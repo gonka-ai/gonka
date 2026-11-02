@@ -863,3 +863,21 @@ func (k Keeper) GetAllBridgeTradeApprovedTokens(ctx sdk.Context) []types.BridgeT
 
 	return approvedTokens
 }
+
+// IsWrappedContractEligibleForTrade reports whether ante may waive the fee
+// for a cw20 send from contractAddr. The contract must be the registered
+// instance, with metadata and trading approval. A missing record is not
+// eligible. This does not query the contract.
+func (k Keeper) IsWrappedContractEligibleForTrade(ctx sdk.Context, contractAddr string) bool {
+	reference, err := k.WrappedContractReverseIndex.Get(ctx, strings.ToLower(contractAddr))
+	if err != nil || reference.ChainId == "" {
+		return false
+	}
+	if _, found := k.GetWrappedTokenContract(ctx, reference.ChainId, reference.ContractAddress); !found {
+		return false
+	}
+	if _, found := k.GetTokenMetadata(ctx, reference.ChainId, reference.ContractAddress); !found {
+		return false
+	}
+	return k.HasBridgeTradeApprovedToken(ctx, reference.ChainId, reference.ContractAddress)
+}

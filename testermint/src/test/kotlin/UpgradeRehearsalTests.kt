@@ -557,8 +557,31 @@ class UpgradeRehearsalTests : TestermintTest() {
 
     private fun isBadGatewayFailure(t: Throwable): Boolean =
         generateSequence(t) { it.cause }.any { cause ->
-            cause.message?.contains("502") == true || cause.message?.contains("Bad Gateway") == true
+            cause is java.net.SocketException ||
+                cause.message?.contains("502") == true ||
+                cause.message?.contains("Bad Gateway") == true ||
+                cause.message?.contains("Connection reset") == true ||
+                cause.message?.contains("Connection refused") == true
         }
+
+    private fun apiContainerLogs(pair: LocalInferencePair): String {
+        val container = "${pair.name.trimStart('/')}-api"
+        val process = ProcessBuilder("docker", "logs", container)
+            .redirectErrorStream(true)
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val exit = process.waitFor()
+        check(exit == 0) { "docker logs $container failed: $output" }
+        return output
+    }
+
+    private fun assertApiCosmovisorSwitched(pair: LocalInferencePair) {
+        val logs = apiContainerLogs(pair)
+        val container = "${pair.name.trimStart('/')}-api"
+        check(logs.contains("upgrade detected, relaunching")) {
+            "$container cosmovisor did not relaunch decentralized-api"
+        }
+    }
 
     private fun verifyUpgradeWithLocalApiRecovery(cluster: LocalCluster, genesis: LocalInferencePair) {
         fun pairHealthFailure(pair: LocalInferencePair): Throwable? =
@@ -569,6 +592,7 @@ class UpgradeRehearsalTests : TestermintTest() {
 
         val initialFailures = failedPairs()
         if (initialFailures.isEmpty()) {
+            cluster.allPairs.forEach(::assertApiCosmovisorSwitched)
             return
         }
 
@@ -578,7 +602,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         }
 
         Logger.warn(
-            "Post-upgrade API verification failed with 502; restarting local API containers for {}",
+            "Post-upgrade API is unreachable; restarting local API containers for {}",
             initialFailures.joinToString(", ") { it.name },
         )
         initialFailures.forEach { it.restartApiContainer() }
@@ -588,6 +612,7 @@ class UpgradeRehearsalTests : TestermintTest() {
         while (genesis.getCurrentBlockHeight() < targetBlock) {
             val remainingFailures = failedPairs()
             if (remainingFailures.isEmpty()) {
+                cluster.allPairs.forEach(::assertApiCosmovisorSwitched)
                 return
             }
             Logger.info(
@@ -597,7 +622,7 @@ class UpgradeRehearsalTests : TestermintTest() {
             genesis.node.waitForNextBlock(2)
         }
 
-        error("API containers did not recover from post-upgrade 502 by block $targetBlock")
+        error("API containers did not recover after post-upgrade restart by block $targetBlock")
     }
 
     private fun rehearsalBinaryPath(path: String): String {

@@ -132,3 +132,57 @@ func (k Keeper) validateIBCTradeApprovedToken(approvedToken *types.BridgeTokenRe
 
 	return nil
 }
+
+// IsIBCDenomEligibleForTrade reports whether ante may waive the fee for a
+// purchase that pays with denom. The approval map is keyed by (chain id,
+// asset), and a purchase only carries the denom, so this walks that map.
+// The approved set is a handful of tokens. A missing match or a read error
+// is not eligible.
+func (k Keeper) IsIBCDenomEligibleForTrade(ctx sdk.Context, denom string) bool {
+	if !strings.HasPrefix(denom, "ibc/") {
+		return false
+	}
+	chainID, ok := k.approvedChainForDenom(ctx, denom)
+	if !ok {
+		return false
+	}
+	if _, found := k.GetTokenMetadata(ctx, chainID, denom); found {
+		return true
+	}
+	return usableBankDenomMetadata(k, ctx, denom)
+}
+
+func (k Keeper) approvedChainForDenom(ctx sdk.Context, denom string) (string, bool) {
+	normalized := strings.ToLower(denom)
+	iter, err := k.LiquidityPoolApprovedTokensMap.Iterate(ctx, nil)
+	if err != nil {
+		return "", false
+	}
+	defer iter.Close()
+	for ; iter.Valid(); iter.Next() {
+		key, err := iter.Key()
+		if err != nil {
+			return "", false
+		}
+		if key.K2() == normalized {
+			return key.K1(), true
+		}
+	}
+	return "", false
+}
+
+func usableBankDenomMetadata(k Keeper, ctx sdk.Context, denom string) bool {
+	if k.BankView == nil {
+		return false
+	}
+	meta, found := k.BankView.GetDenomMetaData(ctx, denom)
+	if !found || strings.TrimSpace(meta.Display) == "" {
+		return false
+	}
+	for _, unit := range meta.DenomUnits {
+		if unit != nil && unit.Denom == meta.Display && unit.Exponent > 0 {
+			return true
+		}
+	}
+	return false
+}

@@ -1574,6 +1574,7 @@ type storeCommitCalibratorRecorder struct {
 	clears            int
 	rate              uint64
 	base              uint64
+	gasPerNew         uint64
 	loaded            bool
 }
 
@@ -1593,8 +1594,8 @@ func (r *storeCommitCalibratorRecorder) ClearStoreCommitIntrinsic() {
 	r.intrinsic = 0
 }
 
-func (r *storeCommitCalibratorRecorder) StoreCommitRawLeaf() (uint64, uint64, bool) {
-	return r.rate, r.base, r.loaded
+func (r *storeCommitCalibratorRecorder) StoreCommitRawLeaf() (uint64, uint64, uint64, bool) {
+	return r.rate, r.base, r.gasPerNew, r.loaded
 }
 
 func TestCommitWorker_CalibrateStoreCommitGas_PeelsDummySimOnce(t *testing.T) {

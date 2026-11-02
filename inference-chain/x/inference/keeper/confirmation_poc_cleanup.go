@@ -19,7 +19,6 @@ const (
 	confirmationCleanupValidations = iota
 	confirmationCleanupStoreCommits
 	confirmationCleanupWeightDistributions
-	confirmationCleanupValidationCounts
 	confirmationCleanupCollectionCount
 )
 
@@ -57,8 +56,6 @@ func confirmationCleanupCollectionName(collection uint8) string {
 		return "store_commits"
 	case confirmationCleanupWeightDistributions:
 		return "weight_distributions"
-	case confirmationCleanupValidationCounts:
-		return "validation_counts"
 	default:
 		return "unknown"
 	}
@@ -206,10 +203,7 @@ func (k Keeper) deleteConfirmationPrefix(ctx context.Context, trigger int64, col
 			if err := guardConfirmationCleanupRemoval(); err != nil {
 				return err
 			}
-			if err := k.PoCValidationsV2.Remove(ctx, key); err != nil {
-				return err
-			}
-			return k.adjustPocValidationV2Count(ctx, key.K1(), key.K3().K2(), -1)
+			return k.PoCValidationsV2.Remove(ctx, key)
 		})
 	case confirmationCleanupStoreCommits:
 		return deletePrefixUntil(ctx, budget, k.PoCV2StoreCommits, collections.NewPrefixedTripleRange[int64, sdk.AccAddress, string](trigger), func(key collections.Triple[int64, sdk.AccAddress, string]) error {
@@ -224,13 +218,6 @@ func (k Keeper) deleteConfirmationPrefix(ctx context.Context, trigger int64, col
 				return err
 			}
 			return k.MLNodeWeightDistributions.Remove(ctx, key)
-		})
-	case confirmationCleanupValidationCounts:
-		return deletePrefixUntil(ctx, budget, k.PoCValidationV2Counts, collections.NewPrefixedPairRange[int64, sdk.AccAddress](trigger), func(key collections.Pair[int64, sdk.AccAddress]) error {
-			if err := guardConfirmationCleanupRemoval(); err != nil {
-				return err
-			}
-			return k.PoCValidationV2Counts.Remove(ctx, key)
 		})
 	default:
 		return 0, false, sdkerrors.Wrapf(types.ErrIllegalState, "unknown confirmation cleanup collection %d", collection)

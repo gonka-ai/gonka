@@ -134,17 +134,13 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	// PoCValidationV2CountPrefix is (stage, validator) -> stored vote count.
-	// The validation key ends with the validator, so a count cannot be a prefix
-	// walk of PoCValidationsV2.
-	PoCValidationV2CountPrefix = collections.NewPrefix(114)
 	// ConfirmationPoCCleanupCursorPrefix is the durable position of the
 	// bounded confirmation-prefix cleanup. It is not one of the regular
 	// pruner epoch fields.
 	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
 	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
-	// after a member is removed. 114 and 115 are taken above. Not 115: 's' is the
-	// first byte of the "stats/" keys in this store.
+	// after a member is removed. 114 is reserved and 115 is the cleanup cursor.
+	// Not 115: 's' is the first byte of the "stats/" keys in this store.
 	BridgePendingByEpochPrefix = collections.NewPrefix(117)
 	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
 	BridgeRecheckRestartPrefix = collections.NewPrefix(119)

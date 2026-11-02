@@ -88,6 +88,17 @@ func setupMsgExecCheckTx(t *testing.T, registerParticipant bool) msgExecCheckTxF
 		Count:                    100,
 		RootHash:                 make([]byte, 32),
 	}))
+	require.NoError(t, testApp.InferenceKeeper.SetPoCValidationSnapshot(ctx, inferencetypes.PoCValidationSnapshot{
+		PocStageStartHeight: 1,
+		SnapshotHeight:      1,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*inferencetypes.ModelVotingPowers{{
+			ModelId: "test-model",
+			VotingPowers: []*inferencetypes.VotingPowerEntry{
+				{Address: granter.String(), VotingPower: 100},
+			},
+		}},
+	}))
 
 	_, err = testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
 		Height: testApp.LastBlockHeight() + 1,
@@ -302,4 +313,128 @@ func TestMsgExecAuthorization_MalformedMsgExecFailsClosed(t *testing.T) {
 	_, resp := signCheckTx(t, f, []sdk.Msg{execMsg}, f.grantee, f.granteeKey)
 	require.NotEqual(t, uint32(0), resp.Code, "malformed MsgExec must fail closed; log=%q", resp.Log)
 	require.Equal(t, 0, f.testApp.Mempool().CountTx())
+}
+
+func TestPocVoterEligibility_RejectsInvalidSigAndUnauthorizedMsgExecBeforeSnapshot(t *testing.T) {
+	f := setupMsgExecCheckTx(t, true)
+
+	// Delete the validation snapshot so any call to BuildPocStageVoterEligibility
+	// returns "validation snapshot not found for stage".
+	delCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	require.NoError(t, f.testApp.InferenceKeeper.DeletePoCValidationSnapshot(delCtx, 1))
+	_, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+		Height: f.testApp.LastBlockHeight() + 1,
+		Time:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	// 1. Invalid signature claiming a valid participant fails at SigVerificationDecorator,
+	//    never reaching PocVoterEligibilityDecorator.
+	wrongKey := secp256k1.GenPrivKey()
+	_, badSigResp := signCheckTx(t, f, []sdk.Msg{f.pocMsg}, f.granter, wrongKey)
+	require.NotEqual(t, uint32(0), badSigResp.Code)
+	require.NotContains(t, badSigResp.Log, "validation snapshot not found for stage")
+
+	// 2. Validly signed MsgExec without an authz grant fails at MsgExecAuthorizationDecorator,
+	//    never reaching PocVoterEligibilityDecorator.
+	execMsg := authz.NewMsgExec(f.grantee, []sdk.Msg{f.pocMsg})
+	_, noGrantResp := signCheckTx(t, f, []sdk.Msg{&execMsg}, f.grantee, f.granteeKey)
+	require.NotEqual(t, uint32(0), noGrantResp.Code)
+	require.Contains(t, noGrantResp.Log, authz.ErrNoAuthorizationFound.Error())
+	require.NotContains(t, noGrantResp.Log, "validation snapshot not found for stage")
+
+	// 3. Validly signed direct transaction reaches PocVoterEligibilityDecorator and fails
+	//    because the snapshot is absent.
+	_, directResp := signCheckTx(t, f, []sdk.Msg{f.pocMsg}, f.granter, f.granterKey)
+	require.NotEqual(t, uint32(0), directResp.Code)
+	require.Contains(t, directResp.Log, "validation snapshot not found for stage")
+
+	// 4. Seed a snapshot where granter has 0 voting power and grant MsgExec authorization:
+	//    both direct and authorized MsgExec transactions fail voter eligibility.
+	snapCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	require.NoError(t, f.testApp.InferenceKeeper.SetPoCValidationSnapshot(snapCtx, inferencetypes.PoCValidationSnapshot{
+		PocStageStartHeight: 1,
+		SnapshotHeight:      1,
+		TotalNetworkWeight:  100,
+		ModelVotingPowers: []*inferencetypes.ModelVotingPowers{{
+			ModelId: "test-model",
+			VotingPowers: []*inferencetypes.VotingPowerEntry{
+				{Address: f.grantee.String(), VotingPower: 100},
+			},
+		}},
+	}))
+	persistGrant(t, f, authz.NewGenericAuthorization(sdk.MsgTypeURL(f.pocMsg)), nil)
+
+	_, ineligibleDirect := signCheckTx(t, f, []sdk.Msg{f.pocMsg}, f.granter, f.granterKey)
+	require.NotEqual(t, uint32(0), ineligibleDirect.Code)
+	require.Contains(t, ineligibleDirect.Log, "signer has no voting power for any submitted model in stage snapshot")
+
+	_, ineligibleExec := signCheckTx(t, f, []sdk.Msg{&execMsg}, f.grantee, f.granteeKey)
+	require.NotEqual(t, uint32(0), ineligibleExec.Code)
+	require.Contains(t, ineligibleExec.Log, "signer has no voting power for any submitted model in stage snapshot")
+}
+
+func TestPocVoterEligibility_AuthorizedMsgExecMixedModelMatchesDirect(t *testing.T) {
+	f := setupMsgExecCheckTx(t, true)
+	writeCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	f.testApp.InferenceKeeper.SetModel(writeCtx, &inferencetypes.Model{Id: "model-b"})
+	require.NoError(t, f.testApp.InferenceKeeper.SetPoCV2StoreCommit(writeCtx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       f.grantee.String(),
+		PocStageStartBlockHeight: 1,
+		ModelId:                  "model-b",
+		Count:                    10,
+		RootHash:                 make([]byte, 32),
+	}))
+	_, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+		Height: f.testApp.LastBlockHeight() + 1,
+		Time:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	mixed := &inferencetypes.MsgSubmitPocValidationsV2{
+		Creator:                  f.granter.String(),
+		PocStageStartBlockHeight: 1,
+		Validations: []*inferencetypes.PoCValidationEntryV2{
+			{ParticipantAddress: f.grantee.String(), ModelId: "test-model", ValidatedWeight: 1},
+			{ParticipantAddress: f.grantee.String(), ModelId: "model-b", ValidatedWeight: -1},
+		},
+	}
+	onlyB := &inferencetypes.MsgSubmitPocValidationsV2{
+		Creator:                  f.granter.String(),
+		PocStageStartBlockHeight: 1,
+		Validations: []*inferencetypes.PoCValidationEntryV2{
+			{ParticipantAddress: f.grantee.String(), ModelId: "model-b", ValidatedWeight: -1},
+		},
+	}
+
+	_, mixedDirect := signCheckTx(t, f, []sdk.Msg{mixed}, f.granter, f.granterKey)
+	require.Equal(t, uint32(0), mixedDirect.Code, "mixed batch CheckTx log=%q", mixedDirect.Log)
+	_, onlyBDirect := signCheckTx(t, f, []sdk.Msg{onlyB}, f.granter, f.granterKey)
+	require.NotEqual(t, uint32(0), onlyBDirect.Code)
+	require.Contains(t, onlyBDirect.Log, "signer has no voting power for any submitted model in stage snapshot")
+
+	persistGrant(t, f, authz.NewGenericAuthorization(sdk.MsgTypeURL(mixed)), nil)
+	execMixed := authz.NewMsgExec(f.grantee, []sdk.Msg{mixed})
+	_, mixedExec := signCheckTx(t, f, []sdk.Msg{&execMixed}, f.grantee, f.granteeKey)
+	require.Equal(t, uint32(0), mixedExec.Code, "authorized mixed MsgExec CheckTx log=%q", mixedExec.Log)
+	execOnlyB := authz.NewMsgExec(f.grantee, []sdk.Msg{onlyB})
+	_, onlyBExec := signCheckTx(t, f, []sdk.Msg{&execOnlyB}, f.grantee, f.granteeKey)
+	require.NotEqual(t, uint32(0), onlyBExec.Code)
+	require.Contains(t, onlyBExec.Log, "signer has no voting power for any submitted model in stage snapshot")
 }

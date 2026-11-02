@@ -5,7 +5,8 @@
 // templates, and preserves poc_scheme. Pre-v0.2.16 static weight factors remain
 // on the model. Admission defaults are written when stored params do not have
 // them yet, then retained accounts and weights are repaired. After migrations,
-// the wasm fee group is enabled.
+// the wasm fee group is enabled, the epoch fee group carries the new
+// store-commit key price, and the onboarding fee group is enabled.
 package v0_2_17
 
 import (
@@ -14,6 +15,7 @@ import (
 	"slices"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
 	"github.com/productscience/inference/x/inference/keeper"
@@ -48,13 +50,6 @@ func CreateUpgradeHandler(
 		if err := k.RepairEpochValidationState(ctx); err != nil {
 			return nil, err
 		}
-		// Votes already stored have no signer counter. Seed counters only for
-		// stages that can still accept votes. Finished confirmation triggers
-		// are not scanned or deleted here; the bounded confirmation cleanup
-		// walks them on later blocks.
-		if err := k.RebuildPocValidationV2Counts(ctx); err != nil {
-			return nil, err
-		}
 
 		if err := migratePocSchemeBlocks(ctx, k); err != nil {
 			return fromVM, err
@@ -79,8 +74,16 @@ func CreateUpgradeHandler(
 			return toVM, err
 		}
 
-		// After migrations, so a fee-params migration cannot drop the wasm group.
+		// After migrations, so a fee-params migration cannot drop these groups.
+		// The signer/stage validation cap is gone in this binary, so the epoch
+		// fee group must carry the new store-commit key price in the same upgrade.
 		if err := enableWasmFeeGroup(ctx, k); err != nil {
+			return toVM, err
+		}
+		if err := updateEpochFeeGroup(ctx, k); err != nil {
+			return toVM, err
+		}
+		if err := enableOnboardingFeeGroup(ctx, k); err != nil {
 			return toVM, err
 		}
 
@@ -119,6 +122,105 @@ func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
 
 	k.LogInfo("enabled wasm fee group", types.Upgrades,
 		"min_gas_price", group.MinGasPrice,
+		"enabled_fee_groups", fp.EnabledFeeGroups)
+	return k.SetParams(ctx, params)
+}
+
+// updateEpochFeeGroup writes the activation price for a newly inserted
+// (stage, participant, model) store-commit key on the epoch fee group.
+// The price is a static rule. stored_delta stays the count rate. The
+// signer/stage validation cap is not enforced by this binary, so this
+// upgrade must not finish while new keys are still free.
+func updateEpochFeeGroup(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.FeeParams == nil {
+		params.FeeParams = types.DefaultFeeParams()
+	}
+	fp := params.FeeParams
+	group := fp.GroupByName(types.FeeGroupEpoch)
+	if group == nil {
+		return fmt.Errorf("epoch fee group missing; refusing to activate without a new-key charge")
+	}
+	storeURL := sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{})
+	var delta, staticRule *types.MsgGasRule
+	for _, rule := range group.Msgs {
+		if rule == nil || rule.TypeUrl != storeURL {
+			continue
+		}
+		if rule.GetStoredDelta() != nil {
+			delta = rule
+		}
+		if rule.GetStatic() != nil {
+			staticRule = rule
+		}
+	}
+	if delta == nil {
+		return fmt.Errorf("store commit fee rule missing; refusing to activate without a new-key charge")
+	}
+	if staticRule == nil {
+		staticRule = &types.MsgGasRule{TypeUrl: storeURL}
+		group.Msgs = append(group.Msgs, staticRule)
+	}
+	staticRule.Base = nil
+	staticRule.Func = &types.MsgGasRule_Static{
+		Static: &types.StaticParams{Gas: types.StoreCommitGasPerNewKey},
+	}
+	if err := fp.Validate(); err != nil {
+		return err
+	}
+	k.LogInfo("updated epoch fee group", types.Upgrades,
+		"static_gas", staticRule.GetStatic().GetGas(),
+		"ngonka_per_key_at_price_1", staticRule.GetStatic().GetGas())
+	return k.SetParams(ctx, params)
+}
+
+// enableOnboardingFeeGroup turns on the onboarding fee group at 1 ngonka
+// per gas and sets the one-time creation surcharge. Updating an existing
+// participant does not pay that surcharge. This does not change the epoch
+// fee group's StoreCommit period base or static new-key gas.
+func enableOnboardingFeeGroup(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.FeeParams == nil {
+		params.FeeParams = types.DefaultFeeParams()
+	}
+	fp := params.FeeParams
+	group := fp.GroupByName(types.FeeGroupOnboarding)
+	if group == nil {
+		group = &types.FeeGroup{Name: types.FeeGroupOnboarding, MinGasPrice: wasmMinGasPriceNgonka}
+		fp.Groups = append(fp.Groups, group)
+	} else if group.MinGasPrice == 0 {
+		group.MinGasPrice = wasmMinGasPriceNgonka
+	}
+	submitURL := sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{})
+	var rule *types.MsgGasRule
+	for _, candidate := range group.Msgs {
+		if candidate != nil && candidate.TypeUrl == submitURL {
+			rule = candidate
+			break
+		}
+	}
+	if rule == nil {
+		rule = &types.MsgGasRule{TypeUrl: submitURL}
+		group.Msgs = append(group.Msgs, rule)
+	}
+	rule.Func = &types.MsgGasRule_Static{
+		Static: &types.StaticParams{Gas: types.NewParticipantGas},
+	}
+	if !slices.Contains(fp.EnabledFeeGroups, types.FeeGroupOnboarding) {
+		fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupOnboarding)
+	}
+	if err := fp.Validate(); err != nil {
+		return err
+	}
+	k.LogInfo("enabled onboarding fee group", types.Upgrades,
+		"min_gas_price", group.MinGasPrice,
+		"static_gas", rule.GetStatic().GetGas(),
 		"enabled_fee_groups", fp.EnabledFeeGroups)
 	return k.SetParams(ctx, params)
 }

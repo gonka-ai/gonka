@@ -131,18 +131,14 @@ const (
 	// MaxValidationsPerMessage rejects one fee-exempt validation batch.
 	// One observed signer stored at most 40 votes in an epoch.
 	MaxValidationsPerMessage = 128
-	// MaxValidationsPerSignerPerStage stops further stores once this signer
-	// already has this many rows for the stage.
-	MaxValidationsPerSignerPerStage = 256
 )
 
 // DefaultEpochValidationParams is the governance value written at genesis
 // and by the v0.2.17 upgrade.
 func DefaultEpochValidationParams() *EpochValidationParams {
 	return &EpochValidationParams{
-		MaxPositiveDistributionRows:     DefaultMaxPositiveDistributionRows,
-		MaxValidationsPerMessage:        MaxValidationsPerMessage,
-		MaxValidationsPerSignerPerStage: MaxValidationsPerSignerPerStage,
+		MaxPositiveDistributionRows: DefaultMaxPositiveDistributionRows,
+		MaxValidationsPerMessage:    MaxValidationsPerMessage,
 	}
 }
 
@@ -165,15 +161,6 @@ func (p *EpochValidationParams) ValidationsPerMessageLimit() int {
 	return int(p.MaxValidationsPerMessage)
 }
 
-// ValidationsPerSignerPerStageLimit is the governed cap on rows stored for
-// one signer in one stage.
-func (p *EpochValidationParams) ValidationsPerSignerPerStageLimit() int {
-	if p == nil || p.MaxValidationsPerSignerPerStage == 0 {
-		return MaxValidationsPerSignerPerStage
-	}
-	return int(p.MaxValidationsPerSignerPerStage)
-}
-
 func (p *EpochValidationParams) Validate() error {
 	if p == nil {
 		return nil
@@ -183,9 +170,6 @@ func (p *EpochValidationParams) Validate() error {
 	}
 	if p.MaxValidationsPerMessage == 0 {
 		return fmt.Errorf("epoch_validation_params.max_validations_per_message must be greater than 0")
-	}
-	if p.MaxValidationsPerSignerPerStage == 0 {
-		return fmt.Errorf("epoch_validation_params.max_validations_per_signer_per_stage must be greater than 0")
 	}
 	return nil
 }
