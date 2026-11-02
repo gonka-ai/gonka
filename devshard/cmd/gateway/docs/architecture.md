@@ -12,7 +12,7 @@ Every structural choice below follows from one of those.
 
 ## Layers
 
-An arrow points from a package to one it imports.
+An arrow points from a package to one it imports. The diagram is a selection of those imports, the ones that show the layering; every import between gateway packages is listed under "Every import" below.
 
 ```mermaid
 graph TD
@@ -72,9 +72,44 @@ graph TD
     STO --> CFG
 ```
 
-`filters` depends on nothing: it is pure, and its behaviour is pinned byte-for-byte against goldens. `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.
+`filters` depends on no layer package: it is pure, and its behaviour is pinned byte-for-byte against goldens. `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.
 
 The graph shows the layer packages, so the composition root, `app`, is not on it: `app` imports every box above and `app/compose.go` wires them, and the four adapters that hand one event to two readers — a race outcome to the metrics recorder and the nonce ledger, a warmup's vote to that same recorder without a race's line, a burn to its log line, its metric and the ledger, a phase poll to a line only when something changed — live in `app/observers.go` rather than in a layer package. See the root [`README.md`](../README.md), "Two readers of one fact".
+
+## Every import
+
+The non-test imports between gateway packages, as `go list -f '{{.ImportPath}} {{.Imports}}' ./...` reports them from `devshard/cmd/gateway`, with the standard library, third-party and `devshard/...` libraries left out:
+
+- `accounting` imports `engine`, `filters`, `scheduler`
+- `api` imports `chain`, `config`, `engine`, `escrow`, `filters`, `internal/logkey`, `internal/safemath`, `internal/strictjson`, `journal`, `limits`, `perf`, `registry`, `scheduler`, `store`, `tokenizer`
+- `app` imports `accounting`, `api`, `chain`, `config`, `engine`, `env`, `escrow`, `filters`, `heights`, `hostping`, `internal/logkey`, `internal/strictjson`, `journal`, `limits`, `metrics`, `nonces`, `perf`, `registry`, `scheduler`, `store`, `tokenizer`, `warmup`
+- `chain` imports `internal/safemath`, `internal/strictjson`
+- `config` imports `chain`, `env`, `filters`
+- `engine` imports `chain`, `config`, `filters`, `internal/strictjson`, `limits`, `perf`, `scheduler`
+- `env` imports `internal/logkey`
+- `escrow` imports `chain`, `config`, `filters`, `funding`, `internal/safemath`, `liquidity`, `scheduler`, `store`
+- `filters` imports `internal/strictjson`, `internal/tokensource`
+- `funding` imports `internal/safemath`, `liquidity`
+- `heights` imports `config`, `internal/logkey`
+- `hostping` imports `config`, `internal/logkey`, `registry`
+- `internal/leakcheck` imports no gateway package
+- `internal/logcapture` imports no gateway package
+- `internal/logkey` imports no gateway package
+- `internal/safemath` imports no gateway package
+- `internal/strictjson` imports no gateway package
+- `internal/tokensource` imports no gateway package
+- `journal` imports `accounting`, `chain`, `engine`, `internal/logkey`, `perf`, `scheduler`, `store`
+- `limits` imports `chain`, `config`, `internal/safemath`
+- `liquidity` imports `internal/safemath`
+- `metrics` imports `chain`, `engine`, `limits`, `perf`, `registry`, `store`
+- `nonces` imports `accounting`, `chain`, `config`, `engine`, `internal/logkey`, `registry`, `scheduler`
+- `perf` imports `config`
+- `registry` imports `chain`, `scheduler`
+- `scheduler` imports `chain`, `config`, `internal/tokensource`, `limits`
+- `store` imports `config`, `internal/tokensource`
+- `tokenizer` imports `internal/logkey`
+- `warmup` imports `accounting`, `chain`, `config`, `engine`, `registry`
+- `(root)` imports `app`
 
 ## One request
 
