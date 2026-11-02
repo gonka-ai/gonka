@@ -12,7 +12,7 @@ This is a hands-on infrastructure and backend testing role which involves a cons
 
 [Gonka](https://gonka.ai) is a decentralized AI compute network that connects developers with independent GPU hosts and provides OpenAI-compatible access to AI inference.
 
-The community has funded an independent testing initiative to validate protocol changes on a dedicated, geographically distributed DevNet before they reach mainnet. Test plans, reports, and defect write-ups will be public and used by the wider ecosystem.
+You will be working alongside the team who created and brought the chain from ground up. You will also liaise and partner with external contributors who support the Gonka project. 
 
 ## Responsibilities
 
