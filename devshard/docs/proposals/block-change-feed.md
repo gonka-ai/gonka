@@ -1,7 +1,7 @@
 # One long-poll client for blocks and warm keys
 
 **Status:** Draft / plan
-**Related:** [async-header-time-timeout.md](async-header-time-timeout.md), [warm-key-grant-cache.md](warm-key-grant-cache.md), [block-change-feed-concerns.md](block-change-feed-concerns.md) (fixes adopted here), [block-change-feed-plan.md](../block-change-feed-plan.md) (implementation steps), `GetHostEvents` ring, `BlockObserver`, `headertime.Source`, `WarmKeyLogCopy`
+**Related:** [async-header-time-timeout.md](../timeouts/async-header-time-timeout.md), [warm-key-grant-cache.md](warm-key-grant-cache.md), [block-change-feed-concerns.md](block-change-feed-concerns.md) (fixes adopted here), [block-change-feed-plan.md](../block-change-feed-plan.md) (implementation steps), `GetHostEvents` ring, `BlockObserver`, `headertime.Source`, `WarmKeyLogCopy`
 **Scope:** One async library on devshardd and the gateway. It long-polls the host-event ring for block changes and warm-key events, writes blocks into the existing `headertime.Source`, catches up from a height through that ring's store, and falls back to the chain when dapi is absent or stalled. dapi fills the ring from one ordered feed loop, one height at a time. `NODE_MANAGER_ADDR` on the gateway is optional and trusted when set. Comet headers are still commit-checked. The header-time map is optional.
 
 This is a plan. It does not change code by itself.
@@ -60,7 +60,7 @@ The piece the grant-cache note still asks for, and this library provides, is the
 
 ## Fit with async header time
 
-[async-header-time-timeout.md](async-header-time-timeout.md) needs:
+[async-header-time-timeout.md](../timeouts/async-header-time-timeout.md) needs:
 - each item of the long-poll to carry `(height, block hash, header time)`
 - the caller to pass the last height it has and receive newer blocks, or wait
 - both processes to fill a local map, with the process's own Comet subscription as the fallback when dapi is unreachable

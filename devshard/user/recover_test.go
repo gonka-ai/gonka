@@ -35,10 +35,32 @@ func newTestStateMachine(
 	opts ...state.SMOption,
 ) *state.StateMachine {
 	t.Helper()
-	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion)}, opts...)
+	opts = append([]state.SMOption{
+		state.WithStateRootAndProtocolVersion("v6"),
+		state.WithHeaderTimes(polledSource(t)),
+	}, opts...)
 	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance), opts...)
 	require.NoError(t, err)
 	return sm
+}
+
+// recoverForTest rebuilds the session on the same polled header-time map the
+// live machine used. RecoverSession constructs a new state machine, so the
+// map has to be passed in again.
+func recoverForTest(
+	t *testing.T,
+	store storage.Storage,
+	signer signing.Signer,
+	verifier signing.Verifier,
+	escrowID string,
+	boundVersion string,
+	group []types.SlotAssignment,
+	clients []HostClient,
+	smOpts ...state.SMOption,
+) (*Session, *state.StateMachine, error) {
+	t.Helper()
+	smOpts = append([]state.SMOption{state.WithHeaderTimes(polledSource(t))}, smOpts...)
+	return RecoverSession(store, signer, verifier, escrowID, boundVersion, group, clients, smOpts...)
 }
 
 func newTestStore(t *testing.T) *storage.SQLite {
@@ -68,7 +90,7 @@ func setupRecoverableSession(
 	// Create storage session.
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -125,7 +147,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	}
 
 	// Recover.
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
@@ -157,7 +179,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -187,7 +209,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), session.Nonce())
 	require.Len(t, session.Diffs(), 1)
@@ -206,7 +228,7 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -221,7 +243,7 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), session.Nonce())
 }
@@ -263,7 +285,7 @@ func setupRecoverableSeedSession(
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -314,7 +336,7 @@ func setupRecoverableHeartbeatSessionWithOracles(
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -367,7 +389,7 @@ func recoverHeartbeatSession(
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 	require.NoError(t, err)
 	session.SetHeightSyncCadence(10, uint64(len(hosts)))
 	session.SetObservedHeight(func() (uint64, []byte, bool) {
@@ -591,8 +613,8 @@ func TestRecoverSession_HeartbeatPendingAckLossDoesNotDuplicateTurnOrStall(t *te
 	require.Equal(t, heightsync.TurnOpen, session.HeartbeatTurnTracker().Record(firstTurn).State)
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -642,8 +664,8 @@ func TestRecoverSession_HeartbeatPartialPendingAckLossDoesNotStall(t *testing.T)
 		"only one volatile ack made it back before restart")
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -693,8 +715,8 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	require.Equal(t, heightsync.TurnOpen, rec.State)
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -738,8 +760,8 @@ func TestRecoverSession_HeartbeatLateOldAckDoesNotCreditNewTurn(t *testing.T) {
 	oldAck := heightAcksInTxs(session.PendingTxs())[0]
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -808,8 +830,8 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	require.Zero(t, targetHost.LatestNonce(),
 		"fresh recovered host has not received the persisted ack-flush diff yet")
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryClients)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -858,8 +880,8 @@ func TestRecoverSession_BlindCourierStillHeartbeatsCarryingTheFloor(t *testing.T
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 1)
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -915,8 +937,8 @@ func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
 	require.Equal(t, uint64(0), session.HeartbeatTurnTracker().LastCompletedHeight())
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -926,20 +948,30 @@ func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
 	require.Empty(t, recovered.Diffs())
 	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnStart())
 	require.Equal(t, uint64(0), recovered.HeartbeatTurnTracker().LastCompletedHeight())
+	rememberJournal(recovered)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Equal(t, uint64(0), recovered.Nonce(), "recovery must not promote a pre-diff seed into durable height")
-	require.Equal(t, 1, recovered.HeartbeatSkippedNoHeight())
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(recovered)),
+		"recovery must not promote a pre-diff seed into a heartbeat stamp")
+	for _, d := range seenDiffs(recovered) {
+		for _, tx := range d.Txs {
+			if hb := tx.GetHeartbeat(); hb != nil {
+				require.Zero(t, hb.ObservedHeight)
+				require.Empty(t, hb.ObservedBlockHash)
+			}
+		}
+	}
+	floor, _, _ := recovered.StateMachine().HeightSyncFloorAsOf(recovered.Nonce() + 1)
+	require.Zero(t, floor)
+	require.Zero(t, recovered.HeartbeatSkippedNoHeight())
 
-	// Handing the producer a courier tip changes nothing, and that is the point.
-	// The seed was volatile and the log is empty, so there is no F; §10.3.1 leaves
-	// the producer with nothing it is allowed to stamp, and no turn opens. A
-	// restart cannot launder an off-log reading into logical time.
+	// Handing the producer a courier tip changes nothing. The opening span
+	// already went out, and a user-chosen height is still not a stamp.
 	recovered.SetObservedHeight(func() (uint64, []byte, bool) { return 55, []byte{0xaa}, true })
+	nonce := recovered.Nonce()
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Equal(t, uint64(0), recovered.Nonce())
-	require.Empty(t, recovered.Diffs())
-	require.Equal(t, 2, recovered.HeartbeatSkippedNoHeight())
-	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, nonce, recovered.Nonce())
+	floor, _, _ = recovered.StateMachine().HeightSyncFloorAsOf(recovered.Nonce() + 1)
+	require.Zero(t, floor)
 }
 
 func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testing.T) {
@@ -961,8 +993,8 @@ func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testin
 
 	shortCfg := heightsync.HeartbeatConfig{Interval: 40 * time.Millisecond}
 	recoveredOracles := newSessionOracles(len(hosts), height, []byte{0xaa})
-	recovered, recSM, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, recSM, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClientsWithOracles(t, group, hosts, user, recoveredOracles),
 		state.WithHeartbeatConfig(shortCfg))
 	require.NoError(t, err)
@@ -1109,7 +1141,7 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1141,7 +1173,7 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	require.Equal(t, uint64(1), seq)
 	saveSnapshot(store, sm, "escrow-1", finalNonce, map[int]uint64{0: finalNonce, 1: finalNonce, 2: finalNonce})
 
-	recovered, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -1204,7 +1236,7 @@ func TestRecoverSession_OpenTurnRepairProbeStateIsVolatile(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1218,7 +1250,7 @@ func TestRecoverSession_OpenTurnRepairProbeStateIsVolatile(t *testing.T) {
 	liveSM := buildSM()
 	appendHeartbeatDiff(t, store, liveSM, user, 1, 1, 100)
 
-	recovered, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, recSM, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -1290,7 +1322,7 @@ func TestRecoverSession_ReplayWithoutEnvelopeAfterEdgeMarkIsDeterministic(t *tes
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1336,7 +1368,7 @@ func TestRecoverSession_ReplayWithoutEnvelopeAfterEdgeMarkIsDeterministic(t *tes
 	require.Empty(t, liveSM.HeightSyncMarks(),
 		"edge admission marks must not enter the replayed consensus state")
 
-	recovered, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, recSM, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -1371,8 +1403,8 @@ func TestRecoverSession_EmptyLogWaitsForTheFirstHostStamp(t *testing.T) {
 	require.Equal(t, uint64(0), session.Nonce())
 	require.NoError(t, session.Close())
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClientsWithOracles(t, group, hosts, user,
 			newSessionOracles(len(hosts), height, []byte{0xaa})))
 	require.NoError(t, err)
@@ -1382,15 +1414,15 @@ func TestRecoverSession_EmptyLogWaitsForTheFirstHostStamp(t *testing.T) {
 	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnStart())
 
 	ctx := context.Background()
+	rememberJournal(recovered)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Empty(t, recovered.Diffs(), "no floor to stamp: the cadence cannot open a turn yet")
-	require.Equal(t, 1, recovered.HeartbeatSkippedNoHeight())
-
-	seedFloorByInference(t, recovered)
-	firstTurn := recovered.Nonce() + 1
-	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(journalDiffs(t, recovered), firstTurn))
-	require.Nil(t, heartbeatTxForTurn(journalDiffs(t, recovered), nthTurn(journalDiffs(t, recovered), 3, 2)))
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(recovered)),
+		"the opening span carries no height; the host ack is what seeds F")
+	require.Zero(t, recovered.HeartbeatSkippedNoHeight())
+	floor, hash, known := recovered.StateMachine().HeightSyncFloorAsOf(recovered.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, height, floor)
+	require.Equal(t, []byte{0xaa}, hash)
 }
 
 func recoveryHeartbeatClients(
@@ -1643,7 +1675,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1712,7 +1744,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, recSM, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Nonce())
 
@@ -1739,7 +1771,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1761,7 +1793,7 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 	}
 
 	// Recover with a warm key resolver option.
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients,
+	session, recSM, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients,
 		state.WithWarmKeyResolver(resolver),
 	)
 	require.NoError(t, err)
@@ -1790,7 +1822,7 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 	require.NoError(t, err)
 
 	// Each inference gets a signature from the executor host.
@@ -1835,7 +1867,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
 	// Rebuild once to get a session at LatestNonce, mark every host caught up,
 	// then flush so the next recover takes the snapshot-only early-return path.
 	verifier := signing.NewSecp256k1Verifier()
-	live, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	live, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, finalNonce, live.Nonce())
@@ -1847,7 +1879,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
 	require.NoError(t, live.FlushSnapshot())
 
 	spy := &replaySpyStore{Storage: store}
-	rec, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	rec, _, err := recoverForTest(t, spy, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, finalNonce, rec.Nonce())
@@ -1888,8 +1920,8 @@ func TestRecoverSession_SnapshotOnly_ReseedsTrimmedPrefixKeys(t *testing.T) {
 	require.NoError(t, session.Close())
 
 	spy := &replaySpyStore{Storage: store}
-	recovered, _, err := RecoverSession(spy, user, signing.NewSecp256k1Verifier(),
-		"escrow-1", testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, spy, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v6", group,
 		recoveryHeartbeatClients(t, group, hosts, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -1989,7 +2021,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 	verifier := signing.NewSecp256k1Verifier()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       escrowID,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1997,7 +2029,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 	}))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, store,
-		state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion))
+		state.WithStateRootAndProtocolVersion("v6"))
 	require.NoError(t, err)
 	appendAppliedDiff := func(nonce uint64, txs []*types.DevshardTx) {
 		t.Helper()
@@ -2039,7 +2071,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 
 	saveSnapshot(store, sm, escrowID, 3, map[int]uint64{0: 3, 1: 3, 2: 3})
 	spy := &replaySpyStore{Storage: store}
-	recovered, recSM, err := RecoverSession(spy, user, verifier, escrowID, testutil.RuntimeTestVersion, group,
+	recovered, recSM, err := recoverForTest(t, spy, user, verifier, escrowID, "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
@@ -2088,7 +2120,7 @@ func recoverSnapshotOnlyWithDurableHostTx(t *testing.T, tx *types.DevshardTx) *S
 	verifier := signing.NewSecp256k1Verifier()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       escrowID,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -2107,7 +2139,7 @@ func recoverSnapshotOnlyWithDurableHostTx(t *testing.T, tx *types.DevshardTx) *S
 	require.NoError(t, store.SaveSnapshot(escrowID, 1, blob))
 
 	spy := &replaySpyStore{Storage: store}
-	recovered, _, err := RecoverSession(spy, user, verifier, escrowID, testutil.RuntimeTestVersion, group,
+	recovered, _, err := recoverForTest(t, spy, user, verifier, escrowID, "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), recovered.Nonce())
@@ -2160,7 +2192,7 @@ func TestRecoverSession_NewFormatSnapshot_RestoresHostCursor(t *testing.T) {
 	}
 	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), cursor)
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 
@@ -2203,7 +2235,7 @@ func TestRecoverSession_NewFormatSnapshot_BackfillsStrandedHost(t *testing.T) {
 	}
 	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), cursor)
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 
@@ -2238,7 +2270,7 @@ func TestRecoverSession_NewFormatSnapshot_ProcessResponseUsesActualDiffNonce(t *
 	}
 	saveSnapshot(store, sm, "escrow-1", uint64(numInferences), cursor)
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 
 	diffs := session.Diffs()
@@ -2287,7 +2319,7 @@ func TestRecoverSession_SnapshotWithoutCursorIsRestored(t *testing.T) {
 	group, hosts, user := setupRecoverableSession(t, 3, n, store)
 	saveHonestSnapshot(t, store, group, user, n, nil)
 
-	session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+	session, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(), "escrow-1", "v6",
 		group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, map[int]uint64{0: 0, 1: 0, 2: 0}, hostCursorOf(session))
@@ -2306,7 +2338,7 @@ func TestRecoverSession_SilentHostKeepsTheSnapshot(t *testing.T) {
 	saveHonestSnapshot(t, store, group, user, n, answered)
 
 	for restart := range 2 {
-		session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+		session, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(), "escrow-1", "v6",
 			group, buildRecoveryClients(t, hosts, group, user))
 		require.NoError(t, err)
 		require.Equal(t, map[int]uint64{0: n, 1: n, 2: 0}, hostCursorOf(session), "restart %d", restart)
@@ -2327,7 +2359,7 @@ func TestRecoverSession_CursorPastSnapshotIsClamped(t *testing.T) {
 	group, hosts, user := setupRecoverableSession(t, 3, n, store)
 	saveHonestSnapshot(t, store, group, user, n, map[int]uint64{0: n + 50, 1: n, 2: n})
 
-	session, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion,
+	session, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(), "escrow-1", "v6",
 		group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, map[int]uint64{0: n, 1: n, 2: n}, hostCursorOf(session))
@@ -2372,7 +2404,7 @@ func recoverIgnoringSnapshot(t *testing.T, encode func(types.EscrowState) []byte
 	honest := sm.ExportState()
 	require.NoError(t, store.SaveSnapshot("escrow-1", uint64(numInferences), encode(*honest)))
 
-	session, recSM, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, recSM, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	return session, recSM, *honest
@@ -2386,7 +2418,7 @@ func TestRecoverSession_ReplaysOnePageAtATime(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
 
-	session, sm, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, sm, err := recoverForTest(t, spy, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
@@ -2399,7 +2431,7 @@ func TestRecoverSession_ReplaysOnePageAtATime(t *testing.T) {
 	require.NoError(t, err)
 	fresh := newTestStore(t)
 	require.NoError(t, fresh.CreateSession(storage.CreateSessionParams{
-		EscrowID: "escrow-1", EpochID: 1, Version: testutil.RuntimeTestVersion,
+		EscrowID: "escrow-1", EpochID: 1, Version: "v6",
 	}))
 	require.NoError(t, storage.RebuildValidationObsFromDiffs(fresh, "escrow-1", records, storage.SealedInferenceIDsSorted(sm.ExportSealedNonces())))
 	want, err := fresh.GetValidationObservability("escrow-1")
@@ -2431,7 +2463,7 @@ func TestRecoverSession_CursorZeroBackfillIsPaged(t *testing.T) {
 	})
 
 	spy := &replaySpyStore{Storage: store}
-	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, _, err := recoverForTest(t, spy, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Zero(t, spy.replayedRecords(uint64(numInferences)), "snapshot is current, so nothing after it is replayed")
@@ -2459,7 +2491,7 @@ func TestRecoverSession_SnapshotPathSkipsObsRebuild(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -2476,7 +2508,7 @@ func TestRecoverSession_SnapshotPathSkipsObsRebuild(t *testing.T) {
 	writeSnapshot(store, "escrow-1", 2, snap, map[int]uint64{0: 1, 1: 2, 2: 2}, nil, nil, nil)
 
 	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
-	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, _, err := recoverForTest(t, spy, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Nonce())
 	require.Len(t, session.Diffs(), 1)
@@ -2538,7 +2570,7 @@ func TestRecoverSession_FailedObsRebuildRepeatsAfterRestart(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	faulty := &obsFaultStore{Storage: store, failDrain: true}
-	_, _, err := RecoverSession(faulty, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	_, _, err := recoverForTest(t, faulty, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.ErrorContains(t, err, "drain refused")
 	requireObsRebuildPending(t, store, true)
 	snapNonce, _, err := store.LoadSnapshot("escrow-1")
@@ -2546,14 +2578,14 @@ func TestRecoverSession_FailedObsRebuildRepeatsAfterRestart(t *testing.T) {
 	require.Equal(t, uint64(4), snapNonce, "the snapshot landed before the rebuild failed")
 
 	spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
-	session, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	session, _, err := recoverForTest(t, spy, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(4), session.Nonce())
 	require.Equal(t, 1, spy.clearCalls(), "the snapshot restore repeats the unfinished rebuild")
 	requireObsRebuildPending(t, store, false)
 
 	again := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
-	_, _, err = RecoverSession(again, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+	_, _, err = recoverForTest(t, again, user, verifier, "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Zero(t, again.clearCalls(), "a finished rebuild is not repeated")
 }
@@ -2573,7 +2605,7 @@ func TestRecoverSession_PendingObsRebuildOnSnapshotPath(t *testing.T) {
 		config := testutil.DefaultConfig(len(hosts))
 		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 			EscrowID:       "escrow-1",
-			Version:        testutil.RuntimeTestVersion,
+			Version:        "v6",
 			CreatorAddr:    user.Address(),
 			Config:         config,
 			Group:          group,
@@ -2592,7 +2624,7 @@ func TestRecoverSession_PendingObsRebuildOnSnapshotPath(t *testing.T) {
 	t.Run("rebuilds the cleared rows", func(t *testing.T) {
 		store, group, hosts, user := setup(t)
 		spy := &clearSpyStore{replaySpyStore: &replaySpyStore{Storage: store}}
-		_, _, err := RecoverSession(spy, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+		_, _, err := recoverForTest(t, spy, user, signing.NewSecp256k1Verifier(), "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 		require.NoError(t, err)
 		require.Equal(t, 1, spy.clearCalls())
 		requireObsRebuildPending(t, store, false)
@@ -2607,7 +2639,7 @@ func TestRecoverSession_PendingObsRebuildOnSnapshotPath(t *testing.T) {
 	t.Run("a failed retry keeps the mark and recovers", func(t *testing.T) {
 		store, group, hosts, user := setup(t)
 		faulty := &obsFaultStore{Storage: store, failClear: true}
-		session, _, err := RecoverSession(faulty, user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
+		session, _, err := recoverForTest(t, faulty, user, signing.NewSecp256k1Verifier(), "escrow-1", "v6", group, buildRecoveryClients(t, hosts, group, user))
 		require.NoError(t, err)
 		require.Equal(t, uint64(2), session.Nonce())
 		requireObsRebuildPending(t, store, true)
@@ -2675,14 +2707,14 @@ func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	session, recSM, err := RecoverSession(legacy, user, verifier, "escrow-1",
-		testutil.RuntimeTestVersion, group, clients)
+	session, recSM, err := recoverForTest(t, legacy, user, verifier, "escrow-1",
+		"v6", group, clients)
 	require.NoError(t, err, "recovery must bridge empty stored Version to boundVersion")
 	require.Equal(t, uint64(numInferences), session.Nonce())
 
 	exported := recSM.ExportState()
 	require.NotNil(t, exported)
-	require.Equal(t, testutil.RuntimeTestVersion, exported.StateRootAndProtocolVersion,
+	require.Equal(t, "v6", exported.StateRootAndProtocolVersion,
 		"recovered state machine uses the session protocol version")
 }
 
@@ -2705,7 +2737,7 @@ func TestRecoverSession_EmptyVersionRejected(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	_, _, err := RecoverSession(legacy, user, verifier, "escrow-1", "", group, clients)
+	_, _, err := recoverForTest(t, legacy, user, verifier, "escrow-1", "", group, clients)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "session version required")
 }
@@ -2764,7 +2796,7 @@ func TestRecoverSession_BackfillGapUnrecoverable(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -2779,7 +2811,7 @@ func TestRecoverSession_BackfillGapUnrecoverable(t *testing.T) {
 	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	saveSnapshot(store, sm, "escrow-1", 4, map[int]uint64{0: 2, 1: 4, 2: 4})
 
-	_, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	_, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 
 	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
@@ -2806,7 +2838,7 @@ func TestRecoverSession_IgnoredFutureSnapshotRecovers(t *testing.T) {
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -2820,7 +2852,7 @@ func TestRecoverSession_IgnoredFutureSnapshotRecovers(t *testing.T) {
 	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	saveSnapshot(store, sm, "escrow-1", 5, map[int]uint64{0: 5, 1: 5, 2: 5})
 
-	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+	session, _, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group,
 		buildRecoveryClients(t, hosts, group, user))
 
 	require.NoError(t, err)
@@ -2856,7 +2888,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 	}))
 
 	clients := make([]HostClient, len(hosts))
-	session, recovered, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	session, recovered, err := recoverForTest(t, store, user, verifier, "escrow-1", "v6", group, clients)
 
 	require.NoError(t, err, "recovery must replay history the running policy would no longer create")
 	require.NotNil(t, session)

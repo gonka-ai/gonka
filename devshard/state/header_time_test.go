@@ -1,8 +1,10 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"sync"
 	"testing"
@@ -10,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"common/chainoracle/blocks"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/internal/testutil"
 	"devshard/types"
 )
@@ -142,7 +146,7 @@ func TestSettlementWaitsForTheDrainFloorHeader(t *testing.T) {
 	require.True(t, due)
 }
 
-func TestComposeDropsAFloorRaiseTheChainCannotProve(t *testing.T) {
+func TestAckAppliesWhileTheHeaderMapIsBehind(t *testing.T) {
 	d, src := newHeaderTimeDriver(t)
 	hash := []byte{0x01, 0x00}
 	src.set(100, time.Hour)
@@ -152,13 +156,95 @@ func TestComposeDropsAFloorRaiseTheChainCannotProve(t *testing.T) {
 	ref := d.next()
 	require.NoError(t, d.apply(divHeartbeatTx(0, nil)))
 	nonce := d.next()
-	fake := divAckTx(t, d.hosts[1], d.turn, ref, 1, 1_000_000, []byte{0x0f, 0x00}, types.SyncState_SYNCED)
-	_, applied, err := d.sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{fake, divHeartbeatTx(0, nil)})
+	ack := divAckTx(t, d.hosts[1], d.turn, ref, 1, 1_000_000, []byte{0x0f, 0x00}, types.SyncState_SYNCED)
+	started := time.Now()
+	_, applied, deferred, err := d.sm.ApplyLocalBestEffortDeferred(nonce, []*types.DevshardTx{ack})
 	require.NoError(t, err)
+	require.Less(t, time.Since(started), 200*time.Millisecond, "a missing row does not wait on the poller")
+	require.Empty(t, deferred)
 	require.Len(t, applied, 1)
-	require.Nil(t, applied[0].GetHeightAck(), "the gateway does not sequence a height its chain cannot prove")
-	h, _, _ := d.sm.HeightSyncFloorAsOf(d.next())
+	require.NotNil(t, applied[0].GetHeightAck())
+	h, got, known := d.sm.HeightSyncFloorAsOf(d.next())
+	require.True(t, known)
+	require.Equal(t, uint64(1_000_000), h)
+	require.Equal(t, []byte{0x0f, 0x00}, got)
+}
+
+func TestAckWithADifferentStoredHashIsLeftOut(t *testing.T) {
+	d := newFloorDriver(t)
+	src := headertime.New(headertime.WithGateway(), headertime.WithMissWait(2*time.Second))
+	d.sm.headerTimes = src
+	at := time.Unix(1_800_000_000, 0).UTC()
+	src.Observe(&blocks.Header{Height: 100, Time: at, BlockHash: []byte{0x01, 0x00}}, headertime.OriginDAPI, true)
+	d.raise(100, []byte{0x01, 0x00})
+	src.Observe(&blocks.Header{Height: 200, Time: at.Add(time.Second), BlockHash: []byte{0xaa}}, headertime.OriginDAPI, true)
+
+	d.turn++
+	ref := d.next()
+	require.NoError(t, d.apply(divHeartbeatTx(0, nil)))
+	nonce := d.next()
+	bad := divAckTx(t, d.hosts[1], d.turn, ref, 1, 200, []byte{0xbb}, types.SyncState_SYNCED)
+	logs := captureStateLogs(t)
+	started := time.Now()
+	_, applied, deferred, err := d.sm.ApplyLocalBestEffortDeferred(nonce, []*types.DevshardTx{bad})
+	require.NoError(t, err)
+	require.Less(t, time.Since(started), 500*time.Millisecond)
+	require.Empty(t, applied)
+	require.Empty(t, deferred, "a contradicting ack is dropped, not retried")
+	require.Contains(t, logs.String(), "host ack hash disagrees with the polled header")
+	h, got, known := d.sm.HeightSyncFloorAsOf(d.next())
+	require.True(t, known)
 	require.Equal(t, uint64(100), h)
+	require.Equal(t, []byte{0x01, 0x00}, got)
+}
+
+func TestSecondHostAckWithADifferentHashIsLeftOut(t *testing.T) {
+	d := newFloorDriver(t)
+	src := headertime.New(headertime.WithGateway())
+	d.sm.headerTimes = src
+	d.raise(200, []byte{0xaa})
+
+	d.turn++
+	ref := d.next()
+	require.NoError(t, d.apply(divHeartbeatTx(0, nil)))
+	nonce := d.next()
+	bad := divAckTx(t, d.hosts[1], d.turn, ref, 1, 200, []byte{0xbb}, types.SyncState_SYNCED)
+	logs := captureStateLogs(t)
+	_, applied, deferred, err := d.sm.ApplyLocalBestEffortDeferred(nonce, []*types.DevshardTx{bad})
+	require.NoError(t, err)
+	require.Empty(t, applied)
+	require.Empty(t, deferred)
+	require.Contains(t, logs.String(), "host ack hash disagrees with an earlier host ack")
+	h, got, _ := d.sm.HeightSyncFloorAsOf(d.next())
+	require.Equal(t, uint64(200), h)
+	require.Equal(t, []byte{0xaa}, got)
+}
+
+func TestCommittedAckStillAppliesWhenThePolledHashDiffers(t *testing.T) {
+	d := newFloorDriver(t)
+	src := headertime.New(headertime.WithGateway())
+	d.sm.headerTimes = src
+	at := time.Unix(1_800_000_000, 0).UTC()
+	src.Observe(&blocks.Header{Height: 300, Time: at, BlockHash: []byte{0xaa}}, headertime.OriginDAPI, true)
+	d.turn++
+	ref := d.next()
+	require.NoError(t, d.apply(divHeartbeatTx(0, nil)))
+	logs := captureStateLogs(t)
+	require.NoError(t, d.apply(divAckTx(t, d.hosts[1], d.turn, ref, 1, 300, []byte{0xbb}, types.SyncState_SYNCED)))
+	require.Contains(t, logs.String(), "polled header hash disagrees with a host ack")
+	h, got, known := d.sm.HeightSyncFloorAsOf(d.next())
+	require.True(t, known)
+	require.Equal(t, uint64(300), h)
+	require.Equal(t, []byte{0xbb}, got)
+}
+
+func captureStateLogs(t *testing.T) *bytes.Buffer {
+	t.Helper()
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return &buf
 }
 
 func TestSealClockReadsConfirmBlockTimes(t *testing.T) {
@@ -170,7 +256,7 @@ func TestSealClockReadsConfirmBlockTimes(t *testing.T) {
 	require.NoError(t, d.start(id, 100, hash))
 	src.set(5000, 2*time.Hour)
 	d.raise(5000, []byte{0x50, 0x00})
-	require.NoError(t, d.apply(d.confirm(id, 100, hash)))
+	require.NoError(t, d.apply(d.confirm(id, 5000, []byte{0x50, 0x00})))
 
 	clock := d.sm.AutoSealStateClock()
 	require.True(t, clock.Known)

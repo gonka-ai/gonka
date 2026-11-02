@@ -1270,7 +1270,7 @@ func (l *pageLog) first() []observer.DAPIBlock {
 func blockEvent(seq uint64, height int64) *gen.HostEvent {
 	return &gen.HostEvent{
 		Seq: seq, Kind: gen.HostEventKind_HOST_EVENT_KIND_BLOCK,
-		Block: &gen.BlockPayload{Height: height, Hash: []byte{byte(height)}, HeaderTimeUnixMs: height * 1_000, Header: []byte{0xa, byte(height)}},
+		Block: &gen.BlockPayload{Height: height, Hash: []byte{byte(height)}, HeaderTimeUnixMs: time.Now().UnixMilli(), Header: []byte{0xa, byte(height)}},
 	}
 }
 
@@ -1278,10 +1278,12 @@ func TestPoller_GatewayOffersEachPageOnce(t *testing.T) {
 	verify := &pageLog{}
 	src := headertime.New(headertime.WithBlockInterval(time.Second))
 	srv := &fakeHostEventsServer{}
+	ev7 := blockEvent(1, 7)
+	ev8 := blockEvent(2, 8)
 	srv.SetHandlers(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		return &gen.GetHostEventsResponse{
 			Generation: 1, NextCursor: 3, SupportedKinds: blockKinds(),
-			Events: []*gen.HostEvent{blockEvent(1, 7), blockEvent(2, 8), {
+			Events: []*gen.HostEvent{ev7, ev8, {
 				Seq: 3, Kind: gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
 				WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 4, Height: 8, ExpiresAtUnix: 50},
 			}},
@@ -1308,7 +1310,7 @@ func TestPoller_GatewayOffersEachPageOnce(t *testing.T) {
 	require.Equal(t, 1, verify.count(), "one response is one offer")
 	page := verify.first()
 	require.Len(t, page, 2)
-	require.Equal(t, observer.DAPIBlock{Height: 7, Hash: []byte{7}, TimeMs: 7_000, Header: []byte{0xa, 7}}, page[0])
+	require.Equal(t, observer.DAPIBlock{Height: 7, Hash: []byte{7}, TimeMs: ev7.GetBlock().GetHeaderTimeUnixMs(), Header: []byte{0xa, 7}}, page[0])
 	require.Equal(t, int64(8), page[1].Height)
 	_, stored := src.StoredAt(8)
 	require.False(t, stored, "the verifier writes the map, the poller does not")

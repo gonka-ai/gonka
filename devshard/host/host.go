@@ -294,6 +294,9 @@ func NewHost(
 	for _, opt := range opts {
 		opt(h)
 	}
+	if h.oracle == nil {
+		h.oracle = testChainTip
+	}
 	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
 	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
 	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
@@ -445,6 +448,40 @@ func WithGrace(grace uint64) HostOption {
 
 // ErrNoChainOracle is returned by Host.LatestHeight when no BlockOracle was configured.
 var ErrNoChainOracle = errors.New("host: no chain oracle configured")
+
+// testChainTip is empty in production. Tests set it so a host built without
+// WithChainOracle still has a header to stamp on an executor receipt.
+// WithChainOracle wins when the caller passes one.
+var testChainTip blocks.BlockOracle
+
+// SetTestChainTip installs the oracle NewHost uses when WithChainOracle is
+// omitted. Production leaves it unset.
+func SetTestChainTip(o blocks.BlockOracle) { testChainTip = o }
+
+// StaticTipOracle reports one height and hash for every read.
+func StaticTipOracle(height int64) blocks.BlockOracle {
+	return staticTipOracle{height: height}
+}
+
+type staticTipOracle struct{ height int64 }
+
+func (o staticTipOracle) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(o.height, time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+}
+
+func (o staticTipOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
+	return o.Latest(ctx)
+}
+
+func (o staticTipOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+
+func (o staticTipOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
+}
 
 // WithChainOracle injects a mainnet BlockOracle. LatestHeight returns ErrNoChainOracle when omitted.
 func WithChainOracle(o blocks.BlockOracle) HostOption {
@@ -990,17 +1027,26 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 	return stateSig, root, nonce, nil
 }
 
+// errConfirmAwaitingHeader means this response carries no receipt. The host
+// has no usable header and no floor to carry, so there is nothing honest to
+// stamp. A later request for the same nonce signs once a header exists.
+var errConfirmAwaitingHeader = errors.New("confirm awaiting a block header")
+
 // confirmStartLocked returns the executor receipt for a pending inference as a
 // MsgConfirmStart queued in the mempool. A receipt this host already queued is
 // returned as is, so every retry hands out the same bytes: whichever copy lands
 // in a diff, RemoveIncluded clears the queued one. Otherwise it signs a new
-// receipt stamped with the height-sync floor as of inferenceID, and queues it.
-// Caller must hold h.mu.
+// receipt at max(the header it just read, F(inferenceID)). An empty result
+// returns errConfirmAwaitingHeader and queues nothing. Caller must hold h.mu.
 func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord, hdr *blocks.Header, hdrErr error) (*types.MsgConfirmStart, error) {
 	if queued := h.mempool.QueuedConfirmStart(inferenceID); queued != nil {
 		return queued, nil
 	}
-	obsH, obsHash := state.StartStamp(&rec)
+	tipH, tipHash := headerStamp(hdr, hdrErr)
+	obsH, obsHash := h.referenceStamp(inferenceID, tipH, tipHash)
+	if obsH == 0 || !heightsync.StampPresent(obsHash) {
+		return nil, errConfirmAwaitingHeader
+	}
 	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,
@@ -1117,6 +1163,10 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	// The ConfirmStart is queued in the mempool so it survives HTTP failures:
 	// if the response is lost (e.g. 503), the next request delivers it.
 	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
+	if errors.Is(err, errConfirmAwaitingHeader) {
+		outcome.reason = observability.ReasonNoReceipt
+		return nil, 0, nil, nil, outcome, nil
+	}
 	if err != nil {
 		return nil, 0, nil, nil, outcome, err
 	}

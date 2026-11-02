@@ -2306,11 +2306,11 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	clientOracle := staticOracleWith(100, xHash)
 	st := setupFourHostHTTPHeightSyncWithOracles(t, hostOracles, clientOracle)
 	seedHTTPSession(t, st.Session)
-	opened := st.Session.HeightSeedStatus()
+	opened := st.Session.SeedRPCStatus()
 	require.GreaterOrEqual(t, opened.Seeded*2, opened.Slots,
 		"seed returns once half the roster has an anchor")
 	require.Eventually(t, func() bool {
-		status := st.Session.HeightSeedStatus()
+		status := st.Session.SeedRPCStatus()
 		return status.Slots > 0 && status.Seeded == status.Slots
 	}, 5*time.Second, 10*time.Millisecond,
 		"the background sweep anchors the slots quorum went without")

@@ -361,6 +361,82 @@ func TestHost_HeartbeatAck_CatchingUp(t *testing.T) {
 	require.Equal(t, uint64(90), acks[0].ObservedHeight)
 }
 
+func TestHost_HeartbeatAck_UnstampedReportsSynced(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{
+		heartbeatDiff(t, user, 1, 1, 0, slots),
+		heartbeatDiff(t, user, 2, 1, 0, slots),
+		heartbeatDiff(t, user, 3, 1, 0, slots),
+	}})
+	require.NoError(t, err)
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 1)
+	require.Equal(t, types.SyncState_SYNCED, acks[0].SyncState)
+	require.Equal(t, uint64(100), acks[0].ObservedHeight)
+	require.Equal(t, []byte{0xaa}, acks[0].ObservedBlockHash)
+}
+
+func TestHost_HeartbeatAck_UnstampedOracleMissing(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setErr(errors.New("follower unavailable"))
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{
+		heartbeatDiff(t, user, 1, 1, 0, slots),
+		heartbeatDiff(t, user, 2, 1, 0, slots),
+		heartbeatDiff(t, user, 3, 1, 0, slots),
+	}})
+	require.NoError(t, err)
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 1)
+	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, acks[0].SyncState)
+	require.Zero(t, acks[0].ObservedHeight)
+	require.Empty(t, acks[0].ObservedBlockHash)
+}
+
+func TestHost_HeartbeatAck_DeltaStillCatchingUp(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	tip := int64(100 + heightsync.DefaultSyncDeltaBlocks + 1)
+	or.setHeight(tip)
+	or.setHash([]byte{0xbb})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{
+		stampedHeartbeatDiff(t, user, 1, 1, 100, slots, []byte{0xaa}),
+		stampedHeartbeatDiff(t, user, 2, 1, 100, slots, []byte{0xaa}),
+		stampedHeartbeatDiff(t, user, 3, 1, 100, slots, []byte{0xaa}),
+	}})
+	require.NoError(t, err)
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 1)
+	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState)
+}
+
 // TestHost_HeartbeatAck_LagsButClearsHostFloor is the producer-side lift: a host
 // whose own tip sits below a floor *host acks already established* stamps F(m),
 // not its raw tip. A soliciting MsgHeartbeat does not itself raise F (spec §14

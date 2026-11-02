@@ -108,6 +108,35 @@ type Source struct {
 
 	cache     Cache
 	restoring bool
+
+	// listeners are told, outside s.mu, after a header time is stored.
+	listeners []*headerListener
+
+	// hostAcks are hashes accepted from host acks. They are not header rows:
+	// an ack has no timestamp. A later poll whose hash differs is logged.
+	hostAcks  map[uint64]hostAckClaim
+	hostWarns []hostHashWarn
+}
+
+// hostAckClaim is one accepted host hash. warned is the polled hash already
+// logged against it, so the same disagreement is not logged again.
+type hostAckClaim struct {
+	hash   []byte
+	warned []byte
+}
+
+// hostHashWarn is one disagreement to log after the map lock is released.
+// A later version should open a dispute from it.
+type hostHashWarn struct {
+	msg    string
+	height uint64
+	host   []byte
+	other  []byte
+}
+
+// headerListener is one Watch registration.
+type headerListener struct {
+	fn func()
 }
 
 // catchSpan is one queued catch-up. A backward job stores its anchor and
@@ -219,6 +248,7 @@ func (s *Source) ObserveEpoch(h *blocks.Header, origin Origin, verified bool, ep
 	restoring := s.restoring
 	s.mu.Unlock()
 	s.emit(note)
+	s.flushHostWarns()
 	if restoring {
 		return
 	}
@@ -227,6 +257,46 @@ func (s *Source) ObserveEpoch(h *blocks.Header, origin Origin, verified bool, ep
 		rows = []Row{*row}
 	}
 	s.persistUnlocked(cache, rows, floor, pruned)
+	if row != nil {
+		s.notifyListeners()
+	}
+}
+
+// Watch registers fn to run after a header time is stored. The returned
+// cancel removes it. fn runs outside the map lock.
+func (s *Source) Watch(fn func()) (cancel func()) {
+	if s == nil || fn == nil {
+		return func() {}
+	}
+	l := &headerListener{fn: fn}
+	s.mu.Lock()
+	s.listeners = append(s.listeners, l)
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		next := make([]*headerListener, 0, len(s.listeners))
+		for _, cur := range s.listeners {
+			if cur != l {
+				next = append(next, cur)
+			}
+		}
+		s.listeners = next
+	}
+}
+
+func (s *Source) notifyListeners() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	ls := append([]*headerListener(nil), s.listeners...)
+	s.mu.Unlock()
+	for _, l := range ls {
+		if l != nil && l.fn != nil {
+			l.fn()
+		}
+	}
 }
 
 // StoredAt returns the header at height after dropping entries below the floor.
@@ -252,6 +322,101 @@ func (s *Source) StoredAt(height uint64) (Record, bool) {
 		Verified: e.verified,
 		Epoch:    e.epoch,
 	}, true
+}
+
+// StoredHash is the hash stored at height. It does not ask the filler.
+// A miss means this process has not polled that height yet.
+func (s *Source) StoredHash(height uint64) ([]byte, bool) {
+	rec, ok := s.StoredAt(height)
+	if !ok || len(rec.Hash) == 0 {
+		return nil, false
+	}
+	return rec.Hash, true
+}
+
+// HostAckHash is the hash accepted from a host ack at height.
+func (s *Source) HostAckHash(height uint64) ([]byte, bool) {
+	if s == nil || height == 0 {
+		return nil, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c, ok := s.hostAcks[height]
+	if !ok || len(c.hash) == 0 {
+		return nil, false
+	}
+	return append([]byte(nil), c.hash...), true
+}
+
+// NoteHostAck records a hash accepted from a host ack. The first hash at a
+// height is kept. A different hash, or a polled row that already differs, is
+// logged. A later version should open a dispute from that disagreement.
+func (s *Source) NoteHostAck(height uint64, hash []byte) {
+	if s == nil || height == 0 || len(hash) == 0 {
+		return
+	}
+	s.mu.Lock()
+	if s.hostAcks == nil {
+		s.hostAcks = make(map[uint64]hostAckClaim)
+	}
+	if c, ok := s.hostAcks[height]; ok {
+		if !bytes.Equal(c.hash, hash) && !bytes.Equal(c.warned, hash) {
+			c.warned = append([]byte(nil), hash...)
+			s.hostAcks[height] = c
+			s.queueHostWarnLocked(hostAckHostDisagree, height, c.hash, hash)
+		}
+	} else {
+		s.hostAcks[height] = hostAckClaim{hash: append([]byte(nil), hash...)}
+		if e, ok := s.entries[height]; ok && len(e.hash) > 0 && !bytes.Equal(e.hash, hash) {
+			c := s.hostAcks[height]
+			c.warned = append([]byte(nil), e.hash...)
+			s.hostAcks[height] = c
+			s.queueHostWarnLocked(hostAckPollDisagree, height, hash, e.hash)
+		}
+	}
+	s.mu.Unlock()
+	s.flushHostWarns()
+}
+
+const (
+	hostAckPollDisagree = "polled header hash disagrees with a host ack"
+	hostAckHostDisagree = "host ack hash disagrees with an earlier host ack"
+)
+
+func (s *Source) notePolledAgainstHostLocked(height uint64, hash []byte) {
+	c, ok := s.hostAcks[height]
+	if !ok || bytes.Equal(c.hash, hash) || bytes.Equal(c.warned, hash) {
+		return
+	}
+	c.warned = append([]byte(nil), hash...)
+	s.hostAcks[height] = c
+	s.queueHostWarnLocked(hostAckPollDisagree, height, c.hash, hash)
+}
+
+func (s *Source) queueHostWarnLocked(msg string, height uint64, host, other []byte) {
+	s.hostWarns = append(s.hostWarns, hostHashWarn{
+		msg:    msg,
+		height: height,
+		host:   append([]byte(nil), host...),
+		other:  append([]byte(nil), other...),
+	})
+}
+
+func (s *Source) flushHostWarns() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	warns := s.hostWarns
+	s.hostWarns = nil
+	s.mu.Unlock()
+	for _, w := range warns {
+		// A later version should open a dispute from this disagreement.
+		logging.Warn(w.msg, "headertime",
+			"height", w.height,
+			"host_hash", hex.EncodeToString(w.host),
+			"other_hash", hex.EncodeToString(w.other))
+	}
 }
 
 // Conflicts is how many different-hash writes this map has seen.
@@ -385,6 +550,7 @@ func (s *Source) fetchInto(height uint64, flight *fetchFlight, filler Filler) {
 	restoring := s.restoring
 	s.mu.Unlock()
 	s.emit(note)
+	s.flushHostWarns()
 	if !restoring {
 		var rows []Row
 		if row != nil {
@@ -395,6 +561,9 @@ func (s *Source) fetchInto(height uint64, flight *fetchFlight, filler Filler) {
 	flight.ms = got.Header.Time.UnixMilli()
 	flight.hash = append([]byte(nil), got.Header.BlockHash...)
 	flight.hit = true
+	if row != nil && !restoring {
+		s.notifyListeners()
+	}
 }
 
 // fetched returns the stored header, or the filler result when the hard cap
@@ -430,6 +599,9 @@ func (s *Source) putLocked(height uint64, hash []byte, at time.Time, origin Orig
 	pruned := s.pruneFloorLocked(floor)
 	if floor > 0 && height < floor {
 		return conflict{}, nil, pruned
+	}
+	if !s.restoring {
+		s.notePolledAgainstHostLocked(height, hash)
 	}
 	ms := at.UnixMilli()
 	old, exists := s.entries[height]
@@ -790,6 +962,10 @@ func (s *Source) fillBatch(from, to uint64) {
 	cache := s.cache
 	s.mu.Unlock()
 	s.persistUnlocked(cache, rows, floor, pruned)
+	s.flushHostWarns()
+	if len(rows) > 0 {
+		s.notifyListeners()
+	}
 }
 
 func (s *Source) batchTimeout() time.Duration {
@@ -872,6 +1048,9 @@ func (s *Source) applyCacheLocked(cache []cachedHeader, floor uint64) ([]Row, bo
 		}
 		s.entries[c.height] = e
 		s.order = append(s.order, c.height)
+		if !s.restoring {
+			s.notePolledAgainstHostLocked(c.height, c.hash)
+		}
 		s.noteMinLocked(c.height)
 		if s.tip > 0 && c.height > s.tip {
 			s.tip = c.height
@@ -955,6 +1134,13 @@ func (s *Source) advanceBaseLocked() {
 }
 
 func (s *Source) pruneFloorLocked(floor uint64) bool {
+	if floor > 0 {
+		for h := range s.hostAcks {
+			if h < floor {
+				delete(s.hostAcks, h)
+			}
+		}
+	}
 	if floor == 0 || s.minHeight == 0 || floor <= s.minHeight {
 		return false
 	}

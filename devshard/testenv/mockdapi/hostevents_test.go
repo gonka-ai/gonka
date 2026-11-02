@@ -96,7 +96,7 @@ func appendBlock(ring *hostEventRing, height int64) uint64 {
 	return ring.AppendBlock(&gen.BlockPayload{
 		Height:           height,
 		Hash:             []byte{byte(height)},
-		HeaderTimeUnixMs: height * 1_000,
+		HeaderTimeUnixMs: time.Now().UnixMilli(),
 		EpochIndex:       1,
 		Header:           []byte{0xa, byte(height)},
 	})

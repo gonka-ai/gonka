@@ -26,6 +26,10 @@ func MustStateMachine(
 	opts ...state.SMOption,
 ) *state.StateMachine {
 	t.Helper()
+	// Production sessions use the v7 tag and reject a start while the floor
+	// is empty. Fixtures that are not about that rule stay on v6, and a
+	// version passed in opts still wins.
+	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion("v6")}, opts...)
 	sm, err := state.NewStateMachine(
 		escrowID, config, group, balance, userAddr, verifier,
 		testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance),

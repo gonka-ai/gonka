@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
-	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/stub"
@@ -48,7 +47,7 @@ func TestRecoverSessions_UsesEightWorkers(t *testing.T) {
 		require.NoError(t, inner.CreateSession(storage.CreateSessionParams{
 			EscrowID:       strconv.Itoa(i),
 			EpochID:        7,
-			Version:        testutil.RuntimeTestVersion,
+			Version:        "v6",
 			CreatorAddr:    user.Address(),
 			Config:         defaultConfig(3),
 			Group:          group,
@@ -61,7 +60,7 @@ func TestRecoverSessions_UsesEightWorkers(t *testing.T) {
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", &mockBridge{
 		escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
 	}, nil, nil))
 
@@ -99,7 +98,7 @@ func TestRecoverSessions_CapsWorkersToSessionCount(t *testing.T) {
 	require.NoError(t, inner.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "1",
 		EpochID:        7,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         defaultConfig(3),
 		Group:          group,
@@ -108,7 +107,7 @@ func TestRecoverSessions_CapsWorkersToSessionCount(t *testing.T) {
 	require.NoError(t, inner.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "2",
 		EpochID:        7,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         defaultConfig(3),
 		Group:          group,
@@ -120,7 +119,7 @@ func TestRecoverSessions_CapsWorkersToSessionCount(t *testing.T) {
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", &mockBridge{
 		escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
 	}, nil, nil))
 

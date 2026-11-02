@@ -13,7 +13,7 @@ import (
 
 func newSealTestSM(t *testing.T, escrowID string, hosts []*signing.Secp256k1Signer, withStore bool) (*StateMachine, *storage.Memory, *signing.Secp256k1Signer, []types.SlotAssignment) {
 	t.Helper()
-	return newSealTestSMVersion(t, escrowID, hosts, withStore, types.DevshardStateRootAndProtocolVersion)
+	return newSealTestSMVersion(t, escrowID, hosts, withStore, "v6")
 }
 
 func newSealTestSMVersion(t *testing.T, escrowID string, hosts []*signing.Secp256k1Signer, withStore bool, sessionVersion string) (*StateMachine, *storage.Memory, *signing.Secp256k1Signer, []types.SlotAssignment) {
@@ -241,7 +241,7 @@ func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
 	confirmed := d.next()
 	require.NoError(t, d.start(confirmed, 100, hash))
 	d.raise(5000, []byte{0x50, 0x00})
-	require.NoError(t, d.apply(d.confirm(confirmed, 100, hash)))
+	require.NoError(t, d.apply(d.confirm(confirmed, 5000, []byte{0x50, 0x00})))
 
 	clock := d.sm.AutoSealStateClock()
 	require.True(t, clock.Known)

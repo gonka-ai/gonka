@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -9,7 +10,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v6"
+const DevshardStateRootAndProtocolVersion = "v7"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -20,6 +21,32 @@ func NormalizeVersion(version string) string {
 		return DefaultStateRootVersion
 	}
 	return version
+}
+
+// StartRequiresFloorProtocolVersion is the first state-root tag on which an
+// empty floor rejects MsgStartInference. A session stored under an earlier
+// tag still replays an empty first start. Tags that are not vN keep that
+// earlier rule.
+const StartRequiresFloorProtocolVersion = "v7"
+
+// StartRequiresFloor reports whether a session at version rejects a start
+// while F is empty. v7 and later do. v6 and non-numeric tags do not.
+func StartRequiresFloor(version string) bool {
+	n, ok := stateRootVersionOrdinal(version)
+	floor, fok := stateRootVersionOrdinal(StartRequiresFloorProtocolVersion)
+	return ok && fok && n >= floor
+}
+
+func stateRootVersionOrdinal(version string) (int, bool) {
+	version = strings.TrimSpace(version)
+	if len(version) < 2 || (version[0] != 'v' && version[0] != 'V') {
+		return 0, false
+	}
+	n, err := strconv.Atoi(version[1:])
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
 }
 
 // SessionPhase represents the phase of a devshard session.

@@ -1255,3 +1255,20 @@ func TestSourceCatchUpBatchTimeoutLetsTheNextJobRun(t *testing.T) {
 	batch.mu.Unlock()
 	require.GreaterOrEqual(t, calls, 2)
 }
+
+func TestPolledHashDisagreesWithAnAcceptedHostAck(t *testing.T) {
+	at := time.Unix(1_800_000_000, 0)
+	s := New(WithGateway())
+	s.NoteHostAck(10, []byte{0xaa})
+	logs := captureLogs(t)
+	s.Observe(hdr(10, at, []byte{0xbb}), OriginDAPI, true)
+	require.Contains(t, logs.String(), "polled header hash disagrees with a host ack")
+	s.Observe(hdr(10, at.Add(time.Second), []byte{0xbb}), OriginDAPI, true)
+	require.Equal(t, 1, bytes.Count([]byte(logs.String()), []byte("polled header hash disagrees with a host ack")))
+	got, ok := s.StoredHash(10)
+	require.True(t, ok)
+	require.Equal(t, []byte{0xbb}, got)
+	host, ok := s.HostAckHash(10)
+	require.True(t, ok)
+	require.Equal(t, []byte{0xaa}, host)
+}

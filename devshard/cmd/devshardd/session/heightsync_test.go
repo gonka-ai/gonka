@@ -12,7 +12,6 @@ import (
 	"common/nodemanager/gen"
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/hostevents"
-	"devshard/internal/testutil"
 	"devshard/state"
 	"devshard/stub"
 
@@ -32,7 +31,7 @@ func unsetHeightSyncSources(t *testing.T) {
 
 func newHeightSyncMgr(t *testing.T) *HostManager {
 	t.Helper()
-	return NewHostManager(newManagerTestStore(t), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+	return NewHostManager(newManagerTestStore(t), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", &mockBridge{}, nil, nil)
 }
 
 type heightSyncNMServer struct {

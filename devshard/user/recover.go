@@ -504,6 +504,7 @@ func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	defer sess.publishFloorGateLocked()
 	if clone := sm.HeightSyncCloneTurnTracker(); clone != nil {
 		sess.turnTracker = clone
 	}

@@ -4862,9 +4862,8 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	}
 	// Leave the receipt and Finish queued for the next Start diff, which
 	// already pays FeePerNonce. Arm the quiet settle for the request that
-	// has no successor. The cadence is off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
-	// is set, and this request is already marked finished in memory, so no
-	// timeout goroutine will compose them later.
+	// has no successor. This request is already marked finished in memory, so
+	// no timeout goroutine will compose the leftover later.
 	if e.session != nil {
 		e.session.ArmQuietSettle()
 	}

@@ -124,9 +124,7 @@ func (r *hostEventRing) SetStalled(stalled bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.stalled = stalled
-	if !stalled {
-		r.wakeLocked()
-	}
+	r.wakeLocked()
 }
 
 func (r *hostEventRing) Stalled() bool {

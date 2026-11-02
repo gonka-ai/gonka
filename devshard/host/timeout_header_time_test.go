@@ -122,20 +122,21 @@ func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 			if tc.chainHash != nil {
 				chain.add(1_000_000, tc.chainHash, anchorAt.Add(time.Hour))
 			}
+			// A committed ack raises F even when the local chain has not
+			// caught that height, or has a different hash there. The timeout
+			// vote still needs that block.
 			_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{ack(6, 1_000_000, farHash)}))
-			require.ErrorIs(t, err, tc.wantErr)
-			floor, _, _ := sm.HeightSyncFloorAsOf(7)
-			require.EqualValues(t, 100, floor)
-			require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrTimeoutNotDue)
+			require.NoError(t, err)
+			floor, _, _ := sm.HeightSyncFloorAsOf(8)
+			require.EqualValues(t, 1_000_000, floor)
+			require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), tc.wantErr)
 
 			if tc.chainHash != nil {
 				return
 			}
 			chain.add(1_000_000, farHash, anchorAt.Add(500*time.Millisecond))
-			_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{ack(6, 1_000_000, farHash)}))
-			require.NoError(t, err)
 			require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrTimeoutNotDue,
-				"the window is block time, not the distance in heights")
+				"the window is the block time, not the distance in heights")
 		})
 	}
 }

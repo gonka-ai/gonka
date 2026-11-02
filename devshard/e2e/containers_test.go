@@ -164,9 +164,6 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		// Hosts are Docker DNS names that resolve to private IPs.
 		// Production leaves this unset so the dial-time SSRF guard stays on.
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
-		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
-		// POST /height-sync omits. Keep the production seed gate on in citest.
-		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
 		// Production quiet-settle default is 5m; keep 5s so settle waits stay under budget.
 		"DEVSHARD_QUIET_SETTLE_DELAY": "5s",
 	}

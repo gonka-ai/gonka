@@ -1,6 +1,7 @@
 # Async header time for timeout and challenge
 
 **Status:** Draft / proposal  
+**Implementation:** [async-header-time-timeout-plan.md](async-header-time-timeout-plan.md)  
 **Related:** height-sync floor `F`, `DeltaBlocks` (default 2), legacy `started_at` / `confirmed_at`  
 **Scope:** Where a block time is learned, which messages may wait for it, and how a gateway triggers a timeout challenge.
 
@@ -91,40 +92,46 @@ gateway_wallclock - started_at > RefusalTimeout
 
 It does not need the map for this trigger.
 
-**Execution.** The confirm stamp was written by the executor. The gateway opens the challenge when the map has a time for the confirm stamp and
+**Execution.** The anchor is confirmed-at time. That timestamp is the header time of `ConfirmedAtHeight`, read from the map. It is not the stored `ConfirmedAtTimeMs`, and it is not the confirm stamp. The gateway opens the challenge when the map has that time and
 
 ```text
-gateway_wallclock - time(confirm stamp) > ExecutionTimeout
+gateway_wallclock - time(ConfirmedAtHeight) > ExecutionTimeout
 ```
 
-When the legacy wall clock already says the interval has elapsed,
+The host uses its own wall clock against `time(ConfirmedAtHeight)` from its own map. Both sides share that timestamp.
+
+When the executor's wall clock already says the interval has elapsed,
 
 ```text
 gateway_wallclock - confirmed_at > ExecutionTimeout
 ```
 
-and the map has no time for the confirm stamp, the gateway does not open the challenge. It logs that fact. The log means the gateway's block feed is behind the chain by more than the timeout: the wall clock of the message is already due, and the block that would prove it has not been seen.
+and the map has no time for `ConfirmedAtHeight`, the gateway does not open the challenge. It logs that fact. The log means the gateway's block feed is behind the chain: the wall clock of the message is already due, and the block that would prove it has not been seen.
 
 ### Verifier, answering a challenge
 
-The check is asynchronous and uses the verifier's own wall clock and its own map:
+A refusal uses the verifier's own wall clock and its own map, with `event_height` the start stamp:
 
 ```text
-verifier_wallclock - time(event_height) > timeout_interval
+verifier_wallclock - time(event_height) > RefusalTimeout
+```
+
+An execution timeout uses the same check as the gateway, on this verifier's wall clock and its own map:
+
+```text
+verifier_wallclock - time(ConfirmedAtHeight) > ExecutionTimeout
 ```
 
 - The inequality holds: answer the challenge now.
-- The map has the time and the inequality does not hold. Let
-
-  ```text
-  delta = timeout_interval - (verifier_wallclock - time(event_height))
-  ```
+- The map has the times and the inequality does not hold. `delta` is the time left on that check.
 
   - `delta < 60s`: schedule the same check once, after `delta`, then answer.
   - `delta >= 60s`: ignore this challenge message. Do not sign a vote and do not hold the request open.
-- The map has no entry for `event_height`. Wait up to 60 seconds for the map to catch up from the block feed, without calling `GetBlockHeader` and without blocking other work. When the entry arrives, apply the two rules above. When it still has not arrived after 60 seconds, do not sign on this round, and log that this verifier's block feed is behind the chain.
+- The map has no entry the check needs. Wait up to 60 seconds for the map to catch up from the block feed, without calling `GetBlockHeader` and without blocking other work. When the entry arrives, apply the two rules above. When it still has not arrived after 60 seconds, do not sign on this round, and log that this verifier's block feed is behind the chain.
 
 The 60 second bounds are these waits only. They are not a period during which an executor can suppress the vote by answering `header_pending`.
+
+A second `VerifyTimeout` for the same inference and the same reason is refused on the host, from memory, not from the state machine. While the check above is held, the later call returns `accept=false` with an empty body and a warning, and the held check is the one that answers. After that check has returned a vote, the pair stays remembered and a later call is refused the same way. An answer that carried no vote is not remembered. A refusal and an execution timeout are separate pairs. The remembered pair is dropped when the local record leaves `Pending` for a refusal or `Started` for an execution, and a restart drops it. The implementation step is [step 6](async-header-time-timeout-plan.md#step-6-refuse-a-duplicate-challenge) of the timeout plan.
 
 ### Why a stamp cannot point past the chain
 

@@ -3,14 +3,22 @@ package state
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math"
 	"time"
 
 	"devshard/heightsync"
+	"devshard/logging"
 	"devshard/types"
 )
+
+// errAckHashMismatch is a host ack whose hash disagrees with a header this
+// process already stored, or with a host ack already accepted at that height.
+// It is not ErrHeaderPending: compose leaves the ack out, and does not retry it.
+// A later version should open a dispute from this disagreement.
+var errAckHashMismatch = errors.New("host ack hash disagrees with the stored header")
 
 func (sm *StateMachine) floorPointLocked(m uint64) (heightsync.FloorPoint, error) {
 	if !sm.floorReady {
@@ -33,6 +41,12 @@ func (sm *StateMachine) checkFloorStampLocked(leg string, m, height uint64, hash
 	}
 	stamped := heightsync.StampPresent(hash)
 	if p.Height == 0 {
+		// v7 and later reject a start while F is empty, stamped or not. An
+		// earlier tag still applies an empty first start so a stored session
+		// replays. A stamp on an empty floor was already rejected.
+		if leg == "start" && types.StartRequiresFloor(sm.state.StateRootAndProtocolVersion) {
+			return p, fmt.Errorf("%w: %s stamp %d, floor as of nonce %d is empty", types.ErrStampNotFloor, leg, height, m)
+		}
 		if stamped || height != 0 {
 			return p, fmt.Errorf("%w: %s stamp %d, floor as of nonce %d is empty", types.ErrStampNotFloor, leg, height, m)
 		}
@@ -51,19 +65,32 @@ func StartStamp(rec *types.InferenceRecord) (uint64, []byte) {
 	return rec.StartedAtHeight, append([]byte(nil), rec.StartedAtBlockHash...)
 }
 
+// checkStartStamp admits the executor's confirm.
+//
+// A start with no floor may be confirmed at the host's tip: that stamp is what
+// first raises the floor. A start that already carried a floor may be confirmed
+// at that same block, or at a newer one. A lower height, or the same height on
+// a different block, is rejected. An empty confirm is still legal when the
+// start itself carried no floor.
 func checkStartStamp(rec *types.InferenceRecord, height uint64, hash []byte) error {
 	want, wantHash := StartStamp(rec)
-	stamped := heightsync.StampPresent(hash)
-	if want == 0 {
-		if stamped || height != 0 {
-			return fmt.Errorf("%w: confirm stamp %d, start carried no floor", types.ErrStampNotFloor, height)
+	present := heightsync.StampPresent(hash)
+	if height == 0 && !present {
+		if want == 0 {
+			return nil
 		}
-		return nil
-	}
-	if !stamped || height != want || !bytes.Equal(hash, wantHash) {
 		return fmt.Errorf("%w: confirm stamp %d, start floor %d", types.ErrStampNotFloor, height, want)
 	}
-	return nil
+	if height == 0 || !present {
+		return fmt.Errorf("%w: confirm stamp %d, start floor %d", types.ErrStampNotFloor, height, want)
+	}
+	if want == 0 || height > want {
+		return nil
+	}
+	if height == want && bytes.Equal(hash, wantHash) {
+		return nil
+	}
+	return fmt.Errorf("%w: confirm stamp %d, start floor %d", types.ErrStampNotFloor, height, want)
 }
 
 func (sm *StateMachine) floorTimeMsLocked(p heightsync.FloorPoint) (int64, error) {
@@ -90,7 +117,69 @@ func (sm *StateMachine) floorTimeMsLocked(p heightsync.FloorPoint) (int64, error
 	return ms, nil
 }
 
+// HeightAckHashDisagrees reports an ack that must not enter the log.
+// A missing row is not a mismatch. The error is not ErrHeaderPending.
+func (sm *StateMachine) HeightAckHashDisagrees(ack *types.MsgHeightAck) error {
+	if sm == nil {
+		return nil
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return sm.ackHashMismatchLocked(ack)
+}
+
+// ackHashMismatchLocked reports an ack that must not enter the log.
+// A missing row is not a mismatch: the poller may still be catching up, and
+// the ack applies. The check runs on compose. A replica applying a committed
+// diff still records the ack and logs the disagreement from NoteHostAck.
+func (sm *StateMachine) ackHashMismatchLocked(ack *types.MsgHeightAck) error {
+	if sm == nil || ack == nil || ack.ObservedHeight == 0 || !heightsync.StampPresent(ack.ObservedBlockHash) {
+		return nil
+	}
+	view, ok := sm.headerTimes.(HeaderAckView)
+	if !ok || view == nil {
+		return nil
+	}
+	if hash, found := view.StoredHash(ack.ObservedHeight); found && !bytes.Equal(hash, ack.ObservedBlockHash) {
+		// A later version should open a dispute from this disagreement.
+		logging.Warn("host ack hash disagrees with the polled header",
+			"subsystem", "state",
+			"height", ack.ObservedHeight,
+			"slot", ack.SlotId,
+			"ack_hash", hex.EncodeToString(ack.ObservedBlockHash),
+			"polled_hash", hex.EncodeToString(hash))
+		return fmt.Errorf("%w: height %d", errAckHashMismatch, ack.ObservedHeight)
+	}
+	if hash, found := view.HostAckHash(ack.ObservedHeight); found && !bytes.Equal(hash, ack.ObservedBlockHash) {
+		// A later version should open a dispute from this disagreement.
+		logging.Warn("host ack hash disagrees with an earlier host ack",
+			"subsystem", "state",
+			"height", ack.ObservedHeight,
+			"slot", ack.SlotId,
+			"ack_hash", hex.EncodeToString(ack.ObservedBlockHash),
+			"host_hash", hex.EncodeToString(hash))
+		return fmt.Errorf("%w: height %d", errAckHashMismatch, ack.ObservedHeight)
+	}
+	return nil
+}
+
+func (sm *StateMachine) noteAcceptedHostAckLocked(ack *types.MsgHeightAck) {
+	if sm == nil || ack == nil || ack.ObservedHeight == 0 || !heightsync.StampPresent(ack.ObservedBlockHash) {
+		return
+	}
+	view, ok := sm.headerTimes.(HeaderAckView)
+	if !ok || view == nil {
+		return
+	}
+	view.NoteHostAck(ack.ObservedHeight, ack.ObservedBlockHash)
+}
+
 func (sm *StateMachine) checkRaiseResolvableLocked(nonce uint64, tx *types.DevshardTx) error {
+	if tx.GetHeightAck() != nil {
+		// The host signature raises F. A missing polled time means this
+		// process is still catching up; it does not hold the ack.
+		return nil
+	}
 	cur, _ := sm.heightSyncFloor.Max()
 	for _, c := range floorClaims(sm.state, []*types.DevshardTx{tx}) {
 		if c.Signer == heightsync.SequencerSigner || c.Height <= cur || !heightsync.StampPresent(c.Hash) {
