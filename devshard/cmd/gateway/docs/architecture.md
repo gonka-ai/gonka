@@ -55,6 +55,7 @@ graph TD
     ENG --> LIM
     ENG --> FIL
     REG --> SCH
+    REG --> CHN
     ESC --> CHN
     ESC --> STO
     NON --> ACC
