@@ -2,7 +2,7 @@
 
 ## **Remote · Contract**
 
-This role sought a **QA / Infrastructure Testing Engineer** to join Gonka Team.
+This role offers an opportunity for a talented **QA / Infrastructure Testing Engineer** to join Gonka Team.
 
 You will work with distributed nodes and services in production-like environments, helping validate network upgrades, inference and Proof-of-Compute flows, host and broker interactions, and other critical changes before they reach mainnet.
 
