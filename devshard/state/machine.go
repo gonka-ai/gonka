@@ -747,10 +747,6 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 			sm.dropOrDeferLocked(nonce, tx, err)
 			continue
 		}
-		if err := sm.checkRaiseResolvableLocked(nonce, tx); err != nil {
-			sm.dropOrDeferLocked(nonce, tx, err)
-			continue
-		}
 		if err := sm.applyTxAtomicLocked(tx, nonce); err != nil {
 			if tx.GetStartInference() != nil {
 				return nil, nil, nil, fmt.Errorf("mandatory start inference: %w", err)
@@ -950,9 +946,6 @@ func (sm *StateMachine) applyCoreJournaled(nonce uint64, txs []*types.DevshardTx
 
 	// 4. Apply each tx.
 	for _, tx := range txs {
-		if err := sm.checkRaiseResolvableLocked(nonce, tx); err != nil {
-			return nil, nil, err
-		}
 		if err := sm.applyTx(tx, nonce); err != nil {
 			return nil, nil, err
 		}
@@ -1361,10 +1354,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNo
 	if err != nil {
 		return err
 	}
-	startedAtMs, err := sm.floorTimeMsLocked(anchor)
-	if err != nil {
-		return err
-	}
+	startedAtMs := sm.recordedFloorTimeLocked(anchor)
 
 	// Executor slot: group[inference_id % len(group)].SlotID
 	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
@@ -1423,10 +1413,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 	if err != nil {
 		return err
 	}
-	confirmedAtMs, err := sm.floorTimeMsLocked(anchor)
-	if err != nil {
-		return err
-	}
+	confirmedAtMs := sm.recordedFloorTimeLocked(anchor)
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAtHeight = anchor.Height
@@ -1879,8 +1866,12 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference, diffNonce u
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
-	if err := sm.checkTimeoutDueLocked(rec, msg.Reason, diffNonce); err != nil {
-		return err
+	// A persisted timeout already passed this check when it was committed.
+	// Replay must not wait on the header map to accept it again.
+	if !sm.replayingPersisted {
+		if err := sm.checkTimeoutDueLocked(rec, msg.Reason, diffNonce); err != nil {
+			return err
+		}
 	}
 
 	// Count accept votes, weighted by slots per address.
@@ -2057,6 +2048,11 @@ func (sm *StateMachine) liveTimeoutDueAtDrainLocked(rec *types.InferenceRecord, 
 	}
 	remaining, err := sm.timeoutRemainingLocked(rec, reason, sealNonce)
 	if errors.Is(err, types.ErrHeaderPending) {
+		// Replay must not block restart on the header map. Settle as not due
+		// (refund). Live drain still waits for the floor header.
+		if sm.replayingPersisted {
+			return false, nil
+		}
 		return false, err
 	}
 	return err == nil && remaining == 0, nil

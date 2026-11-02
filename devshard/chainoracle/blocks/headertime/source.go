@@ -99,6 +99,9 @@ type Source struct {
 	catchFloor uint64
 	catchOn    bool
 	catchQ     []catchSpan
+	// pendingCatchFrom is an EnsureFrom height asked before a tip existed.
+	// The next Observe that sets a tip queues the gap from this height.
+	pendingCatchFrom uint64
 	// minHeight is the lowest stored height. pruneFloorLocked returns at
 	// once when the floor is at or below it.
 	minHeight uint64
@@ -664,6 +667,39 @@ func (s *Source) putLocked(height uint64, hash []byte, at time.Time, origin Orig
 	return note, &row, pruned
 }
 
+// EnsureFrom asks the filler to fill from height up toward the tip. It does
+// not block. With no tip yet the height is remembered until Observe sets one.
+// A height already at or above the catch floor is a no-op.
+func (s *Source) EnsureFrom(height uint64) {
+	if s == nil || height == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureFromLocked(height)
+}
+
+func (s *Source) ensureFromLocked(height uint64) {
+	if height == 0 {
+		return
+	}
+	if s.catchFloor == 0 || s.tip == 0 {
+		if s.pendingCatchFrom == 0 || height < s.pendingCatchFrom {
+			s.pendingCatchFrom = height
+		}
+		return
+	}
+	if height >= s.catchFloor {
+		return
+	}
+	if s.gapConnectedLocked(height) {
+		s.catchFloor = height
+		s.pullBaseLocked()
+		return
+	}
+	s.enqueueBackwardLocked(height)
+}
+
 // noteHeightLocked extends the tip run, or queues the gap under it.
 // The caller holds s.mu. A height below the run is already stored. Its job
 // fills from that anchor up to the catch floor. The floor moves when the job
@@ -673,6 +709,12 @@ func (s *Source) noteHeightLocked(height uint64) {
 		s.runBase = height
 		s.tip = height
 		s.catchFloor = height
+		if pending := s.pendingCatchFrom; pending > 0 {
+			s.pendingCatchFrom = 0
+			if pending < height {
+				s.ensureFromLocked(pending)
+			}
+		}
 		return
 	}
 	if height > s.tip {
@@ -806,8 +848,10 @@ func (s *Source) runCatch(job catchSpan) {
 	s.runBackward(job)
 }
 
-// runBackward fills from the anchor up to the catch floor as it stands when
-// the job starts. A miss is queued again behind work that can still be stored.
+// runBackward fills from the anchor up to just below the catch floor as it
+// stands when the job starts. Already-stored heights are skipped, so the same
+// path covers an Observe that already wrote the anchor and an EnsureFrom that
+// has not. A miss is queued again behind work that can still be stored.
 func (s *Source) runBackward(job catchSpan) {
 	s.mu.Lock()
 	floor := s.catchFloor
@@ -816,7 +860,7 @@ func (s *Source) runBackward(job catchSpan) {
 		s.mu.Unlock()
 		return
 	}
-	from := anchor + 1
+	from := anchor
 	to := floor - 1
 	s.mu.Unlock()
 	if from <= to {

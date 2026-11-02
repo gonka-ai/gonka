@@ -7,6 +7,7 @@ import (
 	"io"
 	"maps"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,6 +24,30 @@ import (
 	"devshard/stub"
 	"devshard/types"
 )
+
+// ensureFromRecorder records WarmUnfinishedHeaders catch-up requests after recover.
+type ensureFromRecorder struct {
+	mu      sync.Mutex
+	ensured []uint64
+}
+
+func (r *ensureFromRecorder) HeaderTimeMs(height uint64, _ []byte) (int64, error) {
+	return 0, fmt.Errorf("%w: height %d", types.ErrHeaderPending, height)
+}
+
+func (r *ensureFromRecorder) EnsureFrom(height uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ensured = append(r.ensured, height)
+}
+
+func (r *ensureFromRecorder) takeEnsured() []uint64 {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := append([]uint64(nil), r.ensured...)
+	r.ensured = nil
+	return out
+}
 
 func newTestStateMachine(
 	t *testing.T,
@@ -1802,6 +1827,52 @@ func TestRecoverSession_WithSMOptions(t *testing.T) {
 	// The resolver should be wired: CheckWarmKey triggers it.
 	recSM.CheckWarmKey("unknown-addr", hosts[0].Address())
 	require.True(t, resolverCalled, "resolver must be called after recovery with WithWarmKeyResolver")
+}
+
+func TestRecoverSession_WarmsHeaderCatchUpFromLowestUnfinishedStart(t *testing.T) {
+	store := newTestStore(t)
+	height := uint64(100)
+	now := time.Now()
+	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+
+	floor, hash, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.NotZero(t, floor)
+
+	nonce := session.Nonce() + 1
+	startTxs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+		ObservedHeight: floor, ObservedBlockHash: append([]byte(nil), hash...),
+	}}}}
+	root, err := session.StateMachine().ApplyLocal(nonce, startTxs)
+	require.NoError(t, err)
+	rec, ok := session.StateMachine().GetInference(nonce)
+	require.True(t, ok)
+	require.Equal(t, floor, rec.StartedAtHeight)
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", nonce, startTxs, root),
+		StateHash: root,
+	}))
+
+	clients := make([]HostClient, len(hosts))
+	for i := range hosts {
+		sm := newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(hosts)), group, 100000, user.Address(), signing.NewSecp256k1Verifier())
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	spy := &ensureFromRecorder{}
+	recoverStarted := time.Now()
+	recovered, recSM, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(), "escrow-1", "v6", group, clients,
+		state.WithHeaderTimes(spy),
+	)
+	require.NoError(t, err)
+	require.Less(t, time.Since(recoverStarted), 2*time.Second, "replay must not wait on a missing header map")
+	require.Equal(t, nonce, recovered.Nonce())
+	require.Equal(t, floor, recSM.LowestUnfinishedStartHeight())
+	require.Equal(t, []uint64{floor}, spy.takeEnsured())
 }
 
 func TestRecoverSession_SignaturesRestored(t *testing.T) {

@@ -669,6 +669,9 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
+	if errors.Is(err, host.ErrDuplicateChallenge) {
+		return &VerifyTimeoutResponse{Accept: false}, nil
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -2,7 +2,6 @@ package state
 
 import (
 	"bytes"
-	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -101,13 +100,6 @@ func (sm *StateMachine) floorTimeMsLocked(p heightsync.FloorPoint) (int64, error
 		return 0, fmt.Errorf("%w: no header time source for height %d", types.ErrHeaderPending, p.Height)
 	}
 	ms, err := sm.headerTimes.HeaderTimeMs(p.Height, p.Hash)
-	if errors.Is(err, types.ErrHeaderPending) && sm.replayingPersisted {
-		if awaiter, ok := sm.headerTimes.(HeaderTimeAwaiter); ok {
-			ctx, cancel := context.WithTimeout(context.Background(), ReplayHeaderAwait)
-			ms, err = awaiter.AwaitHeaderTimeMs(ctx, p.Height, p.Hash)
-			cancel()
-		}
-	}
 	if err != nil {
 		return 0, err
 	}
@@ -115,6 +107,39 @@ func (sm *StateMachine) floorTimeMsLocked(p heightsync.FloorPoint) (int64, error
 		return 0, fmt.Errorf("%w: height %d has no block time", types.ErrHeaderPending, p.Height)
 	}
 	return ms, nil
+}
+
+// recordedFloorTimeLocked is the header time copied onto a start or confirm.
+// A stored map is read with StoredAt, which does not fetch and does not wait.
+// A miss, including a hash that is not the stored row, records 0. A clock that
+// only answers HeaderTimeMs, such as the test fallback, is read once and a
+// miss records 0. Neither case is an apply error.
+func (sm *StateMachine) recordedFloorTimeLocked(p heightsync.FloorPoint) int64 {
+	if p.Height == 0 {
+		return 0
+	}
+	src := sm.headerTimes
+	if src == nil {
+		src = fallbackHeaderTimes
+	}
+	if src == nil {
+		return 0
+	}
+	if reader, ok := src.(storedHeaderReader); ok && reader != nil {
+		row, ok := reader.StoredAt(p.Height)
+		if !ok || row.TimeMs <= 0 {
+			return 0
+		}
+		if len(p.Hash) > 0 && len(row.Hash) > 0 && !bytes.Equal(row.Hash, p.Hash) {
+			return 0
+		}
+		return row.TimeMs
+	}
+	ms, err := src.HeaderTimeMs(p.Height, p.Hash)
+	if err != nil || ms <= 0 {
+		return 0
+	}
+	return ms
 }
 
 // HeightAckHashDisagrees reports an ack that must not enter the log.
@@ -172,24 +197,6 @@ func (sm *StateMachine) noteAcceptedHostAckLocked(ack *types.MsgHeightAck) {
 		return
 	}
 	view.NoteHostAck(ack.ObservedHeight, ack.ObservedBlockHash)
-}
-
-func (sm *StateMachine) checkRaiseResolvableLocked(nonce uint64, tx *types.DevshardTx) error {
-	if tx.GetHeightAck() != nil {
-		// The host signature raises F. A missing polled time means this
-		// process is still catching up; it does not hold the ack.
-		return nil
-	}
-	cur, _ := sm.heightSyncFloor.Max()
-	for _, c := range floorClaims(sm.state, []*types.DevshardTx{tx}) {
-		if c.Signer == heightsync.SequencerSigner || c.Height <= cur || !heightsync.StampPresent(c.Hash) {
-			continue
-		}
-		if _, err := sm.floorTimeMsLocked(heightsync.FloorPoint{Height: c.Height, Hash: c.Hash}); err != nil {
-			return fmt.Errorf("floor claim %d at nonce %d: %w", c.Height, nonce, err)
-		}
-	}
-	return nil
 }
 
 func secondsToMs(seconds int64) int64 {

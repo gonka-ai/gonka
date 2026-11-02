@@ -1,0 +1,407 @@
+package host
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"sync"
+	"time"
+
+	"devshard/chainoracle/blocks/headertime"
+	"devshard/logging"
+	"devshard/state"
+	"devshard/types"
+)
+
+// verifierMap is this process's wall clock and stored header times.
+// A verifier without a stored feed keeps the TimeoutDue gate.
+type verifierMap interface {
+	VerifierNow() time.Time
+	HasHeaderFeed() bool
+	StampHeaderTime(height uint64, hash []byte) (int64, bool)
+	TimeoutInterval(reason types.TimeoutReason) time.Duration
+}
+
+// storedHeaderTime is the map read that does not call the filler.
+type storedHeaderTime interface {
+	StoredAt(height uint64) (headertime.Record, bool)
+}
+
+// ErrDuplicateChallenge is a second VerifyTimeout for an inference and reason
+// this process is already answering or has already voted. The body stays empty.
+var ErrDuplicateChallenge = errors.New("timeout challenge already held")
+
+// deferralKey is one inference and one timeout reason.
+type deferralKey struct {
+	inferenceID uint64
+	reason      types.TimeoutReason
+}
+
+// answerMark is the host-local memory for one (inference, reason).
+// A restart drops it. It is not part of the state machine or the diff.
+type answerMark uint8
+
+const (
+	answerHeld answerMark = iota + 1
+	answerVoted
+)
+
+// answerHolds is one check per inference and reason. A held check is the
+// schedule timer, the feed wait, or the executor call. A voted check has
+// already returned a vote. ignore, feed_behind, and accept=false are not kept.
+type answerHolds struct {
+	mu   sync.Mutex
+	held map[deferralKey]answerMark
+}
+
+func (a *answerHolds) tryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held == nil {
+		a.held = make(map[deferralKey]answerMark)
+	}
+	key := deferralKey{inferenceID: inferenceID, reason: reason}
+	if mark, ok := a.held[key]; ok {
+		warnDuplicateChallenge(inferenceID, reason, mark == answerVoted)
+		return nil, false
+	}
+	a.held[key] = answerHeld
+	return func(voted bool) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if voted {
+			a.held[key] = answerVoted
+			return
+		}
+		if a.held[key] == answerHeld {
+			delete(a.held, key)
+		}
+	}, true
+}
+
+func (a *answerHolds) forget(inferenceID uint64, reason types.TimeoutReason) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held == nil {
+		return
+	}
+	delete(a.held, deferralKey{inferenceID: inferenceID, reason: reason})
+}
+
+func warnDuplicateChallenge(inferenceID uint64, reason types.TimeoutReason, voted bool) {
+	msg := "timeout challenge already held"
+	if voted {
+		msg = "timeout challenge already answered"
+	}
+	logging.Warn(msg,
+		"subsystem", "host",
+		"inference", inferenceID,
+		"reason", reason.String(),
+	)
+}
+
+func (h *Host) VerifierNow() time.Time {
+	if h != nil && h.answerNow != nil {
+		return h.answerNow()
+	}
+	return time.Now()
+}
+
+func (h *Host) HasHeaderFeed() bool {
+	_, ok := h.storedHeaders()
+	return ok
+}
+
+func (h *Host) StampHeaderTime(height uint64, hash []byte) (int64, bool) {
+	src, ok := h.storedHeaders()
+	if !ok {
+		return 0, false
+	}
+	return storedStampTime(src, height, hash)
+}
+
+func (h *Host) TimeoutInterval(reason types.TimeoutReason) time.Duration {
+	if h == nil || h.sm == nil {
+		return 0
+	}
+	return timeoutIntervalOf(h.sm.Config(), reason)
+}
+
+func (h *Host) After(d time.Duration) <-chan time.Time {
+	if d < 0 {
+		d = 0
+	}
+	if h != nil && h.answerAfter != nil {
+		return h.answerAfter(d)
+	}
+	return time.After(d)
+}
+
+func (h *Host) WatchHeaders(fn func()) func() {
+	if h == nil || h.sm == nil || fn == nil {
+		return func() {}
+	}
+	w, ok := h.sm.HeaderTimes().(state.HeaderTimeWatch)
+	if !ok || w == nil {
+		return func() {}
+	}
+	return w.Watch(fn)
+}
+
+func (h *Host) TryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), bool) {
+	if h == nil {
+		return func(bool) {}, true
+	}
+	return h.answerHolds.tryHold(inferenceID, reason)
+}
+
+// ForgetTimeoutVote drops a remembered vote for this inference and reason.
+// A restart drops every vote. The next check also drops a vote whose record
+// has left the status that reason requires.
+func (h *Host) ForgetTimeoutVote(inferenceID uint64, reason types.TimeoutReason) {
+	if h == nil {
+		return
+	}
+	h.answerHolds.forget(inferenceID, reason)
+}
+
+func (h *Host) storedHeaders() (storedHeaderTime, bool) {
+	if h == nil || h.sm == nil {
+		return nil, false
+	}
+	src, ok := h.sm.HeaderTimes().(storedHeaderTime)
+	if !ok || src == nil {
+		return nil, false
+	}
+	return src, true
+}
+
+func storedStampTime(src storedHeaderTime, height uint64, hash []byte) (int64, bool) {
+	if src == nil || height == 0 {
+		return 0, false
+	}
+	row, ok := src.StoredAt(height)
+	if !ok || row.TimeMs <= 0 {
+		return 0, false
+	}
+	if len(hash) > 0 && !bytes.Equal(row.Hash, hash) {
+		return 0, false
+	}
+	return row.TimeMs, true
+}
+
+func timeoutIntervalOf(cfg types.SessionConfig, reason types.TimeoutReason) time.Duration {
+	seconds := cfg.RefusalTimeout
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		seconds = cfg.ExecutionTimeout
+	}
+	if seconds <= 0 {
+		return 0
+	}
+	maxSeconds := int64(maxDuration / time.Second)
+	if seconds > maxSeconds {
+		return maxDuration
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+const maxDuration = time.Duration(int64(^uint64(0) >> 1))
+
+func challengeStamp(rec *types.InferenceRecord, reason types.TimeoutReason) (uint64, []byte) {
+	if rec == nil {
+		return 0, nil
+	}
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		return rec.ConfirmedAtHeight, nil
+	}
+	return rec.StartedAtHeight, rec.StartedAtBlockHash
+}
+
+type answerHeldKey struct{}
+
+// beginAnswer owns the single check for this inference and reason.
+// A call that already owns it, such as the refusal progress walk, does not
+// take a second one. release(voted) remembers a returned vote and drops any
+// other answer. A verifier with no memory of its own always owns the call.
+func beginAnswer(ctx context.Context, ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) (context.Context, func(bool), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if ctx.Value(answerHeldKey{}) != nil {
+		return ctx, nil, nil
+	}
+	release, owned := tryAnswerHold(ev, inferenceID, reason)
+	if !owned {
+		return ctx, nil, ErrDuplicateChallenge
+	}
+	return context.WithValue(ctx, answerHeldKey{}, true), release, nil
+}
+
+func finishAnswer(release func(bool), accept bool, err error) {
+	if release == nil {
+		return
+	}
+	release(err == nil && accept)
+}
+
+// awaitVerifierDue reports whether the challenge body should run.
+// ready is false when the verifier returns without a vote. The caller owns
+// the single in-flight check. The 60 second wait is a timer on this call.
+// It does not call GetBlockHeader and it does not sleep inside ChallengeReceipt.
+func awaitVerifierDue(
+	ctx context.Context,
+	ev EvidenceVerifier,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	reason types.TimeoutReason,
+) (bool, error) {
+	m, ok := ev.(verifierMap)
+	if !ok || m == nil || !m.HasHeaderFeed() {
+		if timeoutDue(ev, inferenceID, reason) {
+			return true, nil
+		}
+		return false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	height, hash := challengeStamp(rec, reason)
+	interval := m.TimeoutInterval(reason)
+	var waitFrom time.Time
+
+	for {
+		now := m.VerifierNow()
+		ms, found := m.StampHeaderTime(height, hash)
+		waited := time.Duration(0)
+		if !found {
+			if waitFrom.IsZero() {
+				waitFrom = now
+			}
+			waited = now.Sub(waitFrom)
+			if waited < 0 {
+				waited = 0
+			}
+		}
+		d := headertime.Decide(now, ms, !found, interval, waited, headertime.CallerVerifier)
+		switch d.Outcome {
+		case headertime.OutcomeDue:
+			return true, nil
+		case headertime.OutcomeIgnore:
+			return false, nil
+		case headertime.OutcomeFeedBehind:
+			logging.Warn("verifier block feed is behind the chain",
+				"subsystem", "host",
+				"inference", inferenceID,
+				"reason", reason.String(),
+			)
+			return false, nil
+		case headertime.OutcomeSchedule:
+			if err := waitAnswer(ctx, ev, d.Delta, nil); err != nil && err != errAnswerTimer {
+				return false, err
+			}
+			now = m.VerifierNow()
+			ms, found = m.StampHeaderTime(height, hash)
+			again := headertime.Decide(now, ms, !found, interval, 0, headertime.CallerVerifier)
+			return again.Outcome == headertime.OutcomeDue, nil
+		case headertime.OutcomeWaiting:
+			left := headertime.AnswerWait - waited
+			if left < 0 {
+				left = 0
+			}
+			notify := make(chan struct{}, 1)
+			cancel := watchHeaders(ev, func() {
+				select {
+				case notify <- struct{}{}:
+				default:
+				}
+			})
+			if _, ok := m.StampHeaderTime(height, hash); ok {
+				cancel()
+				continue
+			}
+			waitErr := waitAnswer(ctx, ev, left, notify)
+			cancel()
+			if waitErr != nil && waitErr != errAnswerTimer {
+				return false, waitErr
+			}
+			if waitErr == errAnswerTimer && m.VerifierNow().Sub(waitFrom) < headertime.AnswerWait {
+				waitFrom = m.VerifierNow().Add(-headertime.AnswerWait)
+			}
+		default:
+			return false, nil
+		}
+	}
+}
+
+var errAnswerTimer = errAnswerTimerSentinel{}
+
+type errAnswerTimerSentinel struct{}
+
+func (errAnswerTimerSentinel) Error() string { return "verifier answer timer" }
+
+func tryAnswerHold(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) (func(bool), bool) {
+	h, ok := ev.(interface {
+		TryHold(uint64, types.TimeoutReason) (func(bool), bool)
+	})
+	if !ok || h == nil {
+		return func(bool) {}, true
+	}
+	return h.TryHold(inferenceID, reason)
+}
+
+func forgetAnswer(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) {
+	f, ok := ev.(interface {
+		ForgetTimeoutVote(uint64, types.TimeoutReason)
+	})
+	if !ok || f == nil {
+		return
+	}
+	f.ForgetTimeoutVote(inferenceID, reason)
+}
+
+func watchHeaders(ev EvidenceVerifier, fn func()) func() {
+	w, ok := ev.(interface {
+		WatchHeaders(func()) func()
+	})
+	if !ok || w == nil {
+		return func() {}
+	}
+	cancel := w.WatchHeaders(fn)
+	if cancel == nil {
+		return func() {}
+	}
+	return cancel
+}
+
+func verifierAfter(ev EvidenceVerifier, d time.Duration) <-chan time.Time {
+	if d < 0 {
+		d = 0
+	}
+	a, ok := ev.(interface {
+		After(time.Duration) <-chan time.Time
+	})
+	if ok && a != nil {
+		return a.After(d)
+	}
+	return time.After(d)
+}
+
+func waitAnswer(ctx context.Context, ev EvidenceVerifier, d time.Duration, notify <-chan struct{}) error {
+	timer := verifierAfter(ev, d)
+	if notify == nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-timer:
+			return errAnswerTimer
+		}
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer:
+		return errAnswerTimer
+	case <-notify:
+		return nil
+	}
+}

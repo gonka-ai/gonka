@@ -278,6 +278,12 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 	return append([]byte(nil), enc[:]...), nil
 }
 
+// marshalInferenceEntry is the canonical inference bytes in the state root.
+// StartedAtTimeMs and ConfirmedAtTimeMs are omitted on purpose: they are local
+// copies of header times from this process's map (or zero when the map missed).
+// Putting them in the root would make two replicas that apply the same diffs
+// diverge when one map is empty. TimeoutDue and auto-seal still read the live
+// record fields; the root keeps stamp heights and hashes only.
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
 	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
 		InferenceId:        id,
@@ -296,8 +302,6 @@ func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) 
 		StartedAtHeight:    r.StartedAtHeight,
 		StartedAtBlockHash: r.StartedAtBlockHash,
 		ConfirmedAtHeight:  r.ConfirmedAtHeight,
-		StartedAtTimeMs:    r.StartedAtTimeMs,
-		ConfirmedAtTimeMs:  r.ConfirmedAtTimeMs,
 		VotesValid:         r.VotesValid,
 		VotesInvalid:       r.VotesInvalid,
 		ValidatedBy:        r.ValidatedBy.Bytes(),

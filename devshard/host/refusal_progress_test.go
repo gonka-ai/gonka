@@ -1166,26 +1166,12 @@ func TestScreenCatchUpPageRejectsDamagedFraming(t *testing.T) {
 	require.Zero(t, allocs)
 }
 
-type windowedJudge struct {
-	EvidenceVerifier
-	deferrals *evidenceDeferrals
-}
-
-func (w windowedJudge) PendingEvidenceDeferrable(types.TimeoutReason, ...*types.DevshardTx) bool {
-	return false
-}
-
-func (w windowedJudge) HeaderPendingDeferrable(inferenceID uint64, reason types.TimeoutReason) bool {
-	return w.deferrals.allow(inferenceID, reason)
-}
-
-func TestRefusalDefersWhenTheExecutorIsWaitingForAHeader(t *testing.T) {
+func TestRefusalAcceptsWhenTheExecutorCannotServe(t *testing.T) {
 	root := bytes.Repeat([]byte{1}, 32)
 	st := progressState(3)
 	pending := fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)
 	for _, cold := range []bool{false, true} {
-		now := time.Unix(1_800_000_000, 0)
-		judge := windowedJudge{EvidenceVerifier: due(newEvidenceGroup(t).sm), deferrals: &evidenceDeferrals{clock: func() time.Time { return now }}}
+		judge := due(newEvidenceGroup(t).sm)
 		peerFor := func() *progressPeer {
 			peer := &progressPeer{
 				heads: []struct {
@@ -1204,36 +1190,21 @@ func TestRefusalDefersWhenTheExecutorIsWaitingForAHeader(t *testing.T) {
 			}
 			return peer
 		}
-		run := func() (bool, error) {
-			return VerifyRefusedProgress(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peerFor(), nil, judge, peerFor(), &progressJournal{diffs: progressDiffs(3, root)}, time.Second, 2*time.Second, progressUnreachable)
-		}
-		accept, err := run()
-		require.ErrorIs(t, err, types.ErrHeaderPending, "an executor waiting for a block gives no vote yet")
-		require.False(t, accept)
-
-		now = now.Add(PendingEvidenceDeferWindow + time.Second)
-		accept, err = run()
+		accept, err := VerifyRefusedProgress(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peerFor(), nil, judge, peerFor(), &progressJournal{diffs: progressDiffs(3, root)}, time.Second, 2*time.Second, progressUnreachable)
 		require.NoError(t, err)
-		require.True(t, accept, "after the window an answer the verifier cannot check counts as unreachable")
+		require.True(t, accept, "an executor that cannot serve gives the refusal a yes vote")
 	}
 }
 
-func TestRefusedTimeoutHeaderPendingIsBoundedToo(t *testing.T) {
+func TestRefusedTimeoutHeaderPendingVotesYes(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
-	now := time.Unix(1_800_000_000, 0)
-	judge := windowedJudge{EvidenceVerifier: due(newEvidenceGroup(t).sm), deferrals: &evidenceDeferrals{clock: func() time.Time { return now }}}
 	executor := &progressPeer{steps: []struct {
 		receipt []byte
 		mempool []*types.DevshardTx
 		err     error
 	}{{err: fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)}}}
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, judge)
-	require.ErrorIs(t, err, types.ErrHeaderPending)
-	require.False(t, accept)
-
-	now = now.Add(PendingEvidenceDeferWindow + time.Second)
-	accept, err = VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, judge)
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, due(newEvidenceGroup(t).sm))
 	require.NoError(t, err)
 	require.True(t, accept)
 }

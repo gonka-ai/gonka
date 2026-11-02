@@ -753,6 +753,33 @@ func TestSourceCatchUpFillsTheGapBelowTheTip(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
+func TestSourceEnsureFromFillsBelowTheTip(t *testing.T) {
+	base := time.Unix(1_800_000_000, 0)
+	var mu sync.Mutex
+	var got []int64
+	s := New(WithFiller(fillerFunc(func(_ context.Context, height int64) (Fill, error) {
+		mu.Lock()
+		got = append(got, height)
+		mu.Unlock()
+		return Fill{Header: hdr(height, base.Add(time.Duration(height)*time.Millisecond), []byte{byte(height)}), Origin: OriginChain}, nil
+	})))
+	s.Observe(hdr(10, base.Add(10*time.Millisecond), []byte{10}), OriginComet, true)
+	s.EnsureFrom(7)
+
+	require.Eventually(t, func() bool {
+		for h := uint64(7); h <= 10; h++ {
+			if _, ok := s.StoredAt(h); !ok {
+				return false
+			}
+		}
+		return s.HighWater() == 10
+	}, 2*time.Second, 10*time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.ElementsMatch(t, []int64{7, 8, 9}, got)
+}
+
 func TestSourceCatchUpFillsAForwardGap(t *testing.T) {
 	var mu sync.Mutex
 	var got []int64
