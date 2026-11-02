@@ -127,7 +127,7 @@ const (
 
 // Why an attempt did not win. A terminal that names no reason is one that won or lost on merit.
 const (
-	ReasonNone                 FailureReason = ""
+	ReasonUnset                 FailureReason = ""
 	ReasonThrottled            FailureReason = "http_429"
 	ReasonUnavailable          FailureReason = "http_503"
 	ReasonForbidden            FailureReason = "http_forbidden"

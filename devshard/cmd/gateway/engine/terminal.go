@@ -114,7 +114,7 @@ func (t Terminal) String() string {
 	case TerminalUnclassified:
 		return TerminalNameUnclassified
 	}
-	if reason := t.reason(); reason != ReasonNone {
+	if reason := t.reason(); reason != ReasonUnset {
 		return string(reason)
 	}
 	return TerminalNameUnnamed

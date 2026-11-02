@@ -218,7 +218,7 @@ func (o RaceOutcome) failureReason(a AttemptOutcome) FailureReason {
 	if a.PhaseTransitionAborted {
 		return ReasonPhaseAborted
 	}
-	if reason := a.Terminal.reason(); reason != ReasonNone {
+	if reason := a.Terminal.reason(); reason != ReasonUnset {
 		return reason
 	}
 	if !a.NonceFinished {
