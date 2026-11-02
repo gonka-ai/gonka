@@ -36,7 +36,7 @@ func (s *SessionTimeouts) VoteDeadline(nonce uint64, startedAt time.Time) time.T
 func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (TimeoutVote, error) {
 	result, err := s.settle(ctx, step)
 	vote := TimeoutVote{
-		Kind:          result.Reason,
+		Kind:          TimeoutKind(result.Reason),
 		Detail:        result.DetailReason,
 		Unjudged:      result.Outcome == user.TimeoutOutcomeVoteCollectionFailed,
 		VerifyRejects: result.VerifyRejects,

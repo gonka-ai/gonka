@@ -36,16 +36,11 @@ const (
 	PhasePoC    Phase = "poc"
 )
 
-// How an attempt ended, as the ledger files it. The first three are absences rather than verdicts: a
-// terminal nobody reported, one the race could not name, and one this build does not know.
+// How an attempt ended, as the ledger files it, beyond the engine's own names; TerminalUnreported is an absence rather than a verdict.
 const (
-	TerminalUnreported   = "unreported"
-	TerminalUnnamed      = "unnamed"
-	TerminalUnclassified = "unclassified"
-
-	TerminalWarmupProbe     = "warmup_probe"
-	TerminalClientGone      = "client_gone_before_delivery"
-	TerminalClientCancelled = "client_cancelled"
+	TerminalUnreported  = "unreported"
+	TerminalWarmupProbe = "warmup_probe"
+	TerminalClientGone  = "client_gone_before_delivery"
 )
 
 // A settled timeout round, in the ledger's outcome vocabulary; TimeoutNoOutcome is a round the ledger does not settle.
@@ -54,7 +49,6 @@ const (
 	TimeoutSkipped              TimeoutOutcome = "skipped"
 	TimeoutVoteCollectionFailed TimeoutOutcome = "vote_collection_failed"
 	TimeoutInsufficientVotes    TimeoutOutcome = "insufficient_votes"
-	TimeoutDiffSendFailed       TimeoutOutcome = "diff_send_failed"
 	TimeoutApplied              TimeoutOutcome = "applied"
 )
 

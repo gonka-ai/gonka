@@ -57,6 +57,7 @@ type Recorder struct {
 	pinnedEpochs sync.Map
 
 	observing sync.Map
+	diffs     atomic.Pointer[DiffJournal]
 	wake      chan struct{}
 
 	readingLock    chan struct{}

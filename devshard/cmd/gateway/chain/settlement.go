@@ -1,5 +1,10 @@
 package chain
 
+import "errors"
+
+// ErrDevshardBusy means an escrow cannot be settled yet; registry raises it and escrow waits on it.
+var ErrDevshardBusy = errors.New("devshard busy")
+
 // SettlementInput is a settle payload with binary fields already decoded; it maps 1:1 onto MsgSettleDevshardEscrow.
 type SettlementInput struct {
 	EscrowID  uint64
@@ -13,12 +18,12 @@ type SettlementInput struct {
 }
 
 type SettlementHostStat struct {
-	SlotID               uint64
-	Missed               uint64
-	Invalid              uint64
+	SlotID               uint32
+	Missed               uint32
+	Invalid              uint32
 	Cost                 uint64
-	RequiredValidations  uint64
-	CompletedValidations uint64
+	RequiredValidations  uint32
+	CompletedValidations uint32
 }
 
 // SettlementSlotSig is one slot's settlement signature, already decoded.

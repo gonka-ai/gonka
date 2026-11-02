@@ -20,16 +20,13 @@ func boolPointer(value bool) *bool          { return &value }
 //  2. Assert each built field takes the right source: an override beats the same env value, an env value beats an untouched default, and an override-only field takes the override.
 func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 	values := env.Values{
-		Port:             int64Pointer(9000),
-		DefaultMaxTokens: int64Pointer(2000),
-
+		Tunables:          env.Tunables{DefaultMaxTokens: int64Pointer(2000)},
+		Port:              int64Pointer(9000),
 		CaptureSampleRate: float64Pointer(0.1),
 		CaptureMaxBytes:   int64Pointer(4096),
 	}
 	overrides := Overrides{
-		DefaultMaxTokens:                    int64Pointer(1500),
-		Disabled:                            boolPointer(true),
-		MaxConcurrentRequestsPer10000Weight: float64Pointer(2.5),
+		Tunables: env.Tunables{DefaultMaxTokens: int64Pointer(1500), Disabled: boolPointer(true), MaxConcurrentRequestsPer10000Weight: float64Pointer(2.5)},
 	}
 
 	configuration, err := Build(values, overrides)
@@ -78,7 +75,7 @@ func TestBuildSplitsAPIKeys(t *testing.T) {
 //  1. Build a config with `MaxTokensCap` set to 0 in the environment.
 //  2. Assert `Build` returns an error naming `max_tokens_cap`.
 func TestBuildRejectsInvalidMergedConfig(t *testing.T) {
-	values := env.Values{MaxTokensCap: int64Pointer(0)}
+	values := env.Values{Tunables: env.Tunables{MaxTokensCap: int64Pointer(0)}}
 	_, err := Build(values, Overrides{})
 	if err == nil || !strings.Contains(err.Error(), "max_tokens_cap") {
 		t.Fatalf("Build() with an unset cap: want max_tokens_cap validation error, got %v", err)
@@ -195,12 +192,12 @@ func TestForcedStreamingIsOnByDefaultAndTurnedOffWithoutARedeploy(t *testing.T) 
 		want      bool
 	}{
 		{name: "nothing configured", want: true},
-		{name: "turned off by env", values: env.Values{ForceUpstreamStreaming: boolPointer(false)}, want: false},
-		{name: "turned off at runtime", overrides: Overrides{ForceUpstreamStreaming: boolPointer(false)}, want: false},
+		{name: "turned off by env", values: env.Values{Tunables: env.Tunables{ForceUpstreamStreaming: boolPointer(false)}}, want: false},
+		{name: "turned off at runtime", overrides: Overrides{Tunables: env.Tunables{ForceUpstreamStreaming: boolPointer(false)}}, want: false},
 		{
 			name:      "turned back on at runtime over an env that turned it off",
-			values:    env.Values{ForceUpstreamStreaming: boolPointer(false)},
-			overrides: Overrides{ForceUpstreamStreaming: boolPointer(true)},
+			values:    env.Values{Tunables: env.Tunables{ForceUpstreamStreaming: boolPointer(false)}},
+			overrides: Overrides{Tunables: env.Tunables{ForceUpstreamStreaming: boolPointer(true)}},
 			want:      true,
 		},
 	}
@@ -229,15 +226,15 @@ func TestTheBurnRunIsReachableWithoutARedeploy(t *testing.T) {
 		want      int64
 	}{
 		{name: "nothing configured", want: 2},
-		{name: "set by env", values: env.Values{MaxConsecutiveBurns: int64Pointer(3)}, want: 3},
-		{name: "set at runtime", overrides: Overrides{MaxConsecutiveBurns: int64Pointer(3)}, want: 3},
+		{name: "set by env", values: env.Values{Tunables: env.Tunables{MaxConsecutiveBurns: int64Pointer(3)}}, want: 3},
+		{name: "set at runtime", overrides: Overrides{Tunables: env.Tunables{MaxConsecutiveBurns: int64Pointer(3)}}, want: 3},
 		{
 			name:      "runtime wins over env",
-			values:    env.Values{MaxConsecutiveBurns: int64Pointer(3)},
-			overrides: Overrides{MaxConsecutiveBurns: int64Pointer(12)},
+			values:    env.Values{Tunables: env.Tunables{MaxConsecutiveBurns: int64Pointer(3)}},
+			overrides: Overrides{Tunables: env.Tunables{MaxConsecutiveBurns: int64Pointer(12)}},
 			want:      12,
 		},
-		{name: "turned off at runtime", overrides: Overrides{MaxConsecutiveBurns: int64Pointer(0)}, want: 0},
+		{name: "turned off at runtime", overrides: Overrides{Tunables: env.Tunables{MaxConsecutiveBurns: int64Pointer(0)}}, want: 0},
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -267,20 +264,20 @@ func TestEjectionThresholdsAreReachableWithoutARedeploy(t *testing.T) {
 		{name: "nothing configured", wantRate: 0.15, wantMaxSecond: 600},
 		{
 			name:          "set by env",
-			values:        env.Values{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)},
+			values:        env.Values{Tunables: env.Tunables{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)}},
 			wantRate:      0.5,
 			wantMaxSecond: 180,
 		},
 		{
 			name:          "set at runtime",
-			overrides:     Overrides{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)},
+			overrides:     Overrides{Tunables: env.Tunables{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)}},
 			wantRate:      0.5,
 			wantMaxSecond: 180,
 		},
 		{
 			name:          "runtime wins over env",
-			values:        env.Values{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)},
-			overrides:     Overrides{PerfFailureRateThreshold: float64Pointer(0.7), PerfEjectionMaxSeconds: int64Pointer(300)},
+			values:        env.Values{Tunables: env.Tunables{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)}},
+			overrides:     Overrides{Tunables: env.Tunables{PerfFailureRateThreshold: float64Pointer(0.7), PerfEjectionMaxSeconds: int64Pointer(300)}},
 			wantRate:      0.7,
 			wantMaxSecond: 300,
 		},
@@ -330,7 +327,7 @@ func TestThePoCWeightLimitFollowsThePlainOneWhenOnlyThePlainOneIsSet(t *testing.
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			values := env.Values{MaxConcurrentRequestsPer10000Weight: testCase.plain, PoCMaxConcurrentRequestsPer10000Weight: testCase.poc}
+			values := env.Values{Tunables: env.Tunables{MaxConcurrentRequestsPer10000Weight: testCase.plain, PoCMaxConcurrentRequestsPer10000Weight: testCase.poc}}
 
 			built, err := Build(values, Overrides{})
 
@@ -353,12 +350,12 @@ func TestBothSettlementTogglesFollowTheEnvironmentAndTheOverrides(t *testing.T) 
 		t.Fatalf("Build() rotation = %+v, %v, want both settlement toggles off", configuration.Rotation, err)
 	}
 	enabled, disabled := true, false
-	values := env.Values{RotationSettlementEnabled: &enabled, RotationPreviousEpochSettlementEnabled: &enabled}
+	values := env.Values{Tunables: env.Tunables{RotationSettlementEnabled: &enabled, RotationPreviousEpochSettlementEnabled: &enabled}}
 	configuration, err = Build(values, Overrides{})
 	if err != nil || !configuration.Rotation.SettlementEnabled || !configuration.Rotation.PreviousEpochSettlementEnabled {
 		t.Fatalf("Build(environment on) rotation = %+v, %v, want both settlement toggles on", configuration.Rotation, err)
 	}
-	configuration, err = Build(values, Overrides{RotationSettlementEnabled: &disabled, RotationPreviousEpochSettlementEnabled: &disabled})
+	configuration, err = Build(values, Overrides{Tunables: env.Tunables{RotationSettlementEnabled: &disabled, RotationPreviousEpochSettlementEnabled: &disabled}})
 	if err != nil || configuration.Rotation.SettlementEnabled || configuration.Rotation.PreviousEpochSettlementEnabled {
 		t.Fatalf("Build(overrides off) rotation = %+v, %v, want the overrides to turn both off", configuration.Rotation, err)
 	}
@@ -373,12 +370,12 @@ func TestTheSettleMarginDefaultsTo600BlocksAndRefusesLessThanOne(t *testing.T) {
 		t.Fatalf("Build() settle margin = %d, %v, want 600, nil", configuration.Rotation.SettleMarginBlocks, err)
 	}
 	wider := int64(900)
-	configuration, err = Build(env.Values{}, Overrides{RotationSettleMarginBlocks: &wider})
+	configuration, err = Build(env.Values{}, Overrides{Tunables: env.Tunables{RotationSettleMarginBlocks: &wider}})
 	if err != nil || configuration.Rotation.SettleMarginBlocks != 900 {
 		t.Fatalf("Build(900) settle margin = %d, %v, want 900, nil", configuration.Rotation.SettleMarginBlocks, err)
 	}
 	for _, refused := range []int64{0, -1} {
-		if _, err := Build(env.Values{}, Overrides{RotationSettleMarginBlocks: &refused}); !errors.Is(err, ErrInvalid) {
+		if _, err := Build(env.Values{}, Overrides{Tunables: env.Tunables{RotationSettleMarginBlocks: &refused}}); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("Build(%d) = %v, want ErrInvalid", refused, err)
 		}
 	}

@@ -20,7 +20,7 @@ func plannerSpec() testSpec {
 	return spec
 }
 
-func repeatSeeded(count int, amount uint64, role string) []seededEscrow {
+func repeatSeeded(count int, amount uint64, role store.Role) []seededEscrow {
 	seeded := make([]seededEscrow, count)
 	for index := range seeded {
 		seeded[index] = seededEscrow{amount: amount, role: role}

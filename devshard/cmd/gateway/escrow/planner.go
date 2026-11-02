@@ -3,7 +3,6 @@ package escrow
 import (
 	"context"
 	"errors"
-	"math"
 	"strings"
 	"time"
 
@@ -11,12 +10,15 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/funding"
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/cmd/gateway/liquidity"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
 	"devshard/types"
 	"devshard/user"
 )
+
+const nearBridgePrePoCWindows = 3
 
 type modelReading struct {
 	state    funding.ModelState
@@ -116,7 +118,7 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 			RequestsBlocked: snapshot.RequestsBlocked, EpochKnown: !snapshotHasNoEpochYet(snapshot),
 			ServedByNetwork: served || !known, BreakerGated: m.breaker.open(model.ModelID, roleRegular),
 			InBridgeWindow:   blocksToSwitch >= 0 && blocksToSwitch <= prePoC,
-			NearBridgeWindow: blocksToSwitch > prePoC && blocksToSwitch <= 3*prePoC,
+			NearBridgeWindow: blocksToSwitch > prePoC && blocksToSwitch <= nearBridgePrePoCWindows*prePoC,
 			CurrentLabel:     int64(snapshot.EpochIndex),
 		},
 		report: FundingReport{
@@ -147,7 +149,7 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 	return reading
 }
 
-func (reading *modelReading) countPendingCreate(role string) {
+func (reading *modelReading) countPendingCreate(role store.Role) {
 	switch role {
 	case RoleReserve:
 		reading.state.PendingStandbyCreates++
@@ -161,7 +163,7 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 	case goneFromChain(row):
 		reading.report.Counts[CountInactive]++
 		return
-	case !row.Active && (row.SettlementPending || row.SettleTxHash != ""):
+	case !row.Active && row.Parked():
 		reading.report.Counts[CountParked]++
 		if row.SettlementPending {
 			reading.state.Parking++
@@ -174,7 +176,7 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 	money, live := m.funds.EscrowMoney(row.EscrowID)
 	if !live {
 		reading.report.Counts[CountUnread]++
-		if row.Amount > 0 {
+		if _, err := m.signer.SignerFor(row.PrivateKeyEnv); err == nil && row.Amount > 0 {
 			reading.state.Escrows = append(reading.state.Escrows, unreadEscrow(row, reading.state))
 		}
 		return
@@ -188,12 +190,12 @@ func (m *Manager) readRow(reading *modelReading, row store.DevshardRecord, prici
 		Now:     now,
 	})
 	reading.live = append(reading.live, row.EscrowID)
-	reading.reserved = saturatingAdd(reading.reserved, reservedIn(money.Open))
+	reading.reserved = safemath.AddSaturatingUint64(reading.reserved, reservedIn(money.Open))
 	totals := reading.report.Money
-	totals[liquidity.ClassFree] = saturatingAdd(totals[liquidity.ClassFree], classified.Free)
-	totals[liquidity.ClassReturning] = saturatingAdd(totals[liquidity.ClassReturning], classified.Returning)
-	totals[liquidity.ClassLate] = saturatingAdd(totals[liquidity.ClassLate], classified.Late)
-	totals[liquidity.ClassStuck] = saturatingAdd(totals[liquidity.ClassStuck], classified.Stuck)
+	totals[liquidity.ClassFree] = safemath.AddSaturatingUint64(totals[liquidity.ClassFree], classified.Free)
+	totals[liquidity.ClassReturning] = safemath.AddSaturatingUint64(totals[liquidity.ClassReturning], classified.Returning)
+	totals[liquidity.ClassLate] = safemath.AddSaturatingUint64(totals[liquidity.ClassLate], classified.Late)
+	totals[liquidity.ClassStuck] = safemath.AddSaturatingUint64(totals[liquidity.ClassStuck], classified.Stuck)
 	reading.report.Counts[countStateOf(row, classified)]++
 	reading.state.Escrows = append(reading.state.Escrows, funding.EscrowState{
 		ID: row.EscrowID, Standby: row.RotationRole == RoleReserve, Temp: row.RotationRole == roleTemp,
@@ -215,9 +217,6 @@ func unreadEscrow(row store.DevshardRecord, state funding.ModelState) funding.Es
 }
 
 func (m *Manager) narratePlan(model string, state funding.ModelState, decision funding.Decision, transitions planTransitions) {
-	if m.narrator == nil {
-		return
-	}
 	for _, escrow := range transitions.starved {
 		m.narrator.EscrowStarved(escrow.ID, escrow.Money.Free)
 	}
@@ -239,9 +238,7 @@ func (m *Manager) narratePlan(model string, state funding.ModelState, decision f
 }
 
 func (m *Manager) narratePlanFailed(err error) {
-	if m.narrator != nil {
-		m.narrator.FundingPlanFailed(err)
-	}
+	m.narrator.FundingPlanFailed(err)
 }
 
 func newModelPricing(modelID string, snapshot chain.PhaseSnapshot, configuration *config.Config) modelPricing {
@@ -262,17 +259,10 @@ func reservedIn(open []types.InferenceRecord) uint64 {
 	var reserved uint64
 	for _, record := range open {
 		if record.Status == types.StatusPending || record.Status == types.StatusStarted {
-			reserved = saturatingAdd(reserved, record.ReservedCost)
+			reserved = safemath.AddSaturatingUint64(reserved, record.ReservedCost)
 		}
 	}
 	return reserved
-}
-
-func saturatingAdd(left, right uint64) uint64 {
-	if sum := left + right; sum >= left {
-		return sum
-	}
-	return math.MaxUint64
 }
 
 func countStateOf(row store.DevshardRecord, money liquidity.Escrow) CountState {

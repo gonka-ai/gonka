@@ -3,6 +3,7 @@ package accounting
 import (
 	"testing"
 
+	"devshard/cmd/gateway/engine"
 	"devshard/types"
 )
 
@@ -12,9 +13,10 @@ import (
 //  3. Where settled is true, assert the returned outcome matches the case's wanted `TimeoutOutcome`.
 func TestTimeoutOutcomeOfSpeaksTheOldLedgersVocabulary(t *testing.T) {
 	cases := []struct {
-		action, reason string
-		want           TimeoutOutcome
-		settled        bool
+		action  engine.TimeoutAction
+		reason  engine.TimeoutReason
+		want    TimeoutOutcome
+		settled bool
 	}{
 		{action: "skipped", reason: "nonce_already_finished", want: TimeoutSkipped, settled: true},
 		{action: "completed", reason: "none", want: TimeoutApplied, settled: true},

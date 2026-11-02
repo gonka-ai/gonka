@@ -4,6 +4,8 @@ import (
 	"maps"
 	"slices"
 	"testing"
+
+	"devshard/cmd/gateway/engine"
 )
 
 const secondTestEscrow = "escrow-2"
@@ -193,8 +195,8 @@ func TestTheUnknownReasonCheckCatchesWhatNothingCouldName(t *testing.T) {
 		key  CounterKey
 		want bool
 	}{
-		{"a terminal the engine has no name for", CounterKey{Terminal: TerminalUnnamed}, true},
-		{"an attempt the race never classified", CounterKey{Terminal: TerminalUnclassified}, true},
+		{"a terminal the engine has no name for", CounterKey{Terminal: engine.TerminalNameUnnamed}, true},
+		{"an attempt the race never classified", CounterKey{Terminal: engine.TerminalNameUnclassified}, true},
 		{"a burn kind with no reason", CounterKey{Disposition: DispositionGhost}, true},
 		{"a race that reported nothing", CounterKey{Terminal: TerminalUnreported}, false},
 		{"a burn that named itself", CounterKey{Disposition: DispositionGhost, GhostReason: "poc_unavailable_host"}, false},

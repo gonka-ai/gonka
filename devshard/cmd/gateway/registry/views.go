@@ -289,3 +289,18 @@ func (r *Registry) HostDials() []HostDial {
 	}
 	return dials
 }
+
+// IsBusy satisfies escrow.SettlementSource: a settlement must not claim funds while nonces are still being spent.
+func (r *Registry) IsBusy(escrowID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if entry, known := r.live.Load().byID[escrowID]; known && entry.busyOrSwept() {
+		return true
+	}
+	for entry := range r.draining {
+		if entry.id == escrowID && entry.busyOrSwept() {
+			return true
+		}
+	}
+	return false
+}

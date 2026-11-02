@@ -191,6 +191,19 @@ func (f *fakeControl) ListDevshards(context.Context) ([]store.DevshardRecord, er
 	return f.devshards, f.listErr
 }
 
+func (f *fakeControl) Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error) {
+	records, err := f.ListDevshards(ctx)
+	if err != nil {
+		return store.DevshardRecord{}, false, err
+	}
+	for _, record := range records {
+		if record.EscrowID == escrowID {
+			return record, true, nil
+		}
+	}
+	return store.DevshardRecord{}, false, nil
+}
+
 func (f *fakeControl) LoadOverrides(context.Context) (config.Overrides, error) {
 	return f.overrides, nil
 }

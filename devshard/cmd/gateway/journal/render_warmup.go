@@ -35,9 +35,9 @@ func (j *Journal) WarmupLedgerOpenFailed(escrowID string, err error) {
 }
 
 // WarmupVoted renders the probe's own timeout vote, at Warn when it failed, as a race's failed vote is.
-func (j *Journal) WarmupVoted(escrowID string, nonce uint64, action, reason string) {
+func (j *Journal) WarmupVoted(escrowID string, nonce uint64, action engine.TimeoutAction, reason engine.TimeoutReason) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {
-		fields := []any{logkey.Escrow, escrowID, logkey.Nonce, nonce, logkey.Action, action, logkey.Reason, reason}
+		fields := []any{logkey.Escrow, escrowID, logkey.Nonce, nonce, logkey.Action, string(action), logkey.Reason, string(reason)}
 		if action == engine.TimeoutActionFailed {
 			lines.Warn("escrow warmup voted on its unfinished nonce", fields...)
 			return

@@ -115,7 +115,6 @@ The session adapter lives outside this package, so the two sides meet on a narro
 - On `hostLimiter`, `Acquire` is the admission authority and runs with the commit; `Admits` is only a cheap peek that names which rung would refuse, so a match-wait answer from it costs nothing. A slot handed to a caller is released by the engine that spends it, never here.
 - On `hostHealth`, `Ejected` is already capped to a fraction of the model's known hosts, so honouring it here can never empty the pool.
 - The PoC-preserved set is read per drain, preferring the model's own; a nil set means it has not loaded yet, so every participant counts as preserved. See rules.md, "8. Fail-closed and fail-open are chosen per signal".
-- `AffinityHint` is the per-request handle the boundary carries for KV-cache affinity. It holds nothing and no decision reads it.
 
 ## Read next
 

@@ -15,11 +15,20 @@ const (
 	MissProofTruncated MissProofCompleteness = "truncated"
 )
 
+// The named types of an attempt's wire strings: why it started, its place in the race, how it ended, what the client saw of it, and why it did not win.
+type (
+	StartReason       string
+	AttemptRole       string
+	AttemptResult     string
+	AttemptVisibility string
+	FailureReason     string
+)
+
 // Why an attempt started, reported on every nonce the race commits.
 const (
-	StartPrimary           = "primary"
-	StartPrimarySuspicious = "primary_suspicious"
-	StartPrimaryDegraded   = "primary_degraded"
+	StartPrimary           StartReason = "primary"
+	StartPrimarySuspicious StartReason = "primary_suspicious"
+	StartPrimaryDegraded   StartReason = "primary_degraded"
 )
 
 const noTokenEstimate uint64 = 0
@@ -50,8 +59,9 @@ const (
 
 // An attempt's place in its race, and why the crown fell to it.
 const (
-	RolePrimary     = "primary"
-	RoleSpeculative = "speculative"
+	RoleUnset       AttemptRole = ""
+	RolePrimary     AttemptRole = "primary"
+	RoleSpeculative AttemptRole = "speculative"
 
 	crownFirstClaim           = "first_claim"
 	crownNoRival              = "no_rival"
@@ -61,38 +71,50 @@ const (
 // How an attempt ended, and what the client saw of it. Visibility is the only account of a race that
 // produced an answer nobody received.
 const (
-	AttemptOutcomeSuccess = "success"
-	AttemptOutcomeFailed  = "failed"
+	AttemptResultSuccess AttemptResult = "success"
+	AttemptResultFailed  AttemptResult = "failed"
 
-	VisibilityWinner            = "user_visible_winner"
-	VisibilityWinnerClientGone  = "winner_client_gone"
-	VisibilityNoWinner          = "no_winner"
-	VisibilitySuppressedLoser   = "suppressed_loser"
-	VisibilityFailedNotFinished = "failed_not_finished"
+	VisibilityWinner            AttemptVisibility = "user_visible_winner"
+	VisibilityWinnerClientGone  AttemptVisibility = "winner_client_gone"
+	VisibilityNoWinner          AttemptVisibility = "no_winner"
+	VisibilitySuppressedLoser   AttemptVisibility = "suppressed_loser"
+	VisibilityFailedNotFinished AttemptVisibility = "failed_not_finished"
 )
+
+// TimeoutKind is what a timeout vote on a nonce was owed for.
+type TimeoutKind string
+
+// TimeoutAction is what the gateway did about a timeout vote.
+type TimeoutAction string
+
+// TimeoutReason is why the gateway took that action on a timeout vote.
+type TimeoutReason string
 
 // The vocabulary of a TimeoutEvent: what a nonce was owed, what the gateway did about it, and why. A
 // reason outside this set normalises to "unknown" in the ledger's report, and the fact becomes invisible.
 const (
-	TimeoutKindRefused   = "refused"
-	TimeoutKindExecution = "execution"
-	TimeoutKindErrorMiss = "error_miss"
+	TimeoutKindUnset     TimeoutKind = ""
+	TimeoutKindRefused   TimeoutKind = "refused"
+	TimeoutKindExecution TimeoutKind = "execution"
+	TimeoutKindErrorMiss TimeoutKind = "error_miss"
 
-	TimeoutActionSkipped   = "skipped"
-	TimeoutActionStarted   = "started"
-	TimeoutActionCompleted = "completed"
-	TimeoutActionFailed    = "failed"
-	TimeoutActionAbandoned = "abandoned_by_restart"
+	TimeoutActionUnset     TimeoutAction = ""
+	TimeoutActionSkipped   TimeoutAction = "skipped"
+	TimeoutActionStarted   TimeoutAction = "started"
+	TimeoutActionCompleted TimeoutAction = "completed"
+	TimeoutActionFailed    TimeoutAction = "failed"
+	TimeoutActionAbandoned TimeoutAction = "abandoned_by_restart"
 
-	TimeoutReasonNone            = "none"
-	TimeoutReasonNoPoster        = "no_poster"
-	TimeoutReasonPhaseAborted    = "phase_transition_aborted"
-	TimeoutReasonEmptyStream     = "empty_stream_without_non_empty_winner"
-	TimeoutReasonNonceFinished   = "nonce_already_finished"
-	TimeoutReasonLongResponse    = "long_response_after_content"
-	TimeoutReasonCollectionError = "timeout_collection_error"
-	TimeoutReasonNotApplied      = "timeout_not_applied"
-	TimeoutReasonEscrowGone      = "escrow_gone_from_hosts"
+	TimeoutReasonUnset           TimeoutReason = ""
+	TimeoutReasonNone            TimeoutReason = "none"
+	TimeoutReasonNoPoster        TimeoutReason = "no_poster"
+	TimeoutReasonPhaseAborted    TimeoutReason = "phase_transition_aborted"
+	TimeoutReasonEmptyStream     TimeoutReason = "empty_stream_without_non_empty_winner"
+	TimeoutReasonNonceFinished   TimeoutReason = "nonce_already_finished"
+	TimeoutReasonLongResponse    TimeoutReason = "long_response_after_content"
+	TimeoutReasonCollectionError TimeoutReason = "timeout_collection_error"
+	TimeoutReasonNotApplied      TimeoutReason = "timeout_not_applied"
+	TimeoutReasonEscrowGone      TimeoutReason = "escrow_gone_from_hosts"
 )
 
 // How an attempt ended, as the ledger, the metrics and the logs all name it.
@@ -105,37 +127,39 @@ const (
 
 // Why an attempt did not win. A terminal that names no reason is one that won or lost on merit.
 const (
-	ReasonThrottled            = "http_429"
-	ReasonUnavailable          = "http_503"
-	ReasonForbidden            = "http_forbidden"
-	ReasonNotFound             = "http_not_found"
-	ReasonTimestampDrift       = "http_timestamp_drift"
-	ReasonRejected             = "http_error"
-	ReasonUpstreamServer       = "http_server_error"
-	ReasonOffPath              = "off_path"
-	ReasonDialFailure          = "transport_error"
-	ReasonStreamTruncated      = "sse_truncated"
-	ReasonUnexpectedEOF        = "eof_transport"
-	ReasonResponseTooLarge     = "response_too_large"
-	ReasonRequestTooLarge      = "request_too_large"
-	ReasonEscrowLookupLimited  = "escrow_lookup_limited"
-	ReasonClientCancelled      = "client_cancelled"
-	ReasonNoReceipt            = "no_receipt"
-	ReasonEmptyStream          = "empty_stream"
-	ReasonErrorStream          = "error_stream"
-	ReasonStalled              = "stalled"
-	ReasonHardTimeout          = "hard_timeout"
-	ReasonNonceNotFinished     = "not_finished"
-	ReasonUnknown              = "unknown"
-	ReasonAbandonedAfterCancel = "abandoned_after_cancel"
+	ReasonUnset                FailureReason = ""
+	ReasonThrottled            FailureReason = "http_429"
+	ReasonUnavailable          FailureReason = "http_503"
+	ReasonForbidden            FailureReason = "http_forbidden"
+	ReasonNotFound             FailureReason = "http_not_found"
+	ReasonTimestampDrift       FailureReason = "http_timestamp_drift"
+	ReasonRejected             FailureReason = "http_error"
+	ReasonUpstreamServer       FailureReason = "http_server_error"
+	ReasonOffPath              FailureReason = "off_path"
+	ReasonDialFailure          FailureReason = "transport_error"
+	ReasonStreamTruncated      FailureReason = "sse_truncated"
+	ReasonUnexpectedEOF        FailureReason = "eof_transport"
+	ReasonResponseTooLarge     FailureReason = "response_too_large"
+	ReasonRequestTooLarge      FailureReason = "request_too_large"
+	ReasonEscrowLookupLimited  FailureReason = "escrow_lookup_limited"
+	ReasonClientCancelled      FailureReason = "client_cancelled"
+	ReasonNoReceipt            FailureReason = "no_receipt"
+	ReasonEmptyStream          FailureReason = "empty_stream"
+	ReasonErrorStream          FailureReason = "error_stream"
+	ReasonStalled              FailureReason = "stalled"
+	ReasonHardTimeout          FailureReason = "hard_timeout"
+	ReasonNonceNotFinished     FailureReason = "not_finished"
+	ReasonUnknown              FailureReason = "unknown"
+	ReasonAbandonedAfterCancel FailureReason = "abandoned_after_cancel"
+	ReasonPhaseAborted                       = FailureReason(TimeoutReasonPhaseAborted)
 )
 
 // Why an attempt was started beside another, as the metric label names it.
 const (
-	EscalationReasonSuspicious    = "suspicious_host"
-	EscalationReasonAttemptFailed = "attempt_failed"
-	EscalationReasonReceipt       = "receipt_timeout"
-	EscalationReasonFirstToken    = "first_token_timeout"
-	EscalationReasonHedge         = "slow_start"
-	EscalationReasonStall         = "stalled_before_content"
+	EscalationReasonSuspicious    StartReason = "suspicious_host"
+	EscalationReasonAttemptFailed StartReason = "attempt_failed"
+	EscalationReasonReceipt       StartReason = "receipt_timeout"
+	EscalationReasonFirstToken    StartReason = "first_token_timeout"
+	EscalationReasonHedge         StartReason = "slow_start"
+	EscalationReasonStall         StartReason = "stalled_before_content"
 )

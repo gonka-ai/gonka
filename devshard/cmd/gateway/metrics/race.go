@@ -187,11 +187,11 @@ func (r *RaceRecorder) RecordRace(outcome engine.RaceOutcome) {
 	for _, attempt := range outcome.Attempts {
 		labels := outcome.Labels(attempt)
 		participant := metricLabel(labels.Participant, labelUnknown)
-		role := metricLabel(labels.Role, labelUnknown)
+		role := metricLabel(string(labels.Role), labelUnknown)
 		r.markSeen(participant, model)
 
 		if !attempt.SendTime.IsZero() {
-			r.attemptsStarted.WithLabelValues(participant, model, role, metricLabel(attempt.StartReason, role)).Inc()
+			r.attemptsStarted.WithLabelValues(participant, model, role, metricLabel(string(attempt.StartReason), role)).Inc()
 		}
 		if !outcome.FinishAwaited(attempt) {
 			if reason, failed := r.countTerminal(participant, model, role, labels, attempt); failed && firstFailure == "" {
@@ -210,19 +210,19 @@ func (r *RaceRecorder) RecordAwaitedFinish(outcome engine.RaceOutcome, attempt e
 	labels := outcome.Labels(attempt)
 	participant := metricLabel(labels.Participant, labelUnknown)
 	r.markSeen(participant, model)
-	reason, failed := r.countTerminal(participant, model, metricLabel(labels.Role, labelUnknown), labels, attempt)
+	reason, failed := r.countTerminal(participant, model, metricLabel(string(labels.Role), labelUnknown), labels, attempt)
 	if failed && outcome.Succeeded && !otherAttemptFailed(outcome) {
 		r.hiddenFailures.WithLabelValues(model, reason).Inc()
 	}
 }
 
 func (r *RaceRecorder) countTerminal(participant, model, role string, labels engine.AttemptLabels, attempt engine.AttemptOutcome) (string, bool) {
-	r.attemptsTerminal.WithLabelValues(participant, model, role, labels.Outcome, labels.Visibility).Inc()
-	if labels.Outcome != engine.AttemptOutcomeFailed {
+	r.attemptsTerminal.WithLabelValues(participant, model, role, string(labels.Outcome), string(labels.Visibility)).Inc()
+	if labels.Outcome != engine.AttemptResultFailed {
 		return "", false
 	}
-	reason := metricLabel(labels.Reason, labelUnknown)
-	r.attemptFailures.WithLabelValues(participant, model, role, reason, labels.Visibility).Inc()
+	reason := metricLabel(string(labels.Reason), labelUnknown)
+	r.attemptFailures.WithLabelValues(participant, model, role, reason, string(labels.Visibility)).Inc()
 	if status, upstream := transportStatus(attempt); upstream {
 		r.transportErrors.WithLabelValues(participant, model, status).Inc()
 	}
@@ -231,7 +231,7 @@ func (r *RaceRecorder) countTerminal(participant, model, role string, labels eng
 
 func otherAttemptFailed(outcome engine.RaceOutcome) bool {
 	for _, attempt := range outcome.Attempts {
-		if !outcome.FinishAwaited(attempt) && outcome.Labels(attempt).Outcome == engine.AttemptOutcomeFailed {
+		if !outcome.FinishAwaited(attempt) && outcome.Labels(attempt).Outcome == engine.AttemptResultFailed {
 			return true
 		}
 	}
@@ -240,7 +240,7 @@ func otherAttemptFailed(outcome engine.RaceOutcome) bool {
 
 func (r *RaceRecorder) recordRequest(model string, outcome engine.RaceOutcome, firstFailure string) {
 	if outcome.Succeeded {
-		r.requests.WithLabelValues(model, engine.AttemptOutcomeSuccess, reasonNone).Inc()
+		r.requests.WithLabelValues(model, string(engine.AttemptResultSuccess), reasonNone).Inc()
 		if firstFailure != "" {
 			r.hiddenFailures.WithLabelValues(model, firstFailure).Inc()
 		}
@@ -256,7 +256,7 @@ func raceFailureReason(outcome engine.RaceOutcome, firstFailure string) string {
 	case outcome.Lifecycle.BalanceExhausted:
 		return reasonBalanceExhausted
 	case outcome.Lifecycle.ClientGone:
-		return engine.ReasonClientCancelled
+		return string(engine.ReasonClientCancelled)
 	case len(outcome.Attempts) == 0:
 		return reasonNoAttempts
 	}
@@ -283,10 +283,10 @@ func transportStatus(attempt engine.AttemptOutcome) (string, bool) {
 
 func (r *RaceRecorder) countMissedDeadlines(participant, model string, attempt engine.AttemptOutcome) {
 	if attempt.ReceiptDeadlineMissed {
-		r.missedDeadlines.WithLabelValues(participant, model, engine.EscalationReasonReceipt).Inc()
+		r.missedDeadlines.WithLabelValues(participant, model, string(engine.EscalationReasonReceipt)).Inc()
 	}
 	if attempt.FirstTokenDeadlineMissed {
-		r.missedDeadlines.WithLabelValues(participant, model, engine.EscalationReasonFirstToken).Inc()
+		r.missedDeadlines.WithLabelValues(participant, model, string(engine.EscalationReasonFirstToken)).Inc()
 	}
 }
 
@@ -318,9 +318,9 @@ func (r *RaceRecorder) RecordTimeout(event engine.TimeoutEvent) {
 	r.markSeen(participant, model)
 	r.timeoutActions.WithLabelValues(
 		participant, model,
-		metricLabel(event.Kind, labelUnknown),
-		metricLabel(event.Action, labelUnknown),
-		metricLabel(event.Reason, reasonNone),
+		metricLabel(string(event.Kind), labelUnknown),
+		metricLabel(string(event.Action), labelUnknown),
+		metricLabel(string(event.Reason), reasonNone),
 	).Inc()
 	completeness := metricLabel(string(event.Completeness), labelUnknown)
 	for _, cause := range event.VerifyRejects {

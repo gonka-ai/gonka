@@ -5,14 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"time"
 
 	"devshard/cmd/gateway/chain"
-	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
 )
@@ -26,61 +22,14 @@ const (
 // ErrAmountBelowFloor marks a create refused before broadcast because its amount cannot pay one full-context request of its model. See README.md, "Creating an escrow".
 var ErrAmountBelowFloor = errors.New("escrow amount cannot pay one full-context request of its model")
 
-type Manager struct {
-	tx        escrowTxClient
-	store     escrowStore
-	snapshots snapshotSource
-	signer    SignerSource
-	breaker   *createBreaker
-	now       func() time.Time
-
-	config           *config.Holder
-	routePrefix      string
-	settlementSource SettlementSource
-	exhaustion       ExhaustionProbe
-	funds            FundingReader
-	chainFacts       escrowLookup
-	chainFactsAfter  string
-	prunedCheckAfter string
-	settlements      inFlightSet
-	budgetedSettles  inFlightSet
-	urgentSettles    inFlightSet
-	checks           inFlightSet
-
-	depleted            depletionMarks
-	missing             markSet
-	underfundedNarrated markSet
-	belowFloorNarrated  markSet
-	unresolvedNarrated  markSet
-	reserveTaken        markSet
-	moneyShort          markSet
-	deadlineNarrated    map[string]bool
-	deadlineCounts      deadlineCounter
-	pace                blockPace
-	stale               staleProjection
-	wakeup              chan struct{}
-
-	timeoutSweeper TimeoutSweeper
-	sweepRecorder  SweepRecorder
-	sweepRetries   retryWindows
-	narrator       lifecycleNarrator
-	sweeping       atomic.Bool
-	offTickWork    sync.WaitGroup
-	planner        fundingPlanner
-
-	lifecycleMu sync.Mutex
-	done        chan struct{}
-	cancel      context.CancelFunc
-}
-
 // CreateEscrow creates one escrow on demand, on the same durable-intent path rotation uses. See README.md, "Creating an escrow".
 func (m *Manager) CreateEscrow(ctx context.Context, model ModelConfig) (chain.CreateEscrowResult, error) {
 	snapshot := m.snapshots.Snapshot()
-	return m.createFor(ctx, model, roleRegular, snapshot.EpochIndex, string(createdByOperator), snapshot)
+	return m.createFor(ctx, model, roleRegular, snapshot.EpochIndex, createdByOperator, snapshot)
 }
 
 // A failed intent-commitment write (in onPrepared) aborts before any chain broadcast: no broadcast without durable intent.
-func (m *Manager) createFor(ctx context.Context, model ModelConfig, role string, label uint64, reason string, snapshot chain.PhaseSnapshot) (chain.CreateEscrowResult, error) {
+func (m *Manager) createFor(ctx context.Context, model ModelConfig, role store.Role, label uint64, reason createReason, snapshot chain.PhaseSnapshot) (chain.CreateEscrowResult, error) {
 	if floor, priced := m.creationFloor(model.ModelID, snapshot); priced && model.Amount < floor {
 		m.narrateBelowFloor(model, role, floor)
 		return chain.CreateEscrowResult{}, fmt.Errorf("creating escrow for %s/%s: %w: amount %d, floor %d", model.ModelID, role, ErrAmountBelowFloor, model.Amount, floor)
@@ -113,9 +62,7 @@ func (m *Manager) createFor(ctx context.Context, model ModelConfig, role string,
 		return chain.CreateEscrowResult{}, failure
 	}
 	escrowID := strconv.FormatUint(result.EscrowID, 10)
-	if m.narrator != nil {
-		m.narrator.EscrowCreated(escrowID, model.ModelID, role, reason, label, result.TxHash)
-	}
+	m.narrator.EscrowCreated(escrowID, model.ModelID, role, string(reason), label, result.TxHash)
 	return result, m.persistEscrow(ctx, escrowID, c)
 }
 
@@ -163,30 +110,28 @@ func (m *Manager) creationFloor(modelID string, snapshot chain.PhaseSnapshot) (u
 	return floor, true
 }
 
-func (m *Manager) narrateBelowFloor(model ModelConfig, role string, floor uint64) {
-	if !m.belowFloorNarrated.mark(createBreakerKey(model.ModelID, role)) || m.narrator == nil {
+func (m *Manager) narrateBelowFloor(model ModelConfig, role store.Role, floor uint64) {
+	if !m.belowFloorNarrated.mark(createBreakerKey(model.ModelID, role)) {
 		return
 	}
 	m.narrator.EscrowCreateBelowFloor(model.ModelID, role, model.Amount, floor)
 }
 
 // narrateUnderfunded names a wallet that cannot pay once per (model, role), until a create of it succeeds.
-func (m *Manager) narrateUnderfunded(modelID, role string, err error) {
+func (m *Manager) narrateUnderfunded(modelID string, role store.Role, err error) {
 	var underfunded *chain.WalletUnderfundedError
-	if !errors.As(err, &underfunded) || !m.underfundedNarrated.mark(createBreakerKey(modelID, role)) || m.narrator == nil {
+	if !errors.As(err, &underfunded) || !m.underfundedNarrated.mark(createBreakerKey(modelID, role)) {
 		return
 	}
 	m.narrator.EscrowCreateUnderfunded(modelID, role, underfunded.Have, underfunded.Need)
 }
 
 func (m *Manager) escrowRegistered(ctx context.Context, escrowID string) (bool, error) {
-	records, err := m.store.ListDevshards(ctx)
+	_, found, err := m.store.Devshard(ctx, escrowID)
 	if err != nil {
-		return false, fmt.Errorf("listing devshards for escrow %s: %w", escrowID, err)
+		return false, fmt.Errorf("reading devshard for escrow %s: %w", escrowID, err)
 	}
-	return slices.ContainsFunc(records, func(record store.DevshardRecord) bool {
-		return record.EscrowID == escrowID
-	}), nil
+	return found, nil
 }
 
 func (m *Manager) clearCommitmentRow(ctx context.Context, escrowID, txHash string) error {
@@ -219,9 +164,7 @@ func (m *Manager) reconcileOne(ctx context.Context, c store.Commitment) error {
 		if persistErr := m.persistEscrow(ctx, escrowID, c); persistErr != nil {
 			return persistErr
 		}
-		if m.narrator != nil {
-			m.narrator.EscrowRecovered(escrowID, c.Model, c.Role, c.Epoch, c.TxHash)
-		}
+		m.narrator.EscrowRecovered(escrowID, c.Model, c.Role, c.Epoch, c.TxHash)
 		return nil
 	case err == nil && !found:
 		return m.clearCommitment(ctx, c, commitmentClearedNoEscrow) // committed but produced no escrow event: terminal
@@ -240,9 +183,7 @@ func (m *Manager) clearCommitment(ctx context.Context, c store.Commitment, reaso
 	if err := m.store.WithRetry(ctx, func() error { return m.store.DeleteCommitment(ctx, c.TxHash) }); err != nil {
 		return fmt.Errorf("clearing commitment %s: %w", c.TxHash, err)
 	}
-	if m.narrator != nil {
-		m.narrator.CommitmentCleared(c.TxHash, c.Model, c.Role, c.Epoch, reason)
-	}
+	m.narrator.CommitmentCleared(c.TxHash, c.Model, c.Role, c.Epoch, reason)
 	return nil
 }
 

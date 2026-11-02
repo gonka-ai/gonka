@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+
+	"devshard/signing"
 )
 
 // Fixed message-encoder inputs; must match the values chain_txgold_test.go used
@@ -151,7 +153,7 @@ func TestTruncateSignatureShortSignatureErrors(t *testing.T) {
 //  5. Recompute the expected signature over the reconstructed sign-doc and assert it matches the decoded signature, so the builder is pinned to signing the correct bytes rather than just producing a signature of the right length.
 func TestBuildCreateEscrowTxStructural(t *testing.T) {
 	signer := fixedSigner(t)
-	txBytes, err := buildCreateEscrowTx(signer, fixedChainID, fixedAccountNumber, fixedFeeDenom, fixedFeeAmount, fixedGasLimit, fixedAmount, fixedModelID, fixedTTL)
+	txBytes, err := buildCreateEscrowTx(fixedSigning(signer, fixedChainID), fixedAmount, fixedModelID)
 	if err != nil {
 		t.Fatalf("buildCreateEscrowTx: %v", err)
 	}
@@ -202,7 +204,7 @@ func TestBuildCreateEscrowTxStructural(t *testing.T) {
 //  1. Call buildCreateEscrowTx with a blank (whitespace-only) chain id.
 //  2. Assert it returns an error.
 func TestBuildCreateEscrowTxEmptyChainIDErrors(t *testing.T) {
-	_, err := buildCreateEscrowTx(fixedSigner(t), "   ", fixedAccountNumber, fixedFeeDenom, fixedFeeAmount, fixedGasLimit, fixedAmount, fixedModelID, fixedTTL)
+	_, err := buildCreateEscrowTx(fixedSigning(fixedSigner(t), "   "), fixedAmount, fixedModelID)
 	if err == nil {
 		t.Fatal("want error for a blank chain id, got nil")
 	}
@@ -217,7 +219,7 @@ func TestBuildCreateEscrowTxEmptyChainIDErrors(t *testing.T) {
 func TestBuildSettleEscrowTxStructural(t *testing.T) {
 	signer := fixedSigner(t)
 	input := fixedSettlementFull()
-	txBytes, err := buildSettleEscrowTx(signer, fixedChainID, fixedAccountNumber, fixedFeeDenom, fixedFeeAmount, fixedGasLimit, fixedSettler, input, fixedTTL)
+	txBytes, err := buildSettleEscrowTx(fixedSigning(signer, fixedChainID), fixedSettler, input)
 	if err != nil {
 		t.Fatalf("buildSettleEscrowTx: %v", err)
 	}
@@ -268,8 +270,12 @@ func TestBuildSettleEscrowTxStructural(t *testing.T) {
 //  1. Call buildSettleEscrowTx with an empty chain id.
 //  2. Assert it returns an error.
 func TestBuildSettleEscrowTxEmptyChainIDErrors(t *testing.T) {
-	_, err := buildSettleEscrowTx(fixedSigner(t), "", fixedAccountNumber, fixedFeeDenom, fixedFeeAmount, fixedGasLimit, fixedSettler, fixedSettlementFull(), fixedTTL)
+	_, err := buildSettleEscrowTx(fixedSigning(fixedSigner(t), ""), fixedSettler, fixedSettlementFull())
 	if err == nil {
 		t.Fatal("want error for empty chain id, got nil")
 	}
+}
+
+func fixedSigning(signer *signing.Secp256k1Signer, chainID string) txSigning {
+	return txSigning{signer: signer, chainID: chainID, accountNumber: fixedAccountNumber, feeDenom: fixedFeeDenom, feeAmount: fixedFeeAmount, gasLimit: fixedGasLimit, ttl: fixedTTL}
 }

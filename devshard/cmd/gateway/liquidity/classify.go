@@ -2,9 +2,9 @@
 package liquidity
 
 import (
-	"math"
 	"time"
 
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/types"
 )
 
@@ -62,13 +62,13 @@ func Classify(input Input) Escrow {
 		}
 		switch class {
 		case ClassReturning:
-			result.Returning = saturatingAdd(result.Returning, amount)
+			result.Returning = safemath.AddSaturatingUint64(result.Returning, amount)
 			busy = true
 		case ClassLate:
-			result.Late = saturatingAdd(result.Late, amount)
+			result.Late = safemath.AddSaturatingUint64(result.Late, amount)
 			busy = true
 		case ClassStuck:
-			result.Stuck = saturatingAdd(result.Stuck, amount)
+			result.Stuck = safemath.AddSaturatingUint64(result.Stuck, amount)
 		}
 	}
 	result.Idle = !busy
@@ -121,26 +121,9 @@ func surplus(record types.InferenceRecord, price Price) uint64 {
 		return 0
 	}
 	surplusBytes := record.InputLength - record.InputLength/price.BytesPerToken
-	return min(saturatingMul(surplusBytes, price.TokenPrice), record.ReservedCost)
+	return min(safemath.MulSaturatingUint64(surplusBytes, price.TokenPrice), record.ReservedCost)
 }
 
 func full(input Input) bool {
 	return input.Price.Priced && input.Balance >= input.Price.Slot
-}
-
-func saturatingAdd(left, right uint64) uint64 {
-	if sum := left + right; sum >= left {
-		return sum
-	}
-	return math.MaxUint64
-}
-
-func saturatingMul(left, right uint64) uint64 {
-	if left == 0 || right == 0 {
-		return 0
-	}
-	if product := left * right; product/left == right {
-		return product
-	}
-	return math.MaxUint64
 }

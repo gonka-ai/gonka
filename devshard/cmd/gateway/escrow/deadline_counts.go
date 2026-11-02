@@ -12,22 +12,22 @@ type DeadlineUnsettled struct {
 }
 
 type deadlineCounter struct {
-	mu     sync.Mutex
-	counts map[DeadlineUnsettled]uint64
+	mu        sync.Mutex
+	unsettled map[DeadlineUnsettled]uint64
 }
 
 func (counter *deadlineCounter) add(model, reason string) {
 	counter.mu.Lock()
 	defer counter.mu.Unlock()
-	if counter.counts == nil {
-		counter.counts = map[DeadlineUnsettled]uint64{}
+	if counter.unsettled == nil {
+		counter.unsettled = map[DeadlineUnsettled]uint64{}
 	}
-	counter.counts[DeadlineUnsettled{Model: model, Reason: reason}]++
+	counter.unsettled[DeadlineUnsettled{Model: model, Reason: reason}]++
 }
 
 // DeadlineUnsettledCounts is how many escrows the deadline rule narrated unsettled, by model and reason, for the metrics collector.
 func (m *Manager) DeadlineUnsettledCounts() map[DeadlineUnsettled]uint64 {
-	m.deadlineCounts.mu.Lock()
-	defer m.deadlineCounts.mu.Unlock()
-	return maps.Clone(m.deadlineCounts.counts)
+	m.deadlines.counts.mu.Lock()
+	defer m.deadlines.counts.mu.Unlock()
+	return maps.Clone(m.deadlines.counts.unsettled)
 }

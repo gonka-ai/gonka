@@ -12,6 +12,7 @@ import (
 	"devshard/cmd/gateway/funding"
 	"devshard/cmd/gateway/liquidity"
 	"devshard/cmd/gateway/store"
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -343,5 +344,45 @@ func TestTheDefaultConfigurationRunsThePlanner(t *testing.T) {
 
 	if txClient.createCalls != 2 {
 		t.Fatalf("CreateEscrow calls = %d, want the guarantee's 2 guard creates", txClient.createCalls)
+	}
+}
+
+type keyedSignerSource struct {
+	fakeSignerSource
+	missing string
+}
+
+func (k *keyedSignerSource) SignerFor(privateKeyEnv string) (*signing.Secp256k1Signer, error) {
+	if privateKeyEnv == k.missing {
+		return nil, errors.New("key not in the environment")
+	}
+	return k.fakeSignerSource.SignerFor(privateKeyEnv)
+}
+
+// Test flow:
+//  1. Plan a model with no other escrow and one active row of the current label whose key is not in the environment, the model's own key present.
+//  2. Assert the row counts unread, does not enter the plan, and the plan counts no full escrow and a guard shortfall of two, so it buys a replacement.
+//  3. Return the key and plan again, and assert the row enters the plan as an unread escrow.
+func TestAKeylessRowOfTheCurrentLabelIsNotFundedCapacity(t *testing.T) {
+	manager, testStore, _, _ := planningManager(t)
+	delete(testStore.devshards, "5")
+	testStore.devshards["9"] = store.DevshardRecord{EscrowID: "9", Model: "qwen", Active: true, RotationRole: roleRegular, RotationEpoch: 7, Amount: 999_900, PrivateKeyEnv: "GONE"}
+	signerSource := &keyedSignerSource{fakeSignerSource: fakeSignerSource{signer: testSigner(t)}, missing: "GONE"}
+	manager.signer = signerSource
+	rows, _ := testStore.ListDevshards(context.Background())
+	configuration := manager.config.Load()
+	models, _ := rotationModels(configuration.Rotation)
+
+	reading := manager.readModel(models[0], rows, nil, planningSnapshot(), configuration, manager.now())
+	decision := funding.Plan(reading.state)
+
+	if len(reading.state.Escrows) != 0 || reading.report.Counts[CountUnread] != 1 || decision.FullCount != 0 || decision.Shortfalls.Guard != 2 {
+		t.Fatalf("readModel() escrows = %+v unread = %d full = %d guard shortfall = %d, want none, 1, 0 and 2", reading.state.Escrows, reading.report.Counts[CountUnread], decision.FullCount, decision.Shortfalls.Guard)
+	}
+
+	signerSource.missing = ""
+	reading = manager.readModel(models[0], rows, nil, planningSnapshot(), configuration, manager.now())
+	if len(reading.state.Escrows) != 1 || !reading.state.Escrows[0].Unread {
+		t.Fatalf("readModel() with the key back escrows = %+v, want the row as one unread escrow", reading.state.Escrows)
 	}
 }

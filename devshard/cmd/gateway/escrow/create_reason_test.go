@@ -20,7 +20,7 @@ func TestEveryCreateNarratesTheReasonItWasMadeFor(t *testing.T) {
 		want   string
 	}{
 		{name: "a bridge temp", want: "bridge", create: func(manager *Manager) error {
-			return manager.fillToLabel(ctx, roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
+			return fillFromStore(t, manager, ctx, roleTemp, snapshot.EpochIndex, []ModelConfig{model}, func(ModelConfig) int { return 1 }, snapshot, nil)[0].err
 		}},
 		{name: "the operator's create", want: "operator", create: func(manager *Manager) error {
 			_, err := manager.CreateEscrow(ctx, model)

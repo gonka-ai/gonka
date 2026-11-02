@@ -96,6 +96,7 @@ func parkedRowOfEpoch(escrowID string, ownEpoch uint64) store.DevshardRecord {
 func concurrentSettlementManager(t *testing.T, testStore *fakeStore, source *stalledSettlementSource, operatorSettles *sync.WaitGroup) *Manager {
 	t.Helper()
 	manager := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},

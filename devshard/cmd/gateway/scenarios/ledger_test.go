@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"devshard/cmd/gateway/accounting"
 )
 
 // Test flow:
@@ -28,6 +30,36 @@ func TestAForcedSettleLeavesTheLedgerChargedAsTheChain(t *testing.T) {
 			}
 			if harness.ledgerComparisons == 0 {
 				return fmt.Errorf("the ledger match compared no ledger totals: the invariant passed by skipping")
+			}
+			return nil
+		}},
+	}
+	runStepsWith(t, spec, switchedToEpochEight)
+}
+
+// Test flow:
+//  1. Serve requests on the seeded escrow, let them finish, and move inside the settle margin so the idle escrow is settled through a rehydrated session.
+//  2. Assert the escrow settled.
+//  3. Assert the ledger counted the finalize nonce and left no nonce of the escrow unclassified.
+func TestASettledIdleEscrowLeavesNoNonceUnclassified(t *testing.T) {
+	spec := lastEpochSpec()
+	spec.steps = []harnessStep{
+		advance{by: 30 * time.Second},
+		sendRequests{promptBytes: 200, maxTokens: 64, count: 2},
+		advance{by: time.Minute},
+		moveInsideTheMargin(),
+		advance{by: 3 * time.Minute},
+		expectThat{label: "the ledger classified every nonce of the settled escrow", verify: func(harness *gatewayHarness) error {
+			if record, _ := harness.chain.escrowRecord(parseEscrowID(harness.seededIDs[0])); !record.settled {
+				return fmt.Errorf("the seeded escrow did not settle")
+			}
+			var unclassified, finalized uint64
+			for _, record := range harness.currentGateway().Nonces().Book().Query(accounting.QueryFilter{}) {
+				unclassified += record.Unobserved
+				finalized += record.ServiceNonces[accounting.ServiceFinalize]
+			}
+			if unclassified != 0 || finalized == 0 {
+				return fmt.Errorf("unclassified %d, finalize nonces %d, want none unclassified and a finalize counted", unclassified, finalized)
 			}
 			return nil
 		}},

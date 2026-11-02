@@ -30,7 +30,7 @@ type RaceOutcome struct {
 	InputTokensSource    filters.InputTokensSource
 	InputTokensFromBytes uint64
 	OutputTokens         uint64
-	Decision             string
+	Decision             StartReason
 	ClientStream         bool
 
 	ModelContextLength uint64
@@ -49,8 +49,8 @@ type AttemptOutcome struct {
 	HostIdx     int
 	HostLabel   string
 	Nonce       uint64
-	Role        string
-	StartReason string
+	Role        AttemptRole
+	StartReason StartReason
 	Suspicious  bool
 
 	StartedAt    time.Time
@@ -159,12 +159,11 @@ func (a AttemptOutcome) elapsed() time.Duration {
 }
 
 func (o RaceOutcome) WinnerNonceFinished() (finished, crowned bool) {
-	for _, attempt := range o.Attempts {
-		if o.IsWinner(attempt) {
-			return attempt.NonceFinished, true
-		}
+	winner := o.Winner()
+	if winner == nil {
+		return false, false
 	}
-	return false, false
+	return winner.NonceFinished, true
 }
 
 // TimePerOutputToken starts at the first content chunk, so prefill is not charged to decode speed.

@@ -48,7 +48,7 @@ type warmupNarrator interface {
 	WarmupFoundNoNonce(escrowID string, probeErr error)
 	EscrowWarmed(escrowID, model string, nonce uint64, served bool, catchUpErr error)
 	WarmupLedgerOpenFailed(escrowID string, err error)
-	WarmupVoted(escrowID string, nonce uint64, action, reason string)
+	WarmupVoted(escrowID string, nonce uint64, action engine.TimeoutAction, reason engine.TimeoutReason)
 }
 
 // Epochs stamps the escrow with the epoch the ledger first saw it in, exactly as its own sweep would.

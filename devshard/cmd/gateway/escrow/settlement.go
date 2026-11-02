@@ -16,7 +16,7 @@ import (
 
 // ErrUnknownEscrow means the registry has no row for the escrow, ErrEscrowPruned that the chain pruned it after its settlement window, ErrEscrowSettledOnChain that the chain already holds its settlement. See README.md, "Settlement and retirement".
 var (
-	ErrDevshardBusy = errors.New("devshard busy")
+	ErrDevshardBusy = chain.ErrDevshardBusy
 
 	ErrUnknownEscrow = errors.New("unknown escrow")
 
@@ -27,7 +27,11 @@ var (
 	ErrEscrowSettledOnChain = errors.New("escrow already settled on chain")
 )
 
-type parkNarration bool
+type (
+	parkNarration bool
+
+	retirementCause bool
+)
 
 // See escrows.md, "Settlement and retirement".
 const (
@@ -37,6 +41,9 @@ const (
 
 	narratePark       parkNarration = true
 	skipParkNarration parkNarration = false
+
+	retireOrdinary    retirementCause = false
+	retireForNonceCap retirementCause = true
 )
 
 // parkedToSettle is the settlement order: the nearest deadline first, then the escrow id.
@@ -68,7 +75,7 @@ func (m *Manager) settleParked(ctx context.Context, parked []pendingSettle) erro
 	for _, settle := range admitted {
 		settling.Go(func() {
 			defer settle.leave()
-			_, err := m.settleAndDrop(ctx, settle.record, settle.urgent)
+			_, err := m.settleAndDrop(ctx, settle.record, settle.urgent, retireOrdinary)
 			if err == nil || nothingLeftToSettle(err) || deferredRetire(err) || errors.Is(err, store.ErrDevshardNotFound) {
 				return
 			}
@@ -84,13 +91,13 @@ func (m *Manager) settleParked(ctx context.Context, parked []pendingSettle) erro
 func (m *Manager) admitParked(parked []pendingSettle) []admittedSettle {
 	var admitted []admittedSettle
 	for _, pending := range parked {
-		if m.settlements.has(pending.record.EscrowID) {
+		if m.settling.inFlight.has(pending.record.EscrowID) {
 			continue
 		}
 		urgent := pending.deadline.inMargin
-		slots, limit := &m.budgetedSettles, pendingSettleBudget
+		slots, limit := &m.settling.budgeted, pendingSettleBudget
 		if urgent {
-			slots, limit = &m.urgentSettles, urgentSettleBudget
+			slots, limit = &m.settling.urgent, urgentSettleBudget
 		}
 		if leave, entered := slots.enterWithin(pending.record.EscrowID, limit); entered {
 			admitted = append(admitted, admittedSettle{record: pending.record, urgent: urgent, leave: leave})
@@ -112,31 +119,28 @@ type pendingSettle struct {
 
 // Settle settles one escrow on demand, on the same path the rotation lifecycle uses; force crosses the busy check alone. See ../docs/operations.md.
 func (m *Manager) Settle(ctx context.Context, escrowID string, force bool) (chain.SettleEscrowResult, error) {
-	devshards, err := m.store.ListDevshards(ctx)
+	record, found, err := m.store.Devshard(ctx, escrowID)
 	if err != nil {
-		return chain.SettleEscrowResult{}, fmt.Errorf("listing devshards: %w", err)
+		return chain.SettleEscrowResult{}, fmt.Errorf("reading devshard %s: %w", escrowID, err)
 	}
-	for _, record := range devshards {
-		if record.EscrowID != escrowID {
-			continue
-		}
-		return m.settleAndDrop(ctx, record, force)
+	if !found {
+		return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", escrowID, ErrUnknownEscrow)
 	}
-	return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", escrowID, ErrUnknownEscrow)
+	return m.settleAndDrop(ctx, record, force, retireOrdinary)
 }
 
 func (m *Manager) park(ctx context.Context, escrowID string) error {
-	return m.parkAs(ctx, escrowID, narratePark)
+	return m.parkAs(ctx, escrowID, narratePark, retireOrdinary)
 }
 
 // parkAs writes inactive and pending in one statement, then stops routing -- the order the busy check relies on.
-func (m *Manager) parkAs(ctx context.Context, escrowID string, narration parkNarration) error {
+func (m *Manager) parkAs(ctx context.Context, escrowID string, narration parkNarration, cause retirementCause) error {
 	if err := m.store.WithRetry(ctx, func() error {
 		return m.store.ParkForSettlement(ctx, escrowID)
 	}); err != nil {
 		return fmt.Errorf("parking escrow %s for settlement: %w", escrowID, err)
 	}
-	return m.stopRouting(ctx, escrowID, narration)
+	return m.stopRouting(escrowID, narration, cause)
 }
 
 // parkIfServing parks only a serving escrow and reports whether this call parked it. See README.md, "Depletion marks".
@@ -152,18 +156,18 @@ func (m *Manager) parkIfServing(ctx context.Context, escrowID string) (bool, err
 	if !parked {
 		return false, nil
 	}
-	return true, m.stopRouting(ctx, escrowID, narratePark)
+	return true, m.stopRouting(escrowID, narratePark, retireOrdinary)
 }
 
-func (m *Manager) stopRouting(ctx context.Context, escrowID string, narration parkNarration) error {
+func (m *Manager) stopRouting(escrowID string, narration parkNarration, cause retirementCause) error {
 	retire := m.settlementSource.Retire
-	if capped, ok := m.settlementSource.(nonceCapRetirer); ok && atNonceCap(ctx) {
+	if capped, ok := m.settlementSource.(nonceCapRetirer); ok && cause == retireForNonceCap {
 		retire = capped.RetireAtNonceCap
 	}
 	if err := retire(escrowID); err != nil {
 		return fmt.Errorf("retiring escrow %s from routing: %w", escrowID, err)
 	}
-	if narration == narratePark && m.narrator != nil {
+	if narration == narratePark {
 		m.narrator.EscrowParked(escrowID)
 	}
 	return nil
@@ -178,17 +182,17 @@ func parkNarrationOf(record store.DevshardRecord) parkNarration {
 
 // settle clears SettlementPending only once the broadcast is confirmed. See README.md, "Settlement and retirement".
 func (m *Manager) settle(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
-	leave, busy := m.settlements.enter(record.EscrowID)
+	leave, busy := m.settling.inFlight.enter(record.EscrowID)
 	if busy {
 		return chain.SettleEscrowResult{}, ErrSettlementInFlight
 	}
 	defer leave()
-	return m.settleEntered(ctx, record, force)
+	return m.settleEntered(ctx, record, force, retireOrdinary)
 }
 
-func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
+func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord, force bool, cause retirementCause) (chain.SettleEscrowResult, error) {
 	// Parked before the reconciliation: the caller deletes the row on success, and a row that is gone can no longer un-publish the escrow.
-	if err := m.parkAs(ctx, record.EscrowID, parkNarrationOf(record)); err != nil {
+	if err := m.parkAs(ctx, record.EscrowID, parkNarrationOf(record), cause); err != nil {
 		return chain.SettleEscrowResult{}, err
 	}
 
@@ -235,9 +239,7 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 		}
 		return chain.SettleEscrowResult{}, failure
 	}
-	if m.narrator != nil {
-		m.narrator.EscrowSettled(record.EscrowID, record.Model, result.TxHash, result.Settler)
-	}
+	m.narrator.EscrowSettled(record.EscrowID, record.Model, result.TxHash, result.Settler)
 
 	if err := m.store.WithRetry(ctx, func() error {
 		return m.store.SetDevshardSettlementPending(ctx, record.EscrowID, false)
@@ -263,10 +265,10 @@ func (m *Manager) sweepBeforeFinalize(ctx context.Context, escrowID string, forc
 	if !force && due >= budget && applied > 0 {
 		return fmt.Errorf("%w: escrow %s spent its timeout sweep budget with votes still landing", ErrDevshardBusy, escrowID)
 	}
-	if !force && failed > 0 && ctx.Err() == nil && m.sweepRetries.retrying(escrowID, m.now()) {
+	if !force && failed > 0 && ctx.Err() == nil && m.settling.sweepRetries.retrying(escrowID, m.now()) {
 		return fmt.Errorf("%w: escrow %s failed %d timeout votes; finalize waits to retry them", ErrDevshardBusy, escrowID, failed)
 	}
-	m.sweepRetries.forget(escrowID)
+	m.settling.sweepRetries.forget(escrowID)
 	return nil
 }
 
@@ -288,13 +290,13 @@ func nothingLeftToSettle(err error) bool {
 }
 
 // settleAndDrop drops the row once nothing is left to settle: after a confirmed settlement, or once the chain has pruned or already settled the escrow.
-func (m *Manager) settleAndDrop(ctx context.Context, record store.DevshardRecord, force bool) (chain.SettleEscrowResult, error) {
-	leave, busy := m.settlements.enter(record.EscrowID)
+func (m *Manager) settleAndDrop(ctx context.Context, record store.DevshardRecord, force bool, cause retirementCause) (chain.SettleEscrowResult, error) {
+	leave, busy := m.settling.inFlight.enter(record.EscrowID)
 	if busy {
 		return chain.SettleEscrowResult{}, ErrSettlementInFlight
 	}
 	defer leave()
-	result, err := m.settleEntered(ctx, record, force)
+	result, err := m.settleEntered(ctx, record, force, cause)
 	if err != nil && !nothingLeftToSettle(err) {
 		return result, err
 	}
@@ -325,9 +327,7 @@ func (m *Manager) alreadySettled(ctx context.Context, record store.DevshardRecor
 	case !succeeded:
 		return "", false, m.clearSettleTxHash(ctx, record.EscrowID) // committed and rejected: retry is right
 	}
-	if m.narrator != nil {
-		m.narrator.SettlementReconciled(record.EscrowID, hash)
-	}
+	m.narrator.SettlementReconciled(record.EscrowID, hash)
 	return hash, true, nil
 }
 
@@ -356,12 +356,16 @@ func numericEscrowID(escrowID string) uint64 {
 
 // retire honors the model's settlement policy. See README.md, "Settlement and retirement".
 func (m *Manager) retire(ctx context.Context, record store.DevshardRecord) error {
+	return m.retireFor(ctx, record, retireOrdinary)
+}
+
+func (m *Manager) retireFor(ctx context.Context, record store.DevshardRecord, cause retirementCause) error {
 	// Parked only: the row names the sole key that can settle this escrow later, so it outlives retirement.
 	if !newSettlementPolicy(m.config.Load().Rotation).settlesAtRetirement(record.Model) {
-		return m.park(ctx, record.EscrowID)
+		return m.parkAs(ctx, record.EscrowID, narratePark, cause)
 	}
 
-	if _, err := m.settleAndDrop(ctx, record, false); err != nil && !nothingLeftToSettle(err) {
+	if _, err := m.settleAndDrop(ctx, record, false, cause); err != nil && !nothingLeftToSettle(err) {
 		return err // busy, deduped or broadcast failure: stays registered, inactive, pending -- not deleted.
 	}
 	return nil
@@ -372,9 +376,7 @@ func (m *Manager) deleteSettled(ctx context.Context, escrowID string) error {
 	if err := m.store.WithRetry(ctx, func() error { return m.store.DeleteDevshard(ctx, escrowID) }); err != nil {
 		return fmt.Errorf("deleting settled escrow %s: %w", escrowID, err)
 	}
-	m.sweepRetries.forget(escrowID)
-	if m.narrator != nil {
-		m.narrator.SettledRecordDropped(escrowID)
-	}
+	m.settling.sweepRetries.forget(escrowID)
+	m.narrator.SettledRecordDropped(escrowID)
 	return nil
 }

@@ -28,7 +28,7 @@ type scriptedTimeoutHandler struct {
 }
 
 func (h *scriptedTimeoutHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
-	return TimeoutKindExecution, time.Time{}
+	return string(TimeoutKindExecution), time.Time{}
 }
 
 func (h *scriptedTimeoutHandler) FinishTxFor(uint64) []byte { return h.finishTx }
@@ -54,7 +54,7 @@ func TestSessionTimeoutsReadsAPostedVoteThroughTheHandlersAppliedFlag(t *testing
 		name       string
 		result     user.TimeoutResult
 		err        error
-		wantVote   string
+		wantVote   TimeoutKind
 		wantDetail string
 		wantFailed bool
 	}{
@@ -525,7 +525,7 @@ func TestSettleTimeoutsSeparatesAGoneEscrowFromACollectionFailure(t *testing.T) 
 	cases := []struct {
 		name          string
 		escrowMissing bool
-		wantReason    string
+		wantReason    TimeoutReason
 	}{
 		{name: "the hosts still have the escrow", wantReason: TimeoutReasonCollectionError},
 		{name: "the hosts have dropped the escrow", escrowMissing: true, wantReason: TimeoutReasonEscrowGone},

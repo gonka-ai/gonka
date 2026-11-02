@@ -64,7 +64,7 @@ Old tests and fixtures become behavioural contracts; a golden-parity harness cov
 | # | question | decision |
 |---|---|---|
 | 1 | compatibility | external HTTP API preserved; environment, configuration and state layout redesigned |
-| 2 | KV-cache affinity | extension point (`AffinityHint`) only |
+| 2 | KV-cache affinity | closed as unreachable |
 | 3 | single-escrow mode | dropped; one escrow is a pool of one, reachable at `/devshard/{id}/…` |
 | 4 | configuration | immutable snapshot from `defaults ← environment ← admin overrides`, swapped atomically; no mutable globals |
 | 5 | approach | full rewrite including the race engine |
@@ -128,6 +128,6 @@ Equivalence was proven before the numbers were read: 84 body-and-intent combinat
 
 ## 10. Open items
 
-- **KV-cache affinity.** Closed as unreachable, not deferred. The protocol addresses a *participant*, never a node behind it, so the most a gateway can promise is affinity to the participant; which of that participant's nodes serves the request is decided by its own router, which this side neither sees nor addresses. `AffinityHint` stays an empty extension point until the protocol carries node identity.
+- **KV-cache affinity.** Closed as unreachable, not deferred. The protocol addresses a *participant*, never a node behind it, so the most a gateway can promise is affinity to the participant; which of that participant's nodes serves the request is decided by its own router, which this side neither sees nor addresses.
 - **Cross-shard coordination of the network concurrency share.** Closed as a protocol limit, not deferred. A shard sees its own escrows and nothing else, so no gateway can divide a network-wide concurrency share without the protocol carrying one; measurement also shows it is not the binding constraint at current load.
 - **`encoding/json/v2` for the response strip.** Measured, not adopted — see section 8. Revisit when the package ships without `GOEXPERIMENT`.

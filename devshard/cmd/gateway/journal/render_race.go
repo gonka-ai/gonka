@@ -15,7 +15,7 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 	case engine.RaceStepNonceCommitted:
 		lines.Info("nonce committed",
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Nonce, step.Nonce,
-			logkey.Host, logkey.ShortHost(step.Participant), logkey.Slot, step.Slot, logkey.Role, step.Role, logkey.Reason, step.Reason)
+			logkey.Host, logkey.ShortHost(step.Participant), logkey.Slot, step.Slot, logkey.Role, string(step.Role), logkey.Reason, step.Reason)
 	case engine.RaceStepEscalationUnfilled:
 		lines.Info("escalation unfilled",
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Reason, step.Reason,
@@ -29,7 +29,7 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 	case engine.RaceStepNonceStranded:
 		lines.Warn("nonce stranded",
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID,
-			logkey.Nonce, step.Nonce, logkey.Host, logkey.ShortHost(step.Participant), logkey.Role, step.Role)
+			logkey.Nonce, step.Nonce, logkey.Host, logkey.ShortHost(step.Participant), logkey.Role, string(step.Role))
 	case engine.RaceStepHostBlocked:
 		lines.Warn("host blocked for state divergence",
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID,
@@ -44,6 +44,8 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID,
 			logkey.Nonce, step.Nonce, logkey.Host, logkey.ShortHost(step.Participant),
 			logkey.FinishLagMS, step.FinishLag.Milliseconds())
+	default:
+		lines.Error("race step the journal has no line for", logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Kind, int(step.Kind))
 	}
 }
 

@@ -273,7 +273,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 2. the warmup prober starts;
 3. the host pings start — observability alone, and they read the live set per wave, so starting before anything is published costs nothing ([`hostping/README.md`](../hostping/README.md));
 4. `seedDevshards` applies `escrows_json` to the store — a seeded escrow that names no key variable is **refused**, not silently accepted. It leaves a row it already holds alone, but settlement deletes the row of an escrow it settled, so on every later boot the seed writes that escrow back as active;
-5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has, or whose key is missing, is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose session would not open for any other reason stays unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 8 does once the chain lists the participant again;
+5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 8 does once the chain lists the participant again;
 6. the nonce ledger starts, so nothing above it files a fact into a sink that is not yet reading;
 7. the escrow lifecycle manager starts its 15 s tick;
 8. the store's write notifications start republishing escrows on change, and on a timer while step 5 left an escrow unopened; the same loop probes the chain for participants absent when an escrow's session opened, and reopens that escrow once one is listed again, all of a model's such escrows in the same probe while another escrow of the model with no dead slot serves it ([routing.md](./routing.md), "A slot the chain did not list at open");
@@ -454,6 +454,38 @@ An escrow hands out nonces one at a time, so its throughput is the inverse of th
 ### Cardinality rules
 
 Route labels are **templated** (`/devshard/{id}/…`), never per-escrow, so cardinality does not grow with the escrow set. `/v1/admin/devshards/import` reports under the `/v1/admin/devshards/{id}` label so it lands in the same panel. A recorder keeps every label value it writes non-empty (`metrics/labels.go`, `metricLabel`): an empty label silently merges unrelated series, and a status with no recoverable code reports as `0` (`metrics/vocabulary.go`, `statusNoCode`) rather than as blank. A collector, by contrast, passes its source's values through unchanged, empty ones included.
+
+### Other families
+
+The families no question above needs, with the help text each one exports.
+
+| family | what it reports |
+| --- | --- |
+| `devshard_gateway_cache_entries` | Replies the response cache currently holds. |
+| `devshard_gateway_cache_misses_total` | Requests the response cache could not serve. Against hits this is the only measure of whether the cache earns its memory. |
+| `devshard_gateway_capacity_weights_unobserved_by_model` | 1 while escrow scoring for a model runs on the membership-share fallback because the chain has reported no weights. |
+| `devshard_gateway_captured_requests_failed_total` | Captures the sink could not write: the directory is unwritable, out of space, or gone. Distinct from refused, which is the byte cap doing its job. |
+| `devshard_gateway_captured_requests_refused_total` | Captures refused because the directory is at its byte cap. Nothing evicts capture files, so a rising count means capture is off until an operator empties the directory. |
+| `devshard_gateway_captured_requests_total` | Requests written to the capture directory. |
+| `devshard_gateway_chain_block_height` | Latest chain block height the observer published. |
+| `devshard_gateway_chain_block_reason` | Current request-block reason (1 for the active one). |
+| `devshard_gateway_chain_epoch_index` | Latest epoch index the observer published. |
+| `devshard_gateway_chain_epoch_switch_block_height` | Block height at which the current epoch switches. |
+| `devshard_gateway_chain_max_nonce` | Escrow max-nonce parameter; 0 means not yet fetched. |
+| `devshard_gateway_effective_max_input_tokens_in_flight` | Configured input-token cap, before per-model overrides and capacity scaling. |
+| `devshard_gateway_enforced_max_input_tokens_by_model` | Input-token cap a model's requests are judged against, after its overrides and capacity scaling. |
+| `devshard_gateway_escrow_drain_close_failures_total` | Drained escrows whose snapshot flush or session close failed. |
+| `devshard_gateway_escrow_weight` | Per-escrow effective host weight used by the capacity-aware picker. |
+| `devshard_gateway_host_seconds_per_output_token` | Slow-quartile decode cost per output token, measured from the first content chunk. |
+| `devshard_gateway_participant_first_content_seconds` | Time from inference send until first content by participant and model. |
+| `devshard_gateway_participant_inter_chunk_seconds` | Mean silence between streamed chunks within one attempt, by participant and model. |
+| `devshard_gateway_participant_max_inter_chunk_seconds` | Longest silence between two streamed chunks within one attempt, by participant and model. |
+| `devshard_gateway_participant_missed_deadlines_total` | Total receipt and first-token deadlines a participant missed on a model, each of which narrowed its window. |
+| `devshard_gateway_participant_output_tokens_total` | Output tokens a participant generated on a model: the host's usage completion_tokens, else the logprob entries it streamed. |
+| `devshard_gateway_participant_prefill_seconds_per_input_token` | Receipt-to-first-content time divided by input tokens, by participant and model. |
+| `devshard_gateway_participant_receipt_seconds` | Time from inference send until receipt confirmation by participant and model. |
+| `devshard_gateway_participant_total_attempt_seconds` | Total inference attempt time by participant and model. |
+| `devshard_gateway_served_bindings_total` | Total served streams checked against the Finish their host signed, by verdict. |
 
 ### Metric changes
 

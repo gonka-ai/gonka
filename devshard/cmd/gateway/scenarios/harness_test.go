@@ -46,7 +46,7 @@ type modelSpec struct {
 
 type seededEscrow struct {
 	amount uint64
-	role   string
+	role   store.Role
 	parked bool
 	model  string
 }

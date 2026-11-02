@@ -7,7 +7,7 @@ import (
 
 // OnBalanceExhausted marks an escrow for the next tick, so this hook does no I/O; only a nonce cap is narrated, since nothing replaces a balance mark.
 func (m *Manager) OnBalanceExhausted(escrowID string, reason scheduler.ExhaustionReason) {
-	if !m.depleted.mark(escrowID, reason) || m.narrator == nil || reason != scheduler.ExhaustionNonceCap {
+	if !m.depleted.mark(escrowID, reason) || reason != scheduler.ExhaustionNonceCap {
 		return
 	}
 	m.narrator.EscrowMarkedForReplacement(escrowID, string(reason))

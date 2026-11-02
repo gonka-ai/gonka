@@ -29,8 +29,8 @@ func staleSnapshot(height int64, updatedAt time.Time) chain.PhaseSnapshot {
 func TestAFreshSnapshotIsNeverProjected(t *testing.T) {
 	now := time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 	manager, _, narrator := staleManager(t, now)
-	manager.pace.observe(1_000, now.Add(-time.Hour))
-	manager.pace.observe(2_600, now.Add(-time.Hour+time.Second))
+	manager.deadlines.pace.observe(1_000, now.Add(-time.Hour))
+	manager.deadlines.pace.observe(2_600, now.Add(-time.Hour+time.Second))
 
 	projected := manager.projectStale(staleSnapshot(2_000, now.Add(-30*time.Second)))
 
@@ -58,8 +58,8 @@ func TestAStaleSnapshotReadsDeadlinesAtTheProjectedHeight(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			manager, _, narrator := staleManager(t, now)
 			if testCase.blockTime > 0 {
-				manager.pace.observe(1_000, now.Add(-2*time.Hour))
-				manager.pace.observe(1_200, now.Add(-2*time.Hour+200*testCase.blockTime))
+				manager.deadlines.pace.observe(1_000, now.Add(-2*time.Hour))
+				manager.deadlines.pace.observe(1_200, now.Add(-2*time.Hour+200*testCase.blockTime))
 			}
 			snapshot := staleSnapshot(2_000, now.Add(-testCase.staleFor))
 

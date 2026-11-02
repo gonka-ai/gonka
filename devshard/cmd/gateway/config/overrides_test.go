@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"devshard/cmd/gateway/env"
 )
 
 // Test flow:
@@ -14,9 +16,8 @@ func TestOverridesJSONRoundTrip(t *testing.T) {
 	modelMaxConcurrentRequests := int64(64)
 	modelMaxInputTokensInFlight := int64(8192)
 	original := Overrides{
-		DefaultMaxTokens: &maxTokens,
-		Disabled:         &disabled,
-		ModelAccess:      map[string]string{"model-a": "api_key"},
+		Tunables:    env.Tunables{DefaultMaxTokens: &maxTokens, Disabled: &disabled},
+		ModelAccess: map[string]string{"model-a": "api_key"},
 		ModelLimits: map[string]ModelLimits{
 			"model-a": {
 				DefaultMaxTokens:       1024,
@@ -77,5 +78,29 @@ func TestParseOverridesOfEmptyObjectIsEmpty(t *testing.T) {
 	}
 	if decoded.DefaultMaxTokens != nil || decoded.Disabled != nil || len(decoded.ModelAccess) != 0 {
 		t.Fatalf("ParseOverrides(empty) = %+v, want zero value", decoded)
+	}
+}
+
+// Test flow:
+//  1. Parse a settings body naming a shared tunable and an admin-only field.
+//  2. Assert both land, and encoding writes the tunable as a top-level key rather than under the embedded struct.
+//  3. Assert an unknown field is still refused.
+func TestSharedTunablesStayFlatInTheSettingsJSON(t *testing.T) {
+	parsed, err := ParseOverrides([]byte(`{"max_tokens_cap":7,"fallback_max_model_len":9}`))
+	if err != nil {
+		t.Fatalf("ParseOverrides = %v", err)
+	}
+	if parsed.MaxTokensCap == nil || *parsed.MaxTokensCap != 7 || parsed.FallbackMaxModelLen == nil || *parsed.FallbackMaxModelLen != 9 {
+		t.Fatalf("parsed = %+v, want both fields set", parsed)
+	}
+	encoded, err := parsed.EncodeOverrides()
+	if err != nil {
+		t.Fatalf("EncodeOverrides = %v", err)
+	}
+	if want := `{"max_tokens_cap":7,"fallback_max_model_len":9}`; string(encoded) != want {
+		t.Fatalf("encoded = %s, want %s", encoded, want)
+	}
+	if _, err := ParseOverrides([]byte(`{"max_tokens_capp":7}`)); err == nil {
+		t.Fatal("ParseOverrides accepted an unknown field")
 	}
 }

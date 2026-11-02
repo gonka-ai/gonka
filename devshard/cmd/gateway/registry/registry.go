@@ -33,6 +33,7 @@ type Deps struct {
 	Narrator         escrowNarrator
 	Retiring         escrowObserver
 	Closing          escrowObserver
+	Rehydrated       escrowObserver
 	ServedBindings   servedBindingObserver
 	PeerRPC          peerRPCAdoption
 	Now              func() time.Time
@@ -58,6 +59,7 @@ type Registry struct {
 	narrator         escrowNarrator
 	retiring         escrowObserver
 	closingObserver  escrowObserver
+	rehydrated       escrowObserver
 	servedBindings   servedBindingObserver
 	peerRPC          peerRPCAdoption
 	now              func() time.Time
@@ -94,6 +96,7 @@ func New(deps Deps) *Registry {
 		narrator:         deps.Narrator,
 		retiring:         deps.Retiring,
 		closingObserver:  deps.Closing,
+		rehydrated:       deps.Rehydrated,
 		servedBindings:   deps.ServedBindings,
 		peerRPC:          deps.PeerRPC,
 		now:              deps.Now,
@@ -370,21 +373,6 @@ func (r *Registry) claimCloseLocked(entry *escrowEntry) bool {
 
 // DrainCloseFailures counts a flush or close failure with no caller left to return it to.
 func (r *Registry) DrainCloseFailures() int64 { return r.drainCloseFailures.Load() }
-
-// IsBusy satisfies escrow.SettlementSource: a settlement must not claim funds while nonces are still being spent.
-func (r *Registry) IsBusy(escrowID string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if entry, known := r.live.Load().byID[escrowID]; known && entry.busyOrSwept() {
-		return true
-	}
-	for entry := range r.draining {
-		if entry.id == escrowID && entry.busyOrSwept() {
-			return true
-		}
-	}
-	return false
-}
 
 // ReserveTaken turns a reserve into a regular escrow at once; the manager rewrites the row and funds the next reserve.
 func (r *Registry) ReserveTaken(escrowID string) {

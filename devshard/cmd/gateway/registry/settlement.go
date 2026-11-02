@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	"devshard/cmd/gateway/chain"
-	"devshard/cmd/gateway/escrow"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/types"
@@ -27,11 +26,14 @@ func (r *Registry) Finalize(ctx context.Context, escrowID string) error {
 
 func (r *Registry) withServingSession(ctx context.Context, escrowID string, work func(EscrowSession) error) error {
 	if r.chainMaxNonce.Load() == unknownChainMaxNonce {
-		return fmt.Errorf("%w: escrow %s waits for the chain max_nonce before it is settled", escrow.ErrDevshardBusy, escrowID)
+		return fmt.Errorf("%w: escrow %s waits for the chain max_nonce before it is settled", chain.ErrDevshardBusy, escrowID)
 	}
 	if session, release, held := r.HoldSettlement(escrowID); held {
 		defer release()
 		return work(session)
+	}
+	if r.closeInProgress(escrowID) {
+		return fmt.Errorf("%w: escrow %s is closing its session", chain.ErrDevshardBusy, escrowID)
 	}
 	if r.servingSessions == nil {
 		return fmt.Errorf("escrow %s: no serving session factory", escrowID)
@@ -40,7 +42,17 @@ func (r *Registry) withServingSession(ctx context.Context, escrowID string, work
 	if err != nil {
 		return fmt.Errorf("rehydrating serving session for escrow %s: %w", escrowID, err)
 	}
+	if r.rehydrated != nil {
+		r.rehydrated(escrowID, session)
+	}
 	return errors.Join(work(session), session.Close())
+}
+
+func (r *Registry) closeInProgress(escrowID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	entry, known := r.settlementEntryLocked(escrowID)
+	return known && entry.closeClaimed
 }
 
 func (r *Registry) openServingSession(ctx context.Context, escrowID string) (EscrowSession, error) {
@@ -145,12 +157,12 @@ func settlementHostStats(perSlot map[uint32]*types.HostStats) []chain.Settlement
 	for _, slotID := range sortedKeys(perSlot) {
 		hostStats := perSlot[slotID]
 		stats = append(stats, chain.SettlementHostStat{
-			SlotID:               uint64(slotID),
-			Missed:               uint64(hostStats.Missed),
-			Invalid:              uint64(hostStats.Invalid),
+			SlotID:               slotID,
+			Missed:               hostStats.Missed,
+			Invalid:              hostStats.Invalid,
 			Cost:                 hostStats.Cost,
-			RequiredValidations:  uint64(hostStats.RequiredValidations),
-			CompletedValidations: uint64(hostStats.CompletedValidations),
+			RequiredValidations:  hostStats.RequiredValidations,
+			CompletedValidations: hostStats.CompletedValidations,
 		})
 	}
 	return stats

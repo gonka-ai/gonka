@@ -314,7 +314,7 @@ func TestSnapshotReportsTimePerOutputTokenP75PerPair(t *testing.T) {
 //  1. Build a tracker.
 //  2. Record one fewer sample than the minimum window for a single host.
 //  3. Assert the snapshot has exactly one tracked pair.
-//  4. Assert that pair's TimePerOutputToken reports 0, matching `TimePerOutputTokenP75`'s own refusal below the minimum.
+//  4. Assert that pair's TimePerOutputToken reports 0, matching the decode window's own refusal below the minimum.
 func TestSnapshotReportsZeroTimePerOutputTokenBelowTheMinimumWindow(t *testing.T) {
 	tracker := newTestTracker(testPerf(), fixedNow(testEpoch))
 	for range latencyWindowMinimum - 1 {
@@ -395,36 +395,9 @@ func TestTrackerConcurrentRecordAndQueryNoRace(t *testing.T) {
 
 // Test flow:
 //  1. Build a tracker.
-//  2. Record one fewer sample than the minimum window with a 20ms decode latency.
-//  3. Assert `TimePerOutputTokenP75` reports unknown.
-//  4. Record one more sample to fill the window.
-//  5. Assert `TimePerOutputTokenP75` now reports known and returns 20ms.
-func TestTimePerOutputTokenP75NeedsAFullEnoughWindow(t *testing.T) {
-	tracker := newTestTracker(testPerf(), fixedNow(time.Unix(1700000000, 0)))
-
-	for range latencyWindowMinimum - 1 {
-		tracker.RecordSample(Sample{ParticipantKey: "host", Model: "qwen", Responsive: true, TimePerOutputToken: 20 * time.Millisecond})
-	}
-	if _, ok := tracker.TimePerOutputTokenP75("host", "qwen"); ok {
-		t.Fatal("a quantile was reported before the window held enough samples")
-	}
-
-	tracker.RecordSample(Sample{ParticipantKey: "host", Model: "qwen", Responsive: true, TimePerOutputToken: 20 * time.Millisecond})
-
-	got, ok := tracker.TimePerOutputTokenP75("host", "qwen")
-	if !ok {
-		t.Fatal("the window filled and still reported nothing")
-	}
-	if got != 20*time.Millisecond {
-		t.Fatalf("TimePerOutputTokenP75() = %v, want 20ms", got)
-	}
-}
-
-// Test flow:
-//  1. Build a tracker.
 //  2. Fill the latency window for "quick" (10ms decode latency) and "slow" (20ms decode latency), both on model qwen.
-//  3. Assert `TimePerOutputTokenP75` reports 10ms for quick and 20ms for slow.
-func TestTimePerOutputTokenP75SeparatesASlowDecoderFromAFastOne(t *testing.T) {
+//  3. Assert the decode p75 reports 10ms for quick and 20ms for slow.
+func TestTheDecodeP75SeparatesASlowDecoderFromAFastOne(t *testing.T) {
 	tracker := newTestTracker(testPerf(), fixedNow(time.Unix(1700000000, 0)))
 
 	for range latencyWindowMinimum {
@@ -432,8 +405,8 @@ func TestTimePerOutputTokenP75SeparatesASlowDecoderFromAFastOne(t *testing.T) {
 		tracker.RecordSample(Sample{ParticipantKey: "slow", Model: "qwen", Responsive: true, TimePerOutputToken: 20 * time.Millisecond})
 	}
 
-	quick, _ := tracker.TimePerOutputTokenP75("quick", "qwen")
-	slow, _ := tracker.TimePerOutputTokenP75("slow", "qwen")
+	quick, _ := decodeP75Of(tracker, "quick")
+	slow, _ := decodeP75Of(tracker, "slow")
 
 	if quick != 10*time.Millisecond || slow != 20*time.Millisecond {
 		t.Fatalf("p75 quick = %v, slow = %v, want 10ms and 20ms", quick, slow)
@@ -443,7 +416,7 @@ func TestTimePerOutputTokenP75SeparatesASlowDecoderFromAFastOne(t *testing.T) {
 // Test flow:
 //  1. Build a tracker.
 //  2. Record enough measured samples with a 20ms decode latency to fill the window, then record four times as many unmeasured samples carrying no decode latency.
-//  3. Assert `TimePerOutputTokenP75` still reports the measured 20ms rather than a folded-in zero.
+//  3. Assert the decode p75 still reports the measured 20ms rather than a folded-in zero.
 func TestAnUnmeasuredDecodeIsNotFoldedIntoTheWindow(t *testing.T) {
 	const measured, unmeasured = latencyWindowMinimum, 4 * latencyWindowMinimum
 	tracker := newTestTracker(testPerf(), fixedNow(time.Unix(1700000000, 0)))
@@ -455,10 +428,10 @@ func TestAnUnmeasuredDecodeIsNotFoldedIntoTheWindow(t *testing.T) {
 		tracker.RecordSample(Sample{ParticipantKey: "host", Model: "qwen", Responsive: true})
 	}
 
-	got, ok := tracker.TimePerOutputTokenP75("host", "qwen")
+	got, ok := decodeP75Of(tracker, "host")
 
 	if !ok || got != 20*time.Millisecond {
-		t.Fatalf("TimePerOutputTokenP75() = (%v, %v), want (20ms, true): an unmeasured attempt entered the window", got, ok)
+		t.Fatalf("decode p75 = (%v, %v), want (20ms, true): an unmeasured attempt entered the window", got, ok)
 	}
 }
 
@@ -572,4 +545,13 @@ func TestServedMismatchesEjectAHostLikeStalls(t *testing.T) {
 	if !tracker.Ejected("participant-a", "model-a") {
 		t.Fatal("Ejected() after served mismatches at the consecutive-fail threshold = false, want true")
 	}
+}
+
+func decodeP75Of(tracker *Tracker, participant string) (time.Duration, bool) {
+	for _, state := range tracker.Snapshot() {
+		if state.Participant == participant {
+			return state.TimePerOutputToken, state.TimePerOutputToken > 0
+		}
+	}
+	return 0, false
 }

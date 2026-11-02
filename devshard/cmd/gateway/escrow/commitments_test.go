@@ -78,6 +78,7 @@ type fakeStore struct {
 	mu sync.Mutex
 
 	saveCommitmentErr     error
+	loadCommitmentsErr    error
 	upsertDevshardErr     error
 	upsertDevshardErrByID map[string]error
 	rotationRoleErrByID   map[string]error
@@ -124,6 +125,9 @@ func (f *fakeStore) LoadCommitments(ctx context.Context) ([]store.Commitment, er
 	if f.calls != nil {
 		f.calls.record("LoadCommitments")
 	}
+	if f.loadCommitmentsErr != nil {
+		return nil, f.loadCommitmentsErr
+	}
 	commitments := make([]store.Commitment, 0, len(f.commitments))
 	for _, c := range f.commitments {
 		commitments = append(commitments, c)
@@ -163,6 +167,19 @@ func (f *fakeStore) snapshotDevshard(escrowID string) (store.DevshardRecord, boo
 	defer f.mu.Unlock()
 	record, ok := f.devshards[escrowID]
 	return record, ok
+}
+
+func (f *fakeStore) Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error) {
+	records, err := f.ListDevshards(ctx)
+	if err != nil {
+		return store.DevshardRecord{}, false, err
+	}
+	for _, record := range records {
+		if record.EscrowID == escrowID {
+			return record, true, nil
+		}
+	}
+	return store.DevshardRecord{}, false, nil
 }
 
 func (f *fakeStore) ListDevshards(ctx context.Context) ([]store.DevshardRecord, error) {
@@ -309,7 +326,7 @@ func (f *fakeStore) DevshardSettleTxHash(_ context.Context, escrowID string) (st
 	return f.devshards[escrowID].SettleTxHash, f.settleTxAt[escrowID], nil
 }
 
-func (f *fakeStore) SetDevshardRotationRole(_ context.Context, escrowID, role string) error {
+func (f *fakeStore) SetDevshardRotationRole(_ context.Context, escrowID string, role store.Role) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.calls != nil {
@@ -369,7 +386,7 @@ func (f *fakeStore) SaveRotationStatus(ctx context.Context, s store.RotationStat
 	if f.saveRotationStatusErr != nil {
 		return f.saveRotationStatusErr
 	}
-	f.rotationStatuses[s.Model+"|"+s.Role] = s
+	f.rotationStatuses[s.Model+"|"+string(s.Role)] = s
 	return nil
 }
 
@@ -419,15 +436,16 @@ func TestCreateEscrowAbortsWhenIntentWriteFails(t *testing.T) {
 		},
 	}
 	m := &Manager{
-		tx:      txClient,
-		store:   testStore,
-		signer:  &fakeSignerSource{signer: testSigner(t)},
-		breaker: newCreateBreaker(),
-		now:     func() time.Time { return time.Unix(0, 0) },
+		narrator: silentNarrator{},
+		tx:       txClient,
+		store:    testStore,
+		signer:   &fakeSignerSource{signer: testSigner(t)},
+		breaker:  newCreateBreaker(),
+		now:      func() time.Time { return time.Unix(0, 0) },
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 5, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 5, createdForBridge, chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
 		t.Fatal("createFor() = nil, want error when the intent write fails")
 	}
 
@@ -454,15 +472,16 @@ func TestCreateEscrowSignerResolutionFailureNeverCallsChain(t *testing.T) {
 		},
 	}
 	m := &Manager{
-		tx:      txClient,
-		store:   newFakeStore(),
-		signer:  &fakeSignerSource{err: errors.New("key not configured")},
-		breaker: newCreateBreaker(),
-		now:     time.Now,
+		narrator: silentNarrator{},
+		tx:       txClient,
+		store:    newFakeStore(),
+		signer:   &fakeSignerSource{err: errors.New("key not configured")},
+		breaker:  newCreateBreaker(),
+		now:      time.Now,
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MISSING_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 5, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 5, createdForBridge, chain.PhaseSnapshot{EpochIndex: 5, BlockHeight: 100}); err == nil {
 		t.Fatal("createFor() = nil, want error when signer resolution fails")
 	}
 	if txClient.createCalls != 0 {
@@ -492,15 +511,16 @@ func TestCreateEscrowHappyPathPersistsDevshardAndClearsCommitment(t *testing.T) 
 	}
 	signerSource := &fakeSignerSource{signer: testSigner(t)}
 	m := &Manager{
-		tx:      txClient,
-		store:   testStore,
-		signer:  signerSource,
-		breaker: newCreateBreaker(),
-		now:     func() time.Time { return fixedNow },
+		narrator: silentNarrator{},
+		tx:       txClient,
+		store:    testStore,
+		signer:   signerSource,
+		breaker:  newCreateBreaker(),
+		now:      func() time.Time { return fixedNow },
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 7, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500}); err != nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 7, createdForBridge, chain.PhaseSnapshot{EpochIndex: 7, BlockHeight: 500}); err != nil {
 		t.Fatalf("createFor(): %v", err)
 	}
 
@@ -555,15 +575,16 @@ func TestCreateEscrowPersistFailureRecoversViaReconcile(t *testing.T) {
 		},
 	}
 	m := &Manager{
-		tx:      txClient,
-		store:   testStore,
-		signer:  &fakeSignerSource{signer: testSigner(t)},
-		breaker: newCreateBreaker(),
-		now:     func() time.Time { return fixedNow },
+		narrator: silentNarrator{},
+		tx:       txClient,
+		store:    testStore,
+		signer:   &fakeSignerSource{signer: testSigner(t)},
+		breaker:  newCreateBreaker(),
+		now:      func() time.Time { return fixedNow },
 	}
 	model := ModelConfig{ModelID: "model-a", Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}
 
-	if _, err := m.createFor(context.Background(), model, "temp", 11, string(createdForBridge), chain.PhaseSnapshot{EpochIndex: 11, BlockHeight: 200}); err == nil {
+	if _, err := m.createFor(context.Background(), model, "temp", 11, createdForBridge, chain.PhaseSnapshot{EpochIndex: 11, BlockHeight: 200}); err == nil {
 		t.Fatal("createFor() = nil, want error when the post-create registry write fails")
 	}
 	if devshards, _ := testStore.ListDevshards(context.Background()); len(devshards) != 0 {
@@ -663,10 +684,11 @@ func TestReconcileDecisionTable(t *testing.T) {
 				breaker.recordFailure(tt.commitment.Model, tt.commitment.Role)
 			}
 			m := &Manager{
-				tx:      &fakeTxClient{getTxEscrowIDFn: tt.getTxEscrowIDFn},
-				store:   testStore,
-				breaker: breaker,
-				now:     func() time.Time { return fixedNow },
+				narrator: silentNarrator{},
+				tx:       &fakeTxClient{getTxEscrowIDFn: tt.getTxEscrowIDFn},
+				store:    testStore,
+				breaker:  breaker,
+				now:      func() time.Time { return fixedNow },
 			}
 
 			err := m.reconcile(context.Background())
@@ -714,7 +736,7 @@ func TestReconcileDecisionTable(t *testing.T) {
 //  3. Assert the result matches the case's expectation. The table varies CreatedAt across: the zero value, freshly created, exactly at the grace boundary, and just past the grace boundary.
 func TestTxMayStillLand(t *testing.T) {
 	fixedNow := time.Date(2026, 4, 4, 0, 0, 0, 0, time.UTC)
-	m := &Manager{now: func() time.Time { return fixedNow }}
+	m := &Manager{narrator: silentNarrator{}, now: func() time.Time { return fixedNow }}
 
 	tests := []struct {
 		name      string
@@ -742,7 +764,7 @@ func TestTxMayStillLand(t *testing.T) {
 //  3. Assert the resulting devshard record's RoutePrefix is stamped with the Manager's route prefix at persist time.
 func TestPersistEscrowStampsTheVersionItWasMintedUnder(t *testing.T) {
 	testStore := newFakeStore()
-	m := &Manager{store: testStore, breaker: newCreateBreaker(), now: time.Now, routePrefix: "/devshard/v3"}
+	m := &Manager{narrator: silentNarrator{}, store: testStore, breaker: newCreateBreaker(), now: time.Now, routePrefix: "/devshard/v3"}
 
 	if err := m.persistEscrow(context.Background(), "77",
 		store.Commitment{TxHash: "TXV", Model: "model-a", Role: "temp", Epoch: 1, PrivateKeyEnv: "KEY_A"}); err != nil {
@@ -768,7 +790,7 @@ func TestPersistEscrowStampsTheVersionItWasMintedUnder(t *testing.T) {
 //  3. Assert the store ends up with exactly one devshard record, not a duplicate.
 func TestPersistEscrowSameEscrowIDTwiceIsSuccessNoOp(t *testing.T) {
 	testStore := newFakeStore()
-	m := &Manager{store: testStore, breaker: newCreateBreaker(), now: time.Now}
+	m := &Manager{narrator: silentNarrator{}, store: testStore, breaker: newCreateBreaker(), now: time.Now}
 	c := store.Commitment{TxHash: "TXG", Model: "model-a", Role: "temp", Epoch: 1, PrivateKeyEnv: "KEY_A"}
 
 	if err := m.persistEscrow(context.Background(), "77", c); err != nil {
@@ -803,7 +825,7 @@ func TestReconcileLeavesAnAlreadyRegisteredEscrowAlone(t *testing.T) {
 	txClient := &fakeTxClient{
 		getTxEscrowIDFn: func(context.Context, string) (uint64, bool, error) { return 42, true, nil },
 	}
-	m := &Manager{tx: txClient, store: testStore, breaker: newCreateBreaker(), now: time.Now}
+	m := &Manager{narrator: silentNarrator{}, tx: txClient, store: testStore, breaker: newCreateBreaker(), now: time.Now}
 
 	if err := m.reconcile(context.Background()); err != nil {
 		t.Fatalf("reconcile() = %v, want nil", err)
@@ -863,9 +885,9 @@ func TestCreateEscrowRefusesAnAmountBelowTheModelsFloor(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			txClient := &fakeTxClient{createEscrowFn: succeedingCreateEscrowFn(42)}
-			manager := floorManager(t, txClient, nil)
+			manager := floorManager(t, txClient, silentNarrator{})
 
-			_, err := manager.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: testCase.amount, PrivateKeyEnv: "MODEL_A_KEY"}, roleRegular, testCase.snapshot.EpochIndex, string(createdForBridge), testCase.snapshot)
+			_, err := manager.createFor(context.Background(), ModelConfig{ModelID: "model-a", Amount: testCase.amount, PrivateKeyEnv: "MODEL_A_KEY"}, roleRegular, testCase.snapshot.EpochIndex, createdForBridge, testCase.snapshot)
 
 			if refused := errors.Is(err, ErrAmountBelowFloor); refused != testCase.refused {
 				t.Fatalf("createFor() = %v, want refused=%v", err, testCase.refused)
@@ -889,7 +911,7 @@ func TestABelowFloorRefusalIsNarratedOnceUntilACreateSucceeds(t *testing.T) {
 	snapshot := pricedSnapshot(1, 10, 100)
 
 	for _, model := range []ModelConfig{short, short, funded, short} {
-		_, _ = manager.createFor(context.Background(), model, roleRegular, snapshot.EpochIndex, string(createdForBridge), snapshot)
+		_, _ = manager.createFor(context.Background(), model, roleRegular, snapshot.EpochIndex, createdForBridge, snapshot)
 	}
 
 	want := []string{
@@ -906,12 +928,12 @@ func TestABelowFloorRefusalIsNarratedOnceUntilACreateSucceeds(t *testing.T) {
 //  1. Fill model-a to its target under a priced snapshot whose floor its amount cannot cover.
 //  2. Assert the fill reports `ErrAmountBelowFloor` and the create breaker stays closed: the refusal is the operator's configuration, not a failing chain.
 func TestABelowFloorRefusalLeavesTheCreateBreakerClosed(t *testing.T) {
-	manager := floorManager(t, &fakeTxClient{createEscrowFn: failOnCreate(t)}, nil)
+	manager := floorManager(t, &fakeTxClient{createEscrowFn: failOnCreate(t)}, silentNarrator{})
 	models := []ModelConfig{{ModelID: "model-a", TargetCount: 1, Amount: 1_000, PrivateKeyEnv: "MODEL_A_KEY"}}
 
 	snapshot := pricedSnapshot(1, 10, 100)
 
-	fills := manager.fillToLabel(context.Background(), roleRegular, snapshot.EpochIndex, models, func(model ModelConfig) int { return model.TargetCount }, snapshot, nil)
+	fills := fillFromStore(t, manager, context.Background(), roleRegular, snapshot.EpochIndex, models, func(model ModelConfig) int { return model.TargetCount }, snapshot, nil)
 
 	if len(fills) != 1 || !errors.Is(fills[0].err, ErrAmountBelowFloor) {
 		t.Fatalf("fills = %+v, want one refused below the floor", fills)

@@ -450,9 +450,9 @@ func TestIsCacheableUpstreamError_EveryMarkerExcludes(t *testing.T) {
 }
 
 // Test flow:
-//  1. Call IsCacheableResponse with a table of status/body pairs covering plain successes, a 204, an empty body, a completed SSE stream, SSE-embedded transient and deterministic errors under both success and error statuses, a 500, and CRLF-framed SSE.
+//  1. Call CacheRefusal with a table of status/body pairs covering plain successes, a 204, an empty body, a completed SSE stream, SSE-embedded transient and deterministic errors under both success and error statuses, a 500, and CRLF-framed SSE.
 //  2. Assert each case's result matches the expected cacheability.
-func TestIsCacheableResponseCoversSuccessesAndSSEEmbeddedFailures(t *testing.T) {
+func TestCacheRefusalCoversSuccessesAndSSEEmbeddedFailures(t *testing.T) {
 	tests := []struct {
 		name   string
 		status int
@@ -472,8 +472,8 @@ func TestIsCacheableResponseCoversSuccessesAndSSEEmbeddedFailures(t *testing.T) 
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := IsCacheableResponse(testCase.status, []byte(testCase.body)); got != testCase.want {
-				t.Errorf("IsCacheableResponse(%d, %q) = %v, want %v", testCase.status, testCase.body, got, testCase.want)
+			if got := CacheRefusal(testCase.status, []byte(testCase.body)) == CacheStorable; got != testCase.want {
+				t.Errorf("CacheRefusal(%d, %q) == CacheStorable = %v, want %v", testCase.status, testCase.body, got, testCase.want)
 			}
 		})
 	}
@@ -759,7 +759,7 @@ func TestNonFiniteWordsInsideStringsAreLeftAlone(t *testing.T) {
 func TestAnEmptyErrorEventDoesNotStopTheScan(t *testing.T) {
 	payload := []byte("data: {\"error\":{}}\n\n" + "data: {\"object\":\"error\",\"message\":\"service unavailable\"}\n\n")
 
-	details, found := parseUpstreamErrorDetails(payload)
+	details, found := UpstreamFailure(payload)
 
 	if !found {
 		t.Fatal("the scan stopped at the empty error and never saw the real one")
@@ -770,7 +770,7 @@ func TestAnEmptyErrorEventDoesNotStopTheScan(t *testing.T) {
 }
 
 // Test flow:
-//  1. Call IsCacheableResponse(200, ...) with a table of stream and completion bodies, varying how a choice signals it finished: no finish_reason, a later event supplying it, a terminal reason not repeated later, null/empty finish_reason, multiple choices where only some finish, stop_reason alone, differently cased "Choices", split-across-lines events, error-only bodies, and malformed or cut-off bodies.
+//  1. Call CacheRefusal(200, ...) == CacheStorable with a table of stream and completion bodies, varying how a choice signals it finished: no finish_reason, a later event supplying it, a terminal reason not repeated later, null/empty finish_reason, multiple choices where only some finish, stop_reason alone, differently cased "Choices", split-across-lines events, error-only bodies, and malformed or cut-off bodies.
 //  2. Assert each case's cacheability matches whether every choice the reply started was actually brought to an end.
 func TestAnAnswerThatNeverFinishedIsNotCacheable(t *testing.T) {
 	t.Parallel()
@@ -894,8 +894,8 @@ func TestAnAnswerThatNeverFinishedIsNotCacheable(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			if got := IsCacheableResponse(200, []byte(testCase.body)); got != testCase.want {
-				t.Errorf("IsCacheableResponse(200, %q) = %v, want %v", testCase.body, got, testCase.want)
+			if got := CacheRefusal(200, []byte(testCase.body)) == CacheStorable; got != testCase.want {
+				t.Errorf("CacheRefusal(200, %q) == CacheStorable = %v, want %v", testCase.body, got, testCase.want)
 			}
 		})
 	}
@@ -904,7 +904,7 @@ func TestAnAnswerThatNeverFinishedIsNotCacheable(t *testing.T) {
 // Test flow:
 //  1. List every SSE fixture under testdata/sse and check it exists in a manually classified storable/not-storable map.
 //  2. Assert the fixture count matches the classified count, so no fixture is missing from the classification.
-//  3. For each fixture, assert IsCacheableResponse(200, ...) matches its classified expectation.
+//  3. For each fixture, assert CacheRefusal(200, ...) == CacheStorable matches its classified expectation.
 func TestEveryRecordedStreamIsClassified(t *testing.T) {
 	t.Parallel()
 	storable := map[string]bool{
@@ -933,8 +933,8 @@ func TestEveryRecordedStreamIsClassified(t *testing.T) {
 			t.Fatalf("%s is unclassified: say whether the cache must store it", entry.Name())
 		}
 		t.Run(entry.Name(), func(t *testing.T) {
-			if got := IsCacheableResponse(200, readSSEFixture(t, entry.Name())); got != want {
-				t.Fatalf("IsCacheableResponse = %v, want %v", got, want)
+			if got := CacheRefusal(200, readSSEFixture(t, entry.Name())) == CacheStorable; got != want {
+				t.Fatalf("CacheRefusal storable = %v, want %v", got, want)
 			}
 		})
 	}
@@ -976,7 +976,7 @@ func TestCacheRefusalNamesWhyItRefused(t *testing.T) {
 
 // Test flow:
 //  1. Build a response body naming maxIndexedElements choices, and separately one with maxIndexedElements+1 choices, every choice finished.
-//  2. Call IsCacheableResponse(200, ...) on each.
+//  2. Call CacheRefusal(200, ...) == CacheStorable on each.
 //  3. Assert the body at the limit is cacheable and the one past it is not.
 func TestAFloodOfChoicesIsNotStored(t *testing.T) {
 	t.Parallel()
@@ -993,8 +993,8 @@ func TestAFloodOfChoicesIsNotStored(t *testing.T) {
 			body.WriteString(`]}`)
 
 			want := choices <= maxIndexedElements
-			if got := IsCacheableResponse(200, []byte(body.String())); got != want {
-				t.Fatalf("IsCacheableResponse over %d choices = %v, want %v", choices, got, want)
+			if got := CacheRefusal(200, []byte(body.String())) == CacheStorable; got != want {
+				t.Fatalf("CacheRefusal storable over %d choices = %v, want %v", choices, got, want)
 			}
 		})
 	}

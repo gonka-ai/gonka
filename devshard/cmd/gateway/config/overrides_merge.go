@@ -21,13 +21,20 @@ func (o Overrides) Merged(patch []byte) (Overrides, error) {
 		return Overrides{}, fmt.Errorf("parsing overrides patch: %w", err)
 	}
 	merged := o
-	target, source := reflect.ValueOf(&merged).Elem(), reflect.ValueOf(changes)
+	replaceNamedFields(reflect.ValueOf(&merged).Elem(), reflect.ValueOf(changes), named)
+	return merged, nil
+}
+
+func replaceNamedFields(target, source reflect.Value, named map[string]json.RawMessage) {
 	fields := target.Type()
 	for index := range fields.NumField() {
+		if fields.Field(index).Anonymous {
+			replaceNamedFields(target.Field(index), source.Field(index), named)
+			continue
+		}
 		name, _, _ := strings.Cut(fields.Field(index).Tag.Get("json"), jsonTagSeparator)
 		if _, present := named[name]; present {
 			target.Field(index).Set(source.Field(index))
 		}
 	}
-	return merged, nil
 }

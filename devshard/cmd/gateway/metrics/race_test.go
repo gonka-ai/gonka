@@ -327,9 +327,9 @@ func TestATimeoutVoteIsCountedWhateverItsAction(t *testing.T) {
 			expectCounter(t, telemetry, "devshard_gateway_timeout_actions_total", labels{
 				"participant_key": testCase.event.Participant,
 				"model":           testCase.event.Model,
-				"kind":            testCase.event.Kind,
-				"action":          testCase.event.Action,
-				"reason":          testCase.event.Reason,
+				"kind":            string(testCase.event.Kind),
+				"action":          string(testCase.event.Action),
+				"reason":          string(testCase.event.Reason),
 			}, 1)
 		})
 	}
@@ -404,18 +404,18 @@ var _ interface {
 //  2. Assert each constant's value still equals its pinned wire string.
 func TestEmittedLabelValuesMatchTheirWireStrings(t *testing.T) {
 	pinned := []struct{ emitted, want string }{
-		{engine.AttemptOutcomeSuccess, "success"},
-		{engine.AttemptOutcomeFailed, "failed"},
-		{engine.VisibilityWinner, "user_visible_winner"},
-		{engine.VisibilityNoWinner, "no_winner"},
-		{engine.VisibilitySuppressedLoser, "suppressed_loser"},
-		{engine.VisibilityFailedNotFinished, "failed_not_finished"},
-		{engine.RolePrimary, "primary"},
-		{engine.RoleSpeculative, "speculative"},
-		{engine.TimeoutActionSkipped, "skipped"},
-		{engine.TimeoutActionStarted, "started"},
-		{engine.TimeoutActionCompleted, "completed"},
-		{engine.TimeoutActionFailed, "failed"},
+		{string(engine.AttemptResultSuccess), "success"},
+		{string(engine.AttemptResultFailed), "failed"},
+		{string(engine.VisibilityWinner), "user_visible_winner"},
+		{string(engine.VisibilityNoWinner), "no_winner"},
+		{string(engine.VisibilitySuppressedLoser), "suppressed_loser"},
+		{string(engine.VisibilityFailedNotFinished), "failed_not_finished"},
+		{string(engine.RolePrimary), "primary"},
+		{string(engine.RoleSpeculative), "speculative"},
+		{string(engine.TimeoutActionSkipped), "skipped"},
+		{string(engine.TimeoutActionStarted), "started"},
+		{string(engine.TimeoutActionCompleted), "completed"},
+		{string(engine.TimeoutActionFailed), "failed"},
 		{outcomeFailure, "failure"},
 	}
 	for _, label := range pinned {

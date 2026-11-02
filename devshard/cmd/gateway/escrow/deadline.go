@@ -80,13 +80,11 @@ func (m *Manager) parkAtDeadline(ctx context.Context, snapshot chain.PhaseSnapsh
 	narrate := func(record store.DevshardRecord, deadline settleDeadline, reason deadlineUnsettled) {
 		key := record.EscrowID + "|" + string(reason)
 		narrated[key] = true
-		if m.deadlineNarrated[key] {
+		if m.deadlines.narrated[key] {
 			return
 		}
-		m.deadlineCounts.add(record.Model, string(reason))
-		if m.narrator != nil {
-			m.narrator.EscrowDeadlineUnsettled(record.EscrowID, deadline.settleBy, string(reason))
-		}
+		m.deadlines.counts.add(record.Model, string(reason))
+		m.narrator.EscrowDeadlineUnsettled(record.EscrowID, deadline.settleBy, string(reason))
 	}
 	updated := slices.Clone(devshards)
 	var errs []error
@@ -101,7 +99,7 @@ func (m *Manager) parkAtDeadline(ctx context.Context, snapshot chain.PhaseSnapsh
 		switch {
 		case !policy.settles(record.Model, ownEpochOver(record, snapshot)):
 			narrate(record, deadline, deadlineSettlementDisabled)
-		case !record.Active && !record.SettlementPending && record.SettleTxHash == "":
+		case !record.Active && !record.Parked():
 			narrate(record, deadline, m.deactivationReason(record))
 		case record.Active:
 			parked, err := m.parkIfServing(ctx, record.EscrowID)
@@ -112,14 +110,12 @@ func (m *Manager) parkAtDeadline(ctx context.Context, snapshot chain.PhaseSnapsh
 			if !parked {
 				continue
 			}
-			if m.narrator != nil {
-				epoch, _ := chainEpochOf(record)
-				m.narrator.EscrowDeadlineReached(record.EscrowID, epoch, deadline.settleBy)
-			}
+			epoch, _ := chainEpochOf(record)
+			m.narrator.EscrowDeadlineReached(record.EscrowID, epoch, deadline.settleBy)
 			updated[index].Active, updated[index].SettlementPending = false, true
 		}
 	}
-	m.deadlineNarrated = narrated
+	m.deadlines.narrated = narrated
 	return updated, errors.Join(errs...)
 }
 
@@ -197,8 +193,6 @@ func (m *Manager) checkPruned(ctx context.Context, record store.DevshardRecord) 
 	if err := m.store.WithRetry(ctx, func() error { return m.store.MarkDevshardGoneFromChain(ctx, record.EscrowID) }); err != nil {
 		return prunedCheckKept, fmt.Errorf("marking escrow %s gone from chain: %w", record.EscrowID, err)
 	}
-	if m.narrator != nil {
-		m.narrator.EscrowGoneFromChain(record.EscrowID)
-	}
+	m.narrator.EscrowGoneFromChain(record.EscrowID)
 	return prunedCheckMarkedGone, nil
 }

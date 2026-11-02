@@ -16,12 +16,7 @@ func TestEngineTimingsReachTheSnapshotFromAnOverride(t *testing.T) {
 	receipt, floor, ceiling, stall, grace, hedge := int64(7_000), int64(1_500), int64(25_000), int64(45_000), int64(120_000), int64(900)
 
 	built, err := Build(env.Values{}, Overrides{
-		EngineReceiptTimeoutMS:       &receipt,
-		EngineFirstTokenFloorMS:      &floor,
-		EngineFirstTokenCeilingMS:    &ceiling,
-		EngineInterChunkStallMS:      &stall,
-		EngineLoserGraceMS:           &grace,
-		EngineHedgeFirstTokenFloorMS: &hedge,
+		Tunables: env.Tunables{EngineReceiptTimeoutMS: &receipt, EngineFirstTokenFloorMS: &floor, EngineFirstTokenCeilingMS: &ceiling, EngineInterChunkStallMS: &stall, EngineLoserGraceMS: &grace, EngineHedgeFirstTokenFloorMS: &hedge},
 	})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -51,13 +46,7 @@ func TestEngineTimingsReachTheSnapshotFromAnOverride(t *testing.T) {
 func TestEngineTimingsReachTheSnapshotFromTheEnvironment(t *testing.T) {
 	t.Parallel()
 	built, err := Build(env.Values{
-		EngineReceiptTimeoutMS:       int64Pointer(9_000),
-		EngineFirstTokenFloorMS:      int64Pointer(1_200),
-		EngineFirstTokenCeilingMS:    int64Pointer(21_000),
-		EngineInterChunkStallMS:      int64Pointer(20_000),
-		EngineLoserGraceMS:           int64Pointer(90_000),
-		EngineHedgeFirstTokenFloorMS: int64Pointer(0),
-		ChainSnapshotMaxAgeSeconds:   int64Pointer(45),
+		Tunables: env.Tunables{EngineReceiptTimeoutMS: int64Pointer(9_000), EngineFirstTokenFloorMS: int64Pointer(1_200), EngineFirstTokenCeilingMS: int64Pointer(21_000), EngineInterChunkStallMS: int64Pointer(20_000), EngineLoserGraceMS: int64Pointer(90_000), EngineHedgeFirstTokenFloorMS: int64Pointer(0), ChainSnapshotMaxAgeSeconds: int64Pointer(45)},
 	}, Overrides{})
 	if err != nil {
 		t.Fatalf("Build: %v", err)
@@ -90,22 +79,10 @@ func TestAnEngineOverrideOutranksTheEnvironment(t *testing.T) {
 	t.Parallel()
 	fromEnv, fromAdmin := int64(9_000), int64(3_000)
 	values := env.Values{
-		EngineReceiptTimeoutMS:       &fromEnv,
-		EngineFirstTokenFloorMS:      &fromEnv,
-		EngineFirstTokenCeilingMS:    &fromEnv,
-		EngineInterChunkStallMS:      &fromEnv,
-		EngineLoserGraceMS:           &fromEnv,
-		EngineHedgeFirstTokenFloorMS: &fromEnv,
-		ChainSnapshotMaxAgeSeconds:   int64Pointer(90),
+		Tunables: env.Tunables{EngineReceiptTimeoutMS: &fromEnv, EngineFirstTokenFloorMS: &fromEnv, EngineFirstTokenCeilingMS: &fromEnv, EngineInterChunkStallMS: &fromEnv, EngineLoserGraceMS: &fromEnv, EngineHedgeFirstTokenFloorMS: &fromEnv, ChainSnapshotMaxAgeSeconds: int64Pointer(90)},
 	}
 	overrides := Overrides{
-		EngineReceiptTimeoutMS:       &fromAdmin,
-		EngineFirstTokenFloorMS:      &fromAdmin,
-		EngineFirstTokenCeilingMS:    int64Pointer(12_000),
-		EngineInterChunkStallMS:      &fromAdmin,
-		EngineLoserGraceMS:           int64Pointer(30_000),
-		EngineHedgeFirstTokenFloorMS: &fromAdmin,
-		ChainSnapshotMaxAgeSeconds:   int64Pointer(45),
+		Tunables: env.Tunables{EngineReceiptTimeoutMS: &fromAdmin, EngineFirstTokenFloorMS: &fromAdmin, EngineFirstTokenCeilingMS: int64Pointer(12_000), EngineInterChunkStallMS: &fromAdmin, EngineLoserGraceMS: int64Pointer(30_000), EngineHedgeFirstTokenFloorMS: &fromAdmin, ChainSnapshotMaxAgeSeconds: int64Pointer(45)},
 	}
 
 	built, err := Build(values, overrides)
@@ -138,11 +115,7 @@ func TestAnEngineOverrideOutranksTheEnvironment(t *testing.T) {
 func TestTheBoundsThemselvesAreAccepted(t *testing.T) {
 	t.Parallel()
 	built, err := Build(env.Values{}, Overrides{
-		EngineReceiptTimeoutMS:       int64Pointer(maxEngineTimingMS),
-		EngineInterChunkStallMS:      int64Pointer(maxEngineTimingMS),
-		EngineLoserGraceMS:           int64Pointer(maxEngineTimingMS),
-		EngineHedgeFirstTokenFloorMS: int64Pointer(maxEngineTimingMS),
-		ChainSnapshotMaxAgeSeconds:   int64Pointer(int64(chain.DefaultObserverPollInterval.Seconds()) * snapshotAgePollMultiple),
+		Tunables: env.Tunables{EngineReceiptTimeoutMS: int64Pointer(maxEngineTimingMS), EngineInterChunkStallMS: int64Pointer(maxEngineTimingMS), EngineLoserGraceMS: int64Pointer(maxEngineTimingMS), EngineHedgeFirstTokenFloorMS: int64Pointer(maxEngineTimingMS), ChainSnapshotMaxAgeSeconds: int64Pointer(int64(chain.DefaultObserverPollInterval.Seconds()) * snapshotAgePollMultiple)},
 	})
 	if err != nil {
 		t.Fatalf("Build refused the documented limits: %v", err)
@@ -165,62 +138,62 @@ func TestEngineOverridesAreValidatedLikeTheDefaults(t *testing.T) {
 	}{
 		{
 			name:      "a grace shorter than the stall it must outlive",
-			overrides: Overrides{EngineLoserGraceMS: int64Pointer(1_000), EngineInterChunkStallMS: int64Pointer(30_000)},
+			overrides: Overrides{Tunables: env.Tunables{EngineLoserGraceMS: int64Pointer(1_000), EngineInterChunkStallMS: int64Pointer(30_000)}},
 			wantError: "engine_loser_grace_ms: 1000 must be >= engine_inter_chunk_stall_ms 30000",
 		},
 		{
 			name:      "a ceiling under its own floor",
-			overrides: Overrides{EngineFirstTokenFloorMS: int64Pointer(10_000), EngineFirstTokenCeilingMS: int64Pointer(2_000)},
+			overrides: Overrides{Tunables: env.Tunables{EngineFirstTokenFloorMS: int64Pointer(10_000), EngineFirstTokenCeilingMS: int64Pointer(2_000)}},
 			wantError: "engine_first_token_ceiling_ms: 2000 must be >= engine_first_token_floor_ms 10000",
 		},
 		{
 			name:      "a receipt deadline of zero",
-			overrides: Overrides{EngineReceiptTimeoutMS: int64Pointer(0)},
+			overrides: Overrides{Tunables: env.Tunables{EngineReceiptTimeoutMS: int64Pointer(0)}},
 			wantError: "engine_receipt_timeout_ms: 0 must be >= 1",
 		},
 		{
 			name:      "a receipt deadline wide enough to overflow its own duration",
-			overrides: Overrides{EngineReceiptTimeoutMS: int64Pointer(maxEngineTimingMS + 1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineReceiptTimeoutMS: int64Pointer(maxEngineTimingMS + 1)}},
 			wantError: "engine_receipt_timeout_ms: 86400001 must be <= 86400000",
 		},
 		{
 			name:      "a ceiling wide enough to overflow its own duration",
-			overrides: Overrides{EngineFirstTokenCeilingMS: int64Pointer(maxEngineTimingMS + 1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineFirstTokenCeilingMS: int64Pointer(maxEngineTimingMS + 1)}},
 			wantError: "engine_first_token_ceiling_ms: 86400001 must be <= 86400000",
 		},
 		{
 			name:      "a floor wide enough to overflow its own duration",
-			overrides: Overrides{EngineFirstTokenFloorMS: int64Pointer(maxEngineTimingMS + 1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineFirstTokenFloorMS: int64Pointer(maxEngineTimingMS + 1)}},
 			wantError: "engine_first_token_floor_ms: 86400001 must be <= 86400000",
 		},
 		{
 			name:      "a stall wide enough to overflow its own duration",
-			overrides: Overrides{EngineInterChunkStallMS: int64Pointer(maxEngineTimingMS + 1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineInterChunkStallMS: int64Pointer(maxEngineTimingMS + 1)}},
 			wantError: "engine_inter_chunk_stall_ms: 86400001 must be <= 86400000",
 		},
 		{
 			name:      "a grace wide enough to overflow its own duration",
-			overrides: Overrides{EngineLoserGraceMS: int64Pointer(maxEngineTimingMS + 1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineLoserGraceMS: int64Pointer(maxEngineTimingMS + 1)}},
 			wantError: "engine_loser_grace_ms: 86400001 must be <= 86400000",
 		},
 		{
 			name:      "a negative hedge floor",
-			overrides: Overrides{EngineHedgeFirstTokenFloorMS: int64Pointer(-1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineHedgeFirstTokenFloorMS: int64Pointer(-1)}},
 			wantError: "engine_hedge_first_token_floor_ms: -1 must be >= 0",
 		},
 		{
 			name:      "a hedge floor wide enough to overflow its own duration",
-			overrides: Overrides{EngineHedgeFirstTokenFloorMS: int64Pointer(maxEngineTimingMS + 1)},
+			overrides: Overrides{Tunables: env.Tunables{EngineHedgeFirstTokenFloorMS: int64Pointer(maxEngineTimingMS + 1)}},
 			wantError: "engine_hedge_first_token_floor_ms: 86400001 must be <= 86400000",
 		},
 		{
 			name:      "a snapshot age wide enough to overflow its own duration",
-			overrides: Overrides{ChainSnapshotMaxAgeSeconds: int64Pointer(maxSnapshotAgeSeconds + 1)},
+			overrides: Overrides{Tunables: env.Tunables{ChainSnapshotMaxAgeSeconds: int64Pointer(maxSnapshotAgeSeconds + 1)}},
 			wantError: "chain_snapshot_max_age_seconds: 86401 must be between 0 (disabled) and 86400",
 		},
 		{
 			name:      "a snapshot age under the observer's own refresh cadence",
-			overrides: Overrides{ChainSnapshotMaxAgeSeconds: int64Pointer(2)},
+			overrides: Overrides{Tunables: env.Tunables{ChainSnapshotMaxAgeSeconds: int64Pointer(2)}},
 			wantError: "chain_snapshot_max_age_seconds: 2 must be 0 or at least 35",
 		},
 	} {

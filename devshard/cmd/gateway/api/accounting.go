@@ -28,7 +28,7 @@ func requestRecord(outcome engine.RaceOutcome) store.RequestRecord {
 		EscrowID:          outcome.EscrowID,
 		Model:             outcome.Model,
 		Outcome:           requestOutcome(outcome),
-		Decision:          outcome.Decision,
+		Decision:          string(outcome.Decision),
 		Stream:            outcome.ClientStream,
 		WinnerNonce:       outcome.WinnerNonce,
 		Attempts:          len(outcome.Attempts),

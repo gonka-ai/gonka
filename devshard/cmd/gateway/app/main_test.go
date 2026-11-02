@@ -638,12 +638,11 @@ func TestPublishEscrowsWalksTheThreeArmedBuildLadder(t *testing.T) {
 			wantCauses:      map[string]error{"gone": bridge.ErrEscrowNotFound},
 		},
 		{
-			name:            "an escrow whose key the environment lacks is marked inactive and skipped",
-			records:         []store.DevshardRecord{devshard("keyless", true)},
-			failures:        map[string]error{"keyless": fmt.Errorf("opening session: %w", env.ErrPrivateKeyMissing)},
-			wantAdded:       []string{"keyless"},
-			wantDeactivated: []string{"keyless"},
-			wantCauses:      map[string]error{"keyless": env.ErrPrivateKeyMissing},
+			name:         "an escrow whose key the environment lacks stays active and unpublished for a retry",
+			records:      []store.DevshardRecord{devshard("keyless", true)},
+			failures:     map[string]error{"keyless": fmt.Errorf("opening session: %w", env.ErrPrivateKeyMissing)},
+			wantAdded:    []string{"keyless"},
+			wantUnopened: []string{"keyless"},
 		},
 		{
 			name:         "any other failure leaves the escrow unpublished for a retry and marks nothing inactive",

@@ -6,16 +6,19 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"strconv"
 	"strings"
 	"time"
 
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/signing"
 )
 
 // See README.md, "Transaction encoding".
 const (
+	intentEscrowCreate = "escrow create"
+	intentSettle       = "settle"
+
 	DefaultFeeDenom     = EscrowDenom
 	DefaultFeeAmount    = uint64(1_000_000)
 	DefaultGasLimit     = uint64(700_000)
@@ -151,31 +154,17 @@ func (c *TxClient) CreateEscrow(ctx context.Context, signer *signing.Secp256k1Si
 	if need := c.createCost(amount); have < need {
 		return CreateEscrowResult{}, &WalletUnderfundedError{Address: creator, Have: have, Need: need}
 	}
-	chainID, err := c.resolveChainID(ctx)
+	parameters, err := c.signingFor(ctx, signer)
 	if err != nil {
 		return CreateEscrowResult{}, err
 	}
-	account, err := c.transport.Account(ctx, creator)
+	txBytes, err := buildCreateEscrowTx(parameters, amount, modelID)
 	if err != nil {
 		return CreateEscrowResult{}, err
 	}
-	ttl := c.now().Add(UnorderedTxTTL)
-	txBytes, err := buildCreateEscrowTx(signer, chainID, account.Number, c.feeDenom, c.feeAmount, c.gasLimit, amount, modelID, ttl)
+	txHash, err := c.broadcastPrepared(ctx, txBytes, intentEscrowCreate, onPrepared)
 	if err != nil {
 		return CreateEscrowResult{}, err
-	}
-	txHash := txHashFromBytes(txBytes)
-	if onPrepared != nil {
-		if err := onPrepared(txHash); err != nil {
-			return CreateEscrowResult{}, fmt.Errorf("record escrow create intent before broadcast: %w", err)
-		}
-	}
-	nodeHash, err := c.transport.Broadcast(ctx, txBytes)
-	if err != nil {
-		return CreateEscrowResult{}, err
-	}
-	if !strings.EqualFold(nodeHash, txHash) {
-		return CreateEscrowResult{}, fmt.Errorf("tx hash mismatch: precomputed %s, node returned %s", txHash, nodeHash)
 	}
 	escrowID, err := c.waitForCreatedEscrowID(ctx, txHash)
 	if err != nil {
@@ -189,10 +178,7 @@ func (c *TxClient) createCost(amount uint64) uint64 {
 	if c.feeDenom != EscrowDenom {
 		return amount
 	}
-	if amount > math.MaxUint64-c.feeAmount {
-		return math.MaxUint64
-	}
-	return amount + c.feeAmount
+	return safemath.AddSaturatingUint64(amount, c.feeAmount)
 }
 
 // SettleEscrow builds, signs, broadcasts and confirms a MsgSettleDevshardEscrow tx; unlike CreateEscrow it waits for the commit. See README.md, "Transaction encoding".
@@ -204,31 +190,17 @@ func (c *TxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Si
 		return SettleEscrowResult{}, fmt.Errorf("escrow_id is required")
 	}
 	settler := signer.Address()
-	chainID, err := c.resolveChainID(ctx)
+	parameters, err := c.signingFor(ctx, signer)
 	if err != nil {
 		return SettleEscrowResult{}, err
 	}
-	account, err := c.transport.Account(ctx, settler)
+	txBytes, err := buildSettleEscrowTx(parameters, settler, input)
 	if err != nil {
 		return SettleEscrowResult{}, err
 	}
-	ttl := c.now().Add(UnorderedTxTTL)
-	txBytes, err := buildSettleEscrowTx(signer, chainID, account.Number, c.feeDenom, c.feeAmount, c.gasLimit, settler, input, ttl)
+	txHash, err := c.broadcastPrepared(ctx, txBytes, intentSettle, onPrepared)
 	if err != nil {
 		return SettleEscrowResult{}, err
-	}
-	txHash := txHashFromBytes(txBytes)
-	if onPrepared != nil {
-		if err := onPrepared(txHash); err != nil {
-			return SettleEscrowResult{}, fmt.Errorf("record settle intent before broadcast: %w", err)
-		}
-	}
-	nodeHash, err := c.transport.Broadcast(ctx, txBytes)
-	if err != nil {
-		return SettleEscrowResult{}, err
-	}
-	if !strings.EqualFold(nodeHash, txHash) {
-		return SettleEscrowResult{}, fmt.Errorf("tx hash mismatch: precomputed %s, node returned %s", txHash, nodeHash)
 	}
 	if c.narrator != nil {
 		c.narrator.SettleBroadcast(strconv.FormatUint(input.EscrowID, 10), txHash, settler)
@@ -238,6 +210,43 @@ func (c *TxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Si
 		return SettleEscrowResult{}, fmt.Errorf("awaiting settlement commit for tx %s: %w", txHash, err)
 	}
 	return SettleEscrowResult{EscrowID: input.EscrowID, TxHash: txHash, Settler: settler}, nil
+}
+
+func (c *TxClient) signingFor(ctx context.Context, signer *signing.Secp256k1Signer) (txSigning, error) {
+	chainID, err := c.resolveChainID(ctx)
+	if err != nil {
+		return txSigning{}, err
+	}
+	account, err := c.transport.Account(ctx, signer.Address())
+	if err != nil {
+		return txSigning{}, err
+	}
+	return txSigning{
+		signer:        signer,
+		chainID:       chainID,
+		accountNumber: account.Number,
+		feeDenom:      c.feeDenom,
+		feeAmount:     c.feeAmount,
+		gasLimit:      c.gasLimit,
+		ttl:           c.now().Add(UnorderedTxTTL),
+	}, nil
+}
+
+func (c *TxClient) broadcastPrepared(ctx context.Context, txBytes []byte, intent string, onPrepared func(txHash string) error) (string, error) {
+	txHash := txHashFromBytes(txBytes)
+	if onPrepared != nil {
+		if err := onPrepared(txHash); err != nil {
+			return "", fmt.Errorf("record %s intent before broadcast: %w", intent, err)
+		}
+	}
+	nodeHash, err := c.transport.Broadcast(ctx, txBytes)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(nodeHash, txHash) {
+		return "", fmt.Errorf("tx hash mismatch: precomputed %s, node returned %s", txHash, nodeHash)
+	}
+	return txHash, nil
 }
 
 func (c *TxClient) resolveChainID(ctx context.Context) (string, error) {

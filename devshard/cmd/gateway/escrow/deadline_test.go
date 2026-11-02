@@ -260,6 +260,7 @@ func TestPendingSettlesRunWithTheMarginForcedAndUnbudgeted(t *testing.T) {
 	}
 	source := &recordingSettlementSource{fakeSettlementSource: &fakeSettlementSource{busy: true}}
 	manager := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -536,6 +537,7 @@ func TestPreviousEpochSettlementSettlesAParkedRowOnlyOnceItsOwnEpochIsOver(t *te
 	storeRows(testStore, rows)
 	configuration := previousEpochSettlementConfig(`[{"model_id":"model-b","amount":1000,"previous_epoch_settlement_enabled":false}]`)
 	manager := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settlingTxClient(),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -677,6 +679,7 @@ func TestRetireOnlyParksUnderPreviousEpochSettlement(t *testing.T) {
 	storeRows(testStore, []store.DevshardRecord{row})
 	configuration := previousEpochSettlementConfig("")
 	manager := &Manager{
+		narrator: silentNarrator{},
 		tx: &fakeTxClient{settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be called at retirement under previous-epoch settlement alone")
 			return chain.SettleEscrowResult{}, nil

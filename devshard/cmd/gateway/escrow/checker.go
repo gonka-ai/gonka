@@ -56,8 +56,6 @@ func (m *Manager) TriggerEscrowCheck(ctx context.Context, escrowID string) error
 	}); err != nil {
 		return fmt.Errorf("marking escrow %s gone from chain: %w", escrowID, err)
 	}
-	if m.narrator != nil {
-		m.narrator.EscrowGoneFromChain(escrowID)
-	}
+	m.narrator.EscrowGoneFromChain(escrowID)
 	return nil
 }

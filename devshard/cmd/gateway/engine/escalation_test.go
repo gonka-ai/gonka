@@ -535,7 +535,7 @@ func TestConfirmSpendsOnlyTheArmedAttemptsEscalation(t *testing.T) {
 func TestStageReasonLabelsEveryTrigger(t *testing.T) {
 	testCases := []struct {
 		stage EscalationStage
-		want  string
+		want  StartReason
 	}{
 		{StageSuspicious, "suspicious_host"},
 		{StageAttemptFailed, "attempt_failed"},

@@ -26,6 +26,7 @@ type virtualTime struct {
 	mu       sync.Mutex
 	step     time.Duration
 	now      time.Time
+	lastRead time.Time
 	deadline time.Time
 	armed    bool
 	fired    chan time.Time
@@ -34,9 +35,10 @@ type virtualTime struct {
 
 func newVirtualTime() *virtualTime {
 	return &virtualTime{
-		now:   testEpoch,
-		fired: make(chan time.Time, 1),
-		arms:  make(chan time.Duration, 256),
+		now:      testEpoch,
+		lastRead: testEpoch,
+		fired:    make(chan time.Time, 1),
+		arms:     make(chan time.Duration, 256),
 	}
 }
 
@@ -44,28 +46,28 @@ func (v *virtualTime) Now() time.Time {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	v.now = v.now.Add(v.step)
+	v.lastRead = v.now
 	return v.now
 }
 
 func (v *virtualTime) Reset(delay time.Duration) {
+	v.mu.Lock()
+	v.deadline, v.armed = v.lastRead.Add(delay), true
+	v.discard()
+	if !v.deadline.After(v.now) {
+		v.ring()
+	}
+	v.mu.Unlock()
 	select {
 	case v.arms <- delay:
 	default:
-	}
-	v.mu.Lock()
-	v.deadline, v.armed = v.now.Add(delay), true
-	due := !v.deadline.After(v.now)
-	v.mu.Unlock()
-	v.discard()
-	if due {
-		v.ring()
 	}
 }
 
 func (v *virtualTime) Stop() {
 	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.armed = false
-	v.mu.Unlock()
 	v.discard()
 }
 
@@ -73,10 +75,9 @@ func (v *virtualTime) Fired() <-chan time.Time { return v.fired }
 
 func (v *virtualTime) advance(step time.Duration) {
 	v.mu.Lock()
+	defer v.mu.Unlock()
 	v.now = v.now.Add(step)
-	due := v.armed && !v.deadline.After(v.now)
-	v.mu.Unlock()
-	if due {
+	if v.armed && !v.deadline.After(v.now) {
 		v.ring()
 	}
 }
@@ -231,7 +232,7 @@ type simDispatchParams struct{ prompt string }
 type simPoster struct {
 	entered chan uint64
 	release chan struct{}
-	vote    string
+	vote    TimeoutKind
 	err     error
 
 	mu       sync.Mutex
@@ -1068,7 +1069,11 @@ func TestSimulatorAHostCutAtTheBackstopAnswersForIt(t *testing.T) {
 	sim.clock.waitArmed(t, policy.InterChunkStall)
 	sim.clock.advance(streamingHardTimeout + time.Second)
 	close(resume)
-	<-outcomes
+	select {
+	case <-outcomes:
+	case <-time.After(10 * time.Second):
+		t.Fatal("the race did not finish after the backstop passed")
+	}
 
 	reported := sim.reported(t)
 	attempt := attemptFor(t, reported, 10)
@@ -1423,5 +1428,23 @@ func TestPanickingRaceReleasesTheStopBarrierAndRepanics(t *testing.T) {
 	case <-stopped:
 	case <-time.After(10 * time.Second):
 		t.Fatal("Stop() never returned: the panicking race still holds its registration")
+	}
+}
+
+// Test flow:
+//  1. Arm a deadline, read the clock, advance past the deadline so it rings, then re-arm from the read taken before the advance.
+//  2. Assert the ring survives the re-arm: the delay was computed from a time the advance already passed.
+func TestVirtualTimeKeepsTheRingOfADeadlineArmedFromAReadBeforeAnAdvance(t *testing.T) {
+	clock := newVirtualTime()
+	clock.Reset(time.Second)
+	_ = clock.Now()
+	clock.advance(time.Minute)
+
+	clock.Reset(time.Second)
+
+	select {
+	case <-clock.Fired():
+	default:
+		t.Fatal("the re-arm lost the ring")
 	}
 }

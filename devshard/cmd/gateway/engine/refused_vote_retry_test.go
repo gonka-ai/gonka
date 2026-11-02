@@ -255,7 +255,7 @@ type outcomeHandler struct {
 }
 
 func (h outcomeHandler) HandleTimeout(context.Context, uint64, time.Time, *host.InferencePayload) (user.TimeoutResult, error) {
-	return user.TimeoutResult{Reason: TimeoutKindRefused, Outcome: h.outcome, DetailReason: h.detail}, fmt.Errorf("inference 7: %w", user.ErrTimeoutNotApplied)
+	return user.TimeoutResult{Reason: string(TimeoutKindRefused), Outcome: h.outcome, DetailReason: h.detail}, fmt.Errorf("inference 7: %w", user.ErrTimeoutNotApplied)
 }
 
 func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {

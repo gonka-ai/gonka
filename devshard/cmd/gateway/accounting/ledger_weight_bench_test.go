@@ -55,7 +55,7 @@ func weightRecordNonce(book *Book, escrow *weightEscrow, nonce uint64) {
 	case nonce%weightUnfinishedEvery == 0:
 		_ = book.RecordRace(escrow.escrowID, []Attempt{{
 			Nonce: nonce, RequestID: requestID, Sent: true, Acknowledged: true,
-			Usage: UsageUnknown, Terminal: TerminalUnnamed, Phase: PhaseNormal,
+			Usage: UsageUnknown, Terminal: engine.TerminalNameUnnamed, Phase: PhaseNormal,
 		}})
 		_ = book.RecordTimeout(escrow.escrowID, nonce, engine.TimeoutKindExecution, engine.TimeoutActionCompleted, engine.TimeoutReasonNotApplied)
 		_ = book.RecordAppliedTimeout(escrow.escrowID, nonce)

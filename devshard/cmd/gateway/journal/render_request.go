@@ -8,10 +8,10 @@ import (
 	"devshard/cmd/gateway/internal/logkey"
 )
 
-// See ../docs/operations.md, "The request record".
+// See ../docs/operations.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
 const (
 	loggedFieldSlots    = 32
-	maxLoggedErrorBytes = 256
+	MaxLoggedErrorBytes = 256
 
 	cacheHitOutcome = "cache_hit"
 )
@@ -78,25 +78,21 @@ func requestFinishedFields(line *RequestLine) []any {
 }
 
 func hostClockOffset(outcome engine.RaceOutcome) (offsetMS, roundTripMS int64, stamped bool) {
-	for _, attempt := range outcome.Attempts {
-		if !outcome.IsWinner(attempt) {
-			continue
-		}
-		offset, measured := engine.ClockOffset(attempt)
-		if !measured {
-			continue
-		}
-		return offset.Milliseconds(), attempt.ReceiptTime.Sub(attempt.SendTime).Milliseconds(), true
+	winner := outcome.Winner()
+	if winner == nil {
+		return 0, 0, false
 	}
-	return 0, 0, false
+	offset, measured := engine.ClockOffset(*winner)
+	if !measured {
+		return 0, 0, false
+	}
+	return offset.Milliseconds(), winner.ReceiptTime.Sub(winner.SendTime).Milliseconds(), true
 }
 
 // appendHosts names the crowned host, every host tried when nobody was crowned, and neither when no attempt ran. See README.md, "Absent subjects are omitted".
 func appendHosts(fields []any, outcome engine.RaceOutcome) []any {
-	for _, attempt := range outcome.Attempts {
-		if outcome.IsWinner(attempt) {
-			return append(fields, logkey.Host, logkey.ShortHost(attempt.Participant))
-		}
+	if winner := outcome.Winner(); winner != nil {
+		return append(fields, logkey.Host, logkey.ShortHost(winner.Participant))
 	}
 	tried := make([]string, 0, len(outcome.Attempts))
 	for _, attempt := range outcome.Attempts {
@@ -112,10 +108,8 @@ func appendHosts(fields []any, outcome engine.RaceOutcome) []any {
 
 // winnerOutputTokens is what the client actually received, which a measured output rate is computed from.
 func winnerOutputTokens(outcome engine.RaceOutcome) int64 {
-	for _, attempt := range outcome.Attempts {
-		if outcome.IsWinner(attempt) {
-			return attempt.UsageCompletionTokens
-		}
+	if winner := outcome.Winner(); winner != nil {
+		return winner.UsageCompletionTokens
 	}
 	return 0
 }
@@ -123,10 +117,10 @@ func winnerOutputTokens(outcome engine.RaceOutcome) int64 {
 // loggedError cuts host-controlled text on a rune boundary. See docs/operations.md, "The request record".
 func loggedError(err error) string {
 	text := err.Error()
-	if len(text) <= maxLoggedErrorBytes {
+	if len(text) <= MaxLoggedErrorBytes {
 		return text
 	}
-	cut := maxLoggedErrorBytes
+	cut := MaxLoggedErrorBytes
 	for cut > 0 && !utf8.RuneStart(text[cut]) {
 		cut--
 	}

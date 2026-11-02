@@ -150,7 +150,7 @@ type raceCoordinator struct {
 
 	escrowID     string
 	target       DispatchTarget
-	decision     string
+	decision     StartReason
 	budget       int
 	attemptLimit int
 	started      time.Time
@@ -165,7 +165,7 @@ type raceCoordinator struct {
 	pickCancel       context.CancelFunc
 	pickStarted      time.Time
 	pickStopped      bool
-	pickReason       string
+	pickReason       StartReason
 	moreImmediate    int
 	excluded         []string
 	clientGoneAt     time.Time
@@ -281,7 +281,7 @@ func (c *raceCoordinator) begin() error {
 }
 
 // A stranded nonce is committed, paid for and answered by nobody, so it is carried into the timeout plan.
-func (c *raceCoordinator) strand(assignment scheduler.Assignment, role string) {
+func (c *raceCoordinator) strand(assignment scheduler.Assignment, role AttemptRole) {
 	c.traceStep(RaceStep{
 		Kind: RaceStepNonceStranded, RequestID: c.request.RequestID, EscrowID: assignment.Escrow,
 		Nonce: assignment.Nonce.Nonce(), Participant: assignment.Host, Role: role,

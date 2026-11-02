@@ -4,9 +4,10 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/internal/logcapture"
+	"devshard/cmd/gateway/store"
 )
 
-func judgedCandidate(reason, role string, serving ...servingEscrow) createCandidate {
+func judgedCandidate(reason string, role store.Role, serving ...servingEscrow) createCandidate {
 	return createCandidate{
 		createdID: "9", model: testModelID, role: role, reason: reason, reasonKnown: true,
 		serving: serving, fullCost: 1_000, guaranteeSlots: 2, targetCount: 1, currentLabel: 7,
@@ -130,7 +131,7 @@ func TestCreateReasonsAndPlansAreReadFromTheJournal(t *testing.T) {
 //  2. Resolve each create's role.
 //  3. Assert the stored row wins, the create line stands in for a dropped row, and a create with neither stays unresolved.
 func TestACreateWhoseRowWasDroppedTakesItsRoleFromItsCreateLine(t *testing.T) {
-	rolesByID := map[string]string{"1": regularRole}
+	rolesByID := map[string]store.Role{"1": regularRole}
 	lines := map[string]createLine{
 		"1": {reason: "guard", role: tempRole},
 		"2": {reason: "capacity", role: regularRole},
@@ -139,7 +140,7 @@ func TestACreateWhoseRowWasDroppedTakesItsRoleFromItsCreateLine(t *testing.T) {
 	for _, testCase := range []struct {
 		name      string
 		createdID string
-		role      string
+		role      store.Role
 		known     bool
 	}{
 		{name: "a stored row", createdID: "1", role: regularRole, known: true},

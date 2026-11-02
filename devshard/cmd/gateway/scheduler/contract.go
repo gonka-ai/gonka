@@ -2,7 +2,7 @@ package scheduler
 
 import (
 	"devshard/cmd/gateway/chain"
-	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/internal/tokensource"
 	"devshard/cmd/gateway/limits"
 )
 
@@ -12,7 +12,7 @@ type RequestProfile struct {
 	Model             string
 	Escrow            string
 	InputTokens       int
-	InputTokensSource filters.InputTokensSource
+	InputTokensSource tokensource.Source
 	InputBytes        int
 	OutputTokens      int
 	Exclude           []string

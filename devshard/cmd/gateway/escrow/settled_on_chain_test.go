@@ -29,6 +29,7 @@ func TestAParkedEscrowTheChainReportsSettledIsDroppedWithoutABroadcast(t *testin
 	log := &callLog{}
 	source := &fakeSettlementSource{calls: log}
 	manager := &Manager{
+		narrator:         silentNarrator{},
 		tx:               settledOnChainTxClient(log),
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
@@ -59,7 +60,7 @@ func TestAnEscrowCheckRetiresAnEscrowTheChainReportsSettled(t *testing.T) {
 	testStore := newFakeStore()
 	testStore.devshards["1"] = store.DevshardRecord{EscrowID: "1", Model: "model-a", Active: true}
 	routing := &fakeSettlementSource{}
-	manager := &Manager{tx: settledOnChainTxClient(nil), store: testStore, settlementSource: routing}
+	manager := &Manager{narrator: silentNarrator{}, tx: settledOnChainTxClient(nil), store: testStore, settlementSource: routing}
 
 	if err := manager.TriggerEscrowCheck(context.Background(), "1"); err != nil {
 		t.Fatalf("TriggerEscrowCheck() = %v, want nil", err)
@@ -79,7 +80,7 @@ func TestAnEscrowCheckRetiresAnEscrowTheChainReportsSettled(t *testing.T) {
 //  2. Run the escrow check on it.
 //  3. Assert the check succeeds: there is nothing left to park, and a failed check would schedule itself again every tick until the chain prunes the escrow.
 func TestAnEscrowCheckOfASettledEscrowWithNoRowIsDone(t *testing.T) {
-	manager := &Manager{tx: settledOnChainTxClient(nil), store: newFakeStore(), settlementSource: &fakeSettlementSource{}}
+	manager := &Manager{narrator: silentNarrator{}, tx: settledOnChainTxClient(nil), store: newFakeStore(), settlementSource: &fakeSettlementSource{}}
 
 	if err := manager.TriggerEscrowCheck(context.Background(), "1"); err != nil {
 		t.Fatalf("TriggerEscrowCheck() = %v, want nil for an escrow already dropped", err)

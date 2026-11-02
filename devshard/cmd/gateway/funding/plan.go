@@ -5,6 +5,7 @@ import (
 	"slices"
 	"time"
 
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/cmd/gateway/liquidity"
 )
 
@@ -157,22 +158,22 @@ func misconfigured(state ModelState) bool {
 }
 
 func amountNeeded(state ModelState) uint64 {
-	return saturatingAdd(state.CreateFee, state.Slot)
+	return safemath.AddSaturatingUint64(state.CreateFee, state.Slot)
 }
 
 func demandNeed(state ModelState, misconfigured bool) uint64 {
-	headroom := saturatingAdd(state.DemandPeak, state.DemandPeak/demandPeakPerHeadroom)
+	headroom := safemath.AddSaturatingUint64(state.DemandPeak, state.DemandPeak/demandPeakPerHeadroom)
 	if misconfigured {
 		return headroom
 	}
-	return saturatingAdd(headroom, saturatingMul(uint64(max(state.FullContextSlots, 0)), state.Slot))
+	return safemath.AddSaturatingUint64(headroom, safemath.MulSaturatingUint64(uint64(max(state.FullContextSlots, 0)), state.Slot))
 }
 
 func liquidMoney(state ModelState, routable []EscrowState) uint64 {
 	var liquid uint64
 	for _, escrow := range routable {
-		ownPrice := saturatingAdd(subtractFloor(escrow.Money.Free, escrow.FullCost), escrow.Money.Returning)
-		liquid = saturatingAdd(liquid, atModelPrice(state, escrow, ownPrice))
+		ownPrice := safemath.AddSaturatingUint64(subtractFloor(escrow.Money.Free, escrow.FullCost), escrow.Money.Returning)
+		liquid = safemath.AddSaturatingUint64(liquid, atModelPrice(state, escrow, ownPrice))
 	}
 	return liquid
 }

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/escrow"
 	"devshard/types"
 )
 
@@ -493,5 +494,77 @@ func TestBuildSettlementSignsWithTheCheckedSettlementSignatures(t *testing.T) {
 				t.Fatalf("narrated %v, want %d unverifiable lines", recorded, testCase.wantNarrations)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Build a registry with one escrow, acquire and retire it, and arm the session's onFlush hook to block until signaled.
+//  2. Release the request so the drain starts flushing, then call `Finalize` while the flush is blocked.
+//  3. Let the flush finish and wait for the close to complete.
+//  4. Assert `Finalize` reports the escrow busy and no second serving session was opened on its store.
+func TestFinalizeDuringABackgroundCloseOpensNoSecondSession(t *testing.T) {
+	t.Parallel()
+	session := newFakeSession("hostA")
+	sessions := newSessions(map[string]*fakeSession{"1": session})
+	registry := New(Deps{ServingSessions: sessions.open, Now: fixedClock()})
+	registry.ShareChainMaxNonce(100)
+	mustAdd(t, registry, "1", "qwen")
+	_, releaseRequest, acquired := registry.Acquire("1")
+	if !acquired {
+		t.Fatal("Acquire(1) = false, want true")
+	}
+	if err := registry.Retire("1"); err != nil {
+		t.Fatalf("Retire(1) = %v, want nil", err)
+	}
+	flushing, finishFlush := make(chan struct{}), make(chan struct{})
+	session.onFlush = func() {
+		close(flushing)
+		<-finishFlush
+	}
+
+	releaseRequest()
+	<-flushing
+	err := registry.Finalize(context.Background(), "1")
+	close(finishFlush)
+	registry.closing.Wait()
+
+	if !errors.Is(err, escrow.ErrDevshardBusy) {
+		t.Fatalf("Finalize(1) during the close = %v, want ErrDevshardBusy", err)
+	}
+	if got := sessions.calls.Load(); got != 1 {
+		t.Fatalf("serving sessions opened = %d, want 1", got)
+	}
+}
+
+// Test flow:
+//  1. Build a registry with one escrow whose close fails, acquire and retire it, release the request and wait for the failed close.
+//  2. Let the store close, hold the escrow for settlement and release the hold.
+//  3. Assert the hold was granted and its release closed the session a second time.
+func TestAFailedCloseLetsTheNextHoldsReleaseTryAgain(t *testing.T) {
+	t.Parallel()
+	session := newFakeSession("hostA")
+	session.closeErr = errors.New("storage refused to close")
+	registry := New(Deps{ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Now: fixedClock()})
+	mustAdd(t, registry, "1", "qwen")
+	_, releaseRequest, acquired := registry.Acquire("1")
+	if !acquired {
+		t.Fatal("Acquire(1) = false, want true")
+	}
+	if err := registry.Retire("1"); err != nil {
+		t.Fatalf("Retire(1) = %v, want nil", err)
+	}
+	releaseRequest()
+	registry.closing.Wait()
+
+	session.closeErr = nil
+	_, releaseHold, held := registry.HoldSettlement("1")
+	if !held {
+		t.Fatal("HoldSettlement(1) after the failed close = false, want true")
+	}
+	releaseHold()
+	registry.closing.Wait()
+
+	if got := session.closeCalls.Load(); got != 2 {
+		t.Fatalf("Close calls = %d, want 2", got)
 	}
 }

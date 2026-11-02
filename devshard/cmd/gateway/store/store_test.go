@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/filters"
 )
 
@@ -62,7 +63,7 @@ func TestOverridesRoundTripAndEmptyLoad(t *testing.T) {
 	}
 
 	maxTokens := int64(1234)
-	saved := config.Overrides{DefaultMaxTokens: &maxTokens}
+	saved := config.Overrides{Tunables: env.Tunables{DefaultMaxTokens: &maxTokens}}
 	if err := testStore.SaveOverrides(ctx, saved); err != nil {
 		t.Fatalf("SaveOverrides(): %v", err)
 	}
@@ -75,7 +76,7 @@ func TestOverridesRoundTripAndEmptyLoad(t *testing.T) {
 	}
 
 	newTokens := int64(999)
-	if err := testStore.SaveOverrides(ctx, config.Overrides{DefaultMaxTokens: &newTokens}); err != nil {
+	if err := testStore.SaveOverrides(ctx, config.Overrides{Tunables: env.Tunables{DefaultMaxTokens: &newTokens}}); err != nil {
 		t.Fatalf("second SaveOverrides(): %v", err)
 	}
 	replaced, err := testStore.LoadOverrides(ctx)
@@ -184,6 +185,39 @@ func TestUpsertDevshardKeepsAQueuedSettlementWhileReplacingEveryOtherField(t *te
 	}
 	if listed[0].Model != "model-b" || !listed[0].Active {
 		t.Fatalf("re-imported row = %+v, want model-b and active (every other field replaced)", listed[0])
+	}
+}
+
+// Test flow:
+//  1. Register two escrows, the second parked.
+//  2. Read the second by id and assert the row matches what the list returns for it.
+//  3. Read an id that was never registered and assert it is reported missing without an error.
+func TestDevshardReadsOneRowAsTheListDoes(t *testing.T) {
+	testStore := openTestStore(t)
+	ctx := context.Background()
+	for _, escrowID := range []string{"1", "2"} {
+		if err := testStore.UpsertDevshard(ctx, DevshardRecord{EscrowID: escrowID, PrivateKeyEnv: "KEY_" + escrowID, Model: "model", Active: true}); err != nil {
+			t.Fatalf("UpsertDevshard(%s): %v", escrowID, err)
+		}
+	}
+	if err := testStore.ParkForSettlement(ctx, "2"); err != nil {
+		t.Fatalf("ParkForSettlement(2): %v", err)
+	}
+
+	listed, err := testStore.ListDevshards(ctx)
+	if err != nil {
+		t.Fatalf("ListDevshards(): %v", err)
+	}
+	record, found, err := testStore.Devshard(ctx, "2")
+	if err != nil || !found {
+		t.Fatalf("Devshard(2) = found %v, err %v", found, err)
+	}
+	if record != listed[1] {
+		t.Fatalf("Devshard(2) = %+v, want the listed row %+v", record, listed[1])
+	}
+
+	if _, found, err := testStore.Devshard(ctx, "ghost"); err != nil || found {
+		t.Fatalf("Devshard(ghost) = found %v, err %v, want missing and no error", found, err)
 	}
 }
 

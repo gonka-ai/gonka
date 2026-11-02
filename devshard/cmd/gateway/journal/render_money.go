@@ -41,7 +41,7 @@ func renderTimeoutVote(lines logSink, vote *engine.TimeoutEvent) {
 	fields = append(fields,
 		logkey.Escrow, vote.EscrowID, logkey.Nonce, vote.Nonce,
 		logkey.Host, logkey.ShortHost(vote.Participant), logkey.Model, vote.Model,
-		logkey.Kind, vote.Kind, logkey.Reason, vote.Reason)
+		logkey.Kind, string(vote.Kind), logkey.Reason, string(vote.Reason))
 	lines.Warn("timeout vote failed", fields...)
 }
 

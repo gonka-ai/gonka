@@ -236,7 +236,7 @@ func TestSettleTimeoutReportsAnInsufficientVoteTallyAsAFailure(t *testing.T) {
 	if !errors.Is(err, user.ErrTimeoutNotApplied) {
 		t.Errorf("SettleTimeout error = %v, want it to match user.ErrTimeoutNotApplied", err)
 	}
-	if got, want := vote.Kind, "refused"; got != want {
+	if got, want := vote.Kind, engine.TimeoutKindRefused; got != want {
 		t.Errorf("vote kind = %q, want %q", got, want)
 	}
 }

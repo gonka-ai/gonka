@@ -22,12 +22,12 @@ func encodeMsgSettleDevshardEscrow(settler string, input SettlementInput) ([]byt
 	hostStats := make([]*inferencetypes.DevshardSettlementHostStats, 0, len(input.HostStats))
 	for _, hostStat := range input.HostStats {
 		hostStats = append(hostStats, &inferencetypes.DevshardSettlementHostStats{
-			SlotId:               uint32(hostStat.SlotID),
-			Missed:               uint32(hostStat.Missed),
-			Invalid:              uint32(hostStat.Invalid),
+			SlotId:               hostStat.SlotID,
+			Missed:               hostStat.Missed,
+			Invalid:              hostStat.Invalid,
 			Cost:                 hostStat.Cost,
-			RequiredValidations:  uint32(hostStat.RequiredValidations),
-			CompletedValidations: uint32(hostStat.CompletedValidations),
+			RequiredValidations:  hostStat.RequiredValidations,
+			CompletedValidations: hostStat.CompletedValidations,
 		})
 	}
 	signatures := make([]*inferencetypes.DevshardSlotSignature, 0, len(input.SlotSigs))
@@ -59,22 +59,36 @@ func truncateSignature(sig []byte) ([]byte, error) {
 	return sig[:compactSignatureLength], nil
 }
 
-// buildCreateEscrowTx assembles and signs an unordered MsgCreateDevshardEscrow tx; ttl is caller-supplied so encoding stays deterministic.
-func buildCreateEscrowTx(signer *signing.Secp256k1Signer, chainID string, accountNumber uint64, feeDenom string, feeAmount, gasLimit, amount uint64, modelID string, ttl time.Time) ([]byte, error) {
-	if strings.TrimSpace(chainID) == "" {
+const (
+	actionCreateEscrow = "create-escrow"
+	actionSettleEscrow = "settle-escrow"
+)
+
+type txSigning struct {
+	signer        *signing.Secp256k1Signer
+	chainID       string
+	accountNumber uint64
+	feeDenom      string
+	feeAmount     uint64
+	gasLimit      uint64
+	ttl           time.Time
+}
+
+func (s txSigning) signMessage(action, typeURL string, encode func() ([]byte, error)) ([]byte, error) {
+	if strings.TrimSpace(s.chainID) == "" {
 		return nil, fmt.Errorf("chain id is required")
 	}
-	msg, err := encodeMsgCreateDevshardEscrow(signer.Address(), amount, modelID)
+	msg, err := encode()
 	if err != nil {
-		return nil, fmt.Errorf("encode create-escrow message: %w", err)
+		return nil, fmt.Errorf("encode %s message: %w", action, err)
 	}
-	bodyBytes := encodeUnorderedTxBody(encodeAny(createEscrowMsgTypeURL, msg), ttl)
-	pubKeyAny := encodeAny(secp256k1PubKeyTypeURL, encodeSecp256k1PubKey(signer.CompressedPublicKeyBytes()))
-	authInfoBytes := encodeAuthInfo(pubKeyAny, 0, feeDenom, feeAmount, gasLimit)
-	signDoc := encodeSignDoc(bodyBytes, authInfoBytes, chainID, accountNumber)
-	sig, err := signer.Sign(signDoc)
+	bodyBytes := encodeUnorderedTxBody(encodeAny(typeURL, msg), s.ttl)
+	pubKeyAny := encodeAny(secp256k1PubKeyTypeURL, encodeSecp256k1PubKey(s.signer.CompressedPublicKeyBytes()))
+	authInfoBytes := encodeAuthInfo(pubKeyAny, 0, s.feeDenom, s.feeAmount, s.gasLimit)
+	signDoc := encodeSignDoc(bodyBytes, authInfoBytes, s.chainID, s.accountNumber)
+	sig, err := s.signer.Sign(signDoc)
 	if err != nil {
-		return nil, fmt.Errorf("sign create-escrow tx: %w", err)
+		return nil, fmt.Errorf("sign %s tx: %w", action, err)
 	}
 	truncated, err := truncateSignature(sig)
 	if err != nil {
@@ -83,26 +97,14 @@ func buildCreateEscrowTx(signer *signing.Secp256k1Signer, chainID string, accoun
 	return encodeTxRaw(bodyBytes, authInfoBytes, truncated), nil
 }
 
-// buildSettleEscrowTx assembles and signs an unordered MsgSettleDevshardEscrow tx; settler may differ from the broadcasting signer.
-func buildSettleEscrowTx(signer *signing.Secp256k1Signer, chainID string, accountNumber uint64, feeDenom string, feeAmount, gasLimit uint64, settler string, input SettlementInput, ttl time.Time) ([]byte, error) {
-	if strings.TrimSpace(chainID) == "" {
-		return nil, fmt.Errorf("chain id is required")
-	}
-	msg, err := encodeMsgSettleDevshardEscrow(settler, input)
-	if err != nil {
-		return nil, fmt.Errorf("encode settle-escrow message: %w", err)
-	}
-	bodyBytes := encodeUnorderedTxBody(encodeAny(settleEscrowMsgTypeURL, msg), ttl)
-	pubKeyAny := encodeAny(secp256k1PubKeyTypeURL, encodeSecp256k1PubKey(signer.CompressedPublicKeyBytes()))
-	authInfoBytes := encodeAuthInfo(pubKeyAny, 0, feeDenom, feeAmount, gasLimit)
-	signDoc := encodeSignDoc(bodyBytes, authInfoBytes, chainID, accountNumber)
-	sig, err := signer.Sign(signDoc)
-	if err != nil {
-		return nil, fmt.Errorf("sign settle-escrow tx: %w", err)
-	}
-	truncated, err := truncateSignature(sig)
-	if err != nil {
-		return nil, err
-	}
-	return encodeTxRaw(bodyBytes, authInfoBytes, truncated), nil
+func buildCreateEscrowTx(parameters txSigning, amount uint64, modelID string) ([]byte, error) {
+	return parameters.signMessage(actionCreateEscrow, createEscrowMsgTypeURL, func() ([]byte, error) {
+		return encodeMsgCreateDevshardEscrow(parameters.signer.Address(), amount, modelID)
+	})
+}
+
+func buildSettleEscrowTx(parameters txSigning, settler string, input SettlementInput) ([]byte, error) {
+	return parameters.signMessage(actionSettleEscrow, settleEscrowMsgTypeURL, func() ([]byte, error) {
+		return encodeMsgSettleDevshardEscrow(settler, input)
+	})
 }

@@ -27,10 +27,10 @@ const (
 type AttemptLabels struct {
 	Participant string
 	Model       string
-	Role        string
-	Outcome     string
-	Visibility  string
-	Reason      string
+	Role        AttemptRole
+	Outcome     AttemptResult
+	Visibility  AttemptVisibility
+	Reason      FailureReason
 }
 
 // longResponseExempt gates on ContentSource, not ContentChunks, which counts error events too. See rules.md, "1. A committed nonce is always settled".
@@ -166,7 +166,7 @@ func (o RaceOutcome) DeniesCrowning(a AttemptOutcome) bool {
 
 func (o RaceOutcome) Labels(a AttemptOutcome) AttemptLabels {
 	role := a.Role
-	if role == "" {
+	if role == RoleUnset {
 		role = RolePrimary
 	}
 	served := o.served(a)
@@ -174,18 +174,18 @@ func (o RaceOutcome) Labels(a AttemptOutcome) AttemptLabels {
 		Participant: a.Participant,
 		Model:       o.Model,
 		Role:        role,
-		Outcome:     AttemptOutcomeFailed,
+		Outcome:     AttemptResultFailed,
 		Visibility:  o.visibility(a, served),
 		Reason:      o.failureReason(a),
 	}
 	if served {
-		labels.Outcome = AttemptOutcomeSuccess
+		labels.Outcome = AttemptResultSuccess
 		labels.Reason = ""
 	}
 	return labels
 }
 
-func (o RaceOutcome) visibility(a AttemptOutcome, served bool) string {
+func (o RaceOutcome) visibility(a AttemptOutcome, served bool) AttemptVisibility {
 	switch {
 	case served && o.IsWinner(a) && o.Lifecycle.ClientGone:
 		return VisibilityWinnerClientGone
@@ -204,11 +204,21 @@ func (o RaceOutcome) IsWinner(a AttemptOutcome) bool {
 	return o.WinnerNonce != 0 && a.Nonce == o.WinnerNonce
 }
 
-func (o RaceOutcome) failureReason(a AttemptOutcome) string {
-	if a.PhaseTransitionAborted {
-		return TimeoutReasonPhaseAborted
+// Winner returns the crowned attempt, nil when nobody was crowned.
+func (o RaceOutcome) Winner() *AttemptOutcome {
+	for index := range o.Attempts {
+		if o.IsWinner(o.Attempts[index]) {
+			return &o.Attempts[index]
+		}
 	}
-	if reason := a.Terminal.reason(); reason != "" {
+	return nil
+}
+
+func (o RaceOutcome) failureReason(a AttemptOutcome) FailureReason {
+	if a.PhaseTransitionAborted {
+		return ReasonPhaseAborted
+	}
+	if reason := a.Terminal.reason(); reason != ReasonUnset {
 		return reason
 	}
 	if !a.NonceFinished {

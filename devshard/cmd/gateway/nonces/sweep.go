@@ -90,6 +90,7 @@ func (n *Recorder) StartSweeping(ctx context.Context, escrows EscrowSource, diff
 	if n == nil {
 		return
 	}
+	n.diffs.Store(&diffs)
 	sweepCtx, stopSweeping := context.WithCancel(ctx)
 	swept := make(chan struct{})
 	n.stopSweeping, n.swept = stopSweeping, swept
@@ -208,6 +209,16 @@ func (n *Recorder) forgetEscrow(escrowID string) {
 	n.readingLock <- struct{}{}
 	defer func() { <-n.readingLock }()
 	delete(n.timedOutAtSeal, escrowID)
+}
+
+// EscrowRehydrated watches a session opened to settle an escrow the sweep no longer reads, whose finalize and pre-finalize nonces would otherwise never reach the ledger.
+func (n *Recorder) EscrowRehydrated(escrowID string, session registry.EscrowSession) {
+	if n == nil {
+		return
+	}
+	if diffs := n.diffs.Load(); diffs != nil {
+		n.watchDiffs(escrowID, session, *diffs)
+	}
 }
 
 // EscrowClosing takes the reading a shutdown would otherwise lose, before the session closes, and leaves the escrow open. See docs/accounting.md, "Storage".

@@ -150,11 +150,11 @@ func (attempt *liveAttempt) wentSilentMidContent(outcome AttemptOutcome) bool {
 	return attempt.stalled && outcome.ContentChunks > 0
 }
 
-func (c *raceCoordinator) traceUnreported(attempt *liveAttempt, reason string) {
+func (c *raceCoordinator) traceUnreported(attempt *liveAttempt, reason FailureReason) {
 	c.traceStep(RaceStep{
 		Kind: RaceStepAttemptFinished, RequestID: c.request.RequestID, EscrowID: c.escrowID,
 		Nonce: attempt.nonce, Participant: attempt.participant, NonceFinished: attempt.nonceFinished,
-		Reason: reason,
+		Reason: string(reason),
 	})
 }
 

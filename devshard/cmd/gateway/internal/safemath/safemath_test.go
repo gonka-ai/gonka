@@ -95,3 +95,25 @@ func TestSaturatingArithmeticNeverWraps(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Table-driven: sums and products below, at and past the uint64 bound.
+//  2. Assert each stops at the bound instead of wrapping.
+func TestUint64ArithmeticStopsAtTheBound(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		got  uint64
+		want uint64
+	}{
+		{"a sum in range", AddSaturatingUint64(2, 3), 5},
+		{"a sum at the bound", AddSaturatingUint64(math.MaxUint64-1, 1), math.MaxUint64},
+		{"a sum past the bound", AddSaturatingUint64(math.MaxUint64, 1), math.MaxUint64},
+		{"a product in range", MulSaturatingUint64(2, 3), 6},
+		{"a product with zero", MulSaturatingUint64(0, math.MaxUint64), 0},
+		{"a product past the bound", MulSaturatingUint64(math.MaxUint64, 2), math.MaxUint64},
+	} {
+		if testCase.got != testCase.want {
+			t.Errorf("%s = %d, want %d", testCase.name, testCase.got, testCase.want)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/escrow"
+	"devshard/cmd/gateway/internal/logkey"
 )
 
 const adminSettleTimeout = 5 * time.Minute
@@ -63,7 +64,7 @@ func (s *Server) settleOne(ctx context.Context, escrowID string, forced bool) (c
 		return result, err
 	}
 	if forced {
-		auditAdmin("escrow settled under force", "escrow", escrowID, "in_flight", overridden)
+		auditAdmin("escrow settled under force", logkey.Escrow, escrowID, logkey.InFlight, overridden)
 	}
 	return result, nil
 }

@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/cmd/gateway/engine"
 	"devshard/types"
 )
 
@@ -92,9 +93,9 @@ type nonceRecord struct {
 	usage             Usage
 	ghostReason       string
 
-	timeoutKind   string
-	timeoutAction string
-	timeoutReason string
+	timeoutKind   engine.TimeoutKind
+	timeoutAction engine.TimeoutAction
+	timeoutReason engine.TimeoutReason
 
 	terminal        string
 	phase           Phase
@@ -292,10 +293,10 @@ func (b *Book) RecordRace(escrowID string, attempts []Attempt) error {
 	})
 }
 
-func (b *Book) RecordTimeout(escrowID string, nonce uint64, kind, action, reason string) error {
+func (b *Book) RecordTimeout(escrowID string, nonce uint64, kind engine.TimeoutKind, action engine.TimeoutAction, reason engine.TimeoutReason) error {
 	return b.withEscrow(escrowID, func(escrow *escrowLedger) error {
 		record := escrow.record(nonce)
-		if kind != "" {
+		if kind != engine.TimeoutKindUnset {
 			record.timeoutKind = kind
 		}
 		record.timeoutAction = action

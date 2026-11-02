@@ -52,6 +52,7 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		Narrator:         deps.Journal,
 		Retiring:         deps.Ledger.EscrowRetiring,
 		Closing:          deps.Ledger.EscrowClosing,
+		Rehydrated:       deps.Ledger.EscrowRehydrated,
 		ServedBindings:   servedBindingStrikes(deps.Hosts, deps.Journal, deps.Served, deps.Finishes),
 		PeerRPC:          deps.PeerRPC,
 		Now:              deps.Now,

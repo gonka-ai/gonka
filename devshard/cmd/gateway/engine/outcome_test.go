@@ -610,7 +610,7 @@ func TestLabels(t *testing.T) {
 func TestTerminalFailureReasons(t *testing.T) {
 	tests := []struct {
 		terminal Terminal
-		want     string
+		want     FailureReason
 	}{
 		{TerminalUnclassified, "unknown"},
 		{TerminalWon, ""},
@@ -698,15 +698,15 @@ func TestEveryRecoveredStatusRoundTripsThroughItsTerminal(t *testing.T) {
 }
 
 // Test flow:
-//  1. Walk every terminal from TerminalUnclassified to TerminalHardTimeout.
+//  1. Walk every terminal up to terminalCount.
 //  2. Assert each one has a non-empty name that is not the unnamed/unknown placeholder.
 //  3. Assert a win and a loss both report an empty failure reason.
 func TestEveryTerminalHasAName(t *testing.T) {
-	for terminal := TerminalUnclassified; terminal <= TerminalHardTimeout; terminal++ {
+	for terminal := range terminalCount {
 		if terminal.String() == "" {
 			t.Fatalf("terminal %d has no name", terminal)
 		}
-		if terminal.String() == TerminalNameUnnamed || terminal.String() == ReasonUnknown {
+		if terminal.String() == TerminalNameUnnamed || terminal.String() == string(ReasonUnknown) {
 			t.Fatalf("terminal %d fell through to a placeholder, so a new terminal was added without a name", terminal)
 		}
 	}
@@ -920,5 +920,43 @@ func TestUpstreamServerErrorsNarrowTheWindowAndClientErrorsDoNot(t *testing.T) {
 					verdict, moves, testCase.wantVerdict, testCase.wantMoves)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Table-driven: every terminal with the limiter verdict it reports, or none.
+//  2. Assert verdict() returns exactly that, and a terminal with no verdict reports ModelOutcome and false.
+func TestEveryTerminalReportsItsVerdict(t *testing.T) {
+	verdicts := map[Terminal]limits.Verdict{
+		TerminalWon: limits.Success, TerminalLost: limits.Success,
+		TerminalThrottled: limits.Overload, TerminalUnavailable: limits.Overload, TerminalHardTimeout: limits.Overload,
+		TerminalUpstreamServerError: limits.UpstreamFault,
+		TerminalForbidden:           limits.TransportFault, TerminalNotFound: limits.TransportFault, TerminalTimestampDrift: limits.TransportFault,
+		TerminalDialFailure: limits.TransportFault, TerminalStreamTruncated: limits.TransportFault, TerminalUnexpectedEOF: limits.TransportFault,
+		TerminalStalled:     limits.DecodeStalled,
+		TerminalEmptyStream: limits.ModelOutcome, TerminalBurnEmpty: limits.ModelOutcome, TerminalErrorStream: limits.ModelOutcome, TerminalCapabilityRefused: limits.ModelOutcome,
+		TerminalResponseTooLarge: limits.ModelOutcome, TerminalRequestTooLarge: limits.ModelOutcome, TerminalEscrowLookupLimited: limits.ModelOutcome,
+	}
+	for terminal := range terminalCount {
+		wanted, known := verdicts[terminal]
+		if !known {
+			wanted = limits.ModelOutcome
+		}
+		if got, gotKnown := terminal.verdict(); got != wanted || gotKnown != known {
+			t.Errorf("terminal %s verdict = %v, %v, want %v, %v", terminal, got, gotKnown, wanted, known)
+		}
+	}
+}
+
+// Test flow:
+//  1. Build an outcome whose second attempt won, and one with no winner.
+//  2. Assert Winner returns the crowned attempt, and nil when nobody was crowned.
+func TestWinnerReturnsTheCrownedAttempt(t *testing.T) {
+	crowned := RaceOutcome{WinnerNonce: 2, Attempts: []AttemptOutcome{{Nonce: 1}, {Nonce: 2}}}
+	if winner := crowned.Winner(); winner == nil || winner.Nonce != 2 {
+		t.Fatalf("Winner = %+v, want nonce 2", winner)
+	}
+	if winner := (RaceOutcome{Attempts: []AttemptOutcome{{Nonce: 1}}}).Winner(); winner != nil {
+		t.Fatalf("Winner = %+v, want nil", winner)
 	}
 }

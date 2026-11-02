@@ -26,7 +26,7 @@ func (m *Manager) applyPlan(ctx context.Context, model ModelConfig, snapshot cha
 		if create.Standby {
 			role = RoleReserve
 		}
-		_, err := m.createFor(ctx, model, role, snapshot.EpochIndex, string(create.Reason), snapshot)
+		_, err := m.createFor(ctx, model, role, snapshot.EpochIndex, createReason(create.Reason), snapshot)
 		m.planner.recordCreate(model.ModelID, err, m.now())
 		if err == nil {
 			m.breaker.reset(model.ModelID, roleRegular)
@@ -59,7 +59,7 @@ func (m *Manager) retireBridgedTemps(ctx context.Context, snapshot chain.PhaseSn
 		}
 		retired++
 	}
-	if retired > 0 && m.narrator != nil {
+	if retired > 0 {
 		m.narrator.BridgeFinished(model.ModelID, snapshot.EpochIndex, 0, retired)
 	}
 	return errors.Join(errs...)

@@ -19,7 +19,7 @@ type TimeoutPoster interface {
 }
 
 type TimeoutVote struct {
-	Kind          string
+	Kind          TimeoutKind
 	Detail        string
 	Unjudged      bool
 	VerifyRejects []string
@@ -32,9 +32,9 @@ type TimeoutEvent struct {
 	Participant   string
 	Model         string
 	Nonce         uint64
-	Kind          string
-	Action        string
-	Reason        string
+	Kind          TimeoutKind
+	Action        TimeoutAction
+	Reason        TimeoutReason
 	VerifyRejects []string
 	Completeness  MissProofCompleteness
 }
@@ -57,7 +57,7 @@ type TimeoutStep struct {
 	Event     TimeoutEvent
 }
 
-func timeoutKind(a AttemptOutcome) string {
+func timeoutKind(a AttemptOutcome) TimeoutKind {
 	if a.claimsMiss() {
 		return TimeoutKindErrorMiss
 	}
@@ -67,7 +67,7 @@ func timeoutKind(a AttemptOutcome) string {
 	return TimeoutKindExecution
 }
 
-func timeoutVoteKind(vote, fallback string) string {
+func timeoutVoteKind(vote, fallback TimeoutKind) TimeoutKind {
 	switch vote {
 	case TimeoutKindRefused, TimeoutKindExecution:
 		return vote
@@ -80,9 +80,9 @@ func (o RaceOutcome) nonceSettled(a AttemptOutcome) bool {
 }
 
 // timeoutSkipReason names every skip; a diverged escrow state is deliberately not one. See race.md, "Timeout votes".
-func (o RaceOutcome) timeoutSkipReason(a AttemptOutcome) (string, bool) {
+func (o RaceOutcome) timeoutSkipReason(a AttemptOutcome) (TimeoutReason, bool) {
 	if a.claimsMiss() {
-		return "", false
+		return TimeoutReasonUnset, false
 	}
 	switch {
 	case a.PhaseTransitionAborted:
@@ -94,7 +94,7 @@ func (o RaceOutcome) timeoutSkipReason(a AttemptOutcome) (string, bool) {
 	case o.longResponseExempt(a):
 		return TimeoutReasonLongResponse, true
 	}
-	return "", false
+	return TimeoutReasonUnset, false
 }
 
 func (o RaceOutcome) releaseHeldFinishes() {
@@ -229,7 +229,7 @@ func postTimeout(ctx context.Context, poster TimeoutPoster, step TimeoutStep, es
 }
 
 // TimeoutOutcome classifies what a posted vote came back as, preferring the handler's own detail. See README, "Timeout votes".
-func TimeoutOutcome(vote TimeoutVote, err error, escrowMissing bool) (action, reason string) {
+func TimeoutOutcome(vote TimeoutVote, err error, escrowMissing bool) (action TimeoutAction, reason TimeoutReason) {
 	switch {
 	case errors.Is(err, user.ErrInferenceMissed):
 		return TimeoutActionCompleted, TimeoutReasonNone
@@ -245,9 +245,9 @@ func TimeoutOutcome(vote TimeoutVote, err error, escrowMissing bool) (action, re
 	return TimeoutActionCompleted, TimeoutReasonNone
 }
 
-func firstNamed(detail, fallback string) string {
+func firstNamed(detail string, fallback TimeoutReason) TimeoutReason {
 	if detail != "" {
-		return detail
+		return TimeoutReason(detail)
 	}
 	return fallback
 }

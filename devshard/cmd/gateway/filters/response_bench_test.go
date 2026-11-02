@@ -53,7 +53,7 @@ func BenchmarkDeleteFields(b *testing.B) {
 	}
 }
 
-func BenchmarkIsCacheableResponse(b *testing.B) {
+func BenchmarkCacheRefusal(b *testing.B) {
 	events := productionStream(64)
 	var body bytes.Buffer
 	for _, event := range events[:len(events)-1] {
@@ -65,7 +65,7 @@ func BenchmarkIsCacheableResponse(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(stream)))
 	for b.Loop() {
-		if !IsCacheableResponse(200, stream) {
+		if CacheRefusal(200, stream) != CacheStorable {
 			b.Fatal("the production stream must stay cacheable")
 		}
 	}

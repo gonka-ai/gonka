@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+
+	"devshard/cmd/gateway/internal/logkey"
 )
 
 type deactivateOutcome struct {
@@ -47,6 +49,6 @@ func (s *Server) deactivateEntry(ctx context.Context, escrowID string, registere
 	if err != nil {
 		return deactivateOutcome{EscrowID: escrowID, Status: statusForError(err), Error: err.Error()}
 	}
-	auditAdmin("escrow deactivated", "escrow", escrowID)
+	auditAdmin("escrow deactivated", logkey.Escrow, escrowID)
 	return deactivateOutcome{EscrowID: escrowID}
 }

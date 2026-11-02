@@ -10,7 +10,7 @@ import (
 type Commitment struct {
 	TxHash        string
 	Model         string
-	Role          string
+	Role          Role
 	PrivateKeyEnv string
 	Epoch         uint64
 	BlockHeight   int64

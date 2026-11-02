@@ -195,6 +195,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 
 | Test | Why it exists | What it checks |
 | --- | --- | --- |
+| `TestASettledIdleEscrowLeavesNoNonceUnclassified` | an idle escrow settles through a rehydrated session; its finalize and pre-finalize nonces must reach the ledger | no nonce stays unclassified and a finalize nonce is counted |
 | `TestAForcedSettleLeavesTheLedgerChargedAsTheChain` | a forced settle pays open records at finalize; the ledger must agree | the ledger's charged total equals the chain's and the comparison actually ran |
 
 ### Operator — `operator_test.go`
