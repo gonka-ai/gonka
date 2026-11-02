@@ -51,6 +51,9 @@ You will be working alongside the team that built the chain from the ground up. 
 2. **Technical interview — 60–75 minutes**  
    Discussion of previous infrastructure and testing work, followed by practical testing and troubleshooting scenarios.
 
+3. **Interview with the founding team — 60 minutes**  
+   Meet the people who started the project. Discussion of the direction, how you would work with the hiring team and external contributors, and your questions about Gonka.
+
 ## How to apply
 
 Send your CV and LinkedIn/GitHub profile, together with a short description of your most relevant project involving distributed systems, infrastructure, blockchain, or QA, to Telegram: [@Charchian](https://t.me/Charchian).
