@@ -53,7 +53,7 @@ func BenchmarkDeleteFields(b *testing.B) {
 	}
 }
 
-func BenchmarkIsCacheableResponse(b *testing.B) {
+func BenchmarkCacheRefusal(b *testing.B) {
 	events := productionStream(64)
 	var body bytes.Buffer
 	for _, event := range events[:len(events)-1] {

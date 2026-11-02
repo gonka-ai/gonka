@@ -159,12 +159,11 @@ func (a AttemptOutcome) elapsed() time.Duration {
 }
 
 func (o RaceOutcome) WinnerNonceFinished() (finished, crowned bool) {
-	for _, attempt := range o.Attempts {
-		if o.IsWinner(attempt) {
-			return attempt.NonceFinished, true
-		}
+	winner := o.Winner()
+	if winner == nil {
+		return false, false
 	}
-	return false, false
+	return winner.NonceFinished, true
 }
 
 // TimePerOutputToken starts at the first content chunk, so prefill is not charged to decode speed.
