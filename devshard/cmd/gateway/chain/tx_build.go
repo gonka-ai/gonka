@@ -22,12 +22,12 @@ func encodeMsgSettleDevshardEscrow(settler string, input SettlementInput) ([]byt
 	hostStats := make([]*inferencetypes.DevshardSettlementHostStats, 0, len(input.HostStats))
 	for _, hostStat := range input.HostStats {
 		hostStats = append(hostStats, &inferencetypes.DevshardSettlementHostStats{
-			SlotId:               uint32(hostStat.SlotID),
-			Missed:               uint32(hostStat.Missed),
-			Invalid:              uint32(hostStat.Invalid),
+			SlotId:               hostStat.SlotID,
+			Missed:               hostStat.Missed,
+			Invalid:              hostStat.Invalid,
 			Cost:                 hostStat.Cost,
-			RequiredValidations:  uint32(hostStat.RequiredValidations),
-			CompletedValidations: uint32(hostStat.CompletedValidations),
+			RequiredValidations:  hostStat.RequiredValidations,
+			CompletedValidations: hostStat.CompletedValidations,
 		})
 	}
 	signatures := make([]*inferencetypes.DevshardSlotSignature, 0, len(input.SlotSigs))

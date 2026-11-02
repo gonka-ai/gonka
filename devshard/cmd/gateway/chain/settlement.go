@@ -18,12 +18,12 @@ type SettlementInput struct {
 }
 
 type SettlementHostStat struct {
-	SlotID               uint64
-	Missed               uint64
-	Invalid              uint64
+	SlotID               uint32
+	Missed               uint32
+	Invalid              uint32
 	Cost                 uint64
-	RequiredValidations  uint64
-	CompletedValidations uint64
+	RequiredValidations  uint32
+	CompletedValidations uint32
 }
 
 // SettlementSlotSig is one slot's settlement signature, already decoded.

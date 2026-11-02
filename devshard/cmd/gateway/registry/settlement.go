@@ -157,12 +157,12 @@ func settlementHostStats(perSlot map[uint32]*types.HostStats) []chain.Settlement
 	for _, slotID := range sortedKeys(perSlot) {
 		hostStats := perSlot[slotID]
 		stats = append(stats, chain.SettlementHostStat{
-			SlotID:               uint64(slotID),
-			Missed:               uint64(hostStats.Missed),
-			Invalid:              uint64(hostStats.Invalid),
+			SlotID:               slotID,
+			Missed:               hostStats.Missed,
+			Invalid:              hostStats.Invalid,
 			Cost:                 hostStats.Cost,
-			RequiredValidations:  uint64(hostStats.RequiredValidations),
-			CompletedValidations: uint64(hostStats.CompletedValidations),
+			RequiredValidations:  hostStats.RequiredValidations,
+			CompletedValidations: hostStats.CompletedValidations,
 		})
 	}
 	return stats
