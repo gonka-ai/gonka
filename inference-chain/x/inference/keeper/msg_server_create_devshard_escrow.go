@@ -58,7 +58,15 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		return nil, fmt.Errorf("total weight is zero")
 	}
 
-	appHash := hex.EncodeToString(ctx.HeaderInfo().AppHash)
+	// The current block hash includes the create transaction, so a creator cannot
+	// predict its committee from the previously committed app hash. A proposer
+	// can still bias the block hash; this does not provide proposer-proof randomness.
+	seed := ctx.HeaderInfo().Hash
+	if len(seed) == 0 && ctx.ExecMode() == sdk.ExecModeFinalize {
+		return nil, fmt.Errorf("block hash unavailable for devshard slot draw")
+	}
+	// CheckTx and simulation may have no block hash; their state is discarded.
+	seedHex := hex.EncodeToString(seed)
 
 	// We need the escrow ID for slot sampling, but we don't have it yet.
 	// Reserve the next counter value first.
@@ -72,7 +80,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	nextID := counter + 1
 
 	slots := calculations.GetSlotsFromSorted(
-		appHash,
+		seedHex,
 		fmt.Sprintf("devshard_escrow:%d", nextID),
 		msg.ModelId,
 		sortedEntries,
@@ -99,7 +107,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		Amount:                    msg.Amount,
 		Slots:                     slots,
 		EpochIndex:                epochIndex,
-		AppHash:                   appHash,
+		AppHash:                   seedHex,
 		Settled:                   false,
 		TokenPrice:                ep.TokenPrice,
 		ModelId:                   msg.ModelId,
