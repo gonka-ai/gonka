@@ -265,7 +265,7 @@ services:
   proxy:
     container_name: proxy
     image: >-
-      ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.16}
+      ${PROXY_ROUTER_IMAGE:-ghcr.io/gonka-ai/proxy-router:0.2.16-devshard-v6}
     ports:
       # Peer RPC between hosts shares these two ports with the JSON API;
       # proxy-router tells them apart by the first bytes of a connection.
