@@ -5,10 +5,12 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -586,6 +588,25 @@ func (d dueEvidence) CheckEvidence(rec *types.InferenceRecord, txs ...*types.Dev
 }
 
 func (d dueEvidence) TimeoutDue(uint64, types.TimeoutReason) error { return d.due }
+
+// A due verifier has a header time already past the window. A not-due
+// verifier has a full AnswerWait left, which is an ignore and not a wait.
+func (d dueEvidence) VerifierNow() time.Time {
+	return time.UnixMilli(time.Now().UnixMilli())
+}
+
+func (d dueEvidence) HasHeaderFeed() bool { return true }
+
+func (d dueEvidence) StampHeaderTime(uint64, []byte) (int64, bool) {
+	if d.due != nil {
+		return d.VerifierNow().Add(time.Second).UnixMilli(), true
+	}
+	return 1, true
+}
+
+func (d dueEvidence) TimeoutInterval(types.TimeoutReason) time.Duration {
+	return headertime.AnswerWait
+}
 
 func due(ev EvidenceVerifier) EvidenceVerifier { return dueEvidence{inner: ev} }
 

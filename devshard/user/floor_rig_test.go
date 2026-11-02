@@ -249,6 +249,15 @@ func (p *polledHeaders) StoredAt(height uint64) (headertime.Record, bool) {
 	return p.rig.gateway.StoredAt(height)
 }
 
+// EnsureFrom asks the gateway map to catch up from height toward the tip.
+// Recovery calls this after replay so unfinished start heights are polled.
+func (p *polledHeaders) EnsureFrom(height uint64) {
+	if p == nil || p.rig == nil || p.rig.gateway == nil {
+		return
+	}
+	p.rig.gateway.EnsureFrom(height)
+}
+
 // StoredHash is the polled hash already stored. It does not progress the chain.
 // A miss means the poller has not reached that height, and the ack still applies.
 func (p *polledHeaders) StoredHash(height uint64) ([]byte, bool) {

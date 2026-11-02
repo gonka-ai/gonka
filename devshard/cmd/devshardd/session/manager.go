@@ -1388,12 +1388,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 				for _, rec := range page {
 					sm.InjectWarmKeys(rec.WarmKeyDelta)
-					var root []byte
-					applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
-						var err error
-						root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
-						return err
-					})
+					root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 					if applyErr != nil {
 						return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 					}
@@ -1468,6 +1463,11 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			}
 		}
 	}
+
+	// Replay does not wait on the header map. Catch up from the lowest
+	// unfinished start height so later timeout checks can read those rows
+	// without blocking restart.
+	sm.WarmUnfinishedHeaders()
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
 	if err != nil {

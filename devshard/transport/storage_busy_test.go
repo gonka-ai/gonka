@@ -138,10 +138,10 @@ func TestServeInference_ClientCancelAfterReceiptStillFinishes(t *testing.T) {
 		5*time.Second, 5*time.Millisecond)
 }
 
-func TestHeaderPendingIsAnAnswerNotAnOutage(t *testing.T) {
+func TestHeaderPendingCannotServe(t *testing.T) {
 	ce := connect.NewError(connect.CodeUnavailable, errors.New("pending"))
 	ce.Meta().Set(HeaderDevshardError, DevshardErrorHeaderPending)
-	require.False(t, executorUnreachable(ce), "the executor answered: it is waiting for a block")
+	require.True(t, executorUnreachable(ce), "header_pending means the host cannot serve the response")
 	require.True(t, executorUnreachable(connect.NewError(connect.CodeUnavailable, errors.New("draining"))))
 
 	tagged := TagHeaderPending(fmt.Errorf("challenge-receipt: %w", ce))

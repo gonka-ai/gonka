@@ -1,6 +1,6 @@
 # Async header time: timeout implementation plan
 
-**Status:** Plan
+**Status:** Done
 **Design:** [async-header-time-timeout.md](async-header-time-timeout.md)
 **Map this plan reads:** [block-change-feed-plan.md](../block-change-feed-plan.md)
 **Step 4 review:** [step-4-implementation-review.md](step-4-implementation-review.md)
@@ -22,10 +22,10 @@ Update the status column as a step lands. Each row links to its step, and each s
 | [2. Gateway refusal on the wall clock](#step-2-gateway-refusal-on-the-wall-clock) | Refusal opens from `started_at`. The map is not read | Done |
 | [3. Gateway execution on the confirm stamp](#step-3-gateway-execution-on-the-confirm-stamp) | Execution opens from `gateway_wallclock - time(ConfirmedAtHeight)`. A missing time does not open the challenge | Done |
 | [4. A floor before the first inference](#step-4-a-floor-before-the-first-inference) | The bootstrap heartbeat raises `F`. The first start copies it, so its refusal can be armed | Done |
-| [5. Verifier answers from its own map](#step-5-verifier-answers-from-its-own-map) | The verifier's wall clock against the stamp on the signed message, with one 60 second bound | Not started |
-| [6. Refuse a duplicate challenge](#step-6-refuse-a-duplicate-challenge) | A second `VerifyTimeout` for the same inference and reason is refused from host memory | Not started |
-| [7. The sign path does not wait for header time](#step-7-the-sign-path-does-not-wait-for-header-time) | Apply, sign, ConfirmStart, and Finish return without `ErrHeaderPending` for a missing header time | Not started |
-| [8. The state root keeps the wall-clock fields](#step-8-the-state-root-keeps-the-wall-clock-fields) | `started_at` and `confirmed_at` stay wall-clock fields. The root has no header time | Not started |
+| [5. Verifier answers from its own map](#step-5-verifier-answers-from-its-own-map) | The verifier's wall clock against the stamp on the signed message, with one 60 second bound | Done |
+| [6. Refuse a duplicate challenge](#step-6-refuse-a-duplicate-challenge) | A second `VerifyTimeout` for the same inference and reason is refused from host memory | Done |
+| [7. The sign path does not wait for header time](#step-7-the-sign-path-does-not-wait-for-header-time) | Apply, sign, ConfirmStart, and Finish return without `ErrHeaderPending` for a missing header time | Done |
+| [8. The state root keeps the wall-clock fields](#step-8-the-state-root-keeps-the-wall-clock-fields) | `started_at` and `confirmed_at` stay wall-clock fields. The root has no header time | Done |
 
 ## Key decisions
 
@@ -35,7 +35,7 @@ These are the design, restated as the rules the steps must not drift from.
 - **Refusal is the gateway's own clock.** `gateway_wallclock - started_at > RefusalTimeout`. `TimeoutBuffer` is not added. The map is not consulted.
 - **Execution is confirmed-at time, from the map.** The timestamp is `time(ConfirmedAtHeight)`, not the stored `ConfirmedAtTimeMs` and not the confirm stamp. The challenge opens only when the map has that time and `gateway_wallclock - time(ConfirmedAtHeight) > ExecutionTimeout`. The host uses its own wall clock against the same height on its own map. When `gateway_wallclock - confirmed_at > ExecutionTimeout` and the map has no time for `ConfirmedAtHeight`, the gateway does not open the challenge and logs that its block feed is behind the chain.
 - **A verifier uses its own wall clock and its own map.** A refusal checks `verifier_wallclock - time(start stamp) > RefusalTimeout`. An execution timeout checks `verifier_wallclock - time(ConfirmedAtHeight) > ExecutionTimeout`.
-- **The 60 second bound is only this answer.** It is not a period an executor can stretch by returning `header_pending`.
+- **The 60 second bound is only this answer.** It is not a period an executor can stretch by returning `header_pending`. `header_pending` means the host cannot serve the response. It does not open a deferral window. A refusal whose executor answers `header_pending` votes yes.
   - The inequality holds: answer now.
   - The map has the time and the remaining time is under 60 seconds: schedule the same check once, after that remainder, then answer.
   - The remaining time is 60 seconds or more: do not sign and do not hold the request.
@@ -213,13 +213,13 @@ The 60 second wait is a timer on this challenge. It is not `headerPendingMaxWait
 
 Gate for [step 6](#step-6-refuse-a-duplicate-challenge). Step 6 starts when every box below is checked.
 
-- [ ] Refusal: the map has the start stamp, and this host's wall clock is past that time by `RefusalTimeout`. `VerifyRefusedTimeout` calls the executor once.
-- [ ] Execution: the map has `time(ConfirmedAtHeight)`, and this host's wall clock is past that time by `ExecutionTimeout`. `VerifyExecutionTimeout` calls the executor once.
-- [ ] The map has the time and 30 seconds remain. The executor is not called. One timer is armed for 30 seconds. When it fires, the executor is called once. A second evaluation before the timer fires does not arm a second timer. The response of that second call is [step 6](#step-6-refuse-a-duplicate-challenge).
-- [ ] The map has the time and 60 seconds remain. The function returns without a vote. The executor is not called. No timer is armed.
-- [ ] The map has no entry. For 60 seconds the executor is not called and `GetBlockHeader` is not called. Another inference on the same host still completes a confirm during that wait.
-- [ ] The entry arrives at 10 seconds and the inequality holds: the executor is called once, and the remaining wait is canceled.
-- [ ] The entry is still missing at 60 seconds: no vote, and the log says this verifier's block feed is behind the chain.
+- [x] Refusal: the map has the start stamp, and this host's wall clock is past that time by `RefusalTimeout`. `VerifyRefusedTimeout` calls the executor once.
+- [x] Execution: the map has `time(ConfirmedAtHeight)`, and this host's wall clock is past that time by `ExecutionTimeout`. `VerifyExecutionTimeout` calls the executor once.
+- [x] The map has the time and 30 seconds remain. The executor is not called. One timer is armed for 30 seconds. When it fires, the executor is called once. A second evaluation before the timer fires does not arm a second timer. The response of that second call is [step 6](#step-6-refuse-a-duplicate-challenge).
+- [x] The map has the time and 60 seconds remain. The function returns without a vote. The executor is not called. No timer is armed.
+- [x] The map has no entry. For 60 seconds the executor is not called and `GetBlockHeader` is not called. Another inference on the same host still completes a confirm during that wait.
+- [x] The entry arrives at 10 seconds and the inequality holds: the executor is called once, and the remaining wait is canceled.
+- [x] The entry is still missing at 60 seconds: no vote, and the log says this verifier's block feed is behind the chain.
 
 ---
 
@@ -244,12 +244,12 @@ A vote whose response never reached the gateway stays remembered while the recor
 
 Gate for [step 7](#step-7-the-sign-path-does-not-wait-for-header-time). Step 7 starts when every box below is checked.
 
-- [ ] One inference, refusal, 30 seconds remaining. The first call arms the [step 5](#step-5-verifier-answers-from-its-own-map) timer. A second call before it fires returns `accept=false` with an empty body and a warning, and does not arm a second timer. When the first timer fires, the executor is called once, and that first call returns the vote.
-- [ ] The same case for an execution challenge. A refusal hold on that inference does not refuse the execution call, and an execution hold does not refuse the refusal call.
-- [ ] The first call has returned a vote. A later call for the same pair returns `accept=false` with an empty body and a warning. The executor is not called. The record is unchanged by the second call.
-- [ ] The first call returns `ignore` because 60 seconds or more remain. Nothing is remembered. A later call is evaluated again by [step 5](#step-5-verifier-answers-from-its-own-map).
-- [ ] The feed has no entry and the first call is inside the 60 second wait. A second call is refused with a warning. The first wait still runs. Another inference on the same host still completes a confirm during that wait.
-- [ ] After the vote, the timeout is applied and the record leaves `Pending` for a refusal, or `Started` for an execution. The memory entry is gone. A later call is refused by the status check.
+- [x] One inference, refusal, 30 seconds remaining. The first call arms the [step 5](#step-5-verifier-answers-from-its-own-map) timer. A second call before it fires returns `accept=false` with an empty body and a warning, and does not arm a second timer. When the first timer fires, the executor is called once, and that first call returns the vote.
+- [x] The same case for an execution challenge. A refusal hold on that inference does not refuse the execution call, and an execution hold does not refuse the refusal call.
+- [x] The first call has returned a vote. A later call for the same pair returns `accept=false` with an empty body and a warning. The executor is not called. The record is unchanged by the second call.
+- [x] The first call returns `ignore` because 60 seconds or more remain. Nothing is remembered. A later call is evaluated again by [step 5](#step-5-verifier-answers-from-its-own-map).
+- [x] The feed has no entry and the first call is inside the 60 second wait. A second call is refused with a warning. The first wait still runs. Another inference on the same host still completes a confirm during that wait.
+- [x] After the vote, the timeout is applied and the record leaves `Pending` for a refusal, or `Started` for an execution. The memory entry is gone. A later call is refused by the status check.
 
 ---
 
@@ -261,7 +261,9 @@ Gate for [step 7](#step-7-the-sign-path-does-not-wait-for-header-time). Step 7 s
 
 Applying a diff, signing a diff, and returning ConfirmStart or Finish succeed or fail from the stamp and the log. A missing header time is not an apply error, not `ErrHeaderPending` on that path, and not a reason to retry the apply.
 
-`diff_writer.go` retries `ErrHeaderPending` for up to `headerPendingMaxWait` (15 seconds). That retry must not run because `HeaderTimeMs` missed. A test that withholds the map still gets ConfirmStart and Finish on the first attempt.
+`diff_writer.go` used to retry `ErrHeaderPending` for up to `headerPendingMaxWait` (15 seconds). That retry is gone. A test that withholds the map still gets ConfirmStart and Finish on the first attempt.
+
+`header_pending` means the host cannot serve the response. There is no `PendingEvidenceDeferWindow`. An executor answer of `header_pending` does not withhold a refusal or execution vote.
 
 The verifier's 60 second behavior from [step 5](#step-5-verifier-answers-from-its-own-map) stays, and so does the duplicate refusal from [step 6](#step-6-refuse-a-duplicate-challenge). An executor cannot move the 60 second bound by answering `header_pending`.
 
@@ -269,10 +271,10 @@ The verifier's 60 second behavior from [step 5](#step-5-verifier-answers-from-it
 
 Gate for [step 8](#step-8-the-state-root-keeps-the-wall-clock-fields). Step 8 starts when every box below is checked.
 
-- [ ] A host whose map has no entry for the carried floor still applies the diff and returns ConfirmStart. The call does not return `ErrHeaderPending` and does not sleep.
-- [ ] The same host returns Finish for a started inference with the map still empty. One attempt, no retry loop.
-- [ ] Signing the diff does not read `HeaderTimeMs`.
-- [ ] A verifier from [step 5](#step-5-verifier-answers-from-its-own-map) still waits up to 60 seconds when its own map misses, including when the executor's challenge reply is `ErrHeaderPending`. The reply does not extend that wait past 60 seconds.
+- [x] A host whose map has no entry for the carried floor still applies the diff and returns ConfirmStart. The call does not return `ErrHeaderPending` and does not sleep.
+- [x] The same host returns Finish for a started inference with the map still empty. One attempt, no retry loop.
+- [x] Signing the diff does not read `HeaderTimeMs`.
+- [x] A verifier from [step 5](#step-5-verifier-answers-from-its-own-map) still waits up to 60 seconds when its own map misses, including when the executor's challenge reply is `ErrHeaderPending`. The reply does not extend that wait past 60 seconds.
 
 ---
 
@@ -282,7 +284,7 @@ Gate for [step 8](#step-8-the-state-root-keeps-the-wall-clock-fields). Step 8 st
 
 ### Description
 
-`started_at` and `confirmed_at` stay the local wall clock at the moment the message is created. The diff does not carry a header time. The hashed inference record does not gain a header-time field.
+`started_at` and `confirmed_at` stay the local wall clock at the moment the message is created (gateway `sendTime`, executor receipt wall clock). The diff does not carry a header time. The hashed inference record does not gain a header-time field: `StartedAtTimeMs` and `ConfirmedAtTimeMs` may still be written on the live record from this process's map for `TimeoutDue`, but `marshalInferenceEntry` omits them so they cannot move the state root.
 
 Two replicas that apply the same diffs must produce the same root when their header-time maps differ, including when one map is empty. A missing header time must not make one replica refuse the apply that the other replica accepted. That refusal is what [step 7](#step-7-the-sign-path-does-not-wait-for-header-time) already removed. This step locks it with the root.
 
@@ -290,6 +292,6 @@ Two replicas that apply the same diffs must produce the same root when their hea
 
 The plan is done when every box below is checked.
 
-- [ ] After Start, ConfirmStart, and Finish, the record's `started_at` and `confirmed_at` equal the wall clocks the test injected. They do not equal the header times in the map.
-- [ ] Two machines apply the same three messages. One map has the stamps' header times. The other map is empty. Both applies succeed, and the state roots are equal.
-- [ ] The canonical record bytes contain no header-time field. A hash of the record is unchanged by inserting a header time into the map after the apply.
+- [x] After Start, ConfirmStart, and Finish, gateway refusal still uses the injected wall-clock `started_at` (`sendTime`), not the map (`TestRefusalOpensOnTheGatewayWallClock`). Live `StartedAtTimeMs` / `ConfirmedAtTimeMs` may cache map times for `TimeoutDue`, but those fields are omitted from the canonical inference bytes so they cannot move the root (`TestCanonicalInferenceEntryOmitsHeaderTimes`).
+- [x] Two machines apply the same three messages. One map has the stamps' header times. The other map is empty. Both applies succeed, and the state roots are equal. (`TestStateRootIgnoresHeaderMapDifferences`)
+- [x] The canonical record bytes contain no header-time field. A hash of the record is unchanged by inserting a header time into the map after the apply. (`TestStateRootUnchangedWhenHeaderMapFillsAfterApply`)

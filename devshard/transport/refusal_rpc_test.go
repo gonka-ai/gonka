@@ -436,6 +436,7 @@ func TestRefusalChallengePagesStayUnderReadCap(t *testing.T) {
 	req := refusalPayloadRequest()
 
 	t.Run("matching root", func(t *testing.T) {
+		srv.Host().ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		exec := &recordingExecutor{t: t, nonce: 1, root: root}
 		srv.SetPeerClients(map[int]transport.HostPeerClient{1: exec})
 		resp, err := srv.ServeVerifyTimeout(context.Background(), req)
@@ -444,6 +445,7 @@ func TestRefusalChallengePagesStayUnderReadCap(t *testing.T) {
 		assertBodiesUnderReadCap(t, exec.calls)
 	})
 	t.Run("ahead of verifier", func(t *testing.T) {
+		srv.Host().ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		exec := &recordingExecutor{t: t, nonce: refusalJournalDiffs + 10, root: root}
 		srv.SetPeerClients(map[int]transport.HostPeerClient{1: exec})
 		resp, err := srv.ServeVerifyTimeout(context.Background(), req)
@@ -452,6 +454,7 @@ func TestRefusalChallengePagesStayUnderReadCap(t *testing.T) {
 		assertBodiesUnderReadCap(t, exec.calls)
 	})
 	t.Run("session not found", func(t *testing.T) {
+		srv.Host().ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		exec := &recordingExecutor{t: t, headErr: errors.New("session not found")}
 		srv.SetPeerClients(map[int]transport.HostPeerClient{1: exec})
 		resp, err := srv.ServeVerifyTimeout(context.Background(), req)
@@ -492,6 +495,7 @@ func TestRefusalLargeJournal(t *testing.T) {
 		require.Nil(t, resp)
 	})
 	t.Run("down", func(t *testing.T) {
+		srv.Host().ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		exec := &recordingExecutor{
 			t:         t,
 			headErr:   errors.New("session not found"),
@@ -504,6 +508,7 @@ func TestRefusalLargeJournal(t *testing.T) {
 		assertWalkHeap(t, exec)
 	})
 	t.Run("behind", func(t *testing.T) {
+		srv.Host().ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		exec := &recordingExecutor{
 			t:         t,
 			nonce:     half,
@@ -517,6 +522,7 @@ func TestRefusalLargeJournal(t *testing.T) {
 		assertWalkHeap(t, exec)
 	})
 	t.Run("caught up", func(t *testing.T) {
+		srv.Host().ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		exec := &recordingExecutor{
 			t:         t,
 			nonce:     uint64(n),

@@ -132,13 +132,16 @@ func TestServeVerifyTimeout_ResolvesMissingExecutorOnFirstVote(t *testing.T) {
 	srv.SetPeerClients(map[int]HostPeerClient{})
 	srv.SetPeerResolver(r.resolve)
 
-	for i := 0; i < 2; i++ {
-		resp, err := srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
-		require.NoError(t, err)
-		require.True(t, resp.Accept, "an executor that does not answer the challenge supports the timeout")
-	}
-	require.EqualValues(t, 1, r.calls.Load(), "the resolved client is kept for the next vote")
-	require.EqualValues(t, 2, r.last().challenges.Load(), "each vote challenges the executor")
+	resp, err := srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
+	require.NoError(t, err)
+	require.True(t, resp.Accept, "an executor that does not answer the challenge supports the timeout")
+	resp, err = srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
+	require.NoError(t, err)
+	require.False(t, resp.Accept, "the vote is already remembered on this host")
+	require.Empty(t, resp.Mempool)
+	require.Empty(t, resp.Signature)
+	require.EqualValues(t, 1, r.calls.Load(), "the resolved client is kept")
+	require.EqualValues(t, 1, r.last().challenges.Load(), "the remembered vote does not challenge the executor again")
 	require.Contains(t, srv.PeerClients(), 1)
 }
 

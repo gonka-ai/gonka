@@ -1,19 +1,17 @@
 package state
 
 import (
+	"bytes"
 	"context"
-	"devshard/heightsync"
-	"devshard/types"
 	"errors"
 	"time"
+
+	"devshard/chainoracle/blocks/headertime"
+	"devshard/types"
 )
 
 type HeaderTimeSource interface {
 	HeaderTimeMs(height uint64, hash []byte) (int64, error)
-}
-
-type HeaderTimeAwaiter interface {
-	AwaitHeaderTimeMs(ctx context.Context, height uint64, hash []byte) (int64, error)
 }
 
 // HeaderTimeWatch is a header map that reports when a time is stored.
@@ -33,34 +31,6 @@ type HeaderAckView interface {
 	NoteHostAck(height uint64, hash []byte)
 }
 
-const EvidenceHeaderWait = 5 * time.Second
-
-func (sm *StateMachine) awaitRaiseHeaders(txs []*types.DevshardTx) {
-	awaiter, ok := sm.headerTimes.(HeaderTimeAwaiter)
-	if !ok {
-		return
-	}
-	raising := make([]*types.DevshardTx, 0, len(txs))
-	for _, tx := range txs {
-		if tx.GetHeightAck() != nil {
-			continue
-		}
-		raising = append(raising, tx)
-	}
-	sm.mu.RLock()
-	cur, _ := sm.heightSyncFloor.Max()
-	claims := floorClaims(sm.state, raising)
-	sm.mu.RUnlock()
-	ctx, cancel := context.WithTimeout(context.Background(), EvidenceHeaderWait)
-	defer cancel()
-	for _, c := range claims {
-		if c.Signer == heightsync.SequencerSigner || c.Height <= cur || !heightsync.StampPresent(c.Hash) {
-			continue
-		}
-		_, _ = awaiter.AwaitHeaderTimeMs(ctx, c.Height, c.Hash)
-	}
-}
-
 var fallbackHeaderTimes HeaderTimeSource
 
 func SetFallbackHeaderTimes(src HeaderTimeSource) {
@@ -70,8 +40,115 @@ func SetFallbackHeaderTimes(src HeaderTimeSource) {
 const (
 	HeaderPendingRetryInterval = time.Second
 	ReplayHeaderWait           = 2 * time.Minute
-	ReplayHeaderAwait          = 10 * time.Second
 )
+
+// VerifierNow is the wall clock a timeout verifier compares with the map.
+func (sm *StateMachine) VerifierNow() time.Time { return time.Now() }
+
+// HasHeaderFeed reports whether this machine reads a stored header-time map.
+// A fallback clock that only answers HeaderTimeMs is not that map.
+func (sm *StateMachine) HasHeaderFeed() bool {
+	_, ok := sm.storedHeaders()
+	return ok
+}
+
+// StampHeaderTime is the stored time for a stamp. A miss does not call out.
+// An empty hash matches the row at that height. A hash that differs is a miss.
+func (sm *StateMachine) StampHeaderTime(height uint64, hash []byte) (int64, bool) {
+	src, ok := sm.storedHeaders()
+	if !ok || height == 0 {
+		return 0, false
+	}
+	row, ok := src.StoredAt(height)
+	if !ok || row.TimeMs <= 0 {
+		return 0, false
+	}
+	if len(hash) > 0 && !bytes.Equal(row.Hash, hash) {
+		return 0, false
+	}
+	return row.TimeMs, true
+}
+
+// TimeoutInterval is the refusal or execution window from the session config.
+func (sm *StateMachine) TimeoutInterval(reason types.TimeoutReason) time.Duration {
+	if sm == nil {
+		return 0
+	}
+	seconds := sm.Config().RefusalTimeout
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		seconds = sm.Config().ExecutionTimeout
+	}
+	if seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+type storedHeaderReader interface {
+	StoredAt(height uint64) (headertime.Record, bool)
+}
+
+func (sm *StateMachine) storedHeaders() (storedHeaderReader, bool) {
+	if sm == nil {
+		return nil, false
+	}
+	src, ok := sm.HeaderTimes().(storedHeaderReader)
+	if !ok || src == nil {
+		return nil, false
+	}
+	return src, true
+}
+
+// headerCatchUp is a map that can fill a gap from a height toward the tip
+// without blocking the caller. *headertime.Source implements it.
+type headerCatchUp interface {
+	EnsureFrom(height uint64)
+}
+
+// LowestUnfinishedStartHeight is the smallest StartedAtHeight among live
+// inferences that are still Pending, Started, or Challenged. Sealed records
+// are already gone from Inferences. Zero means none, or every live record
+// carried no start height.
+func (sm *StateMachine) LowestUnfinishedStartHeight() uint64 {
+	if sm == nil {
+		return 0
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	var lowest uint64
+	for _, rec := range sm.state.Inferences {
+		if rec == nil {
+			continue
+		}
+		switch rec.Status {
+		case types.StatusPending, types.StatusStarted, types.StatusChallenged:
+		default:
+			continue
+		}
+		if rec.StartedAtHeight == 0 {
+			continue
+		}
+		if lowest == 0 || rec.StartedAtHeight < lowest {
+			lowest = rec.StartedAtHeight
+		}
+	}
+	return lowest
+}
+
+// WarmUnfinishedHeaders asks the header map to catch up from the lowest
+// unfinished start height. It does not wait. A map that cannot catch up is
+// a no-op.
+func (sm *StateMachine) WarmUnfinishedHeaders() {
+	height := sm.LowestUnfinishedStartHeight()
+	if height == 0 {
+		return
+	}
+	src, ok := sm.HeaderTimes().(headerCatchUp)
+	if !ok || src == nil {
+		return
+	}
+	src.EnsureFrom(height)
+}
 
 func RetryWhileHeaderPending(ctx context.Context, maxWait time.Duration, apply func() error) error {
 	err := apply()

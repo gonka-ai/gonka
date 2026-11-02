@@ -186,8 +186,13 @@ type Host struct {
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
 
 	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
-	oracle            blocks.BlockOracle
-	evidenceDeferrals evidenceDeferrals
+	oracle blocks.BlockOracle
+
+	// answerNow and answerAfter are the verifier's wall clock and timer.
+	// Tests set them. Production leaves both nil and uses time.Now and time.After.
+	answerNow   func() time.Time
+	answerAfter func(time.Duration) <-chan time.Time
+	answerHolds answerHolds
 
 	// peerSeen and heartbeatCfg serve host-signed height acks (spec §10.4).
 	// peerSeen is the spec §11.2 bitmap (Diff acks and repair HEIGHT).
@@ -709,7 +714,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	if diffsApplied {
 		lastAppliedTxs = req.Diffs[len(req.Diffs)-1].Txs
 	}
-	newlyApplied, err := h.applyDiffsAwaitingHeadersLocked(ctx, req.Diffs)
+	newlyApplied, err := h.applyDiffsLocked(ctx, req.Diffs)
 	if err != nil {
 		h.mu.Unlock()
 		if errors.Is(err, types.ErrNonceLimitExceeded) {
