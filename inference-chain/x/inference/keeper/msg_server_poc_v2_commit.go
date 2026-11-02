@@ -256,10 +256,10 @@ func (k msgServer) buildPoCV2CommitUpdate(
 				fmt.Sprintf("count must increase: got %d, last recorded %d", entry.Count, existing.Count),
 			)
 		}
-		if entry.TreeDepth != existing.TreeDepth {
+		if entry.TreeDepth < existing.TreeDepth {
 			return pocV2CommitUpdate{}, sdkerrors.Wrap(
 				types.ErrIllegalState,
-				fmt.Sprintf("tree_depth must stay %d, got %d", existing.TreeDepth, entry.TreeDepth),
+				fmt.Sprintf("tree_depth must not decrease from %d, got %d", existing.TreeDepth, entry.TreeDepth),
 			)
 		}
 		countDelta = uint64(entry.Count - existing.Count)

@@ -662,6 +662,7 @@ func TestWorkerAbstainsOnEarlyGuardLocalFailure(t *testing.T) {
 				requireInclusion: true,
 				earlyCount:       10,
 				earlyRoot:        earlyRoot,
+				earlyDepth:       24,
 				finalCount:       work.count,
 			},
 		},

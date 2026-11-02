@@ -29,6 +29,7 @@ type commitWorkerQueryServer struct {
 	types.UnimplementedQueryServer
 	commitCounts        map[string]uint32
 	commitRoots         map[string][]byte
+	commitDepths        map[string]uint32
 	distributionOnChain map[string]bool
 	failCommitQuery     bool
 	commitQueryCalls    int
@@ -57,10 +58,15 @@ func (s *commitWorkerQueryServer) PoCV2StoreCommit(ctx context.Context, req *typ
 	if s.commitRoots != nil {
 		root = s.commitRoots[key]
 	}
+	depth := uint32(24)
+	if s.commitDepths != nil {
+		depth = s.commitDepths[key]
+	}
 	return &types.QueryPoCV2StoreCommitResponse{
-		Found:    count > 0,
-		Count:    count,
-		RootHash: root,
+		TreeDepth: depth,
+		Found:     count > 0,
+		Count:     count,
+		RootHash:  root,
 	}, nil
 }
 
@@ -1905,4 +1911,34 @@ func TestCommitWorker_RetryLogic(t *testing.T) {
 			assert.Equal(t, tt.expectRetry, shouldRetry)
 		})
 	}
+}
+
+func TestCommitPayloadDepthIdentity(t *testing.T) {
+	root := make([]byte, 32)
+	st := commitState{count: 2, rootHash: root, treeDepth: 24}
+	assert.True(t, sameCommitState(st, 2, root, 24))
+	assert.False(t, sameCommitState(st, 2, root, 25))
+	assert.False(t, sameCommitState(st, 2, nil, 24))
+	q := &commitWorkerQueryServer{commitCounts: map[string]uint32{"100|p|m": 2}, commitRoots: map[string][]byte{"100|p|m": root}, commitDepths: map[string]uint32{"100|p|m": 25}}
+	client, cleanup := newCommitWorkerQueryClient(t, q)
+	defer cleanup()
+	rec := &cosmosclient.MockCosmosMessageClient{}
+	rec.On("NewInferenceQueryClient").Return(client)
+	key := commitKey{100, "m"}
+	w := &CommitWorker{recorder: rec, participantAddress: "p", blockHeight: 110, pending: map[commitKey]pendingCommit{key: {state: st}}, lastCommitted: map[commitKey]commitState{}}
+	w.reconcilePending(100)
+	assert.Contains(t, w.pending, key, "different depth must not confirm the payload")
+	q.commitDepths["100|p|m"] = 24
+	w.blockHeight++
+	w.reconcilePending(100)
+	assert.Empty(t, w.pending)
+	assert.Equal(t, st, w.lastCommitted[key])
+	w.challengePending = map[commitKey]pendingCommit{key: {state: st}}
+	w.challengeLastCommitted = map[commitKey]commitState{}
+	ch := &types.OpenPoCChallenge{Challenge: &types.PoCChallenge{StartHeight: 100}, Commits: []*types.PoCV2StoreCommit{{ModelId: "m", Count: 2, RootHash: root, TreeDepth: 25}}}
+	w.reconcileChallengePending(ch)
+	assert.Contains(t, w.challengePending, key)
+	ch.Commits[0].TreeDepth = 24
+	w.reconcileChallengePending(ch)
+	assert.Empty(t, w.challengePending)
 }

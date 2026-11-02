@@ -1,6 +1,7 @@
 package poc
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"sync"
+	"time"
 
 	"common/logging"
 	"decentralized-api/poc/earlyshare"
@@ -47,7 +49,9 @@ type EarlyShareGuard struct {
 
 	// captureMu collapses concurrent capture attempts for the retry window
 	// (the dispatcher may fire MaybeCapture on every block past the target).
-	captureMu sync.Mutex
+	captureMu             sync.Mutex
+	depthBackfillAttempts map[int64]map[int64]int
+	depthPrepared         map[int64]bool
 }
 
 // NewEarlyShareGuard builds a guard. Returns nil when the config is disabled or
@@ -81,6 +85,10 @@ func (g *EarlyShareGuard) DeleteStage(ctx context.Context, stageHeight int64) {
 	if g == nil || g.store == nil {
 		return
 	}
+	g.captureMu.Lock()
+	defer g.captureMu.Unlock()
+	delete(g.depthBackfillAttempts, stageHeight)
+	delete(g.depthPrepared, stageHeight)
 	if err := g.store.DeleteStage(ctx, stageHeight); err != nil {
 		logging.Warn("EarlyShareGuard: failed to prune stage", types.PoC, "stage", stageHeight, "error", err)
 	}
@@ -111,6 +119,9 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 		return
 	}
 	if done {
+		if err := g.prepareDepthsLocked(ctx, qc, stageHeight); err != nil {
+			logging.Warn("EarlyShareGuard: checkpoint depths not ready", types.PoC, "stage", stageHeight, "error", err)
+		}
 		return
 	}
 
@@ -135,12 +146,18 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 		if c == nil {
 			continue
 		}
+		if c.TreeDepth < 1 || c.TreeDepth > 32 {
+			logging.Warn("EarlyShareGuard: invalid checkpoint depth", types.PoC, "stage", stageHeight, "depth", c.TreeDepth)
+			return
+		}
+		depth := c.TreeDepth
 		checkpoints = append(checkpoints, earlyshare.Checkpoint{
 			StageHeight:           stageHeight,
 			ParticipantAddress:    c.ParticipantAddress,
 			ModelID:               c.ModelId,
 			EarlyCount:            c.Count,
 			EarlyRootHash:         c.RootHash,
+			EarlyTreeDepth:        &depth,
 			CheckpointBlockHeight: target,
 			CapturedAtBlockHeight: capturedAt,
 		})
@@ -162,6 +179,10 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 	// this stage must log the same digest; differing digests across
 	// validators indicate capture divergence (version skew, pruned state)
 	// and are the primary observe-mode health signal for the guard.
+	if g.depthPrepared == nil {
+		g.depthPrepared = make(map[int64]bool)
+	}
+	g.depthPrepared[stageHeight] = true
 	logging.Info("EarlyShareGuard: captured early checkpoints", types.PoC,
 		"stage", stageHeight, "target", target, "capturedAt", capturedAt,
 		"commits", len(checkpoints), "digest", checkpointsDigest(checkpoints))
@@ -181,7 +202,11 @@ func checkpointsDigest(checkpoints []earlyshare.Checkpoint) string {
 
 	h := sha256.New()
 	for _, cp := range sorted {
-		fmt.Fprintf(h, "%s|%s|%d|%x\n", cp.ParticipantAddress, cp.ModelID, cp.EarlyCount, cp.EarlyRootHash)
+		depth := "unknown"
+		if cp.EarlyTreeDepth != nil {
+			depth = strconv.FormatUint(uint64(*cp.EarlyTreeDepth), 10)
+		}
+		fmt.Fprintf(h, "%d|%s|%s|%d|%x|%s|%d\n", cp.StageHeight, cp.ParticipantAddress, cp.ModelID, cp.EarlyCount, cp.EarlyRootHash, depth, cp.CheckpointBlockHeight)
 	}
 	return hex.EncodeToString(h.Sum(nil)[:8])
 }
@@ -192,6 +217,8 @@ type earlyDecision struct {
 	requireInclusion bool
 	earlyCount       uint32
 	earlyRoot        []byte
+	earlyDepth       uint32
+	metadataError    string
 	finalCount       uint32
 	earlyShare       float64
 	threshold        float64
@@ -245,18 +272,18 @@ func (g *EarlyShareGuard) Evaluate(
 
 	captured, err := g.store.HasCompletedCapture(ctx, stageHeight)
 	if err != nil {
-		logging.Warn("EarlyShareGuard: capture lookup failed; skipping guard", types.PoC, "stage", stageHeight, "error", err)
-		return nil
+		logging.Warn("EarlyShareGuard: capture lookup failed", types.PoC, "stage", stageHeight, "error", err)
+		return localEarlyPreparationErrors(assigned, "early capture lookup failed")
 	}
 	if !captured {
-		logging.Info("EarlyShareGuard: no early capture for stage; skipping guard", types.PoC, "stage", stageHeight)
+		logging.Info("EarlyShareGuard: no early capture for stage", types.PoC, "stage", stageHeight)
 		return nil
 	}
 
 	checkpoints, err := g.store.GetCheckpoints(ctx, stageHeight)
 	if err != nil {
-		logging.Warn("EarlyShareGuard: checkpoint load failed; skipping guard", types.PoC, "stage", stageHeight, "error", err)
-		return nil
+		logging.Warn("EarlyShareGuard: checkpoint load failed", types.PoC, "stage", stageHeight, "error", err)
+		return localEarlyPreparationErrors(assigned, "early checkpoint load failed")
 	}
 	cpByKey := make(map[string]earlyshare.Checkpoint, len(checkpoints))
 	for _, c := range checkpoints {
@@ -272,6 +299,16 @@ func (g *EarlyShareGuard) Evaluate(
 	}
 
 	decisions := make(map[string]earlyDecision)
+	for key, cp := range cpByKey {
+		if !assigned[key] {
+			continue
+		}
+		if cp.EarlyTreeDepth == nil {
+			decisions[key] = earlyDecision{metadataError: "early checkpoint depth unknown"}
+		} else if *cp.EarlyTreeDepth < 1 || *cp.EarlyTreeDepth > 32 {
+			decisions[key] = earlyDecision{metadataError: "early checkpoint depth invalid"}
+		}
+	}
 
 	for modelID, commits := range commitsByModel {
 		vp := modelVotingPowers[modelID]
@@ -290,6 +327,8 @@ func (g *EarlyShareGuard) Evaluate(
 			finalCount       uint32
 			earlyCount       uint32
 			earlyRoot        []byte
+			earlyDepth       uint32
+			metadataError    string
 			share            float64
 			requireInclusion bool
 			shareFail        bool
@@ -307,6 +346,16 @@ func (g *EarlyShareGuard) Evaluate(
 			}
 			cp, hasCP := cpByKey[earlyShareKey(addr, modelID)]
 			d := participantData{finalCount: fc}
+			if hasCP {
+				switch {
+				case cp.EarlyTreeDepth == nil:
+					d.metadataError = "early checkpoint depth unknown"
+				case *cp.EarlyTreeDepth < 1 || *cp.EarlyTreeDepth > 32:
+					d.metadataError = "early checkpoint depth invalid"
+				default:
+					d.earlyDepth = *cp.EarlyTreeDepth
+				}
+			}
 			switch {
 			case !hasCP:
 				// Present in final, absent from early snapshot -> early_share 0.
@@ -347,6 +396,10 @@ func (g *EarlyShareGuard) Evaluate(
 				continue
 			}
 
+			if d.metadataError != "" {
+				decisions[key] = earlyDecision{metadataError: d.metadataError}
+				continue
+			}
 			passed := !d.shareFail && d.share >= threshold
 
 			prev, _, err := g.store.GetGuardState(ctx, addr, modelID)
@@ -385,6 +438,7 @@ func (g *EarlyShareGuard) Evaluate(
 				requireInclusion: d.requireInclusion,
 				earlyCount:       d.earlyCount,
 				earlyRoot:        d.earlyRoot,
+				earlyDepth:       d.earlyDepth,
 				finalCount:       d.finalCount,
 				earlyShare:       d.share,
 				threshold:        threshold,
@@ -406,6 +460,9 @@ func (g *EarlyShareGuard) decide(
 	validatorPubKey string,
 	samplingBlockHash string,
 ) (earlyGuardOutcome, string) {
+	if dec.metadataError != "" {
+		return earlyGuardAbstainRetry, dec.metadataError
+	}
 	if dec.requireInclusion {
 		outcome, reason := g.checkInclusion(ctx, pf, stage, work, dec, validatorPubKey, samplingBlockHash)
 		if outcome != earlyGuardPass {
@@ -433,6 +490,9 @@ func (g *EarlyShareGuard) checkInclusion(
 	if dec.earlyCount == 0 || len(dec.earlyRoot) == 0 {
 		return earlyGuardPass, "" // nothing to compare; handled elsewhere
 	}
+	if dec.earlyDepth < 1 || dec.earlyDepth > 32 {
+		return earlyGuardAbstainRetry, "early checkpoint depth missing or invalid"
+	}
 	leafIndices := sampleLeafIndices(
 		validatorPubKey,
 		samplingBlockHash,
@@ -450,7 +510,7 @@ func (g *EarlyShareGuard) checkInclusion(
 		ModelId:                  work.modelId,
 		RootHash:                 dec.earlyRoot,
 		Count:                    dec.earlyCount,
-		TreeDepth:                work.treeDepth,
+		TreeDepth:                dec.earlyDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
 		DecodeSteps:              work.decodeSteps,
@@ -513,4 +573,128 @@ func isPermanentProofError(err error) bool {
 		errors.Is(err, ErrIncompleteCoverage) ||
 		errors.Is(err, ErrNonceAbsent) ||
 		errors.Is(err, ErrInvalidVectorData)
+}
+
+func (g *EarlyShareGuard) PrepareDepths(ctx context.Context, qc earlyShareQueryClient, stage int64) error {
+	if !g.Enabled() {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !g.captureMu.TryLock() {
+		return fmt.Errorf("early checkpoint capture or depth preparation is in progress")
+	}
+	defer g.captureMu.Unlock()
+	return g.prepareDepthsLocked(ctx, qc, stage)
+}
+
+func (g *EarlyShareGuard) prepareDepthsLocked(ctx context.Context, qc earlyShareQueryClient, stage int64) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if g.depthPrepared[stage] {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	complete, err := g.store.HasCompletedCapture(ctx, stage)
+	if err != nil {
+		return err
+	}
+	if !complete {
+		return fmt.Errorf("stage %d has no complete early capture", stage)
+	}
+	cps, err := g.store.GetCheckpoints(ctx, stage)
+	if err != nil {
+		return err
+	}
+	byHeight := make(map[int64][]earlyshare.Checkpoint)
+	for _, cp := range cps {
+		if cp.EarlyTreeDepth == nil {
+			byHeight[cp.CheckpointBlockHeight] = append(byHeight[cp.CheckpointBlockHeight], cp)
+		}
+	}
+	heights := make([]int64, 0, len(byHeight))
+	for height := range byHeight {
+		heights = append(heights, height)
+	}
+	sort.Slice(heights, func(i, j int) bool { return heights[i] < heights[j] })
+	if g.depthBackfillAttempts == nil {
+		g.depthBackfillAttempts = make(map[int64]map[int64]int)
+	}
+	if g.depthBackfillAttempts[stage] == nil {
+		g.depthBackfillAttempts[stage] = make(map[int64]int)
+	}
+	queried := false
+	queries := 0
+	for _, height := range heights {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if queries == 4 {
+			break
+		}
+		if height <= 0 || qc == nil || g.depthBackfillAttempts[stage][height] >= 3 {
+			continue
+		}
+		g.depthBackfillAttempts[stage][height]++
+		queries++
+		queried = true
+		queryCtx := metadata.AppendToOutgoingContext(ctx, grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(height, 10))
+		queryCtx, cancel := context.WithTimeout(queryCtx, 5*time.Second)
+		resp, queryErr := qc.AllPoCV2StoreCommitsForStage(queryCtx, &types.QueryAllPoCV2StoreCommitsForStageRequest{PocStageStartBlockHeight: stage})
+		cancel()
+		if queryErr != nil || resp == nil {
+			continue
+		}
+		commits := make(map[string]*types.PoCV2StoreCommitWithAddress, len(resp.Commits))
+		for _, c := range resp.Commits {
+			if c != nil {
+				commits[earlyShareKey(c.ParticipantAddress, c.ModelId)] = c
+			}
+		}
+		repaired := make([]earlyshare.Checkpoint, 0, len(byHeight[height]))
+		for _, cp := range byHeight[height] {
+			c := commits[earlyShareKey(cp.ParticipantAddress, cp.ModelID)]
+			if c == nil || c.Count != cp.EarlyCount || !bytes.Equal(c.RootHash, cp.EarlyRootHash) || c.TreeDepth < 1 || c.TreeDepth > 32 {
+				continue
+			}
+			depth := c.TreeDepth
+			cp.EarlyTreeDepth = &depth
+			repaired = append(repaired, cp)
+		}
+		if err := g.store.UpsertCheckpoints(ctx, repaired); err != nil {
+			return err
+		}
+	}
+	if queried {
+		cps, err = g.store.GetCheckpoints(ctx, stage)
+		if err != nil {
+			return err
+		}
+	}
+	for _, cp := range cps {
+		if cp.EarlyTreeDepth == nil || *cp.EarlyTreeDepth < 1 || *cp.EarlyTreeDepth > 32 {
+			return fmt.Errorf("stage %d checkpoint depth incomplete or invalid for %s/%s", stage, cp.ParticipantAddress, cp.ModelID)
+		}
+	}
+	if g.depthPrepared == nil {
+		g.depthPrepared = make(map[int64]bool)
+	}
+	g.depthPrepared[stage] = true
+	return nil
+}
+
+func localEarlyPreparationErrors(assigned map[string]bool, reason string) map[string]earlyDecision {
+	if len(assigned) == 0 {
+		return nil
+	}
+	out := make(map[string]earlyDecision, len(assigned))
+	for key, yes := range assigned {
+		if yes {
+			out[key] = earlyDecision{metadataError: reason}
+		}
+	}
+	return out
 }
