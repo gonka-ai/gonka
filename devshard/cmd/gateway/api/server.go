@@ -71,6 +71,7 @@ type RequestLedger interface {
 
 type ControlStore interface {
 	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
+	Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error)
 	LoadOverrides(ctx context.Context) (config.Overrides, error)
 	LoadRotationStatuses(ctx context.Context) ([]store.RotationStatus, error)
 }

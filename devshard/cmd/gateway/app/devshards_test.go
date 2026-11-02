@@ -150,6 +150,15 @@ func (rows rowLister) ListDevshards(context.Context) ([]store.DevshardRecord, er
 	return rows, nil
 }
 
+func (rows rowLister) Devshard(_ context.Context, escrowID string) (store.DevshardRecord, bool, error) {
+	for _, row := range rows {
+		if row.EscrowID == escrowID {
+			return row, true, nil
+		}
+	}
+	return store.DevshardRecord{}, false, nil
+}
+
 // Test flow:
 //  1. Table-driven: a row with a stored chain epoch, an unresolved row the chain answers for, and an unresolved row the chain cannot answer for.
 //  2. Resolve the creation epoch.

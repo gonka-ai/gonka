@@ -72,23 +72,15 @@ type escrowEpochLookup interface {
 	GetEscrow(ctx context.Context, escrowID string) (chain.EscrowInfo, bool, error)
 }
 
-type devshardLister interface {
-	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
+type devshardLookup interface {
+	Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error)
 }
 
 // creationEpochOf resolves the epoch the chain stamped on an escrow: the stored chain epoch, else the chain's answer, else the row's label. See ../nonces/README.md, "The judgements it does make".
-func creationEpochOf(chainClient escrowEpochLookup, records devshardLister) nonces.CreationEpochFunc {
+func creationEpochOf(chainClient escrowEpochLookup, records devshardLookup) nonces.CreationEpochFunc {
 	return func(ctx context.Context, escrowID string) (uint64, bool) {
-		var row store.DevshardRecord
-		stored := false
-		if devshards, err := records.ListDevshards(ctx); err == nil {
-			for _, record := range devshards {
-				if record.EscrowID == escrowID {
-					row, stored = record, true
-					break
-				}
-			}
-		}
+		row, stored, err := records.Devshard(ctx, escrowID)
+		stored = stored && err == nil
 		if stored && row.ChainEpoch > 0 {
 			return row.ChainEpoch, true
 		}
@@ -102,21 +94,15 @@ func creationEpochOf(chainClient escrowEpochLookup, records devshardLister) nonc
 	}
 }
 
-type devshardLookup interface {
-	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
-}
-
 func findDevshard(ctx context.Context, records devshardLookup, escrowID string) (store.DevshardRecord, error) {
-	known, err := records.ListDevshards(ctx)
+	record, found, err := records.Devshard(ctx, escrowID)
 	if err != nil {
-		return store.DevshardRecord{}, fmt.Errorf("listing devshards: %w", err)
+		return store.DevshardRecord{}, fmt.Errorf("reading devshard %s: %w", escrowID, err)
 	}
-	for _, record := range known {
-		if record.EscrowID == escrowID {
-			return record, nil
-		}
+	if !found {
+		return store.DevshardRecord{}, fmt.Errorf("devshard %s: %w", escrowID, escrow.ErrUnknownEscrow)
 	}
-	return store.DevshardRecord{}, fmt.Errorf("devshard %s: %w", escrowID, escrow.ErrUnknownEscrow)
+	return record, nil
 }
 
 const (

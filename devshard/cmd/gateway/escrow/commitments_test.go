@@ -169,6 +169,19 @@ func (f *fakeStore) snapshotDevshard(escrowID string) (store.DevshardRecord, boo
 	return record, ok
 }
 
+func (f *fakeStore) Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error) {
+	records, err := f.ListDevshards(ctx)
+	if err != nil {
+		return store.DevshardRecord{}, false, err
+	}
+	for _, record := range records {
+		if record.EscrowID == escrowID {
+			return record, true, nil
+		}
+	}
+	return store.DevshardRecord{}, false, nil
+}
+
 func (f *fakeStore) ListDevshards(ctx context.Context) ([]store.DevshardRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

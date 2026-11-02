@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"strconv"
 	"time"
 
@@ -130,13 +129,11 @@ func (m *Manager) narrateUnderfunded(modelID string, role store.Role, err error)
 }
 
 func (m *Manager) escrowRegistered(ctx context.Context, escrowID string) (bool, error) {
-	records, err := m.store.ListDevshards(ctx)
+	_, found, err := m.store.Devshard(ctx, escrowID)
 	if err != nil {
-		return false, fmt.Errorf("listing devshards for escrow %s: %w", escrowID, err)
+		return false, fmt.Errorf("reading devshard for escrow %s: %w", escrowID, err)
 	}
-	return slices.ContainsFunc(records, func(record store.DevshardRecord) bool {
-		return record.EscrowID == escrowID
-	}), nil
+	return found, nil
 }
 
 func (m *Manager) clearCommitmentRow(ctx context.Context, escrowID, txHash string) error {

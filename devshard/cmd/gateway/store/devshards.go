@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// SQL shared by two statements each: the upsert, kept apart so a test can read which columns it carries, and the condition that leaves a parked row alone. See README.md, "The devshard registry".
+// SQL shared by two statements each: the upsert, kept apart so a test can read which columns it carries, the condition that leaves a parked row alone, and the columns a row is scanned from. See README.md, "The devshard registry".
 const (
 	upsertDevshardStatement = `
 		INSERT INTO devshards (escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, route_prefix)
@@ -22,6 +22,7 @@ const (
 			gone_from_chain = CASE WHEN excluded.active = 1 THEN 0 ELSE devshards.gone_from_chain END,
 			updated_at = datetime('now')`
 	unparkedCondition = `devshards.settlement_pending = 0 AND devshards.settle_tx_hash = ''`
+	devshardColumns   = `escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, settle_tx_hash, route_prefix, chain_epoch, amount, gone_from_chain`
 )
 
 // Parked reports a row settlement owns: waiting for its settle, or with one in flight. It is the Go form of unparkedCondition negated.
@@ -61,20 +62,16 @@ func (s *Store) UpsertDevshard(ctx context.Context, record DevshardRecord) error
 
 // ListDevshards returns every record ordered by escrow id.
 func (s *Store) ListDevshards(ctx context.Context) ([]DevshardRecord, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		SELECT escrow_id, private_key_env, model, active, rotation_role, rotation_epoch, settlement_pending, settle_tx_hash, route_prefix, chain_epoch, amount, gone_from_chain
-		FROM devshards ORDER BY escrow_id`)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+devshardColumns+` FROM devshards ORDER BY escrow_id`)
 	if err != nil {
 		return nil, fmt.Errorf("listing devshards: %w", err)
 	}
 	defer rows.Close()
 	var records []DevshardRecord
 	for rows.Next() {
-		var record DevshardRecord
-		if err := rows.Scan(&record.EscrowID, &record.PrivateKeyEnv, &record.Model,
-			&record.Active, &record.RotationRole, &record.RotationEpoch, &record.SettlementPending,
-			&record.SettleTxHash, &record.RoutePrefix, &record.ChainEpoch, &record.Amount, &record.GoneFromChain); err != nil {
-			return nil, fmt.Errorf("scanning devshard row: %w", err)
+		record, err := scanDevshard(rows)
+		if err != nil {
+			return nil, err
 		}
 		records = append(records, record)
 	}
@@ -82,6 +79,31 @@ func (s *Store) ListDevshards(ctx context.Context) ([]DevshardRecord, error) {
 		return nil, fmt.Errorf("iterating devshards: %w", err)
 	}
 	return records, nil
+}
+
+// Devshard returns one record and whether it exists.
+func (s *Store) Devshard(ctx context.Context, escrowID string) (DevshardRecord, bool, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT `+devshardColumns+` FROM devshards WHERE escrow_id = ?`, escrowID)
+	record, err := scanDevshard(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return DevshardRecord{}, false, nil
+	}
+	if err != nil {
+		return DevshardRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+func scanDevshard(row interface {
+	Scan(destinations ...any) error
+}) (DevshardRecord, error) {
+	var record DevshardRecord
+	if err := row.Scan(&record.EscrowID, &record.PrivateKeyEnv, &record.Model,
+		&record.Active, &record.RotationRole, &record.RotationEpoch, &record.SettlementPending,
+		&record.SettleTxHash, &record.RoutePrefix, &record.ChainEpoch, &record.Amount, &record.GoneFromChain); err != nil {
+		return DevshardRecord{}, fmt.Errorf("scanning devshard row: %w", err)
+	}
+	return record, nil
 }
 
 func (s *Store) SetDevshardActive(ctx context.Context, escrowID string, active bool) error {

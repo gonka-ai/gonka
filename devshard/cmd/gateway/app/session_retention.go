@@ -27,6 +27,10 @@ const (
 	hostHorizonPreviousEpochs   = storage.DefaultEpochRetain - 1
 )
 
+type devshardLister interface {
+	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
+}
+
 type escrowSnapshots interface {
 	Snapshot() []registry.EscrowState
 }
@@ -35,14 +39,14 @@ type escrowSnapshots interface {
 type sessionRetention struct {
 	storageDir     string
 	previousEpochs uint64
-	devshards      devshardLookup
+	devshards      devshardLister
 	registered     escrowSnapshots
 	prunedThrough  atomic.Uint64
 	running        atomic.Bool
 }
 
 // newSessionRetention returns nil for 0, which keeps every session; anything below the host horizon is raised to it.
-func newSessionRetention(storageDir string, configured int64, devshards devshardLookup, registered escrowSnapshots) *sessionRetention {
+func newSessionRetention(storageDir string, configured int64, devshards devshardLister, registered escrowSnapshots) *sessionRetention {
 	if configured <= 0 {
 		return nil
 	}

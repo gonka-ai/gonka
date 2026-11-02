@@ -231,16 +231,7 @@ func (s *Server) handleDevshardFinalize(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) devshardRecord(r *http.Request, escrowID string) (store.DevshardRecord, bool, error) {
-	records, err := s.control.ListDevshards(r.Context())
-	if err != nil {
-		return store.DevshardRecord{}, false, err
-	}
-	for _, record := range records {
-		if record.EscrowID == escrowID {
-			return record, true, nil
-		}
-	}
-	return store.DevshardRecord{}, false, nil
+	return s.control.Devshard(r.Context(), escrowID)
 }
 
 // badRequestUnlessOversized keeps an ingest-cap rejection at 413; every other decode failure is the client's.

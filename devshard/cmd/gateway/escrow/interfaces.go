@@ -28,6 +28,7 @@ type escrowLookup interface {
 // Satisfied by *store.Store.
 type escrowStore interface {
 	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
+	Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error)
 	UpsertDevshard(ctx context.Context, record store.DevshardRecord) error
 	SetDevshardActive(ctx context.Context, escrowID string, active bool) error
 	MarkDevshardGoneFromChain(ctx context.Context, escrowID string) error

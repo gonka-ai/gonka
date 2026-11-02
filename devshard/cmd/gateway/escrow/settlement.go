@@ -119,17 +119,14 @@ type pendingSettle struct {
 
 // Settle settles one escrow on demand, on the same path the rotation lifecycle uses; force crosses the busy check alone. See ../docs/operations.md.
 func (m *Manager) Settle(ctx context.Context, escrowID string, force bool) (chain.SettleEscrowResult, error) {
-	devshards, err := m.store.ListDevshards(ctx)
+	record, found, err := m.store.Devshard(ctx, escrowID)
 	if err != nil {
-		return chain.SettleEscrowResult{}, fmt.Errorf("listing devshards: %w", err)
+		return chain.SettleEscrowResult{}, fmt.Errorf("reading devshard %s: %w", escrowID, err)
 	}
-	for _, record := range devshards {
-		if record.EscrowID != escrowID {
-			continue
-		}
-		return m.settleAndDrop(ctx, record, force, retireOrdinary)
+	if !found {
+		return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", escrowID, ErrUnknownEscrow)
 	}
-	return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", escrowID, ErrUnknownEscrow)
+	return m.settleAndDrop(ctx, record, force, retireOrdinary)
 }
 
 func (m *Manager) park(ctx context.Context, escrowID string) error {

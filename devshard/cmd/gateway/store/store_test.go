@@ -189,6 +189,39 @@ func TestUpsertDevshardKeepsAQueuedSettlementWhileReplacingEveryOtherField(t *te
 }
 
 // Test flow:
+//  1. Register two escrows, the second parked.
+//  2. Read the second by id and assert the row matches what the list returns for it.
+//  3. Read an id that was never registered and assert it is reported missing without an error.
+func TestDevshardReadsOneRowAsTheListDoes(t *testing.T) {
+	testStore := openTestStore(t)
+	ctx := context.Background()
+	for _, escrowID := range []string{"1", "2"} {
+		if err := testStore.UpsertDevshard(ctx, DevshardRecord{EscrowID: escrowID, PrivateKeyEnv: "KEY_" + escrowID, Model: "model", Active: true}); err != nil {
+			t.Fatalf("UpsertDevshard(%s): %v", escrowID, err)
+		}
+	}
+	if err := testStore.ParkForSettlement(ctx, "2"); err != nil {
+		t.Fatalf("ParkForSettlement(2): %v", err)
+	}
+
+	listed, err := testStore.ListDevshards(ctx)
+	if err != nil {
+		t.Fatalf("ListDevshards(): %v", err)
+	}
+	record, found, err := testStore.Devshard(ctx, "2")
+	if err != nil || !found {
+		t.Fatalf("Devshard(2) = found %v, err %v", found, err)
+	}
+	if record != listed[1] {
+		t.Fatalf("Devshard(2) = %+v, want the listed row %+v", record, listed[1])
+	}
+
+	if _, found, err := testStore.Devshard(ctx, "ghost"); err != nil || found {
+		t.Fatalf("Devshard(ghost) = found %v, err %v, want missing and no error", found, err)
+	}
+}
+
+// Test flow:
 //  1. Call `SetDevshardActive`, `SetDevshardSettlementPending`, and `DeleteDevshard` on an escrow id that was never registered.
 //  2. Assert each returns `ErrDevshardNotFound`.
 func TestMissingDevshardReturnsSentinel(t *testing.T) {
