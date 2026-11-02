@@ -183,9 +183,10 @@ func TestRunInferenceRecordsEachAttemptDurationAtItsOwnEnd(t *testing.T) {
 	release := func() { releaseGate.Do(func() { close(gate) }) }
 	clients := make([]user.HostClient, numHosts)
 	timed := make([]*timedClient, numHosts)
+	tip := tipOracleChain()
 	for i := range hostSigners {
 		sm := statetest.MustStateMachine(t, "escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
-		h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), "escrow-proxy", group, nil, host.WithGrace(100))
+		h, err := host.NewHost(sm, hostSigners[i], stub.NewInferenceEngine(), "escrow-proxy", group, nil, host.WithGrace(100), host.WithChainOracle(tip))
 		require.NoError(t, err)
 		vc := &verifierClient{
 			killableClient: &killableClient{inner: &user.InProcessClient{Host: h}},

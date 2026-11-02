@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"common/httpguard"
 
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/gossip"
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -33,6 +35,8 @@ import (
 // would block the loopback connections.
 func TestMain(m *testing.M) {
 	httpguard.SetAllowPrivate(true)
+	state.SetFixtureProtocolVersion("v6")
+	host.SetTestChainTip(host.StaticTipOracle(100))
 	os.Exit(m.Run())
 }
 
@@ -142,6 +146,8 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 	servers := make([]*transport.Server, numHosts)
 	httpServers := make([]*httptest.Server, numHosts)
 	stores := make([]*storage.Memory, numHosts)
+	var tipHeight atomic.Int64
+	tipHeight.Store(100)
 
 	for i := range hostSigners {
 		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
@@ -150,7 +156,7 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		store := storage.NewMemory()
 		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 			EscrowID:       "escrow-1",
-			Version:        testutil.RuntimeTestVersion,
+			Version:        "v6",
 			Config:         config,
 			Group:          group,
 			InitialBalance: balance,
@@ -163,6 +169,8 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		}
 		if rig != nil {
 			hostOpts = append(hostOpts, host.WithChainOracle(rig.oracles[i]))
+		} else {
+			hostOpts = append(hostOpts, host.WithChainOracle(rigOracle{height: &tipHeight}))
 		}
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, hostOpts...)
 		require.NoError(t, err)
@@ -273,6 +281,22 @@ func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery [
 	session, err := user.NewSession(sm, env.userSigner, "escrow-1", env.group, clients, verifier, opts...)
 	require.NoError(t, err)
 	return session, source
+}
+
+type protocolHeaderTimes struct{ ms int64 }
+
+func (p protocolHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
+	if p.ms <= 0 {
+		return 0, types.ErrHeaderPending
+	}
+	return p.ms, nil
+}
+
+func (p protocolHeaderTimes) StoredAt(uint64) (headertime.Record, bool) {
+	if p.ms <= 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{TimeMs: p.ms}, true
 }
 
 func withHTTPTimeoutBuffer(t *testing.T, d time.Duration) {
@@ -666,6 +690,7 @@ func TestHTTP_ExecutionTimeoutDoesNotUseConfirmStartRecovery(t *testing.T) {
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 	beforeDiffs := len(session.Diffs())
+	session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
 
 	_, err = session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
 	require.Error(t, err)
@@ -800,10 +825,7 @@ func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
 	confirmTx := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce())
 	require.NotNil(t, confirmTx)
 
-	require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{
-		Receipt:     receipt,
-		ConfirmedAt: time.Now().Unix(),
-	}, prepared.Nonce()))
+	require.NoError(t, env.session.ProcessResponse(executorIdx, stampedReceiptResponse(receipt, confirmTx), prepared.Nonce()))
 	// executeAsync queues Finish after ChallengeReceipt returns. The publish
 	// response copies the mempool once, so the finish must already be there.
 	require.Eventually(t, func() bool {
@@ -1374,10 +1396,10 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 
 	rec, ok := env.session.StateMachine().GetInference(nonce)
 	require.True(t, ok)
+	cs := got.GetConfirmStart()
 	want := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens,
-		testutil.ReceiptStamp{Height: rec.StartedAtHeight, Hash: rec.StartedAtBlockHash})
-	require.Equal(t, want, got.GetConfirmStart().ExecutorSig, "session must copy the executor's receipt, not mint a new ConfirmStart")
-	require.Equal(t, rec.StartedAtHeight, got.GetConfirmStart().ObservedHeight)
+		testutil.ReceiptStamp{Height: cs.ObservedHeight, Hash: cs.ObservedBlockHash})
+	require.Equal(t, want, cs.ExecutorSig, "session must copy the executor's receipt, not mint a new ConfirmStart")
 
 	peer := rig.peerBefore(t, env, recovery.Nonce)
 	require.Equal(t, types.StatusPending, peer.SnapshotState().Inferences[nonce].Status)

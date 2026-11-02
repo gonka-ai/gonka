@@ -23,6 +23,28 @@ import (
 	"devshard/types"
 )
 
+// testTip is a block header a test host can stamp onto a confirm when the
+// floor is still empty. sessionMachine's poll fills the same pair on lookup.
+func testTip() *sessionOracle {
+	o := &sessionOracle{hash: []byte{0xaa}}
+	o.height.Store(100)
+	return o
+}
+
+func sessionMachine(t *testing.T, config types.SessionConfig, group []types.SlotAssignment, balance uint64, userAddr string, verifier signing.Verifier, opts ...state.SMOption) *state.StateMachine {
+	t.Helper()
+	all := append([]state.SMOption{state.WithHeaderTimes(polledSource(t))}, opts...)
+	return statetest.MustStateMachine(t, "escrow-1", config, group, balance, userAddr, verifier, all...)
+}
+
+func inferenceHost(t *testing.T, sm *state.StateMachine, signer *signing.Secp256k1Signer, engine devshard.InferenceEngine, group []types.SlotAssignment, opts ...host.HostOption) *host.Host {
+	t.Helper()
+	all := append([]host.HostOption{host.WithChainOracle(testTip())}, opts...)
+	h, err := host.NewHost(sm, signer, engine, "escrow-1", group, nil, all...)
+	require.NoError(t, err)
+	return h
+}
+
 func setupSession(t *testing.T, numHosts int, balance uint64, grace uint64) (*Session, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
 	t.Helper()
 	return setupSessionWithEngine(t, numHosts, balance, grace, nil)
@@ -44,14 +66,13 @@ func setupSessionWithOptions(t *testing.T, numHosts int, balance uint64, grace u
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
+		sm := sessionMachine(t, config, group, balance, user.Address(), verifier)
 		engine := stub.NewInferenceEngine()
-		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(grace))
-		require.NoError(t, err)
+		h := inferenceHost(t, sm, hosts[i], engine, group, host.WithGrace(grace))
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
+	userSM := sessionMachine(t, config, group, balance, user.Address(), verifier)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, opts...)
 	require.NoError(t, err)
 
@@ -72,20 +93,19 @@ func setupSessionWithEngine(t *testing.T, numHosts int, balance uint64, grace ui
 	// Create hosts.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
+		sm := sessionMachine(t, config, group, balance, user.Address(), verifier)
 		var engine devshard.InferenceEngine
 		if engines != nil {
 			engine = engines[i]
 		} else {
 			engine = stub.NewInferenceEngine()
 		}
-		h, err := host.NewHost(sm, hosts[i], engine, "escrow-1", group, nil, host.WithGrace(grace))
-		require.NoError(t, err)
+		h := inferenceHost(t, sm, hosts[i], engine, group, host.WithGrace(grace))
 		clients[i] = &InProcessClient{Host: h}
 	}
 
 	// Create user session.
-	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
+	userSM := sessionMachine(t, config, group, balance, user.Address(), verifier)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 
@@ -2252,17 +2272,29 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 	session.nonceStates[prepared.diff.Nonce].confirmedAt = confirmedAt
 	session.mu.Unlock()
 	require.NoError(t, session.SendPendingDiff(ctx), "test setup must publish ConfirmStart before execution timeout")
+	confirmed, ok := session.StateMachine().GetInference(prepared.diff.Nonce)
+	require.True(t, ok)
+	stamp, ok := session.StateMachine().LookupHeaderTimeMs(confirmed.ConfirmedAtHeight, []byte{0xaa})
+	require.True(t, ok)
 	rig.raise(t, session, 200_000)
+	again, ok := session.StateMachine().LookupHeaderTimeMs(confirmed.ConfirmedAtHeight, []byte{0xaa})
+	require.True(t, ok)
+	require.Equal(t, stamp, again, "a later height does not move time(ConfirmedAtHeight)")
+
+	_, deadline := session.TimeoutDeadline(prepared.diff.Nonce, time.Unix(0, 0))
+	exec := time.Duration(session.StateMachine().Config().ExecutionTimeout) * time.Second
+	require.WithinDuration(t, time.UnixMilli(stamp).Add(exec), deadline, 5*time.Second)
 
 	beforeDiffs := len(session.Diffs())
 	for i, c := range session.clients {
 		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{confirmTx}}
 	}
 
-	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "insufficient votes")
-	require.Len(t, session.Diffs(), beforeDiffs, "execution timeout must not publish ConfirmStart recovery diff")
+	waitCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	_, err = session.HandleTimeout(waitCtx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Len(t, session.Diffs(), beforeDiffs, "a height jump must not publish ConfirmStart recovery")
 
 	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
 	require.True(t, ok)
@@ -2350,7 +2382,10 @@ func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
 		TimeoutBuffer = prevTimeoutBuffer
 	})
 
-	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(signers))
+	config.ExecutionTimeout = 5
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -2383,7 +2418,8 @@ func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
 	}, prepared.diff.Nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
-	rig.raise(t, session, 200_000)
+	startedRec, _ := session.StateMachine().GetInference(prepared.diff.Nonce)
+	rig.coverTimeout(t, session, startedRec.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
 
 	slot, ok := session.StateMachine().InferenceExecutorSlot(prepared.diff.Nonce)
 	require.True(t, ok)
@@ -2413,7 +2449,9 @@ func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
 		}
 	}
 
-	result, err := session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), nil)
+	voteCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(voteCtx, prepared.diff.Nonce, time.Unix(0, 0), nil)
 	require.Error(t, err)
 	require.Equal(t, "execution", result.Reason)
 	require.Positive(t, result.Votes)
@@ -2446,7 +2484,11 @@ func TestHandleTimeout_RecoveredReceiptContinuesToExecutionTimeout(t *testing.T)
 		TimeoutBuffer = prevTimeoutBuffer
 	})
 
-	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(signers))
+	config.ExecutionTimeout = 5
+	config.RefusalTimeout = 1
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -2474,9 +2516,19 @@ func TestHandleTimeout_RecoveredReceiptContinuesToExecutionTimeout(t *testing.T)
 		Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength,
 		MaxTokens: params.MaxTokens, StartedAt: params.StartedAt,
 	}
-	raised := rig.raiseOnceStarted(session, nonce, 200_000)
-	result, err := session.HandleTimeout(context.Background(), nonce, time.Unix(0, 0), payload)
-	<-raised
+	voteCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	reason, ready, skipped, err := session.WaitTimeoutDeadline(voteCtx, nonce, time.Unix(0, 0))
+	require.NoError(t, err)
+	require.True(t, ready, "skipped %+v", skipped)
+	require.Equal(t, types.TimeoutReason_TIMEOUT_REASON_REFUSED, reason)
+	_, needsWait, err := session.VoteTimeout(voteCtx, nonce, time.Unix(0, 0), payload, reason)
+	require.NoError(t, err)
+	require.True(t, needsWait)
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+	startedRec, _ := session.StateMachine().GetInference(nonce)
+	rig.coverTimeout(t, session, startedRec.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
+	result, err := session.HandleTimeout(voteCtx, nonce, time.Unix(0, 0), payload)
 	require.Error(t, err)
 	require.Equal(t, "execution", result.Reason)
 	require.True(t, result.Applied, "%+v", result)
@@ -2585,7 +2637,10 @@ func TestHandleTimeout_ExecutionRejectRecoversFinish(t *testing.T) {
 	previous := TimeoutBuffer
 	TimeoutBuffer = 0
 	t.Cleanup(func() { TimeoutBuffer = previous })
-	session, _, _, rig := setupArmedSession(t, 3, 100000, 10)
+	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(signers))
+	config.ExecutionTimeout = 5
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 	prepared, err := session.PrepareInference(context.Background(), params)
@@ -2605,7 +2660,8 @@ func TestHandleTimeout_ExecutionRejectRecoversFinish(t *testing.T) {
 		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
 	}, nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
-	rig.raise(t, session, 200_000)
+	startedRec, _ := session.StateMachine().GetInference(nonce)
+	rig.coverTimeout(t, session, startedRec.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
 	require.Eventually(t, func() bool { return findRecoveryFinish(executor.MempoolTxs(), nonce) != nil }, 5*time.Second, 20*time.Millisecond)
 	finish := findRecoveryFinish(executor.MempoolTxs(), nonce)
 	for i, client := range session.clients {
@@ -2616,7 +2672,9 @@ func TestHandleTimeout_ExecutionRejectRecoversFinish(t *testing.T) {
 	session.mu.Lock()
 	session.nonceStates[nonce].confirmedAt = 1
 	session.mu.Unlock()
-	result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), nil)
+	voteCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(voteCtx, nonce, time.Unix(0, 0), nil)
 	require.NoError(t, err)
 	require.Equal(t, "execution", result.Reason)
 	require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[nonce].Status)
@@ -2626,7 +2684,10 @@ func TestHandleTimeout_DroppedPendingFinishFallsThroughToVote(t *testing.T) {
 	previous := TimeoutBuffer
 	TimeoutBuffer = 0
 	t.Cleanup(func() { TimeoutBuffer = previous })
-	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(signers))
+	config.ExecutionTimeout = 5
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
 	ctx := context.Background()
 	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 	prepared, err := session.PrepareInference(context.Background(), params)
@@ -2646,8 +2707,9 @@ func TestHandleTimeout_DroppedPendingFinishFallsThroughToVote(t *testing.T) {
 		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
 	}, nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
-	rig.raise(t, session, 200_000)
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+	startedRec, _ := session.StateMachine().GetInference(nonce)
+	rig.coverTimeout(t, session, startedRec.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
 	bad := &types.MsgFinishInference{InferenceId: nonce, EscrowId: "escrow-1", ExecutorSlot: uint32(execIdx), ResponseHash: []byte("short"), ServedHash: testutil.TestServedHash}
 	bad.ProposerSig = testutil.SignProposerTx(t, signers[execIdx], bad)
 	session.mu.Lock()
@@ -2657,7 +2719,9 @@ func TestHandleTimeout_DroppedPendingFinishFallsThroughToVote(t *testing.T) {
 	for i, client := range session.clients {
 		session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: session.group, slotIdx: i}}
 	}
-	result, err := session.HandleTimeout(ctx, nonce, time.Unix(0, 0), nil)
+	voteCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(voteCtx, nonce, time.Unix(0, 0), nil)
 	require.Error(t, err)
 	require.True(t, result.Applied)
 	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
@@ -2667,12 +2731,18 @@ func TestHandleTimeout_DroppedReceiptFallsBackToRefusalVote(t *testing.T) {
 	previous := TimeoutBuffer
 	TimeoutBuffer = 0
 	t.Cleanup(func() { TimeoutBuffer = previous })
-	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(signers))
+	config.RefusalTimeout = 1
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
 	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	rig.raise(t, session, 100_000)
 	nonce := prepared.Nonce()
+	startedRec, ok := session.StateMachine().GetInference(nonce)
+	require.True(t, ok)
+	rig.coverTimeout(t, session, startedRec.StartedAtTimeMs, time.Second)
 	session.mu.Lock()
 	session.nonceStates[nonce].confirmedAt = 1 // stale receipt observation; no ConfirmStart can land
 	session.mu.Unlock()
@@ -2680,7 +2750,9 @@ func TestHandleTimeout_DroppedReceiptFallsBackToRefusalVote(t *testing.T) {
 		session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: session.group, slotIdx: i}}
 	}
 	payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
-	result, err := session.HandleTimeout(context.Background(), nonce, time.Unix(0, 0), payload)
+	voteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	result, err := session.HandleTimeout(voteCtx, nonce, time.Unix(0, 0), payload)
 	require.Error(t, err)
 	require.Equal(t, "refused", result.Reason)
 	require.True(t, result.Applied)

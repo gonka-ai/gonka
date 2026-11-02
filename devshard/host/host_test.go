@@ -114,6 +114,13 @@ func defaultPayload() *InferencePayload {
 	}
 }
 
+func tipOracle() *fakeOracle {
+	o := &fakeOracle{}
+	o.setHeight(100)
+	o.setHash([]byte{0xaa})
+	return o
+}
+
 func newTestHost(t *testing.T, hostIdx int, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer, balance uint64, grace uint64) *Host {
 	t.Helper()
 	return newTestHostWithChecker(t, hostIdx, hosts, user, balance, grace, nil)
@@ -124,11 +131,13 @@ func newTestHostWithChecker(t *testing.T, hostIdx int, hosts []*signing.Secp256k
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance))
+	sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance),
+		state.WithStateRootAndProtocolVersion("v6"))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	var opts []HostOption
 	opts = append(opts, WithGrace(grace))
+	opts = append(opts, WithChainOracle(tipOracle()))
 	h, err := NewHost(sm, hosts[hostIdx], engine, "escrow-1", group, checker, opts...)
 	require.NoError(t, err)
 	return h
@@ -268,13 +277,17 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 	// Verify receipt is a valid executor signature.
 	require.NotZero(t, resp.ConfirmedAt, "executor should set confirmed_at")
 	verifier := signing.NewSecp256k1Verifier()
+	require.Equal(t, uint64(100), resp.ObservedHeight)
+	require.Equal(t, []byte{0xaa}, resp.ObservedBlockHash)
 	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: 1,
-		PromptHash:  testutil.TestPromptHash[:],
-		Model:       "llama",
-		InputLength: 100,
-		MaxTokens:   testutil.TestMaxTokens,
-		EscrowId:    "escrow-1",
+		InferenceId:       1,
+		PromptHash:        testutil.TestPromptHash[:],
+		Model:             "llama",
+		InputLength:       100,
+		MaxTokens:         testutil.TestMaxTokens,
+		EscrowId:          "escrow-1",
+		ObservedHeight:    100,
+		ObservedBlockHash: []byte{0xaa},
 	}
 	data, err := proto.Marshal(receiptContent)
 	require.NoError(t, err)
@@ -504,7 +517,7 @@ func TestHost_NotInGroup(t *testing.T) {
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 
-	_, err = NewHost(sm, outsider, engine, "escrow-1", group, nil, WithGrace(10))
+	_, err = NewHost(sm, outsider, engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.ErrorIs(t, err, types.ErrHostNotInGroup)
 }
 
@@ -527,7 +540,7 @@ func newMultiSlotHost(t *testing.T, hostIdx int, hosts []*signing.Secp256k1Signe
 	sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
-	h, err := NewHost(sm, hosts[hostIdx], engine, "escrow-1", group, nil, WithGrace(grace))
+	h, err := NewHost(sm, hosts[hostIdx], engine, "escrow-1", group, nil, WithGrace(grace), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 	return h
 }
@@ -1001,7 +1014,7 @@ func TestHost_ExecuteFailure_ReturnsReceiptNoMempool(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := stub.NewFailingEngine(fmt.Errorf("GPU error"))
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1099,6 +1112,39 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	require.Zero(t, countMempoolConfirms(h.MempoolTxs(), 1), "the landed receipt leaves no ConfirmStart behind")
 }
 
+func TestHost_ConfirmWaitsUntilAHeaderExists(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	oracle := &fakeOracle{}
+	oracle.setErr(ErrNoChainOracle)
+	h, err := NewHost(sm, hosts[1], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(oracle))
+	require.NoError(t, err)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	req := HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()}
+	first, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.Nil(t, first.Receipt, "no header and no floor: the confirm waits")
+	require.Nil(t, first.ExecutionJob)
+	require.Equal(t, observability.ReasonNoReceipt, first.ReceiptReason)
+	require.Zero(t, countMempoolConfirms(h.MempoolTxs(), 1))
+
+	oracle.setErr(nil)
+	oracle.setHeight(100)
+	oracle.setHash([]byte{0xaa})
+	second, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, second.Receipt)
+	require.Equal(t, uint64(100), second.ObservedHeight)
+	require.Equal(t, []byte{0xaa}, second.ObservedBlockHash)
+	require.NotNil(t, second.ExecutionJob)
+}
+
 func TestHost_ReceiptIgnoresPeerImportedConfirmStart(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
@@ -1142,7 +1188,7 @@ func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
 			ResponseBody: responseBody,
 		},
 	}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1187,7 +1233,7 @@ func TestHost_ExecutionPayloadEpoch(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithEpochID(42))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithEpochID(42), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1212,7 +1258,7 @@ func TestHost_SignReceipt_NoDuplicateExecution(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1241,7 +1287,7 @@ func TestHost_ExecutingCleanup(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1271,7 +1317,7 @@ func TestHost_ChallengeReceipt_AlreadyExecuting(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1310,7 +1356,7 @@ func setupChallengeReceiptHost(t *testing.T, engine devshard.InferenceEngine) (*
 	if engine == nil {
 		engine = stub.NewInferenceEngine()
 	}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	return h, diff
@@ -1387,7 +1433,7 @@ func TestHost_ChallengeReceipt_AlreadyFinished(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := &countingEngine{inner: stub.NewInferenceEngine()}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1487,7 +1533,7 @@ func TestHost_ChallengeReceipt_DoesNotBlockOnExecution(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := newBlockingInferenceEngine()
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1539,7 +1585,7 @@ func TestHost_ChallengeReceipt_ExecutionSurvivesRequestCancel(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 	engine := newCtxCapturingInferenceEngine()
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1607,7 +1653,7 @@ func TestHost_ChallengeReceipt_ExecutionBudgetReleasesWedgedInference(t *testing
 	// An ML node that only returns when its context is done.
 	engine := stub.NewInferenceEngine()
 	engine.BlockUntilContextDone = true
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 	require.Equal(t, time.Second, h.executionBudget())
 
@@ -1640,7 +1686,7 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
-	h, err := NewHost(sm, hosts[1], stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1721,7 +1767,7 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 
 	// Create Host with warmSigner (not in group as cold key).
 	engine := stub.NewInferenceEngine()
-	h, err := NewHost(sm, warmSigner, engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, warmSigner, engine, "escrow-1", group, nil, WithGrace(10), WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	// Host should have found its slot via WarmKeys check.
@@ -2484,7 +2530,7 @@ func newExecutorHostWithGossip(t *testing.T) (*Host, []*signing.Secp256k1Signer,
 	require.NoError(t, err)
 
 	engine := stub.NewInferenceEngine()
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil)
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithChainOracle(tipOracle()))
 	require.NoError(t, err)
 
 	// Build gossip with the host's own mempool as MempoolSink; attach it

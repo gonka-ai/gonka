@@ -93,8 +93,105 @@ func TestStartMustCarryExactlyTheFloor(t *testing.T) {
 	require.Equal(t, uint64(250), rec.StartedAtHeight)
 }
 
+func TestStartOnNewProtocolRejectsEmptyFloor(t *testing.T) {
+	spy := &rejectTimes{}
+	d := newVersionedFloorDriver(t, types.StartRequiresFloorProtocolVersion, spy, 9)
+	require.Equal(t, uint64(9), d.sm.HeartbeatConfig().DeltaBlocks)
+	require.True(t, types.StartRequiresFloor(d.sm.ProtocolVersion()))
+
+	require.ErrorIs(t, d.start(1, 0, nil), types.ErrStampNotFloor)
+	require.ErrorIs(t, d.start(1, 10, []byte{0x01}), types.ErrStampNotFloor)
+	require.Zero(t, spy.calls, "an empty floor is rejected before the map is read")
+	_, ok := d.sm.GetInference(1)
+	require.False(t, ok)
+}
+
+func TestStartOnNewProtocolStoresMapTime(t *testing.T) {
+	times := newHeaderTimes()
+	const wantMs = int64(4_200_000)
+	times.set(100, time.Duration(wantMs)*time.Millisecond)
+	d := newVersionedFloorDriver(t, types.StartRequiresFloorProtocolVersion, times, 0)
+	hash := []byte{0xaa}
+	d.raise(100, hash)
+
+	id := d.next()
+	require.NoError(t, d.start(id, 100, hash))
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, uint64(100), rec.StartedAtHeight)
+	require.Equal(t, wantMs, rec.StartedAtTimeMs)
+
+	_, err := d.sm.TimeoutRemaining(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.NotErrorIs(t, err, types.ErrTimeoutNotArmed)
+
+	require.ErrorIs(t, d.start(id+1, 101, hash), types.ErrStampNotFloor)
+	require.ErrorIs(t, d.start(id+1, 100, []byte{0xbb}), types.ErrStampNotFloor)
+}
+
+func TestStartOnPreviousProtocolAllowsEmptyFloor(t *testing.T) {
+	d := newVersionedFloorDriver(t, "v6", newHeaderTimes(), 0)
+	require.False(t, types.StartRequiresFloor(d.sm.ProtocolVersion()))
+	require.NoError(t, d.start(1, 0, nil))
+	rec, ok := d.sm.GetInference(1)
+	require.True(t, ok)
+	require.Zero(t, rec.StartedAtTimeMs)
+	_, err := d.sm.TimeoutRemaining(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.ErrorIs(t, err, types.ErrTimeoutNotArmed)
+}
+
+func TestStartOnNewProtocolReplicaRejectsWithoutFloor(t *testing.T) {
+	hosts := fourHosts(t)
+	user := testutil.MustGenerateKey(t)
+	spy := &rejectTimes{}
+	primary := newSMWithKeys(t, user, hosts, types.StartRequiresFloorProtocolVersion, spy, 9)
+	replica := newSMWithKeys(t, user, hosts, types.StartRequiresFloorProtocolVersion, spy, 9)
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{divStartTx(1, 0, nil)})
+
+	_, err := primary.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrStampNotFloor)
+	_, err = replica.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrStampNotFloor)
+	require.Zero(t, spy.calls)
+	require.Equal(t, uint64(9), replica.HeartbeatConfig().DeltaBlocks)
+}
+
+type rejectTimes struct {
+	calls int
+}
+
+func (r *rejectTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
+	r.calls++
+	return 0, types.ErrHeaderPending
+}
+
+func newVersionedFloorDriver(t *testing.T, version string, times HeaderTimeSource, delta uint64) *floorDriver {
+	t.Helper()
+	hosts := fourHosts(t)
+	user := testutil.MustGenerateKey(t)
+	sm := newSMWithKeys(t, user, hosts, version, times, delta)
+	return &floorDriver{t: t, sm: sm, user: user, hosts: hosts}
+}
+
+func newSMWithKeys(t *testing.T, user *signing.Secp256k1Signer, hosts []*signing.Secp256k1Signer, version string, times HeaderTimeSource, delta uint64) *StateMachine {
+	t.Helper()
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+	opts := []SMOption{
+		WithStateRootAndProtocolVersion(version),
+		WithHeartbeatConfig(heightsync.HeartbeatConfig{DeltaBlocks: delta}),
+	}
+	if times != nil {
+		opts = append(opts, WithHeaderTimes(times))
+	}
+	sm, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store, opts...)
+	require.NoError(t, err)
+	return sm
+}
+
 func TestStartBeforeAnyHostStampHasNoAnchor(t *testing.T) {
-	d := newFloorDriver(t)
+	d := newVersionedFloorDriver(t, "v6", nil, 0)
 	require.ErrorIs(t, d.start(1, 10, []byte{0x01}), types.ErrStampNotFloor, "there is no floor to carry yet")
 	require.NoError(t, d.start(1, 0, nil))
 	rec, ok := d.sm.GetInference(1)
@@ -106,7 +203,7 @@ func TestStartBeforeAnyHostStampHasNoAnchor(t *testing.T) {
 	require.ErrorIs(t, d.apply(d.timeout(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED)), types.ErrTimeoutNotArmed)
 }
 
-func TestConfirmCarriesTheAssignmentFloorAndAnchorsAtTheLandingFloor(t *testing.T) {
+func TestConfirmMayRaiseAndAnchorsOnItsOwnStamp(t *testing.T) {
 	d := newFloorDriver(t)
 	first, second := []byte{0x02, 0x50}, []byte{0x03, 0x00}
 	d.raise(250, first)
@@ -114,20 +211,35 @@ func TestConfirmCarriesTheAssignmentFloorAndAnchorsAtTheLandingFloor(t *testing.
 	require.NoError(t, d.start(id, 250, first))
 	d.raise(300, second)
 
-	require.ErrorIs(t, d.apply(d.confirm(id, 300, second)), types.ErrStampNotFloor,
-		"a higher height is a clock the executor chose")
+	require.Error(t, d.apply(d.confirm(id, 249, first)), "a confirm below the start is rejected")
+	require.ErrorIs(t, d.apply(d.confirm(id, 250, []byte{0x02, 0x51})), types.ErrStampNotFloor, "the same height on another block is rejected")
 	rec, ok := d.sm.GetInference(id)
 	require.True(t, ok)
-	require.ErrorIs(t, d.sm.CheckEvidence(&rec, d.confirm(id, 300, second)), types.ErrStampNotFloor,
-		"the read-only check rejects the stamp apply rejects")
+	require.NoError(t, d.sm.CheckEvidence(&rec, d.confirm(id, 300, second)))
 
-	require.NoError(t, d.sm.CheckEvidence(&rec, d.confirm(id, 250, first)))
-	require.NoError(t, d.apply(d.confirm(id, 250, first)))
+	require.NoError(t, d.apply(d.confirm(id, 300, second)))
 	rec, ok = d.sm.GetInference(id)
 	require.True(t, ok)
 	require.Equal(t, types.StatusStarted, rec.Status)
 	require.Equal(t, uint64(250), rec.StartedAtHeight)
-	require.Equal(t, uint64(300), rec.ConfirmedAtHeight, "the confirm anchor is F at the nonce where the receipt lands")
+	require.Equal(t, uint64(300), rec.ConfirmedAtHeight, "the record stores the confirm's stamp")
+	require.Equal(t, int64(300)*testutil.HeightClockBlockMs, rec.ConfirmedAtTimeMs)
+}
+
+func TestConfirmSeedsTheFloorWhenTheStartHadNone(t *testing.T) {
+	d := newVersionedFloorDriver(t, "v6", nil, 0)
+	require.NoError(t, d.start(1, 0, nil))
+	hash := []byte{0x0a}
+	require.NoError(t, d.apply(d.confirm(1, 40, hash)))
+	rec, ok := d.sm.GetInference(1)
+	require.True(t, ok)
+	require.Zero(t, rec.StartedAtHeight)
+	require.Equal(t, uint64(40), rec.ConfirmedAtHeight)
+	require.Equal(t, int64(40)*testutil.HeightClockBlockMs, rec.ConfirmedAtTimeMs)
+	height, got, known := d.sm.HeightSyncFloorAsOf(d.next())
+	require.True(t, known)
+	require.Equal(t, uint64(40), height)
+	require.Equal(t, hash, got)
 }
 
 func TestTimeoutIsDueOnlyOnceTheFloorClearsTheAnchor(t *testing.T) {
@@ -167,7 +279,7 @@ func TestExecutionTimeoutCountsFromTheConfirmAnchor(t *testing.T) {
 	id := d.next()
 	require.NoError(t, d.start(id, 100, hash))
 	d.raise(150, []byte{0x01, 0x50})
-	require.NoError(t, d.apply(d.confirm(id, 100, hash)))
+	require.NoError(t, d.apply(d.confirm(id, 150, []byte{0x01, 0x50})))
 
 	d.raise(100+execBlocks, []byte{0x02, 0x00})
 	require.ErrorIs(t, d.apply(d.timeout(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)), types.ErrTimeoutNotDue,
@@ -177,7 +289,7 @@ func TestExecutionTimeoutCountsFromTheConfirmAnchor(t *testing.T) {
 }
 
 func TestSettlementDoesNotPayAnUnanchoredReservation(t *testing.T) {
-	d := newFloorDriver(t)
+	d := newVersionedFloorDriver(t, "v6", nil, 0)
 	require.NoError(t, d.start(1, 0, nil))
 	rec, ok := d.sm.GetInference(1)
 	require.True(t, ok)

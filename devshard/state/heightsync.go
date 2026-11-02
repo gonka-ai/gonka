@@ -142,6 +142,7 @@ func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if !sm.hostSignerAllowedLocked(msg.SlotId, recovered) {
 		return fmt.Errorf("%w: expected %s, got %s", heightsync.ErrAckSigInvalid, expected, recovered)
 	}
+	sm.noteAcceptedHostAckLocked(msg)
 	return nil
 }
 
@@ -212,6 +213,18 @@ func (sm *StateMachine) HeightSyncFloorAsOf(nonce uint64) (uint64, []byte, bool)
 	defer sm.mu.RUnlock()
 	h, hash, known := sm.heightSyncFloor.AsOf(nonce)
 	return h, append([]byte(nil), hash...), known
+}
+
+// FloorPointAtHeight is the floor entry whose height is exactly height, with
+// its block hash. The index stores running maxima only. A confirm between two
+// maxima is absent here; the execution deadline reads the header map by height.
+func (sm *StateMachine) FloorPointAtHeight(height uint64) (heightsync.FloorPoint, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.heightSyncFloor == nil || !sm.floorReady {
+		return heightsync.FloorPoint{}, false
+	}
+	return sm.heightSyncFloor.PointAtHeight(height)
 }
 
 // HeightSyncFloorReady reports whether the floor is a consistent fold of
@@ -446,6 +459,17 @@ func (sm *StateMachine) HeightSyncMissingAcks(turnStart uint64) []uint32 {
 		return nil
 	}
 	return sm.turnTracker.MissingAcksDue(turnStart, sm.turnTracker.LastCompletedHeight())
+}
+
+// HeightSyncSlotsWithBlockAck counts distinct slots whose applied ack carries
+// a block. It does not call out and does not read an oracle tip.
+func (sm *StateMachine) HeightSyncSlotsWithBlockAck() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return 0
+	}
+	return sm.turnTracker.SlotsWithBlockAck()
 }
 
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.

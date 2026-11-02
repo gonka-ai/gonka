@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"time"
 
@@ -58,15 +59,15 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 // turnover, or turnOpenedAt+TurnTimeout while a turn is still open — not a
 // free-running ticker, which opens a full Interval late. Idempotent. A Close
 // that races Start does not leave a goroutine behind. In-process clients
-// have no catalog URL and skip the wait. When the producer cadence is
-// disabled, the height-seed loop still starts and no heartbeat goroutine does.
+// have no catalog URL and skip the wait. The unstamped bootstrap span starts
+// after catalog admission. This loop does not call the height-sync seed RPC.
+// When the producer cadence is disabled, no heartbeat goroutine starts; the
+// bootstrap span still does.
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
 	}
-	if s.requireHeightSeed {
-		s.startHeightSeedLoop()
-	}
+	s.startBootstrapSpan()
 	if s.disableHeightSyncHeartbeat {
 		logging.Info("heartbeat loop disabled", "subsystem", "heightsync",
 			"escrow", s.escrowID)
@@ -102,13 +103,172 @@ func (s *Session) StopHeartbeatLoop() {
 	s.heartbeatClosed = true
 	stop := s.heartbeatStop
 	done := s.heartbeatDone
+	bootstrapStop := s.bootstrapStop
+	bootstrapDone := s.bootstrapDone
 	s.mu.Unlock()
 	if stop != nil {
 		stop()
 	}
+	if bootstrapStop != nil {
+		bootstrapStop()
+	}
 	if done != nil {
 		<-done
 	}
+	if bootstrapDone != nil {
+		<-bootstrapDone
+	}
+}
+
+// startBootstrapSpan waits for router catalog admission, then sends one
+// unstamped heartbeat per slot while F is empty. Until a host ack raises F,
+// it retries once per heartbeat interval: the still-open bootstrap turn gets
+// its unacked heartbeats resent, and a closed one gets a new span. The seed
+// gate starts it, including when the quiet-session cadence is off. A session
+// that already has a floor sends nothing here.
+func (s *Session) startBootstrapSpan() {
+	if s == nil {
+		return
+	}
+	s.bootstrapOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if err := s.WaitRouterCatalog(ctx); err != nil {
+				logging.Debug("bootstrap span stopped before catalog", "subsystem", "heightsync",
+					"escrow", s.escrowID, "error", err)
+				return
+			}
+			s.markHeightSeedAdmitted()
+			s.runBootstrapLoop(ctx)
+		}()
+		s.mu.Lock()
+		if s.heartbeatClosed {
+			s.mu.Unlock()
+			cancel()
+			<-done
+			return
+		}
+		s.bootstrapStop = cancel
+		s.bootstrapDone = done
+		s.mu.Unlock()
+	})
+}
+
+// runBootstrapLoop sends the bootstrap span, then retries each heartbeat
+// interval until F is set, the session leaves Active, or ctx ends. Once F is
+// set, the ordinary cadence owns the floor.
+func (s *Session) runBootstrapLoop(ctx context.Context) {
+	for {
+		if err := s.sendBootstrapSpan(ctx); err != nil {
+			logging.Debug("bootstrap span failed", "subsystem", "heightsync",
+				"escrow", s.escrowID, "error", err)
+		}
+		if s.bootstrapSettled() {
+			return
+		}
+		timer := time.NewTimer(s.bootstrapRetryInterval())
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// bootstrapSettled reports that the bootstrap loop has nothing left to do:
+// F is set or the session is no longer Active.
+func (s *Session) bootstrapSettled() bool {
+	if s.sm == nil || s.sm.Phase() != types.PhaseActive {
+		return true
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hNow, _, ok := s.referenceStampLocked(s.nonce + 1)
+	return ok && hNow != 0
+}
+
+func (s *Session) bootstrapRetryInterval() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.heartbeatIntervalLocked()
+}
+
+// heartbeatIntervalLocked is the cadence interval. Caller holds s.mu.
+func (s *Session) heartbeatIntervalLocked() time.Duration {
+	if s.heartbeat != nil {
+		if cfg := s.heartbeat.Config().Interval; cfg > 0 {
+			return cfg
+		}
+	}
+	return heightsync.DefaultHeartbeatInterval
+}
+
+// refreshFloorForChat sends the span the chat gate is waiting on. An empty
+// floor gets the unstamped opening span. A floor older than two cadence
+// intervals gets an ordinary span that copies F, so a newer host tip can
+// raise it. Chats of this session share that span: a second one inside the
+// same interval sends nothing and waits for the acks. A fresh floor, or a
+// floor whose map time is missing, sends nothing. Catalog admission is
+// unchanged: the caller only invokes this once the gate is pending.
+func (s *Session) refreshFloorForChat(ctx context.Context) error {
+	if s == nil || s.sm == nil || s.sm.Phase() != types.PhaseActive {
+		return nil
+	}
+	s.mu.Lock()
+	_, mode := s.floorChatEvalLocked()
+	s.mu.Unlock()
+	switch mode {
+	case floorRefreshBootstrap:
+		return s.sendBootstrapSpan(ctx)
+	case floorRefreshStale:
+		s.mu.Lock()
+		recent := s.floorSpanRecentLocked(s.nowLocked())
+		s.mu.Unlock()
+		if recent {
+			return nil
+		}
+		span, err := s.composeSpan(true)
+		s.dispatchHeartbeatSpan(ctx, span)
+		if err != nil {
+			s.publishHeightSyncView()
+			return err
+		}
+		err = s.flushHeartbeatAckRounds(ctx)
+		s.publishHeightSyncView()
+		return err
+	default:
+		return nil
+	}
+}
+
+// floorSpanRecentLocked reports that this session opened a height span within
+// the last cadence interval. Caller holds s.mu.
+func (s *Session) floorSpanRecentLocked(now time.Time) bool {
+	if s.lastFloorSpanAt.IsZero() {
+		return false
+	}
+	return now.Sub(s.lastFloorSpanAt) < s.heartbeatIntervalLocked()
+}
+
+// sendBootstrapSpan composes and dispatches the opening span when F is empty,
+// then flushes the acks those heartbeats solicit. A later call, after one ack
+// has raised F, does not send another unstamped span.
+func (s *Session) sendBootstrapSpan(ctx context.Context) error {
+	if s == nil || s.sm == nil || s.sm.Phase() != types.PhaseActive {
+		return nil
+	}
+	span, err := s.composeBootstrapOnly()
+	s.dispatchHeartbeatSpan(ctx, span)
+	if err != nil {
+		s.publishHeightSyncView()
+		return err
+	}
+	err = s.flushHeartbeatAckRounds(ctx)
+	s.publishHeightSyncView()
+	return err
 }
 
 func (s *Session) runHeartbeatLoop(ctx context.Context) {
@@ -276,6 +436,128 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	return s.composeSpan(false)
 }
 
+// composeBootstrapOnly sends the opening span while F is empty and returns
+// nothing once a host stamp has raised it. Caller does not hold s.mu.
+func (s *Session) composeBootstrapOnly() ([]composedDiff, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	hNow, _, ok := s.referenceStampLocked(s.nonce + 1)
+	if ok && hNow != 0 {
+		return nil, nil
+	}
+	return s.composeBootstrapSpanLocked(s.nowLocked())
+}
+
+// composeBootstrapSpanLocked emits one unstamped heartbeat per slot. The
+// gateway's polled tip is not written onto the message. Attempts are spaced
+// one heartbeat interval apart, so concurrent callers emit one span. A retry
+// while the bootstrap turn is still open resends that turn's unacked
+// heartbeats on their original nonces; an unstamped turn never closes by
+// deadline, and those acks still count toward it. Caller holds s.mu.
+func (s *Session) composeBootstrapSpanLocked(now time.Time) ([]composedDiff, error) {
+	if !s.bootstrapSentAt.IsZero() && now.Before(s.bootstrapSentAt.Add(s.heartbeatIntervalLocked())) {
+		return nil, nil
+	}
+	// No drain. A queued confirm or finish stays queued for the next start
+	// or an explicit drain. This span is only the unstamped heartbeats.
+	hNow, _, ok := s.referenceStampLocked(s.nonce + 1)
+	if ok && hNow != 0 {
+		return nil, nil
+	}
+	if resend, ok := s.bootstrapResendLocked(); ok {
+		s.bootstrapSentAt = now
+		s.bootstrapAckFlush = true
+		logging.Info("bootstrap span resent", "subsystem", "heightsync",
+			"escrow", s.escrowID, "turn_start", s.turnTracker.Latest().TurnStart,
+			"unacked", len(resend))
+		return resend, nil
+	}
+
+	slots := uint64(len(s.group))
+	spanStart := s.nonce + 1
+	prev := s.turnTracker.Latest()
+	var prevStart uint64
+	if prev != nil {
+		prevStart = prev.TurnStart
+	}
+	vector := heightsync.ComposeSyncVector(uint32(slots), prev)
+	spanTxs := s.heartbeat.BootstrapSpanTxs(slots, vector)
+	if len(spanTxs) == 0 {
+		return nil, nil
+	}
+
+	// Keep a queued confirm or finish out of these diffs. The opening span
+	// is heartbeats only; drain and the next start publish the rest.
+	//
+	// No MsgForceHeightSyncTurn. Nonces 1..slots are already a sync window,
+	// so each host still attaches a response anchor. A force turn would
+	// require a request anchor, and this span goes out before any reply has
+	// filled the peer-tip cache.
+	parked := s.detachNonAckPendingLocked()
+	out := []composedDiff{}
+	for _, hbTx := range spanTxs {
+		diff, hostIdx, err := s.composeDiffLocked(context.Background(), []*types.DevshardTx{hbTx})
+		if err != nil {
+			s.restoreParkedPendingLocked(parked)
+			return out, err
+		}
+		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
+	}
+	s.restoreParkedPendingLocked(parked)
+	s.heartbeatFlushLeft = 1
+	s.bootstrapAckFlush = true
+	s.bootstrapSentAt = now
+	s.lastFloorSpanAt = now
+	abandoned := s.heartbeat.OpenTurn(now)
+	if abandoned {
+		s.heartbeat.RecordCadence(heightsync.CadenceEvent{
+			At:        now,
+			Event:     heightsync.CadenceTurnAbandoned,
+			TurnStart: prevStart,
+			Reason:    string(heightsync.ReasonQuietSession),
+		})
+	}
+	s.heartbeat.RecordCadence(heightsync.CadenceEvent{
+		At:        now,
+		Event:     heightsync.CadenceHeartbeatOpened,
+		TurnStart: spanStart,
+		Span:      len(spanTxs),
+		Reason:    string(heightsync.ReasonQuietSession),
+	})
+	logging.Info("heartbeat span dispatched", "subsystem", "heightsync",
+		"escrow", s.escrowID, "turn_start", spanStart,
+		"height", uint64(0), "span", len(spanTxs), "reason", string(heightsync.ReasonQuietSession))
+	return out, nil
+}
+
+// bootstrapResendLocked returns the heartbeats of the open bootstrap turn
+// whose slot has not acked, each addressed to its original host. ok is false
+// when the latest turn is not an open unstamped turn, or when a heartbeat
+// diff can no longer be read; the caller then composes a new span. Caller
+// holds s.mu.
+func (s *Session) bootstrapResendLocked() ([]composedDiff, bool) {
+	if s.turnTracker == nil || len(s.group) == 0 {
+		return nil, false
+	}
+	rec := s.turnTracker.Latest()
+	if rec == nil || rec.State != heightsync.TurnOpen || rec.HReq != 0 {
+		return nil, false
+	}
+	slots := uint64(len(s.group))
+	var out []composedDiff
+	for n := rec.RequestSpan[0]; n <= rec.RequestSpan[1] && n <= s.nonce; n++ {
+		if _, acked := rec.Acks[heightsync.SlotForNonce(n, slots)]; acked {
+			continue
+		}
+		diffs, err := s.diffRangeLocked(n, n)
+		if err != nil || len(diffs) != 1 {
+			return nil, false
+		}
+		out = append(out, composedDiff{diff: diffs[0], hostIdx: int(n % slots)})
+	}
+	return out, true
+}
+
 func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -283,10 +565,7 @@ func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 	now := s.nowLocked()
 	hNow, hash, ok := s.referenceStampLocked(s.nonce + 1)
 	if !ok || hNow == 0 {
-		s.heartbeat.Due(now, 0) // increments skippedNoHeight
-		logging.Info("heartbeat skipped", "subsystem", "heightsync",
-			"escrow", s.escrowID, "cause", "no_height")
-		return nil, nil
+		return s.composeBootstrapSpanLocked(now)
 	}
 
 	// Turn state is a function of the log. The live tip stamps the span; it
@@ -361,6 +640,7 @@ func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
 	}
 	s.heartbeatFlushLeft = 1
+	s.lastFloorSpanAt = now
 	abandoned := s.heartbeat.OpenTurn(now)
 	if abandoned {
 		s.heartbeat.RecordCadence(heightsync.CadenceEvent{
@@ -410,21 +690,39 @@ func (s *Session) drainUnpinnedPendingLocked() ([]composedDiff, error) {
 }
 
 func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
+	if s == nil || !s.ackFlushInFlight.CompareAndSwap(false, true) {
+		return nil
+	}
+	defer s.ackFlushInFlight.Store(false)
+	// Clear the park flag on every exit, including compose and send errors.
+	// This defer runs before the in-flight flag drops, so the next flush
+	// does not observe a stale park.
+	defer func() {
+		s.mu.Lock()
+		s.bootstrapAckFlush = false
+		s.mu.Unlock()
+	}()
 	// Every slot acks at most once per turn, so the guaranteed round plus one
 	// round per slot bounds the loop without a cadence parameter.
 	maxRounds := len(s.group) + 1
 	for i := 0; i < maxRounds; i++ {
 		s.mu.Lock()
+		var parked parkedPending
+		if s.bootstrapAckFlush {
+			parked = s.detachNonAckPendingLocked()
+		}
 		need := s.heartbeatFlushLeft > 0 || s.hasPendingHeightAckLocked()
 		open := false
 		if rec := s.turnTracker.Latest(); rec != nil && rec.State == heightsync.TurnOpen {
 			open = true
 		}
 		if !need || !open {
+			s.restoreParkedPendingLocked(parked)
 			s.mu.Unlock()
 			return nil
 		}
 		diff, hostIdx, err := s.composeDiffLocked(ctx, nil)
+		s.restoreParkedPendingLocked(parked)
 		if err != nil {
 			s.mu.Unlock()
 			return err
@@ -438,6 +736,98 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// indexedPending is a queued tx and the index it had in pendingTxs.
+type indexedPending struct {
+	tx    *types.DevshardTx
+	index int
+}
+
+// parkedPending is the split detachNonAckPendingLocked makes. parked txs
+// stay out of the ack flush. ackAt remembers where the acks sat so restore
+// can put every survivor back at its original index.
+type parkedPending struct {
+	parked []indexedPending
+	ackAt  []indexedPending
+}
+
+// detachNonAckPendingLocked pulls every queued tx that is not a height ack
+// out of the compose set. The opening span's flush uses it so a confirm or
+// finish that was already waiting is not published by that span. Caller holds
+// s.mu.
+func (s *Session) detachNonAckPendingLocked() parkedPending {
+	if len(s.pendingTxs) == 0 {
+		return parkedPending{}
+	}
+	acks := make([]*types.DevshardTx, 0, len(s.pendingTxs))
+	var split parkedPending
+	for i, tx := range s.pendingTxs {
+		if tx == nil {
+			continue
+		}
+		if tx.GetHeightAck() != nil {
+			acks = append(acks, tx)
+			split.ackAt = append(split.ackAt, indexedPending{tx: tx, index: i})
+			continue
+		}
+		split.parked = append(split.parked, indexedPending{tx: tx, index: i})
+	}
+	s.pendingTxs = acks
+	s.reindexPendingLocked()
+	return split
+}
+
+// restoreParkedPendingLocked puts parked txs back among the acks that are
+// still queued, each at the index it had before the park. An ack the flush
+// applied is absent. Caller holds s.mu.
+func (s *Session) restoreParkedPendingLocked(split parkedPending) {
+	if len(split.parked) == 0 {
+		return
+	}
+	surviving := make(map[*types.DevshardTx]struct{}, len(s.pendingTxs))
+	for _, tx := range s.pendingTxs {
+		if tx != nil {
+			surviving[tx] = struct{}{}
+		}
+	}
+	merged := make([]indexedPending, 0, len(split.parked)+len(split.ackAt))
+	seen := make(map[*types.DevshardTx]struct{}, len(split.ackAt))
+	for _, ack := range split.ackAt {
+		if _, ok := surviving[ack.tx]; !ok {
+			continue
+		}
+		merged = append(merged, ack)
+		seen[ack.tx] = struct{}{}
+	}
+	merged = append(merged, split.parked...)
+	sort.SliceStable(merged, func(i, j int) bool {
+		return merged[i].index < merged[j].index
+	})
+	out := make([]*types.DevshardTx, 0, len(merged)+len(s.pendingTxs))
+	for _, item := range merged {
+		out = append(out, item.tx)
+	}
+	for _, tx := range s.pendingTxs {
+		if tx == nil {
+			continue
+		}
+		if _, ok := seen[tx]; ok {
+			continue
+		}
+		out = append(out, tx)
+	}
+	s.pendingTxs = out
+	s.reindexPendingLocked()
+}
+
+func (s *Session) reindexPendingLocked() {
+	clear(s.pendingTxKeys)
+	for _, tx := range s.pendingTxs {
+		if key := devshardTxKey(tx); key != "" {
+			s.pendingTxKeys[key] = struct{}{}
+		}
+	}
 }
 
 func (s *Session) heartbeatForceTxLocked(nonce uint64) *types.DevshardTx {
@@ -482,9 +872,9 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 // the receiving host judges it against its own follower (|Δ| > D) and can demand
 // proof.
 //
-// Absent is the only other branch, and it is what a session before its first
-// inference gets: F does not exist yet, so there is nothing truthful to stamp and
-// no heartbeat may open. The first host-signed stamp seeds F and starts the clock.
+// Absent is the branch a session gets before its first host stamp: F does
+// not exist yet, so a heartbeat may not carry a height. The opening span is
+// the unstamped exception. The first host-signed stamp seeds F.
 func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
 	if !s.sm.HeightSyncFloorReady() {
 		return 0, nil, false

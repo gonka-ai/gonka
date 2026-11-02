@@ -23,6 +23,7 @@ import (
 	"devshard/hostevents"
 	"devshard/internal/testutil"
 	"devshard/transport"
+	"devshard/types"
 	"devshard/user"
 
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -106,19 +107,6 @@ func TestExtraClientConfigFromEnv_NodeManagerEnablesCourier(t *testing.T) {
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
 }
 
-func TestRequireHeightSeedFromEnv(t *testing.T) {
-	t.Setenv(envRequireHeightSeed, "")
-	require.True(t, requireHeightSeedFromEnv())
-
-	t.Setenv(envRequireHeightSeed, "true")
-	require.True(t, requireHeightSeedFromEnv())
-
-	for _, v := range []string{"0", "false", "off", "no", "FALSE", " Off "} {
-		t.Setenv(envRequireHeightSeed, v)
-		require.False(t, requireHeightSeedFromEnv(), v)
-	}
-}
-
 func TestParseUintEnv(t *testing.T) {
 	t.Setenv("DEVSHARD_HEIGHTSYNC_K", "")
 	v, err := parseUintEnv("DEVSHARD_HEIGHTSYNC_K")
@@ -129,22 +117,6 @@ func TestParseUintEnv(t *testing.T) {
 	v, err = parseUintEnv("DEVSHARD_HEIGHTSYNC_K")
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), v)
-}
-
-func TestHeightSyncHeartbeatFromEnv(t *testing.T) {
-	t.Setenv(envHeightSyncHeartbeat, "")
-	require.False(t, heightSyncHeartbeatFromEnv())
-	require.True(t, !heightSyncHeartbeatFromEnv(), "unset is the bit gateway.go stores in DisableHeightSyncHeartbeat")
-
-	for _, v := range []string{"true", "1", "on", "TRUE", " On "} {
-		t.Setenv(envHeightSyncHeartbeat, v)
-		require.True(t, heightSyncHeartbeatFromEnv(), v)
-		require.False(t, !heightSyncHeartbeatFromEnv(), v)
-	}
-	for _, v := range []string{"false", "0", "off", "no", "yes", "maybe", "TRUEISH"} {
-		t.Setenv(envHeightSyncHeartbeat, v)
-		require.False(t, heightSyncHeartbeatFromEnv(), v)
-	}
 }
 
 func TestQuietSettleDelayFromEnv(t *testing.T) {
@@ -473,4 +445,70 @@ func TestGatewayCometHooks_WarmQueriesOnTheHeightSocket(t *testing.T) {
 	require.Equal(t, "warm", e.Grantee)
 	hooks.OnDisconnected()
 	require.False(t, connected.Load())
+}
+
+// countingHeaderTimes is the map a gateway build hands to the chat gate.
+// HeaderTimeMs is the only read that gate is allowed to make.
+type countingHeaderTimes struct {
+	ms    int64
+	reads atomic.Int32
+}
+
+func (c *countingHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
+	c.reads.Add(1)
+	if c.ms <= 0 {
+		return 0, types.ErrHeaderPending
+	}
+	return c.ms, nil
+}
+
+func TestGatewayHeaderTimes_NilSourceDoesNotServe(t *testing.T) {
+	resetHeightSyncForTest()
+	t.Cleanup(resetHeightSyncForTest)
+	unsetHeightSyncSources(t)
+
+	require.Nil(t, gatewayHeaderTimes())
+	served := false
+	err := listenGateway(gatewayHeaderTimes(), func() { served = true })
+	require.Error(t, err)
+	require.False(t, served)
+	require.Contains(t, err.Error(), "header_times_unwired")
+	require.Contains(t, err.Error(), "block time")
+}
+
+func TestGatewayHeaderTimes_SourceServesAndChatGateReadsIt(t *testing.T) {
+	src := &countingHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()}
+	served := false
+	require.NoError(t, listenGateway(src, func() { served = true }))
+	require.True(t, served)
+
+	chain := &testChain{start: time.Now()}
+	chain.manual.Store(100)
+	env := setupTestProxyFloor(t, 3, nil, true, 1_000_000, 0, chain)
+	env.sm.SetHeaderTimes(src)
+	env.session.SetRequireHeightSeed(true)
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+
+	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
+	before := src.reads.Load()
+	st := env.session.HeightSeedStatus()
+	require.Greater(t, src.reads.Load(), before, "the chat gate reads the gateway header-time source")
+	require.Equal(t, user.HeightSeedStateOK, st.State)
+	require.Equal(t, 3, st.Slots)
+	require.GreaterOrEqual(t, st.Seeded, 2)
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	env.proxy.handleStatus(rec, req)
+	var body statusResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, user.HeightSeedStateOK, body.HeightSeed.State)
+
+	chain.clock.Store(time.Now().UnixNano())
+	src.ms = time.Now().Add(-2 * time.Minute).UnixMilli()
+	require.Equal(t, user.HeightSeedStatePending, env.session.HeightSeedStatus().State)
+	rec = httptest.NewRecorder()
+	env.proxy.handleStatus(rec, req)
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, user.HeightSeedStatePending, body.HeightSeed.State)
 }

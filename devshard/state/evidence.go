@@ -138,6 +138,9 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 		return nil, err
 	}
 	for _, tx := range txs {
+		if err := sm.ackHashMismatchLocked(tx.GetHeightAck()); err != nil {
+			return nil, err
+		}
 		if err := sm.checkRaiseResolvableLocked(sm.state.LatestNonce+1, tx); err != nil {
 			return nil, err
 		}

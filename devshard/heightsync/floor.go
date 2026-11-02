@@ -226,6 +226,29 @@ func (f *FloorIndex) PointAsOf(m uint64) (FloorPoint, bool) {
 	return FloorPoint{Height: e.height, Hash: e.hash, Author: e.author, Nonce: e.nonce}, true
 }
 
+// PointAtHeight returns the floor entry whose height is exactly height.
+// Heights in the index are the running maximum, so each height appears once.
+// A pruned entry is not returned.
+func (f *FloorIndex) PointAtHeight(height uint64) (FloorPoint, bool) {
+	if f == nil || height == 0 || len(f.entries) == 0 {
+		return FloorPoint{}, false
+	}
+	lo, hi := 0, len(f.entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if f.entries[mid].height < height {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo >= len(f.entries) || f.entries[lo].height != height {
+		return FloorPoint{}, false
+	}
+	e := f.entries[lo]
+	return FloorPoint{Height: e.height, Hash: append([]byte(nil), e.hash...), Author: e.author, Nonce: e.nonce}, true
+}
+
 // Max is the highest reference height in the index.
 func (f *FloorIndex) Max() (uint64, []byte) {
 	if f == nil {

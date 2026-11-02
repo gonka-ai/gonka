@@ -32,13 +32,11 @@ import (
 )
 
 const (
-	envHeightSyncK         = "DEVSHARD_HEIGHTSYNC_K"
-	envHeightSyncSlots     = "DEVSHARD_HEIGHTSYNC_SLOTS"
-	envHeightSyncProbe     = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
-	envHeightSyncHeartbeat = "DEVSHARD_HEIGHTSYNC_HEARTBEAT"
-	envRequireHeightSeed   = "DEVSHARD_REQUIRE_HEIGHT_SEED"
-	envGatewayChainOracle  = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
-	envQuietSettleDelay    = "DEVSHARD_QUIET_SETTLE_DELAY"
+	envHeightSyncK        = "DEVSHARD_HEIGHTSYNC_K"
+	envHeightSyncSlots    = "DEVSHARD_HEIGHTSYNC_SLOTS"
+	envHeightSyncProbe    = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
+	envGatewayChainOracle = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
+	envQuietSettleDelay   = "DEVSHARD_QUIET_SETTLE_DELAY"
 )
 
 type heightSyncProcessState struct {
@@ -265,6 +263,28 @@ func gatewayHeaderTimes() state.HeaderTimeSource {
 	return st.headerTimes
 }
 
+// requireGatewayHeaderTimes is the startup check for the chat gate and for
+// StartedAtTimeMs. A nil map is the same cause the process used to log and
+// then serve with.
+func requireGatewayHeaderTimes(src state.HeaderTimeSource) error {
+	if src == nil {
+		return fmt.Errorf("header_times_unwired: no chain source for block times; inferences cannot start once hosts stamp a height-sync floor")
+	}
+	return nil
+}
+
+// listenGateway starts the HTTP server only when src is a header-time map.
+// A nil map returns the startup error and does not call listen.
+func listenGateway(src state.HeaderTimeSource, listen func()) error {
+	if err := requireGatewayHeaderTimes(src); err != nil {
+		return err
+	}
+	if listen != nil {
+		listen()
+	}
+	return nil
+}
+
 // gatewayHeaderTimeView is the debug snapshot. It does not start the follower.
 func gatewayHeaderTimeView() hostevents.HeaderTimeView {
 	if hsSt == nil || hsSt.poller == nil {
@@ -435,25 +455,6 @@ func extraClientConfigFromEnv() (*transport.ClientConfig, error) {
 		}
 	}
 	return cfg, nil
-}
-
-// requireHeightSeedFromEnv is the gateway fail-closed seed gate. Unset and
-// unrecognized values keep the gate on. Only 0/false/off/no disable it.
-func requireHeightSeedFromEnv() bool {
-	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envRequireHeightSeed)))
-	switch raw {
-	case "0", "false", "off", "no":
-		return false
-	default:
-		return true
-	}
-}
-
-// heightSyncHeartbeatFromEnv is the gateway quiet-session cadence. Only
-// true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
-// any other value leave heartbeats off. The height-seed loop is separate.
-func heightSyncHeartbeatFromEnv() bool {
-	return envBoolOptIn(envHeightSyncHeartbeat)
 }
 
 // quietSettleDelayFromEnv is how long leftover receipt/Finish wait for a

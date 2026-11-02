@@ -37,7 +37,10 @@ func (f *ingestFixture) host(t *testing.T, idx int) *Host {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, f.user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", f.user.Address(), config, group, 10000))
 	require.NoError(t, err)
-	h, err := NewHost(sm, f.hosts[idx], stub.NewInferenceEngine(), "escrow-1", group, nil)
+	oracle := &fakeOracle{}
+	oracle.setHeight(100)
+	oracle.setHash([]byte{0xaa})
+	h, err := NewHost(sm, f.hosts[idx], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(oracle))
 	require.NoError(t, err)
 	return h
 }

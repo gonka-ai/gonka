@@ -226,6 +226,7 @@ func TestHTTP_ExecutionTimeout_ForgedFinishTimesOut(t *testing.T) {
 
 			forger := &forgingExecutor{}
 			routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
+			env.session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
 
 			result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
 			require.Error(t, err)
@@ -262,6 +263,7 @@ func TestHTTP_ExecutionTimeout_ExecutorFinishIsSequenced(t *testing.T) {
 			routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
 			require.Nil(t, findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
 				"the finish exists only in the challenge response")
+			env.session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
 
 			votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), rig.journal())
 			require.NoError(t, err)

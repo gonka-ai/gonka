@@ -125,7 +125,10 @@ type StateMachine struct {
 
 	warmResolver WarmKeyResolver // optional, nil = no warm key support
 	headerTimes  HeaderTimeSource
-	deferred     []*types.DevshardTx
+	// headerSourceHook is told the current map, including after SetHeaderTimes.
+	// The session uses it to watch for a stored time. Called without sm.mu.
+	headerSourceHook func(HeaderTimeSource)
+	deferred         []*types.DevshardTx
 
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
@@ -211,6 +214,17 @@ func WithVersion(version string) SMOption {
 	return WithStateRootAndProtocolVersion(version)
 }
 
+// fixtureProtocolVersion is empty in a production binary. The test helper
+// package sets it to v6 so an inference fixture can apply an unstamped start.
+// WithStateRootAndProtocolVersion still wins.
+var fixtureProtocolVersion string
+
+// SetFixtureProtocolVersion sets the version NewStateMachine uses when the
+// caller does not pass one. Production leaves it empty and gets v7.
+func SetFixtureProtocolVersion(version string) {
+	fixtureProtocolVersion = version
+}
+
 // WithHeartbeatConfig sets log-plane heartbeat knobs (K_hb, D_ack, D). Zero
 // fields fall back to compiled defaults.
 func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
@@ -219,6 +233,69 @@ func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
 
 func WithHeaderTimes(src HeaderTimeSource) SMOption {
 	return func(sm *StateMachine) { sm.headerTimes = src }
+}
+
+// SetHeaderTimes replaces the map this machine reads. A nil source restores
+// the process fallback. The refusal deadline does not call it; tests swap the
+// map to show that a refusal does not move when the map does.
+func (sm *StateMachine) SetHeaderTimes(src HeaderTimeSource) {
+	if sm == nil {
+		return
+	}
+	sm.mu.Lock()
+	if src == nil {
+		src = fallbackHeaderTimes
+	}
+	sm.headerTimes = src
+	hook := sm.headerSourceHook
+	sm.mu.Unlock()
+	if hook != nil {
+		hook(src)
+	}
+}
+
+// SetHeaderSourceHook registers fn and calls it with the current map.
+// Later SetHeaderTimes calls it again, without sm.mu.
+func (sm *StateMachine) SetHeaderSourceHook(fn func(HeaderTimeSource)) {
+	if sm == nil {
+		return
+	}
+	sm.mu.Lock()
+	sm.headerSourceHook = fn
+	src := sm.headerTimes
+	sm.mu.Unlock()
+	if fn != nil {
+		fn(src)
+	}
+}
+
+// HeaderTimes is the map this machine reads. Nil means none is installed.
+func (sm *StateMachine) HeaderTimes() HeaderTimeSource {
+	if sm == nil {
+		return nil
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.headerTimes
+}
+
+// LookupHeaderTimeMs reads the map and does not call out. A miss, including
+// a time that has not been stored, reports false. It does not wait.
+func (sm *StateMachine) LookupHeaderTimeMs(height uint64, hash []byte) (int64, bool) {
+	if height == 0 || !heightsync.StampPresent(hash) {
+		return 0, false
+	}
+	sm.mu.RLock()
+	src := sm.headerTimes
+	sm.mu.RUnlock()
+	if src == nil {
+		return 0, false
+	}
+	ms, err := src.HeaderTimeMs(height, hash)
+	if err != nil || ms <= 0 {
+		return 0, false
+	}
+	return ms, true
 }
 
 // AppliedHeaderTimes returns the header-time source installed by opts.
@@ -297,10 +374,14 @@ func NewStateMachine(
 	}
 	initialBalance := balance - config.CreateDevshardFee
 
+	version := types.EffectiveStateRootAndProtocolVersion
+	if fixtureProtocolVersion != "" {
+		version = fixtureProtocolVersion
+	}
 	sm := &StateMachine{
 		state: &types.EscrowState{
 			EscrowID:                    escrowID,
-			StateRootAndProtocolVersion: types.EffectiveStateRootAndProtocolVersion,
+			StateRootAndProtocolVersion: version,
 			Config:                      config,
 			Group:                       groupCopy,
 			Balance:                     initialBalance,
@@ -660,6 +741,10 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 				return nil, nil, nil, err
 			}
 			logPlaneReject = err
+			continue
+		}
+		if err := sm.ackHashMismatchLocked(tx.GetHeightAck()); err != nil {
+			sm.dropOrDeferLocked(nonce, tx, err)
 			continue
 		}
 		if err := sm.checkRaiseResolvableLocked(nonce, tx); err != nil {
@@ -1331,11 +1416,11 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 	if rec.Status != types.StatusPending {
 		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
 	}
-	anchor, err := sm.floorPointLocked(diffNonce)
-	if err != nil {
+	if err := sm.checkReceiptLocked(rec, msg, sm.hostSignerAllowedLocked); err != nil {
 		return err
 	}
-	if err := sm.checkReceiptLocked(rec, msg, sm.hostSignerAllowedLocked); err != nil {
+	anchor, err := sm.confirmAnchorLocked(msg, diffNonce)
+	if err != nil {
 		return err
 	}
 	confirmedAtMs, err := sm.floorTimeMsLocked(anchor)
@@ -1352,6 +1437,21 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 		"confirmed_at_height", anchor.Height,
 	)
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// confirmAnchorLocked is the block the confirm names. A stamp on the receipt
+// is that block, so the record's confirmed height is the host tip (or the
+// floor it carried), and the header-time map is read for that same pair.
+// An unstamped confirm keeps the floor as of the diff, which is empty when
+// the start had no floor.
+func (sm *StateMachine) confirmAnchorLocked(msg *types.MsgConfirmStart, diffNonce uint64) (heightsync.FloorPoint, error) {
+	if msg.ObservedHeight > 0 && heightsync.StampPresent(msg.ObservedBlockHash) {
+		return heightsync.FloorPoint{
+			Height: msg.ObservedHeight,
+			Hash:   append([]byte(nil), msg.ObservedBlockHash...),
+		}, nil
+	}
+	return sm.floorPointLocked(diffNonce)
 }
 
 // checkReceiptLocked verifies msg.ExecutorSig over the receipt that rec and
@@ -1451,6 +1551,9 @@ func (sm *StateMachine) checkAppliedReceipt(rec *types.InferenceRecord, msg *typ
 	}
 	if err != nil {
 		return err
+	}
+	if rec.ConfirmedAtHeight != msg.ObservedHeight || (rec.ConfirmedAtHeight == 0 && heightsync.StampPresent(msg.ObservedBlockHash)) {
+		return fmt.Errorf("%w: confirm stamp %d, confirmed height %d", types.ErrStampNotFloor, msg.ObservedHeight, rec.ConfirmedAtHeight)
 	}
 	if unbound != "" && !sm.CheckWarmKey(unbound, expected) {
 		return fmt.Errorf("%w: expected executor %s (slot %d), got %s", types.ErrInvalidExecutorSig, expected, rec.ExecutorSlot, unbound)

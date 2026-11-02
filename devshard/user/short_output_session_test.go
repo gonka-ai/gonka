@@ -82,11 +82,11 @@ func newShortOutputStack(t *testing.T, engines func(i int) devshard.InferenceEng
 	stack := shortOutputStack{}
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-short", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-short", user.Address(), config, group, balance))
+		sm, err := state.NewStateMachine("escrow-short", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-short", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 		require.NoError(t, err)
 		validator := &countingValidator{}
 		engine := engines(i)
-		h, err := host.NewHost(sm, hosts[i], engine, "escrow-short", group, nil, host.WithGrace(100), host.WithValidator(validator))
+		h, err := host.NewHost(sm, hosts[i], engine, "escrow-short", group, nil, host.WithGrace(100), host.WithValidator(validator), host.WithChainOracle(testTip()))
 		require.NoError(t, err)
 		h.Start()
 		t.Cleanup(h.Close)
@@ -96,7 +96,7 @@ func newShortOutputStack(t *testing.T, engines func(i int) devshard.InferenceEng
 		stack.validators = append(stack.validators, validator)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-short", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-short", user.Address(), config, group, balance))
+	userSM, err := state.NewStateMachine("escrow-short", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-short", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 	require.NoError(t, err)
 	stack.session, err = NewSession(userSM, user, "escrow-short", group, clients, verifier)
 	require.NoError(t, err)

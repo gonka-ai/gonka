@@ -314,26 +314,20 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	_, err = h.RunExecution(ctx, resp.ExecutionJob)
 	require.NoError(t, err)
 
-	// Find the finish tx (mempool also has confirm_start from Issue 4 fix).
-	var finishTx *types.DevshardTx
+	// The mempool holds the receipt the host just signed and the finish.
+	var confirmTx, finishTx *types.DevshardTx
 	for _, tx := range h.MempoolTxs() {
+		if tx.GetConfirmStart() != nil {
+			confirmTx = tx
+		}
 		if tx.GetFinishInference() != nil {
 			finishTx = tx
-			break
 		}
 	}
+	require.NotNil(t, confirmTx, "mempool should contain MsgConfirmStart")
 	require.NotNil(t, finishTx, "mempool should contain MsgFinishInference")
 
-	// Nonce 2: confirm start.
-	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: 1, PromptHash: testutil.TestPromptHash[:], Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, EscrowId: "escrow-1",
-	}
-	receiptData, _ := proto.Marshal(receiptContent)
-	receiptSig, _ := hostSigners[1].Sign(receiptData)
-	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: receiptSig,
-	}}}
+	// Nonce 2: the host's own confirm, so the finish later has a started record.
 	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
 	// Nonces 3,4: empty (push past grace).

@@ -88,24 +88,27 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 	stampedStart.ObservedBlockHash = hash
 	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 1, []*types.DevshardTx{txStart(stampedStart)}))
 	require.NoError(t, err)
-	seedFloor(t, stamped, 101, hash)
 
 	plainSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	stampSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens,
-		testutil.ReceiptStamp{Height: 100, Hash: hash})
+		testutil.ReceiptStamp{Height: 101, Hash: hash})
 	_, err = plain.ApplyDiff(testutil.SignDiff(t, userP, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: plainSig,
 	})}))
 	require.NoError(t, err)
 	_, err = stamped.ApplyDiff(testutil.SignDiff(t, userS, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: stampSig,
-		ObservedHeight: 100, ObservedBlockHash: hash,
+		ObservedHeight: 101, ObservedBlockHash: hash,
 	})}))
 	require.NoError(t, err)
 
 	rec := stamped.SnapshotState().Inferences[1]
 	require.Equal(t, uint64(100), rec.StartedAtHeight)
-	require.Equal(t, uint64(101), rec.ConfirmedAtHeight)
+	require.Equal(t, uint64(101), rec.ConfirmedAtHeight, "the record stores the confirm stamp, which is newer than the start")
+	floor, floorHash, known := stamped.HeightSyncFloorAsOf(stamped.LatestNonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(101), floor)
+	require.Equal(t, hash, floorHash)
 
 	stampedRoot, err := stamped.ComputeStateRoot()
 	require.NoError(t, err)

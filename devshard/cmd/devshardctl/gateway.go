@@ -417,31 +417,29 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
 	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex:              keyHex,
-		EscrowID:                   cfg.ID,
-		Bridge:                     br,
-		StoragePath:                cfg.StoragePath,
-		RoutePrefix:                routePrefix,
-		RequestAdmission:           sharedParticipantRequestLimiter,
-		RequireHeightSeed:          requireHeightSeedFromEnv(),
-		DisableHeightSyncHeartbeat: !heightSyncHeartbeatFromEnv(),
-		QuietSettleDelay:           quietSettleDelayFromEnv(),
-		Escrow:                     escrow,
-		RefusalTimeoutSeconds:      timeoutOverrides.RefusalTimeoutSeconds,
-		ExecutionTimeoutSeconds:    timeoutOverrides.ExecutionTimeoutSeconds,
-		ExtraClientConfig:          extraClient,
-		Heartbeat:                  heartbeatFromDeps(deps),
-		HeaderTimes:                gatewayHeaderTimes(),
+		PrivateKeyHex:           keyHex,
+		EscrowID:                cfg.ID,
+		Bridge:                  br,
+		StoragePath:             cfg.StoragePath,
+		RoutePrefix:             routePrefix,
+		RequestAdmission:        sharedParticipantRequestLimiter,
+		QuietSettleDelay:        quietSettleDelayFromEnv(),
+		Escrow:                  escrow,
+		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
+		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
+		ExtraClientConfig:       extraClient,
+		Heartbeat:               heartbeatFromDeps(deps),
+		HeaderTimes:             gatewayHeaderTimes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
-	// Quiet-session cadence (§10.3). Off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
-	// is true/1/on. StartHeartbeatLoop still starts the height-seed loop when
-	// that gate is on. Close() cancels whichever loops started. Not started
-	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
-	// inference. The loop waits for router catalog admission before the
-	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
+	// Quiet-session cadence (§10.3). Always on. StartHeartbeatLoop also sends
+	// the unstamped bootstrap span. It does not call the height-sync seed
+	// RPC. Close() cancels whichever loops started.
+	// Not started inside NewHTTPSession so in-process / E2E stacks keep nonce
+	// 1 for inference. The loop waits for router catalog admission before the
+	// first heartbeat so a cold router cannot 503 those into quarantine.
 	if deps.completionStore != nil {
 		session.SetInferenceCompletionStore(deps.completionStore)
 	}

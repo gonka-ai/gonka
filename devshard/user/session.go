@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -29,9 +30,15 @@ import (
 	"devshard/types"
 )
 
-// TimeoutBuffer is added to protocol deadlines so verifiers have
-// passed their own deadline before the proxy fires the timeout.
+// TimeoutBuffer is added to protocol waits that still use it, so verifiers
+// have passed their own deadline before the proxy fires. A refusal deadline
+// is the gateway wall clock alone. An execution deadline is the wall clock
+// against time(ConfirmedAtHeight). Neither adds this buffer.
 var TimeoutBuffer = 5 * time.Second
+
+// executionFeedPoll is how soon a gateway whose map has no time for the
+// confirm stamp looks again. The challenge stays closed across that wait.
+const executionFeedPoll = 250 * time.Millisecond
 
 // ErrNilHostResponse is returned when ProcessResponse is given a nil resp.
 // A successful Send never yields nil without an error; treating nil as
@@ -107,8 +114,9 @@ const nonceOutcomeRetention = 1024
 
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
-	confirmedAt int64
-	finished    bool
+	confirmedAt      int64
+	finished         bool
+	feedBehindLogged bool
 }
 
 // TimeoutResult reports what happened during timeout handling.
@@ -404,6 +412,24 @@ type Session struct {
 	heartbeatClosed   bool
 	heartbeatStop     context.CancelFunc
 	heartbeatDone     chan struct{}
+	// bootstrapOnce runs the unstamped span loop while F is empty. It starts
+	// with the seed gate, including when the quiet-session cadence is off,
+	// and StopHeartbeatLoop cancels it.
+	bootstrapOnce sync.Once
+	bootstrapStop context.CancelFunc
+	bootstrapDone chan struct{}
+	// bootstrapAckFlush limits the flush after the opening span to height
+	// acks. A confirm or finish that was already queued stays queued.
+	// ackFlushInFlight lets one flush own that flag: the cadence tick and
+	// the bootstrap span both call the flush, and the one that finds
+	// nothing to send must not clear the flag while the other is still
+	// parking confirms.
+	bootstrapAckFlush bool
+	ackFlushInFlight  atomic.Bool
+	// bootstrapSentAt is when the last bootstrap span was composed or resent.
+	// The next attempt waits one heartbeat interval after it. Zero after a
+	// restart, so a recovered session retries at once.
+	bootstrapSentAt time.Time
 	// heartbeatPoke is buffered 1. A turnover off the loop sends without
 	// blocking; the loop re-arms from lastTurnover and does not tick early.
 	heartbeatPoke chan struct{}
@@ -415,20 +441,39 @@ type Session struct {
 	heightSeedPhase           atomic.Uint32
 	heightSeedCatalogAdmitted atomic.Bool
 	heightSeedGateUntil       atomic.Int64
-	heightSeedOK              map[int]struct{}
-	heightSeedLast            map[int]seedSlotRecord
-	heightSeedSlotCount       int
-	heightSeedWaiters         chan struct{}
-	requireHeightSeed         bool
-	// disableHeightSyncHeartbeat skips the producer cadence. Zero keeps
-	// MaybeHeartbeat available for in-process sessions and tests. The gateway
-	// sets it when DEVSHARD_HEIGHTSYNC_HEARTBEAT is not explicitly on.
+	// floorGateOpened is set once F has a map time and half the slots have
+	// acked a block. That roster bar is bootstrap only. The 30s missed cutoff
+	// applies only before the latch. Afterwards a fresh floor stays open, and
+	// a stale floor stays pending so the first inference can refresh it.
+	floorGateOpened atomic.Bool
+	// floorGate is the chat-gate inputs published after a commit. Status and
+	// WaitFloorChat read it without s.mu. Waiters block on floorGateWaiters,
+	// which is closed on commit, catalog admission, and a stored header time.
+	floorGate         atomic.Pointer[floorGateSnap]
+	floorGateMu       sync.Mutex
+	floorGateWaiters  chan struct{}
+	floorGateWaiting  atomic.Int32
+	headerWatchCancel func()
+	// firstInferenceStarted is set when the first MsgStartInference commits.
+	// The floor gate applies to that inference only.
+	firstInferenceStarted atomic.Bool
+	heightSeedOK          map[int]struct{}
+	heightSeedLast        map[int]seedSlotRecord
+	heightSeedSlotCount   int
+	heightSeedWaiters     chan struct{}
+	requireHeightSeed     bool
+	// disableHeightSyncHeartbeat skips the producer cadence. The gateway
+	// leaves this false. Tests set it when one session must not tick.
 	disableHeightSyncHeartbeat bool
 	lastTimeoutFloorRound      time.Time
-	heightSeedLoopOnce         sync.Once
-	heightSeedClosed           bool
-	heightSeedStop             context.CancelFunc
-	heightSeedDoneCh           chan struct{}
+	// lastFloorSpanAt is when this session last opened a height span. Chats
+	// waiting on a stale floor share that span: another one waits until a
+	// cadence interval has passed.
+	lastFloorSpanAt    time.Time
+	heightSeedLoopOnce sync.Once
+	heightSeedClosed   bool
+	heightSeedStop     context.CancelFunc
+	heightSeedDoneCh   chan struct{}
 
 	lastContact   []time.Time
 	lastPeerSeen  map[uint32][]byte
@@ -660,6 +705,11 @@ func NewSession(
 	sess.anchors = heightsync.NewAnchorTally(cfg.AckDeadlineBlocks, 0)
 	if sess.heightSyncK > 0 || sess.heightSyncSlots > 0 {
 		sess.heightSyncWired.Store(true)
+	}
+	if sm != nil {
+		sm.SetHeaderSourceHook(func(src state.HeaderTimeSource) {
+			sess.watchHeaderTimes(src)
+		})
 	}
 	return sess, nil
 }
@@ -1383,6 +1433,8 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
 		s.syncLaggingHostsLocked()
+		s.noteFirstInferenceLocked(diff.Txs)
+		s.publishFloorGateLocked()
 		return diff, hostIdx, nil
 	}
 
@@ -1402,7 +1454,30 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	s.observeTurnLocked(diff)
 	s.diffObserver(diff)
 	s.syncLaggingHostsLocked()
+	s.noteFirstInferenceLocked(diff.Txs)
+	s.publishFloorGateLocked()
 	return diff, hostIdx, nil
+}
+
+// MarkFirstInferenceStarted records that a start has committed, so the floor
+// chat gate is no longer consulted. A committed start sets this itself.
+func (s *Session) MarkFirstInferenceStarted() {
+	if s == nil {
+		return
+	}
+	s.firstInferenceStarted.Store(true)
+}
+
+func (s *Session) noteFirstInferenceLocked(txs []*types.DevshardTx) {
+	if s == nil || s.firstInferenceStarted.Load() {
+		return
+	}
+	for _, tx := range txs {
+		if tx != nil && tx.GetStartInference() != nil {
+			s.firstInferenceStarted.Store(true)
+			return
+		}
+	}
 }
 
 func finishInferenceID(tx *types.DevshardTx) (uint64, bool) {
@@ -1997,9 +2072,12 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 	})
 }
 
-// acceptConfirmStartLocked queues msg only when it is the assigned executor's receipt, stamped with
-// the height-sync floor as of the inference. That is what ends a refusal wait. An unverified confirm
-// is dropped: the chain would reject it, and the refusal is still the vote that can record the miss.
+// acceptConfirmStartLocked queues msg only when it is the assigned executor's receipt.
+// The stamp is the host tip or the floor, whichever is higher. The gateway keeps it
+// only once its own header-time map has that same pair; until then the host holds
+// the signed confirm and a later delivery is accepted. That is what ends a refusal
+// wait. An unverified confirm is dropped: the chain would reject it, and the
+// refusal is still the vote that can record the miss.
 // A duplicate does not move the local receipt time, so the queued signature and the execution wait
 // stay with the same message. It reports whether msg is an authentic receipt for the inference,
 // queued now, already queued, or already applied. Caller holds s.mu.
@@ -2863,6 +2941,13 @@ func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse,
 		return
 	}
 	if tx.GetHeightAck() != nil && s.sm != nil && s.sm.Phase() != types.PhaseActive {
+		return
+	}
+	// A hash that disagrees with the polled row, or with an ack already
+	// accepted at that height, is ignored. It is not queued, so a host that
+	// keeps offering it does not spend a nonce on every flush. A missing row
+	// is not a disagreement.
+	if ack := tx.GetHeightAck(); ack != nil && s.sm.HeightAckHashDisagrees(ack) != nil {
 		return
 	}
 	// Settle dedup before verifying: every host gossips the same Finish, and
@@ -4054,7 +4139,7 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 					// A dropped receipt cannot support an execution timeout. The
 					// refusal path can recover it or refund the still-pending record.
 					reasonLabel = "refused"
-					deadline = sendTime.Add(time.Duration(s.sm.Config().RefusalTimeout)*time.Second + TimeoutBuffer)
+					deadline = refusalWallDeadline(sendTime, s.sm.Config().RefusalTimeout)
 				}
 			}
 		}
@@ -4067,7 +4152,7 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 		// the record and publishes a queued finish so the record can close before
 		// the deadline; the caller then skips the vote.
 		recordClosed := func() bool {
-			if s.nonceClosed(nonce) || s.timeoutDueAtFloor(nonce) {
+			if s.nonceClosed(nonce) {
 				return true
 			}
 			s.mu.Lock()
@@ -4076,10 +4161,16 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			return queued && s.closedByPendingFinish(ctx, nonce)
 		}
 		if reasonLabel == "execution" {
-			if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
-				logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
-			}, recordClosed) {
-				return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+			// Sleep only while the wall clock is not yet past time(ConfirmedAtHeight)
+			// by ExecutionTimeout, or while the map has no time for that height.
+			// Waking up is another pass: the challenge opens once Decide says due.
+			if deadlineNotReached(reasonLabel, deadline) {
+				if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
+					logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
+				}, recordClosed) {
+					return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+				}
+				continue
 			}
 			reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 		} else {
@@ -4101,17 +4192,6 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			// Applied receipt: the executor now owes a finish. Keep waiting here
 			// for the execution deadline so barrier holders never see this sleep.
 			continue
-		}
-		if s.awaitingFloor(nonce, reason) {
-			if err := s.DriveTimeoutFloor(ctx); err != nil {
-				if ctx.Err() != nil {
-					return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
-				}
-				logging.Stage(ctx, "timeout_floor_round_failed", logFields("error", err)...)
-			}
-			if s.awaitingFloor(nonce, reason) {
-				continue
-			}
 		}
 		// A queued confirm (not yet Started) ends the refusal wait; VoteTimeout
 		// reports confirmed_before_vote. Do not treat that as an execution wait.
@@ -4146,7 +4226,7 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 		logging.Stage(ctx, "timeout_skipped", logFields("reason", "confirmed_before_vote")...)
 		return TimeoutResult{Outcome: "skipped", DetailReason: "confirmed_before_vote"}, false, fmt.Errorf("inference %d: confirmed before the refusal vote", nonce)
 	}
-	if reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime); time.Now().Before(deadline) {
+	if reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime); deadlineNotReached(reasonLabel, deadline) {
 		// Refuse to sleep under a caller that expected a due vote (e.g. drain
 		// barrier). Gateway schedule loops wait off-barrier and retry.
 		logging.Stage(ctx, "timeout_skipped", logFields(
@@ -4335,24 +4415,128 @@ func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, tim
 	if started && outcome != nil && outcome.confirmedAt == 0 {
 		outcome.confirmedAt = time.Now().Unix()
 	}
-	label, reason := "refused", types.TimeoutReason_TIMEOUT_REASON_REFUSED
-	deadline := sendTime.Add(time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer)
+	label := "refused"
+	deadline := refusalWallDeadline(sendTime, cfg.RefusalTimeout)
 	if started || outcome != nil && outcome.confirmedAt > 0 && s.pendingConfirmLocked(nonce) != nil {
-		label, reason = "execution", types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-		deadline = time.Now()
-		if outcome != nil && outcome.confirmedAt > 0 {
-			deadline = time.Unix(outcome.confirmedAt, 0).Add(time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer)
-		}
-	}
-	if ok && (reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && rec.Status == types.StatusPending || started) {
-		if remaining, err := s.sm.TimeoutRemaining(nonce, reason); err == nil {
-			deadline = time.Now()
-			if remaining > 0 {
-				deadline = deadline.Add(remaining).Add(TimeoutBuffer)
-			}
-		}
+		label = "execution"
+		deadline = s.executionDeadlineLocked(nonce, rec, outcome, time.Now())
 	}
 	return label, deadline
+}
+
+// executionDeadlineLocked is the gateway execution trigger. The caller holds
+// s.mu. Open only when the map has time(ConfirmedAtHeight) and the wall clock
+// is past that time by ExecutionTimeout. A missing time does not open the
+// challenge. confirmed_at is the signal for the feed-behind log, not the deadline.
+func (s *Session) executionDeadlineLocked(nonce uint64, rec types.InferenceRecord, outcome *nonceOutcome, now time.Time) time.Time {
+	interval := timeoutInterval(s.sm.Config().ExecutionTimeout)
+	confirmedMs, ok := s.confirmedHeightTimeLocked(rec)
+	d := headertime.Decide(now, confirmedMs, !ok, interval, 0, headertime.CallerGateway)
+	switch d.Outcome {
+	case headertime.OutcomeDue:
+		return now.Add(-time.Millisecond)
+	case headertime.OutcomeNotYet:
+		if d.Delta <= 0 {
+			return now.Add(time.Millisecond)
+		}
+		return now.Add(d.Delta)
+	default:
+		confirmedAt := int64(0)
+		if outcome != nil {
+			confirmedAt = outcome.confirmedAt
+		}
+		if outcome != nil && confirmedWallPast(confirmedAt, interval, now) && !outcome.feedBehindLogged {
+			outcome.feedBehindLogged = true
+			logging.Stage(context.Background(), "timeout_block_feed_behind",
+				"escrow", s.escrowID,
+				"nonce", nonce,
+				"reason", "execution",
+				"detail", "gateway block feed is behind the chain",
+			)
+		}
+		wake := executionFeedPoll
+		if confirmedAt > 0 && !confirmedWallPast(confirmedAt, interval, now) {
+			until := time.Until(time.Unix(confirmedAt, 0).Add(interval))
+			if until > wake {
+				wake = until
+			}
+		}
+		if wake <= 0 {
+			wake = executionFeedPoll
+		}
+		return now.Add(wake)
+	}
+}
+
+// headerAtHeight is the height-keyed map read. *headertime.Source implements
+// it. A miss stays a miss: StoredAt does not ask the filler.
+type headerAtHeight interface {
+	StoredAt(height uint64) (headertime.Record, bool)
+}
+
+// confirmedHeightTimeLocked reads time(ConfirmedAtHeight) from the map.
+// The caller holds s.mu. The key is the height. A confirm can sit below the
+// running floor maximum and still have a row, so the floor index is not
+// consulted. A miss reports false. It does not call AwaitHeaderTimeMs.
+// executionDeadlineLocked already waits and retries that miss.
+func (s *Session) confirmedHeightTimeLocked(rec types.InferenceRecord) (int64, bool) {
+	if rec.ConfirmedAtHeight == 0 || s.sm == nil {
+		return 0, false
+	}
+	store, ok := s.sm.HeaderTimes().(headerAtHeight)
+	if !ok || store == nil {
+		return 0, false
+	}
+	row, ok := store.StoredAt(rec.ConfirmedAtHeight)
+	if !ok || row.TimeMs <= 0 {
+		return 0, false
+	}
+	return row.TimeMs, true
+}
+
+func confirmedWallPast(confirmedAt int64, interval time.Duration, now time.Time) bool {
+	if confirmedAt <= 0 {
+		return false
+	}
+	return now.After(time.Unix(confirmedAt, 0).Add(interval))
+}
+
+// refusalWallDeadline is started_at + RefusalTimeout on the gateway wall
+// clock. It does not add TimeoutBuffer and it does not read a header time.
+// A timeout that does not fit in a Duration saturates instead of wrapping
+// into the past.
+func refusalWallDeadline(sendTime time.Time, refusalTimeoutSeconds int64) time.Time {
+	return sendTime.Add(timeoutInterval(refusalTimeoutSeconds))
+}
+
+// timeoutInterval converts a protocol timeout in seconds. A value that does
+// not fit in a Duration saturates instead of wrapping into the past.
+func timeoutInterval(seconds int64) time.Duration {
+	if seconds <= 0 {
+		return 0
+	}
+	maxSeconds := int64(math.MaxInt64 / int64(time.Second))
+	if seconds > maxSeconds {
+		return time.Duration(math.MaxInt64)
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// refusalPast reports the refusal inequality: wall clock is strictly past
+// started_at + RefusalTimeout. A clock exactly on the deadline is not past it.
+func refusalPast(now, deadline time.Time) bool {
+	return now.After(deadline)
+}
+
+// deadlineNotReached is the vote gate. Both triggers are strict: a wall clock
+// exactly on the deadline does not open the challenge. A due execution
+// deadline is placed in the past, and every earlier result stays in the future.
+func deadlineNotReached(reasonLabel string, deadline time.Time) bool {
+	now := time.Now()
+	if reasonLabel == "refused" || reasonLabel == "execution" {
+		return !refusalPast(now, deadline)
+	}
+	return now.Before(deadline)
 }
 
 func (s *Session) timeoutDueAtFloor(nonce uint64) bool {
@@ -4506,7 +4690,8 @@ func (s *Session) sleepRefusal(ctx context.Context, nonce uint64, sendTime time.
 		if s.inferenceConfirmed(nonce, sendTime) {
 			return false
 		}
-		if !time.Now().Before(deadline) {
+		now := time.Now()
+		if refusalPast(now, deadline) {
 			return !s.inferenceConfirmed(nonce, sendTime)
 		}
 
@@ -4520,6 +4705,11 @@ func (s *Session) sleepRefusal(ctx context.Context, nonce uint64, sendTime time.
 		}
 
 		wake := deadline
+		// Exactly on the deadline is not yet past it. A zero timer would spin
+		// until the clock moves, so wait one millisecond and check again.
+		if !now.Before(deadline) {
+			wake = now.Add(time.Millisecond)
+		}
 		if !nextHeartbeat.IsZero() && nextHeartbeat.Before(wake) {
 			wake = nextHeartbeat
 		}
@@ -4598,6 +4788,13 @@ func shortAddress(addr string) string {
 // (PeerConn Attach/Watch), and closes the underlying storage, if any.
 // Safe to call multiple times.
 func (s *Session) Close() error {
+	s.floorGateMu.Lock()
+	cancel := s.headerWatchCancel
+	s.headerWatchCancel = nil
+	s.floorGateMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	s.StopHeartbeatLoop()
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()

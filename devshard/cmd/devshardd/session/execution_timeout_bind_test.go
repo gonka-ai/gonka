@@ -55,7 +55,7 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	execStore := newManagerTestStore(t)
 	execMgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(
 		execStore, hosts[1], stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, &mockBridge{escrow: escrow}, nil, nil,
+		nil, "v6", &mockBridge{escrow: escrow}, nil, nil,
 	))
 	e := echo.New()
 	execMgr.Register(e.Group(devshardpkg.DefaultRoutePrefix()))
@@ -68,7 +68,7 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	verStore := newManagerTestStore(t)
 	verMgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(
 		verStore, hosts[2], stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, &mockBridge{
+		nil, "v6", &mockBridge{
 			escrow: escrow,
 			// The first SelectTransport for this host wins the shared PeerConn.
 			// wireHostToHost runs inside sessionForOwner, so the executor URL
@@ -97,7 +97,7 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 		require.NoError(t, heightsync.SignAck(hosts[0], msg))
 		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
 	}
-	startTx := testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)
+	startTx := testutil.StartTxVersioned(inferenceID, "v6")
 	startTx.GetStartInference().ObservedHeight = 500
 	startTx.GetStartInference().ObservedBlockHash = hash
 	receipt := testutil.SignExecutorReceipt(
