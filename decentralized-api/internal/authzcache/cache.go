@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -96,10 +97,18 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 	signers, err := c.fetchSigners(ctx, granterAddress, msgTypeUrl)
 	if err != nil {
 		// A canceled caller or an unknown address says nothing about the granter, and
-		// caching unknown addresses would let arbitrary input grow the map.
-		if ctx.Err() == nil && status.Code(err) != codes.NotFound {
+		// caching unknown or malformed addresses would let arbitrary input grow the map.
+		if _, addrErr := sdk.AccAddressFromBech32(granterAddress); addrErr == nil && ctx.Err() == nil && status.Code(err) != codes.NotFound {
 			c.mu.Lock()
-			c.cache[cacheKey] = &cachedEntry{err: err, expiresAt: time.Now().Add(authzCacheErrorTTL)}
+			// Drop expired entries so failures for many distinct addresses stay bounded
+			// by the error TTL window.
+			now := time.Now()
+			for key, entry := range c.cache {
+				if !now.Before(entry.expiresAt) {
+					delete(c.cache, key)
+				}
+			}
+			c.cache[cacheKey] = &cachedEntry{err: err, expiresAt: now.Add(authzCacheErrorTTL)}
 			c.mu.Unlock()
 		}
 		return nil, err

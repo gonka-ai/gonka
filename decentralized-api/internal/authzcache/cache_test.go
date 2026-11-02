@@ -3,10 +3,13 @@ package authzcache
 import (
 	"context"
 	"decentralized-api/cosmosclient"
+	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -277,29 +280,30 @@ func TestAuthzCache_SlowLookupDoesNotBlockOtherKeys(t *testing.T) {
 // 3. Expire the cached failure and clear the chain error.
 // 4. Look A up again and require a fresh chain call that succeeds.
 func TestAuthzCache_FailedLookupIsCachedBriefly(t *testing.T) {
+	granter := sdk.AccAddress([]byte("granterA_20_bytes___")).String()
 	chain := newFakeChainClient()
 	chainErr := status.Error(codes.Unavailable, "node down")
-	chain.setErr("granterA", chainErr)
+	chain.setErr(granter, chainErr)
 	cache := NewAuthzCache(&fakeRecorder{queryClient: chain})
 
-	_, err := cache.GetPubKeys(context.Background(), "granterA", "/msg/type")
+	_, err := cache.GetPubKeys(context.Background(), granter, "/msg/type")
 	require.ErrorIs(t, err, chainErr)
-	_, err = cache.GetPubKeys(context.Background(), "granterA", "/msg/type")
+	_, err = cache.GetPubKeys(context.Background(), granter, "/msg/type")
 	require.ErrorIs(t, err, chainErr)
-	require.Equal(t, 1, chain.callCount("granterA"))
+	require.Equal(t, 1, chain.callCount(granter))
 
 	cache.mu.Lock()
-	entry := cache.cache["granterA|/msg/type"]
+	entry := cache.cache[granter+"|/msg/type"]
 	require.NotNil(t, entry)
 	require.True(t, entry.expiresAt.Before(time.Now().Add(authzCacheTTL/2)))
 	entry.expiresAt = time.Now().Add(-time.Second)
 	cache.mu.Unlock()
-	chain.setErr("granterA", nil)
+	chain.setErr(granter, nil)
 
-	pubkeys, err := cache.GetPubKeys(context.Background(), "granterA", "/msg/type")
+	pubkeys, err := cache.GetPubKeys(context.Background(), granter, "/msg/type")
 	require.NoError(t, err)
-	require.Equal(t, []string{"pubkey_granterA"}, pubkeys)
-	require.Equal(t, 2, chain.callCount("granterA"))
+	require.Equal(t, []string{"pubkey_" + granter}, pubkeys)
+	require.Equal(t, 2, chain.callCount(granter))
 }
 
 // Test flow:
@@ -329,4 +333,52 @@ func TestAuthzCache_CanceledOrNotFoundIsNotCached(t *testing.T) {
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
 	require.NotContains(t, cache.cache, "granterN|/msg/type")
+}
+
+// Test flow:
+// 1. Make the chain fail for 1000 distinct malformed 64 KB granter addresses.
+// 2. Look each address up and require an error.
+// 3. Require the cache to hold no entries.
+func TestAuthzCache_MalformedGranterNotCached(t *testing.T) {
+	chain := newFakeChainClient()
+	cache := NewAuthzCache(&fakeRecorder{queryClient: chain})
+	pad := strings.Repeat("x", 64<<10)
+	for i := 0; i < 1000; i++ {
+		addr := fmt.Sprintf("bad%06d%s", i, pad)
+		chain.setErr(addr, status.Error(codes.Internal, "failed to get grants"))
+		_, err := cache.GetPubKeys(context.Background(), addr, "/msg/type")
+		require.Error(t, err)
+	}
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+	require.Equal(t, 0, len(cache.cache))
+}
+
+// Test flow:
+// 1. Make the chain fail for valid granter A, look A up and expire its entry.
+// 2. Make the chain fail for valid granter B and look B up.
+// 3. Require only B's entry to remain in the cache.
+func TestAuthzCache_ExpiredEntriesSweptOnFailedInsert(t *testing.T) {
+	granterA := sdk.AccAddress([]byte("granterA_20_bytes___")).String()
+	granterB := sdk.AccAddress([]byte("granterB_20_bytes___")).String()
+	chain := newFakeChainClient()
+	chain.setErr(granterA, status.Error(codes.Unavailable, "node down"))
+	chain.setErr(granterB, status.Error(codes.Unavailable, "node down"))
+	cache := NewAuthzCache(&fakeRecorder{queryClient: chain})
+
+	_, err := cache.GetPubKeys(context.Background(), granterA, "/msg/type")
+	require.Error(t, err)
+	cache.mu.Lock()
+	require.Contains(t, cache.cache, granterA+"|/msg/type")
+	cache.cache[granterA+"|/msg/type"].expiresAt = time.Now().Add(-time.Second)
+	cache.mu.Unlock()
+
+	_, err = cache.GetPubKeys(context.Background(), granterB, "/msg/type")
+	require.Error(t, err)
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+	require.Len(t, cache.cache, 1)
+	require.Contains(t, cache.cache, granterB+"|/msg/type")
 }
