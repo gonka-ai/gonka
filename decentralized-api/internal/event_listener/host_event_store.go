@@ -133,19 +133,48 @@ func sqliteDSN(path string) string {
 	return "file:" + p + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(FULL)"
 }
 
+// canonicalSQLitePath resolves links even when their final target does not yet
+// exist, so creating the database cannot change the writer lock's identity.
+func canonicalSQLitePath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	for hops := 0; ; hops++ {
+		dir, err := filepath.EvalSymlinks(filepath.Dir(path))
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(dir, filepath.Base(path))
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		if hops >= 40 {
+			return "", &os.PathError{Op: "resolve sqlite path", Path: path, Err: syscall.ELOOP}
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", err
+		}
+		if filepath.IsAbs(target) {
+			path = target
+		} else {
+			path = filepath.Join(dir, target)
+		}
+	}
+}
+
 func openSQLiteStore(path, writer string) (*dbStore, error) {
-	canonical, err := filepath.Abs(path)
+	canonical, err := canonicalSQLitePath(path)
 	if err != nil {
 		return nil, err
-	}
-	if resolved, err := filepath.EvalSymlinks(canonical); err == nil {
-		canonical = resolved
-	} else {
-		dir, err := filepath.EvalSymlinks(filepath.Dir(canonical))
-		if err != nil {
-			return nil, err
-		}
-		canonical = filepath.Join(dir, filepath.Base(canonical))
 	}
 	// Keep this lock file in place: unlinking it would let another opener
 	// lock a different inode while the current process still owns the old one.
