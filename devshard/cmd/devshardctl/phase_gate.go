@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -86,6 +87,10 @@ type ChainPhaseGate struct {
 	// versions polls each candidate miner's /v1/versions endpoint
 	versions *VersionsCache
 
+	// participants is the payload decoded from the last current-epoch
+	// ActiveParticipants record, reused while the record is unchanged.
+	participants participantsCache
+
 	// inferenceURLs is the last successful participant→InferenceUrl map
 	// (unique chain dials). The RPC-stats poller scrapes these, not the
 	// escrow-scoped host-ping set.
@@ -130,7 +135,13 @@ type chainCurrentParticipantsResponse struct {
 }
 
 type chainActiveParticipantsGroup struct {
+	EpochID      jsonUint64               `json:"epoch_id"`
 	Participants []chainActiveParticipant `json:"participants"`
+}
+
+type participantsCache struct {
+	payload *chainCurrentParticipantsResponse
+	record  []byte
 }
 
 type chainActiveParticipant struct {
@@ -432,11 +443,16 @@ func (g *ChainPhaseGate) refresh() {
 	// Combine the fetches so we never double-poll the chain.
 	needPreservedFetch := active && relaxedPoCModeEnabled() && shouldRefreshPoCPreservedParticipants(previous, snapshot)
 	if needPreservedFetch || capacityState != nil {
-		state, perr := g.fetchParticipantsState(
-			active,
-			preservedSnapshotAnchor(snapshot),
-			allowAllParticipantsUntilSnapshot(snapshot),
-		)
+		var state *participantsState
+		payload, perr := g.currentParticipants(resp)
+		if perr == nil {
+			state, perr = g.participantsStateFromPayload(
+				payload,
+				active,
+				preservedSnapshotAnchor(snapshot),
+				allowAllParticipantsUntilSnapshot(snapshot),
+			)
+		}
 		if perr != nil {
 			g.recordError(perr)
 			g.logPreservedParticipantFetchFailure(snapshot, perr)
@@ -616,6 +632,14 @@ func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, er
 }
 
 func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshotAnchor int64, allowAllWhenSnapshotMissing bool) (*participantsState, error) {
+	payload, err := g.fetchParticipants()
+	if err != nil {
+		return nil, err
+	}
+	return g.participantsStateFromPayload(payload, pocActive, expectedSnapshotAnchor, allowAllWhenSnapshotMissing)
+}
+
+func (g *ChainPhaseGate) fetchParticipants() (*chainCurrentParticipantsResponse, error) {
 	payload, apiErr := g.fetchParticipantsFromAPI()
 	if apiErr != nil {
 		var chainErr error
@@ -624,8 +648,75 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 			return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
 		}
 	}
+	return payload, nil
+}
 
-	return g.participantsStateFromPayload(payload, pocActive, expectedSnapshotAnchor, allowAllWhenSnapshotMissing)
+// currentParticipants returns the participant set of the chain's current
+// epoch. Each poll reads the raw ActiveParticipants record (one ABCI read, no
+// proof) and builds the payload from it, decoding again only when it changed;
+// without a readable record it fetches as before.
+func (g *ChainPhaseGate) currentParticipants(resp *chainEpochInfoResponse) (*chainCurrentParticipantsResponse, error) {
+	expected, known := currentEpochIndex(resp)
+	if !known {
+		return g.fetchParticipants()
+	}
+	record := g.activeParticipantsRecord(expected)
+	if record == nil {
+		return g.fetchParticipants()
+	}
+	g.mu.RLock()
+	cached := g.participants
+	g.mu.RUnlock()
+	if cached.payload != nil && bytes.Equal(record, cached.record) {
+		return cached.payload, nil
+	}
+	var active inferencetypes.ActiveParticipants
+	if err := proto.Unmarshal(record, &active); err != nil {
+		return g.fetchParticipants()
+	}
+	payload := activeParticipantsPayload(&active)
+	payload.ActiveParticipants.EpochID = jsonUint64(active.EpochId)
+	g.mu.Lock()
+	g.participants = participantsCache{payload: payload, record: record}
+	g.mu.Unlock()
+	return payload, nil
+}
+
+// activeParticipantsRecord returns the stored ActiveParticipants value of
+// epoch, or nil when it cannot be read.
+func (g *ChainPhaseGate) activeParticipantsRecord(epoch uint64) []byte {
+	sq := g.storeQueryClient()
+	if sq == nil {
+		return nil
+	}
+	result, err := sq.ABCIQuery(context.Background(), &cmtservice.ABCIQueryRequest{
+		Path: "store/inference/key",
+		Data: inferencetypes.ActiveParticipantsFullKey(epoch),
+	})
+	if err != nil || result == nil || result.Code != 0 || len(result.Value) == 0 {
+		return nil
+	}
+	return result.Value
+}
+
+// currentEpochIndex is the epoch GetCurrentEpoch reports at resp's height:
+// the chain flips it in the EndBlock of the latest epoch's set_new_validators.
+func currentEpochIndex(resp *chainEpochInfoResponse) (uint64, bool) {
+	if resp == nil {
+		return 0, false
+	}
+	latest := uint64(resp.LatestEpoch.Index)
+	switchHeight := int64(resp.EpochStages.SetNewValidators)
+	if latest == 0 || uint64(resp.EpochStages.EpochIndex) != latest || switchHeight <= 0 {
+		return 0, false
+	}
+	if int64(resp.BlockHeight) >= switchHeight {
+		return latest, true
+	}
+	if latest == 1 {
+		return 0, false
+	}
+	return latest - 1, true
 }
 
 func (g *ChainPhaseGate) fetchParticipantsFromAPI() (*chainCurrentParticipantsResponse, error) {
@@ -684,7 +775,9 @@ func (g *ChainPhaseGate) fetchParticipantsFromChain() (*chainCurrentParticipants
 	if err := proto.Unmarshal(result.Value, &active); err != nil {
 		return nil, err
 	}
-	return activeParticipantsPayload(&active), nil
+	payload := activeParticipantsPayload(&active)
+	payload.ActiveParticipants.EpochID = jsonUint64(active.EpochId)
+	return payload, nil
 }
 
 func activeParticipantsPayload(active *inferencetypes.ActiveParticipants) *chainCurrentParticipantsResponse {
