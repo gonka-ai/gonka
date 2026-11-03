@@ -900,9 +900,6 @@ func (v *OffChainValidator) checkValidateeProofs(
 	// precomputed in ValidateAll. In observe mode the guard only logs.
 	if gr != nil && gr.guard != nil {
 		if dec, ok := gr.decisions[earlyShareKey(work.address, work.modelId)]; ok {
-			if dec.metadataError != "" {
-				return validateAbstainRetry, false
-			}
 			outcome, reason := gr.guard.decide(ctx, proofClient, gr.stage, *work, dec, gr.validatorPubKey, gr.samplingBlockHash)
 			switch outcome {
 			case earlyGuardVoteNo:

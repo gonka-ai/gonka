@@ -707,3 +707,50 @@ func TestWorkerAbstainsOnEarlyGuardLocalFailure(t *testing.T) {
 	require.GreaterOrEqual(t, fetcher.calls, 2, "main proof fetch and early inclusion fetch must both run")
 	recorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
 }
+
+func TestWorkerEarlyMetadataFailureRespectsGuardMode(t *testing.T) {
+	for _, mode := range []earlyshare.Mode{earlyshare.ModeObserve, earlyshare.ModeEnforce} {
+		for _, reason := range []string{"early checkpoint depth unknown", "early checkpoint depth invalid"} {
+			t.Run(string(mode)+"/"+reason, func(t *testing.T) {
+				recorder := &cosmosclient.MockCosmosMessageClient{}
+				client := mlnodeclient.NewMockClient()
+				v := &OffChainValidator{recorder: recorder, nodeBroker: &stubNodeBroker{client: client}, callbackUrl: "http://callback", config: ValidationConfig{MaxRetries: 1, RetryBackoff: time.Millisecond}}
+				work := testWork()
+				guard := NewEarlyShareGuard(earlyshare.Config{Mode: mode, RequireInclusionProof: true}, newFakeStore())
+				gr := &guardRuntime{guard: guard, decisions: map[string]earlyDecision{earlyShareKey(work.address, work.modelId): {metadataError: reason}}, stage: 1000, validatorPubKey: "pub", samplingBlockHash: "sampling-hash"}
+				queue := make(chan participantWork, 1)
+				queue <- work
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				var dispatched, failed, abstained int
+				pending := 1
+				var mu sync.Mutex
+				v.worker(ctx, cancel, 0, queue, validArtifactFetcher(), []broker.NodeResponse{nodeForModel("test-model")}, 1000, "sampling-hash", "start-hash", testModelPocParams(), 1, gr, &mu, &dispatched, &failed, &abstained, &pending)
+				require.Zero(t, failed)
+				require.Zero(t, pending)
+				if mode == earlyshare.ModeObserve {
+					require.Equal(t, 1, dispatched)
+					require.Zero(t, abstained)
+				} else {
+					require.Zero(t, dispatched)
+					require.Equal(t, 1, abstained)
+				}
+				recorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
+			})
+		}
+	}
+}
+
+func TestInvalidFinalProofIsNotHiddenByEarlyMetadataError(t *testing.T) {
+	for _, mode := range []earlyshare.Mode{earlyshare.ModeObserve, earlyshare.ModeEnforce} {
+		t.Run(string(mode), func(t *testing.T) {
+			work := testWork()
+			guard := NewEarlyShareGuard(earlyshare.Config{Mode: mode}, newFakeStore())
+			gr := &guardRuntime{guard: guard, decisions: map[string]earlyDecision{earlyShareKey(work.address, work.modelId): {metadataError: "early checkpoint depth unknown"}}}
+			v := &OffChainValidator{}
+			result, passed := v.checkValidateeProofs(context.Background(), &work, &failingProofFetcher{err: ErrProofVerificationFailed}, 1000, "hash", 1, gr)
+			require.False(t, passed)
+			require.Equal(t, validateFailPermanent, result)
+		})
+	}
+}

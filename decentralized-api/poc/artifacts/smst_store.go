@@ -178,7 +178,7 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		s.dataFile.Close()
 		s.distFile.Close()
 		s.rootsFile.Close()
-		return nil, fmt.Errorf("recover: %w", err)
+		return nil, fmt.Errorf("recover: %w; check stage file access and restore a consistent stage backup if artifact data or snapshot metadata is missing or inconsistent", err)
 	}
 
 	return s, nil

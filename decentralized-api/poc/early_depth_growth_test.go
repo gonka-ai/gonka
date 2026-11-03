@@ -3,6 +3,7 @@ package poc
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"testing"
 	"time"
 
@@ -238,4 +239,63 @@ func TestEarlyDepthPreparationHonorsTotalDeadline(t *testing.T) {
 	require.Error(t, g.PrepareDepths(ctx, q, 100))
 	require.Equal(t, 1, q.calls)
 	require.False(t, g.depthPrepared[100])
+}
+
+type earlyCheckpointReadFailure struct {
+	*fakeStore
+	captureErr     error
+	checkpointsErr error
+}
+
+func (s *earlyCheckpointReadFailure) HasCompletedCapture(ctx context.Context, stage int64) (bool, error) {
+	if s.captureErr != nil {
+		return false, s.captureErr
+	}
+	return s.fakeStore.HasCompletedCapture(ctx, stage)
+}
+func (s *earlyCheckpointReadFailure) GetCheckpoints(ctx context.Context, stage int64) ([]earlyshare.Checkpoint, error) {
+	if s.checkpointsErr != nil {
+		return nil, s.checkpointsErr
+	}
+	return s.fakeStore.GetCheckpoints(ctx, stage)
+}
+func TestEarlyGuardReadErrorsSkipStage(t *testing.T) {
+	for _, mode := range []earlyshare.Mode{earlyshare.ModeObserve, earlyshare.ModeEnforce} {
+		for _, operation := range []string{"capture", "checkpoints"} {
+			t.Run(string(mode)+"/"+operation, func(t *testing.T) {
+				s := &earlyCheckpointReadFailure{fakeStore: newFakeStore()}
+				s.captured[100] = true
+				s.state["p|m"] = earlyshare.GuardState{ParticipantAddress: "p", ModelID: "m", ConsecutiveMisses: 2, UpdatedStageHeight: 90}
+				before := s.state["p|m"]
+				if operation == "capture" {
+					s.captureErr = fmt.Errorf("database is locked")
+				} else {
+					s.checkpointsErr = fmt.Errorf("database is locked")
+				}
+				g := NewEarlyShareGuard(earlyshare.Config{Mode: mode}, s)
+				decisions := g.Evaluate(context.Background(), 100, true, []*types.PoCV2StoreCommitWithAddress{{ParticipantAddress: "p", ModelId: "m", Count: 4}}, map[string]map[string]int64{"m": {"p": 100}}, map[string]bool{"p|m": true})
+				require.Empty(t, decisions)
+				require.Equal(t, before, s.state["p|m"])
+			})
+		}
+	}
+}
+
+func TestExhaustedBackfillDoesNotApproveLegacyCheckpoint(t *testing.T) {
+	s := newFakeStore()
+	s.captured[100] = true
+	s.checkpoints[100] = []earlyshare.Checkpoint{{StageHeight: 100, ParticipantAddress: "p", ModelID: "m", EarlyCount: 2, EarlyRootHash: []byte{1}, CheckpointBlockHeight: 110}}
+	prev := earlyshare.GuardState{ParticipantAddress: "p", ModelID: "m", ConsecutiveMisses: 2, UpdatedStageHeight: 90}
+	s.state["p|m"] = prev
+	g := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequireInclusionProof: true}, s)
+	q := &depthBackfillQuery{}
+	for i := 0; i < 4; i++ {
+		require.Error(t, g.PrepareDepths(context.Background(), q, 100))
+	}
+	require.Equal(t, 3, q.calls)
+	decisions := g.Evaluate(context.Background(), 100, true, []*types.PoCV2StoreCommitWithAddress{{ParticipantAddress: "p", ModelId: "m", Count: 3}}, map[string]map[string]int64{"m": {"p": 100}}, map[string]bool{"p|m": true})
+	outcome, _ := g.decide(context.Background(), nil, 100, participantWork{}, decisions["p|m"], "", "")
+	require.Equal(t, earlyGuardAbstainRetry, outcome)
+	require.Equal(t, prev, s.state["p|m"])
+	require.Equal(t, 3, q.calls)
 }

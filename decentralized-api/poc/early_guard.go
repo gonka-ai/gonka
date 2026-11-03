@@ -273,7 +273,7 @@ func (g *EarlyShareGuard) Evaluate(
 	captured, err := g.store.HasCompletedCapture(ctx, stageHeight)
 	if err != nil {
 		logging.Warn("EarlyShareGuard: capture lookup failed", types.PoC, "stage", stageHeight, "error", err)
-		return localEarlyPreparationErrors(assigned, "early capture lookup failed")
+		return nil
 	}
 	if !captured {
 		logging.Info("EarlyShareGuard: no early capture for stage", types.PoC, "stage", stageHeight)
@@ -283,7 +283,7 @@ func (g *EarlyShareGuard) Evaluate(
 	checkpoints, err := g.store.GetCheckpoints(ctx, stageHeight)
 	if err != nil {
 		logging.Warn("EarlyShareGuard: checkpoint load failed", types.PoC, "stage", stageHeight, "error", err)
-		return localEarlyPreparationErrors(assigned, "early checkpoint load failed")
+		return nil
 	}
 	cpByKey := make(map[string]earlyshare.Checkpoint, len(checkpoints))
 	for _, c := range checkpoints {
@@ -684,17 +684,4 @@ func (g *EarlyShareGuard) prepareDepthsLocked(ctx context.Context, qc earlyShare
 	}
 	g.depthPrepared[stage] = true
 	return nil
-}
-
-func localEarlyPreparationErrors(assigned map[string]bool, reason string) map[string]earlyDecision {
-	if len(assigned) == 0 {
-		return nil
-	}
-	out := make(map[string]earlyDecision, len(assigned))
-	for key, yes := range assigned {
-		if yes {
-			out[key] = earlyDecision{metadataError: reason}
-		}
-	}
-	return out
 }

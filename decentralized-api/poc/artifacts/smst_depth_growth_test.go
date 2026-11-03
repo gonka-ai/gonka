@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -534,4 +535,103 @@ func TestSMSTSpillPublicationFailureCrashRecovery(t *testing.T) {
 	}
 	assertSnapshotProofs(t, reopened, oldCount, oldRoot, oldDepth)
 	assertSnapshotProofs(t, reopened, count, root, depth)
+}
+
+func TestSMSTRecoveryFromConsistentBackup(t *testing.T) {
+	for _, limit := range []uint32{2, 1_000_000} {
+		for _, corruption := range []string{"root mismatch", "truncated artifacts", "missing artifacts"} {
+			t.Run(fmt.Sprintf("%d/%s", limit, corruption), func(t *testing.T) {
+				dir := t.TempDir()
+				s := openSMSTWithRAMLimit(t, dir, limit)
+				if err := s.AddWithNode(1, []byte("vector"), ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				oldCount, oldRoot, oldDepth, err := s.GetFlushedSnapshot()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.AddWithNode(1<<24, []byte("vector"), ""); err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Flush(); err != nil {
+					t.Fatal(err)
+				}
+				count, root, depth, err := s.GetFlushedSnapshot()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := s.Close(); err != nil {
+					t.Fatal(err)
+				}
+				backup := make(map[string][]byte)
+				if err := filepath.Walk(dir, func(path string, info os.FileInfo, walkErr error) error {
+					if walkErr != nil {
+						return walkErr
+					}
+					if info.IsDir() {
+						return nil
+					}
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return err
+					}
+					backup[path] = data
+					return nil
+				}); err != nil {
+					t.Fatal(err)
+				}
+				dataPath := filepath.Join(dir, "artifacts.data")
+				switch corruption {
+				case "root mismatch":
+					path := filepath.Join(dir, "flushed_roots.jsonl")
+					original := backup[path]
+					changed := bytes.ReplaceAll(original, []byte(fmt.Sprintf("%x", root)), bytes.Repeat([]byte("0"), 64))
+					if bytes.Equal(changed, original) {
+						t.Fatal("fixture did not corrupt the root")
+					}
+					if err := os.WriteFile(path, changed, 0644); err != nil {
+						t.Fatal(err)
+					}
+				case "truncated artifacts":
+					if err := os.Truncate(dataPath, int64(len(backup[dataPath])/2)); err != nil {
+						t.Fatal(err)
+					}
+				case "missing artifacts":
+					if err := os.Remove(dataPath); err != nil {
+						t.Fatal(err)
+					}
+				}
+				invalid, err := OpenSMST(dir)
+				if err == nil {
+					invalid.Close()
+					t.Fatal("inconsistent store opened")
+				}
+				if !strings.Contains(err.Error(), "restore a consistent stage backup") {
+					t.Fatalf("missing recovery guidance: %v", err)
+				}
+				for path, data := range backup {
+					if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(path, data, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				recovered, err := OpenSMST(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer recovered.Close()
+				gotCount, gotRoot, gotDepth, err := recovered.GetFlushedSnapshot()
+				if err != nil || gotCount != count || gotDepth != depth || !bytes.Equal(gotRoot, root) {
+					t.Fatalf("restored tuple %d/%d: %v", gotCount, gotDepth, err)
+				}
+				assertSnapshotProofs(t, recovered, oldCount, oldRoot, oldDepth)
+				assertSnapshotProofs(t, recovered, count, root, depth)
+			})
+		}
+	}
 }
