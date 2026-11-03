@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"cosmossdk.io/collections"
 	cosmossdk_math "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -220,6 +221,10 @@ func (k Keeper) activateMaintenanceReservation(ctx context.Context, sdkCtx sdk.C
 	}
 
 	if err := k.SetMaintenanceState(ctx, state); err != nil {
+		return err
+	}
+
+	if err := k.MaintenanceWindowsByParticipant.Set(ctx, collections.Join(participantAddr, r.StartHeight), reservationID); err != nil {
 		return err
 	}
 
