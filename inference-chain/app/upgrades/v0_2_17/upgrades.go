@@ -226,16 +226,21 @@ func enableOnboardingFeeGroup(ctx context.Context, k keeper.Keeper) error {
 }
 
 // migrateEpochValidationParams writes the admission caps when the stored
-// params do not have them yet. A later governance value is left in place.
+// params do not have them yet. A missing acceptance floor is filled with the
+// historical raw-weight gate. A later governance value is left in place.
 func migrateEpochValidationParams(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
-	if params.EpochValidationParams != nil {
+	if params.EpochValidationParams == nil {
+		params.EpochValidationParams = types.DefaultEpochValidationParams()
+		return k.SetParams(ctx, params)
+	}
+	if params.EpochValidationParams.MinEpochAcceptanceWeight >= 1 {
 		return nil
 	}
-	params.EpochValidationParams = types.DefaultEpochValidationParams()
+	params.EpochValidationParams.MinEpochAcceptanceWeight = types.DefaultMinEpochAcceptanceWeight
 	return k.SetParams(ctx, params)
 }
 

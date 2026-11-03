@@ -51,6 +51,12 @@ message EpochValidationParams {
   uint32 max_positive_distribution_rows = 1;
   // max_validations_per_message rejects one fee-exempt validation batch.
   uint32 max_validations_per_message = 2;
+  // min_epoch_acceptance_weight is the minimum raw claimed PoC weight for one
+  // participant and one model to enter the next epoch. Raw weight is the
+  // store-commit count times the time-normalization factor. Dynamic model
+  // coefficients are applied after this gate and do not change it. Zero means
+  // the default of 1, the historical comparison.
+  int64 min_epoch_acceptance_weight = 3;
 }
 
 // PoCChallengeParams defines governance-controlled parameters for PoCChallenge.
