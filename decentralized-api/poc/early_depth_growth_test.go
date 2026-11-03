@@ -131,7 +131,7 @@ func TestUnknownEarlyDepthAbstainsAndPreservesStreak(t *testing.T) {
 		s.checkpoints[100] = []earlyshare.Checkpoint{{StageHeight: 100, ParticipantAddress: "p", ModelID: "m", EarlyCount: 2, EarlyRootHash: []byte{1}, EarlyTreeDepth: depth}}
 		prev := earlyshare.GuardState{ParticipantAddress: "p", ModelID: "m", ConsecutiveMisses: 2, UpdatedStageHeight: 90}
 		s.state["p|m"] = prev
-		g := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce}, s)
+		g := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequireInclusionProof: true}, s)
 		ds := g.Evaluate(context.Background(), 100, true, []*types.PoCV2StoreCommitWithAddress{{ParticipantAddress: "p", ModelId: "m", Count: 3}}, map[string]map[string]int64{"m": {"p": 100}}, map[string]bool{"p|m": true})
 		require.Equal(t, prev, s.state["p|m"])
 		outcome, _ := g.decide(context.Background(), nil, 100, participantWork{}, ds["p|m"], "", "")
@@ -298,4 +298,60 @@ func TestExhaustedBackfillDoesNotApproveLegacyCheckpoint(t *testing.T) {
 	require.Equal(t, earlyGuardAbstainRetry, outcome)
 	require.Equal(t, prev, s.state["p|m"])
 	require.Equal(t, 3, q.calls)
+}
+
+func TestEarlyDepthOnlyRequiredForInclusion(t *testing.T) {
+	cases := []struct {
+		name        string
+		votingPower bool
+		root        []byte
+		count       uint32
+		inclusion   bool
+		decision    bool
+		voteNo      bool
+		misses      int
+	}{
+		{"no voting power", false, []byte{1}, 2, true, false, false, 1},
+		{"empty early root", true, nil, 2, true, false, false, 1},
+		{"early count exceeds final", true, []byte{1}, 5, true, true, true, 2},
+		{"inclusion disabled", true, []byte{1}, 2, false, true, false, 0},
+		{"empty early count", true, []byte{1}, 0, true, true, true, 2},
+	}
+	for _, tc := range cases {
+		for _, depth := range []*uint32{nil, testEarlyDepth(0), testEarlyDepth(33), testEarlyDepth(24)} {
+			label := "unknown"
+			if depth != nil {
+				label = fmt.Sprint(*depth)
+			}
+			t.Run(tc.name+"/"+label, func(t *testing.T) {
+				s := newFakeStore()
+				s.captured[100] = true
+				s.checkpoints[100] = []earlyshare.Checkpoint{
+					{StageHeight: 100, ParticipantAddress: "p", ModelID: "m", EarlyCount: tc.count, EarlyRootHash: tc.root, EarlyTreeDepth: depth},
+					{StageHeight: 100, ParticipantAddress: "q", ModelID: "m", EarlyCount: 4, EarlyRootHash: []byte{2}, EarlyTreeDepth: testEarlyDepth(24)},
+				}
+				s.state["p|m"] = earlyshare.GuardState{ParticipantAddress: "p", ModelID: "m", ConsecutiveMisses: 1, UpdatedStageHeight: 90}
+				g := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequireInclusionProof: tc.inclusion}, s)
+				powers := map[string]map[string]int64{}
+				if tc.votingPower {
+					powers["m"] = map[string]int64{"p": 10, "q": 90}
+				}
+				decisions := g.Evaluate(context.Background(), 100, true, []*types.PoCV2StoreCommitWithAddress{{ParticipantAddress: "p", ModelId: "m", Count: 4}, {ParticipantAddress: "q", ModelId: "m", Count: 4}}, powers, map[string]bool{"p|m": true})
+				dec, ok := decisions["p|m"]
+				require.Equal(t, tc.decision, ok)
+				require.Empty(t, dec.metadataError)
+				require.False(t, dec.requireInclusion)
+				require.Equal(t, tc.voteNo, dec.shareVoteNo)
+				require.Equal(t, tc.misses, s.state["p|m"].ConsecutiveMisses)
+				if ok {
+					outcome, _ := g.decide(context.Background(), nil, 100, participantWork{}, dec, "", "")
+					if tc.voteNo {
+						require.Equal(t, earlyGuardVoteNo, outcome)
+					} else {
+						require.Equal(t, earlyGuardPass, outcome)
+					}
+				}
+			})
+		}
+	}
 }

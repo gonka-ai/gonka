@@ -299,17 +299,6 @@ func (g *EarlyShareGuard) Evaluate(
 	}
 
 	decisions := make(map[string]earlyDecision)
-	for key, cp := range cpByKey {
-		if !assigned[key] {
-			continue
-		}
-		if cp.EarlyTreeDepth == nil {
-			decisions[key] = earlyDecision{metadataError: "early checkpoint depth unknown"}
-		} else if *cp.EarlyTreeDepth < 1 || *cp.EarlyTreeDepth > 32 {
-			decisions[key] = earlyDecision{metadataError: "early checkpoint depth invalid"}
-		}
-	}
-
 	for modelID, commits := range commitsByModel {
 		vp := modelVotingPowers[modelID]
 		var totalVP int64
@@ -346,16 +335,6 @@ func (g *EarlyShareGuard) Evaluate(
 			}
 			cp, hasCP := cpByKey[earlyShareKey(addr, modelID)]
 			d := participantData{finalCount: fc}
-			if hasCP {
-				switch {
-				case cp.EarlyTreeDepth == nil:
-					d.metadataError = "early checkpoint depth unknown"
-				case *cp.EarlyTreeDepth < 1 || *cp.EarlyTreeDepth > 32:
-					d.metadataError = "early checkpoint depth invalid"
-				default:
-					d.earlyDepth = *cp.EarlyTreeDepth
-				}
-			}
 			switch {
 			case !hasCP:
 				// Present in final, absent from early snapshot -> early_share 0.
@@ -377,6 +356,16 @@ func (g *EarlyShareGuard) Evaluate(
 				d.earlyRoot = cp.EarlyRootHash
 				d.share = float64(cp.EarlyCount) / float64(fc)
 				d.requireInclusion = g.cfg.RequireInclusionProof && cp.EarlyCount > 0
+				if d.requireInclusion {
+					switch {
+					case cp.EarlyTreeDepth == nil:
+						d.metadataError = "early checkpoint depth unknown"
+					case *cp.EarlyTreeDepth < 1 || *cp.EarlyTreeDepth > 32:
+						d.metadataError = "early checkpoint depth invalid"
+					default:
+						d.earlyDepth = *cp.EarlyTreeDepth
+					}
+				}
 				points = append(points, earlyshare.SharePoint{Share: d.share, Weight: vp[addr]})
 			}
 			pdata[addr] = d

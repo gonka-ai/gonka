@@ -1,10 +1,14 @@
 package poc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,6 +21,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -1941,4 +1946,49 @@ func TestCommitPayloadDepthIdentity(t *testing.T) {
 	ch.Commits[0].TreeDepth = 24
 	w.reconcileChallengePending(ch)
 	assert.Empty(t, w.challengePending)
+}
+
+func TestCommitWorkerStoreRecoveryWarning(t *testing.T) {
+	for _, challenge := range []bool{false, true} {
+		name := "regular"
+		if challenge {
+			name = "challenge"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			modelDir := filepath.Join(dir, "100", "model-a")
+			store, err := artifacts.OpenSMST(modelDir)
+			require.NoError(t, err)
+			require.NoError(t, store.AddWithNode(1, []byte("vector"), ""))
+			require.NoError(t, store.Close())
+			rootPath := filepath.Join(modelDir, "flushed_roots.jsonl")
+			data, err := os.ReadFile(rootPath)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(rootPath, bytes.ReplaceAll(data, []byte(`"depth":24`), []byte(`"depth":0`)), 0644))
+			managed := artifacts.NewManagedArtifactStore(dir, 5)
+			defer managed.Close()
+			managed.ActivateStage(100)
+			recorder := &cosmosclient.MockCosmosMessageClient{}
+			worker := &CommitWorker{store: managed, recorder: recorder, participantAddress: "participant_addr", blockHeight: 110, tracker: commitWorkerTestTracker(110)}
+			var output bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			defer slog.SetDefault(previous)
+			if challenge {
+				defer OpenChallenges.Reset()
+				OpenChallenges.Replace(worker.participantAddress, []*types.OpenPoCChallenge{openCh(worker.participantAddress, 100, 2000, true, 1)}, 0)
+				worker.maybeSubmitChallengeCommit(worker.tracker.GetCurrentEpochState())
+			} else {
+				worker.maybeSubmitCommit(100, 250)
+			}
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record), output.String())
+			require.Equal(t, "WARN", record["level"])
+			require.Equal(t, float64(100), record["pocHeight"])
+			require.Contains(t, record["error"], `model "model-a"`)
+			require.Contains(t, record["error"], "restore a consistent stage backup")
+			recorder.AssertNotCalled(t, "SubmitPoCV2StoreCommitWithTimeout", mock.Anything, mock.Anything)
+			recorder.AssertNotCalled(t, "SubmitPoCChallengeStoreCommitWithTimeout", mock.Anything, mock.Anything)
+		})
+	}
 }

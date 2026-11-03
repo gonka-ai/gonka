@@ -361,7 +361,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 
 	stageStores, err := w.store.GetStoresForStage(pocHeight)
 	if err != nil {
-		logging.Debug("CommitWorker: no stores for height", types.PoC, "pocHeight", pocHeight, "error", err)
+		logging.Warn("CommitWorker: failed to open stage stores", types.PoC, "pocHeight", pocHeight, "error", err)
 		return
 	}
 	if len(stageStores) == 0 {
@@ -612,7 +612,11 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 	finalWindow := inFinalCommitWindow(height, deadline)
 	pocHeight := ch.StartHeight()
 	stageStores, err := w.store.GetStoresForServing(pocHeight)
-	if err != nil || len(stageStores) == 0 {
+	if err != nil {
+		logging.Warn("CommitWorker: failed to open challenge stores", types.PoC, "pocHeight", pocHeight, "error", err)
+		return
+	}
+	if len(stageStores) == 0 {
 		return
 	}
 
@@ -912,7 +916,7 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 
 	stageStores, err := w.store.GetStoresForStage(pocHeight)
 	if err != nil {
-		logging.Debug("CommitWorker: no stores for distribution", types.PoC, "pocHeight", pocHeight, "error", err)
+		logging.Warn("CommitWorker: failed to open distribution stores", types.PoC, "pocHeight", pocHeight, "error", err)
 		return
 	}
 	if len(stageStores) == 0 {
