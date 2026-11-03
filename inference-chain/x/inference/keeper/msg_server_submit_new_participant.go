@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -17,8 +18,9 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 	// ValidatorKey, WorkerKey, and Url as per requirements.
 	if existing, found := k.GetParticipant(ctx, msg.GetCreator()); found {
 		// Preserve all existing fields and update only the allowed ones
-		if msg.Url != "" {
-			existing.InferenceUrl = msg.Url
+		// Whitespace follows the empty-string rule: it must not erase a live address.
+		if trimmed := strings.TrimSpace(msg.Url); trimmed != "" {
+			existing.InferenceUrl = trimmed
 		}
 		if msg.ValidatorKey != "" {
 			existing.ValidatorKey = msg.ValidatorKey
@@ -48,7 +50,7 @@ func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant) t
 		JoinTime:          ctx.BlockTime().UnixMilli(),
 		JoinHeight:        ctx.BlockHeight(),
 		LastInferenceTime: 0,
-		InferenceUrl:      msg.GetUrl(),
+		InferenceUrl:      strings.TrimSpace(msg.GetUrl()),
 		Status:            types.ParticipantStatus_ACTIVE,
 		ValidatorKey:      msg.GetValidatorKey(),
 		WorkerPublicKey:   msg.GetWorkerKey(),

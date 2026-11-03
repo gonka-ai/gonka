@@ -26,6 +26,15 @@ func TestMsgSubmitNewParticipant_ValidateBasic(t *testing.T) {
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
+			name: "whitespace-only worker key",
+			msg: MsgSubmitNewParticipant{
+				Creator:      validCreator,
+				Url:          "https://example.com",
+				ValidatorKey: sample.ValidED25519ValidatorKey(),
+				WorkerKey:    "   ",
+			},
+			err: sdkerrors.ErrInvalidPubKey,
+		}, {
 			name: "valid participant",
 			msg: MsgSubmitNewParticipant{
 				Creator:      validCreator,

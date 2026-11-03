@@ -112,3 +112,51 @@ func TestMsgServer_SubmitNewParticipant_EmptyValuesNoEffect(t *testing.T) {
 	require.Equal(t, p1.EpochsCompleted, p2.EpochsCompleted)
 	require.Equal(t, p1.CurrentEpochStats, p2.CurrentEpochStats)
 }
+
+func TestMsgServer_SubmitNewParticipant_WhitespaceUrlNoEffect(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Executor,
+		Url:     "http://url",
+	})
+	require.NoError(t, err)
+
+	// A whitespace-only URL means "leave the address", like "". ValidateBasic
+	// lets it through because it only checks a non-blank URL.
+	for _, blank := range []string{"   ", "\t\n"} {
+		_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+			Creator: testutil.Executor,
+			Url:     blank,
+		})
+		require.NoError(t, err)
+
+		p, found := k.GetParticipant(ctx, testutil.Executor)
+		require.True(t, found)
+		require.Equal(t, "http://url", p.InferenceUrl, "url %q must not replace the stored address", blank)
+	}
+}
+
+func TestMsgServer_SubmitNewParticipant_PaddedUrlStoredTrimmed(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Executor,
+		Url:     "http://url/ ",
+	})
+	require.NoError(t, err)
+
+	p, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.Equal(t, "http://url/", p.InferenceUrl, "create stores the trimmed URL")
+
+	_, err = ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Executor,
+		Url:     "http://new.url/  ",
+	})
+	require.NoError(t, err)
+
+	p, found = k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.Equal(t, "http://new.url/", p.InferenceUrl, "update stores the trimmed URL")
+}
