@@ -5,6 +5,8 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -228,4 +230,62 @@ func TestClaimRecipientPruningRemovesPrimaryAndIndex(t *testing.T) {
 	hasIndex, err = k.ClaimRecipientsByEpoch.Has(ctx, collections.Join(uint64(96), creatorAddr))
 	require.NoError(t, err)
 	require.True(t, hasIndex)
+}
+
+func TestSetClaimRecipients_RejectsBlockedRecipient(t *testing.T) {
+	k, ms, ctx, creatorAddr := setupSchedule(t, 100)
+	blocked := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+
+	_, err := ms.SetClaimRecipients(ctx, &types.MsgSetClaimRecipients{
+		Creator: testutil.Creator,
+		Entries: []types.ClaimRecipientEntry{
+			{Epoch: 101, Recipient: testutil.Executor},
+			{Epoch: 102, Recipient: blocked.String()},
+		},
+	})
+	require.Error(t, err)
+
+	_, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	require.NoError(t, err)
+	require.False(t, found)
+	_, found, err = k.GetClaimRecipientForEpoch(ctx, creatorAddr, 102)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestSetClaimRecipients_AcceptsUnblockedModuleRecipient(t *testing.T) {
+	k, ms, ctx, creatorAddr := setupSchedule(t, 100)
+	gov := authtypes.NewModuleAddress(govtypes.ModuleName).String()
+
+	_, err := ms.SetClaimRecipients(ctx, &types.MsgSetClaimRecipients{
+		Creator: testutil.Creator,
+		Entries: []types.ClaimRecipientEntry{{Epoch: 101, Recipient: gov}},
+	})
+	require.NoError(t, err)
+
+	got, found, err := k.GetClaimRecipientForEpoch(ctx, creatorAddr, 101)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, gov, got)
+}
+
+func TestResolveClaimRecipientAddress(t *testing.T) {
+	k, _, ctx, creatorAddr := setupSchedule(t, 100)
+	recipient, err := sdk.AccAddressFromBech32(testutil.Executor)
+	require.NoError(t, err)
+	blocked := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+
+	got, err := k.ResolveClaimRecipientAddress(ctx, testutil.Creator, 101)
+	require.NoError(t, err)
+	require.Equal(t, creatorAddr, got)
+
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 101, recipient.String()))
+	got, err = k.ResolveClaimRecipientAddress(ctx, testutil.Creator, 101)
+	require.NoError(t, err)
+	require.Equal(t, recipient, got)
+
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, creatorAddr, 102, blocked.String()))
+	got, err = k.ResolveClaimRecipientAddress(ctx, testutil.Creator, 102)
+	require.NoError(t, err)
+	require.Equal(t, creatorAddr, got)
 }

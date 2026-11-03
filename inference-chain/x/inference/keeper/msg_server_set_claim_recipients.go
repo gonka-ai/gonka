@@ -67,8 +67,12 @@ func (ms msgServer) applyClaimRecipientEntry(
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "epoch %d exceeds max lookahead of %d from current epoch %d", entry.Epoch, MaxClaimRecipientLookahead, currentEpoch)
 	}
 	if entry.Recipient != "" {
-		if _, err := sdk.AccAddressFromBech32(entry.Recipient); err != nil {
+		recipientAddr, err := sdk.AccAddressFromBech32(entry.Recipient)
+		if err != nil {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid recipient for epoch %d: %s", entry.Epoch, err)
+		}
+		if ms.BankView.BlockedAddr(recipientAddr) {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "recipient %s for epoch %d is not allowed to receive funds", entry.Recipient, entry.Epoch)
 		}
 	}
 

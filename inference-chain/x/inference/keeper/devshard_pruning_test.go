@@ -5,6 +5,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
@@ -250,6 +251,76 @@ func TestPruneDevshardData_UnsettledDistributionUsesClaimRecipient(t *testing.T)
 	require.NoError(t, err)
 	mock.BankKeeper.EXPECT().
 		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, recipient, expectedShare, gomock.Eq("devshard_escrow_unsettled_distribution")).
+		Return(nil)
+
+	require.NoError(t, pruneDevshard(k, ctx, 5))
+}
+
+func TestPruneDevshardData_UnsettledDistributionBlockedClaimRecipientPaysParticipant(t *testing.T) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	participant := sdk.AccAddress(make([]byte, 20))
+	participant[0] = 0x01
+	blocked := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+
+	slots := make([]string, keeper.DevshardGroupSize)
+	for i := range slots {
+		slots[i] = participant.String()
+	}
+
+	escrow := &types.DevshardEscrow{
+		Creator:    "gonka1creator",
+		Amount:     8_000_000_000,
+		Slots:      slots,
+		EpochIndex: 3,
+		Settled:    false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, escrow, 1)
+	require.NoError(t, err)
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, participant, escrow.EpochIndex, blocked.String()))
+
+	expectedShare, err := types.GetCoins(8_000_000_000)
+	require.NoError(t, err)
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, participant, expectedShare, gomock.Eq("devshard_escrow_unsettled_distribution")).
+		Return(nil)
+
+	require.NoError(t, pruneDevshard(k, ctx, 5))
+}
+
+func TestPruneDevshardData_UnsettledDistributionOverriddenBlockedRecipientPaysParticipant(t *testing.T) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	participant := sdk.AccAddress(make([]byte, 20))
+	participant[0] = 0x01
+	recipient := sdk.AccAddress(make([]byte, 20))
+	recipient[0] = 0x09
+	mock.BlockedAddrs.Set(recipient, true)
+
+	slots := make([]string, keeper.DevshardGroupSize)
+	for i := range slots {
+		slots[i] = participant.String()
+	}
+
+	escrow := &types.DevshardEscrow{
+		Creator:    "gonka1creator",
+		Amount:     8_000_000_000,
+		Slots:      slots,
+		EpochIndex: 3,
+		Settled:    false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, escrow, 1)
+	require.NoError(t, err)
+	require.NoError(t, k.SetClaimRecipientForEpoch(ctx, participant, escrow.EpochIndex, recipient.String()))
+
+	expectedShare, err := types.GetCoins(8_000_000_000)
+	require.NoError(t, err)
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, participant, expectedShare, gomock.Eq("devshard_escrow_unsettled_distribution")).
 		Return(nil)
 
 	require.NoError(t, pruneDevshard(k, ctx, 5))
