@@ -389,6 +389,9 @@ func protocolTimeoutSeconds(value string) (int64, error) {
 	return int64(duration / time.Second), nil
 }
 
+// ValidateForDataset permits messages supplied by replay rows.
+func (s Scenario) ValidateForDataset() error { return s.validate(true) }
+
 func (s Scenario) Validate() error {
 	return s.validate(false)
 }

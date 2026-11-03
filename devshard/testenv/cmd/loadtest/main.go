@@ -38,7 +38,7 @@ func main() {
 		for _, note := range notes {
 			log.Printf("loadtest: recheck: %s", note)
 		}
-		report, err := loadtest.WriteReport(*recheckDir)
+		report, err := loadtest.WriteReportForTerminal(*recheckDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func main() {
 		return
 	}
 	if *reportDir != "" {
-		report, err := loadtest.WriteReport(*reportDir)
+		report, err := loadtest.WriteReportForTerminal(*reportDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func main() {
 		StrictXFail:     *strictXFail,
 		Build:           build,
 	})
-	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
+	if report, reportErr := loadtest.WriteReportForTerminal(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)
 	} else {
 		fmt.Println(report)

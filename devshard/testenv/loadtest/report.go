@@ -35,6 +35,16 @@ type runReport struct {
 // WriteReport renders the run's fixed-template report from its artifacts
 // into report.md and returns it; it reads only files the run wrote.
 func WriteReport(outputDir string) (string, error) {
+	return writeReport(outputDir, false)
+}
+
+// WriteReportForTerminal saves the Markdown report but returns its model summary
+// as aligned plain text for terminal display.
+func WriteReportForTerminal(outputDir string) (string, error) {
+	return writeReport(outputDir, true)
+}
+
+func writeReport(outputDir string, terminal bool) (string, error) {
 	run, err := loadRunReport(outputDir)
 	if err != nil {
 		return "", err
@@ -42,6 +52,9 @@ func WriteReport(outputDir string) (string, error) {
 	report := run.render(filepath.Base(outputDir))
 	if err := os.WriteFile(filepath.Join(outputDir, reportFileName), []byte(report), 0o644); err != nil {
 		return "", err
+	}
+	if terminal {
+		report = strings.TrimSuffix(report, RenderModelBreakdown(run.summary.ModelBreakdown)) + RenderModelBreakdownText(run.summary.ModelBreakdown)
 	}
 	return report, nil
 }
@@ -157,6 +170,7 @@ func (r runReport) render(runName string) string {
 	r.renderOverlaps(&out)
 	r.renderEndState(&out)
 	r.renderEveryCheck(&out)
+	out.WriteString(RenderModelBreakdown(r.summary.ModelBreakdown))
 	return out.String()
 }
 

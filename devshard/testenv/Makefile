@@ -34,6 +34,7 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
+REMOTE_PREFLIGHT_ONLY ?=
 LOAD_DATASET ?=
 
 ifeq ($(strip $(SCENARIO)),)
@@ -47,21 +48,23 @@ endif
 
 .PHONY: loadtest-remote
 ifeq ($(strip $(SCENARIO)),)
-loadtest-remote: ## Run a scenario against an external gateway using .env.remote-load (SCENARIO=name).
-	@echo "SCENARIO is required, for example: make loadtest-remote SCENARIO=normal-load"
+loadtest-remote: ## Run client traffic against GONKA_BASE without Docker (SCENARIO=name).
+	@echo "SCENARIO is required, for example: make loadtest-remote SCENARIO=qwen-two-models-smoke"
 	@false
 else
-loadtest-remote: ## Run a scenario against an external gateway using .env.remote-load (SCENARIO=name).
+loadtest-remote: ## Run client traffic against GONKA_BASE without Docker (SCENARIO=name).
 	@set -euo pipefail; \
 	if [[ -f .env.remote-load ]]; then \
 		set -a; source ./.env.remote-load; set +a; \
 	fi; \
 	: "$${GONKA_API_KEY:?Set GONKA_API_KEY in .env.remote-load or the environment}"; \
 	: "$${GONKA_BASE:?Set GONKA_BASE in .env.remote-load or the environment}"; \
-	: "$${GONKA_MODEL:?Set GONKA_MODEL in .env.remote-load or the environment}"; \
-	export GONKA_API_KEY GONKA_BASE GONKA_MODEL; \
-	exec go run ./cmd/remote-loadtest -scenario "loadtest/scenarios/$(SCENARIO).yaml" $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
+	exec go run ./cmd/remote-loadtest -scenario "loadtest/scenarios/$(SCENARIO).yaml" $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)") $(if $(filter 1 true yes,$(REMOTE_PREFLIGHT_ONLY)),-preflight-only)
 endif
+
+.PHONY: loadtest-remote-preflight
+loadtest-remote-preflight: REMOTE_PREFLIGHT_ONLY=1
+loadtest-remote-preflight: loadtest-remote ## Inspect remote environment without sending inference requests.
 
 .PHONY: loadtest-prodlike
 loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min).

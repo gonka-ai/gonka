@@ -915,6 +915,108 @@ recorded in `requests.jsonl`; replay hits and misses are included in
 Dataset replay creates one initial escrow per configured YAML model. Keep this in
 mind when interpreting escrow IDs and when designing an escrow-rotation run.
 
+## Remote environment preflight
+
+Only `cmd/remote-loadtest` and `make loadtest-remote` inspect the existing
+environment before sending client traffic. The local Docker runner does not
+perform these remote checks. The same preflight handles a single model
+(`request.model`, including the final `GONKA_MODEL` or `-model` override) and
+multiple models (`request.mix.models`, without a single-model override).
+
+The runner makes three read-only GET requests in parallel:
+
+- `<GONKA_BASE>/v1/models` for advertised model IDs, context/output limits and
+  supported parameter metadata.
+- `<GONKA_BASE>/v1/status` for per-model live capacity, admission limits,
+  requests in flight, available concurrency slots and escrow state.
+- `/v1/epochs/latest` on the same origin for phase, cPOC state, block height,
+  epoch index and the next PoC start block. This public probe is sent without
+  the API key; the two gateway probes use the configured authorization.
+
+Models are matched by exact ID against the YAML and any dataset. Preflight
+blocks the entire workload if a required model is missing, has known zero
+live capacity, is not routable, has disabled access, or has no usable escrow.
+An explicit zero effective concurrency limit blocks when its configured limit
+is positive; a configured unlimited limit of zero is not treated as exhausted.
+A requested output cap above the model's advertised completion limit also
+blocks. The runner does not silently remove unavailable models or change the
+traffic weights. PoC/cPOC alone is informational and does not block a model
+with usable capacity.
+
+Model discovery must succeed. Missing or inaccessible optional status/epoch
+endpoints produce notes, and unexposed values are displayed as `unknown`.
+Balances are shown in raw API units; nonce headroom and an affordable request
+count are not inferred without the necessary limits and pricing. Context
+length is reported, but prompt token counts are not estimated.
+
+Every remote run saves `environment.json` with timestamps, normalized model
+comparisons and raw JSON probe responses. The preflight snapshot is printed as
+plain text and included in `report.md`. On a blocked preflight, the snapshot,
+`run.yaml`, `assertions.json` and `report.md` remain available; no inference
+requests are sent and no workload summary is fabricated. Probe timeout is
+five seconds per endpoint and can be changed with `-preflight-timeout` on the
+remote CLI. The snapshot does not reserve capacity or guarantee that PoC or
+host availability remains unchanged throughout the run.
+
+Remote console output is separated by asterisk banners: `PRE-FLIGHT CHECK`
+contains the target and environment snapshot, `LOAD TEST` contains workload
+settings and progress, and `REPORT SUMMARY` contains the verdict and model
+comparison. Preflight-only and blocked runs omit the load block and explicitly
+report that the workload did not start. The saved Markdown report retains its
+document headings.
+
+Inspect the current environment without running the workload, from the
+repository root:
+
+```bash
+make -C devshard/testenv loadtest-remote-preflight \
+  SCENARIO=qwen-two-models-smoke \
+  LOAD_DATASET=loadtest/resources/qwen-two-models-250.jsonl
+```
+
+This invokes `cmd/remote-loadtest -preflight-only`. To inspect a single model,
+use a single-model scenario such as `SCENARIO=normal-load` and set
+`GONKA_MODEL` in `.env.remote-load`. A normal `loadtest-remote` run performs the
+same preflight automatically and starts its workload only after it succeeds.
+
+## Per model report summary
+
+The console displays the model comparison as aligned plain text, with compact
+unique model headings and a mapping to the full model IDs. Durations use short
+units with two decimals where applicable (for example `105.94ms` or `1.33s`).
+The saved `report.md` keeps its Markdown table and full model IDs. Both formats
+read the same statistics from `summary.json`; no terminal utility is required.
+
+Local and remote reports end with a model comparison table. Model IDs are
+columns (in YAML order), followed by a Total column; metrics are rows:
+
+- Client result against the configured error and drop thresholds.
+- Planned, sent, dropped, and successful request counts.
+- Success rate among sent requests and successful share of planned requests.
+- Errors total, followed only by categories with a nonzero count in the run.
+  HTTP status codes, timeouts, other network failures, invalid JSON responses,
+  and SSE failures are mutually exclusive categories. If one model has a
+  category and another does not, the latter displays zero in that row.
+- Successful-response latency sample count, P50, P95, P99, and maximum.
+- Successful requests per second over the configured workload duration.
+
+Drops are never counted as request errors. Newly recorded drops retain the
+model selected by the seed and request sequence, including generator-behind
+arrivals. A legacy result without a model ID is shown as Unattributed rather
+than assigned to a model.
+
+Latency covers the full successful JSON or SSE response, and failed-request
+durations are excluded from this table. Total percentiles are computed from
+pooled successful samples, not averaged model percentiles. With no successful
+samples, latency displays a dash. P99 is descriptive and unstable for small
+sample counts. The existing top-level summary latency fields retain their
+previous behavior; this successful-only comparison is stored separately in
+`summary.json` under `model_breakdown` with `models` and `total` entries.
+
+The remote headline separates planned requests, sent requests, successful
+requests, errors, and drops. Model client results do not evaluate server state
+or settlement assertions and do not replace the overall verdict.
+
 ## Gateway and drain settings
 
 The Gateway speculative-cleanup grace period can be overridden per scenario:
