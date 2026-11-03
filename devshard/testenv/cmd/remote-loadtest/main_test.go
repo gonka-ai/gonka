@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"devshard/testenv/loadtest"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -141,4 +143,37 @@ func TestRemoteHTTPFailureProducesFailedReport(t *testing.T) {
 	require.Contains(t, out.String(), "Result: FAIL")
 	require.Contains(t, out.String(), "HTTP 401")
 	require.NotContains(t, out.String(), "HTTP 500")
+}
+
+func TestRebasedRemoteOverridesAndRequestOnlyDataset(t *testing.T) {
+	dir := t.TempDir()
+	scenario := filepath.Join(dir, "scenario.yaml")
+	dataset := filepath.Join(dir, "requests.jsonl")
+	output := filepath.Join(dir, "output")
+	require.NoError(t, os.WriteFile(scenario, []byte(scenarioHeader), 0o600))
+	require.NoError(t, os.WriteFile(dataset, []byte(`{"model":"a","messages":[{"role":"user","content":"a"}],"max_tokens":32,"temperature":0}
+{"model":"b","messages":[{"role":"user","content":"b"}],"max_tokens":64,"temperature":0.7}`), 0o600))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if serveHealthyEnvironment(w, r) {
+			return
+		}
+		// The legacy status-only mode must remain explicitly available after rebase.
+		_, _ = w.Write([]byte("plain non-JSON response"))
+	}))
+	defer server.Close()
+	env := map[string]string{"GONKA_BASE": server.URL + "/gateway", "GONKA_API_KEY": "key", "GONKA_MODEL": "ignored-for-mix"}
+	var out bytes.Buffer
+	err := run(context.Background(), []string{"-scenario", scenario, "-load-dataset", dataset, "-output", output, "-duration", "40ms", "-concurrency", "1", "-request-timeout", "2s", "-report-interval", "20ms", "-http-status-only"}, func(k string) string { return env[k] }, &out)
+	require.NoError(t, err)
+	effective, err := loadtest.LoadDatasetScenario(filepath.Join(output, "run.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, "40ms", effective.Workload.Duration)
+	require.Equal(t, 1, effective.Workload.MaxInFlight)
+	require.Equal(t, 2*time.Second, effective.RequestTimeout())
+	require.Equal(t, 20*time.Millisecond, effective.ReportInterval())
+	require.Contains(t, out.String(), "HTTP status only")
+	for _, name := range []string{"metrics.jsonl", "metrics-summary.json", "report.txt", "report.md"} {
+		_, err := os.Stat(filepath.Join(output, name))
+		require.NoError(t, err)
+	}
 }
