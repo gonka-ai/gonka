@@ -40,7 +40,6 @@ func run(parent context.Context, args []string, getenv func(string) string, out 
 	base := fs.String("base", getenv("GONKA_BASE"), "remote gateway base URL including /gateway if needed")
 	model := fs.String("model", "", "single-model override; incompatible with mix.models")
 	output := fs.String("output", "", "new artifact directory")
-	preflightOnly := fs.Bool("preflight-only", false, "inspect remote models, capacity, escrows and PoC without sending inference requests")
 	duration := fs.Duration("duration", 0, "override workload duration")
 	concurrency := fs.Int("concurrency", 0, "override max in flight")
 	stream := fs.Bool("stream", false, "override common synthetic request streaming")
@@ -177,16 +176,13 @@ func run(parent context.Context, args []string, getenv func(string) string, out 
 		return err
 	}
 	fmt.Fprint(out, environmentText(environment))
-	if *preflightOnly || !environment.Ready {
-		result := "READY (preflight only; workload not started)"
-		if !environment.Ready {
-			result = "BLOCKED (preflight failed; workload not started)"
-		}
+	if !environment.Ready {
+		result := "BLOCKED (preflight failed; workload not started)"
 		report := "# Remote environment preflight\n\nResult: " + result + "\n" + environmentMarkdown(environment)
 		if err := os.WriteFile(filepath.Join(*output, "report.md"), []byte(report), 0o644); err != nil {
 			return err
 		}
-		assertions, err := json.MarshalIndent(map[string]any{"passed": environment.Ready, "preflight_ready": environment.Ready, "workload_started": false, "scope": "remote environment preflight only"}, "", "  ")
+		assertions, err := json.MarshalIndent(map[string]any{"passed": false, "preflight_ready": false, "workload_started": false, "scope": "remote load test blocked by environment preflight"}, "", "  ")
 		if err != nil {
 			return err
 		}
@@ -195,10 +191,7 @@ func run(parent context.Context, args []string, getenv func(string) string, out 
 		}
 		consoleSummary(out, result, nil)
 		fmt.Fprintf(out, "Artifacts: %s\n", *output)
-		if !environment.Ready {
-			return fmt.Errorf("remote preflight blocked workload; inspect %s/environment.json", *output)
-		}
-		return nil
+		return fmt.Errorf("remote preflight blocked workload; inspect %s/environment.json", *output)
 	}
 	consoleSection(out, "LOAD TEST")
 	fmt.Fprintf(out, "Duration: %s\nTraffic: %s\nMax in flight: %d\nScope: client requests only\n\n", scenario.Duration(), environment.Workload.Traffic, scenario.Workload.MaxInFlight)

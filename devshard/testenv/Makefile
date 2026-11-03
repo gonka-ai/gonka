@@ -34,7 +34,6 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
-REMOTE_PREFLIGHT_ONLY ?=
 LOAD_DATASET ?=
 
 ifeq ($(strip $(SCENARIO)),)
@@ -59,12 +58,8 @@ loadtest-remote: ## Run client traffic against GONKA_BASE without Docker (SCENAR
 	fi; \
 	: "$${GONKA_API_KEY:?Set GONKA_API_KEY in .env.remote-load or the environment}"; \
 	: "$${GONKA_BASE:?Set GONKA_BASE in .env.remote-load or the environment}"; \
-	exec go run ./cmd/remote-loadtest -scenario "loadtest/scenarios/$(SCENARIO).yaml" $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)") $(if $(filter 1 true yes,$(REMOTE_PREFLIGHT_ONLY)),-preflight-only)
+	exec go run ./cmd/remote-loadtest -scenario "loadtest/scenarios/$(SCENARIO).yaml" $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
 endif
-
-.PHONY: loadtest-remote-preflight
-loadtest-remote-preflight: REMOTE_PREFLIGHT_ONLY=1
-loadtest-remote-preflight: loadtest-remote ## Inspect remote environment without sending inference requests.
 
 .PHONY: loadtest-prodlike
 loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min).

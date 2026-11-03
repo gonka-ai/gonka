@@ -168,8 +168,8 @@ func TestEnvironmentMissingOptionalEndpointsAndCredentialRedaction(t *testing.T)
 	require.Contains(t, string(raw), "[REDACTED]")
 }
 
-func TestRemotePreflightOnlyAndBlockedRunsNeverSendInference(t *testing.T) {
-	for _, mode := range []string{"inspect", "missing-model", "zero-capacity"} {
+func TestRemoteBlockedRunsNeverSendInference(t *testing.T) {
+	for _, mode := range []string{"missing-model", "zero-capacity"} {
 		t.Run(mode, func(t *testing.T) {
 			dir := t.TempDir()
 			scenario := filepath.Join(dir, "scenario.yaml")
@@ -199,16 +199,9 @@ func TestRemotePreflightOnlyAndBlockedRunsNeverSendInference(t *testing.T) {
 			defer server.Close()
 			env := map[string]string{"GONKA_BASE": server.URL + "/gateway", "GONKA_API_KEY": "test-secret"}
 			args := []string{"-scenario", scenario, "-output", output}
-			if mode == "inspect" {
-				args = append(args, "-preflight-only")
-			}
 			var stdout bytes.Buffer
 			err := run(context.Background(), args, func(key string) string { return env[key] }, &stdout)
-			if mode == "inspect" {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, "preflight blocked workload")
-			}
+			require.ErrorContains(t, err, "preflight blocked workload")
 			require.Zero(t, inference.Load())
 			require.Contains(t, stdout.String(), "PRE-FLIGHT CHECK")
 			require.Contains(t, stdout.String(), "REPORT SUMMARY")
@@ -235,16 +228,26 @@ func TestRemoteSingleModelOverrideIsCheckedBeforeWorkload(t *testing.T) {
 	scenario := filepath.Join(dir, "scenario.yaml")
 	source := strings.Replace(scenarioHeader, "    mix:\n      models:\n        - {value: a, weight: 50}\n        - {value: b, weight: 50}", "    model: original\n    messages: [{role: user, content: test}]", 1)
 	require.NoError(t, os.WriteFile(scenario, []byte(source), 0o600))
+	var sent atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !serveHealthyEnvironment(w, r) {
-			http.Error(w, "unexpected inference", 500)
+		if serveHealthyEnvironment(w, r) {
+			return
 		}
+		require.Equal(t, http.MethodPost, r.Method)
+		var request struct {
+			Model string `json:"model"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&request))
+		require.Equal(t, "b", request.Model)
+		sent.Add(1)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
 	}))
 	defer server.Close()
 	var out bytes.Buffer
 	env := map[string]string{"GONKA_BASE": server.URL + "/gateway", "GONKA_API_KEY": "secret", "GONKA_MODEL": "b"}
-	err := run(context.Background(), []string{"-scenario", scenario, "-output", filepath.Join(dir, "output"), "-preflight-only"}, func(key string) string { return env[key] }, &out)
+	err := run(context.Background(), []string{"-scenario", scenario, "-output", filepath.Join(dir, "output")}, func(key string) string { return env[key] }, &out)
 	require.NoError(t, err)
+	require.Positive(t, sent.Load())
 	raw, err := os.ReadFile(filepath.Join(dir, "output", "environment.json"))
 	require.NoError(t, err)
 	var e environmentSnapshot

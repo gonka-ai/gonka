@@ -961,23 +961,22 @@ host availability remains unchanged throughout the run.
 Remote console output is separated by asterisk banners: `PRE-FLIGHT CHECK`
 contains the target and environment snapshot, `LOAD TEST` contains workload
 settings and progress, and `REPORT SUMMARY` contains the verdict and model
-comparison. Preflight-only and blocked runs omit the load block and explicitly
+comparison. Blocked runs omit the load block and explicitly
 report that the workload did not start. The saved Markdown report retains its
 document headings.
 
-Inspect the current environment without running the workload, from the
-repository root:
+Preflight is an automatic stage of every remote load test. After it succeeds,
+the runner starts the configured workload; there is no separate inspection
+mode. For example, from the repository root:
 
 ```bash
-make -C devshard/testenv loadtest-remote-preflight \
+make -C devshard/testenv loadtest-remote \
   SCENARIO=qwen-two-models-smoke \
   LOAD_DATASET=loadtest/resources/qwen-two-models-250.jsonl
 ```
 
-This invokes `cmd/remote-loadtest -preflight-only`. To inspect a single model,
-use a single-model scenario such as `SCENARIO=normal-load` and set
-`GONKA_MODEL` in `.env.remote-load`. A normal `loadtest-remote` run performs the
-same preflight automatically and starts its workload only after it succeeds.
+For a single model, use a single-model scenario such as
+`SCENARIO=normal-load` and set `GONKA_MODEL` in `.env.remote-load`.
 
 ## Per model report summary
 
