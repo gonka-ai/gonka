@@ -138,6 +138,10 @@ type (
 		// queries iterate only the bounded set of scheduled reservations
 		// instead of every participant's MaintenanceState (DoS protection).
 		MaintenanceScheduledIndex collections.KeySet[uint64]
+		// MaintenanceWindowsByParticipant maps (participant, start height) to
+		// the reservation ID of every window that activated. ClaimRewards uses
+		// it to exempt only the inferences that fell inside a window.
+		MaintenanceWindowsByParticipant collections.Map[collections.Pair[sdk.AccAddress, int64], uint64]
 		// PoC delegation collections
 		PoCDelegations                   collections.Map[collections.Pair[string, string], types.PoCDelegation]
 		PoCRefusals                      collections.KeySet[collections.Pair[string, string]]
@@ -689,6 +693,13 @@ func NewKeeper(
 			types.MaintenanceScheduledIndexPrefix,
 			"maintenance_scheduled_index",
 			collections.Uint64Key,
+		),
+		MaintenanceWindowsByParticipant: collections.NewMap(
+			sb,
+			types.MaintenanceWindowsByParticipantPrefix,
+			"maintenance_windows_by_participant",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Int64Key),
+			collections.Uint64Value,
 		),
 		// PoC delegation collections
 		PoCDelegations: collections.NewMap(
