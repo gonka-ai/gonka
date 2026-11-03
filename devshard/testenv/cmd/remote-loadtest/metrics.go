@@ -27,6 +27,7 @@ type remoteMetricsSample struct {
 }
 
 type remoteMetricsSummary struct {
+	Scope          string             `json:"scope"`
 	Interval       string             `json:"interval"`
 	StartedAt      time.Time          `json:"started_at"`
 	FinishedAt     time.Time          `json:"finished_at"`
@@ -59,6 +60,10 @@ func startRemoteMetrics(ctx context.Context, client *http.Client, base, key, tar
 		return nil, err
 	}
 	c := &remoteMetricsCollector{client: client, url: base + "/metrics", key: key, model: targetModel, output: output, index: index, done: make(chan struct{}), stopSignal: make(chan struct{}), duration: duration, summary: remoteMetricsSummary{Interval: "10% of workload (0% through 100%), plus final snapshot", Peaks: map[string]float64{}}}
+	c.summary.Scope = "all gateway models; process metrics are gateway-wide"
+	if targetModel != "" {
+		c.summary.Scope = "model " + targetModel + "; process metrics are gateway-wide"
+	}
 	zero := 0
 	c.collect(ctx, "before", &zero)
 	c.started = time.Now()
@@ -196,8 +201,8 @@ func extractRemoteMetrics(body []byte, targetModel string) (map[string]float64, 
 					result = label.GetValue()
 				}
 			}
-			if modelName == targetModel && metric.Counter != nil {
-				values["cache_"+result] = metric.Counter.GetValue()
+			if (targetModel == "" || modelName == targetModel) && metric.Counter != nil {
+				values["cache_"+result] += metric.Counter.GetValue()
 			}
 		}
 	}
@@ -215,7 +220,7 @@ func extractRemoteMetrics(body []byte, targetModel string) (map[string]float64, 
 			continue
 		}
 		for _, metric := range family.Metric {
-			if metricLabel(metric, "model") != targetModel {
+			if targetModel != "" && metricLabel(metric, "model") != targetModel {
 				continue
 			}
 			key := item.prefix
@@ -255,6 +260,9 @@ func (s remoteMetricsSummary) delta(name string) (float64, bool) {
 }
 
 func printRemoteMetrics(w io.Writer, s remoteMetricsSummary) {
+	if s.Scope != "" {
+		fmt.Fprintf(w, "\nMetrics scope: %s\n", s.Scope)
+	}
 	fmt.Fprintf(w, "\nGateway metrics summary\n-----------------------\n  Schedule: %s\n  Snapshots: %d; collection errors: %d\n", s.Interval, s.Samples, len(s.Errors))
 	for _, item := range []struct{ name, label string }{{"process_resident_memory_bytes", "Gateway RSS"}, {"go_memstats_heap_alloc_bytes", "Go heap allocated"}} {
 		before, b := s.Before[item.name]

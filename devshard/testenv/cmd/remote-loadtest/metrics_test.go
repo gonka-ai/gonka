@@ -143,3 +143,20 @@ func TestRemoteMetricsUnavailableIsRecorded(t *testing.T) {
 		t.Fatalf("missing collection errors: %+v", summary)
 	}
 }
+
+func TestRemoteMetricsAggregatesAllModelsWithoutLosingCacheCounters(t *testing.T) {
+	values, err := extractRemoteMetrics([]byte(remoteMetricsFixture), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if values["cache_hit"] != 111 {
+		t.Fatalf("all-model cache hits = %v, want 12+99", values["cache_hit"])
+	}
+	single, err := extractRemoteMetrics([]byte(remoteMetricsFixture), "target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if single["cache_hit"] != 12 {
+		t.Fatalf("single-model cache hits = %v, want 12", single["cache_hit"])
+	}
+}
