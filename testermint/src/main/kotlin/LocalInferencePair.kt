@@ -249,6 +249,42 @@ private val devshardctlLogFollowers = ConcurrentHashMap<Long, DevshardctlLogFoll
 private val containersWithDevshardctl = ConcurrentHashMap.newKeySet<String>()
 
 /**
+ * Copies a host-built CosmWasm artifact into the *node* container so
+ * `inferenced tx wasm store` can read it, and returns the in-container path.
+ *
+ * The artifact is not baked into the node image; build it first with
+ * `inference-chain/contracts/<name>/build.sh`.
+ */
+fun LocalInferencePair.installWasmArtifact(hostPath: Path): String {
+    val exec = node.executor
+    require(exec is DockerExecutor) { "installing a wasm artifact requires a DockerExecutor-backed node" }
+    check(Files.isRegularFile(hostPath)) {
+        "wasm artifact missing at $hostPath. Build it, e.g.: " +
+            "cd inference-chain/contracts/reward-splitter && ./build.sh"
+    }
+
+    val containerPath = "/tmp/${hostPath.fileName}"
+    val cp = ProcessBuilder(
+        "docker",
+        "cp",
+        hostPath.toAbsolutePath().toString(),
+        "${exec.containerId}:$containerPath",
+    )
+        .redirectErrorStream(true)
+        .start()
+    val cpOut = cp.inputStream.bufferedReader().use { it.readText() }
+    check(cp.waitFor() == 0) {
+        "docker cp $hostPath into ${exec.containerId} failed: $cpOut"
+    }
+    Logger.info("Installed wasm artifact {} into node container {}", hostPath.fileName, exec.containerId)
+    return containerPath
+}
+
+/** Host path of a built contract artifact under `inference-chain/contracts/`. */
+fun contractArtifactPath(contractDir: String, artifactName: String): Path =
+    Path.of(getRepoRoot(), "inference-chain", "contracts", contractDir, "artifacts", artifactName)
+
+/**
  * Tails devshardctl stdout/stderr from the api container into tinylog with source=devshardctl,
  * so per-test log files include user-side auto-seal diagnostics alongside dapi host logs.
  */
