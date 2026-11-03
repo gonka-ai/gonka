@@ -72,6 +72,9 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 		}
 		logging.Info("OffChainValidator: validating open PoC challenge", types.PoC,
 			"target", ch.Target(), "start_height", ch.StartHeight(), "work_items", len(workItems))
+		// Challenges keep a per-validator random order. The ordinary planner
+		// must not see this list.
+		shuffleValidationWork(workItems, nil)
 		v.executeValidation(ch.StartHeight(), samplingBlockHash, seedHex, challengeParams, sampleSize, nodes, workItems, nil, true)
 	}
 }

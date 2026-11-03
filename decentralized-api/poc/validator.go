@@ -361,14 +361,14 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	// modelVotingPowers holds established per-model voting power (model_id ->
 	// participant -> voting power) for the early-share guard's weighted median.
 	modelVotingPowers := make(map[string]map[string]int64)
-	snapshotResp, err := queryClient.PoCValidationSnapshot(context.Background(),
+	snapshotResp, snapshotQueryErr := queryClient.PoCValidationSnapshot(context.Background(),
 		&types.QueryPoCValidationSnapshotRequest{
 			PocStageStartHeight: pocStageStartBlockHeight,
 		})
-	if err != nil {
+	if snapshotQueryErr != nil {
 		if validationSlots > 0 {
 			logging.Warn("OffChainValidator: failed to query validation snapshot, falling back to O(N^2)", types.PoC,
-				"error", err)
+				"error", snapshotQueryErr)
 			validationSlots = 0
 		}
 	} else if snapshotResp.Found && snapshotResp.Snapshot != nil {
@@ -507,7 +507,43 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		}
 	}
 
+	var priorityResp *types.QueryPoCValidationSnapshotResponse
+	if snapshotQueryErr == nil {
+		priorityResp = snapshotResp
+	}
+	workItems, orderDecision := orderOrdinaryValidationWork(
+		pocStageStartBlockHeight,
+		v.validatorAddress,
+		priorityResp,
+		workItems,
+		v.config.WorkerCount,
+		nil,
+	)
+	v.logValidationOrder(pocStageStartBlockHeight, len(workItems), orderDecision)
 	v.executeValidation(pocStageStartBlockHeight, samplingBlockHash, pocStartBlockHash, pocParams, sampleSize, nodes, workItems, gr, false)
+}
+
+func (v *OffChainValidator) logValidationOrder(stage int64, items int, decision validationOrderDecision) {
+	fields := []any{
+		"pocStageStartBlockHeight", stage,
+		"mode", decision.Mode,
+		"items", items,
+	}
+	if decision.Reason != "" {
+		fields = append(fields, "reason", decision.Reason)
+	}
+	if decision.Mode == "priority" {
+		fields = append(fields,
+			"guardian", decision.Guardian,
+			"established", decision.Established,
+			"admission", decision.Admission,
+			"laneGuardian", decision.LaneGuardian,
+			"laneImpact", decision.LaneImpact,
+			"laneCoverage", decision.LaneCoverage,
+			"laneAdmission", decision.LaneAdmission,
+		)
+	}
+	logging.Info("OffChainValidator: validation dispatch order", types.PoC, fields...)
 }
 
 func (v *OffChainValidator) executeValidation(
@@ -521,15 +557,17 @@ func (v *OffChainValidator) executeValidation(
 	gr *guardRuntime,
 	challenge bool,
 ) {
-	rand.Shuffle(len(workItems), func(i, j int) {
-		workItems[i], workItems[j] = workItems[j], workItems[i]
-	})
-
 	proofClient := NewProofClient(v.recorder, ProofClientConfig{
 		Timeout: v.config.RequestTimeout,
 	})
 
-	workChan := make(chan participantWork, len(workItems)*2)
+	// Seed the whole initial order before workers start. A retry send then
+	// lands behind every item that has not been attempted yet.
+	workChan := make(chan participantWork, len(workItems))
+	for _, item := range workItems {
+		workChan <- item
+	}
+
 	var wg sync.WaitGroup
 
 	var statsMu sync.Mutex
@@ -570,10 +608,6 @@ func (v *OffChainValidator) executeValidation(
 				&pendingCount,
 			)
 		}(i)
-	}
-
-	for _, item := range workItems {
-		workChan <- item
 	}
 
 	wg.Wait()
