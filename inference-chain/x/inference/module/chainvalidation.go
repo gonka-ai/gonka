@@ -63,15 +63,16 @@ type PoCWeightCalculator struct {
 	AppHash                 string
 	ValidationSlots         int
 
-	// sortedVotingPowers caches PrepareSortedEntries output per model.
-	// Avoids re-sorting the same voting power map for every participant on the same model.
+	// sortedVotingPowers caches model totals and, in slot mode, sorted entries.
+	// The model electorate is immutable for the lifetime of a calculator.
 	sortedVotingPowers map[string]sortedModelVP
 }
 
-// sortedModelVP holds pre-computed sorted entries and total weight for a model.
+// sortedModelVP holds a cached total and optional slot-sampling entries.
 type sortedModelVP struct {
 	entries     []calculations.WeightEntry
 	totalWeight int64
+	validTotal  bool // Non-slot totals are checked for negative values and overflow.
 }
 
 // NewPoCWeightCalculator creates a new PoCWeightCalculator instance.
@@ -323,22 +324,63 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 		})
 	}
 
-	// Non-slot: weight approvals by votingPower, threshold against totalNetworkWeight.
+	// A removed delegator leaves the live network total, but its contribution
+	// remains in its target's frozen voting power. Keep the threshold base at
+	// least as large as the model electorate, including members who abstained.
+	totalWeight, ok := wc.nonSlotTotalWeight(key.ModelID)
+	if !ok {
+		wc.Logger.LogError("Calculate: Invalid non-slot voting-power total. Rejecting.", types.PoC,
+			"participant", key.ParticipantAddress, "modelId", key.ModelID)
+		return false
+	}
 	outcome := calculateValidationOutcome(votingPowers, vals)
-	outcome.TotalWeight = wc.TotalNetworkWeight
-	if passesValidationVoteThreshold(outcome.ValidWeight, wc.TotalNetworkWeight, thresholdBps) {
+	outcome.TotalWeight = totalWeight
+	validPasses := passesValidationVoteThreshold(outcome.ValidWeight, totalWeight, thresholdBps)
+	invalidPasses := passesValidationVoteThreshold(outcome.InvalidWeight, totalWeight, thresholdBps)
+	if validPasses && invalidPasses {
+		// Unique votes cannot do this with a threshold of at least 50%.
+		// Treat inconsistent input as ambiguous instead of preferring valid.
+		wc.Logger.LogError("Calculate: Both validation sides exceed threshold. Using guardian protection.", types.PoC,
+			"participant", key.ParticipantAddress, "modelId", key.ModelID,
+			"validWeight", outcome.ValidWeight, "invalidWeight", outcome.InvalidWeight,
+			"totalWeight", totalWeight, "thresholdBps", thresholdBps)
+		return wc.guardianProtection(key, outcome)
+	}
+	if validPasses {
 		wc.Logger.LogInfo("Calculate: Valid majority. Accepting.", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID,
-			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight, "thresholdBps", thresholdBps)
+			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight,
+			"totalWeight", totalWeight, "thresholdBps", thresholdBps)
 		return true
 	}
-	if passesValidationVoteThreshold(outcome.InvalidWeight, wc.TotalNetworkWeight, thresholdBps) {
+	if invalidPasses {
 		wc.Logger.LogWarn("Calculate: Invalid majority. Rejecting.", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID,
-			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight, "thresholdBps", thresholdBps)
+			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight,
+			"totalWeight", totalWeight, "thresholdBps", thresholdBps)
 		return false
 	}
 	return wc.guardianProtection(key, outcome)
+}
+
+// nonSlotTotalWeight uses the same lower bound on the electorate as slot
+// sampling. Cache the checked model sum once, rather than sorting and summing
+// it again for every candidate. Never fall back to a smaller denominator when
+// the sum is invalid: the caller must reject that electorate.
+func (wc *PoCWeightCalculator) nonSlotTotalWeight(modelID string) (int64, bool) {
+	cached, found := wc.sortedVotingPowers[modelID]
+	if !found {
+		total, valid := sumInt64Safe(wc.ModelVotingPowers[modelID])
+		cached = sortedModelVP{totalWeight: total, validTotal: valid}
+		if wc.sortedVotingPowers == nil {
+			wc.sortedVotingPowers = make(map[string]sortedModelVP)
+		}
+		wc.sortedVotingPowers[modelID] = cached
+	}
+	if !cached.validTotal {
+		return 0, false
+	}
+	return max(wc.TotalNetworkWeight, cached.totalWeight), true
 }
 
 func (wc *PoCWeightCalculator) validationVoteThresholdBps() int64 {
