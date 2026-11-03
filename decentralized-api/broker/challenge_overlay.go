@@ -1,6 +1,8 @@
 package broker
 
 import (
+	"sync"
+
 	"decentralized-api/chainphase"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -14,13 +16,25 @@ type challengeOverlay interface {
 	UnderChallenge() *types.OpenPoCChallenge
 }
 
-var overlay challengeOverlay
+var (
+	overlayMu sync.RWMutex
+	overlay   challengeOverlay
+)
 
 func SetChallengeOverlay(o challengeOverlay) {
+	overlayMu.Lock()
+	defer overlayMu.Unlock()
 	overlay = o
 }
 
+func getChallengeOverlay() challengeOverlay {
+	overlayMu.RLock()
+	defer overlayMu.RUnlock()
+	return overlay
+}
+
 func overlayUnderChallenge() *types.OpenPoCChallenge {
+	overlay := getChallengeOverlay()
 	if overlay == nil {
 		return nil
 	}
