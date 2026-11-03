@@ -350,6 +350,19 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	logging.Info("OffChainValidator: found participants with commits", types.PoC,
 		"count", len(commitsResp.Commits))
 
+	isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.CurrentPhase == types.InferencePhase &&
+		pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
+	stageCommits := commitsResp.Commits
+	skippedChallengeTargets := 0
+	if isConfirmation {
+		stageCommits, skippedChallengeTargets = filterChallengedConfirmationCommits(
+			stageCommits,
+			epochState.ActiveConfirmationPoCEvent.EpochIndex,
+			OpenChallenges.List(),
+		)
+	}
+
 	// Query validation snapshot for per-model sampling and authoritative model gating.
 	// An empty model set is treated as non-authoritative so bootstrap/startup epochs
 	// do not accidentally exclude all validation work.
@@ -394,11 +407,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	}
 
 	// Build work items with participant URLs
-	workItems := make([]participantWork, 0, len(commitsResp.Commits))
+	workItems := make([]participantWork, 0, len(stageCommits))
 	skippedNotAssigned := 0
 	skippedExcludedModel := 0
 	authoritativeModelAllowlist := hasModelList(snapshotFound, modelSampling)
-	for _, commit := range commitsResp.Commits {
+	for _, commit := range stageCommits {
 		if authoritativeModelAllowlist {
 			if _, allowed := modelSampling[commit.ModelId]; !allowed {
 				skippedExcludedModel++
@@ -465,10 +478,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		workItems = append(workItems, work)
 	}
 
-	if validationSlots > 0 || snapshotFound {
+	if validationSlots > 0 || snapshotFound || skippedChallengeTargets > 0 {
 		logging.Info("OffChainValidator: filtered work items before validation", types.PoC,
 			"totalCommits", len(commitsResp.Commits),
 			"assignedToUs", len(workItems),
+			"skippedChallengeTargets", skippedChallengeTargets,
 			"skippedNotAssigned", skippedNotAssigned,
 			"skippedExcludedModel", skippedExcludedModel,
 		)
@@ -489,13 +503,10 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		for _, item := range workItems {
 			assigned[earlyShareKey(item.address, item.modelId)] = true
 		}
-		// A confirmation PoC (CPoC) run is identified by an active confirmation
-		// event during the inference phase whose trigger height matches this
-		// stage. Only a passing CPoC clears the miss streak.
-		isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
-			epochState.CurrentPhase == types.InferencePhase &&
-			pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
-		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, commitsResp.Commits, modelVotingPowers, assigned)
+		// Only a passing CPoC clears the miss streak. Challenge targets are not
+		// part of ordinary CPoC, so do not let legacy/pre-filter commits affect
+		// the guard either.
+		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, stageCommits, modelVotingPowers, assigned)
 		if len(decisions) > 0 {
 			gr = &guardRuntime{
 				guard:             v.guard,
@@ -508,6 +519,38 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	}
 
 	v.executeValidation(pocStageStartBlockHeight, samplingBlockHash, pocStartBlockHash, pocParams, sampleSize, nodes, workItems, gr, false)
+}
+
+func filterChallengedConfirmationCommits(
+	commits []*types.PoCV2StoreCommitWithAddress,
+	epochIndex uint64,
+	challenges []*types.OpenPoCChallenge,
+) ([]*types.PoCV2StoreCommitWithAddress, int) {
+	targets := make(map[string]struct{}, len(challenges))
+	for _, open := range challenges {
+		if open == nil || open.Challenge == nil ||
+			open.Challenge.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN ||
+			open.Challenge.EpochIndex != epochIndex || open.Target() == "" {
+			continue
+		}
+		targets[open.Target()] = struct{}{}
+	}
+	if len(targets) == 0 {
+		return commits, 0
+	}
+
+	filtered := make([]*types.PoCV2StoreCommitWithAddress, 0, len(commits))
+	skipped := 0
+	for _, commit := range commits {
+		if commit != nil {
+			if _, challenged := targets[commit.ParticipantAddress]; challenged {
+				skipped++
+				continue
+			}
+		}
+		filtered = append(filtered, commit)
+	}
+	return filtered, skipped
 }
 
 func (v *OffChainValidator) executeValidation(
