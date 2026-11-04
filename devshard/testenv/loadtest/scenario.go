@@ -76,6 +76,7 @@ type CPUProfileWindow struct {
 }
 
 type Gateway struct {
+	PoCRequestMode      string                     `yaml:"poc_request_mode"`
 	Redundancy          GatewayRedundancy          `yaml:"redundancy"`
 	EscrowRotation      GatewayEscrowRotation      `yaml:"escrow_rotation"`
 	ParticipantThrottle GatewayParticipantThrottle `yaml:"participant_throttle"`
@@ -363,6 +364,9 @@ func protocolTimeoutSeconds(value string) (int64, error) {
 }
 
 func (s Scenario) Validate() error {
+	if mode := s.Gateway.PoCRequestMode; mode != "" && mode != "off" && mode != "relaxed" {
+		return fmt.Errorf("gateway.poc_request_mode must be off or relaxed")
+	}
 	if s.SchemaVersion != "v1" || strings.TrimSpace(s.Scenario) == "" {
 		return fmt.Errorf("schema_version must be v1 and scenario must be set")
 	}

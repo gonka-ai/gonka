@@ -730,7 +730,8 @@ as `MOCK_ML_NODE_HOSTS` (`node=host` pairs) with `MOCK_DAPI_HOST_ADDRS`
 model; other models keep the global `settlement_enabled`.
 
 There is no separate `thresholds` or fail-fast configuration. A run evaluates
-all enabled assertions and prints every result before returning a failure.
+all enabled assertions and saves every result. The console summarizes statuses
+and shows checks needing attention before returning a failure.
 `assertions.requests.error_rate` is the maximum permitted error rate over the requests sent to the gateway. `assertions.requests.dropped_rate` bounds the share of planned requests the generator never sent, dropped at `max_in_flight` or skipped as `generator_behind`; when unset it takes the `error_rate` value.
 
 ## Traffic profiles
@@ -986,12 +987,12 @@ one of the mock's workers get the first token; the rest wait in its queue. `faul
 each event fired; it never becomes XFAIL, because a fault that did not fire
 makes the run invalid.
 
-The final report prints each check with its expected value, actual value, and
-diagnostic details. Failed checks are also listed in `assertions.json`.
+The full file report includes every check with its expected value, actual value,
+and diagnostic details. All checks are also listed in `assertions.json`.
 
 ### Run report
 
-Every run ends with `report.md` in its directory, also printed to the console, built from `summary.json`, `assertions.json`, `events.json` and `invariants.json` only. Its template does not change between runs: a verdict line counting every status, the run's stalled share (`harness_health.invalid_fraction`) right under it, then (1) client traffic with the error and drop bounds and the quiet window, (2) one row per fault with its own requests, errors, bound and recovery, (3) the overlaps several faults touched at once, (4) the end state (orphans, settlement, pending age, resident runtimes), and (5) every check sorted by status. Each check carries one status:
+Every run saves a complete Markdown `report.md` in its directory, built from `summary.json`, `assertions.json`, `events.json` and `invariants.json` only. Its template does not change between runs: a verdict line counting every status, the run's stalled share (`harness_health.invalid_fraction`) right under it, then (1) client traffic with the error and drop bounds and the quiet window, (2) one row per fault with its own requests, errors, bound and recovery, (3) the overlaps several faults touched at once, (4) the end state (orphans, settlement, pending age, resident runtimes), and (5) every check sorted by status. Each check carries one status:
 
 | Status | Meaning |
 | --- | --- |
@@ -1002,7 +1003,16 @@ Every run ends with `report.md` in its directory, also printed to the console, b
 | `NOT_JUDGED` | The run left no data for the check, such as a fault every request of which another fault also touched. |
 | `PASS` | The bound held. |
 
-`go run ./cmd/loadtest -report <run directory>` rebuilds the report of an earlier run without starting a stack.
+The console uses plain text with aligned columns, short duration values and
+wrapped diagnostics. It shows client traffic, load/PoC windows, nonempty overlap
+windows, end state, and details for checks needing attention; successful checks
+are counted rather than repeated individually. Live runs also print ML-node,
+process memory/CPU and profile diagnostics once. Markdown tables and the full
+check listing remain in `report.md`.
+
+`go run ./cmd/loadtest -report <run directory>` rebuilds `report.md` and prints
+the console summary of an earlier run without starting a stack. `-recheck` uses
+the same console format.
 
 `go run ./cmd/loadtest -recheck <run directory>` judges every check of an earlier run again without a stack, from the files in its directory, and rewrites `assertions.json`, `invariants.json` and `report.md` there; copy the directory first to keep the run's own result. It exits 1 when a check fails. A live run judges its checks the same way: it writes what it read from the stack after the workload to `run-inputs.json`, then evaluates from the directory with the same code, so `-recheck` on a run made by the same binary gives the same `assertions.json`. A run saved before `run-inputs.json` existed is judged from what its other files hold. Its host-to-participant map comes from `host-stats.jsonl`, its allocations from `ml-stats.json` and its burns from `compose-pre-drain.log` (decompress `compose-pre-drain.log.gz` first). The drain check, the escrow-rotation check and the checks that need the gateway devshard list, the chain ledger or the lease table report `unavailable`, and the runner logs a `recheck:` line for each of these gaps.
 
@@ -1102,3 +1112,63 @@ what happened during and after the drain.
 | `resources/` | Optional captured request datasets. |
 | `traffic.go` | Traffic-profile validation and request scheduling. |
 | `results/` | Local artifacts from completed and failed runs; not committed. |
+
+## PoC with one preserved participant
+
+`poc-preserved-load` runs four participant identities at a constant 32 RPS for
+16 minutes, with 128-token streaming responses and seeded `prod-like` ML timing:
+
+```bash
+make -C devshard/testenv loadtest SCENARIO=poc-preserved-load
+```
+
+| Workload offset | State |
+| --- | --- |
+| 0–2m | All four participants serve; baseline |
+| 2–4m | P0 (`versiond-0/1`, one HA identity) preserved; P1/P2/P3 in PoC |
+| 4–10m | All four serve; six minutes of recovery |
+| 10–12m | P1 (`versiond-2`) preserved; P0/P2/P3 in PoC |
+| 12–16m | All four serve; four minutes of final recovery |
+
+The `poc_window` event requires `gateway.poc_request_mode: relaxed` and one
+bound mock ML node per container. `params.preserved` names a versiond service;
+its whole identity, including HA replicas, is preserved. `params.kind` is `poc`
+(default) or `cpoc` (confirmation generation). Change both events to `cpoc` for
+the corresponding experiment. Windows cannot overlap other injected events.
+
+On entry the runner blocks new ML allocations on the other participants,
+interrupts their active mock ML requests with the one-shot `abort_active` fault,
+and publishes PoC generation plus the per-model preserved set to the gateway.
+On exit (also on cancellation or a partially failed apply), it unblocks all
+affected hosts and restores Inference. It does not advance the epoch. The
+second PoC window is followed by four minutes of traffic with all hosts
+available, before drain.
+
+This simulates the inference interruption and routing lifecycle, without doing
+GPU PoC generation or implementing the proposed signed CPoC skip protocol.
+Small gateway probes and protocol/state traffic to non-preserved hosts remain
+permitted; new ML requests and allocations must stop. Checks require positive
+ML traffic on every identity in baseline/recovery and on the preserved identity
+during PoC, zero new ML work on the other three in the sampled interior, and
+positive aborted work on each affected identity at entry. A transition without
+active work fails rather than claiming cancellation was exercised. HA standby
+replicas are not required to serve individually.
+
+`report.md` and `invariants.json` (`tables.poc-load`) show all five windows:
+completed cohort RPS, p95/p99, failures, generator drops, sampled nonce growth,
+approximate nonces/completion, all unsent burns, and per-participant assigned
+nonces, protocol misses, host missed, ML requests and abort counts. Misses are
+measured without an assumed zero-miss requirement for PoC. Missing/reset counters
+are unavailable, not zero. Counter deltas cover interior samples; accounting
+sample timestamps are included in JSON. RPS uses eventual completions of
+requests started in each window, so requests can finish after the window.
+Generator drops are client admission losses, not TCP/IP packet-loss measurements.
+
+Raw evidence: `accounting-snapshots.jsonl` (10s throughout the workload, including final recovery, plus event boundaries),
+`dapi-host-stats.jsonl` (10s, also includes ML stats), `metrics.jsonl`,
+`requests.jsonl`, `events.json` and container logs. CPU profiles of the gateway
+and all host containers are collected at 1m, 3m, 5m, 9m, 11m and 15m for 30s each. Late
+misses can appear in recovery/drain; the normal pending/accounting checks still
+run, with the full 4m10s protocol grace. Request failures above 10% or unsent
+ghost rate above 2% fail the scenario; these bounds do not suppress the observed
+counts.

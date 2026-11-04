@@ -25,6 +25,8 @@ type Config struct {
 
 // Stats is the test-only request outcome snapshot exposed by a Mock ML node.
 type Stats struct {
+	ActiveRequests      int    `json:"active_requests"`
+	AbortedRequests     uint64 `json:"aborted_requests"`
 	RequestsReceived    uint64 `json:"requests_received"`
 	SuccessfulResponses uint64 `json:"successful_responses"`
 	FailedResponses     uint64 `json:"failed_responses"`
@@ -135,6 +137,7 @@ func (j *StreamJitter) draw(median, p99 time.Duration) time.Duration {
 
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
+	AbortActive         *bool   `json:"abort_active,omitempty"` // one-shot cancellation; false is a no-op
 	LatencyMs           *int    `json:"latency_ms,omitempty"`
 	StreamTTFTMs        *int    `json:"stream_ttft_ms,omitempty"`
 	HTTPStatus          *int    `json:"http_status,omitempty"`

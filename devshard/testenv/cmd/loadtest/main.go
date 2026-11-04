@@ -26,9 +26,9 @@ func main() {
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
-	reportDir := flag.String("report", "", "rebuild report.md of an existing run directory and print it, without running")
+	reportDir := flag.String("report", "", "rebuild report.md and print a console summary of an existing run, without running")
 	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
-	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print the report, without a stack")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print a console summary, without a stack")
 	flag.Parse()
 	if *recheckDir != "" {
 		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
@@ -38,7 +38,7 @@ func main() {
 		for _, note := range notes {
 			log.Printf("loadtest: recheck: %s", note)
 		}
-		report, err := loadtest.WriteReport(*recheckDir)
+		report, err := writeConsoleReport(*recheckDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func main() {
 		return
 	}
 	if *reportDir != "" {
-		report, err := loadtest.WriteReport(*reportDir)
+		report, err := writeConsoleReport(*reportDir)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -103,16 +103,28 @@ func main() {
 		StrictXFail:     *strictXFail,
 		Build:           build,
 	})
-	if report, reportErr := loadtest.WriteReport(*outputDir); reportErr != nil {
+	reportPrinted := false
+	if report, reportErr := writeConsoleReport(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)
 	} else {
-		fmt.Println(report)
+		fmt.Print(report)
+		reportPrinted = true
+	}
+	if reportPrinted {
+		printDiagnostics(result)
 	}
 	if err != nil {
-		if result.Summary.Requests > 0 {
+		if !reportPrinted && result.Summary.Requests > 0 {
 			printSummary(result, false)
 		}
+		if reportPrinted && loadtest.IsAssertionFailure(err) {
+			log.Print("loadtest: assertions failed; details above and in report.md")
+			os.Exit(1)
+		}
 		log.Fatal(err)
+	}
+	if reportPrinted {
+		return
 	}
 	if result.Summary.Requests == 0 {
 		fmt.Fprintf(os.Stdout, "Load test summary\n\nScenario: %s\nResult: NO REQUESTS\n\nArtifacts\n---------\n  output: %s\n", result.Summary.Scenario, result.OutputDir)
@@ -178,6 +190,25 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	}
 	fmt.Fprintln(os.Stdout)
 
+	printDiagnostics(result)
+	fmt.Fprintln(os.Stdout, "Artifacts")
+	fmt.Fprintln(os.Stdout, "---------")
+	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)
+	fmt.Fprintln(os.Stdout)
+	printAssertions(result.Assertions)
+}
+
+// writeConsoleReport preserves the complete file report while stdout uses
+// a terminal-specific renderer for normal runs, -report and -recheck.
+func writeConsoleReport(outputDir string) (string, error) {
+	if _, err := loadtest.WriteReport(outputDir); err != nil {
+		return "", err
+	}
+	return loadtest.ConsoleReport(outputDir)
+}
+
+func printDiagnostics(result loadtest.RunResult) {
+	summary := result.Summary
 	printMLNodeStats(result.MLStats)
 	fmt.Fprintln(os.Stdout)
 	printGatewayStateSizes(result.GatewayState)
@@ -208,11 +239,6 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		}
 		fmt.Fprintln(os.Stdout)
 	}
-	fmt.Fprintln(os.Stdout, "Artifacts")
-	fmt.Fprintln(os.Stdout, "---------")
-	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)
-	fmt.Fprintln(os.Stdout)
-	printAssertions(result.Assertions)
 }
 
 func printAccounting(report *loadtest.AccountingReport) {

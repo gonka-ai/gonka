@@ -379,6 +379,12 @@ func TestScenariosSetExecutionTimeoutAboveTheGenerationTail(t *testing.T) {
 			require.Greater(t, hangs[0].end-hangs[0].start, refusal+execution, "%s: %s", s.Scenario, reason)
 			continue
 		}
+		if s.Scenario == "poc-preserved-load" {
+			// Observe late misses after interrupted inference using the full
+			// refusal + execution + sweep grace/tick; do not shorten the tail.
+			require.Equal(t, 4*time.Minute+10*time.Second, resolveInvariantSettings(s).Grace, s.Scenario)
+			continue
+		}
 		require.Equal(t, 3*time.Minute+10*time.Second, resolveInvariantSettings(s).Grace, s.Scenario)
 	}
 }

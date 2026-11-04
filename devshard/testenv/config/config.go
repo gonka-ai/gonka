@@ -172,11 +172,12 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port"`
-	StatsPort int    `yaml:"stats_port"`
-	IP        string `yaml:"ip"`
-	Image     string `yaml:"image,omitempty"`
+	PoCRequestMode string `yaml:"poc_request_mode,omitempty"`
+	Host           string `yaml:"host"`
+	Port           int    `yaml:"port"`
+	StatsPort      int    `yaml:"stats_port"`
+	IP             string `yaml:"ip"`
+	Image          string `yaml:"image,omitempty"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.

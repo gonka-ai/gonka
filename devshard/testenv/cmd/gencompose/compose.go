@@ -357,6 +357,8 @@ services:
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
       DEVSHARD_ESCROW_ID: "{{ primaryEscrowID . }}"
       DEVSHARD_MODEL: "{{ primaryModelID . }}"
+{{ if .Devshardctl.PoCRequestMode }}      DEVSHARD_POC_REQUEST_MODE: "{{ .Devshardctl.PoCRequestMode }}"
+{{ end }}
 {{ with devshardsJSON . }}      DEVSHARDS_JSON: '{{ . }}'
 {{ end }}      DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}

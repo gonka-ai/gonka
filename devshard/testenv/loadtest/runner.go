@@ -94,6 +94,13 @@ type assertionFailures struct {
 	Checks []AssertionResult
 }
 
+// IsAssertionFailure lets the CLI avoid repeating checks already rendered in
+// its console report while still surfacing operational errors in full.
+func IsAssertionFailure(err error) bool {
+	var failures *assertionFailures
+	return errors.As(err, &failures)
+}
+
 func (e *assertionFailures) Error() string {
 	messages := make([]string, 0, len(e.Checks))
 	for _, check := range e.Checks {
@@ -588,6 +595,7 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 		return err
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
+	cfg.Devshardctl.PoCRequestMode = scenario.Gateway.PoCRequestMode
 	cfg.Versiond.DisablePeriodicSnapshots = scenario.Diagnostics.DisablePeriodicSnapshots
 	cfg.Versiond.EnableContentionProfiles = scenario.Diagnostics.ContentionProfiles
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"

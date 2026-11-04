@@ -27,6 +27,7 @@ type runReport struct {
 	checks  []AssertionResult
 	events  []EventRecord
 	windows []requestWindowStats
+	poc     []pocWindowReport
 	ladder  ladderReport
 	health  *harnessHealth
 	build   *BuildRecord
@@ -68,6 +69,7 @@ func loadRunReport(outputDir string) (runReport, error) {
 	var invariants struct {
 		Tables struct {
 			ErrorRateAndLatency []requestWindowStats `json:"error-rate-and-latency"`
+			PoC                 []pocWindowReport    `json:"poc-load"`
 		} `json:"tables"`
 		Health *harnessHealth `json:"harness_health"`
 	}
@@ -75,6 +77,7 @@ func loadRunReport(outputDir string) (runReport, error) {
 		return run, err
 	}
 	run.windows, run.health = invariants.Tables.ErrorRateAndLatency, invariants.Health
+	run.poc = invariants.Tables.PoC
 	run.ladder = loadLadder(outputDir, run.summary)
 	return run, nil
 }
@@ -153,6 +156,7 @@ func (r runReport) render(runName string) string {
 	out.WriteString("FIX: a bound was broken and needs a fix. XPASS: a known bug no longer reproduces; drop its marker. INVALID: a harness stall covers the check. XFAIL: a known bug failed as expected. NOT_JUDGED: the run left no data for the check. PASS: the bound held.\n")
 	r.renderTraffic(&out)
 	r.renderLadder(&out)
+	r.renderPoC(&out)
 	r.renderFaultWindows(&out)
 	r.renderOverlaps(&out)
 	r.renderEndState(&out)
