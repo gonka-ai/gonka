@@ -76,35 +76,57 @@ type EchoSignals struct {
 	SumGap float64 `json:"sum_gap"`
 }
 
-// EchoThresholds challenge an answer with Z below ZMin, a flip rate above
-// CountRate or a gap above MaxGap. ZMin is one bound for every model; the other
-// two are the honest quantiles of the model and have to be calibrated.
+// EchoThresholds challenge an answer with Z below ZMin, with more positions
+// off the winner than the model's honest share allows for its length, or with
+// a gap above the model's honest largest. ZMin is one bound for every model;
+// FlipRate and MaxGap are calibrated per model and zero when they are not.
 type EchoThresholds struct {
-	ZMin      float64
-	CountRate float64
-	MaxGap    float64
+	ZMin     float64
+	FlipRate float64
+	MaxGap   float64
 }
 
-// DefaultEchoThresholds: ZMin at three sigma; CountRate and MaxGap are the
-// honest 1 - 0.01/2 quantiles of Qwen3-0.6B on one RTX 3090 (2026-11-04) and
-// stand in until the fleet's models are calibrated.
-var DefaultEchoThresholds = EchoThresholds{ZMin: -3, CountRate: 0.023, MaxGap: 6.4}
+// echoThresholds: honest DeepSeek-V4-Flash-0731 FP8 on one B300 and honest
+// Qwen3-0.6B on one RTX 3090, 2026-11-04, 64 answers each; FlipRate is the
+// share of positions off the winner, MaxGap the largest gap seen.
+var echoThresholds = map[string]EchoThresholds{
+	"deepseek-ai/DeepSeek-V4-Flash-0731": {ZMin: -3, FlipRate: 0.038, MaxGap: 3.5},
+	"Qwen/Qwen3-0.6B":                    {ZMin: -3, FlipRate: 0.006, MaxGap: 6.4},
+}
+
+// EchoThresholdsFor returns the model's thresholds; a model without a
+// calibration is judged by Z alone.
+func EchoThresholdsFor(model string) EchoThresholds {
+	if t, ok := echoThresholds[model]; ok {
+		return t
+	}
+	return EchoThresholds{ZMin: -3}
+}
 
 func (t EchoThresholds) Pass(s EchoSignals) bool {
-	if s.Steps == 0 {
+	if s.Steps == 0 || s.Z < t.ZMin {
 		return false
 	}
-	return s.Z >= t.ZMin && float64(s.Count)/float64(s.Steps) <= t.CountRate && s.MaxGap <= t.MaxGap
+	if t.FlipRate > 0 {
+		n := float64(s.Steps)
+		// The honest count is binomial; this is its 99.5% bound.
+		bound := t.FlipRate*n + 2.576*math.Sqrt(n*t.FlipRate*(1-t.FlipRate)) + 0.5
+		if float64(s.Count) > bound {
+			return false
+		}
+	}
+	return t.MaxGap == 0 || s.MaxGap <= t.MaxGap
 }
 
 // EchoValidationResult holds the signals of a scored answer.
 type EchoValidationResult struct {
 	BaseValidationResult
+	Model   string
 	Signals EchoSignals
 }
 
 func (r EchoValidationResult) IsSuccessful() bool {
-	return DefaultEchoThresholds.Pass(r.Signals)
+	return EchoThresholdsFor(r.Model).Pass(r.Signals)
 }
 
 // ScoreEcho scores an answer from the validator's logprobs of its positions:
@@ -373,6 +395,7 @@ func ExecuteEchoValidation(
 	signals := ScoreEcho(logprobs, out, seed, vocab, tapeParams(requestMap))
 	return &EchoValidationResult{
 		BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBody},
+		Model:                model,
 		Signals:              signals,
 	}, nil
 }

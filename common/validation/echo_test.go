@@ -76,7 +76,7 @@ func TestScoreEcho_TheTapeSamplerLooksHonest(t *testing.T) {
 	require.Zero(t, s.Count)
 	require.InDelta(t, eulerGamma, s.MeanR, 0.25)
 	require.Greater(t, s.Z, -3.0)
-	require.True(t, DefaultEchoThresholds.Pass(s))
+	require.True(t, EchoThresholdsFor("Qwen/Qwen3-0.6B").Pass(s))
 }
 
 func TestScoreEcho_SamplingOffTheTapeFails(t *testing.T) {
@@ -84,7 +84,7 @@ func TestScoreEcho_SamplingOffTheTapeFails(t *testing.T) {
 	s := ScoreEcho(lp, greedyAnswer(lp), echoTestSeed, echoTestVocab, plainParams)
 	require.Less(t, s.Z, -3.0)
 	require.Greater(t, s.Count, echoTestSteps/5)
-	require.False(t, DefaultEchoThresholds.Pass(s))
+	require.False(t, EchoThresholdsFor("Qwen/Qwen3-0.6B").Pass(s))
 }
 
 func TestScoreEcho_AnotherSeedIsAnotherTape(t *testing.T) {
@@ -199,4 +199,15 @@ func TestExecuteEchoValidation_InflatedCountsAndRejectedIDsFail(t *testing.T) {
 	result, err = ExecuteEchoValidation(context.Background(), "42", promptPayload, stored, reject, 3, uint64(len(out)))
 	require.NoError(t, err)
 	require.IsType(t, &InvalidInferenceResult{}, result)
+}
+
+func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
+	th := EchoThresholdsFor("deepseek-ai/DeepSeek-V4-Flash-0731")
+	// 500 positions at an honest 3.8%: 19 expected, the 99.5% bound at 30.
+	require.True(t, th.Pass(EchoSignals{Steps: 500, Count: 30, Z: 0}))
+	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 31, Z: 0}))
+	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, Z: -3.1}))
+	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, MaxGap: 3.6}))
+	// Without a calibration only Z decides.
+	require.True(t, EchoThresholdsFor("other/model").Pass(EchoSignals{Steps: 500, Count: 200, MaxGap: 20, Z: -2.9}))
 }
