@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -43,6 +45,7 @@ type RequestResult struct {
 	Status            int           `json:"status"`
 	Outcome           string        `json:"outcome"`
 	Error             string        `json:"error,omitempty"`
+	ErrorCategory     string        `json:"error_category,omitempty"`
 	Model             string        `json:"model,omitempty"`
 	Stream            bool          `json:"stream,omitempty"`
 	MaxTokens         int64         `json:"max_tokens,omitempty"`
@@ -71,6 +74,7 @@ type Summary struct {
 	LatencyWindows          []LatencyWindow `json:"latency_windows"`
 	LatencyWindowInterval   string          `json:"latency_window_interval"`
 	StreamOutcomes          map[string]int  `json:"stream_outcomes,omitempty"`
+	ModelBreakdown          *ModelBreakdown `json:"model_breakdown,omitempty"`
 }
 
 // Windows group requests by start time; drops are included in offered RPS,
@@ -94,7 +98,7 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 	if cfg.GatewayURL == "" {
 		return Summary{}, fmt.Errorf("gateway URL is required")
 	}
-	if err := cfg.Scenario.Validate(); err != nil {
+	if err := cfg.Scenario.validate(cfg.Replay != nil); err != nil {
 		return Summary{}, err
 	}
 	if cfg.Client == nil {
@@ -288,6 +292,7 @@ func waitForArrival(ctx context.Context, at time.Time) bool {
 
 func droppedRequest(scenario Scenario, index uint64) RequestResult {
 	return RequestResult{
+		Model:     sampleRequest(scenario, index).Model,
 		RequestID: fmt.Sprintf("%s-%d-%06d", scenario.Scenario, scenario.Seed, index),
 		StartedAt: time.Now().UTC(),
 		Outcome:   "dropped_by_generator",
@@ -301,6 +306,7 @@ const generatorBehind = "generator_behind"
 
 func behindRequest(scenario Scenario, index uint64, slot time.Time) RequestResult {
 	return RequestResult{
+		Model:     sampleRequest(scenario, index).Model,
 		RequestID: fmt.Sprintf("%s-%d-%06d", scenario.Scenario, scenario.Seed, index),
 		StartedAt: slot.UTC(),
 		Outcome:   "dropped_by_generator",
@@ -333,20 +339,25 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 		result.Duration = time.Since(started)
 	}()
 	spec := sampleRequest(cfg.Scenario, index)
+	result.Model = spec.Model
 	var messages []Message
 	if cfg.Replay != nil {
-		sample, sampleIndex, ok := cfg.Replay.Select(index)
+		var sample replay.Sample
+		var sampleIndex int
+		var ok bool
+		if cfg.ReplayModel != "" {
+			sample, sampleIndex, ok = cfg.Replay.Select(index)
+		} else {
+			sample, sampleIndex, ok = cfg.Replay.SelectModel(spec.Model, index)
+		}
 		if !ok {
 			result.Error = "replay selector has no samples"
+			result.ErrorCategory = "request_error"
 			result.Outcome = "error"
 			return result
 		}
 		result.SampleIndex = &sampleIndex
-		spec = requestSpec{Model: sample.Model, Stream: sample.Stream, MaxTokens: sample.MaxTokens}
-		if sample.Temperature != 0 {
-			temperature := sample.Temperature
-			spec.Temperature = &temperature
-		}
+		spec = requestSpec{Model: sample.Model, Stream: sample.Stream, MaxTokens: sample.MaxTokens, Temperature: sample.Temperature, Logprobs: sample.Logprobs, TopLogprobs: sample.TopLogprobs}
 		messages = make([]Message, len(sample.Messages))
 		for i, message := range sample.Messages {
 			messages[i] = Message{Role: message.Role, Content: message.Content}
@@ -356,6 +367,9 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 			spec.Model = cfg.ReplayModel
 		}
 	} else {
+		if !spec.Logprobs {
+			spec.TopLogprobs = 0
+		}
 		messages = append([]Message(nil), spec.Messages...)
 		messages[len(messages)-1].Content += " [load-request:" + requestID + "]"
 	}
@@ -370,12 +384,14 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 		MaxTokens   int64     `json:"max_tokens,omitempty"`
 	}{Model: spec.Model, Stream: spec.Stream, Temperature: spec.Temperature, Logprobs: spec.Logprobs, TopLogprobs: spec.TopLogprobs, Messages: messages, MaxTokens: spec.MaxTokens})
 	if err != nil {
+		result.ErrorCategory = "request_error"
 		result.Error = err.Error()
 		result.Outcome = "error"
 		return result
 	}
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, cfg.GatewayURL+"/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
+		result.ErrorCategory = "request_error"
 		result.Error = err.Error()
 		result.Outcome = "error"
 		return result
@@ -387,6 +403,7 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	}
 	resp, err := cfg.Client.Do(httpReq)
 	if err != nil {
+		result.ErrorCategory = transportErrorCategory(err)
 		result.Error = err.Error()
 		result.Outcome = "error"
 		return result
@@ -406,6 +423,10 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 		stream := readSSE(resp.Body)
 		result.StreamOutcome = stream.Outcome
 		if stream.Outcome != streamCompleted {
+			result.ErrorCategory = "stream_" + stream.Outcome
+			if transportErrorCategory(stream.Err) != "network" {
+				result.ErrorCategory = transportErrorCategory(stream.Err)
+			}
 			result.Outcome = "error"
 			result.Error = stream.Outcome
 			if stream.Err != nil {
@@ -418,22 +439,39 @@ func executeRequest(ctx context.Context, cfg GeneratorConfig, index uint64) (res
 	}
 	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
+		result.ErrorCategory = transportErrorCategory(err)
+		if resp.StatusCode != cfg.Scenario.Assertions.Requests.HTTPStatus {
+			result.ErrorCategory = fmt.Sprintf("http_%d", resp.StatusCode)
+		}
 		result.Error = err.Error()
 		result.Outcome = "error"
 		return result
 	}
 	if resp.StatusCode != cfg.Scenario.Assertions.Requests.HTTPStatus {
+		result.ErrorCategory = fmt.Sprintf("http_%d", resp.StatusCode)
 		result.Outcome = "error"
 		result.Error = string(responseBody)
 		return result
 	}
 	if err := validateGatewayResponse(responseBody); err != nil {
+		result.ErrorCategory = "invalid_response"
 		result.Outcome = "error"
 		result.Error = err.Error()
 		return result
 	}
 	result.Outcome = cfg.Scenario.Assertions.Requests.TerminalOutcome
 	return result
+}
+
+func transportErrorCategory(err error) string {
+	var networkError net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+		return "timeout"
+	}
+	if errors.Is(err, context.Canceled) {
+		return "cancelled"
+	}
+	return "network"
 }
 
 func validateGatewayResponse(body []byte) error {
@@ -532,19 +570,56 @@ type requestSpec struct {
 // only on the seed and the index, so a rerun sends the same mix.
 func sampleRequest(scenario Scenario, index uint64) requestSpec {
 	request := scenario.Workload.Request
-	spec := requestSpec{Model: request.Model, Stream: request.Stream, MaxTokens: int64(request.MaxTokens), Messages: request.Messages}
-	mix := request.Mix
-	if mix == nil {
+	spec := requestSpec{Model: request.Model, Stream: request.Stream, MaxTokens: int64(request.MaxTokens), Messages: request.Messages, Temperature: request.Temperature, Logprobs: request.Logprobs, TopLogprobs: request.TopLogprobs}
+	if request.Mix == nil {
 		return spec
 	}
 	rng := rand.New(rand.NewPCG(uint64(scenario.Seed), index))
-	streamDraw, logprobsDraw := rng.Float64(), rng.Float64()
-	if mix.StreamRatio > 0 {
-		spec.Stream = streamDraw < mix.StreamRatio
+	applyRequestMix(&spec, request.Mix, rng)
+	// Preserve the existing seeded draws for the global mix, then apply model-specific overrides.
+	choices := make([]Weighted[int], len(request.Mix.Models))
+	for i, model := range request.Mix.Models {
+		choices[i] = Weighted[int]{Value: i, Weight: model.Weight}
 	}
-	if logprobsDraw < mix.LogprobsRatio {
-		spec.Logprobs = true
-		spec.TopLogprobs = mix.TopLogprobs
+	if selected, ok := pickWeighted(rng, choices); ok {
+		model := request.Mix.Models[selected]
+		spec.Model = model.Value
+		if model.Messages != nil {
+			spec.Messages = model.Messages
+		}
+		if model.MaxTokens != nil {
+			spec.MaxTokens = int64(*model.MaxTokens)
+		}
+		if model.Temperature != nil {
+			spec.Temperature = model.Temperature
+		}
+		if model.Stream != nil {
+			spec.Stream = *model.Stream
+		}
+		if model.Logprobs != nil {
+			spec.Logprobs = *model.Logprobs
+		}
+		if model.TopLogprobs != nil {
+			spec.TopLogprobs = *model.TopLogprobs
+		}
+		applyRequestMix(&spec, model.Mix, rng)
+	}
+	return spec
+}
+
+func applyRequestMix(spec *requestSpec, mix *RequestMix, rng *rand.Rand) {
+	if mix == nil {
+		return
+	}
+	streamDraw, logprobsDraw := rng.Float64(), rng.Float64()
+	if mix.StreamRatio != nil {
+		spec.Stream = streamDraw < *mix.StreamRatio
+	}
+	if mix.LogprobsRatio != nil {
+		spec.Logprobs = logprobsDraw < *mix.LogprobsRatio
+	}
+	if mix.TopLogprobs != nil {
+		spec.TopLogprobs = *mix.TopLogprobs
 	}
 	if choice, ok := pickWeighted(rng, mix.MaxTokens); ok {
 		spec.MaxTokens = int64(choice)
@@ -555,10 +630,6 @@ func sampleRequest(scenario Scenario, index uint64) requestSpec {
 	if choice, ok := pickWeighted(rng, mix.Prompts); ok {
 		spec.Messages = choice
 	}
-	if choice, ok := pickWeighted(rng, mix.Models); ok {
-		spec.Model = choice
-	}
-	return spec
 }
 
 // pickWeighted always consumes one draw so each dimension keeps its place in
@@ -619,6 +690,7 @@ func summarize(scenario Scenario, started time.Time, duration time.Duration, res
 	summary.P95 = percentile(latencies, 0.95)
 	summary.LatencyWindows = latencyWindows(scenario, started, results)
 	summary.LatencyWindowInterval = scenario.ReportInterval().String()
+	summary.ModelBreakdown = BuildModelBreakdown(scenario, results)
 	return summary
 }
 

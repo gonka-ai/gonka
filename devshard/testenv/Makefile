@@ -47,19 +47,17 @@ endif
 
 .PHONY: loadtest-remote
 ifeq ($(strip $(SCENARIO)),)
-loadtest-remote: ## Run a scenario against an external gateway using .env.remote-load (SCENARIO=name).
-	@echo "SCENARIO is required, for example: make loadtest-remote SCENARIO=normal-load"
+loadtest-remote: ## Run client traffic against GONKA_BASE without Docker (SCENARIO=name).
+	@echo "SCENARIO is required, for example: make loadtest-remote SCENARIO=qwen-two-models-smoke"
 	@false
 else
-loadtest-remote: ## Run a scenario against an external gateway using .env.remote-load (SCENARIO=name).
+loadtest-remote: ## Run client traffic against GONKA_BASE without Docker (SCENARIO=name).
 	@set -euo pipefail; \
 	if [[ -f .env.remote-load ]]; then \
 		set -a; source ./.env.remote-load; set +a; \
 	fi; \
 	: "$${GONKA_API_KEY:?Set GONKA_API_KEY in .env.remote-load or the environment}"; \
 	: "$${GONKA_BASE:?Set GONKA_BASE in .env.remote-load or the environment}"; \
-	: "$${GONKA_MODEL:?Set GONKA_MODEL in .env.remote-load or the environment}"; \
-	export GONKA_API_KEY GONKA_BASE GONKA_MODEL; \
 	exec go run ./cmd/remote-loadtest -scenario "loadtest/scenarios/$(SCENARIO).yaml" $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
 endif
 

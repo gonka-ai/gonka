@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 func TestPoCScenarioAndHAPlanning(t *testing.T) {
@@ -142,4 +144,20 @@ func TestPoCAbortBaselineExcludesBoundaryPoll(t *testing.T) {
 	_, _, aborted := pocMLDeltas(newInvariantContext(in), "p", at(135*time.Second), at(220*time.Second), at(120*time.Second))
 	require.NotNil(t, aborted)
 	require.Equal(t, uint64(5), *aborted)
+}
+
+func TestPoCModeValidatedForOrdinaryAndDatasetScenarios(t *testing.T) {
+	scenario, err := LoadScenario(filepath.Join("scenarios", "poc-preserved-load.yaml"))
+	require.NoError(t, err)
+	scenario.Gateway.PoCRequestMode = "invalid-mode"
+	require.ErrorContains(t, scenario.Validate(), "gateway.poc_request_mode")
+	require.ErrorContains(t, scenario.ValidateForDataset(), "gateway.poc_request_mode")
+	body, err := yaml.Marshal(scenario)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "scenario.yaml")
+	require.NoError(t, os.WriteFile(path, body, 0o644))
+	_, err = LoadScenario(path)
+	require.ErrorContains(t, err, "gateway.poc_request_mode")
+	_, err = LoadDatasetScenario(path)
+	require.ErrorContains(t, err, "gateway.poc_request_mode")
 }

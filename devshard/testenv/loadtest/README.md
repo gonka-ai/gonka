@@ -34,118 +34,96 @@ post-run inspection.
 
 ## External gateway
 
-Run the same normal-load client generator against an existing gateway without
-starting Docker (requires Go and the repository's Go dependencies):
+Run client traffic against an existing gateway without starting Docker:
 
 ```bash
 cp devshard/testenv/.env.remote-load.example devshard/testenv/.env.remote-load
-# Edit .env.remote-load: set GONKA_API_KEY, GONKA_BASE, and GONKA_MODEL.
+# Set GONKA_API_KEY and GONKA_BASE; GONKA_MODEL overrides a single-model scenario.
 make -C devshard/testenv loadtest-remote SCENARIO=normal-load
 ```
 
-This uses `normal-load.yaml`: 30 seconds, two closed-loop workers, non-streaming,
-64 requested output tokens, and request prompts with distinct IDs within a run.
-Repeated runs with the same scenario name and seed reuse IDs and may hit caches.
-The Make target loads `devshard/testenv/.env.remote-load` if present; its values
-override exported variables. The local file is ignored by Git.
-Files are sourced as shell code and must be trusted. Without a file, exported
-environment variables also work. URL and model have no defaults in the target.
-The key is not saved in run artifacts.
-Select scenarios with `SCENARIO=name`. Duration, concurrency, traffic, streaming,
-request settings and assertions come from `loadtest/scenarios/<name>.yaml`;
-the model is overridden by `GONKA_MODEL` from the environment file.
-The Make target needs no other parameters. For a different workload, edit or
-create a scenario YAML, as with local Docker runs.
-It rejects host-fault scenarios. Request
-timeouts default to 30 seconds; set `workload.request_timeout` in the scenario
-to change the deadline for the entire HTTP exchange, including reading the
-response body. Active requests can finish after the workload
-window. Interrupting a run saves partial request results and exits nonzero.
+The Make target sources the trusted `.env.remote-load` file when present and
+exports its values; otherwise it uses exported environment variables. The API
+key is not saved in artifacts, and the local env file is ignored by Git.
+For single-model YAML, `GONKA_MODEL` or the explicit `-model` CLI flag selects
+the target model. For `request.mix.models`, IDs and weights come from YAML;
+`GONKA_MODEL` is ignored and an explicit `-model` override is rejected.
 
-Artifacts under `loadtest/results/remote-<timestamp>/` include the effective
-`run.yaml`, `summary.json`, `requests.jsonl`, `assertions.json`, and capped
-failure bundles. Output directories must be new to avoid mixing runs. JSON
-latencies are nanoseconds, matching the local runner.
+Every remote run performs the environment preflight described below. It checks
+all selected models before sending inference requests and does not provision
+or change escrows. Preflight is always part of the load-test run. Host faults and
+scenario events are rejected. Local topology, settlement, accounting, and host
+state assertions are not evaluated by the remote client runner.
 
-The final console report is also saved as `report.txt`. It shows completed
-throughput over actual elapsed time (including final responses), separate
-request failures and generator drops, HTTP status counts, min/mean/p50/p95/p99/max
-full-response latency, and a window table with proportional throughput bars.
-Windows default to five seconds; use `-report-interval 10s` to change the size.
-Window RPS divides eventual completions of requests started in the window by
-that window's workload duration, matching the local Docker runner. Latencies
-include failed attempts and exclude generator drops. Streaming measurements
-cover the full stream, not time to first token. Repeated runs may benefit from
-response caching and should not be treated as uncached model benchmarks.
+Duration, concurrency, traffic and request settings normally come from YAML.
+The direct CLI also supports `-duration`, `-concurrency`, `-stream` (common
+synthetic request setting), `-request-timeout`, and `-report-interval` overrides.
+Only explicit overrides change YAML values. `workload.request_timeout` is
+supported for compatibility and takes precedence over `request.timeout`;
+without either, the entire HTTP exchange defaults to a 30-second timeout.
+Report windows default to five seconds when the scenario does not set one.
+Requests already in flight can finish after the workload window. Interrupting
+a run saves partial results and exits nonzero.
 
-Remote runs check HTTP status and error rate; response content, JSON structure,
-and streaming `[DONE]` are not validated. Connection failures without an HTTP
-response count as errors. After HTTP 200, bodies are consumed for latency
-measurement; read errors/timeouts are recorded separately and do not fail the
-status check. Latency then ends at the read error rather than the full response.
-Local Docker response validation is unchanged. A passing result also requires
-at least one completed request. Topology and gateway configuration are not
-applied; DevShard lifecycle, mock allocation, accounting, escrow rotation,
-container logs, process metrics and profiling checks are skipped explicitly.
-This measures client-visible behavior, not model quality or internal health.
-
-To send requests from the local 250-sample JSONL fixture:
+For the two-model JSONL fixture, from the repository root:
 
 ```bash
-make -C devshard/testenv loadtest-remote SCENARIO=normal-load \
-  LOAD_DATASET=loadtest/resources/devshard-load-samples-250-sanitized-final.jsonl
+make -C devshard/testenv loadtest-remote \
+  SCENARIO=qwen-two-models-smoke \
+  LOAD_DATASET=loadtest/resources/qwen-two-models-250.jsonl
 ```
 
-Both local `loadtest` and `loadtest-remote` Make targets accept `LOAD_DATASET`,
-which forwards the same `-load-dataset` flag to their runners. Paths are relative
-to `devshard/testenv`, or may be absolute. Omitting it uses the scenario's
-synthetic request. No separate dataset scenario is needed.
-Requests are sampled deterministically with replacement using
-the scenario seed; a run does not necessarily send all 250 records. Captured
-model IDs are replaced by `GONKA_MODEL`; messages, temperature, max_tokens and
-stream flags are preserved. The fixture's `response` field is ignored and may
-be omitted. Only the request is sent to the remote model and HTTP 200 is
-required by this scenario. Selected sample indices and original fingerprints
-are saved in `requests.jsonl`. Large prompts and output limits are sent as-is;
-HTTP errors from model context limits are included in the report.
+Both local and remote Make targets accept `LOAD_DATASET`; paths are relative
+to `devshard/testenv`, or absolute. The generator selects a model using YAML
+weights, then selects a complete row from that model's samples. It preserves
+the row's model, messages, temperature, max_tokens and stream settings. Every
+configured model must have samples. Extra dataset models are ignored, and
+row counts do not change YAML weights. Samples are selected deterministically
+with replacement, so a run need not send every row. Original sample indices
+and fingerprints are saved in `requests.jsonl`.
 
-For longer real-model requests, use `remote-long-load`: ten minutes of
-closed-loop traffic, two concurrent requests, a three-minute timeout per
-request, and thirty-second report windows:
+Remote datasets may omit `response`: fixture responses are not sent or
+compared to real model answers. Local Mock ML replay still requires response
+fixtures. Model IDs are not rewritten to a single target when using the remote
+CLI. The legacy `GeneratorConfig.ReplayModel` API remains available for callers
+that explicitly need the older single-target dataset override.
 
-```bash
-make -C devshard/testenv loadtest-remote SCENARIO=remote-long-load \
-  LOAD_DATASET=loadtest/resources/devshard-load-samples-250-sanitized-final.jsonl
-```
+By default, remote requests validate JSON response structure or successful
+SSE completion, as well as HTTP status. For legacy HTTP-status-only checks,
+pass `-http-status-only` to `cmd/remote-loadtest`. In that opt-in mode the body
+is still consumed for timing; read errors are recorded separately and do not
+turn an expected HTTP status into a failure. Such timings can end at a read
+error rather than a complete response. A passing client verdict requires at
+least one successful request and error/drop rates within scenario bounds.
 
-The run may take up to about thirteen minutes while final requests finish.
-The effective timeout is printed at startup and saved in `run.yaml` and
-`report.txt`. Endpoint and model still come from `.env.remote-load`. This
-scenario keeps concurrency at two to allow longer responses without also
-increasing simultaneous load. HTTP-status-only validation is unchanged;
-incomplete body reads remain separately visible in the report.
+The incoming `remote-long-load` scenario remains available: ten minutes,
+two concurrent requests, a three-minute request timeout and thirty-second
+report windows. Use it with a single deployed model selected by `GONKA_MODEL`.
+Dataset rows, if supplied, must contain that exact model ID. Large prompts
+and output limits are not silently rewritten or tokenized by the runner.
+
+Artifacts in a fresh `loadtest/results/remote-<timestamp>/` directory include
+`run.yaml`, `environment.json`, `summary.json`, `requests.jsonl`,
+`assertions.json`, failure bundles, Markdown `report.md` and plain-text
+`report.txt`. JSON latencies are nanoseconds. The console and text report
+show the per-model comparison described below. Success latency excludes
+failed requests; drops remain separate from request errors. Repeated runs may
+hit gateway caches and do not measure uncached model performance.
 
 Remote runs also collect `GET <GONKA_BASE>/metrics` at 0%, 10%, ..., 100% of
-the configured workload duration, and once more after all requests return.
-The 0% snapshot finishes before traffic begins. For a ten-minute workload,
-scheduled snapshots are one minute apart; for thirty seconds, three seconds
-apart. Interrupted runs can have fewer snapshots. Scrapes run sequentially
-with a five-second deadline against absolute workload offsets; slow scrapes
-can delay later snapshots. Requested progress and actual timestamps are
-recorded separately. Raw Prometheus snapshots
-are saved in `metrics/*.prom`, with timestamps, phases, selected process/cache
-values and errors in `metrics.jsonl`. `metrics-summary.json` stores the baseline,
-final values and sampled peaks. The final console report (also `report.txt`)
-reports numeric memory changes, CPU-seconds and average CPU cores, model cache hits,
-server/participant failures and means of new server timing observations
-(receipt, first content, total attempt and maximum chunk gap per attempt).
-It contains no automated findings; the saved results can be analyzed by an LLM.
-Timings describe attempts whose histogram observations were recorded during
-the collection interval; they do not represent client request percentiles.
-Missing or reset counters are not treated as zero. Counter deltas are omitted if a process change is
-detected. Missing metrics stay unavailable; collection errors do not change the
-HTTP-status-only test result. Metrics describe the whole Gateway, including
-other concurrent users. Collection does not clear or bypass the response cache.
+the configured workload duration, then after final responses. Scrapes are
+sequential, each with a five-second deadline; requested progress and actual
+timestamps are recorded separately. The baseline completes before traffic
+starts. Raw Prometheus responses are saved in `metrics/*.prom`, samples in
+`metrics.jsonl`, and baseline/final values and peaks in `metrics-summary.json`.
+Collection errors do not change the client verdict.
+
+Process metrics cover the gateway. Model counters are filtered to the target
+in a single-model run and aggregated across gateway models in a multi-model
+run; the scope is printed and saved. These shared gateway observations may
+include other clients and are separate from per-model client request stats.
+Counter deltas are omitted after a detected process change; missing metrics
+are unavailable, not zero. Collection neither clears nor bypasses the cache.
 
 ## Catch-up scenario
 
@@ -727,6 +705,48 @@ workload:
       models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
 ```
 
+Common fixed fields (`messages`, `max_tokens`, `temperature`, `stream`,
+`logprobs`, and `top_logprobs`) can be overridden inside each `models` entry.
+Each model may also have its own parameter `mix`:
+
+```yaml
+workload:
+  request:
+    messages: [{role: user, content: "common prompt"}]
+    max_tokens: 128
+    stream: false
+    mix:
+      models:
+        - value: model-a
+          weight: 70
+          # Inherits the common prompt and parameters.
+        - value: model-b
+          weight: 30
+          messages: [{role: user, content: "explain escrow in detail"}]
+          max_tokens: 1024
+          temperature: 0
+          stream: true
+          mix:
+            max_tokens: [{value: 512, weight: 80}, {value: 1024, weight: 20}]
+            stream_ratio: 0.5
+            prompts:
+              - {value: [{role: user, content: "explain escrow"}], weight: 60}
+              - {value: [{role: user, content: "explain validation"}], weight: 40}
+```
+
+Precedence is common fixed fields, common parameter mix, model fixed fields,
+then the model's local parameter mix. Missing fields inherit the previous
+value; explicit `false`, `temperature: 0`, and ratios of `0` override it.
+Local mixes support `stream_ratio`, `logprobs_ratio`, `top_logprobs`,
+`max_tokens`, `temperature`, and `prompts`; nested `models` are rejected.
+The short `{value: model-a, weight: 70}` format remains supported. Model IDs
+must be unique, and weights must be positive and finite.
+
+For a single model, keep using `request.model` with fixed parameters or a
+common mix. When `mix.models` is present, it supplies all selectable model IDs
+and `request.model` is not selected separately. Common `messages` may be
+omitted if every model supplies messages or a local prompt mix.
+
 With more than one mix model the runner creates one escrow and epoch group per
 model, as for replay datasets. Streamed responses are classified per request in
 `requests.jsonl` (`stream_outcome`) and counted in `summary.json`
@@ -865,10 +885,36 @@ go run ./cmd/loadtest \
 ```
 
 Each line contains `model`, `stream`, `temperature`, `max_tokens`,
-`messages`, and `response`. The runner loads the complete file into memory,
-selects samples pseudo-randomly with replacement using `seed`, and registers
-every unique captured model before starting the Gateway. There is no separate
-model flag.
+`messages`, and `response`; `logprobs` and `top_logprobs` are also supported.
+The runner loads the complete file into memory and groups samples by `model`.
+YAML determines the selectable models: `request.model` for one model, or
+`request.mix.models` and its weights for several. For example, a dataset
+containing `model-a` and `model-b` can use:
+
+```yaml
+workload:
+  request:
+    mix:
+      models:
+        - {value: model-a, weight: 70}
+        - {value: model-b, weight: 30}
+```
+
+For each request the generator first chooses a model by the YAML weights, then
+selects a row uniformly with replacement from that model's samples using
+`seed`. Dataset row counts do not affect the model weights. The selected row
+supplies the complete request; YAML prompts, parameters, and parameter mixes
+do not override it. Explicit `temperature: 0` is preserved, and an omitted
+temperature stays omitted. YAML messages may be omitted when `-load-dataset`
+is supplied.
+
+Every configured model must have at least one dataset row. Otherwise the
+runner returns `dataset has no samples for configured model "model-b"` before
+starting the stack. Extra dataset models are ignored for traffic and runtime
+registration, with a log message. Unlike the previous replay behavior, dataset
+models are no longer registered automatically: declare them in YAML first.
+In the command above, `normal-load.yaml` selects `test-model`, so the dataset
+must include `test-model` or the scenario must be updated to its actual IDs.
 
 Mock ML does not choose an independent response. It looks up the response by
 the selected request fingerprint, so concurrent and speculative requests stay
@@ -876,8 +922,109 @@ associated with the correct fixture. Request selections and fingerprints are
 recorded in `requests.jsonl`; replay hits and misses are included in
 `ml-stats.json` and the terminal summary.
 
-Dataset replay can create one initial escrow per unique model. Keep this in
+Dataset replay creates one initial escrow per configured YAML model. Keep this in
 mind when interpreting escrow IDs and when designing an escrow-rotation run.
+
+## Remote environment preflight
+
+Only `cmd/remote-loadtest` and `make loadtest-remote` inspect the existing
+environment before sending client traffic. The local Docker runner does not
+perform these remote checks. The same preflight handles a single model
+(`request.model`, including the final `GONKA_MODEL` or `-model` override) and
+multiple models (`request.mix.models`, without a single-model override).
+
+The runner makes three read-only GET requests in parallel:
+
+- `<GONKA_BASE>/v1/models` for advertised model IDs, context/output limits and
+  supported parameter metadata.
+- `<GONKA_BASE>/v1/status` for per-model live capacity, admission limits,
+  requests in flight, available concurrency slots and escrow state.
+- `/v1/epochs/latest` on the same origin for phase, cPOC state, block height,
+  epoch index and the next PoC start block. This public probe is sent without
+  the API key; the two gateway probes use the configured authorization.
+
+Models are matched by exact ID against the YAML and any dataset. Preflight
+blocks the entire workload if a required model is missing, has known zero
+live capacity, is not routable, has disabled access, or has no usable escrow.
+An explicit zero effective concurrency limit blocks when its configured limit
+is positive; a configured unlimited limit of zero is not treated as exhausted.
+A requested output cap above the model's advertised completion limit also
+blocks. The runner does not silently remove unavailable models or change the
+traffic weights. PoC/cPOC alone is informational and does not block a model
+with usable capacity.
+
+Model discovery must succeed. Missing or inaccessible optional status/epoch
+endpoints produce notes, and unexposed values are displayed as `unknown`.
+Balances are shown in raw API units; nonce headroom and an affordable request
+count are not inferred without the necessary limits and pricing. Context
+length is reported, but prompt token counts are not estimated.
+
+Every remote run saves `environment.json` with timestamps, normalized model
+comparisons and raw JSON probe responses. The preflight snapshot is printed as
+plain text and included in `report.md`. On a blocked preflight, the snapshot,
+`run.yaml`, `assertions.json` and `report.md` remain available; no inference
+requests are sent and no workload summary is fabricated. Probe timeout is
+five seconds per endpoint and can be changed with `-preflight-timeout` on the
+remote CLI. The snapshot does not reserve capacity or guarantee that PoC or
+host availability remains unchanged throughout the run.
+
+Remote console output is separated by asterisk banners: `PRE-FLIGHT CHECK`
+contains the target and environment snapshot, `LOAD TEST` contains workload
+settings and progress, and `REPORT SUMMARY` contains the verdict and model
+comparison. Blocked runs omit the load block and explicitly
+report that the workload did not start. The saved Markdown report retains its
+document headings.
+
+Preflight is an automatic stage of every remote load test. After it succeeds,
+the runner starts the configured workload; there is no separate inspection
+mode. For example, from the repository root:
+
+```bash
+make -C devshard/testenv loadtest-remote \
+  SCENARIO=qwen-two-models-smoke \
+  LOAD_DATASET=loadtest/resources/qwen-two-models-250.jsonl
+```
+
+For a single model, use a single-model scenario such as
+`SCENARIO=normal-load` and set `GONKA_MODEL` in `.env.remote-load`.
+
+## Per model report summary
+
+The console displays the model comparison as aligned plain text, with compact
+unique model headings and a mapping to the full model IDs. Durations use short
+units with two decimals where applicable (for example `105.94ms` or `1.33s`).
+The saved `report.md` keeps its Markdown table and full model IDs. Both formats
+read the same statistics from `summary.json`; no terminal utility is required.
+
+Local and remote reports end with a model comparison table. Model IDs are
+columns (in YAML order), followed by a Total column; metrics are rows:
+
+- Client result against the configured error and drop thresholds.
+- Planned, sent, dropped, and successful request counts.
+- Success rate among sent requests and successful share of planned requests.
+- Errors total, followed only by categories with a nonzero count in the run.
+  HTTP status codes, timeouts, other network failures, invalid JSON responses,
+  and SSE failures are mutually exclusive categories. If one model has a
+  category and another does not, the latter displays zero in that row.
+- Successful-response latency sample count, P50, P95, P99, and maximum.
+- Successful requests per second over the configured workload duration.
+
+Drops are never counted as request errors. Newly recorded drops retain the
+model selected by the seed and request sequence, including generator-behind
+arrivals. A legacy result without a model ID is shown as Unattributed rather
+than assigned to a model.
+
+Latency covers the full successful JSON or SSE response, and failed-request
+durations are excluded from this table. Total percentiles are computed from
+pooled successful samples, not averaged model percentiles. With no successful
+samples, latency displays a dash. P99 is descriptive and unstable for small
+sample counts. The existing top-level summary latency fields retain their
+previous behavior; this successful-only comparison is stored separately in
+`summary.json` under `model_breakdown` with `models` and `total` entries.
+
+The remote headline separates planned requests, sent requests, successful
+requests, errors, and drops. Model client results do not evaluate server state
+or settlement assertions and do not replace the overall verdict.
 
 ## Gateway and drain settings
 
@@ -1038,8 +1185,9 @@ The console uses plain text with aligned columns, short duration values and
 wrapped diagnostics. It shows client traffic, load/PoC windows, nonempty overlap
 windows, end state, and details for checks needing attention; successful checks
 are counted rather than repeated individually. Live runs also print ML-node,
-process memory/CPU and profile diagnostics once. Markdown tables and the full
-check listing remain in `report.md`.
+process memory/CPU and profile diagnostics once. The per-model comparison is
+printed once as aligned plain text alongside the PoC summary. Markdown tables
+and the full check listing remain in `report.md`.
 
 `go run ./cmd/loadtest -report <run directory>` rebuilds `report.md` and
 `timeline.html`, and prints the console summary of an earlier run without

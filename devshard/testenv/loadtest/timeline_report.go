@@ -105,10 +105,19 @@ func loadTimelineData(dir string) (timelineData, error) {
 		return timelineData{}, fmt.Errorf("summary.json has no workload start time")
 	}
 	duration := summary.Duration
-	if scenario, err := LoadScenario(filepath.Join(dir, "run.yaml")); err == nil {
-		duration = scenario.Duration()
-		if summary.Duration > 0 {
-			duration = min(duration, summary.Duration)
+	// Saved dataset scenarios may omit messages supplied by replay rows.
+	// Reporting needs only workload timing, not request validation.
+	var timing struct {
+		Workload struct {
+			Duration string `yaml:"duration"`
+		} `yaml:"workload"`
+	}
+	if err := loadYAML(filepath.Join(dir, "run.yaml"), &timing); err == nil {
+		if configured, err := time.ParseDuration(timing.Workload.Duration); err == nil && configured > 0 {
+			duration = configured
+			if summary.Duration > 0 {
+				duration = min(duration, summary.Duration)
+			}
 		}
 	}
 	if duration <= 0 {

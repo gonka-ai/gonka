@@ -95,6 +95,7 @@ func (r runReport) renderConsole(outputDir string) string {
 			consoleLine(&out, strings.ReplaceAll(name, "_", " "), check.Actual+" ["+reportStatus(check)+"]")
 		}
 	}
+	out.WriteString(RenderModelBreakdownText(r.summary.ModelBreakdown))
 	r.consoleLadder(&out)
 	if len(r.poc) > 0 {
 		consoleSection(&out, "PoC load windows")
