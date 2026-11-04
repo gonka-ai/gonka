@@ -49,6 +49,9 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	if _, asked := requestMap["n"]; asked {
 		requestMap["n"] = 1
 	}
+	// DECODE PoC uses priority -1; chat defaults to 0. Lower values run first.
+	// Remove client priority so inference requests cannot jump ahead of PoC.
+	delete(requestMap, "priority")
 	requestMap["skip_special_tokens"] = false
 	requestMap["return_token_ids"] = true
 	if _, ok := requestMap["seed"]; !ok {

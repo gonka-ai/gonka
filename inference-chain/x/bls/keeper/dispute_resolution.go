@@ -9,7 +9,6 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/cosmos/cosmos-sdk/crypto/ecies"
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/productscience/inference/x/bls/types"
 	blst "github.com/supranational/blst/bindings/go"
 )
@@ -202,14 +201,7 @@ func encryptWithSeedForParticipant(data []byte, secp256k1PubKeyBytes []byte, see
 }
 
 func parseECIESPublicKeyFromCompressed(secp256k1PubKeyBytes []byte) (*ecies.PublicKey, error) {
-	if len(secp256k1PubKeyBytes) != 33 {
-		return nil, fmt.Errorf("invalid compressed secp256k1 public key format, expected 33 bytes, got %d bytes", len(secp256k1PubKeyBytes))
-	}
-	if secp256k1PubKeyBytes[0] != 0x02 && secp256k1PubKeyBytes[0] != 0x03 {
-		return nil, fmt.Errorf("invalid compressed secp256k1 public key prefix, expected 0x02 or 0x03, got 0x%x", secp256k1PubKeyBytes[0])
-	}
-
-	pubKey, err := secp256k1.ParsePubKey(secp256k1PubKeyBytes)
+	pubKey, err := types.ParseCompressedSecp256k1PubKey(secp256k1PubKeyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse secp256k1 public key: %w", err)
 	}

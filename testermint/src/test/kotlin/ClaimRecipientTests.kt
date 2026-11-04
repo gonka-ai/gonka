@@ -1,6 +1,5 @@
 import com.productscience.EpochStage
 import com.productscience.assertions.assertThat
-import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
 import com.productscience.logSection
@@ -70,26 +69,18 @@ class ClaimRecipientTests : TestermintTest() {
             pair.waitForMlNodesToLoad()
         }
 
-        val participantKey = genesis.node.createKey("claim-recipient-prune-participant-${System.currentTimeMillis()}")
-        val participant = participantKey.address
-        genesis.api.addUnfundedInferenceParticipant(
-            UnfundedInferenceParticipant(
-                url = "",
-                models = listOf(),
-                validatorKey = "",
-                pubKey = participantKey.pubkey.key,
-                address = participant
-            )
-        )
-        genesis.node.waitForNextBlock(2)
-
+        // The join cold account is created in genesis and registered with
+        // submit-new-participant. SetClaimRecipients requires that participant
+        // record, and a mid-test key cannot be created with a user-to-user send
+        // while bootstrap transfers are restricted.
+        val participantPair = cluster.joinPairs.first()
+        val participant = participantPair.node.getColdAddress()
         val recipient = genesis.node.createKey("claim-recipient-prune-${System.currentTimeMillis()}").address
         val targetEpoch = genesis.getEpochData().latestEpoch.index + 1
 
-        logSection("Configure recipient for inactive participant epoch $targetEpoch")
-        val setRecipient = genesis.node.setClaimRecipients(
-            claimRecipientsJson(targetEpoch, recipient),
-            from = participantKey.name
+        logSection("Configure recipient for participant epoch $targetEpoch")
+        val setRecipient = participantPair.node.setClaimRecipients(
+            claimRecipientsJson(targetEpoch, recipient)
         )
         assertThat(setRecipient).isSuccess()
         assertThat(genesis.node.listClaimRecipients(participant).entries)

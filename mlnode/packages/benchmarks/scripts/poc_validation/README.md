@@ -37,6 +37,28 @@ For Qwen3-235B run validate.py against both qwen235b references in
 separate runs (the default lookup picks the 32-nonce one; pass
 `--reference <path>` for the deepgemm variant).
 
+### Decode scheme
+
+`--scheme decode` validates the decode PoC scheme against
+`artifacts/<sanitized model>-decode.json`. A decode reference holds, per
+nonce, the point chosen at each of its 257 steps (`k_points`, one hex digit
+per step); the MLNode teacher-forces that trajectory and counts a nonce as a
+mismatch when its claimed margin exceeds `dist_threshold` (the decode tau).
+The throughput phase mines the decode scheme. Shipped:
+
+```
+deepseek-ai-deepseek-v4-flash-0731-decode.json  (1xB300 tp=1 FP8; 200 nonces; tau 0.05)
+minimaxai-minimax-m2.7-decode.json              (2xH200 tp=2 triton; 200 nonces; tau 0.05)
+zai-org-glm-5.3-flash-decode.json               (2xB300 tp=2; 200 nonces; tau 0.025)
+```
+
+Each is one validation request of 200 nonces, the sample the chain
+validates; a request of many more can outlast MLNode's 60 s backend
+timeout. `make_artifact.py --scheme decode --num-nonces 200` bakes a new one;
+add the network's `stat_test` block to it as in the shipped references,
+or the server defaults (p_mismatch 0.001) fail an honest node on another
+GPU type over a few near-ties.
+
 Per-run output goes to
 `mlnode/packages/benchmarks/data/experiments/<exp_name>_<YYYY-MM-DD_HHMMSS>/`,
 matching the layout in `mlnode/packages/benchmarks/scripts/README.md`.

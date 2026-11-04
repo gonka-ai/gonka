@@ -21,9 +21,21 @@ func TestFeeParamsAminoJSON(t *testing.T) {
 	require.Contains(t, string(bz), `"type":"inference/MsgGasRule/StoredDelta"`)
 	require.Contains(t, string(bz), `"type":"inference/MsgGasRule/StoredBytes"`)
 	require.Contains(t, string(bz), `"stored_delta"`)
+	require.NotContains(t, string(bz), `"type":"inference/MsgGasRule/Static"`)
 	require.Contains(t, string(bz), `"stored_bytes"`)
 	// SDK camel-cases the oneof name, so Amino JSON uses "Func" not "func".
 	require.Contains(t, string(bz), `"Func"`)
+
+	params.FeeParams.Groups[0].Msgs = append(params.FeeParams.Groups[0].Msgs, &types.MsgGasRule{
+		TypeUrl: sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}),
+		Func: &types.MsgGasRule_Static{
+			Static: &types.StaticParams{Gas: types.StoreCommitGasPerNewKey},
+		},
+	})
+	require.NoError(t, params.Validate())
+	bz = marshalQueryParamsAminoJSON(t, params)
+	require.Contains(t, string(bz), `"type":"inference/MsgGasRule/Static"`)
+	require.Contains(t, string(bz), `"static"`)
 
 	params.FeeParams.Groups[0].Msgs = append(params.FeeParams.Groups[0].Msgs, &types.MsgGasRule{
 		TypeUrl: sdk.MsgTypeURL(&types.MsgSubmitPocValidationsV2{}),

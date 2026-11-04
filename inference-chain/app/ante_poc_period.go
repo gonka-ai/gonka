@@ -174,13 +174,41 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageSender(ctx sdk.Context, m
 
 func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	switch m := msg.(type) {
-	case *inferencetypes.MsgSubmitPocBatch,
-		*inferencetypes.MsgSubmitPocValidationsV2,
-		*inferencetypes.MsgPoCV2StoreCommit, *inferencetypes.MsgMLNodeWeightDistribution:
+	case *inferencetypes.MsgSubmitPocBatch, *inferencetypes.MsgPoCV2StoreCommit:
 		if err := ppd.checkPocMessageSender(ctx, msg); err != nil {
 			return err
 		}
 		return ppd.checkPocMessageTooLate(ctx, msg)
+
+	case *inferencetypes.MsgSubmitPocValidationsV2:
+		if err := ppd.checkPocMessageSender(ctx, msg); err != nil {
+			return err
+		}
+		if err := ppd.checkPocMessageTooLate(ctx, msg); err != nil {
+			return err
+		}
+		return ppd.checkPocValidationShape(ctx, m)
+
+	case *inferencetypes.MsgMLNodeWeightDistribution:
+		// Raw bounds run before permission, window, and store lookups, including
+		// a distribution unpacked from MsgExec. A non-participant still receives
+		// this error when the message is over the fixed ceiling.
+		if err := m.ValidateRawBounds(); err != nil {
+			return err
+		}
+		if err := ppd.checkPocMessageSender(ctx, msg); err != nil {
+			return err
+		}
+		if err := ppd.checkPocMessageTooLate(ctx, msg); err != nil {
+			return err
+		}
+		return ppd.checkMLNodeWeightDistribution(ctx, m)
+
+	case *inferencetypes.MsgPoCChallengeStoreCommit:
+		if ppd.inferenceKeeper == nil {
+			return nil
+		}
+		return ppd.inferenceKeeper.CheckPoCChallengeStoreCommitMempool(ctx, m)
 
 	case *authztypes.MsgExec:
 		// Recursively validate messages inside MsgExec. Fail closed on
@@ -210,6 +238,185 @@ func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Ms
 	}
 
 	return nil
+}
+
+// checkPocValidationShape drops a fee-exempt validation batch whose rows do
+// not match live validation shape. The handler still skips those rows when a
+// proposer includes the transaction anyway.
+func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context, msg *inferencetypes.MsgSubmitPocValidationsV2) error {
+	if ppd.inferenceKeeper == nil || msg == nil {
+		return nil
+	}
+	params, err := ppd.inferenceKeeper.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if len(msg.Validations) == 0 {
+		return inferencetypes.ErrIllegalState.Wrap("validations must not be empty")
+	}
+	if len(msg.Validations) > params.GetEpochValidationParams().ValidationsPerMessageLimit() {
+		return inferencetypes.ErrIllegalState.Wrap("too many validations in one message")
+	}
+	if _, err := inferencetypes.CanonicalAccAddress(msg.Creator); err != nil {
+		return err
+	}
+	for _, validation := range msg.Validations {
+		if validation == nil || validation.ModelId == "" || !ppd.inferenceKeeper.IsValidGovernanceModel(ctx, validation.ModelId) {
+			return inferencetypes.ErrInvalidModel
+		}
+		target, err := inferencetypes.CanonicalAccAddress(validation.ParticipantAddress)
+		if err != nil {
+			return sdkerrors.ErrInvalidAddress.Wrap("validation target is not canonical")
+		}
+		if _, found := ppd.inferenceKeeper.GetParticipant(ctx, target.String()); !found {
+			return inferencetypes.ErrParticipantNotFound
+		}
+		hasCommit, err := ppd.inferenceKeeper.HasPoCV2StoreCommit(ctx, msg.PocStageStartBlockHeight, target.String(), validation.ModelId)
+		if err != nil {
+			return err
+		}
+		if !hasCommit {
+			return inferencetypes.ErrIllegalState
+		}
+	}
+	return nil
+}
+
+type pocVoterEligibilityKey struct {
+	stage  int64
+	signer string
+}
+
+// PocVoterEligibilityDecorator rejects MsgSubmitPocValidationsV2 in CheckTx
+// when the signer lacks positive voting power for a submitted model in the
+// stage's PoCValidationSnapshot (unless the signer is an enabled genesis
+// guardian).
+//
+// Placed after SigVerificationDecorator and MsgExecAuthorizationDecorator so
+// unauthenticated or unauthorized transactions cannot trigger a snapshot read.
+type PocVoterEligibilityDecorator struct {
+	inferenceKeeper *inferencemodulekeeper.Keeper
+	cdc             codec.Codec
+}
+
+func NewPocVoterEligibilityDecorator(ik *inferencemodulekeeper.Keeper, cdc codec.Codec) PocVoterEligibilityDecorator {
+	return PocVoterEligibilityDecorator{
+		inferenceKeeper: ik,
+		cdc:             cdc,
+	}
+}
+
+func (d PocVoterEligibilityDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if simulate {
+		return next(ctx, tx, simulate)
+	}
+	if !ctx.IsCheckTx() {
+		return next(ctx, tx, simulate)
+	}
+	if d.inferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+
+	var cache map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility
+	for _, msg := range tx.GetMsgs() {
+		if err := d.checkMessage(ctx, msg, &cache); err != nil {
+			return ctx, err
+		}
+	}
+	return next(ctx, tx, simulate)
+}
+
+func (d PocVoterEligibilityDecorator) checkMessage(
+	ctx sdk.Context,
+	msg sdk.Msg,
+	cache *map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility,
+) error {
+	switch m := msg.(type) {
+	case *inferencetypes.MsgSubmitPocValidationsV2:
+		return d.checkVoterEligibility(ctx, m, cache)
+
+	case *authztypes.MsgExec:
+		if d.cdc == nil {
+			return sdkerrors.ErrInvalidRequest.Wrap("codec is required to unpack MsgExec")
+		}
+		for _, innerMsg := range m.Msgs {
+			var unwrapped sdk.Msg
+			if err := d.cdc.UnpackAny(innerMsg, &unwrapped); err != nil {
+				return err
+			}
+			if _, nested := unwrapped.(*authztypes.MsgExec); nested {
+				return errNestedMsgExec
+			}
+			if err := d.checkMessage(ctx, unwrapped, cache); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (d PocVoterEligibilityDecorator) checkVoterEligibility(
+	ctx sdk.Context,
+	msg *inferencetypes.MsgSubmitPocValidationsV2,
+	cache *map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility,
+) error {
+	if d.inferenceKeeper == nil || msg == nil {
+		return nil
+	}
+	signer, err := inferencetypes.CanonicalAccAddress(msg.Creator)
+	if err != nil {
+		return err
+	}
+	key := pocVoterEligibilityKey{
+		stage:  msg.PocStageStartBlockHeight,
+		signer: signer.String(),
+	}
+	var eligibility inferencemodulekeeper.PocStageVoterEligibility
+	var cached bool
+	if *cache != nil {
+		eligibility, cached = (*cache)[key]
+	}
+	if !cached {
+		var found bool
+		eligibility, found, err = d.inferenceKeeper.BuildPocStageVoterEligibility(ctx, msg.PocStageStartBlockHeight, signer.String())
+		if err != nil {
+			return err
+		}
+		if !found {
+			return inferencetypes.ErrIllegalState.Wrap("validation snapshot not found for stage")
+		}
+		if *cache == nil {
+			*cache = make(map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility, 1)
+		}
+		(*cache)[key] = eligibility
+	}
+	hasEligibleRow := false
+	for _, validation := range msg.Validations {
+		if validation == nil {
+			return inferencetypes.ErrInvalidModel
+		}
+		if eligibility.CanValidateModel(validation.ModelId) {
+			hasEligibleRow = true
+		}
+	}
+	if !hasEligibleRow {
+		return inferencetypes.ErrIllegalState.Wrap("signer has no voting power for any submitted model in stage snapshot")
+	}
+	return nil
+}
+
+// checkMLNodeWeightDistribution runs the same canonical admission the handler
+// uses, so an honest mempool accepts every distribution that would be stored.
+func (ppd PocPeriodValidationDecorator) checkMLNodeWeightDistribution(ctx sdk.Context, msg *inferencetypes.MsgMLNodeWeightDistribution) error {
+	if ppd.inferenceKeeper == nil || msg == nil {
+		return nil
+	}
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return sdkerrors.ErrInvalidAddress.Wrapf("invalid creator address: %s", err)
+	}
+	_, err = ppd.inferenceKeeper.CanonicalMLNodeWeightDistribution(ctx, msg.PocStageStartBlockHeight, addr, msg.Entries)
+	return err
 }
 
 func (ppd PocPeriodValidationDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {

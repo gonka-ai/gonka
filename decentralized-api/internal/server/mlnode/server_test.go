@@ -26,7 +26,14 @@ import (
 )
 
 type stubBrokerChainBridge struct {
-	models []string
+	models         []string
+	scheme         types.PocScheme
+	seqLen         int64
+	decodeSteps    int64
+	frozenScheme   types.PocScheme
+	frozenSeqLen   int64
+	frozenMax      int64
+	overrideFrozen bool
 }
 
 const (
@@ -67,10 +74,72 @@ func (s stubBrokerChainBridge) GetPreservedNodesSnapshot() (*types.QueryPreserve
 }
 
 func (s stubBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) {
-	return &types.QueryParamsResponse{}, nil
+	return &types.QueryParamsResponse{
+		Params: types.Params{
+			PocParams: &types.PocParams{
+				PocScheme: s.scheme,
+				Models:    s.recipeModels(s.scheme, s.seqLen, s.decodeSteps),
+			},
+		},
+	}, nil
+}
+
+func recipeModel(id string, scheme types.PocScheme, seqLen, decodeSteps int64) *types.PoCModelConfig {
+	return &types.PoCModelConfig{
+		ModelId: id,
+		Schemes: []*types.PocSchemeParams{{
+			Scheme:      scheme,
+			SeqLen:      seqLen,
+			DecodeSteps: decodeSteps,
+		}},
+	}
+}
+
+func (s stubBrokerChainBridge) recipeModels(scheme types.PocScheme, seqLen, decodeSteps int64) []*types.PoCModelConfig {
+	if len(s.models) == 0 {
+		return []*types.PoCModelConfig{
+			recipeModel(testModelA, scheme, seqLen, decodeSteps),
+			recipeModel(testModelB, scheme, seqLen, decodeSteps),
+		}
+	}
+	models := make([]*types.PoCModelConfig, 0, len(s.models))
+	for _, id := range s.models {
+		models = append(models, recipeModel(id, scheme, seqLen, decodeSteps))
+	}
+	return models
+}
+
+func (s stubBrokerChainBridge) GetPocStageRecipe(stageHeight int64) (*types.QueryPocStageRecipeResponse, error) {
+	scheme, seqLen, decodeSteps := s.scheme, s.seqLen, s.decodeSteps
+	if s.overrideFrozen {
+		scheme, seqLen, decodeSteps = s.frozenScheme, s.frozenSeqLen, s.frozenMax
+	}
+	return &types.QueryPocStageRecipeResponse{
+		Found: true,
+		Recipe: &types.PocStageRecipe{
+			StageHeight: stageHeight,
+			Scheme:      scheme,
+			Models:      s.recipeModels(scheme, seqLen, decodeSteps),
+		},
+	}, nil
+}
+
+func (s stubBrokerChainBridge) GetEpochPocRecipe(epochIndex uint64) (*types.QueryPocStageRecipeResponse, error) {
+	return s.GetPocStageRecipe(int64(epochIndex))
 }
 
 func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...string) *broker.Broker {
+	return newMLNodeTestBrokerWithRecipe(t, phase, types.PocScheme_POC_SCHEME_PREFILL, 1, 0, modelIDs...)
+}
+
+func newMLNodeTestBrokerWithRecipe(t *testing.T, phase types.EpochPhase, scheme types.PocScheme, seqLen, decodeSteps int64, modelIDs ...string) *broker.Broker {
+	t.Helper()
+	return newMLNodeTestBrokerWithBridge(t, phase, stubBrokerChainBridge{
+		models: modelIDs, scheme: scheme, seqLen: seqLen, decodeSteps: decodeSteps,
+	})
+}
+
+func newMLNodeTestBrokerWithBridge(t *testing.T, phase types.EpochPhase, bridge stubBrokerChainBridge) *broker.Broker {
 	t.Helper()
 
 	tracker := &chainphase.ChainPhaseTracker{}
@@ -89,7 +158,7 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 		nil,
 	)
 	testBroker := broker.NewBroker(
-		stubBrokerChainBridge{models: modelIDs},
+		bridge,
 		tracker,
 		nil,
 		"http://callback",
@@ -111,8 +180,8 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 		// already set above
 	}
 
-	models := make(map[string]apiconfig.ModelConfig, len(modelIDs))
-	for _, modelID := range modelIDs {
+	models := make(map[string]apiconfig.ModelConfig, len(bridge.models))
+	for _, modelID := range bridge.models {
 		models[modelID] = apiconfig.ModelConfig{}
 	}
 
@@ -314,6 +383,65 @@ func TestV2GeneratedCallback_ChallengeStageRejectsOldHeight(t *testing.T) {
 	assert.Equal(t, uint32(1), modelStore.Count())
 }
 
+func TestV3GeneratedCallback_ChallengeUsesFrozenEpochRecipe(t *testing.T) {
+	poc.OpenChallenges.Reset()
+	t.Cleanup(poc.OpenChallenges.Reset)
+	poc.OpenChallenges.Replace("me", []*types.OpenPoCChallenge{{
+		Challenge: &types.PoCChallenge{
+			Target:      "me",
+			StartHeight: 777,
+			Seed:        []byte{1},
+		},
+		Finish:     2000,
+		Generating: true,
+	}}, 0)
+
+	testBroker := newMLNodeTestBrokerWithBridge(t, types.PoCGeneratePhase, stubBrokerChainBridge{
+		models:         []string{testModelA},
+		scheme:         types.PocScheme_POC_SCHEME_PREFILL,
+		seqLen:         128,
+		overrideFrozen: true,
+		frozenScheme:   types.PocScheme_POC_SCHEME_DECODE,
+		frozenSeqLen:   256,
+		frozenMax:      2,
+	})
+	testBroker.GetPhaseTracker().Update(
+		chainphase.BlockInfo{Height: 800, Hash: "test-hash"},
+		&types.Epoch{Index: 1, PocStartBlockHeight: 100},
+		&types.EpochParams{
+			EpochLength:           1000,
+			EpochShift:            0,
+			PocStageDuration:      100,
+			PocExchangeDuration:   50,
+			PocValidationDelay:    10,
+			PocValidationDuration: 100,
+		},
+		true,
+		nil,
+	)
+
+	artifactStore := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
+	defer artifactStore.Close()
+	server := NewServer(nil, testBroker, WithArtifactStore(artifactStore))
+
+	rec := postGeneratedBatch(t, server, testModelA, 777)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "v2 must not interpret a DECODE stage as PREFILL")
+	body, err := json.Marshal(map[string]any{
+		"block_height": 777, "public_key": "pub", "node_id": 1,
+		"artifacts": []map[string]any{{"nonce": 1, "k_points_steps": []int{1, 2, 3}}},
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/v3/poc-batches/model-a/generated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	modelStore, err := artifactStore.GetStore(777, testModelA)
+	assert.NoError(t, err)
+	assert.Equal(t, uint32(1), modelStore.Count())
+}
+
 func TestV2ValidatedCallbackUsesPathModelID(t *testing.T) {
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.
@@ -471,4 +599,67 @@ func TestGetVersions_OracleJSONContract(t *testing.T) {
 	assert.Equal(t, "v1", body.Versions[0].Name)
 	assert.Equal(t, "https://example/v1.zip", body.Versions[0].Binary)
 	assert.Equal(t, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", body.Versions[0].SHA256)
+}
+
+func TestV2ValidatedCallback_AbstainsOnNanSteps(t *testing.T) {
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"n_nan_steps":     2,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
+}
+
+func TestV3ValidatedCallbackUsesPathModelID(t *testing.T) {
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.
+		On("SubmitPocValidationsV2", mock.MatchedBy(func(msg *types.MsgSubmitPocValidationsV2) bool {
+			return msg != nil &&
+				msg.PocStageStartBlockHeight == 100 &&
+				len(msg.Validations) == 1 &&
+				msg.Validations[0].ModelId == testModelA
+		})).
+		Return(nil).
+		Once()
+
+	server := NewServer(mockRecorder, newMLNodeTestBrokerWithBridge(t, types.PoCValidatePhase, stubBrokerChainBridge{models: []string{testModelA}, scheme: types.PocScheme_POC_SCHEME_DECODE, seqLen: 256, decodeSteps: 256}))
+
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         1,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v3/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	server.e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
+	mockRecorder.AssertExpectations(t)
 }
