@@ -47,7 +47,7 @@ The gateway then reads `DEVSHARD_PRIVATE_KEY` from its environment. This is why 
 
 ## Storage
 
-`DEVSHARD_STORAGE_HOST_DIR` (default `.devshard-gateway`, next to the compose file) is mounted at `DEVSHARD_STORAGE_DIR` in the container. It holds the escrow database, the per-escrow session state and the nonce ledger. Losing it loses the gateway's memory of the escrows it serves, so back it up or point it somewhere durable before running anything that matters.
+`DEVSHARD_STORAGE_HOST_DIR` (default `.devshard-gateway`, next to the compose file) is mounted at `DEVSHARD_STORAGE_DIR` in the container. It holds the escrow database, the per-escrow session state and the nonce ledger. Losing it loses the gateway's memory of the escrows it serves, so back it up or point it somewhere durable before running anything that matters. How to take a backup and restore one is in [`docs/operations.md`](../docs/operations.md), "Backup and restore"; how to roll back a release, in "Release and rollback".
 
 ## Tuning without a redeploy
 

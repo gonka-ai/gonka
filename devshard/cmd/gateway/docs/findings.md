@@ -82,7 +82,7 @@ With an empty map a nonce a host already receipted yields reason `refused`, and 
 
 ## Known limitations
 
-These are not defects the gateway can fix inside `cmd/gateway`; each is recorded so a reader does not rediscover it.
+Each is recorded so a reader does not rediscover it. Most sit in the hosts or the shared devshard packages; the frozen-height detection (`escrow/staleness.go`) and the full-count guard (`escrow/planner.go`) are the gateway's own and are not closed yet.
 
 - Abandoned `Pending` reservations are still paid to the host at finalize: `Finalize` pays every open record in full, so an attempt the gateway gave up on is charged when the escrow settles; the timeout sweep cannot recover it, because hosts reject a refused vote that carries no payload (`devshard/host/timeout.go`).
 - An over-context prompt costs the refusing host's attempt a reservation for the whole execution timeout and gives that honest host a miss. The host relays vLLM's 400 to the gateway as a stream event, and the race stops at a trusted refusal unless the host runs shorter than the model ([race.md](./race.md), "Escalation"), so one attempt is held, not one per host. The hold and the miss are a host defect: the engine error comes after the receipt is signed and ends in `FailReceiptOrphan` with no Finish over the refusal (`devshard/host/host.go`, `RunExecution`), so only an execution-timeout vote settles the record. The scenarios pin the miss so a host fix flips it.

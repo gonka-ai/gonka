@@ -10,9 +10,9 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | --- | --- | --- |
 | `/v1/chat/completions` | per-model (below) | no |
 | `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
-| `/v1/status` | none, as above | yes — the deployed compose healthcheck reads it, and a gateway disabled on purpose is not unhealthy |
+| `/v1/status` | none, as above | yes — a gateway disabled on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
-| `/metrics`, `/healthz` | none | yes |
+| `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which does no work ([`deploy/README.md`](../deploy/README.md)) |
 | `/v1/requests/{id}` | admin | yes |
 | `/devshard/{id}/v1/finalize`, `.../state`, `.../debug/*` | admin | yes |
 | `/v1/admin/*`, `/v1/debug/rotation`, `/v1/debug/memstats`, `/v1/debug/heightsync` | admin | yes |
@@ -674,6 +674,47 @@ A chat request whose prompt and `max_tokens` its model's context cannot hold is 
 ## One process per escrow set
 
 The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. The devshardctl gateway's Postgres settings (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PG_CONNECT_TIMEOUT`) are not read; when any is set the gateway logs `legacy Postgres settings are ignored` at boot, naming them (`env.LegacyPostgresVariablesSet`).
+
+## Release and rollback
+
+A release is an image, built and pushed by `make release` from `devshard/cmd/gateway`. It refuses to run without `GATEWAY_VERSION`, which is stamped into every settlement ([`CONTRIBUTING.md`](../CONTRIBUTING.md)), and without `GATEWAY_TAGS`, the tags the image is pushed under as `$(GATEWAY_IMAGE):<tag>`; it builds for `linux/amd64` (`PLATFORM`):
+
+```
+cd devshard/cmd/gateway
+make release GATEWAY_VERSION=<version> GATEWAY_TAGS='<tag> <tag>-latest'
+```
+
+The stack in [`deploy/`](../deploy/) runs the image `GATEWAY_IMAGE` names, a full reference with its tag. To deploy a release, set it to the new tag and recreate the container from the `deploy` directory:
+
+```
+export GATEWAY_IMAGE=<registry>/<image>:<tag>
+docker compose -f docker-compose.devshard-gateway.yml pull
+docker compose -f docker-compose.devshard-gateway.yml up -d
+```
+
+`up -d` stops the running container with SIGTERM, so the outgoing gateway runs its whole shutdown ("Shutdown") before the new one opens the same storage directory. To go back one tag, set `GATEWAY_IMAGE` to the previous tag and run the same two commands.
+
+What a rollback reads depends on what the newer release wrote into the storage directory:
+
+- **`gateway.db`** is versioned by `schema_version`, one row per applied entry of `migrations` (`store/store.go`, `migrate`). The list is append-only, so a release reads every store a release with a list no longer than its own wrote, and migrates it up at `Open`. An older release opening a store a newer one migrated applies nothing and does not refuse it: the tables and columns it knows are all still there, and every column a later entry adds carries a default, so the rows it inserts stay valid. A rollback across a migration that is not a plain added table or column is not covered by this; read the entries the newer release added before rolling back over them.
+- **`accounting.db`** carries the ledger's `accounting.SchemaVersion` and is read only by a release with the same number (`accounting/sqlload.go`, `Store.Load`). Across a change of that number the ledger starts without its stored counters, logs `nonce accounting started without its stored counters`, and replaces the stored tables on its next write. That loses the ledger's history, never money: the ledger is observation, and settlement reads the escrow sessions ([accounting.md](./accounting.md), "Storage").
+- **The escrow sessions** (`escrow-<id>/epoch_<N>.db`, "Session storage") are written by the devshard libraries the release is built with, and a gateway release runs only with the devshard release of the same version.
+
+## Backup and restore
+
+The storage directory (`DEVSHARD_STORAGE_DIR`, mounted from `DEVSHARD_STORAGE_HOST_DIR`) holds everything the gateway remembers: `gateway.db` (escrow rows, create commitments, admin overrides), `accounting.db` (the nonce ledger) and one `escrow-<id>/` directory per escrow session. The three describe the same escrows at the same moment, so they are archived together and restored together: a `gateway.db` older than the session directories beside it lacks the rows of escrows those sessions serve, and session directories older than the rows hold nonces the hosts have moved past. No command takes a backup for you; this is the manual procedure.
+
+1. **Stop routing.** Turn on the kill switch ("The kill switch") through the admin settings: `curl -X POST -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -d '{"disabled": true}' "$GATEWAY/v1/admin/settings"`. Clients are refused from then on; the admin and recovery surfaces stay up.
+2. **Wait for the drain.** `devshard_gateway_inflight_requests` reaches 0 once the last client has its answer, and `devshard_gateway_owed_timeout_votes` reaches 0 once every vote the races owe is posted, which can take as long as the protocol's own deadline, half an hour after a host confirmed the work ([race.md](./race.md), "The timeout-vote queue").
+3. **Stop the container.** `docker compose -f docker-compose.devshard-gateway.yml stop` runs the shutdown ("Shutdown"): the ledger's final write, the sessions' close and the store's close. The escrow tick and the ledger's sweep write to the storage directory while the process runs, so it is copied only once the process is down.
+4. **Checkpoint the WAL.** Both databases run in WAL mode (`connectionPragmas` in `store/store.go` and in `accounting/sqlstore.go`). A clean close folds the WAL back into the database; where a `gateway.db-wal` or `accounting.db-wal` file is still there, fold it in before copying: `sqlite3 gateway.db 'PRAGMA wal_checkpoint(TRUNCATE);'`, and the same for `accounting.db`.
+5. **Archive the whole directory in one piece**, for example `tar -C "$DEVSHARD_STORAGE_HOST_DIR" -czf gateway-storage-<date>.tar.gz .`, so `gateway.db`, `accounting.db` and every `escrow-<id>/` come from the same moment.
+6. **Start again** with `docker compose -f docker-compose.devshard-gateway.yml up -d`; the admin overrides are in the store, so the kill switch is still on. Turn it off with `{"disabled": false}` through the same endpoint.
+
+To restore, stop the container, replace the contents of the storage directory with one archive's contents (never files from two archives), and start it with the kill switch still on from the archived overrides; check `/v1/status` and the escrow list before turning it off. Two rules decide what a restored store does at boot ("Boot", steps 4 and 5):
+
+- **`DEVSHARDS_JSON` writes rows back.** An escrow settled after the archive was taken has its row restored as active, and the seed writes back every seeded escrow whose row settlement deleted. Neither is served: publication asks the chain, refuses an escrow it reports settled (`bridge.ErrEscrowSettled`) and deletes its row again, so a restore cannot resurrect a settled escrow.
+- **What happened after the archive is not in it.** An escrow created after the archive was taken has no row in it, so the restored gateway does not know it; an escrow that served after the archive comes back with its archived session, older than the copy its hosts hold. Take the archive right before the change it protects against, and settle or let drain what you do not need restored.
 
 ## Moving from devshardctl
 
