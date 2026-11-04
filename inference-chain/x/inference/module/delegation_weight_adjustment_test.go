@@ -365,6 +365,7 @@ func TestResolveBootstrapPenaltyModes_PreEligibleFalse(t *testing.T) {
 	modes := ResolveBootstrapPenaltyModes(
 		participants,
 		map[string]bool{"direct": true, "delegator": true, "intender": true, "none": true},
+		nil,
 		reportByModel,
 		delegations,
 		intents,
@@ -404,6 +405,7 @@ func TestResolveBootstrapPenaltyModes_PreEligibleTrue(t *testing.T) {
 	modes := ResolveBootstrapPenaltyModes(
 		participants,
 		map[string]bool{"direct": true, "delegator": true, "intender": true, "none": true},
+		nil,
 		reportByModel,
 		delegations,
 		intents,
@@ -413,6 +415,82 @@ func TestResolveBootstrapPenaltyModes_PreEligibleTrue(t *testing.T) {
 	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["delegator"])
 	require.Equal(t, BootstrapPenaltyIntentMissed, modes["bootstrap-model"]["intender"])
 	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["none"])
+}
+
+func TestResolveBootstrapPenaltyModes_InvalidDelegateTargetResolvesNone(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "direct", Weight: 50},
+		{Index: "to-direct", Weight: 40},
+		{Index: "to-unseated", Weight: 40},
+		{Index: "to-zero-weight", Weight: 40},
+		{Index: "to-non-committer", Weight: 40},
+		{Index: "to-unknown", Weight: 40},
+		{Index: "dormant", Weight: 10},
+		{Index: "to-newcomer", Weight: 40},
+		{Index: "to-upcoming-zero", Weight: 40},
+		{Index: "newcomer", Weight: 30},
+		{Index: "upcoming-zero", Weight: 0},
+	}
+	previousWeights := map[string]int64{
+		"direct":           50,
+		"to-direct":        40,
+		"to-unseated":      40,
+		"to-zero-weight":   40,
+		"to-non-committer": 40,
+		"to-unknown":       40,
+		"dormant":          10,
+		"to-newcomer":      40,
+		"to-upcoming-zero": 40,
+		"unseated":         40,
+		"zero-weight":      0,
+	}
+	previousRoot := make(map[string]bool, len(previousWeights))
+	for addr := range previousWeights {
+		previousRoot[addr] = true
+	}
+	reportByModel := map[string]*types.BootstrapModelPreEligibility{
+		"bootstrap-model": {ModelId: "bootstrap-model", PreEligible: true},
+	}
+	delegations := map[string]map[string]string{
+		"bootstrap-model": {
+			"to-direct":        "direct",
+			"to-unseated":      "unseated",
+			"to-zero-weight":   "zero-weight",
+			"to-non-committer": "dormant",
+			"to-unknown":       "unregistered",
+			"to-newcomer":      "newcomer",
+			"to-upcoming-zero": "upcoming-zero",
+		},
+	}
+	directCommitters := map[string]map[string]bool{
+		"bootstrap-model": {"direct": true, "unseated": true, "zero-weight": true, "newcomer": true, "upcoming-zero": true},
+	}
+
+	modes := ResolveBootstrapPenaltyModes(participants, previousRoot, previousWeights, reportByModel, delegations, nil, directCommitters)
+
+	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["to-direct"])
+	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["to-unseated"])
+	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["to-newcomer"])
+	require.Equal(t, BootstrapPenaltyDelegate, modes["bootstrap-model"]["to-upcoming-zero"])
+	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["to-zero-weight"])
+	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["to-non-committer"])
+	require.Equal(t, BootstrapPenaltyNone, modes["bootstrap-model"]["to-unknown"])
+
+	params := DelegationAdjustmentParams{
+		RefusalPenalty:         mathsdk.LegacyMustNewDecFromStr("0.1"),
+		NoParticipationPenalty: mathsdk.LegacyMustNewDecFromStr("0.15"),
+		DelegationShare:        mathsdk.LegacyZeroDec(),
+	}
+	acc := NewPenaltyAccumulator(participants)
+	AccumulateBootstrapPenalties(acc, modes, nil, params, 1, nil)
+
+	require.True(t, acc.AppliedFraction("to-direct").IsZero())
+	require.True(t, acc.AppliedFraction("to-unseated").IsZero())
+	require.True(t, acc.AppliedFraction("to-newcomer").IsZero())
+	require.True(t, acc.AppliedFraction("to-upcoming-zero").IsZero())
+	for _, addr := range []string{"to-zero-weight", "to-non-committer", "to-unknown"} {
+		require.Equal(t, mathsdk.LegacyMustNewDecFromStr("0.15"), acc.AppliedFraction(addr), addr)
+	}
 }
 
 func TestResolveBootstrapPenaltyModes_SkipsParticipantOutsidePreviousRoot(t *testing.T) {
@@ -427,6 +505,7 @@ func TestResolveBootstrapPenaltyModes_SkipsParticipantOutsidePreviousRoot(t *tes
 	modes := ResolveBootstrapPenaltyModes(
 		participants,
 		map[string]bool{"existing": true},
+		nil,
 		reportByModel,
 		nil,
 		nil,
@@ -498,6 +577,7 @@ func TestAccumulateBootstrapPenalties_NonPreEligibleModelNotPenalized(t *testing
 	modes := ResolveBootstrapPenaltyModes(
 		participants,
 		map[string]bool{"direct": true, "none": true},
+		nil,
 		reportByModel,
 		nil,
 		nil,
