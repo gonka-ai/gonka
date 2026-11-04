@@ -38,6 +38,7 @@ type VersionsCache struct {
 	mu         sync.RWMutex
 	candidates map[string]string // miner -> dapi base URL (inference_url)
 	entries    map[string]versionsEntry
+	wakeCh     chan struct{}
 	now        func() time.Time
 }
 
@@ -47,6 +48,7 @@ func NewVersionsCache(client *http.Client, ttl time.Duration) *VersionsCache {
 		ttl:        ttl,
 		candidates: map[string]string{},
 		entries:    map[string]versionsEntry{},
+		wakeCh:     make(chan struct{}, 1),
 		now:        time.Now,
 	}
 }
@@ -63,10 +65,22 @@ func (c *VersionsCache) SetCandidates(minerURLs map[string]string) {
 		}
 		next[miner] = u
 	}
+	hasUnpolled := false
+	for miner := range next {
+		if _, seen := c.entries[miner]; !seen {
+			hasUnpolled = true
+		}
+	}
 	c.candidates = next
 	for miner := range c.entries {
 		if _, ok := next[miner]; !ok {
 			delete(c.entries, miner)
+		}
+	}
+	if hasUnpolled && c.wakeCh != nil {
+		select {
+		case c.wakeCh <- struct{}{}:
+		default:
 		}
 	}
 }
@@ -149,6 +163,8 @@ func (c *VersionsCache) Run(ctx context.Context, interval time.Duration) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-c.wakeCh:
+			c.Poll(ctx)
 		case <-ticker.C:
 			c.Poll(ctx)
 		}
