@@ -168,8 +168,8 @@ func (p *EpochValidationParams) ValidationsPerMessageLimit() int {
 }
 
 // EpochAcceptanceWeightFloor is the governed minimum raw claimed weight for
-// one participant and one model to enter the next epoch. A missing or
-// non-positive value uses the historical floor of 1.
+// one participant and one model to enter the next epoch. A field that is
+// still absent on stored params is read as the historical floor of 1.
 func (p *EpochValidationParams) EpochAcceptanceWeightFloor() int64 {
 	if p == nil || p.MinEpochAcceptanceWeight < 1 {
 		return DefaultMinEpochAcceptanceWeight
@@ -188,7 +188,7 @@ func (p *EpochValidationParams) Validate() error {
 		return fmt.Errorf("epoch_validation_params.max_validations_per_message must be greater than 0")
 	}
 	if p.MinEpochAcceptanceWeight < 1 {
-		return fmt.Errorf("epoch_validation_params.min_epoch_acceptance_weight must be greater than 0")
+		return fmt.Errorf("epoch_validation_params.min_epoch_acceptance_weight must be at least 1")
 	}
 	return nil
 }

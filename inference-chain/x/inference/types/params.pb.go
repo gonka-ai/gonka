@@ -259,8 +259,8 @@ type EpochValidationParams struct {
 	// min_epoch_acceptance_weight is the minimum raw claimed PoC weight for one
 	// participant and one model to enter the next epoch. Raw weight is the
 	// store-commit count times the time-normalization factor. Dynamic model
-	// coefficients are applied after this gate and do not change it. Zero means
-	// the default of 1, the historical comparison.
+	// coefficients are applied after this gate and do not change it. The value
+	// must be at least 1. That is the historical gate and the upgrade default.
 	MinEpochAcceptanceWeight int64 `protobuf:"varint,3,opt,name=min_epoch_acceptance_weight,json=minEpochAcceptanceWeight,proto3" json:"min_epoch_acceptance_weight,omitempty"`
 }
 

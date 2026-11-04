@@ -54,8 +54,8 @@ message EpochValidationParams {
   // min_epoch_acceptance_weight is the minimum raw claimed PoC weight for one
   // participant and one model to enter the next epoch. Raw weight is the
   // store-commit count times the time-normalization factor. Dynamic model
-  // coefficients are applied after this gate and do not change it. Zero means
-  // the default of 1, the historical comparison.
+  // coefficients are applied after this gate and do not change it. The value
+  // must be at least 1. That is the historical gate and the upgrade default.
   int64 min_epoch_acceptance_weight = 3;
 }
 
