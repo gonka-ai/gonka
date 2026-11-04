@@ -61,6 +61,46 @@ func TestConfirmationWeightSkipsExcludedCoefficientState(t *testing.T) {
 	require.Equal(t, int64(30), types.ConfirmationWeightOfModelNodes(nodes, scales))
 }
 
+func TestConfirmationWeightsByModelGroupNodesBeforeCoefficient(t *testing.T) {
+	scales := []*types.ConfirmationWeightScale{
+		{ModelId: "model-a", EffectiveCoefficient: &types.Decimal{Value: 1, Exponent: -1}},
+		{ModelId: "model-b", EffectiveCoefficient: &types.Decimal{Value: 2, Exponent: 0}},
+		{
+			ModelId:                 "excluded",
+			EffectiveCoefficient:    &types.Decimal{Value: 9, Exponent: 0},
+			ExcludeFromConfirmation: true,
+		},
+	}
+	coefficients := types.ConfirmationWeightCoefficients(scales)
+	modelNodes := map[string][]*types.MLNodeInfo{
+		"model-a":  {&types.MLNodeInfo{PocWeight: 5}, nil, &types.MLNodeInfo{PocWeight: 5}},
+		"model-b":  {&types.MLNodeInfo{PocWeight: 3}, &types.MLNodeInfo{PocWeight: 4}},
+		"excluded": {&types.MLNodeInfo{PocWeight: 100}},
+		"missing":  {&types.MLNodeInfo{PocWeight: 100}},
+	}
+
+	byModel := types.ConfirmationWeightsByModelWithCoefficients(modelNodes, coefficients)
+	require.Equal(t, map[string]int64{
+		"model-a": 1,  // (5+5) * 0.1 truncates to 1
+		"model-b": 14, // (3+4) * 2
+	}, byModel)
+	require.Equal(t, int64(15), types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients))
+
+	participant := &types.ActiveParticipant{
+		Models: []string{"model-b", "model-a", "model-a", "excluded", ""},
+		MlNodes: []*types.ModelMLNodes{
+			{MlNodes: modelNodes["model-b"]},
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 5}, nil}},
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 5}}},
+			{MlNodes: modelNodes["excluded"]},
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	}
+	require.Equal(t, byModel, types.ConfirmationWeightsByModelForParticipant(participant, coefficients))
+	require.Equal(t, int64(15), types.ConfirmationWeightOfParticipant(participant, scales))
+	require.Nil(t, types.ConfirmationWeightsByModelForParticipant(nil, coefficients))
+}
+
 func TestConfirmationWeightOfParticipantMatchesModelNodes(t *testing.T) {
 	scales := []*types.ConfirmationWeightScale{
 		{ModelId: "model-a", WeightScaleFactor: &types.Decimal{Value: 15, Exponent: -1}},

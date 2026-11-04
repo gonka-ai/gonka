@@ -421,9 +421,11 @@ func (am AppModule) updateConfirmationWeights(ctx context.Context, event *types.
 	return am.evaluateConfirmation(ctx, event, &epochGroupData)
 }
 
-// evaluateConfirmation lowers each participant's ConfirmationWeight to
-// min(current, preserved(event) + measured(event)) and records the event-local
-// slashing ratio.
+// evaluateConfirmation lowers each participant's ConfirmationWeight to the
+// minimum of its current value and this event's per-model capped reading.
+// Preserved and measured weight for one model are added, then capped at that
+// model's expected weight, so surplus on one epoch model cannot cover a
+// deficit on another. The slashing ratio uses that same capped reading.
 func (am AppModule) evaluateConfirmation(
 	ctx context.Context,
 	event *types.ConfirmationPoCEvent,
@@ -476,7 +478,7 @@ func (am AppModule) evaluateConfirmation(
 	activeParticipants := participants.Participants
 
 	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
-	measured := weightByParticipant(restrictToEpochModels(confirmationParticipants, activeParticipants), presentScales)
+	filtered := restrictToEpochModels(confirmationParticipants, activeParticipants)
 
 	preservedSnapshot, snapshotFound, err := am.keeper.GetPreservedNodesSnapshot(ctx)
 	if err != nil {
@@ -487,8 +489,11 @@ func (am AppModule) evaluateConfirmation(
 		preservedSnapshot = types.PreservedNodesSnapshot{}
 	}
 
-	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
-	totalExpected := weightByParticipant(activeParticipants, presentScales)
+	expectedByModel := weightByParticipantAndModel(activeParticipants, presentScales)
+	measuredByModel := weightByParticipantAndModel(filtered, presentScales)
+	preservedByModel := preservedWeightByParticipantAndModel(activeParticipants, &preservedSnapshot, presentScales)
+	reading := cappedReadingByParticipant(expectedByModel, preservedByModel, measuredByModel)
+	totalExpected := sumModelWeightsByParticipant(expectedByModel)
 
 	// Maintenance-covered participants are expected to be offline: skip both the
 	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
@@ -502,7 +507,8 @@ func (am AppModule) evaluateConfirmation(
 		skipAddrs[addr] = struct{}{}
 	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)
+	// reading already includes same-model preserved weight, capped per model.
+	updated, ratios := foldEventReadings(epochGroupData, reading, nil, totalExpected, skipAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -723,16 +729,30 @@ func confirmationScalesInSnapshot(
 	return filtered
 }
 
+// participantModelWeights maps participant address to model ID to
+// coefficient-weighted confirmation units.
+type participantModelWeights map[string]map[string]int64
+
 func weightByParticipant(
 	participants []*types.ActiveParticipant,
 	scales []*types.ConfirmationWeightScale,
 ) map[string]int64 {
-	weights := make(map[string]int64, len(participants))
+	return sumModelWeightsByParticipant(weightByParticipantAndModel(participants, scales))
+}
+
+func weightByParticipantAndModel(
+	participants []*types.ActiveParticipant,
+	scales []*types.ConfirmationWeightScale,
+) participantModelWeights {
+	weights := make(participantModelWeights, len(participants))
 	coefficients := types.ConfirmationWeightCoefficients(scales)
 	for _, p := range participants {
-		if p != nil {
-			weights[p.Index] = types.ConfirmationWeightOfParticipantWithCoefficients(p, coefficients)
+		if p == nil || p.Index == "" {
+			continue
 		}
+		// A repeated participant index keeps the last entry. Active-participant
+		// lists contain each address once; this makes a duplicate deterministic.
+		weights[p.Index] = types.ConfirmationWeightsByModelForParticipant(p, coefficients)
 	}
 	return weights
 }
@@ -742,34 +762,92 @@ func preservedWeightByParticipant(
 	preservedSnapshot *types.PreservedNodesSnapshot,
 	scales []*types.ConfirmationWeightScale,
 ) map[string]int64 {
-	preserved := make(map[string]int64, len(participants))
+	return sumModelWeightsByParticipant(preservedWeightByParticipantAndModel(participants, preservedSnapshot, scales))
+}
+
+func preservedWeightByParticipantAndModel(
+	participants []*types.ActiveParticipant,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+	scales []*types.ConfirmationWeightScale,
+) participantModelWeights {
+	preserved := make(participantModelWeights, len(participants))
 	coefficients := types.ConfirmationWeightCoefficients(scales)
 	for _, p := range participants {
-		if p == nil {
+		if p == nil || p.Index == "" {
 			continue
 		}
-		modelNodes := make(map[string][]*types.MLNodeInfo)
-		for i, nodeArray := range p.MlNodes {
-			if nodeArray == nil {
-				continue
-			}
-			if i >= len(p.Models) || p.Models[i] == "" {
-				continue
-			}
-			modelId := p.Models[i]
-			preservedNodeSet := keeper.PreservedNodeSetByModel(preservedSnapshot, modelId)
-			for _, mlNode := range nodeArray.MlNodes {
-				if mlNode == nil {
-					continue
-				}
-				if keeper.IsPreservedNode(preservedNodeSet, p.Index, mlNode.NodeId) {
-					modelNodes[modelId] = append(modelNodes[modelId], mlNode)
-				}
-			}
-		}
-		preserved[p.Index] = types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
+		preserved[p.Index] = types.ConfirmationWeightsByModelWithCoefficients(
+			preservedModelNodes(p, preservedSnapshot),
+			coefficients,
+		)
 	}
 	return preserved
+}
+
+func preservedModelNodes(
+	p *types.ActiveParticipant,
+	preservedSnapshot *types.PreservedNodesSnapshot,
+) map[string][]*types.MLNodeInfo {
+	modelNodes := make(map[string][]*types.MLNodeInfo)
+	for i, nodeArray := range p.MlNodes {
+		if nodeArray == nil || i >= len(p.Models) || p.Models[i] == "" {
+			continue
+		}
+		modelID := p.Models[i]
+		preservedNodeSet := keeper.PreservedNodeSetByModel(preservedSnapshot, modelID)
+		for _, mlNode := range nodeArray.MlNodes {
+			if mlNode == nil {
+				continue
+			}
+			if keeper.IsPreservedNode(preservedNodeSet, p.Index, mlNode.NodeId) {
+				modelNodes[modelID] = append(modelNodes[modelID], mlNode)
+			}
+		}
+	}
+	return modelNodes
+}
+
+// cappedReadingByParticipant credits each model with min(preserved+measured, expected)
+// and then sums those credits. Surplus on one model cannot fill another model's deficit.
+// A negative same-model sum credits nothing. Map iteration order does not affect the totals.
+func cappedReadingByParticipant(
+	expected, preserved, measured participantModelWeights,
+) map[string]int64 {
+	out := make(map[string]int64, len(expected))
+	for participant, models := range expected {
+		var total int64
+		for modelID, want := range models {
+			got := modelWeight(preserved, participant, modelID) + modelWeight(measured, participant, modelID)
+			if got < 0 {
+				got = 0
+			}
+			if got > want {
+				got = want
+			}
+			total += got
+		}
+		out[participant] = total
+	}
+	return out
+}
+
+func modelWeight(weights participantModelWeights, participant, modelID string) int64 {
+	if weights == nil {
+		return 0
+	}
+	return weights[participant][modelID]
+}
+
+func sumModelWeightsByParticipant(weights participantModelWeights) map[string]int64 {
+	out := make(map[string]int64, len(weights))
+	for participant, models := range weights {
+		var total int64
+		for _, weight := range models {
+			total += weight
+		}
+		out[participant] = total
+	}
+	return out
 }
 
 func restrictToEpochModels(

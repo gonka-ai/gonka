@@ -529,6 +529,103 @@ func TestDecideCurrentChallengeSegments_SkipsOtherEpoch(t *testing.T) {
 	require.Equal(t, uint64(1), ch.EpochIndex)
 }
 
+func TestDecideCurrentChallengeSegment_OwnModelSurplusDoesNotCoverMissingModel(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
+		{id: "model-a", weight: 40, count: 100, accept: true},
+		{id: "model-b", weight: 60},
+	})
+	setChallengeAlpha(t, k, ctx, 0.5)
+
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED, ch.State)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.Equal(t, int64(40), group.ValidationWeights[0].ConfirmationWeight)
+}
+
+func TestDecideCurrentChallengeSegment_OwnModelWork(t *testing.T) {
+	tests := []struct {
+		name      string
+		models    []challengeEvalModel
+		wantState types.PoCChallengeState
+		want      int64
+	}{
+		{
+			name: "balanced work passes",
+			models: []challengeEvalModel{
+				{id: "model-a", weight: 40, count: 40, accept: true},
+				{id: "model-b", weight: 60, count: 60, accept: true},
+			},
+			wantState: types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
+			want:      100,
+		},
+		{
+			name: "partial per-model work is haircut and still passes alpha",
+			models: []challengeEvalModel{
+				{id: "model-a", weight: 40, count: 80, accept: true},
+				{id: "model-b", weight: 60, count: 30, accept: true},
+			},
+			wantState: types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
+			want:      70,
+		},
+		{
+			name: "partial per-model work below alpha fails",
+			models: []challengeEvalModel{
+				{id: "model-a", weight: 40, count: 10, accept: true},
+				{id: "model-b", weight: 60, count: 10, accept: true},
+			},
+			wantState: types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
+			want:      20,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			am, k, ctx := prepareChallengeEval(t, 400, 0, tt.models)
+			setChallengeAlpha(t, k, ctx, 0.5)
+			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+			require.NoError(t, err)
+			require.True(t, found)
+			require.Equal(t, tt.wantState, ch.State)
+			group, found := k.GetEpochGroupData(ctx, 2, "")
+			require.True(t, found)
+			require.Equal(t, tt.want, group.ValidationWeights[0].ConfirmationWeight)
+		})
+	}
+}
+
+func TestDecideCurrentChallengeSegment_NormalizationBeforePerModelCap(t *testing.T) {
+	am, k, ctx := prepareChallengeEval(t, 800, 0, []challengeEvalModel{
+		{id: "model-a", weight: 40, count: 30, accept: true},
+		{id: "model-b", weight: 60, count: 10, accept: true},
+	})
+	setChallengeAlpha(t, k, ctx, 0.5)
+
+	require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
+
+	ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED, ch.State)
+	group, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	// Duration 400 against a stage of 800 doubles the commits first: model A
+	// 60 is capped at 40, model B stays 20. The reading is 60.
+	require.Equal(t, int64(60), group.ValidationWeights[0].ConfirmationWeight)
+}
+
+func setChallengeAlpha(t *testing.T, k keeper.Keeper, ctx sdk.Context, alpha float64) {
+	t.Helper()
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.ConfirmationPocParams.AlphaThreshold = types.DecimalFromFloat(alpha)
+	require.NoError(t, k.SetParams(ctx, params))
+}
+
 func TestDecideLastChallengeSegments_PropagatesWhenUpcomingMissing(t *testing.T) {
 	am, k, ctx := challengeApp(t)
 	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{

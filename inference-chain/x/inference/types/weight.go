@@ -52,9 +52,24 @@ func ConfirmationWeightOfParticipantWithCoefficients(
 	p *ActiveParticipant,
 	coefficients map[string]mathsdk.LegacyDec,
 ) int64 {
+	return sumConfirmationWeights(ConfirmationWeightsByModelForParticipant(p, coefficients))
+}
+
+// ConfirmationWeightsByModelForParticipant returns coefficient-weighted
+// confirmation units for each of the participant's models. Duplicate model
+// entries are grouped, and each model's nodes are summed before that model's
+// coefficient is applied once.
+func ConfirmationWeightsByModelForParticipant(
+	p *ActiveParticipant,
+	coefficients map[string]mathsdk.LegacyDec,
+) map[string]int64 {
 	if p == nil {
-		return 0
+		return nil
 	}
+	return ConfirmationWeightsByModelWithCoefficients(modelNodesByID(p), coefficients)
+}
+
+func modelNodesByID(p *ActiveParticipant) map[string][]*MLNodeInfo {
 	modelNodes := make(map[string][]*MLNodeInfo, len(p.Models))
 	for i, modelID := range p.Models {
 		if modelID == "" || i >= len(p.MlNodes) || p.MlNodes[i] == nil {
@@ -62,7 +77,7 @@ func ConfirmationWeightOfParticipantWithCoefficients(
 		}
 		modelNodes[modelID] = append(modelNodes[modelID], p.MlNodes[i].MlNodes...)
 	}
-	return ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
+	return modelNodes
 }
 
 func ConfirmationWeightOfModelNodes(modelNodes map[string][]*MLNodeInfo, scales []*ConfirmationWeightScale) int64 {
@@ -73,26 +88,49 @@ func ConfirmationWeightOfModelNodesWithCoefficients(
 	modelNodes map[string][]*MLNodeInfo,
 	coefficients map[string]mathsdk.LegacyDec,
 ) int64 {
-	total := int64(0)
+	return sumConfirmationWeights(ConfirmationWeightsByModelWithCoefficients(modelNodes, coefficients))
+}
 
-	modelIDs := make([]string, 0, len(modelNodes))
-	for modelID := range modelNodes {
-		modelIDs = append(modelIDs, modelID)
+// ConfirmationWeightsByModelWithCoefficients returns one truncated confirmation
+// weight per model. Raw node weight for a model is summed first; the model's
+// coefficient is then applied once. Models with no confirmation coefficient are
+// omitted. Model-id order does not change the values.
+func ConfirmationWeightsByModelWithCoefficients(
+	modelNodes map[string][]*MLNodeInfo,
+	coefficients map[string]mathsdk.LegacyDec,
+) map[string]int64 {
+	if len(modelNodes) == 0 {
+		return nil
 	}
-	slices.Sort(modelIDs)
-
-	for _, modelID := range modelIDs {
+	weights := make(map[string]int64)
+	for modelID, nodes := range modelNodes {
 		coeff, ok := coefficients[modelID]
 		if !ok {
 			continue
 		}
 		rawModel := int64(0)
-		for _, node := range modelNodes[modelID] {
+		for _, node := range nodes {
 			if node != nil {
 				rawModel += node.PocWeight
 			}
 		}
-		total += coeff.MulInt64(rawModel).TruncateInt64()
+		weights[modelID] = coeff.MulInt64(rawModel).TruncateInt64()
+	}
+	if len(weights) == 0 {
+		return nil
+	}
+	return weights
+}
+
+func sumConfirmationWeights(weights map[string]int64) int64 {
+	modelIDs := make([]string, 0, len(weights))
+	for modelID := range weights {
+		modelIDs = append(modelIDs, modelID)
+	}
+	slices.Sort(modelIDs)
+	total := int64(0)
+	for _, modelID := range modelIDs {
+		total += weights[modelID]
 	}
 	return total
 }

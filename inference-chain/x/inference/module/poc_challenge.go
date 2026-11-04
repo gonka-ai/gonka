@@ -185,20 +185,21 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 		return evaluationError("target participant not found")
 	}
 
-	measured := map[string]int64{ch.Target: 0}
 	calculatorResult, calcErr := am.challengeCalculatorResult(ctx, ch, finish, snapshot, params)
 	if calcErr != nil {
 		return calcErr
 	}
+	// Normalization is already inside the calculator. Cap that normalized,
+	// coefficient-weighted result per model before the participant total.
 	calculatorResult = restrictToEpochModels(calculatorResult, participants.Participants)
-	if len(calculatorResult) > 0 {
-		fullMeasured := weightByParticipant(calculatorResult, presentScales)
-		measured[ch.Target] = fullMeasured[ch.Target]
-	}
-	fullExpected := weightByParticipant(participants.Participants, presentScales)
+	expectedByModel := weightByParticipantAndModel(participants.Participants, presentScales)
+	measuredByModel := weightByParticipantAndModel(calculatorResult, presentScales)
+	capped := cappedReadingByParticipant(expectedByModel, nil, measuredByModel)
+	measured := map[string]int64{ch.Target: capped[ch.Target]}
+	fullExpected := sumModelWeightsByParticipant(expectedByModel)
 	totalExpected := map[string]int64{ch.Target: fullExpected[ch.Target]}
 
-	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, totalExpected, nil)
+	updated, ratios := foldEventReadings(&epochGroupData, measured, nil, totalExpected, nil)
 	if updated {
 		am.keeper.SetEpochGroupData(ctx, epochGroupData)
 	}

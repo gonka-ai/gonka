@@ -242,10 +242,10 @@ func TestDecideCurrentChallengeSegment_ModelOutsideEpochDoesNotCount(t *testing.
 		wantConfirmed int64
 	}{
 		{
-			name:          "work on an epoch model counts",
+			name:          "work on an epoch model counts only toward that model",
 			inEpoch:       true,
 			wantState:     types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
-			wantConfirmed: 88,
+			wantConfirmed: 64,
 		},
 		{
 			name:          "work on a model outside the epoch does not count",
@@ -256,8 +256,8 @@ func TestDecideCurrentChallengeSegment_ModelOutsideEpochDoesNotCount(t *testing.
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			am, k, ctx := prepareChallengeEval(t, 400, 0, []challengeEvalModel{
-				{id: "assigned", weight: 100},
-				{id: "substitute", weight: 0, count: 88, accept: true},
+				{id: "assigned", weight: 36},
+				{id: "substitute", weight: 64, count: 200, accept: true},
 			})
 			if !tc.inEpoch {
 				active, found := k.GetActiveParticipants(ctx, 2)
