@@ -108,6 +108,9 @@ func main() {
 		StrictXFail:     *strictXFail,
 		Build:           build,
 	})
+	if err != nil && result.Summary.Requests == 0 {
+		log.Fatalf("loadtest: workload did not start: %v", err)
+	}
 	reportPrinted := false
 	if report, reportErr := writeConsoleReport(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)

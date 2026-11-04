@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -115,4 +117,46 @@ func TestDatasetModelReportsKeepPlainConsoleMarkdownAndTimeline(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(data), &timeline))
 	require.Len(t, timeline.Traffic, 3) // 30s workload, excludes 20s response tail
 	require.Less(t, timeline.Traffic[len(timeline.Traffic)-1].X, scenario.Duration().Minutes())
+}
+
+func TestPrestartFailureDoesNotPrintEmptyReports(t *testing.T) {
+	if os.Getenv("GONKA_TEST_PRESTART_CHILD") == "1" {
+		flag.CommandLine = flag.NewFlagSet("loadtest", flag.ExitOnError)
+		os.Args = []string{"loadtest", "-scenario", os.Getenv("GONKA_TEST_SCENARIO"), "-output", os.Getenv("GONKA_TEST_OUTPUT")}
+		main()
+		os.Exit(0)
+	}
+	testenv, err := filepath.Abs(filepath.Join("..", ".."))
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "loadtest", "profiles"), 0o755))
+	profile, err := os.ReadFile(filepath.Join(testenv, "loadtest", "profiles", "fast.yaml"))
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "loadtest", "profiles", "fast.yaml"), profile, 0o644))
+	bin := filepath.Join(dir, "bin")
+	require.NoError(t, os.Mkdir(bin, 0o755))
+	docker := `#!/bin/sh
+if [ "$1" = compose ] && [ "$2" = ls ]; then
+    echo '[{"Name":"loadtest-existing"}]'
+    exit 0
+fi
+echo 'unexpected Docker operation' >&2
+exit 7
+`
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(docker), 0o755))
+	output := filepath.Join(dir, "results")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPrestartFailureDoesNotPrintEmptyReports$")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "GONKA_TEST_PRESTART_CHILD=1", "GONKA_TEST_SCENARIO="+filepath.Join(testenv, "loadtest", "scenarios", "normal-load.yaml"), "GONKA_TEST_OUTPUT="+output, "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	data, err := cmd.CombinedOutput()
+	require.Error(t, err)
+	text := string(data)
+	require.Contains(t, text, "workload did not start")
+	require.Contains(t, text, "another load-test stack is running (loadtest-existing)")
+	require.NotContains(t, text, "Client traffic")
+	require.NotContains(t, text, "Gateway state")
+	require.NotContains(t, text, "no HTML timeline")
+	require.NotContains(t, text, "summary.json")
+	_, err = os.Stat(filepath.Join(output, "report.md"))
+	require.True(t, os.IsNotExist(err))
 }
