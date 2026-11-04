@@ -88,3 +88,16 @@ func TestTape_PromptTheValidatorCannotServe_StaysAutopass(t *testing.T) {
 	require.IsType(t, &SimilarityValidationResult{}, result)
 	require.True(t, result.IsSuccessful())
 }
+
+func TestTape_BeamSearchIsDroppedFromTheReplay(t *testing.T) {
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":1000,"use_beam_search":true}`)
+	var replay map[string]any
+	execute := tapeExecutor(t, func(req map[string]any) (int, []byte) {
+		replay = req
+		return http.StatusOK, tapeReplayBody(100, 100)
+	})
+	_, err := ExecuteTapeValidation(context.Background(), "inf-1", prompt,
+		responsePayloadTokens(100, "stop", ""), execute, 0, 0, "")
+	require.NoError(t, err)
+	require.NotContains(t, replay, "use_beam_search")
+}
