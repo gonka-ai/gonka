@@ -232,11 +232,10 @@ func (k Keeper) activeReservationCoversEpoch(ctx context.Context, r types.Mainte
 }
 
 // maintenanceStateCoversEpoch reports whether the participant's MaintenanceState
-// indicates the given epoch is covered by a maintenance window. Single source of
-// truth for credit accrual (GrantMaintenanceCredit) and claim-time validation
-// exemption (hasSignificantMissedValidations); both must agree, otherwise a
-// multi-epoch window's mid/end epochs could be exempted from credit but not
-// from missed-validation checks (or vice versa).
+// indicates the given epoch is covered by a maintenance window. Used for credit
+// accrual (GrantMaintenanceCredit). The claim-time validation exemption is
+// per inference instead (see getMustBeValidatedInferences): a window waives
+// only the inferences created inside it, not the whole epoch.
 //
 // Two branches, in order:
 //
@@ -273,6 +272,57 @@ func (k Keeper) maintenanceStateCoversEpoch(ctx context.Context, state types.Mai
 		epochIndex <= state.LastMaintenanceEndEpoch
 }
 
+// maintenanceWindow is the inclusive block range of one activated window.
+type maintenanceWindow struct {
+	start int64
+	end   int64
+}
+
+// maintenanceWindowsBetween returns the participant's activated windows that
+// overlap [fromHeight, toHeight], newest first. A participant's windows never
+// overlap each other, so descending start heights also mean descending end
+// heights and the scan stops at the first window that ends before fromHeight.
+func (k Keeper) maintenanceWindowsBetween(ctx context.Context, participant sdk.AccAddress, fromHeight, toHeight int64) ([]maintenanceWindow, error) {
+	rng := collections.NewPrefixedPairRange[sdk.AccAddress, int64](participant).
+		EndInclusive(toHeight).
+		Descending()
+	iter, err := k.MaintenanceWindowsByParticipant.Iterate(ctx, rng)
+	if err != nil {
+		return nil, err
+	}
+	defer iter.Close()
+
+	var windows []maintenanceWindow
+	for ; iter.Valid(); iter.Next() {
+		reservationID, err := iter.Value()
+		if err != nil {
+			return nil, err
+		}
+		r, found := k.GetMaintenanceReservation(ctx, reservationID)
+		if !found {
+			continue
+		}
+		w := maintenanceWindow{start: r.StartHeight, end: r.StartHeight + int64(r.DurationBlocks) - 1}
+		if w.end < fromHeight {
+			break
+		}
+		windows = append(windows, w)
+	}
+	return windows, nil
+}
+
+func inMaintenanceWindow(height int64, windows []maintenanceWindow) bool {
+	if height <= 0 {
+		return false
+	}
+	for _, w := range windows {
+		if w.start <= height && height <= w.end {
+			return true
+		}
+	}
+	return false
+}
+
 // --- Credit accrual ---
 
 // GrantMaintenanceCredit grants maintenance credit to a participant after a
@@ -303,8 +353,6 @@ func (k Keeper) GrantMaintenanceCredit(ctx context.Context, participant string, 
 	state := k.GetOrCreateMaintenanceState(ctx, participantAddr)
 
 	// Suppress credit accrual for any epoch covered by a maintenance window.
-	// Shared with hasSignificantMissedValidations so both paths give the same
-	// answer to "is this epoch covered by maintenance?" — see helper docs.
 	if k.maintenanceStateCoversEpoch(ctx, state, epochIndex) {
 		k.LogDebug("Maintenance credit skipped: epoch covered by maintenance window",
 			types.Maintenance, "participant", participant, "epoch", epochIndex,
