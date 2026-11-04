@@ -1,10 +1,14 @@
 package poc
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,6 +21,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/metadata"
@@ -29,6 +34,7 @@ type commitWorkerQueryServer struct {
 	types.UnimplementedQueryServer
 	commitCounts        map[string]uint32
 	commitRoots         map[string][]byte
+	commitDepths        map[string]uint32
 	distributionOnChain map[string]bool
 	failCommitQuery     bool
 	commitQueryCalls    int
@@ -57,10 +63,15 @@ func (s *commitWorkerQueryServer) PoCV2StoreCommit(ctx context.Context, req *typ
 	if s.commitRoots != nil {
 		root = s.commitRoots[key]
 	}
+	depth := uint32(24)
+	if s.commitDepths != nil {
+		depth = s.commitDepths[key]
+	}
 	return &types.QueryPoCV2StoreCommitResponse{
-		Found:    count > 0,
-		Count:    count,
-		RootHash: root,
+		TreeDepth: depth,
+		Found:     count > 0,
+		Count:     count,
+		RootHash:  root,
 	}, nil
 }
 
@@ -1903,6 +1914,81 @@ func TestCommitWorker_RetryLogic(t *testing.T) {
 			shouldRetry := tt.lastDistributionAttempt.IsZero() ||
 				time.Since(tt.lastDistributionAttempt) > distributionRetryInterval
 			assert.Equal(t, tt.expectRetry, shouldRetry)
+		})
+	}
+}
+
+func TestCommitPayloadDepthIdentity(t *testing.T) {
+	root := make([]byte, 32)
+	st := commitState{count: 2, rootHash: root, treeDepth: 24}
+	assert.True(t, sameCommitState(st, 2, root, 24))
+	assert.False(t, sameCommitState(st, 2, root, 25))
+	assert.False(t, sameCommitState(st, 2, nil, 24))
+	q := &commitWorkerQueryServer{commitCounts: map[string]uint32{"100|p|m": 2}, commitRoots: map[string][]byte{"100|p|m": root}, commitDepths: map[string]uint32{"100|p|m": 25}}
+	client, cleanup := newCommitWorkerQueryClient(t, q)
+	defer cleanup()
+	rec := &cosmosclient.MockCosmosMessageClient{}
+	rec.On("NewInferenceQueryClient").Return(client)
+	key := commitKey{100, "m"}
+	w := &CommitWorker{recorder: rec, participantAddress: "p", blockHeight: 110, pending: map[commitKey]pendingCommit{key: {state: st}}, lastCommitted: map[commitKey]commitState{}}
+	w.reconcilePending(100)
+	assert.Contains(t, w.pending, key, "different depth must not confirm the payload")
+	q.commitDepths["100|p|m"] = 24
+	w.blockHeight++
+	w.reconcilePending(100)
+	assert.Empty(t, w.pending)
+	assert.Equal(t, st, w.lastCommitted[key])
+	w.challengePending = map[commitKey]pendingCommit{key: {state: st}}
+	w.challengeLastCommitted = map[commitKey]commitState{}
+	ch := &types.OpenPoCChallenge{Challenge: &types.PoCChallenge{StartHeight: 100}, Commits: []*types.PoCV2StoreCommit{{ModelId: "m", Count: 2, RootHash: root, TreeDepth: 25}}}
+	w.reconcileChallengePending(ch)
+	assert.Contains(t, w.challengePending, key)
+	ch.Commits[0].TreeDepth = 24
+	w.reconcileChallengePending(ch)
+	assert.Empty(t, w.challengePending)
+}
+
+func TestCommitWorkerStoreRecoveryWarning(t *testing.T) {
+	for _, challenge := range []bool{false, true} {
+		name := "regular"
+		if challenge {
+			name = "challenge"
+		}
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			modelDir := filepath.Join(dir, "100", "model-a")
+			store, err := artifacts.OpenSMST(modelDir)
+			require.NoError(t, err)
+			require.NoError(t, store.AddWithNode(1, []byte("vector"), ""))
+			require.NoError(t, store.Close())
+			rootPath := filepath.Join(modelDir, "flushed_roots.jsonl")
+			data, err := os.ReadFile(rootPath)
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(rootPath, bytes.ReplaceAll(data, []byte(`"depth":24`), []byte(`"depth":0`)), 0644))
+			managed := artifacts.NewManagedArtifactStore(dir, 5)
+			defer managed.Close()
+			managed.ActivateStage(100)
+			recorder := &cosmosclient.MockCosmosMessageClient{}
+			worker := &CommitWorker{store: managed, recorder: recorder, participantAddress: "participant_addr", blockHeight: 110, tracker: commitWorkerTestTracker(110)}
+			var output bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			defer slog.SetDefault(previous)
+			if challenge {
+				defer OpenChallenges.Reset()
+				OpenChallenges.Replace(worker.participantAddress, []*types.OpenPoCChallenge{openCh(worker.participantAddress, 100, 2000, true, 1)}, 0)
+				worker.maybeSubmitChallengeCommit(worker.tracker.GetCurrentEpochState())
+			} else {
+				worker.maybeSubmitCommit(100, 250)
+			}
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(bytes.TrimSpace(output.Bytes()), &record), output.String())
+			require.Equal(t, "WARN", record["level"])
+			require.Equal(t, float64(100), record["pocHeight"])
+			require.Contains(t, record["error"], `model "model-a"`)
+			require.Contains(t, record["error"], "restore a consistent stage backup")
+			recorder.AssertNotCalled(t, "SubmitPoCV2StoreCommitWithTimeout", mock.Anything, mock.Anything)
+			recorder.AssertNotCalled(t, "SubmitPoCChallengeStoreCommitWithTimeout", mock.Anything, mock.Anything)
 		})
 	}
 }

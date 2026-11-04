@@ -50,7 +50,13 @@ func newFinalWindowWorker(t *testing.T, height int64) (*CommitWorker, *finalWind
 		require.NoError(t, a.AddWithNode(1, []byte("vec"), "node-1"))
 		require.NoError(t, a.Flush())
 	}
-	server := &commitWorkerQueryServer{commitCounts: map[string]uint32{}, failModels: map[string]bool{}}
+	server := &commitWorkerQueryServer{commitCounts: map[string]uint32{}, commitRoots: map[string][]byte{}, failModels: map[string]bool{}}
+	for _, model := range []string{"model-a", "model-b"} {
+		a, err := store.GetOrCreateStore(100, model)
+		require.NoError(t, err)
+		_, root := a.GetFlushedRoot()
+		server.commitRoots["100|participant_addr|"+model] = root
+	}
 	client, cleanup := newCommitWorkerQueryClient(t, server)
 	t.Cleanup(cleanup)
 	recorder := &finalWindowRecorder{failures: map[string]error{}}
@@ -196,4 +202,41 @@ func TestCommitWorker_FinalWindowAdmissionLimitIsPerModel(t *testing.T) {
 	w.tick()
 	require.Len(t, r.submissions, 4)
 	require.Equal(t, uint32(2), w.pending[commitKey{100, "model-b"}].state.count)
+}
+
+func TestCommitWorkerConcurrentSnapshotConstruction(t *testing.T) {
+	w, r, _ := newFinalWindowWorker(t, 110)
+	s, err := w.store.GetOrCreateStore(100, "model-a")
+	require.NoError(t, err)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := int32(0); i < 20; i++ {
+			if err := s.AddWithNode((1<<24)+i, []byte("vec"), "node-1"); err != nil {
+				t.Error(err)
+				return
+			}
+			if err := s.Flush(); err != nil {
+				t.Error(err)
+				return
+			}
+		}
+	}()
+	for i := 0; i < 30; i++ {
+		w.blockHeight = 110 + int64(i)
+		w.pending = make(map[commitKey]pendingCommit)
+		w.lastAcceptedBroadcastHeight = 0
+		w.maybeSubmitCommit(100, 250)
+	}
+	<-done
+	require.NotEmpty(t, r.submissions)
+	for _, sub := range r.submissions {
+		for _, entry := range sub.entries {
+			st, err := w.store.GetOrCreateStore(100, entry.ModelId)
+			require.NoError(t, err)
+			nonce, vector, proof, err := st.GetArtifactAndProof(0, entry.Count)
+			require.NoError(t, err)
+			require.True(t, artifacts.VerifySMSTProofWithDenseIndex(entry.RootHash, entry.Count, entry.TreeDepth, 0, nonce, buildLeafData(nonce, vector), proof), "worker advertised a mixed snapshot")
+		}
+	}
 }

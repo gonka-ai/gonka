@@ -12,9 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func challengeApp(t *testing.T) (AppModule, keeper.Keeper, sdk.Context) {
+func challengeApp(t *testing.T, collateral ...types.CollateralKeeper) (AppModule, keeper.Keeper, sdk.Context) {
 	t.Helper()
 	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	if len(collateral) > 0 {
+		k, ctx, _ = newMinimalInferenceKeeperWithCollateral(t, collateral[0])
+	}
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.EpochParams.EpochLength = 2000
@@ -294,9 +297,9 @@ type challengeEvalModel struct {
 	accept bool
 }
 
-func prepareChallengeEval(t *testing.T, stage, exchange int64, models []challengeEvalModel) (AppModule, keeper.Keeper, sdk.Context) {
+func prepareChallengeEval(t *testing.T, stage, exchange int64, models []challengeEvalModel, collateral ...types.CollateralKeeper) (AppModule, keeper.Keeper, sdk.Context) {
 	t.Helper()
-	am, k, ctx := challengeApp(t)
+	am, k, ctx := challengeApp(t, collateral...)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.EpochParams.PocStageDuration = stage

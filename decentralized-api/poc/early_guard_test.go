@@ -143,7 +143,17 @@ func (f *fakeStore) HasCompletedCapture(_ context.Context, stage int64) (bool, e
 }
 func (f *fakeStore) UpsertCheckpoints(_ context.Context, cps []earlyshare.Checkpoint) error {
 	for _, c := range cps {
-		f.checkpoints[c.StageHeight] = append(f.checkpoints[c.StageHeight], c)
+		replaced := false
+		for i, old := range f.checkpoints[c.StageHeight] {
+			if old.ParticipantAddress == c.ParticipantAddress && old.ModelID == c.ModelID {
+				f.checkpoints[c.StageHeight][i] = c
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			f.checkpoints[c.StageHeight] = append(f.checkpoints[c.StageHeight], c)
+		}
 	}
 	return nil
 }
@@ -182,8 +192,8 @@ func TestEvaluate(t *testing.T) {
 	store := newFakeStore()
 	store.captured[stage] = true
 	store.checkpoints[stage] = []earlyshare.Checkpoint{
-		{StageHeight: stage, ParticipantAddress: "a", ModelID: model, EarlyCount: 10, EarlyRootHash: []byte{1}},
-		{StageHeight: stage, ParticipantAddress: "b", ModelID: model, EarlyCount: 90, EarlyRootHash: []byte{2}},
+		{StageHeight: stage, ParticipantAddress: "a", ModelID: model, EarlyCount: 10, EarlyTreeDepth: testEarlyDepth(24), EarlyRootHash: []byte{1}},
+		{StageHeight: stage, ParticipantAddress: "b", ModelID: model, EarlyCount: 90, EarlyTreeDepth: testEarlyDepth(24), EarlyRootHash: []byte{2}},
 		// c has no early checkpoint -> early_share 0
 	}
 	// Seed c with one grace miss already used so a fresh fail votes no.
@@ -256,7 +266,7 @@ func TestEvaluatePoCPassDoesNotAdvance(t *testing.T) {
 	store := newFakeStore()
 	store.captured[stage] = true
 	store.checkpoints[stage] = []earlyshare.Checkpoint{
-		{StageHeight: stage, ParticipantAddress: "a", ModelID: model, EarlyCount: 50, EarlyRootHash: []byte{1}},
+		{StageHeight: stage, ParticipantAddress: "a", ModelID: model, EarlyCount: 50, EarlyTreeDepth: testEarlyDepth(24), EarlyRootHash: []byte{1}},
 	}
 	// Seed a with one grace miss already used.
 	store.state["a|"+model] = earlyshare.GuardState{ParticipantAddress: "a", ModelID: model, ConsecutiveMisses: 1}
@@ -317,8 +327,8 @@ func TestMaybeCapture(t *testing.T) {
 		guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeObserve}, store)
 		qc := &fakeESQueryClient{resp: &types.QueryAllPoCV2StoreCommitsForStageResponse{
 			Commits: []*types.PoCV2StoreCommitWithAddress{
-				{ParticipantAddress: "a", ModelId: "m1", Count: 10, RootHash: []byte{1}},
-				{ParticipantAddress: "b", ModelId: "m1", Count: 20, RootHash: []byte{2}},
+				{ParticipantAddress: "a", ModelId: "m1", Count: 10, TreeDepth: 24, RootHash: []byte{1}},
+				{ParticipantAddress: "b", ModelId: "m1", Count: 20, TreeDepth: 24, RootHash: []byte{2}},
 			},
 		}}
 
@@ -396,7 +406,7 @@ func TestMaybeCapture(t *testing.T) {
 		qc.err = nil
 		qc.resp = &types.QueryAllPoCV2StoreCommitsForStageResponse{
 			Commits: []*types.PoCV2StoreCommitWithAddress{
-				{ParticipantAddress: "a", ModelId: "m1", Count: 10, RootHash: []byte{1}},
+				{ParticipantAddress: "a", ModelId: "m1", Count: 10, TreeDepth: 24, RootHash: []byte{1}},
 			},
 		}
 		guard.MaybeCapture(ctx, qc, stage, 1010, 1013)
@@ -471,7 +481,7 @@ func TestDecide(t *testing.T) {
 		return f
 	}
 
-	inclusionDec := earlyDecision{requireInclusion: true, earlyCount: 10, earlyRoot: earlyRoot, finalCount: 100, earlyShare: 0.1, threshold: 0.05}
+	inclusionDec := earlyDecision{requireInclusion: true, earlyCount: 10, earlyRoot: earlyRoot, earlyDepth: 24, finalCount: 100, earlyShare: 0.1, threshold: 0.05}
 
 	t.Run("matching inclusion and passing share -> pass", func(t *testing.T) {
 		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
@@ -569,3 +579,5 @@ func TestDecide(t *testing.T) {
 		}
 	})
 }
+
+func testEarlyDepth(depth uint32) *uint32 { return &depth }

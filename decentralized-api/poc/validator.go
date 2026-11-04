@@ -495,6 +495,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
 			epochState.CurrentPhase == types.InferencePhase &&
 			pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
+		if err := v.guard.PrepareDepths(context.Background(), v.recorder.NewInferenceQueryClient(), pocStageStartBlockHeight); err != nil {
+			logging.Warn("EarlyShareGuard: stage not ready for depth growth; checkpoint preparation incomplete", types.PoC, "stage", pocStageStartBlockHeight, "error", err)
+		}
 		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, commitsResp.Commits, modelVotingPowers, assigned)
 		if len(decisions) > 0 {
 			gr = &guardRuntime{
