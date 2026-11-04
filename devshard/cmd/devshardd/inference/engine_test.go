@@ -647,3 +647,143 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
+
+func TestDoWithLockedNodeReleasesABrokenStreamAsTransportErrorOnce(t *testing.T) {
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: first\n\n"))
+		w.(http.Flusher).Flush()
+		// Drop the connection mid-stream, before the last chunk.
+		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+	}))
+	t.Cleanup(mlSrv.Close)
+
+	var releases, outcome atomic.Int32
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: mlSrv.URL, NodeId: "node-1"}, nil
+		},
+		releaseFunc: func(_ context.Context, req *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
+			releases.Add(1)
+			outcome.Store(int32(req.Outcome))
+			return &nmgen.ReleaseMLNodeResponse{}, nil
+		},
+	})
+	eng := newTestEngine(ml, mlnodeclient.NewManager(time.Hour), nil)
+
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "42", []byte(`{"stream":true}`))
+	require.NoError(t, err)
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.Error(t, err, "the stream was cut before its last chunk")
+	require.Equal(t, int32(0), releases.Load(), "the slot is held until the body is closed")
+
+	_ = resp.Body.Close()
+	_ = resp.Body.Close()
+	require.Equal(t, int32(1), releases.Load(), "a second Close must not release again")
+	require.Equal(t, nmgen.ReleaseOutcome_TRANSPORT_ERROR, nmgen.ReleaseOutcome(outcome.Load()))
+}
+
+func TestDoWithLockedNodeReleasesAStreamWhoseRequestWasCancelled(t *testing.T) {
+	finish := make(chan struct{})
+	var finishOnce sync.Once
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: first\n\n"))
+		w.(http.Flusher).Flush()
+		select {
+		case <-r.Context().Done():
+		case <-finish:
+		}
+	}))
+	t.Cleanup(func() {
+		finishOnce.Do(func() { close(finish) })
+		mlSrv.Close()
+	})
+
+	var releases, outcome atomic.Int32
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: mlSrv.URL, NodeId: "node-1"}, nil
+		},
+		releaseFunc: func(_ context.Context, req *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
+			releases.Add(1)
+			outcome.Store(int32(req.Outcome))
+			return &nmgen.ReleaseMLNodeResponse{}, nil
+		},
+	})
+	eng := newTestEngine(ml, mlnodeclient.NewManager(time.Hour), nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	resp, err := eng.executeMLRequest(ctx, "model-a", "42", []byte(`{"stream":true}`))
+	require.NoError(t, err)
+	_, err = resp.Body.Read(make([]byte, 64))
+	require.NoError(t, err)
+
+	cancel()
+	_, err = io.Copy(io.Discard, resp.Body)
+	require.Error(t, err, "the cancelled request cuts the stream")
+	_ = resp.Body.Close()
+
+	// The release RPC must not inherit the cancelled request context.
+	require.Equal(t, int32(1), releases.Load())
+	require.Equal(t, nmgen.ReleaseOutcome_SUCCESS, nmgen.ReleaseOutcome(outcome.Load()),
+		"a client that left is not the node's failure")
+}
+
+func TestFallback_HoldsLocalSlotUntilBodyClosed(t *testing.T) {
+	finish := make(chan struct{})
+	var finishOnce sync.Once
+	finishBody := func() { finishOnce.Do(func() { close(finish) }) }
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: first\n\n"))
+		w.(http.Flusher).Flush()
+		<-finish
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(func() {
+		finishBody()
+		mlSrv.Close()
+	})
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.Unavailable, "dapi down")
+		},
+	})
+
+	now := time.Unix(1_700_000_000, 0)
+	capacity := mlnodeclient.NewCache(nil, mlnodeclient.CacheOptions{
+		Now: func() time.Time { return now },
+		ActiveLoad: func() (map[uint64]float64, time.Time) {
+			return map[uint64]float64{}, now
+		},
+	})
+	// MaxConcurrent=4, divisor=4 → one local slot.
+	capacity.ApplyPollForTest([]*nmgen.NodeCapacityEntry{
+		{NodeId: "node-1", Model: "model-a", MaxConcurrent: 4, LockCount: 0},
+	})
+	require.Equal(t, 1, capacity.AvailableSlots("node-1"))
+
+	mgr := mlnodeclient.NewManager(time.Hour)
+	mgr.Observe("model-a", "node-1", mlSrv.URL)
+	eng := newTestEngine(ml, mgr, capacity)
+
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+		func(endpoint string) (*http.Response, error) {
+			return http.Get(endpoint)
+		})
+	require.NoError(t, err)
+	assert.Equal(t, 0, capacity.AvailableSlots("node-1"), "the slot is held while the body streams")
+
+	finishBody()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	_ = resp.Body.Close()
+	assert.Equal(t, 1, capacity.AvailableSlots("node-1"), "closing the body frees the slot once")
+}
