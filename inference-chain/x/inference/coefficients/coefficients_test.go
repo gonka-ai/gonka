@@ -208,6 +208,16 @@ func TestCalculateAdjustsAndDilutes(t *testing.T) {
 	require.Equal(t, "under", result.Scales[1].ModelId)
 }
 
+func TestWeightScaleFactorMultipliesEffectiveNotBase(t *testing.T) {
+	config := params(model("a", dec(5, -1), dec(2, 0), dec(1, 0), 10000))
+	config.DynamicCoefficientParams.WeightScaleFactor = dec(2, 0)
+	totals := map[string]int64{"a": 100}
+	result, err := calculateForTest(config, nil, nil, totals, []string{"a"}, false)
+	require.NoError(t, err)
+	require.Equal(t, "1.000000000000000000", result.Effective["a"].String())
+	require.Equal(t, dec(5, -1), result.Scales[0].BaseCoefficient)
+}
+
 func TestCalculateUsesRelativeDifficulty(t *testing.T) {
 	config := params(
 		model("hard", dec(5, -1), dec(2, 0), dec(2, 0), 5000),

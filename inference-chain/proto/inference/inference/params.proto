@@ -242,6 +242,7 @@ message DynamicCoefficientParams {
   Decimal step_max = 3;
   Decimal bootstrap_step_max = 4;
   uint32 bootstrap_share_bps = 5;
+  Decimal weight_scale_factor = 6; // Multiplies every model's effective coefficient; unset is 1.
 }
 
 // PocStageRecipe is the frozen generate/validate/evaluate snapshot for one stage height.
