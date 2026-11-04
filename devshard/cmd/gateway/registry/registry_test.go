@@ -63,6 +63,7 @@ type fakeSession struct {
 	flushCalls           atomic.Int64
 	closeErr             error
 	closeCalls           atomic.Int64
+	onClose              func()
 	chainMaxNonce        atomic.Uint32
 	onFlush              func()
 	prepare              func(user.ParamsForHost) (*user.PreparedInference, error)
@@ -172,6 +173,9 @@ func (f *fakeSession) FlushSnapshot() error {
 
 func (f *fakeSession) Close() error {
 	f.closeCalls.Add(1)
+	if f.onClose != nil {
+		f.onClose()
+	}
 	return f.closeErr
 }
 
@@ -1144,12 +1148,15 @@ func TestCloseReleasesLiveAndDrainingSessions(t *testing.T) {
 //  1. Build a registry with four escrows.
 //  2. For each escrow, run concurrent goroutines that repeatedly add and retire it, acquire and release it, and read candidates/routable sessions/`Serves`, 200 iterations each.
 //  3. Wait for all goroutines to finish.
-//  4. Assert every escrow ends up not busy and was closed by at least one rotation.
+//  4. Assert every escrow ends up not busy and, waiting up to five seconds for a close handed to a background goroutine, was closed by at least one rotation.
 func TestConcurrentPicksRotationsAndRequestsStayConsistent(t *testing.T) {
 	t.Parallel()
 	byEscrow := map[string]*fakeSession{}
+	closed := map[string]chan struct{}{}
 	for index := range 4 {
-		byEscrow[fmt.Sprint(index)] = newFakeSession("hostA", "hostB")
+		session, signal, once := newFakeSession("hostA", "hostB"), make(chan struct{}), &sync.Once{}
+		session.onClose = func() { once.Do(func() { close(signal) }) }
+		byEscrow[fmt.Sprint(index)], closed[fmt.Sprint(index)] = session, signal
 	}
 	registry := New(Deps{
 		ServingSessions: newSessions(byEscrow).open,
@@ -1189,12 +1196,14 @@ func TestConcurrentPicksRotationsAndRequestsStayConsistent(t *testing.T) {
 	}
 	workers.Wait()
 
-	for escrowID, session := range byEscrow {
+	for escrowID := range byEscrow {
 		if registry.IsBusy(escrowID) {
 			t.Errorf("escrow %s is still busy after every request finished", escrowID)
 		}
-		if got := session.closeCalls.Load(); got == 0 {
-			t.Errorf("escrow %s was never closed across %d rotations", escrowID, got)
+		select {
+		case <-closed[escrowID]:
+		case <-time.After(5 * time.Second):
+			t.Errorf("escrow %s session Close not called within 5s of the last rotation", escrowID)
 		}
 	}
 }

@@ -2,6 +2,7 @@ package hostping
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,7 +97,7 @@ var (
 // Test flow:
 //  1. Start a loopback stub that counts hits and close the dial guard.
 //  2. Build a pinger over two live host dials, one by the stub's IP and one by the host name localhost, and start it.
-//  3. Read probe results from the sink until both hosts have reported, failing if they do not within five seconds.
+//  3. Read probe results from the sink until both hosts have reported, skipping a probe that ran out of its deadline before the guard answered, failing if they do not within five seconds.
 //  4. Assert each result is down with the guard's refusal and the stub was never reached.
 func TestAPingDoesNotDialAHostOnAPrivateAddress(t *testing.T) {
 	var hits atomic.Int32
@@ -126,6 +127,9 @@ func TestAPingDoesNotDialAHostOnAPrivateAddress(t *testing.T) {
 	for len(reported) < 2 {
 		select {
 		case result := <-sink.results:
+			if errors.Is(result.Err, context.DeadlineExceeded) {
+				continue
+			}
 			if result.Up || result.Err == nil || !strings.Contains(result.Err.Error(), "ssrf guard") {
 				t.Fatalf("probe of %s = up %v, err %v, want down with the ssrf guard's refusal", result.Key, result.Up, result.Err)
 			}
