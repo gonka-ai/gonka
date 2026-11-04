@@ -121,17 +121,13 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
-	executeValidation, path := commonvalidation.ExecuteValidation, "/v1/chat/completions"
-	if tapeSampling {
-		executeValidation, path = commonvalidation.ExecuteTapeValidation, commonvalidation.TapeReplayPath
-	}
-	result, err := executeValidation(
+	result, err := commonvalidation.ExecuteTapeValidation(
 		ctx,
 		inferenceID,
 		promptPayload,
 		responsePayload,
 		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return v.executeMLRequest(ctx, req.Model, req.EscrowID, path, body)
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, commonvalidation.TapeReplayPath, body)
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),

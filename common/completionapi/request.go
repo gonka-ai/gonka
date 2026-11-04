@@ -220,6 +220,27 @@ func MinTokensOf(requestMap map[string]interface{}) int {
 	return getMinTokens(requestMap)
 }
 
+// ConstrainsOutput reports whether the request decodes under a grammar, which
+// ends the output when it completes, before min_tokens if need be: a JSON
+// response format, vLLM structured outputs or a forced tool call.
+func ConstrainsOutput(requestMap map[string]interface{}) bool {
+	if format, ok := requestMap["response_format"].(map[string]interface{}); ok && format["type"] != "text" {
+		return true
+	}
+	for _, key := range []string{"structured_outputs", "guided_json", "guided_regex", "guided_choice", "guided_grammar"} {
+		if _, ok := requestMap[key]; ok {
+			return true
+		}
+	}
+	switch choice := requestMap["tool_choice"].(type) {
+	case string:
+		return choice == "required"
+	case map[string]interface{}:
+		return true
+	}
+	return false
+}
+
 // LogprobsAsked reads the pair as one intent: logprobs alone names no width, and a width of zero switches them off.
 func LogprobsAsked(logprobs bool, topLogprobs float64) bool {
 	return logprobs && topLogprobs > 0
