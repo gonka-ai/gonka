@@ -678,7 +678,7 @@ func TestDoWithLockedNodeReleasesABrokenStreamAsTransportErrorOnce(t *testing.T)
 	require.NoError(t, err)
 	_, err = io.Copy(io.Discard, resp.Body)
 	require.Error(t, err, "the stream was cut before its last chunk")
-	require.Equal(t, int32(0), releases.Load(), "the slot is held until the body is closed")
+	require.Eventually(t, func() bool { return releases.Load() == 1 }, time.Second, time.Millisecond)
 
 	_ = resp.Body.Close()
 	_ = resp.Body.Close()

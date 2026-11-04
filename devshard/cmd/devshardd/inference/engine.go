@@ -5,10 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"common/chain"
@@ -176,11 +174,6 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 	return resp, nil
 }
 
-// doWithLockedNode tries NodeManager gRPC first. On success it records the
-// node in the passive cache (Observe) and POSTs. A 2xx or 4xx answer keeps the
-// lock until the caller closes the response body; a failed attempt Releases at
-// once and rotates. The caller must close the body. If dapi is
-// unreachable it falls back to mgr.PickNode round-robin without lock/release.
 // ResourceExhausted (dapi up, no free nodes) stays on the gRPC retry path.
 // escrowID is forwarded on Acquire so dapi can attribute per-escrow load.
 // A validation reserves one credit for the whole call, across node rotation.
@@ -264,8 +257,6 @@ func (e *Engine) doWithLockedNode(
 		}
 
 		if outcome == mlnodegen.ReleaseOutcome_SUCCESS {
-			// Do returns at the headers, while a streamed body is still being
-			// generated: the lock is released when the caller closes the body.
 			credit.spend()
 			resp.Body = holdSlot(ctx, resp.Body, func(outcome mlnodegen.ReleaseOutcome) {
 				if releaseErr := e.releaseNode(ctx, acq, outcome); releaseErr != nil {
@@ -332,51 +323,8 @@ func (e *Engine) releaseNode(
 	return e.mlClient.Release(spanCtx, acq.LockId, outcome)
 }
 
-// holdSlot keeps an ML node slot until the caller closes body. A read that
-// fails before EOF while the request is still live is the node's failure and
-// releases with TRANSPORT_ERROR; a body closed early, or cut by the request's
-// own cancellation, releases with SUCCESS. release runs once.
-func holdSlot(ctx context.Context, body io.ReadCloser, release func(mlnodegen.ReleaseOutcome)) io.ReadCloser {
-	if body == nil {
-		release(mlnodegen.ReleaseOutcome_SUCCESS)
-		return nil
-	}
-	return &slotBody{ReadCloser: body, ctx: ctx, release: release}
-}
-
-type slotBody struct {
-	io.ReadCloser
-	ctx     context.Context
-	release func(mlnodegen.ReleaseOutcome)
-	failed  atomic.Bool
-	once    sync.Once
-}
-
-func (b *slotBody) Read(p []byte) (int, error) {
-	n, err := b.ReadCloser.Read(p)
-	if err != nil && !errors.Is(err, io.EOF) && b.ctx.Err() == nil {
-		b.failed.Store(true)
-	}
-	return n, err
-}
-
-func (b *slotBody) Close() error {
-	err := b.ReadCloser.Close()
-	b.once.Do(func() {
-		outcome := mlnodegen.ReleaseOutcome_SUCCESS
-		if b.failed.Load() {
-			outcome = mlnodegen.ReleaseOutcome_TRANSPORT_ERROR
-		}
-		b.release(outcome)
-	})
-	return err
-}
-
 // doWithFallbackNodes serves inference from the passive cache when dapi is
 // unreachable. No lock/release — degraded mode. Rotates on transport/5xx.
-// When capacity has been observed, each attempt takes a local in-flight slot
-// for (nodeID, model), held until the caller closes the body of a returned
-// response; old DAPI / never-observed capacity is unbounded.
 func (e *Engine) doWithFallbackNodes(
 	ctx context.Context,
 	path observability.Path,
@@ -491,9 +439,6 @@ func (e *Engine) doWithFallbackNodes(
 			}
 			continue
 		default:
-			// Success and 4xx are returned as-is (no rotation on 4xx). The
-			// local slot is freed when the caller closes the body, as on the
-			// gRPC path.
 			credit.spend()
 			resp.Body = holdSlot(ctx, resp.Body, releaseSlot)
 			return resp, nil
