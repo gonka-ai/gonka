@@ -308,6 +308,20 @@ func ExecuteValidation(
 	claimedInputTokens, claimedOutputTokens uint64,
 	logprobsMode string,
 ) (ValidationResult, error) {
+	return executeValidation(ctx, inferenceID, promptPayload, responsePayload, execute,
+		claimedInputTokens, claimedOutputTokens, logprobsMode, false)
+}
+
+func executeValidation(
+	ctx context.Context,
+	inferenceID string,
+	promptPayload []byte,
+	responsePayload []byte,
+	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	claimedInputTokens, claimedOutputTokens uint64,
+	logprobsMode string,
+	tape bool,
+) (ValidationResult, error) {
 	var requestMap map[string]interface{}
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
 		promptPayload,
@@ -346,6 +360,9 @@ func ExecuteValidation(
 	} else {
 		requestMap["enforced_tokens"] = enforcedTokens
 	}
+	if tape {
+		completionapi.SetTape(requestMap)
+	}
 	requestMap["stream"] = false
 	requestMap["skip_special_tokens"] = false
 	delete(requestMap, "stream_options")
@@ -374,6 +391,9 @@ func ExecuteValidation(
 	// semantics and rely on the warn logs to surface any cases worth marking
 	// invalid later. Ref: decentralized-api/internal/validation/inference_validation.go (~944).
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+		if tape && !isEmptySentinel && servesWithoutCommitted(ctx, requestMap, execute) {
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Replay rejected the committed tokens of a servable prompt."}, nil
+		}
 		logging.Warn("validator re-execution rejected payload; treating validation as passed (mainnet 4xx autopass)",
 			types.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
 		return &SimilarityValidationResult{
@@ -444,8 +464,8 @@ func ExecuteValidation(
 	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
 	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
 	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
-	// above; empty-sentinel errors are exempt.
-	if !isEmptySentinel && len(originalLogits) > 0 {
+	// above; empty-sentinel errors and grammar-constrained outputs are exempt.
+	if !isEmptySentinel && len(originalLogits) > 0 && !completionapi.ConstrainsOutput(requestMap) {
 		minTokens := completionapi.MinTokensOf(requestMap)
 		if minTokens > 0 && len(originalLogits) < minTokens {
 			logging.Warn("validation failed: output below min_tokens floor",
@@ -455,6 +475,9 @@ func ExecuteValidation(
 		}
 	}
 
+	if tape {
+		return tapeResult(respBodyBytes, len(enforcedTokens.Tokens), baseResult)
+	}
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 

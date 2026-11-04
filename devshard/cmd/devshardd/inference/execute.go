@@ -32,6 +32,9 @@ func executeInference(
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
 	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
+	if err == nil {
+		modified.NewBody, err = completionapi.WithTape(modified.NewBody)
+	}
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}
