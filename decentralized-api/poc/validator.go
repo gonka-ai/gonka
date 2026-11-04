@@ -358,8 +358,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	if isConfirmation {
 		stageCommits, skippedChallengeTargets = filterChallengedConfirmationCommits(
 			stageCommits,
-			epochState.ActiveConfirmationPoCEvent.EpochIndex,
-			OpenChallenges.List(),
+			OpenChallenges.TargetsForEpoch(epochState.ActiveConfirmationPoCEvent.EpochIndex),
 		)
 	}
 
@@ -523,18 +522,8 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 
 func filterChallengedConfirmationCommits(
 	commits []*types.PoCV2StoreCommitWithAddress,
-	epochIndex uint64,
-	challenges []*types.OpenPoCChallenge,
+	targets map[string]struct{},
 ) ([]*types.PoCV2StoreCommitWithAddress, int) {
-	targets := make(map[string]struct{}, len(challenges))
-	for _, open := range challenges {
-		if open == nil || open.Challenge == nil ||
-			open.Challenge.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN ||
-			open.Challenge.EpochIndex != epochIndex || open.Target() == "" {
-			continue
-		}
-		targets[open.Target()] = struct{}{}
-	}
 	if len(targets) == 0 {
 		return commits, 0
 	}
