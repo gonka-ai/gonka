@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -26,9 +27,9 @@ func main() {
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
-	reportDir := flag.String("report", "", "rebuild report.md and print a console summary of an existing run, without running")
+	reportDir := flag.String("report", "", "rebuild report.md and timeline.html, and print a console summary of an existing run, without running")
 	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
-	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json and report.md, and print a console summary, without a stack")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json, report.md and timeline.html, and print a console summary, without a stack")
 	flag.Parse()
 	if *recheckDir != "" {
 		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
@@ -107,11 +108,10 @@ func main() {
 	if report, reportErr := writeConsoleReport(*outputDir); reportErr != nil {
 		log.Printf("loadtest: no report: %v", reportErr)
 	} else {
+		// Put the compact report and its clickable timeline link last.
+		printDiagnostics(result)
 		fmt.Print(report)
 		reportPrinted = true
-	}
-	if reportPrinted {
-		printDiagnostics(result)
 	}
 	if err != nil {
 		if !reportPrinted && result.Summary.Requests > 0 {
@@ -204,7 +204,27 @@ func writeConsoleReport(outputDir string) (string, error) {
 	if _, err := loadtest.WriteReport(outputDir); err != nil {
 		return "", err
 	}
-	return loadtest.ConsoleReport(outputDir)
+	report, err := loadtest.ConsoleReport(outputDir)
+	if err != nil {
+		return "", err
+	}
+	path, err := loadtest.WriteTimelineReport(outputDir)
+	if err != nil {
+		log.Printf("loadtest: no HTML timeline: %v", err)
+		return report, nil
+	}
+	return report + "  HTML timeline: " + terminalFileLink(path) + "\n", nil
+}
+
+// OSC 8 makes the label clickable in supporting terminals. Redirected logs
+// retain a plain, escaped file URL with no terminal control sequences.
+func terminalFileLink(path string) string {
+	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	info, err := os.Stdout.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice != 0 && os.Getenv("TERM") != "dumb" {
+		return "\033]8;;" + uri + "\a" + path + "\033]8;;\a"
+	}
+	return uri
 }
 
 func printDiagnostics(result loadtest.RunResult) {

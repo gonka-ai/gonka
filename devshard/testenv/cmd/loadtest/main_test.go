@@ -34,3 +34,14 @@ func TestPrintMetricsSummaryShowsValuesAndMissingMetrics(t *testing.T) {
 	require.Contains(t, string(body), "CPU per 1000 completed client requests: 2.000 s")
 	require.Contains(t, string(body), "missing go_goroutines")
 }
+
+func TestTerminalFileLinkKeepsRedirectedOutputPlain(t *testing.T) {
+	f, err := os.CreateTemp(t.TempDir(), "console")
+	require.NoError(t, err)
+	prior := os.Stdout
+	os.Stdout = f
+	t.Cleanup(func() { os.Stdout = prior; _ = f.Close() })
+	link := terminalFileLink("/tmp/load results/timeline.html")
+	require.Equal(t, "file:///tmp/load%20results/timeline.html", link)
+	require.NotContains(t, link, "\033")
+}

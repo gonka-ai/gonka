@@ -244,12 +244,43 @@ workload:
 | `tripfile` | versiond host | `touch` / `rm -f` of `params.file` in the executor fault dir (`/tmp` by default) |
 | `chain_participant` | versiond host | mock-chain `POST /testenv/participant {address, mode}` with `params.mode` `unavailable` or `absent` / mode `ok` |
 | `epoch_advance` | `mock-chain` (implicit) | without `until`: mock-chain `POST /testenv/epoch {advance: true}`, no revert. With `until`: mock-dapi `POST /testenv/phase` with `params.phases` (`at=phase,...` from the window start; default PoCGenerate, then PoCValidate for the last third) / epoch advance, then phase back to Inference |
+| `poc_window` | `mock-dapi` (implicit) | block new ML allocations and abort active mock ML work on non-preserved identities, then publish the generation phase and preserved set / unblock hosts and restore Inference; `until` and `params.preserved` required; `params.kind: poc` (default) or `cpoc`; does not advance the epoch |
 | `dapi_challenge` | versiond host | mock-dapi `POST /testenv/challenge {host, on: true}` / `on: false` |
 | `marker` | versiond host | nothing; gives a fault caused by topology or traffic (such as a tight peer budget) a window and a case; `until` required |
 
 Events on one host must not overlap; an `ml_fault` on a node bound to
 a host (`topology.mock_ml.nodes[].host`) counts as that host. `gateway_restart`
-and `epoch_advance` are global and must not overlap each other.
+and `epoch_advance` are global and must not overlap each other. A `poc_window`
+affects the whole topology and cannot overlap any other non-background event.
+
+For a PoC window, set `gateway.poc_request_mode: relaxed`, configure explicit
+`topology.participants` (at least two), and bind at least one mock ML node to
+every versiond container with `topology.mock_ml.nodes[].host`. For example,
+in a topology containing `versiond-0`:
+
+```yaml
+gateway:
+  poc_request_mode: relaxed
+
+workload:
+  events:
+    - id: poc-preserved-p0
+      action: poc_window
+      at: 2m
+      until: 4m
+      params:
+        preserved: versiond-0
+        kind: poc
+```
+
+`params.preserved` preserves the named host's entire participant identity,
+including HA replicas. Set `kind: cpoc` to publish confirmation PoC generation
+instead of epoch PoC generation. Cleanup also runs after cancellation or a
+partially failed apply. This simulates inference interruption and routing;
+it does not run GPU PoC generation. See [PoC with one preserved participant](#poc-with-one-preserved-participant)
+for the complete 16-minute scenario, recovery windows and collected metrics.
+Use `epoch_advance` for an epoch switch; use `dapi_challenge` for an allocation
+refusal on a single host without the phase change and active-request aborts.
 
 `events.json` holds one record per event: `id, case, action, target, params, planned_start, planned_end, started_at, ended_at, error`, plus optional `recovery` when configured. Times are RFC 3339; `started_at`/`ended_at` are null when the step did not happen. `started_at` is when the apply step began, because the fault takes effect somewhere inside it (a `docker compose kill` of the gateway cuts connections up to two seconds before the command returns); `ended_at` is when the revert step returned. Saved-run rechecks use the recorded `recovery`, or the `60s` default for older pause records.
 
@@ -1010,9 +1041,44 @@ are counted rather than repeated individually. Live runs also print ML-node,
 process memory/CPU and profile diagnostics once. Markdown tables and the full
 check listing remain in `report.md`.
 
-`go run ./cmd/loadtest -report <run directory>` rebuilds `report.md` and prints
-the console summary of an earlier run without starting a stack. `-recheck` uses
-the same console format.
+`go run ./cmd/loadtest -report <run directory>` rebuilds `report.md` and
+`timeline.html`, and prints the console summary of an earlier run without
+starting a stack. `-recheck` uses the same output format.
+
+Each live run, `-report` and `-recheck` also generates an offline `timeline.html`
+in the run's results directory. The page has English labels and descriptions,
+with aligned charts for successful/scheduled RPS, generator drops/request errors,
+RSS and Go heap for the gateway and each devshardd process. Hovering shares a
+cursor across charts; click/tap pins it, Escape releases it, and legend buttons
+toggle individual series. Actual applied event windows are shaded; events that never applied are
+omitted. PoC/CPoC windows are numbered separately in chronological order
+(`PoC 1`, `PoC 2`, `CPoC 1`). Affected node names appear on the bands when
+space permits, and full names plus preserved HA replicas appear in descriptions
+and tooltips. These node roles come from host-state samples inside the applied
+window; when samples are unavailable, the report keeps only the known preserved
+host instead of inferring affected nodes from service numbering.
+
+The HTML embeds data, styles and chart code, so it opens locally without network
+access or a server. The final console report prints a clickable file link using
+OSC 8 in supporting terminals, or a plain escaped `file://` URL in redirected
+logs. On macOS, open it directly with `open <run directory>/timeline.html`.
+
+Traffic is grouped by request start, using 10-second bins; final short bins use
+their actual duration. Scheduled RPS includes generator drops. Errors divide by
+sent requests, while drops divide by scheduled requests. These drops do not
+measure TCP/IP packet loss. Memory is the median of available samples per
+5-second bin in MiB; missing metrics remain unavailable. For long runs the bins
+automatically widen to limit file size. Memory includes drain samples where
+available. If requests are unavailable, the page uses summary traffic windows
+and displays a note; missing memory data is also stated explicitly. Malformed
+inputs produce a diagnostic without failing the existing text report.
+
+To create charts for a saved run:
+
+```bash
+cd devshard/testenv
+go run ./cmd/loadtest -report loadtest/results/<run directory>
+```
 
 `go run ./cmd/loadtest -recheck <run directory>` judges every check of an earlier run again without a stack, from the files in its directory, and rewrites `assertions.json`, `invariants.json` and `report.md` there; copy the directory first to keep the run's own result. It exits 1 when a check fails. A live run judges its checks the same way: it writes what it read from the stack after the workload to `run-inputs.json`, then evaluates from the directory with the same code, so `-recheck` on a run made by the same binary gives the same `assertions.json`. A run saved before `run-inputs.json` existed is judged from what its other files hold. Its host-to-participant map comes from `host-stats.jsonl`, its allocations from `ml-stats.json` and its burns from `compose-pre-drain.log` (decompress `compose-pre-drain.log.gz` first). The drain check, the escrow-rotation check and the checks that need the gateway devshard list, the chain ledger or the lease table report `unavailable`, and the runner logs a `recheck:` line for each of these gaps.
 
@@ -1092,6 +1158,7 @@ records, summaries, state snapshots, and logs:
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |
 | `report.md` | The run report in its fixed template; see [Run report](#run-report). |
+| `timeline.html` | Offline interactive RPS, drop/error, RSS and Go heap charts with recorded event windows. |
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |
 | `gateway-inferences.json` | Gateway inference records collected for diagnosis. |
 | `gateway-state.json` | Gateway diff, nonce, pending transaction, and applied-key counts. |

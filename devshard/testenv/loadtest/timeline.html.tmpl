@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="Load-test timeline: successful and scheduled RPS, generator drops, request errors, RSS and Go heap with recorded event windows.">
+<title>{{.Title}} — performance timeline</title>
+<style>
+:root{color-scheme:light dark;--bg:#fff;--fg:#18212e;--muted:#586375;--grid:#dce1e7;--tip:#fff;--band:#9b74e0;--c1:#2563b5;--c2:#b65c13;--c3:#14805e;--c4:#8752b4;--c5:#ba4275;--c6:#197f99}
+@media(prefers-color-scheme:dark){:root{--bg:#161a20;--fg:#e6eaf0;--muted:#a5afbd;--grid:#38414d;--tip:#242b34;--band:#b49ae6;--c1:#7eb2ff;--c2:#efab6e;--c3:#6bd3ad;--c4:#c3a0ed;--c5:#f39cbe;--c6:#74cbdf}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 system-ui,-apple-system,sans-serif}main{max-width:1120px;margin:auto;padding:24px}h1{font-size:24px;font-weight:600;margin:0 0 6px}h2{font-size:16px;font-weight:600;margin:22px 0 4px}p{margin:6px 0}.muted{color:var(--muted)}.legend{display:flex;flex-wrap:wrap;gap:6px 18px;margin:5px 0}.legend button{display:inline-flex;align-items:center;gap:7px;color:var(--fg);border:0;background:none;padding:5px 0;font:inherit;cursor:pointer}.legend button[aria-pressed="false"]{opacity:.4}.swatch{width:20px;height:3px;display:inline-block}.chart svg{display:block;width:100%;overflow:visible}svg text{font:12px system-ui,sans-serif;fill:var(--fg)}.axis-text{fill:var(--muted)}.grid{stroke:var(--grid);stroke-width:1}.line{fill:none;stroke-width:1.8;stroke-linejoin:round;stroke-linecap:round}.tip{position:fixed;z-index:5;pointer-events:none;background:var(--tip);border:1px solid var(--grid);padding:10px 12px;max-width:310px;font-variant-numeric:tabular-nums}.tip-row{display:flex;justify-content:space-between;gap:18px}.tip-heading{font-weight:600;margin:4px 0}.notice{margin:12px 0;color:var(--muted)}.summary{font-size:13px;color:var(--muted)}@media(max-width:480px){main{padding:14px}h1{font-size:20px}}
+</style>
+</head>
+<body>
+<main id="timeline">
+<h1>Performance &amp; memory timeline</h1>
+<p id="run" class="muted"></p>
+<div id="event-summary" class="summary"></div>
+<div id="notes" class="notice" role="status"></div>
+<section data-panel="rps"><h2>Successful and scheduled requests</h2><div class="legend" id="traffic-legend"></div><div class="chart"></div></section>
+<section data-panel="loss"><h2>Generator drops and request errors</h2><div class="legend" id="loss-legend"></div><div class="chart"></div></section>
+<div class="legend" id="memory-legend" aria-label="Toggle processes"></div>
+<section data-panel="rss"><h2>RSS — process resident memory</h2><div class="chart"></div></section>
+<section data-panel="heap"><h2>Go heap — allocated objects</h2><div class="chart"></div></section>
+<noscript>Enable JavaScript to view the charts. All data and chart code are embedded; no network connection is required.</noscript>
+</main>
+<div id="tooltip" class="tip" role="tooltip" hidden></div>
+<script id="timeline-data" type="application/json">{{.Data}}</script>
+<script>
+(()=>{
+'use strict';
+const DATA=JSON.parse(document.getElementById('timeline-data').textContent);
+const root=document.getElementById('timeline'),tip=document.getElementById('tooltip');
+const NS='http://www.w3.org/2000/svg';
+const palette=Array.from({length:6},(_,i)=>`var(--c${i+1})`);
+const visible=new Map();let charts=[],cursor=null,pinned=false,activePanel='rss';
+const panels=[{id:'rps',unit:'requests / s',height:190},{id:'loss',unit:'%',height:170},{id:'rss',unit:'MiB',height:225},{id:'heap',unit:'MiB',height:225}];
+const number=n=>Number(n).toLocaleString('en-US',{maximumFractionDigits:1});
+const time=x=>{const s=Math.round(x*60);return `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;};
+function html(tag,text,cls){const e=document.createElement(tag);if(text!==undefined)e.textContent=text;if(cls)e.className=cls;return e;}
+function svgNode(parent,tag,attrs,text){const e=document.createElementNS(NS,tag);for(const [k,v] of Object.entries(attrs||{})){if(v!==null)e.setAttribute(k,String(v));}if(text!==undefined)e.textContent=text;parent.appendChild(e);return e;}
+function series(id){
+ if(id==='rps')return [{key:'ok',label:'Successful RPS',color:palette[0],points:DATA.traffic.map(p=>({x:p.x,y:p.ok}))},{key:'scheduled',label:'Scheduled RPS',color:'var(--muted)',dash:'5 4',points:DATA.traffic.map(p=>({x:p.x,y:p.scheduled}))}];
+ if(id==='loss')return [{key:'drop',label:'Generator drops (% scheduled)',color:palette[1],points:DATA.traffic.map(p=>({x:p.x,y:p.drop}))},{key:'error',label:'Request errors (% sent)',color:palette[4],points:DATA.traffic.map(p=>({x:p.x,y:p.error}))}];
+ return DATA.series.map((s,i)=>({key:s.key,label:s.label,color:palette[i%6],dash:i>=6?'4 3':null,points:s.points.map(p=>({x:p.x,y:p[id]}))}));
+}
+function createLegend(id,items){
+ const container=document.getElementById(id);
+ for(const s of items){visible.set(s.key,true);const b=html('button');b.type='button';b.setAttribute('aria-pressed','true');const sw=html('span',undefined,'swatch');sw.style.background=s.color;sw.setAttribute('aria-hidden','true');b.append(sw,document.createTextNode(s.label));b.addEventListener('click',()=>{const on=!visible.get(s.key);visible.set(s.key,on);b.setAttribute('aria-pressed',String(on));draw();});container.appendChild(b);}
+}
+createLegend('traffic-legend',series('rps'));createLegend('loss-legend',series('loss'));createLegend('memory-legend',series('rss'));
+document.getElementById('run').textContent=`${DATA.scenario} · ${DATA.run} · started ${DATA.started}`;
+for(const event of DATA.events){document.getElementById('event-summary').appendChild(html('p',`${time(event.from)}–${time(event.to)}  ${event.label}`));}
+for(const note of DATA.notes){document.getElementById('notes').appendChild(html('p',note));}
+function niceStep(range,count){const raw=Math.max(range/count,1e-9),base=10**Math.floor(Math.log10(raw)),fraction=raw/base;return (fraction<=1?1:fraction<=2?2:fraction<=5?5:10)*base;}
+function interpolate(points,x,gap){
+ if(!points.length||x<points[0].x-gap/2||x>points[points.length-1].x+gap/2)return null;
+ let lo=0,hi=points.length;while(lo<hi){const m=(lo+hi)>>1;if(points[m].x<x)lo=m+1;else hi=m;}
+ const b=points[Math.min(lo,points.length-1)],a=points[Math.max(0,lo-1)];
+ if(!Number.isFinite(a.y)||!Number.isFinite(b.y)||b.x-a.x>gap*3)return null;
+ if(a.x===b.x)return a.y;const f=Math.max(0,Math.min(1,(x-a.x)/(b.x-a.x)));return a.y+(b.y-a.y)*f;
+}
+function draw(){
+ charts=[];
+ for(const panel of panels){
+  const container=root.querySelector(`[data-panel="${panel.id}"] .chart`),W=Math.max(260,container.clientWidth),H=panel.height,L=70,R=16,T=DATA.events.some(e=>e.nodes?.length)?42:24,B=45;
+  container.replaceChildren();
+  const items=series(panel.id),shown=items.filter(s=>visible.get(s.key));
+  const values=items.flatMap(s=>s.points.filter(p=>Number.isFinite(p.y)).map(p=>p.y));const max=Math.max(1,...values)*1.08;
+  const step=niceStep(max,4),top=Math.ceil(max/step)*step;
+  const xmax=Math.max(DATA.end,1/60);
+  const x=v=>L+4+(W-L-R-8)*v/xmax,y=v=>H-B-4-(H-B-T-8)*v/top;
+  const svg=document.createElementNS(NS,'svg');svg.setAttribute('viewBox',`0 0 ${W} ${H}`);svg.setAttribute('height',H);svg.setAttribute('role','img');svg.setAttribute('aria-label',`${panel.id}: ${panel.unit}; time since workload start in minutes`);container.appendChild(svg);
+  svgNode(svg,'title',{},`${panel.id} over time with event windows`);
+  const defs=svgNode(svg,'defs');const clip=svgNode(defs,'clipPath',{id:`clip-${panel.id}`});svgNode(clip,'rect',{x:L,y:T,width:W-L-R,height:H-T-B});
+  const plot=svgNode(svg,'g',{'clip-path':`url(#clip-${panel.id})`});
+  DATA.events.forEach((event,i)=>{
+   svgNode(plot,'rect',{x:x(event.from),y:T,width:Math.max(1,x(event.to)-x(event.from)),height:H-T-B,fill:'var(--band)',opacity:.1});
+   for(const t of [event.from,event.to])svgNode(plot,'line',{x1:x(t),x2:x(t),y1:T,y2:H-B,stroke:'var(--muted)','stroke-opacity':.4});
+   const center=(x(event.from)+x(event.to))/2,bandWidth=x(event.to)-x(event.from);
+   const hasNodes=event.nodes?.length>0;
+   const label=svgNode(svg,'text',{x:center,y:T-(hasNodes?23:8),'text-anchor':'middle'},event.title||event.label);
+   if(label.getBBox().width+8>bandWidth)label.remove();
+   if(hasNodes){
+    const names=event.nodes.map(name=>name.replace(/^versiond-(\d+)$/,'v$1')).join(', ');
+    const nodeLabel=svgNode(svg,'text',{x:center,y:T-8,'text-anchor':'middle',class:'axis-text'},names);
+    if(nodeLabel.getBBox().width+8>bandWidth)nodeLabel.remove();
+   }
+  });
+  svgNode(svg,'rect',{x:L,y:T,width:W-L-R,height:H-T-B,fill:'none',stroke:'var(--grid)'});
+  for(let value=0;value<=top+step/100;value+=step){
+   svgNode(svg,'line',{x1:L,x2:W-R,y1:y(value),y2:y(value),class:'grid'});svgNode(svg,'text',{x:L-8,y:y(value)+4,'text-anchor':'end',class:'axis-text'},number(value));
+  }
+  const xtick=niceStep(xmax,W<420?3:8);let previous=-Infinity;
+  for(let value=0;value<=xmax+xtick/100;value+=xtick){
+   svgNode(svg,'line',{x1:x(value),x2:x(value),y1:H-B,y2:H-B+4,class:'grid'});
+   const t=svgNode(svg,'text',{x:x(value),y:H-B+19,'text-anchor':value===0?'start':'middle',class:'axis-text'},number(value));
+   const box=t.getBBox();if(box.x<previous+4||box.x+box.width>W-R)t.remove();else previous=box.x+box.width;
+  }
+  svgNode(svg,'text',{x:(L+W-R)/2,y:H-4,'text-anchor':'middle',class:'axis-title','data-axis':'x'},'Time since start, min');
+  svgNode(svg,'text',{transform:`translate(15,${(T+H-B)/2}) rotate(-90)`,'text-anchor':'middle',class:'axis-title','data-axis':'y'},panel.unit);
+  const gap=(panel.id==='rps'||panel.id==='loss'?DATA.trafficBin:DATA.memoryBin)/60;
+  for(const s of shown){let d='',last=null;for(const p of s.points){if(!Number.isFinite(p.y)){last=null;continue;}const move=last===null||p.x-last>gap*3;d+=`${move?'M':'L'}${x(p.x).toFixed(2)},${y(p.y).toFixed(2)} `;last=p.x;}svgNode(plot,'path',{d,class:'line',stroke:s.color,'stroke-dasharray':s.dash,'stroke-width':s.key==='gateway'?2.4:1.8});}
+  if(values.length===0)svgNode(svg,'text',{x:(L+W-R)/2,y:(T+H-B)/2,'text-anchor':'middle'},'No samples available');
+  const guide=svgNode(plot,'line',{y1:T,y2:H-B,stroke:'var(--fg)','stroke-opacity':.5,display:'none'});
+  const markers=shown.map(s=>({s,node:svgNode(plot,'circle',{r:3,fill:s.color,display:'none'})}));
+  const chart={id:panel.id,x,y,guide,markers,gap,svg};charts.push(chart);
+  const hit=svgNode(svg,'rect',{x:L,y:T,width:W-L-R,height:H-T-B,fill:'transparent'});
+  function position(event){const box=svg.getBoundingClientRect();return Math.max(0,Math.min(xmax,((event.clientX-box.left)/box.width*W-L-4)/(W-L-R-8)*xmax));}
+  hit.addEventListener('pointermove',e=>{if(!pinned){cursor=position(e);activePanel=panel.id;show(e);}});
+  hit.addEventListener('pointerleave',()=>{if(!pinned){cursor=null;hide();}});
+  hit.addEventListener('click',e=>{pinned=!pinned;cursor=position(e);activePanel=panel.id;show(e);});
+ }
+ if(cursor!==null)show();
+}
+function hide(){tip.hidden=true;for(const c of charts){c.guide.setAttribute('display','none');for(const m of c.markers)m.node.setAttribute('display','none');}}
+function tipRow(label,value){const row=html('div',undefined,'tip-row');row.append(html('span',label),html('span',value));tip.appendChild(row);}
+function show(event){
+ tip.replaceChildren(html('div',`${time(cursor)}${pinned?' · pinned':''}`,'tip-heading'));
+ for(const e of DATA.events.filter(e=>cursor>=e.from&&cursor<=e.to))tip.appendChild(html('div',e.label));
+ for(const c of charts){
+  c.guide.setAttribute('x1',c.x(cursor));c.guide.setAttribute('x2',c.x(cursor));c.guide.removeAttribute('display');
+  const showRows=c.id==='rps'||c.id==='loss'||c.id===activePanel;
+  if(showRows)tip.appendChild(html('div',c.id==='rps'?'Requests / s':c.id==='loss'?'Drops / errors':`${c.id==='rss'?'RSS':'Go heap'}, MiB`,'tip-heading'));
+  for(const m of c.markers){const value=interpolate(m.s.points,cursor,c.gap);if(value===null)m.node.setAttribute('display','none');else{m.node.removeAttribute('display');m.node.setAttribute('cx',c.x(cursor));m.node.setAttribute('cy',c.y(value));}if(showRows)tipRow(m.s.label,value===null?'unavailable':number(value)+(c.id==='loss'?'%':''));}
+ }
+ tip.hidden=false;
+ if(event){tip.style.left=`${Math.max(8,Math.min(innerWidth-tip.offsetWidth-8,event.clientX+14))}px`;tip.style.top=`${Math.max(8,Math.min(innerHeight-tip.offsetHeight-8,event.clientY+12))}px`;}
+}
+document.addEventListener('keydown',event=>{if(event.key==='Escape'){pinned=false;cursor=null;hide();}});
+new ResizeObserver(draw).observe(root);
+draw();
+})();
+</script>
+</body>
+</html>
