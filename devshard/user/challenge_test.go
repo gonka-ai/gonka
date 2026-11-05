@@ -24,6 +24,21 @@ type startedChallenge struct {
 	reason types.ChallengeReason
 }
 
+func TestChallengeAskDeadlineUsesConfirmedExecutionBudget(t *testing.T) {
+	config := testutil.DefaultConfig(3)
+	config.ExecutionTimeout = 17
+	config.InferenceSealGraceSeconds = 120
+	session, _, _ := setupSessionWithConfigAndEngine(t, 3, 100000, 10, config, nil)
+	confirmed := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
+	rec := &types.InferenceRecord{ConfirmedAtTimeMs: confirmed.UnixMilli()}
+	want := confirmed.Add(17*time.Second + time.Minute + ChallengeVoteSlack)
+	for _, now := range []time.Time{confirmed, confirmed.Add(20 * time.Second), confirmed.Add(time.Hour)} {
+		require.True(t, want.Equal(session.challengeAskDeadline(rec, now)), "delivery time cannot extend collection")
+	}
+	missing := &types.InferenceRecord{}
+	require.Equal(t, confirmed.Add(ChallengeVoteSlack), session.challengeAskDeadline(missing, confirmed), "unarmed requests get no new fetch window")
+}
+
 func challengeJoinSession(started *[]startedChallenge) (*Session, *[]servedBindingReport) {
 	reports := &[]servedBindingReport{}
 	session := bindingSession(reports)

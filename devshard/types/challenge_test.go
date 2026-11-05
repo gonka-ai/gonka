@@ -1,9 +1,43 @@
 package types
 
 import (
+	"math"
 	"testing"
 	"time"
 )
+
+func TestChallengeFetchDeadline(t *testing.T) {
+	confirmed := time.Date(2026, 11, 5, 10, 0, 0, 123000000, time.UTC)
+	for _, tc := range []struct {
+		name      string
+		confirmed int64
+		timeout   int64
+		grace     uint32
+		want      time.Duration
+		armed     bool
+	}{
+		{"session execution budget", confirmed.UnixMilli(), 17, 7200, 17*time.Second + 30*time.Minute, true},
+		{"short seal grace", confirmed.UnixMilli(), 17, 120, 17*time.Second + time.Minute, true},
+		{"zero timeout is not the default", confirmed.UnixMilli(), 0, 7200, 30 * time.Minute, true},
+		{"negative timeout follows execution timeout", confirmed.UnixMilli(), -1, 7200, 30 * time.Minute, true},
+		{"missing confirmed time", 0, 17, 7200, 0, false},
+		{"invalid confirmed time", -1, 17, 7200, 0, false},
+		{"unrepresentable budget", confirmed.UnixMilli(), math.MaxInt64, 7200, 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, armed := ChallengeFetchDeadline(tc.confirmed, SessionConfig{ExecutionTimeout: tc.timeout, InferenceSealGraceSeconds: tc.grace})
+			if armed != tc.armed {
+				t.Fatalf("armed = %v, want %v", armed, tc.armed)
+			}
+			if armed && !got.Equal(confirmed.Add(tc.want)) {
+				t.Fatalf("deadline = %v, want %v", got, confirmed.Add(tc.want))
+			}
+			if !armed && !got.IsZero() {
+				t.Fatalf("unarmed deadline = %v", got)
+			}
+		})
+	}
+}
 
 func TestProtocolKnowsChallenge(t *testing.T) {
 	saved := EffectiveStateRootAndProtocolVersion

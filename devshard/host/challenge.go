@@ -28,8 +28,8 @@ const (
 	ChallengeRejectLate        = "late"
 )
 
-// challengeFirstAskLimit bounds how long after the Finish a gateway may first
-// challenge it and still get the fetch window.
+// challengeFirstAskLimit bounds the first ask after the confirmed execution
+// budget, independent of when a host receives Finish.
 const challengeFirstAskLimit = 5 * time.Minute
 
 var (
@@ -63,7 +63,7 @@ type ChallengeAnswer struct {
 }
 
 // keptChallengeVote is what a host stores per challenged inference. Deadline
-// is the end of the fetch window, fixed when the entry is first stored.
+// is the end of the fetch window, derived from confirmed state on first ask.
 type keptChallengeVote struct {
 	Deadline  int64                `json:"deadline"`
 	Fault     types.ChallengeFault `json:"fault,omitempty"`
@@ -137,26 +137,15 @@ func (h *Host) challengeWindow() time.Duration {
 	return types.ChallengeWindow(h.sm.Config().InferenceSealGraceSeconds)
 }
 
-// challengeFirstAsk is how long after the Finish a first challenge request
+// challengeFirstAsk is how long after the execution budget a first request
 // opens the fetch window: challengeFirstAskLimit, or half a shorter window.
 func (h *Host) challengeFirstAsk() time.Duration {
 	return min(challengeFirstAskLimit, h.challengeWindow()/2)
 }
 
-// challengeAnchor is when this host applied the inference's Finish, or now
-// for a host that learns the Finish only from the challenge's own diffs.
-func (h *Host) challengeAnchor(inferenceID uint64, now time.Time) time.Time {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if obs, ok := h.finishObs[inferenceID]; ok && obs.at.Before(now) {
-		return obs.at
-	}
-	return now
-}
-
 // VerifyChallenge answers a gateway's challenge of a finished inference with
 // this host's kept vote. The first request opens a fetch of the body from the
-// executor, retried until a window anchored at the Finish ends; later
+// executor, retried until the fixed confirmed execution window ends; later
 // requests and a request after a restart get the same vote, and pending while
 // the fetch is open. The vote depends on the body alone, not on the reason
 // the gateway gave, so the reason stays on the wire for the logs and is not
@@ -182,13 +171,13 @@ func (h *Host) VerifyChallenge(ctx context.Context, inferenceID uint64) (Challen
 
 	store := h.challengeVoteStore()
 	now := time.Now()
-	anchor := h.challengeAnchor(inferenceID, now)
-	deadline := anchor.Add(h.challengeWindow())
+	fetchEnd, armed := types.ChallengeFetchDeadline(rec.ConfirmedAtTimeMs, h.sm.Config())
+	deadline := now
 	// A gateway is not trusted to challenge promptly. One that first asks
 	// late, say while the executor restarts, gets no window: a fetch that
 	// fails then is no vote, so the voters are never left seconds to fetch.
-	if now.Sub(anchor) > h.challengeFirstAsk() {
-		deadline = now
+	if armed && !now.After(fetchEnd.Add(-h.challengeWindow()).Add(h.challengeFirstAsk())) {
+		deadline = fetchEnd
 	}
 	pending, err := json.Marshal(keptChallengeVote{Deadline: deadline.Unix()})
 	if err != nil {
@@ -205,9 +194,17 @@ func (h *Host) VerifyChallenge(ctx context.Context, inferenceID uint64) (Challen
 	if settled {
 		return kept.answer(), nil
 	}
+	// A pending vote keeps its original allowance after a restart, even
+	// past the first-ask cutoff, but cannot outlive the protocol's end.
+	deadline = time.Unix(kept.Deadline, 0)
+	if !armed {
+		deadline = time.Time{}
+	} else if deadline.After(fetchEnd) {
+		deadline = fetchEnd
+	}
 
 	job, started, err := h.challengeJobFor(inferenceID, func(ctx context.Context) (ChallengeAnswer, error) {
-		return h.runChallengeFetch(ctx, fetcher, store, inferenceID, rec, time.Unix(kept.Deadline, 0))
+		return h.runChallengeFetch(ctx, fetcher, store, inferenceID, rec, deadline)
 	})
 	if err != nil {
 		return ChallengeAnswer{}, err
@@ -293,7 +290,13 @@ func (h *Host) runChallengeFetch(
 		EpochID:         h.epochID,
 	}
 	triedInWindow := time.Now().Before(deadline)
-	fetchCtx, cutFetch := context.WithDeadline(ctx, deadline.Add(challengeFetchGrace))
+	// A late or unarmed ask still checks available signed evidence once.
+	// Its bounded fetch allowance does not open a retry window.
+	cutoff := deadline.Add(challengeFetchGrace)
+	if deadline.IsZero() {
+		cutoff = time.Now().Add(challengeFetchGrace)
+	}
+	fetchCtx, cutFetch := context.WithDeadline(ctx, cutoff)
 	defer cutFetch()
 	attempts := 0
 	for {
@@ -315,6 +318,9 @@ func (h *Host) runChallengeFetch(
 				return h.settleChallengeVote(store, inferenceID, rec.ResponseHash, verdict, attempts, fetch.Cause)
 			}
 			if !triedInWindow {
+				if deadline.IsZero() {
+					return h.uncheckedChallenge(inferenceID, attempts, fetch.Cause), nil
+				}
 				return h.noChallengeVote(inferenceID, ChallengeRejectLate, attempts, fetch.Cause), nil
 			}
 			return h.uncheckedChallenge(inferenceID, attempts, fetch.Cause), nil

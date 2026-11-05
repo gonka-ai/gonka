@@ -1,6 +1,7 @@
 package types
 
 import (
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -56,6 +57,18 @@ func ChallengeWindow(sealGraceSeconds uint32) time.Duration {
 		window = grace / 2
 	}
 	return window
+}
+
+// ChallengeFetchDeadline fixes the fetch window to the execution budget of
+// the confirmed inference. Delivery of Finish and process restarts cannot
+// extend it. Without a confirmed block time, unavailability is not timed.
+func ChallengeFetchDeadline(confirmedAtTimeMs int64, cfg SessionConfig) (time.Time, bool) {
+	timeout := max(int64(0), cfg.ExecutionTimeout)
+	if confirmedAtTimeMs <= 0 || timeout > math.MaxInt64/int64(time.Second) {
+		return time.Time{}, false
+	}
+	anchor := time.UnixMilli(confirmedAtTimeMs).Add(time.Duration(timeout) * time.Second)
+	return anchor.Add(ChallengeWindow(cfg.InferenceSealGraceSeconds)), true
 }
 
 // ChallengeReasonLabel is the metric and log label of a challenge reason.

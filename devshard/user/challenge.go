@@ -29,9 +29,8 @@ var (
 	// slot of the verifier queue the timeout and error-miss votes share.
 	ChallengePendingReaskInterval = 30 * time.Second
 	// ChallengeVoteSlack is added to the session's fetch window when the
-	// gateway decides how long to keep asking. A host's window ends a window
-	// after its own Finish apply, which is before the gateway's challenge
-	// starts, and its last fetch attempt may run a minute past that end
+	// gateway decides how long to keep asking. Hosts use the same fixed
+	// confirmed execution deadline, and their last fetch may run a minute past it
 	// before the host cuts it and settles the vote.
 	ChallengeVoteSlack = 2 * time.Minute
 	// ChallengeOpenStreamGrace is how long an attempt's stream may stay open
@@ -277,8 +276,13 @@ func (s *Session) ChallengeVerifiers() map[int]ChallengeVerifier {
 
 // challengeAskDeadline is how long the gateway keeps asking hosts that
 // answer pending: the hosts' fetch window plus a slack.
-func (s *Session) challengeAskDeadline(now time.Time) time.Time {
-	return now.Add(types.ChallengeWindow(s.sm.Config().InferenceSealGraceSeconds) + ChallengeVoteSlack)
+func (s *Session) challengeAskDeadline(rec *types.InferenceRecord, now time.Time) time.Time {
+	if end, armed := types.ChallengeFetchDeadline(rec.ConfirmedAtTimeMs, s.sm.Config()); armed {
+		return end.Add(ChallengeVoteSlack)
+	}
+	// Without an armed timeout, allow only the existing collection slack
+	// for direct evidence. Do not create a fresh fetch window from now.
+	return now.Add(ChallengeVoteSlack)
 }
 
 // RunChallenge collects the verdicts of every host other than the executor
@@ -313,7 +317,7 @@ func (s *Session) RunChallenge(ctx context.Context, nonce uint64, reason types.C
 	}
 	responseHash := append([]byte(nil), rec.ResponseHash...)
 	executorAddr := s.sm.SlotAddress(rec.ExecutorSlot)
-	votes, unanswered, unansweredWeight, _ := s.CollectChallengeVotes(ctx, nonce, reason, responseHash, executorAddr, s.ChallengeVerifiers(), s.challengeAskDeadline(time.Now()))
+	votes, unanswered, unansweredWeight, _ := s.CollectChallengeVotes(ctx, nonce, reason, responseHash, executorAddr, s.ChallengeVerifiers(), s.challengeAskDeadline(rec, time.Now()))
 	result.Votes = votes
 	result.Unanswered = unanswered
 	result.UnansweredWeight = unansweredWeight
