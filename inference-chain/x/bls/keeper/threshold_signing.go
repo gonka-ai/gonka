@@ -15,7 +15,9 @@ import (
 
 // RequestThresholdSignature is the main entry point for other modules to request BLS threshold signatures
 func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.SigningData) error {
-	epochBLSData, err := k.GetEpochBLSData(ctx, signingData.CurrentEpochId)
+	// Phase and group key live on the base record. The full load also reads
+	// every dealer part, verification, and complaint.
+	epochBLSData, err := k.GetEpochBLSDataBase(ctx, signingData.CurrentEpochId)
 	if err != nil {
 		return fmt.Errorf("failed to get epoch %d BLS data: %w", signingData.CurrentEpochId, err)
 	}

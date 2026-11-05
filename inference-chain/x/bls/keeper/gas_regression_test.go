@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"testing"
 
 	storetypes "cosmossdk.io/store/types"
@@ -54,6 +55,44 @@ func makeVerificationSubmission() *types.VerificationVectorSubmission {
 		validity[i] = true
 	}
 	return &types.VerificationVectorSubmission{DealerValidity: validity}
+}
+
+func TestRequestThresholdSignature_SkipsDealerPartReads(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(9)
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{Address: string(rune('a' + i))}
+	}
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:        epochID,
+		DkgPhase:       types.DKGPhase_DKG_PHASE_SIGNED,
+		GroupPublicKey: []byte{1, 2, 3},
+		Participants:   participants,
+	}))
+	for i := 0; i < gasRegressionN; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, epochID, uint32(i), makeDealerPart(participants[i].Address)))
+	}
+
+	fullCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	fullStart := fullCtx.GasMeter().GasConsumed()
+	_, err := k.GetEpochBLSData(fullCtx, epochID)
+	require.NoError(t, err)
+	fullUsed := fullCtx.GasMeter().GasConsumed() - fullStart
+
+	signCtx := ctx.WithBlockHeight(10).WithGasMeter(storetypes.NewInfiniteGasMeter())
+	signStart := signCtx.GasMeter().GasConsumed()
+	err = k.RequestThresholdSignature(signCtx, types.SigningData{
+		CurrentEpochId: epochID,
+		ChainId:        bytes.Repeat([]byte{1}, 32),
+		RequestId:      bytes.Repeat([]byte{2}, 32),
+		Data:           [][]byte{bytes.Repeat([]byte{3}, 32)},
+	})
+	require.NoError(t, err)
+	signUsed := signCtx.GasMeter().GasConsumed() - signStart
+
+	require.Less(t, signUsed, fullUsed/2,
+		"signing request %d must stay under half of the full epoch load %d", signUsed, fullUsed)
 }
 
 func TestSetEpochBLSData_GasBoundedWhenSplitFieldsNulled(t *testing.T) {
