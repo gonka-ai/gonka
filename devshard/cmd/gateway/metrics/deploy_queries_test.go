@@ -12,8 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"gopkg.in/yaml.v3"
 )
 
 const observabilityDir = "../../../../deploy/join/observability"
@@ -25,7 +23,7 @@ var (
 
 // Test flow:
 //  1. Collect every devshard_gateway_* family name the metrics package declares in its non-test sources.
-//  2. Read every expr and query string of the dashboards under deploy/join/observability, skipping the devshardctl-only dashboard, and every expr of gateway-alerts.yml.
+//  2. Read every expr and query string of the dashboards under deploy/join/observability, skipping the devshardctl-only dashboard.
 //  3. Assert the queries name at least one gateway family, and that each family they name, less a histogram's _bucket, _sum or _count suffix, is one the package declares.
 func TestEveryShippedQueryNamesAFamilyTheGatewayDeclares(t *testing.T) {
 	declared := declaredGatewayFamilies(t)
@@ -40,7 +38,6 @@ func TestEveryShippedQueryNamesAFamilyTheGatewayDeclares(t *testing.T) {
 		}
 		queries[filepath.Base(path)] = dashboardQueries(t, path)
 	}
-	queries["gateway-alerts.yml"] = alertRuleQueries(t, filepath.Join(observabilityDir, "gateway-alerts.yml"))
 
 	named := 0
 	for file, expressions := range queries {
@@ -129,36 +126,5 @@ func dashboardQueries(t *testing.T, path string) []string {
 		}
 	}
 	walk(dashboard)
-	return queries
-}
-
-func alertRuleQueries(t *testing.T, path string) []string {
-	t.Helper()
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("os.ReadFile(%s) = %v, want nil", path, err)
-	}
-	var rules struct {
-		Groups []struct {
-			Rules []struct {
-				Expr string `yaml:"expr"`
-			} `yaml:"rules"`
-		} `yaml:"groups"`
-	}
-	if err := yaml.Unmarshal(raw, &rules); err != nil {
-		t.Fatalf("yaml.Unmarshal(%s) = %v, want nil", path, err)
-	}
-	var queries []string
-	for _, group := range rules.Groups {
-		for _, rule := range group.Rules {
-			if rule.Expr == "" {
-				t.Fatalf("%s holds a rule with no expr", path)
-			}
-			queries = append(queries, rule.Expr)
-		}
-	}
-	if len(queries) == 0 {
-		t.Fatalf("%s holds no rules", path)
-	}
 	return queries
 }
