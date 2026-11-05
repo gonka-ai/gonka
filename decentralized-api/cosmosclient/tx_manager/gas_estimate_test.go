@@ -45,11 +45,12 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 		{"MsgSubmitNewUnfundedParticipant", &inferencetypes.MsgSubmitNewUnfundedParticipant{}, gasSubmitNewUnfundedParticipant},
 		{"MsgBridgeExchange", &inferencetypes.MsgBridgeExchange{}, gasBridgeExchange},
 
-		// BLS DKG (bypass-exempt).
-		{"MsgSubmitDealerPart", &blstypes.MsgSubmitDealerPart{}, gasSubmitDealerPart},
-		{"MsgSubmitVerificationVector", &blstypes.MsgSubmitVerificationVector{}, gasSubmitVerificationVector},
-		{"MsgSubmitGroupKeyValidationSignature", &blstypes.MsgSubmitGroupKeyValidationSignature{}, gasSubmitGroupKeyValidationSignature},
-		{"MsgRespondDealerComplaints", &blstypes.MsgRespondDealerComplaints{}, gasRespondDealerComplaints},
+		// BLS DKG. Broadcast replaces this with Simulate; the lookup value
+		// is the default so the authz list stays explicit.
+		{"MsgSubmitDealerPart", &blstypes.MsgSubmitDealerPart{}, gasDefaultEstimate},
+		{"MsgSubmitVerificationVector", &blstypes.MsgSubmitVerificationVector{}, gasDefaultEstimate},
+		{"MsgSubmitGroupKeyValidationSignature", &blstypes.MsgSubmitGroupKeyValidationSignature{}, gasDefaultEstimate},
+		{"MsgRespondDealerComplaints", &blstypes.MsgRespondDealerComplaints{}, gasDefaultEstimate},
 		{"MsgRequestThresholdSignature", &blstypes.MsgRequestThresholdSignature{}, gasRequestThresholdSignature},
 		{"MsgSubmitPartialSignature", &blstypes.MsgSubmitPartialSignature{}, gasSubmitPartialSignature},
 
@@ -525,6 +526,20 @@ func TestEstimateMsgGas_AllInferenceOperationKeyPermsHaveExplicitEstimate(t *tes
 					"add a case to lookupMsgGas in gas_estimate.go", msg)
 		})
 	}
+}
+
+func TestIsBlsDkgSimGas(t *testing.T) {
+	require.True(t, isBlsDkgSimGas([]sdk.Msg{&blstypes.MsgSubmitDealerPart{}}))
+	require.True(t, isBlsDkgSimGas([]sdk.Msg{&blstypes.MsgSubmitVerificationVector{}}))
+	require.True(t, isBlsDkgSimGas([]sdk.Msg{&blstypes.MsgSubmitGroupKeyValidationSignature{}}))
+	require.True(t, isBlsDkgSimGas([]sdk.Msg{&blstypes.MsgRespondDealerComplaints{}}))
+	require.False(t, isBlsDkgSimGas(nil))
+	require.False(t, isBlsDkgSimGas([]sdk.Msg{&blstypes.MsgSubmitPartialSignature{}}))
+	require.False(t, isBlsDkgSimGas([]sdk.Msg{&blstypes.MsgRequestThresholdSignature{}}))
+	require.False(t, isBlsDkgSimGas([]sdk.Msg{
+		&blstypes.MsgSubmitDealerPart{},
+		&blstypes.MsgSubmitVerificationVector{},
+	}))
 }
 
 func TestIsHardwareDiffOnly(t *testing.T) {

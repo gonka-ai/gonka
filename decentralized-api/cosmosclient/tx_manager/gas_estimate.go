@@ -85,14 +85,9 @@ const (
 	gasSubmitNewUnfundedParticipant = uint64(150_000)
 	gasBridgeExchange               = uint64(500_000)
 
-	// BLS DKG (bypass-exempt). Sized at observed max + 30% to absorb
-	// network-size growth without OOG-retry storms during DKG.
-	gasSubmitDealerPart                  = uint64(140_000_000)
-	gasSubmitVerificationVector          = uint64(140_000_000)
-	gasSubmitGroupKeyValidationSignature = uint64(160_000_000) // max 116M, p99 33M
-	gasRespondDealerComplaints           = uint64(150_000_000)
-	gasRequestThresholdSignature         = uint64(2_000_000)
-	gasSubmitPartialSignature            = uint64(5_000_000)
+	// BLS messages that are not on the DKG simulate path.
+	gasRequestThresholdSignature = uint64(2_000_000)
+	gasSubmitPartialSignature    = uint64(5_000_000)
 
 	// Cosmos-SDK / cosmwasm.
 	gasBankSend          = uint64(150_000)
@@ -240,14 +235,13 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 		return gasSubmitNewUnfundedParticipant, true
 	case *inferencetypes.MsgBridgeExchange:
 		return gasBridgeExchange, true
-	case *blstypes.MsgSubmitDealerPart:
-		return gasSubmitDealerPart, true
-	case *blstypes.MsgSubmitVerificationVector:
-		return gasSubmitVerificationVector, true
-	case *blstypes.MsgSubmitGroupKeyValidationSignature:
-		return gasSubmitGroupKeyValidationSignature, true
-	case *blstypes.MsgRespondDealerComplaints:
-		return gasRespondDealerComplaints, true
+	// DKG messages are sized by Simulate at broadcast. This default is
+	// only so the authz list stays explicit; it is not the gas limit sent.
+	case *blstypes.MsgSubmitDealerPart,
+		*blstypes.MsgSubmitVerificationVector,
+		*blstypes.MsgSubmitGroupKeyValidationSignature,
+		*blstypes.MsgRespondDealerComplaints:
+		return gasDefaultEstimate, true
 	case *blstypes.MsgRequestThresholdSignature:
 		return gasRequestThresholdSignature, true
 	case *blstypes.MsgSubmitPartialSignature:
@@ -450,6 +444,24 @@ func isHardwareDiffOnly(msgs []sdk.Msg) bool {
 	}
 	_, ok := msgs[0].(*inferencetypes.MsgSubmitHardwareDiff)
 	return ok
+}
+
+// isBlsDkgSimGas reports a single DKG message whose gas limit comes from
+// Simulate. These are not on the PoC fast path, so broadcast waits for
+// the simulation instead of a static ceiling.
+func isBlsDkgSimGas(msgs []sdk.Msg) bool {
+	if len(msgs) != 1 {
+		return false
+	}
+	switch msgs[0].(type) {
+	case *blstypes.MsgSubmitDealerPart,
+		*blstypes.MsgSubmitVerificationVector,
+		*blstypes.MsgSubmitGroupKeyValidationSignature,
+		*blstypes.MsgRespondDealerComplaints:
+		return true
+	default:
+		return false
+	}
 }
 
 func isStoreCommitOnly(msgs []sdk.Msg) bool {

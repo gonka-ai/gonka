@@ -946,6 +946,28 @@ func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msg
 				"tx_gas_multiplier", m.txGasMultiplier)
 		}
 	}
+	if isBlsDkgSimGas(msgs) {
+		used, simErr := m.simulateMsgsGas(factory, finalMsgs, price)
+		if simErr != nil || used == 0 {
+			if simErr == nil {
+				simErr = errors.New("BLS simulate returned zero gas")
+			}
+			logging.Error("BLS gas simulate failed", types.Messages,
+				"tx_id", id, "error", simErr, "attempt", attempt)
+			return nil, time.Time{}, fmt.Errorf("BLS gas simulate failed: %w", simErr)
+		}
+		gasWanted = gasWantedFromSimulate(0, used, m.txGasMultiplier)
+		for i := 0; i < attempt; i++ {
+			gasWanted = uint64(float64(gasWanted) * gasRetryMultiplier)
+			if gasWanted > BatchGasLimit {
+				gasWanted = BatchGasLimit
+				break
+			}
+		}
+		logging.Debug("BLS gas from simulate", types.Messages,
+			"tx_id", id, "simulated", used, "gasWanted", gasWanted,
+			"attempt", attempt, "tx_gas_multiplier", m.txGasMultiplier)
+	}
 	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs, opts.TimeoutHeight)
 	if err != nil {
 		return nil, time.Time{}, err
@@ -1250,6 +1272,8 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// HardwareDiff additionally simulates on attempt 0; a working sim is
 	// padded by txGasMultiplier (default 1.5×) and is not raised
 	// back to the static 550k floor.
+	// The four BLS DKG messages are sized only from Simulate. A failed
+	// simulation does not fall back to a static ceiling.
 	// StoreCommit sizes from the once-per-stage dummy Simulate cached on
 	// the fee tree (fallback: static formula).
 	price := m.minGasPriceNgonka

@@ -1,15 +1,46 @@
 package v0_2_17
 
 import (
+	"context"
 	"testing"
 
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+func TestSetBlockMaxGas_WritesFiniteLimit(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	store := &memConsensusParams{params: cmtproto.ConsensusParams{
+		Block: &cmtproto.BlockParams{MaxBytes: 22_020_096, MaxGas: -1},
+	}}
+
+	require.NoError(t, setBlockMaxGas(ctx, store, k))
+	require.NoError(t, setBlockMaxGas(ctx, store, k))
+
+	got, err := store.Get(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(22_020_096), got.Block.MaxBytes)
+	require.Equal(t, blockMaxGas, got.Block.MaxGas)
+	require.Error(t, setBlockMaxGas(ctx, nil, k))
+}
+
+type memConsensusParams struct {
+	params cmtproto.ConsensusParams
+}
+
+func (m *memConsensusParams) Get(context.Context) (cmtproto.ConsensusParams, error) {
+	return m.params, nil
+}
+
+func (m *memConsensusParams) Set(_ context.Context, params cmtproto.ConsensusParams) error {
+	m.params = params
+	return nil
+}
 
 func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.17", UpgradeName)
