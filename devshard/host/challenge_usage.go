@@ -540,7 +540,7 @@ func (h *Host) fetchedVerdict(ctx context.Context, fetch devshard.ChallengeFetch
 			// back until it is whole (object, array, number): what the engine
 			// generated for it was never served, and a render of the served
 			// part counts less. A cut string argument is served as generated
-			// and rendered as served.
+			// and its incomplete JSON is closed only for rendering.
 			count.outputSkipped, countOutput = "cut_tool_call", false
 		}
 	}
@@ -556,11 +556,15 @@ func (h *Host) fetchedVerdict(ctx context.Context, fetch devshard.ChallengeFetch
 	}
 
 	if countOutput {
+		turn, err := answer.renderTurn(terms)
+		if err != nil {
+			return keptChallengeVote{}, count, ChallengeRejectNoRender, err.Error()
+		}
 		started := time.Now()
 		renderCtx := observability.WithRenderNodeObserver(ctx, func(id, endpoint string) {
 			count.outputRenderNodes = append(count.outputRenderNodes, id+"@"+endpoint)
 		})
-		rendered, source, err := h.renderer.CountTurn(renderCtx, rec.Model, request, answer.turn())
+		rendered, source, err := h.renderer.CountTurn(renderCtx, rec.Model, request, turn)
 		count.outputRender = source
 		observeRender("output", rec.Model, started, err)
 		switch {

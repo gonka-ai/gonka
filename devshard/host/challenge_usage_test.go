@@ -22,6 +22,7 @@ type recordedRenderer struct {
 	counts   replay.RenderCounts
 	turns    int
 	requests [][]byte
+	wantTurn map[string]any
 	// anyTurn takes a turn the executor changed from the recording.
 	anyTurn bool
 }
@@ -37,7 +38,11 @@ func (r *recordedRenderer) CountTurn(_ context.Context, _ string, request []byte
 	r.turns++
 	r.requests = append(r.requests, request)
 	if !r.anyTurn {
-		require.Equal(r.t, r.counts.TurnBytes, turnTextBytes(turn), "the rebuilt turn carries the served text")
+		if r.wantTurn != nil {
+			require.Equal(r.t, r.wantTurn, turn, "the renderer receives the served turn with only the cut string closed")
+		} else {
+			require.Equal(r.t, r.counts.TurnBytes, turnTextBytes(turn), "the rebuilt turn carries the served text")
+		}
 	}
 	return r.counts.Output, "recorded", nil
 }
@@ -114,6 +119,23 @@ func (c recordedChallenge) vote(t *testing.T) (keptChallengeVote, *usageCount, *
 
 func (c recordedChallenge) voteWith(t *testing.T, renderer *recordedRenderer) (keptChallengeVote, *usageCount, *recordedRenderer) {
 	t.Helper()
+	if !renderer.anyTurn {
+		answer, err := parseServedAnswer(c.fetch.Response)
+		require.NoError(t, err)
+		renderer.wantTurn = answer.turn()
+		require.Equal(t, renderer.counts.TurnBytes, turnTextBytes(renderer.wantTurn), "the fetched answer carries the recorded text")
+		if strings.HasPrefix(c.sample.Name, "cut_in_string_arg") {
+			calls := renderer.wantTurn["tool_calls"].([]any)
+			function := calls[len(calls)-1].(map[string]any)["function"].(map[string]any)
+			// These are the two partial values emitted by the recorded model builds.
+			repaired, ok := map[string]string{
+				`{"query": "`:                `{"query": ""}`,
+				`{"query": "devshard escrow`: `{"query": "devshard escrow"}`,
+			}[function["arguments"].(string)]
+			require.True(t, ok, "unexpected recorded string cut")
+			function["arguments"] = repaired
+		}
+	}
 	h := &Host{renderer: renderer}
 	verdict, count, reject, cause := h.fetchedVerdict(context.Background(), c.fetch, c.rec)
 	require.Empty(t, reject, cause)
@@ -439,7 +461,7 @@ func TestWithThinkingKeepsTheModeARequestNamed(t *testing.T) {
 // Test flow:
 //  1. Vote on recordings whose request rule leaves the rendered output check out: a grammar, a call cut by max_tokens
 //     inside an argument the schema does not type as a string. A DeepSeek call cut inside an object argument is
-//     served with whole arguments, so it is counted; a call cut inside a string argument is rendered as served.
+//     served with whole arguments, so it is counted; a cut string argument has its JSON closed for rendering.
 //  2. Require no turn render where the check is left out, NONE, and the positions still counted.
 func TestRecordedRequestRuleLeavesTheRenderedOutputOut(t *testing.T) {
 	for _, c := range loadRecordedChallenges(t) {
@@ -453,8 +475,8 @@ func TestRecordedRequestRuleLeavesTheRenderedOutputOut(t *testing.T) {
 			if strings.HasPrefix(name, "guided_json") {
 				require.Equal(t, "grammar_constrained", count.outputSkipped)
 			}
-			// A string argument is served as generated: its cut is rendered as
-			// served, and the honest claim stays within the bound.
+			// A string argument is served as generated: only its missing JSON
+			// syntax is closed for render, and the honest claim stays within the bound.
 			if strings.HasPrefix(name, "cut_in_string_arg") {
 				require.Empty(t, count.outputSkipped)
 				require.NotZero(t, renderer.turns)
