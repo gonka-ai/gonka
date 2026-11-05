@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
@@ -22,12 +23,29 @@ func (s *Server) getNodes(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, nodes)
 }
 
+// nodeIdParam returns the :id path parameter with percent-escapes decoded.
+// Echo matches routes on the raw path and does not unescape parameters, so a
+// node id such as "Qwen/Qwen3-4B" arrives as "Qwen%2FQwen3-4B".
+func nodeIdParam(c echo.Context) (string, error) {
+	nodeId, err := url.PathUnescape(c.Param("id"))
+	if err != nil {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "invalid node id")
+	}
+	if nodeId == "" {
+		return "", echo.NewHTTPError(http.StatusBadRequest, "node id is required")
+	}
+	return nodeId, nil
+}
+
 func (s *Server) deleteNode(ctx echo.Context) error {
-	nodeId := ctx.Param("id")
+	nodeId, err := nodeIdParam(ctx)
+	if err != nil {
+		return err
+	}
 	logging.Info("Deleting node", types.Nodes, "node", nodeId)
 	response := make(chan bool, 2)
 
-	err := s.nodeBroker.QueueMessage(broker.RemoveNode{
+	err = s.nodeBroker.QueueMessage(broker.RemoveNode{
 		NodeId:   nodeId,
 		Response: response,
 	})
@@ -244,13 +262,13 @@ func (s *Server) addNode(ctx context.Context, newNode apiconfig.InferenceNodeCon
 
 // enableNode handles POST /admin/v1/nodes/:id/enable
 func (s *Server) enableNode(c echo.Context) error {
-	nodeId := c.Param("id")
-	if nodeId == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "node id is required")
+	nodeId, err := nodeIdParam(c)
+	if err != nil {
+		return err
 	}
 
 	response := make(chan error, 2)
-	err := s.nodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
+	err = s.nodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
 		NodeId:   nodeId,
 		Enabled:  true,
 		Response: response,
@@ -271,13 +289,13 @@ func (s *Server) enableNode(c echo.Context) error {
 
 // disableNode handles POST /admin/v1/nodes/:id/disable
 func (s *Server) disableNode(c echo.Context) error {
-	nodeId := c.Param("id")
-	if nodeId == "" {
-		return echo.NewHTTPError(http.StatusBadRequest, "node id is required")
+	nodeId, err := nodeIdParam(c)
+	if err != nil {
+		return err
 	}
 
 	response := make(chan error, 2)
-	err := s.nodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
+	err = s.nodeBroker.QueueMessage(broker.SetNodeAdminStateCommand{
 		NodeId:   nodeId,
 		Enabled:  false,
 		Response: response,
