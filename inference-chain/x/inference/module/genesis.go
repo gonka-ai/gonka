@@ -114,6 +114,13 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge token metadata from genesis
 		for _, elem := range genState.Bridge.TokenMetadata {
+			if isIBCDenom(elem.ContractAddress) {
+				if err := k.SetIBCTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, *elem); err != nil {
+					//nolint:forbidigo // genesis code
+					panic(err)
+				}
+				continue
+			}
 			k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
 				Name:     elem.Name,
 				Symbol:   elem.Symbol,
@@ -123,7 +130,11 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge trade approved tokens from genesis
 		for _, elem := range genState.Bridge.TradeApprovedTokens {
-			if err := k.SetBridgeTradeApprovedToken(ctx, *elem); err != nil {
+			setApproved := k.SetBridgeTradeApprovedToken
+			if isIBCDenom(elem.ContractAddress) {
+				setApproved = k.SetIBCTradeApprovedToken
+			}
+			if err := setApproved(ctx, *elem); err != nil {
 				//nolint:forbidigo // genesis code
 				panic(err)
 			}
@@ -488,4 +499,9 @@ func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {
 		panic(err)
 	}
 	return models2
+}
+
+// isIBCDenom reports entries stored by the IBC setters: bridge addresses never contain '/'.
+func isIBCDenom(addr string) bool {
+	return strings.Contains(addr, "/")
 }

@@ -209,3 +209,29 @@ func TestGenesis_ExportPromotesLeftoverParamsApprovedVersions(t *testing.T) {
 	require.Equal(t, "v-legacy", got.DevshardApprovedVersions[0].Name)
 	require.Empty(t, got.Params.DevshardEscrowParams.ApprovedVersions)
 }
+
+func TestGenesis_TradeApprovedTokensRoundTrip(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+	inference.InitGenesis(ctx, k, mocks.StubGenesisState())
+	require.NoError(t, k.SetBridgeTradeApprovedToken(ctx, types.BridgeTokenReference{
+		ChainId: "ethereum", ContractAddress: "0xdAC17F958D2ee523a2206206994597C13D831ec7"}))
+	require.NoError(t, k.SetIBCTradeApprovedToken(ctx, types.BridgeTokenReference{
+		ChainId: "kava_2222-10", ContractAddress: "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"}))
+	require.NoError(t, k.SetIBCTokenMetadata(ctx, "kava_2222-10",
+		"ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4",
+		types.BridgeTokenMetadata{Name: "Tether USD", Symbol: "USDT", Decimals: 6}))
+	exported := inference.ExportGenesis(ctx, k)
+	require.Len(t, exported.Bridge.TradeApprovedTokens, 2)
+	require.Len(t, exported.Bridge.TokenMetadata, 1)
+
+	k2, ctx2, mocks2 := keepertest.InferenceKeeperReturningMocks(t)
+	mocks2.StubForInitGenesis(ctx2)
+	imported := mocks2.StubGenesisState()
+	imported.Bridge = exported.Bridge
+	inference.InitGenesis(ctx2, k2, imported)
+	again := inference.ExportGenesis(ctx2, k2)
+	require.Equal(t, exported.Bridge.TradeApprovedTokens, again.Bridge.TradeApprovedTokens)
+	require.Equal(t, exported.Bridge.TokenMetadata, again.Bridge.TokenMetadata)
+	require.True(t, k2.HasBridgeTradeApprovedToken(ctx2, "kava_2222-10", "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"))
+}
