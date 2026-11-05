@@ -92,6 +92,11 @@ const (
 	DefaultLogprobsMode   = LogprobsModeProcessed
 
 	DefaultPocValidationVoteThresholdBps uint32 = 5000
+
+	// MaxPocValidationSampleSize bounds poc_params.validation_sample_size. A
+	// validator sends all sampled leaf indices in one proof request, and the
+	// DAPI proof endpoint serves at most this many per request.
+	MaxPocValidationSampleSize int32 = 500
 )
 
 const (
@@ -1061,6 +1066,12 @@ func (p *PocParams) Validate() error {
 	if p.ValidationVoteThresholdBps != 0 &&
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
+	}
+	// A negative size sends an empty proof request, and a larger one asks for
+	// more leaf indices than the proof endpoint serves. Both get a 400, so
+	// honest participants would fail PoC validation.
+	if p.ValidationSampleSize < 0 || p.ValidationSampleSize > MaxPocValidationSampleSize {
+		return fmt.Errorf("poc_params.validation_sample_size must be 0 (default) or in [1, %d]", MaxPocValidationSampleSize)
 	}
 	requiredSchemes, err := activePocSchemes(p)
 	if err != nil {

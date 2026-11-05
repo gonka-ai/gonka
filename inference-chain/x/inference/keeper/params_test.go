@@ -333,6 +333,23 @@ func TestPocParamsValidationVoteThresholdBps(t *testing.T) {
 	}
 }
 
+func TestPocParamsValidationSampleSize(t *testing.T) {
+	params := types.DefaultPocParams()
+	require.NoError(t, params.Validate())
+
+	// 0 means the DAPI default sample size.
+	for _, valid := range []int32{0, 500} {
+		params.ValidationSampleSize = valid
+		require.NoError(t, params.Validate(), "size=%d must be valid", valid)
+	}
+
+	// The proof endpoint rejects an empty request and more than 500 leaf indices.
+	for _, invalid := range []int32{-1, 501} {
+		params.ValidationSampleSize = invalid
+		require.ErrorContains(t, params.Validate(), "validation_sample_size", "size=%d must be rejected", invalid)
+	}
+}
+
 func TestValidationParamsNilFieldChecks(t *testing.T) {
 	testCases := []struct {
 		name           string
