@@ -229,7 +229,7 @@ func (r *referenceCounter) originalPreTokens(text string) ([]string, error) {
 
 func (r *referenceCounter) ids(pieces []string) []uint32 {
 	scratch := originalScratch{merges: r.merges}
-	var ids []uint32
+	ids := make([]uint32, 0, len(pieces))
 	for _, piece := range pieces {
 		ids = append(ids, r.pieceIDs(piece, &scratch)...)
 	}

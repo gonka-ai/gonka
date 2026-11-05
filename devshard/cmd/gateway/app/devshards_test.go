@@ -206,8 +206,8 @@ type settledChain struct {
 	escrow bridge.EscrowInfo
 }
 
-func (chain settledChain) GetEscrow(string) (*bridge.EscrowInfo, error) {
-	escrow := chain.escrow
+func (settled settledChain) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	escrow := settled.escrow
 	return &escrow, nil
 }
 
@@ -222,8 +222,8 @@ func (settledChain) GetHostInfo(address string) (*bridge.HostInfo, error) {
 func TestAServingSessionRefusesAnEscrowTheChainSettled(t *testing.T) {
 	t.Setenv("SETTLED_ESCROW_KEY", strings.Repeat("11", 32))
 	rows := rowLister{{EscrowID: "1", PrivateKeyEnv: "SETTLED_ESCROW_KEY", Model: "model-a", Active: true}}
-	chain := settledChain{escrow: bridge.EscrowInfo{EscrowID: "1", Slots: []string{"host-a", "host-b", "host-c"}, Amount: 5_000_000_000, TokenPrice: 1, Settled: true}}
-	open := servingSessions(rows, t.TempDir(), chain, config.HeightSync{}, nil, nil, "/devshard/v2", nil, nil)
+	settled := settledChain{escrow: bridge.EscrowInfo{EscrowID: "1", Slots: []string{"host-a", "host-b", "host-c"}, Amount: 5_000_000_000, TokenPrice: 1, Settled: true}}
+	open := servingSessions(rows, t.TempDir(), settled, config.HeightSync{}, nil, nil, "/devshard/v2", nil, nil)
 
 	session, err := open(context.Background(), "1")
 

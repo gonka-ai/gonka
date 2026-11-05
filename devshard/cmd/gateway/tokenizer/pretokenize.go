@@ -411,7 +411,7 @@ func cjkEnd(text string, at int) int {
 	end := at
 	for {
 		r, _, width := peek(text, end)
-		if width == endOfText || !(r >= cjkFirstIdeograph && r <= cjkLastIdeograph || r >= hiraganaFirst && r <= hiraganaLast || r >= katakanaFirst && r <= katakanaLast) {
+		if width == endOfText || (r < cjkFirstIdeograph || r > cjkLastIdeograph) && (r < hiraganaFirst || r > hiraganaLast) && (r < katakanaFirst || r > katakanaLast) {
 			break
 		}
 		end += width

@@ -64,7 +64,7 @@ func TestEjectionIsNarratedWhenItStarts(t *testing.T) {
 
 // Test flow:
 //  1. Build a tracker with a no-cap perf config and a recording narrator attached.
-//  2. Record failure, failure, success, failure, success for participant-a/model-a, so the failure rate trips at the minimum volume with no consecutive-failure run.
+//  2. Record two failures, then success, failure, success for participant-a/model-a, so the failure rate trips at the minimum volume with no consecutive-failure run.
 //  3. Assert exactly one withholding was narrated, with reason "failure_rate", the rate 0.6 and the volume 5 that tripped it, and no consecutive failures.
 func TestFailureRateEjectionIsNarratedWithTheRateThatTrippedIt(t *testing.T) {
 	perf := noCap(testPerf())

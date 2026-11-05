@@ -57,7 +57,7 @@ var differentialNamedTexts = map[string]string{
 	"japanese":         "これはテストです。カタカナとひらがなと漢字、ＡＢＣ１２３。ｱｲｳ",
 	"korean":           "안녕하세요 세계, 토크나이저 시험입니다.",
 	"emoji":            "👍🏽 emoji 😀😀 ZWJ 👨‍👩‍👧‍👦 flag 🇺🇸🇯🇵 keycap 1️⃣ 🏳️‍🌈 heart ❤️",
-	"combining":        "e\u0301 a\u0308\u0308 \u0301x \u0301\u0301 ǅ ǈ Ǆ ǆ ʰ ʻ ａ ª º ᴬ é ä ộ नि 각 Å Å ᴖ0",
+	"combining":        "e\u0301 a\u0308\u0308 \u0301x \u0301\u0301 ǅ ǈ Ǆ ǆ ʰ ʻ ａ ª º ᴬ é ä ộ नि 각 Å Å ᴖ0", //nolint:dupword // repeated letter is tokenizer input
 	"mixed digits":     "12345678901234 ٣٤٥٦ ½ ¼ ²³ Ⅷ 1,234.567 ０１２３４ 3.14159265358979 0x1F600 1e-10 -987654321",
 	"digits letters":   "abc123def 45x 6 7 8 9 123 4567 89",
 	"whitespace":       "a" + strings.Repeat(" ", 50) + "b" + strings.Repeat("\t", 9) + "c" + strings.Repeat("\n", 20) + "d" + strings.Repeat(" \n", 9) + "e",
