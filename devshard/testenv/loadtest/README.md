@@ -1441,3 +1441,19 @@ from `devshard/testenv`; relative binary paths inside a manifest are resolved
 from the manifest's directory. The manifest protocol must match the scenario.
 `devshardd` is mounted into versiond containers as a separate binary, so
 changing a host container image alone does not replace the tested DevShard.
+
+Reuse an already built testenv DevShard binary while changing only Gateway:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-preserved-load-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2 \
+  SKIP_DEVSHARDD_BUILD=1
+```
+
+This skips only the Make prerequisite that rebuilds `build/devshardd`.
+The binary must already exist and match the testenv host architecture and
+protocol; scenario-required testenv hooks must also be present. Runner checks
+still apply. Other stack images may still be built by Compose. Omit the flag
+to rebuild DevShard after source changes, or use `BUILD` for a complete
+prebuilt artifact manifest (which already skips this prerequisite).
