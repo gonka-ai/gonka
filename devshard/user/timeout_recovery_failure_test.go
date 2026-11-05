@@ -56,7 +56,7 @@ func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 			if scenario == "queued_invalid_finish" {
 				require.NoError(t, session.SendPendingDiff(context.Background()))
 				started, _ := session.StateMachine().GetInference(nonce)
-				rig.coverTimeout(t, session, started.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
+				rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), started.ConfirmedAtHeight, nil), time.Duration(config.ExecutionTimeout)*time.Second)
 				bad := &types.MsgFinishInference{InferenceId: nonce, ExecutorSlot: uint32(executor), EscrowId: "escrow-1", ResponseHash: []byte("short"), ServedHash: testutil.TestServedHash}
 				bad.ProposerSig = testutil.SignProposerTx(t, signers[executor], bad)
 				session.mu.Lock()
@@ -81,7 +81,7 @@ func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 				require.NoError(t, session.SendPendingDiff(ctx))
 				require.Equal(t, types.StatusStarted, session.sm.SnapshotState().Inferences[nonce].Status)
 				started, _ := session.StateMachine().GetInference(nonce)
-				rig.coverTimeout(t, session, started.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
+				rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), started.ConfirmedAtHeight, nil), time.Duration(config.ExecutionTimeout)*time.Second)
 			}
 			if scenario == "recovered_receipt" {
 				reason, ready, skipped, err := session.WaitTimeoutDeadline(ctx, nonce, sendTime)
@@ -93,7 +93,7 @@ func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 				require.True(t, needsWait, "a failed recovery send still starts the record")
 				require.Equal(t, types.StatusStarted, session.sm.SnapshotState().Inferences[nonce].Status)
 				started, _ := session.StateMachine().GetInference(nonce)
-				rig.coverTimeout(t, session, started.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
+				rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), started.ConfirmedAtHeight, nil), time.Duration(config.ExecutionTimeout)*time.Second)
 			}
 			result, err := session.HandleTimeout(ctx, nonce, sendTime, payload)
 			require.Error(t, err, "an applied timeout is reported as an inference error")
@@ -138,7 +138,7 @@ func TestHandleTimeoutRefusalVoteRaceContinuesAsExecution(t *testing.T) {
 	require.True(t, needsWait, "the receipt lands before the refusal tx")
 	require.Equal(t, types.StatusStarted, session.sm.SnapshotState().Inferences[nonce].Status)
 	started, _ := session.StateMachine().GetInference(nonce)
-	rig.coverTimeout(t, session, started.ConfirmedAtTimeMs, time.Duration(config.ExecutionTimeout)*time.Second)
+	rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), started.ConfirmedAtHeight, nil), time.Duration(config.ExecutionTimeout)*time.Second)
 	result, err := session.HandleTimeout(ctx, nonce, sendTime, payload)
 	require.Error(t, err)
 	require.Equal(t, "execution", result.Reason)

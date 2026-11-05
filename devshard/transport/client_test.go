@@ -180,22 +180,26 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 		ExecutorSig: []byte("other"),
 	}}})
 
+	refusal := testutil.DefaultConfig(1).RefusalTimeout
+	startAt := int64(1_000_000)
+	dueAt := startAt + int64(refusal)*1000
 	heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{SlotsNum: 1, Reason: "quiet_session"}}}
-	ack := func(ref, height uint64, hash []byte) *types.DevshardTx {
+	ack := func(ref, height uint64, hash []byte, timeMs int64) *types.DevshardTx {
 		msg := &types.MsgHeightAck{RefNonce: ref, SlotId: 0, ObservedHeight: height, ObservedBlockHash: hash,
-			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0x01}}
+			ObservedTimeMs: timeMs, SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0x01}}
 		require.NoError(t, heightsync.SignAck(hostSigner, msg))
 		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
 	}
 	start := testutil.StartTx(3)
-	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = 100, []byte{0x01}
-	refusalBlocks := uint64(testutil.DefaultConfig(1).RefusalTimeout)
+	start.GetStartInference().ObservedHeight = 100
+	start.GetStartInference().ObservedBlockHash = []byte{0x01}
+	start.GetStartInference().ObservedTimeMs = startAt
 	diffs := []types.Diff{
 		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{heartbeat}),
-		testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{ack(1, 100, []byte{0x01})}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{ack(1, 100, []byte{0x01}, startAt)}),
 		testutil.SignDiff(t, userSigner, "escrow-1", 3, []*types.DevshardTx{start}),
 		testutil.SignDiff(t, userSigner, "escrow-1", 4, []*types.DevshardTx{heartbeat}),
-		testutil.SignDiff(t, userSigner, "escrow-1", 5, []*types.DevshardTx{ack(4, 100+refusalBlocks, []byte{0x02})}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 5, []*types.DevshardTx{ack(4, 100+uint64(refusal), []byte{0x02}, dueAt)}),
 	}
 	payload := &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,

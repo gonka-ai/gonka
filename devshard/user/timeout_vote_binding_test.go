@@ -100,11 +100,11 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 
 // coverRefusal waits out RefusalTimeout after the start stamp, then moves the
 // floor. The chain accepts a refusal only once the new floor's polled header
-// time is past StartedAtTimeMs by that window.
+// time is past the start stamp's header time by that window.
 func (f *timeoutVoteFixture) coverRefusal(t *testing.T) {
 	t.Helper()
 	rec := f.userSM.SnapshotState().Inferences[f.id]
-	f.rig.coverTimeout(t, f.session, rec.StartedAtTimeMs, time.Second)
+	f.rig.coverTimeout(t, f.session, headerStampMs(t, f.userSM, rec.StartedAtHeight, rec.StartedAtBlockHash), time.Second)
 }
 
 func (f *timeoutVoteFixture) dropHostReceipts() {

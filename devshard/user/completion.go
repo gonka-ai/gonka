@@ -226,7 +226,9 @@ func (s *Session) guardCompletion(ctx context.Context) error {
 		if err := host.VerifyPayload(&entry.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 			return fmt.Errorf("%w: nonce %d retry payload: %v", ErrInferenceCompletionPending, entry.Nonce, err)
 		}
-		result, retryErr := s.HandleTimeout(retryCtx, entry.Nonce, time.Unix(0, entry.PreparedAt), &entry.Payload)
+		// Zero sendTime: restart path. Refusal (and execution) restore the
+		// trigger from the local header map, not PreparedAt / Payload.StartedAt.
+		result, retryErr := s.HandleTimeout(retryCtx, entry.Nonce, time.Time{}, &entry.Payload)
 		if !s.completionResolved(entry.Nonce) {
 			return fmt.Errorf("%w: nonce %d timeout %s/%s: %v", ErrInferenceCompletionPending, entry.Nonce, result.Outcome, result.DetailReason, retryErr)
 		}

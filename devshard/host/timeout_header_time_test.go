@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -122,7 +123,7 @@ func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 			rec, ok := sm.GetInference(id)
 			require.True(t, ok)
 			require.Equal(t, types.StatusStarted, rec.Status)
-			require.Equal(t, anchorAt.UnixMilli(), rec.ConfirmedAtTimeMs, "the confirm anchor carries the block time of its floor")
+			require.Zero(t, rec.ConfirmedAtTimeMs)
 
 			if tc.chainHash != nil {
 				chain.add(1_000_000, tc.chainHash, anchorAt.Add(time.Hour))
@@ -317,15 +318,15 @@ type pendingExecutor struct{ calls int }
 func (p *pendingExecutor) GetMempool(context.Context) ([]*types.DevshardTx, error) { return nil, nil }
 
 func (p *pendingExecutor) ChallengeCatchUp(context.Context, uint64, []types.DiffWire, string) error {
-	return fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)
+	return fmt.Errorf("challenge-receipt: %w", net.ErrClosed)
 }
 
 func (p *pendingExecutor) ChallengeReceipt(context.Context, uint64, *InferencePayload, []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	p.calls++
-	return nil, nil, fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)
+	return nil, nil, fmt.Errorf("challenge-receipt: %w", net.ErrClosed)
 }
 
-func TestExecutorHeaderPendingAcceptsTheTimeout(t *testing.T) {
+func TestExecutorUnreachableAcceptsTheTimeout(t *testing.T) {
 	st := stateWithStarted(1, 1)
 	executor := &pendingExecutor{}
 	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, st.Inferences[1], nil, executor, nil, due(newEvidenceGroup(t).sm))
@@ -334,14 +335,14 @@ func TestExecutorHeaderPendingAcceptsTheTimeout(t *testing.T) {
 	require.Equal(t, 1, executor.calls)
 }
 
-func TestHeaderPendingAcceptsRefusalAndExecution(t *testing.T) {
+func TestUnreachableAcceptsRefusalAndExecution(t *testing.T) {
 	ev := due(newEvidenceGroup(t).sm)
 	pst := stateWithPendingFull(1, 1)
 	refuser := &progressPeer{steps: []struct {
 		receipt []byte
 		mempool []*types.DevshardTx
 		err     error
-	}{{err: fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)}}}
+	}{{err: fmt.Errorf("challenge-receipt: %w", net.ErrClosed)}}}
 	accept, err := VerifyRefusedTimeout(context.Background(), pst, 1, pst.Inferences[1], testPayload(), nil, refuser, nil, ev)
 	require.NoError(t, err)
 	require.True(t, accept)

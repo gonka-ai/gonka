@@ -232,22 +232,22 @@ func TestNextAutoSealNonce(t *testing.T) {
 	require.Equal(t, uint64(300), NextAutoSealNonce(299))
 }
 
-func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
+func TestAutoSealStateClock_UsesFloorAndSkipsUnconfirmedInTailWindow(t *testing.T) {
 	d := newFloorDriver(t)
 	hash := []byte{0x01, 0x00}
-	d.raise(100, hash)
+	d.raiseClock(100, hash)
 	pending := d.next()
-	require.NoError(t, d.start(pending, 100, hash))
+	require.NoError(t, d.startClock(pending, 100, hash))
 	confirmed := d.next()
-	require.NoError(t, d.start(confirmed, 100, hash))
-	d.raise(5000, []byte{0x50, 0x00})
-	require.NoError(t, d.apply(d.confirm(confirmed, 5000, []byte{0x50, 0x00})))
+	require.NoError(t, d.startClock(confirmed, 100, hash))
+	d.raiseClock(5000, []byte{0x50, 0x00})
+	require.NoError(t, d.apply(d.confirmClock(confirmed, 5000, []byte{0x50, 0x00})))
 
 	clock := d.sm.AutoSealStateClock()
 	require.True(t, clock.Known)
+	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.ClockMs, "the seal clock is carried time(F)")
 	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.MinConfirmedAtMs, "an unconfirmed record must not pull window min to zero")
 	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.MaxConfirmedAtMs)
-	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.ClockMs)
 }
 
 func TestExportAllInferenceRecords_IncludesSealedFromDB(t *testing.T) {

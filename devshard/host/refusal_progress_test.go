@@ -1169,7 +1169,7 @@ func TestScreenCatchUpPageRejectsDamagedFraming(t *testing.T) {
 func TestRefusalAcceptsWhenTheExecutorCannotServe(t *testing.T) {
 	root := bytes.Repeat([]byte{1}, 32)
 	st := progressState(3)
-	pending := fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)
+	down := fmt.Errorf("challenge-receipt: %w", net.ErrClosed)
 	for _, cold := range []bool{false, true} {
 		judge := due(newEvidenceGroup(t).sm)
 		peerFor := func() *progressPeer {
@@ -1183,7 +1183,7 @@ func TestRefusalAcceptsWhenTheExecutorCannotServe(t *testing.T) {
 					receipt []byte
 					mempool []*types.DevshardTx
 					err     error
-				}{{err: pending}},
+				}{{err: down}},
 			}
 			if cold {
 				peer.heads[0].nonce, peer.heads[0].root, peer.heads[0].err = 0, nil, errors.New("session not found")
@@ -1196,13 +1196,32 @@ func TestRefusalAcceptsWhenTheExecutorCannotServe(t *testing.T) {
 	}
 }
 
-func TestRefusedTimeoutHeaderPendingVotesYes(t *testing.T) {
+func TestClassifyChallenge_PlainHeaderPendingIsNotYes(t *testing.T) {
+	// Production unreachable does not treat bare map-lag ErrHeaderPending as a yes.
+	unreachable := func(err error) bool {
+		if err == nil || errors.Is(err, types.ErrHeaderPending) {
+			return false
+		}
+		return progressUnreachable(err)
+	}
+	accept, done, err := classifyChallenge(0, &executorCallError{err: types.ErrHeaderPending}, unreachable)
+	require.NoError(t, err)
+	require.False(t, accept)
+	require.False(t, done, "map-lag header_pending must not finish as a refusal yes")
+
+	accept, done, err = classifyChallenge(0, &executorCallError{err: net.ErrClosed}, unreachable)
+	require.NoError(t, err)
+	require.True(t, accept)
+	require.True(t, done)
+}
+
+func TestRefusedTimeoutUnreachableVotesYes(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	executor := &progressPeer{steps: []struct {
 		receipt []byte
 		mempool []*types.DevshardTx
 		err     error
-	}{{err: fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)}}}
+	}{{err: fmt.Errorf("challenge-receipt: %w", net.ErrClosed)}}}
 
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, due(newEvidenceGroup(t).sm))
 	require.NoError(t, err)

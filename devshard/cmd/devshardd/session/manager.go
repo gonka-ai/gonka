@@ -1388,7 +1388,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 				for _, rec := range page {
 					sm.InjectWarmKeys(rec.WarmKeyDelta)
-					root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+					root, applyErr := sm.ApplyLocalPersistedRecord(rec)
 					if applyErr != nil {
 						return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 					}

@@ -54,7 +54,11 @@ func ArmRefusalDue(t *testing.T, sm *state.StateMachine, inferenceID uint64) {
 		floor = heightsync.NewFloorIndex()
 	}
 	due := uint64(startHeight + st.Config.RefusalTimeout)
-	floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{Signer: 0, Height: due, Hash: []byte{0x02}}})
+	// Carry TimeMs so TimeoutDue (StoredAt-only under lock) is armed without a map row.
+	floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{
+		Signer: 0, Height: due, Hash: []byte{0x02},
+		TimeMs: int64(due) * testutil.HeightClockBlockMs,
+	}})
 	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 	require.NoError(t, sm.TimeoutDue(inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED))
 }

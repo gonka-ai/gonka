@@ -205,10 +205,14 @@ func (j refusalJournal) pageHasMore(ctx context.Context, sizes []storage.DiffSiz
 // Unavailable: the executor received the page and applied none of it.
 // rpcRetry still retries that Unavailable for the non-inference budget;
 // once the budget is spent the answer stays answered, so the payload is sent.
-// header_pending is a host that cannot serve the response. The probe has
-// no receipt, and the refusal stands.
+// Plain types.ErrHeaderPending (map lag) is not unreachable: apply no longer
+// returns it for a missing map row. A Connect Unavailable from the peer still
+// counts via the Connect branch below.
 func executorUnreachable(err error) bool {
 	if err == nil {
+		return false
+	}
+	if errors.Is(err, types.ErrHeaderPending) {
 		return false
 	}
 	if IsStorageBusy(err) {

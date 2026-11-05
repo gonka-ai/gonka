@@ -29,11 +29,26 @@ func NormalizeVersion(version string) string {
 // earlier rule.
 const StartRequiresFloorProtocolVersion = "v7"
 
+// StampRequiresTimeProtocolVersion is the first state-root tag on which a
+// stamped message (observed_height > 0) must carry observed_time_ms > 0.
+// Earlier tags still accept 0. Tags that are not vN keep the earlier rule.
+// Same floor as StartRequiresFloor: v7 ships both rules; no separate v8 bump.
+const StampRequiresTimeProtocolVersion = "v7"
+
 // StartRequiresFloor reports whether a session at version rejects a start
 // while F is empty. v7 and later do. v6 and non-numeric tags do not.
 func StartRequiresFloor(version string) bool {
 	n, ok := stateRootVersionOrdinal(version)
 	floor, fok := stateRootVersionOrdinal(StartRequiresFloorProtocolVersion)
+	return ok && fok && n >= floor
+}
+
+// StampRequiresTime reports whether a session at version rejects a stamped
+// message with observed_time_ms <= 0. v7 and later do. v6 and non-numeric
+// tags do not.
+func StampRequiresTime(version string) bool {
+	n, ok := stateRootVersionOrdinal(version)
+	floor, fok := stateRootVersionOrdinal(StampRequiresTimeProtocolVersion)
 	return ok && fok && n >= floor
 }
 
@@ -88,11 +103,19 @@ type InferenceRecord struct {
 	StartedAtHeight    uint64          `json:"started_at_height,omitempty"`
 	StartedAtBlockHash []byte          `json:"started_at_block_hash,omitempty"`
 	ConfirmedAtHeight  uint64          `json:"confirmed_at_height,omitempty"`
-	StartedAtTimeMs    int64           `json:"started_at_time_ms,omitempty"`
-	ConfirmedAtTimeMs  int64           `json:"confirmed_at_time_ms,omitempty"`
-	VotesValid         uint32          `json:"votes_valid,omitempty"`
-	VotesInvalid       uint32          `json:"votes_invalid,omitempty"`
-	ValidatedBy        Bitmap128       `json:"validated_by,omitempty"`
+	// ConfirmedAtBlockHash is the confirm stamp's observed_block_hash when the
+	// confirm carried one. Empty for legacy / unstamped confirms. Bound into
+	// the state root like StartedAtBlockHash.
+	ConfirmedAtBlockHash []byte `json:"confirmed_at_block_hash,omitempty"`
+	// StartedAtTimeMs / ConfirmedAtTimeMs hold carried stamp times
+	// (MsgStartInference / MsgConfirmStart observed_time_ms) when non-zero.
+	// Omitted from the state-root hash: seal/drain read them from the live
+	// record / floor; the root still commits to stamp heights and hashes only.
+	StartedAtTimeMs   int64     `json:"started_at_time_ms,omitempty"`
+	ConfirmedAtTimeMs int64     `json:"confirmed_at_time_ms,omitempty"`
+	VotesValid        uint32    `json:"votes_valid,omitempty"`
+	VotesInvalid      uint32    `json:"votes_invalid,omitempty"`
+	ValidatedBy       Bitmap128 `json:"validated_by,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
@@ -255,6 +278,14 @@ type Diff struct {
 	PostStateRoot []byte
 }
 
+// HeaderTimeRow is a legacy journal row (height, hash, time). Deprecated: kept
+// only so old diffs.header_times_json can decode; apply never seeds from it.
+type HeaderTimeRow struct {
+	Height uint64 `json:"height"`
+	Hash   []byte `json:"hash,omitempty"`
+	TimeMs int64  `json:"time_ms"`
+}
+
 // DiffRecord is the storage representation: Diff + computed metadata.
 type DiffRecord struct {
 	Diff
@@ -262,6 +293,10 @@ type DiffRecord struct {
 	Signatures   map[uint32][]byte
 	WarmKeyDelta map[uint32]string // warm key bindings introduced at this nonce
 	CreatedAt    int64
+	// Deprecated: legacy local-journal snapshot. Decode-only for old rows;
+	// storage never writes these; apply ignores them. Not covered by UserSig.
+	HeaderTimes      []HeaderTimeRow
+	HeaderTimesKnown bool
 }
 
 // ComputeWarmKeyDelta returns entries in after that are not in before.

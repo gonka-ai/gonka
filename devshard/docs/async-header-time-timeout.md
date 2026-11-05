@@ -1,11 +1,11 @@
 # Async header time for timeout and challenge
 
-**Status:** Draft / proposal  
+**Status:** Implemented (timeout trigger/answer). Seal/drain clock path superseded by [stamped-block-time-plan.md](stamped-block-time-plan.md).  
 **Implementation:** [async-header-time-timeout-plan.md](async-header-time-timeout-plan.md)  
-**Related:** height-sync floor `F`, `DeltaBlocks` (default 2), legacy `started_at` / `confirmed_at`  
+**Related:** height-sync floor `F`, `DeltaBlocks` (default 2), legacy `started_at` / `confirmed_at`, stamped `observed_time_ms`  
 **Scope:** Where a block time is learned, which messages may wait for it, and how a gateway triggers a timeout challenge.
 
-This is a design note only. It does not change code by itself.
+Historical design note. Timeout trigger/answer rules below still match the shipped plan. Sections that say seal/drain wait on the map, or that the diff carries no header time, are superseded by stamped block time — see callouts.
 
 ---
 
@@ -51,7 +51,7 @@ A lookup reads the map. It does not call out. A missing entry means "this proces
 
 ## Messages that carry a stamp and do not wait
 
-The diff contains no header time. `started_at` and `confirmed_at` stay as they are today: the local wall clock at the moment the message is created. They are not a chain time and they are not filled from the map.
+> **Superseded for stamp times:** every height stamp now also carries `observed_time_ms` ([stamped-block-time-plan.md](stamped-block-time-plan.md)). Compose fills it from the map or an optimistic candidate (floor/tip); apply copies it onto the record. Wire wall-clock `started_at` / `confirmed_at` stay reserved/absent as before.
 
 ### Gateway, `MsgStartInference`
 
@@ -78,7 +78,7 @@ In that window the executor trusts the carried `F` and puts that same `(height, 
 
 ## Where header time is used
 
-Header time is used in two local decisions: the gateway deciding to open a timeout challenge, and a verifier deciding whether to answer one. Both read the map. Neither reads a time out of the diff.
+Header time is used for the gateway deciding to open a timeout challenge and for a verifier deciding whether to answer one; both read the local map. Seal and drain use **carried** stamp / floor times ([stamped-block-time-plan.md](stamped-block-time-plan.md)); the pre-apply map wait in [Seal and drain wait for the map](#seal-and-drain-wait-for-the-map) is historical. Timeout apply does not read the map: it counts votes only.
 
 `event_height` is the height stamp on the message being judged: the start stamp for a refusal, the confirm stamp for an execution timeout. `timeout_interval` is the existing second bound (`RefusalTimeout` or `ExecutionTimeout`).
 
@@ -139,8 +139,16 @@ A stamp that names a height no process will ever see would leave the map empty f
 
 ---
 
+## Seal and drain wait for the map
+
+> **Superseded.** Seal and drain now read carried `StartedAtTimeMs` / `ConfirmedAtTimeMs` and floor `TimeMs` ([stamped-block-time-plan.md](stamped-block-time-plan.md) steps 4–6). There is no pre-apply map snapshot and no `DiffRecord.HeaderTimes` write. The only residual wait is settlement drain when carried floor time is still `0` (`waitFloorTimeIfMissing`). Map prefer when the map already has `time(F)`: use the map and log carried≠map. Historical map-wait text below is kept for context only.
+
+Seal and drain write `SealedAcc`, balances, and host stats. Those values are in the state root, so both replicas have to use the same clocks. Carried stamp times make that deterministic without a map wait. Timeout apply no longer uses those rows.
+
+---
+
 ## What stays off the sign path
 
-Applying a diff, signing a diff, and returning ConfirmStart or Finish use the floor index and the height-sync stamp rules. They succeed or fail from the stamp and the log. A missing header time is not an apply error, not `ErrHeaderPending` on that path, and not a reason to retry the apply for seconds before answering.
+Signing a diff, and returning ConfirmStart or Finish, use the floor index and the height-sync stamp rules. They succeed or fail from the stamp and the log. A missing header-map row on that path is not an apply error and not a reason to hold the answer; compose fills `observed_time_ms` from the map or an optimistic candidate.
 
-The state root keeps the legacy wall-clock fields. It does not gain a header-time field that every replica must resolve before the root will match.
+The state root omits stamp times from the canonical inference entry (heights/hashes only). Seal/drain read carried fields from the live record / floor.

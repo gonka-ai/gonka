@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net"
 	"testing"
 	"time"
 
@@ -190,11 +191,14 @@ func TestVerifyRefused_UnsignedLocalEvidenceDoesNotReject(t *testing.T) {
 
 func TestVerifyRefused_ChallengeErrorAcceptsTimeout(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		err  error
+		name   string
+		err    error
+		accept bool
 	}{
-		{name: "executor unreachable", err: errors.New("unreachable")},
-		{name: "challenge timeout", err: context.DeadlineExceeded},
+		{name: "net closed", err: net.ErrClosed, accept: true},
+		{name: "challenge timeout", err: context.DeadlineExceeded, accept: true},
+		{name: "plain header pending", err: types.ErrHeaderPending, accept: false},
+		{name: "generic answered error", err: errors.New("executor 500"), accept: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := stateWithPendingFull(1, 1)
@@ -202,7 +206,7 @@ func TestVerifyRefused_ChallengeErrorAcceptsTimeout(t *testing.T) {
 
 			accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, due(newEvidenceGroup(t).sm))
 			require.NoError(t, err)
-			require.True(t, accept, "challenge error should be treated as executor unreachable")
+			require.Equal(t, tc.accept, accept)
 		})
 	}
 }

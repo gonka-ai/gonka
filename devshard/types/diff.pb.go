@@ -535,6 +535,7 @@ type MsgHeartbeat struct {
 	SlotsNum          uint64                 `protobuf:"varint,4,opt,name=slots_num,json=slotsNum,proto3" json:"slots_num,omitempty"`
 	Reason            string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                           // height_cadence|quiet_session|forced|cpoc_band
 	SyncVector        []*SyncVectorEntry     `protobuf:"bytes,6,rep,name=sync_vector,json=syncVector,proto3" json:"sync_vector,omitempty"` // status of the preceding turn
+	ObservedTimeMs    int64                  `protobuf:"varint,7,opt,name=observed_time_ms,json=observedTimeMs,proto3" json:"observed_time_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -604,6 +605,13 @@ func (x *MsgHeartbeat) GetSyncVector() []*SyncVectorEntry {
 	return nil
 }
 
+func (x *MsgHeartbeat) GetObservedTimeMs() int64 {
+	if x != nil {
+		return x.ObservedTimeMs
+	}
+	return 0
+}
+
 // MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
 //
 // ref_nonce names the heartbeat; the turn follows from it. turn_seq claimed
@@ -616,7 +624,8 @@ type MsgHeightAck struct {
 	ObservedBlockHash []byte                 `protobuf:"bytes,5,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	SyncState         SyncState              `protobuf:"varint,6,opt,name=sync_state,json=syncState,proto3,enum=devshard.v1.SyncState" json:"sync_state,omitempty"`
 	PeerSeen          []byte                 `protobuf:"bytes,7,opt,name=peer_seen,json=peerSeen,proto3" json:"peer_seen,omitempty"` // bitmap, bit j = "slot j fresh within F"
-	HostSig           []byte                 `protobuf:"bytes,8,opt,name=host_sig,json=hostSig,proto3" json:"host_sig,omitempty"`    // over fields 2–7, domain heightsync.ack.v1
+	HostSig           []byte                 `protobuf:"bytes,8,opt,name=host_sig,json=hostSig,proto3" json:"host_sig,omitempty"`    // over all fields except host_sig, domain heightsync.ack.v1
+	ObservedTimeMs    int64                  `protobuf:"varint,9,opt,name=observed_time_ms,json=observedTimeMs,proto3" json:"observed_time_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -700,6 +709,13 @@ func (x *MsgHeightAck) GetHostSig() []byte {
 	return nil
 }
 
+func (x *MsgHeightAck) GetObservedTimeMs() int64 {
+	if x != nil {
+		return x.ObservedTimeMs
+	}
+	return 0
+}
+
 type SyncVectorEntry struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	SlotId         uint32                 `protobuf:"varint,1,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
@@ -779,6 +795,7 @@ type ExecutorReceiptContent struct {
 	EscrowId          string                 `protobuf:"bytes,7,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,9,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,10,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	ObservedTimeMs    int64                  `protobuf:"varint,11,opt,name=observed_time_ms,json=observedTimeMs,proto3" json:"observed_time_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -867,6 +884,13 @@ func (x *ExecutorReceiptContent) GetObservedBlockHash() []byte {
 		return x.ObservedBlockHash
 	}
 	return nil
+}
+
+func (x *ExecutorReceiptContent) GetObservedTimeMs() int64 {
+	if x != nil {
+		return x.ObservedTimeMs
+	}
+	return 0
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
@@ -1107,14 +1131,15 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"height_ack\x18\v \x01(\v2\x19.devshard.v1.MsgHeightAckH\x00R\theightAck\x12:\n" +
 	"\n" +
 	"error_miss\x18\x0e \x01(\v2\x19.devshard.v1.MsgErrorMissH\x00R\terrorMissB\x04\n" +
-	"\x02txJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\"\xe1\x01\n" +
+	"\x02txJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\"\x8b\x02\n" +
 	"\fMsgHeartbeat\x12'\n" +
 	"\x0fobserved_height\x18\x02 \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\x03 \x01(\fR\x11observedBlockHash\x12\x1b\n" +
 	"\tslots_num\x18\x04 \x01(\x04R\bslotsNum\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\x12=\n" +
 	"\vsync_vector\x18\x06 \x03(\v2\x1c.devshard.v1.SyncVectorEntryR\n" +
-	"syncVectorJ\x04\b\x01\x10\x02\"\x92\x02\n" +
+	"syncVector\x12(\n" +
+	"\x10observed_time_ms\x18\a \x01(\x03R\x0eobservedTimeMsJ\x04\b\x01\x10\x02\"\xbc\x02\n" +
 	"\fMsgHeightAck\x12\x1b\n" +
 	"\tref_nonce\x18\x02 \x01(\x04R\brefNonce\x12\x17\n" +
 	"\aslot_id\x18\x03 \x01(\rR\x06slotId\x12'\n" +
@@ -1123,12 +1148,13 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\n" +
 	"sync_state\x18\x06 \x01(\x0e2\x16.devshard.v1.SyncStateR\tsyncState\x12\x1b\n" +
 	"\tpeer_seen\x18\a \x01(\fR\bpeerSeen\x12\x19\n" +
-	"\bhost_sig\x18\b \x01(\fR\ahostSigJ\x04\b\x01\x10\x02\"\xa0\x01\n" +
+	"\bhost_sig\x18\b \x01(\fR\ahostSig\x12(\n" +
+	"\x10observed_time_ms\x18\t \x01(\x03R\x0eobservedTimeMsJ\x04\b\x01\x10\x02\"\xa0\x01\n" +
 	"\x0fSyncVectorEntry\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12.\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x16.devshard.v1.AckStatusR\x06status\x12'\n" +
 	"\x0fobserved_height\x18\x03 \x01(\x04R\x0eobservedHeight\x12\x1b\n" +
-	"\tack_nonce\x18\x04 \x01(\x04R\backNonce\"\xd0\x02\n" +
+	"\tack_nonce\x18\x04 \x01(\x04R\backNonce\"\xfa\x02\n" +
 	"\x16ExecutorReceiptContent\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
 	"\vprompt_hash\x18\x02 \x01(\fR\n" +
@@ -1140,7 +1166,8 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\tescrow_id\x18\a \x01(\tR\bescrowId\x12'\n" +
 	"\x0fobserved_height\x18\t \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\n" +
-	" \x01(\fR\x11observedBlockHashJ\x04\b\x06\x10\aJ\x04\b\b\x10\tR\n" +
+	" \x01(\fR\x11observedBlockHash\x12(\n" +
+	"\x10observed_time_ms\x18\v \x01(\x03R\x0eobservedTimeMsJ\x04\b\x06\x10\aJ\x04\b\b\x10\tR\n" +
 	"started_atR\fconfirmed_at\"\xa6\x01\n" +
 	"\x12TimeoutVoteContent\x12\x1b\n" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +

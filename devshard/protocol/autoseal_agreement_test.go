@@ -238,15 +238,17 @@ func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenc
 func TestProtocol_UserHostApply_AutoSealAgreement_ExplicitClock(t *testing.T) {
 	env := setupAutoSealEnv(t, 5, 1_000_000)
 
-	env.startConfirm(t, 1, 1)
-	env.finishInference(t, 1, 3)
+	nonce := env.raiseFloor(t, 1, autoSealTestBaseConfirmedAt)
+	env.startConfirm(t, nonce, nonce)
+	env.finishInference(t, nonce, nonce+2)
 
-	require.Equal(t, types.StatusFinished, env.userSM.SnapshotState().Inferences[1].Status)
+	require.Equal(t, types.StatusFinished, env.userSM.SnapshotState().Inferences[nonce].Status)
+	require.Equal(t, uint64(autoSealTestBaseConfirmedAt), env.userSM.SnapshotState().Inferences[nonce].ConfirmedAtHeight)
 	require.Empty(t, env.userSM.ExportSealedNonces(), "finished inference should not seal before clock gate")
 
-	env.advanceClockPastGrace(t, 4, 1)
+	env.advanceClockPastGrace(t, nonce+3, nonce)
 	require.NotEmpty(t, env.userSM.SnapshotState().SealedAcc, "expected non-empty sealed_acc after auto-seal")
-	require.Contains(t, env.userSM.ExportSealedNonces(), uint64(1))
+	require.Contains(t, env.userSM.ExportSealedNonces(), nonce)
 
 	assertUserHostStateParity(t, env, 0, env.userSM.LatestNonce())
 }

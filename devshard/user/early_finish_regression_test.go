@@ -170,13 +170,13 @@ func (f *earlyFinishFixture) handleTimeout(t *testing.T) (TimeoutResult, error) 
 	t.Helper()
 	f.rig.raise(t, f.session, 100_000)
 	rec := f.record()
+	height, hash := rec.StartedAtHeight, rec.StartedAtBlockHash
 	window := time.Duration(f.session.StateMachine().Config().RefusalTimeout) * time.Second
-	stamp := rec.StartedAtTimeMs
-	if rec.Status == types.StatusStarted && rec.ConfirmedAtTimeMs > 0 {
-		stamp = rec.ConfirmedAtTimeMs
+	if rec.Status == types.StatusStarted && rec.ConfirmedAtHeight > 0 {
+		height, hash = rec.ConfirmedAtHeight, nil
 		window = time.Duration(f.session.StateMachine().Config().ExecutionTimeout) * time.Second
 	}
-	f.rig.coverTimeout(t, f.session, stamp, window)
+	f.rig.coverTimeout(t, f.session, headerStampMs(t, f.session.StateMachine(), height, hash), window)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return f.session.HandleTimeout(ctx, f.nonce, time.Unix(0, 0), f.payload)

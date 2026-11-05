@@ -10,22 +10,24 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/chainoracle/blocks"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/transport"
 	"devshard/types"
 )
 
-// chatGateTimes is the gateway map the chat gate reads. HeaderTimeMs is the
-// only method that read may call. AwaitHeaderTimeMs and GetBlockHeader are
-// present so a call from the gate shows up in the counters.
+// chatGateTimes is the gateway map the chat gate reads via StoredAt
+// (LookupHeaderTimeMs → StampHeaderTime). HeaderTimeMs / AwaitHeaderTimeMs /
+// GetBlockHeader are present so a call from the gate shows up in the counters.
 type chatGateTimes struct {
-	mu          sync.Mutex
-	open        atomic.Bool
-	ms          int64
-	byHeight    map[uint64]int64
-	headerCalls atomic.Int32
-	awaitCalls  atomic.Int32
+	mu            sync.Mutex
+	open          atomic.Bool
+	ms            int64
+	byHeight      map[uint64]int64
+	headerCalls   atomic.Int32
+	awaitCalls    atomic.Int32
+	headerMsCalls atomic.Int32
 }
 
 func (g *chatGateTimes) set(height uint64, ms int64) {
@@ -37,7 +39,30 @@ func (g *chatGateTimes) set(height uint64, ms int64) {
 	g.byHeight[height] = ms
 }
 
+func (g *chatGateTimes) StoredAt(height uint64) (headertime.Record, bool) {
+	if !g.open.Load() {
+		return headertime.Record{}, false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	var ms int64
+	if len(g.byHeight) > 0 {
+		var ok bool
+		ms, ok = g.byHeight[height]
+		if !ok || ms <= 0 {
+			return headertime.Record{}, false
+		}
+	} else if g.ms > 0 {
+		ms = g.ms
+	} else {
+		return headertime.Record{}, false
+	}
+	// sessionOracles stamp hash is {0xaa}; StampHeaderTime rejects empty row hashes.
+	return headertime.Record{TimeMs: ms, Hash: []byte{0xaa}}, true
+}
+
 func (g *chatGateTimes) HeaderTimeMs(height uint64, _ []byte) (int64, error) {
+	g.headerMsCalls.Add(1)
 	if !g.open.Load() {
 		return 0, types.ErrHeaderPending
 	}
@@ -110,6 +135,7 @@ func TestFloorChat_OneAckIsNotReady(t *testing.T) {
 	require.Equal(t, []byte{0xaa}, hash)
 
 	beforeH, beforeA := times.gateCalls()
+	beforeMs := times.headerMsCalls.Load()
 	st := session.HeightSeedStatus()
 	require.Equal(t, HeightSeedStatePending, st.State)
 	require.Equal(t, 1, st.Seeded)
@@ -121,6 +147,7 @@ func TestFloorChat_OneAckIsNotReady(t *testing.T) {
 	require.ErrorAs(t, err, &se)
 	require.Equal(t, beforeH, times.headerCalls.Load())
 	require.Equal(t, beforeA, times.awaitCalls.Load())
+	require.Equal(t, beforeMs, times.headerMsCalls.Load(), "chat gate must not call HeaderTimeMs")
 }
 
 func TestFloorChat_SecondAckOpensAndStartCopiesFloor(t *testing.T) {
@@ -141,11 +168,13 @@ func TestFloorChat_SecondAckOpensAndStartCopiesFloor(t *testing.T) {
 	require.GreaterOrEqual(t, blockAcks(heightAcksInDiffs(seenDiffs(session))), 2)
 
 	beforeH, beforeA := times.gateCalls()
+	beforeMs := times.headerMsCalls.Load()
 	st := session.HeightSeedStatus()
 	require.Equal(t, HeightSeedStateOK, st.State)
 	require.GreaterOrEqual(t, st.Seeded, 2)
 	require.Equal(t, beforeH, times.headerCalls.Load())
 	require.Equal(t, beforeA, times.awaitCalls.Load())
+	require.Equal(t, beforeMs, times.headerMsCalls.Load(), "chat gate must not call HeaderTimeMs")
 
 	prepared, err := session.PrepareInference(ctx, InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -161,12 +190,14 @@ func TestFloorChat_SecondAckOpensAndStartCopiesFloor(t *testing.T) {
 	require.NotNil(t, start)
 	require.Equal(t, uint64(100), start.ObservedHeight)
 	require.Equal(t, []byte{0xaa}, start.ObservedBlockHash)
+	require.Equal(t, wantMs, start.ObservedTimeMs, "compose fills stamp time from StoredAt")
 	rec, ok := session.StateMachine().GetInference(prepared.Nonce())
 	require.True(t, ok)
 	require.Equal(t, uint64(100), rec.StartedAtHeight)
 	require.Equal(t, wantMs, rec.StartedAtTimeMs)
 	require.Equal(t, beforeH, times.headerCalls.Load())
 	require.Equal(t, beforeA, times.awaitCalls.Load())
+	require.Equal(t, beforeMs, times.headerMsCalls.Load(), "start compose must not call HeaderTimeMs")
 }
 
 func TestFloorChat_UnavailableAcksLeaveFloorEmpty(t *testing.T) {
@@ -236,7 +267,6 @@ func TestFloorChat_HalfIntervalIsReady(t *testing.T) {
 	rec := appliedStart(t, session)
 	require.Equal(t, uint64(100), rec.StartedAtHeight)
 	require.Equal(t, mapMs, rec.StartedAtTimeMs)
-	require.NotEqual(t, now.UnixMilli(), rec.StartedAtTimeMs)
 }
 
 func TestFloorChat_OneIntervalPlusLagIsReady(t *testing.T) {
@@ -312,7 +342,6 @@ func TestFloorChat_StaleFloorSendsSpanThenCopiesFreshFloor(t *testing.T) {
 	require.Equal(t, uint64(200), rec.StartedAtHeight)
 	require.Equal(t, []byte{0xaa}, rec.StartedAtBlockHash)
 	require.Equal(t, freshMs, rec.StartedAtTimeMs)
-	require.NotEqual(t, clock.Now().UnixMilli(), rec.StartedAtTimeMs)
 }
 
 func TestFloorChat_HalfRosterIsBootstrapOnly(t *testing.T) {

@@ -220,6 +220,49 @@ func TestRefusalOpensOnTheGatewayWallClock(t *testing.T) {
 	require.NotEqual(t, "skipped", result.Outcome)
 }
 
+// Test flow:
+//  1. Pending inference with a start stamp; forget the live sendTime (restart).
+//  2. Empty map → refusal stays closed (poll), not ErrTimeoutNotArmed.
+//  3. Seed time(StartedAtHeight) past RefusalTimeout → deadline opens from the map.
+func TestRefusalDeadlineRestoresFromTheHeaderMapAfterRestart(t *testing.T) {
+	session, hosts, _, _ := setupArmedSession(t, 3, 1_000_000, 0)
+	nonce := prepareNonce(t, session)
+	rec, ok := session.sm.GetInference(nonce)
+	require.True(t, ok)
+	require.NotZero(t, rec.StartedAtHeight)
+
+	refusal := time.Duration(session.sm.Config().RefusalTimeout) * time.Second
+	headers := &countingHeaders{}
+	session.StateMachine().SetHeaderTimes(headers)
+
+	reason, deadline := session.TimeoutDeadline(nonce, time.Time{})
+	require.Equal(t, "refused", reason)
+	require.True(t, deadline.After(time.Now()), "a map miss does not open the refusal")
+	require.False(t, session.timeoutUnarmed(nonce), "header_pending is not unarmed")
+
+	stamp := time.Now().Add(-refusal - time.Millisecond)
+	headers.byHeight = map[uint64]int64{rec.StartedAtHeight: stamp.UnixMilli()}
+	headers.calls.Store(0)
+
+	reason, deadline = session.TimeoutDeadline(nonce, time.Time{})
+	require.Equal(t, "refused", reason)
+	require.True(t, refusalPast(time.Now(), deadline), "map stamp past RefusalTimeout opens now")
+	require.Positive(t, headers.calls.Load(), "restart refusal reads StoredAt")
+
+	var opened atomic.Int32
+	for i := range session.clients {
+		session.clients[i] = &verifyingHost{HostClient: session.clients[i], mockTimeoutVerifier: &mockTimeoutVerifier{
+			accept: true, signer: hosts[i], group: session.group, slotIdx: i,
+			onVerify: func() { opened.Add(1) },
+		}}
+	}
+	result, needsWait, _ := session.VoteTimeout(context.Background(), nonce, time.Time{}, nil, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.False(t, needsWait)
+	require.Positive(t, opened.Load())
+	require.Equal(t, "refused", result.Reason)
+	require.NotEqual(t, "skipped", result.Outcome)
+}
+
 func TestExecutionOpensOnTheConfirmedHeight(t *testing.T) {
 	prev := TimeoutBuffer
 	TimeoutBuffer = 7 * time.Second

@@ -105,6 +105,7 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 	rec := stamped.SnapshotState().Inferences[1]
 	require.Equal(t, uint64(100), rec.StartedAtHeight)
 	require.Equal(t, uint64(101), rec.ConfirmedAtHeight, "the record stores the confirm stamp, which is newer than the start")
+	require.Equal(t, hash, rec.ConfirmedAtBlockHash, "the record stores the confirm block hash")
 	floor, floorHash, known := stamped.HeightSyncFloorAsOf(stamped.LatestNonce() + 1)
 	require.True(t, known)
 	require.Equal(t, uint64(101), floor)

@@ -41,7 +41,10 @@ func (o *sessionOracle) Latest(context.Context) (*blocks.Header, error) {
 		return nil, errors.New("follower unavailable")
 	}
 	h := o.height.Load()
-	return blocks.HashOnlyHeader(h, time.Unix(1, 0).UTC(), "fake-chain", append([]byte(nil), o.hash...)), nil
+	// Zero header time: compose fills observed_time_ms from the header map
+	// when present (optimistic map rule). A fixed fake time would disagree
+	// with the poller and reject ConfirmStart / Finish / HeightAck.
+	return blocks.HashOnlyHeader(h, time.Time{}, "fake-chain", append([]byte(nil), o.hash...)), nil
 }
 func (o *sessionOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
 	return o.Latest(ctx)

@@ -103,7 +103,7 @@ func coverRefusal(t *testing.T, session *Session, rig *floorRig, nonce uint64) {
 	t.Helper()
 	rec, ok := session.StateMachine().GetInference(nonce)
 	require.True(t, ok)
-	rig.coverTimeout(t, session, rec.StartedAtTimeMs, time.Duration(session.StateMachine().Config().RefusalTimeout)*time.Second)
+	rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), rec.StartedAtHeight, rec.StartedAtBlockHash), time.Duration(session.StateMachine().Config().RefusalTimeout)*time.Second)
 }
 
 func TestCompletionJournalFailurePreventsSignedStart(t *testing.T) {

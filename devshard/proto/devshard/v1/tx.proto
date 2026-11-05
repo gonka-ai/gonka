@@ -25,6 +25,9 @@ message MsgStartInference {
   // user-signed Diff so a later ChallengeReceipt can prove which version
   // may CreateSession on a host the gateway never pinged.
   string protocol_version = 9;
+  // observed_time_ms is the Comet header time for (observed_height,
+  // observed_block_hash), in milliseconds. Zero means unset (legacy / optimistic miss).
+  int64 observed_time_ms = 10;
 }
 
 message MsgConfirmStart {
@@ -34,6 +37,7 @@ message MsgConfirmStart {
   reserved "confirmed_at";
   uint64 observed_height = 4;
   bytes  observed_block_hash = 5;
+  int64  observed_time_ms = 6;
 }
 
 message MsgFinishInference {
@@ -47,6 +51,7 @@ message MsgFinishInference {
   uint64 observed_height = 8;
   bytes  observed_block_hash = 9;
   bytes  served_hash = 10;
+  int64  observed_time_ms = 11;
 }
 
 message MsgTimeoutInference {
