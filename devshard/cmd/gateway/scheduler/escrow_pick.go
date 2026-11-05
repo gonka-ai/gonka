@@ -6,6 +6,7 @@ import (
 	"math"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/internal/safemath"
 	"devshard/types"
 )
 
@@ -363,7 +364,7 @@ func affordsAttempts(candidate Escrow, reserveTokens uint64, attempts int) bool 
 	if !ok {
 		return false
 	}
-	floor, ok := safeMul(cost, uint64(attempts))
+	floor, ok := safemath.MulCheckedUint64(cost, uint64(attempts))
 	if !ok {
 		return false
 	}
@@ -376,19 +377,9 @@ func requestCost(escrowSession session, reserveTokens uint64) (uint64, bool) {
 
 // RequestCost is what the chain takes for one request: its reserve and the fee for the nonce it draws; unpriced when that overflows. See capacity.md, "The balance floor".
 func RequestCost(reserveTokens, tokenPrice, feePerNonce uint64) (uint64, bool) {
-	reserve, ok := safeMul(reserveTokens, tokenPrice)
+	reserve, ok := safemath.MulCheckedUint64(reserveTokens, tokenPrice)
 	if !ok {
 		return 0, false
 	}
-	cost := reserve + feePerNonce
-	return cost, cost >= reserve
-}
-
-// safeMul reports the product only when it did not wrap: an unaffordable price must not read as a small one.
-func safeMul(left, right uint64) (uint64, bool) {
-	if left == 0 || right == 0 {
-		return 0, true
-	}
-	product := left * right
-	return product, product/left == right
+	return safemath.AddCheckedUint64(reserve, feePerNonce)
 }

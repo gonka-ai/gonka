@@ -159,7 +159,7 @@ So every counter an admission or a window decision is read from, and every total
 
 The two other defences are the bounds themselves. `Validate` refuses a configuration whose knobs could be multiplied past the ceiling, and refuses a float that is not finite, because `NaN` is false in every ordering comparison and passes a range check written as one. `contextWindowsOf` drops a context length outside the range a model could plausibly have rather than clamping it, so a model governance reports nonsense for keeps the length it was last priced at — the fallback, where it has never had one — instead of being priced at the ceiling.
 
-Money is the exception: `safeMul` in the escrow pick and `safeAdd` in the state machine report an overflow rather than saturating, because a reserve that saturates is a reserve the chain will not honour. There the right answer is to refuse the request, not to serve it at the wrong price.
+Money is the exception: `safemath.MulCheckedUint64` and `safemath.AddCheckedUint64` in the escrow pick and `safeAdd` in the state machine report an overflow rather than saturating, because a reserve that saturates is a reserve the chain will not honour. There the right answer is to refuse the request, not to serve it at the wrong price.
 
 ### 11. Labels, ordering and determinism
 

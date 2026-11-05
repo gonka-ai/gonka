@@ -117,3 +117,31 @@ func TestUint64ArithmeticStopsAtTheBound(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Table-driven: checked sums and products below, at and past the uint64 bound, and products with zero.
+//  2. Assert each reports its result when it did not wrap, and 0, false when it did.
+func TestCheckedUint64ArithmeticReportsAWrap(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		operation func(first, second uint64) (uint64, bool)
+		first     uint64
+		second    uint64
+		want      uint64
+		wantOK    bool
+	}{
+		{"a sum in range", AddCheckedUint64, 2, 3, 5, true},
+		{"a sum at the bound", AddCheckedUint64, math.MaxUint64 - 1, 1, math.MaxUint64, true},
+		{"a sum past the bound", AddCheckedUint64, math.MaxUint64, 1, 0, false},
+		{"a product in range", MulCheckedUint64, 2, 3, 6, true},
+		{"a product with zero", MulCheckedUint64, 0, math.MaxUint64, 0, true},
+		{"a product at the bound", MulCheckedUint64, math.MaxUint64, 1, math.MaxUint64, true},
+		{"a product past the bound", MulCheckedUint64, math.MaxUint64, 2, 0, false},
+		{"a product of two halves past the bound", MulCheckedUint64, 1 << 32, 1 << 32, 0, false},
+	} {
+		if got, ok := testCase.operation(testCase.first, testCase.second); got != testCase.want || ok != testCase.wantOK {
+			t.Errorf("%s: (%d, %d) = %d, %t, want %d, %t: a wrapped price must not read as a small one",
+				testCase.name, testCase.first, testCase.second, got, ok, testCase.want, testCase.wantOK)
+		}
+	}
+}
