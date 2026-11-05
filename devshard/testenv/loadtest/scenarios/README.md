@@ -217,3 +217,27 @@ Artifacts are in `devshard/testenv/loadtest/results/<timestamp>/`, including
 in-flight response completion, drain (up to three minutes) and cleanup add
 time to the eight-minute workload. Existing scenarios continue to select the
 legacy gateway unless `gateway.implementation: gateway` is set.
+
+## poc-preserved-load-gateway-v7
+
+A standalone-gateway variant of `poc-preserved-load`. It preserves the original
+seed (42), topology, 16-minute workload at 32 RPS, 256 maximum in-flight
+requests, streaming request settings and CPU-profile schedule. Both windows
+are PoC: 2–4 minutes preserve the `versiond-0/1` HA participant, and 10–12
+minutes preserve `versiond-2`. It does not substitute the shorter PoC/cPoC
+schedule of `poc-gateway-v7`.
+
+From the repository root:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-preserved-load-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+The implementation is `gateway`, the protocol stamp is `v2`, and rotation is
+disabled. Native `engine_loser_grace: 30s` replaces the legacy redundancy
+configuration; the two engine policies are not semantically identical.
+The client and orphan-work assertions are preserved. Invariant groups are
+limited to `poc-load` and `faults-fired-and-ml-nodes-bound`, as for the other
+standalone scenario; legacy accounting/quarantine/memory checks are not run.
