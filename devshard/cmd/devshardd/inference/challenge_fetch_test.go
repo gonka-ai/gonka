@@ -2,18 +2,160 @@ package inference
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
+	"sync/atomic"
 	"testing"
 
+	"common/completionapi"
+	"common/httpguard"
+	"common/utils"
 	commonvalidation "common/validation"
 
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"github.com/productscience/inference/x/inference/calculations"
+	chaintypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 
 	devshardpkg "devshard"
+	"devshard/bridge"
+	"devshard/internal/testutil"
 	"devshard/transport"
+	"devshard/transport/rpcpb"
+	"devshard/transport/rpcserver"
 )
+
+type challengeURLRecorder struct {
+	PayloadAuthClient
+	key *secp256k1.PrivKey
+}
+
+func (challengeURLRecorder) GetAccountAddress() string { return "validator" }
+func (r challengeURLRecorder) SignBytes(data []byte) (string, error) {
+	if r.key == nil {
+		return "signature", nil
+	}
+	sig, err := r.key.Sign(data)
+	return base64.StdEncoding.EncodeToString(sig), err
+}
+
+func (r challengeURLRecorder) NewInferenceQueryClient() chaintypes.QueryClient {
+	return challengeURLKeys{pubkey: base64.StdEncoding.EncodeToString(r.key.PubKey().Bytes())}
+}
+
+type challengeURLKeys struct {
+	chaintypes.QueryClient
+	pubkey string
+}
+
+func (q challengeURLKeys) GranteesByMessageType(context.Context, *chaintypes.QueryGranteesByMessageTypeRequest, ...grpc.CallOption) (*chaintypes.QueryGranteesByMessageTypeResponse, error) {
+	return &chaintypes.QueryGranteesByMessageTypeResponse{}, nil
+}
+
+func (q challengeURLKeys) AccountByAddress(context.Context, *chaintypes.QueryAccountByAddressRequest, ...grpc.CallOption) (*chaintypes.QueryAccountByAddressResponse, error) {
+	return &chaintypes.QueryAccountByAddressResponse{Pubkey: q.pubkey}, nil
+}
+
+type challengeURLBridge struct {
+	bridge.MainnetBridge
+	url string
+	err error
+}
+
+func (b *challengeURLBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
+	return &bridge.HostInfo{Address: address, URL: b.url}, b.err
+}
+
+func TestFetchChallengePayload_ExecutorURL(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		url          string
+		lookupErr    error
+		payloadRPC   bool
+		want         devshardpkg.ChallengeFetchOutcome
+		executorSide bool
+	}{
+		{name: "empty", payloadRPC: true, want: devshardpkg.ChallengeFetchRetry, executorSide: true},
+		{name: "spaces", url: "   ", payloadRPC: true, want: devshardpkg.ChallengeFetchRetry, executorSide: true},
+		{name: "other whitespace", url: "\t\n\u00a0", payloadRPC: true, want: devshardpkg.ChallengeFetchRetry, executorSide: true},
+		{name: "own RPC disabled", url: "http://executor.test", want: devshardpkg.ChallengeFetchLocal},
+		{name: "own chain query failed", lookupErr: errors.New("chain unavailable"), payloadRPC: true, want: devshardpkg.ChallengeFetchRetry},
+	} {
+		for _, voteFalse := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/vote_false=%t", tc.name, voteFalse), func(t *testing.T) {
+				v := newFaultTestValidator(10, voteFalse, nil, nil, nil)
+				if tc.payloadRPC {
+					v.SetPayloadRPC(testutil.MustGenerateKey(t), transport.ParseRPCEndpoints(transport.EndpointPayload))
+				}
+				t.Cleanup(v.ClosePayloadClients)
+				br := &challengeURLBridge{url: tc.url, err: tc.lookupErr}
+				v.fetchPayloads = func(ctx context.Context, req devshardpkg.ValidateRequest, id string, epoch uint64) ([]byte, []byte, error) {
+					return fetchPayloadsFromExecutor(ctx, br, challengeURLRecorder{}, req, id, epoch, "", nil,
+						func(url, address, escrow string) *transport.RPCClient {
+							rpc, _ := v.payloadRPC(url, address, escrow, epoch)
+							return rpc
+						})
+				}
+				req := faultReq(10)
+				req.EscrowID = "escrow-1"
+				got := v.FetchChallengePayload(context.Background(), req)
+				require.Equal(t, tc.want, got.Outcome, "cause: %s", got.Cause)
+				require.Equal(t, tc.executorSide && voteFalse, got.ExecutorSide)
+				verdict, err := v.Validate(context.Background(), req)
+				require.Error(t, err, "replay still cannot fetch this payload")
+				require.Nil(t, verdict, "replay must not start blaming an empty URL")
+			})
+		}
+	}
+}
+
+func TestFetchChallengePayload_ExecutorURLRecovery(t *testing.T) {
+	httpguard.SetAllowPrivate(true)
+	prompt := []byte(`{"model":"test","messages":[]}`)
+	body := []byte(`{"events":["data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\"},\"logprobs\":{\"content\":[{\"token\":\"a\",\"logprob\":-0.1,\"top_logprobs\":[{\"token\":\"a\",\"logprob\":-0.1}]}]}}]}","data: [DONE]"]}`)
+	served, err := completionapi.StripForGateway(body)
+	require.NoError(t, err)
+	promptHash, responseHash, servedHash := sha256.Sum256(prompt), sha256.Sum256(body), sha256.Sum256(served)
+	req := faultReq(10)
+	req.InferenceID, req.EscrowID = 42, "escrow-1"
+	req.PromptHash, req.ResponseHash, req.ServedHash = promptHash[:], responseHash[:], servedHash[:]
+	recorder := challengeURLRecorder{key: secp256k1.GenPrivKey()}
+	sig, err := calculations.Sign(recorder, calculations.SignatureComponents{
+		Payload:         "42" + utils.GenerateSHA256HashBytes(prompt) + utils.GenerateSHA256HashBytes(body),
+		TransferAddress: req.ExecutorAddress,
+	}, calculations.Developer)
+	require.NoError(t, err)
+	var calls atomic.Int32
+	rpc := newPayloadRPCClient(t, func(_ context.Context, _ rpcserver.SessionCore, _ string, request *rpcpb.GetPayloadRequest) (*rpcpb.GetPayloadResponse, error) {
+		calls.Add(1)
+		return &rpcpb.GetPayloadResponse{InferenceId: request.GetInferenceId(), PromptPayload: prompt, ResponsePayload: body, ExecutorSignature: sig}, nil
+	})
+	br := &challengeURLBridge{url: "   "}
+	v := newFaultTestValidator(10, true, nil, nil, nil)
+	v.fetchPayloads = func(ctx context.Context, req devshardpkg.ValidateRequest, id string, epoch uint64) ([]byte, []byte, error) {
+		return fetchPayloadsFromExecutor(ctx, br, recorder, req, id, epoch, "", nil,
+			func(url, _, _ string) *transport.RPCClient {
+				if strings.TrimSpace(url) == "" {
+					return nil
+				}
+				return rpc
+			})
+	}
+	first := v.FetchChallengePayload(context.Background(), req)
+	require.Equal(t, devshardpkg.ChallengeFetchRetry, first.Outcome)
+	require.True(t, first.ExecutorSide)
+	require.Zero(t, calls.Load())
+	br.url = "http://executor.test"
+	restored := v.FetchChallengePayload(context.Background(), req)
+	require.Equal(t, devshardpkg.ChallengeFetchFetched, restored.Outcome, "cause: %s", restored.Cause)
+	require.Equal(t, body, restored.Response, "the restored endpoint serves the signed body and all three hashes match")
+	require.Equal(t, int32(1), calls.Load())
+}
 
 func TestFetchChallengePayload_Classification(t *testing.T) {
 	ctx := context.Background()

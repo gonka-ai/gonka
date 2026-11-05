@@ -66,6 +66,8 @@ func classifyChallengeFetch(ctx context.Context, phase *chain.Phase, epochID uin
 		// The deadline ended on this host's side of the fetch (its own
 		// signer, peer or chain lookup), or the fetch cannot run here.
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchLocal, Cause: cause}
+	case errors.Is(err, errExecutorURLUnavailable):
+		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
 	case errors.Is(err, commonvalidation.ErrHashMismatch), errors.Is(err, errExecutorPayloadSignature):
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchMismatch, Cause: cause}
 	case errors.Is(err, commonvalidation.ErrPayloadGone):

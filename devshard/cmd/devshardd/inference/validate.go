@@ -42,6 +42,10 @@ var errExecutorPayloadSignature = errors.New("verify executor signature")
 // arrived are not marked: a deadline that ends there is this host's own.
 var errExecutorFetchCut = errors.New("executor did not answer the payload call before the deadline")
 
+// An absent executor URL is retriable by a challenge. Keep it separate from
+// errExecutorPayloadFault so replay retains its existing no-vote behavior.
+var errExecutorURLUnavailable = errors.New("executor has no URL")
+
 func tagExecutorPayloadFault(err error) error {
 	if err == nil {
 		return nil
@@ -112,8 +116,8 @@ func fetchPayloadsFromExecutor(
 	if err != nil {
 		return nil, nil, fmt.Errorf("get executor info: %w", err)
 	}
-	if executorInfo.URL == "" {
-		return nil, nil, fmt.Errorf("executor has no URL")
+	if strings.TrimSpace(executorInfo.URL) == "" {
+		return nil, nil, errExecutorURLUnavailable
 	}
 
 	validatorAddress := recorder.GetAccountAddress()
