@@ -42,6 +42,13 @@ func (k Keeper) ValidateTransfer(ctx context.Context, genesisAddr, recipientAddr
 		return err
 	}
 
+	// A recipient's unfinished vesting schedule must not be replaced
+	if recipient := k.accountKeeper.GetAccount(ctx, recipientAddr); recipient != nil {
+		if err := checkRecipientSchedule(k.accountKeeper.GetAccount(ctx, genesisAddr), recipient, sdk.UnwrapSDKContext(ctx).BlockTime().Unix()); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
