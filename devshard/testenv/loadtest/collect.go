@@ -287,7 +287,7 @@ type DebugInference struct {
 
 func fetchDebugInferences(ctx context.Context, runtimeURL, apiKey string) (map[string]DebugInference, error) {
 	var body struct {
-		Inferences map[string]DebugInference `json:"inferences"`
+		Inferences inferenceEntries `json:"inferences"`
 	}
 	if err := getJSON(ctx, runtimeURL+"/v1/debug/inferences", apiKey, &body); err != nil {
 		return nil, err

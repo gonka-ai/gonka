@@ -33,25 +33,27 @@ type RunnerConfig struct {
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
 	// Build runs prebuilt artifacts instead of building them from the checkout.
-	Build *Build
+	Build        *Build
+	GatewayImage string
 }
 
 type RunResult struct {
-	Summary            Summary
-	Terminal           TerminalSummary
-	Assertions         []AssertionResult
-	OutputDir          string
-	WorkDir            string
-	GatewayURL         string
-	Allocations        map[string]uint64
-	MLStats            map[string]MLNodeStats
-	GatewayState       GatewayStateSizes
-	Metrics            MetricsSummary
-	Events             []EventRecord
-	CPUProfiles        []CPUProfileResult
-	ContentionProfiles []ContentionProfileResult
-	ProfileSnapshots   []ProfileSnapshotResult
-	Accounting         *AccountingReport
+	Summary                 Summary
+	Terminal                TerminalSummary
+	Assertions              []AssertionResult
+	OutputDir               string
+	WorkDir                 string
+	GatewayURL              string
+	Allocations             map[string]uint64
+	MLStats                 map[string]MLNodeStats
+	GatewayState            GatewayStateSizes
+	GatewayStateUnavailable string
+	Metrics                 MetricsSummary
+	Events                  []EventRecord
+	CPUProfiles             []CPUProfileResult
+	ContentionProfiles      []ContentionProfileResult
+	ProfileSnapshots        []ProfileSnapshotResult
+	Accounting              *AccountingReport
 }
 
 type MLNodeStats struct {
@@ -151,6 +153,10 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return RunResult{}, err
 	}
+	scenario, opts.Build, err = resolveGatewayImage(scenario, opts.Build, opts.GatewayImage)
+	if err != nil {
+		return result, err
+	}
 	var replaySelector *replay.Selector
 	var replayModels []string
 	if opts.LoadDataset != "" {
@@ -172,7 +178,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 			_ = writeAssertions(opts.OutputDir, result.Assertions, err)
 		}
 	}()
-	if err := copyFile(opts.ScenarioPath, filepath.Join(opts.OutputDir, "run.yaml")); err != nil {
+	if err := saveRunScenario(opts.ScenarioPath, filepath.Join(opts.OutputDir, "run.yaml"), scenario); err != nil {
 		return RunResult{}, err
 	}
 	profilesDir := opts.ProfilesDir
@@ -229,6 +235,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		log.Printf("loadtest: build=%s protocol=%s binary=%s", opts.Build.Name, opts.Build.Protocol, opts.Build.BinaryVersion)
 	}
+	if scenario.Gateway.Implementation == "gateway" {
+		if err := recordGatewayImage(ctx, scenario.Gateway, opts.OutputDir); err != nil {
+			return result, err
+		}
+	}
 	if err := requireTestenvHooks(scenario, devshardd); err != nil {
 		return RunResult{}, err
 	}
@@ -277,7 +288,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
 	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.StatsPort)
 	stateGatewayURL := result.GatewayURL
-	if replaySelector != nil || len(scenario.RequestModels()) > 1 {
+	if scenario.Gateway.Implementation == "gateway" || replaySelector != nil || len(scenario.RequestModels()) > 1 {
 		// Replay and multi-model stacks configure Gateway through DEVSHARDS_JSON, so even a
 		// single dataset model uses the multi-DevShard debug route.
 		stateGatewayURL = scopedGatewayURL(result.GatewayURL, config.PrimaryEscrowID(cfg))
@@ -307,7 +318,11 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 		return RunResult{}, err
 	}
-	log.Printf("loadtest: stage=gateway_ready secondary_wait_after_winner=%s", scenario.SecondaryWaitAfterWinner())
+	if scenario.Gateway.Implementation == "gateway" {
+		log.Printf("loadtest: stage=gateway_ready implementation=gateway image=%s protocol=%s engine_loser_grace=%s", scenario.Gateway.Image, scenario.Gateway.Protocol, scenario.Gateway.EngineLoserGrace)
+	} else {
+		log.Printf("loadtest: stage=gateway_ready secondary_wait_after_winner=%s", scenario.SecondaryWaitAfterWinner())
+	}
 	collector, err := startMetricsCollector(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey)
 	if err != nil {
 		return result, fmt.Errorf("start metrics collector: %w", err)
@@ -431,15 +446,23 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		log.Printf("loadtest: final Compose log collection failed: %v", err)
 	}
-	gatewayState, stateErr := fetchGatewayStateSizes(ctx, stateGatewayURL, apiKey)
-	if stateErr == nil {
-		result.GatewayState = gatewayState
-		if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
-			return RunResult{}, err
+	if scenario.Gateway.Implementation == "gateway" {
+		result.GatewayStateUnavailable = "legacy state-size counters unavailable; native escrow state saved in gateway-state.json"
+		if err := writeStandaloneGatewayState(ctx, stateGatewayURL, apiKey, opts.OutputDir); err != nil && assertionErr == nil {
+			return result, err
 		}
-	} else if assertionErr == nil {
-		return RunResult{}, stateErr
+	} else {
+		gatewayState, stateErr := fetchGatewayStateSizes(ctx, stateGatewayURL, apiKey)
+		if stateErr == nil {
+			result.GatewayState = gatewayState
+			if err := writeGatewayStateSizes(opts.OutputDir, gatewayState); err != nil && assertionErr == nil {
+				return result, err
+			}
+		} else if assertionErr == nil {
+			return result, stateErr
+		}
 	}
+
 	mlStats, statsErr := fetchMLNodeStats(ctx, cfg.MockDapi.HTTPPort)
 	if statsErr == nil {
 		result.MLStats = mlStats
@@ -518,6 +541,13 @@ func applyGatewayScenarioSettings(ctx context.Context, gatewayURL, apiKey string
 		}
 	}
 
+	if scenario.Gateway.Implementation == "gateway" {
+		settings = map[string]any{"rotation_enabled": false}
+		if scenario.Gateway.EngineLoserGrace != "" {
+			grace, _ := time.ParseDuration(scenario.Gateway.EngineLoserGrace)
+			settings["engine_loser_grace_ms"] = grace.Milliseconds()
+		}
+	}
 	body, err := json.Marshal(settings)
 	if err != nil {
 		return fmt.Errorf("marshal gateway settings: %w", err)
@@ -616,6 +646,11 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	}
 	cfg.Versiond.Mode = scenario.Topology.VersiondMode
 	cfg.Devshardctl.PoCRequestMode = scenario.Gateway.PoCRequestMode
+	cfg.Devshardctl.Binary = ""
+	if scenario.Gateway.Implementation == "gateway" {
+		cfg.Devshardctl.Binary = "gateway"
+		cfg.Devshardctl.Image = scenario.Gateway.Image
+	}
 	cfg.Versiond.DisablePeriodicSnapshots = scenario.Diagnostics.DisablePeriodicSnapshots
 	cfg.Versiond.EnableContentionProfiles = scenario.Diagnostics.ContentionProfiles
 	cfg.Postgres.PerParticipant = scenario.Topology.Storage == "per_participant"
@@ -623,7 +658,14 @@ func writeRunnerConfig(testenvDir, workDir string, scenario Scenario, profiles m
 	cfg.Params.MaxNonce = scenario.Topology.Chain.MaxNonce
 	if build != nil {
 		build.apply(cfg)
+		if scenario.Gateway.Implementation == "gateway" && (build.Protocol != scenario.Gateway.Protocol || build.Images.Gateway != scenario.Gateway.Image) {
+			return fmt.Errorf("build protocol and gateway image must match the standalone gateway scenario")
+		}
 	}
+	if scenario.Gateway.Implementation == "gateway" && cfg.Versiond.VersionName != scenario.Gateway.Protocol {
+		return fmt.Errorf("gateway image protocol %s does not match host protocol %s", scenario.Gateway.Protocol, cfg.Versiond.VersionName)
+	}
+
 	if scenario.Protocol.RefusalTimeout != "" {
 		refusal, err := protocolTimeoutSeconds(scenario.Protocol.RefusalTimeout)
 		if err != nil {
@@ -1123,13 +1165,10 @@ func formatTerminalSummary(summary TerminalSummary) string {
 	return fmt.Sprintf("finished=%d orphaned=%d sealed=%d in_flight=%d ghost=%d ghost_excluded=%d total=%d ghost_rate=%.2f%% statuses=%s", summary.Finished, summary.Orphaned, summary.Sealed, summary.InFlight, summary.Ghost, summary.GhostExcluded, summary.Total, summary.GhostRate*100, statusCounts)
 }
 
-type debugInference struct {
-	Status    string `json:"status"`
-	StartedAt int64  `json:"started_at"`
-}
+type debugInference = DebugInference
 
 type debugInferencesResponse struct {
-	Inferences map[string]debugInference `json:"inferences"`
+	Inferences inferenceEntries `json:"inferences"`
 }
 
 // orphanJudge is what devshard.no_orphaned_work judges a debug read by.

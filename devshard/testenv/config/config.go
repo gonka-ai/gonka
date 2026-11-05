@@ -172,6 +172,8 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
+	// Binary selects the legacy devshardctl or the standalone gateway.
+	Binary         string `yaml:"binary,omitempty"`
 	PoCRequestMode string `yaml:"poc_request_mode,omitempty"`
 	Host           string `yaml:"host"`
 	Port           int    `yaml:"port"`
@@ -728,6 +730,13 @@ func (c *File) onChainHostCount() int {
 
 // Validate enforces invariants gencompose and mock-chain rely on.
 func (c *File) Validate() error {
+	if c.Devshardctl.Binary != "" && c.Devshardctl.Binary != "devshardctl" && c.Devshardctl.Binary != "gateway" {
+		return errors.New("devshardctl.binary must be devshardctl or gateway")
+	}
+	if c.Devshardctl.Binary == "gateway" && strings.TrimSpace(c.Devshardctl.Image) == "" {
+		return errors.New("standalone gateway requires devshardctl.image")
+	}
+
 	if c.ChainID == "" {
 		return errors.New("chain_id must not be empty")
 	}

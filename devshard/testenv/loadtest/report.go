@@ -22,6 +22,12 @@ var reportStatusOrder = []string{statusFix, "XPASS", statusInvalid, "XFAIL", sta
 var endStatePrefixes = []string{"devshard.", "escrow_rotation.", "invariants.escrow-accounting-reconciles.", "invariants.no-nonce-left-pending.", "invariants.no-runtime-for-deactivated-escrow."}
 
 type runReport struct {
+	invariantScope []string
+	gatewayImage   *struct {
+		Image    string `json:"image"`
+		ID       string `json:"id"`
+		Protocol string `json:"protocol"`
+	}
 	summary Summary
 	passed  bool
 	checks  []AssertionResult
@@ -73,6 +79,9 @@ func loadRunReport(outputDir string) (runReport, error) {
 	if err := readReportArtifact(outputDir, "summary.json", false, &run.summary); err != nil {
 		return run, err
 	}
+	if err := readReportArtifact(outputDir, "gateway-image.json", false, &run.gatewayImage); err != nil {
+		return run, err
+	}
 	if err := readReportArtifact(outputDir, buildFileName, false, &run.build); err != nil {
 		return run, err
 	}
@@ -81,6 +90,9 @@ func loadRunReport(outputDir string) (runReport, error) {
 	}
 	var invariants struct {
 		Tables struct {
+			Scope struct {
+				Selected []string `json:"selected"`
+			} `json:"scope"`
 			ErrorRateAndLatency []requestWindowStats `json:"error-rate-and-latency"`
 			PoC                 []pocWindowReport    `json:"poc-load"`
 		} `json:"tables"`
@@ -91,6 +103,7 @@ func loadRunReport(outputDir string) (runReport, error) {
 	}
 	run.windows, run.health = invariants.Tables.ErrorRateAndLatency, invariants.Health
 	run.poc = invariants.Tables.PoC
+	run.invariantScope = invariants.Tables.Scope.Selected
 	run.ladder = loadLadder(outputDir, run.summary)
 	return run, nil
 }
@@ -163,6 +176,12 @@ func (r runReport) render(runName string) string {
 	fmt.Fprintf(&out, "# Load test report: %s, seed %d, %s\n\n", r.summary.Scenario, r.summary.Seed, runName)
 	if r.build != nil {
 		fmt.Fprintf(&out, "Build: %s, protocol %s, binary %s, devshardd sha256 %s.\n\n", r.build.Name, r.build.Protocol, r.build.BinaryVersion, r.build.DevsharddSHA256)
+	}
+	if r.gatewayImage != nil {
+		fmt.Fprintf(&out, "Gateway: %s, protocol %s, image ID %s.\n\n", r.gatewayImage.Image, r.gatewayImage.Protocol, r.gatewayImage.ID)
+	}
+	if len(r.invariantScope) > 0 {
+		fmt.Fprintf(&out, "Invariant scope: %s. Other invariant groups were not evaluated.\n\n", strings.Join(r.invariantScope, ", "))
 	}
 	fmt.Fprintf(&out, "Verdict: %s. %s\n\n", verdict, strings.Join(countCells, " · "))
 	r.renderStalledShare(&out)

@@ -28,6 +28,7 @@ func main() {
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	reportDir := flag.String("report", "", "rebuild report.md and timeline.html, and print a console summary of an existing run, without running")
+	gatewayImage := flag.String("gateway-image", "", "override the standalone gateway image selected by the scenario or -build")
 	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
 	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json, report.md and timeline.html, and print a console summary, without a stack")
 	flag.Parse()
@@ -107,6 +108,7 @@ func main() {
 		MetricsInterval: *metricsInterval,
 		StrictXFail:     *strictXFail,
 		Build:           build,
+		GatewayImage:    *gatewayImage,
 	})
 	if err != nil && result.Summary.Requests == 0 {
 		log.Fatalf("loadtest: workload did not start: %v", err)
@@ -238,7 +240,11 @@ func printDiagnostics(result loadtest.RunResult) {
 	summary := result.Summary
 	printMLNodeStats(result.MLStats)
 	fmt.Fprintln(os.Stdout)
-	printGatewayStateSizes(result.GatewayState)
+	if result.GatewayStateUnavailable != "" {
+		fmt.Fprintln(os.Stdout, "Gateway state: "+result.GatewayStateUnavailable)
+	} else {
+		printGatewayStateSizes(result.GatewayState)
+	}
 	fmt.Fprintln(os.Stdout)
 	printAccounting(result.Accounting)
 	printMetricsSummary(result.Metrics, summary.Completed)

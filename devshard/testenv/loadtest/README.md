@@ -1387,3 +1387,57 @@ misses can appear in recovery/drain; the normal pending/accounting checks still
 run, with the full 4m10s protocol grace. Request failures above 10% or unsent
 ghost rate above 2% fail the scenario; these bounds do not suppress the observed
 counts.
+
+## Standalone gateway from qd/v7/gateway
+
+The additional `gateway-v7-smoke` and `poc-gateway-v7` scenarios use the
+prebuilt local image `local/gateway:46ce696a-v2` with protocol `v2`.
+See [scenario details and commands](scenarios/README.md#poc-gateway-v7).
+Selecting the standalone implementation is explicit:
+
+```yaml
+gateway:
+  implementation: gateway
+  image: local/gateway:46ce696a-v2
+  protocol: v2
+  poc_request_mode: relaxed
+  engine_loser_grace: 30s
+  escrow_rotation: {enabled: false}
+```
+
+The runner configures the standalone binary, single-escrow seed, native admin
+settings and scoped diagnostic routes. `assertions.invariants.checks` optionally
+selects evaluator groups by name; omitted means all groups. Unknown groups are
+rejected, and a PoC scenario cannot select a subset without `poc-load`.
+Standalone scenarios reject legacy redundancy/throttle settings and currently
+require rotation disabled. A supplied `-build` must name the same protocol as the scenario.
+The gateway image selection order is `-gateway-image` > `-build` > scenario YAML.
+
+Override the standalone image without editing the scenario:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+`GATEWAY_IMAGE` is passed as the runner's `-gateway-image` flag. It selects
+only the standalone image; implementation and protocol stay in the scenario.
+The effective image is saved in `run.yaml`, and its actual ID in
+`gateway-image.json`. The source scenario and build manifest are not modified.
+
+For a complete set of prebuilt artifacts:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-gateway-v7 \
+  BUILD=/absolute/path/build.yaml \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+With `BUILD`, Make skips `build-devshardd` and uses the manifest's `devshardd`
+binary plus the versiond/router images. Relative manifest paths are resolved
+from `devshard/testenv`; relative binary paths inside a manifest are resolved
+from the manifest's directory. The manifest protocol must match the scenario.
+`devshardd` is mounted into versiond containers as a separate binary, so
+changing a host container image alone does not replace the tested DevShard.
