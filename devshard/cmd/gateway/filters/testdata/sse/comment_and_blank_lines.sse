@@ -1,0 +1,6 @@
+: keep-alive
+
+data: {"id":"chatcmpl-cb1","object":"chat.completion.chunk","created":12,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"content":"hi"},"logprobs":{"content":[{"token":"hi","logprob":-0.1}]},"finish_reason":null}]}
+
+data: [DONE]
+

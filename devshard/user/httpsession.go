@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
+	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
@@ -40,11 +42,15 @@ type HTTPSessionConfig struct {
 	// false in this library so tests can call MaybeHeartbeat. The gateway
 	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
 	DisableHeightSyncHeartbeat bool
+	// OpenAbsentHostsAsDeadSlots opens the session when a group member is absent from the chain, its slot failing every
+	// call with ErrHostAbsentFromChain, instead of a lazy slot that looks the host up again on every use.
+	OpenAbsentHostsAsDeadSlots bool
+	StepTimer                  StepTimer
 	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
 	// receipt/Finish compose. Zero keeps the session default (5m). The
 	// gateway sets this from DEVSHARD_QUIET_SETTLE_DELAY (testenv: 5s).
 	QuietSettleDelay time.Duration
-	// ExtraClientConfig: only its HeightSync fields reach each host client.
+	// ExtraClientConfig: its HeightSync fields reach each host client; the whole config reaches SelectTransport.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
 	Heartbeat *heightsync.HeartbeatConfig
@@ -86,6 +92,18 @@ func hostClientConfig(
 		}
 	}
 	return clientConfig
+}
+
+// ErrHostAbsentFromChain is every call to a group member the chain no longer lists.
+var ErrHostAbsentFromChain = errors.New("host is absent from the chain")
+
+// absentHostClient stands in for a group member the chain no longer lists, so the escrow keeps serving on the rest of its group.
+type absentHostClient struct {
+	address string
+}
+
+func (c absentHostClient) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	return nil, fmt.Errorf("host %s: %w", c.address, ErrHostAbsentFromChain)
 }
 
 func asHostClient(v any) HostClient {
@@ -248,6 +266,11 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		} else if info == nil || strings.TrimSpace(info.URL) == "" {
 			err = fmt.Errorf("host %s: %w", addr, transport.ErrPeerURLMissing)
 		}
+		if err != nil && cfg.OpenAbsentHostsAsDeadSlots && errors.Is(err, bridge.ErrParticipantNotFound) {
+			logging.Warn("group member is absent from the chain; its slot fails every call", "subsystem", "session",
+				"escrow", cfg.EscrowID, "host", addr)
+			return absentHostClient{address: addr}, nil
+		}
 		if err != nil {
 			logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
 				"escrow", cfg.EscrowID, "participant", addr, "error", err)
@@ -283,6 +306,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
+		session.SetStepTimer(cfg.StepTimer)
 		if cfg.QuietSettleDelay > 0 {
 			session.SetQuietSettleDelay(cfg.QuietSettleDelay)
 		}
@@ -417,6 +441,9 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 	}
 	if cfg.QuietSettleDelay > 0 {
 		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
+	}
+	if cfg.StepTimer != nil {
+		extra = append(extra, WithStepTimer(cfg.StepTimer))
 	}
 	return extra
 }

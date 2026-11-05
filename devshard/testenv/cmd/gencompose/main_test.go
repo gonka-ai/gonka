@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -514,6 +515,51 @@ func TestWriteCompose_ContentionProfilesEnv(t *testing.T) {
 	require.NoError(t, yaml.Unmarshal(body, &compose))
 	require.Equal(t, "true", compose.Services["versiond-0"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
 	require.Equal(t, "true", compose.Services["devshardctl"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
+}
+
+func TestWriteCompose_GatewayDriverRunsCmdGateway(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.Devshardctl.Driver = config.GatewayDriverGateway
+	cfg.Versiond.EnableContentionProfiles = true
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Build struct {
+				Target string `yaml:"target"`
+			} `yaml:"build"`
+			Image       string            `yaml:"image"`
+			Entrypoint  []string          `yaml:"entrypoint"`
+			Environment map[string]string `yaml:"environment"`
+			Healthcheck struct {
+				Test []string `yaml:"test"`
+			} `yaml:"healthcheck"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	gateway := compose.Services["devshardctl"]
+	require.Equal(t, "gateway-runtime", gateway.Build.Target)
+	require.Equal(t, "devshard-gateway:latest", gateway.Image)
+	require.Equal(t, []string{"gateway"}, gateway.Entrypoint)
+	require.Equal(t, "${TESTENV_USER_PRIVATE_KEY}", gateway.Environment["GATEWAY_ESCROW_KEY"])
+	require.Equal(t, "true", gateway.Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
+	require.Equal(t, "false", gateway.Environment["DEVSHARD_ESCROW_ROTATION_ENABLED"])
+	require.NotContains(t, gateway.Environment, "DEVSHARD_ESCROW_ID")
+	require.Contains(t, gateway.Healthcheck.Test[len(gateway.Healthcheck.Test)-1], "/healthz")
+
+	var seeds []map[string]string
+	require.NoError(t, json.Unmarshal([]byte(gateway.Environment["DEVSHARDS_JSON"]), &seeds))
+	require.Equal(t, []map[string]string{{
+		"id":              config.PrimaryEscrowID(cfg),
+		"model":           config.PrimaryModelID(cfg),
+		"private_key_env": "GATEWAY_ESCROW_KEY",
+	}}, seeds)
 }
 
 func TestWriteCompose_PerParticipantPostgres(t *testing.T) {

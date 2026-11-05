@@ -1,0 +1,18 @@
+{
+  "models": ["moonshotai/Kimi-K2.6"],
+  "filters": {
+    "thinking": "mirror_to_kwargs",
+    "thinking_template_key": "thinking",
+    "thinking_token_budget": {
+      "force_zero_below": 256,
+      "default_divisor": 2,
+      "absolute_max": 96000,
+      "content_headroom": 64
+    },
+    "empty_answer_counts_tokens": true,
+    "force_zero_penalties": true,
+    "reject_structured_outputs": true,
+    "allow_safety_identifier": true,
+    "output_tokens_floor": 16
+  }
+}

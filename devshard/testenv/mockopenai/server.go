@@ -157,6 +157,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 
 	f, streamGate := s.streamFaults()
 	if f.Hang {
+		// net/http notices a caller that hung up only once the body is read; unread, a held
+		// request outlives the caller's deadline and keeps its capacity slot after the hang lifts.
+		_, _ = io.Copy(io.Discard, c.Request().Body)
 		<-c.Request().Context().Done()
 		s.stats.timeouts.Add(1)
 		return c.Request().Context().Err()
@@ -228,7 +231,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	}
 	if req.Stream {
 		err := s.streamCompletion(c, req, text, body, f, streamGate)
-		if err != nil || f.PartialStream || f.DropFirstChunk {
+		if err != nil || f.PartialStream || f.DropFirstChunk || f.EmptyStream {
 			s.recordFailure(c.Request().Context())
 			return err
 		}
@@ -309,7 +312,8 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 }
 
 func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}) error {
-	if err := waitForLatency(c.Request().Context(), f.StreamFirstTokenDelay); err != nil {
+	jitter := f.NewStreamJitter(body)
+	if err := waitForLatency(c.Request().Context(), jitter.FirstToken()); err != nil {
 		return err
 	}
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
@@ -344,8 +348,23 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if f.StreamChunkDelay > 0 {
-			time.Sleep(f.StreamChunkDelay)
+		if d := jitter.Chunk(); d > 0 {
+			time.Sleep(d)
+		}
+		return nil
+	}
+
+	if f.EmptyStream {
+		stop := "stop"
+		if err := writeChunk(map[string]any{"role": "assistant"}, nil, nil); err != nil {
+			return err
+		}
+		if err := writeChunk(map[string]any{}, &stop, nil); err != nil {
+			return err
+		}
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+		if flusher != nil {
+			flusher.Flush()
 		}
 		return nil
 	}

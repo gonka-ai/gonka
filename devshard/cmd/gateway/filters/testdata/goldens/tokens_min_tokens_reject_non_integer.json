@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "min_tokens: must be a non-negative integer",
+  "status": "rejected"
+}

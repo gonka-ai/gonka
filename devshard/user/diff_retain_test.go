@@ -383,6 +383,73 @@ func TestSession_InferenceToAFarBehindHostCatchesUpInChunksFirst(t *testing.T) {
 	}, sends, "the earlier nonces go in chunks, and the inference carries only its own diff")
 }
 
+// Test flow:
+//  1. Compose more than one chunk of diffs and prepare an inference, so its host is far behind.
+//  2. Catch the host up before the send, then send.
+//  3. Assert the catch-up carried the earlier nonces in chunks with no payload, and the send carried only its own diff: a caller timing the host from its send starts the clock after the session's own wait.
+func TestSession_CatchUpBeforeSendTeachesAFarBehindHostAheadOfTheRequest(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize + 100
+	composeEmptyDiffs(t, session, n)
+	recorders := make([]*recordingSendClient, len(session.clients))
+	for index, client := range session.clients {
+		recorders[index] = &recordingSendClient{InProcessClient: client.(*InProcessClient)}
+		session.clients[index] = recorders[index]
+	}
+	prepared, err := session.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+		return InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil, nil
+	})
+	require.NoError(t, err)
+	recorder := recorders[prepared.HostIdx()]
+
+	require.NoError(t, session.CatchUpBeforeSend(context.Background(), prepared))
+	caughtUp := slices.Clone(recorder.sends)
+	_, err = session.SendOnly(context.Background(), prepared, nil, nil)
+	require.NoError(t, err)
+
+	require.Equal(t, []recordedSend{
+		{from: 1, to: catchUpChunkSize, nonce: catchUpChunkSize},
+		{from: catchUpChunkSize + 1, to: n, nonce: n},
+	}, caughtUp, "the earlier nonces go before the send, in chunks")
+	require.Equal(t, recordedSend{from: n + 1, to: n + 1, nonce: n + 1, payload: true}, recorder.sends[len(recorder.sends)-1],
+		"the send carries only its own diff")
+}
+
+// Test flow:
+//  1. Prepare two inferences for the same far-behind host, the earlier one first.
+//  2. Catch the host up for the later one, which teaches it the earlier nonce too, then send the earlier one.
+//  3. Assert the earlier send carries exactly its own diff: a host only signs a receipt for a nonce its request carries, and re-sending what it already applied would read past the retained diffs under the session lock.
+func TestSession_ASendCarriesItsOwnDiffAfterAnotherCatchUpPassedIt(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	const n = catchUpChunkSize + 100
+	composeEmptyDiffs(t, session, n)
+	recorders := make([]*recordingSendClient, len(session.clients))
+	for index, client := range session.clients {
+		recorders[index] = &recordingSendClient{InProcessClient: client.(*InProcessClient)}
+		session.clients[index] = recorders[index]
+	}
+	prepare := func() *PreparedInference {
+		prepared, err := session.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+			return InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil, nil
+		})
+		require.NoError(t, err)
+		return prepared
+	}
+	earlier := prepare()
+	composeEmptyDiffs(t, session, len(session.group)-1)
+	later := prepare()
+	require.Equal(t, earlier.HostIdx(), later.HostIdx(), "precondition: both nonces bind to the same host")
+
+	require.NoError(t, session.CatchUpBeforeSend(context.Background(), later))
+	_, err := session.SendOnly(context.Background(), earlier, nil, nil)
+	require.NoError(t, err)
+
+	sends := recorders[earlier.HostIdx()].sends
+	last := sends[len(sends)-1]
+	require.Equal(t, recordedSend{from: earlier.Nonce(), to: earlier.Nonce(), nonce: earlier.Nonce(), payload: true}, last,
+		"the send carries its own diff and nothing the host already applied")
+}
+
 // hostSlot returns the first slot owned by host i.
 func hostSlot(session *Session, i int) uint32 {
 	return session.addrToSlots[session.group[i].ValidatorAddress][0]
@@ -453,6 +520,32 @@ func TestSession_TrimKeepsTheCurrentNonceAndTheQuorumStatus(t *testing.T) {
 	require.Equal(t, wantHighest, gotHighest, "the trim does not change the quorum nonce")
 	require.NotEmpty(t, wantEntries)
 	require.Equal(t, uint64(5), session.sigsTrimmedThrough, "the current nonce is never trimmed")
+}
+
+// Test flow:
+//  1. Record signatures at nonces 1, 2, 3 and 6 the way a host response does, then let every host acknowledge nonce 6 and trim.
+//  2. Assert the signed-slots view drops what the signature trim drops and keeps the slots of every nonce it keeps.
+func TestSession_TrimBoundsTheSignedSlotsView(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	roots := composeEmptyDiffs(t, session, 6)
+	firstSlot, secondSlot, thirdSlot := hostSlot(session, 0), hostSlot(session, 1), hostSlot(session, 2)
+
+	session.mu.Lock()
+	session.recordSignatureLocked(1, firstSlot, signSessionHostRootForTest(t, session, 0, 1, roots[1]))
+	session.recordSignatureLocked(1, secondSlot, signSessionHostRootForTest(t, session, 1, 1, roots[1]))
+	session.recordSignatureLocked(2, secondSlot, signSessionHostRootForTest(t, session, 1, 2, roots[2]))
+	session.recordSignatureLocked(3, firstSlot, signSessionHostRootForTest(t, session, 0, 3, roots[3]))
+	session.recordSignatureLocked(6, thirdSlot, signSessionHostRootForTest(t, session, 2, 6, roots[6]))
+	for index := range session.group {
+		session.hostSyncNonce[index] = 6
+	}
+	session.dropDiffPrefixLocked()
+	session.mu.Unlock()
+
+	signed := session.SignedSlots()
+	require.ElementsMatch(t, []uint64{2, 3, 6}, slices.Collect(maps.Keys(signed)))
+	require.Equal(t, []uint32{secondSlot}, signed[2].SetBits())
+	require.Equal(t, []uint32{thirdSlot}, signed[6].SetBits())
 }
 
 func TestSession_QuorumAtATrimmedNonceIsReadFromTheStore(t *testing.T) {

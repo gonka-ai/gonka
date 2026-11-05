@@ -32,6 +32,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/gatewayproto"
 	"devshard/heightsync"
 	"devshard/internal/e2econfig"
 	"devshard/memwatch"
@@ -90,8 +91,7 @@ type Gateway struct {
 	runtimeParamsClose           func()
 	maxNonce                     devshardpkg.MaxNonceProvider
 	chainClient                  *chain.Client
-	finalizeLocksMu              sync.Mutex
-	finalizeLocks                map[string]*sync.Mutex
+	finalizeGates                gatewayproto.Gates
 	settlementMu                 sync.Mutex
 	settlementInFlight           map[string]struct{}
 	replenishmentMu              sync.Mutex
@@ -173,18 +173,9 @@ func (rt *devshardRuntime) escrowHasBackgroundWork() bool {
 }
 
 func (g *Gateway) lockFinalize(escrowID string) func() {
-	g.finalizeLocksMu.Lock()
-	if g.finalizeLocks == nil {
-		g.finalizeLocks = make(map[string]*sync.Mutex)
-	}
-	lock, ok := g.finalizeLocks[escrowID]
-	if !ok {
-		lock = &sync.Mutex{}
-		g.finalizeLocks[escrowID] = lock
-	}
-	g.finalizeLocksMu.Unlock()
-	lock.Lock()
-	return lock.Unlock
+	gate := g.finalizeGates.For(escrowID)
+	gate.Lock()
+	return gate.Unlock
 }
 
 type runtimeStatus struct {

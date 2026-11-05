@@ -1,0 +1,15 @@
+{
+  "admin": false,
+  "body": {
+    "use_beam_search": true,
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ]
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+}

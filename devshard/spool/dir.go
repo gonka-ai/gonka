@@ -332,13 +332,13 @@ func (d *Dir) Snapshot() Config {
 	defer d.mu.RUnlock()
 	max, _ := d.files.Stats()
 	return Config{
-		Path:         d.path,
-		Prefix:       d.prefix,
-		KeepNamed:    d.keepNamed,
-		MaxFiles:     max,
-		MaxFileBytes: d.maxFileBytes,
-		WriteBuffer:  d.writeBuffer,
-		Files:        d.files,
+		Path:           d.path,
+		Prefix:         d.prefix,
+		KeepNamed:      d.keepNamed,
+		MaxFiles:       max,
+		MaxFileBytes:   d.maxFileBytes,
+		WriteBuffer:    d.writeBuffer,
+		Files:          d.files,
 		AllowUnlimited: max == 0 || d.maxFileBytes == 0,
 	}
 }

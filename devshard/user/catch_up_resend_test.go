@@ -5,7 +5,9 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"devshard/host"
@@ -248,4 +250,65 @@ func TestProcessResponse_CursorRules(t *testing.T) {
 	// A wrong hash moves nothing.
 	require.Error(t, session.processResponse(2, &host.HostResponse{Nonce: 18, StateHash: []byte("not-the-root")}, 18))
 	require.Equal(t, uint64(5), session.hostSyncNonce[2])
+}
+
+// Test flow:
+//  1. Inside a synctest bubble, start a catch-up of host 0 whose first chunk fails once, so the run holds the host's catch-up lock through its resend backoff.
+//  2. Start a second catch-up of the same host while the first one waits out the backoff.
+//  3. Assert both runs finish and the host reaches the tip: a send waiting its turn for the host must not stop the bubble's clock.
+func TestCatchUp_ASecondRunWaitsOutTheFirstRunsBackoff(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		session := setupStoredSession(t, storage.NewMemory())
+		const n = catchUpChunkSize + 20
+		composeEmptyDiffs(t, session, n)
+		session.clients[0] = &faultyChunkClient{InProcessClient: session.clients[0].(*InProcessClient), errs: []error{status500()}}
+
+		first := session.startHostCatchUp(0, n)
+		synctest.Wait()
+		second := session.startHostCatchUp(0, n)
+		<-first.done
+		<-second.done
+
+		require.NoError(t, first.err)
+		require.NoError(t, second.err)
+		require.Equal(t, uint64(n), hostCursor(session, 0))
+		session.stopSendCatchUps()
+	})
+}
+
+// doorCountingClient stands for a host client whose admission-stripped copies each hold a door on the shared peer connection until closed.
+type doorCountingClient struct {
+	*InProcessClient
+	doors *atomic.Int32
+}
+
+func (c *doorCountingClient) WithoutAdmission() any {
+	c.doors.Add(1)
+	return &doorCountingCopy{InProcessClient: c.InProcessClient, doors: c.doors}
+}
+
+type doorCountingCopy struct {
+	*InProcessClient
+	doors  *atomic.Int32
+	closed sync.Once
+}
+
+func (c *doorCountingCopy) Close() { c.closed.Do(func() { c.doors.Add(-1) }) }
+
+// Test flow:
+//  1. Give every host a client whose admission-stripped copy holds a door until it is closed.
+//  2. Catch one host up, then catch every host up.
+//  3. Assert no copy is left holding a door: a copy nobody closes pins its escrow on the shared peer connection after the session closes.
+func TestCatchUp_ReleasesTheAdmissionStrippedClientsItTook(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	composeEmptyDiffs(t, session, 10)
+	doors := new(atomic.Int32)
+	for index, client := range session.clients {
+		session.clients[index] = &doorCountingClient{InProcessClient: client.(*InProcessClient), doors: doors}
+	}
+
+	require.NoError(t, session.sendCatchUp(context.Background(), 0))
+	require.NoError(t, session.CatchUpAllHosts(context.Background()))
+
+	require.Zero(t, doors.Load(), "admission-stripped copies still holding a door")
 }

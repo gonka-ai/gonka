@@ -1447,27 +1447,37 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 
 const divergenceUpstreamError = `http /sessions/escrow-proxy/chat/completions: status 500: {"error":"apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"}`
 
-// A host rolls the diff back when its root disagrees, so its state survives intact and one replay of the
-// retained chain is worth trying before the escrow writes it off.
+// Test flow:
+//  1. Make host 1 refuse nonce 1 with a state-root divergence, run one inference and wait for the refusal to buy a replay; assert host 1 was dispatched to at nonce 1 and is not blocked.
+//  2. Let host 1 answer again, run a second inference and wait for the replay to be cleared; assert host 1 was dispatched to at nonce 3.
+//  3. Assert host 1 is not blocked: a host rolls the diff back when its root disagrees, so its state survives intact and agreeing on the replay clears it.
 func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T) {
-	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
 	divergent.ForceError(errors.New(divergenceUpstreamError))
+	participantKey := env.session.HostParticipantKey(1)
+	replayPending := func() bool {
+		env.proxy.redundancy.stateBlockMu.RLock()
+		defer env.proxy.redundancy.stateBlockMu.RUnlock()
+		_, pending := env.proxy.redundancy.stateRewoundAt[participantKey]
+		return pending
+	}
 
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
+	require.Eventually(t, replayPending, 5*time.Second, 10*time.Millisecond)
 	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
 
-	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	_, blocked := env.proxy.redundancy.escrowStateBlockReason(participantKey)
 	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
 
 	divergent.ForceError(nil)
 	var second bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
+	require.Eventually(t, func() bool { return !replayPending() }, 5*time.Second, 10*time.Millisecond)
 	require.EqualValues(t, 3, divergent.LastRequest().Nonce, "the host has to be dispatched to again to prove itself")
 
-	_, blocked = env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	_, blocked = env.proxy.redundancy.escrowStateBlockReason(participantKey)
 	require.False(t, blocked, "a host that agreed on the replay must not be written off")
 }
 

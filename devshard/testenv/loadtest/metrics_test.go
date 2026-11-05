@@ -150,3 +150,27 @@ func TestProcessIdentityIgnoresWallClockShift(t *testing.T) {
 	after["loadtest_process_start_ticks"] = 456
 	require.True(t, processChanged(before, after))
 }
+
+// Test flow:
+// 1. Parse a devshardctl status body with a top-level nonce and a gateway status body listing one escrow.
+// 2. Check both yield the escrow nonce and the chain phase.
+func TestParseStatus(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		body       string
+		nonce      uint64
+		chainPhase string
+	}{
+		{name: "devshardctl top-level nonce", body: `{"nonce":42,"chain_phase":"inference"}`, nonce: 42, chainPhase: "inference"},
+		{name: "gateway single escrow", body: `{"chain_phase":"poc","devshards":[{"id":"1","nonce":17}]}`, nonce: 17, chainPhase: "poc"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			nonce, chainPhase, err := parseStatus(testCase.body)
+
+			require.NoError(t, err)
+			require.NotNil(t, nonce)
+			require.Equal(t, testCase.nonce, *nonce)
+			require.Equal(t, testCase.chainPhase, chainPhase)
+		})
+	}
+}

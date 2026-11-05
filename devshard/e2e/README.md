@@ -14,9 +14,11 @@ Each test starts an isolated Docker network with:
 - `mock-chain`: testenv gRPC mock chain (`testenv/cmd/mockchain`) seeded from
   `e2e/mock-chain-config.yaml`; serves escrow/participant queries on `:9090` and
   devshardctl phase-gate stubs on `:9191` (`/v1/epochs/*`).
+  With `MOCK_CHAIN_HUB_ADDR` set it also answers as the Hugging Face hub over TLS (`MOCK_CHAIN_HUB_DIR`, `MOCK_CHAIN_HUB_CERT`, `MOCK_CHAIN_HUB_KEY`); a scenario that aliases it `huggingface.co`, pins `hf_repo`/`hf_commit` on its epoch group and hands the gateway the certificate through `SSL_CERT_FILE` gets the pinned tokenizer without leaving the network.
 - `postgres`: smoke CI storage dependency.
 - `devshard-host-0..2`: three participant hosts with stub inference.
 - `devshardctl`: OpenAI-compatible HTTP entry point for the test client.
+- `devshard-gateway`: the same entry point served by `cmd/gateway`, started **instead of** `devshardctl` when a scenario sets `runGateway`. The two cannot run together: both would open the same escrow and advance the same nonce sequence. Its image comes from `DEVSHARD_E2E_GATEWAY_IMAGE` and is built by `make -C cmd/gateway image`, which `make e2e-images` calls.
 
 Some recovery tests also attach named Docker volumes to host containers to
 verify SQLite-backed restart behavior.
@@ -84,6 +86,11 @@ CI uploads this report as `devshard-e2e-junit-report` and publishes it as the
 ## Notes
 
 E2E tests require `DEVSHARD_E2E=1`. The Compose runner sets this automatically.
+
+The protocol deadlines a nonce is judged against are the stand's to shorten, on the gateway as well as
+on the hosts: `DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS` and `DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS` reach
+the gateway's own session through `gatewayEnvOverrides`, alongside `DEVSHARD_E2E=1`. Without them the
+chain's half-hour execution deadline stands, and no scenario that ends in an applied timeout can run.
 
 Each test uses a unique Docker network name so stale networks from interrupted
 runs do not break the next run. If Docker state still gets messy, prune stopped

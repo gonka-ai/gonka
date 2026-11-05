@@ -7,6 +7,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
+	"devshard/types"
 )
 
 func benchFillSQLite(b *testing.B, escrowID string) (*StateMachine, *storage.SQLite) {
@@ -113,5 +114,55 @@ func BenchmarkFillSealedInferenceIndexGaps_AllMissing(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// BenchmarkAutoSealEvaluationOfAWindowNotYetDue times one seal pass over a live window whose Finished
+// records are still inside their clock grace, the common case on a busy escrow: every record is read,
+// none is sealed, so the pass repeats unchanged.
+func BenchmarkAutoSealEvaluationOfAWindowNotYetDue(b *testing.B) {
+	const liveWindow = 20000
+	sm := benchFillSM(b, storage.NewMemory(), "escrow-auto-seal-bench")
+	for id := uint64(1); id <= liveWindow; id++ {
+		sm.state.Inferences[id] = &types.InferenceRecord{
+			Status: types.StatusFinished, Model: "llama", ConfirmedAt: 1_700_000_000 + int64(id/100),
+		}
+	}
+	sealNonce := uint64(liveWindow) * 10
+	b.ReportAllocs()
+	for b.Loop() {
+		sm.mu.Lock()
+		sealed, _, err := sm.autoSealLocked("user", sealNonce)
+		sm.mu.Unlock()
+		if err != nil || len(sealed) != 0 {
+			b.Fatalf("autoSealLocked() = %v sealed, %v, want nothing sealed", sealed, err)
+		}
+	}
+}
+
+// BenchmarkPreviewOfALongLivedEscrow times composing one diff on an escrow that has sealed a hundred
+// thousand nonces and keeps twenty thousand live: the cost a heartbeat turn or a request pays per diff.
+func BenchmarkPreviewOfALongLivedEscrow(b *testing.B) {
+	const (
+		liveWindow = 20000
+		sealed     = 100000
+	)
+	sm := benchFillSM(b, storage.NewMemory(), "escrow-preview-bench")
+	sm.sealedNonces = make(map[uint64]uint64, sealed)
+	for id := uint64(1); id <= sealed; id++ {
+		sm.sealedNonces[id] = id
+	}
+	for id := uint64(sealed + 1); id <= sealed+liveWindow; id++ {
+		sm.state.Inferences[id] = &types.InferenceRecord{
+			Status: types.StatusFinished, Model: "llama", PromptHash: make([]byte, 32), ResponseHash: make([]byte, 32),
+			ConfirmedAt: 1_700_000_000,
+		}
+	}
+	sm.state.LatestNonce = sealed + liveWindow
+	b.ReportAllocs()
+	for b.Loop() {
+		if _, err := sm.PreviewLocalBestEffort(sm.state.LatestNonce+1, nil); err != nil {
+			b.Fatalf("PreviewLocalBestEffort() = %v, want nil", err)
+		}
 	}
 }
