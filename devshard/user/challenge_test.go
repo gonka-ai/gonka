@@ -475,7 +475,9 @@ func TestCollectChallengeVotes_CutsALongRejectCause(t *testing.T) {
 // honest NONE vote still lands, and the record stays Finished and paid.
 func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 	fastChallengeReask(t)
-	session, hosts, nonce, execIdx, responseHash := finishedChallengeSession(t)
+	// Four voters keep the outcome open after either first answer. The two
+	// silent voters are cancelled only after both signature checks complete.
+	session, hosts, nonce, execIdx, responseHash := finishedChallengeSessionOf(t, 5)
 	var honest, forger int = -1, -1
 	for i := range session.clients {
 		if i == execIdx {
@@ -483,8 +485,10 @@ func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 		}
 		if honest < 0 {
 			honest = i
-		} else {
+		} else if forger < 0 {
 			forger = i
+		} else {
+			session.clients[i] = &scriptedChallengeClient{HostClient: session.clients[i]}
 		}
 	}
 	session.clients[honest] = &scriptedChallengeClient{HostClient: session.clients[honest], answers: []*transport.VerifyChallengeResponse{
@@ -501,8 +505,10 @@ func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 	require.Len(t, result.Votes, 1)
 	require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, result.Votes[0].Fault)
 	require.Zero(t, result.Faults)
-	require.Equal(t, 1, result.Unanswered)
-	require.Equal(t, uint32(1), result.UnansweredWeight, "the dropped vote counts as unanswered, with its slot weight")
+	require.Equal(t, 3, result.Unanswered)
+	require.Equal(t, uint32(3), result.UnansweredWeight, "the dropped vote and two cancelled voters count as unanswered")
+	require.Equal(t, 1, session.clients[honest].(*scriptedChallengeClient).askCount())
+	require.Equal(t, 1, session.clients[forger].(*scriptedChallengeClient).askCount())
 
 	st := session.StateMachine().SnapshotState()
 	require.Equal(t, types.StatusFinished, st.Inferences[nonce].Status)
