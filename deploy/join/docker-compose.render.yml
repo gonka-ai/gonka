@@ -1,0 +1,109 @@
+# Optional CPU render servers for usage challenge votes.
+#
+# A voter counts the tokens of a challenged answer on its own ML node first
+# (the /v1/chat/completions/render route; vLLM 0.30 and later serve it with
+# --enable-scale-out). These servers are the fallback: an ML node without the
+# route, or one busy with PoC. `vllm launch render` runs the model's chat
+# template and tokenizer on CPU, without weights or a GPU. devshardd finds the
+# servers in DEVSHARD_RENDER_URLS ("model=url1|url2,model=url"); a host that
+# can count a challenged answer neither way answers with reject cause
+# no_render and its vote is not counted.
+#
+# As shipped it requires docker-compose.yml and docker-compose.versiond.yml.
+# Add this file after them in every Compose command (or in COMPOSE_FILE):
+#
+#   docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+#     -f docker-compose.render.yml up -d
+#
+# With docker-compose.versiond3.yml (and copies of it) add the same
+# versiond3 entry as versiond2 below. Without docker-compose.versiond.yml, or
+# with docker-compose.versiond-remote.yml alone, drop the versiond2 entry.
+#
+# Run one render service per model this host serves. The command is the
+# model, its revision and its serving arguments from node-config.json
+# (tokenizer mode, tool-call and reasoning parsers, max-model-len,
+# trust-remote-code); leave out GPU arguments such as --tensor-parallel-size.
+# render-ds below serves DeepSeek-V4-Flash-0731; delete it if the host does
+# not serve that model, uncomment or copy a block for every other model it
+# serves, and list each service in DEVSHARD_RENDER_URLS. A model with several
+# render servers (render-ds and render-ds-2) lists them all:
+#
+#   DEVSHARD_RENDER_URLS=deepseek-ai/DeepSeek-V4-Flash-0731=http://render-ds:8000|http://render-ds-2:8000
+#
+# The render servers share the Hugging Face cache in HF_HOME with the ML node
+# and download the config and tokenizer files of a model missing there on
+# first start. Each needs about 8 GiB of memory and 4 CPUs.
+
+x-render: &render
+  image: >-
+    ${DEVSHARD_RENDER_IMAGE:-ghcr.io/gonka-ai/devshard-render:v0.32.0}
+  volumes:
+    - ${HF_HOME:-${HOME}/.cache}:/root/.cache
+  environment:
+    - HF_HOME=/root/.cache
+  deploy:
+    resources:
+      limits:
+        memory: ${DEVSHARD_RENDER_MEMORY:-8g}
+        cpus: "${DEVSHARD_RENDER_CPUS:-4}"
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+    interval: 10s
+    timeout: 5s
+    retries: 3
+    start_period: 5m
+  restart: always
+
+x-render-urls: &render-urls
+  environment:
+    - DEVSHARD_RENDER_URLS=${DEVSHARD_RENDER_URLS:-deepseek-ai/DeepSeek-V4-Flash-0731=http://render-ds:8000}
+
+services:
+  versiond:
+    <<: *render-urls
+
+  versiond2:
+    <<: *render-urls
+
+  render-ds:
+    <<: *render
+    container_name: render-ds
+    command:
+      - deepseek-ai/DeepSeek-V4-Flash-0731
+      - --revision=7872f01b1d1fe23eabc4c98b48bffcef5a386062
+      - --max-model-len=400000
+      - --kv-cache-dtype=fp8
+      - --tokenizer-mode=deepseek_v4
+      - --enable-auto-tool-choice
+      - --tool-call-parser=deepseek_v4
+      - --reasoning-parser=deepseek_v4
+      - --trust-remote-code
+      - --port=8000
+
+  # render-glm:
+  #   <<: *render
+  #   container_name: render-glm
+  #   command:
+  #     - zai-org/GLM-5.3-Flash
+  #     - --revision=04c4e9e95c5da8862dced7e5056455116f83a7e0
+  #     - --max-model-len=400000
+  #     - --kv-cache-dtype=fp8
+  #     - --enable-auto-tool-choice
+  #     - --tool-call-parser=glm47
+  #     - --reasoning-parser=glm45
+  #     - --trust-remote-code
+  #     - --port=8000
+
+  # render-minimax:
+  #   <<: *render
+  #   container_name: render-minimax
+  #   command:
+  #     - MiniMaxAI/MiniMax-M2.7
+  #     - --revision=d494266a4affc0d2995ba1fa35c8481cbd84294b
+  #     - --max-model-len=180000
+  #     - --kv-cache-dtype=fp8
+  #     - --enable-auto-tool-choice
+  #     - --tool-call-parser=minimax_m2
+  #     - --reasoning-parser=minimax_m2_append_think
+  #     - --trust-remote-code
+  #     - --port=8000

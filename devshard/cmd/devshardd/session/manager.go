@@ -79,6 +79,7 @@ type HostManager struct {
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
 	params             runtimeparams.Provider
+	renderer           host.ChallengeRenderer
 	maxBodySize        int64
 
 	recoveryGate   recoveryGate
@@ -505,6 +506,13 @@ func (m *HostManager) SetParamsProvider(p runtimeparams.Provider) {
 	m.params = p
 }
 
+// SetChallengeRenderer gives every host the render servers that count usage
+// for its challenge votes. Without one a host does not vote on a challenge
+// that needs a count.
+func (m *HostManager) SetChallengeRenderer(r host.ChallengeRenderer) {
+	m.renderer = r
+}
+
 // SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
 // (same value as --print-binary-version / DEVSHARD_BINARY_LOG_VERSION).
 func (m *HostManager) SetBinaryVersion(v string) {
@@ -638,7 +646,7 @@ func (m *HostManager) ownerEscrow(escrowID, addr string) (*bridge.EscrowInfo, er
 // sessionForOwner is BindOwnerChat without POST auth: Existing + IsOwner,
 // or CreateSession only when addr is the escrow creator. Slot members
 // get (nil, nil). Chat and height-sync seed use this.
-// ChallengeReceipt, VerifyTimeout, and VerifyErrorMiss use sessionForStartProof
+// ChallengeReceipt, VerifyTimeout, VerifyErrorMiss, and VerifyChallenge use sessionForStartProof
 // so a peer cannot pick the version: a cold host binds only from the
 // creator-signed MsgStartInference in the diffs.
 func (m *HostManager) sessionForOwner(escrowID, addr string) (*transport.Server, error) {
@@ -1484,7 +1492,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 
 // hostRPCLookup is the Connect session resolver. Observability GETs and
 // gossip/repair use Existing (no CreateSession). ChallengeReceipt,
-// VerifyTimeout, and VerifyErrorMiss bind via SessionForStartProof
+// VerifyTimeout, VerifyErrorMiss, and VerifyChallenge bind via SessionForStartProof
 // (creator-signed start + version). Chat and seed use SessionForOwner
 // (creator only).
 type hostRPCLookup struct{ m *HostManager }
@@ -2236,6 +2244,10 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		host.WithStorage(m.store),
 		host.WithEpochID(epochID),
 		host.WithAvailabilityProvider(m.availability),
+		host.WithBinaryVersion(m.binaryVersion),
+	}
+	if m.renderer != nil {
+		opts = append(opts, host.WithChallengeRenderer(m.renderer))
 	}
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))

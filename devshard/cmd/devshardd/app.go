@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"common/chain"
@@ -31,6 +32,7 @@ import (
 	"devshard/signing"
 	devshardstorage "devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
@@ -355,6 +357,14 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	// Challenge votes count on the host's own ML node first; a render server in
+	// DEVSHARD_RENDER_URLS counts when the node cannot.
+	manager.SetChallengeRenderer(host.NewRenderClient(cfg.RenderURLs, eng.RenderOnMLNode))
+	for _, model := range types.UsageAllowanceModels() {
+		slog.Info("usage challenge render", "subsystem", "challenge", "model", model,
+			"ml_node", "/v1/chat/completions/render (vLLM 0.30 and later need --enable-scale-out)",
+			"render_servers", strings.Join(cfg.RenderURLs[model], "|"))
+	}
 	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}

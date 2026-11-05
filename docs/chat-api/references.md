@@ -26,6 +26,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[OpenAI-5]** [openai-python README — undocumented request params](https://github.com/openai/openai-python/blob/main/README.md#undocumented-request-params) — SDK convention for `extra_body`/`extra_headers`/`extra_query`; clarifies client-side flatten semantics.
 - **[OpenAI-6]** [Safety identifier help-center article](https://help.openai.com/en/articles/5428082-how-to-incorporate-a-safety-identifier) — `safety_identifier` field guidance; recommends short hashed identifiers for end-user attribution.
 - **[OpenAI-7]** [openai-python `tool_choice` parameter docstring](https://github.com/openai/openai-python/blob/f348ec87b934c98889102668913e0a3ae7fc303d/src/openai/types/chat/completion_create_params.py#L326-L337) — "`none` is the default when no tools are present. `auto` is the default if tools are present."
+- **[OpenAI-8]** [Azure OpenAI reasoning models](https://learn.microsoft.com/azure/foundry/openai/how-to/reasoning) — lists `logit_bias` among the parameters the reasoning models do not support.
 
 ## Anthropic
 

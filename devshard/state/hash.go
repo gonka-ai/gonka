@@ -301,6 +301,7 @@ func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) 
 		VotesValid:         r.VotesValid,
 		VotesInvalid:       r.VotesInvalid,
 		ValidatedBy:        r.ValidatedBy.Bytes(),
+		UsageChallenged:    r.UsageChallenged,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal inference %d: %w", id, err)
@@ -334,6 +335,7 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		VotesValid:         msg.VotesValid,
 		VotesInvalid:       msg.VotesInvalid,
 		ValidatedBy:        types.Bitmap128FromBytes(msg.ValidatedBy),
+		UsageChallenged:    msg.UsageChallenged,
 	}
 	return msg.InferenceId, rec, nil
 }

@@ -26,6 +26,8 @@ func TestParseProtocolVersion(t *testing.T) {
 		{name: "bare 5", in: "5", want: ProtocolV5},
 		{name: "v6", in: "v6", want: ProtocolV6},
 		{name: "bare 6", in: "6", want: ProtocolV6},
+		{name: "v7", in: "v7", want: ProtocolV7},
+		{name: "bare 7", in: "7", want: ProtocolV7},
 		{name: "legacy semver", in: "0.2.11", want: "0.2"},
 		{name: "v2.1.0", in: "v2.1.0", want: "2.1"},
 		{name: "named runtime", in: "mainnet-canary", want: "mainnet-canary"},

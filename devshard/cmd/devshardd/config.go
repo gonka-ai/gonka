@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"devshard/cmd/devshardd/session"
+	"devshard/host"
 	"devshard/internal/boolvalue"
 	"devshard/signing"
 
@@ -47,7 +48,11 @@ type runtimeConfig struct {
 	ValidationLeaseTTL      time.Duration
 	VoteFalseOnFetchFailure bool
 	ShutdownGrace           time.Duration
-	Node                    ChainNodeConfig
+	// RenderURLs are the render servers (`vllm launch render`) per model that
+	// count usage for challenge votes. Env: DEVSHARD_RENDER_URLS, as
+	// "model=url1|url2,model=url".
+	RenderURLs map[string][]string
+	Node       ChainNodeConfig
 }
 
 // ChainNodeConfig holds the chain connectivity and signing identity settings
@@ -147,6 +152,11 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_SHUTDOWN_GRACE: %w", err)
 	}
 
+	renderURLs, err := host.ParseRenderURLs(os.Getenv("DEVSHARD_RENDER_URLS"))
+	if err != nil {
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_RENDER_URLS: %w", err)
+	}
+
 	return runtimeConfig{
 		Port:                        *port,
 		AdminAddr:                   strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_ADDR")),
@@ -163,6 +173,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ValidationLeaseTTL:          leaseTTL,
 		VoteFalseOnFetchFailure:     envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
 		ShutdownGrace:               shutdownGrace,
+		RenderURLs:                  renderURLs,
 		Node:                        loadNodeConfigFromEnv(),
 	}, nil
 }

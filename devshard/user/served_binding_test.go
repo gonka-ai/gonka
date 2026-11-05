@@ -185,3 +185,94 @@ func TestOnlyTheFinishThatAppliesIsJudged(t *testing.T) {
 
 	require.Equal(t, []servedBindingReport{{nonce: 6, hostIndex: 0, participantKey: "host-zero", verdict: ServedBindingMismatch}}, reports)
 }
+
+// usageSession is a binding session whose state machine holds inference 1 of model, started with
+// maxTokens and an input of inputLength bytes.
+func usageSession(t *testing.T, model string, maxTokens, inputLength uint64) (*Session, func() []startedChallenge) {
+	t.Helper()
+	session := bindingSession(&[]servedBindingReport{})
+	started := lockedChallengeHandler(session)
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	userKey := testutil.MustGenerateKey(t)
+	session.sm = newTestStateMachine(t, "escrow-1", testutil.DefaultConfig(len(hosts)), testutil.MakeGroup(hosts), 1_000_000, userKey.Address(), signing.NewSecp256k1Verifier())
+	start := testutil.StartTx(1)
+	start.GetStartInference().Model = model
+	start.GetStartInference().MaxTokens = maxTokens
+	start.GetStartInference().InputLength = inputLength
+	_, err := session.sm.ApplyDiff(testutil.SignDiff(t, userKey, "escrow-1", 1, []*types.DevshardTx{start}))
+	require.NoError(t, err)
+	return session, started
+}
+
+func applyFinishClaiming(session *Session, nonce, inputTokens, outputTokens uint64) {
+	finish := finishTransaction(nonce, storedSum)
+	finish.GetFinishInference().InputTokens = inputTokens
+	finish.GetFinishInference().OutputTokens = outputTokens
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.retainPendingLocked(nil, []*types.DevshardTx{finish})
+}
+
+// Test flow:
+//  1. Start an inference of GLM-5.3-Flash and bind a full stream with the text the gateway counted on it.
+//  2. Apply a Finish with the claim, before and after the stream ends.
+//  3. Assert the challenge the claim calls for: none for an honest claim, OUTPUT_ABOVE_BYTES above twice the
+//     text and allowance or above max_tokens, INPUT_ABOVE_BYTES above twice the request's bytes, UNMEASURED for
+//     a stream whose text the gateway lost count of, whatever its claim, nothing for a probe, an answer the ML
+//     node was not asked to stream, or input with non-text parts.
+func TestABoundStreamIsChallengedWhenTheClaimIsAboveItsBytes(t *testing.T) {
+	text := func(bytes uint64) ServedText {
+		return ServedText{Measured: true, Bytes: bytes, Streamed: true, TextOnly: true}
+	}
+	output := types.ChallengeReason_CHALLENGE_REASON_OUTPUT_ABOVE_BYTES
+	input := types.ChallengeReason_CHALLENGE_REASON_INPUT_ABOVE_BYTES
+	unmeasured := types.ChallengeReason_CHALLENGE_REASON_UNMEASURED
+	for _, testCase := range []struct {
+		name          string
+		maxTokens     uint64
+		text          ServedText
+		input, output uint64
+		want          []types.ChallengeReason
+	}{
+		{name: "honest claim", maxTokens: 4096, text: text(300), input: 30, output: 120},
+		{name: "claim at the bound", maxTokens: 4096, text: text(300), input: 30, output: 2 * (300 + 8)},
+		{name: "output set to max_tokens", maxTokens: 4096, text: text(54), input: 30, output: 4096, want: []types.ChallengeReason{output}},
+		{name: "claim above max_tokens", maxTokens: 64, text: text(199), input: 30, output: 199, want: []types.ChallengeReason{output}},
+		{name: "stop string allowance", maxTokens: 4096, text: ServedText{Measured: true, Bytes: 10, StopBytes: 256, Streamed: true, TextOnly: true}, input: 30, output: 500},
+		{name: "input moved from the reservation", maxTokens: 4096, text: text(54), input: 4400, output: 16, want: []types.ChallengeReason{input}},
+		{name: "both above: one challenge", maxTokens: 4096, text: text(54), input: 4400, output: 4096, want: []types.ChallengeReason{output}},
+		{name: "probe", maxTokens: 4096, text: ServedText{}, input: 4400, output: 4096},
+		{name: "unmeasured, honest claim", maxTokens: 4096, text: ServedText{Unmeasured: true}, input: 30, output: 120, want: []types.ChallengeReason{unmeasured}},
+		{name: "unmeasured, claim above max_tokens", maxTokens: 64, text: ServedText{Unmeasured: true}, input: 4400, output: 199, want: []types.ChallengeReason{unmeasured}},
+		{name: "answer the ML node was not asked to stream", maxTokens: 4096, text: ServedText{Measured: true, Bytes: 54, TextOnly: true}, input: 30, output: 4096},
+		{name: "non-text input", maxTokens: 4096, text: ServedText{Measured: true, Bytes: 54, Streamed: true}, input: 4400, output: 16},
+	} {
+		for _, order := range []string{"stream first", "finish first"} {
+			t.Run(testCase.name+"/"+order, func(t *testing.T) {
+				session, started := usageSession(t, types.GLM53FlashModelID, testCase.maxTokens, 400)
+				if order == "stream first" {
+					session.BindServedStream(1, [][32]byte{servedSum}, testCase.text)
+					applyFinishClaiming(session, 1, testCase.input, testCase.output)
+				} else {
+					applyFinishClaiming(session, 1, testCase.input, testCase.output)
+					session.BindServedStream(1, [][32]byte{servedSum}, testCase.text)
+				}
+				var reasons []types.ChallengeReason
+				for _, challenge := range started() {
+					reasons = append(reasons, challenge.reason)
+				}
+				require.Equal(t, testCase.want, reasons)
+			})
+		}
+	}
+}
+
+// Test flow:
+//  1. Bind a stream that matches neither signed hash and whose claim is also above its bytes.
+//  2. Assert the challenge is STREAM_UNBOUND alone: PR 1's reason comes first and an inference gets one.
+func TestAnUnboundStreamIsNotJudgedByItsBytes(t *testing.T) {
+	session, started := usageSession(t, types.GLM53FlashModelID, 4096, 400)
+	session.BindServedStream(1, [][32]byte{tamperedSum}, ServedText{Measured: true, Bytes: 10, Streamed: true, TextOnly: true})
+	applyFinishClaiming(session, 1, 4400, 4096)
+	require.Equal(t, []startedChallenge{{nonce: 1, reason: types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND}}, started())
+}

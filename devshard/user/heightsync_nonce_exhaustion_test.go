@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -89,7 +90,7 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	}
 	now := time.Unix(1_000, 0)
 	sm := newTestStateMachine(t, escrowID, config, group, balance, user.Address(), verifier)
-	session, err := NewSession(sm, user, escrowID, group, clients, verifier,
+	session, err := NewSession(sm, user, escrowID, group, slices.Clone(clients), verifier,
 		WithStorage(store), WithHeightSyncCadence(16, numHosts),
 		WithHeartbeatClock(func() time.Time { return now }))
 	require.NoError(t, err)
@@ -112,7 +113,7 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	// enabled. Separate state machines retain independent host state.
 	var limitErrors atomic.Uint64
 	for i := range keys {
-		_, hostSM, err := RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
+		_, hostSM, err := RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, slices.Clone(clients))
 		require.NoError(t, err)
 		h, err := host.NewHost(hostSM, keys[i], stub.NewInferenceEngine(), escrowID, group, nil,
 			host.WithGrace(100), host.WithChainOracle(oracle),
@@ -120,7 +121,7 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		clients[i] = ackBlackholeClient{HostClient: &InProcessClient{Host: h}, limitErrors: &limitErrors}
 	}
-	session, sm, err = RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
+	session, sm, err = RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, slices.Clone(clients))
 	require.NoError(t, err)
 	session.SetHeightSyncCadence(16, numHosts)
 	session.clock = func() time.Time { return now }
