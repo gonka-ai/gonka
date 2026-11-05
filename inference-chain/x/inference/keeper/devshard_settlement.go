@@ -143,6 +143,9 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 
 	// Verify signatures and count slot votes
 	seenSlots := make(map[uint32]bool, len(msg.Signatures))
+	// A host holding several slots signs each with the same key: recover and check its grant once.
+	recoveredBySig := make(map[string]string, len(msg.Signatures))
+	grantedWarmKeys := make(map[[2]string]bool)
 	slotVotes := 0
 	for _, sig := range msg.Signatures {
 		if seenSlots[sig.SlotId] {
@@ -154,13 +157,22 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 		}
 		expectedAddr := escrow.Slots[sig.SlotId]
 
-		recovered, err := recoverCosmosAddress(sigHash[:], sig.Signature)
-		if err != nil {
-			return fmt.Errorf("failed to recover address for slot %d: %w", sig.SlotId, err)
+		recoveredAddr, ok := recoveredBySig[string(sig.Signature)]
+		if !ok {
+			recovered, err := recoverCosmosAddress(sigHash[:], sig.Signature)
+			if err != nil {
+				return fmt.Errorf("failed to recover address for slot %d: %w", sig.SlotId, err)
+			}
+			recoveredAddr = recovered.String()
+			recoveredBySig[string(sig.Signature)] = recoveredAddr
 		}
-		if recovered.String() != expectedAddr {
-			if isWarmKey == nil || !isWarmKey(expectedAddr, recovered.String()) {
-				return fmt.Errorf("signature for slot %d recovered %s, expected %s", sig.SlotId, recovered.String(), expectedAddr)
+		if recoveredAddr != expectedAddr {
+			pair := [2]string{expectedAddr, recoveredAddr}
+			if !grantedWarmKeys[pair] {
+				if isWarmKey == nil || !isWarmKey(expectedAddr, recoveredAddr) {
+					return fmt.Errorf("signature for slot %d recovered %s, expected %s", sig.SlotId, recoveredAddr, expectedAddr)
+				}
+				grantedWarmKeys[pair] = true
 			}
 		}
 

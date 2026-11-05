@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/log"
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -43,6 +44,8 @@ func SetConfirmationCleanupFailAfterForTest(n int) {
 func (k Keeper) RemoveFromEpochGroupsForTesting(ctx sdk.Context, participant *types.Participant, reason calculations.ParticipantStatusReason) error {
 	return k.removeFromEpochGroups(ctx, participant, reason)
 }
+
+func SetLoggerForTesting(k *Keeper, l log.Logger) { k.logger = l }
 
 // PlantActiveParticipantsForTest writes an active-participant record without
 // the cache address check, so a test can store a legacy invalid index.

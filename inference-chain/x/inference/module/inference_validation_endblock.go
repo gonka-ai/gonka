@@ -24,14 +24,12 @@ func (am AppModule) processFinishedInferencesInBlock(
 		am.LogError("Failed to list finished inference IDs", types.Inferences, "error", err)
 	}
 	modelBlockLoads := make(map[string]uint64)
-	modelBlockInferenceCounts := make(map[string]uint64)
 	if len(pendingInferenceIDs) == 0 {
 		if err := am.keeper.UpdateModelRollingWindows(
 			ctx,
 			currentEpochGroup.GroupData,
 			params,
 			modelBlockLoads,
-			modelBlockInferenceCounts,
 		); err != nil {
 			am.LogError("Failed to update model rolling windows", types.Pricing, "error", err)
 		}
@@ -61,7 +59,6 @@ func (am AppModule) processFinishedInferencesInBlock(
 			continue
 		}
 		modelBlockLoads[inference.Model] += inference.PromptTokenCount + inference.CompletionTokenCount
-		modelBlockInferenceCounts[inference.Model]++
 
 		modelEpochGroup, found := modelEpochGroupCache[inference.Model]
 		if !found {
@@ -130,7 +127,6 @@ func (am AppModule) processFinishedInferencesInBlock(
 		currentEpochGroup.GroupData,
 		params,
 		modelBlockLoads,
-		modelBlockInferenceCounts,
 	); err != nil {
 		am.LogError("Failed to update model rolling windows", types.Pricing, "error", err)
 	}

@@ -16,7 +16,7 @@ func (k msgServer) SubmitUnitOfComputePriceProposal(goCtx context.Context, msg *
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
 	blockHeight := ctx.BlockHeight()
-	effectiveEpoch, found := k.GetEffectiveEpoch(ctx)
+	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if !found {
 		k.LogError("SubmitUnitOfComputePriceProposal: No effective epoch found", types.Pricing)
 		return nil, sdkerrors.Wrapf(types.ErrEffectiveEpochNotFound, "SubmitUnitOfComputePriceProposal: No effective epoch found. blockHeight: %d", blockHeight)
@@ -26,7 +26,7 @@ func (k msgServer) SubmitUnitOfComputePriceProposal(goCtx context.Context, msg *
 		Price:                 msg.Price,
 		Participant:           msg.Creator,
 		ProposedAtBlockHeight: uint64(blockHeight),
-		ProposedAtEpoch:       effectiveEpoch.Index,
+		ProposedAtEpoch:       effectiveEpochIndex,
 	}); err != nil {
 		return nil, err
 	}
