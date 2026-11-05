@@ -27,6 +27,9 @@ type diffWriter struct {
 	running bool
 	// claims are nonce ranges a challenge request is applying. Guarded by h.mu.
 	claims []*nonceClaim
+	// beforeTakeQueue is a test barrier set before the worker starts and never
+	// changed while it runs. It holds neither h.mu nor the writer lock.
+	beforeTakeQueue func()
 }
 
 // applyChunkNonces is the most diffs one hold of h.mu validates. It matches
@@ -53,10 +56,6 @@ var testBeforeClaimSig func()
 // testBeforeStackedWait, when set, runs as a stacked claim is about to wait for
 // the claim below it to reach the writer queue. h.mu is not held.
 var testBeforeStackedWait func()
-
-// testBeforeTakeQueue, when set, runs before the diff writer takes the queue.
-// It holds neither h.mu nor the writer lock.
-var testBeforeTakeQueue func()
 
 // testStackedWaitLimit, when set, replaces the half-deadline cap on how long a
 // stacked claim waits for the claim below it to reach the writer queue.
@@ -197,8 +196,8 @@ func (h *Host) applyDiffsAwaitingHeadersLocked(ctx context.Context, diffs []type
 // empty. At most one runs per host.
 func (h *Host) runDiffWriter() {
 	for {
-		if testBeforeTakeQueue != nil {
-			testBeforeTakeQueue()
+		if h.writer.beforeTakeQueue != nil {
+			h.writer.beforeTakeQueue()
 		}
 		h.writer.mu.Lock()
 		queued := h.writer.queue

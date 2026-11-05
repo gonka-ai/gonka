@@ -56,17 +56,22 @@ func TestStartH2C_ShutdownWaitsForInFlightHTTP2(t *testing.T) {
 		time.Sleep(hold)
 		return c.String(http.StatusOK, "done")
 	})
+	addrReady := make(chan string, 1)
+	e.Server.BaseContext = func(ln net.Listener) context.Context {
+		addrReady <- ln.Addr().String()
+		return context.Background()
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- StartH2C(e, "127.0.0.1:0") }()
 
 	var addr string
-	require.Eventually(t, func() bool {
-		if e.Listener == nil || e.Listener.Addr() == nil {
-			return false
-		}
-		addr = e.Listener.Addr().String()
-		return addr != ""
-	}, 2*time.Second, 10*time.Millisecond)
+	select {
+	case addr = <-addrReady:
+	case err := <-errCh:
+		t.Fatalf("StartH2C returned before listening: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartH2C did not publish its listen address")
+	}
 
 	resCh := make(chan struct {
 		body string
@@ -110,17 +115,22 @@ func TestStartH2C_HTTP1AndHTTP2(t *testing.T) {
 	e.HideBanner = true
 	e.HidePort = true
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	addrReady := make(chan string, 1)
+	e.Server.BaseContext = func(ln net.Listener) context.Context {
+		addrReady <- ln.Addr().String()
+		return context.Background()
+	}
 	errCh := make(chan error, 1)
 	go func() { errCh <- StartH2C(e, "127.0.0.1:0") }()
 
 	var addr string
-	require.Eventually(t, func() bool {
-		if e.Listener == nil || e.Listener.Addr() == nil {
-			return false
-		}
-		addr = e.Listener.Addr().String()
-		return addr != ""
-	}, 2*time.Second, 10*time.Millisecond)
+	select {
+	case addr = <-addrReady:
+	case err := <-errCh:
+		t.Fatalf("StartH2C returned before listening: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartH2C did not publish its listen address")
+	}
 
 	resp, err := http.Get("http://" + addr + "/healthz")
 	require.NoError(t, err)
