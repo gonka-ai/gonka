@@ -12,7 +12,7 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
 | `/v1/status` | none, as above | yes — a gateway disabled on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
-| `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which does no work ([`deploy/README.md`](../deploy/README.md)) |
+| `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which answers 200 without checking anything else ([`deploy/README.md`](../deploy/README.md)) |
 | `/v1/requests/{id}` | admin | yes |
 | `/devshard/{id}/v1/finalize`, `.../state`, `.../debug/*` | admin | yes |
 | `/v1/admin/*`, `/v1/debug/rotation`, `/v1/debug/memstats`, `/v1/debug/heightsync` | admin | yes |

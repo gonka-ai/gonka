@@ -25,7 +25,7 @@ services:
     stop_grace_period: 30s
     healthcheck:
       # /healthz, not /v1/status: both survive the kill switch, but /v1/status builds the status
-      # of every escrow on each probe, and /healthz does no work.
+      # of every escrow on each probe, and /healthz answers 200 without checking anything else.
       # Not /metrics either: there every probe is a full scrape. See README.md.
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
       interval: 30s
