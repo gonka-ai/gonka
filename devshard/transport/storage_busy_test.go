@@ -141,13 +141,10 @@ func TestServeInference_ClientCancelAfterReceiptStillFinishes(t *testing.T) {
 func TestHeaderPendingCannotServe(t *testing.T) {
 	ce := connect.NewError(connect.CodeUnavailable, errors.New("pending"))
 	ce.Meta().Set(HeaderDevshardError, DevshardErrorHeaderPending)
-	require.True(t, executorUnreachable(ce), "header_pending means the host cannot serve the response")
+	// Connect Unavailable is unreachable; a legacy header_pending tag does not change that.
+	require.True(t, executorUnreachable(ce))
 	require.True(t, executorUnreachable(connect.NewError(connect.CodeUnavailable, errors.New("draining"))))
-
-	tagged := TagHeaderPending(fmt.Errorf("challenge-receipt: %w", ce))
-	require.ErrorIs(t, tagged, types.ErrHeaderPending)
-	var got *connect.Error
-	require.ErrorAs(t, tagged, &got, "the Connect error stays reachable")
-	plain := errors.New("boom")
-	require.Equal(t, plain, TagHeaderPending(plain))
+	require.False(t, executorUnreachable(types.ErrHeaderPending),
+		"plain map-lag ErrHeaderPending is not unreachable after apply stopped returning it")
+	require.True(t, IsHeaderPending(ce), "legacy tag still detectable for old peers")
 }

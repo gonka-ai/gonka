@@ -74,6 +74,15 @@ func (r *floorRig) heightSynced(h uint64) bool {
 	return true
 }
 
+// headerStampMs is the map time of a stamp. Timeout decisions read this, not
+// the record's legacy time fields.
+func headerStampMs(t *testing.T, sm *state.StateMachine, height uint64, hash []byte) int64 {
+	t.Helper()
+	ms, ok := sm.StampHeaderTime(height, hash)
+	require.True(t, ok, "header time for height %d", height)
+	return ms
+}
+
 // coverTimeout waits out window after stampMs, then moves the floor to a new
 // height. The new header time is the wall clock at that progress, so the
 // chain's timeout check and the gateway's wall clock agree.

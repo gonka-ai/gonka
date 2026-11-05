@@ -315,7 +315,7 @@ func RecoverSession(
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+			root, applyErr := sm.ApplyLocalPersistedRecord(rec)
 			if applyErr != nil {
 				if errors.Is(applyErr, types.ErrInvalidNonce) {
 					return fmt.Errorf("%w: replay nonce %d: %w",
@@ -389,9 +389,9 @@ func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*S
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
-	// Replay does not wait on the header map. Catch up from the lowest
-	// unfinished start height so later timeout checks and the chat gate
-	// can read those rows without blocking restart.
+	// A diff that stored its header rows replayed from those rows. Catch up
+	// from the lowest unfinished start so later timeout checks and the chat
+	// gate can read heights that were not on a diff record.
 	sm.WarmUnfinishedHeaders()
 	restoreHeartbeatProducer(sess, sm)
 	// Signatures are loaded only from the slowest cursor on; the trim marks

@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
@@ -125,10 +126,19 @@ type StateMachine struct {
 
 	warmResolver WarmKeyResolver // optional, nil = no warm key support
 	headerTimes  HeaderTimeSource
+	// headerWait bounds the settlement wait when floor TimeMs is still 0
+	// (waitFloorTimeIfMissing). Zero uses headertime.AnswerWait. Replay and
+	// TimeoutDue do not use this field.
+	headerWait time.Duration
 	// headerSourceHook is told the current map, including after SetHeaderTimes.
 	// The session uses it to watch for a stored time. Called without sm.mu.
 	headerSourceHook func(HeaderTimeSource)
-	deferred         []*types.DevshardTx
+	// headerStampWatchCancel removes the deferred stamp-time mismatch Watch
+	// installed on the current HeaderTimeWatch map.
+	headerStampWatchCancel func()
+	// stampTimeMismatchHook is an optional test/observability callback for
+	// deferred map disagrees (warn-only; state is not rolled back).
+	stampTimeMismatchHook func(leg string, height uint64, hash []byte, stampMs, mapMs int64)
 
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
@@ -183,7 +193,6 @@ type ValidatedDiff struct {
 	Root      []byte
 	WarmAfter map[uint32]string
 	Applied   []*types.DevshardTx // populated for the best-effort (gateway) path
-	Deferred  []*types.DevshardTx
 	nonce     uint64
 	journal   *mutationJournal
 	obs       []deferredObsWrite
@@ -220,7 +229,8 @@ func WithVersion(version string) SMOption {
 var fixtureProtocolVersion string
 
 // SetFixtureProtocolVersion sets the version NewStateMachine uses when the
-// caller does not pass one. Production leaves it empty and gets v7.
+// caller does not pass one. Production leaves it empty and gets
+// EffectiveStateRootAndProtocolVersion (v7 unstamped).
 func SetFixtureProtocolVersion(version string) {
 	fixtureProtocolVersion = version
 }
@@ -233,6 +243,12 @@ func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
 
 func WithHeaderTimes(src HeaderTimeSource) SMOption {
 	return func(sm *StateMachine) { sm.headerTimes = src }
+}
+
+// WithHeaderWait bounds waitFloorTimeIfMissing on settlement drain when
+// carried floor TimeMs is 0. Zero keeps headertime.AnswerWait.
+func WithHeaderWait(d time.Duration) SMOption {
+	return func(sm *StateMachine) { sm.headerWait = d }
 }
 
 // SetHeaderTimes replaces the map this machine reads. A nil source restores
@@ -249,6 +265,7 @@ func (sm *StateMachine) SetHeaderTimes(src HeaderTimeSource) {
 	sm.headerTimes = src
 	hook := sm.headerSourceHook
 	sm.mu.Unlock()
+	sm.wireHeaderStampWatch(src)
 	if hook != nil {
 		hook(src)
 	}
@@ -279,23 +296,14 @@ func (sm *StateMachine) HeaderTimes() HeaderTimeSource {
 	return sm.headerTimes
 }
 
-// LookupHeaderTimeMs reads the map and does not call out. A miss, including
-// a time that has not been stored, reports false. It does not wait.
+// LookupHeaderTimeMs reads the stored map only. It never calls HeaderTimeMs
+// (no filler fetch, no miss wait). A miss, including a time that has not been
+// stored or a hash that disagrees with the row, reports false. It does not wait.
 func (sm *StateMachine) LookupHeaderTimeMs(height uint64, hash []byte) (int64, bool) {
 	if height == 0 || !heightsync.StampPresent(hash) {
 		return 0, false
 	}
-	sm.mu.RLock()
-	src := sm.headerTimes
-	sm.mu.RUnlock()
-	if src == nil {
-		return 0, false
-	}
-	ms, err := src.HeaderTimeMs(height, hash)
-	if err != nil || ms <= 0 {
-		return 0, false
-	}
-	return ms, true
+	return sm.StampHeaderTime(height, hash)
 }
 
 // AppliedHeaderTimes returns the header-time source installed by opts.
@@ -409,6 +417,7 @@ func NewStateMachine(
 	if sm.headerTimes == nil {
 		sm.headerTimes = fallbackHeaderTimes
 	}
+	sm.wireHeaderStampWatch(sm.headerTimes)
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
 	sm.heightSyncFloor = heightsync.NewFloorIndex()
 	sm.floorReady = true
@@ -429,16 +438,20 @@ func NewStateMachine(
 }
 
 // ApplyDiff validates user signature and post_state_root, then applies the diff.
-// Returns the computed state root.
+// Returns the computed state root. Seal/drain clocks prefer the header map when
+// present, else carried floor time; live apply waits for the map only when
+// floor TimeMs is still 0. Timeout apply counts votes only.
 func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
 	if err := sm.verifyDiffUserSig(diff); err != nil {
 		return nil, err
 	}
-
-	// Apply txs and verify post_state_root atomically.
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	return sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+	var root []byte
+	err := sm.withResolvedDecision(diff.Nonce, diff.Txs, false, func() error {
+		var err error
+		root, err = sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+		return err
+	})
+	return root, err
 }
 
 // ValidateDiff verifies the user signature and trial-applies the diff (nonce,
@@ -451,24 +464,27 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	if err := sm.verifyDiffUserSig(diff); err != nil {
 		return nil, err
 	}
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	var obs []deferredObsWrite
-	var marks []heightsync.AttributableMark
-	sm.obsDeferred = &obs
-	sm.marksDeferred = &marks
-	root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
-	sm.obsDeferred = nil
-	sm.marksDeferred = nil
-	if err != nil {
-		// applyCore undoes its journal on every error path.
-		return nil, err
-	}
-	warmAfter := copyStringMap(sm.state.WarmKeys)
-	sm.detachJournalLocked(j)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
+	var vd *ValidatedDiff
+	err := sm.withResolvedDecision(diff.Nonce, diff.Txs, false, func() error {
+		var obs []deferredObsWrite
+		var marks []heightsync.AttributableMark
+		sm.obsDeferred = &obs
+		sm.marksDeferred = &marks
+		root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+		sm.obsDeferred = nil
+		sm.marksDeferred = nil
+		if err != nil {
+			// applyCore undoes its journal on every error path.
+			return err
+		}
+		warmAfter := copyStringMap(sm.state.WarmKeys)
+		sm.detachJournalLocked(j)
+		vd = &ValidatedDiff{
+			Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks,
+		}
+		return nil
+	})
+	return vd, err
 }
 
 // ValidateDiffs is ValidateDiff for a contiguous run. Each diff is
@@ -486,9 +502,17 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 	}
 
 	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	out, err := sm.tryValidateDiffsLocked(diffs)
+	sm.mu.Unlock()
+	if err != nil {
+		return out, err
+	}
+	return out, sigErr
+}
 
-	out := make([]*ValidatedDiff, 0, len(diffs))
+// tryValidateDiffsLocked trial-applies diffs on top of each other. Journals are
+// undone before return; the handles keep them for CommitValidated. Caller holds sm.mu.
+func (sm *StateMachine) tryValidateDiffsLocked(diffs []types.Diff) (out []*ValidatedDiff, err error) {
 	defer func() {
 		for i := len(out) - 1; i >= 0; i-- {
 			sm.undoJournalLocked(out[i].journal)
@@ -499,18 +523,20 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 		var marks []heightsync.AttributableMark
 		sm.obsDeferred = &obs
 		sm.marksDeferred = &marks
-		root, j, err := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
+		root, j, aerr := sm.applyCoreJournaled(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
 		sm.obsDeferred = nil
 		sm.marksDeferred = nil
-		if err != nil {
-			return out, err
+		if aerr != nil {
+			return out, aerr
 		}
 		warmAfter := copyStringMap(sm.state.WarmKeys)
 		sm.detachJournalLocked(j)
 		sm.installJournalLocked(j)
-		out = append(out, &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks})
+		out = append(out, &ValidatedDiff{
+			Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks,
+		})
 	}
-	return out, sigErr
+	return out, nil
 }
 
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
@@ -526,48 +552,47 @@ func (sm *StateMachine) VerifyDiffUserSig(diff types.Diff) error {
 // ApplyLocal applies txs without signature verification. Used by the user
 // to compute the post_state_root before signing the diff.
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	return sm.applyCore(nonce, txs, nil, "user")
+	var root []byte
+	err := sm.withResolvedDecision(nonce, txs, false, func() error {
+		var err error
+		root, err = sm.applyCore(nonce, txs, nil, "user")
+		return err
+	})
+	return root, err
 }
 
 // ApplyLocalPersisted replays a diff this node already accepted and persisted. It is the only path that
 // relaxes policy, and it relaxes it only for checks that guard the creation of new work.
+// Seal and drain use carried stamp/floor times; replay does not wait on the map.
 func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.replayingPersisted = true
-	defer func() { sm.replayingPersisted = false }()
-	return sm.applyCore(nonce, txs, nil, "user")
+	return sm.ApplyLocalPersistedRecord(types.DiffRecord{Diff: types.Diff{Nonce: nonce, Txs: txs}})
+}
+
+// ApplyLocalPersistedRecord replays rec from carried stamp/floor times only.
+// Legacy HeaderTimes fields on the record are ignored.
+func (sm *StateMachine) ApplyLocalPersistedRecord(rec types.DiffRecord) ([]byte, error) {
+	var root []byte
+	err := sm.withResolvedDecision(rec.Nonce, rec.Txs, true, func() error {
+		var err error
+		root, err = sm.applyCore(rec.Nonce, rec.Txs, nil, "user")
+		return err
+	})
+	return root, err
 }
 
 // ApplyLocalBestEffort applies txs one by one, skipping any that fail.
 // Returns the post-state root and the subset of txs that were applied.
 // Used by the user to compose diffs from pending txs that may be stale.
+// Failed non-mandatory txs are dropped (logged), not retried later.
 func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
-	root, applied, _, err := sm.ApplyLocalBestEffortDeferred(nonce, txs)
+	var root []byte
+	var applied []*types.DevshardTx
+	err := sm.withResolvedDecision(nonce, txs, false, func() error {
+		var err error
+		root, applied, err = sm.localBestEffortLocked(nonce, txs)
+		return err
+	})
 	return root, applied, err
-}
-
-func (sm *StateMachine) ApplyLocalBestEffortDeferred(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, []*types.DevshardTx, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	root, applied, err := sm.localBestEffortLocked(nonce, txs)
-	deferred := sm.takeDeferredLocked()
-	return root, applied, deferred, err
-}
-
-func (sm *StateMachine) dropOrDeferLocked(nonce uint64, tx *types.DevshardTx, err error) {
-	logDroppedTx(nonce, tx, err)
-	if errors.Is(err, types.ErrHeaderPending) {
-		sm.deferred = append(sm.deferred, tx)
-	}
-}
-
-func (sm *StateMachine) takeDeferredLocked() []*types.DevshardTx {
-	out := sm.deferred
-	sm.deferred = nil
-	return out
 }
 
 // PreviewLocalBestEffort is the validate-on-clone form of ApplyLocalBestEffort:
@@ -576,23 +601,27 @@ func (sm *StateMachine) takeDeferredLocked() []*types.DevshardTx {
 // SM is unchanged. Used for persist-first compose: preview →
 // persist → CommitValidated (which installs the post-state without recompute).
 func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.DevshardTx) (*ValidatedDiff, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	var obs []deferredObsWrite
-	var marks []heightsync.AttributableMark
-	sm.obsDeferred = &obs
-	sm.marksDeferred = &marks
-	root, applied, j, err := sm.localBestEffortJournaled(nonce, txs)
-	sm.obsDeferred = nil
-	sm.marksDeferred = nil
-	if err != nil {
-		// localBestEffortLocked undoes its journal on every error path.
-		return nil, err
-	}
-	warmAfter := copyStringMap(sm.state.WarmKeys)
-	sm.detachJournalLocked(j)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, Deferred: sm.takeDeferredLocked(), nonce: nonce, journal: j, obs: obs, marks: marks}, nil
+	var vd *ValidatedDiff
+	err := sm.withResolvedDecision(nonce, txs, false, func() error {
+		var obs []deferredObsWrite
+		var marks []heightsync.AttributableMark
+		sm.obsDeferred = &obs
+		sm.marksDeferred = &marks
+		root, applied, j, err := sm.localBestEffortJournaled(nonce, txs)
+		sm.obsDeferred = nil
+		sm.marksDeferred = nil
+		if err != nil {
+			return err
+		}
+		warmAfter := copyStringMap(sm.state.WarmKeys)
+		sm.detachJournalLocked(j)
+		vd = &ValidatedDiff{
+			Root: root, WarmAfter: warmAfter, Applied: applied,
+			nonce: nonce, journal: j, obs: obs, marks: marks,
+		}
+		return nil
+	})
+	return vd, err
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -676,7 +705,6 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 // localBestEffortJournaled is localBestEffortLocked that also returns the
 // closed journal of a successful apply.
 func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, *mutationJournal, error) {
-	sm.deferred = nil
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
 		return nil, nil, nil, fmt.Errorf("%w: expected %d, got %d", types.ErrInvalidNonce, expectedNonce, nonce)
@@ -744,14 +772,14 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 			continue
 		}
 		if err := sm.ackHashMismatchLocked(tx.GetHeightAck()); err != nil {
-			sm.dropOrDeferLocked(nonce, tx, err)
+			logDroppedTx(nonce, tx, err)
 			continue
 		}
 		if err := sm.applyTxAtomicLocked(tx, nonce); err != nil {
 			if tx.GetStartInference() != nil {
 				return nil, nil, nil, fmt.Errorf("mandatory start inference: %w", err)
 			}
-			sm.dropOrDeferLocked(nonce, tx, err)
+			logDroppedTx(nonce, tx, err)
 			continue
 		}
 		applied = append(applied, tx)
@@ -988,10 +1016,8 @@ func (sm *StateMachine) applyCoreJournaled(nonce uint64, txs []*types.DevshardTx
 
 	// 6b. Deterministically seal inferences whose grace gates have cleared,
 	// folding them into SealedAcc before the root is computed so the seal is
-	// part of post_state_root. The decision reads only state (nonce + the
-	// ConfirmedAt-derived state clock, with Finished requiring
-	// InferenceSealGraceSeconds + ExecutionTimeout), so user, host and replay
-	// all agree.
+	// part of post_state_root. Finished uses time(F) - time(ConfirmedAtHeight)
+	// against InferenceSealGraceSeconds + ExecutionTimeout.
 	var sealClockWin StateClockWindow
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
 		var err error
@@ -1312,7 +1338,7 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 	case *types.DevshardTx_ValidationVote:
 		return sm.applyValidationVote(inner.ValidationVote)
 	case *types.DevshardTx_TimeoutInference:
-		return sm.applyTimeout(inner.TimeoutInference, diffNonce)
+		return sm.applyTimeout(inner.TimeoutInference)
 	case *types.DevshardTx_ErrorMiss:
 		return sm.applyErrorMiss(inner.ErrorMiss)
 	case *types.DevshardTx_RevealSeed:
@@ -1354,7 +1380,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNo
 	if err != nil {
 		return err
 	}
-	startedAtMs := sm.recordedFloorTimeLocked(anchor)
+	if err := sm.checkObservedStampTimeLocked("start", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
+		return err
+	}
 
 	// Executor slot: group[inference_id % len(group)].SlotID
 	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
@@ -1379,7 +1407,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNo
 		ReservedCost:       reservedCost,
 		StartedAtHeight:    anchor.Height,
 		StartedAtBlockHash: append([]byte(nil), anchor.Hash...),
-		StartedAtTimeMs:    startedAtMs,
+	}
+	if msg.ObservedTimeMs > 0 {
+		rec.StartedAtTimeMs = msg.ObservedTimeMs
 	}
 
 	sm.putInferenceLocked(msg.InferenceId, rec)
@@ -1413,11 +1443,20 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 	if err != nil {
 		return err
 	}
-	confirmedAtMs := sm.recordedFloorTimeLocked(anchor)
+	if err := sm.checkObservedStampTimeLocked("confirm", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
+		return err
+	}
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAtHeight = anchor.Height
-	rec.ConfirmedAtTimeMs = confirmedAtMs
+	if heightsync.StampPresent(anchor.Hash) {
+		rec.ConfirmedAtBlockHash = append([]byte(nil), anchor.Hash...)
+	} else {
+		rec.ConfirmedAtBlockHash = nil
+	}
+	if msg.ObservedTimeMs > 0 {
+		rec.ConfirmedAtTimeMs = msg.ObservedTimeMs
+	}
 	logging.Debug("inference pending -> started", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,
@@ -1428,7 +1467,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 
 // confirmAnchorLocked is the block the confirm names. A stamp on the receipt
 // is that block, so the record's confirmed height is the host tip (or the
-// floor it carried), and the header-time map is read for that same pair.
+// floor it carried). Apply stores the height and does not read the map.
 // An unstamped confirm keeps the floor as of the diff, which is empty when
 // the start had no floor.
 func (sm *StateMachine) confirmAnchorLocked(msg *types.MsgConfirmStart, diffNonce uint64) (heightsync.FloorPoint, error) {
@@ -1457,6 +1496,7 @@ func (sm *StateMachine) checkReceiptLocked(rec *types.InferenceRecord, msg *type
 		EscrowId:          sm.state.EscrowID,
 		ObservedHeight:    msg.ObservedHeight,
 		ObservedBlockHash: msg.ObservedBlockHash,
+		ObservedTimeMs:    msg.ObservedTimeMs,
 	}
 	receiptData, err := deterministicMarshal.Marshal(receiptContent)
 	if err != nil {
@@ -1561,6 +1601,9 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	}
 	actualCost, err := sm.checkFinishLocked(rec, msg, sm.hostSignerAllowedLocked)
 	if err != nil {
+		return err
+	}
+	if err := sm.checkObservedStampTimeLocked("finish", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
 		return err
 	}
 
@@ -1857,7 +1900,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
-func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference, diffNonce uint64) error {
+func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
 	if !ok {
 		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
@@ -1866,12 +1909,10 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference, diffNonce u
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
-	// A persisted timeout already passed this check when it was committed.
-	// Replay must not wait on the header map to accept it again.
-	if !sm.replayingPersisted {
-		if err := sm.checkTimeoutDueLocked(rec, msg.Reason, diffNonce); err != nil {
-			return err
-		}
+	// Timing is the gateway trigger and the verifier answer. Apply trusts the
+	// votes: enough accept signatures is the only due gate on this path.
+	if err := sm.checkTimeoutReasonLocked(rec, msg.Reason); err != nil {
+		return err
 	}
 
 	// Count accept votes, weighted by slots per address.
@@ -2046,16 +2087,16 @@ func (sm *StateMachine) liveTimeoutDueAtDrainLocked(rec *types.InferenceRecord, 
 	default:
 		return false, nil
 	}
-	remaining, err := sm.timeoutRemainingLocked(rec, reason, sealNonce)
-	if errors.Is(err, types.ErrHeaderPending) {
-		// Replay must not block restart on the header map. Settle as not due
-		// (refund). Live drain still waits for the floor header.
-		if sm.replayingPersisted {
+	remaining, err := sm.timeoutRemainingCarriedLocked(rec, reason, sealNonce)
+	if err != nil {
+		if errors.Is(err, types.ErrTimeoutNotArmed) {
 			return false, nil
 		}
+		// Missing floor/record time after map prefer + (live) wait fails closed.
+		// Drain returns the error so settlement does not guess.
 		return false, err
 	}
-	return err == nil && remaining == 0, nil
+	return remaining == 0, nil
 }
 
 func (sm *StateMachine) settleLiveRecordLocked(rec *types.InferenceRecord, timeoutDue bool) {

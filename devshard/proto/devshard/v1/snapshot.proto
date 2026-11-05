@@ -60,6 +60,9 @@ message FloorIndexEntryProto {
   uint64 height = 2;
   bytes hash = 3;
   uint32 author = 4;
+  // time_ms is the observed_time_ms of the stamp that first set this floor
+  // point (first non-zero wins). Zero means unset / legacy.
+  int64 time_ms = 5;
 }
 
 message FloorIndexProto {

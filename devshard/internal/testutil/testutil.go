@@ -133,6 +133,7 @@ func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []by
 type ReceiptStamp struct {
 	Height uint64
 	Hash   []byte
+	TimeMs int64
 }
 
 func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, stamp ...ReceiptStamp) []byte {
@@ -148,6 +149,7 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
 		content.ObservedHeight = stamp[0].Height
 		content.ObservedBlockHash = stamp[0].Hash
+		content.ObservedTimeMs = stamp[0].TimeMs
 	}
 	data, err := deterministicMarshal.Marshal(content)
 	require.NoError(t, err)

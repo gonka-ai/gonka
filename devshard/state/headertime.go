@@ -2,8 +2,6 @@ package state
 
 import (
 	"bytes"
-	"context"
-	"errors"
 	"time"
 
 	"devshard/chainoracle/blocks/headertime"
@@ -37,26 +35,31 @@ func SetFallbackHeaderTimes(src HeaderTimeSource) {
 	fallbackHeaderTimes = src
 }
 
-const (
-	HeaderPendingRetryInterval = time.Second
-	ReplayHeaderWait           = 2 * time.Minute
-)
-
 // VerifierNow is the wall clock a timeout verifier compares with the map.
 func (sm *StateMachine) VerifierNow() time.Time { return time.Now() }
 
 // HasHeaderFeed reports whether this machine reads a stored header-time map.
 // A fallback clock that only answers HeaderTimeMs is not that map.
 func (sm *StateMachine) HasHeaderFeed() bool {
-	_, ok := sm.storedHeaders()
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	_, ok := sm.storedHeadersLocked()
 	return ok
 }
 
 // StampHeaderTime is the stored time for a stamp. A miss does not call out.
 // An empty hash matches the row at that height. A hash that differs is a miss.
 func (sm *StateMachine) StampHeaderTime(height uint64, hash []byte) (int64, bool) {
-	src, ok := sm.storedHeaders()
-	if !ok || height == 0 {
+	if sm == nil || height == 0 {
+		return 0, false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	src, ok := sm.storedHeadersLocked()
+	if !ok {
 		return 0, false
 	}
 	row, ok := src.StoredAt(height)
@@ -88,11 +91,14 @@ type storedHeaderReader interface {
 	StoredAt(height uint64) (headertime.Record, bool)
 }
 
-func (sm *StateMachine) storedHeaders() (storedHeaderReader, bool) {
+// storedHeadersLocked returns the non-fetching map reader. Caller holds sm.mu
+// (or accepts a torn pointer on SetHeaderTimes); do not call HeaderTimes here —
+// that takes RLock and deadlocks under apply.
+func (sm *StateMachine) storedHeadersLocked() (storedHeaderReader, bool) {
 	if sm == nil {
 		return nil, false
 	}
-	src, ok := sm.HeaderTimes().(storedHeaderReader)
+	src, ok := sm.headerTimes.(storedHeaderReader)
 	if !ok || src == nil {
 		return nil, false
 	}
@@ -143,28 +149,12 @@ func (sm *StateMachine) WarmUnfinishedHeaders() {
 	if height == 0 {
 		return
 	}
-	src, ok := sm.HeaderTimes().(headerCatchUp)
+	sm.mu.RLock()
+	src, ok := sm.headerTimes.(headerCatchUp)
+	sm.mu.RUnlock()
 	if !ok || src == nil {
 		return
 	}
 	src.EnsureFrom(height)
 }
 
-func RetryWhileHeaderPending(ctx context.Context, maxWait time.Duration, apply func() error) error {
-	err := apply()
-	if !errors.Is(err, types.ErrHeaderPending) {
-		return err
-	}
-	deadline := time.Now().Add(maxWait)
-	for errors.Is(err, types.ErrHeaderPending) && time.Now().Before(deadline) {
-		timer := time.NewTimer(HeaderPendingRetryInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return err
-		case <-timer.C:
-		}
-		err = apply()
-	}
-	return err
-}

@@ -28,8 +28,18 @@ type storedHeaderTime interface {
 }
 
 // ErrDuplicateChallenge is a second VerifyTimeout for an inference and reason
-// this process is already answering or has already voted. The body stays empty.
+// this process is already answering or has already voted without a stored
+// signature yet. ServeVerifyTimeout replays LookupTimeoutVote when present.
 var ErrDuplicateChallenge = errors.New("timeout challenge already held")
+
+// ErrAnswerBusy is returned when too many verifier checks are already in
+// flight on this host. ServeVerifyTimeout answers accept=false with no vote.
+var ErrAnswerBusy = errors.New("timeout answer capacity reached")
+
+// maxConcurrentAnswers caps in-flight (held) verifier checks per host session.
+// Voted/remembered entries do not count. Each check may hold a goroutine and
+// map watcher for up to about AnswerWait (~60s).
+const maxConcurrentAnswers = 32
 
 // deferralKey is one inference and one timeout reason.
 type deferralKey struct {
@@ -46,37 +56,83 @@ const (
 	answerVoted
 )
 
+// answerEntry is one check: held while answering, then voted with an optional
+// signed payload so a gateway retry can replay the same vote.
+type answerEntry struct {
+	mark      answerMark
+	signature []byte
+	voterSlot uint32
+}
+
 // answerHolds is one check per inference and reason. A held check is the
 // schedule timer, the feed wait, or the executor call. A voted check has
 // already returned a vote. ignore, feed_behind, and accept=false are not kept.
 type answerHolds struct {
 	mu   sync.Mutex
-	held map[deferralKey]answerMark
+	held map[deferralKey]answerEntry
 }
 
-func (a *answerHolds) tryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), bool) {
+func (a *answerHolds) tryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.held == nil {
-		a.held = make(map[deferralKey]answerMark)
+		a.held = make(map[deferralKey]answerEntry)
 	}
 	key := deferralKey{inferenceID: inferenceID, reason: reason}
-	if mark, ok := a.held[key]; ok {
-		warnDuplicateChallenge(inferenceID, reason, mark == answerVoted)
-		return nil, false
+	if entry, ok := a.held[key]; ok {
+		warnDuplicateChallenge(inferenceID, reason, entry.mark == answerVoted)
+		return nil, ErrDuplicateChallenge
 	}
-	a.held[key] = answerHeld
+	held := 0
+	for _, e := range a.held {
+		if e.mark == answerHeld {
+			held++
+		}
+	}
+	if held >= maxConcurrentAnswers {
+		return nil, ErrAnswerBusy
+	}
+	a.held[key] = answerEntry{mark: answerHeld}
 	return func(voted bool) {
 		a.mu.Lock()
 		defer a.mu.Unlock()
-		if voted {
-			a.held[key] = answerVoted
+		cur, ok := a.held[key]
+		if !ok {
 			return
 		}
-		if a.held[key] == answerHeld {
+		if voted {
+			cur.mark = answerVoted
+			a.held[key] = cur
+			return
+		}
+		if cur.mark == answerHeld {
 			delete(a.held, key)
 		}
-	}, true
+	}, nil
+}
+
+func (a *answerHolds) rememberVote(inferenceID uint64, reason types.TimeoutReason, signature []byte, voterSlot uint32) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held == nil {
+		a.held = make(map[deferralKey]answerEntry)
+	}
+	key := deferralKey{inferenceID: inferenceID, reason: reason}
+	cur := a.held[key]
+	cur.mark = answerVoted
+	cur.signature = append([]byte(nil), signature...)
+	cur.voterSlot = voterSlot
+	a.held[key] = cur
+}
+
+func (a *answerHolds) lookupVote(inferenceID uint64, reason types.TimeoutReason) (signature []byte, voterSlot uint32, ok bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	cur, found := a.held[deferralKey{inferenceID: inferenceID, reason: reason}]
+	if !found || cur.mark != answerVoted || len(cur.signature) == 0 {
+		return nil, 0, false
+	}
+	return append([]byte(nil), cur.signature...), cur.voterSlot, true
 }
 
 func (a *answerHolds) forget(inferenceID uint64, reason types.TimeoutReason) {
@@ -86,6 +142,18 @@ func (a *answerHolds) forget(inferenceID uint64, reason types.TimeoutReason) {
 		return
 	}
 	delete(a.held, deferralKey{inferenceID: inferenceID, reason: reason})
+}
+
+// forgetInference drops held and voted entries for both timeout reasons.
+// Used when a record leaves the live map (sealed or drained).
+func (a *answerHolds) forgetInference(inferenceID uint64) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.held == nil {
+		return
+	}
+	delete(a.held, deferralKey{inferenceID: inferenceID, reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED})
+	delete(a.held, deferralKey{inferenceID: inferenceID, reason: types.TimeoutReason_TIMEOUT_REASON_EXECUTION})
 }
 
 func warnDuplicateChallenge(inferenceID uint64, reason types.TimeoutReason, voted bool) {
@@ -134,6 +202,8 @@ func (h *Host) After(d time.Duration) <-chan time.Time {
 	if h != nil && h.answerAfter != nil {
 		return h.answerAfter(d)
 	}
+	// Production verifier waits go through waitAnswer (NewTimer+Stop). After
+	// remains for injectors and any caller that only has this channel API.
 	return time.After(d)
 }
 
@@ -148,11 +218,27 @@ func (h *Host) WatchHeaders(fn func()) func() {
 	return w.Watch(fn)
 }
 
-func (h *Host) TryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), bool) {
+func (h *Host) TryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), error) {
 	if h == nil {
-		return func(bool) {}, true
+		return func(bool) {}, nil
 	}
 	return h.answerHolds.tryHold(inferenceID, reason)
+}
+
+// forgetAnswersLeftLive drops answer memory for inferences that were live in
+// before and are gone now (sealed or drained). Caller holds h.mu when the
+// live set is read after apply.
+func (h *Host) forgetAnswersLeftLive(before map[uint64]struct{}) {
+	if h == nil || h.sm == nil || len(before) == 0 {
+		return
+	}
+	after := h.sm.LiveInferenceIDs()
+	for id := range before {
+		if _, still := after[id]; still {
+			continue
+		}
+		h.answerHolds.forgetInference(id)
+	}
 }
 
 // ForgetTimeoutVote drops a remembered vote for this inference and reason.
@@ -163,6 +249,23 @@ func (h *Host) ForgetTimeoutVote(inferenceID uint64, reason types.TimeoutReason)
 		return
 	}
 	h.answerHolds.forget(inferenceID, reason)
+}
+
+// RememberTimeoutVote stores the signed accept vote for a gateway retry.
+// Only Accept=true votes are stored; a second check is never started.
+func (h *Host) RememberTimeoutVote(inferenceID uint64, reason types.TimeoutReason, signature []byte, voterSlot uint32) {
+	if h == nil || len(signature) == 0 {
+		return
+	}
+	h.answerHolds.rememberVote(inferenceID, reason, signature, voterSlot)
+}
+
+// LookupTimeoutVote returns a previously remembered accept vote, if any.
+func (h *Host) LookupTimeoutVote(inferenceID uint64, reason types.TimeoutReason) (signature []byte, voterSlot uint32, ok bool) {
+	if h == nil {
+		return nil, 0, false
+	}
+	return h.answerHolds.lookupVote(inferenceID, reason)
 }
 
 func (h *Host) storedHeaders() (storedHeaderTime, bool) {
@@ -212,7 +315,7 @@ func challengeStamp(rec *types.InferenceRecord, reason types.TimeoutReason) (uin
 		return 0, nil
 	}
 	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
-		return rec.ConfirmedAtHeight, nil
+		return rec.ConfirmedAtHeight, rec.ConfirmedAtBlockHash
 	}
 	return rec.StartedAtHeight, rec.StartedAtBlockHash
 }
@@ -230,9 +333,9 @@ func beginAnswer(ctx context.Context, ev EvidenceVerifier, inferenceID uint64, r
 	if ctx.Value(answerHeldKey{}) != nil {
 		return ctx, nil, nil
 	}
-	release, owned := tryAnswerHold(ev, inferenceID, reason)
-	if !owned {
-		return ctx, nil, ErrDuplicateChallenge
+	release, err := tryAnswerHold(ev, inferenceID, reason)
+	if err != nil {
+		return ctx, nil, err
 	}
 	return context.WithValue(ctx, answerHeldKey{}, true), release, nil
 }
@@ -339,12 +442,12 @@ type errAnswerTimerSentinel struct{}
 
 func (errAnswerTimerSentinel) Error() string { return "verifier answer timer" }
 
-func tryAnswerHold(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) (func(bool), bool) {
+func tryAnswerHold(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) (func(bool), error) {
 	h, ok := ev.(interface {
-		TryHold(uint64, types.TimeoutReason) (func(bool), bool)
+		TryHold(uint64, types.TimeoutReason) (func(bool), error)
 	})
 	if !ok || h == nil {
-		return func(bool) {}, true
+		return func(bool) {}, nil
 	}
 	return h.TryHold(inferenceID, reason)
 }
@@ -373,21 +476,33 @@ func watchHeaders(ev EvidenceVerifier, fn func()) func() {
 	return cancel
 }
 
-func verifierAfter(ev EvidenceVerifier, d time.Duration) <-chan time.Time {
+// answerWaitChannel returns the timer channel for waitAnswer. Production uses
+// time.NewTimer so an early return (ctx cancel or map notify) can Stop it.
+// Test injectors (*Host.answerAfter or non-Host After) keep ownership of their
+// channel and do not get a stop func.
+func answerWaitChannel(ev EvidenceVerifier, d time.Duration) (<-chan time.Time, func()) {
 	if d < 0 {
 		d = 0
 	}
-	a, ok := ev.(interface {
-		After(time.Duration) <-chan time.Time
-	})
-	if ok && a != nil {
-		return a.After(d)
+	if h, ok := ev.(*Host); ok && h != nil && h.answerAfter != nil {
+		return h.answerAfter(d), nil
 	}
-	return time.After(d)
+	if _, isHost := ev.(*Host); !isHost {
+		if a, ok := ev.(interface {
+			After(time.Duration) <-chan time.Time
+		}); ok && a != nil {
+			return a.After(d), nil
+		}
+	}
+	t := time.NewTimer(d)
+	return t.C, func() { t.Stop() }
 }
 
 func waitAnswer(ctx context.Context, ev EvidenceVerifier, d time.Duration, notify <-chan struct{}) error {
-	timer := verifierAfter(ev, d)
+	timer, stop := answerWaitChannel(ev, d)
+	if stop != nil {
+		defer stop()
+	}
 	if notify == nil {
 		select {
 		case <-ctx.Done():

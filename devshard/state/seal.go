@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"maps"
 	"math"
@@ -13,10 +14,9 @@ import (
 	"devshard/types"
 )
 
-// stateClockWindowFactor sets how many recent live inferences the deterministic
-// state clock scans, as a multiple of the group size N. Concurrency is bounded
-// by the number of slots, so N*factor comfortably covers the in-flight window
-// whose ConfirmedAtTimeMs anchors approximate "now".
+// stateClockWindowFactor sets how many recent live inferences the seal
+// diagnostic scans for min/max confirm times, as a multiple of the group size
+// N. The seal clock itself is time(F) at the seal nonce, not this window.
 const stateClockWindowFactor = 3
 
 func autoSealInterval(cfg types.SessionConfig) uint64 {
@@ -494,8 +494,8 @@ func terminalAutoSealStatus(s types.InferenceStatus) bool {
 	}
 }
 
-// StateClockWindow holds the deterministic state-clock value (max ConfirmedAtTimeMs
-// over the tail window) plus min/max extents from that scan for diagnostics.
+// StateClockWindow holds the deterministic seal clock (header time of F at the
+// seal nonce) plus min/max confirm-stamp times from the live tail for diagnostics.
 type StateClockWindow struct {
 	ClockMs          int64
 	MinConfirmedAtMs int64
@@ -503,72 +503,92 @@ type StateClockWindow struct {
 	Known            bool
 }
 
-// stateClockLocked derives a deterministic "current time" purely from state:
-// the max ConfirmedAtTimeMs over confirmed live inferences in the latest
-// N*stateClockWindowFactor tail (N = group size), plus the min and max
-// ConfirmedAtTimeMs among those confirmed records for diagnostics. Pending and
-// unanchored inferences (ConfirmedAtTimeMs == 0) are excluded so they do not
-// pull window_min_confirmed_at_ms to zero. Returns Known=false when there are no
-// live inferences or no confirmed records in the tail window. Caller holds sm.mu.
-func (sm *StateMachine) stateClockLocked() StateClockWindow {
+// confirmHeaderMsLocked is the carried confirm stamp time
+// (ConfirmedAtTimeMs). Seal does not read the header map. A record with no
+// confirm height or zero carried time is not anchored for the clock gate.
+func (sm *StateMachine) confirmHeaderMsLocked(rec *types.InferenceRecord) (int64, bool, error) {
+	if rec == nil || rec.ConfirmedAtHeight == 0 || rec.ConfirmedAtTimeMs <= 0 {
+		return 0, false, nil
+	}
+	return rec.ConfirmedAtTimeMs, true, nil
+}
+
+// stateClockLocked is time(F) at sealNonce via floorTimeMsLocked (map prefer,
+// else carried). Min/Max are confirm carried times in the live tail, for
+// diagnostics only. Known is false when there is no floor yet or neither map
+// nor carried time is available (skip seal clock gate; never ErrHeaderPending).
+// Caller holds sm.mu.
+func (sm *StateMachine) stateClockLocked(sealNonce uint64) (StateClockWindow, error) {
+	floor, err := sm.floorPointLocked(sealNonce)
+	if err != nil {
+		return StateClockWindow{}, err
+	}
+	if floor.Height == 0 {
+		return StateClockWindow{}, nil
+	}
+	clockMs, err := sm.floorTimeMsLocked(floor)
+	if err != nil {
+		if errors.Is(err, types.ErrFloorTimeMissing) {
+			return StateClockWindow{}, nil
+		}
+		return StateClockWindow{}, err
+	}
+	if clockMs <= 0 {
+		return StateClockWindow{}, nil
+	}
+	win := StateClockWindow{ClockMs: clockMs, Known: true}
 	if len(sm.state.Inferences) == 0 {
-		return StateClockWindow{}
+		return win, nil
 	}
 	window := len(sm.state.Group) * stateClockWindowFactor
 	if window <= 0 {
 		window = stateClockWindowFactor
 	}
-
 	ids := make([]uint64, 0, len(sm.state.Inferences))
 	for id := range sm.state.Inferences {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-
-	// Inference id == start nonce, so the highest ids are the most recently
-	// started. Scan the tail window once over confirmed records only.
 	start := 0
 	if len(ids) > window {
 		start = len(ids) - window
 	}
-	var minConfirmed, maxConfirmed int64
-	confirmedInWindow := 0
+	confirmed := 0
 	for _, id := range ids[start:] {
-		c := sm.state.Inferences[id].ConfirmedAtTimeMs
-		if c <= 0 {
+		c, ok, err := sm.confirmHeaderMsLocked(sm.state.Inferences[id])
+		if err != nil {
+			return StateClockWindow{}, err
+		}
+		if !ok {
 			continue
 		}
-		if confirmedInWindow == 0 {
-			minConfirmed = c
-			maxConfirmed = c
-			confirmedInWindow++
+		if confirmed == 0 {
+			win.MinConfirmedAtMs = c
+			win.MaxConfirmedAtMs = c
+			confirmed++
 			continue
 		}
-		confirmedInWindow++
-		if c < minConfirmed {
-			minConfirmed = c
+		confirmed++
+		if c < win.MinConfirmedAtMs {
+			win.MinConfirmedAtMs = c
 		}
-		if c > maxConfirmed {
-			maxConfirmed = c
+		if c > win.MaxConfirmedAtMs {
+			win.MaxConfirmedAtMs = c
 		}
 	}
-	if confirmedInWindow == 0 {
-		return StateClockWindow{}
-	}
-	return StateClockWindow{
-		ClockMs:          maxConfirmed,
-		MinConfirmedAtMs: minConfirmed,
-		MaxConfirmedAtMs: maxConfirmed,
-		Known:            true,
-	}
+	return win, nil
 }
 
-// AutoSealStateClock returns the deterministic state-clock window over the
-// current live inference tail. Used for mismatch forensics on devshardctl.
+// AutoSealStateClock returns the seal clock as of the next nonce. Used for
+// mismatch forensics on devshardctl.
 func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return sm.stateClockLocked()
+	win, err := sm.stateClockLocked(sm.state.LatestNonce + 1)
+	if err != nil {
+		return StateClockWindow{}
+	}
+	return win
 }
 
 // autoSealCandidate is one seal-eligible live inference and how the grace gates
@@ -625,18 +645,15 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 // autoSealLocked folds every live inference that has cleared both seal gates
 // into SealedAcc, in ascending id order, and returns the ids it sealed. It is
 // the deterministic replacement for the old host-local, wall-clock prune/seal:
-// both gates read only state, so the user (composing a diff), the host
-// (applying it) and replay all seal the identical set at the identical nonce
-// and agree on the post_state_root.
+// both gates use the same header times every replica resolved before apply.
 //
 // Per live, seal-eligible inference:
 //   - nonce gate (always):  sealNonce >= id + InferenceSealGraceNonces   (id == start nonce)
-//   - clock gate (Finished only): stateClock - ConfirmedAtTimeMs >=
+//   - clock gate (Finished only): time(F at sealNonce) - time(ConfirmedAtHeight) >=
 //     InferenceSealGraceSeconds + ExecutionTimeout
 //
-// ConfirmedAtTimeMs is written at ConfirmStart, so ExecutionTimeout is added to
-// keep a full grace window after the latest legal Finish. Mixed binaries
-// that disagree on this sum diverge on SealedAcc / post_state_root.
+// That is the same interval rule as drain and the timeout challenge.
+// ExecutionTimeout keeps a full grace window after the latest legal Finish.
 //
 // Terminal statuses (Validated/Invalidated/TimedOut) skip the clock gate and
 // seal as soon as the nonce gate clears on the diff that made them terminal.
@@ -653,7 +670,10 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	graceSeconds := int64(sm.state.Config.InferenceSealGraceSeconds)
 	executionTimeout := sm.state.Config.ExecutionTimeout
 	requiredMs := secondsToMs(FinishedClockRequiredSeconds(graceSeconds, executionTimeout))
-	clockWin := sm.stateClockLocked()
+	clockWin, err := sm.stateClockLocked(sealNonce)
+	if err != nil {
+		return nil, StateClockWindow{}, err
+	}
 	stateClockMs := clockWin.ClockMs
 
 	var candidates []autoSealCandidate
@@ -662,10 +682,14 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		if !sealEligibleStatus(rec.Status) {
 			continue
 		}
+		confirmMs, haveConfirm, err := sm.confirmHeaderMsLocked(rec)
+		if err != nil {
+			return nil, StateClockWindow{}, err
+		}
 		candidate := autoSealCandidate{
 			ID:            id,
 			Status:        uint8(rec.Status),
-			ConfirmedAtMs: rec.ConfirmedAtTimeMs,
+			ConfirmedAtMs: confirmMs,
 		}
 		candidate.NonceGateOK = sealNonce >= id+sealGraceNonces
 		if !candidate.NonceGateOK {
@@ -680,9 +704,13 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 			eligible = append(eligible, id)
 			continue
 		}
+		if !haveConfirm {
+			candidates = append(candidates, candidate)
+			continue
+		}
 		var elapsed int64
-		if stateClockMs > rec.ConfirmedAtTimeMs {
-			elapsed = stateClockMs - rec.ConfirmedAtTimeMs
+		if stateClockMs > confirmMs {
+			elapsed = stateClockMs - confirmMs
 		}
 		if elapsed < requiredMs {
 			candidate.GraceRemainingMs = requiredMs - elapsed
@@ -1067,6 +1095,10 @@ func (sm *StateMachine) foldInferenceRecordsInto(group []types.SlotAssignment, p
 					continue
 				}
 				inf.Status = types.StatusStarted
+				if heightsync.StampPresent(msg.ObservedBlockHash) {
+					inf.ConfirmedAtHeight = msg.ObservedHeight
+					inf.ConfirmedAtBlockHash = append([]byte(nil), msg.ObservedBlockHash...)
+				}
 			case *types.DevshardTx_FinishInference:
 				msg := inner.FinishInference
 				if msg == nil {

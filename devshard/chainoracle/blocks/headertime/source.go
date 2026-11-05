@@ -89,6 +89,9 @@ type Source struct {
 	entries  map[uint64]entry
 	order    []uint64
 	inflight map[uint64]*fetchFlight
+	// resolved keeps a fetched or seeded header after the retention floor
+	// has dropped it, so a decision can still read that height.
+	resolved map[uint64]entry
 
 	// runBase is the lowest height of the contiguous tip run. tip is its top.
 	// catchFloor is the lowest anchor whose gap has been applied. A queued
@@ -211,6 +214,7 @@ func New(opts ...Option) *Source {
 		blockInterval: DefaultBlockInterval,
 		entries:       make(map[uint64]entry),
 		inflight:      make(map[uint64]*fetchFlight),
+		resolved:      make(map[uint64]entry),
 		intervalGaps:  make([]int64, 0, blockIntervalSample),
 	}
 	for _, o := range opts {
@@ -325,6 +329,107 @@ func (s *Source) StoredAt(height uint64) (Record, bool) {
 		Verified: e.verified,
 		Epoch:    e.epoch,
 	}, true
+}
+
+// DecisionAt is the header a seal, drain, or timeout decision may read.
+// It includes a row the retention floor has already dropped, once a fetch
+// or Seed has remembered it.
+func (s *Source) DecisionAt(height uint64) (Record, bool) {
+	if s == nil || height == 0 {
+		return Record{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if e, ok := s.entries[height]; ok && e.ms > 0 {
+		floor := s.cachedFloor.Load()
+		if floor == 0 || height >= floor {
+			return Record{Hash: append([]byte(nil), e.hash...), TimeMs: e.ms, Origin: e.origin, Verified: e.verified, Epoch: e.epoch}, true
+		}
+	}
+	if e, ok := s.resolved[height]; ok && e.ms > 0 {
+		return Record{Hash: append([]byte(nil), e.hash...), TimeMs: e.ms, Origin: e.origin, Verified: e.verified, Epoch: e.epoch}, true
+	}
+	return Record{}, false
+}
+
+// EnsureHeights starts a fetch for each height that is not already readable
+// by DecisionAt. It does not wait. A height the retention floor will drop
+// is still remembered for DecisionAt.
+func (s *Source) EnsureHeights(heights []uint64) {
+	if s == nil || len(heights) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	filler := s.filler
+	if s.resolved == nil {
+		s.resolved = map[uint64]entry{}
+	}
+	for _, height := range heights {
+		if height == 0 {
+			continue
+		}
+		if e, ok := s.entries[height]; ok && e.ms > 0 {
+			floor := s.cachedFloor.Load()
+			if floor == 0 || height >= floor {
+				continue
+			}
+		}
+		if e, ok := s.resolved[height]; ok && e.ms > 0 {
+			continue
+		}
+		if _, running := s.inflight[height]; running {
+			continue
+		}
+		if filler == nil {
+			continue
+		}
+		flight := &fetchFlight{done: make(chan struct{})}
+		s.inflight[height] = flight
+		go s.fetchInto(height, flight, filler)
+	}
+}
+
+// Seed stores a header resolved with a local diff record. A hash that
+// disagrees with a row already stored is a conflict.
+func (s *Source) Seed(height uint64, hash []byte, ms int64) error {
+	if s == nil || height == 0 || ms <= 0 {
+		return nil
+	}
+	floor := s.writeFloor()
+	s.mu.Lock()
+	if e, ok := s.entries[height]; ok && len(hash) > 0 && len(e.hash) > 0 && !bytes.Equal(e.hash, hash) {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: height %d", types.ErrHeaderMismatch, height)
+	}
+	if e, ok := s.resolved[height]; ok && len(hash) > 0 && len(e.hash) > 0 && !bytes.Equal(e.hash, hash) {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: height %d", types.ErrHeaderMismatch, height)
+	}
+	if s.resolved == nil {
+		s.resolved = map[uint64]entry{}
+	}
+	at := time.UnixMilli(ms).UTC()
+	var note conflict
+	if len(hash) > 0 {
+		note, _, _ = s.putLocked(height, hash, at, OriginChain, true, floor, 0)
+	}
+	if note.ok && len(hash) > 0 && !bytes.Equal(note.keptHash, hash) && !note.replaced {
+		s.mu.Unlock()
+		s.emit(note)
+		return fmt.Errorf("%w: height %d", types.ErrHeaderMismatch, height)
+	}
+	keptHash := append([]byte(nil), hash...)
+	keptMs := ms
+	if e, ok := s.entries[height]; ok && e.ms > 0 {
+		keptHash = append([]byte(nil), e.hash...)
+		keptMs = e.ms
+	}
+	s.resolved[height] = entry{hash: keptHash, ms: keptMs, origin: OriginChain, verified: true}
+	s.mu.Unlock()
+	s.emit(note)
+	s.notifyListeners()
+	return nil
 }
 
 // StoredHash is the hash stored at height. It does not ask the filler.
@@ -551,6 +656,15 @@ func (s *Source) fetchInto(height uint64, flight *fetchFlight, filler Filler) {
 	note, row, pruned := s.putLocked(height, got.Header.BlockHash, got.Header.Time, got.Origin, got.Verified, floor, 0)
 	cache := s.cache
 	restoring := s.restoring
+	accepted := entry{hash: append([]byte(nil), got.Header.BlockHash...), ms: got.Header.Time.UnixMilli()}
+	if e, ok := s.entries[height]; ok && e.ms > 0 {
+		accepted = e
+		accepted.hash = append([]byte(nil), e.hash...)
+	}
+	if s.resolved == nil {
+		s.resolved = map[uint64]entry{}
+	}
+	s.resolved[height] = accepted
 	s.mu.Unlock()
 	s.emit(note)
 	s.flushHostWarns()
@@ -561,10 +675,10 @@ func (s *Source) fetchInto(height uint64, flight *fetchFlight, filler Filler) {
 		}
 		s.persistUnlocked(cache, rows, floor, pruned)
 	}
-	flight.ms = got.Header.Time.UnixMilli()
-	flight.hash = append([]byte(nil), got.Header.BlockHash...)
+	flight.ms = accepted.ms
+	flight.hash = append([]byte(nil), accepted.hash...)
 	flight.hit = true
-	if row != nil && !restoring {
+	if !restoring {
 		s.notifyListeners()
 	}
 }

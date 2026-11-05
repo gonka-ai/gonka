@@ -134,6 +134,11 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
 		Name:       "sessions_obs_rebuild_pending",
 		Statements: []string{`ALTER TABLE sessions ADD COLUMN obs_rebuild_pending INTEGER NOT NULL DEFAULT 0`},
 	},
+	{
+		ID:         9,
+		Name:       "diffs_header_times",
+		Statements: []string{`ALTER TABLE diffs ADD COLUMN header_times_json TEXT`},
+	},
 }
 
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.

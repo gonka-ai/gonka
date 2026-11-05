@@ -92,54 +92,56 @@ func checkStartStamp(rec *types.InferenceRecord, height uint64, hash []byte) err
 	return fmt.Errorf("%w: confirm stamp %d, start floor %d", types.ErrStampNotFloor, height, want)
 }
 
+// floorTimeMsLocked is time(F) for seal/drain clocks.
+//
+// Policy:
+//  1. Map has height → time: use the map time. If carried TimeMs differs,
+//     warn (dispute stand-in) and still use the map.
+//  2. Map miss + carried TimeMs > 0: use carried.
+//  3. Map miss + carried TimeMs == 0: ErrFloorTimeMissing. Live apply waits
+//     for the map before locking (withResolvedDecision); replay does not.
+//
+// A map row that arrives after drain already settled is ignored — acceptable
+// tradeoff documented in stamped-block-time-revalidation Issue 4.
+// Caller holds sm.mu.
 func (sm *StateMachine) floorTimeMsLocked(p heightsync.FloorPoint) (int64, error) {
 	if p.Height == 0 {
 		return 0, nil
 	}
-	if sm.headerTimes == nil {
-		return 0, fmt.Errorf("%w: no header time source for height %d", types.ErrHeaderPending, p.Height)
+	if src, ok := sm.storedHeadersLocked(); ok {
+		if row, found := src.StoredAt(p.Height); found && row.TimeMs > 0 {
+			if p.TimeMs > 0 && p.TimeMs != row.TimeMs {
+				sm.emitStampTimeMismatchLocked("floor", p.Height, p.Hash, p.TimeMs, row.TimeMs)
+			}
+			return row.TimeMs, nil
+		}
 	}
-	ms, err := sm.headerTimes.HeaderTimeMs(p.Height, p.Hash)
-	if err != nil {
-		return 0, err
+	if p.TimeMs > 0 {
+		return p.TimeMs, nil
 	}
-	if ms <= 0 {
-		return 0, fmt.Errorf("%w: height %d has no block time", types.ErrHeaderPending, p.Height)
-	}
-	return ms, nil
+	return 0, fmt.Errorf("%w: height %d", types.ErrFloorTimeMissing, p.Height)
 }
 
-// recordedFloorTimeLocked is the header time copied onto a start or confirm.
-// A stored map is read with StoredAt, which does not fetch and does not wait.
-// A miss, including a hash that is not the stored row, records 0. A clock that
-// only answers HeaderTimeMs, such as the test fallback, is read once and a
-// miss records 0. Neither case is an apply error.
-func (sm *StateMachine) recordedFloorTimeLocked(p heightsync.FloorPoint) int64 {
-	if p.Height == 0 {
-		return 0
+// stampTimeMsLocked reads a stamp time from the stored header map for gateway
+// TimeoutDue when carried times are unset. StoredAt only — never HeaderTimeMs /
+// fetch under sm.mu. A miss is ErrHeaderPending; a different hash is
+// ErrHeaderMismatch. Seal/drain do not call this. Caller holds sm.mu.
+func (sm *StateMachine) stampTimeMsLocked(height uint64, hash []byte) (int64, error) {
+	if height == 0 {
+		return 0, fmt.Errorf("%w: no height", types.ErrTimeoutNotArmed)
 	}
-	src := sm.headerTimes
-	if src == nil {
-		src = fallbackHeaderTimes
+	reader, ok := sm.storedHeadersLocked()
+	if !ok {
+		return 0, fmt.Errorf("%w: no header time source for height %d", types.ErrHeaderPending, height)
 	}
-	if src == nil {
-		return 0
+	row, ok := reader.StoredAt(height)
+	if !ok || row.TimeMs <= 0 {
+		return 0, fmt.Errorf("%w: height %d", types.ErrHeaderPending, height)
 	}
-	if reader, ok := src.(storedHeaderReader); ok && reader != nil {
-		row, ok := reader.StoredAt(p.Height)
-		if !ok || row.TimeMs <= 0 {
-			return 0
-		}
-		if len(p.Hash) > 0 && len(row.Hash) > 0 && !bytes.Equal(row.Hash, p.Hash) {
-			return 0
-		}
-		return row.TimeMs
+	if len(hash) > 0 && len(row.Hash) > 0 && !bytes.Equal(row.Hash, hash) {
+		return 0, fmt.Errorf("%w: height %d", types.ErrHeaderMismatch, height)
 	}
-	ms, err := src.HeaderTimeMs(p.Height, p.Hash)
-	if err != nil || ms <= 0 {
-		return 0
-	}
-	return ms
+	return row.TimeMs, nil
 }
 
 // HeightAckHashDisagrees reports an ack that must not enter the log.
@@ -209,29 +211,89 @@ func secondsToMs(seconds int64) int64 {
 	return seconds * 1000
 }
 
-func (sm *StateMachine) timeoutWindowLocked(rec *types.InferenceRecord, reason types.TimeoutReason) (anchorMs, windowMs int64, err error) {
+// checkTimeoutReasonLocked verifies the timeout reason matches the record
+// status and that the reason has a height stamp. It does not read the header
+// map and does not check whether the interval has elapsed.
+func (sm *StateMachine) checkTimeoutReasonLocked(rec *types.InferenceRecord, reason types.TimeoutReason) error {
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		if rec.Status != types.StatusPending {
-			return 0, 0, fmt.Errorf("%w: reason=refused requires pending, got %d", types.ErrInvalidTimeoutReason, rec.Status)
+			return fmt.Errorf("%w: reason=refused requires pending, got %d", types.ErrInvalidTimeoutReason, rec.Status)
 		}
-		anchorMs, windowMs = rec.StartedAtTimeMs, secondsToMs(sm.state.Config.RefusalTimeout)
+		if rec.StartedAtHeight == 0 {
+			return fmt.Errorf("%w: no height", types.ErrTimeoutNotArmed)
+		}
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		if rec.Status != types.StatusStarted {
-			return 0, 0, fmt.Errorf("%w: reason=execution requires started, got %d", types.ErrInvalidTimeoutReason, rec.Status)
+			return fmt.Errorf("%w: reason=execution requires started, got %d", types.ErrInvalidTimeoutReason, rec.Status)
 		}
-		anchorMs, windowMs = rec.ConfirmedAtTimeMs, secondsToMs(sm.state.Config.ExecutionTimeout)
+		if rec.ConfirmedAtHeight == 0 {
+			return fmt.Errorf("%w: no height", types.ErrTimeoutNotArmed)
+		}
 	default:
-		return 0, 0, fmt.Errorf("%w: unknown reason %v", types.ErrInvalidTimeoutReason, reason)
+		return fmt.Errorf("%w: unknown reason %v", types.ErrInvalidTimeoutReason, reason)
 	}
-	if anchorMs <= 0 {
-		return 0, 0, fmt.Errorf("%w: reason=%s", types.ErrTimeoutNotArmed, reason)
+	return nil
+}
+
+// timeoutWindowLocked is the gateway TimeoutDue / verifier trigger clock.
+// Prefer carried stamp times; fall back to StoredAt only (never HeaderTimeMs
+// under sm.mu).
+func (sm *StateMachine) timeoutWindowLocked(rec *types.InferenceRecord, reason types.TimeoutReason) (anchorMs, windowMs int64, err error) {
+	return sm.timeoutWindowChooseLocked(rec, reason, false)
+}
+
+// timeoutWindowCarriedLocked is the drain / seal-adjacent clock: carried
+// stamp times only (no map).
+func (sm *StateMachine) timeoutWindowCarriedLocked(rec *types.InferenceRecord, reason types.TimeoutReason) (anchorMs, windowMs int64, err error) {
+	return sm.timeoutWindowChooseLocked(rec, reason, true)
+}
+
+func (sm *StateMachine) timeoutWindowChooseLocked(rec *types.InferenceRecord, reason types.TimeoutReason, carriedOnly bool) (anchorMs, windowMs int64, err error) {
+	if err = sm.checkTimeoutReasonLocked(rec, reason); err != nil {
+		return 0, 0, err
+	}
+	var height uint64
+	var hash []byte
+	switch reason {
+	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
+		anchorMs = rec.StartedAtTimeMs
+		height, hash = rec.StartedAtHeight, rec.StartedAtBlockHash
+		windowMs = secondsToMs(sm.state.Config.RefusalTimeout)
+	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
+		anchorMs = rec.ConfirmedAtTimeMs
+		height, hash = rec.ConfirmedAtHeight, rec.ConfirmedAtBlockHash
+		windowMs = secondsToMs(sm.state.Config.ExecutionTimeout)
+	}
+	if anchorMs > 0 {
+		return anchorMs, windowMs, nil
+	}
+	if carriedOnly {
+		return 0, 0, fmt.Errorf("%w: no carried stamp time", types.ErrTimeoutNotArmed)
+	}
+	anchorMs, err = sm.stampTimeMsLocked(height, hash)
+	if err != nil {
+		return 0, 0, err
 	}
 	return anchorMs, windowMs, nil
 }
 
 func (sm *StateMachine) timeoutRemainingLocked(rec *types.InferenceRecord, reason types.TimeoutReason, nonce uint64) (time.Duration, error) {
-	anchorMs, windowMs, err := sm.timeoutWindowLocked(rec, reason)
+	return sm.timeoutRemainingChooseLocked(rec, reason, nonce, false)
+}
+
+func (sm *StateMachine) timeoutRemainingCarriedLocked(rec *types.InferenceRecord, reason types.TimeoutReason, nonce uint64) (time.Duration, error) {
+	return sm.timeoutRemainingChooseLocked(rec, reason, nonce, true)
+}
+
+func (sm *StateMachine) timeoutRemainingChooseLocked(rec *types.InferenceRecord, reason types.TimeoutReason, nonce uint64, carriedOnly bool) (time.Duration, error) {
+	var anchorMs, windowMs int64
+	var err error
+	if carriedOnly {
+		anchorMs, windowMs, err = sm.timeoutWindowCarriedLocked(rec, reason)
+	} else {
+		anchorMs, windowMs, err = sm.timeoutWindowLocked(rec, reason)
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -239,7 +301,21 @@ func (sm *StateMachine) timeoutRemainingLocked(rec *types.InferenceRecord, reaso
 	if err != nil {
 		return 0, err
 	}
-	nowMs, err := sm.floorTimeMsLocked(p)
+	var nowMs int64
+	if carriedOnly {
+		nowMs, err = sm.floorTimeMsLocked(p)
+	} else {
+		// Gateway TimeoutDue: map prefer / carried only (same as drain). Never
+		// HeaderTimeMs under sm.mu — a miss is ErrHeaderPending for the
+		// trigger to retry outside the lock.
+		nowMs, err = sm.floorTimeMsLocked(p)
+		if err != nil && errors.Is(err, types.ErrFloorTimeMissing) {
+			if p.Height == 0 {
+				return 0, fmt.Errorf("%w: no height", types.ErrTimeoutNotArmed)
+			}
+			return 0, fmt.Errorf("%w: height %d", types.ErrHeaderPending, p.Height)
+		}
+	}
 	if err != nil {
 		return 0, err
 	}

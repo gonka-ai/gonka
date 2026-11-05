@@ -264,8 +264,8 @@ func gatewayHeaderTimes() state.HeaderTimeSource {
 }
 
 // requireGatewayHeaderTimes is the startup check for the chat gate and for
-// StartedAtTimeMs. A nil map is the same cause the process used to log and
-// then serve with.
+// timeout decisions, which read this map. A nil map is the same cause the
+// process used to log and then serve with.
 func requireGatewayHeaderTimes(src state.HeaderTimeSource) error {
 	if src == nil {
 		return fmt.Errorf("header_times_unwired: no chain source for block times; inferences cannot start once hosts stamp a height-sync floor")

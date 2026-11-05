@@ -606,6 +606,10 @@ func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 	if !ok || hNow == 0 {
 		return drain, nil
 	}
+	stampTime, err := s.resolveStampTimeLocked(hNow, hash, s.floorStampCandidateLocked(s.nonce+1, hNow))
+	if err != nil {
+		return drain, err
+	}
 
 	slots := uint64(len(s.group))
 	// The turn's identity is the nonce its first heartbeat lands at, so the
@@ -622,6 +626,11 @@ func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 	spanTxs := s.heartbeat.SpanTxs(hNow, hash, slots, reason, vector)
 	if len(spanTxs) == 0 {
 		return drain, nil
+	}
+	for _, tx := range spanTxs {
+		if hb := tx.GetHeartbeat(); hb != nil {
+			hb.ObservedTimeMs = stampTime
+		}
 	}
 
 	out := drain

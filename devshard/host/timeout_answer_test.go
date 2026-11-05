@@ -79,7 +79,7 @@ func (s *scriptMap) WatchHeaders(fn func()) func() {
 	return func() {}
 }
 
-func (s *scriptMap) TryHold(id uint64, reason types.TimeoutReason) (func(bool), bool) {
+func (s *scriptMap) TryHold(id uint64, reason types.TimeoutReason) (func(bool), error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.marks == nil {
@@ -88,7 +88,16 @@ func (s *scriptMap) TryHold(id uint64, reason types.TimeoutReason) (func(bool), 
 	key := deferralKey{inferenceID: id, reason: reason}
 	if mark, ok := s.marks[key]; ok {
 		warnDuplicateChallenge(id, reason, mark == answerVoted)
-		return nil, false
+		return nil, ErrDuplicateChallenge
+	}
+	held := 0
+	for _, mark := range s.marks {
+		if mark == answerHeld {
+			held++
+		}
+	}
+	if held >= maxConcurrentAnswers {
+		return nil, ErrAnswerBusy
 	}
 	s.marks[key] = answerHeld
 	return func(voted bool) {
@@ -101,7 +110,7 @@ func (s *scriptMap) TryHold(id uint64, reason types.TimeoutReason) (func(bool), 
 		if s.marks[key] == answerHeld {
 			delete(s.marks, key)
 		}
-	}, true
+	}, nil
 }
 
 func (s *scriptMap) ForgetTimeoutVote(id uint64, reason types.TimeoutReason) {
@@ -285,7 +294,45 @@ func TestVerifierFeedArrivesDuringTheWait(t *testing.T) {
 	require.Equal(t, 1, m.afterCount(), "the remaining feed wait is not armed again")
 }
 
-func TestExecutorHeaderPendingDoesNotExtendTheVerifierWait(t *testing.T) {
+// Issue 12.5: journal floor is at F; the verifier map still lacks F (one block
+// behind). Within AnswerWait there is no vote; after F arrives and is past the
+// window, the verifier votes for the refusal.
+func TestIssue12_VerifierOneBlockBehindFloor_NoVoteThenAccept(t *testing.T) {
+	now := time.UnixMilli(time.Now().UnixMilli())
+	const floorHeight uint64 = 100
+	m := &scriptMap{now: now, missing: true, interval: headertime.AnswerWait}
+	st := stateWithPendingFull(1, 1)
+	st.Inferences[1].StartedAtHeight = floorHeight
+	st.Inferences[1].StartedAtBlockHash = []byte{0xaa}
+	exec := &countingExecutor{}
+
+	done := make(chan error, 1)
+	var accept bool
+	go func() {
+		var err error
+		accept, err = VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, exec, nil, m)
+		done <- err
+	}()
+	require.Eventually(t, func() bool { return m.afterCount() == 1 }, time.Second, 5*time.Millisecond)
+	require.Contains(t, m.asked, floorHeight)
+	require.Equal(t, int32(0), exec.calls.Load(), "behind on F: no challenge / no vote yet")
+	require.False(t, m.voted(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED))
+
+	m.mu.Lock()
+	require.Equal(t, headertime.AnswerWait, m.afters[0])
+	m.now = now.Add(10 * time.Second)
+	m.missing = false
+	m.stamp = now.Add(-headertime.AnswerWait - time.Millisecond)
+	m.mu.Unlock()
+
+	m.notify()
+	require.NoError(t, <-done)
+	require.True(t, accept, "after F lands past the window, vote yes for refusal")
+	require.Equal(t, int32(1), exec.calls.Load())
+	require.True(t, m.voted(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED))
+}
+
+func TestExecutorUnreachableDoesNotExtendTheVerifierWait(t *testing.T) {
 	now := time.UnixMilli(time.Now().UnixMilli())
 	m := &scriptMap{now: now, missing: true, interval: headertime.AnswerWait}
 	st := stateWithPendingFull(1, 1)
@@ -311,7 +358,7 @@ func TestExecutorHeaderPendingDoesNotExtendTheVerifierWait(t *testing.T) {
 
 	m.notify()
 	require.NoError(t, <-done)
-	require.True(t, accept, "once this verifier's map is due, header_pending is a yes vote")
+	require.True(t, accept, "once this verifier's map is due, an unreachable executor is a yes vote")
 	require.Equal(t, 1, exec.calls)
 	require.Equal(t, 1, m.afterCount(), "the executor reply does not arm another wait")
 }
@@ -403,6 +450,23 @@ func TestDuplicateReasonsStayIndependent(t *testing.T) {
 	require.True(t, executionAccept)
 	require.Equal(t, int32(1), refusedExec.calls.Load())
 	require.Equal(t, int32(1), executionExec.calls.Load())
+}
+
+func TestRememberedTimeoutVoteReplaysSignature(t *testing.T) {
+	h := &Host{}
+	sig := []byte{0xab, 0xcd}
+	h.RememberTimeoutVote(7, types.TimeoutReason_TIMEOUT_REASON_REFUSED, sig, 3)
+	got, slot, ok := h.LookupTimeoutVote(7, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.True(t, ok)
+	require.Equal(t, sig, got)
+	require.Equal(t, uint32(3), slot)
+
+	_, err := h.TryHold(7, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.ErrorIs(t, err, ErrDuplicateChallenge, "a remembered vote still occupies the hold")
+
+	h.ForgetTimeoutVote(7, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	_, _, ok = h.LookupTimeoutVote(7, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.False(t, ok)
 }
 
 func TestVotedChallengeIsRememberedUntilTheRecordMoves(t *testing.T) {
@@ -568,4 +632,139 @@ func TestVerifierMissingFeedLeavesAnotherConfirmRunning(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelling the wait did not return")
 	}
+}
+
+func TestChallengeStampExecutionCarriesConfirmHash(t *testing.T) {
+	rec := &types.InferenceRecord{
+		Status:               types.StatusStarted,
+		ConfirmedAtHeight:    70,
+		ConfirmedAtBlockHash: []byte{0xb1},
+		StartedAtHeight:      40,
+		StartedAtBlockHash:   []byte{0xa1},
+	}
+	h, hash := challengeStamp(rec, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	require.Equal(t, uint64(70), h)
+	require.Equal(t, []byte{0xb1}, hash)
+
+	h, hash = challengeStamp(rec, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.Equal(t, uint64(40), h)
+	require.Equal(t, []byte{0xa1}, hash)
+}
+
+func TestStoredStampTimeRejectsConfirmHashMismatch(t *testing.T) {
+	src := headertime.New()
+	src.Observe(&blocks.Header{Height: 70, BlockHash: []byte{0xb1}, Time: time.UnixMilli(1_000)}, headertime.OriginDAPI, true)
+
+	ms, ok := storedStampTime(src, 70, []byte{0xb1})
+	require.True(t, ok)
+	require.Equal(t, int64(1_000), ms)
+
+	_, ok = storedStampTime(src, 70, []byte{0xff})
+	require.False(t, ok, "a fork hash at the same height is not the confirm stamp")
+
+	ms, ok = storedStampTime(src, 70, nil)
+	require.True(t, ok, "empty hash keeps the legacy height-only read")
+	require.Equal(t, int64(1_000), ms)
+}
+
+func TestVerifierExecutionRejectsForkHashAtConfirmHeight(t *testing.T) {
+	now := time.UnixMilli(time.Now().UnixMilli())
+	wantHash := []byte{0xb1}
+	forkHash := []byte{0xff}
+	src := headertime.New()
+	src.Observe(&blocks.Header{Height: 70, BlockHash: forkHash, Time: now.Add(-2 * time.Minute)}, headertime.OriginDAPI, true)
+
+	user := testutil.MustGenerateKey(t)
+	hostSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	cfg := testutil.DefaultConfig(1)
+	sm, err := state.NewStateMachine("escrow-1", cfg, group, 100000, user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 100000),
+		state.WithHeaderTimes(src))
+	require.NoError(t, err)
+	host, err := NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil)
+	require.NoError(t, err)
+
+	rec := &types.InferenceRecord{
+		Status:               types.StatusStarted,
+		ConfirmedAtHeight:    70,
+		ConfirmedAtBlockHash: wantHash,
+	}
+	ms, ok := host.StampHeaderTime(challengeStamp(rec, types.TimeoutReason_TIMEOUT_REASON_EXECUTION))
+	require.False(t, ok, "map row for a fork hash must not satisfy the confirm stamp")
+	require.Zero(t, ms)
+}
+
+// Issue 11: early cancel of waitAnswer must return promptly (NewTimer is Stop'd).
+func TestIssue11_WaitAnswerCancelReturnsPromptly(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- waitAnswer(ctx, nil, time.Hour, nil)
+	}()
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("waitAnswer did not return after cancel; timer likely not Stop'd")
+	}
+}
+
+// Issue 11: answer memory is dropped when the inference leaves the live map.
+func TestIssue11_ForgetAnswersWhenInferenceLeavesLive(t *testing.T) {
+	h := &Host{}
+	sig := []byte{0x11}
+	h.RememberTimeoutVote(9, types.TimeoutReason_TIMEOUT_REASON_REFUSED, sig, 1)
+	h.RememberTimeoutVote(9, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, sig, 1)
+	_, _, ok := h.LookupTimeoutVote(9, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.True(t, ok)
+
+	h.answerHolds.forgetInference(9)
+	_, _, ok = h.LookupTimeoutVote(9, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.False(t, ok)
+	_, _, ok = h.LookupTimeoutVote(9, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	require.False(t, ok)
+}
+
+// Issue 11: past maxConcurrentAnswers, beginAnswer returns ErrAnswerBusy
+// (accept=false, no vote) rather than starting another wait.
+func TestIssue11_AnswerCapacityRejectsExtraCheck(t *testing.T) {
+	h := &Host{}
+	releases := make([]func(bool), 0, maxConcurrentAnswers)
+	for i := 0; i < maxConcurrentAnswers; i++ {
+		release, err := h.TryHold(uint64(i+1), types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+		require.NoError(t, err)
+		releases = append(releases, release)
+	}
+	_, err := h.TryHold(uint64(maxConcurrentAnswers+1), types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.ErrorIs(t, err, ErrAnswerBusy)
+
+	// Voted entries do not count toward the concurrent cap.
+	releases[0](true)
+	_, err = h.TryHold(uint64(maxConcurrentAnswers+1), types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.NoError(t, err)
+
+	for i := 1; i < len(releases); i++ {
+		releases[i](false)
+	}
+}
+
+func TestIssue11_ForgetAnswersLeftLiveUsesBeforeSet(t *testing.T) {
+	user := testutil.MustGenerateKey(t)
+	hostSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	cfg := testutil.DefaultConfig(1)
+	sm, err := state.NewStateMachine("escrow-1", cfg, group, 100000, user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 100000))
+	require.NoError(t, err)
+	h, err := NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil)
+	require.NoError(t, err)
+
+	h.RememberTimeoutVote(42, types.TimeoutReason_TIMEOUT_REASON_REFUSED, []byte{0x42}, 0)
+	before := map[uint64]struct{}{42: {}}
+	h.forgetAnswersLeftLive(before)
+	_, _, ok := h.LookupTimeoutVote(42, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.False(t, ok, "id absent from live map must drop answer memory")
 }

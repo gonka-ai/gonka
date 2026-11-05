@@ -116,7 +116,7 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
 	}
-	return nil
+	return sm.checkObservedStampTimeLocked("heartbeat", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs)
 }
 
 // applyHeightAck accepts MsgHeightAck into Diff while Active. Log-plane L0–L7
@@ -141,6 +141,9 @@ func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	}
 	if !sm.hostSignerAllowedLocked(msg.SlotId, recovered) {
 		return fmt.Errorf("%w: expected %s, got %s", heightsync.ErrAckSigInvalid, expected, recovered)
+	}
+	if err := sm.checkObservedStampTimeLocked("height_ack", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
+		return err
 	}
 	sm.noteAcceptedHostAckLocked(msg)
 	return nil
@@ -215,6 +218,23 @@ func (sm *StateMachine) HeightSyncFloorAsOf(nonce uint64) (uint64, []byte, bool)
 	return h, append([]byte(nil), hash...), known
 }
 
+// HeightSyncFloorPointAsOf is F(m) with hash, author, and carried TimeMs.
+func (sm *StateMachine) HeightSyncFloorPointAsOf(nonce uint64) (heightsync.FloorPoint, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.heightSyncFloor == nil || !sm.floorReady {
+		return heightsync.FloorPoint{}, false
+	}
+	p, known := sm.heightSyncFloor.PointAsOf(nonce)
+	if !known {
+		return heightsync.FloorPoint{}, false
+	}
+	if len(p.Hash) > 0 {
+		p.Hash = append([]byte(nil), p.Hash...)
+	}
+	return p, true
+}
+
 // FloorPointAtHeight is the floor entry whose height is exactly height, with
 // its block hash. The index stores running maxima only. A confirm between two
 // maxima is absent here; the execution deadline reads the header map by height.
@@ -274,6 +294,15 @@ func observeHeightSync(st *types.EscrowState, tracker *heightsync.TurnTracker, f
 	// verifiers different floors and therefore different L0 verdicts for every
 	// later diff — an escrow split. Floor updates therefore run only on apply.
 	floor.Observe(nonce, floorClaims(st, txs))
+	for _, mm := range floor.DrainTimeMismatches() {
+		logging.Warn("floor stamp time disagrees with an earlier floor time",
+			"subsystem", "heightsync",
+			"height", mm.Height,
+			"hash", fmt.Sprintf("%x", mm.Hash),
+			"kept_time_ms", mm.Kept,
+			"got_time_ms", mm.Got,
+		)
+	}
 	st.HeightSyncLastCompletedHeight = tracker.LastCompletedHeight()
 	st.HeightSyncLatestTurnStart = tracker.LatestTurnStart()
 }
@@ -403,9 +432,34 @@ func floorClaims(st *types.EscrowState, txs []*types.DevshardTx) []heightsync.Fl
 			}
 			signer = rec.ExecutorSlot
 		}
-		claims = append(claims, heightsync.FloorClaim{Signer: signer, Height: h, Hash: hash})
+		claims = append(claims, heightsync.FloorClaim{
+			Signer: signer,
+			Height: h,
+			Hash:   hash,
+			TimeMs: stampObservedTimeMs(tx),
+		})
 	}
 	return claims
+}
+
+func stampObservedTimeMs(tx *types.DevshardTx) int64 {
+	if tx == nil {
+		return 0
+	}
+	switch {
+	case tx.GetStartInference() != nil:
+		return tx.GetStartInference().GetObservedTimeMs()
+	case tx.GetConfirmStart() != nil:
+		return tx.GetConfirmStart().GetObservedTimeMs()
+	case tx.GetFinishInference() != nil:
+		return tx.GetFinishInference().GetObservedTimeMs()
+	case tx.GetHeartbeat() != nil:
+		return tx.GetHeartbeat().GetObservedTimeMs()
+	case tx.GetHeightAck() != nil:
+		return tx.GetHeightAck().GetObservedTimeMs()
+	default:
+		return 0
+	}
 }
 
 // HeightSyncLatestTurnStart is the span-start nonce of the newest turn folded from

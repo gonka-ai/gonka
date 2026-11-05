@@ -20,6 +20,7 @@ func (f *FloorIndex) ToProto() *types.FloorIndexProto {
 			Height: e.height,
 			Hash:   append([]byte(nil), e.hash...),
 			Author: e.author,
+			TimeMs: e.timeMs,
 		}
 	}
 	return &types.FloorIndexProto{
@@ -72,6 +73,7 @@ func FloorIndexFromProto(cfg FloorConfig, p *types.FloorIndexProto) (*FloorIndex
 				height: e.Height,
 				hash:   append([]byte(nil), e.Hash...),
 				author: e.Author,
+				timeMs: e.TimeMs,
 			})
 		}
 	}

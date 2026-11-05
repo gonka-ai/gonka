@@ -295,6 +295,13 @@ ALTER TABLE devshard_validation_credits
     ADD COLUMN IF NOT EXISTS hold_token     UUID,
     ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
 	},
+	{
+		ID:   21,
+		Name: "devshard_diffs_header_times",
+		Statements: []string{`
+ALTER TABLE devshard_diffs
+    ADD COLUMN IF NOT EXISTS header_times_json TEXT`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io"
+	"net"
+	"syscall"
 
 	"google.golang.org/protobuf/proto"
 
@@ -248,7 +252,7 @@ func VerifyRefusedTimeout(
 	ingest TxSink,
 	ev EvidenceVerifier,
 ) (bool, error) {
-	return verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev)
+	return verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev, nil)
 }
 
 type refusedChallenge int
@@ -270,6 +274,7 @@ func verifyRefusedTimeout(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
+	unreachable func(error) bool,
 ) (accept bool, err error) {
 	if rec == nil {
 		return false, fmt.Errorf("inference %d not found", inferenceID)
@@ -316,17 +321,47 @@ func verifyRefusedTimeout(
 	}
 
 	if executorClient == nil {
+		// VerifyRefusedProgress uses a nil client as a local preflight. That
+		// true means "gates passed, continue to challenge" — not a cast vote.
+		// Drop the hold so the real challenge can take it (or the nil-client
+		// tip/nonce short path can challenge next).
+		if release != nil {
+			release(false)
+			release = nil
+		}
 		return true, nil
 	}
 	outcome, callErr := challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, diffs, executorClient, ingest, ev)
-	return finishRefusedChallenge(outcome, callErr)
+	return finishRefusedChallenge(outcome, callErr, unreachable)
 }
 
-// finishRefusedChallenge accepts the refusal when the executor cannot serve
-// a receipt. header_pending is that case: the host has no response to return.
-func finishRefusedChallenge(outcome refusedChallenge, callErr error) (bool, error) {
+// defaultRefusedUnreachable is used when VerifyRefusedTimeout has no transport
+// classifier. Plain ErrHeaderPending is not a yes; net/context failures are.
+// Production refusal goes through VerifyRefusedProgress with executorUnreachable.
+func defaultRefusedUnreachable(err error) bool {
+	if err == nil || errors.Is(err, types.ErrHeaderPending) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+// finishRefusedChallenge accepts the refusal only when the challenge error is
+// unreachable (same rule as classifyChallenge). Answered soft failures,
+// including plain ErrHeaderPending, are not a yes vote.
+func finishRefusedChallenge(outcome refusedChallenge, callErr error, unreachable func(error) bool) (bool, error) {
 	if callErr != nil {
-		return true, nil
+		if unreachable == nil {
+			unreachable = defaultRefusedUnreachable
+		}
+		return unreachable(callErr), nil
 	}
 	return outcome != refusedReceipt, nil
 }
@@ -438,8 +473,8 @@ func VerifyExecutionTimeout(
 	}
 
 	// One challenge, no journal. A nil payload does not sign a receipt or
-	// start execution. A host that cannot serve, including header_pending,
-	// has no finish to return, and the timeout stands.
+	// start execution. A host that cannot serve has no finish to return,
+	// and the timeout stands.
 	if executorClient != nil {
 		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, nil)
 		if err == nil {

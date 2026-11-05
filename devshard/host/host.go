@@ -70,6 +70,7 @@ type HostResponse struct {
 	ConfirmedAt       int64  // executor wall-clock timestamp, 0 if not executor
 	ObservedHeight    uint64 // executor stamp; 0 if unstamped
 	ObservedBlockHash []byte
+	ObservedTimeMs    int64 // header time for the stamp; 0 if unset
 	// EnvelopeHeight is the response-leg HeightSyncSection.mainnet_height when
 	// the hop attached a section (HasEnvelope). Honest compose uses it to drop
 	// a host-signed raise that does not match this hop's envelope (spec §14).
@@ -94,6 +95,7 @@ type receiptOutcome struct {
 	executionExpected bool
 	observedHeight    uint64
 	observedHash      []byte
+	observedTimeMs    int64
 	// lookupStored means the inference already ran here and the caller loads
 	// its stored body outside the host lock. No execution claim is held.
 	lookupStored bool
@@ -189,7 +191,8 @@ type Host struct {
 	oracle blocks.BlockOracle
 
 	// answerNow and answerAfter are the verifier's wall clock and timer.
-	// Tests set them. Production leaves both nil and uses time.Now and time.After.
+	// Tests set them. Production leaves both nil: waitAnswer uses time.Now
+	// and time.NewTimer (stopped on early return).
 	answerNow   func() time.Time
 	answerAfter func(time.Duration) <-chan time.Time
 	answerHolds answerHolds
@@ -802,6 +805,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		ConfirmedAt:        confirmedAt,
 		ObservedHeight:     receiptOutcome.observedHeight,
 		ObservedBlockHash:  append([]byte(nil), receiptOutcome.observedHash...),
+		ObservedTimeMs:     receiptOutcome.observedTimeMs,
 		Mempool:            h.mempool.Txs(),
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
@@ -1052,6 +1056,17 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 	if obsH == 0 || !heightsync.StampPresent(obsHash) {
 		return nil, errConfirmAwaitingHeader
 	}
+	var tipTime int64
+	if obsH == tipH {
+		tipTime = headerStampTime(hdr, hdrErr)
+	}
+	if tipTime <= 0 {
+		tipTime = h.floorStampCandidate(inferenceID, obsH)
+	}
+	obsTime, err := h.resolveStampTime(obsH, obsHash, tipTime)
+	if err != nil {
+		return nil, err
+	}
 	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,
@@ -1061,6 +1076,7 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 		EscrowId:          h.escrowID,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
+		ObservedTimeMs:    obsTime,
 	})
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
@@ -1074,6 +1090,7 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 		ExecutorSig:       sig,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
+		ObservedTimeMs:    obsTime,
 	}
 	h.mempool.Add(MempoolEntry{
 		Tx:         &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}},
@@ -1178,6 +1195,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	sig, confirmedAt := confirm.ExecutorSig, time.Now().Unix()
 	outcome.observedHeight = confirm.ObservedHeight
 	outcome.observedHash = confirm.ObservedBlockHash
+	outcome.observedTimeMs = confirm.ObservedTimeMs
 
 	// Dedup: return receipt (proves executor alive) but skip execution.
 	if alreadyExecuting {
@@ -1366,11 +1384,32 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
 
-	obsH, obsHash := h.observedTip(ctx)
+	tipH, tipHash, tipTime := h.observedTipWithTime(ctx)
+	var envH uint64
+	var envHash []byte
 	if job != nil {
-		obsH, obsHash = heightsync.FinishObserved(job.ResponseEnvelopeHeight, job.ResponseEnvelopeHash, obsH, obsHash)
+		envH, envHash = job.ResponseEnvelopeHeight, job.ResponseEnvelopeHash
 	}
+	obsH, obsHash := heightsync.FinishObserved(envH, envHash, tipH, tipHash)
+	candidate := int64(0)
+	if obsH == tipH && bytes.Equal(obsHash, tipHash) {
+		candidate = tipTime
+	}
+	preLiftH := obsH
 	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
+	if obsH != preLiftH || candidate <= 0 {
+		if floorTime := h.floorStampCandidate(inferenceID, obsH); floorTime > 0 {
+			candidate = floorTime
+		} else if obsH != preLiftH {
+			candidate = 0
+		}
+	}
+	obsTime, timeErr := h.resolveStampTime(obsH, obsHash, candidate)
+	if timeErr != nil {
+		return result, observability.FailReceiptOrphan(ctx, h.escrowID,
+			observability.ReasonSignFinishErr, observability.WhereHostPublishFinish,
+			observability.StageFinished, "stamp time mismatch", timeErr, "inference_id", inferenceID)
+	}
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,
 		ResponseHash:      result.ResponseHash,
@@ -1381,6 +1420,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		EscrowId:          h.escrowID,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
+		ObservedTimeMs:    obsTime,
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {

@@ -1268,6 +1268,7 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 			ExecutorSig:       resp.Receipt,
 			ObservedHeight:    resp.ObservedHeight,
 			ObservedBlockHash: resp.ObservedBlockHash,
+			ObservedTimeMs:    resp.ObservedTimeMs,
 		})
 	}
 	for _, tx := range resp.Mempool {
@@ -1428,7 +1429,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.diffs = append(s.diffs, diff)
 		s.nonce = nonce
 		s.dropDiffPrefixLocked()
-		s.retainPendingLocked(append(held, vd.Deferred...), vd.Applied)
+		s.retainPendingLocked(held, vd.Applied)
 		s.maybeSaveSnapshotLocked()
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
@@ -1438,11 +1439,10 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return diff, hostIdx, nil
 	}
 
-	postStateRoot, applied, deferred, err := s.sm.ApplyLocalBestEffortDeferred(nonce, candidates)
+	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
 	if err != nil {
 		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
 	}
-	held = append(held, deferred...)
 	diff, err = s.signDiff(nonce, applied, postStateRoot)
 	if err != nil {
 		return types.Diff{}, 0, err
@@ -1911,6 +1911,11 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if h, hash, ok := s.referenceStampLocked(nonce); ok {
 		start.ObservedHeight = h
 		start.ObservedBlockHash = hash
+		ms, err := s.resolveStampTimeLocked(h, hash, s.floorStampCandidateLocked(nonce, h))
+		if err != nil {
+			return nil, err
+		}
+		start.ObservedTimeMs = ms
 	}
 	startTx := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
 		StartInference: start,
@@ -2069,6 +2074,7 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 		ExecutorSig:       resp.Receipt,
 		ObservedHeight:    resp.ObservedHeight,
 		ObservedBlockHash: resp.ObservedBlockHash,
+		ObservedTimeMs:    resp.ObservedTimeMs,
 	})
 }
 
@@ -4097,7 +4103,9 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 					// A dropped receipt cannot support an execution timeout. The
 					// refusal path can recover it or refund the still-pending record.
 					reasonLabel = "refused"
-					deadline = refusalWallDeadline(sendTime, s.sm.Config().RefusalTimeout)
+					s.mu.Lock()
+					deadline = s.refusalDeadlineLocked(sendTime, *rec, s.sm.Config().RefusalTimeout)
+					s.mu.Unlock()
 				}
 			}
 		}
@@ -4374,12 +4382,39 @@ func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, tim
 		outcome.confirmedAt = time.Now().Unix()
 	}
 	label := "refused"
-	deadline := refusalWallDeadline(sendTime, cfg.RefusalTimeout)
+	deadline := s.refusalDeadlineLocked(sendTime, rec, cfg.RefusalTimeout)
 	if started || outcome != nil && outcome.confirmedAt > 0 && s.pendingConfirmLocked(nonce) != nil {
 		label = "execution"
 		deadline = s.executionDeadlineLocked(nonce, rec, outcome, time.Now())
 	}
 	return label, deadline
+}
+
+// refusalDeadlineLocked is the gateway refusal trigger. A live sendTime is the
+// wall clock from when this process sent the start. After a restart sendTime
+// is zero: the anchor is time(StartedAtHeight) from the local header map
+// (same StoredAt path as execution), which survives in headertime.sqlite /
+// Postgres. A map miss does not open the challenge; the waiter polls.
+// Caller holds s.mu.
+func (s *Session) refusalDeadlineLocked(sendTime time.Time, rec types.InferenceRecord, refusalTimeoutSeconds int64) time.Time {
+	interval := timeoutInterval(refusalTimeoutSeconds)
+	if !sendTime.IsZero() {
+		return refusalWallDeadline(sendTime, refusalTimeoutSeconds)
+	}
+	startMs, ok := s.startedHeightTimeLocked(rec)
+	now := time.Now()
+	d := headertime.Decide(now, startMs, !ok, interval, 0, headertime.CallerGateway)
+	switch d.Outcome {
+	case headertime.OutcomeDue:
+		return now.Add(-time.Millisecond)
+	case headertime.OutcomeNotYet:
+		if d.Delta <= 0 {
+			return now.Add(time.Millisecond)
+		}
+		return now.Add(d.Delta)
+	default:
+		return now.Add(executionFeedPoll)
+	}
 }
 
 // executionDeadlineLocked is the gateway execution trigger. The caller holds
@@ -4432,21 +4467,61 @@ type headerAtHeight interface {
 	StoredAt(height uint64) (headertime.Record, bool)
 }
 
+// floorStampCandidateLocked returns F(m).TimeMs when stamp height is exactly
+// that floor height. Used as the optimistic ResolveObservedTimeMs candidate on
+// map miss so compose carries the floor time instead of zero. Caller holds s.mu.
+func (s *Session) floorStampCandidateLocked(nonce, height uint64) int64 {
+	if s.sm == nil || height == 0 {
+		return 0
+	}
+	p, ok := s.sm.HeightSyncFloorPointAsOf(nonce)
+	if !ok || p.Height != height || p.TimeMs <= 0 {
+		return 0
+	}
+	return p.TimeMs
+}
+
+// resolveStampTimeLocked applies the optimistic map rule for a stamp the
+// gateway is about to sign. candidate is an event/floor time when the map
+// misses; 0 is allowed. Caller holds s.mu.
+func (s *Session) resolveStampTimeLocked(height uint64, hash []byte, candidate int64) (int64, error) {
+	var src heightsync.StoredStampTime
+	if s.sm != nil {
+		src, _ = s.sm.HeaderTimes().(heightsync.StoredStampTime)
+	}
+	return heightsync.ResolveObservedTimeMs(src, height, hash, candidate)
+}
+
 // confirmedHeightTimeLocked reads time(ConfirmedAtHeight) from the map.
-// The caller holds s.mu. The key is the height. A confirm can sit below the
-// running floor maximum and still have a row, so the floor index is not
-// consulted. A miss reports false. It does not call AwaitHeaderTimeMs.
-// executionDeadlineLocked already waits and retries that miss.
+// The caller holds s.mu. A confirm can sit below the running floor maximum
+// and still have a row, so the floor index is not consulted. When the record
+// carries ConfirmedAtBlockHash, a map row with a different hash is a miss
+// (same rule as the verifier challenge stamp). It does not call
+// AwaitHeaderTimeMs; executionDeadlineLocked already waits and retries.
 func (s *Session) confirmedHeightTimeLocked(rec types.InferenceRecord) (int64, bool) {
-	if rec.ConfirmedAtHeight == 0 || s.sm == nil {
+	return s.stampHeightTimeLocked(rec.ConfirmedAtHeight, rec.ConfirmedAtBlockHash)
+}
+
+// startedHeightTimeLocked reads time(StartedAtHeight) from the map for the
+// refusal restart path. Same StoredAt + hash rules as confirmedHeightTimeLocked.
+// Caller holds s.mu.
+func (s *Session) startedHeightTimeLocked(rec types.InferenceRecord) (int64, bool) {
+	return s.stampHeightTimeLocked(rec.StartedAtHeight, rec.StartedAtBlockHash)
+}
+
+func (s *Session) stampHeightTimeLocked(height uint64, hash []byte) (int64, bool) {
+	if height == 0 || s.sm == nil {
 		return 0, false
 	}
 	store, ok := s.sm.HeaderTimes().(headerAtHeight)
 	if !ok || store == nil {
 		return 0, false
 	}
-	row, ok := store.StoredAt(rec.ConfirmedAtHeight)
+	row, ok := store.StoredAt(height)
 	if !ok || row.TimeMs <= 0 {
+		return 0, false
+	}
+	if len(hash) > 0 && len(row.Hash) > 0 && !bytes.Equal(row.Hash, hash) {
 		return 0, false
 	}
 	return row.TimeMs, true
@@ -4460,9 +4535,10 @@ func confirmedWallPast(confirmedAt int64, interval time.Duration, now time.Time)
 }
 
 // refusalWallDeadline is started_at + RefusalTimeout on the gateway wall
-// clock. It does not add TimeoutBuffer and it does not read a header time.
-// A timeout that does not fit in a Duration saturates instead of wrapping
-// into the past.
+// clock. Live path only. It does not add TimeoutBuffer and it does not read
+// a header time. Restart (zero sendTime) goes through refusalDeadlineLocked
+// and the header map instead. A timeout that does not fit in a Duration
+// saturates instead of wrapping into the past.
 func refusalWallDeadline(sendTime time.Time, refusalTimeoutSeconds int64) time.Time {
 	return sendTime.Add(timeoutInterval(refusalTimeoutSeconds))
 }
@@ -4534,6 +4610,10 @@ func (s *Session) awaitingFloor(nonce uint64, reason types.TimeoutReason) bool {
 	return err == nil && remaining > 0
 }
 
+// timeoutUnarmed reports that this inference can never grow a timeout: no
+// start/confirm height. A missing header-map row is ErrHeaderPending, not
+// unarmed — the gateway keeps the completion and retries once the map fills
+// (restart refusal) or the wall-clock sendTime elapses (live refusal).
 func (s *Session) timeoutUnarmed(nonce uint64) bool {
 	rec, ok := s.sm.GetInference(nonce)
 	if !ok {

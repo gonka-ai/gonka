@@ -19,10 +19,21 @@ import (
 
 func newAckTestHost(t *testing.T, hostIdx int, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer, opts ...HostOption) *Host {
 	t.Helper()
+	return newAckTestHostVersion(t, "", hostIdx, hosts, user, opts...)
+}
+
+// newAckTestHostVersion is newAckTestHost with an explicit state-root tag.
+// Empty version keeps the package fixture (v6 via TestMain).
+func newAckTestHostVersion(t *testing.T, version string, hostIdx int, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer, opts ...HostOption) *Host {
+	t.Helper()
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+	var smOpts []state.SMOption
+	if version != "" {
+		smOpts = append(smOpts, state.WithStateRootAndProtocolVersion(version))
+	}
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000), smOpts...)
 	require.NoError(t, err)
 	all := append([]HostOption{WithGrace(100)}, opts...)
 	h, err := NewHost(sm, hosts[hostIdx], stub.NewInferenceEngine(), "escrow-1", group, nil, all...)
@@ -48,13 +59,18 @@ func stampedHeartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, hei
 	return testutil.SignDiff(t, user, "escrow-1", nonce, d.Txs)
 }
 
-func signedAckTx(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
+func signedAckTx(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte, timeMs ...int64) *types.DevshardTx {
 	t.Helper()
+	var ms int64
+	if len(timeMs) > 0 {
+		ms = timeMs[0]
+	}
 	ack := &types.MsgHeightAck{
 		RefNonce:          ref,
 		SlotId:            slot,
 		ObservedHeight:    height,
 		ObservedBlockHash: append([]byte(nil), hash...),
+		ObservedTimeMs:    ms,
 		SyncState:         types.SyncState_SYNCED,
 		PeerSeen:          []byte{0xff},
 	}
@@ -455,10 +471,11 @@ func TestHost_HeartbeatAck_LagsButClearsHostFloor(t *testing.T) {
 	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or)) // executor(3) = 0
 
 	const slots = uint64(3)
+	const floorTime int64 = 1_600_000_000_000
 	top := []byte{0xaa}
 	d1 := stampedHeartbeatDiff(t, user, 1, 1, 100, slots, top)
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
-		signedAckTx(t, hosts[1], 1, 1, 1, 100, top),
+		signedAckTx(t, hosts[1], 1, 1, 1, 100, top, floorTime),
 		stampedHeartbeatDiff(t, user, 2, 2, 100, slots, top).Txs[0],
 	})
 	d3 := stampedHeartbeatDiff(t, user, 3, 3, 100, slots, top)
@@ -470,6 +487,7 @@ func TestHost_HeartbeatAck_LagsButClearsHostFloor(t *testing.T) {
 	require.Equal(t, uint64(3), acks[0].RefNonce)
 	require.Equal(t, uint64(100), acks[0].ObservedHeight, "lifted to the host-established floor, not own tip 90")
 	require.Equal(t, top, acks[0].ObservedBlockHash, "the carried pair must be the floor's, not the host's")
+	require.Equal(t, floorTime, acks[0].ObservedTimeMs, "floor lift carries floor TimeMs when the map misses")
 	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
 		"the lag is not hidden: it moves to the label the gateway monitors")
 }

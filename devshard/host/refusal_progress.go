@@ -140,7 +140,7 @@ func VerifyRefusedProgress(
 	if unreachable == nil {
 		unreachable = func(error) bool { return true }
 	}
-	localAccept, localErr := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, nil, nil, ev)
+	localAccept, localErr := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, nil, nil, ev, unreachable)
 	if localErr != nil || !localAccept {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
@@ -148,7 +148,7 @@ func VerifyRefusedProgress(
 		return localAccept, localErr
 	}
 	if tip == nil || executorClient == nil || st.LatestNonce == 0 {
-		accept, err = verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev)
+		accept, err = verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev, unreachable)
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
@@ -335,16 +335,15 @@ func challengeAndMaybeRetry(
 }
 
 // classifyChallenge turns a challengeFrom result into an accept decision.
-// done is false when the caller may retry a matching root.
+// done is false when the caller may retry a matching root. Map-lag
+// ErrHeaderPending is not a yes vote; only unreachable() decides that.
 func classifyChallenge(outcome refusedChallenge, err error, unreachable func(error) bool) (accept bool, done bool, ret error) {
 	if err != nil {
 		var call *executorCallError
 		if !errors.As(err, &call) {
 			return false, true, err
 		}
-		// header_pending means the executor cannot serve a receipt. That is
-		// the same vote as any other unreachable probe: accept the refusal.
-		if errors.Is(call.err, types.ErrHeaderPending) || unreachable(call.err) {
+		if unreachable(call.err) {
 			return true, true, nil
 		}
 		return false, false, nil
@@ -436,7 +435,7 @@ func challengeOnce(
 		return outcome, err
 	}
 	releaseColdWalk(ctx)
-	if errors.Is(catchUp.err, types.ErrHeaderPending) || unreachable(catchUp.err) {
+	if unreachable(catchUp.err) {
 		return 0, &executorCallError{err: catchUp.err}
 	}
 	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)

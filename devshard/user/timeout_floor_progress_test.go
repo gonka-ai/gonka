@@ -47,7 +47,7 @@ func TestExecutionTimeoutAppliesAfterTheFloorCoversTheStamp(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	target := time.UnixMilli(rec.ConfirmedAtTimeMs).Add(time.Duration(config.ExecutionTimeout) * time.Second)
+	target := time.UnixMilli(headerStampMs(t, session.StateMachine(), rec.ConfirmedAtHeight, nil)).Add(time.Duration(config.ExecutionTimeout) * time.Second)
 	if d := time.Until(target); d > 0 {
 		time.Sleep(d + 30*time.Millisecond)
 	}
