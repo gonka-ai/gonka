@@ -58,17 +58,11 @@ func classifyChallengeFetch(ctx context.Context, phase *chain.Phase, epochID uin
 	}
 	cause := truncateCause(err.Error())
 	switch {
-	case errors.Is(err, errExecutorFetchCut):
-		// The caller's deadline ended while the executor had not answered
-		// the payload call: kept until the window ends, then the executor's.
-		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
-	case ctx.Err() != nil, errors.Is(err, errPayloadRPCUnavailable), transport.OutboundPeersReleased():
-		// The deadline ended on this host's side of the fetch (its own
-		// signer, peer or chain lookup), or the fetch cannot run here.
+	case errors.Is(err, errPayloadRPCUnavailable), transport.OutboundPeersReleased():
+		// This process cannot run the fetch.
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchLocal, Cause: cause}
-	case errors.Is(err, errExecutorURLUnavailable):
-		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
 	case errors.Is(err, commonvalidation.ErrHashMismatch), errors.Is(err, errExecutorPayloadSignature):
+		// A completed check is not undone by the fetch deadline.
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchMismatch, Cause: cause}
 	case errors.Is(err, commonvalidation.ErrPayloadGone):
 		// Same retention rule as executorFaultVerdict.
@@ -78,6 +72,16 @@ func classifyChallengeFetch(ctx context.Context, phase *chain.Phase, epochID uin
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchUnavailable, Cause: cause}
 	case errors.Is(err, commonvalidation.ErrPayloadTooLarge):
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchUnavailable, Cause: cause}
+	case errors.Is(err, errExecutorFetchCut):
+		// The caller's deadline ended while the executor had not answered
+		// the payload call: kept until the window ends, then the executor's.
+		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
+	case ctx.Err() != nil:
+		// The deadline ended in this host's own signer or chain lookup,
+		// without an established payload verdict.
+		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchLocal, Cause: cause}
+	case errors.Is(err, errExecutorURLUnavailable):
+		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
 	case errors.Is(err, ErrPayloadRateLimited), errors.Is(err, errExecutorPayloadFault):
 		return devshardpkg.ChallengeFetch{Outcome: devshardpkg.ChallengeFetchRetry, ExecutorSide: true, Cause: cause}
 	case errors.Is(err, transport.ErrPeerNoAttachDoor):

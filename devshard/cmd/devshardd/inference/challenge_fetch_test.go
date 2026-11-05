@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"common/completionapi"
 	"common/httpguard"
@@ -284,6 +285,65 @@ func TestFetchChallengePayload_ACutIsTheSideItLandedOn(t *testing.T) {
 			require.Equal(t, testCase.executorSide, got.ExecutorSide)
 		})
 	}
+}
+
+func TestFetchChallengePayload_EstablishedFaultSurvivesFetchDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	t.Cleanup(cancel)
+	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
+	hashMismatch := verifyFetchedPayloadHashes(devshardpkg.ValidateRequest{PromptHash: []byte("different prompt")}, []byte("prompt"), []byte("body"))
+	require.ErrorIs(t, hashMismatch, commonvalidation.ErrHashMismatch)
+	badSignature := tagExecutorPayloadFault(fmt.Errorf("%w: bad signature", errExecutorPayloadSignature))
+	wrapCut := func(err error) error { return fmt.Errorf("%w: %w", errExecutorFetchCut, err) }
+	for _, tc := range []struct {
+		name       string
+		err        error
+		phaseEpoch uint64
+		want       devshardpkg.ChallengeFetchOutcome
+	}{
+		{name: "verified hash mismatch", err: hashMismatch, phaseEpoch: 10, want: devshardpkg.ChallengeFetchMismatch},
+		{name: "invalid executor signature", err: badSignature, phaseEpoch: 10, want: devshardpkg.ChallengeFetchMismatch},
+		{name: "gone inside retention", err: commonvalidation.ErrPayloadGone, phaseEpoch: 11, want: devshardpkg.ChallengeFetchUnavailable},
+		{name: "gone after retention", err: commonvalidation.ErrPayloadGone, phaseEpoch: 12, want: devshardpkg.ChallengeFetchPruned},
+		{name: "too large", err: commonvalidation.ErrPayloadTooLarge, phaseEpoch: 10, want: devshardpkg.ChallengeFetchUnavailable},
+		{name: "gone inside retention wrapped by cut", err: wrapCut(commonvalidation.ErrPayloadGone), phaseEpoch: 11, want: devshardpkg.ChallengeFetchUnavailable},
+		{name: "gone after retention wrapped by cut", err: wrapCut(commonvalidation.ErrPayloadGone), phaseEpoch: 12, want: devshardpkg.ChallengeFetchPruned},
+		{name: "too large wrapped by cut", err: wrapCut(commonvalidation.ErrPayloadTooLarge), phaseEpoch: 10, want: devshardpkg.ChallengeFetchUnavailable},
+	} {
+		for _, voteFalse := range []bool{true, false} {
+			t.Run(fmt.Sprintf("%s/vote_false=%t", tc.name, voteFalse), func(t *testing.T) {
+				v := newFaultTestValidator(tc.phaseEpoch, voteFalse, taggedFetch(tc.err), nil, nil)
+				got := v.FetchChallengePayload(ctx, devshardpkg.ValidateRequest{InferenceID: 1, EpochID: 10})
+				want := tc.want
+				if !voteFalse && (want == devshardpkg.ChallengeFetchMismatch || want == devshardpkg.ChallengeFetchUnavailable) {
+					want = devshardpkg.ChallengeFetchLocal
+				}
+				require.Equal(t, want, got.Outcome, "cause: %s", got.Cause)
+				require.False(t, got.ExecutorSide, "the explicit outcome must not fall through to a retry")
+			})
+		}
+	}
+}
+
+func TestFetchChallengePayload_LocalFailureStaysLocalAfterFetchDeadline(t *testing.T) {
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	t.Cleanup(cancel)
+	for _, err := range []error{errPayloadRPCUnavailable, fmt.Errorf("resolve executor pubkeys: %w", ctx.Err())} {
+		v := newFaultTestValidator(10, true, taggedFetch(err), nil, nil)
+		got := v.FetchChallengePayload(ctx, devshardpkg.ValidateRequest{InferenceID: 1, EpochID: 10})
+		require.Equal(t, devshardpkg.ChallengeFetchLocal, got.Outcome)
+		require.False(t, got.ExecutorSide)
+	}
+}
+
+func TestFetchChallengePayload_ReleasedPeersDoNotVoteOnEstablishedFault(t *testing.T) {
+	t.Cleanup(transport.ResetOutboundPeerReleaseForTest)
+	transport.ReleaseOutboundPeerConns()
+	hashMismatch := verifyFetchedPayloadHashes(devshardpkg.ValidateRequest{PromptHash: []byte("different prompt")}, []byte("prompt"), []byte("body"))
+	v := newFaultTestValidator(10, true, taggedFetch(hashMismatch), nil, nil)
+	got := v.FetchChallengePayload(context.Background(), devshardpkg.ValidateRequest{InferenceID: 1, EpochID: 10})
+	require.Equal(t, devshardpkg.ChallengeFetchLocal, got.Outcome)
+	require.False(t, got.ExecutorSide)
 }
 
 func TestFetchChallengePayload_FetchedBodyAndLease(t *testing.T) {
