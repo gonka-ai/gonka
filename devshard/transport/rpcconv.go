@@ -295,6 +295,59 @@ func VerifyErrorMissResponseFromProto(r *rpcpb.VerifyErrorMissResponse) *VerifyE
 	}
 }
 
+// VerifyChallengeRequestToProto is the Connect inner payload for VerifyChallenge.
+func VerifyChallengeRequestToProto(r VerifyChallengeRequest) *rpcpb.VerifyChallengeRequest {
+	return &rpcpb.VerifyChallengeRequest{
+		InferenceId: r.InferenceID,
+		Reason:      r.Reason,
+		Diffs:       diffsJSONToProto(r.Diffs),
+	}
+}
+
+// VerifyChallengeRequestFromProto reconstructs the JSON-shaped request.
+func VerifyChallengeRequestFromProto(r *rpcpb.VerifyChallengeRequest) VerifyChallengeRequest {
+	if r == nil {
+		return VerifyChallengeRequest{}
+	}
+	return VerifyChallengeRequest{
+		InferenceID: r.GetInferenceId(),
+		Reason:      r.GetReason(),
+		Diffs:       diffsJSONFromProto(r.GetDiffs()),
+	}
+}
+
+// VerifyChallengeResponseToProto is the Connect form of VerifyChallengeResponse.
+func VerifyChallengeResponseToProto(r *VerifyChallengeResponse) *rpcpb.VerifyChallengeResponse {
+	if r == nil {
+		return nil
+	}
+	return &rpcpb.VerifyChallengeResponse{
+		Pending:     r.Pending,
+		Fault:       r.Fault,
+		Check:       r.Check,
+		Deviation:   r.Deviation,
+		Signature:   r.Signature,
+		VoterSlot:   r.VoterSlot,
+		RejectCause: r.RejectCause,
+	}
+}
+
+// VerifyChallengeResponseFromProto reconstructs VerifyChallengeResponse.
+func VerifyChallengeResponseFromProto(r *rpcpb.VerifyChallengeResponse) *VerifyChallengeResponse {
+	if r == nil {
+		return nil
+	}
+	return &VerifyChallengeResponse{
+		Pending:     r.GetPending(),
+		Fault:       r.GetFault(),
+		Check:       r.GetCheck(),
+		Deviation:   r.GetDeviation(),
+		Signature:   r.GetSignature(),
+		VoterSlot:   r.GetVoterSlot(),
+		RejectCause: r.GetRejectCause(),
+	}
+}
+
 // ChallengeReceiptRequestToProto is the Connect inner payload for ChallengeReceipt.
 func ChallengeReceiptRequestToProto(r ChallengeReceiptRequest) *rpcpb.ChallengeReceiptRequest {
 	return &rpcpb.ChallengeReceiptRequest{

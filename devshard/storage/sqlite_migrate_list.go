@@ -30,7 +30,7 @@ func (s *SQLite) listSealedInferences(escrowID string) ([]InferenceRow, error) {
 		        sealed_input_length, sealed_max_tokens,
 		        sealed_input_tokens, sealed_output_tokens,
 		        sealed_reserved_cost, sealed_actual_cost,
-		        sealed_started_at, sealed_confirmed_at
+		        sealed_started_at, sealed_confirmed_at, sealed_usage_challenged
 		   FROM sealed_inferences
 		  WHERE escrow_id = ?
 		  ORDER BY inference_id`,
@@ -44,7 +44,7 @@ func (s *SQLite) listSealedInferences(escrowID string) ([]InferenceRow, error) {
 	var out []InferenceRow
 	for rows.Next() {
 		var row InferenceRow
-		var obsPresent int
+		var obsPresent, usageChallenged int
 		if err := rows.Scan(
 			&row.InferenceID, &row.SealedNonce, &obsPresent, &row.SealedStatus, &row.SealedExecutorSlot,
 			&row.SealedVotesValid, &row.SealedVotesInvalid, &row.SealedValidatedBy,
@@ -52,11 +52,12 @@ func (s *SQLite) listSealedInferences(escrowID string) ([]InferenceRow, error) {
 			&row.SealedInputLength, &row.SealedMaxTokens,
 			&row.SealedInputTokens, &row.SealedOutputTokens,
 			&row.SealedReservedCost, &row.SealedActualCost,
-			&row.SealedStartedAtHeight, &row.SealedConfirmedAtHeight,
+			&row.SealedStartedAtHeight, &row.SealedConfirmedAtHeight, &usageChallenged,
 		); err != nil {
 			return nil, err
 		}
 		row.ObsPresent = obsPresent != 0
+		row.SealedChallenged = usageChallenged != 0
 		out = append(out, row)
 	}
 	return out, rows.Err()
