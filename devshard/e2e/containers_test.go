@@ -114,6 +114,9 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		name:    mockChainAlias,
 		image:   images.mockChain,
 		port:    "9090/tcp",
+		extraPorts: []string{
+			"26657/tcp",
+		},
 		aliases: []string{mockChainAlias},
 		env:     opts.mockChainEnv,
 		waitLog: "mock-chain gRPC listening",
@@ -153,6 +156,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		"DEVSHARD_E2E":           "1",
 		"DEVSHARD_ESCROW_ID":     defaultEscrowID,
 		"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+		"DEVSHARD_CHAIN_RPC":     "http://" + mockChainAlias + ":26657",
+		"NODE_RPC_URL":           "http://" + mockChainAlias + ":26657",
 		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
 		"DEVSHARD_PARAMS_SOURCE": "chain",
 		"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
@@ -245,6 +250,8 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
 		"DEVSHARD_E2E":               "1",
 		"DEVSHARD_STUB_INFERENCE":    "1",
+		"DEVSHARD_CHAIN_RPC":         "http://" + mockChainAlias + ":26657",
+		"NODE_RPC_URL":               "http://" + mockChainAlias + ":26657",
 		// Peer URLs are compose aliases on the test network (private IPs).
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
 	}

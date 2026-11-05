@@ -213,6 +213,10 @@ func polledSource(t *testing.T) *polledHeaders {
 		return v.(*polledHeaders)
 	}
 	p := &polledHeaders{rig: openPollFeed(t)}
+	// testTip stamps height 100. Settlement reads that height from the map
+	// and does not ask the poller to catch up, so the row has to be there
+	// before the first finalize.
+	p.rig.progress(t, 100)
 	polledByTest.Store(t, p)
 	t.Cleanup(func() { polledByTest.Delete(t) })
 	return p

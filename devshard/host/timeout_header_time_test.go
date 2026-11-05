@@ -69,82 +69,70 @@ func (c *headerChain) Subscribe(context.Context, int64) (<-chan *blocks.Header, 
 }
 
 func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
-	for _, tc := range []struct {
-		name      string
-		chainHash []byte
-		wantErr   error
-	}{
-		{name: "fabricated height never lands", wantErr: types.ErrHeaderPending},
-		{name: "height lands on another block", chainHash: []byte{0xbb}, wantErr: types.ErrHeaderMismatch},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-			user := testutil.MustGenerateKey(t)
-			group := testutil.MakeGroup(hosts)
-			config := testutil.DefaultConfig(len(hosts))
-			config.ExecutionTimeout = 1
-			anchorAt := time.Unix(1_800_000_000, 0)
-			hash, farHash := []byte{0xaa}, []byte{0xcc}
-			chain := newHeaderChain()
-			chain.add(100, hash, anchorAt)
-			src := headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))
-			stored, err := chain.At(context.Background(), 100)
-			require.NoError(t, err)
-			src.Observe(stored, headertime.OriginChain, false)
-			sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
-				testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-				state.WithHeaderTimes(src))
-			require.NoError(t, err)
-			h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
-			require.NoError(t, err)
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	config.ExecutionTimeout = 1
+	anchorAt := time.Unix(1_800_000_000, 0)
+	hash, farHash := []byte{0xaa}, []byte{0xcc}
+	chain := newHeaderChain()
+	chain.add(100, hash, anchorAt)
+	src := headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))
+	stored, err := chain.At(context.Background(), 100)
+	require.NoError(t, err)
+	src.Observe(stored, headertime.OriginChain, false)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
+		state.WithHeaderTimes(src))
+	require.NoError(t, err)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
+	require.NoError(t, err)
 
-			heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				SlotsNum: uint64(len(hosts)), Reason: string(heightsync.ReasonQuietSession),
-			}}}
-			ack := func(ref, height uint64, blockHash []byte) *types.DevshardTx {
-				msg := &types.MsgHeightAck{RefNonce: ref, SlotId: 2, ObservedHeight: height, ObservedBlockHash: blockHash,
-					SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
-				require.NoError(t, heightsync.SignAck(hosts[2], msg))
-				return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
-			}
-			const id uint64 = 4
-			start := testutil.StartTx(id)
-			start.GetStartInference().ObservedHeight = 100
-			start.GetStartInference().ObservedBlockHash = hash
-			receipt := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", id, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens,
-				testutil.ReceiptStamp{Height: 100, Hash: hash})
-			confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: id, ExecutorSig: receipt, ObservedHeight: 100, ObservedBlockHash: hash,
-			}}}
-			for n, txs := range [][]*types.DevshardTx{{heartbeat}, {ack(1, 100, hash)}, {heartbeat}, {start}, {confirm}, {heartbeat}} {
-				_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", uint64(n+1), txs))
-				require.NoError(t, err)
-			}
-			rec, ok := sm.GetInference(id)
-			require.True(t, ok)
-			require.Equal(t, types.StatusStarted, rec.Status)
-			require.Zero(t, rec.ConfirmedAtTimeMs)
-
-			if tc.chainHash != nil {
-				chain.add(1_000_000, tc.chainHash, anchorAt.Add(time.Hour))
-			}
-			// A committed ack raises F even when the local chain has not
-			// caught that height, or has a different hash there. The timeout
-			// vote still needs that block.
-			_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{ack(6, 1_000_000, farHash)}))
-			require.NoError(t, err)
-			floor, _, _ := sm.HeightSyncFloorAsOf(8)
-			require.EqualValues(t, 1_000_000, floor)
-			require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), tc.wantErr)
-
-			if tc.chainHash != nil {
-				return
-			}
-			chain.add(1_000_000, farHash, anchorAt.Add(500*time.Millisecond))
-			require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrTimeoutNotDue,
-				"the window is the block time, not the distance in heights")
-		})
+	heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum: uint64(len(hosts)), Reason: string(heightsync.ReasonQuietSession),
+	}}}
+	ack := func(ref, height uint64, blockHash []byte) *types.DevshardTx {
+		msg := &types.MsgHeightAck{RefNonce: ref, SlotId: 2, ObservedHeight: height, ObservedBlockHash: blockHash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+		require.NoError(t, heightsync.SignAck(hosts[2], msg))
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
 	}
+	const id uint64 = 4
+	start := testutil.StartTx(id)
+	start.GetStartInference().ObservedHeight = 100
+	start.GetStartInference().ObservedBlockHash = hash
+	receipt := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", id, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens,
+		testutil.ReceiptStamp{Height: 100, Hash: hash})
+	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: id, ExecutorSig: receipt, ObservedHeight: 100, ObservedBlockHash: hash,
+	}}}
+	for n, txs := range [][]*types.DevshardTx{{heartbeat}, {ack(1, 100, hash)}, {heartbeat}, {start}, {confirm}, {heartbeat}} {
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", uint64(n+1), txs))
+		require.NoError(t, err)
+	}
+	rec, ok := sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Zero(t, rec.ConfirmedAtTimeMs)
+
+	// A committed ack raises F even when the map has not stored that height.
+	// The vote reads the map and does not fetch the chain.
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{ack(6, 1_000_000, farHash)}))
+	require.NoError(t, err)
+	floor, _, _ := sm.HeightSyncFloorAsOf(8)
+	require.EqualValues(t, 1_000_000, floor)
+	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrHeaderPending)
+
+	chain.add(1_000_000, farHash, anchorAt.Add(500*time.Millisecond))
+	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrHeaderPending,
+		"a chain row the poller has not stored does not open the vote")
+
+	hdr, err := chain.At(context.Background(), 1_000_000)
+	require.NoError(t, err)
+	src.Observe(hdr, headertime.OriginChain, false)
+	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrTimeoutNotDue,
+		"the window is the block time, not the distance in heights")
 }
 
 type countingHeaderSource struct {
