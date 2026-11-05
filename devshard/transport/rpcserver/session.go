@@ -316,6 +316,9 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if err != nil {
 		return nil, err
 	}
+	if err := checkDiffsPayload(payload, verifyTimeoutDiffs); err != nil {
+		return nil, err
+	}
 	var inner rpcpb.VerifyTimeoutRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
@@ -351,6 +354,9 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, err
 	}
+	if err := checkDiffsPayload(payload, verifyErrorMissDiffs); err != nil {
+		return nil, err
+	}
 	var inner rpcpb.VerifyErrorMissRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
@@ -384,6 +390,9 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	}
 	_, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
 	if err != nil {
+		return nil, err
+	}
+	if err := checkDiffsPayload(payload, challengeReceiptDiffs); err != nil {
 		return nil, err
 	}
 	var inner rpcpb.ChallengeReceiptRequest

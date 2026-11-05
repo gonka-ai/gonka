@@ -325,3 +325,56 @@ func TestChallengeEnvelopeEncodesIntoTheSendBuffer(t *testing.T) {
 	require.Same(t, unsafe.SliceData(dst[:1]), unsafe.SliceData(out), "the page is written into the buffer it was given")
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(64<<10), "signing and encoding a %d KiB page", n*each>>10)
 }
+
+func TestDiffsFromJSONCapsTxsAcrossDiffs(t *testing.T) {
+	const per = 4000 // each diff alone is under the cap
+	txs := bytes.Repeat([]byte{0x12, 0x00}, per)
+	var djs []DiffJSON
+	for n := 0; n <= types.MaxDecodedTxs; n += per {
+		djs = append(djs, DiffJSON{Nonce: uint64(len(djs) + 1), Txs: txs})
+	}
+	_, err := DiffsFromJSON(djs)
+	require.ErrorIs(t, err, types.ErrDecodeLimit)
+
+	_, err = DiffsFromJSON(djs[:len(djs)-1])
+	require.NoError(t, err)
+}
+
+func TestDevshardTxsFromBytesCap(t *testing.T) {
+	data := make([][]byte, types.MaxDecodedTxs+1)
+	_, err := DevshardTxsFromBytes(data)
+	require.ErrorIs(t, err, types.ErrDecodeLimit)
+
+	txs, err := DevshardTxsFromBytes(data[:types.MaxDecodedTxs])
+	require.NoError(t, err)
+	require.Len(t, txs, types.MaxDecodedTxs)
+}
+
+func TestCheckPayloadCounts(t *testing.T) {
+	empty := bytes.Repeat([]byte{0x12, 0x00}, 4000)
+	var diffs []*rpcpb.Diff
+	for n := 0; n <= types.MaxDecodedTxs; n += 4000 {
+		diffs = append(diffs, &rpcpb.Diff{Nonce: uint64(len(diffs) + 1), Txs: empty})
+	}
+	b, err := proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: diffs})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, 4), types.ErrDecodeLimit)
+	b, err = proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: diffs[1:]})
+	require.NoError(t, err)
+	require.NoError(t, CheckDiffsPayload(b, 4))
+
+	b, err = proto.Marshal(&rpcpb.GossipTxsRequest{Txs: make([][]byte, types.MaxDecodedTxs+1)})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckTxsPayload(b, 1), types.ErrDecodeLimit)
+	b, err = proto.Marshal(&rpcpb.GossipTxsRequest{Txs: make([][]byte, types.MaxDecodedTxs)})
+	require.NoError(t, err)
+	require.NoError(t, CheckTxsPayload(b, 1))
+}
+
+func TestCheckPayloadLeavesParseErrorsToDecoder(t *testing.T) {
+	b, err := proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: []*rpcpb.Diff{{Nonce: 1, Txs: []byte{0xff}}}})
+	require.NoError(t, err)
+	require.NoError(t, CheckDiffsPayload(b, 4))
+	require.NoError(t, CheckDiffsPayload([]byte{0x22, 0x05}, 4))
+	require.NoError(t, CheckTxsPayload([]byte{0x0a, 0x05}, 1))
+}

@@ -61,6 +61,9 @@ func (h *GossipHandler) Txs(ctx context.Context, req *connect.Request[rpcpb.Sign
 	if err := requireGroupMember(srv, peer); err != nil {
 		return nil, err
 	}
+	if err := checkTxsPayload(payload, gossipTxsTxs); err != nil {
+		return nil, err
+	}
 	var inner rpcpb.GossipTxsRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
