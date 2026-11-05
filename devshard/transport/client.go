@@ -1029,7 +1029,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, TagHeaderPending(err)
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
@@ -1077,7 +1077,7 @@ func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, TagHeaderPending(err)
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
