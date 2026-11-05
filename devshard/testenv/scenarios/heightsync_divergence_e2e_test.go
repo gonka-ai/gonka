@@ -95,13 +95,19 @@ func TestHeightSync_E2E_WideDivergenceNeverBlocksInferences(t *testing.T) {
 		"a lone host claim seeds F at any distance")
 
 	for id := uint64(1); id < nonces; id++ {
-		at, _, known := sm.HeightSyncFloorAsOf(id)
+		at, floorHash, known := sm.HeightSyncFloorAsOf(id)
 		require.True(t, known)
 		require.Equalf(t, at, recs[id].StartedAtHeight, "inference %d starts at exactly F", id)
-		landed, _, known := sm.HeightSyncFloorAsOf(id + 1)
-		require.True(t, known)
-		require.Equalf(t, landed, recs[id].ConfirmedAtHeight,
-			"inference %d: slot %d confirm anchors at F where it lands", id, hostIdxForNonce(id))
+		// The confirm carries max(executor tip, F). An empty floor does not
+		// omit the tip: that stamp is the host's own header, and the floor
+		// itself moves on the later ack, not on this confirm.
+		tip := uint64(divergedOracleHeights[hostIdxForNonce(id)])
+		wantConfirm := tip
+		if at > tip && heightsync.StampPresent(floorHash) {
+			wantConfirm = at
+		}
+		require.Equalf(t, wantConfirm, recs[id].ConfirmedAtHeight,
+			"inference %d: slot %d confirm carries max(tip, F)", id, hostIdxForNonce(id))
 	}
 
 	require.Equal(t, 3, hostIdxForNonce(3))
