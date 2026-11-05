@@ -44,6 +44,23 @@ func withoutUsageCountUnsafeFields(prompt []byte) []byte {
 	return stripped
 }
 
+// prepareExecutionPrompt keeps generated reasoning and its token metadata in
+// the ML response. Only the execution copy changes; stored and signed prompts
+// retain the gateway's original fields.
+func prepareExecutionPrompt(prompt []byte) []byte {
+	prompt = withoutUsageCountUnsafeFields(prompt)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(prompt, &fields); err != nil || fields == nil {
+		return prompt
+	}
+	fields["include_reasoning"] = json.RawMessage("true")
+	prepared, err := json.Marshal(fields)
+	if err != nil {
+		return prompt
+	}
+	return prepared
+}
+
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
 
 type processedExecutionResponse struct {
@@ -67,7 +84,7 @@ func executeInference(
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
-	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(withoutUsageCountUnsafeFields(req.Prompt), seed, chainParams.LogprobsMode())
+	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(prepareExecutionPrompt(req.Prompt), seed, chainParams.LogprobsMode())
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}

@@ -49,7 +49,7 @@ func (v *Validator) executedRequest(prompt []byte, inferenceID uint64) []byte {
 	if v.chainParams != nil {
 		mode = v.chainParams.LogprobsMode()
 	}
-	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(withoutUsageCountUnsafeFields(prompt), int32(inferenceID), mode)
+	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(prepareExecutionPrompt(prompt), int32(inferenceID), mode)
 	if err != nil {
 		return nil
 	}
