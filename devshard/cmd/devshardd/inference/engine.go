@@ -174,6 +174,11 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 	return resp, nil
 }
 
+// doWithLockedNode tries NodeManager gRPC first. On success it records the
+// node in the passive cache (Observe) and POSTs. A 2xx or 4xx answer keeps the
+// lock until its body ends (see holdSlot); a failed attempt Releases at once
+// and rotates. The caller must close the body. If dapi is unreachable it falls
+// back to mgr.PickNode round-robin without lock/release.
 // ResourceExhausted (dapi up, no free nodes) stays on the gRPC retry path.
 // escrowID is forwarded on Acquire so dapi can attribute per-escrow load.
 // A validation reserves one credit for the whole call, across node rotation.
@@ -257,6 +262,8 @@ func (e *Engine) doWithLockedNode(
 		}
 
 		if outcome == mlnodegen.ReleaseOutcome_SUCCESS {
+			// Do returns at the headers, while a streamed body is still being
+			// generated: the lock is released when the body ends.
 			credit.spend()
 			resp.Body = holdSlot(ctx, resp.Body, func(outcome mlnodegen.ReleaseOutcome) {
 				if releaseErr := e.releaseNode(ctx, acq, outcome); releaseErr != nil {
@@ -325,6 +332,9 @@ func (e *Engine) releaseNode(
 
 // doWithFallbackNodes serves inference from the passive cache when dapi is
 // unreachable. No lock/release — degraded mode. Rotates on transport/5xx.
+// When capacity has been observed, each attempt takes a local in-flight slot
+// for (nodeID, model), held until the body of a returned response ends (see
+// holdSlot); old DAPI / never-observed capacity is unbounded.
 func (e *Engine) doWithFallbackNodes(
 	ctx context.Context,
 	path observability.Path,
@@ -439,6 +449,8 @@ func (e *Engine) doWithFallbackNodes(
 			}
 			continue
 		default:
+			// Success and 4xx are returned as-is (no rotation on 4xx). The
+			// local slot is freed when the body ends, as on the gRPC path.
 			credit.spend()
 			resp.Body = holdSlot(ctx, resp.Body, releaseSlot)
 			return resp, nil
