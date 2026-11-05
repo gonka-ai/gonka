@@ -144,7 +144,7 @@ message EpochParams {
   uint64 inference_pruning_epoch_threshold = 11;
   int64 inference_pruning_max = 12;
   int64 poc_pruning_max = 13;
-  Decimal poc_slot_allocation = 14; // Fraction of slots allocated to PoC (0.0 to 1.0, default 0.5)
+  Decimal poc_slot_allocation = 14; // Target fraction of each model's weight kept serving inference during PoC (0.0 to 1.0, unset or 0 means 0.5)
   int64 confirmation_poc_safety_window = 15;
 }
 
@@ -164,7 +164,7 @@ message ValidationParams {
   Decimal miss_requests_penalty = 12;
   int64  timestamp_expiration = 13;  // Max time in seconds until timestamps are "too old"
   int64  timestamp_advance = 14;     // Max time in seconds until timestamps are "in the future"
-  uint64 estimated_limits_per_block_kb = 15; // Max estimated KB per block per Transfer Agent
+  uint64 estimated_limits_per_block_kb = 15; // Not read; the live limit is BandwidthLimitsParams.estimated_limits_per_block_kb
   Decimal invalid_reputation_preserve = 16; // How much reputation to keep after an invalidation hit (defaults to 0)
   Decimal bad_participant_invalidation_rate = 17;
   Decimal invalidation_h_threshold = 18; // The H value for the SPRT algorithm for invalid inferences
@@ -296,10 +296,10 @@ message CollateralParams {
   // slash_fraction_invalid is the percentage of collateral to slash when a participant is marked INVALID.
   Decimal slash_fraction_invalid = 1;
 
-  // slash_fraction_downtime is the percentage of collateral to slash for downtime.
+  // slash_fraction_downtime is the fraction of collateral slashed when a participant becomes INACTIVE (downtime or failed confirmation PoC).
   Decimal slash_fraction_downtime = 2;
 
-  // downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
+  // downtime_missed_percentage_threshold is not read; the downtime slash follows a transition to INACTIVE.
   Decimal downtime_missed_percentage_threshold = 3;
 
   uint64 grace_period_end_epoch = 4;
@@ -378,17 +378,16 @@ message BandwidthLimitsParams {
   // kb_per_output_token is the estimated KB per output token
   Decimal kb_per_output_token = 3;
 
-  // The total max simultaneous invalidations across the chain
+  // Not read; the invalidation cap it configured was removed in v0.2.14
   uint64 invalidations_limit = 4;
 
-  // The seconds to look back to determine inference rate for invalidations
+  // Only sizes an inference-count rolling window that nothing reads since v0.2.14
   uint64 invalidations_sample_period = 5;
 
-  // The curve for the tanh function for determining how quickly traffic expands the
-  // max invalidations allowed
+  // Not read; was the tanh curve factor of the invalidation cap removed in v0.2.14
   uint64 invalidations_limit_curve = 6;
 
-  // The least amount of concurrent invalidations
+  // Not read; was the floor of the invalidation cap removed in v0.2.14
   uint32 minimum_concurrent_invalidations = 7;
 
   // max_inferences_per_block is the chain-wide limit on inference requests per block
@@ -405,7 +404,7 @@ message ConfirmationPoCParams {
   // alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
   Decimal alpha_threshold = 2;
 
-  // slash_fraction is the collateral slashed for failure (e.g., "0.10")
+  // slash_fraction is not used; confirmation PoC failure is slashed through collateral_params.slash_fraction_downtime.
   Decimal slash_fraction = 3;
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)

@@ -406,7 +406,7 @@ func (k Keeper) GetAllJailed(ctx sdk.Context) ([]sdk.AccAddress, error) {
 	return iter.Keys()
 }
 
-// Slash penalizes a participant by burning a fraction of their collateral.
+// Slash penalizes a participant by taking a fraction of their collateral.
 // This includes both their active collateral and any collateral in the unbonding queue.
 // The slash is applied proportionally to all holdings, and the slashed coins are transferred
 // from the collateral module account to the governance module account

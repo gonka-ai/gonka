@@ -164,8 +164,7 @@ func (k Keeper) AdjustWeightsByCollateral(ctx context.Context, participants []*t
 	return nil
 }
 
-// SlashForInvalidStatus checks if a participant's status has transitioned to INVALID
-// and, if so, triggers a collateral slash.
+// SlashForInvalidStatus slashes SlashFractionInvalid without further checks; invalidateParticipant calls it when the participant becomes INVALID.
 func (k Keeper) SlashForInvalidStatus(ctx context.Context, participant *types.Participant, params types.Params) {
 	slashFraction, err := params.CollateralParams.SlashFractionInvalid.ToLegacyDec()
 	if err != nil {
@@ -192,8 +191,7 @@ func (k Keeper) SlashForInvalidStatus(ctx context.Context, participant *types.Pa
 	}
 }
 
-// SlashForDowntime checks a participant's performance for the completed epoch and
-// slashes their collateral if their missed request percentage exceeds the threshold.
+// SlashForDowntime slashes SlashFractionDowntime without further checks; deactiveParticipant calls it when the participant becomes INACTIVE.
 func (k Keeper) SlashForDowntime(ctx context.Context, participant *types.Participant, params types.Params) {
 	slashFractionDown, err := params.CollateralParams.SlashFractionDowntime.ToLegacyDec()
 	if err != nil {

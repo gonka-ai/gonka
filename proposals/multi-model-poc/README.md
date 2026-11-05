@@ -279,7 +279,7 @@ The epoch formation pipeline in `onEndOfPoCValidationStage`:
    Writes to ActiveParticipant.VotingPowers.
 
 8. AllocateMLNodesForPoC
-   Per model, selects a fraction of nodes and sets POC_SLOT=true.
+   Per model, selects nodes covering a fraction of the model's weight and sets POC_SLOT=true.
    These nodes continue serving inference during PoC.
 
 9. SetActiveParticipants (immutable from this point)

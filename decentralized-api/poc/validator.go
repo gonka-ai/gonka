@@ -1205,7 +1205,7 @@ func (v *OffChainValidator) stopGenerationOnAllNodes(nodes []broker.NodeResponse
 }
 
 // getNodesWithRetry waits for nodes to become available for PoC validation,
-// retrying up to POC_VALIDATE_GET_NODES_RETRIES times.
+// making up to POC_VALIDATE_GET_NODES_RETRIES attempts while no node passes the filter; a GetNodes error or a nil epoch state returns without retry.
 func (v *OffChainValidator) getNodesWithRetry(pocStageStartBlockHeight int64) ([]broker.NodeResponse, error) {
 	return v.getNodesWithRetryConfig(
 		pocStageStartBlockHeight,

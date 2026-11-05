@@ -30246,7 +30246,7 @@ type EpochParams struct {
 	InferencePruningEpochThreshold uint64   `protobuf:"varint,11,opt,name=inference_pruning_epoch_threshold,json=inferencePruningEpochThreshold,proto3" json:"inference_pruning_epoch_threshold,omitempty"`
 	InferencePruningMax            int64    `protobuf:"varint,12,opt,name=inference_pruning_max,json=inferencePruningMax,proto3" json:"inference_pruning_max,omitempty"`
 	PocPruningMax                  int64    `protobuf:"varint,13,opt,name=poc_pruning_max,json=pocPruningMax,proto3" json:"poc_pruning_max,omitempty"`
-	PocSlotAllocation              *Decimal `protobuf:"bytes,14,opt,name=poc_slot_allocation,json=pocSlotAllocation,proto3" json:"poc_slot_allocation,omitempty"` // Fraction of slots allocated to PoC (0.0 to 1.0, default 0.5)
+	PocSlotAllocation              *Decimal `protobuf:"bytes,14,opt,name=poc_slot_allocation,json=pocSlotAllocation,proto3" json:"poc_slot_allocation,omitempty"` // Target fraction of each model's weight kept serving inference during PoC (0.0 to 1.0, unset or 0 means 0.5)
 	ConfirmationPocSafetyWindow    int64    `protobuf:"varint,15,opt,name=confirmation_poc_safety_window,json=confirmationPocSafetyWindow,proto3" json:"confirmation_poc_safety_window,omitempty"`
 }
 
@@ -30395,7 +30395,7 @@ type ValidationParams struct {
 	MissRequestsPenalty            *Decimal `protobuf:"bytes,12,opt,name=miss_requests_penalty,json=missRequestsPenalty,proto3" json:"miss_requests_penalty,omitempty"`
 	TimestampExpiration            int64    `protobuf:"varint,13,opt,name=timestamp_expiration,json=timestampExpiration,proto3" json:"timestamp_expiration,omitempty"`                         // Max time in seconds until timestamps are "too old"
 	TimestampAdvance               int64    `protobuf:"varint,14,opt,name=timestamp_advance,json=timestampAdvance,proto3" json:"timestamp_advance,omitempty"`                                  // Max time in seconds until timestamps are "in the future"
-	EstimatedLimitsPerBlockKb      uint64   `protobuf:"varint,15,opt,name=estimated_limits_per_block_kb,json=estimatedLimitsPerBlockKb,proto3" json:"estimated_limits_per_block_kb,omitempty"` // Max estimated KB per block per Transfer Agent
+	EstimatedLimitsPerBlockKb      uint64   `protobuf:"varint,15,opt,name=estimated_limits_per_block_kb,json=estimatedLimitsPerBlockKb,proto3" json:"estimated_limits_per_block_kb,omitempty"` // Not read; the live limit is BandwidthLimitsParams.estimated_limits_per_block_kb
 	InvalidReputationPreserve      *Decimal `protobuf:"bytes,16,opt,name=invalid_reputation_preserve,json=invalidReputationPreserve,proto3" json:"invalid_reputation_preserve,omitempty"`      // How much reputation to keep after an invalidation hit (defaults to 0)
 	BadParticipantInvalidationRate *Decimal `protobuf:"bytes,17,opt,name=bad_participant_invalidation_rate,json=badParticipantInvalidationRate,proto3" json:"bad_participant_invalidation_rate,omitempty"`
 	InvalidationHThreshold         *Decimal `protobuf:"bytes,18,opt,name=invalidation_h_threshold,json=invalidationHThreshold,proto3" json:"invalidation_h_threshold,omitempty"` // The H value for the SPRT algorithm for invalid inferences
@@ -31369,9 +31369,9 @@ type CollateralParams struct {
 
 	// slash_fraction_invalid is the percentage of collateral to slash when a participant is marked INVALID.
 	SlashFractionInvalid *Decimal `protobuf:"bytes,1,opt,name=slash_fraction_invalid,json=slashFractionInvalid,proto3" json:"slash_fraction_invalid,omitempty"`
-	// slash_fraction_downtime is the percentage of collateral to slash for downtime.
+	// slash_fraction_downtime is the fraction of collateral slashed when a participant becomes INACTIVE (downtime or failed confirmation PoC).
 	SlashFractionDowntime *Decimal `protobuf:"bytes,2,opt,name=slash_fraction_downtime,json=slashFractionDowntime,proto3" json:"slash_fraction_downtime,omitempty"`
-	// downtime_missed_percentage_threshold is the missed request percentage that triggers a downtime slash.
+	// downtime_missed_percentage_threshold is not read; the downtime slash follows a transition to INACTIVE.
 	DowntimeMissedPercentageThreshold *Decimal `protobuf:"bytes,3,opt,name=downtime_missed_percentage_threshold,json=downtimeMissedPercentageThreshold,proto3" json:"downtime_missed_percentage_threshold,omitempty"`
 	GracePeriodEndEpoch               uint64   `protobuf:"varint,4,opt,name=grace_period_end_epoch,json=gracePeriodEndEpoch,proto3" json:"grace_period_end_epoch,omitempty"`
 	// BaseWeightRatio is the portion of potential weight granted unconditionally (0-1)
@@ -31645,14 +31645,13 @@ type BandwidthLimitsParams struct {
 	KbPerInputToken *Decimal `protobuf:"bytes,2,opt,name=kb_per_input_token,json=kbPerInputToken,proto3" json:"kb_per_input_token,omitempty"`
 	// kb_per_output_token is the estimated KB per output token
 	KbPerOutputToken *Decimal `protobuf:"bytes,3,opt,name=kb_per_output_token,json=kbPerOutputToken,proto3" json:"kb_per_output_token,omitempty"`
-	// The total max simultaneous invalidations across the chain
+	// Not read; the invalidation cap it configured was removed in v0.2.14
 	InvalidationsLimit uint64 `protobuf:"varint,4,opt,name=invalidations_limit,json=invalidationsLimit,proto3" json:"invalidations_limit,omitempty"`
-	// The seconds to look back to determine inference rate for invalidations
+	// Only sizes an inference-count rolling window that nothing reads since v0.2.14
 	InvalidationsSamplePeriod uint64 `protobuf:"varint,5,opt,name=invalidations_sample_period,json=invalidationsSamplePeriod,proto3" json:"invalidations_sample_period,omitempty"`
-	// The curve for the tanh function for determining how quickly traffic expands the
-	// max invalidations allowed
+	// Not read; was the tanh curve factor of the invalidation cap removed in v0.2.14
 	InvalidationsLimitCurve uint64 `protobuf:"varint,6,opt,name=invalidations_limit_curve,json=invalidationsLimitCurve,proto3" json:"invalidations_limit_curve,omitempty"`
-	// The least amount of concurrent invalidations
+	// Not read; was the floor of the invalidation cap removed in v0.2.14
 	MinimumConcurrentInvalidations uint32 `protobuf:"varint,7,opt,name=minimum_concurrent_invalidations,json=minimumConcurrentInvalidations,proto3" json:"minimum_concurrent_invalidations,omitempty"`
 	// max_inferences_per_block is the chain-wide limit on inference requests per block
 	MaxInferencesPerBlock uint64 `protobuf:"varint,8,opt,name=max_inferences_per_block,json=maxInferencesPerBlock,proto3" json:"max_inferences_per_block,omitempty"`
@@ -31744,7 +31743,7 @@ type ConfirmationPoCParams struct {
 	ExpectedConfirmationsPerEpoch uint64 `protobuf:"varint,1,opt,name=expected_confirmations_per_epoch,json=expectedConfirmationsPerEpoch,proto3" json:"expected_confirmations_per_epoch,omitempty"`
 	// alpha_threshold is the minimum confirmed weight ratio (e.g., "0.70")
 	AlphaThreshold *Decimal `protobuf:"bytes,2,opt,name=alpha_threshold,json=alphaThreshold,proto3" json:"alpha_threshold,omitempty"`
-	// slash_fraction is the collateral slashed for failure (e.g., "0.10")
+	// slash_fraction is not used; confirmation PoC failure is slashed through collateral_params.slash_fraction_downtime.
 	SlashFraction *Decimal `protobuf:"bytes,3,opt,name=slash_fraction,json=slashFraction,proto3" json:"slash_fraction,omitempty"`
 	// upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
 	UpgradeProtectionWindow int64 `protobuf:"varint,4,opt,name=upgrade_protection_window,json=upgradeProtectionWindow,proto3" json:"upgrade_protection_window,omitempty"`
