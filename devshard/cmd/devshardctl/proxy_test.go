@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -747,7 +748,13 @@ func (e *testProxyEnv) raiseFloor(t *testing.T, height uint64) {
 	t.Helper()
 	require.NotNil(t, e.chain)
 	require.False(t, e.chain.live)
+	// Pin the new tip before the heartbeat. One second per skipped height would
+	// put the floor a day ahead and the next stamp would wait on that future.
+	// Two seconds clears the fixture's one-second window and stays near now.
+	prev, err := e.chain.HeaderTimeMs(uint64(e.chain.height()), []byte{0xaa})
+	require.NoError(t, err)
 	e.chain.manual.Store(int64(height))
+	e.chain.setHeightTime(height, prev+int64((2*time.Second)/time.Millisecond))
 	for range 8 {
 		e.chain.clock.Add(int64(time.Hour))
 		_ = e.session.MaybeHeartbeat(context.Background())
@@ -778,6 +785,23 @@ type testChain struct {
 	start  time.Time
 	manual atomic.Int64
 	clock  atomic.Int64
+	mu     sync.Mutex
+	times  map[uint64]int64
+}
+
+// setHeightTime pins the map time of one height. A confirm stamped at a
+// raised tip would otherwise carry a block time in the future, and the
+// execution deadline would wait for that future instead of the receipt.
+func (c *testChain) setHeightTime(height uint64, ms int64) {
+	if c == nil || height == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.times == nil {
+		c.times = map[uint64]int64{}
+	}
+	c.times[height] = ms
 }
 
 func (c *testChain) height() int64 {
@@ -788,7 +812,12 @@ func (c *testChain) height() int64 {
 }
 
 func (c *testChain) Latest(context.Context) (*blocks.Header, error) {
-	return blocks.HashOnlyHeader(c.height(), time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+	h := c.height()
+	at := time.Unix(1, 0).UTC()
+	if ms, err := c.HeaderTimeMs(uint64(h), []byte{0xaa}); err == nil && ms > 0 {
+		at = time.UnixMilli(ms).UTC()
+	}
+	return blocks.HashOnlyHeader(h, at, "fake-chain", []byte{0xaa}), nil
 }
 func (c *testChain) At(ctx context.Context, _ int64) (*blocks.Header, error) { return c.Latest(ctx) }
 func (c *testChain) Prove(context.Context, string, int64) (*blocks.Proof, error) {
@@ -800,14 +829,35 @@ func (c *testChain) Subscribe(context.Context, int64) (<-chan *blocks.Header, er
 	return ch, nil
 }
 
+// StoredAt is the height-keyed map. The oracle header for the tip uses the
+// same milliseconds, so a stamp of the tip agrees with the map.
+func (c *testChain) StoredAt(height uint64) (headertime.Record, bool) {
+	if c == nil || height == 0 {
+		return headertime.Record{}, false
+	}
+	ms, err := c.HeaderTimeMs(height, []byte{0xaa})
+	if err != nil || ms <= 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{Hash: []byte{0xaa}, TimeMs: ms}, true
+}
+
 // HeaderTimeMs is the block time of this fixture chain. Height 100 is the
-// chain's start instant, and each later height is one second later. A receipt
-// stamped at the tip then has a recent time, and moving the floor forward
-// moves the protocol clock.
+// chain's start instant, and each later height is one second later. A pin
+// from setHeightTime wins, so a jumped tip does not inherit a second per
+// skipped height.
 func (c *testChain) HeaderTimeMs(height uint64, hash []byte) (int64, error) {
 	if height == 0 || !heightsync.StampPresent(hash) {
 		return 0, types.ErrHeaderPending
 	}
+	c.mu.Lock()
+	if c.times != nil {
+		if ms, ok := c.times[height]; ok {
+			c.mu.Unlock()
+			return ms, nil
+		}
+	}
+	c.mu.Unlock()
 	base := c.start
 	if base.IsZero() {
 		if c.clock.Load() == 0 {

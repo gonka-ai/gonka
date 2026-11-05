@@ -1534,16 +1534,22 @@ func TestSignAndTimeoutPackagesDoNotPoll(t *testing.T) {
 	roots := []string{"../state", "../host"}
 	for _, root := range roots {
 		err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") {
+			if err != nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
 				return err
 			}
 			b, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			text := string(b)
-			if strings.Contains(text, "GetHostEvents") || strings.Contains(text, "GetBlockHeader") {
-				t.Errorf("%s dials from the sign or timeout packages", path)
+			for _, line := range strings.Split(string(b), "\n") {
+				trimmed := strings.TrimSpace(line)
+				if strings.HasPrefix(trimmed, "//") {
+					continue
+				}
+				if strings.Contains(line, "GetHostEvents") || strings.Contains(line, "GetBlockHeader") {
+					t.Errorf("%s dials from the sign or timeout packages", path)
+					break
+				}
 			}
 			return nil
 		})

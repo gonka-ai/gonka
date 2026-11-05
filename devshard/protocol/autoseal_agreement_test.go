@@ -161,13 +161,22 @@ func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint6
 	}
 	start := testutil.StartTx(inferenceID)
 	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = h, hash
+	if h > 0 {
+		start.GetStartInference().ObservedTimeMs = int64(h) * testutil.HeightClockBlockMs
+	}
 	applySignedDiffToUserAndHost(t, env, startNonce, []*types.DevshardTx{start})
 
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
+	timeMs := int64(h) * testutil.HeightClockBlockMs
+	stamp := testutil.ReceiptStamp{}
+	if h > 0 {
+		stamp = testutil.ReceiptStamp{Height: h, Hash: hash, TimeMs: timeMs}
+	}
 	execSig := testutil.SignExecutorReceipt(t, env.hostSigners[executorSlot], env.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, stamp)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID, ExecutorSig: execSig, ObservedHeight: h, ObservedBlockHash: hash,
+		ObservedTimeMs: timeMs,
 	}}}
 	applySignedDiffToUserAndHost(t, env, startNonce+1, []*types.DevshardTx{confirmTx})
 }

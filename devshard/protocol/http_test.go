@@ -53,6 +53,7 @@ type httpTestEnv struct {
 	config      types.SessionConfig
 	stores      []*storage.Memory
 	gossips     []*gossip.Gossip
+	headers     protocolHeaders
 }
 
 type recoveryVerifierClient struct {
@@ -149,8 +150,16 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 	var tipHeight atomic.Int64
 	tipHeight.Store(100)
 
+	var headers protocolHeaders
+	if rig != nil {
+		headers = protocolHeaders{rig: rig}
+	}
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
+		smOpts := []state.SMOption{}
+		if rig != nil {
+			smOpts = append(smOpts, state.WithHeaderTimes(headers))
+		}
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance), smOpts...)
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		store := storage.NewMemory()
@@ -223,7 +232,11 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		srv.SetGossip(g)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
+	userOpts := []state.SMOption{}
+	if rig != nil {
+		userOpts = append(userOpts, state.WithHeaderTimes(headers))
+	}
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance), userOpts...)
 	require.NoError(t, err)
 	var sessionOpts []user.SessionOption
 	if rig != nil {
@@ -245,6 +258,7 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		config:      config,
 		stores:      stores,
 		gossips:     gossips,
+		headers:     headers,
 	}
 }
 
@@ -261,6 +275,10 @@ func setupArmedRecoveryVerifierEnv(t *testing.T, numHosts int, recovery []*types
 func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery []*types.DevshardTx, opts ...user.SessionOption) (*user.Session, *recoveryVerifierSource) {
 	t.Helper()
 	verifier := signing.NewSecp256k1Verifier()
+	smOpts := []state.SMOption{}
+	if env.headers.rig != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(env.headers))
+	}
 	sm, err := state.NewStateMachine(
 		"escrow-1",
 		env.config,
@@ -269,6 +287,7 @@ func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery [
 		env.userSigner.Address(),
 		verifier,
 		testutil.MustMemoryStore(t, "escrow-1", env.userSigner.Address(), env.config, env.group, 1000000),
+		smOpts...,
 	)
 	require.NoError(t, err)
 
@@ -753,7 +772,25 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
-	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	// A verifier that has already voted replays that vote. Hold one back so the
+	// second round is a verifier that has not answered yet.
+	all := env.session.TimeoutVerifiers()
+	first := make(map[int]user.TimeoutVerifier, len(all))
+	var freshKey int
+	var fresh user.TimeoutVerifier
+	held := false
+	for k, v := range all {
+		if k == executorIdx {
+			continue
+		}
+		if !held {
+			freshKey, fresh = k, v
+			held = true
+			continue
+		}
+		first[k] = v
+	}
+	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), first, env.session.Diffs())
 	require.NoError(t, err)
 	require.True(t, len(votes) > int(env.config.VoteThreshold), "challenge response timeouts should initially look like executor unreachable")
 	require.Empty(t, recovery)
@@ -774,7 +811,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
-	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), map[int]user.TimeoutVerifier{freshKey: fresh}, env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "once the executor recovery tx is reachable, timeout should no longer pass as clean refused")
 	require.NotNil(t, findConfirmStart(recovery, prepared.Nonce()), "next check must surface executor ConfirmStart as recovery")
@@ -1398,7 +1435,7 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 	require.True(t, ok)
 	cs := got.GetConfirmStart()
 	want := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens,
-		testutil.ReceiptStamp{Height: cs.ObservedHeight, Hash: cs.ObservedBlockHash})
+		testutil.ReceiptStamp{Height: cs.ObservedHeight, Hash: cs.ObservedBlockHash, TimeMs: cs.ObservedTimeMs})
 	require.Equal(t, want, cs.ExecutorSig, "session must copy the executor's receipt, not mint a new ConfirmStart")
 
 	peer := rig.peerBefore(t, env, recovery.Nonce)
@@ -1560,6 +1597,10 @@ func countConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
 
 func newPeerSM(t *testing.T, env *httpTestEnv, balance uint64) *state.StateMachine {
 	t.Helper()
+	smOpts := []state.SMOption{}
+	if env.headers.rig != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(env.headers))
+	}
 	sm, err := state.NewStateMachine(
 		"escrow-1",
 		env.config,
@@ -1568,6 +1609,7 @@ func newPeerSM(t *testing.T, env *httpTestEnv, balance uint64) *state.StateMachi
 		env.userSigner.Address(),
 		signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", env.userSigner.Address(), env.config, env.group, balance),
+		smOpts...,
 	)
 	require.NoError(t, err)
 	return sm

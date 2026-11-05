@@ -9,9 +9,11 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"common/chainoracle/blocks"
 	"common/httpguard"
 
 	devshardpkg "devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
@@ -66,6 +68,7 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 
 	verStore := newManagerTestStore(t)
+	verHeaders := headertime.New()
 	verMgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(
 		verStore, hosts[2], stub.NewInferenceEngine(), stub.NewValidationEngine(),
 		nil, "v6", &mockBridge{
@@ -76,11 +79,15 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 			hostURLs: map[string]string{hosts[1].Address(): ts.URL},
 		}, nil, nil,
 	))
+	verMgr.headerTimes = verHeaders
 	srv, err := verMgr.sessionForOwner(escrowID, user.Address())
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 
 	hash := []byte{0xaa}
+	// The execution vote reads time(ConfirmedAtHeight) from the map. Height
+	// 500 is a minute behind the one-second execution window.
+	verHeaders.Observe(blocks.HashOnlyHeader(500, time.Now().Add(-time.Minute), "test-chain", hash), headertime.OriginChain, true)
 	heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 		SlotsNum: uint64(len(hosts)),
 		Reason:   string(heightsync.ReasonQuietSession),

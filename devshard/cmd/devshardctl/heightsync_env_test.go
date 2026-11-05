@@ -448,7 +448,7 @@ func TestGatewayCometHooks_WarmQueriesOnTheHeightSocket(t *testing.T) {
 }
 
 // countingHeaderTimes is the map a gateway build hands to the chat gate.
-// HeaderTimeMs is the only read that gate is allowed to make.
+// The gate reads StoredAt. HeaderTimeMs stays for callers that still fetch.
 type countingHeaderTimes struct {
 	ms    int64
 	reads atomic.Int32
@@ -460,6 +460,14 @@ func (c *countingHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
 		return 0, types.ErrHeaderPending
 	}
 	return c.ms, nil
+}
+
+func (c *countingHeaderTimes) StoredAt(uint64) (headertime.Record, bool) {
+	c.reads.Add(1)
+	if c.ms <= 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{TimeMs: c.ms, Hash: []byte{0xaa}}, true
 }
 
 func TestGatewayHeaderTimes_NilSourceDoesNotServe(t *testing.T) {
@@ -477,13 +485,15 @@ func TestGatewayHeaderTimes_NilSourceDoesNotServe(t *testing.T) {
 }
 
 func TestGatewayHeaderTimes_SourceServesAndChatGateReadsIt(t *testing.T) {
-	src := &countingHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()}
+	chain := &testChain{start: time.Now()}
+	chain.manual.Store(100)
+	floorMs := time.Now().UnixMilli()
+	chain.setHeightTime(100, floorMs)
+	src := &countingHeaderTimes{ms: floorMs}
 	served := false
 	require.NoError(t, listenGateway(src, func() { served = true }))
 	require.True(t, served)
 
-	chain := &testChain{start: time.Now()}
-	chain.manual.Store(100)
 	env := setupTestProxyFloor(t, 3, nil, true, 1_000_000, 0, chain)
 	env.sm.SetHeaderTimes(src)
 	env.session.SetRequireHeightSeed(true)

@@ -951,7 +951,7 @@ func TestChat_NoReceiptBeforeServeInference(t *testing.T) {
 	})
 
 	t.Run("verify stays off the chat counter", func(t *testing.T) {
-		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
 		wantSame(observability.ReasonOwnerErr, func() {
 			_, err := env.session.VerifyTimeout(context.Background(), withSession(
 				connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
