@@ -33,7 +33,7 @@ COVER_PROFILE ?= coverage.out
 help:
 	@echo "build        build the gateway binary into $(BINARY)"
 	@echo "test         every gateway package, no race detector"
-	@echo "test-race    the same under -race; this is what CI must run"
+	@echo "test-race    the same under -race; CI runs it on every package but scenarios, which it runs without -race"
 	@echo "test-junit   test-race with a JUnit report at $(JUNIT_REPORT)"
 	@echo "cover        statement coverage of the request and money paths"
 	@echo "lint         golangci-lint over the gateway"
