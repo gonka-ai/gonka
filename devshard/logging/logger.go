@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"reflect"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	commonobs "common/observability"
@@ -23,56 +24,74 @@ type Logger interface {
 	Debug(msg string, keyvals ...any)
 }
 
-var current Logger = &slogLogger{}
+var (
+	currentMu sync.RWMutex
+	current   Logger = &slogLogger{}
+)
 
 var structuredStages atomic.Bool
 
-func SetLogger(l Logger) { current = l }
+func SetLogger(l Logger) {
+	currentMu.Lock()
+	current = l
+	currentMu.Unlock()
+}
 
-func Info(msg string, keyvals ...any)  { current.Info(msg, keyvals...) }
-func Error(msg string, keyvals ...any) { current.Error(msg, keyvals...) }
-func Warn(msg string, keyvals ...any)  { current.Warn(msg, keyvals...) }
-func Debug(msg string, keyvals ...any) { current.Debug(msg, keyvals...) }
+func currentLogger() Logger {
+	currentMu.RLock()
+	l := current
+	currentMu.RUnlock()
+	return l
+}
+
+func Info(msg string, keyvals ...any)  { currentLogger().Info(msg, keyvals...) }
+func Error(msg string, keyvals ...any) { currentLogger().Error(msg, keyvals...) }
+func Warn(msg string, keyvals ...any)  { currentLogger().Warn(msg, keyvals...) }
+func Debug(msg string, keyvals ...any) { currentLogger().Debug(msg, keyvals...) }
 
 // Ctx-aware variants forward the request context so TraceHandler can stamp
 // trace_id/span_id (and registered context fields such as request_id).
 // An installed Logger that does not implement the context method still
 // receives the line through Info/Error/Warn/Debug.
 func InfoCtx(ctx context.Context, msg string, keyvals ...any) {
-	if l, ok := current.(interface {
+	logger := currentLogger()
+	if l, ok := logger.(interface {
 		InfoContext(context.Context, string, ...any)
 	}); ok {
 		l.InfoContext(ctx, msg, keyvals...)
 		return
 	}
-	current.Info(msg, keyvals...)
+	logger.Info(msg, keyvals...)
 }
 func ErrorCtx(ctx context.Context, msg string, keyvals ...any) {
-	if l, ok := current.(interface {
+	logger := currentLogger()
+	if l, ok := logger.(interface {
 		ErrorContext(context.Context, string, ...any)
 	}); ok {
 		l.ErrorContext(ctx, msg, keyvals...)
 		return
 	}
-	current.Error(msg, keyvals...)
+	logger.Error(msg, keyvals...)
 }
 func WarnCtx(ctx context.Context, msg string, keyvals ...any) {
-	if l, ok := current.(interface {
+	logger := currentLogger()
+	if l, ok := logger.(interface {
 		WarnContext(context.Context, string, ...any)
 	}); ok {
 		l.WarnContext(ctx, msg, keyvals...)
 		return
 	}
-	current.Warn(msg, keyvals...)
+	logger.Warn(msg, keyvals...)
 }
 func DebugCtx(ctx context.Context, msg string, keyvals ...any) {
-	if l, ok := current.(interface {
+	logger := currentLogger()
+	if l, ok := logger.(interface {
 		DebugContext(context.Context, string, ...any)
 	}); ok {
 		l.DebugContext(ctx, msg, keyvals...)
 		return
 	}
-	current.Debug(msg, keyvals...)
+	logger.Debug(msg, keyvals...)
 }
 
 type slogLogger struct{}
@@ -171,12 +190,13 @@ func PropagateRequestID(dst, src context.Context) context.Context {
 func Stage(ctx context.Context, stage string, kv ...any) {
 	if structuredStages.Load() || commonobs.IsJSONLogFormat() {
 		fields := stageFields(ctx, stage, kv)
-		if l, ok := current.(ContextLogger); ok {
+		logger := currentLogger()
+		if l, ok := logger.(ContextLogger); ok {
 			l.InfoContext(ctx, stage, fields...)
 			return
 		}
-		if _, isDefault := current.(*slogLogger); !isDefault {
-			current.Info(stage, fields...)
+		if _, isDefault := logger.(*slogLogger); !isDefault {
+			logger.Info(stage, fields...)
 			return
 		}
 		slog.InfoContext(ctx, stage, fields...)

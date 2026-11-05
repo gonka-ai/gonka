@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,11 +88,17 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
+	var nowMu sync.Mutex
 	now := time.Unix(1_000, 0)
+	clock := func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		return now
+	}
 	sm := newTestStateMachine(t, escrowID, config, group, balance, user.Address(), verifier)
 	session, err := NewSession(sm, user, escrowID, group, clients, verifier,
 		WithStorage(store), WithHeightSyncCadence(16, numHosts),
-		WithHeartbeatClock(func() time.Time { return now }))
+		WithHeartbeatClock(clock))
 	require.NoError(t, err)
 	seedFloorByInference(t, session)
 
@@ -111,6 +118,9 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	// Recover each host from the same persisted snapshot, with the chain limit
 	// enabled. Separate state machines retain independent host state.
 	var limitErrors atomic.Uint64
+	// The bootstrap session retains clients for background observations. Build
+	// the replacement list separately so the original slice stays immutable.
+	restoredClients := make([]HostClient, numHosts)
 	for i := range keys {
 		_, hostSM, err := RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
 		require.NoError(t, err)
@@ -118,12 +128,12 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 			host.WithGrace(100), host.WithChainOracle(oracle),
 			host.WithMaxNonceProvider(devshard.StaticMaxNonce(maxNonce)))
 		require.NoError(t, err)
-		clients[i] = ackBlackholeClient{HostClient: &InProcessClient{Host: h}, limitErrors: &limitErrors}
+		restoredClients[i] = ackBlackholeClient{HostClient: &InProcessClient{Host: h}, limitErrors: &limitErrors}
 	}
-	session, sm, err = RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
+	session, sm, err = RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, restoredClients)
 	require.NoError(t, err)
 	session.SetHeightSyncCadence(16, numHosts)
-	session.clock = func() time.Time { return now }
+	session.clock = clock
 	require.Equal(t, nearLimit, session.Nonce())
 	floor, _, known := sm.HeightSyncFloorAsOf(nearLimit + 1)
 	require.True(t, known)
@@ -135,7 +145,10 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	require.Zero(t, limitErrors.Load())
 	require.Zero(t, session.HeartbeatTurnovers())
 	// Advance the injected clock instead of waiting through an idle timeout.
-	now = now.Add(session.heartbeat.Config().TurnTimeout)
+	turnTimeout := session.heartbeat.Config().TurnTimeout
+	nowMu.Lock()
+	now = now.Add(turnTimeout)
+	nowMu.Unlock()
 	err = session.MaybeHeartbeat(context.Background())
 	require.NoError(t, err, "heartbeat currently suppresses host send errors")
 	require.Positive(t, limitErrors.Load(), "hosts must reject with ErrNonceLimitExceeded")
@@ -146,5 +159,5 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	consumed := session.Nonce() - nearLimit
 	require.Equal(t, consumed*fee, after.Fees-before.Fees)
 	require.Equal(t, consumed*fee, before.Balance-after.Balance)
-	t.Logf("nonce %d -> %d; fees charged: %d; simulated elapsed: %s", nearLimit, session.Nonce(), after.Fees-before.Fees, now.Sub(time.Unix(1_000, 0)))
+	t.Logf("nonce %d -> %d; fees charged: %d; simulated elapsed: %s", nearLimit, session.Nonce(), after.Fees-before.Fees, clock().Sub(time.Unix(1_000, 0)))
 }

@@ -825,8 +825,7 @@ func TestChallengeStackedSharedBatchFailureRetriesOnce(t *testing.T) {
 	f := newWriterFixture(t, 10)
 	f.store.before = func(context.Context) error { return errors.New("disk") }
 	release := make(chan struct{})
-	testBeforeTakeQueue = func() { <-release }
-	t.Cleanup(func() { testBeforeTakeQueue = nil })
+	f.host.writer.beforeTakeQueue = func() { <-release }
 	low, err := diffWiresFromDiffs(f.diffs[:5])
 	require.NoError(t, err)
 	high, err := diffWiresFromDiffs(f.diffs[5:])
