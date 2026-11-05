@@ -1226,6 +1226,8 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 		return sm.applyTimeout(inner.TimeoutInference, diffNonce)
 	case *types.DevshardTx_ErrorMiss:
 		return sm.applyErrorMiss(inner.ErrorMiss)
+	case *types.DevshardTx_Challenge:
+		return sm.applyChallenge(inner.Challenge)
 	case *types.DevshardTx_RevealSeed:
 		return sm.applyRevealSeed(inner.RevealSeed)
 	case *types.DevshardTx_FinalizeRound:
@@ -1661,16 +1663,7 @@ func (sm *StateMachine) resolveChallengeTalliesLocked(inferenceID uint64, rec *t
 	}
 	threshold := sm.state.Config.VoteThreshold
 	if rec.VotesInvalid > threshold {
-		rec.Status = types.StatusInvalidated
-		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
-		hs.Invalid++
-		if hs.Cost < rec.ActualCost {
-			hs.Cost = 0
-		} else {
-			hs.Cost -= rec.ActualCost
-		}
-		sm.state.Balance += rec.ActualCost
-		sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
+		sm.invalidateLocked(inferenceID, rec)
 		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
 			"inference_id", inferenceID,
 			"votes_valid", rec.VotesValid,
@@ -1686,6 +1679,21 @@ func (sm *StateMachine) resolveChallengeTalliesLocked(inferenceID uint64, rec *t
 			"votes_invalid", rec.VotesInvalid,
 		)
 	}
+}
+
+// invalidateLocked turns rec Invalidated: the executor's payment goes back to
+// the escrow and the executor takes an Invalid. Caller holds sm.mu.
+func (sm *StateMachine) invalidateLocked(inferenceID uint64, rec *types.InferenceRecord) {
+	rec.Status = types.StatusInvalidated
+	hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+	hs.Invalid++
+	if hs.Cost < rec.ActualCost {
+		hs.Cost = 0
+	} else {
+		hs.Cost -= rec.ActualCost
+	}
+	sm.state.Balance += rec.ActualCost
+	sm.persistLiveInferenceObsBestEffortLocked(inferenceID, rec)
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -1906,6 +1914,96 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,
 		"reason", "error_miss",
+	)
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+// applyChallenge tallies the hosts' signed verdicts on a finished inference.
+// Faults of any kind count together; above VoteThreshold the inference is
+// invalidated with the effects of a replay invalidation. Below it the record
+// stays Finished and paid, and the tx still applies so the votes stay on the
+// diff log. The first applied MsgChallenge marks the record and a later one
+// is a no-op, so a gateway cannot collect vote sets until one crosses the
+// threshold. The executor's address does not vote: the gateway that
+// collects the votes is not trusted to leave it out.
+func (sm *StateMachine) applyChallenge(msg *types.MsgChallenge) error {
+	rec, ok := sm.inferenceForWriteLocked(msg.InferenceId)
+	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+	}
+	if rec.UsageChallenged {
+		return nil
+	}
+	if rec.Status != types.StatusFinished {
+		return fmt.Errorf("%w: challenge requires finished, got %d", types.ErrInvalidTransition, rec.Status)
+	}
+
+	executorAddr := sm.slotToAddress[rec.ExecutorSlot]
+	faultCount := uint32(0)
+	seenAddrs := make(map[string]bool, len(msg.Votes))
+	for _, vote := range msg.Votes {
+		voterAddr, ok := sm.slotToAddress[vote.VoterSlot]
+		if !ok {
+			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.VoterSlot)
+		}
+		if voterAddr == executorAddr {
+			return fmt.Errorf("%w: slot %d", types.ErrExecutorVote, vote.VoterSlot)
+		}
+		if seenAddrs[voterAddr] {
+			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.VoterSlot)
+		}
+		seenAddrs[voterAddr] = true
+		if _, known := types.ChallengeFault_name[int32(vote.Fault)]; !known {
+			return fmt.Errorf("%w: %d from slot %d", types.ErrUnknownChallengeFault, vote.Fault, vote.VoterSlot)
+		}
+
+		voteContent := &types.ChallengeVoteContent{
+			EscrowId:     sm.state.EscrowID,
+			InferenceId:  msg.InferenceId,
+			Fault:        vote.Fault,
+			Check:        vote.Check,
+			Deviation:    vote.Deviation,
+			ResponseHash: rec.ResponseHash,
+		}
+		voteData, err := types.CanonicalSignedBytes(voteContent)
+		if err != nil {
+			return fmt.Errorf("marshal challenge vote: %w", err)
+		}
+		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
+		if err != nil {
+			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+		}
+		if !sm.hostSignerAllowedLocked(vote.VoterSlot, recovered) {
+			return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
+				types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
+		}
+		if vote.Fault != types.ChallengeFault_CHALLENGE_FAULT_NONE {
+			faultCount += sm.addressToSlotCount[voterAddr]
+		}
+	}
+
+	rec.UsageChallenged = true
+	if faultCount > sm.state.Config.VoteThreshold {
+		// The record is still Finished, so every ValidatedBy bit is a sampled
+		// pass already credited to the executor. An invalid record keeps none
+		// of them, as when a replay vote challenges it.
+		hs := sm.hostStatsForWriteLocked(rec.ExecutorSlot)
+		if passes := rec.ValidatedBy.Count(); hs.Validated < passes {
+			hs.Validated = 0
+		} else {
+			hs.Validated -= passes
+		}
+		sm.invalidateLocked(msg.InferenceId, rec)
+	}
+	logging.Debug("inference challenged", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"votes", len(msg.Votes),
+		"fault_weight", faultCount,
+		"status", rec.Status,
 	)
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }

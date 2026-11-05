@@ -236,6 +236,9 @@ func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream
 		// not the cached non-streaming body.
 		writeInProcessStreamingChunk(stream)
 	}
+	// Nothing sits between the gateway and an in-process host, so the
+	// response always arrives whole.
+	resp.ReceivedComplete = true
 	return resp, nil
 }
 
@@ -315,6 +318,22 @@ type Session struct {
 	appliedFinishHashes    map[uint64]waitingAppliedFinish
 	servedBindingsPrunedAt time.Time
 	servedBindingHandler   ServedBindingHandler
+
+	// Challenge bookkeeping (user/challenge.go). A stream that did not bind
+	// waits in challengeMarks for its Finish, an applied Finish waits in
+	// challengeFinishes for a late mark, and challengeStarted keeps one
+	// challenge per inference.
+	challengeMarks    map[uint64]challengeMark
+	challengeFinishes map[uint64]time.Time
+	challengeStarted  map[uint64]time.Time
+	challengeHandler  ChallengeHandler
+	// streamsOpen holds the nonces whose attempt stream the gateway is still
+	// reading: a Finish that applies while one is open starts a challenge
+	// unless the stream ends within ChallengeOpenStreamGrace. streamsEnded
+	// holds the nonces whose stream ended with nothing to challenge, so the
+	// retention sweep does not log their Finish as unchecked.
+	streamsOpen  map[uint64]openStream
+	streamsEnded map[uint64]time.Time
 
 	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
@@ -4584,6 +4603,11 @@ func closeHostClients(clients []HostClient) {
 type TimeoutVerifier interface {
 	VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (accept bool, sig []byte, voterSlot uint32, mempool []*types.DevshardTx, rejectCause string, err error)
 	VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (accept bool, sig []byte, voterSlot uint32, mempool []*types.DevshardTx, rejectCause string, err error)
+}
+
+// ChallengeVerifier asks a host for its verdict on a challenged inference.
+type ChallengeVerifier interface {
+	VerifyChallenge(ctx context.Context, inferenceID uint64, reason types.ChallengeReason, diffs []types.Diff) (*transport.VerifyChallengeResponse, error)
 }
 
 func timeoutReasonLogLabel(reason types.TimeoutReason) string {

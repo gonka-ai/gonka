@@ -62,6 +62,19 @@ type FaultConfig struct {
 	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
 	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
 	StreamErrorEnvelope bool
+	// UsageCompletionTokens and UsagePromptTokens, when positive, replace the
+	// counts in the usage of a recorded stream (total_tokens follows), as an
+	// engine that overstates its usage would. PadEmptyChunks adds that many
+	// chunks with an empty content delta and no logprobs ahead of the chunk
+	// that finishes the choice. They act on executions only: a validation
+	// replay stands for another host's ML node and gets the recording as is.
+	// DropTokens strips every sampled token (content, logprobs, token_ids)
+	// from the stream and keeps its usage and finish_reason: an answer with
+	// a claim and no generated tokens.
+	UsageCompletionTokens int
+	UsagePromptTokens     int
+	PadEmptyChunks        int
+	DropTokens            bool
 }
 
 // ShouldFail deterministically selects requests for a configured failure
@@ -91,6 +104,18 @@ type FaultPatch struct {
 	PauseStream         *bool   `json:"pause_stream,omitempty"`
 	StreamErrorEnvelope *bool   `json:"stream_error_envelope,omitempty"`
 	Hang                *bool   `json:"hang,omitempty"`
+	// Zero turns a usage or padding knob off.
+	UsageCompletionTokens *int `json:"usage_completion_tokens,omitempty"`
+	UsagePromptTokens     *int `json:"usage_prompt_tokens,omitempty"`
+	PadEmptyChunks        *int `json:"pad_empty_chunks,omitempty"`
+
+	DropTokens *bool `json:"drop_tokens,omitempty"`
+
+	// Seed, when set, scopes the patch's usage, padding and drop_tokens
+	// knobs to the requests that carry this seed, so concurrent requests
+	// can each get their own; the other knobs of such a patch are ignored.
+	// A seed patch with all of them zero removes the seed's knobs.
+	Seed *int `json:"seed,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -123,6 +148,18 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.Hang != nil {
 		dst.Hang = *p.Hang
+	}
+	if p.UsageCompletionTokens != nil {
+		dst.UsageCompletionTokens = *p.UsageCompletionTokens
+	}
+	if p.UsagePromptTokens != nil {
+		dst.UsagePromptTokens = *p.UsagePromptTokens
+	}
+	if p.PadEmptyChunks != nil {
+		dst.PadEmptyChunks = *p.PadEmptyChunks
+	}
+	if p.DropTokens != nil {
+		dst.DropTokens = *p.DropTokens
 	}
 }
 

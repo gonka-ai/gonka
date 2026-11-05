@@ -192,7 +192,7 @@ services:
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
-      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat}
       DEVSHARD_RPC_MSGS_PER_MIN: ${DEVSHARD_RPC_MSGS_PER_MIN:-}
       DEVSHARD_RPC_MSGS_BURST: ${DEVSHARD_RPC_MSGS_BURST:-}
       DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL: ${DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL:-}
@@ -345,7 +345,7 @@ services:
       DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
-      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat}
+      DEVSHARD_RPC_ENDPOINTS: ${DEVSHARD_RPC_ENDPOINTS:-signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat}
       DEVSHARD_RPC_H2_UPGRADE: ${DEVSHARD_RPC_H2_UPGRADE:-}
       DEVSHARD_RPC_GRPC: ${DEVSHARD_RPC_GRPC:-}
       GATEWAY_MAX_TOKENS_CAP: "4096"

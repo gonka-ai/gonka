@@ -33,6 +33,19 @@ import (
 // is on.
 var errExecutorPayloadFault = errors.New("executor payload fault")
 
+// errExecutorPayloadSignature marks a fetched payload whose executor
+// signature does not verify.
+var errExecutorPayloadSignature = errors.New("verify executor signature")
+
+// errExecutorFetchCut marks a payload call the caller's deadline ended before
+// the executor answered it. The lookups this host runs after the body
+// arrived are not marked: a deadline that ends there is this host's own.
+var errExecutorFetchCut = errors.New("executor did not answer the payload call before the deadline")
+
+// An absent executor URL is retriable by a challenge. Keep it separate from
+// errExecutorPayloadFault so replay retains its existing no-vote behavior.
+var errExecutorURLUnavailable = errors.New("executor has no URL")
+
 func tagExecutorPayloadFault(err error) error {
 	if err == nil {
 		return nil
@@ -103,8 +116,8 @@ func fetchPayloadsFromExecutor(
 	if err != nil {
 		return nil, nil, fmt.Errorf("get executor info: %w", err)
 	}
-	if executorInfo.URL == "" {
-		return nil, nil, fmt.Errorf("executor has no URL")
+	if strings.TrimSpace(executorInfo.URL) == "" {
+		return nil, nil, errExecutorURLUnavailable
 	}
 
 	validatorAddress := recorder.GetAccountAddress()
@@ -134,6 +147,9 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, signErr
 	}
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, nil, fmt.Errorf("%w: %w", errExecutorFetchCut, err)
+		}
 		return nil, nil, classifyPayloadFetchError(ctx, err)
 	}
 
@@ -150,7 +166,7 @@ func fetchPayloadsFromExecutor(
 		req.ExecutorAddress,
 		encodedPubKeys,
 	); err != nil {
-		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("verify executor signature: %w", err))
+		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: %w", errExecutorPayloadSignature, err))
 	}
 
 	if err := verifyFetchedPayloadHashes(req, payloadResp.PromptPayload, payloadResp.ResponsePayload); err != nil {
