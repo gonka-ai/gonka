@@ -19,14 +19,17 @@ import (
 
 // Server serves OpenAI-compatible /v1/chat/completions.
 type Server struct {
-	echo       *echo.Echo
-	replay     *replay.Dataset
-	mu         sync.RWMutex
-	fault      FaultConfig
-	streamGate chan struct{}
-	capacity   chan struct{}
-	workers    chan struct{}
-	stats      struct {
+	echo            *echo.Echo
+	replay          *replay.Dataset
+	mu              sync.RWMutex
+	fault           FaultConfig
+	streamGate      chan struct{}
+	active          map[uint64]context.CancelFunc
+	nextRequest     uint64
+	abortedRequests uint64
+	capacity        chan struct{}
+	workers         chan struct{}
+	stats           struct {
 		requestsReceived    atomic.Uint64
 		successfulResponses atomic.Uint64
 		failedResponses     atomic.Uint64
@@ -47,7 +50,7 @@ func NewServer(cfg Config) *Server {
 
 // NewServerWithError builds the HTTP server and loads an optional replay file.
 func NewServerWithError(cfg Config) (*Server, error) {
-	s := &Server{fault: cfg.Faults}
+	s := &Server{fault: cfg.Faults, active: make(map[uint64]context.CancelFunc)}
 	if cfg.ReplayFile != "" {
 		dataset, err := replay.LoadFile(cfg.ReplayFile)
 		if err != nil {
@@ -83,6 +86,12 @@ func (s *Server) handleModelStatus(c echo.Context) error {
 func (s *Server) patchFault(p FaultPatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if p.AbortActive != nil && *p.AbortActive {
+		for _, cancel := range s.active {
+			cancel()
+		}
+		s.abortedRequests += uint64(len(s.active))
+	}
 	if p.PauseStream != nil {
 		if *p.PauseStream {
 			s.releaseStreamLocked()
@@ -129,7 +138,11 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 }
 
 func (s *Server) handleStats(c echo.Context) error {
+	s.mu.RLock()
+	active, aborted := len(s.active), s.abortedRequests
+	s.mu.RUnlock()
 	return c.JSON(http.StatusOK, Stats{
+		ActiveRequests: active, AbortedRequests: aborted,
 		RequestsReceived:    s.stats.requestsReceived.Load(),
 		SuccessfulResponses: s.stats.successfulResponses.Load(),
 		FailedResponses:     s.stats.failedResponses.Load(),
@@ -149,6 +162,19 @@ func (s *Server) recordFailure(ctx context.Context) {
 
 func (s *Server) handleChatCompletions(c echo.Context) error {
 	s.stats.requestsReceived.Add(1)
+	ctx, cancel := context.WithCancel(c.Request().Context())
+	c.SetRequest(c.Request().WithContext(ctx))
+	s.mu.Lock()
+	s.nextRequest++
+	requestID := s.nextRequest
+	s.active[requestID] = cancel
+	s.mu.Unlock()
+	defer func() {
+		cancel()
+		s.mu.Lock()
+		delete(s.active, requestID)
+		s.mu.Unlock()
+	}()
 	if !s.acquire(c.Request().Context()) {
 		s.recordFailure(c.Request().Context())
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": "mock-openai capacity exhausted"})

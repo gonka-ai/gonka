@@ -1,9 +1,11 @@
 package gatewayphase_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"devshard/testenv/gatewayphase"
@@ -43,4 +45,24 @@ func TestMount_CurrentParticipantsEmpty(t *testing.T) {
 	participants, ok := active["participants"].([]any)
 	require.True(t, ok)
 	require.Empty(t, participants)
+}
+
+func TestPreservedModelsFollowPhaseAndReset(t *testing.T) {
+	e := echo.New()
+	schedule := gatewayphase.NewSchedule([]gatewayphase.Step{{Phase: gatewayphase.PhasePoCGenerate, Models: []string{"m"}, PreservedParticipants: []string{"p0"}}})
+	gatewayphase.Mount(e.Group(""), gatewayphase.Config{Schedule: schedule, Source: func(context.Context) (gatewayphase.State, error) {
+		return gatewayphase.State{Participants: []gatewayphase.Participant{{Address: "p0"}, {Address: "p1"}}}, nil
+	}})
+	read := func() string {
+		r := httptest.NewRecorder()
+		e.ServeHTTP(r, httptest.NewRequest(http.MethodGet, "/v1/epochs/current/participants", nil))
+		require.Equal(t, http.StatusOK, r.Code)
+		return r.Body.String()
+	}
+	body := read()
+	require.Contains(t, body, `"models":["m"]`)
+	require.Equal(t, 1, strings.Count(body, `"timeslot_allocation":[true,true]`))
+	require.Equal(t, 1, strings.Count(body, `"timeslot_allocation":[true,false]`))
+	schedule.Set(nil)
+	require.NotContains(t, read(), `"timeslot_allocation":[true,true]`)
 }

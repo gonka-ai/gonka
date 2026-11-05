@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"devshard/testenv/config"
+	"devshard/testenv/mockopenai"
 )
 
 // invariantRun owns the pollers that feed the end-of-run invariants.
@@ -40,7 +41,7 @@ func startInvariantRun(ctx context.Context, opts RunnerConfig, cfg *config.File,
 		return nil, err
 	}
 	out := func(name string) string { return filepath.Join(opts.OutputDir, name) }
-	if r.accounting, err = startJSONLPoller(ctx, out("accounting-snapshots.jsonl"), "baseline", atTimes(accountingBoundaries(started, planned, r.settings.Grace)), collectAccounting(statsURL)); err != nil {
+	if r.accounting, err = startJSONLPoller(ctx, out("accounting-snapshots.jsonl"), "baseline", atTimes(accountingBoundaries(started, planned, r.settings.Grace, scenario.Duration())), collectAccounting(statsURL)); err != nil {
 		return nil, err
 	}
 	if r.throttle, err = startJSONLPoller(ctx, out("throttle.jsonl"), "start", everyInterval(throttlePollEvery), collectThrottle(gatewayURL, apiKey)); err != nil {
@@ -60,6 +61,20 @@ func startInvariantRun(ctx context.Context, opts RunnerConfig, cfg *config.File,
 	bound := boundHosts(scenario)
 	if r.dapiHosts, err = startJSONLPoller(ctx, out("dapi-host-stats.jsonl"), "start", everyInterval(dapiHostsPollEvery), func(ctx context.Context, label string) []DapiHostSample {
 		samples := collectDapi(ctx, label)
+		if hasPoCWindows(scenario.TimelineEvents()) {
+			for i := range samples {
+				samples[i].MLNodes = map[string]mockopenai.Stats{}
+				samples[i].MLErrors = map[string]string{}
+				for node, url := range newHTTPMockControl(cfg).mlURLs {
+					var stats mockopenai.Stats
+					if err := getJSON(ctx, url+"/testenv/stats", "", &stats); err != nil {
+						samples[i].MLErrors[node] = err.Error()
+					} else {
+						samples[i].MLNodes[node] = stats
+					}
+				}
+			}
+		}
 		r.warnBinding(samples, warmup, bound)
 		return samples
 	}); err != nil {

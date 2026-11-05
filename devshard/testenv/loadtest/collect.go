@@ -19,6 +19,7 @@ import (
 
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/ledgerface"
+	"devshard/testenv/mockopenai"
 )
 
 // jsonlPoller collects samples on a schedule, appends each one to a JSONL
@@ -529,9 +530,11 @@ func collectAccounting(statsURL string) func(context.Context, string) []Accounti
 // DapiHostSample is one mock-dapi GET /testenv/host-stats read. Counters are
 // cumulative; the "unmapped" row counts callers bound to no host.
 type DapiHostSample struct {
-	At    time.Time              `json:"at"`
-	Hosts map[string]DapiHostRow `json:"hosts,omitempty"`
-	Error string                 `json:"error,omitempty"`
+	MLNodes  map[string]mockopenai.Stats `json:"ml_nodes,omitempty"`
+	MLErrors map[string]string           `json:"ml_errors,omitempty"`
+	At       time.Time                   `json:"at"`
+	Hosts    map[string]DapiHostRow      `json:"hosts,omitempty"`
+	Error    string                      `json:"error,omitempty"`
 }
 
 // DapiHostRow mirrors mockdapi.HostStats.
@@ -559,9 +562,24 @@ func collectDapiHosts(dapiURL string) func(context.Context, string) []DapiHostSa
 // accountingBoundaries lists snapshot times for planned events. Real event
 // times can drift from the plan by a command's duration; the evaluators
 // compare snapshots against the real windows in events.json.
-func accountingBoundaries(started time.Time, events []plannedEvent, grace time.Duration) []labeledTime {
+func accountingBoundaries(started time.Time, events []plannedEvent, grace, workload time.Duration) []labeledTime {
 	var times []labeledTime
 	for _, event := range events {
+		if event.Action == "poc_window" {
+			end := workload
+			for _, e := range events {
+				end = max(end, e.window.end)
+			}
+			for at := 10 * time.Second; at < end; at += 10 * time.Second {
+				times = append(times, labeledTime{At: started.Add(at), Label: "poc-periodic"})
+			}
+			break
+		}
+	}
+	for _, event := range events {
+		if event.Action == "poc_window" {
+			times = append(times, labeledTime{At: started.Add(event.window.end), Label: event.ID + ":end"})
+		}
 		times = append(times, labeledTime{At: started.Add(event.window.start), Label: event.ID + ":start"})
 		times = append(times, labeledTime{At: started.Add(event.window.end + grace), Label: event.ID + ":end+grace"})
 		if event.Action == "epoch_advance" {

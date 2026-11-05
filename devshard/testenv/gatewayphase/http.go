@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/labstack/echo/v4"
 )
@@ -106,16 +107,22 @@ func Mount(g *echo.Group, cfg Config) {
 		if err != nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 		}
+		step := cfg.Schedule.Current()
 		participants := make([]any, 0, len(st.Participants))
 		for _, p := range st.Participants {
+			preserved := slices.Contains(step.PreservedParticipants, p.Address)
+			modelNodes := make([]any, 0, max(1, len(step.Models)))
+			for range max(1, len(step.Models)) {
+				modelNodes = append(modelNodes, map[string]any{"ml_nodes": []any{map[string]any{
+					"node_id": p.Address + "-ml", "timeslot_allocation": []bool{true, preserved},
+					"poc_weight": fmt.Sprintf("%d", participantPoCWeight),
+				}}})
+			}
 			participants = append(participants, map[string]any{
 				"index":         p.Address,
 				"inference_url": p.InferenceURL,
-				"ml_nodes": []any{map[string]any{"ml_nodes": []any{map[string]any{
-					"node_id":             p.Address + "-ml",
-					"timeslot_allocation": []bool{true, false},
-					"poc_weight":          fmt.Sprintf("%d", participantPoCWeight),
-				}}}},
+				"models":        step.Models,
+				"ml_nodes":      modelNodes,
 			})
 		}
 		return c.JSON(http.StatusOK, map[string]any{

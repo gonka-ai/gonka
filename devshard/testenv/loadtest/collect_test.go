@@ -272,7 +272,7 @@ func TestAccountingBoundaries(t *testing.T) {
 		{Event: Event{ID: "c1", Action: "ml_fault"}, window: eventWindow{start: 2 * time.Minute, end: 3 * time.Minute}},
 		{Event: Event{ID: "c8", Action: "epoch_advance"}, window: eventWindow{start: 7 * time.Minute, end: 8 * time.Minute}},
 	}
-	got := accountingBoundaries(started, events, 95*time.Second)
+	got := accountingBoundaries(started, events, 95*time.Second, 10*time.Minute)
 	require.Equal(t, []labeledTime{
 		{started.Add(2 * time.Minute), "c1:start"},
 		{started.Add(3*time.Minute + 95*time.Second), "c1:end+grace"},

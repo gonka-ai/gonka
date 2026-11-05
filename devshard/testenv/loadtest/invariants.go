@@ -212,7 +212,25 @@ func newInvariantContext(in InvariantInputs) *invariantContext {
 	}
 	sort.Strings(c.participants)
 	faulty := map[string]bool{}
+	records := append([]EventRecord(nil), in.Events...)
 	for _, record := range in.Events {
+		if record.Action != "poc_window" {
+			continue
+		}
+		preserved, _ := record.Params["preserved"].(string)
+		address := c.hostToPart[preserved]
+		seen := map[string]bool{}
+		for _, host := range in.Hosts {
+			if host.Participant == address || seen[host.Participant] {
+				continue
+			}
+			seen[host.Participant] = true
+			synthetic := record
+			synthetic.Action, synthetic.Target = "poc_window", host.ID
+			records = append(records, synthetic)
+		}
+	}
+	for _, record := range records {
 		host, participant := c.eventTarget(record)
 		if participant != "" {
 			faulty[participant] = true
@@ -240,6 +258,9 @@ func newInvariantContext(in InvariantInputs) *invariantContext {
 // eventTarget resolves an event to its host and participant. Global events
 // and ML nodes without a host binding attribute to nobody.
 func (c *invariantContext) eventTarget(record EventRecord) (string, string) {
+	if record.Action == "poc_window" {
+		return record.Target, c.hostToPart[record.Target]
+	}
 	switch eventActions[record.Action].target {
 	case targetHost:
 		return record.Target, c.hostToPart[record.Target]
@@ -335,6 +356,7 @@ var invariantEvaluators = []struct {
 	{"faults-fired-and-ml-nodes-bound", evalFaultsFiredAndMLNodesBound},
 	{"no-skipped-validation-leases", evalNoSkippedValidationLeases},
 	{"no-admission-during-poc", evalNoAdmissionDuringPoC},
+	{"poc-load", evalPoCLoad},
 	{"responses-compress", evalResponsesCompress},
 	{"payload-files-are-zstd", evalPayloadFilesAreZstd},
 	{"no-http-5xx-on-honest-hosts", evalNoHTTP5xxOnHonestHosts},
@@ -1169,6 +1191,8 @@ func expectedQuarantine(record EventRecord) (allowed map[string]bool, forbidden 
 			// pause_stream only the requests holding the mock's workers get the first token.
 			return map[string]bool{"stalled_winner": true, "transport": true, "empty_stream": true}, nil, true
 		}
+	case "poc_window":
+		return map[string]bool{"empty_stream": true, "transport": true, "http": true, "stalled_winner": true}, nil, true
 	case "dapi_challenge":
 		return nil, map[string]bool{"empty_stream": true}, true
 	}

@@ -89,6 +89,7 @@ var eventActions = map[string]eventActionSpec{
 	"tripfile":          {targetHost, windowRequired},
 	"chain_participant": {targetHost, windowRequired},
 	"epoch_advance":     {targetGlobal, windowOptional},
+	"poc_window":        {targetGlobal, windowRequired},
 	"dapi_challenge":    {targetHost, windowRequired},
 	"marker":            {targetHost, windowRequired},
 }
@@ -96,6 +97,7 @@ var eventActions = map[string]eventActionSpec{
 var globalEventTargets = map[string]string{
 	"gateway_restart": "devshardctl",
 	"epoch_advance":   "mock-chain",
+	"poc_window":      "mock-dapi",
 }
 
 var signalPattern = regexp.MustCompile(`^(SIG)?[A-Z0-9]+$`)
@@ -243,6 +245,24 @@ func validateEvents(s Scenario, workload time.Duration) error {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
 		windows[i] = window
+		if event.Action == "poc_window" {
+			preserved, _ := event.Params["preserved"].(string)
+			if s.Gateway.PoCRequestMode != "relaxed" || s.Topology.Participants < 2 || !validTopologyHost(preserved, s.Topology.Participants) {
+				return fmt.Errorf("%s: poc_window requires relaxed gateway mode and a preserved host in the explicit topology", prefix)
+			}
+			for host := 0; host <= s.Topology.Participants; host++ {
+				name := fmt.Sprintf("versiond-%d", host)
+				bound := false
+				for _, node := range s.Topology.MockML.Nodes {
+					if node.Host == name {
+						bound = true
+					}
+				}
+				if !bound {
+					return fmt.Errorf("%s: poc_window requires a bound mock ML node for %s", prefix, name)
+				}
+			}
+		}
 		if err := validateEventParams(event); err != nil {
 			return fmt.Errorf("%s: %w", prefix, err)
 		}
@@ -252,7 +272,7 @@ func validateEvents(s Scenario, workload time.Duration) error {
 			if isBackground(events[i].Params) || isBackground(events[j].Params) {
 				continue
 			}
-			if eventLane(events[i], nodeHosts) == eventLane(events[j], nodeHosts) && windows[i].overlaps(windows[j]) {
+			if (eventLane(events[i], nodeHosts) == eventLane(events[j], nodeHosts) || events[i].Action == "poc_window" || events[j].Action == "poc_window") && windows[i].overlaps(windows[j]) {
 				return fmt.Errorf("workload.events %q and %q overlap on %s", events[j].ID, events[i].ID, eventLane(events[i], nodeHosts))
 			}
 		}
@@ -326,6 +346,16 @@ func validateEventParams(event Event) error {
 		file, _ := event.Params["file"].(string)
 		if file == "" || strings.ContainsAny(file, `/\`) || file == "." || file == ".." {
 			return fmt.Errorf("tripfile requires params.file as a bare file name")
+		}
+	case "poc_window":
+		if preserved, _ := event.Params["preserved"].(string); preserved == "" {
+			return fmt.Errorf("poc_window requires params.preserved as a versiond host")
+		}
+		if raw, ok := event.Params["kind"]; ok {
+			kind, isString := raw.(string)
+			if !isString || (kind != "poc" && kind != "cpoc") {
+				return fmt.Errorf("poc_window params.kind must be poc or cpoc")
+			}
 		}
 	case "epoch_advance":
 		if raw, ok := event.Params["phases"]; ok {
@@ -424,9 +454,13 @@ type mockControl interface {
 // plannedEvent is an event resolved against the generated topology.
 type plannedEvent struct {
 	Event
-	window   eventWindow
-	address  string
-	tripPath string
+	window       eventWindow
+	address      string
+	tripPath     string
+	pocPreserved []string
+	pocHosts     []string
+	pocNodes     []string
+	pocModels    []string
 }
 
 type eventStep func(context.Context) error
@@ -489,6 +523,8 @@ func eventSteps(event plannedEvent, ops eventOps, mocks mockControl) (apply, rev
 				}
 				return mocks.GatewayPhase(ctx, nil)
 			}
+	case "poc_window":
+		return pocWindowSteps(event, mocks)
 	case "dapi_challenge":
 		return func(ctx context.Context) error { return mocks.DAPIChallenge(ctx, target, true) },
 			func(ctx context.Context) error { return mocks.DAPIChallenge(ctx, target, false) }
@@ -640,6 +676,42 @@ func planEvents(scenario Scenario, cfg *config.File) ([]plannedEvent, map[string
 			return nil, nil, fmt.Errorf("event %s: %w", event.ID, err)
 		}
 		p := plannedEvent{Event: event, window: window}
+		if event.Action == "poc_window" {
+			preserved, _ := event.Params["preserved"].(string)
+			host, ok := hosts[preserved]
+			if !ok {
+				return nil, nil, fmt.Errorf("event %s: preserved host %s absent", event.ID, preserved)
+			}
+			address := participantAddress(cfg, host)
+			if address == "" {
+				return nil, nil, fmt.Errorf("event %s: preserved host has no participant address", event.ID)
+			}
+			p.pocPreserved = []string{address}
+			// Replay may replace scenario model IDs with dataset model IDs.
+			models := map[string]bool{}
+			for _, escrow := range cfg.Escrows {
+				if escrow.ModelID != "" && !models[escrow.ModelID] {
+					models[escrow.ModelID] = true
+					p.pocModels = append(p.pocModels, escrow.ModelID)
+				}
+			}
+			if len(p.pocModels) == 0 {
+				p.pocModels = scenario.RequestModels()
+			}
+			sort.Strings(p.pocModels)
+			for _, h := range cfg.Hosts {
+				if participantAddress(cfg, h) != address {
+					p.pocHosts = append(p.pocHosts, h.ID)
+				}
+			}
+			for _, node := range scenario.Topology.MockML.Nodes {
+				for _, h := range p.pocHosts {
+					if node.Host == h {
+						p.pocNodes = append(p.pocNodes, node.Name)
+					}
+				}
+			}
+		}
 		if spec.target == targetHost {
 			host, ok := hosts[event.Target]
 			if !ok {

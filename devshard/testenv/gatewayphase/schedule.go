@@ -34,9 +34,11 @@ var (
 // Step is one entry of a phase timeline: from At after the schedule start
 // until the next step, the stub reports Phase and ConfirmationPoCPhase.
 type Step struct {
-	At                   time.Duration
-	Phase                string
-	ConfirmationPoCPhase string
+	PreservedParticipants []string
+	Models                []string
+	At                    time.Duration
+	Phase                 string
+	ConfirmationPoCPhase  string
 }
 
 // ConfirmationPoCActive reports whether the step is inside a confirmation PoC.
@@ -109,13 +111,15 @@ func (s *Schedule) currentLocked() Step {
 
 // StepJSON is the wire form of a Step, with At as a Go duration string.
 type StepJSON struct {
-	At                   string `json:"at"`
-	Phase                string `json:"phase"`
-	ConfirmationPoCPhase string `json:"confirmation_poc_phase,omitempty"`
+	PreservedParticipants []string `json:"preserved_participants,omitempty"`
+	Models                []string `json:"models,omitempty"`
+	At                    string   `json:"at"`
+	Phase                 string   `json:"phase"`
+	ConfirmationPoCPhase  string   `json:"confirmation_poc_phase,omitempty"`
 }
 
 func (s Step) wire() StepJSON {
-	return StepJSON{At: s.At.String(), Phase: s.Phase, ConfirmationPoCPhase: s.ConfirmationPoCPhase}
+	return StepJSON{At: s.At.String(), Phase: s.Phase, ConfirmationPoCPhase: s.ConfirmationPoCPhase, PreservedParticipants: s.PreservedParticipants, Models: s.Models}
 }
 
 // ScheduleSnapshot is the GET/POST /testenv/phase response.
@@ -151,7 +155,7 @@ func (r stepRequests) parse() ([]Step, error) {
 		if err != nil {
 			return nil, fmt.Errorf("steps[%d].at: %w", i, err)
 		}
-		step := Step{At: at, Phase: raw.Phase, ConfirmationPoCPhase: raw.ConfirmationPoCPhase}
+		step := Step{At: at, Phase: raw.Phase, ConfirmationPoCPhase: raw.ConfirmationPoCPhase, PreservedParticipants: raw.PreservedParticipants, Models: raw.Models}
 		if step.Phase == "" {
 			step.Phase = PhaseInference
 		}
