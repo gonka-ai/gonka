@@ -5,12 +5,12 @@ How code in `devshard/cmd/gateway` is built, checked, laid out, named and tested
 ## Prerequisites
 
 - Go 1.25.9 or later, the version `devshard/go.mod` names.
-- golangci-lint v2.6 or later: [`.golangci.yml`](./.golangci.yml) is a version 2 config and enables `modernize`.
+- golangci-lint v2.15 or later, the version CI pins: [`.golangci.yml`](./.golangci.yml) is a version 2 config and enables `modernize`.
 - Docker, only for `make image` and the e2e stand.
 
 ## Before you push
 
-No CI job runs this gate, so running it is the author's job. Run from this directory; `golangci-lint run -v` prints the config file it used.
+CI runs the race tests, except [`scenarios/`](./scenarios/), and golangci-lint in the Build and Test Devshard job; `make verify` also runs `scenarios/` under `-race`, so run it locally before you push. Run from this directory; `golangci-lint run -v` prints the config file it used.
 
 ```
 cd devshard/cmd/gateway

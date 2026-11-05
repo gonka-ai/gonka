@@ -521,6 +521,22 @@ jobs:
       - name: Run devshardd lifecycle tests with race detector
         run: go test -race ./cmd/devshardd
 
+      - name: Run gateway tests with race detector
+        # Scenarios run without -race in the Run Tests steps below.
+        run: |
+          packages=$(go list ./cmd/gateway/... | grep -v '/scenarios$')
+          go test -race -count=1 -timeout 30m $packages
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          install-only: true
+
+      - name: Lint gateway
+        working-directory: ./devshard/cmd/gateway
+        run: golangci-lint run --timeout 15m ./...
+
       - name: Run Tests (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: make test

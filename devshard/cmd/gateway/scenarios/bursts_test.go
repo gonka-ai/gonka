@@ -503,7 +503,7 @@ func contextRefusalSpec(behaviours map[int]participantBehaviour, promptBytes, wa
 	spec.model.fullContextSlots = 1
 	spec.behaviours = behaviours
 	spec.pins = map[string]string{
-		contextRefusalMissLabel: "the host signs its receipt before its engine refuses and publishes no Finish over the refusal (host/host.go:1111-1115), so only an execution-timeout vote settles the record, and it marks the executor missed",
+		contextRefusalMissLabel: "the host signs its receipt before its engine refuses and publishes no Finish over the refusal (host/host.go, RunExecution), so only an execution-timeout vote settles the record, and it marks the executor missed",
 	}
 	spec.steps = []harnessStep{
 		sendRequests{promptBytes: promptBytes, maxTokens: 64, count: 1, sequential: true},

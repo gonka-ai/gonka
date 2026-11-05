@@ -159,7 +159,7 @@ So every counter an admission or a window decision is read from, and every total
 
 The two other defences are the bounds themselves. `Validate` refuses a configuration whose knobs could be multiplied past the ceiling, and refuses a float that is not finite, because `NaN` is false in every ordering comparison and passes a range check written as one. `contextWindowsOf` drops a context length outside the range a model could plausibly have rather than clamping it, so a model governance reports nonsense for keeps the length it was last priced at — the fallback, where it has never had one — instead of being priced at the ceiling.
 
-Money is the exception: `safeMul` in the escrow pick and `safeAdd` in the state machine report an overflow rather than saturating, because a reserve that saturates is a reserve the chain will not honour. There the right answer is to refuse the request, not to serve it at the wrong price.
+Money is the exception: `safemath.MulCheckedUint64` and `safemath.AddCheckedUint64` in the escrow pick and `safeAdd` in the state machine report an overflow rather than saturating, because a reserve that saturates is a reserve the chain will not honour. There the right answer is to refuse the request, not to serve it at the wrong price.
 
 ### 11. Labels, ordering and determinism
 
@@ -203,7 +203,7 @@ The rule does not reach values. A struct the caller fills with already-checked n
 
 **No per-request cost accounting.** The request ledger records tokens and topology, not money. A breakdown computed as a read-time join against live session state would print zeros once an escrow settles. Money lives in chain settlement; the ledger answers "what did this request do", not "what did it cost".
 
-**No KV-cache affinity routing.** Adding it later is a local change inside the scheduler rather than a new selection mechanism bolted beside it.
+**No KV-cache affinity routing.** Closed as unreachable, not deferred: the protocol addresses a participant, never a node behind it, so which of a participant's nodes serves a request is decided by that participant's own router ([proposal.md](./proposal.md), "Open items").
 
 **No data-driven escalation beyond the first-token budget.** The escalation curve itself is a hardcoded quadratic in prompt size. One measured value stretches it: a host's own p75 to first content, which can only *extend* the budget, never shorten it (`engine/escalation.go`, `firstTokenBudget`). Nothing else in the ladder reads a percentile.
 
@@ -223,7 +223,7 @@ Each entry below is a capability this gateway does not have, and the reason it d
 
 - **One per-escrow recovery tool is not served**: `sync-hosts`. The read-only half of the recovery surface **is** served, and resolves through the settlement lookup so a draining escrow still answers — which is the point, since the escrow needing inspection is usually the one in trouble. `signatures/collect` is served as the one write on that surface: it asks the group again for the signatures of one nonce, into the session a settlement builds from.
 - **`/v1/debug/perf` is not served.** The request ledger at `/v1/requests/{id}` answers the same question per request, and the accounting findings carry the thresholds a host's numbers are judged against.
-- **No test reads the dashboard.** [`gonka-gateway-escrows.json`](../../../../deploy/join/observability/grafana/dashboards/gonka-gateway-escrows.json) is built for this gateway and every family and label value it queries is emitted, but nothing checks that automatically, so a change to a family is checked against it by hand, with `jq -r '.. | .expr? // empty'`. `gonka-gateway-observability.json` queries nine families this gateway does not emit — capacity scale, participant limit rejections, quarantine state, picker choice, slot decisions, the skipped-escrow gauge, critical user failures, no-winner attempts and user-visible wins — and is not this gateway's dashboard. The repository carries no alerting rules.
+- **Dashboards are checked by name only.** `metrics/deploy_queries_test.go` fails when a query in a dashboard under [`deploy/join/observability`](../../../../deploy/join/observability/) names a `devshard_gateway_*` family the metrics package does not declare. It does not check label values or whether an expression means what its panel says, so a change to a label is still checked against [`gonka-gateway-escrows.json`](../../../../deploy/join/observability/grafana/dashboards/gonka-gateway-escrows.json) by hand, with `jq -r '.. | .expr? // empty'`. `gonka-gateway-observability.json` is devshardctl's dashboard, titled so, and the test skips it: it queries nine families this gateway does not emit — capacity scale, participant limit rejections, quarantine state, picker choice, slot decisions, the skipped-escrow gauge, critical user failures, no-winner attempts and user-visible wins.
 - **A per-participant decay half-life is captured when a host is first seen**, so changing it at run time reaches only hosts seen afterwards.
 
 ### What a test stand may reach

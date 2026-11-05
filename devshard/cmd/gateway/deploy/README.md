@@ -25,7 +25,7 @@ The gateway answers on `127.0.0.1:18080` (`GATEWAY_HOST_PORT`), bound to loopbac
 curl -s localhost:18080/v1/status
 ```
 
-The container's healthcheck deliberately probes a *different* route, `/healthz`, which the kill switch leaves up and which does no work. `/v1/status` stays up through the kill switch too, so a gateway an operator had disabled on purpose is not restarted either way, but every probe of it would build the status of every escrow. Pointed at `/metrics`, every probe would be a full scrape. So `docker compose ps` reporting `healthy` means the process is up and answering, not that it is serving chat. `/v1/status` does not answer that alone either: its `requests_blocked` reports the chain's admission gate, while a disabled gateway answers 503 (or 308, with a redirect set) on the chat routes.
+The container's healthcheck deliberately probes a *different* route, `/healthz`, which the kill switch leaves up and which answers 200 without checking anything else. `/v1/status` stays up through the kill switch too, so a gateway an operator had disabled on purpose is not restarted either way, but every probe of it would build the status of every escrow. Pointed at `/metrics`, every probe would be a full scrape. So `docker compose ps` reporting `healthy` means the process is up and answering, not that it is serving chat. `/v1/status` does not answer that alone either: its `requests_blocked` reports the chain's admission gate, while a disabled gateway answers 503 (or 308, with a redirect set) on the chat routes.
 
 ## What you must fill in
 
@@ -47,7 +47,7 @@ The gateway then reads `DEVSHARD_PRIVATE_KEY` from its environment. This is why 
 
 ## Storage
 
-`DEVSHARD_STORAGE_HOST_DIR` (default `.devshard-gateway`, next to the compose file) is mounted at `DEVSHARD_STORAGE_DIR` in the container. It holds the escrow database, the per-escrow session state and the nonce ledger. Losing it loses the gateway's memory of the escrows it serves, so back it up or point it somewhere durable before running anything that matters.
+`DEVSHARD_STORAGE_HOST_DIR` (default `.devshard-gateway`, next to the compose file) is mounted at `DEVSHARD_STORAGE_DIR` in the container. It holds the escrow database, the per-escrow session state and the nonce ledger. Losing it loses the gateway's memory of the escrows it serves, so back it up or point it somewhere durable before running anything that matters. How to take a backup and restore one is in [`docs/operations.md`](../docs/operations.md), "Backup and restore"; how to roll back a release, in "Release and rollback".
 
 ## Tuning without a redeploy
 

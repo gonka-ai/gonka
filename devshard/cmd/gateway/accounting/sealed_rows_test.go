@@ -102,7 +102,7 @@ func countedDispositions(book *Book, escrowID string) map[Disposition]uint64 {
 	defer book.mu.RUnlock()
 	counted := make(map[Disposition]uint64)
 	for key, count := range book.escrows[escrowID].counters {
-		counted[key.Disposition] += uint64(count)
+		counted[key.Disposition] += count
 	}
 	return counted
 }

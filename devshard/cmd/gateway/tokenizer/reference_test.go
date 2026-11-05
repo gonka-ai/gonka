@@ -7,8 +7,10 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	"github.com/dlclark/regexp2"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -16,6 +18,7 @@ const (
 	originalNoSymbol      = -1
 	originalHeapArity     = 2
 	originalWholeSentinel = ^uint32(0)
+	originalMatchTimeout  = time.Minute
 )
 
 type originalScratch struct {
@@ -143,6 +146,7 @@ func (s *originalScratch) siftDown(parent int) {
 type referenceCounter struct {
 	*Counter
 	merges map[uint64]merge
+	splits []splitRule
 }
 
 func loadReference(tb testing.TB, path string) *referenceCounter {
@@ -179,7 +183,17 @@ func loadReference(tb testing.TB, path string) *referenceCounter {
 			merges[key] = merge{rank: uint32(rank), result: file.Model.Vocab[pair[0]+pair[1]]}
 		}
 	}
-	return &referenceCounter{Counter: counter, merges: merges}
+	splits := make([]splitRule, 0, len(counter.splits))
+	for _, rule := range counter.splits {
+		pattern, err := regexp2.Compile(rule.pattern.String(), regexp2.None)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		pattern.MatchTimeout = originalMatchTimeout
+		rule.pattern = pattern
+		splits = append(splits, rule)
+	}
+	return &referenceCounter{Counter: counter, merges: merges, splits: splits}
 }
 
 func (r *referenceCounter) pieceIDs(piece string, scratch *originalScratch) []uint32 {
@@ -213,7 +227,7 @@ func (r *referenceCounter) originalPreTokens(text string) ([]string, error) {
 	}
 	pieces := []string{text}
 	var runes []rune
-	for _, rule := range c.splits {
+	for _, rule := range r.splits {
 		next := make([]string, 0, len(pieces))
 		for _, piece := range pieces {
 			var err error
@@ -229,7 +243,7 @@ func (r *referenceCounter) originalPreTokens(text string) ([]string, error) {
 
 func (r *referenceCounter) ids(pieces []string) []uint32 {
 	scratch := originalScratch{merges: r.merges}
-	var ids []uint32
+	ids := make([]uint32, 0, len(pieces))
 	for _, piece := range pieces {
 		ids = append(ids, r.pieceIDs(piece, &scratch)...)
 	}

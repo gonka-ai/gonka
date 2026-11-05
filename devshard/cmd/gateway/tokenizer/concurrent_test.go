@@ -37,7 +37,7 @@ func TestConcurrentCountsMatchSequentialOnes(t *testing.T) {
 		text    string
 		want    int
 	}
-	var jobs []job
+	jobs := make([]job, 0, len(texts)*len(differentialTestdataNames))
 	for _, name := range differentialTestdataNames {
 		counter := loadTestdata(t, name)
 		for _, text := range texts {

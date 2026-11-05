@@ -4,10 +4,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/cmd/gateway/chain"
 	"devshard/types"
-
-	"github.com/stretchr/testify/require"
 )
 
 const escalationMaxNonce = 1_700

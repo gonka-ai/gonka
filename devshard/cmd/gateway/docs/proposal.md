@@ -41,7 +41,7 @@ Structural evidence:
 ## 4. Non-goals
 
 - Changing the external HTTP API. Broker- and participant-facing routes and schemas stay.
-- Building KV-cache affinity. An extension point only; the feature is a separate proposal.
+- Building KV-cache affinity. It is closed as unreachable, not deferred (section 10).
 - Preserving single-escrow mode, its top-level route aliases, or devshardctl's state layout.
 - A latency or throughput target. Both are set by hosts and the chain, not by this code.
 

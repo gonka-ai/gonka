@@ -50,3 +50,22 @@ func MulSaturating(first, second int64) int64 {
 	}
 	return product
 }
+
+// AddCheckedUint64 reports the sum only when it did not wrap past the uint64 bound; 0, false when it did.
+func AddCheckedUint64(first, second uint64) (uint64, bool) {
+	if sum := first + second; sum >= first {
+		return sum, true
+	}
+	return 0, false
+}
+
+// MulCheckedUint64 reports the product only when it did not wrap past the uint64 bound; 0, false when it did.
+func MulCheckedUint64(first, second uint64) (uint64, bool) {
+	if first == 0 || second == 0 {
+		return 0, true
+	}
+	if product := first * second; product/first == second {
+		return product, true
+	}
+	return 0, false
+}
