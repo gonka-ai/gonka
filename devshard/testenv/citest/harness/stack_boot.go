@@ -30,9 +30,10 @@ func BootMixedVersiondStack(t *testing.T, prefix, baselineImage string) (*Stack,
 }
 
 // BootProxyOverlayStack is §8.3: default compose plus docker-compose.proxy.yml.
-// JSON stays on versiond-router:8080. Peer RPC uses proxy:8443.
+// The pooled InferenceUrl is http://proxy:8080; peer RPC and JSON share it.
 func BootProxyOverlayStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
+	t.Setenv(config.ProxyOverlayEnv, "1")
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
 	WriteStackConfig(t, stack.WorkDir)

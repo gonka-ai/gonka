@@ -44,10 +44,11 @@ jq -e '
     "http://api:9100/versions") and
   (.services.proxy.networks | has("versiond-router-front")) and
   (.services.proxy.networks | has("versiond-router-back")) and
-  (.services.versiond.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
-  (.services.versiond.environment.DEVSHARD_RPC_H2_PORT == "9443") and
-  (.services.versiond2.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
-  (.services.versiond2.environment.DEVSHARD_RPC_H2_PORT == "9443") and
+  (.services.versiond.environment | has("DEVSHARD_RPC_H2_PORT") | not) and
+  (.services.versiond2.environment | has("DEVSHARD_RPC_H2_PORT") | not) and
+  (.services.proxy.environment | has("DEVSHARD_RPC_H2_ROUTER_PORT") | not) and
+  (.services.proxy.environment | has("DEVSHARD_RPC_H2_PORT") | not) and
+  ([.services.proxy.ports[] | select(.target == 9443)] | length == 0) and
   (.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
   (.networks["versiond-router-front"].external == true) and
   (.networks["versiond-router-back"].external == true)
@@ -93,13 +94,13 @@ grep -q -- '- versiond-router-metrics' <<<"$router_scrape"
 grep -q 'port: 8405' <<<"$router_scrape"
 
 # Children inherit versiond's environment. Base (non-HA) and a remote HA host
-# must dial proxy-router's HTTP/2 port too; :8080 refuses /rpc/ on an HA peer.
+# Peer RPC shares the public ports: no separate port is published or passed.
 docker compose --project-directory "$script_dir" \
     -f "$script_dir/docker-compose.yml" \
     config --format json >"$tmpdir/base.json"
 jq -e '
-  (.services.versiond.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
-  (.services.versiond.environment.DEVSHARD_RPC_H2_PORT == "9443")
+  (.services.versiond.environment | has("DEVSHARD_RPC_H2_PORT") | not) and
+  ([.services.proxy.ports[] | .target] == [80, 443])
 ' "$tmpdir/base.json" >/dev/null
 
 NETWORK_NODE_PRIVATE_IP=10.0.0.2 \
@@ -110,8 +111,7 @@ DEVSHARD_POSTGRES_PASSWORD=test \
     -f "$script_dir/docker-compose.versiond-remote.yml" \
     config --format json >"$tmpdir/remote.json"
 jq -e '
-  (.services.versiond.environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
-  (.services.versiond.environment.DEVSHARD_RPC_H2_PORT == "9443")
+  (.services.versiond.environment | has("DEVSHARD_RPC_H2_PORT") | not)
 ' "$tmpdir/remote.json" >/dev/null
 
 printf 'DEVSHARD_PORT=8080\n' >"$tmpdir/gateway.env"
@@ -120,8 +120,7 @@ DEVSHARD_ENV_FILE="$tmpdir/gateway.env" \
     -f "$script_dir/docker-compose.devshard-gateway.yml" \
     config --format json >"$tmpdir/gateway.json"
 jq -e '
-  (.services["devshard-gateway"].environment.DEVSHARD_RPC_H2_UPGRADE == "true") and
-  (.services["devshard-gateway"].environment.DEVSHARD_RPC_H2_PORT == "9443")
+  (.services["devshard-gateway"].environment | has("DEVSHARD_RPC_H2_PORT") | not)
 ' "$tmpdir/gateway.json" >/dev/null
 
 echo "versiond-compose-config_test: ok"

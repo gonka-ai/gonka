@@ -1743,6 +1743,111 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	require.Len(t, h.SlotIDs(), 1)
 }
 
+// TestWarmKey_RestartRestoresSiblingSlots is the v6 restart regression: a
+// multi-slot validator stores one warm binding, and rebuilding the host must
+// still execute every unbound sibling. Before the fix, NewHost stopped at
+// that one binding and the other seats answered not_executor until settle.
+func TestWarmKey_RestartRestoresSiblingSlots(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	// Seats 0..3 are cold, seat 4 is another validator. inference N uses seat N%5.
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{4, 1})
+	require.Len(t, group, 5)
+
+	var resolverCalls int
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		resolverCalls++
+		return warmAddr == warm.Address() && coldAddr == cold.Address(), nil
+	}
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000),
+		state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
+
+	// Confirms land on seats 1, then 3, 0, 2. The first one writes the binding.
+	// The later three are sibling signatures and must not write another.
+	for _, nonce := range []uint64{1, 3, 5, 7} {
+		applyWarmConfirm(t, sm, user, warm, nonce)
+	}
+	require.Equal(t, 1, resolverCalls, "only the first seat resolves the grant")
+	require.Equal(t, map[uint32]string{1: warm.Address()}, sm.WarmKeys())
+
+	h, err := NewHost(sm, warm, stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.Equal(t, map[uint32]bool{0: true, 1: true, 2: true, 3: true}, h.SlotIDs())
+	require.Equal(t, map[uint32]string{1: warm.Address()}, sm.WarmKeys(), "restore must not write sibling bindings")
+
+	// Seat 4 belongs to the other validator.
+	foreign := hostRequestAt(t, user, 9)
+	resp, err := h.HandleRequest(context.Background(), foreign)
+	require.NoError(t, err)
+	require.Nil(t, resp.Receipt)
+	require.Equal(t, observability.ReasonNotExecutor, resp.ReceiptReason)
+
+	// Seat 0 had no stored binding. It must execute after the restart.
+	sibling := hostRequestAt(t, user, 10)
+	resp, err = h.HandleRequest(context.Background(), sibling)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Receipt, "unbound sibling seat must execute after restart")
+	require.Equal(t, observability.ReasonOK, resp.ReceiptReason)
+}
+
+// A sibling already bound to a different warm key stays exclusive across restart.
+func TestWarmKey_RestartSkipsExclusivelyBoundSibling(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	stranger := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{4, 1})
+
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+	sm.InjectWarmKeys(map[uint32]string{
+		0: warm.Address(),
+		1: stranger.Address(),
+	})
+
+	h, err := NewHost(sm, warm, stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.Equal(t, map[uint32]bool{0: true, 2: true, 3: true}, h.SlotIDs())
+	require.Equal(t, map[uint32]string{0: warm.Address(), 1: stranger.Address()}, sm.WarmKeys())
+}
+
+func applyWarmConfirm(t *testing.T, sm *state.StateMachine, user, warm *signing.Secp256k1Signer, nonce uint64) {
+	t.Helper()
+	start := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(nonce)})
+	_, err := sm.ApplyDiff(start)
+	require.NoError(t, err)
+
+	sig := testutil.SignExecutorReceipt(t, warm, "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	confirm := testutil.SignDiff(t, user, "escrow-1", nonce+1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: nonce,
+			ExecutorSig: sig,
+			ConfirmedAt: 1000,
+		}},
+	}})
+	_, err = sm.ApplyDiff(confirm)
+	require.NoError(t, err)
+}
+
+func hostRequestAt(t *testing.T, user *signing.Secp256k1Signer, nonce uint64) HostRequest {
+	t.Helper()
+	return HostRequest{
+		Diffs:   []types.Diff{testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(nonce)})},
+		Nonce:   nonce,
+		Payload: defaultPayload(),
+	}
+}
+
 // trackingValidationEngine records Validate calls for test assertions.
 type trackingValidationEngine struct {
 	mu    sync.Mutex

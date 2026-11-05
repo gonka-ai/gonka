@@ -20,8 +20,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestPeerRPCOverlayHop is §8.3. The proxy overlay is on, peer RPC is HTTP/2
-// on proxy:8443, and :8080 does not answer Connect.
+// TestPeerRPCOverlayHop is §8.3. The proxy overlay is on and is the pooled
+// InferenceUrl. Peer RPC is HTTP/2 through proxy:8080, the same port that
+// carries JSON, and one connection per peer on every hop. When that port
+// stops speaking HTTP/2 (an older wrapping), the same peers continue over
+// Connect on HTTP/1.1 through the same port.
 func TestPeerRPCOverlayHop(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	requireOverlayRPC(t)
@@ -49,17 +52,19 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, nginxUp, "testenv has no nginx")
 
-	h2addr := stack.ProxyH2HTTP(t)
-	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(h2addr, "http://"), 5*time.Second)
-	require.NoError(t, err, "proxy must publish %s", h2addr)
+	proxyAddr := stack.ProxyH2HTTP(t)
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(proxyAddr, "http://"), 5*time.Second)
+	require.NoError(t, err, "proxy must publish %s", proxyAddr)
 	_ = conn.Close()
 
-	h2port, err := stack.ComposeExecOutput("devshardctl", "printenv", "DEVSHARD_RPC_H2_PORT")
-	require.NoError(t, err)
-	require.Equal(t, "8443", strings.TrimSpace(h2port))
-	h2host, err := stack.ComposeExecOutput("devshardctl", "printenv", "DEVSHARD_RPC_H2_HOST")
-	require.NoError(t, err)
-	require.Equal(t, "proxy", strings.TrimSpace(h2host))
+	// The overlay proxy is the InferenceUrl. There is no separate port and
+	// no dial override: the gateway and the hosts find HTTP/2 in band.
+	require.NotEmpty(t, cfg.Participants)
+	for _, p := range cfg.Participants {
+		require.Equal(t, config.ProxyOverlayURL, p.InferenceURL, "participant %s", p.Address)
+	}
+	upgrade, _ := stack.ComposeExecOutput("devshardctl", "printenv", "DEVSHARD_RPC_H2_UPGRADE")
+	require.NotEqual(t, "false", strings.TrimSpace(upgrade))
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
@@ -68,13 +73,18 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	postGatewayChats(t, client, eps, cfg, "citest overlay hop")
 	host, _ := waitHostMetric(t, stack, cfg, 30*time.Second, "devshard_peer_rpc_requests_total", `endpoint="Chat"`, `result="ok"`)
 	require.NotEmpty(t, host, "no child counted Chat ok")
+	requireRouterSawPeerRPC(t, stack, "HTTP/2.0", 0)
 
-	requireOneTCP(t, stack, "devshardctl", "", 8443)
-	// The gateway mux is one TCP. A host peer dial through the same
-	// proxy can hold a second connection to versiond-router:8081.
+	proxyIP := procIPv4(overlayProxyIP(cfg))
+	// The gateway keeps one mux to the proxy for peer RPC. JSON hops to
+	// the same port do not outlive the keep-alive window.
+	gatewayConns := outlivingKeepAliveTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort)
+	require.Equal(t, 1, gatewayConns, "gateway must hold exactly one peer mux to the proxy")
+	// The proxy muxes that peer onto one HTTP/2 connection to the router's
+	// :8081. A host peer dial through the same proxy can hold a second one.
 	proxyBackend := settledPersistentTCP(t, stack, "proxy", "", 8081)
 	require.GreaterOrEqual(t, proxyBackend, 1)
-	require.LessOrEqual(t, proxyBackend, 2, "proxy opened more than a gateway mux and one other peer dial to :8081")
+	require.LessOrEqual(t, proxyBackend, 2, "proxy opened more than a gateway mux and one other peer dial to versiond-router:8081")
 	escrowID := config.PrimaryEscrowID(cfg)
 	upstream := harness.RequireResponseHeader(t, client, harness.RouterSessionURL(eps.RouterHTTP, version, escrowID, "/healthz"), harness.StickyUpstreamHeader)
 	hostID := harness.HostIDForUpstream(cfg, upstream)
@@ -83,16 +93,19 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	// The version pool and the host-level pool each keep a mux and a
 	// check connection on this listen. Concurrent RPCs must ride those,
 	// not open another.
-	routerConns := settledPersistentTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080)
+	routerConns := outlivingKeepAliveTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080)
 	require.GreaterOrEqual(t, routerConns, 1)
 	require.LessOrEqual(t, routerConns, 4, "versiond-router opened more than a mux and a check per pool to %s", hostID)
 	requireChildMux(t, stack, hostID)
 
 	launchParallelChats(t, client, eps, cfg, 4)
-	requireOneTCP(t, stack, "devshardctl", "", 8443)
+	// The h2-only hop first: an extra proxy mux would close on the h2
+	// idle timeout before a keep-alive-length reading elsewhere ends.
 	require.Equal(t, proxyBackend, settledPersistentTCP(t, stack, "proxy", "", 8081),
-		"parallel RPCs opened new proxy connections to :8081")
-	require.Equal(t, routerConns, settledPersistentTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080),
+		"parallel RPCs opened new proxy connections to versiond-router:8081")
+	require.Equal(t, gatewayConns, outlivingKeepAliveTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort),
+		"parallel RPCs opened new gateway connections to the proxy")
+	require.Equal(t, routerConns, outlivingKeepAliveTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080),
 		"parallel RPCs opened new versiond-router connections to %s", hostID)
 	requireChildMux(t, stack, hostID)
 
@@ -101,29 +114,73 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 		"HTTP/1.1 pool must not overflow on the h2 mux")
 
 	requireChildUnpublished(t, stack, hostID)
-	requireHTTP11NotPeerRPC(t, client, eps.RouterHTTP, version)
+	requireHTTP11PeerRPCServed(t, client, eps.RouterHTTP, version)
 
-	stack.StopService(t, "proxy")
-	failClient := &http.Client{Timeout: 20 * time.Second}
-	_, err = harness.TryPostGatewayChatCompletion(failClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, harness.ChatCompletionRequest{
-		Model:     config.PrimaryModelID(cfg),
-		Messages:  []harness.ChatMessage{{Role: "user", Content: "citest overlay h2 down"}},
-		MaxTokens: 16,
-	})
-	require.Error(t, err, "closed h2 port must not complete chat on :8080")
+	// The public port stops speaking HTTP/2: the proxy resets the preface
+	// instead of handing it to rpc_h2. A fresh gateway finds that out on
+	// its first Attach and continues over Connect on HTTP/1.1 through the
+	// same port; chat still completes and the router sees HTTP/1.1 Attach.
+	// The HTTP/1.1 Attach above already appears in the router log; the
+	// fallback must add Attach lines of its own on HTTP/1.1 and none on
+	// HTTP/2 beyond those already there.
+	h1Before := routerAttachCount(t, stack, "HTTP/1.1")
+	h2Before := routerAttachCount(t, stack, "HTTP/2.0")
+	harness.RejectProxyH2(t, stack)
+	stack.RecreateServices(t, "proxy")
+	require.False(t, tcpAccepted(strings.TrimPrefix(stack.ProxyH2HTTP(t), "http://")),
+		"the rewritten proxy must reset the HTTP/2 preface")
+	stack.RecreateServices(t, "devshardctl")
+	eps = stack.Endpoints(t, cfg)
+	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	before := chatOKCount(t, stack, cfg)
+	postGatewayChats(t, client, eps, cfg, "citest overlay http11 fallback")
+	require.Greater(t, chatOKCount(t, stack, cfg), before, "chat over the HTTP/1.1 fallback must be counted on the child")
+	requireRouterSawPeerRPC(t, stack, "HTTP/1.1", h1Before)
+	require.Equal(t, h2Before, routerAttachCount(t, stack, "HTTP/2.0"), "no Attach may reach the router over HTTP/2 while the proxy rejects the preface")
 }
 
 func requireOverlayRPC(t *testing.T) {
 	t.Helper()
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")) == "" {
-		t.Fatal("set DEVSHARD_RPC_H2_PORT (make citest-peerrpc-overlay)")
+	if !harness.ProxyOverlayFromEnv() {
+		t.Fatal("set TESTENV_PROXY_OVERLAY=1 (make citest-peerrpc-overlay)")
 	}
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_HOST")) == "" {
-		t.Fatal("set DEVSHARD_RPC_H2_HOST=proxy")
+	if h2UpgradeOff() {
+		t.Fatal("leave DEVSHARD_RPC_H2_UPGRADE unset: the overlay hop is HTTP/2")
 	}
-	if !strings.EqualFold(strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE")), "true") &&
-		strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE")) != "1" {
-		t.Fatal("set DEVSHARD_RPC_H2_UPGRADE=true")
+}
+
+// overlayProxyIP is the overlay proxy's pinned address (docker-compose.proxy.yml).
+func overlayProxyIP(cfg *config.File) string {
+	base := "172.30.0"
+	if cfg != nil && cfg.Network.BaseIP != "" {
+		base = cfg.Network.BaseIP
+	}
+	return base + ".70"
+}
+
+// routerAttachCount counts Attach request lines on the given HTTP version in
+// versiond-router's log. The router logs the request line, so this is the
+// wire protocol between the proxy and the router.
+func routerAttachCount(t *testing.T, stack *harness.Stack, proto string) int {
+	t.Helper()
+	logs, err := stack.ComposeLogsTail(5000, "versiond-router")
+	require.NoError(t, err)
+	return strings.Count(logs, "PeerAuthService/Attach "+proto)
+}
+
+// requireRouterSawPeerRPC waits until the router has logged more Attach
+// lines on the given HTTP version than seen.
+func requireRouterSawPeerRPC(t *testing.T, stack *harness.Stack, proto string, seen int) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if routerAttachCount(t, stack, proto) > seen {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("versiond-router logged no new Attach on %s", proto)
+		}
+		time.Sleep(time.Second)
 	}
 }
 
@@ -182,18 +239,27 @@ func gatewayMetrics(t *testing.T, client *http.Client, gateway string) string {
 	return string(body)
 }
 
-func requireHTTP11NotPeerRPC(t *testing.T, client *http.Client, router, version string) {
+// requireHTTP11PeerRPCServed sends a Connect Attach over HTTP/1.1 to the
+// router's :8080. The HTTP/1.1 fallback rides this path, so the router must
+// route it to the peer-RPC twin and the child must answer it (a Connect
+// error for an empty request), not a router 404.
+func requireHTTP11PeerRPCServed(t *testing.T, client *http.Client, router, version string) {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodPost,
 		router+"/"+version+"/sessions/1/rpc/devshard.transport.v1.PeerAuthService/Attach",
 		strings.NewReader("{}"))
 	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/connect+json")
+	// Attach is unary: Connect expects application/json here and answers
+	// 415 to the streaming application/connect+json before it looks at
+	// the body or the protocol version header.
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Connect-Protocol-Version", "1")
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode, ":8080 must not answer peer RPC")
+	body, _ := io.ReadAll(resp.Body)
+	require.NotEqual(t, http.StatusNotFound, resp.StatusCode, ":8080 must route Connect over HTTP/1.1 to the peer-RPC twin")
+	require.Contains(t, string(body), `"code"`, "the child must answer the HTTP/1.1 Attach: %s", body)
 }
 
 func requireChildUnpublished(t *testing.T, stack *harness.Stack, hostID string) {
@@ -229,11 +295,14 @@ func requireChildMux(t *testing.T, stack *harness.Stack, hostID string) {
 	require.GreaterOrEqual(t, connected, 1, "%s must keep an HTTP/2 mux to the child", hostID)
 }
 
+// settledPersistentTCP returns the persistent connection count to
+// remIPHex:remPort once it has stopped changing. Use it on a hop that
+// carries only peer RPC muxes (proxy to versiond-router:8081): an extra
+// mux opened for parallel RPCs is seen even if the h2 idle timeout would
+// close it later. A one-shot health check does not survive the
+// four-sample window of one reading.
 func settledPersistentTCP(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {
 	t.Helper()
-	// Idle JSON hops share versiond:8080 and drop after HAProxy's
-	// http-keep-alive (10s). Watch and the per-backend check connection
-	// stay. A one-shot health check does not survive the four-sample window.
 	deadline := time.Now().Add(15 * time.Second)
 	prev, stable := -1, 0
 	n := 0
@@ -253,6 +322,30 @@ func settledPersistentTCP(t *testing.T, stack *harness.Stack, service, remIPHex 
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+// outlivingKeepAliveTCP counts the connections to remIPHex:remPort that
+// stay established for longer than HAProxy's http-keep-alive (10s). Use it
+// on a hop that also carries JSON: idle JSON hops from the gateway share
+// the public port and live up to that long, and versiond-router passes
+// them on to the host. Watch and the check connections outlive the window.
+// A count that merely stopped changing for a few seconds would include
+// such a hop while it idles.
+func outlivingKeepAliveTCP(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {
+	t.Helper()
+	const window = 12 * time.Second
+	deadline := time.Now().Add(window)
+	keep := establishedKeys(procNetTCP(t, stack, service), remIPHex, remPort)
+	for time.Now().Before(deadline) {
+		time.Sleep(500 * time.Millisecond)
+		sample := establishedKeys(procNetTCP(t, stack, service), remIPHex, remPort)
+		for key := range keep {
+			if _, ok := sample[key]; !ok {
+				delete(keep, key)
+			}
+		}
+	}
+	return len(keep)
 }
 
 func persistentEstablished(t *testing.T, stack *harness.Stack, service, remIPHex string, remPort uint16) int {

@@ -19,6 +19,25 @@ import (
 	"devshard/transport"
 )
 
+func TestGatewayRPCStatsCollectorEmitsOrigin(t *testing.T) {
+	snap := testRPCSnap("gonka1peer", 10, 1)
+	snap.Host.Attach.Banned = 2
+	snap.Host.Attach.BannedFloor = 1
+	snap.Host.Attach.BannedOrigin = 1
+	p := &rpcStatsPoller{byHost: map[string]*rpcStatsHostState{
+		"gonka1a": {Participant: "gonka1a", Up: true, HasSnap: true, Snap: snap},
+	}}
+	families := gatherRPCStats(t, &Gateway{rpcStats: p})
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_attach_banned_last_minute", map[string]string{"host": "gonka1a", "reason": "floor"}, 1)
+	requireMetricGaugeValue(t, families, "devshard_gateway_rpc_attach_banned_last_minute", map[string]string{"host": "gonka1a", "reason": "origin"}, 1)
+}
+
+func TestAttachOtherBannedLeavesOriginOut(t *testing.T) {
+	require.Equal(t, uint64(1), attachOtherBanned(transport.RPCStatsAttach{Banned: 5, BannedFloor: 2, BannedOrigin: 2}))
+	require.Equal(t, uint64(0), attachOtherBanned(transport.RPCStatsAttach{Banned: 5, BannedFloor: 2, BannedOrigin: 3}))
+	require.Equal(t, uint64(0), attachOtherBanned(transport.RPCStatsAttach{Banned: 1, BannedFloor: 1}))
+}
+
 func TestRPCStatsPollerIdlePool(t *testing.T) {
 	p := newRPCStatsPoller(nil, rpcStatsConfig{Timeout: 2 * time.Second, Concurrency: 8, Interval: 15 * time.Second})
 	tr, ok := p.client.Transport.(*http.Transport)

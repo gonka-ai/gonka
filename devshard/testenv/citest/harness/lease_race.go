@@ -440,7 +440,7 @@ func PauseMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string) {
 // SlowMockOpenAI stretches Validate so leases stay pending without delaying
 // Execute's first stream chunk. Two knobs (see FaultPatch):
 //
-//   - latency_ms → non-stream JSON only (ExecuteValidation sets stream=false)
+//   - latency_ms → Validate only (non-stream JSON or an enforced-token replay)
 //   - stream_chunk_delay_ms / stream_ttft_ms → 0 so gateway first-token stays green
 //
 // Under always-stream upstream, client stream and non-stream are interchangeable:

@@ -982,11 +982,20 @@ func TestRemoveNode_NilCancelInFlightTask(t *testing.T) {
 	resp := <-cmd.Response
 	require.NoError(t, resp.Error)
 
-	broker.mu.RLock()
-	nws := broker.nodes["node1"]
-	require.NotNil(t, nws)
-	require.Nil(t, nws.State.cancelInFlightTask)
-	broker.mu.RUnlock()
+	// RegisterNode starts the status worker, which briefly installs a cancel
+	// while reconciliation has no command. Wait until that pass has cleared
+	// it, so RemoveNode is exercised with no in-flight task.
+	require.Eventually(t, func() bool {
+		broker.mu.RLock()
+		defer broker.mu.RUnlock()
+		nws := broker.nodes["node1"]
+		if nws == nil {
+			return false
+		}
+		return nws.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN &&
+			nws.State.ReconcileInfo == nil &&
+			nws.State.cancelInFlightTask == nil
+	}, 2*time.Second, 5*time.Millisecond)
 
 	removeResp := make(chan bool, 2)
 	queueMessage(t, broker, RemoveNode{NodeId: "node1", Response: removeResp})
@@ -2587,6 +2596,31 @@ func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
 	<-cmd.Response
 
 	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
+}
+
+func TestSetNodesActualStatusCommand_RejectsStatusObservedBeforeTransition(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_POC)
+	observedAt := time.Now()
+	node.State.StatusTimestamp = observedAt
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:     "node-1",
+			PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+			NewStatus:  types.HardwareNodeStatus_STOPPED,
+			Timestamp:  observedAt,
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, types.HardwareNodeStatus_POC, node.State.CurrentStatus)
 }
 
 func TestSetNodesActualStatusCommand_RejectsStaleRegistrationSeq(t *testing.T) {

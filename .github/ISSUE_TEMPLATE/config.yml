@@ -2,7 +2,7 @@ blank_issues_enabled: true
 contact_links:
   - name: Report a security vulnerability
     url: https://gonka.ai/docs/report-vulnerability/
-    about: Submit privately through HackerOne. Do not open a public GitHub issue.
+    about: HackerOne first — that report is paid. Then Security and quality → Report vulnerability, only for a fix. Put the HackerOne number in the title.
   - name: Bounty program
     url: https://gonka.ai/docs/bounty-program/
     about: Bug bounty (HackerOne) and contributor rewards (community pool).

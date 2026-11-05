@@ -26,6 +26,10 @@ func clientIPFromContext(ctx context.Context) string {
 }
 
 func (h *PeerAuthHandler) observeRPC(ctx context.Context, procedure, peer string, banned, streamCap, attach, attachFloor bool) {
+	h.observeRPCSample(ctx, procedure, peer, banned, streamCap, attach, attachFloor, false)
+}
+
+func (h *PeerAuthHandler) observeRPCSample(ctx context.Context, procedure, peer string, banned, streamCap, attach, attachFloor, attachOrigin bool) {
 	if h == nil || h.traffic == nil {
 		return
 	}
@@ -38,14 +42,15 @@ func (h *PeerAuthHandler) observeRPC(ctx context.Context, procedure, peer string
 		ip = clientIPFromContext(ctx)
 	}
 	h.traffic.Observe(ctx, transport.RPCSample{
-		Procedure:   procedure,
-		Peer:        peer,
-		Escrow:      escrow,
-		IP:          ip,
-		Banned:      banned,
-		Attach:      attach,
-		AttachFloor: attachFloor,
-		StreamCap:   streamCap,
+		Procedure:    procedure,
+		Peer:         peer,
+		Escrow:       escrow,
+		IP:           ip,
+		Banned:       banned,
+		Attach:       attach,
+		AttachFloor:  attachFloor,
+		AttachOrigin: attachOrigin,
+		StreamCap:    streamCap,
 	})
 }
 
@@ -63,6 +68,14 @@ func (h *PeerAuthHandler) observeEscrowID(ctx context.Context) string {
 
 func (h *PeerAuthHandler) observeAttach(ctx context.Context, err error) {
 	banned := err != nil && connect.CodeOf(err) == connect.CodeResourceExhausted
-	floor := banned && strings.Contains(err.Error(), "too many attach attempts")
-	h.observeRPC(ctx, rpcpbconnect.PeerAuthServiceAttachProcedure, "", banned, false, true, floor)
+	origin := false
+	floor := false
+	if banned {
+		msg := err.Error()
+		// The origin sentence contains the process sentence, so the longer
+		// one is checked first. Otherwise every origin refusal is a floor hit.
+		origin = strings.Contains(msg, attachOriginLimitMessage)
+		floor = !origin && strings.Contains(msg, attachProcessLimitMessage)
+	}
+	h.observeRPCSample(ctx, rpcpbconnect.PeerAuthServiceAttachProcedure, "", banned, false, true, floor, origin)
 }

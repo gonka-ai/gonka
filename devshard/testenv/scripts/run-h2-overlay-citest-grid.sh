@@ -42,12 +42,9 @@ run_cell() {
   if env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
     -u DEVSHARD_RPC_MSGS_PER_MIN -u DEVSHARD_RPC_MSGS_BURST \
     -u DEVSHARD_RPC_ATTACH_PER_MIN_TOTAL \
+    -u DEVSHARD_RPC_H2_UPGRADE \
     TESTENV_PROXY_OVERLAY=1 \
     DEVSHARD_RPC_ENDPOINTS="$ENDPOINTS" \
-    DEVSHARD_RPC_H2_PORT=8443 \
-    DEVSHARD_RPC_H2_HOST=proxy \
-    DEVSHARD_RPC_H2_UPGRADE=true \
-    DEVSHARD_RPC_H2_FRONT_HOST=versiond-router \
     make "$suite"; then
     grep -v "^H2 $suite " "$OUT" > "$OUT.tmp" || true
     echo "H2 $suite PASS" >> "$OUT.tmp"

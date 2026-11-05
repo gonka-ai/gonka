@@ -241,11 +241,26 @@ func NewHost(
 	// Check state's WarmKeys for existing bindings, then try the warm key
 	// resolver directly (without caching in SM state, which would change
 	// the state root before any diffs are applied).
+	//
+	// The first seat that admits a warm key stores the only binding. Sibling
+	// seats of that validator are authorized from it and are not stored.
+	// Restart has to claim those unbound siblings here. Stopping at the stored
+	// seat leaves the host answering not_executor for the rest of the escrow.
 	if len(slotIDs) == 0 {
 		warmKeys := sm.WarmKeys()
 		for slotID, warmAddr := range warmKeys {
-			if warmAddr == addr {
-				slotIDs[slotID] = true
+			if warmAddr != addr {
+				continue
+			}
+			slotIDs[slotID] = true
+			for _, sibling := range addrToSlots[slotToAddr[slotID]] {
+				if sibling == slotID {
+					continue
+				}
+				if bound := warmKeys[sibling]; bound != "" && bound != addr {
+					continue
+				}
+				slotIDs[sibling] = true
 			}
 		}
 	}

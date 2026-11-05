@@ -20,6 +20,8 @@ const (
 	RPCZoneStreams = "streams"
 	// RPCZoneAttachFloor is the process-wide Attach floor.
 	RPCZoneAttachFloor = "attach_floor"
+	// RPCZoneAttachOrigin is one X-Real-IP (one IPv4, or one IPv6 /64).
+	RPCZoneAttachOrigin = "attach_origin"
 	// RPCZoneAttachRenew is the live-token Attach bucket. Snapshots record
 	// Attach on RPCZoneAttachFloor; this name stays classified so a host
 	// that reports it is not folded into the overflow label.
@@ -94,7 +96,7 @@ func RPCStatsEndpointLabel(name string) string {
 // Names outside the rate-limit zones become RPCStatsOtherLabel.
 func RPCStatsZoneLabel(zone string) string {
 	switch zone {
-	case RPCZoneShared, RPCZoneStreams, RPCZoneAttachFloor, RPCZoneAttachRenew, RPCStatsOtherLabel:
+	case RPCZoneShared, RPCZoneStreams, RPCZoneAttachFloor, RPCZoneAttachOrigin, RPCZoneAttachRenew, RPCStatsOtherLabel:
 		return zone
 	default:
 		return RPCStatsOtherLabel
@@ -184,21 +186,23 @@ type RPCStatsReconnect struct {
 
 // RPCStatsAttach is the process-wide Attach throttle block.
 type RPCStatsAttach struct {
-	Attempts    uint64 `json:"attempts"`
-	Banned      uint64 `json:"banned"`
-	BannedFloor uint64 `json:"banned_floor"`
+	Attempts     uint64 `json:"attempts"`
+	Banned       uint64 `json:"banned"`
+	BannedFloor  uint64 `json:"banned_floor"`
+	BannedOrigin uint64 `json:"banned_origin"`
 }
 
 // RPCSample is one classified inbound RPC (or Attach).
 type RPCSample struct {
-	Procedure   string
-	Peer        string
-	Escrow      string
-	IP          string
-	Banned      bool
-	Attach      bool
-	AttachFloor bool
-	StreamCap   bool
+	Procedure    string
+	Peer         string
+	Escrow       string
+	IP           string
+	Banned       bool
+	Attach       bool
+	AttachFloor  bool
+	AttachOrigin bool
+	StreamCap    bool
 }
 
 // RPCRateLimitZone is the bucket that can ban this procedure.
@@ -303,7 +307,7 @@ func (t *RPCTraffic) SetWarn(fn func(ctx context.Context, minute int64, host RPC
 }
 
 func (t *RPCTraffic) defaultWarn(ctx context.Context, minute int64, host RPCStatsHost) {
-	kv := []any{"minute_unix", minute, "banned", host.Banned, "banned_floor", host.Attach.BannedFloor}
+	kv := []any{"minute_unix", minute, "banned", host.Banned, "banned_floor", host.Attach.BannedFloor, "banned_origin", host.Attach.BannedOrigin}
 	kv = AppendRPCStatsLogTag(kv, "", minute)
 	for _, z := range host.Zones {
 		if z.Banned > 0 {
@@ -538,6 +542,7 @@ func mergeMinute(dst, src *minuteBucket) {
 	dst.attach.Attempts += src.attach.Attempts
 	dst.attach.Banned += src.attach.Banned
 	dst.attach.BannedFloor += src.attach.BannedFloor
+	dst.attach.BannedOrigin += src.attach.BannedOrigin
 	for id, em := range src.escrows {
 		if em == nil {
 			continue
@@ -613,6 +618,9 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 	zone := RPCRateLimitZone(s.Procedure, s.StreamCap)
 	if s.Attach {
 		zone = RPCZoneAttachFloor
+		if s.AttachOrigin {
+			zone = RPCZoneAttachOrigin
+		}
 		endpoint = "Attach"
 	}
 
@@ -630,7 +638,9 @@ func (t *RPCTraffic) Observe(ctx context.Context, s RPCSample) {
 		observability.IncPeerRPCBanned(endpoint, zone)
 		if s.Attach {
 			reason := "other"
-			if s.AttachFloor {
+			if s.AttachOrigin {
+				reason = "origin"
+			} else if s.AttachFloor {
 				reason = "floor"
 			}
 			observability.IncPeerRPCAttachBanned(reason)
@@ -659,7 +669,9 @@ func (s *trafficShard) observe(minute int64, endpoint, zone string, sample RPCSa
 		if sample.Banned {
 			b.attach.Banned++
 		}
-		if sample.AttachFloor {
+		if sample.AttachOrigin {
+			b.attach.BannedOrigin++
+		} else if sample.AttachFloor {
 			b.attach.BannedFloor++
 		}
 		return advanced

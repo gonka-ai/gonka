@@ -11,15 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
-
 	"devshard"
 	"devshard/signing"
 	"devshard/types"
 )
 
 // TestMaxTokens is the happy-path reservation used by fixtures.
-const TestMaxTokens = completionapi.MinTokensFloor
+const TestMaxTokens = 64
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 

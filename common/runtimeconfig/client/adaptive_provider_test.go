@@ -322,16 +322,25 @@ func TestAdaptive_FailbackAfterDapiUpgrade(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cfg := adaptiveTestConfig(t, clock, client, fetcher)
+	// Chain refresh must not share the supervisor clock. Its 20ms timer is
+	// always due on a 30ms reprobe advance, and Advance before the next
+	// reprobe timer is armed drops that tick. Real sleeps do not move this clock.
+	cfg.Chain.Clock = realClock{}
 	p, err := NewAdaptive(ctx, cfg)
 	require.NoError(t, err)
 	cleanupAdaptive(t, cancel, p)
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
+	waitCalls(t, client, 1) // boot probe
 
+	var armed uint64
+	armed = clock.waitTimerArmed(t, cfg.GRPCReprobe, armed)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitCalls(t, client, 2) // first healthy probe; streak is not enough yet
+
+	armed = clock.waitTimerArmed(t, cfg.GRPCReprobe, armed)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitCalls(t, client, 3)
 
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 	waitForHeight(t, p, 50)

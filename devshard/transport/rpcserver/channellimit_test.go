@@ -130,6 +130,16 @@ func requireResourceExhausted(t *testing.T, err error, msg string) {
 	requireRetryAfter(t, err)
 }
 
+func TestReserveWarnIsPerZone(t *testing.T) {
+	l := newChannelLimiter(transport.ChannelLimitConfig{}, func() time.Time {
+		return time.Unix(1_700_000_000, 0)
+	})
+	require.True(t, l.reserveWarn(zoneAttachOrigin))
+	require.False(t, l.reserveWarn(zoneAttachOrigin))
+	require.True(t, l.reserveWarn(zoneAttachFloor))
+	require.False(t, l.reserveWarn(zoneAttachFloor))
+}
+
 func TestChannelLimit_AdvertisedMatchesConfig(t *testing.T) {
 	limits := transport.ChannelLimitConfig{
 		MessagesPerMin: 12,
@@ -323,10 +333,11 @@ func TestChannelLimit_AttachFloorBeforeVerify(t *testing.T) {
 	require.NoError(t, err)
 	_, err = client.Attach(context.Background(), connect.NewRequest(req))
 	requireResourceExhausted(t, err, "too many attach attempts")
+	require.NotContains(t, err.Error(), "for this address")
 	require.Equal(t, calls, spy.n.Load(), "floor must fire before ECDSA")
 }
 
-func TestChannelLimit_AttachFloorIgnoresXRealIP(t *testing.T) {
+func TestChannelLimit_NewOriginDoesNotBypassProcessFloor(t *testing.T) {
 	spy := &countingVerifier{inner: signing.NewSecp256k1Verifier()}
 	auth := NewPeerAuthHandler(spy, testHostAddress, PeerAuthConfig{
 		AttachFloorPerMin: 1,
@@ -343,7 +354,8 @@ func TestChannelLimit_AttachFloorIgnoresXRealIP(t *testing.T) {
 	creq.Header().Set("X-Real-IP", "198.51.100.7")
 	_, err = client.Attach(context.Background(), creq)
 	requireResourceExhausted(t, err, "too many attach attempts")
-	require.Equal(t, calls, spy.n.Load(), "floor must be process-wide, not keyed on X-Real-IP")
+	require.NotContains(t, err.Error(), "for this address")
+	require.Equal(t, calls, spy.n.Load(), "a fresh X-Real-IP does not refill the process floor")
 }
 
 func TestChannelLimit_AttachFloorOnHTTP1(t *testing.T) {
@@ -1019,6 +1031,14 @@ func TestAttachBucket_DefaultBurstIsNotTheMinuteCap(t *testing.T) {
 	require.Equal(t, float64(defaultAttachBurst), burst)
 	require.Equal(t, float64(defaultAttachRefillPerSec), perSec)
 	require.Equal(t, defaultAttachInFlight, maxIn)
+
+	oBurst, oPerSec, oIn, oUnlimited := auth.originAttachLimit()
+	require.False(t, oUnlimited)
+	require.Equal(t, float64(defaultOriginAttachBurst), oBurst)
+	require.Equal(t, float64(defaultOriginAttachRefillPerSec), oPerSec)
+	require.Equal(t, defaultOriginAttachInFlight, oIn)
+	require.Less(t, oBurst, burst)
+	require.Less(t, oIn, maxIn)
 }
 
 func TestChannelLimit_OverflowRefusesNewStreamPeers(t *testing.T) {

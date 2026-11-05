@@ -133,10 +133,19 @@ if ! H2_TWIN=up INVALID_MAP_OUTPUT= INVALID_SERVERS_OUTPUT= FAIL_COMMAND= STAT_S
     exit 1
 fi
 
-if H2_TWIN=down INVALID_MAP_OUTPUT= INVALID_SERVERS_OUTPUT= FAIL_COMMAND= STAT_STATUS= \
-    run_status v5 192.0.2.10 >/dev/null 2>&1; then
-    echo "route-status admitted a version whose peer RPC twin is DOWN" >&2
+# A DOWN twin is not a rejection: peer RPC then rides the admitted JSON
+# backend over HTTP/1.1. The twin's state is reported on stderr.
+if ! twin_note=$(H2_TWIN=down INVALID_MAP_OUTPUT= INVALID_SERVERS_OUTPUT= FAIL_COMMAND= STAT_STATUS= \
+    run_status v5 192.0.2.10 2>&1 >/dev/null); then
+    echo "route-status rejected a version whose peer RPC twin is DOWN" >&2
     exit 1
 fi
+case $twin_note in
+    *"versiond_routers_v5_rpc/"*"DOWN"*"HTTP/1.1"*) ;;
+    *)
+        echo "route-status did not report the DOWN peer RPC twin: $twin_note" >&2
+        exit 1
+        ;;
+esac
 
 echo "route-status_test: ok"

@@ -240,15 +240,15 @@ func TestNewHTTPSession_GetHostInfoErrorOpensWithLazyHost(t *testing.T) {
 	require.False(t, transport.PeerConnRegistered(hostA, "dev"))
 }
 
-// Tests that a slot the chain has no participant for still fails the open.
+// Tests that a slot the chain has no participant for opens like any other unresolved host.
 //  1. Answer GetHostInfo for one of two hosts with ErrParticipantNotFound and open the session.
-//  2. Expect the open to fail with that sentinel, which the gateway parks until the participant appears.
-//  3. Expect the healthy host's PeerConn to be released.
-func TestNewHTTPSession_ParticipantNotFoundStillFails(t *testing.T) {
+//  2. Send to the absent host.
+//  3. Expect the session open, the absent host lazy and reported spent, and its calls refused with ErrHostUnresolved wrapping that sentinel.
+func TestNewHTTPSession_ParticipantNotFoundOpensWithLazyHost(t *testing.T) {
 	const privateKeyHex = "0000000000000000000000000000000000000000000000000000000000000001"
 	hostA := "host-rpc-missing-a"
 	hostB := "host-rpc-missing-b"
-	_, _, err := NewHTTPSession(HTTPSessionConfig{
+	session, _, err := NewHTTPSession(HTTPSessionConfig{
 		PrivateKeyHex: privateKeyHex,
 		EscrowID:      "9801",
 		Bridge: missingParticipantBridge{
@@ -259,9 +259,16 @@ func TestNewHTTPSession_ParticipantNotFoundStillFails(t *testing.T) {
 		RoutePrefix:       "/devshard/dev",
 		ExtraClientConfig: rpcSignaturesConfig(),
 	})
+	require.NoError(t, err, "one participant absent from the chain must not gate the whole escrow")
+	t.Cleanup(func() { _ = session.Close() })
+	lazy, ok := session.Clients()[1].(*lazyHostClient)
+	require.True(t, ok, "absent host is %T", session.Clients()[1])
+
+	_, err = lazy.Send(context.Background(), host.HostRequest{}, nil, nil)
+
+	require.ErrorIs(t, err, ErrHostUnresolved)
 	require.ErrorIs(t, err, bridge.ErrParticipantNotFound)
-	require.ErrorContains(t, err, "get host info for "+hostB)
-	require.False(t, transport.PeerConnRegistered(hostA, "dev"))
+	require.GreaterOrEqual(t, lazy.ChatBudgetWait(), unresolvedHostChatWait)
 }
 
 type missingParticipantBridge struct {

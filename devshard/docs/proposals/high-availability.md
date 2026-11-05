@@ -32,7 +32,7 @@ inference-chain.
 
 | Service | HA today |
 |---------|----------|
-| `proxy` | Immutable; run N behind a VIP/L4 LB. Phase 6 also publishes `{DEVSHARD_RPC_H2_PORT}` on this process (HTTP/2 `/rpc/`, skip nginx). |
+| `proxy` | Immutable; run N behind a VIP/L4 LB. Phase 6 recognises HTTP/2 `/rpc/` on the same `:80/:443` (preface / ALPN `gonka-rpc/1`) and carries it past nginx. |
 | `edge-api` | Stateless; N instances + `edge-api-router` (round-robin) |
 | `versiond` + `devshardd` | N instances on separate machines + `versiond-router` (sticky hash) **on shared Postgres**. Same hash for JSON and `/rpc/`. |
 
@@ -78,9 +78,10 @@ dapi so it can be made highly available.
    leader lock, event cursor, cache)
 ```
 
-`proxy` has two public listens after phase 6: `:80/:443` (TCP to nginx: JSON,
-`/v1`) and `{DEVSHARD_RPC_H2_PORT}` (HTTP/2 `/rpc/`, skip nginx). Both still
-hash version + escrow onto the same `versiond-router` ring. See
+`proxy` keeps its two public listens after phase 6: `:80/:443` carry JSON and
+`/v1` (TCP to nginx) and, recognised by their first bytes, HTTP/2 `/rpc/`
+(past nginx). Both paths still hash version + escrow onto the same
+`versiond-router` ring. See
 [../grpc-transport-connection.md](../grpc-transport-connection.md).
 
 Two pillars:
@@ -386,7 +387,7 @@ A Helm chart alone does not make a monolith HA. The chart assumes:
 | `devshardd` | Child of versiond in-process today; chart may deploy versiond only |
 | `signer` | `Deployment`; NATS queue-group consumer; **one message consumed once** |
 | `dapi` services | Split Deployments: echo workers (scale out), node-manager (leader) |
-| `proxy` | Optional Ingress / Gateway in front of edge-api, dapi, versiond JSON. Phase 6 also needs a **second Service/port** (`DEVSHARD_RPC_H2_PORT`, HTTP/2, skip nginx) — not only `:80/:443`. |
+| `proxy` | Optional Ingress / Gateway in front of edge-api, dapi, versiond JSON. Phase 6 needs the public listener to pass the HTTP/2 preface and ALPN `gonka-rpc/1` through to an HTTP/2-capable hop (an L4 Service, or a Gateway listener that forwards those connections), on the same `:80/:443`. |
 | **Dependencies** | Postgres, NATS, Redis as subcharts or external endpoints in `values.yaml` |
 
 ### Helm deliverable
@@ -416,9 +417,11 @@ for production Kubernetes** once Pillars A–B and phasing steps 1–5 are in pl
 - **Redis vs NATS JetStream KV** for the cursor/lock — avoid adding Redis if
   JetStream KV suffices. (Proposal assumes Redis per the stated direction.)
 - **Cache invalidation** for edge-api chain cache around epoch/phase boundaries.
-- **K8s dual public port:** InferenceUrl (`:80/:443`) vs `{DEVSHARD_RPC_H2_PORT}`.
-  One Ingress cannot carry both if `/rpc/` must skip nginx. The chart needs a
-  second Service (or Gateway listener) that speaks HTTP/2 to versiond-router.
+- **K8s public listener:** InferenceUrl (`:80/:443`) carries both JSON and
+  HTTP/2 `/rpc/`. An HTTP-terminating Ingress drops the preface and the
+  ALPN token, and peers then fall back to HTTP/1.1 through it. The chart
+  needs an L4 Service (or a Gateway TLS passthrough listener) in front of a
+  hop that recognises peer RPC and speaks HTTP/2 to versiond-router.
 
 ---
 

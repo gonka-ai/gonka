@@ -9,19 +9,21 @@ Gonka uses GitHub as the primary platform for public, auditable collaboration.
 - **GitHub Discussions:** start here for ideas, proposals, and anything that still needs alignment. The same idea may already have been discussed, or the current approach may be a trade-off.
 - **GitHub Issues:** scoped bugs, features, refactors, and tasks that are ready to implement (including `up-for-grabs`).
 - **Pull Requests:** code and documentation changes, reviews, and tracking.
-- **HackerOne:** security vulnerabilities. Use the form at [Report a Vulnerability](https://gonka.ai/docs/report-vulnerability/). Do not open a public GitHub issue or PR for a security issue.
+- **HackerOne:** security vulnerabilities, submitted here first. Use the form at [Report a Vulnerability](https://gonka.ai/docs/report-vulnerability/). That submission is the one that can be paid. Do not open a public GitHub issue or PR for a security issue. A fix is optional and comes second: on GitHub open **Security and quality → Report vulnerability**, put the HackerOne report number in the title, submit, then create a private fork. See [Security vulnerabilities](#security-vulnerabilities).
 
-Conversation can happen anywhere (Discord, calls, other forums), but key outcomes should be consolidated back into GitHub. Keeping the full history in one place makes it searchable, maintainable, and easier to review over time. GitHub is the main source of truth for public protocol work. HackerOne is the source of truth for vulnerability reports.
+Conversation can happen anywhere (Discord, calls, other forums), but key outcomes should be consolidated back into GitHub. Keeping the full history in one place makes it searchable, maintainable, and easier to review over time. GitHub is the main source of truth for public protocol work. HackerOne is the source of truth for vulnerability reports, and the only place those reports are paid. A GitHub security advisory is a later private copy of the same report. Its only role here is to open a temporary private fork for a fix.
 
 ## Issues
 This repository uses GitHub Issues for bugs, features, refactors, documentation tasks, and implementation work derived from proposals. For new ideas, start with a Discussion first (see below).
 
 ### Security vulnerabilities
 
-Submit every security vulnerability through the [HackerOne form](https://gonka.ai/docs/report-vulnerability/). That is the only intake.
+Submit every security vulnerability on HackerOne first, through the [report form](https://gonka.ai/docs/report-vulnerability/). That submission is the one that can be paid.
 
 - Do not open a public GitHub issue or PR, and do not post the issue in Discord or other public channels.
-- Reviewers triage the report and assign severity. A valid report is paid after triage. A fix can be paid separately; that amount is discussed individually.
+- A fix is optional, and it comes second. A **GitHub security advisory** is the private page this form opens. It is not a public Issue or Pull Request. After the HackerOne report exists, open [`gonka-ai/gonka`](https://github.com/gonka-ai/gonka/). In the top menu, click **Security and quality**, then **Report vulnerability**. The title must include your HackerOne report number. This copy is not paid.
+- A private fork is available only after you submit that report. Create the fork from the submitted report and open the fix there. The fork stays private.
+- Reviewers triage the report and assign severity. A valid report is paid on HackerOne after triage. You do not need a fix to be paid for the report. If a fix is paid, that payment is discussed separately from the report payout, and it is not guaranteed.
 - If reviewers can confirm the vulnerability is already known — for example there was already a GitHub discussion, or a report already exists on HackerOne — the report may be marked as a **duplicate** and not paid.
 
 Details: [Bounty program](https://gonka.ai/docs/bounty-program/).
@@ -235,7 +237,7 @@ This project aims for an auditable flow from idea to delivery to governance reco
 	- reward size should be justified by impact, complexity, and risk
 	- the **chain** is the source of truth for protocol payouts; matching records also live in this repository. Discord `#bounty-awards` posts some of this later and can be incomplete.
 
-Security reports follow a separate path on HackerOne (see [Security vulnerabilities](#security-vulnerabilities) above).
+Security reports are paid on HackerOne. Submit there first. A fix, if you write one, goes in a private fork you create after submitting the same report under **Security and quality → Report vulnerability**, with the HackerOne report number in the title (see [Security vulnerabilities](#security-vulnerabilities) above). If a fix is paid, that payment is discussed separately from the report payout.
 
 ## Governance (on-chain)
 

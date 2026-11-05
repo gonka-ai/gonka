@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/state"
 	"devshard/user"
 )
 
@@ -163,4 +165,19 @@ func TestRunGhostProbe_SkipsAfterRedundancyStop(t *testing.T) {
 	families, err := metrics.registry.Gather()
 	require.NoError(t, err)
 	requireMetricCounterMissing(t, families, "devshard_gateway_slot_decisions_total", map[string]string{"escrow_id": "escrow-proxy"})
+}
+
+// Test flow:
+//  1. Build the params of a ghost, the nonce the picker burns without sending it.
+//  2. Require it to reserve the least the state machine accepts, since its Pending nonce is paid at ReservedCost, and its prompt to declare that same budget.
+func TestAGhostReservesTheSmallestBudgetTheStateMachineAccepts(t *testing.T) {
+	ghost := ghostProbeParams("llama")
+
+	var declared struct {
+		MaxTokens uint64 `json:"max_tokens"`
+	}
+	require.NoError(t, json.Unmarshal(ghost.Prompt, &declared))
+	require.Equal(t, uint64(state.MinReservationTokens), ghost.MaxTokens)
+	require.Equal(t, ghost.MaxTokens, declared.MaxTokens)
+	require.Equal(t, uint64(len(ghost.Prompt)), ghost.InputLength)
 }

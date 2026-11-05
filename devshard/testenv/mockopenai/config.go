@@ -43,7 +43,7 @@ func DefaultConfig() Config {
 
 // FaultConfig holds runtime fault-injection knobs (env or POST /testenv/fault).
 //
-// Latency delays non-stream JSON only (Validate). StreamFirstTokenDelay delays
+// Latency delays Validate only (non-stream JSON or an enforced-token replay). StreamFirstTokenDelay delays
 // the first SSE chunk (Execute TTFT). StreamChunkDelay sleeps after each
 // flushed chunk, so the first token stays immediate when StreamFirstTokenDelay
 // is zero. Do not put Validate latency in front of the first stream chunk.

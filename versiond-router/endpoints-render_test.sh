@@ -79,6 +79,14 @@ pool_servers endpoints | grep '^ *server versiond2 10.20.0.12:18080 check inter 
     fail "an IPv4 literal must not carry resolver options"
 pool_servers endpoints | grep '^ *server versiond3 10.20.0.13:8080 ' >/dev/null || \
     fail "VERSIOND_PORT was not applied as the default endpoint port"
+# The HTTP/1.1 gate probes the same members. The legacy owner is one of them.
+h1_probes=$(sed -n '/^backend versiond_h1_only$/,/^$/p' "$tmpdir/endpoints.cfg")
+[[ $(grep -c '^ *server h1probe[0-9]' <<<"$h1_probes") -eq 3 ]] || \
+    fail "the HTTP/1.1 gate does not probe every endpoint"
+grep -q '^ *server h1probe2 10.20.0.12:18080 check ' <<<"$h1_probes" || \
+    fail "the HTTP/1.1 gate does not use the endpoint's own port"
+! grep -q 'h1probe_legacy' <<<"$h1_probes" || \
+    fail "a legacy owner named by endpoint id was probed twice"
 # Every HA backend (coarse, two static versions, two dynamic slots) lists all
 # three members; the legacy backend lists only the owner.
 # Five JSON backends plus the native-gRPC twin of each.

@@ -46,8 +46,7 @@ run_cell() {
   fi
   echo "=== $cell $suite ==="
   if env \
-    DEVSHARD_RPC_H2_PORT= \
-    DEVSHARD_RPC_H2_UPGRADE= \
+    DEVSHARD_RPC_H2_UPGRADE=false \
     "$@" \
     make "$suite"; then
     grep -v "^$cell $suite " "$OUT" > "$OUT.tmp" || true

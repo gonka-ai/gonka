@@ -97,12 +97,12 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		if conn.cfg.GRPC {
-			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(opts, true)...)
-			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
-			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
-			c.challengeLargeGRPC = newChallengeClient(conn.http, base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true))
-			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.http, base, maybeGRPC(chatClientOptions(), true)...)
-			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.http, base, maybeGRPC(opts, true)...)
+			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(opts, true)...)
+			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
+			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
+			c.challengeLargeGRPC = newChallengeClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true))
+			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(chatClientOptions(), true)...)
+			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.httpFor(true), base, maybeGRPC(opts, true)...)
 		}
 	}
 	return c
@@ -160,6 +160,32 @@ func (c *RPCClient) WaitReady(ctx context.Context) error {
 		case <-wait:
 		}
 	}
+}
+
+// DoorRefused reports that the remote host closed this client's escrow
+// door at Attach with a dead-door answer. That is the host's claim.
+func (c *RPCClient) DoorRefused() bool {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return false
+	}
+	return c.conn.doorKilled(c.HTTPClient.escrowID)
+}
+
+// DoorRefusals counts dead-door answers for this client's escrow; unlike
+// DoorRefused it survives another caller's ReviveDoor.
+func (c *RPCClient) DoorRefusals() uint64 {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return 0
+	}
+	return c.conn.doorRefusals(c.HTTPClient.escrowID)
+}
+
+// ReviveDoor lets the next Attach try this client's refused escrow door again.
+func (c *RPCClient) ReviveDoor() {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return
+	}
+	c.conn.reviveDoor(c.HTTPClient.escrowID)
 }
 
 func (c *RPCClient) Close() {
@@ -1010,7 +1036,7 @@ func (c *RPCClient) payloadClient(maxBytes int64) (rpcpbconnect.PayloadServiceCl
 		return nil, fmt.Errorf("no peer connection")
 	}
 	base := c.conn.cfg.connectBase(c.HTTPClient.escrowID)
-	client := rpcpbconnect.NewPayloadServiceClient(c.conn.http, base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), grpc)...)
+	client := rpcpbconnect.NewPayloadServiceClient(c.conn.httpFor(grpc), base, maybeGRPC(connectClientOptions(rpcPayloadReadBuckets[i]), grpc)...)
 	if grpc {
 		c.payloadGRPC[i] = client
 	} else {

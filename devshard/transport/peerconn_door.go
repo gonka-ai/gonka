@@ -49,7 +49,7 @@ func (p *PeerConn) addDoor(id string) {
 }
 
 // preferDoor aims the next !liveSession Attach at id (WaitReady's escrow).
-// A killed door is not resurrected.
+// A killed door is not resurrected here (see reviveDoor).
 func (p *PeerConn) preferDoor(id string) {
 	if p == nil || !validAttachDoorID(id) {
 		return
@@ -86,6 +86,7 @@ func (p *PeerConn) killDoor(id string) {
 		return
 	}
 	p.doorMu.Lock()
+	p.refusals[id]++
 	if _, dead := p.deadDoors[id]; dead {
 		p.doorMu.Unlock()
 		return
@@ -102,6 +103,41 @@ func (p *PeerConn) killDoor(id string) {
 	if gone {
 		p.wakeWaiters()
 	}
+}
+
+// doorKilled reports that the host itself closed door id at Attach.
+func (p *PeerConn) doorKilled(id string) bool {
+	if p == nil || !validAttachDoorID(id) {
+		return false
+	}
+	p.doorMu.Lock()
+	defer p.doorMu.Unlock()
+	_, dead := p.deadDoors[id]
+	return dead
+}
+
+// doorRefusals counts the host's dead-door answers for id, revived or not.
+func (p *PeerConn) doorRefusals(id string) uint64 {
+	if p == nil || !validAttachDoorID(id) {
+		return 0
+	}
+	p.doorMu.Lock()
+	defer p.doorMu.Unlock()
+	return p.refusals[id]
+}
+
+// reviveDoor lets the next Attach try a killed door id again.
+func (p *PeerConn) reviveDoor(id string) {
+	if p == nil || !validAttachDoorID(id) {
+		return
+	}
+	p.doorMu.Lock()
+	delete(p.deadDoors, id)
+	if p.doors[id] > 0 {
+		p.attachDoor = id
+	}
+	p.doorMu.Unlock()
+	p.wakeDoors()
 }
 
 func (p *PeerConn) pickDoor() string {
@@ -170,7 +206,7 @@ func (p *PeerConn) doorAuthClient(escrowID string) rpcpbconnect.PeerAuthServiceC
 	}
 	var c rpcpbconnect.PeerAuthServiceClient
 	if grpc {
-		c = rpcpbconnect.NewPeerAuthServiceClient(p.http, p.cfg.connectBase(escrowID), maybeGRPC(connectClientOptions(p.cfg.ReadMaxBytes), true)...)
+		c = rpcpbconnect.NewPeerAuthServiceClient(p.httpFor(true), p.cfg.connectBase(escrowID), maybeGRPC(connectClientOptions(p.cfg.ReadMaxBytes), true)...)
 		if p.authByDoorGRPC == nil {
 			p.authByDoorGRPC = make(map[string]rpcpbconnect.PeerAuthServiceClient)
 		}

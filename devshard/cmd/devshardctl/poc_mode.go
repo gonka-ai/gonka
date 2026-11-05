@@ -6,14 +6,14 @@ import (
 	"strings"
 	"sync"
 
-	"common/completionapi"
+	"devshard/state"
 )
 
 const (
 	pocRequestModeOff     = "off"
 	pocRequestModeRelaxed = "relaxed"
 
-	pocProbeMaxTokens = uint64(completionapi.MinTokensFloor)
+	pocProbeMaxTokens = uint64(state.MinReservationTokens)
 )
 
 var (

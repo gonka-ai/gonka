@@ -27,8 +27,6 @@
 #                             host:port). Recognised only when no endpoint file
 #                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
-#   VERSIOND_ROUTER_H2_PORT  published-hop frontend (default 8081, proto h2).
-#                             :8080 stays HTTP/1.1 for JSON/healthz/catalog.
 #   VERSIOND_ROUTER_BACKEND_H2 proto h2 on every versiond server line (default
 #                             on), with check-proto h1 so the existing health
 #                             check stays HTTP/1.1. Set false for HTTP/1.1
@@ -131,8 +129,10 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
+RPC_FALLBACK_MAXCONN="${VERSIOND_ROUTER_RPC_FALLBACK_MAXCONN:-512}"
+RPC_FALLBACK_MAXQUEUE="${VERSIOND_ROUTER_RPC_FALLBACK_MAXQUEUE:-64}"
+RPC_FALLBACK_QUEUE_MS="${VERSIOND_ROUTER_RPC_FALLBACK_QUEUE_MS:-200}"
 ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
-H2_PORT="${VERSIOND_ROUTER_H2_PORT:-8081}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
 MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
@@ -386,8 +386,8 @@ if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
     FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
     REAL_IP_RULE='# Preserve X-Real-IP from the isolated trusted ingress.'
 else
-    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]'
-    REAL_IP_RULE='http-request set-header X-Real-IP %[src]'
+    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)] unless rpc_legacy_hop'
+    REAL_IP_RULE='http-request set-header X-Real-IP %[src] unless rpc_legacy_hop'
 fi
 
 # Hostnames are substituted into the config by sed, and sed is not inert to
@@ -404,7 +404,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$H2_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$RPC_FALLBACK_MAXCONN" "$RPC_FALLBACK_MAXQUEUE" "$RPC_FALLBACK_QUEUE_MS" "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -412,12 +412,16 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$ADMIN_PORT" -eq 8080 ] || [ "$ADMIN_PORT" -eq 8081 ]; then
+ echo "versiond-router: admin port conflicts with data port 8080/8081" >&2
+ exit 1
+fi
+if [ "$RPC_FALLBACK_MAXCONN" -eq 0 ] || [ "$RPC_FALLBACK_MAXQUEUE" -eq 0 ] || [ "$RPC_FALLBACK_QUEUE_MS" -eq 0 ]; then
+ echo "versiond-router: RPC fallback budgets must be positive" >&2
+ exit 1
+fi
 if [ "$HARD_STOP" -eq 0 ]; then
     echo "versiond-router: VERSIOND_ROUTER_HARD_STOP_SECONDS must be at least 1" >&2
-    exit 1
-fi
-if [ "$H2_PORT" -eq 0 ] || [ "$H2_PORT" -eq 8080 ] || [ "$H2_PORT" -eq "$ADMIN_PORT" ]; then
-    echo "versiond-router: VERSIOND_ROUTER_H2_PORT must be a distinct positive port (not 8080 or the admin port)" >&2
     exit 1
 fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
@@ -572,6 +576,38 @@ render_backend() {
 # $7 server state, $8 retry policy, $9 kind.
 peer_route_check() {
     printf '%s\n' "$1" | sed 's|be_name,map|be_name,regsub(_rpc$,),map|'
+}
+
+# Every versiond this router dials, asked the HTTP/2 client preface. A process
+# without h2c answers with an HTTP/1.x status line and is UP here; an h2c
+# listen answers with a SETTINGS frame and fails. rpc_legacy_admission is
+# open only while some server here is UP.
+render_h1_only_backend() {
+    cat <<'EOF'
+backend versiond_h1_only
+    timeout check 1s
+    option tcp-check
+    tcp-check connect
+    tcp-check send-binary 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]
+EOF
+    h1_options='check inter 1s fall 1 rise 1 init-state fully-down'
+    if [ "$POOL_MODE" = endpoints ]; then
+        h1_index=0
+        while IFS="$US" read -r _ h1_host h1_port; do
+            h1_index=$((h1_index + 1))
+            case "$h1_host" in
+                *[!0-9.]*) h1_resolve=' resolvers docker init-addr none' ;;
+                *) h1_resolve= ;;
+            esac
+            printf '    server h1probe%s %s:%s %s%s\n' "$h1_index" "$h1_host" "$h1_port" "$h1_options" "$h1_resolve"
+        done < "$POOL_ENDPOINTS"
+    else
+        printf '    server-template h1probe %s %s:%s %s resolvers docker init-addr none\n' "$SLOTS" "$POOL_HOST" "$PORT" "$h1_options"
+    fi
+    if [ -s "$MAP" ] && ! endpoint_by_id "$LEGACY_HOST" >/dev/null 2>&1; then
+        printf '    server h1probe_legacy %s:%s %s resolvers docker init-addr none\n' "$LEGACY_HOST" "$PORT" "$h1_options"
+    fi
 }
 
 render_peer_backend() {
@@ -768,6 +804,7 @@ if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
     echo "  is one specific host and must be named explicitly." >&2
     exit 1
 fi
+render_h1_only_backend >> "$POOL_BACKENDS_FILE"
 
 # Render one static readiness rule per immutable startup route. HAProxy's
 # nbsrv() argument is a configuration-time backend name, so bootstrap and
@@ -884,8 +921,10 @@ sed \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
+    -e "s|\${RPC_FALLBACK_MAXCONN}|$RPC_FALLBACK_MAXCONN|g" \
+    -e "s|\${RPC_FALLBACK_MAXQUEUE}|$RPC_FALLBACK_MAXQUEUE|g" \
+    -e "s|\${RPC_FALLBACK_QUEUE_MS}|$RPC_FALLBACK_QUEUE_MS|g" \
     -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
-    -e "s|\${H2_PORT}|$H2_PORT|g" \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${CATALOG_STATUS_SERVER_STATE}|$CATALOG_STATUS_SERVER_STATE|g" \

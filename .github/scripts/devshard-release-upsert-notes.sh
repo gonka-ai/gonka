@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Create or reuse a named GitHub Release and merge a ## Images section into
 # its notes. Does not upload assets. Identity matches host zip publishes
-# (name Devshard Release vX.Y.Z, tag devshard/vX.Y.Z).
+# (name Devshard Release vX.Y.Z[-rcN], tag devshard/vX.Y.Z[-rcN]).
 set -euo pipefail
 
 usage() {

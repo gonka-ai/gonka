@@ -18,6 +18,17 @@ import (
 // peerRPCEndpoints is the §8.2 "RPC on" set (HTTP/1.1, no proxy).
 const peerRPCEndpoints = "signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat"
 
+// h2UpgradeOff is DEVSHARD_RPC_H2_UPGRADE=false: Connect over HTTP/1.1 only.
+// Unset is on: HTTP/2 first, HTTP/1.1 when the origin does not speak it.
+func h2UpgradeOff() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE"))) {
+	case "0", "false", "no", "off":
+		return true
+	default:
+		return false
+	}
+}
+
 func requireNoProxyRPC(t *testing.T) {
 	t.Helper()
 	got := os.Getenv("DEVSHARD_RPC_ENDPOINTS")
@@ -27,28 +38,19 @@ func requireNoProxyRPC(t *testing.T) {
 		}
 	}
 	if harness.ProxyOverlayFromEnv() {
-		if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")) == "" {
-			t.Fatal("§9.1 sets DEVSHARD_RPC_H2_PORT")
-		}
-		if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_HOST")) != "proxy" {
-			t.Fatalf("§9.1 DEVSHARD_RPC_H2_HOST=%q, want proxy", os.Getenv("DEVSHARD_RPC_H2_HOST"))
-		}
-		upgrade := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE"))
-		if !strings.EqualFold(upgrade, "true") && upgrade != "1" {
-			t.Fatal("§9.1 sets DEVSHARD_RPC_H2_UPGRADE=true")
+		if h2UpgradeOff() {
+			t.Fatal("§9.1 is HTTP/2 through the overlay proxy; leave DEVSHARD_RPC_H2_UPGRADE unset")
 		}
 		return
 	}
-	if p := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")); p != "" {
-		t.Fatalf("§8.2 is HTTP/1.1 on :8080; DEVSHARD_RPC_H2_PORT=%q", p)
-	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE")), "true") {
-		t.Fatal("§8.2 is HTTP/1.1 on :8080; DEVSHARD_RPC_H2_UPGRADE must be off")
+	if !h2UpgradeOff() {
+		t.Fatal("§8.2 is Connect over HTTP/1.1 on :8080; set DEVSHARD_RPC_H2_UPGRADE=false")
 	}
 }
 
-// requireNoProxyGRPC is the current-image no-proxy dial: native gRPC on
-// versiond-router:8081. No proxy container. :8080 stays healthz and ops.
+// requireNoProxyGRPC is the current-image no-proxy dial: native gRPC over
+// prior-knowledge HTTP/2 on versiond-router:8080, the same listen that
+// serves JSON. No proxy container.
 func requireNoProxyGRPC(t *testing.T) {
 	t.Helper()
 	got := os.Getenv("DEVSHARD_RPC_ENDPOINTS")
@@ -60,18 +62,8 @@ func requireNoProxyGRPC(t *testing.T) {
 	if harness.ProxyOverlayFromEnv() {
 		t.Fatal("no-proxy gRPC must not set TESTENV_PROXY_OVERLAY")
 	}
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_PORT")) != "8081" {
-		t.Fatalf("DEVSHARD_RPC_H2_PORT=%q, want versiond-router h2 port 8081", os.Getenv("DEVSHARD_RPC_H2_PORT"))
-	}
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_HOST")) != "" {
-		t.Fatalf("DEVSHARD_RPC_H2_HOST=%q, want empty so the dial stays on the InferenceUrl host", os.Getenv("DEVSHARD_RPC_H2_HOST"))
-	}
-	upgrade := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_UPGRADE"))
-	if !strings.EqualFold(upgrade, "true") && upgrade != "1" {
-		t.Fatal("set DEVSHARD_RPC_H2_UPGRADE=true")
-	}
-	if strings.TrimSpace(os.Getenv("DEVSHARD_RPC_H2_FRONT_HOST")) != "versiond-router" {
-		t.Fatalf("DEVSHARD_RPC_H2_FRONT_HOST=%q, want versiond-router", os.Getenv("DEVSHARD_RPC_H2_FRONT_HOST"))
+	if h2UpgradeOff() {
+		t.Fatal("leave DEVSHARD_RPC_H2_UPGRADE unset: HTTP/2 is the default dial")
 	}
 	grpc := strings.TrimSpace(os.Getenv("DEVSHARD_RPC_GRPC"))
 	if !strings.EqualFold(grpc, "true") && grpc != "1" {

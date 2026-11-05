@@ -51,14 +51,15 @@ func TestRPCClient_GetSignaturesGRPCOnH2(t *testing.T) {
 	requireGRPCContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceGetSignaturesProcedure))
 }
 
-func TestRPCClient_GetSignaturesGRPCMissFailsClosed(t *testing.T) {
+func TestRPCClient_GetSignaturesGRPCMissFallsBackToConnect(t *testing.T) {
 	hostAddr := devtest.MustGenerateKey(t).Address()
 	peer := devtest.MustGenerateKey(t)
 	obs := newWireObserver()
+	want := map[uint32][]byte{1: []byte("sig-connect")}
 	inf, _ := startPeerRPCServerObserved(t, hostAddr, rpcserver.PeerAuthConfig{Heartbeat: 50 * time.Millisecond},
-		sigLookup{sigs: map[uint32][]byte{1: []byte("sig-connect")}}, obs)
+		sigLookup{sigs: want}, obs)
 	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	dead.Close()
+	t.Cleanup(dead.Close)
 
 	httpguard.SetAllowPrivate(true)
 	transport.ResetRPCH2MissCacheForTest()
@@ -71,14 +72,18 @@ func TestRPCClient_GetSignaturesGRPCMissFailsClosed(t *testing.T) {
 		H2ProbeTimeout: 200 * time.Millisecond,
 	})
 	pc.Start()
-	require.Never(t, func() bool { return pc.Ready() }, time.Second, 20*time.Millisecond)
+	waitPeerReady(t, pc)
+	require.False(t, pc.UsingH2())
+	require.False(t, pc.UsingGRPC(), "native gRPC never rides the HTTP/1.1 fallback")
 
 	rpc := transport.NewRPCClient(transport.NewHTTPClient(inf.URL, "escrow-1", peer), pc, transport.ParseRPCEndpoints(transport.EndpointSignatures))
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := rpc.GetSignatures(ctx, 7)
-	require.Error(t, err)
-	require.Empty(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
+	got, err := rpc.GetSignatures(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.PeerAuthServiceAttachProcedure))
+	requireConnectContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceGetSignaturesProcedure))
 }
 
 func TestPeerConn_GRPCWithoutH2URLStaysConnect(t *testing.T) {

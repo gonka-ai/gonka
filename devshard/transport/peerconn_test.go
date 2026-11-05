@@ -418,37 +418,17 @@ func TestSelectTransport_EmptyHostAddressKeepsHTTP(t *testing.T) {
 	require.False(t, collapsed, "empty HostAddress must not share a PeerConn")
 }
 
-func TestPeerConnConfigFromClient_H2Env(t *testing.T) {
-	t.Setenv(envRPCH2Upgrade, "1")
-	t.Setenv(envRPCH2Port, "8443")
-	t.Setenv(envRPCH2Host, "proxy")
-	httpClient := NewHTTPClient("http://versiond-router:8080", "escrow-1", devtest.MustGenerateKey(t))
+func TestPeerConnConfigFromClient_H2DefaultOnInferenceOrigin(t *testing.T) {
+	t.Setenv(envRPCH2Upgrade, "")
+	httpClient := NewHTTPClient("http://versiond-router:8080/devshard/v6", "escrow-1", devtest.MustGenerateKey(t))
 	cfg := peerConnConfigFromClient(httpClient, "gonka1host", nil)
-	require.Equal(t, "http://versiond-router:8080", cfg.DialSet.InferenceURL)
-	require.Equal(t, "http://proxy:8443", cfg.DialSet.H2URL)
+	require.Equal(t, "http://versiond-router:8080/devshard/v6", cfg.DialSet.InferenceURL)
+	require.Equal(t, "http://versiond-router:8080", cfg.DialSet.H2URL)
+	require.False(t, cfg.GRPC, "unset DEVSHARD_RPC_GRPC stays Connect on h2")
 }
 
-func TestPeerConnConfigFromClient_FrontHostKeepsDirectOrigin(t *testing.T) {
-	t.Setenv(envRPCH2Upgrade, "true")
-	t.Setenv(envRPCH2Port, "8443")
-	t.Setenv(envRPCH2Host, "proxy")
-	t.Setenv(envRPCH2FrontHost, "versiond-router")
-	signer := devtest.MustGenerateKey(t)
-
-	router := NewHTTPClient("http://versiond-router:8080/devshard/v2", "escrow-1", signer)
-	routerCfg := peerConnConfigFromClient(router, "gonka1host", nil)
-	require.Equal(t, "http://proxy:8443", routerCfg.DialSet.H2URL)
-
-	solo := NewHTTPClient("http://versiond-2:8080", "escrow-1", signer)
-	soloCfg := peerConnConfigFromClient(solo, "gonka1solo", nil)
-	require.Equal(t, "http://versiond-2:8080", soloCfg.DialSet.H2URL)
-	require.Equal(t, "http://versiond-2:8080", soloCfg.DialSet.InferenceURL)
-}
-
-func TestPeerConnConfigFromClient_UnsetPortNoH2(t *testing.T) {
-	t.Setenv(envRPCH2Upgrade, "1")
-	t.Setenv(envRPCH2Port, "")
-	t.Setenv(envRPCH2Host, "proxy")
+func TestPeerConnConfigFromClient_UpgradeOffNoH2(t *testing.T) {
+	t.Setenv(envRPCH2Upgrade, "false")
 	httpClient := NewHTTPClient("http://versiond-router:8080", "escrow-1", devtest.MustGenerateKey(t))
 	cfg := peerConnConfigFromClient(httpClient, "gonka1host", nil)
 	require.Empty(t, cfg.DialSet.H2URL)
@@ -458,9 +438,7 @@ func TestPeerConnConfigFromClient_GRPCRequiresH2(t *testing.T) {
 	httpClient := NewHTTPClient("http://versiond-router:8080", "escrow-1", devtest.MustGenerateKey(t))
 
 	t.Setenv(envRPCH2GRPC, "1")
-	t.Setenv(envRPCH2Upgrade, "")
-	t.Setenv(envRPCH2Port, "8443")
-	t.Setenv(envRPCH2Host, "proxy")
+	t.Setenv(envRPCH2Upgrade, "off")
 	cfg := peerConnConfigFromClient(httpClient, "gonka1host", nil)
 	require.False(t, cfg.GRPC, "gRPC must stay off when H2URL is empty")
 

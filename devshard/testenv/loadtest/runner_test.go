@@ -83,17 +83,11 @@ func TestIsAddressInUse(t *testing.T) {
 }
 
 func TestLoadTestComposeEnvEnablesH2(t *testing.T) {
-	t.Setenv("DEVSHARD_RPC_H2_PORT", "8443")
-	t.Setenv("DEVSHARD_RPC_H2_HOST", "proxy")
 	t.Setenv("DEVSHARD_RPC_H2_UPGRADE", "false")
-	t.Setenv("DEVSHARD_RPC_H2_FRONT_HOST", "")
 	t.Setenv("DEVSHARD_RPC_GRPC", "false")
 
 	env := loadTestComposeEnv()
-	require.Equal(t, "8081", testEnvValue(env, "DEVSHARD_RPC_H2_PORT"))
-	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_H2_HOST"))
-	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"))
-	require.Equal(t, "versiond-router", testEnvValue(env, "DEVSHARD_RPC_H2_FRONT_HOST"))
+	require.Empty(t, testEnvValue(env, "DEVSHARD_RPC_H2_UPGRADE"), "the HTTP/2 default must not be forced off")
 	require.Equal(t, "true", testEnvValue(env, "DEVSHARD_RPC_GRPC"))
 }
 

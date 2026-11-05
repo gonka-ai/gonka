@@ -9,7 +9,7 @@ type: Bug
 
 ---
 
-> **Security issues:** do not use this form. Submit privately through the [HackerOne form](https://gonka.ai/docs/report-vulnerability/). Do not describe a vulnerability in a public GitHub issue.
+> **Security issues:** do not use this form. Submit on HackerOne first: [Report a Vulnerability](https://gonka.ai/docs/report-vulnerability/). That report is what can be paid. Do not describe a vulnerability in a public GitHub issue. A fix comes second: **Security and quality → Report vulnerability**. The title must include your HackerOne report number. A private fork is available after you submit. If a fix is paid, that payment is discussed separately from the report. Details: [Bounty program](https://gonka.ai/docs/bounty-program/).
 
 # Title
 A short, specific, searchable title.

@@ -1092,6 +1092,7 @@ EOF
 # pxname,svname,status,check_status,check_code,addr
 versiond_router_coarse,router1,UP,L7OK,200,10.0.0.8:8080
 rpc_h2_upstream,router1,UP,L7OK,200,10.0.0.8:8081
+rpc_h2_routers,router1,UP,L7OK,200,10.0.0.8:8081
 versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 policy_http,policy1,UP,L4OK,0,10.0.0.8
 rpc_h2_upstream,router2,UP,L7OK,200,10.0.0.9:8081
@@ -1099,6 +1100,7 @@ EOF
     local want
     refs=$(parent_server_refs 10.0.0.8 | sort) || true
     want=$(printf '%s\n' \
+        rpc_h2_routers/router1 \
         rpc_h2_upstream/router1 \
         versiond_router_coarse/router1 \
         versiond_routers_v4/router1 | sort)
@@ -1114,6 +1116,18 @@ EOF
 # pxname,svname,status,check_status,check_code,addr
 versiond_router_coarse,router1,DRAIN,L7OK,200,10.0.0.8:8080
 rpc_h2_upstream,router1,DRAIN,L7OK,200,10.0.0.8:8081
+rpc_h2_routers,router1,UP,L7OK,200,10.0.0.8:8081
+versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
+EOF
+    if parent_address_withdrawal_state 10.0.0.8; then
+        invariant_violated 'withdrawal reported complete while the any-router peer RPC pool was still UP'
+        return
+    fi
+    cat >"$model/parent-stat.csv" <<'EOF'
+# pxname,svname,status,check_status,check_code,addr
+versiond_router_coarse,router1,DRAIN,L7OK,200,10.0.0.8:8080
+rpc_h2_upstream,router1,DRAIN,L7OK,200,10.0.0.8:8081
+rpc_h2_routers,router1,DRAIN,L7OK,200,10.0.0.8:8081
 versiond_routers_v4,router1,DRAIN,L7OK,200,10.0.0.8:8080
 EOF
     if ! parent_address_withdrawal_state 10.0.0.8; then

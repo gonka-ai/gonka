@@ -26,10 +26,10 @@ This works because the router derives everything it needs by observation:
 membership from DNS or the endpoint file, health from active `/readyz` checks.
 Nothing has to be told about the change beyond the membership list itself.
 
-JSON on InferenceUrl and phase 6 `/rpc/` on `{DEVSHARD_RPC_H2_PORT}` share
-that placement. `proxy`'s h2 frontend uses the same version + escrow hash as
-today's `versiond_router_in`. Failing `/readyz` withdraws the host from both
-hops. There is no second evacuation procedure for Connect. See
+JSON on InferenceUrl and phase 6 `/rpc/` over HTTP/2 on the same port share
+that placement. `proxy`'s `rpc_h2` frontend uses the same version + escrow hash
+as `versiond_router_in`, and the router picks the `_rpc` twin by path on private `:8080` and `:8081`. Failing `/readyz` withdraws the host from both. There is no
+second evacuation procedure for Connect. See
 [grpc-transport-connection.md](./grpc-transport-connection.md).
 
 `docker compose stop` is temporary because both hosts use `restart: always`.

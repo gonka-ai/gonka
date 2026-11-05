@@ -46,10 +46,11 @@ const (
 type rateLimitZone string
 
 const (
-	zoneShared      rateLimitZone = "shared"
-	zoneStreams     rateLimitZone = "streams"
-	zoneAttachFloor rateLimitZone = "attach_floor"
-	zoneAttachRenew rateLimitZone = "attach_renew"
+	zoneShared       rateLimitZone = "shared"
+	zoneStreams      rateLimitZone = "streams"
+	zoneAttachFloor  rateLimitZone = "attach_floor"
+	zoneAttachOrigin rateLimitZone = "attach_origin"
+	zoneAttachRenew  rateLimitZone = "attach_renew"
 )
 
 type tokenBucket struct {
@@ -131,7 +132,9 @@ type channelLimiter struct {
 	// evictVisited is how many keys the last at-cap idle walk inspected.
 	evictVisited int
 
-	warnMinute atomic.Int64
+	// warnByZone is one log per zone per minute. Origin and process-floor
+	// refusals must not hide each other.
+	warnByZone sync.Map // zone string -> *atomic.Int64
 }
 
 // peerStreamCount is Chat occupancy. Chat uses at most max-1 when max>1
@@ -183,9 +186,8 @@ func advertisedRateLimits(cfg transport.ChannelLimitConfig) *rpcpb.RateLimits {
 		MessagesPerMin: cfg.MessagesPerMin,
 		MessagesBurst:  cfg.MessagesBurst,
 		MaxStreams:     cfg.EffectiveMaxStreams(),
-		// Child does not key Attach on IP. Per-IP bounds live on versiond /
-		// Phase 6 proxy. Advertise unlimited so mixed-fleet clients do not
-		// self-throttle to a bucket this process never enforces.
+		// The origin Attach bucket is an admission gate, not this budget.
+		// Advertise unlimited so clients do not pace themselves to it.
 		IpWeightPerMin: transport.UnlimitedRPCLimit,
 		IpBurst:        transport.UnlimitedRPCLimit,
 	}
@@ -454,20 +456,29 @@ func (l *channelLimiter) evictIdleLocked(buckets map[string]*tokenBucket, now ti
 }
 
 func (l *channelLimiter) warnBanned(ctx context.Context, procedure string, zone rateLimitZone, key string) {
-	minute := l.now().Unix() / 60
-	for {
-		prev := l.warnMinute.Load()
-		if prev == minute {
-			return
-		}
-		if l.warnMinute.CompareAndSwap(prev, minute) {
-			break
-		}
+	if !l.reserveWarn(zone) {
+		return
 	}
 	observability.Log(ctx, observability.LevelWarn, "rate limit exceeded",
 		observability.StageReceived, observability.WhereTransportRateLimit,
 		EscrowIDFromContext(ctx), observability.ReasonRateLimited, nil,
 		"endpoint", procedure, "zone", string(zone), "key", key)
+}
+
+// reserveWarn is true the first time this zone warns in the current minute.
+func (l *channelLimiter) reserveWarn(zone rateLimitZone) bool {
+	minute := l.now().Unix() / 60
+	v, _ := l.warnByZone.LoadOrStore(string(zone), &atomic.Int64{})
+	slot := v.(*atomic.Int64)
+	for {
+		prev := slot.Load()
+		if prev == minute {
+			return false
+		}
+		if slot.CompareAndSwap(prev, minute) {
+			return true
+		}
+	}
 }
 
 func rateLimitExhausted(msg string, retry time.Duration) error {

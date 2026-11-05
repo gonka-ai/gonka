@@ -262,6 +262,13 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 }
 
 func serveChild(w http.ResponseWriter, r *http.Request, target *Target, rest string, lim *originLookupLimiter) {
+	// Do not silently expand H2 RPC streams into uncapped H1 connections. A
+	// child without h2c predates peer RPC, so this 503 is the final answer;
+	// ingress sends HTTP/1.1 RPC only to a versiond that itself lacks h2c.
+	if r.ProtoMajor == 2 && !target.childH2C && strings.HasPrefix(rest, "/sessions/") && strings.Contains(rest, "/rpc/") {
+		http.Error(w, "peer RPC child requires HTTP/1.1 compatibility admission", http.StatusServiceUnavailable)
+		return
+	}
 	// A token already rejected in this window is the child's
 	// invalid_session_token, not the IP budget. 429 would not send the
 	// peer back through Attach.
