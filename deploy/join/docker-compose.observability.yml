@@ -49,6 +49,7 @@ services:
       - --web.enable-lifecycle
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/gateway-alerts.yml:/etc/prometheus/gateway-alerts.yml:ro
       - prometheus_data:/prometheus
     ports:
       - "127.0.0.1:9099:9090"

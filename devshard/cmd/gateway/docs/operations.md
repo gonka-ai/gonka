@@ -431,7 +431,7 @@ A race the client left counts as `devshard_gateway_requests_total{reason="client
 
 A served winner whose nonce is still open when its race ends is counted on `devshard_gateway_attempts_terminal_total` and `devshard_gateway_attempt_failures_total` only when its perf sample is decided ([race.md](./race.md), "A served winner's sample waits for its finish"): as a winner's success when its Finish lands first, and as `failed_not_finished` with reason `not_finished` when its nonce is still open at its vote. Its request is counted on `devshard_gateway_requests_total` at race end; the request's hidden failure is counted at race end when another attempt failed, and otherwise at that decision, once either way.
 
-`devshard_gateway_chain_snapshot_healthy` is the one to alert on first: with a stale snapshot every score, weight and preserved-set decision below it is being made on old data.
+`devshard_gateway_chain_snapshot_healthy` is the one to alert on first: with a stale snapshot every score, weight and preserved-set decision below it is being made on old data. The join stack's Prometheus loads [`gateway-alerts.yml`](../../../../deploy/join/observability/gateway-alerts.yml), which alerts on it after two minutes, on owed timeout votes held above the default `engine_max_concurrent_timeout_votes`, on any escrow narrated unsettled at its deadline, and on more than half of a model's hosts ejected at once.
 
 ### Where the gateway spends a request's time
 
