@@ -71,7 +71,6 @@ func (TimeoutReason) EnumDescriptor() ([]byte, []int) {
 }
 
 // ChallengeReason is why the gateway challenged a finished inference.
-// The byte-bound reasons are added after STREAM_UNBOUND and EMPTY_STREAM.
 type ChallengeReason int32
 
 const (
@@ -82,6 +81,18 @@ const (
 	ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND ChallengeReason = 1
 	// The receipt was applied and the stream ended with no content.
 	ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM ChallengeReason = 2
+	// The full stream is bound and the claimed output tokens are above the
+	// lesser of the request's max_tokens and twice the text bytes the stream
+	// carried plus the model's allowance.
+	ChallengeReason_CHALLENGE_REASON_OUTPUT_ABOVE_BYTES ChallengeReason = 3
+	// The claimed input tokens are above twice the request's input length plus
+	// the model's allowance. Not raised for a request with non-text parts.
+	ChallengeReason_CHALLENGE_REASON_INPUT_ABOVE_BYTES ChallengeReason = 4
+	// The full stream is bound, but the gateway did not count its text: a
+	// line or the whole stream outgrew its scan buffers, or an overlong
+	// prelude cut the scan. Its claim cannot be held to the byte bounds, so
+	// the voters count it.
+	ChallengeReason_CHALLENGE_REASON_UNMEASURED ChallengeReason = 5
 )
 
 // Enum value maps for ChallengeReason.
@@ -90,11 +101,17 @@ var (
 		0: "CHALLENGE_REASON_UNSPECIFIED",
 		1: "CHALLENGE_REASON_STREAM_UNBOUND",
 		2: "CHALLENGE_REASON_EMPTY_STREAM",
+		3: "CHALLENGE_REASON_OUTPUT_ABOVE_BYTES",
+		4: "CHALLENGE_REASON_INPUT_ABOVE_BYTES",
+		5: "CHALLENGE_REASON_UNMEASURED",
 	}
 	ChallengeReason_value = map[string]int32{
-		"CHALLENGE_REASON_UNSPECIFIED":    0,
-		"CHALLENGE_REASON_STREAM_UNBOUND": 1,
-		"CHALLENGE_REASON_EMPTY_STREAM":   2,
+		"CHALLENGE_REASON_UNSPECIFIED":        0,
+		"CHALLENGE_REASON_STREAM_UNBOUND":     1,
+		"CHALLENGE_REASON_EMPTY_STREAM":       2,
+		"CHALLENGE_REASON_OUTPUT_ABOVE_BYTES": 3,
+		"CHALLENGE_REASON_INPUT_ABOVE_BYTES":  4,
+		"CHALLENGE_REASON_UNMEASURED":         5,
 	}
 )
 
@@ -140,8 +157,9 @@ const (
 	ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH ChallengeFault = 2
 	// The body matches its hashes but holds no generated positions.
 	ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM ChallengeFault = 3
-	// The claim is above what the body holds: the token count check, which no
-	// voter runs yet.
+	// The claim is above what the body holds: more output tokens than its
+	// generated positions, or more input or output tokens than the voter's
+	// render of the request and of the served turn counts.
 	ChallengeFault_CHALLENGE_FAULT_USAGE_INFLATED ChallengeFault = 4
 )
 
@@ -197,6 +215,10 @@ const (
 	ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED ChallengeCheck = 0
 	ChallengeCheck_CHALLENGE_CHECK_HASH        ChallengeCheck = 1
 	ChallengeCheck_CHALLENGE_CHECK_POSITIONS   ChallengeCheck = 2
+	// The served turn rendered with the model's chat template and tokenizer.
+	ChallengeCheck_CHALLENGE_CHECK_RENDERED_OUTPUT ChallengeCheck = 3
+	// The request rendered with the model's chat template and tokenizer.
+	ChallengeCheck_CHALLENGE_CHECK_RENDERED_INPUT ChallengeCheck = 4
 )
 
 // Enum value maps for ChallengeCheck.
@@ -205,11 +227,15 @@ var (
 		0: "CHALLENGE_CHECK_UNSPECIFIED",
 		1: "CHALLENGE_CHECK_HASH",
 		2: "CHALLENGE_CHECK_POSITIONS",
+		3: "CHALLENGE_CHECK_RENDERED_OUTPUT",
+		4: "CHALLENGE_CHECK_RENDERED_INPUT",
 	}
 	ChallengeCheck_value = map[string]int32{
-		"CHALLENGE_CHECK_UNSPECIFIED": 0,
-		"CHALLENGE_CHECK_HASH":        1,
-		"CHALLENGE_CHECK_POSITIONS":   2,
+		"CHALLENGE_CHECK_UNSPECIFIED":     0,
+		"CHALLENGE_CHECK_HASH":            1,
+		"CHALLENGE_CHECK_POSITIONS":       2,
+		"CHALLENGE_CHECK_RENDERED_OUTPUT": 3,
+		"CHALLENGE_CHECK_RENDERED_INPUT":  4,
 	}
 )
 
@@ -1247,21 +1273,26 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\rTimeoutReason\x12\x1e\n" +
 	"\x1aTIMEOUT_REASON_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TIMEOUT_REASON_REFUSED\x10\x01\x12\x1c\n" +
-	"\x18TIMEOUT_REASON_EXECUTION\x10\x02\"\x04\b\x03\x10\x03*\x14TIMEOUT_REASON_ERROR*{\n" +
+	"\x18TIMEOUT_REASON_EXECUTION\x10\x02\"\x04\b\x03\x10\x03*\x14TIMEOUT_REASON_ERROR*\xed\x01\n" +
 	"\x0fChallengeReason\x12 \n" +
 	"\x1cCHALLENGE_REASON_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fCHALLENGE_REASON_STREAM_UNBOUND\x10\x01\x12!\n" +
-	"\x1dCHALLENGE_REASON_EMPTY_STREAM\x10\x02*\xbc\x01\n" +
+	"\x1dCHALLENGE_REASON_EMPTY_STREAM\x10\x02\x12'\n" +
+	"#CHALLENGE_REASON_OUTPUT_ABOVE_BYTES\x10\x03\x12&\n" +
+	"\"CHALLENGE_REASON_INPUT_ABOVE_BYTES\x10\x04\x12\x1f\n" +
+	"\x1bCHALLENGE_REASON_UNMEASURED\x10\x05*\xbc\x01\n" +
 	"\x0eChallengeFault\x12\x18\n" +
 	"\x14CHALLENGE_FAULT_NONE\x10\x00\x12'\n" +
 	"#CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE\x10\x01\x12!\n" +
 	"\x1dCHALLENGE_FAULT_HASH_MISMATCH\x10\x02\x12 \n" +
 	"\x1cCHALLENGE_FAULT_EMPTY_STREAM\x10\x03\x12\"\n" +
-	"\x1eCHALLENGE_FAULT_USAGE_INFLATED\x10\x04*j\n" +
+	"\x1eCHALLENGE_FAULT_USAGE_INFLATED\x10\x04*\xb3\x01\n" +
 	"\x0eChallengeCheck\x12\x1f\n" +
 	"\x1bCHALLENGE_CHECK_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14CHALLENGE_CHECK_HASH\x10\x01\x12\x1d\n" +
-	"\x19CHALLENGE_CHECK_POSITIONS\x10\x02B\x10Z\x0edevshard/typesb\x06proto3"
+	"\x19CHALLENGE_CHECK_POSITIONS\x10\x02\x12#\n" +
+	"\x1fCHALLENGE_CHECK_RENDERED_OUTPUT\x10\x03\x12\"\n" +
+	"\x1eCHALLENGE_CHECK_RENDERED_INPUT\x10\x04B\x10Z\x0edevshard/typesb\x06proto3"
 
 var (
 	file_devshard_v1_tx_proto_rawDescOnce sync.Once

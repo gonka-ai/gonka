@@ -67,6 +67,7 @@ func NewServerWithError(cfg Config) (*Server, error) {
 	e := echo.New()
 	e.HideBanner = true
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
+	e.POST("/v1/chat/completions/render", s.handleRender)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	e.GET("/testenv/stats", s.handleStats)
 	e.POST("/api/v1/models/status", s.handleModelStatus)
@@ -117,6 +118,7 @@ func usageKnobs(f FaultConfig) FaultConfig {
 		UsagePromptTokens:     f.UsagePromptTokens,
 		PadEmptyChunks:        f.PadEmptyChunks,
 		DropTokens:            f.DropTokens,
+		ServeRecording:        f.ServeRecording,
 	}
 }
 
@@ -134,6 +136,7 @@ func (s *Server) withSeedUsage(f FaultConfig, seed *int) FaultConfig {
 		f.UsagePromptTokens = knobs.UsagePromptTokens
 		f.PadEmptyChunks = knobs.PadEmptyChunks
 		f.DropTokens = knobs.DropTokens
+		f.ServeRecording = knobs.ServeRecording
 	}
 	return f
 }
@@ -245,6 +248,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 		f.UsagePromptTokens = 0
 		f.PadEmptyChunks = 0
 		f.DropTokens = false
+		f.ServeRecording = ""
 	}
 	if f.Latency > 0 && validate {
 		if err := waitForLatency(c.Request().Context(), f.Latency); err != nil {
@@ -269,6 +273,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	var recorded *replay.Recorded
 	if s.replay != nil {
 		sample, ok := s.lookupReplay(req, body)
+		if f.ServeRecording != "" {
+			sample, ok = s.replay.LookupName(req.Model, f.ServeRecording)
+		}
 		if !ok {
 			s.stats.replayMisses.Add(1)
 			return c.JSON(http.StatusNotFound, map[string]string{"error": "mock-openai replay sample not found"})

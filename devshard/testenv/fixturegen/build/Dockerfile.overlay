@@ -1,0 +1,18 @@
+# Variant mlnode-3.0.16 (vLLM 0.25.1 + fork be6059424) on CPU: the stock 0.25.1 CPU build with the
+# fork's .py files overlaid exactly as the fork's docker/Dockerfile.gonka-poc does it.
+ARG BASE_IMAGE=vllm/vllm-openai-cpu:v0.25.1-x86_64
+FROM ${BASE_IMAGE}
+ARG EXPECTED_VLLM_VERSION=0.25.1
+ARG FORK_SHA=unknown
+LABEL fixturegen.fork-ref="v0.25.1-gonka-poc-0.1.3.post1" fixturegen.fork-sha="${FORK_SHA}"
+# `fork` is the gonka-ai/vllm checkout at FORK_SHA (docker-bake.hcl).
+COPY --from=fork vllm /tmp/vllm-src
+RUN INSTALLED=$(python3 -c "import vllm; print(vllm.__version__)") \
+    && case "$INSTALLED" in "${EXPECTED_VLLM_VERSION}"*) ;; \
+         *) echo "ERROR: base image ships vllm $INSTALLED, residual targets ${EXPECTED_VLLM_VERSION}"; exit 1 ;; \
+       esac \
+    && VLLM_DIR=$(python3 -c "import vllm, os; print(os.path.dirname(vllm.__file__))") \
+    && [ -d "$VLLM_DIR" ] || (echo "ERROR: vllm not importable"; exit 1) \
+    && cd /tmp/vllm-src \
+    && find . -name "*.py" | tar -cf - -T - | tar -xf - -C "$VLLM_DIR/" \
+    && rm -rf /tmp/vllm-src

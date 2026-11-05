@@ -56,6 +56,7 @@ type DevshardMetrics struct {
 	chatCache              *prometheus.CounterVec
 	servedBindings         *prometheus.CounterVec
 	challenges             *prometheus.CounterVec
+	challengeRejects       *prometheus.CounterVec
 
 	// Host ping observability (common/probe sink). Fleet warm RTT histogram
 	// cannot share the gauge name, so it uses _warm_rtt_seconds.
@@ -357,6 +358,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"reason", "participant_key", "outcome"},
 		),
+		challengeRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_challenge_rejects_total",
+				Help: "Usage challenge asks a voter answered with a reject cause instead of a vote, by voter participant key and cause: not_live, not_finished, already_usage_challenged, executor, unsupported, unchecked, late, no_render (no render answered), render_busy (the ML node stayed busy to the end of the window), other.",
+			},
+			[]string{"participant_key", "cause"},
+		),
 		hostPingUp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "devshard_gateway_host_ping_up",
@@ -473,6 +481,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.chatCache,
 		m.servedBindings,
 		m.challenges,
+		m.challengeRejects,
 		m.hostPingUp,
 		m.hostPingRTT,
 		m.hostPingWarmRTT,
@@ -776,6 +785,13 @@ func (m *DevshardMetrics) RecordChallenge(reason, executor, outcome string) {
 		return
 	}
 	m.challenges.WithLabelValues(metricLabel(reason, "unknown"), metricLabel(executor, "unknown"), metricLabel(outcome, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordChallengeReject(voter, cause string) {
+	if m == nil {
+		return
+	}
+	m.challengeRejects.WithLabelValues(metricLabel(voter, "unknown"), metricLabel(cause, "unknown")).Inc()
 }
 
 func (m *DevshardMetrics) ObserveRequestSample(sample RequestSample) {

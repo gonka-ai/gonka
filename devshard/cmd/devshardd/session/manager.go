@@ -79,6 +79,7 @@ type HostManager struct {
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
 	params             runtimeparams.Provider
+	renderer           host.ChallengeRenderer
 	maxBodySize        int64
 
 	recoveryGate   recoveryGate
@@ -503,6 +504,13 @@ func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 // recovered sessions. Evaluation knobs stay compiled inside HeartbeatConfigFromSnapshot.
 func (m *HostManager) SetParamsProvider(p runtimeparams.Provider) {
 	m.params = p
+}
+
+// SetChallengeRenderer gives every host the render servers that count usage
+// for its challenge votes. Without one a host does not vote on a challenge
+// that needs a count.
+func (m *HostManager) SetChallengeRenderer(r host.ChallengeRenderer) {
+	m.renderer = r
 }
 
 // SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
@@ -2236,6 +2244,10 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		host.WithStorage(m.store),
 		host.WithEpochID(epochID),
 		host.WithAvailabilityProvider(m.availability),
+		host.WithBinaryVersion(m.binaryVersion),
+	}
+	if m.renderer != nil {
+		opts = append(opts, host.WithChallengeRenderer(m.renderer))
 	}
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))

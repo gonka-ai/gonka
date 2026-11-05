@@ -4,11 +4,13 @@ package replay
 import (
 	"bufio"
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -45,6 +47,19 @@ type Sample struct {
 	// ClientRequest is the body the client sent before the gateway and the
 	// executor rewrote it into Request, when the recording kept it.
 	ClientRequest json.RawMessage `json:"client_request,omitempty"`
+	// Render holds what the build's render server counted for the recording,
+	// when it kept that.
+	Render *RenderCounts `json:"render,omitempty"`
+}
+
+// RenderCounts are the counts of a build's own render server for a
+// recording: Input the prompt of its request, Output the served assistant
+// turn (rendered after the request, less an empty turn), and TurnBytes the
+// text bytes of that turn.
+type RenderCounts struct {
+	Input     uint64 `json:"input"`
+	Output    uint64 `json:"output"`
+	TurnBytes uint64 `json:"turn_bytes"`
 }
 
 // Recorded is what an ML node returned for Sample.Request, kept as raw JSON so
@@ -69,6 +84,9 @@ type Dataset struct {
 	byFingerprint map[string]int
 	byMessages    map[string]int
 	byRequest     map[string]int
+	// byRender finds the recordings of the request a voter renders: more
+	// than one when they differ only in their output limits.
+	byRender map[string][]int
 }
 
 func LoadFile(path string) (*Dataset, error) {
@@ -77,13 +95,18 @@ func LoadFile(path string) (*Dataset, error) {
 		return nil, fmt.Errorf("open replay file: %w", err)
 	}
 	defer file.Close()
+	input, err := decompressed(file)
+	if err != nil {
+		return nil, fmt.Errorf("open replay file: %w", err)
+	}
 
 	dataset := &Dataset{
 		byFingerprint: make(map[string]int),
 		byMessages:    make(map[string]int),
 		byRequest:     make(map[string]int),
+		byRender:      make(map[string][]int),
 	}
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	line := 0
 	for scanner.Scan() {
@@ -108,6 +131,11 @@ func LoadFile(path string) (*Dataset, error) {
 				return nil, fmt.Errorf("replay file line %d: duplicate recorded request fingerprint %s", line, fingerprint)
 			}
 			dataset.byRequest[fingerprint] = len(dataset.samples)
+			render, err := RenderFingerprint(sample.Request)
+			if err != nil {
+				return nil, fmt.Errorf("replay file line %d: request: %w", line, err)
+			}
+			dataset.byRender[render] = append(dataset.byRender[render], len(dataset.samples))
 			dataset.samples = append(dataset.samples, cloneSample(sample))
 			continue
 		}
@@ -130,6 +158,16 @@ func LoadFile(path string) (*Dataset, error) {
 		return nil, fmt.Errorf("replay file contains no samples")
 	}
 	return dataset, nil
+}
+
+// decompressed reads a gzip file through gzip and any other file as is. It goes by content, not
+// by name, because harnesses copy the replay file into a container as replay.jsonl.
+func decompressed(file io.Reader) (io.Reader, error) {
+	buffered := bufio.NewReader(file)
+	if magic, err := buffered.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
+		return gzip.NewReader(buffered)
+	}
+	return buffered, nil
 }
 
 func (d *Dataset) Len() int {
@@ -195,6 +233,37 @@ func (d *Dataset) LookupRequest(body []byte) (Sample, int, bool) {
 		return Sample{}, 0, false
 	}
 	return cloneSample(d.samples[index]), index, true
+}
+
+// LookupRender finds the recorded samples whose request a renderer was sent:
+// the request without its output limits, which a render leaves out, so
+// recordings that differ only in those limits all match.
+func (d *Dataset) LookupRender(body []byte) []Sample {
+	if d == nil {
+		return nil
+	}
+	fingerprint, err := RenderFingerprint(body)
+	if err != nil {
+		return nil
+	}
+	samples := make([]Sample, 0, len(d.byRender[fingerprint]))
+	for _, index := range d.byRender[fingerprint] {
+		samples = append(samples, cloneSample(d.samples[index]))
+	}
+	return samples
+}
+
+// LookupName finds the recorded sample of model with the given name.
+func (d *Dataset) LookupName(model, name string) (Sample, bool) {
+	if d == nil || name == "" {
+		return Sample{}, false
+	}
+	for _, sample := range d.samples {
+		if sample.Recorded != nil && sample.Model == model && sample.Name == name {
+			return cloneSample(sample), true
+		}
+	}
+	return Sample{}, false
 }
 
 // Selector makes a deterministic pseudo-random selection with replacement.
@@ -269,6 +338,17 @@ var requestKeyFields = []string{
 // a single stop string as a one-element list, and empty values and a zero
 // min_tokens as absent. Object keys are sorted, so key order never matters.
 func RequestFingerprint(body []byte) (string, error) {
+	return requestFingerprint(body, true)
+}
+
+// RenderFingerprint is RequestFingerprint without the output limits
+// (max_tokens, max_completion_tokens, min_tokens): the prompt a renderer
+// counts does not depend on them.
+func RenderFingerprint(body []byte) (string, error) {
+	return requestFingerprint(body, false)
+}
+
+func requestFingerprint(body []byte, withLimits bool) (string, error) {
 	var request map[string]any
 	if err := json.Unmarshal(body, &request); err != nil {
 		return "", err
@@ -296,6 +376,10 @@ func RequestFingerprint(body []byte) (string, error) {
 		key["stop"] = []any{stop}
 	}
 	if minTokens, ok := key["min_tokens"].(float64); ok && minTokens == 0 {
+		delete(key, "min_tokens")
+	}
+	if !withLimits {
+		delete(key, "max_tokens")
 		delete(key, "min_tokens")
 	}
 	encoded, err := json.Marshal(key)
@@ -379,5 +463,9 @@ func isJSONObject(raw json.RawMessage) bool {
 
 func cloneSample(sample Sample) Sample {
 	sample.Messages = append([]Message(nil), sample.Messages...)
+	if sample.Render != nil {
+		counts := *sample.Render
+		sample.Render = &counts
+	}
 	return sample
 }

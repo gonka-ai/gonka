@@ -464,9 +464,9 @@ func TestCollectChallengeVotes_CutsALongRejectCause(t *testing.T) {
 		types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND, responseHash, executorAddr, verifiers, time.Now().Add(30*time.Millisecond))
 	require.Equal(t, 2, unanswered)
 	require.NotEmpty(t, causes)
-	for _, cause := range causes {
-		require.LessOrEqual(t, len(cause), 200+len("…"), "a line of the cause is kept, not the body")
-		require.True(t, strings.HasPrefix(cause, "xxx"), "the head of the cause is kept")
+	for _, reject := range causes {
+		require.LessOrEqual(t, len(reject.Cause), 200+len("…"), "a line of the cause is kept, not the body")
+		require.True(t, strings.HasPrefix(reject.Cause, "xxx"), "the head of the cause is kept")
 	}
 }
 
@@ -570,8 +570,9 @@ func TestCollectChallengeVotes_PendingAtDeadlineAndRejects(t *testing.T) {
 		// threshold any more), so the other ask may be cancelled before it
 		// answers and then drains as an error without a cause.
 		require.NotEmpty(t, causes)
-		for _, cause := range causes {
-			require.Equal(t, "unchecked", cause)
+		for _, reject := range causes {
+			require.Equal(t, "unchecked", reject.Cause)
+			require.NotEqual(t, execIdx, reject.HostIdx, "the executor is not asked")
 		}
 	})
 }
@@ -928,7 +929,12 @@ func TestCollectChallengeVotes_ResourceExhaustedWaitsForRetryAfter(t *testing.T)
 				}
 				// A fault from each voter: with NONE the first answer would settle the
 				// outcome and the second host would not be asked again at all.
-				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", testCase.err)},
+				sourceErr := testCase.err.(*connect.Error)
+				clientErr := connect.NewError(sourceErr.Code(), sourceErr.Unwrap())
+				if retryAfter := sourceErr.Meta().Get("Retry-After"); retryAfter != "" {
+					clientErr.Meta().Set("Retry-After", retryAfter)
+				}
+				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", clientErr)},
 					answers: []*transport.VerifyChallengeResponse{
 						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
 					}}

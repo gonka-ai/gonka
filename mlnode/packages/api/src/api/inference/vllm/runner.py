@@ -49,6 +49,31 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _query_vllm_version(python_path: str) -> Optional[str]:
+    """Installed vLLM version of the given interpreter, or None if unknown.
+
+    vLLM runs under its own interpreter, which may differ from this process.
+    """
+    try:
+        result = subprocess.run(
+            [python_path, "-c", "import importlib.metadata as m; print(m.version('vllm'))"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def _major_minor(version: Optional[str]) -> Optional[tuple]:
+    """(major, minor) of a version like 0.30.0+cpu or 0.28.1.dev5; None if unparsable."""
+    match = re.match(r"v?(\d+)\.(\d+)", (version or "").strip())
+    return (int(match.group(1)), int(match.group(2))) if match else None
+
+
 def _scrape_heartbeat(host: str, port: int):
     """Read the scheduler heartbeat values from one vLLM replica."""
     try:
@@ -147,6 +172,9 @@ class VLLMRunner(IVLLMRunner):
     VLLM_PORT = int(os.getenv("INFERENCE_PORT", 5000))
     VLLM_HOST = "0.0.0.0"
     WORKER_EXTENSION_CLASS = "gonka_poc.worker.PoCWorkerExtension"
+    # From vLLM 0.30 the /v1/chat/completions/render route is registered only
+    # with --enable-scale-out; older releases reject the flag as unknown.
+    SCALE_OUT_MIN_VLLM_VERSION = (0, 30)
 
     MAX_INSTANCES = int(os.getenv("INFERENCE_MAX_INSTANCES", 128))
 
@@ -164,6 +192,17 @@ class VLLMRunner(IVLLMRunner):
             self.additional_args.extend(
                 ["--worker-extension-cls", self.WORKER_EXTENSION_CLASS]
             )
+        if not {"--enable-scale-out", "--no-enable-scale-out"} & set(self.additional_args):
+            vllm_version = _query_vllm_version(self.vllm_python_path)
+            major_minor = _major_minor(vllm_version)
+            if major_minor is None:
+                logger.warning(
+                    "Could not determine vLLM version of %s (got %r) -- not adding --enable-scale-out",
+                    self.vllm_python_path,
+                    vllm_version,
+                )
+            elif major_minor >= self.SCALE_OUT_MIN_VLLM_VERSION:
+                self.additional_args.append("--enable-scale-out")
         self.processes: List[subprocess.Popen] = []
         self._hb = {}
         self._hb_lock = threading.Lock()

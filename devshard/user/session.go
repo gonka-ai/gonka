@@ -489,6 +489,11 @@ type Session struct {
 	quietSettleDelay  time.Duration
 	quietSettle       *time.Timer
 	quietSettleClosed bool
+
+	validationProgress       *validationProgressRun
+	validationProgressWG     sync.WaitGroup
+	validationProgressNeeded bool
+	validationProgressClosed bool
 }
 
 // SessionOption configures optional Session behavior.
@@ -1120,7 +1125,7 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool, error) {
 	return nil, false, nil
 }
 
-func (s *Session) expectedStateRootLocked(nonce uint64) ([]byte, error) {
+func (s *Session) expectedStateRootLocked(nonce uint64, sentDiffs ...types.Diff) ([]byte, error) {
 	root, ok, err := s.postStateRootForNonce(nonce)
 	if err != nil {
 		return nil, err
@@ -1132,6 +1137,20 @@ func (s *Session) expectedStateRootLocked(nonce uint64) ([]byte, error) {
 		return root, nil
 	}
 	if nonce != s.nonce {
+		// An outstanding send still owns its signed diff after the shared
+		// suffix is trimmed. Verify that request before using its root.
+		for _, diff := range sentDiffs {
+			if diff.Nonce != nonce {
+				continue
+			}
+			if err := s.sm.VerifyDiffUserSig(diff); err != nil {
+				return nil, fmt.Errorf("%w: invalid sent diff at nonce %d: %v", types.ErrStateHashMismatch, nonce, err)
+			}
+			if len(diff.PostStateRoot) != 32 {
+				return nil, fmt.Errorf("%w: invalid sent root length %d at nonce %d", types.ErrStateHashMismatch, len(diff.PostStateRoot), nonce)
+			}
+			return diff.PostStateRoot, nil
+		}
 		return nil, fmt.Errorf("%w: no post-state-root at nonce %d (session nonce %d)", types.ErrStateHashMismatch, nonce, s.nonce)
 	}
 	root, err = s.sm.ComputeStateRoot()
@@ -1151,12 +1170,12 @@ func (s *Session) expectedStateRootLocked(nonce uint64) ([]byte, error) {
 //
 // A response without a state hash proves only that the host took the request,
 // which carried diffs through inferenceNonce, so the cursor stops there.
-func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
+func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64, sentDiffs ...types.Diff) error {
 	var syncCap uint64
 	if resp != nil && len(resp.StateHash) == 0 {
 		syncCap = inferenceNonce
 	}
-	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, syncCap)
+	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, syncCap, sentDiffs...)
 }
 
 // processResponseWithSyncCap is processResponse with an optional hostSyncNonce
@@ -1164,7 +1183,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 // for a response without a state hash: that resp.Nonce is unchecked, so it
 // must not mark the host current past diffs the chunk did not send.
 // Caller must hold s.mu.
-func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostResponse, inferenceNonce uint64, syncCap uint64) error {
+func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostResponse, inferenceNonce uint64, syncCap uint64, sentDiffs ...types.Diff) error {
 	if resp == nil {
 		return ErrNilHostResponse
 	}
@@ -1180,7 +1199,7 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 			return fmt.Errorf("%w: host %d at nonce %d: state hash length %d with signature", types.ErrStateHashMismatch, hostIdx, resp.Nonce, len(resp.StateHash))
 		}
 		var err error
-		expected, err = s.expectedStateRootLocked(resp.Nonce)
+		expected, err = s.expectedStateRootLocked(resp.Nonce, sentDiffs...)
 		if err != nil {
 			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
@@ -1255,6 +1274,9 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 	s.markFinishedLocked(s.finishProbesLocked(resp.Mempool))
 
 	s.noteGatewayTipLocked()
+	if slices.ContainsFunc(resp.Mempool, validationMessage) {
+		s.wakeValidationProgressLocked()
+	}
 	return nil
 }
 
@@ -1288,6 +1310,19 @@ func (p *PreparedInference) NeedsCatchUp() bool { return p.farBehind }
 // OnSend registers fn to run once SendOnly has finished any catch-up and is
 // about to send the request. Set it before SendOnly.
 func (p *PreparedInference) OnSend(fn func()) { p.onSend = fn }
+
+// ProcessPreparedResponse checks a response using the diff retained by its
+// prepared send when that nonce is no longer in the in-memory suffix.
+func (s *Session) ProcessPreparedResponse(p *PreparedInference, resp *host.HostResponse) error {
+	if p == nil {
+		return fmt.Errorf("prepared inference is required")
+	}
+	s.mu.Lock()
+	err := s.processResponse(p.hostIdx, resp, p.diff.Nonce, p.diff)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
+}
 
 // HostBinding describes the host slot that the next nonce will be
 // dispatched to. It is supplied to ParamsForHost so the chooser can make
@@ -1368,25 +1403,37 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		}
 	}
 
+	validationBefore := s.validationProgressMarksLocked(candidates)
+	startsFinalization := slices.ContainsFunc(extraTxs, func(tx *types.DevshardTx) bool {
+		return tx.GetFinalizeRound() != nil
+	})
 	var diff types.Diff
-	if s.store != nil {
+	if s.store != nil || startsFinalization {
 		warmBefore := s.sm.WarmKeys()
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
 		}
+		if startsFinalization {
+			if err := s.checkFinalizingCompletionsLocked(vd.Applied); err != nil {
+				return types.Diff{}, 0, err
+			}
+		}
 		diff, err = s.signDiff(nonce, vd.Applied, vd.Root)
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
-		}); err != nil {
-			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		if s.store != nil {
+			delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
+			if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
+				Diff:         diff,
+				StateHash:    vd.Root,
+				WarmKeyDelta: delta,
+			}); err != nil {
+				return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+			}
 		}
+
 		// Install the previewed post-state without a second apply (no re-sign,
 		// so a retried compose cannot fork on a new UserSig after a durable
 		// write). The gateway is the single sequencer and holds s.mu across
@@ -1397,6 +1444,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.diffs = append(s.diffs, diff)
 		s.nonce = nonce
 		s.dropDiffPrefixLocked()
+		s.noteValidationDiffLocked(diff.Txs, validationBefore)
 		s.retainPendingLocked(append(held, vd.Deferred...), vd.Applied)
 		s.maybeSaveSnapshotLocked()
 		s.observeTurnLocked(diff)
@@ -1417,6 +1465,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.dropDiffPrefixLocked()
+	s.noteValidationDiffLocked(diff.Txs, validationBefore)
 	s.retainPendingLocked(held, applied)
 	s.observeTurnLocked(diff)
 	s.diffObserver(diff)
@@ -1483,6 +1532,11 @@ func (s *Session) unpinPendingFinish(inferenceID uint64) {
 // SetChainMaxNonce tells the session the chain's devshard max_nonce: past types.MaxActiveNonce an active session composes only the round that opens finalization, which its hosts keep the remaining nonces for.
 func (s *Session) SetChainMaxNonce(maxNonce uint32) {
 	s.chainMaxNonce.Store(maxNonce)
+	s.mu.Lock()
+	_, counts := s.sm.InferenceStatusCounts()
+	s.validationProgressNeeded = counts[types.StatusChallenged] > 0
+	s.wakeValidationProgressLocked()
+	s.mu.Unlock()
 }
 
 // NonceCapReached reports that the session can compose no more active work,
@@ -2138,7 +2192,7 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 		return nil, fmt.Errorf("send to host %d: %w", p.hostIdx, err)
 	}
 	s.mu.Lock()
-	err = s.processResponse(p.hostIdx, resp, p.diff.Nonce)
+	err = s.processResponse(p.hostIdx, resp, p.diff.Nonce, p.diff)
 	s.mu.Unlock()
 	s.publishHeightSyncView()
 	if err != nil {
@@ -2181,7 +2235,7 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 		"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
 	s.mu.Lock()
-	err = s.processResponse(hostIdx, resp, diff.Nonce)
+	err = s.processResponse(hostIdx, resp, diff.Nonce, diff)
 	if err == nil {
 		s.logSignatureProgress(resp.Nonce)
 	}
@@ -2337,7 +2391,7 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			syncCap = chunkNonce
 		}
 		s.mu.Lock()
-		err = s.processResponseWithSyncCap(hostIdx, resp, chunkNonce, syncCap)
+		err = s.processResponseWithSyncCap(hostIdx, resp, chunkNonce, syncCap, chunk...)
 		if err == nil {
 			s.logSignatureProgress(resp.Nonce)
 		}
@@ -2475,7 +2529,12 @@ func (s *Session) Finalize(ctx context.Context) error {
 	if !s.finalizeInFlight.CompareAndSwap(false, true) {
 		return fmt.Errorf("finalize already in progress")
 	}
-	defer s.finalizeInFlight.Store(false)
+	defer func() {
+		s.finalizeInFlight.Store(false)
+		s.mu.Lock()
+		s.wakeValidationProgressLocked()
+		s.mu.Unlock()
+	}()
 
 	// Guard: if already settled, try to collect missing signatures instead
 	// of running the full finalize protocol again.
@@ -2495,10 +2554,8 @@ func (s *Session) Finalize(ctx context.Context) error {
 		}
 		return nil
 	}
-	if phase != types.PhaseFinalizing {
-		if err := s.guardCompletion(ctx); err != nil {
-			return err
-		}
+	if err := s.guardCompletion(ctx); err != nil {
+		return err
 	}
 
 	n := len(s.group)
@@ -2530,6 +2587,11 @@ func (s *Session) Finalize(ctx context.Context) error {
 		}
 	}
 
+	// A separate completion store cannot clear its rows in the diff commit.
+	// Require its cleanup before advancing toward settlement.
+	if err := s.guardCompletion(ctx); err != nil {
+		return err
+	}
 	logging.Info("finalize phase A: advancing to settlement", "subsystem", "finalize", "escrow", s.escrowID,
 		"finalize_nonce", s.sm.FinalizeNonce(), "current_nonce", s.Nonce())
 	rounds := 0
@@ -2846,6 +2908,14 @@ func (s *Session) nonceClosed(nonce uint64) bool {
 func (s *Session) nonceStarted(nonce uint64) bool {
 	rec, ok := s.sm.GetInference(nonce)
 	return ok && rec.Status == types.StatusStarted
+}
+
+// queuedFinishRidesNextDiff reports whether nonce has a Finish queued that apply
+// would accept and that the next composed diff carries (not pinned).
+func (s *Session) queuedFinishRidesNextDiff(nonce uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pinnedFinishIDs[nonce] == 0 && s.pendingFinishReadyLocked(nonce)
 }
 
 // closedByPendingFinish publishes a queued Finish for nonce and reports whether
@@ -3619,7 +3689,7 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 		}
 
 		s.mu.Lock()
-		processErr := s.processResponse(candidateIdx, resp, diff.Nonce)
+		processErr := s.processResponse(candidateIdx, resp, diff.Nonce, diff)
 		s.mu.Unlock()
 		s.publishHeightSyncView()
 		if processErr != nil {
@@ -3654,6 +3724,7 @@ func (s *Session) ArmQuietSettle() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.armQuietSettleLocked()
+	s.wakeValidationProgressLocked()
 }
 
 func (s *Session) armQuietSettleLocked() {
@@ -3792,7 +3863,7 @@ func (s *Session) sendDrainedDiff(ctx context.Context, item composedDiff) error 
 			continue
 		}
 		s.mu.Lock()
-		processErr := s.processResponse(candidateIdx, resp, item.diff.Nonce)
+		processErr := s.processResponse(candidateIdx, resp, item.diff.Nonce, item.diff)
 		s.mu.Unlock()
 		s.publishHeightSyncView()
 		if processErr != nil {
@@ -4575,6 +4646,7 @@ func shortAddress(addr string) string {
 // (PeerConn Attach/Watch), and closes the underlying storage, if any.
 // Safe to call multiple times.
 func (s *Session) Close() error {
+	s.stopValidationProgress()
 	s.StopHeartbeatLoop()
 	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()

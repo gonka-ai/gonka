@@ -1,6 +1,8 @@
 package replay
 
 import (
+	"bytes"
+	"compress/gzip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -129,6 +131,47 @@ func TestLoadFileKeysRecordedSamplesByRequest(t *testing.T) {
 	require.Equal(t, 0, index)
 	require.Nil(t, sample.Recorded)
 	require.Equal(t, "text only", sample.Response.Content)
+}
+
+func TestLookupNameFindsRecordedSampleOfModel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "samples.jsonl")
+	named := strings.Replace(recordedLine(recordedRequest, "first"), `{"model":"model-a"`, `{"name":"case","model":"model-a"`, 1)
+	body := `{"name":"case","model":"model-a","messages":[{"role":"user","content":"other"}],"response":{"role":"assistant","content":"text only"}}` + "\n" +
+		named + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
+	dataset, err := LoadFile(path)
+	require.NoError(t, err)
+
+	sample, ok := dataset.LookupName("model-a", "case")
+	require.True(t, ok)
+	require.Equal(t, `{"id":"first"}`, string(sample.Recorded.NonStream), "a text-only sample is not a recording")
+	_, ok = dataset.LookupName("model-b", "case")
+	require.False(t, ok)
+	_, ok = dataset.LookupName("model-a", "")
+	require.False(t, ok)
+}
+
+// Test flow:
+// 1. Write the same recorded samples gzip-compressed, once as .jsonl.gz and once under a .jsonl name.
+// 2. Require both to load as the plain file does.
+func TestLoadFileReadsGzipByContent(t *testing.T) {
+	body := recordedLine(recordedRequest, "first") + "\n"
+	var compressed bytes.Buffer
+	writer := gzip.NewWriter(&compressed)
+	_, err := writer.Write([]byte(body))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	for _, name := range []string{"samples.jsonl.gz", "replay.jsonl"} {
+		path := filepath.Join(t.TempDir(), name)
+		require.NoError(t, os.WriteFile(path, compressed.Bytes(), 0o644))
+		dataset, err := LoadFile(path)
+		require.NoError(t, err, name)
+		require.Equal(t, 1, dataset.Len(), name)
+		sample, _, ok := dataset.LookupRequest([]byte(recordedRequest))
+		require.True(t, ok, name)
+		require.Equal(t, `{"id":"first"}`, string(sample.Recorded.NonStream), name)
+	}
 }
 
 func TestLoadFileRejectsDuplicateRecordedRequest(t *testing.T) {

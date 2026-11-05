@@ -458,6 +458,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		throttledOrOutOfChatBudget(session.Clients(), session.HostParticipantKeyList(), sharedParticipantRequestLimiter.IsBlocked),
 	)
 	redundancy.participantLimiter = sharedParticipantRequestLimiter
+	redundancy.noRenderStrike = noRenderStrikeFromEnv()
 	proxy := &Proxy{
 		session:    session,
 		sm:         sm,

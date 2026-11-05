@@ -26,10 +26,10 @@ const oldHostsDrainBound = 30 * time.Second
 // build and every host still runs a devshardd without VerifyChallenge. A
 // gateway taken to a new release keeps serving its open escrows on the
 // previous protocol, whose hosts are in exactly this state. An honest stream
-// that calls for a challenge (row E2 of TestUsageOverclaimScenarios: a
-// receipt, then tokens that decode to no text) must leave the escrow free to
-// settle, since no host can vote, and its diffs must carry no MsgChallenge,
-// which those hosts cannot apply.
+// that calls for a challenge (row E1 of TestUsageOverclaimScenarios: a
+// receipt, then the stream lost before any content) must leave the escrow
+// free to settle, since no host can vote, and its diffs must carry no
+// MsgChallenge, which those hosts cannot apply.
 //
 // TESTENV_MIXED_CHILD_BINARY is the previous devshardd, built from the
 // previous release line with scripts/build-baseline-infra.sh.
@@ -76,11 +76,11 @@ func TestUsageChallengeOnOldHosts(t *testing.T) {
 
 	var row usageScenario
 	for _, candidate := range usageScenarios {
-		if candidate.id == "E2" {
+		if candidate.id == "E1" {
 			row = candidate
 		}
 	}
-	require.Equal(t, "E2", row.id)
+	require.Equal(t, "E1", row.id)
 	run := &usageRun{row: row, name: row.id + " " + row.executor + ": " + row.shape, seed: 1000 + int(time.Now().Unix()%1_000_000)*100}
 	driveUsageScenario(t, stack, cfg, eps, escrowID, recordedSample(t, dataset, row.recording), run)
 	nonce := run.obs.nonce

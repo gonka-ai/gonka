@@ -78,7 +78,6 @@ message ErrorMissVote {
 }
 
 // ChallengeReason is why the gateway challenged a finished inference.
-// The byte-bound reasons are added after STREAM_UNBOUND and EMPTY_STREAM.
 enum ChallengeReason {
   CHALLENGE_REASON_UNSPECIFIED = 0;
   // The stream was cut before [DONE] and devshard_meta, it was complete and
@@ -87,6 +86,18 @@ enum ChallengeReason {
   CHALLENGE_REASON_STREAM_UNBOUND = 1;
   // The receipt was applied and the stream ended with no content.
   CHALLENGE_REASON_EMPTY_STREAM = 2;
+  // The full stream is bound and the claimed output tokens are above the
+  // lesser of the request's max_tokens and twice the text bytes the stream
+  // carried plus the model's allowance.
+  CHALLENGE_REASON_OUTPUT_ABOVE_BYTES = 3;
+  // The claimed input tokens are above twice the request's input length plus
+  // the model's allowance. Not raised for a request with non-text parts.
+  CHALLENGE_REASON_INPUT_ABOVE_BYTES = 4;
+  // The full stream is bound, but the gateway did not count its text: a
+  // line or the whole stream outgrew its scan buffers, or an overlong
+  // prelude cut the scan. Its claim cannot be held to the byte bounds, so
+  // the voters count it.
+  CHALLENGE_REASON_UNMEASURED = 5;
 }
 
 // ChallengeFault is what a voter found on the body it fetched from the
@@ -102,8 +113,9 @@ enum ChallengeFault {
   CHALLENGE_FAULT_HASH_MISMATCH = 2;
   // The body matches its hashes but holds no generated positions.
   CHALLENGE_FAULT_EMPTY_STREAM = 3;
-  // The claim is above what the body holds: the token count check, which no
-  // voter runs yet.
+  // The claim is above what the body holds: more output tokens than its
+  // generated positions, or more input or output tokens than the voter's
+  // render of the request and of the served turn counts.
   CHALLENGE_FAULT_USAGE_INFLATED = 4;
 }
 
@@ -112,6 +124,10 @@ enum ChallengeCheck {
   CHALLENGE_CHECK_UNSPECIFIED = 0;
   CHALLENGE_CHECK_HASH = 1;
   CHALLENGE_CHECK_POSITIONS = 2;
+  // The served turn rendered with the model's chat template and tokenizer.
+  CHALLENGE_CHECK_RENDERED_OUTPUT = 3;
+  // The request rendered with the model's chat template and tokenizer.
+  CHALLENGE_CHECK_RENDERED_INPUT = 4;
 }
 
 // MsgChallenge carries the hosts' signed verdicts on a finished inference the

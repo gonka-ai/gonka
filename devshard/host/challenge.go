@@ -8,8 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"common/completionapi"
-
 	"devshard"
 	"devshard/logging"
 	"devshard/observability"
@@ -26,6 +24,13 @@ const (
 	ChallengeRejectUnsupported = "unsupported"
 	ChallengeRejectUnchecked   = "unchecked"
 	ChallengeRejectLate        = "late"
+	// ChallengeRejectNoRender: the host has no renderer for the model, so it
+	// cannot count the body.
+	ChallengeRejectNoRender = "no_render"
+	// ChallengeRejectRenderBusy: no ML node of the model was free to count
+	// until the window closed, as while the network runs PoC, and no render
+	// server counted either. Not the host's lapse.
+	ChallengeRejectRenderBusy = "render_busy"
 )
 
 // challengeFirstAskLimit bounds the first ask after the confirmed execution
@@ -305,7 +310,32 @@ func (h *Host) runChallengeFetch(
 		if ctx.Err() != nil {
 			return ChallengeAnswer{Pending: true}, nil
 		}
-		if verdict, ok := challengeVerdict(fetch, rec); ok {
+		if fetch.Outcome == devshard.ChallengeFetchFetched {
+			for {
+				verdict, count, reject, cause := h.fetchedVerdict(ctx, fetch, rec)
+				if ctx.Err() != nil {
+					return ChallengeAnswer{Pending: true}, nil
+				}
+				if reject == "" {
+					return h.settleCountedChallengeVote(store, inferenceID, rec, verdict, attempts, fetch.Cause, count)
+				}
+				// The ML nodes are taken (PoC): count the same body again
+				// until the window closes.
+				now := time.Now()
+				if reject != ChallengeRejectRenderBusy || !now.Before(deadline) {
+					return h.noChallengeVote(inferenceID, reject, attempts, cause, count.logFields(rec.OutputTokens)...), nil
+				}
+				attempts++
+				timer := time.NewTimer(min(challengeFetchRetryInterval, deadline.Sub(now)))
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return ChallengeAnswer{Pending: true}, nil
+				case <-timer.C:
+				}
+			}
+		}
+		if verdict, ok := challengeVerdict(fetch); ok {
 			return h.settleChallengeVote(store, inferenceID, rec.ResponseHash, verdict, attempts, fetch.Cause)
 		}
 		if fetch.Outcome == devshard.ChallengeFetchLocal {
@@ -336,28 +366,13 @@ func (h *Host) runChallengeFetch(
 	}
 }
 
-// challengeVerdict maps a fetch that settles the vote. ok is false for a
+// challengeVerdict maps a fetch without a body to count that settles the
+// vote; a fetched body is counted by fetchedVerdict. ok is false for a
 // failure that may still clear. The vote depends on the body alone, not on
 // the reason the gateway gave: one kept vote per inference must hold for
 // whichever challenge arrives first.
-func challengeVerdict(fetch devshard.ChallengeFetch, rec types.InferenceRecord) (keptChallengeVote, bool) {
+func challengeVerdict(fetch devshard.ChallengeFetch) (keptChallengeVote, bool) {
 	switch fetch.Outcome {
-	case devshard.ChallengeFetchFetched:
-		// Content is the generated positions the stored body keeps, one per
-		// token, not the decoded text: an honest answer can decode to
-		// nothing, but the executor's devshardd forces logprobs on every
-		// request it runs, so it never has zero positions. The exception is the reasoning model
-		// whose tokens vLLM strips with the reasoning block: with completion
-		// tokens claimed, no positions is its documented outcome, which the
-		// gateway does not quarantine and replay passes as both empty.
-		if generatedPositions(fetch.Response) == 0 && !(types.ModelBurnsEmpty(rec.Model) && rec.OutputTokens > 0) {
-			return keptChallengeVote{
-				Fault:     types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM,
-				Check:     types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS,
-				Deviation: int64(rec.OutputTokens),
-			}, true
-		}
-		return keptChallengeVote{Fault: types.ChallengeFault_CHALLENGE_FAULT_NONE}, true
 	case devshard.ChallengeFetchMismatch:
 		return keptChallengeVote{
 			Fault: types.ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH,
@@ -372,16 +387,23 @@ func challengeVerdict(fetch devshard.ChallengeFetch, rec types.InferenceRecord) 
 	}
 }
 
-// generatedPositions counts the logprobs.content entries of a stored body.
-func generatedPositions(response []byte) int {
-	resp, err := completionapi.NewCompletionResponseFromLinesFromResponsePayload(response)
-	if err != nil || resp == nil {
-		return 0
-	}
-	return len(resp.ExtractLogits())
+func (h *Host) settleChallengeVote(store storage.ChallengeVoteStore, inferenceID uint64, responseHash []byte, verdict keptChallengeVote, attempts int, cause string) (ChallengeAnswer, error) {
+	return h.settleVote(store, inferenceID, responseHash, verdict, attempts, cause, nil)
 }
 
-func (h *Host) settleChallengeVote(store storage.ChallengeVoteStore, inferenceID uint64, responseHash []byte, verdict keptChallengeVote, attempts int, cause string) (ChallengeAnswer, error) {
+// settleCountedChallengeVote settles a vote on a counted body and logs the
+// counts next to it.
+func (h *Host) settleCountedChallengeVote(store storage.ChallengeVoteStore, inferenceID uint64, rec types.InferenceRecord, verdict keptChallengeVote, attempts int, cause string, count *usageCount) (ChallengeAnswer, error) {
+	fields := append([]any{
+		"model", rec.Model,
+		"output_tokens", rec.OutputTokens,
+		"input_tokens", rec.InputTokens,
+		"devshardd_version", h.binaryVersion,
+	}, count.logFields(rec.OutputTokens)...)
+	return h.settleVote(store, inferenceID, rec.ResponseHash, verdict, attempts, cause, fields)
+}
+
+func (h *Host) settleVote(store storage.ChallengeVoteStore, inferenceID uint64, responseHash []byte, verdict keptChallengeVote, attempts int, cause string, countFields []any) (ChallengeAnswer, error) {
 	content := &types.ChallengeVoteContent{
 		EscrowId:     h.escrowID,
 		InferenceId:  inferenceID,
@@ -416,15 +438,19 @@ func (h *Host) settleChallengeVote(store storage.ChallengeVoteStore, inferenceID
 		// An HA replica that lost the first settle keeps the winner's vote
 		// and does not count it again.
 		observability.IncChallengeVote(types.ChallengeFaultLabel(kept.Fault))
+		if kept.Check != types.ChallengeCheck_CHALLENGE_CHECK_UNSPECIFIED {
+			observability.IncChallengeVoteCheck(types.ChallengeCheckLabel(kept.Check))
+		}
 	}
-	logging.Info("challenge vote kept", "subsystem", "host",
+	logging.Info("challenge vote kept", append([]any{"subsystem", "host",
 		"escrow_id", h.escrowID,
 		"inference_id", inferenceID,
 		"fault", kept.Fault.String(),
 		"check", kept.Check.String(),
+		"deviation", kept.Deviation,
 		"attempts", attempts,
 		"cause", cause,
-	)
+	}, countFields...)...)
 	return kept.answer(), nil
 }
 
@@ -432,14 +458,14 @@ func (h *Host) uncheckedChallenge(inferenceID uint64, attempts int, cause string
 	return h.noChallengeVote(inferenceID, ChallengeRejectUnchecked, attempts, cause)
 }
 
-func (h *Host) noChallengeVote(inferenceID uint64, reject string, attempts int, cause string) ChallengeAnswer {
+func (h *Host) noChallengeVote(inferenceID uint64, reject string, attempts int, cause string, countFields ...any) ChallengeAnswer {
 	observability.IncChallengeVote(reject)
-	logging.Warn("challenge left unchecked", "subsystem", "host",
+	logging.Warn("challenge left unchecked", append([]any{"subsystem", "host",
 		"escrow_id", h.escrowID,
 		"inference_id", inferenceID,
 		"reject", reject,
 		"attempts", attempts,
 		"cause", cause,
-	)
+	}, countFields...)...)
 	return ChallengeAnswer{RejectCause: reject}
 }

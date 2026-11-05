@@ -139,6 +139,8 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeValidate, fmt.Errorf("fetch payloads from executor: %w", err))
 	}
 
+	// The signature covers the payload as fetched; the replay runs it as the executor did.
+	promptPayload = withoutUsageCountUnsafeFields(promptPayload)
 	if _, err := completionapi.ModifyRequestBodyWithLogprobsMode(promptPayload, int32(req.InferenceID), v.chainParams.LogprobsMode()); err != nil {
 		tagged := tagExecutorPayloadFault(err)
 		if verdict := executorFaultVerdict(ctx, v.phase, req, epochID, tagged, v.voteFalseOnFetchFailure); verdict != nil {
