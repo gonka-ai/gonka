@@ -10,8 +10,9 @@ import (
 // Test flow:
 //  1. Build a harness and submit a request, then await its reply.
 //  2. Assert the submit succeeded.
-//  3. Assert exactly one assignment was reported.
-//  4. Assert that assignment's nonce and request id match the ones handed off.
+//  3. Wait until the observer records the hand-off.
+//  4. Assert exactly one assignment was reported.
+//  5. Assert that assignment's nonce and request id match the ones handed off.
 func TestAHandedOffNonceIsReportedWithItsRequest(t *testing.T) {
 	test := newHarness(t, harnessConfig{})
 
@@ -21,6 +22,7 @@ func TestAHandedOffNonceIsReportedWithItsRequest(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("submit: %v", result.err)
 	}
+	eventually(t, "the observer to record the hand-off", func() bool { return len(test.observer.assignments()) > 0 })
 	assigned := test.observer.assignments()
 	if len(assigned) != 1 {
 		t.Fatalf("reported %+v, want the one nonce handed off", assigned)
@@ -36,7 +38,8 @@ func TestAHandedOffNonceIsReportedWithItsRequest(t *testing.T) {
 // Test flow:
 //  1. Submit a request that entered the queue a moment before the dispatcher's clock.
 //  2. Await its reply.
-//  3. Assert the hand-off reported exactly that wait: the time a request spends in an escrow's queue is what the queue-wait histogram reads.
+//  3. Wait until the observer records the queue wait.
+//  4. Assert the hand-off reported exactly that wait: the time a request spends in an escrow's queue is what the queue-wait histogram reads.
 func TestAHandedOffNonceReportsHowLongItsRequestQueued(t *testing.T) {
 	test := newHarness(t, harnessConfig{})
 	const queuedFor = 250 * time.Millisecond
@@ -44,6 +47,7 @@ func TestAHandedOffNonceReportsHowLongItsRequestQueued(t *testing.T) {
 	queued := test.submit(t, test.clock.Now().Add(-queuedFor))
 	awaitReply(t, queued)
 
+	eventually(t, "the observer to record the queue wait", func() bool { return len(test.observer.waits()) > 0 })
 	if waits := test.observer.waits(); !slices.Equal(waits, []time.Duration{queuedFor}) {
 		t.Fatalf("reported waits %v, want [%v]", waits, queuedFor)
 	}
