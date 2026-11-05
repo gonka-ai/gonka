@@ -90,6 +90,8 @@ func ChallengeCheckLabel(check ChallengeCheck) string {
 		return "rendered_output"
 	case ChallengeCheck_CHALLENGE_CHECK_RENDERED_INPUT:
 		return "rendered_input"
+	case ChallengeCheck_CHALLENGE_CHECK_CONTEXT_LIMIT:
+		return "context_limit"
 	default:
 		return "unknown"
 	}

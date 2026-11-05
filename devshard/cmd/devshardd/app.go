@@ -360,6 +360,7 @@ func buildHostManager(
 	// Challenge votes count on the host's own ML node first; a render server in
 	// DEVSHARD_RENDER_URLS counts when the node cannot.
 	manager.SetChallengeRenderer(host.NewRenderClient(cfg.RenderURLs, eng.RenderOnMLNode))
+	manager.SetContextLimits(inference.NewChainContextLimits(chainBridge))
 	for _, model := range types.UsageAllowanceModels() {
 		slog.Info("usage challenge render", "subsystem", "challenge", "model", model,
 			"ml_node", "/v1/chat/completions/render (vLLM 0.30 and later need --enable-scale-out)",

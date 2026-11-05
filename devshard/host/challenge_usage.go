@@ -489,11 +489,8 @@ func (h *Host) fetchedVerdict(ctx context.Context, fetch devshard.ChallengeFetch
 			count.inputSkipped = "model_burns_empty"
 			return keptChallengeVote{Fault: types.ChallengeFault_CHALLENGE_FAULT_NONE}, count, "", ""
 		}
-		return keptChallengeVote{
-			Fault:     types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM,
-			Check:     types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS,
-			Deviation: int64(rec.OutputTokens),
-		}, count, "", ""
+		verdict, reject, cause := h.emptyBodyVerdict(ctx, fetch, rec, count)
+		return verdict, count, reject, cause
 	}
 	if rec.OutputTokens > answer.positions+positionSlack {
 		return inflated(types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS, rec.OutputTokens, answer.positions), count, "", ""

@@ -214,6 +214,9 @@ type Host struct {
 	// renderer counts usage for challenge votes; nil = this host does not
 	// vote on a challenge that needs a count.
 	renderer ChallengeRenderer
+	// contextLimits tells a context-length refusal from an empty stream; nil
+	// keeps every empty body an EMPTY_STREAM vote.
+	contextLimits ContextLimits
 	// binaryVersion is this devshardd's build, logged with each vote.
 	binaryVersion string
 }

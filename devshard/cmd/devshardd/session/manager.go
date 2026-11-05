@@ -80,6 +80,7 @@ type HostManager struct {
 	maxNonce           devshardpkg.MaxNonceProvider
 	params             runtimeparams.Provider
 	renderer           host.ChallengeRenderer
+	contextLimits      host.ContextLimits
 	maxBodySize        int64
 
 	recoveryGate   recoveryGate
@@ -511,6 +512,12 @@ func (m *HostManager) SetParamsProvider(p runtimeparams.Provider) {
 // that needs a count.
 func (m *HostManager) SetChallengeRenderer(r host.ChallengeRenderer) {
 	m.renderer = r
+}
+
+// SetContextLimits gives every host the governance --max-model-len of each
+// model, so a context-length refusal is not voted an empty stream.
+func (m *HostManager) SetContextLimits(l host.ContextLimits) {
+	m.contextLimits = l
 }
 
 // SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
@@ -2248,6 +2255,9 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 	}
 	if m.renderer != nil {
 		opts = append(opts, host.WithChallengeRenderer(m.renderer))
+	}
+	if m.contextLimits != nil {
+		opts = append(opts, host.WithContextLimits(m.contextLimits))
 	}
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))

@@ -219,6 +219,10 @@ const (
 	ChallengeCheck_CHALLENGE_CHECK_RENDERED_OUTPUT ChallengeCheck = 3
 	// The request rendered with the model's chat template and tokenizer.
 	ChallengeCheck_CHALLENGE_CHECK_RENDERED_INPUT ChallengeCheck = 4
+	// An empty body whose request, rendered by the voter, exceeds the
+	// governance --max-model-len with its max_tokens: the refusal is the
+	// client's fault.
+	ChallengeCheck_CHALLENGE_CHECK_CONTEXT_LIMIT ChallengeCheck = 5
 )
 
 // Enum value maps for ChallengeCheck.
@@ -229,6 +233,7 @@ var (
 		2: "CHALLENGE_CHECK_POSITIONS",
 		3: "CHALLENGE_CHECK_RENDERED_OUTPUT",
 		4: "CHALLENGE_CHECK_RENDERED_INPUT",
+		5: "CHALLENGE_CHECK_CONTEXT_LIMIT",
 	}
 	ChallengeCheck_value = map[string]int32{
 		"CHALLENGE_CHECK_UNSPECIFIED":     0,
@@ -236,6 +241,7 @@ var (
 		"CHALLENGE_CHECK_POSITIONS":       2,
 		"CHALLENGE_CHECK_RENDERED_OUTPUT": 3,
 		"CHALLENGE_CHECK_RENDERED_INPUT":  4,
+		"CHALLENGE_CHECK_CONTEXT_LIMIT":   5,
 	}
 )
 
@@ -1286,13 +1292,14 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"#CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE\x10\x01\x12!\n" +
 	"\x1dCHALLENGE_FAULT_HASH_MISMATCH\x10\x02\x12 \n" +
 	"\x1cCHALLENGE_FAULT_EMPTY_STREAM\x10\x03\x12\"\n" +
-	"\x1eCHALLENGE_FAULT_USAGE_INFLATED\x10\x04*\xb3\x01\n" +
+	"\x1eCHALLENGE_FAULT_USAGE_INFLATED\x10\x04*\xd6\x01\n" +
 	"\x0eChallengeCheck\x12\x1f\n" +
 	"\x1bCHALLENGE_CHECK_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14CHALLENGE_CHECK_HASH\x10\x01\x12\x1d\n" +
 	"\x19CHALLENGE_CHECK_POSITIONS\x10\x02\x12#\n" +
 	"\x1fCHALLENGE_CHECK_RENDERED_OUTPUT\x10\x03\x12\"\n" +
-	"\x1eCHALLENGE_CHECK_RENDERED_INPUT\x10\x04B\x10Z\x0edevshard/typesb\x06proto3"
+	"\x1eCHALLENGE_CHECK_RENDERED_INPUT\x10\x04\x12!\n" +
+	"\x1dCHALLENGE_CHECK_CONTEXT_LIMIT\x10\x05B\x10Z\x0edevshard/typesb\x06proto3"
 
 var (
 	file_devshard_v1_tx_proto_rawDescOnce sync.Once
