@@ -139,8 +139,14 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 
 	log.Printf("Initializing cosmos Client."+
 		"NodeUrl = %s. KeyringBackend = %s. KeyringDir = %s", nodeConfig.Url, nodeConfig.KeyringBackend, keyringDir)
+	nodeRPC, err := newBoundedNodeRPCClient(nodeConfig.Url, nodeRPCTimeoutSeconds)
+	if err != nil {
+		return nil, err
+	}
+
 	cosmoclient, err := cosmosclient.New(
 		ctx,
+		cosmosclient.WithRPCClient(nodeRPC),
 		cosmosclient.WithAddressPrefix(addressPrefix),
 		cosmosclient.WithKeyringServiceName("inferenced"),
 		cosmosclient.WithNodeAddress(nodeConfig.Url),
