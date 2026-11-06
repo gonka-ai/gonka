@@ -687,10 +687,9 @@ func (s *dbStore) Prune(ctx context.Context, currentEpoch uint64) (err error) {
 	}
 	s.mu.Lock()
 	s.pruneCalls++
-	// Keep the current and previous epochs, matching the feed's catch-up
-	// window. The chain prunes escrows from currentEpoch-2, so replaying
-	// their creation events would make hosts retry escrows that no longer exist.
-	if currentEpoch == 0 {
+	// Keep the current and previous block epochs. An escrow's effective
+	// epoch may differ, so consumers still handle absent escrow cache hints.
+	if currentEpoch < 2 {
 		s.mu.Unlock()
 		return nil
 	}

@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -263,7 +264,7 @@ func TestWarmKeyLogExpiryUnixNanoseconds(t *testing.T) {
 			require.NoError(t, err)
 			entries, err := k.WarmKeyLogEntries(ctx, granter)
 			require.NoError(t, err)
-			if delta < 0 {
+			if delta <= 0 {
 				require.Equal(t, int64(6), entries[0].RevokedAtHeight)
 				require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED, entries[0].End)
 			} else {
@@ -320,4 +321,139 @@ func TestWarmKeyLogSeedSkipsUnsupportedExpiration(t *testing.T) {
 	require.Equal(t, warmKeyTestAddr(3).String(), entries[0].Grantee)
 	require.Equal(t, uint64(1), entries[0].Id)
 	require.Zero(t, entries[0].ExpiresAtUnix)
+}
+
+func TestWarmKeyLogExpirationIsNotAnEvent(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter, timed, forever := warmKeyTestAddr(1), warmKeyTestAddr(2), warmKeyTestAddr(3)
+	expires := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	ctx = ctx.WithBlockHeight(10).WithBlockTime(expires.Add(-time.Hour))
+	_, err := k.RecordWarmKeyGrant(ctx, granter, timed, &expires)
+	require.NoError(t, err)
+	_, err = k.RecordWarmKeyGrant(ctx, granter, forever, &expires)
+	require.NoError(t, err)
+
+	ctx = ctx.WithBlockHeight(12).WithBlockTime(expires.Add(time.Nanosecond))
+	entries, err := k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, expires.UnixNano(), entries[0].ExpiresAtUnix)
+	require.Zero(t, entries[0].RevokedAtHeight)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, entries[0].End)
+	require.Empty(t, eventsOfType(ctx, keeper.EventTypeWarmKeyRevoked))
+
+	next, err := k.RecordWarmKeyGrant(ctx, granter, timed, nil)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), next.Id)
+	entries, err = k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, entries[0].End)
+	require.Zero(t, entries[0].RevokedAtHeight)
+	require.Equal(t, uint64(3), entries[2].Id)
+	require.Empty(t, eventsOfType(ctx, keeper.EventTypeWarmKeyRevoked))
+
+	ended, err := k.RecordWarmKeyRevoke(ctx, granter, forever)
+	require.NoError(t, err)
+	require.False(t, ended)
+	entries, err = k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, entries[1].End)
+	require.Empty(t, eventsOfType(ctx, keeper.EventTypeWarmKeyRevoked))
+}
+
+func TestWarmKeyLogExpirationMatchesAuthzBoundary(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter := warmKeyTestAddr(1)
+	early, exact, later := warmKeyTestAddr(2), warmKeyTestAddr(3), warmKeyTestAddr(4)
+	base := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	expires := base.Add(900 * time.Millisecond)
+
+	ctx = ctx.WithBlockHeight(10).WithBlockTime(base.Add(100 * time.Millisecond))
+	first, err := k.RecordWarmKeyGrant(ctx, granter, early, &expires)
+	require.NoError(t, err)
+	require.Equal(t, expires.UnixNano(), first.ExpiresAtUnix)
+	granted := eventsOfType(ctx, keeper.EventTypeWarmKeyGranted)
+	require.Equal(t, fmt.Sprint(expires.UnixNano()), attr(granted[0], keeper.AttributeKeyWarmKeyExpiresAt))
+
+	ctx = ctx.WithBlockHeight(11).WithBlockTime(base.Add(100 * time.Millisecond))
+	_, err = k.RecordWarmKeyGrant(ctx, granter, early, nil)
+	require.NoError(t, err)
+	entries, err := k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_REPLACED, entries[0].End)
+
+	ctx = ctx.WithBlockHeight(12).WithBlockTime(expires)
+	_, err = k.RecordWarmKeyGrant(ctx, granter, exact, &expires)
+	require.NoError(t, err)
+	ended, err := k.RecordWarmKeyRevoke(ctx, granter, exact)
+	require.NoError(t, err)
+	require.True(t, ended)
+
+	ctx = ctx.WithBlockHeight(13).WithBlockTime(expires)
+	_, err = k.RecordWarmKeyGrant(ctx, granter, later, &expires)
+	require.NoError(t, err)
+	ctx = ctx.WithBlockHeight(14).WithBlockTime(expires.Add(time.Nanosecond))
+	_, err = k.RecordWarmKeyGrant(ctx, granter, later, nil)
+	require.NoError(t, err)
+	entries, err = k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Equal(t, types.WarmKeyLogEnd_WARM_KEY_LOG_END_NONE, entries[len(entries)-2].End)
+	require.Zero(t, entries[len(entries)-2].RevokedAtHeight)
+	require.Equal(t, later.String(), entries[len(entries)-2].Grantee)
+}
+
+func TestWarmKeyLogSeedIgnoresDeveloperStats(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
+	now := time.Date(2026, 10, 16, 0, 0, 0, 0, time.UTC)
+	ctx = ctx.WithBlockHeight(500).WithBlockTime(now)
+
+	require.NoError(t, k.SetDeveloperStats(ctx, types.Inference{
+		InferenceId:          "inf-stats",
+		RequestedBy:          granter.String(),
+		EpochId:              1,
+		Status:               types.InferenceStatus_FINISHED,
+		Model:                "model",
+		PromptTokenCount:     1,
+		CompletionTokenCount: 1,
+		StartBlockTimestamp:  now.UnixMilli(),
+		ActualCost:           1,
+	}))
+
+	future := now.Add(24 * time.Hour)
+	iterate := func(_ context.Context, handler func(sdk.AccAddress, sdk.AccAddress, authz.Grant) bool) {
+		anyAuth, err := codectypes.NewAnyWithValue(authz.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL))
+		require.NoError(t, err)
+		handler(granter, grantee, authz.Grant{Authorization: anyAuth, Expiration: &future})
+	}
+
+	n, err := k.SeedWarmKeyLog(ctx, iterate)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	entries, err := k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, grantee.String(), entries[0].Grantee)
+
+	stats, found := k.GetDevelopersStatsByEpoch(ctx, granter.String(), 1)
+	require.True(t, found)
+	require.Equal(t, []string{"inf-stats"}, stats.InferenceIds)
+}
+
+func TestWarmKeyLogSeedKeepsGrantAtExpirationBoundary(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	now := time.Unix(100, 900_000_123)
+	ctx = ctx.WithBlockHeight(500).WithBlockTime(now)
+	granter, grantee := warmKeyTestAddr(1), warmKeyTestAddr(2)
+	authorization, err := codectypes.NewAnyWithValue(authz.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL))
+	require.NoError(t, err)
+	n, err := k.SeedWarmKeyLog(ctx, func(_ context.Context, handler func(sdk.AccAddress, sdk.AccAddress, authz.Grant) bool) {
+		require.False(t, handler(granter, grantee, authz.Grant{Authorization: authorization, Expiration: &now}))
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	entries, err := k.WarmKeyLogEntries(ctx, granter)
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, now.UnixNano(), entries[0].ExpiresAtUnix)
 }

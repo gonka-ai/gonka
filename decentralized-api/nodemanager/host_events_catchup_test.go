@@ -1125,3 +1125,39 @@ func TestNodeManager_GetHostEvents_UnrestoredHeadReadUnavailable(t *testing.T) {
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.NotContains(t, err.Error(), "needs_reset")
 }
+
+func TestNodeManager_GetHostEvents_ResetDuringStoreReadNeedsReset(t *testing.T) {
+	rows := make([]apiconfig.HostEvent, 0, 52)
+	for seq := uint64(40); seq <= 91; seq++ {
+		rows = append(rows, seqEvent(seq, apiconfig.HostEventKindBlock, int64(seq)))
+	}
+	ring := apiconfig.NewHostEventRing(16, 6)
+	ring.Restore(6, 92, []apiconfig.HostEvent{
+		seqEvent(90, apiconfig.HostEventKindBlock, 90),
+		seqEvent(91, apiconfig.HostEventKindBlock, 91),
+	})
+	log := &memLog{generation: 6, rows: rows}
+	log.beforeRead = func() {
+		ring.ResetGeneration(7)
+		log.generation = 7
+		log.rows = []apiconfig.HostEvent{
+			seqEvent(1, apiconfig.HostEventKindBlock, 200),
+			seqEvent(2, apiconfig.HostEventKindEscrowCreated, 200),
+		}
+	}
+	srv := NewServer(&mockBroker{}, nil, nil,
+		WithHostEventRing(ring),
+		WithHostEventLog(log),
+		WithHostEventStatus(&memLive{emitted: 91, tip: 91}),
+	)
+	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
+		Cursor:     50,
+		Subscribe:  allKinds(),
+		Generation: 6,
+	})
+	require.NoError(t, err)
+	require.True(t, resp.NeedsReset)
+	require.Empty(t, resp.Events)
+	require.Equal(t, uint64(7), resp.Generation)
+	require.Equal(t, uint64(2), resp.NextCursor)
+}

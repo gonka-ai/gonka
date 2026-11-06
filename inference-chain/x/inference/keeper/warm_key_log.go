@@ -137,9 +137,10 @@ func (k Keeper) RecordWarmKeyRevoke(ctx context.Context, granter, grantee sdk.Ac
 }
 
 // warmKeyExpired uses the same nanosecond boundary as devshard LiveAt.
+// Like authz, a grant expires strictly after its expiration instant.
 // It is checked only when a transaction touches the pair's index row.
 func warmKeyExpired(entry types.WarmKeyLogEntry, now time.Time) bool {
-	return entry.ExpiresAtUnix != 0 && !now.Before(time.Unix(0, entry.ExpiresAtUnix))
+	return entry.ExpiresAtUnix != 0 && now.After(time.Unix(0, entry.ExpiresAtUnix))
 }
 
 // SeedWarmKeyLog fills an empty log from the authz grants that exist at the
@@ -175,7 +176,7 @@ func (k Keeper) SeedWarmKeyLog(ctx context.Context, iterate func(ctx context.Con
 			skipped++
 			return false
 		}
-		if grant.Expiration != nil && !grant.Expiration.After(blockTime) {
+		if grant.Expiration != nil && grant.Expiration.Before(blockTime) {
 			expiredN++
 			return false
 		}

@@ -77,7 +77,8 @@ WarmKeyLogEntry { granter, id, grantee, granted_at_height, revoked_at_height, ex
   nothing is deleted. A replacement in the same block as its predecessor gets
   a larger id, so ids order grants where heights cannot.
 - Expiration is stored in `expires_at_unix` as Unix nanoseconds, preserving
-  the grant's fractional seconds without rounding. Passing that timestamp
+  the grant's fractional seconds without rounding. As in authz, a grant
+  remains live at that instant and expires strictly after it. Passing it
   changes neither the historical entry nor its end fields and emits no event.
   There is no EndBlock walk over warm keys. A later grant or revoke removes
   the expired pair's index row lazily; its historical entry stays unchanged.
@@ -235,9 +236,9 @@ repair, gossip admission, transport membership and unbound payload fetches
 refuse a key the history still binds once the source answers that its grant
 has ended (`SlotActors.RefuseWarm`); a source that cannot answer leaves the
 history's verdict in place, so an outage never refuses a key consensus
-accepts. Expiry needs no chain event: the grant source excludes a key at or
+accepts. Expiry needs no chain event: the grant source excludes a key strictly
 after its `expires_at_unix`, and the gateway proposes `MsgWarmKeyRevoke` for
-the binding from that timestamp even while the entry's `end` is empty. This
+the binding after that instant even while the entry's `end` is empty. This
 clock check only proposes a new diff or controls local admission; replay
 keeps using the binding history at the diff's nonce. A grant
 renewed on chain (the old entry replaced by a new one for the same key) is

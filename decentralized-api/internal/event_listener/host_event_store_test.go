@@ -1141,7 +1141,7 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		s := open(t, "read-writer")
 		_, err := s.AppendHeight(t.Context(), 1, 5, heightRows(1, 5), at(s, 1, 0))
 		require.NoError(t, err)
-		_, err = s.AppendHeight(t.Context(), 2, 9, heightRows(2, 9), at(s, 4, 1))
+		_, err = s.AppendHeight(t.Context(), 2, 8, heightRows(2, 8), at(s, 4, 1))
 		require.NoError(t, err)
 		seq, found, _, err := s.ResolveBlock(t.Context(), 2)
 		require.NoError(t, err)
@@ -1160,11 +1160,19 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		require.Len(t, next, 1)
 		require.Greater(t, next[0].Seq, page[0].Seq)
 
+		_, err = s.AppendHeight(t.Context(), 3, 9, heightRows(3, 9), at(s, 7, 2))
+		require.NoError(t, err)
+
+		// Current epoch 10: the chain has removed escrows through epoch 8.
+		// Epoch 9 is the oldest row that stays.
 		require.NoError(t, s.Prune(t.Context(), 10))
 		_, found, _, err = s.ResolveBlock(t.Context(), 1)
 		require.NoError(t, err)
 		require.False(t, found)
 		_, found, _, err = s.ResolveBlock(t.Context(), 2)
+		require.NoError(t, err)
+		require.False(t, found)
+		_, found, _, err = s.ResolveBlock(t.Context(), 3)
 		require.NoError(t, err)
 		require.True(t, found)
 		left, _, err := s.Read(t.Context(), 0, []apiconfig.HostEventKind{
@@ -1177,11 +1185,11 @@ func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string)
 		for _, ev := range left {
 			switch ev.Kind {
 			case apiconfig.HostEventKindBlock:
-				require.Equal(t, int64(2), ev.Block.Height)
+				require.Equal(t, int64(3), ev.Block.Height)
 			case apiconfig.HostEventKindEscrowCreated:
-				require.Equal(t, uint64(2), ev.Escrow.EscrowID)
+				require.Equal(t, uint64(3), ev.Escrow.EscrowID)
 			case apiconfig.HostEventKindMaintenanceScheduled:
-				require.Equal(t, uint64(2), ev.Maintenance.ReservationID)
+				require.Equal(t, uint64(3), ev.Maintenance.ReservationID)
 			default:
 				t.Fatalf("unexpected kind %v", ev.Kind)
 			}

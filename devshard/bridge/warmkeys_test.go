@@ -67,7 +67,7 @@ func TestWarmKeyEntryLiveAtUnixNanoseconds(t *testing.T) {
 		e := WarmKeyEntry{ExpiresAtUnix: expires.UnixNano()}
 		require.False(t, e.Ended())
 		require.True(t, e.LiveAt(expires.Add(-time.Nanosecond)))
-		require.False(t, e.LiveAt(expires))
+		require.True(t, e.LiveAt(expires), "the expiration boundary matches authz")
 		require.False(t, e.LiveAt(expires.Add(time.Nanosecond)))
 	}
 	require.True(t, (WarmKeyEntry{}).LiveAt(time.Unix(0, math.MaxInt64).Add(time.Nanosecond)))
