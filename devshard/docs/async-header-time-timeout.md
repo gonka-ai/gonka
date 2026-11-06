@@ -141,7 +141,7 @@ A stamp that names a height no process will ever see would leave the map empty f
 
 ## Seal and drain wait for the map
 
-> **Superseded.** Seal and drain now read carried `StartedAtTimeMs` / `ConfirmedAtTimeMs` and floor `TimeMs` ([stamped-block-time-plan.md](stamped-block-time-plan.md) steps 4–6). There is no pre-apply map snapshot and no `DiffRecord.HeaderTimes` write. The only residual wait is settlement drain when carried floor time is still `0` (`waitFloorTimeIfMissing`). Map prefer when the map already has `time(F)`: use the map and log carried≠map. Historical map-wait text below is kept for context only.
+> **Superseded.** Seal and drain read carried `StartedAtTimeMs` / `ConfirmedAtTimeMs` and the carried floor time at least 4 blocks below the current floor ([stamped-block-time-plan.md](stamped-block-time-plan.md) steps 4–6). `TimeoutDue` reads the carried time of the current floor. There is no pre-apply map snapshot, no `DiffRecord.HeaderTimes` write, and no map wait. A zero carried time fails closed with `ErrFloorTimeMissing`. A map row that disagrees is a warning; a later dispute rolls that timeout back. Historical map-wait text below is kept for context only.
 
 Seal and drain write `SealedAcc`, balances, and host stats. Those values are in the state root, so both replicas have to use the same clocks. Carried stamp times make that deterministic without a map wait. Timeout apply no longer uses those rows.
 

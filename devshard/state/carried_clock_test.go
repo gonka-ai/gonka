@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/chainoracle/blocks/headertime"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/types"
@@ -37,6 +38,7 @@ func TestAutoSeal_EmptyMapsAgreeOnCarriedTimes(t *testing.T) {
 		exec := d.sm.Config().ExecutionTimeout
 		required := time.Duration(FinishedClockRequiredSeconds(grace, exec)) * time.Second
 		d.raiseWithTime(2000, []byte{0xcb}, (confirmAt + required).Milliseconds())
+		d.raiseWithTime(2000+heightsync.SealDrainFloorLagBlocks, []byte{0xcc}, (confirmAt + required).Milliseconds())
 		return d
 	}
 
@@ -81,6 +83,7 @@ func TestDrainCreditUsesCarriedTimesWithEmptyMap(t *testing.T) {
 	id2 := d2.next()
 	require.NoError(t, d2.apply(startTxWithTime(id2, 100, hash, anchor.Milliseconds())))
 	d2.raiseWithTime(200, []byte{0xde}, (anchor + refusal).Milliseconds())
+	d2.raiseWithTime(200+heightsync.SealDrainFloorLagBlocks, []byte{0xdf}, (anchor + refusal).Milliseconds())
 	seal2 := d2.next()
 	d2.sm.mu.Lock()
 	live2, _ := d2.sm.inferenceForWriteLocked(id2)
@@ -101,10 +104,9 @@ func TestMissingFloorTimeIsNotHeaderPending(t *testing.T) {
 	d.raiseWithTime(100, hash, time.Hour.Milliseconds())
 	id := d.next()
 	require.NoError(t, d.apply(startTxWithTime(id, 100, hash, time.Hour.Milliseconds())))
-	d.raiseWithTime(200, []byte{0xf0}, 0)
 
 	clock := d.sm.AutoSealStateClock()
-	require.False(t, clock.Known, "missing floor time skips the seal clock gate")
+	require.False(t, clock.Known, "a floor that is not yet four blocks behind skips the seal clock")
 
 	sealNonce := d.next()
 	d.sm.mu.Lock()

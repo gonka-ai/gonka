@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/chainoracle/blocks/headertime"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/types"
 )
@@ -120,6 +121,7 @@ func TestIssue12_SealNonce_FullVsEmptyMapEqualRoots(t *testing.T) {
 	exec := p.full.sm.Config().ExecutionTimeout
 	required := time.Duration(FinishedClockRequiredSeconds(grace, exec)) * time.Second
 	p.raiseBoth(2000, []byte{0x12, 0x02}, (confirmAt + required).Milliseconds())
+	p.raiseBoth(2000+heightsync.SealDrainFloorLagBlocks, []byte{0x12, 0x2a}, (confirmAt + required).Milliseconds())
 
 	for {
 		_, live := p.full.sm.GetInference(id)
@@ -247,6 +249,7 @@ func TestIssue12_RestartEmptyMap_ReplayMatchesPersistedHashes(t *testing.T) {
 	grace := int64(live.sm.Config().InferenceSealGraceSeconds)
 	required := time.Duration(FinishedClockRequiredSeconds(grace, live.sm.Config().ExecutionTimeout)) * time.Second
 	raise(2000, []byte{0x12, 0x08}, (confirmAt + required).Milliseconds())
+	raise(2000+heightsync.SealDrainFloorLagBlocks, []byte{0x12, 0x09}, (confirmAt + required).Milliseconds())
 	for {
 		_, liveRec := live.sm.GetInference(id)
 		if !liveRec {

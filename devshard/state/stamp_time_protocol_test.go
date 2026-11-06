@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/chainoracle/blocks/headertime"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/types"
@@ -90,6 +91,7 @@ func TestV7_EmptyMapSealRootsAgree(t *testing.T) {
 		exec := d.sm.Config().ExecutionTimeout
 		required := time.Duration(FinishedClockRequiredSeconds(grace, exec)) * time.Second
 		d.raiseWithTime(2000, []byte{0x84}, (confirmAt + required).Milliseconds())
+		d.raiseWithTime(2000+heightsync.SealDrainFloorLagBlocks, []byte{0x85}, (confirmAt + required).Milliseconds())
 		// Empty padded diffs until auto-seal fires on the Finished clock gate.
 		for {
 			_, live := d.sm.GetInference(id)

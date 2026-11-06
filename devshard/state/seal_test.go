@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
@@ -241,11 +242,12 @@ func TestAutoSealStateClock_UsesFloorAndSkipsUnconfirmedInTailWindow(t *testing.
 	confirmed := d.next()
 	require.NoError(t, d.startClock(confirmed, 100, hash))
 	d.raiseClock(5000, []byte{0x50, 0x00})
+	d.raiseClock(5000+heightsync.SealDrainFloorLagBlocks, []byte{0x50, 0x04})
 	require.NoError(t, d.apply(d.confirmClock(confirmed, 5000, []byte{0x50, 0x00})))
 
 	clock := d.sm.AutoSealStateClock()
 	require.True(t, clock.Known)
-	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.ClockMs, "the seal clock is carried time(F)")
+	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.ClockMs, "the seal clock is carried time four blocks behind F")
 	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.MinConfirmedAtMs, "an unconfirmed record must not pull window min to zero")
 	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.MaxConfirmedAtMs)
 }
@@ -349,9 +351,14 @@ func TestAutoSeal_FinishedClockGateIncludesExecutionTimeout(t *testing.T) {
 	require.True(t, live, "must not seal when only InferenceSealGraceSeconds has elapsed")
 
 	required := uint64(FinishedClockRequiredSeconds(graceSeconds, executionTimeout))
-	startConfirmAt(6, 6, confirmedHeight+required+1)
+	high := confirmedHeight + required + 1
+	startConfirmAt(6, 6, high)
 	_, live = sm.SnapshotState().Inferences[1]
-	require.False(t, live, "must seal after grace + execution timeout")
+	require.True(t, live, "the fresh floor is not the seal clock yet")
+	seedFloor(t, sm, high+heightsync.SealDrainFloorLagBlocks, []byte{0x04})
+	apply(8)
+	_, live = sm.SnapshotState().Inferences[1]
+	require.False(t, live, "must seal after grace + execution timeout, four blocks behind F")
 	require.Contains(t, sm.ExportSealedNonces(), uint64(1))
 }
 

@@ -41,7 +41,8 @@ func TestTimeoutDue_DoesNotFetchUnderLockWhenFloorTimeMissing(t *testing.T) {
 
 	require.Zero(t, spy.headerCalls.Load())
 	err := d.sm.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
-	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.ErrorIs(t, err, types.ErrFloorTimeMissing)
+	require.NotErrorIs(t, err, types.ErrHeaderPending)
 	require.Zero(t, spy.headerCalls.Load(), "TimeoutDue must not call HeaderTimeMs under sm.mu")
 }
 
@@ -57,8 +58,8 @@ func TestTimeoutDue_UsesStoredMapWithoutFetch(t *testing.T) {
 	dueMs := (anchor + time.Duration(d.sm.Config().RefusalTimeout)*time.Second).Milliseconds()
 	src.set(200, time.Duration(dueMs)*time.Millisecond)
 
-	require.NoError(t, d.sm.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED),
-		"StoredAt at F is enough; no HeaderTimeMs fetch")
+	err := d.sm.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	require.ErrorIs(t, err, types.ErrFloorTimeMissing, "a map row does not supply time(F)")
 }
 
 func TestTimeoutDue_StampAnchorStoredAtOnly(t *testing.T) {

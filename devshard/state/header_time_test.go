@@ -14,6 +14,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"devshard/chainoracle/blocks/headertime"
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/types"
@@ -162,8 +163,8 @@ func TestMissingCarriedFloorTimeBlocksTimeoutDue(t *testing.T) {
 	d.raiseWithTime(1_000_000, []byte{0x0f, 0x00}, 0)
 	src.set(1_000_000, 0)
 
-	require.ErrorIs(t, d.sm.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED), types.ErrHeaderPending,
-		"TimeoutDue is pending when floor TimeMs and StoredAt both miss — no fetch under lock")
+	require.ErrorIs(t, d.sm.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED), types.ErrFloorTimeMissing,
+		"TimeoutDue uses the carried floor time and does not wait on the map")
 	// Apply does not read times: votes alone commit the timeout.
 	require.NoError(t, d.apply(d.timeout(id, types.TimeoutReason_TIMEOUT_REASON_REFUSED)))
 	rec, ok := d.sm.GetInference(id)
@@ -189,24 +190,19 @@ func TestSettlementWaitsForCarriedFloorTime(t *testing.T) {
 
 	sealNonce := d.next()
 	d.sm.mu.Lock()
-	err := d.sm.drainLiveIntoSealedAccLocked(sealNonce)
-	_, live := d.sm.state.Inferences[id]
-	d.sm.mu.Unlock()
-	require.ErrorIs(t, err, types.ErrFloorTimeMissing)
-	require.NotErrorIs(t, err, types.ErrHeaderPending)
-	require.True(t, live, "a drain that cannot read carried floor time leaves every record live")
-
-	// Fill the tip floor time (first non-zero wins on the same height).
-	d.turn++
-	ref := d.next()
-	require.NoError(t, d.apply(divHeartbeatTx(0, nil)))
-	slot := uint32(d.turn % uint64(len(d.hosts)))
-	dueMs := (anchor + time.Duration(d.sm.Config().RefusalTimeout)*time.Second).Milliseconds()
-	require.NoError(t, d.apply(divAckTxWithTime(t, d.hosts[slot], d.turn, ref, slot, 200, []byte{0x02, 0x00}, types.SyncState_SYNCED, dueMs)))
-
-	d.sm.mu.Lock()
 	rec := *d.sm.state.Inferences[id]
 	due, err := d.sm.liveTimeoutDueAtDrainLocked(&rec, sealNonce)
+	d.sm.mu.Unlock()
+	require.NoError(t, err)
+	require.False(t, due, "drain uses the carried time four blocks behind the zero tip")
+
+	dueMs := (anchor + time.Duration(d.sm.Config().RefusalTimeout)*time.Second).Milliseconds()
+	d.raiseWithTime(300, []byte{0x02, 0x01}, dueMs)
+	d.raiseWithTime(300+heightsync.SealDrainFloorLagBlocks, []byte{0x02, 0x04}, dueMs)
+	sealNonce = d.next()
+	d.sm.mu.Lock()
+	rec = *d.sm.state.Inferences[id]
+	due, err = d.sm.liveTimeoutDueAtDrainLocked(&rec, sealNonce)
 	d.sm.mu.Unlock()
 	require.NoError(t, err)
 	require.True(t, due)
@@ -320,11 +316,14 @@ func TestSealClockReadsCarriedFloorTime(t *testing.T) {
 	require.NoError(t, d.apply(d.confirmWithTime(id, 100, hash, anchor.Milliseconds())))
 
 	clock := d.sm.AutoSealStateClock()
-	require.True(t, clock.Known)
-	require.Equal(t, anchor.Milliseconds(), clock.ClockMs)
+	require.False(t, clock.Known, "the latest floor is not the seal clock")
 
-	// Raising F advances the seal clock without a new confirm in the live set.
+	// The seal clock is the carried time four blocks behind the latest floor.
 	d.raiseWithTime(5000, []byte{0x50, 0x00}, (2 * time.Hour).Milliseconds())
+	clock = d.sm.AutoSealStateClock()
+	require.True(t, clock.Known)
+	require.Equal(t, anchor.Milliseconds(), clock.ClockMs, "a fresh raise does not move the seal clock")
+	d.raiseWithTime(5000+heightsync.SealDrainFloorLagBlocks, []byte{0x50, 0x04}, (2 * time.Hour).Milliseconds())
 	clock = d.sm.AutoSealStateClock()
 	require.True(t, clock.Known)
 	require.Equal(t, (2 * time.Hour).Milliseconds(), clock.ClockMs)
@@ -380,7 +379,6 @@ func TestReplayDrainFailsClosedWhenCarriedFloorTimeIsMissing(t *testing.T) {
 	d.raiseWithTime(100, hash, anchor.Milliseconds())
 	id := d.next()
 	require.NoError(t, d.apply(startTxWithTime(id, 100, hash, anchor.Milliseconds())))
-	d.raiseWithTime(200, []byte{0x02, 0x00}, 0)
 
 	sealNonce := d.next()
 	d.sm.mu.Lock()
@@ -393,17 +391,14 @@ func TestReplayDrainFailsClosedWhenCarriedFloorTimeIsMissing(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrFloorTimeMissing)
 	require.NotErrorIs(t, err, types.ErrHeaderPending)
 	require.Less(t, time.Since(started), 200*time.Millisecond)
-	require.True(t, live, "replay does not refund when carried floor time is missing")
+	require.True(t, live, "replay does not refund before the floor is four blocks behind a carried point")
 
-	// Fill tip floor time; drain due uses carried start + floor only (empty map).
-	d.turn++
-	ref := d.next()
-	require.NoError(t, d.apply(divHeartbeatTx(0, nil)))
-	slot := uint32(d.turn % uint64(len(d.hosts)))
 	dueMs := (2 * time.Hour).Milliseconds()
-	require.NoError(t, d.apply(divAckTxWithTime(t, d.hosts[slot], d.turn, ref, slot, 200, []byte{0x02, 0x00}, types.SyncState_SYNCED, dueMs)))
+	d.raiseWithTime(200, []byte{0x02, 0x00}, dueMs)
+	d.raiseWithTime(200+heightsync.SealDrainFloorLagBlocks, []byte{0x02, 0x04}, dueMs)
 	d.sm.SetHeaderTimes(headertime.New())
 
+	sealNonce = d.next()
 	d.sm.mu.Lock()
 	rec := *d.sm.state.Inferences[id]
 	due, err := d.sm.liveTimeoutDueAtDrainLocked(&rec, sealNonce)
