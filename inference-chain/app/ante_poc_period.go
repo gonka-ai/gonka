@@ -257,16 +257,8 @@ func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context,
 	if len(msg.Validations) > params.GetEpochValidationParams().ValidationsPerMessageLimit() {
 		return inferencetypes.ErrIllegalState.Wrap("too many validations in one message")
 	}
-	signer, err := inferencetypes.CanonicalAccAddress(msg.Creator)
-	if err != nil {
+	if _, err := inferencetypes.CanonicalAccAddress(msg.Creator); err != nil {
 		return err
-	}
-	stored, err := ppd.inferenceKeeper.CountPocValidationsV2ForValidator(ctx, msg.PocStageStartBlockHeight, signer)
-	if err != nil {
-		return err
-	}
-	if stored >= params.GetEpochValidationParams().ValidationsPerSignerPerStageLimit() {
-		return inferencetypes.ErrIllegalState.Wrap("signer stage cap reached")
 	}
 	for _, validation := range msg.Validations {
 		if validation == nil || validation.ModelId == "" || !ppd.inferenceKeeper.IsValidGovernanceModel(ctx, validation.ModelId) {
@@ -286,6 +278,129 @@ func (ppd PocPeriodValidationDecorator) checkPocValidationShape(ctx sdk.Context,
 		if !hasCommit {
 			return inferencetypes.ErrIllegalState
 		}
+	}
+	return nil
+}
+
+type pocVoterEligibilityKey struct {
+	stage  int64
+	signer string
+}
+
+// PocVoterEligibilityDecorator rejects MsgSubmitPocValidationsV2 in CheckTx
+// when the signer lacks positive voting power for a submitted model in the
+// stage's PoCValidationSnapshot (unless the signer is an enabled genesis
+// guardian).
+//
+// Placed after SigVerificationDecorator and MsgExecAuthorizationDecorator so
+// unauthenticated or unauthorized transactions cannot trigger a snapshot read.
+type PocVoterEligibilityDecorator struct {
+	inferenceKeeper *inferencemodulekeeper.Keeper
+	cdc             codec.Codec
+}
+
+func NewPocVoterEligibilityDecorator(ik *inferencemodulekeeper.Keeper, cdc codec.Codec) PocVoterEligibilityDecorator {
+	return PocVoterEligibilityDecorator{
+		inferenceKeeper: ik,
+		cdc:             cdc,
+	}
+}
+
+func (d PocVoterEligibilityDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if simulate {
+		return next(ctx, tx, simulate)
+	}
+	if !ctx.IsCheckTx() {
+		return next(ctx, tx, simulate)
+	}
+	if d.inferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+
+	var cache map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility
+	for _, msg := range tx.GetMsgs() {
+		if err := d.checkMessage(ctx, msg, &cache); err != nil {
+			return ctx, err
+		}
+	}
+	return next(ctx, tx, simulate)
+}
+
+func (d PocVoterEligibilityDecorator) checkMessage(
+	ctx sdk.Context,
+	msg sdk.Msg,
+	cache *map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility,
+) error {
+	switch m := msg.(type) {
+	case *inferencetypes.MsgSubmitPocValidationsV2:
+		return d.checkVoterEligibility(ctx, m, cache)
+
+	case *authztypes.MsgExec:
+		if d.cdc == nil {
+			return sdkerrors.ErrInvalidRequest.Wrap("codec is required to unpack MsgExec")
+		}
+		for _, innerMsg := range m.Msgs {
+			var unwrapped sdk.Msg
+			if err := d.cdc.UnpackAny(innerMsg, &unwrapped); err != nil {
+				return err
+			}
+			if _, nested := unwrapped.(*authztypes.MsgExec); nested {
+				return errNestedMsgExec
+			}
+			if err := d.checkMessage(ctx, unwrapped, cache); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (d PocVoterEligibilityDecorator) checkVoterEligibility(
+	ctx sdk.Context,
+	msg *inferencetypes.MsgSubmitPocValidationsV2,
+	cache *map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility,
+) error {
+	if d.inferenceKeeper == nil || msg == nil {
+		return nil
+	}
+	signer, err := inferencetypes.CanonicalAccAddress(msg.Creator)
+	if err != nil {
+		return err
+	}
+	key := pocVoterEligibilityKey{
+		stage:  msg.PocStageStartBlockHeight,
+		signer: signer.String(),
+	}
+	var eligibility inferencemodulekeeper.PocStageVoterEligibility
+	var cached bool
+	if *cache != nil {
+		eligibility, cached = (*cache)[key]
+	}
+	if !cached {
+		var found bool
+		eligibility, found, err = d.inferenceKeeper.BuildPocStageVoterEligibility(ctx, msg.PocStageStartBlockHeight, signer.String())
+		if err != nil {
+			return err
+		}
+		if !found {
+			return inferencetypes.ErrIllegalState.Wrap("validation snapshot not found for stage")
+		}
+		if *cache == nil {
+			*cache = make(map[pocVoterEligibilityKey]inferencemodulekeeper.PocStageVoterEligibility, 1)
+		}
+		(*cache)[key] = eligibility
+	}
+	hasEligibleRow := false
+	for _, validation := range msg.Validations {
+		if validation == nil {
+			return inferencetypes.ErrInvalidModel
+		}
+		if eligibility.CanValidateModel(validation.ModelId) {
+			hasEligibleRow = true
+		}
+	}
+	if !hasEligibleRow {
+		return inferencetypes.ErrIllegalState.Wrap("signer has no voting power for any submitted model in stage snapshot")
 	}
 	return nil
 }

@@ -169,13 +169,6 @@ func requireTriggerRows(t *testing.T, k keeper.Keeper, ctx sdk.Context, trigger 
 	hasDistribution, err := k.MLNodeWeightDistributions.Has(ctx, collections.Join3(trigger, addr, "m"))
 	require.NoError(t, err)
 	require.Equal(t, present, hasDistribution)
-	count, err := k.CountPocValidationsV2ForValidator(ctx, trigger, sdk.MustAccAddressFromBech32(testutil.Validator))
-	require.NoError(t, err)
-	if present {
-		require.Positive(t, count)
-	} else {
-		require.Zero(t, count)
-	}
 }
 
 func validationCount(t *testing.T, k keeper.Keeper, ctx sdk.Context, trigger int64) int {

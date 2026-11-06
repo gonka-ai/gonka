@@ -41,7 +41,11 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 		return &types.MsgSubmitNewParticipantResponse{}, nil
 	}
 
-	// If participant does not exist yet, create a new one
+	// If participant does not exist yet, charge the one-time creation gas
+	// before the write. An update above does not pay it.
+	if err := k.ChargeStaticGas(ctx, msg); err != nil {
+		return nil, err
+	}
 	newParticipant := createNewParticipant(ctx, msg, addr)
 	if err := k.setParticipantAsRead(ctx, newParticipant, nil, false); err != nil {
 		return nil, err
