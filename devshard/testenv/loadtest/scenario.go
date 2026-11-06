@@ -77,6 +77,11 @@ type CPUProfileWindow struct {
 }
 
 type Gateway struct {
+	Implementation string `yaml:"implementation,omitempty"`
+	Image          string `yaml:"image,omitempty"`
+	// Protocol must match the standalone image's build stamp.
+	Protocol            string                     `yaml:"protocol,omitempty"`
+	EngineLoserGrace    string                     `yaml:"engine_loser_grace,omitempty"`
 	PoCRequestMode      string                     `yaml:"poc_request_mode"`
 	Redundancy          GatewayRedundancy          `yaml:"redundancy"`
 	EscrowRotation      GatewayEscrowRotation      `yaml:"escrow_rotation"`
@@ -288,6 +293,8 @@ type Assertions struct {
 // keep the defaults from invariantSettings. Cases ties a run-level invariant,
 // such as "no-runtime-for-deactivated-escrow", to a scenario case so its known_bug marker applies.
 type InvariantAssertions struct {
+	// Checks selects evaluator groups; empty runs every group.
+	Checks        []string          `yaml:"checks,omitempty"`
 	Enabled       bool              `yaml:"enabled"`
 	Baseline      InvariantWindow   `yaml:"baseline"`
 	TrendEarly    InvariantWindow   `yaml:"trend_early"`
@@ -398,6 +405,32 @@ func (s Scenario) Validate() error {
 }
 
 func (s Scenario) validate(dataset bool) error {
+	if err := s.Gateway.validate(); err != nil {
+		return err
+	}
+	for _, name := range s.Assertions.Invariants.Checks {
+		found := false
+		for _, evaluator := range invariantEvaluators {
+			if evaluator.name == name {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("unknown assertions.invariants.checks entry %q", name)
+		}
+	}
+	if hasPoCWindows(s.TimelineEvents()) && len(s.Assertions.Invariants.Checks) > 0 {
+		found := false
+		for _, name := range s.Assertions.Invariants.Checks {
+			if name == "poc-load" {
+				found = true
+			}
+		}
+		if !found {
+			return fmt.Errorf("poc_window requires the poc-load invariant group")
+		}
+	}
+
 	if mode := s.Gateway.PoCRequestMode; mode != "" && mode != "off" && mode != "relaxed" {
 		return fmt.Errorf("gateway.poc_request_mode must be off or relaxed")
 	}

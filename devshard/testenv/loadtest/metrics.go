@@ -26,15 +26,16 @@ import (
 // MetricsSample keeps absent metrics absent, rather than reporting them as zero.
 // Start time and PID distinguish process lifetimes, including restarts.
 type MetricsSample struct {
-	At        time.Time           `json:"at"`
-	Phase     string              `json:"phase"`
-	Target    string              `json:"target"`
-	Values    map[string]float64  `json:"values,omitempty"`
-	Errors    []string            `json:"errors,omitempty"`
-	EscrowID  string              `json:"escrow_id,omitempty"`
-	Nonce     *uint64             `json:"nonce,omitempty"`
-	State     *GatewayStateSizes  `json:"state,omitempty"`
-	BuildInfo []map[string]string `json:"build_info,omitempty"`
+	At               time.Time           `json:"at"`
+	Phase            string              `json:"phase"`
+	Target           string              `json:"target"`
+	Values           map[string]float64  `json:"values,omitempty"`
+	Errors           []string            `json:"errors,omitempty"`
+	EscrowID         string              `json:"escrow_id,omitempty"`
+	Nonce            *uint64             `json:"nonce,omitempty"`
+	State            *GatewayStateSizes  `json:"state,omitempty"`
+	StateUnavailable string              `json:"state_unavailable,omitempty"`
+	BuildInfo        []map[string]string `json:"build_info,omitempty"`
 	// Domain keeps the domainMetricPrefixes series, keyed name{label="v",...}.
 	Domain map[string]float64 `json:"domain,omitempty"`
 	// ChainPhase is the escrow's /v1/status chain_phase as the gateway sees it.
@@ -311,7 +312,11 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			add(sample)
 		}
 		wg.Add(1)
-		go scrape("gateway", "devshardctl", "devshardctl", "")
+		gatewayBinary := "devshardctl"
+		if cfg.Devshardctl.Binary == "gateway" {
+			gatewayBinary = "gateway"
+		}
+		go scrape("gateway", "devshardctl", gatewayBinary, "")
 		for _, host := range cfg.Hosts {
 			wg.Add(1)
 			go scrape(host.ID+"/devshardd", host.ID, "devshardd", fmt.Sprintf("http://127.0.0.1:%d/%s/metrics", config.DefaultHostPort, cfg.Versiond.VersionName))
@@ -327,12 +332,17 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 			for _, id := range ids {
 				base := scopedGatewayURL(gatewayURL, id)
 				sample := MetricsSample{At: time.Now().UTC(), Target: "escrow", EscrowID: id}
-				sizes, err := fetchGatewayStateSizes(ctx, base, apiKey)
-				if err != nil {
-					sample.Errors = append(sample.Errors, err.Error())
+				if cfg.Devshardctl.Binary == "gateway" {
+					sample.StateUnavailable = "standalone gateway does not expose legacy state-size counters"
 				} else {
-					sample.State = &sizes
+					sizes, err := fetchGatewayStateSizes(ctx, base, apiKey)
+					if err != nil {
+						sample.Errors = append(sample.Errors, err.Error())
+					} else {
+						sample.State = &sizes
+					}
 				}
+
 				statusBody, err := getMetricsHTTP(ctx, base+"/v1/status", apiKey)
 				if err != nil {
 					sample.Errors = append(sample.Errors, err.Error())
@@ -340,11 +350,23 @@ func startMetricsCollector(ctx context.Context, opts RunnerConfig, cfg *config.F
 					var status struct {
 						Nonce      *uint64 `json:"nonce"`
 						ChainPhase string  `json:"chain_phase"`
+						Devshards  []struct {
+							ID    string  `json:"id"`
+							Nonce *uint64 `json:"nonce"`
+						} `json:"devshards"`
 					}
 					if err := json.Unmarshal([]byte(statusBody), &status); err != nil {
 						sample.Errors = append(sample.Errors, err.Error())
 					} else {
 						sample.Nonce, sample.ChainPhase = status.Nonce, status.ChainPhase
+						if sample.Nonce == nil {
+							for _, shard := range status.Devshards {
+								if shard.ID == id {
+									sample.Nonce = shard.Nonce
+									break
+								}
+							}
+						}
 					}
 				}
 				add(sample)
@@ -515,12 +537,15 @@ func processChanged(a, b map[string]float64) bool {
 	return false
 }
 
-func (c *metricsCollector) stop() MetricsSummary {
+func (c *metricsCollector) stop(finalContexts ...context.Context) MetricsSummary {
 	c.stopOnce.Do(func() {
 		c.cancel()
 		<-c.done
 		// The stack remains up; collect a final snapshot after drain, even on failure.
 		c.ctx = context.Background()
+		if len(finalContexts) > 0 {
+			c.ctx = finalContexts[0]
+		}
 		c.phase.Store("final")
 		c.sample()
 		if err := c.file.Close(); err != nil {

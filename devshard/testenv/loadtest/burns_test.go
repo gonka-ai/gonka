@@ -214,3 +214,28 @@ func TestCatchUpPauseBurnsDoNotFailNoOrphanedWork(t *testing.T) {
 	require.Equal(t, 1, summary.Orphaned)
 	require.ErrorContains(t, err, "orphaned inference work")
 }
+
+// Standalone logs name the message instead of the legacy stage. Only actual
+// nonces count; PoC-specific burns are excused only on non-preserved hosts
+// inside the applied window plus one phase-poll interval.
+func TestStandalonePoCBurns(t *testing.T) {
+	burn, ok, err := parseGatewayBurn(`devshardctl-1 | {"time":"2026-10-15T14:35:01Z","msg":"nonce burned for nobody","escrow":"1","nonce":414,"host":"host-p1","reason":"poc_unavailable_host"}`)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "414", burn.Nonce)
+	_, ok, err = parseGatewayBurn(`{"msg":"nonce burned for nobody","escrow":"1","reason":"poc_unavailable_host"}`)
+	require.NoError(t, err)
+	require.False(t, ok)
+	in := InvariantInputs{Started: fixtureT0, Workload: 5 * time.Minute,
+		Hosts:  []InvariantHost{{ID: "h0", Participant: "host-p0"}, {ID: "h1", Participant: "host-p1"}},
+		Events: []EventRecord{{ID: "poc", Action: "poc_window", PlannedStart: at(time.Minute), PlannedEnd: at(2 * time.Minute), StartedAt: atPtr(time.Minute), EndedAt: atPtr(2 * time.Minute), Params: map[string]any{"preserved": "h0"}}},
+	}
+	excuse := burnExcuse(in)
+	burn.At = at(90 * time.Second)
+	require.True(t, excuse(burn))
+	burn.Host = "host-p0"
+	require.False(t, excuse(burn))
+	burn.Host = "host-p1"
+	burn.At = at(2*time.Minute + 6*time.Second)
+	require.False(t, excuse(burn))
+}

@@ -338,6 +338,8 @@ services:
 
   devshardctl:
 {{ if .Devshardctl.Image }}    image: {{ .Devshardctl.Image }}
+{{ if eq .Devshardctl.Binary "gateway" }}    pull_policy: never
+{{ end }}
 {{ else }}    build:
       context: ../..
       dockerfile: devshard/Dockerfile
@@ -345,7 +347,7 @@ services:
       args:
         DEVSHARD_VERSION: "{{ .Versiond.VersionName }}"
     image: devshard-runtime:latest
-{{ end }}    entrypoint: ["devshardctl"]
+{{ end }}    entrypoint: ["{{ if eq .Devshardctl.Binary "gateway" }}gateway{{ else }}devshardctl{{ end }}"]
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
       DEVSHARD_STATS_PORT: "{{ .Devshardctl.StatsPort }}"
@@ -362,7 +364,10 @@ services:
 {{ with devshardsJSON . }}      DEVSHARDS_JSON: '{{ . }}'
 {{ end }}      DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
-      DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+{{ if eq .Devshardctl.Binary "gateway" }}      DEVSHARD_STATS_ENABLED: "true"
+      DEVSHARD_LOG_FORMAT: json
+      DEVSHARD_ESCROW_ROTATION_ENABLED: "false"
+{{ end }}      DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
       DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "{{ $.Versiond.DisablePeriodicSnapshots }}"
       DEVSHARD_ENABLE_CONTENTION_PROFILES: "{{ $.Versiond.EnableContentionProfiles }}"
       # Hosts are compose service names resolving to private IPs; see versiond.
@@ -673,9 +678,10 @@ func extraHostEnv(h config.HostCfg) []envPair {
 }
 
 // devshardsJSON lists one gateway runtime per escrow when there are several
-// (one per model); the key stays in DEVSHARD_PRIVATE_KEY. Empty for one escrow.
+// (one per model); the key stays in DEVSHARD_PRIVATE_KEY. The standalone
+// gateway always needs the list, including for one escrow.
 func devshardsJSON(cfg *config.File) (string, error) {
-	if cfg == nil || len(cfg.Escrows) < 2 {
+	if cfg == nil || (len(cfg.Escrows) < 2 && cfg.Devshardctl.Binary != "gateway") {
 		return "", nil
 	}
 	type runtime struct {

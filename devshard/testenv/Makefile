@@ -34,6 +34,9 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
+SKIP_DEVSHARDD_BUILD ?= 0
+GATEWAY_IMAGE ?=
+BUILD ?=
 LOAD_DATASET ?=
 
 ifeq ($(strip $(SCENARIO)),)
@@ -41,8 +44,13 @@ loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
 	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
 	@false
 else
-loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
-	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
+loadtest: $(if $(strip $(BUILD)),,$(if $(filter 1,$(SKIP_DEVSHARDD_BUILD)),,build-devshardd)) ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+ifeq ($(strip $(BUILD)),)
+ifeq ($(SKIP_DEVSHARDD_BUILD),1)
+	@test -x ../../build/devshardd || { echo "Missing ../../build/devshardd; run make build-devshardd first" >&2; exit 1; }
+endif
+endif
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(strip $(GATEWAY_IMAGE)),-gateway-image "$(GATEWAY_IMAGE)") $(if $(strip $(BUILD)),-build "$(BUILD)") $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
 endif
 
 .PHONY: loadtest-remote

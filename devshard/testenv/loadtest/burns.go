@@ -11,6 +11,7 @@ import (
 )
 
 const ghostStage = "ghost_probe_skipped"
+const standaloneBurnMessage = "nonce burned for nobody"
 
 // faultBurnReasons are the burns a fault causes: the gateway ejected or cut off the slot's host.
 var faultBurnReasons = map[string]bool{"participant_ejected_no_send": true, "participant_cut_off_no_send": true}
@@ -29,7 +30,7 @@ type gatewayBurn struct {
 	Reason   string    `json:"reason"`
 }
 
-// readGatewayBurns returns every ghost_probe_skipped line of a compose log, in the text or the JSON
+// readGatewayBurns returns legacy ghost_probe_skipped and standalone burn lines in the text or JSON
 // log format, in log order.
 func readGatewayBurns(path string) ([]gatewayBurn, error) {
 	file, err := os.Open(path)
@@ -42,7 +43,7 @@ func readGatewayBurns(path string) ([]gatewayBurn, error) {
 	scanner.Buffer(make([]byte, 0, 1<<20), 16<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, ghostStage) {
+		if !strings.Contains(line, ghostStage) && !strings.Contains(line, standaloneBurnMessage) {
 			continue
 		}
 		burn, ok, err := parseGatewayBurn(line)
@@ -78,7 +79,11 @@ func parseGatewayBurn(line string) (gatewayBurn, bool, error) {
 			}
 		}
 	}
-	if fields["stage"] != ghostStage {
+	if fields["stage"] != ghostStage && fields["msg"] != standaloneBurnMessage {
+		return gatewayBurn{}, false, nil
+	}
+	// A standalone scheduler refusal may have no committed nonce at all.
+	if fields["msg"] == standaloneBurnMessage && fields["nonce"] == "" {
 		return gatewayBurn{}, false, nil
 	}
 	if _, err := strconv.ParseUint(fields["nonce"], 10, 64); err != nil {
@@ -124,6 +129,14 @@ func burnExcuse(in InvariantInputs) func(gatewayBurn) bool {
 		for _, participant := range c.participants {
 			if !strings.HasSuffix(participant, burn.Host) {
 				continue
+			}
+			if burn.Reason == "poc_unavailable_host" {
+				for _, w := range c.windows {
+					// Synthetic PoC fault windows contain only non-preserved hosts.
+					if w.Participant == participant && w.Event.Action == "poc_window" && !burn.At.Before(w.Span.From) && burn.At.Before(w.Span.To.Add(gatewayPhasePoll)) {
+						return true
+					}
+				}
 			}
 			if faultBurnReasons[burn.Reason] && c.inForegroundWindow(participant, burn.At, burn.At) {
 				return true

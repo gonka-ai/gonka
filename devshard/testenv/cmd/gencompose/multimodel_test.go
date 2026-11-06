@@ -2,6 +2,9 @@ package main
 
 import (
 	"encoding/json"
+	"gopkg.in/yaml.v3"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"devshard/testenv/config"
@@ -41,4 +44,34 @@ func TestWriteCompose_SingleEscrowHasNoDevshardsJSON(t *testing.T) {
 	require.NoError(t, fillConfig(cfg))
 	_, set := renderServices(t, cfg)["devshardctl"]["DEVSHARDS_JSON"]
 	require.False(t, set)
+}
+
+// Test flow: the standalone gateway needs DEVSHARDS_JSON even for one escrow.
+// Its generated service must execute the new binary and use the supplied image.
+func TestWriteCompose_StandaloneGatewaySingleEscrow(t *testing.T) {
+	cfg := defaultConfig()
+	cfg.Devshardctl.Binary = "gateway"
+	cfg.Devshardctl.Image = "local/gateway:46ce696a-v2"
+	require.NoError(t, fillConfig(cfg))
+	env := renderServices(t, cfg)["devshardctl"]
+	require.Equal(t, "true", env["DEVSHARD_STATS_ENABLED"])
+	var seeds []map[string]string
+	require.NoError(t, json.Unmarshal([]byte(env["DEVSHARDS_JSON"]), &seeds))
+	require.Len(t, seeds, 1)
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", seeds[0]["private_key_env"])
+	out := filepath.Join(t.TempDir(), "compose.yaml")
+	require.NoError(t, writeCompose(cfg, out))
+	body, err := os.ReadFile(out)
+	require.NoError(t, err)
+	var compose struct {
+		Services map[string]struct {
+			Entrypoint []string `yaml:"entrypoint"`
+			Image      string   `yaml:"image"`
+			PullPolicy string   `yaml:"pull_policy"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+	require.Equal(t, []string{"gateway"}, compose.Services["devshardctl"].Entrypoint)
+	require.Equal(t, cfg.Devshardctl.Image, compose.Services["devshardctl"].Image)
+	require.Equal(t, "never", compose.Services["devshardctl"].PullPolicy)
 }

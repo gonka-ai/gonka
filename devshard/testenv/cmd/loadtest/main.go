@@ -25,9 +25,9 @@ func main() {
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
-	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	reportDir := flag.String("report", "", "rebuild report.md and timeline.html, and print a console summary of an existing run, without running")
+	gatewayImage := flag.String("gateway-image", "", "override the standalone gateway image selected by the scenario or -build")
 	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
 	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json, report.md and timeline.html, and print a console summary, without a stack")
 	flag.Parse()
@@ -64,7 +64,7 @@ func main() {
 	if *loadDataset != "" {
 		loadScenario = loadtest.LoadDatasetScenario
 	}
-	scenario, err := loadScenario(*scenarioPath)
+	_, err := loadScenario(*scenarioPath)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -74,12 +74,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	if *runTimeout < 0 {
-		log.Fatal("timeout must be positive")
-	}
-	if *runTimeout == 0 {
-		*runTimeout = max(20*time.Minute, scenario.Duration()+scenario.DrainDuration()+10*time.Minute)
-	}
+
 	testenvDir, err := filepath.Abs(".")
 	if err != nil {
 		log.Fatal(err)
@@ -95,9 +90,7 @@ func main() {
 	}
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
-	ctx, cancel := context.WithTimeout(signalCtx, *runTimeout)
-	defer cancel()
-	result, err := loadtest.RunScenario(ctx, loadtest.RunnerConfig{
+	result, err := loadtest.RunScenario(signalCtx, loadtest.RunnerConfig{
 		ScenarioPath:    *scenarioPath,
 		ProfilesDir:     *profilesDir,
 		TestenvDir:      testenvDir,
@@ -107,8 +100,9 @@ func main() {
 		MetricsInterval: *metricsInterval,
 		StrictXFail:     *strictXFail,
 		Build:           build,
+		GatewayImage:    *gatewayImage,
 	})
-	if err != nil && result.Summary.Requests == 0 {
+	if err != nil && !result.WorkloadStarted {
 		log.Fatalf("loadtest: workload did not start: %v", err)
 	}
 	reportPrinted := false
@@ -238,7 +232,11 @@ func printDiagnostics(result loadtest.RunResult) {
 	summary := result.Summary
 	printMLNodeStats(result.MLStats)
 	fmt.Fprintln(os.Stdout)
-	printGatewayStateSizes(result.GatewayState)
+	if result.GatewayStateUnavailable != "" {
+		fmt.Fprintln(os.Stdout, "Gateway state: "+result.GatewayStateUnavailable)
+	} else {
+		printGatewayStateSizes(result.GatewayState)
+	}
 	fmt.Fprintln(os.Stdout)
 	printAccounting(result.Accounting)
 	printMetricsSummary(result.Metrics, summary.Completed)

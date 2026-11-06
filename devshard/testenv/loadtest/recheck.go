@@ -23,6 +23,7 @@ const (
 // RunInputs is what the checks read from the live stack after the workload. A run saves it to
 // run-inputs.json, so EvaluateSavedRun judges the run directory again without a stack.
 type RunInputs struct {
+	RunError string `json:"run_error,omitempty"`
 	// Started is the workload start the invariants and the ghost-rate fault windows are planned against.
 	Started            time.Time          `json:"started"`
 	Hosts              []InvariantHost    `json:"hosts"`
@@ -108,6 +109,9 @@ func recheckRun(dir string, strictXFail bool) ([]AssertionResult, []string, erro
 
 func evaluateRun(dir string, scenario Scenario, summary Summary, events []EventRecord, inputs RunInputs, strictXFail bool) ([]AssertionResult, error) {
 	checks := assertRun(scenario, summary, inputs, events)
+	if inputs.RunError != "" {
+		checks = append(checks, AssertionResult{Name: "run.completed", Expected: "workload and final collection completed without interruption", Actual: inputs.RunError, Passed: false})
+	}
 	checks = append(checks, eventAssertions(events)...)
 	if accountingEnabled(scenario.Assertions.Accounting) {
 		if inputs.Accounting == nil {

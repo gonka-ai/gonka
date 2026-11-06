@@ -85,15 +85,15 @@ func startInvariantRun(ctx context.Context, opts RunnerConfig, cfg *config.File,
 }
 
 // stop ends all pollers with a final sample each; it is idempotent.
-func (r *invariantRun) stop() {
+func (r *invariantRun) stop(finalContexts ...context.Context) {
 	if r == nil {
 		return
 	}
-	r.accounting.stop("final")
-	r.throttle.stop("final")
-	r.pending.stop("final")
-	r.hostStats.stop("final")
-	r.dapiHosts.stop("final")
+	r.accounting.stop("final", finalContexts...)
+	r.throttle.stop("final", finalContexts...)
+	r.pending.stop("final", finalContexts...)
+	r.hostStats.stop("final", finalContexts...)
+	r.dapiHosts.stop("final", finalContexts...)
 }
 
 // warnBinding logs once, loudly, at the first sample after warm-up when the
@@ -113,7 +113,7 @@ func (r *invariantRun) warnBinding(samples []DapiHostSample, warmup time.Time, b
 // collectEndState runs after drain: it stops the pollers and reads what the invariants need once,
 // from the stack and from compose-pre-drain.log at logPath.
 func (r *invariantRun) collectEndState(ctx context.Context, rotationModels []string, logPath string) invariantEndState {
-	r.stop()
+	r.stop(ctx)
 	end := invariantEndState{SettlementDisabled: settlementDisabledModels(r.scenario, rotationModels), DidNotCompress: -1}
 	if ticks, err := readReconcileTicks(logPath); err != nil {
 		log.Printf("loadtest: invariants read versiond reconcile ticks: %v", err)

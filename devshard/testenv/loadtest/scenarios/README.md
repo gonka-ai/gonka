@@ -153,3 +153,91 @@ The hosts keep the real default peer budget, which is production: 6000 weight a 
 Good: every step offers close to its planned requests and stays at or below 2 % errors and drops, with each max_tokens class's p95 within twice the first step's; if a step crosses a bound, the table marks it, and its gateway CPU and host Chat rates say whose limit it is.
 
 Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/load-ladder.yaml -output loadtest/results/load-ladder`
+
+## poc-gateway-v7
+
+Runs the standalone gateway from `qdanik/gonka` branch `qd/v7/gateway`, commit
+`46ce696aa2efea7b7f5b0ceeb53391e9e93dacef`, using the locally built image
+`local/gateway:46ce696a-v2`. Here **v7 names the implementation branch**;
+**v2 is the protocol stamp**, shared with the testenv hosts. The image is not
+pulled or rebuilt by this scenario. The runner records its actual image ID in
+`gateway-image.json` and refuses a different host protocol.
+
+From the repository root:
+
+```bash
+# First check image wiring, mixed streaming/non-streaming replies and drain.
+make -C devshard/testenv loadtest SCENARIO=gateway-v7-smoke
+
+# Then exercise PoC and cPoC with different preserved participants.
+make -C devshard/testenv loadtest SCENARIO=poc-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+The PoC workload runs for eight minutes at 8 RPS, with 128 requests maximum
+in flight and four participants (five host containers, including one HA pair):
+
+| Window | Behaviour |
+| --- | --- |
+| 0–2 min | Baseline inference on all participants |
+| 2–3 min 30 s | PoC; preserve `versiond-0/1` (one HA participant) |
+| 3 min 30 s–5 min | Recovery |
+| 5–6 min 30 s | cPoC; preserve `versiond-2` |
+| 6 min 30 s–8 min | Final recovery |
+
+These are simulated chain phases and ML interruptions, not real proof
+computation. Requests use unique synthetic prompts so cache hits do not
+replace the workload. Escrow rotation is explicitly disabled. The new engine's
+loser grace is explicitly 30 seconds; this is not a renaming of the legacy
+`secondary_wait_after_winner` policy.
+
+Checks cover completed requests and error/drop rates, no orphaned inference
+work after drain, preserved-participant serving, no new ML requests or
+allocations on non-preserved participants during the interior of a PoC window,
+interruption of their active ML requests, and resumed serving by participants
+between the PoC windows. Final recovery is shown in the report. The overall
+error/drop bound is 10%. CPU profiles are captured during baseline, PoC, cPoC
+and final recovery.
+
+The invariant groups are explicitly limited to `poc-load`
+and `faults-fired-and-ml-nodes-bound`. Legacy accounting, quarantine and memory
+invariant groups are **not evaluated** by this scenario; the report and
+`invariants.json` list the scope. Raw metrics and diagnostics are still saved.
+The standalone journal's `nonce burned for nobody` messages are parsed as
+intentional burns. `poc_unavailable_host` burns are excluded from the ghost
+rate only for non-preserved participants during their applied PoC window
+plus one five-second phase-poll interval; they remain visible in reports.
+Other burns retain the ordinary ghost-rate check.
+Legacy diff/state-size counters are marked unavailable, and `gateway-state.json`
+contains the standalone gateway's native escrow inspection instead.
+
+Artifacts are in `devshard/testenv/loadtest/results/<timestamp>/`, including
+`report.md`, `timeline.html`, `requests.jsonl`, `assertions.json`,
+`invariants.json`, `gateway-image.json`, logs and profiles. Stack startup,
+in-flight response completion, drain (up to three minutes) and cleanup add
+time to the eight-minute workload. Existing scenarios continue to select the
+legacy gateway unless `gateway.implementation: gateway` is set.
+
+## poc-preserved-load-gateway-v7
+
+A standalone-gateway variant of `poc-preserved-load`. It preserves the original
+seed (42), topology, 16-minute workload at 32 RPS, 256 maximum in-flight
+requests, streaming request settings and CPU-profile schedule. Both windows
+are PoC: 2–4 minutes preserve the `versiond-0/1` HA participant, and 10–12
+minutes preserve `versiond-2`. It does not substitute the shorter PoC/cPoC
+schedule of `poc-gateway-v7`.
+
+From the repository root:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-preserved-load-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+The implementation is `gateway`, the protocol stamp is `v2`, and rotation is
+disabled. Native `engine_loser_grace: 30s` replaces the legacy redundancy
+configuration; the two engine policies are not semantically identical.
+The client and orphan-work assertions are preserved. Invariant groups are
+limited to `poc-load` and `faults-fired-and-ml-nodes-bound`, as for the other
+standalone scenario; legacy accounting/quarantine/memory checks are not run.

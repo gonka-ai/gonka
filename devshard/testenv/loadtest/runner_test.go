@@ -24,8 +24,8 @@ func TestWriteComposeLogsTail(t *testing.T) {
 	for _, tail := range []string{"5000", "100", "all"} {
 		t.Run(tail, func(t *testing.T) {
 			outputDir := t.TempDir()
-			require.NoError(t, writeComposeLogs(outputDir, outputDir, "project", "compose.yaml", tail))
-			require.NoError(t, writeComposeLogsTo(outputDir, outputDir, "project", "compose.yaml", "compose-pre-drain.log", tail))
+			require.NoError(t, writeComposeLogs(context.Background(), outputDir, outputDir, "project", "compose.yaml", tail))
+			require.NoError(t, writeComposeLogsTo(context.Background(), outputDir, outputDir, "project", "compose.yaml", "compose-pre-drain.log", tail))
 			for _, filename := range []string{"compose.log", "compose-pre-drain.log"} {
 				body, err := os.ReadFile(filepath.Join(outputDir, filename))
 				require.NoError(t, err)

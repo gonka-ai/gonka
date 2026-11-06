@@ -61,6 +61,7 @@ const (
 
 // invariantSettings are the resolved invariant bounds for one run.
 type invariantSettings struct {
+	Checks        []string
 	Grace         time.Duration
 	MaxPendingAge time.Duration
 	SteadyAfter   time.Duration
@@ -82,6 +83,7 @@ func resolveInvariantSettings(s Scenario) invariantSettings {
 	inv := s.Assertions.Invariants
 	workload := s.Duration()
 	out := invariantSettings{
+		Checks:        inv.Checks,
 		Grace:         refusal + execution + gatewaySweepGrace + gatewaySweepTick,
 		MaxPendingAge: refusal + execution + gatewaySweepGrace + gatewaySweepTick + 30*time.Second,
 		SteadyAfter:   min(defaultInvariantSteadyAfter, workload/2),
@@ -371,12 +373,20 @@ func evaluateInvariants(in InvariantInputs) ([]AssertionResult, InvariantReport)
 		report.Faulty = append(report.Faulty, faultWindowView{Event: w.Event.ID, Case: w.Event.Case, Action: w.Event.Action, Host: w.Host, Participant: w.Participant, From: w.Span.From, To: w.Span.To, GracedTo: w.Graced.To, Invalid: overlapsAny(w.Graced, c.invalid)})
 	}
 	var checks []AssertionResult
+	var omitted []string
 	for _, eval := range invariantEvaluators {
+		if len(in.Settings.Checks) > 0 && !slices.Contains(in.Settings.Checks, eval.name) {
+			omitted = append(omitted, eval.name)
+			continue
+		}
 		results, table := eval.fn(c)
 		checks = append(checks, results...)
 		if table != nil {
 			report.Tables[eval.name] = table
 		}
+	}
+	if len(omitted) > 0 {
+		report.Tables["scope"] = map[string]any{"selected": in.Settings.Checks, "not_evaluated": omitted}
 	}
 	report.Health = harnessHealth{Stalls: c.stalls, InvalidWindows: c.invalid, InvalidFraction: invalidFraction(c.invalid, in.Started, c.runEnd)}
 	report.Health.InvalidChecks = markInvalid(checks, c.invalid)

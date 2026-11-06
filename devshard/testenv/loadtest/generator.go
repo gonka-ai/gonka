@@ -132,7 +132,7 @@ func RunGenerator(ctx context.Context, cfg GeneratorConfig) (Summary, error) {
 
 	summary := summarize(cfg.Scenario, started, time.Since(started), results)
 	if err := writeResults(cfg.OutputDir, summary); err != nil {
-		return Summary{}, err
+		return summary, err
 	}
 	return summary, nil
 }

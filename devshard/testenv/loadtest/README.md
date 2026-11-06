@@ -1387,3 +1387,95 @@ misses can appear in recovery/drain; the normal pending/accounting checks still
 run, with the full 4m10s protocol grace. Request failures above 10% or unsent
 ghost rate above 2% fail the scenario; these bounds do not suppress the observed
 counts.
+
+## Standalone gateway from qd/v7/gateway
+
+The additional `gateway-v7-smoke` and `poc-gateway-v7` scenarios use the
+prebuilt local image `local/gateway:46ce696a-v2` with protocol `v2`.
+See [scenario details and commands](scenarios/README.md#poc-gateway-v7).
+Selecting the standalone implementation is explicit:
+
+```yaml
+gateway:
+  implementation: gateway
+  image: local/gateway:46ce696a-v2
+  protocol: v2
+  poc_request_mode: relaxed
+  engine_loser_grace: 30s
+  escrow_rotation: {enabled: false}
+```
+
+The runner configures the standalone binary, single-escrow seed, native admin
+settings and scoped diagnostic routes. `assertions.invariants.checks` optionally
+selects evaluator groups by name; omitted means all groups. Unknown groups are
+rejected, and a PoC scenario cannot select a subset without `poc-load`.
+Standalone scenarios reject legacy redundancy/throttle settings and currently
+require rotation disabled. A supplied `-build` must name the same protocol as the scenario.
+The gateway image selection order is `-gateway-image` > `-build` > scenario YAML.
+
+Override the standalone image without editing the scenario:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+`GATEWAY_IMAGE` is passed as the runner's `-gateway-image` flag. It selects
+only the standalone image; implementation and protocol stay in the scenario.
+The effective image is saved in `run.yaml`, and its actual ID in
+`gateway-image.json`. The source scenario and build manifest are not modified.
+
+For a complete set of prebuilt artifacts:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-gateway-v7 \
+  BUILD=/absolute/path/build.yaml \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2
+```
+
+With `BUILD`, Make skips `build-devshardd` and uses the manifest's `devshardd`
+binary plus the versiond/router images. Relative manifest paths are resolved
+from `devshard/testenv`; relative binary paths inside a manifest are resolved
+from the manifest's directory. The manifest protocol must match the scenario.
+`devshardd` is mounted into versiond containers as a separate binary, so
+changing a host container image alone does not replace the tested DevShard.
+
+Reuse an already built testenv DevShard binary while changing only Gateway:
+
+```bash
+make -C devshard/testenv loadtest \
+  SCENARIO=poc-preserved-load-gateway-v7 \
+  GATEWAY_IMAGE=local/gateway:46ce696a-v2 \
+  SKIP_DEVSHARDD_BUILD=1
+```
+
+This skips only the Make prerequisite that rebuilds `build/devshardd`.
+The binary must already exist and match the testenv host architecture and
+protocol; scenario-required testenv hooks must also be present. Runner checks
+still apply. Other stack images may still be built by Compose. Omit the flag
+to rebuild DevShard after source changes, or use `BUILD` for a complete
+prebuilt artifact manifest (which already skips this prerequisite).
+
+## Run duration and cancellation
+
+Preparation and workload have no overall runner timeout. Preparation continues
+until Gateway is ready or the run is cancelled. Traffic duration is controlled
+by `workload.duration`; individual requests use the scenario's request timeout.
+Ctrl+C cancels preparation or workload.
+
+Final diagnostics use a separate internal budget of the scenario drain timeout
+plus 2 minutes, at least 5 minutes, so partial results can still be collected
+after cancellation. Stack removal has a separate two-minute limit. These
+internal limits are not configurable through Make or CLI flags.
+
+The Make prerequisite that builds `devshardd` happens before the runner starts;
+`SKIP_DEVSHARDD_BUILD=1` reuses that binary.
+
+An interrupted workload keeps `summary.json`, `requests.jsonl` and its partial
+result. Its reason is saved in `run-inputs.json` as `run_error` and displayed
+in the report; `run.completed` prevents a later recheck from declaring an
+interrupted run successful. Failures after traffic starts are no longer
+reported as "workload did not start". Final HTTP reads and Compose log
+collection use the independent diagnostics context.
