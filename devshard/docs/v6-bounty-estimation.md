@@ -16,19 +16,19 @@ Proposed USDT payouts for the v6 line, then the two estimation methods used as s
 
 USDT (and vested GNK where noted) for the v6 line. The table below is the proposed payout from [#1792](https://github.com/gonka-ai/gonka/pull/1792).
 
-| GitHub          | Address                                                                     | Payout                              |
-| --------------- | --------------------------------------------------------------------------- | ----------------------------------- |
-| a-kuprin / akup | `gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56`                              | 20,000 USDT + **30,000 vested GNK** |
-| qdanik          | `gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8`                              | 14,500 USDT + **55,000 vested GNK** |
-| snevolin        | `gonka1vnupswg7qz2w5k5ax6zrp02mxmln6arnvjc87h`                              | 9,000 USDT                          |
-| aikuznetsov     | `gonka1frlfyz2wtltdy47dq3w9pwc8ruvjvlthp2lh53`                              | 19,125 USDT                         |
+| GitHub          | Address                                                                       | Payout                              |
+| --------------- | ----------------------------------------------------------------------------- | ----------------------------------- |
+| a-kuprin / akup | `gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56`                                | 20,000 USDT + **30,000 vested GNK** |
+| qdanik          | `gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8`                                | 14,500 USDT + **55,000 vested GNK** |
+| snevolin        | `gonka1vnupswg7qz2w5k5ax6zrp02mxmln6arnvjc87h`                                | 9,000 USDT                          |
+| aikuznetsov     | `gonka1frlfyz2wtltdy47dq3w9pwc8ruvjvlthp2lh53`                                | 19,125 USDT                         |
 | zpoken          | `gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt` (joint with staaason; confirm) | mainnet upgrade                     |
 | staaason        | `gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt` (joint with zpoken; confirm)   | mainnet upgrade                     |
-| cyberdelamain   | `gonka15u0r3mf6t7zsfuslusnyt7hsjrq357yumpe8st`                              | 5,000 USDT                          |
-| vitaly-andr     | `gonka1uqt4hue8tljwwgdkvtthyl3n8kkkqtydyns4cm`                              | 500 USDT                            |
-| redstartechno   | `gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l`                              | 300 USDT                            |
-| Ryanchen911     | `gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57`                              | 500 USDT                            |
-| aleksandr-cstl  | UNKNOWN — never paid on chain, ask                                          | 300 USDT                            |
+| cyberdelamain   | `gonka15u0r3mf6t7zsfuslusnyt7hsjrq357yumpe8st`                                | 5,000 USDT                          |
+| vitaly-andr     | `gonka1uqt4hue8tljwwgdkvtthyl3n8kkkqtydyns4cm`                                | 500 USDT                            |
+| redstartechno   | `gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l`                                | 300 USDT                            |
+| Ryanchen911     | `gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57`                                | 500 USDT                            |
+| aleksandr-cstl  | UNKNOWN — never paid on chain, ask                                            | 300 USDT                            |
 
 
 
