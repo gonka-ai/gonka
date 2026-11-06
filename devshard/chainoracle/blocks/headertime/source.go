@@ -535,6 +535,34 @@ func (s *Source) Conflicts() uint64 {
 	return s.conflicts.Load()
 }
 
+// LatestStored is the highest height still in the map and that block's time.
+// A row the retention floor has dropped does not count. An empty map returns ok false.
+func (s *Source) LatestStored() (height uint64, timeMs int64, ok bool) {
+	if s == nil {
+		return 0, 0, false
+	}
+	floor := s.cachedFloor.Load()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var best uint64
+	var ms int64
+	found := false
+	for h, e := range s.entries {
+		if e.ms <= 0 {
+			continue
+		}
+		if floor > 0 && h < floor {
+			continue
+		}
+		if !found || h > best {
+			best = h
+			ms = e.ms
+			found = true
+		}
+	}
+	return best, ms, found
+}
+
 // HighWater is the highest height with every height from the contiguous run
 // present. A stored height below that run does not move it. The walk starts
 // at the stored run, not at a missing floor height. An empty map returns 0.
