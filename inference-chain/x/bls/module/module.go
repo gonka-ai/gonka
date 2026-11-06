@@ -241,10 +241,10 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 }
 
 func InvokeSetBlsHooks(
-	keeper *keeper.Keeper,
+	blsKeeper keeper.Keeper,
 	blsHooks map[string]types.BlsHooksWrapper,
 ) error {
-	if keeper == nil || len(blsHooks) == 0 {
+	if len(blsHooks) == 0 {
 		return nil
 	}
 
@@ -260,5 +260,5 @@ func InvokeSetBlsHooks(
 		multiHooks = append(multiHooks, hook)
 	}
 
-	return keeper.SetHooks(multiHooks)
+	return blsKeeper.SetHooks(multiHooks)
 }

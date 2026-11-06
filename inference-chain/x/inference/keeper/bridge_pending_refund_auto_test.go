@@ -11,12 +11,29 @@ import (
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
+	inferencekeeper "github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+func expectThresholdSigningStatus(
+	t *testing.T,
+	k *inferencekeeper.Keeper,
+	requestID []byte,
+	status blstypes.ThresholdSigningStatus,
+) {
+	t.Helper()
+	blsMock := keepertest.NewMockBlsKeeper(gomock.NewController(t))
+	blsMock.EXPECT().
+		GetSigningStatus(gomock.Any(), requestID).
+		Return(&blstypes.ThresholdSigningRequest{Status: status}, nil).
+		Times(1)
+	k.BlsKeeper = blsMock
+}
 
 func TestProcessAutoRefundForFailedBridgeOperation_Mint(t *testing.T) {
 	k, _, ctx, mocks := setupKeeperWithMocks(t)
@@ -165,6 +182,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_Withdrawal(t *testing.T) {
 func TestProcessAutoRefundForFailedBridgeOperation_NoPendingContext(t *testing.T) {
 	k, _, ctx, _ := setupKeeperWithMocks(t)
 	requestID := bytes.Repeat([]byte{0x66}, 32)
+	expectThresholdSigningStatus(t, &k, requestID, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED)
 
 	closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "deadline expired")
 	require.NoError(t, err)
@@ -175,6 +193,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_MintRefundFailure(t *testing.
 	k, _, ctx, mocks := setupKeeperWithMocks(t)
 	requestID := bytes.Repeat([]byte{0x67}, 32)
 	requestKey := hex.EncodeToString(requestID)
+	expectThresholdSigningStatus(t, &k, requestID, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED)
 
 	require.NoError(t, k.BridgeMintRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeMint{
 		Creator:            testutil.Creator,
@@ -214,6 +233,7 @@ func TestProcessAutoRefundForFailedBridgeOperation_WithdrawalContractNotRegister
 	k, _, ctx, _ := setupKeeperWithMocks(t)
 	requestID := bytes.Repeat([]byte{0x68}, 32)
 	requestKey := hex.EncodeToString(requestID)
+	expectThresholdSigningStatus(t, &k, requestID, blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED)
 
 	require.NoError(t, k.BridgeWithdrawalRefundsMap.Set(ctx, requestKey, types.MsgRequestBridgeWithdrawal{
 		Creator:            testutil.Creator,
@@ -234,4 +254,47 @@ func TestProcessAutoRefundForFailedBridgeOperation_WithdrawalContractNotRegister
 	stillPending, getErr := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
 	require.NoError(t, getErr)
 	require.Equal(t, testutil.Creator, stillPending.Creator)
+}
+
+func TestProcessAutoRefundForFailedBridgeOperation_RejectsOtherSigningStatuses(t *testing.T) {
+	testCases := []struct {
+		name   string
+		status blstypes.ThresholdSigningStatus
+	}{
+		{name: "undefined", status: blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_UNDEFINED},
+		{name: "pending", status: blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_PENDING_SIGNING},
+		{name: "collecting signatures", status: blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES},
+		{name: "completed", status: blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED},
+		{name: "cancelled", status: blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			k, _, ctx, _ := setupKeeperWithMocks(t)
+			requestID := bytes.Repeat([]byte{byte(tc.status + 0x70)}, 32)
+			requestKey := hex.EncodeToString(requestID)
+			expectThresholdSigningStatus(t, &k, requestID, tc.status)
+
+			pending := types.MsgRequestBridgeMint{
+				Creator:            testutil.Creator,
+				Amount:             "1000",
+				DestinationAddress: "0xabc",
+				ChainId:            "ethereum",
+			}
+			require.NoError(t, k.BridgeMintRefundsMap.Set(ctx, requestKey, pending))
+
+			closeRetry, err := k.ProcessAutoRefundForFailedBridgeOperation(ctx, requestID, "must not refund")
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "auto-refund requires FAILED or EXPIRED")
+			require.False(t, closeRetry)
+
+			stillPending, getErr := k.BridgeMintRefundsMap.Get(ctx, requestKey)
+			require.NoError(t, getErr)
+			require.Equal(t, pending, stillPending)
+
+			for _, event := range ctx.EventManager().Events() {
+				require.NotEqual(t, "bridge_operation_auto_refunded", event.Type)
+			}
+		})
+	}
 }
