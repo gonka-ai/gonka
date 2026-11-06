@@ -1,6 +1,7 @@
 package heightsync
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"sort"
@@ -10,6 +11,13 @@ import (
 // *increase* of the reference height, not per nonce, so this covers a long
 // session: at one block per second it is over an hour of continuous advance.
 const DefaultFloorWindow = 4096
+
+// SealDrainFloorLagBlocks is how far behind the latest floor the seal and
+// drain clocks read. The latest floor is one host stamp, and the strong proof
+// is not shipped. Dispute rollback lands later; until then money moves only
+// on a height that already has this many later floor blocks in the log, long
+// enough for a mismatch to have been marked. Four is 2×D (D = 2).
+const SealDrainFloorLagBlocks uint64 = 4
 
 // SequencerSigner is the FloorClaim.Signer of a sequencer-composed stamp
 // (MsgStartInference, MsgHeartbeat). Slot ids are dense from zero, so the top of
@@ -28,6 +36,10 @@ type FloorClaim struct {
 	Signer uint32
 	Height uint64
 	Hash   []byte
+	// TimeMs is the stamp's observed_time_ms. Zero means unset. The floor
+	// keeps the first non-zero time for a given (height, hash); a later
+	// disagree warns and does not rewrite.
+	TimeMs int64
 }
 
 // FloorConfig tunes how much of the floor is retained. It carries no raise
@@ -50,16 +62,29 @@ type floorEntry struct {
 	height uint64
 	hash   []byte
 	author uint32
+	timeMs int64
 }
 
 // FloorPoint is F(m) with the identity that put it there. The author is what
 // keeps blame with the originator of a bad height rather than with the honest
-// parties that carried it (L6).
+// parties that carried it (L6). TimeMs is the carried header time of the stamp
+// that first set this point (first non-zero wins); zero means unset.
 type FloorPoint struct {
 	Height uint64
 	Hash   []byte
 	Author uint32
 	Nonce  uint64
+	TimeMs int64
+}
+
+// FloorTimeMismatch is a later stamp that repeats an established floor
+// (height, hash) with a different non-zero time. The index keeps the first
+// time; callers warn and do not roll back.
+type FloorTimeMismatch struct {
+	Height uint64
+	Hash   []byte
+	Kept   int64
+	Got    int64
 }
 
 // FloorIndex answers F(m): the reference height the log had established at
@@ -102,9 +127,10 @@ type FloorPoint struct {
 // Entries are appended in nonce order and hold a running maximum, so AsOf is a
 // binary search and the structure is cheap to clone for trial-apply.
 type FloorIndex struct {
-	entries   []floorEntry
-	cfg       FloorConfig
-	truncated bool
+	entries    []floorEntry
+	cfg        FloorConfig
+	truncated  bool
+	mismatches []FloorTimeMismatch
 }
 
 // NewFloorIndex constructs an empty index with the default retention.
@@ -122,11 +148,17 @@ func NewFloorIndexWith(cfg FloorConfig) *FloorIndex {
 // can keep blame with it rather than with the parties that carried it.
 //
 // A zero height or absent hash is not a claim and is ignored (spec §14).
+//
+// TimeMs on a new raise is taken from the raising claim. A later host stamp
+// that repeats the same (height, hash) applies first-non-zero-wins: fill when
+// the entry still has 0, warn (via DrainTimeMismatches) and keep the first
+// when a later non-zero disagrees.
 func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) {
 	if f == nil || len(claims) == 0 {
 		return
 	}
 	f.cfg = f.cfg.withDefaults()
+	f.mismatches = f.mismatches[:0]
 
 	present := make([]FloorClaim, 0, len(claims))
 	for _, c := range claims {
@@ -154,12 +186,60 @@ func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) {
 	best := floorEntry{nonce: diffNonce, height: cur}
 	for _, c := range present {
 		if c.Height > best.height {
-			best = floorEntry{nonce: diffNonce, height: c.Height, hash: c.Hash, author: c.Signer}
+			best = floorEntry{
+				nonce:  diffNonce,
+				height: c.Height,
+				hash:   c.Hash,
+				author: c.Signer,
+				timeMs: c.TimeMs,
+			}
 		}
 	}
 	if best.height > cur {
 		f.appendEntry(best)
 	}
+	for _, c := range present {
+		f.noteFloorTime(c)
+	}
+}
+
+// noteFloorTime applies first-non-zero-wins for an established (height, hash).
+// A raise that just appended already has TimeMs; this covers later confirms of
+// the same point and fills a zero left by a legacy stamp.
+func (f *FloorIndex) noteFloorTime(c FloorClaim) {
+	if f == nil || c.TimeMs <= 0 {
+		return
+	}
+	for i := range f.entries {
+		e := &f.entries[i]
+		if e.height != c.Height || !bytes.Equal(e.hash, c.Hash) {
+			continue
+		}
+		if e.timeMs == 0 {
+			e.timeMs = c.TimeMs
+			return
+		}
+		if e.timeMs != c.TimeMs {
+			f.mismatches = append(f.mismatches, FloorTimeMismatch{
+				Height: c.Height,
+				Hash:   append([]byte(nil), c.Hash...),
+				Kept:   e.timeMs,
+				Got:    c.TimeMs,
+			})
+		}
+		return
+	}
+}
+
+// DrainTimeMismatches returns and clears mismatches recorded by the last
+// Observe. Callers warn; the floor time is unchanged.
+func (f *FloorIndex) DrainTimeMismatches() []FloorTimeMismatch {
+	if f == nil || len(f.mismatches) == 0 {
+		return nil
+	}
+	out := append([]FloorTimeMismatch(nil), f.mismatches...)
+	f.mismatches = nil
+	return out
 }
 
 func (f *FloorIndex) tip() (uint64, []byte, uint32) {
@@ -202,6 +282,54 @@ func (f *FloorIndex) AsOf(m uint64) (height uint64, hash []byte, known bool) {
 	return p.Height, p.Hash, known
 }
 
+// PointBehind is the newest retained floor point at nonces below m whose
+// height is at least lag below the current floor. known is false when that
+// point may have been pruned. behind is false when the log has not yet moved
+// lag blocks past a retained point: the latest raise is not a settlement clock.
+// The returned time is the carried TimeMs of that older point.
+func (f *FloorIndex) PointBehind(m, lag uint64) (point FloorPoint, known, behind bool) {
+	cur, known := f.PointAsOf(m)
+	if !known {
+		return FloorPoint{}, false, false
+	}
+	if lag == 0 {
+		if cur.Height == 0 {
+			return FloorPoint{}, true, false
+		}
+		return cur, true, true
+	}
+	if cur.Height <= lag || len(f.entries) == 0 {
+		return FloorPoint{}, true, false
+	}
+	maxH := cur.Height - lag
+	lo, hi := 0, len(f.entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if f.entries[mid].height <= maxH {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 {
+		if f.truncated {
+			return FloorPoint{}, false, false
+		}
+		return FloorPoint{}, true, false
+	}
+	e := f.entries[lo-1]
+	if e.nonce >= m || e.height > maxH {
+		return FloorPoint{}, true, false
+	}
+	return FloorPoint{
+		Height: e.height,
+		Hash:   append([]byte(nil), e.hash...),
+		Author: e.author,
+		Nonce:  e.nonce,
+		TimeMs: e.timeMs,
+	}, true, true
+}
+
 // PointAsOf is AsOf plus the identity that established the floor.
 func (f *FloorIndex) PointAsOf(m uint64) (FloorPoint, bool) {
 	if f == nil || len(f.entries) == 0 {
@@ -223,7 +351,30 @@ func (f *FloorIndex) PointAsOf(m uint64) (FloorPoint, bool) {
 		return FloorPoint{}, true
 	}
 	e := f.entries[lo-1]
-	return FloorPoint{Height: e.height, Hash: e.hash, Author: e.author, Nonce: e.nonce}, true
+	return FloorPoint{Height: e.height, Hash: e.hash, Author: e.author, Nonce: e.nonce, TimeMs: e.timeMs}, true
+}
+
+// PointAtHeight returns the floor entry whose height is exactly height.
+// Heights in the index are the running maximum, so each height appears once.
+// A pruned entry is not returned.
+func (f *FloorIndex) PointAtHeight(height uint64) (FloorPoint, bool) {
+	if f == nil || height == 0 || len(f.entries) == 0 {
+		return FloorPoint{}, false
+	}
+	lo, hi := 0, len(f.entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if f.entries[mid].height < height {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo >= len(f.entries) || f.entries[lo].height != height {
+		return FloorPoint{}, false
+	}
+	e := f.entries[lo]
+	return FloorPoint{Height: e.height, Hash: append([]byte(nil), e.hash...), Author: e.author, Nonce: e.nonce, TimeMs: e.timeMs}, true
 }
 
 // Max is the highest reference height in the index.
@@ -255,6 +406,7 @@ func (f *FloorIndex) Clone() *FloorIndex {
 		entries:   append([]floorEntry(nil), f.entries...),
 		cfg:       f.cfg,
 		truncated: f.truncated,
+		// mismatches are ephemeral Observe output; not cloned into trial state.
 	}
 }
 

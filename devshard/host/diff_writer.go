@@ -106,6 +106,8 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 		return nil, err
 	}
 
+	beforeLive := h.sm.LiveInferenceIDs()
+
 	h.mu.Unlock()
 	var sigErr error
 	for i, diff := range pending {
@@ -124,6 +126,7 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 	if err != nil {
 		return newly, err
 	}
+	h.forgetAnswersLeftLive(beforeLive)
 	return newly, sigErr
 }
 
@@ -363,7 +366,11 @@ func (h *Host) applyChunkLocked(ctx context.Context, run []types.Diff, applied m
 	if len(vds) > 0 {
 		recs := make([]types.DiffRecord, len(vds))
 		for k, vd := range vds {
-			recs[k] = types.DiffRecord{Diff: run[k], StateHash: vd.Root, WarmKeyDelta: types.ComputeWarmKeyDelta(warm, vd.WarmAfter)}
+			recs[k] = types.DiffRecord{
+				Diff:         run[k],
+				StateHash:    vd.Root,
+				WarmKeyDelta: types.ComputeWarmKeyDelta(warm, vd.WarmAfter),
+			}
 			warm = vd.WarmAfter
 		}
 		h.mu.Unlock()

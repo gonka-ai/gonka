@@ -278,6 +278,11 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 	return append([]byte(nil), enc[:]...), nil
 }
 
+// marshalInferenceEntry is the canonical inference bytes in the state root.
+// StartedAtTimeMs and ConfirmedAtTimeMs are omitted on purpose: apply copies
+// carried stamp times into the live record for seal/drain, but the root still
+// commits to stamp heights and hashes only so replicas stay identical when
+// only the header map differs.
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
 	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
 		InferenceId:        id,
@@ -293,14 +298,13 @@ func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) 
 		OutputTokens:       r.OutputTokens,
 		ReservedCost:       r.ReservedCost,
 		ActualCost:         r.ActualCost,
-		StartedAtHeight:    r.StartedAtHeight,
-		StartedAtBlockHash: r.StartedAtBlockHash,
-		ConfirmedAtHeight:  r.ConfirmedAtHeight,
-		StartedAtTimeMs:    r.StartedAtTimeMs,
-		ConfirmedAtTimeMs:  r.ConfirmedAtTimeMs,
-		VotesValid:         r.VotesValid,
-		VotesInvalid:       r.VotesInvalid,
-		ValidatedBy:        r.ValidatedBy.Bytes(),
+		StartedAtHeight:      r.StartedAtHeight,
+		StartedAtBlockHash:   r.StartedAtBlockHash,
+		ConfirmedAtHeight:    r.ConfirmedAtHeight,
+		ConfirmedAtBlockHash: r.ConfirmedAtBlockHash,
+		VotesValid:           r.VotesValid,
+		VotesInvalid:         r.VotesInvalid,
+		ValidatedBy:          r.ValidatedBy.Bytes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal inference %d: %w", id, err)
@@ -314,26 +318,27 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		return 0, nil, fmt.Errorf("unmarshal inference entry: %w", err)
 	}
 	rec := &types.InferenceRecord{
-		Status:             types.InferenceStatus(msg.Status),
-		ExecutorSlot:       msg.ExecutorSlot,
-		Model:              msg.Model,
-		PromptHash:         append([]byte(nil), msg.PromptHash...),
-		ResponseHash:       append([]byte(nil), msg.ResponseHash...),
-		ServedHash:         append([]byte(nil), msg.ServedHash...),
-		InputLength:        msg.InputLength,
-		MaxTokens:          msg.MaxTokens,
-		InputTokens:        msg.InputTokens,
-		OutputTokens:       msg.OutputTokens,
-		ReservedCost:       msg.ReservedCost,
-		ActualCost:         msg.ActualCost,
-		StartedAtHeight:    msg.StartedAtHeight,
-		StartedAtBlockHash: append([]byte(nil), msg.StartedAtBlockHash...),
-		ConfirmedAtHeight:  msg.ConfirmedAtHeight,
-		StartedAtTimeMs:    msg.StartedAtTimeMs,
-		ConfirmedAtTimeMs:  msg.ConfirmedAtTimeMs,
-		VotesValid:         msg.VotesValid,
-		VotesInvalid:       msg.VotesInvalid,
-		ValidatedBy:        types.Bitmap128FromBytes(msg.ValidatedBy),
+		Status:               types.InferenceStatus(msg.Status),
+		ExecutorSlot:         msg.ExecutorSlot,
+		Model:                msg.Model,
+		PromptHash:           append([]byte(nil), msg.PromptHash...),
+		ResponseHash:         append([]byte(nil), msg.ResponseHash...),
+		ServedHash:           append([]byte(nil), msg.ServedHash...),
+		InputLength:          msg.InputLength,
+		MaxTokens:            msg.MaxTokens,
+		InputTokens:          msg.InputTokens,
+		OutputTokens:         msg.OutputTokens,
+		ReservedCost:         msg.ReservedCost,
+		ActualCost:           msg.ActualCost,
+		StartedAtHeight:      msg.StartedAtHeight,
+		StartedAtBlockHash:   append([]byte(nil), msg.StartedAtBlockHash...),
+		ConfirmedAtHeight:    msg.ConfirmedAtHeight,
+		ConfirmedAtBlockHash: append([]byte(nil), msg.ConfirmedAtBlockHash...),
+		StartedAtTimeMs:      msg.StartedAtTimeMs,
+		ConfirmedAtTimeMs:    msg.ConfirmedAtTimeMs,
+		VotesValid:           msg.VotesValid,
+		VotesInvalid:         msg.VotesInvalid,
+		ValidatedBy:          types.Bitmap128FromBytes(msg.ValidatedBy),
 	}
 	return msg.InferenceId, rec, nil
 }

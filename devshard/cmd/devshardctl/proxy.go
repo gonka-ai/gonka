@@ -508,9 +508,7 @@ func (p *Proxy) waitHeightSeed(ctx context.Context) error {
 	if p == nil || p.session == nil {
 		return nil
 	}
-	waitCtx, cancel := context.WithTimeout(ctx, user.WaitHeightSeedChatBudget)
-	defer cancel()
-	return p.session.WaitHeightSeed(waitCtx)
+	return p.session.WaitFloorChat(ctx)
 }
 
 func writeHeightSeedError(w http.ResponseWriter, err error) {

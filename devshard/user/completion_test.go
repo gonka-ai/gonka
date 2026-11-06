@@ -11,6 +11,7 @@ import (
 
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/storage"
 	"devshard/types"
 
@@ -83,6 +84,28 @@ func completionParams() InferenceParams {
 	return InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 }
 
+// armedCompletionSession uses a 5s refusal window. Finalize's refusal is due on
+// the chain only after the floor's polled header time is that far past the
+// start stamp, so the caller covers that window before Finalize.
+func armedCompletionSession(t *testing.T) (*Session, []*signing.Secp256k1Signer, *floorRig) {
+	t.Helper()
+	signers := make([]*signing.Secp256k1Signer, 3)
+	for i := range signers {
+		signers[i] = testutil.MustGenerateKey(t)
+	}
+	config := testutil.DefaultConfig(len(signers))
+	config.RefusalTimeout = 5
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
+	return session, signers, rig
+}
+
+func coverRefusal(t *testing.T, session *Session, rig *floorRig, nonce uint64) {
+	t.Helper()
+	rec, ok := session.StateMachine().GetInference(nonce)
+	require.True(t, ok)
+	rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), rec.StartedAtHeight, rec.StartedAtBlockHash), time.Duration(session.StateMachine().Config().RefusalTimeout)*time.Second)
+}
+
 func TestCompletionJournalFailurePreventsSignedStart(t *testing.T) {
 	s, _, _ := setupSession(t, 3, 100000, 10)
 	journal := newMemoryCompletionStore()
@@ -99,12 +122,12 @@ func TestCompletionJournalFailurePreventsSignedStart(t *testing.T) {
 func TestCompletionFinalizeBlocksFailedVotesAndRetries(t *testing.T) {
 	for _, canceled := range []bool{false, true} {
 		t.Run(map[bool]string{false: "no_quorum", true: "cancellation"}[canceled], func(t *testing.T) {
-			s, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+			s, signers, rig := armedCompletionSession(t)
 			journal := newMemoryCompletionStore()
 			s.SetInferenceCompletionStore(journal)
 			p, err := s.PrepareInference(context.Background(), completionParams())
 			require.NoError(t, err)
-			rig.raise(t, s, 100_000)
+			coverRefusal(t, s, rig, p.Nonce())
 			var voters []*mockTimeoutVerifier
 			for i, client := range s.clients {
 				voter := &mockTimeoutVerifier{signer: signers[i], group: s.group, slotIdx: i}
@@ -141,12 +164,12 @@ func TestCompletionFinalizeBlocksFailedVotesAndRetries(t *testing.T) {
 }
 
 func TestCompletionRetryAfterLocalApplyAndFailedDelivery(t *testing.T) {
-	s, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
+	s, signers, rig := armedCompletionSession(t)
 	journal := newMemoryCompletionStore()
 	s.SetInferenceCompletionStore(journal)
 	p, err := s.PrepareInference(context.Background(), completionParams())
 	require.NoError(t, err)
-	rig.raise(t, s, 100_000)
+	coverRefusal(t, s, rig, p.Nonce())
 	for i, client := range s.clients {
 		s.clients[i] = &completionFailedSendClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: s.group, slotIdx: i}}
 	}
@@ -269,7 +292,8 @@ func TestReceiptNotificationsRequireExecutorAuthentication(t *testing.T) {
 			case "zero_time":
 				response.ConfirmedAt = 0
 			case "canonical_duplicate":
-				receipt := testutil.SignExecutorReceipt(t, signers[p.HostIdx()], "escrow-1", p.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
+				receipt := testutil.SignExecutorReceipt(t, signers[p.HostIdx()], "escrow-1", p.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens,
+					testutil.ReceiptStamp{Height: response.ObservedHeight, Hash: response.ObservedBlockHash, TimeMs: response.ObservedTimeMs})
 				response.Receipt = receipt
 				require.True(t, s.confirmStartOnReceipt(p.Nonce(), response))
 				require.NoError(t, s.SendPendingDiff(context.Background()))

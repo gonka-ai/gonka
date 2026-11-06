@@ -8,7 +8,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
-	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/stub"
@@ -117,7 +116,7 @@ func TestRecoverSessionsRetiresNonCanonicalStoredSessions(t *testing.T) {
 	hostSigner := seedNonCanonicalStoredSession(t, store, "9905", "09905")
 
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
-		testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+		"v6", &mockBridge{}, nil, nil)
 	require.NoError(t, mgr.RecoverSessions())
 
 	require.Equal(t, []string{"9905"}, mgr.ActiveEscrowIDs())
@@ -138,7 +137,7 @@ func TestStatsDetailCannotResurrectNonCanonicalSession(t *testing.T) {
 
 	mgr := NewHostManager(currentEpochStore{Storage: store, epoch: 7}, hostSigner,
 		stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
-		testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+		"v6", &mockBridge{}, nil, nil)
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/09906")
 	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())

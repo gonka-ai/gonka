@@ -32,13 +32,11 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
-	// RequireHeightSeed fails closed on chat/warmup until half the roster
-	// returns a host-signed Anchor. Default false in this library; the
-	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
+	// RequireHeightSeed joins the old seed-RPC loop on recover. The floor chat
+	// gate does not read it.
 	RequireHeightSeed bool
-	// DisableHeightSyncHeartbeat skips the quiet-session cadence. Default
-	// false in this library so tests can call MaybeHeartbeat. The gateway
-	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
+	// DisableHeightSyncHeartbeat skips the quiet-session cadence. The gateway
+	// leaves this false. Tests set it when one session must not tick.
 	DisableHeightSyncHeartbeat bool
 	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
 	// receipt/Finish compose. Zero keeps the session default (5m). The
@@ -277,7 +275,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	// Check if there is an existing session to recover from.
 	_, metaErr := sqlStore.GetSessionMeta(cfg.EscrowID)
 	if metaErr == nil {
-		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
+		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(bridge.ApplyWarmKeyCheck(cfg.Bridge))
 		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
 			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
 		)
@@ -321,7 +319,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier, sqlStore,
-		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey), state.WithVersion(sessionVersion))...,
+		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(bridge.ApplyWarmKeyCheck(cfg.Bridge)), state.WithVersion(sessionVersion))...,
 	)
 	if err != nil {
 		closeHostClients(hostClientsFromCache(clientCache))

@@ -2,8 +2,8 @@ package transport
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,7 +34,7 @@ type countingPeer struct {
 
 func (p *countingPeer) ChallengeReceipt(context.Context, uint64, *host.InferencePayload, []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	p.challenges.Add(1)
-	return nil, nil, errors.New("executor down")
+	return nil, nil, fmt.Errorf("challenge-receipt: %w", net.ErrClosed)
 }
 
 func (p *countingPeer) Close() { p.closed.Store(true) }
@@ -132,13 +132,20 @@ func TestServeVerifyTimeout_ResolvesMissingExecutorOnFirstVote(t *testing.T) {
 	srv.SetPeerClients(map[int]HostPeerClient{})
 	srv.SetPeerResolver(r.resolve)
 
-	for i := 0; i < 2; i++ {
-		resp, err := srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
-		require.NoError(t, err)
-		require.True(t, resp.Accept, "an executor that does not answer the challenge supports the timeout")
-	}
-	require.EqualValues(t, 1, r.calls.Load(), "the resolved client is kept for the next vote")
-	require.EqualValues(t, 2, r.last().challenges.Load(), "each vote challenges the executor")
+	resp, err := srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
+	require.NoError(t, err)
+	require.True(t, resp.Accept, "an executor that does not answer the challenge supports the timeout")
+	require.NotEmpty(t, resp.Signature)
+	firstSig := append([]byte(nil), resp.Signature...)
+	firstSlot := resp.VoterSlot
+	resp, err = srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
+	require.NoError(t, err)
+	require.True(t, resp.Accept, "a gateway retry replays the stored accept vote")
+	require.Equal(t, firstSig, resp.Signature)
+	require.Equal(t, firstSlot, resp.VoterSlot)
+	require.Empty(t, resp.Mempool)
+	require.EqualValues(t, 1, r.calls.Load(), "the resolved client is kept")
+	require.EqualValues(t, 1, r.last().challenges.Load(), "the remembered vote does not challenge the executor again")
 	require.Contains(t, srv.PeerClients(), 1)
 }
 

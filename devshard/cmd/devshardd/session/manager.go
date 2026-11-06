@@ -33,6 +33,7 @@ import (
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/hostevents"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -108,6 +109,7 @@ type HostManager struct {
 	// Height-sync scheduler (NodeManager GetBlockHeader or chain client). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
 	headerTimes      *headertime.Source
+	hostEvents       *hostevents.Poller
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
@@ -997,7 +999,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	config := bridge.SessionConfigAtBind(len(group), escrow)
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier, m.store,
-		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(m.boundVersion))...,
+		m.sessionSMOpts(state.WithWarmKeyResolver(bridge.ApplyWarmKeyCheck(m.bridge)), state.WithVersion(m.boundVersion))...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -1323,7 +1325,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		return state.NewStateMachine(
 			escrowID, meta.Config, meta.Group, meta.InitialBalance,
 			meta.CreatorAddr, m.verifier, m.store,
-			m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
+			m.sessionSMOpts(state.WithWarmKeyResolver(bridge.ApplyWarmKeyCheck(m.bridge)), state.WithVersion(recoveredVersion))...,
 		)
 	}
 	sm, err := newStateMachine()
@@ -1386,12 +1388,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 				for _, rec := range page {
 					sm.InjectWarmKeys(rec.WarmKeyDelta)
-					var root []byte
-					applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
-						var err error
-						root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
-						return err
-					})
+					root, applyErr := sm.ApplyLocalPersistedRecord(rec)
 					if applyErr != nil {
 						return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 					}
@@ -1466,6 +1463,11 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			}
 		}
 	}
+
+	// Replay does not wait on the header map. Catch up from the lowest
+	// unfinished start height so later timeout checks can read those rows
+	// without blocking restart.
+	sm.WarmUnfinishedHeaders()
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
 	if err != nil {

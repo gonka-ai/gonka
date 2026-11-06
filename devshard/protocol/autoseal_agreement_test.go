@@ -161,13 +161,22 @@ func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint6
 	}
 	start := testutil.StartTx(inferenceID)
 	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = h, hash
+	if h > 0 {
+		start.GetStartInference().ObservedTimeMs = int64(h) * testutil.HeightClockBlockMs
+	}
 	applySignedDiffToUserAndHost(t, env, startNonce, []*types.DevshardTx{start})
 
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
+	timeMs := int64(h) * testutil.HeightClockBlockMs
+	stamp := testutil.ReceiptStamp{}
+	if h > 0 {
+		stamp = testutil.ReceiptStamp{Height: h, Hash: hash, TimeMs: timeMs}
+	}
 	execSig := testutil.SignExecutorReceipt(t, env.hostSigners[executorSlot], env.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, stamp)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID, ExecutorSig: execSig, ObservedHeight: h, ObservedBlockHash: hash,
+		ObservedTimeMs: timeMs,
 	}}}
 	applySignedDiffToUserAndHost(t, env, startNonce+1, []*types.DevshardTx{confirmTx})
 }
@@ -238,15 +247,17 @@ func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenc
 func TestProtocol_UserHostApply_AutoSealAgreement_ExplicitClock(t *testing.T) {
 	env := setupAutoSealEnv(t, 5, 1_000_000)
 
-	env.startConfirm(t, 1, 1)
-	env.finishInference(t, 1, 3)
+	nonce := env.raiseFloor(t, 1, autoSealTestBaseConfirmedAt)
+	env.startConfirm(t, nonce, nonce)
+	env.finishInference(t, nonce, nonce+2)
 
-	require.Equal(t, types.StatusFinished, env.userSM.SnapshotState().Inferences[1].Status)
+	require.Equal(t, types.StatusFinished, env.userSM.SnapshotState().Inferences[nonce].Status)
+	require.Equal(t, uint64(autoSealTestBaseConfirmedAt), env.userSM.SnapshotState().Inferences[nonce].ConfirmedAtHeight)
 	require.Empty(t, env.userSM.ExportSealedNonces(), "finished inference should not seal before clock gate")
 
-	env.advanceClockPastGrace(t, 4, 1)
+	env.advanceClockPastGrace(t, nonce+3, nonce)
 	require.NotEmpty(t, env.userSM.SnapshotState().SealedAcc, "expected non-empty sealed_acc after auto-seal")
-	require.Contains(t, env.userSM.ExportSealedNonces(), uint64(1))
+	require.Contains(t, env.userSM.ExportSealedNonces(), nonce)
 
 	assertUserHostStateParity(t, env, 0, env.userSM.LatestNonce())
 }

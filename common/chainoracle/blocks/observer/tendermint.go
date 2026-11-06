@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"common/chainoracle/blocks"
@@ -23,6 +24,8 @@ const (
 	atWaitPoll          = 500 * time.Millisecond
 	maxFillPerCall      = 20_000
 	maxTipGapFill       = 1000
+	minLinkBudget       = 5 * time.Second
+	DefaultRPCTimeout   = 10 * time.Second
 	historyLoadTimeout  = 30 * time.Second
 	storeWriteQueue     = 256
 	storePruneEvery     = 1024
@@ -42,6 +45,8 @@ type TendermintConfig struct {
 	Store          HeaderStore
 	HistoryHeights int64
 	ResetTrust     bool
+	// RPCTimeout bounds one HTTP call. Zero uses DefaultRPCTimeout.
+	RPCTimeout time.Duration
 }
 
 type headerRPC interface {
@@ -60,10 +65,28 @@ type Oracle struct {
 
 	writes  chan []StoredHeader
 	verifyQ chan int64
+	linkQ   chan struct{}
+	fillQ   chan struct{}
 	fillMu  sync.Mutex
+
+	chainID    string
+	now        func() time.Time
+	linkBudget time.Duration
+	pendMu     sync.Mutex
+	pending    map[int64]pendingHeader
+	aheadLog   sync.Map
+
+	hookMu    sync.RWMutex
+	publish   func(h *blocks.Header, fromDAPI bool)
+	pendFloor func() int64
+	onFailure func(error)
+	failures  atomic.Uint64
+	// publishedTrusted is the last trusted height remember published.
+	publishedTrusted atomic.Int64
 }
 
 type oracleOptions struct {
+	chainID        string
 	verify         bool
 	trustingPeriod time.Duration
 	store          HeaderStore
@@ -77,17 +100,32 @@ func NewTendermint(cfg TendermintConfig) (*Oracle, error) {
 	if cfg.RPCURL == "" {
 		return nil, errors.New("observer: empty RPC URL")
 	}
-	rpc, err := rpchttp.New(cfg.RPCURL, "/websocket")
+	rpc, err := rpchttp.NewWithTimeout(cfg.RPCURL, "/websocket", rpcTimeoutSeconds(cfg.RPCTimeout))
 	if err != nil {
 		return nil, fmt.Errorf("observer: tendermint rpc: %w", err)
 	}
 	return newOracleWith(rpc, oracleOptions{
+		chainID:        cfg.ChainID,
 		verify:         cfg.VerifyCommits,
 		trustingPeriod: cfg.TrustingPeriod,
 		store:          cfg.Store,
 		historyHeights: cfg.HistoryHeights,
 		resetTrust:     cfg.ResetTrust,
 	}), nil
+}
+
+func rpcTimeoutSeconds(d time.Duration) uint {
+	if d <= 0 {
+		d = DefaultRPCTimeout
+	}
+	sec := uint(d / time.Second)
+	if time.Duration(sec)*time.Second < d {
+		sec++
+	}
+	if sec == 0 {
+		return 1
+	}
+	return sec
 }
 
 func newOracle(rpc headerRPC) *Oracle {
@@ -100,6 +138,8 @@ func newOracleWith(rpc headerRPC, opts oracleOptions) *Oracle {
 		cache:   tipcache.New(0),
 		history: NewHistory(opts.historyHeights),
 		store:   opts.store,
+		chainID: opts.chainID,
+		pending: make(map[int64]pendingHeader),
 	}
 	if opts.verify {
 		if lrpc, ok := rpc.(lightRPC); ok {
@@ -134,6 +174,8 @@ func newOracleWith(rpc headerRPC, opts oracleOptions) *Oracle {
 			cancel()
 		}
 		o.verifyQ = make(chan int64, 1)
+		o.linkQ = make(chan struct{}, 1)
+		o.fillQ = make(chan struct{}, 1)
 		go o.runVerifier()
 	}
 	return o
@@ -192,13 +234,22 @@ func (o *Oracle) runStoreWriter() {
 
 func (o *Oracle) remember(rows ...StoredHeader) {
 	var kept []StoredHeader
+	link := false
 	for _, r := range rows {
 		if r.Verified && o.verifier != nil {
 			r.Epoch = o.verifier.epoch.Load()
 		}
 		if o.history.PutStored(r) {
 			kept = append(kept, r)
+			o.aheadLog.Delete(r.Height)
+			if o.pendingHas(r.Height - 1) {
+				link = true
+			}
 		}
+	}
+	o.publishRows(kept)
+	if link {
+		o.queueLink()
 	}
 	if o.writes == nil || len(kept) == 0 {
 		return
@@ -210,23 +261,186 @@ func (o *Oracle) remember(rows ...StoredHeader) {
 	}
 }
 
+// rememberTrusted publishes the trusted header only when its height advances.
+func (o *Oracle) rememberTrusted(hdr *cmttypes.Header) {
+	if hdr == nil || hdr.Height <= 0 {
+		return
+	}
+	for {
+		prev := o.publishedTrusted.Load()
+		if hdr.Height <= prev {
+			return
+		}
+		if o.publishedTrusted.CompareAndSwap(prev, hdr.Height) {
+			o.remember(verifiedFromHeader(hdr))
+			return
+		}
+	}
+}
+
 func (o *Oracle) runVerifier() {
 	var lastTop int64
-	for height := range o.verifyQ {
-		ctx, cancel := context.WithTimeout(context.Background(), historyStoreTimeout)
-		if _, ok := o.history.entry(height); !ok {
-			if _, err := o.verifiedAt(ctx, height); err != nil {
-				logging.Warn("chainoracle: verify tip", "chainoracle", "height", height, "error", err)
+	for {
+		select {
+		case height := <-o.verifyQ:
+			ctx, cancel := context.WithTimeout(context.Background(), historyStoreTimeout)
+			ok, tip := o.verifyTip(ctx, height)
+			if !ok {
 				cancel()
 				continue
 			}
+			o.linkPending()
+			if tip {
+				if lastTop > 0 && height-lastTop > 1 && height-lastTop <= maxTipGapFill {
+					_, _ = o.fillDown(ctx, lastTop+1)
+				}
+				lastTop = height
+			}
+			cancel()
+		case <-o.linkQ:
+			o.linkPending()
+		case <-o.fillQ:
+			o.fillPendingFromTrusted()
 		}
-		if lastTop > 0 && height-lastTop > 1 && height-lastTop <= maxTipGapFill {
-			_, _ = o.fillDown(ctx, lastTop+1)
-		}
-		lastTop = height
-		cancel()
 	}
+}
+
+// verifyTip checks one queued height. A dapi height below the trusted header
+// is not sent to verifiedAt: the trusted header is already its anchor, and
+// linkPending walks down to it.
+func (o *Oracle) verifyTip(ctx context.Context, height int64) (ok, tip bool) {
+	if _, have := o.history.entry(height); have {
+		return true, true
+	}
+	if o.pendingHas(height) {
+		trusted, err := o.trust(ctx)
+		if err != nil {
+			logging.Warn("chainoracle: trusted header for dapi blocks", "chainoracle", "height", height, "error", err)
+			return false, false
+		}
+		if height < trusted {
+			return true, false
+		}
+	}
+	if _, err := o.verifiedAt(ctx, height); err != nil {
+		if o.logDAPIAhead(height, err) {
+			return false, false
+		}
+		logging.Warn("chainoracle: verify tip", "chainoracle", "height", height, "error", err)
+		return false, false
+	}
+	return true, true
+}
+
+func (o *Oracle) queueVerify(height int64) {
+	select {
+	case o.verifyQ <- height:
+	default:
+		select {
+		case <-o.verifyQ:
+		default:
+		}
+		select {
+		case o.verifyQ <- height:
+		default:
+		}
+	}
+}
+
+func (o *Oracle) queueLink() {
+	if o.linkQ == nil {
+		return
+	}
+	select {
+	case o.linkQ <- struct{}{}:
+	default:
+	}
+}
+
+func (o *Oracle) queueFillPending() {
+	if o.fillQ == nil {
+		return
+	}
+	select {
+	case o.fillQ <- struct{}{}:
+	default:
+	}
+}
+
+// LinkBuffered walks down from the trusted header through the pending
+// buffer. The poller calls it on SuppressBlocks and needs_reset.
+func (o *Oracle) LinkBuffered() {
+	if o == nil || o.verifier == nil {
+		return
+	}
+	o.queueFillPending()
+}
+
+func (o *Oracle) fillPendingFromTrusted() {
+	from := o.pendingLowest()
+	if from <= 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), historyStoreTimeout)
+	defer cancel()
+	if _, err := o.fillDown(ctx, from); err != nil {
+		logging.Warn("chainoracle: fill pending dapi heights", "chainoracle", "from", from, "error", err)
+	}
+}
+
+func (o *Oracle) clock() time.Time {
+	if o != nil && o.now != nil {
+		return o.now()
+	}
+	return time.Now()
+}
+
+func (o *Oracle) pendingLinkBudget() time.Duration {
+	if o.linkBudget > 0 {
+		return o.linkBudget
+	}
+	b := 2 * o.headerInterval()
+	if b < minLinkBudget {
+		return minLinkBudget
+	}
+	return b
+}
+
+func (o *Oracle) headerInterval() time.Duration {
+	if o == nil || o.history == nil {
+		return 0
+	}
+	top := o.history.Top()
+	if top < 2 {
+		return 0
+	}
+	newer, ok := o.history.Get(top)
+	if !ok {
+		return 0
+	}
+	older, ok := o.history.Get(top - 1)
+	if !ok {
+		return 0
+	}
+	d := newer.Time.Sub(older.Time)
+	if d <= 0 {
+		return 0
+	}
+	return d
+}
+
+func (o *Oracle) logDAPIAhead(height int64, err error) bool {
+	if o.verifier == nil || height <= o.verifier.trustedHeight() {
+		return false
+	}
+	if !errors.Is(err, blocks.ErrHeaderNotFound) && !isCometHeightErr(err) {
+		return false
+	}
+	if _, loaded := o.aheadLog.LoadOrStore(height, struct{}{}); loaded {
+		return true
+	}
+	logging.Debug("dapi ahead of the RPC", "chainoracle", "height", height)
+	return true
 }
 
 // Observe records a committed header from the dapi NewBlock listener.
@@ -242,18 +456,7 @@ func (o *Oracle) Observe(h *blocks.Header) {
 		o.remember(StoredHeader{Height: h.Height, Hash: h.BlockHash, TimeMs: h.Time.UnixMilli(), ChainID: h.ChainID})
 		return
 	}
-	select {
-	case o.verifyQ <- h.Height:
-	default:
-		select {
-		case <-o.verifyQ:
-		default:
-		}
-		select {
-		case o.verifyQ <- h.Height:
-		default:
-		}
-	}
+	o.queueVerify(h.Height)
 }
 
 // ObserveHex decodes a hex block hash (Comet WS block_id.hash) and Observes.
@@ -285,6 +488,9 @@ func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 		return nil, blocks.ErrHeaderNotFound
 	}
 	if o.verifier != nil {
+		if _, ok := o.history.Get(height); !ok && o.pendingWaiting(height) {
+			return nil, ErrHeaderPendingLink
+		}
 		return o.verifiedAt(ctx, height)
 	}
 	h, err := o.cache.At(ctx, height)
@@ -334,7 +540,7 @@ func (o *Oracle) verifiedAt(ctx context.Context, height int64) (*blocks.Header, 
 	if err != nil {
 		return nil, err
 	}
-	o.remember(verifiedFromHeader(trusted))
+	o.rememberTrusted(trusted)
 	if height >= trusted.Height {
 		hdr, err := o.verifier.verifyForward(ctx, height)
 		if err == nil {
@@ -363,10 +569,6 @@ func (o *Oracle) fillDown(ctx context.Context, height int64) (*blocks.Header, er
 	if h, ok := o.history.Get(height); ok {
 		return h, nil
 	}
-	rpc, ok := o.rpc.(blockchainInfoRPC)
-	if !ok {
-		return nil, blocks.ErrHeaderNotFound
-	}
 	nextHeight, next, ok := o.history.lowestLinkedAbove(height)
 	if !ok {
 		return nil, blocks.ErrHeaderNotFound
@@ -377,8 +579,30 @@ func (o *Oracle) fillDown(ctx context.Context, height int64) (*blocks.Header, er
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		lo := max(height, nextHeight-BlockchainInfoBatch)
-		res, err := rpc.BlockchainInfo(ctx, lo, nextHeight-1)
+		cur := nextHeight - 1
+		if p, ok := o.pendingAt(cur); ok {
+			if err := verifyBackwardLink(p.hdr, next, nextHeight, chainID); err != nil {
+				o.breakAt(cur, err)
+			} else {
+				row := verifiedFromHeader(p.hdr)
+				row.fromDAPI = true
+				o.remember(row)
+				o.dropPending(cur)
+				filled++
+				next = historyEntry{hash: row.Hash, prevHash: row.PrevHash, timeMs: row.TimeMs}
+				nextHeight = cur
+				if cur == height {
+					return o.headerFromRow(row), nil
+				}
+				continue
+			}
+		}
+		rpc, ok := o.rpc.(blockchainInfoRPC)
+		if !ok {
+			return nil, blocks.ErrHeaderNotFound
+		}
+		lo := o.missingFrom(max(height, cur-BlockchainInfoBatch+1), cur)
+		res, err := rpc.BlockchainInfo(ctx, lo, cur)
 		if err != nil {
 			if isCometHeightErr(err) {
 				return nil, blocks.ErrHeaderNotFound
@@ -449,6 +673,45 @@ func (o *Oracle) fetchHeader(ctx context.Context, height *int64, observe bool) (
 		o.remember(storedFromHeader(res.Header))
 	}
 	return hdr, nil
+}
+
+// Header reads one height with Comet /header.
+func (o *Oracle) Header(ctx context.Context, height int64) (*blocks.Header, error) {
+	if o == nil || height <= 0 {
+		return nil, blocks.ErrHeaderNotFound
+	}
+	return o.fetchHeader(ctx, &height, false)
+}
+
+// BlockchainInfo reads [from, to] with one BlockchainInfo call, capped at
+// BlockchainInfoBatch. It does not call Block or GetBlockHeader.
+func (o *Oracle) BlockchainInfo(ctx context.Context, from, to int64) ([]*blocks.Header, error) {
+	if o == nil || from <= 0 || to < from {
+		return nil, nil
+	}
+	if to-from+1 > BlockchainInfoBatch {
+		to = from + BlockchainInfoBatch - 1
+	}
+	rpc, ok := o.rpc.(blockchainInfoRPC)
+	if !ok {
+		return nil, blocks.ErrHeaderNotFound
+	}
+	res, err := rpc.BlockchainInfo(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	hdrs := headersFromBlockchainInfo(res)
+	out := make([]*blocks.Header, 0, len(hdrs))
+	var rows []StoredHeader
+	for _, h := range hdrs {
+		row := storedFromHeader(h)
+		rows = append(rows, row)
+		out = append(out, o.headerFromRow(row))
+	}
+	if o.verifier == nil {
+		o.remember(rows...)
+	}
+	return out, nil
 }
 
 func (o *Oracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {

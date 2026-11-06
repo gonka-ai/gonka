@@ -56,6 +56,7 @@ message MsgHeartbeat {
   uint64 slots_num                     = 4;
   string reason                        = 5; // height_cadence|quiet_session|forced|cpoc_band
   repeated SyncVectorEntry sync_vector = 6; // status of the preceding turn
+  int64  observed_time_ms              = 7;
 }
 
 // MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
@@ -70,7 +71,8 @@ message MsgHeightAck {
   bytes     observed_block_hash = 5;
   SyncState sync_state          = 6;
   bytes     peer_seen           = 7; // bitmap, bit j = "slot j fresh within F"
-  bytes     host_sig            = 8; // over fields 2–7, domain heightsync.ack.v1
+  bytes     host_sig            = 8; // over all fields except host_sig, domain heightsync.ack.v1
+  int64     observed_time_ms    = 9;
 }
 
 message SyncVectorEntry {
@@ -108,6 +110,7 @@ message ExecutorReceiptContent {
   string escrow_id = 7;
   uint64 observed_height = 9;
   bytes  observed_block_hash = 10;
+  int64  observed_time_ms = 11;
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.

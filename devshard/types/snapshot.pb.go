@@ -396,11 +396,14 @@ func (x *EscrowStateProto) GetHeightSyncTurnReason() string {
 // reader that cannot confirm that must discard the blob rather than answer F(m)
 // from it.
 type FloorIndexEntryProto struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Nonce         uint64                 `protobuf:"varint,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
-	Height        uint64                 `protobuf:"varint,2,opt,name=height,proto3" json:"height,omitempty"`
-	Hash          []byte                 `protobuf:"bytes,3,opt,name=hash,proto3" json:"hash,omitempty"`
-	Author        uint32                 `protobuf:"varint,4,opt,name=author,proto3" json:"author,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Nonce  uint64                 `protobuf:"varint,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
+	Height uint64                 `protobuf:"varint,2,opt,name=height,proto3" json:"height,omitempty"`
+	Hash   []byte                 `protobuf:"bytes,3,opt,name=hash,proto3" json:"hash,omitempty"`
+	Author uint32                 `protobuf:"varint,4,opt,name=author,proto3" json:"author,omitempty"`
+	// time_ms is the observed_time_ms of the stamp that first set this floor
+	// point (first non-zero wins). Zero means unset / legacy.
+	TimeMs        int64 `protobuf:"varint,5,opt,name=time_ms,json=timeMs,proto3" json:"time_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -459,6 +462,13 @@ func (x *FloorIndexEntryProto) GetHash() []byte {
 func (x *FloorIndexEntryProto) GetAuthor() uint32 {
 	if x != nil {
 		return x.Author
+	}
+	return 0
+}
+
+func (x *FloorIndexEntryProto) GetTimeMs() int64 {
+	if x != nil {
+		return x.TimeMs
 	}
 	return 0
 }
@@ -649,12 +659,13 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x1b.devshard.v1.HostStatsProtoR\x05value:\x028\x01\x1a;\n" +
 	"\rWarmKeysEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"p\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +
 	"\x14FloorIndexEntryProto\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12\x16\n" +
 	"\x06height\x18\x02 \x01(\x04R\x06height\x12\x12\n" +
 	"\x04hash\x18\x03 \x01(\fR\x04hash\x12\x16\n" +
-	"\x06author\x18\x04 \x01(\rR\x06author\"r\n" +
+	"\x06author\x18\x04 \x01(\rR\x06author\x12\x17\n" +
+	"\atime_ms\x18\x05 \x01(\x03R\x06timeMs\"r\n" +
 	"\x0fFloorIndexProto\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.devshard.v1.FloorIndexEntryProtoR\aentries\x12\x1c\n" +
 	"\ttruncated\x18\x03 \x01(\bR\ttruncatedJ\x04\b\x02\x10\x03\"\xf3\x04\n" +

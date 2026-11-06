@@ -799,7 +799,7 @@ func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	defer tx.Rollback()
 
 	rows, err := tx.Query(
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at, header_times_json
 		 FROM diffs
 		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
 		 ORDER BY nonce`,

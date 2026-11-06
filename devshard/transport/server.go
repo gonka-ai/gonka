@@ -626,8 +626,10 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 }
 
 // ServeVerifyTimeout is the transport-neutral core behind POST .../verify-timeout
-// and SessionService.VerifyTimeout. Callers allow the escrow owner or a group
-// member. A cold host CreateSession requires a creator-signed start in diffs.
+// and SessionService.VerifyTimeout. Callers allow the escrow owner (gateway)
+// only. A cold host CreateSession requires a creator-signed start in diffs.
+// A second call for the same inference/reason replays a stored accept vote
+// when one exists; a second check is never started.
 func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutRequest) (*VerifyTimeoutResponse, error) {
 	if !s.host.CompletionRequestsEnabled() {
 		logging.Debug("ServeVerifyTimeout: devshard_requests_enabled=false", "subsystem", "server")
@@ -669,6 +671,15 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
+	if errors.Is(err, host.ErrDuplicateChallenge) {
+		if sig, slot, ok := s.host.LookupTimeoutVote(req.InferenceID, reason); ok {
+			return &VerifyTimeoutResponse{Accept: true, Signature: sig, VoterSlot: slot}, nil
+		}
+		return &VerifyTimeoutResponse{Accept: false}, nil
+	}
+	if errors.Is(err, host.ErrAnswerBusy) {
+		return &VerifyTimeoutResponse{Accept: false}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -681,6 +692,7 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 		}
 		resp.Signature = sig
 		resp.VoterSlot = voterSlot
+		s.host.RememberTimeoutVote(req.InferenceID, reason, sig, voterSlot)
 	} else {
 		mempoolBytes, mErr := DevshardTxsToBytes(host.VerifiedRecoveryTxsFor(s.host, st, req.InferenceID, rec, s.host.MempoolTxs()))
 		if mErr != nil {
@@ -760,8 +772,8 @@ func (s *Server) HandleVerifyErrorMiss(c echo.Context) (err error) {
 }
 
 // ServeVerifyErrorMiss is the transport-neutral core behind POST .../verify-error-miss
-// and SessionService.VerifyErrorMiss. Callers allow the escrow owner or a group
-// member. A cold host CreateSession requires a creator-signed start in diffs.
+// and SessionService.VerifyErrorMiss. Callers allow the escrow owner (gateway)
+// only. A cold host CreateSession requires a creator-signed start in diffs.
 func (s *Server) ServeVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
 	_ = ctx
 	if !s.host.CompletionRequestsEnabled() {

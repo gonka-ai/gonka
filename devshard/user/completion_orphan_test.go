@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"devshard/internal/testutil"
 	"devshard/storage"
 	"devshard/types"
 
@@ -20,7 +19,7 @@ func restartWithCompletionOrphan(t *testing.T) (*Session, *memoryCompletionStore
 	path := filepath.Join(t.TempDir(), "session")
 	db, err := storage.NewSQLite(path)
 	require.NoError(t, err)
-	require.NoError(t, db.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, CreatorAddr: creator.Address(), Config: s.sm.SnapshotState().Config, Group: s.group, InitialBalance: 100000}))
+	require.NoError(t, db.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Version: "v6", CreatorAddr: creator.Address(), Config: s.sm.SnapshotState().Config, Group: s.group, InitialBalance: 100000}))
 	s.store = db
 	journal := newMemoryCompletionStore()
 	s.SetInferenceCompletionStore(journal)
@@ -32,7 +31,7 @@ func restartWithCompletionOrphan(t *testing.T) (*Session, *memoryCompletionStore
 	db, err = storage.NewSQLite(path)
 	require.NoError(t, err)
 	t.Cleanup(func() { db.Close() })
-	recovered, _, err := RecoverSession(db, creator, s.verifier, "escrow-1", testutil.RuntimeTestVersion, s.group, s.clients)
+	recovered, _, err := recoverForTest(t, db, creator, s.verifier, "escrow-1", "v6", s.group, s.clients)
 	require.NoError(t, err)
 	recovered.SetInferenceCompletionStore(journal)
 	return recovered, journal
