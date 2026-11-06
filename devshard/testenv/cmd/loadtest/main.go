@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -25,13 +26,53 @@ func main() {
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
 	runTimeout := flag.Duration("timeout", 0, "overall run timeout; default: workload + drain + 10m, at least 20m")
+	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
+	reportDir := flag.String("report", "", "rebuild report.md and timeline.html, and print a console summary of an existing run, without running")
+	buildPath := flag.String("build", "", "YAML file naming a prebuilt devshardd and versiond, versiond-router and gateway images to run instead of building them from this checkout")
+	recheckDir := flag.String("recheck", "", "judge every check of an existing run directory again from its saved inputs, rewrite assertions.json, invariants.json, report.md and timeline.html, and print a console summary, without a stack")
 	flag.Parse()
+	if *recheckDir != "" {
+		passed, notes, err := loadtest.EvaluateSavedRun(*recheckDir, *strictXFail)
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, note := range notes {
+			log.Printf("loadtest: recheck: %s", note)
+		}
+		report, err := writeConsoleReport(*recheckDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		if !passed {
+			os.Exit(1)
+		}
+		return
+	}
+	if *reportDir != "" {
+		report, err := writeConsoleReport(*reportDir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		fmt.Print(report)
+		return
+	}
 	if *scenarioPath == "" {
 		log.Fatal("provide -scenario")
 	}
-	scenario, err := loadtest.LoadScenario(*scenarioPath)
+	loadScenario := loadtest.LoadScenario
+	if *loadDataset != "" {
+		loadScenario = loadtest.LoadDatasetScenario
+	}
+	scenario, err := loadScenario(*scenarioPath)
 	if err != nil {
 		log.Fatal(err)
+	}
+	var build *loadtest.Build
+	if *buildPath != "" {
+		if build, err = loadtest.LoadBuild(*buildPath); err != nil {
+			log.Fatal(err)
+		}
 	}
 	if *runTimeout < 0 {
 		log.Fatal("timeout must be positive")
@@ -64,12 +105,33 @@ func main() {
 		KeepStack:       *keepStack,
 		LoadDataset:     *loadDataset,
 		MetricsInterval: *metricsInterval,
+		StrictXFail:     *strictXFail,
+		Build:           build,
 	})
+	if err != nil && result.Summary.Requests == 0 {
+		log.Fatalf("loadtest: workload did not start: %v", err)
+	}
+	reportPrinted := false
+	if report, reportErr := writeConsoleReport(*outputDir); reportErr != nil {
+		log.Printf("loadtest: no report: %v", reportErr)
+	} else {
+		// Put the compact report and its clickable timeline link last.
+		printDiagnostics(result)
+		fmt.Print(report)
+		reportPrinted = true
+	}
 	if err != nil {
-		if result.Summary.Requests > 0 {
+		if !reportPrinted && result.Summary.Requests > 0 {
 			printSummary(result, false)
 		}
+		if reportPrinted && loadtest.IsAssertionFailure(err) {
+			log.Print("loadtest: assertions failed; details above and in report.md")
+			os.Exit(1)
+		}
 		log.Fatal(err)
+	}
+	if reportPrinted {
+		return
 	}
 	if result.Summary.Requests == 0 {
 		fmt.Fprintf(os.Stdout, "Load test summary\n\nScenario: %s\nResult: NO REQUESTS\n\nArtifacts\n---------\n  output: %s\n", result.Summary.Scenario, result.OutputDir)
@@ -98,6 +160,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	fmt.Fprintf(os.Stdout, "  failed:          %d\n", summary.Failed)
 	fmt.Fprintf(os.Stdout, "  dropped:         %d\n", summary.Dropped)
 	fmt.Fprintf(os.Stdout, "  error rate:      %.2f%%\n", summary.ErrorRate*100)
+	fmt.Fprintf(os.Stdout, "  dropped rate:    %.2f%%\n", summary.DroppedRate*100)
 	fmt.Fprintln(os.Stdout)
 
 	fmt.Fprintln(os.Stdout, "Latency")
@@ -121,6 +184,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		fmt.Fprintf(os.Stdout, "  finished:         %d\n", terminal.Finished)
 		fmt.Fprintf(os.Stdout, "  orphaned:         %d\n", terminal.Orphaned)
 		fmt.Fprintf(os.Stdout, "  ghost:            %d\n", terminal.Ghost)
+		fmt.Fprintf(os.Stdout, "  ghost excluded:   %d\n", terminal.GhostExcluded)
 		fmt.Fprintf(os.Stdout, "  total:             %d\n", terminal.Total)
 		fmt.Fprintf(os.Stdout, "  ghost rate:       %.2f%%\n", terminal.GhostRate*100)
 		statuses := formatIntCounts(terminal.Statuses)
@@ -133,6 +197,45 @@ func printSummary(result loadtest.RunResult, passed bool) {
 	}
 	fmt.Fprintln(os.Stdout)
 
+	printDiagnostics(result)
+	fmt.Fprintln(os.Stdout, "Artifacts")
+	fmt.Fprintln(os.Stdout, "---------")
+	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)
+	fmt.Fprintln(os.Stdout)
+	printAssertions(result.Assertions)
+}
+
+// writeConsoleReport preserves the complete file report while stdout uses
+// a terminal-specific renderer for normal runs, -report and -recheck.
+func writeConsoleReport(outputDir string) (string, error) {
+	if _, err := loadtest.WriteReport(outputDir); err != nil {
+		return "", err
+	}
+	report, err := loadtest.ConsoleReport(outputDir)
+	if err != nil {
+		return "", err
+	}
+	path, err := loadtest.WriteTimelineReport(outputDir)
+	if err != nil {
+		log.Printf("loadtest: no HTML timeline: %v", err)
+		return report, nil
+	}
+	return report + "  HTML timeline: " + terminalFileLink(path) + "\n", nil
+}
+
+// OSC 8 makes the label clickable in supporting terminals. Redirected logs
+// retain a plain, escaped file URL with no terminal control sequences.
+func terminalFileLink(path string) string {
+	uri := (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	info, err := os.Stdout.Stat()
+	if err == nil && info.Mode()&os.ModeCharDevice != 0 && os.Getenv("TERM") != "dumb" {
+		return "\033]8;;" + uri + "\a" + path + "\033]8;;\a"
+	}
+	return uri
+}
+
+func printDiagnostics(result loadtest.RunResult) {
+	summary := result.Summary
 	printMLNodeStats(result.MLStats)
 	fmt.Fprintln(os.Stdout)
 	printGatewayStateSizes(result.GatewayState)
@@ -163,11 +266,6 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		}
 		fmt.Fprintln(os.Stdout)
 	}
-	fmt.Fprintln(os.Stdout, "Artifacts")
-	fmt.Fprintln(os.Stdout, "---------")
-	fmt.Fprintf(os.Stdout, "  output: %s\n", result.OutputDir)
-	fmt.Fprintln(os.Stdout)
-	printAssertions(result.Assertions)
 }
 
 func printAccounting(report *loadtest.AccountingReport) {

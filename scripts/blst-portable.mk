@@ -1,4 +1,5 @@
 # Apple Silicon auto-detection (Darwin + hw.optional.arm64 via sysctl, not uname -m).
+# sysctl by absolute path: /usr/sbin is often missing from PATH in non-login shells.
 # Rosetta/x86_64 shells on M-series Macs still match the host.
 #
 # When detected:
@@ -8,7 +9,7 @@
 # Override: make build-docker BLST_PORTABLE=0
 # Override: make build-docker DOCKER_PLATFORM=linux/amd64
 _APPLE_SILICON := $(shell \
-  if [ "$$(uname -s 2>/dev/null)" = Darwin ] && [ "$$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then \
+  if [ "$$(uname -s 2>/dev/null)" = Darwin ] && [ "$$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then \
     echo 1; \
   fi)
 
