@@ -501,6 +501,10 @@ func TestRunChallenge_DropsAVoteSignedByAnotherKey(t *testing.T) {
 
 	result, err := session.RunChallenge(context.Background(), nonce, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM)
 	require.NoError(t, err)
+	require.Equal(t, responseHash, result.ResponseHash, "the result names the Finish the voters judged")
+	require.Equal(t, testutil.TestServedHash, result.ServedHash)
+	require.True(t, result.BindsReceivedStream([][32]byte{[32]byte(responseHash)}))
+	require.False(t, result.BindsReceivedStream([][32]byte{tamperedSum}))
 	require.False(t, result.Invalidated)
 	require.Len(t, result.Votes, 1)
 	require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, result.Votes[0].Fault)
