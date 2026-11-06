@@ -68,6 +68,9 @@ func TestVersiondRestartSessionPersistence(t *testing.T) {
 	snapAfterAll := harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey)
 	harness.RequireGatewaySessionStable(t, snap2, snapAfterAll)
 	harness.ClearGatewayParticipantQuarantines(t, client, eps.GatewayHTTP, adminKey, snap2.EscrowID)
+	// Unquarantine can let stranded timeout votes finish; re-settle so the
+	// Advanced baseline is not sitting on a still-held reservation.
+	snapAfterAll = harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey)
 
 	harness.Step(t, "gateway chat after all versiond restarts")
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{

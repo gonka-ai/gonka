@@ -1,0 +1,54 @@
+schema_version: v1
+scenario: single-timeout-ml-node
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: timeout
+
+workload:
+  max_in_flight: 10
+  duration: 30s
+  traffic:
+    type: constant
+    rps: 4
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "single timeout ML node request"
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    # One of four nodes intentionally never completes its upstream request.
+    error_rate: 0.35
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+
+drain_timeout: 60s

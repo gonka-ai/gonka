@@ -69,6 +69,15 @@ func VersionedSessionPayloadPath(version, escrowID string) string {
 	return SessionPayloadPath(VersionedRoutePrefix(version), escrowID)
 }
 
+// SessionRPCPath is the public URL for a Connect procedure mounted under
+// /devshard/{version}/sessions/{id}/rpc/{procedure}. procedure is the Connect
+// path including the leading slash (e.g. /devshard.transport.v1.PeerAuthService/Attach).
+func SessionRPCPath(routePrefix, escrowID, procedure string) string {
+	prefix := strings.TrimRight(NormalizeRoutePrefix(routePrefix), "/")
+	proc := strings.TrimPrefix(strings.TrimSpace(procedure), "/")
+	return fmt.Sprintf("%s/sessions/%s/rpc/%s", prefix, escrowID, proc)
+}
+
 // VersionlessRoutePrefix is the canonical mount for public observability
 // (no protocol version segment). Protocol traffic stays under VersionedRoutePrefix.
 const VersionlessRoutePrefix = "/devshard"
@@ -88,7 +97,10 @@ func VersionlessSessionSignaturesPath(escrowID string) string {
 	return fmt.Sprintf("%s/sessions/%s/signatures", VersionlessRoutePrefix, escrowID)
 }
 
-// VersionlessStatsShardsPath is GET /devshard/stats/shards.
+// VersionlessStatsRPCPath is GET /devshard/stats/rpc.
+func VersionlessStatsRPCPath() string {
+	return VersionlessRoutePrefix + "/stats/rpc"
+}
 func VersionlessStatsShardsPath() string {
 	return VersionlessRoutePrefix + "/stats/shards"
 }

@@ -1,13 +1,17 @@
 package proxy
 
-import "sync"
+import (
+	"net/http"
+	"sync"
+)
 
 // RouteTable maps a public version name to one concrete child generation.
 type RouteTable map[string]*Target
 
 // Target tracks requests pinned by the proxy to one child process.
 type Target struct {
-	address string
+	address  string
+	childH2C bool
 
 	mu       sync.Mutex
 	retired  bool
@@ -16,11 +20,26 @@ type Target struct {
 	closed   bool
 }
 
+// NewTarget registers a child that accepts prior-knowledge HTTP/2.
 func NewTarget(address string) *Target {
+	return NewChildTarget(address, true)
+}
+
+// NewChildTarget registers a child. childH2C selects the dial: HTTP/2 when
+// the binary advertised an h2c listen, HTTP/1.1 otherwise.
+func NewChildTarget(address string, childH2C bool) *Target {
 	return &Target{
-		address: address,
-		drained: make(chan struct{}),
+		address:  address,
+		childH2C: childH2C,
+		drained:  make(chan struct{}),
 	}
+}
+
+func (t *Target) transport() http.RoundTripper {
+	if t != nil && t.childH2C {
+		return childTransport
+	}
+	return childHTTP1Transport
 }
 
 func (t *Target) Address() string {

@@ -52,3 +52,24 @@ func TestFilterHostRaises_SequencerStampsPass(t *testing.T) {
 	require.Zero(t, n)
 	require.Len(t, kept, 1)
 }
+
+func TestFilterHostRaises_FinishRaiseMustMatchEnvelope(t *testing.T) {
+	hash := []byte{0xaa}
+	// The stamp is inside proposer_sig, so an unbacked raise is omitted whole.
+	finish := finishTxAt(7, 180, hash)
+	kept, n := heightsync.FilterHostRaises(100, 90, true, nil, []*types.DevshardTx{finish})
+	require.Equal(t, 1, n)
+	require.Empty(t, kept)
+	require.Equal(t, uint64(180), finish.GetFinishInference().ObservedHeight)
+
+	match := finishTxAt(7, 180, hash)
+	kept, n = heightsync.FilterHostRaises(100, 180, true, nil, []*types.DevshardTx{match})
+	require.Zero(t, n)
+	require.Equal(t, uint64(180), kept[0].GetFinishInference().ObservedHeight)
+	require.Equal(t, hash, kept[0].GetFinishInference().ObservedBlockHash)
+
+	carry := finishTxAt(7, 100, hash)
+	kept, n = heightsync.FilterHostRaises(100, 90, true, nil, []*types.DevshardTx{carry})
+	require.Zero(t, n)
+	require.Equal(t, uint64(100), kept[0].GetFinishInference().ObservedHeight)
+}

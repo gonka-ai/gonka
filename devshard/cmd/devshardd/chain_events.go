@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 
 	"common/chain"
 	chainbridge "devshard/cmd/devshardd/bridge"
@@ -19,14 +19,15 @@ type chainEventBridge struct {
 
 // bootstrapPhase fetches the current epoch from the chain and seeds phase
 // before runtime-config OnEpochChange starts firing (initial snapshot apply
-// does not emit OnEpochChange).
-func bootstrapPhase(ctx context.Context, chainClient *chain.Client, phase *chain.Phase) {
-	epochResp, err := chainClient.InferenceQueryClient().GetCurrentEpoch(ctx, &chaintypes.QueryGetCurrentEpochRequest{})
+// does not emit OnEpochChange). A failure is returned so startup fails:
+// phase left at 0 would store payloads under an epoch validators never ask.
+func bootstrapPhase(ctx context.Context, query chain.InferenceClient, phase *chain.Phase) error {
+	epochResp, err := query.GetCurrentEpoch(ctx, &chaintypes.QueryGetCurrentEpochRequest{})
 	if err != nil {
-		slog.Warn("phase: failed to bootstrap epoch, starting at 0", "error", err)
-		return
+		return fmt.Errorf("query current epoch: %w", err)
 	}
 	phase.SetEpoch(epochResp.Epoch)
+	return nil
 }
 
 func newChainEventBridge(
@@ -34,9 +35,11 @@ func newChainEventBridge(
 	chainRPCURL string,
 	chainClient *chain.Client,
 	submitter chainbridge.Submitter,
-) *chainEventBridge {
+) (*chainEventBridge, error) {
 	phase := new(chain.Phase)
-	bootstrapPhase(ctx, chainClient, phase)
+	if err := bootstrapPhase(ctx, chainClient.InferenceQueryClient(), phase); err != nil {
+		return nil, err
+	}
 	eventListener := events.NewListener(chainRPCURL)
 	br := chainbridge.NewChainBridge(chainClient, submitter)
 	br.Subscribe(eventListener)
@@ -44,7 +47,7 @@ func newChainEventBridge(
 		listener: eventListener,
 		bridge:   br,
 		phase:    phase,
-	}
+	}, nil
 }
 
 func (b *chainEventBridge) Bridge() *chainbridge.ChainBridge {

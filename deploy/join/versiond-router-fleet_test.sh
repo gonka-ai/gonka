@@ -26,6 +26,7 @@ cleanup() {
     docker volume ls -q --filter label=ai.gonka.component=versiond-router-state \
         --filter "label=ai.gonka.fleet=$fleet_id" | xargs -r docker volume rm >/dev/null 2>&1 || true
     docker rm -f gonka-router-fleet-backend-$suffix \
+        gonka-router-fleet-rpc-backend-$suffix \
         gonka-router-fleet-proxy-$suffix \
         gonka-router-fleet-probe-$suffix \
         gonka-router-fleet-duplicate-$suffix \
@@ -102,6 +103,9 @@ VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=false
 PROXY_ROUTER_CONTAINER=gonka-router-fleet-proxy-$suffix
 VERSIOND_NON_HA_VERSIONS=
 VERSIOND_VERSIONS=v4
+# The fixture exposes an actual H2 data endpoint and the peer-RPC capability
+# marker. Python supplies only the test response/stream bodies behind it.
+VERSIOND_ROUTER_BACKEND_H2=true
 EOF
 fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
 
@@ -213,9 +217,29 @@ docker build -q -t "$incompatible_cache_image" \
 docker build -q -t "$proxy_image" -f "$script_dir/../../proxy-router/Dockerfile" \
     "$script_dir/../.." >/dev/null
 docker run -d --name "gonka-router-fleet-backend-$suffix" \
-    --network "$back" --network-alias versiond-pool \
+    --network "$back" \
     -v "$tmpdir/backend.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
+
+cat >"$tmpdir/rpc-backend.cfg" <<EOF
+global
+    log stdout format raw local0
+defaults
+    mode http
+    timeout connect 1s
+    timeout client 10s
+    timeout server 10s
+frontend versiond
+    bind :8080
+    http-request return status 200 content-type text/plain string "peer-rpc-ok\n" if { path /readyz } { url_param(peer-rpc) -m str 1 }
+    default_backend response_body
+backend response_body
+    server python gonka-router-fleet-backend-$suffix:8080
+EOF
+docker run -d --name "gonka-router-fleet-rpc-backend-$suffix" \
+    --network "$back" --network-alias versiond-pool \
+    -v "$tmpdir/rpc-backend.cfg:/etc/haproxy/mock.cfg:ro" \
+    --entrypoint haproxy "$image" -W -db -f /etc/haproxy/mock.cfg >/dev/null
 
 "${fleet[@]}" up >/dev/null
 bootstrap_status=$("${fleet[@]}" status)
@@ -478,6 +502,7 @@ sed -i '/^VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true$/d' "$tmpdir/config.env"
 docker run -d --name "gonka-router-fleet-proxy-$suffix" \
     --network "$front" --network-alias proxy-router \
     -e VERSIOND_NON_HA_VERSIONS= -e VERSIOND_VERSIONS=v4 \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     "$proxy_image" >/dev/null
 docker run -d --name "gonka-router-fleet-probe-$suffix" \
     --network "$front" curlimages/curl:8.12.1 sleep 300 >/dev/null
@@ -503,6 +528,64 @@ VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "maintenance rollout committed before parent admission converged"
 
+# Peer RPC is a checked server. After admission, every slot address on
+# rpc_h2_upstream is UP with L7OK. "no check" is still in the hash ring
+# and parent drain never selects it.
+slot_ips=()
+for slot in "${slots[@]}"; do
+    id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    [[ -n $id ]] || fail "peer RPC admission has no running slot $slot"
+    ip=$(docker inspect --format \
+        "{{with index .NetworkSettings.Networks \"$front\"}}{{.IPAddress}}{{end}}" \
+        "$id")
+    [[ -n $ip ]] || fail "peer RPC admission cannot read the front address of slot $slot"
+    slot_ips+=("$ip")
+done
+h2_ready=
+h2_stats=
+for _ in $(seq 30); do
+    h2_stats=$(docker exec "gonka-router-fleet-proxy-$suffix" /bin/sh -ec \
+        "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock")
+    if awk -F, -v ips="${slot_ips[*]}" '
+        BEGIN {
+            count = split(ips, wanted_list, " ")
+            for (i = 1; i <= count; i++) wanted[wanted_list[i]] = 1
+        }
+        NR == 1 {
+            for (i = 1; i <= NF; i++) {
+                name = $i
+                sub(/^#[[:space:]]*/, "", name)
+                column[name] = i
+            }
+            next
+        }
+        $(column["pxname"]) == "rpc_h2_upstream" && $(column["svname"]) != "BACKEND" {
+            if ($(column["status"]) == "no check") unchecked = 1
+            address = $(column["addr"])
+            sub(/:.*/, "", address)
+            if (address in wanted) {
+                seen[address] = 1
+                if ($(column["status"]) !~ /^UP/ || $(column["check_status"]) != "L7OK") {
+                    pending = 1
+                }
+            }
+        }
+        END {
+            if (unchecked || pending) exit 1
+            for (address in wanted) if (!(address in seen)) exit 1
+        }
+    ' <<<"$h2_stats"; then
+        h2_ready=1
+        break
+    fi
+    sleep 1
+done
+[[ -n $h2_ready ]] || fail \
+    "rpc_h2_upstream is not UP with L7OK for every admitted slot: $h2_stats"
+
 # A killed fleet operation can leave runtime-only DRAIN state in the parent.
 # The next converging start repairs only those stale entries and requires a
 # fresh active-check rise before reporting admission.
@@ -526,7 +609,8 @@ mapfile -t stale_refs < <(awk -F, -v address="$selected_slot_ip" '
         next
     }
     ($(column["pxname"]) == "versiond_router_coarse" ||
-            $(column["pxname"]) ~ /^versiond_routers_/) &&
+            $(column["pxname"]) ~ /^versiond_routers_/ ||
+            $(column["pxname"]) == "rpc_h2_upstream") &&
         ($(column["addr"]) == address ||
             index($(column["addr"]), address ":") == 1) &&
         $(column["status"]) ~ /^UP/ {
@@ -960,6 +1044,7 @@ done < <(docker ps -aq --no-trunc \
 # `down` is intentionally ordered after the main Compose project: it refuses
 # to delete shared external networks while any non-fleet endpoint remains.
 docker rm -f "gonka-router-fleet-backend-$suffix" \
+    "gonka-router-fleet-rpc-backend-$suffix" \
     "gonka-router-fleet-proxy-$suffix" \
     "gonka-router-fleet-probe-$suffix" >/dev/null
 "${fleet[@]}" down --maintenance >/dev/null

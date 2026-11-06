@@ -121,7 +121,7 @@ func RequireAggregateSpilledInGatewayLogs(t *testing.T, s *Stack) {
 	t.Helper()
 	out, err := s.ComposeLogsTail(400, "devshardctl")
 	require.NoError(t, err)
-	require.Contains(t, out, "aggregate_spilled=true",
+	require.True(t, LogsContainFields(out, LogBoolField("aggregate_spilled", true)),
 		"expected aggregate spill in gateway logs")
 }
 

@@ -87,6 +87,11 @@ func (p *fakeHostAvailabilityProvider) Conditions() process.Conditions {
 	return p.conditions
 }
 
+func (m *fakeHostShutdownManager) ReleasePeers(context.Context) error {
+	m.record("release_peers")
+	return nil
+}
+
 func (m *fakeHostShutdownManager) RequestChildrenDrain(context.Context) error {
 	m.record("request_children_drain")
 	return nil
@@ -494,6 +499,7 @@ func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
 	assertCallOrder(
 		t,
 		mgr.callLog(),
+		"release_peers",
 		"request_children_drain",
 		"wait_children_idle",
 		"shutdown",
@@ -775,12 +781,92 @@ func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
 	assertCallOrder(
 		t,
 		mgr.callLog(),
+		"release_peers",
 		"request_children_drain",
 		"wait_children_idle",
 		"shutdown",
 	)
 	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
 		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+func TestShutdownHostOpenWatchReachesChildDrain(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	releaseWatch := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseWatch) }) }
+	handler := hostLifecycle.Admission(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasSuffix(r.URL.Path, "PeerAuthService/Watch") {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		close(entered)
+		<-releaseWatch
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	watchSrv := httptest.NewServer(handler)
+	t.Cleanup(func() {
+		release()
+		watchSrv.Close()
+	})
+	go func() {
+		resp, err := http.Get(watchSrv.URL + "/v1/devshard.transport.v1.PeerAuthService/Watch")
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("watch did not start")
+	}
+	if got := hostLifecycle.Snapshot().Inflight; got != 0 {
+		t.Fatalf("watch inflight = %d, want 0", got)
+	}
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	hostSrv := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(hostSrv.Close)
+	mgr := newFakeHostShutdownManager()
+	mgr.shutdownGrace = 1500 * time.Millisecond
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
+	result := make(chan error, 1)
+	go func() {
+		result <- shutdownHost(
+			hostSrv.Config,
+			mgr,
+			hostLifecycle,
+			force,
+			pollDone,
+			time.Now().Add(2*time.Second),
+		)
+	}()
+
+	deadline := time.After(time.Second)
+	for !strings.Contains(mgr.callLog(), "request_children_drain") {
+		select {
+		case <-deadline:
+			t.Fatalf("child drain was not reached while Watch was open:\n%s", mgr.callLog())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+	assertCallOrder(t, mgr.callLog(), "release_peers", "request_children_drain")
+	release()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish")
 	}
 }
 
@@ -928,6 +1014,7 @@ func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
 	assertCallOrder(
 		t,
 		calls,
+		"release_peers",
 		"request_children_drain",
 		"wait_children_idle",
 		"shutdown",
@@ -1023,6 +1110,19 @@ func TestVersiondReadyForVersionAnswersPerVersion(t *testing.T) {
 	status.Ready = false
 	if versiondReadyForVersion(status, serves, "v4") {
 		t.Fatal("announcing host is still ready for v4")
+	}
+}
+
+func TestWriteReadyPeerRPCBody(t *testing.T) {
+	plain := httptest.NewRecorder()
+	writeReady(plain, false)
+	if plain.Body.String() != "ready\n" {
+		t.Fatalf("JSON readiness body = %q, want ready", plain.Body.String())
+	}
+	peer := httptest.NewRecorder()
+	writeReady(peer, true)
+	if peer.Body.String() != peerRPCReadyBody {
+		t.Fatalf("peer-RPC readiness body = %q, want %q", peer.Body.String(), peerRPCReadyBody)
 	}
 }
 

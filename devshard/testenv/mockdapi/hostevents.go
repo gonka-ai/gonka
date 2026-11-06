@@ -96,15 +96,52 @@ func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKi
 // nodeManagerServer augments the chainoracle params NodeManager (GetRuntimeConfig
 // + AcquireMLNode + …) with a mock GetHostEvents producer for the escrow
 // long-poll warm scenario. Other RPCs are inherited from the embedded params server.
+//
+// When a test-only ML pool is configured, AcquireMLNode still goes through
+// params.Server so mlnode_acquire/release Stage lines and lock tracking stay
+// truthful; this wrapper only tallies /testenv/ml-allocations.
 type nodeManagerServer struct {
 	*params.Server
-	ring       *hostEventRing
-	blocks     blocks.BlockOracle
-	omitBlocks bool
+	ring         *hostEventRing
+	blocks       blocks.BlockOracle
+	omitBlocks   bool
+	mlNodes      []MLNode
+	allocationMu sync.Mutex
+	allocations  map[string]uint64
 }
 
-func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle blocks.BlockOracle, omitBlocks bool) *nodeManagerServer {
-	return &nodeManagerServer{Server: paramsSrv, ring: ring, blocks: oracle, omitBlocks: omitBlocks}
+func newNodeManagerServer(paramsSrv *params.Server, ring *hostEventRing, oracle blocks.BlockOracle, omitBlocks bool, configured ...[]MLNode) *nodeManagerServer {
+	var nodes []MLNode
+	if len(configured) > 0 {
+		nodes = append([]MLNode(nil), configured[0]...)
+	}
+	return &nodeManagerServer{
+		Server: paramsSrv, ring: ring, blocks: oracle, omitBlocks: omitBlocks,
+		mlNodes: nodes, allocations: make(map[string]uint64, len(nodes)),
+	}
+}
+
+// AcquireMLNode delegates to params.Server (stage logs + lock table) and, when
+// a test-only pool is configured, increments /testenv/ml-allocations.
+func (s *nodeManagerServer) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+	resp, err := s.Server.AcquireMLNode(ctx, req)
+	if err != nil || len(s.mlNodes) == 0 {
+		return resp, err
+	}
+	s.allocationMu.Lock()
+	s.allocations[resp.NodeId]++
+	s.allocationMu.Unlock()
+	return resp, nil
+}
+
+func (s *nodeManagerServer) AllocationCounts() map[string]uint64 {
+	s.allocationMu.Lock()
+	defer s.allocationMu.Unlock()
+	counts := make(map[string]uint64, len(s.allocations))
+	for id, count := range s.allocations {
+		counts[id] = count
+	}
+	return counts
 }
 
 func (s *nodeManagerServer) GetBlockHeader(ctx context.Context, req *gen.GetBlockHeaderRequest) (*gen.GetBlockHeaderResponse, error) {

@@ -20,20 +20,22 @@ type catalogHealthzSource interface {
 // proxy forwards it to the versiond-router catalog probe /{version}/healthz.
 // Direct routers and e2e hosts also accept the public path. 503, 404, and
 // dial errors keep waiting — root /healthz is never consulted (router
-// process-up is not this version). In-process clients have no catalog URL
-// and return immediately.
+// process-up is not this version). Each tick rebuilds the URL list and
+// starts lazy lookups whose retry window has elapsed, so a host that
+// resolves after the first probe can admit the catalog. In-process clients
+// have no catalog URL and return immediately.
 func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 	if s == nil {
-		return nil
-	}
-	urls := s.catalogHealthzURLs()
-	if len(urls) == 0 {
 		return nil
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
+	urls, pending := s.catalogHealthzURLs()
+	if len(urls) == 0 && !pending {
+		return nil
+	}
 	if probeRouterCatalog(client, urls) == catalogProbeAdmitted {
 		return nil
 	}
@@ -46,6 +48,10 @@ func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
+			urls, pending = s.catalogHealthzURLs()
+			if len(urls) == 0 && !pending {
+				return nil
+			}
 			if probeRouterCatalog(client, urls) == catalogProbeAdmitted {
 				logging.Debug("router catalog admitted", "subsystem", "heightsync",
 					"escrow", s.escrowID)
@@ -55,13 +61,21 @@ func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 	}
 }
 
-func (s *Session) catalogHealthzURLs() []string {
+// catalogHealthzURLs starts lazy host lookups that are allowed to run and
+// returns the catalog URLs those clients can answer now. pending is true
+// while a lazy host still has no client, so an empty list keeps waiting.
+func (s *Session) catalogHealthzURLs() (urls []string, pending bool) {
 	s.mu.Lock()
 	clients := append([]HostClient(nil), s.clients...)
 	s.mu.Unlock()
 	seen := make(map[string]struct{}, len(clients))
-	var urls []string
 	for _, c := range clients {
+		if lazy, ok := c.(*lazyHostClient); ok {
+			lazy.lazy.Start()
+			if lazy.built() == nil {
+				pending = true
+			}
+		}
 		src, ok := c.(catalogHealthzSource)
 		if !ok {
 			continue
@@ -76,7 +90,7 @@ func (s *Session) catalogHealthzURLs() []string {
 		seen[u] = struct{}{}
 		urls = append(urls, u)
 	}
-	return urls
+	return urls, pending
 }
 
 type catalogProbe int

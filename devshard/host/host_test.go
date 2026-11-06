@@ -18,6 +18,7 @@ import (
 	"devshard/gossip"
 	"devshard/internal/testutil"
 	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -760,26 +761,26 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 	require.Contains(t, err.Error(), "max_tokens")
 }
 
-// An honest gateway floors max_tokens before signing the reservation, so a declared
-// max_tokens below the floor means a dishonest gateway under-reserved: escrow pays for
-// 1 token while the executor is forced to produce the floor. The executor must reject it.
-func TestVerifyPayloadWorkload_RejectsUnderReservedFloor(t *testing.T) {
-	underReserved := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+// Test flow:
+// 1. Verify a payload declaring max_tokens 0; it fails with ErrPayloadMismatch.
+// 2. Verify a payload declaring max_tokens 1; it passes.
+func TestVerifyPayloadWorkload_RejectsZeroReservation(t *testing.T) {
+	zero := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":0}`)
 	err := verifyPayloadWorkload(&InferencePayload{
-		Prompt:      underReserved,
+		Prompt:      zero,
 		Model:       "llama",
-		InputLength: uint64(len(underReserved)),
-		MaxTokens:   1,
+		InputLength: uint64(len(zero)),
+		MaxTokens:   0,
 	})
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
 	require.Contains(t, err.Error(), "below floor")
 
-	atFloor := []byte(fmt.Sprintf(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":%d}`, testutil.TestMaxTokens))
+	short := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
 	require.NoError(t, verifyPayloadWorkload(&InferencePayload{
-		Prompt:      atFloor,
+		Prompt:      short,
 		Model:       "llama",
-		InputLength: uint64(len(atFloor)),
-		MaxTokens:   testutil.TestMaxTokens,
+		InputLength: uint64(len(short)),
+		MaxTokens:   1,
 	}))
 }
 
@@ -1022,6 +1023,115 @@ func TestHost_ExecuteFailure_ReturnsReceiptNoMempool(t *testing.T) {
 	mptxs := h.MempoolTxs()
 	require.Len(t, mptxs, 1, "mempool should have only MsgConfirmStart")
 	require.NotNil(t, mptxs[0].GetConfirmStart())
+}
+
+func countMempoolConfirms(txs []*types.DevshardTx, inferenceID uint64) int {
+	n := 0
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			n++
+		}
+	}
+	return n
+}
+
+// signTestReceipt signs an unstamped executor receipt for rec, as the host does
+// when it has no oracle.
+func signTestReceipt(t *testing.T, signer *signing.Secp256k1Signer, inferenceID uint64, rec types.InferenceRecord, confirmedAt int64) []byte {
+	t.Helper()
+	data, err := proto.Marshal(&types.ExecutorReceiptContent{
+		InferenceId: inferenceID,
+		PromptHash:  rec.PromptHash,
+		Model:       rec.Model,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		StartedAt:   rec.StartedAt,
+		EscrowId:    "escrow-1",
+		ConfirmedAt: confirmedAt,
+	})
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return sig
+}
+
+func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	req := HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()}
+	first, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, first.Receipt)
+
+	// Stand in for a retry a few seconds later: the queued receipt is one
+	// signed at an earlier confirmed_at than the retry would sign now.
+	rec, ok := h.sm.GetInference(1)
+	require.True(t, ok)
+	earlier := first.ConfirmedAt - 30
+	queued := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: signTestReceipt(t, hosts[1], 1, rec, earlier),
+		ConfirmedAt: earlier,
+	}}}
+	h.mempool.RemoveIncluded([]*types.DevshardTx{findMempoolConfirm(h.MempoolTxs())})
+	h.mempool.Add(MempoolEntry{Tx: queued, ProposedAt: 1})
+
+	retry, err := h.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, queued.GetConfirmStart().ExecutorSig, retry.Receipt, "a retry while pending returns the queued receipt")
+	require.Equal(t, earlier, retry.ConfirmedAt)
+	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1), "a retry must not queue a second ConfirmStart")
+
+	challenge, challengeAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
+	require.NoError(t, err)
+	require.Equal(t, retry.Receipt, challenge, "the challenge path hands out the same receipt")
+	require.Equal(t, earlier, challengeAt)
+	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1))
+
+	// The gateway composes the receipt it got back. Its bytes match the queued
+	// entry, so applying it clears the mempool.
+	landed := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId:       1,
+		ExecutorSig:       retry.Receipt,
+		ConfirmedAt:       retry.ConfirmedAt,
+		ObservedHeight:    retry.ObservedHeight,
+		ObservedBlockHash: retry.ObservedBlockHash,
+	}}}
+	confirmDiff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{landed})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{confirmDiff}})
+	require.NoError(t, err)
+	rec, ok = h.sm.GetInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Zero(t, countMempoolConfirms(h.MempoolTxs(), 1), "the landed receipt leaves no ConfirmStart behind")
+}
+
+func TestHost_ReceiptIgnoresPeerImportedConfirmStart(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{startDiff}})
+	require.NoError(t, err)
+
+	forged := []byte("not this host's signature")
+	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: forged,
+		ConfirmedAt: 1,
+	}}})
+
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()})
+	require.NoError(t, err)
+	require.NotNil(t, resp.Receipt)
+	require.NotEqual(t, forged, resp.Receipt, "a gossiped copy must not stand in for this host's receipt")
+	own := h.mempool.QueuedConfirmStart(1)
+	require.NotNil(t, own)
+	require.Equal(t, resp.Receipt, own.ExecutorSig)
 }
 
 func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
@@ -1633,6 +1743,111 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	require.Len(t, h.SlotIDs(), 1)
 }
 
+// TestWarmKey_RestartRestoresSiblingSlots is the v6 restart regression: a
+// multi-slot validator stores one warm binding, and rebuilding the host must
+// still execute every unbound sibling. Before the fix, NewHost stopped at
+// that one binding and the other seats answered not_executor until settle.
+func TestWarmKey_RestartRestoresSiblingSlots(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	// Seats 0..3 are cold, seat 4 is another validator. inference N uses seat N%5.
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{4, 1})
+	require.Len(t, group, 5)
+
+	var resolverCalls int
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		resolverCalls++
+		return warmAddr == warm.Address() && coldAddr == cold.Address(), nil
+	}
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000),
+		state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
+
+	// Confirms land on seats 1, then 3, 0, 2. The first one writes the binding.
+	// The later three are sibling signatures and must not write another.
+	for _, nonce := range []uint64{1, 3, 5, 7} {
+		applyWarmConfirm(t, sm, user, warm, nonce)
+	}
+	require.Equal(t, 1, resolverCalls, "only the first seat resolves the grant")
+	require.Equal(t, map[uint32]string{1: warm.Address()}, sm.WarmKeys())
+
+	h, err := NewHost(sm, warm, stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.Equal(t, map[uint32]bool{0: true, 1: true, 2: true, 3: true}, h.SlotIDs())
+	require.Equal(t, map[uint32]string{1: warm.Address()}, sm.WarmKeys(), "restore must not write sibling bindings")
+
+	// Seat 4 belongs to the other validator.
+	foreign := hostRequestAt(t, user, 9)
+	resp, err := h.HandleRequest(context.Background(), foreign)
+	require.NoError(t, err)
+	require.Nil(t, resp.Receipt)
+	require.Equal(t, observability.ReasonNotExecutor, resp.ReceiptReason)
+
+	// Seat 0 had no stored binding. It must execute after the restart.
+	sibling := hostRequestAt(t, user, 10)
+	resp, err = h.HandleRequest(context.Background(), sibling)
+	require.NoError(t, err)
+	require.NotNil(t, resp.Receipt, "unbound sibling seat must execute after restart")
+	require.Equal(t, observability.ReasonOK, resp.ReceiptReason)
+}
+
+// A sibling already bound to a different warm key stays exclusive across restart.
+func TestWarmKey_RestartSkipsExclusivelyBoundSibling(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm := testutil.MustGenerateKey(t)
+	stranger := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{4, 1})
+
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+	sm.InjectWarmKeys(map[uint32]string{
+		0: warm.Address(),
+		1: stranger.Address(),
+	})
+
+	h, err := NewHost(sm, warm, stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.Equal(t, map[uint32]bool{0: true, 2: true, 3: true}, h.SlotIDs())
+	require.Equal(t, map[uint32]string{0: warm.Address(), 1: stranger.Address()}, sm.WarmKeys())
+}
+
+func applyWarmConfirm(t *testing.T, sm *state.StateMachine, user, warm *signing.Secp256k1Signer, nonce uint64) {
+	t.Helper()
+	start := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(nonce)})
+	_, err := sm.ApplyDiff(start)
+	require.NoError(t, err)
+
+	sig := testutil.SignExecutorReceipt(t, warm, "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	confirm := testutil.SignDiff(t, user, "escrow-1", nonce+1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: nonce,
+			ExecutorSig: sig,
+			ConfirmedAt: 1000,
+		}},
+	}})
+	_, err = sm.ApplyDiff(confirm)
+	require.NoError(t, err)
+}
+
+func hostRequestAt(t *testing.T, user *signing.Secp256k1Signer, nonce uint64) HostRequest {
+	t.Helper()
+	return HostRequest{
+		Diffs:   []types.Diff{testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(nonce)})},
+		Nonce:   nonce,
+		Payload: defaultPayload(),
+	}
+}
+
 // trackingValidationEngine records Validate calls for test assertions.
 type trackingValidationEngine struct {
 	mu    sync.Mutex
@@ -1780,7 +1995,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	// Nonce 3: FinishInference from executor.
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: engine.ResponseHash,
+		ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: 1,
@@ -1886,7 +2101,7 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 
 		finishMsg := &types.MsgFinishInference{
 			InferenceId:  inferenceID,
-			ResponseHash: []byte{byte(i)},
+			ResponseHash: bytes.Repeat([]byte{byte(i)}, 32), ServedHash: testutil.TestServedHash,
 			InputTokens:  80,
 			OutputTokens: 40,
 			ExecutorSlot: 1,
@@ -1931,10 +2146,14 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
-func TestHost_ResponseCache_Lifecycle(t *testing.T) {
+func TestHost_ReconnectReplaysStoredResponse(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	h := newTestHost(t, 1, hosts, user, 100000, 100)
+	stored := map[uint64][]byte{}
+	h.storedResponse = func(_ context.Context, _ string, inferenceID, _ uint64) ([]byte, error) {
+		return stored[inferenceID], nil
+	}
 
 	// Execute inference 1 via HandleRequest + RunExecution.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1943,29 +2162,21 @@ func TestHost_ResponseCache_Lifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.ExecutionJob)
-	require.Nil(t, resp.CachedResponseBody, "first request should not have cached body")
+	require.Nil(t, resp.CachedResponseBody, "first request has nothing stored yet")
 
 	result, err := h.RunExecution(context.Background(), resp.ExecutionJob)
 	require.NoError(t, err)
 	require.NotEmpty(t, result.ResponseBody)
+	stored[1] = result.ResponseBody
 
-	// Verify cache populated.
-	h.mu.Lock()
-	cached, ok := h.completedResponses[1]
-	h.mu.Unlock()
-	require.True(t, ok, "response should be cached after execution")
-	require.Equal(t, result.ResponseBody, cached)
-
-	// Reconnect: same request again should return cached body, no execution job.
+	// Reconnect reads payload storage, not an in-memory copy.
 	resp2, err := h.HandleRequest(context.Background(), HostRequest{
 		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
 	})
 	require.NoError(t, err)
 	require.Nil(t, resp2.ExecutionJob, "reconnect should not trigger new execution")
-	require.NotNil(t, resp2.CachedResponseBody, "reconnect should return cached body")
 	require.Equal(t, result.ResponseBody, resp2.CachedResponseBody)
 
-	// Evict: apply diff with MsgFinishInference.
 	finishTx := findMempoolFinish(h.MempoolTxs())
 	require.NotNil(t, finishTx)
 	confirmTx := findMempoolConfirm(h.MempoolTxs())
@@ -1978,10 +2189,283 @@ func TestHost_ResponseCache_Lifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	h.mu.Lock()
-	_, stillCached := h.completedResponses[1]
-	h.mu.Unlock()
-	require.False(t, stillCached, "cache should be evicted after MsgFinishInference in diff")
+	resp3, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp3.ExecutionJob)
+	require.Nil(t, resp3.Receipt, "a finished inference must not sign another confirm")
+	require.Equal(t, result.ResponseBody, resp3.CachedResponseBody, "finish does not drop the stored response")
+	require.Nil(t, findMempoolConfirm(h.MempoolTxs()))
+
+	delete(stored, 1)
+	resp4, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp4.ExecutionJob)
+	require.Nil(t, resp4.CachedResponseBody)
+	require.Nil(t, resp4.Receipt)
+	require.Equal(t, observability.ReasonInferenceDisappeared, resp4.ReceiptReason)
+	require.Nil(t, findMempoolConfirm(h.MempoolTxs()))
+}
+
+func TestHost_FirstExecutionSkipsStoredResponseLookup(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 100000, 100)
+	lookups := 0
+	h.storedResponse = func(_ context.Context, _ string, _, _ uint64) ([]byte, error) {
+		lookups++
+		return []byte(`{"id":"stored-before-finish"}`), nil
+	}
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob, "without a queued finish the host executes")
+	require.Nil(t, resp.CachedResponseBody)
+	require.NotNil(t, resp.Receipt)
+	require.Zero(t, lookups, "the first execution must not read payload storage")
+	require.Equal(t, devshard.RecoveryNone, resp.ExecutionJob.Recovery, "a start applied by this request has nothing stored")
+	_, executing := h.executing[1]
+	require.True(t, executing)
+}
+
+func queueTestFinish(h *Host, inferenceID uint64) {
+	h.mempool.Add(MempoolEntry{
+		Tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+			InferenceId: inferenceID,
+		}}},
+		ProposedAt: 1,
+	})
+}
+
+func TestHost_ReconnectFindsResponseInAdjacentEpoch(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 100000, 100)
+	h.epochID = 5
+	body := []byte(`{"id":"adjacent"}`)
+	var epochs []uint64
+	h.storedResponse = func(_ context.Context, _ string, inferenceID, epochID uint64) ([]byte, error) {
+		epochs = append(epochs, epochID)
+		if inferenceID == 1 && epochID == 4 {
+			return body, nil
+		}
+		return nil, nil
+	}
+	queueTestFinish(h, 1)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp.ExecutionJob)
+	require.Equal(t, body, resp.CachedResponseBody)
+	require.NotNil(t, resp.Receipt, "a pending inference still needs its confirm")
+	require.Equal(t, []uint64{5, 6, 4}, epochs)
+	_, executing := h.executing[1]
+	require.False(t, executing, "replay does not claim execution")
+}
+
+func TestHost_StoredResponseReadErrorKeepsRequest(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 100000, 100)
+	h.storedResponse = func(_ context.Context, _ string, _, _ uint64) ([]byte, error) {
+		return nil, fmt.Errorf("payload db down")
+	}
+	queueTestFinish(h, 1)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err, "a payload read error must not drop the state signature")
+	require.NotNil(t, resp.StateSig)
+	require.Nil(t, resp.ExecutionJob, "a queued finish must never execute twice")
+	require.Nil(t, resp.CachedResponseBody)
+	require.Equal(t, observability.ReasonInferenceDisappeared, resp.ReceiptReason)
+	_, executing := h.executing[1]
+	require.False(t, executing)
+}
+
+func TestReplayableStatus(t *testing.T) {
+	cases := []struct {
+		status       types.InferenceStatus
+		finishQueued bool
+		want         bool
+	}{
+		{types.StatusStarted, false, false},
+		{types.StatusStarted, true, true},
+		{types.StatusFinished, false, true},
+		{types.StatusChallenged, false, true},
+		{types.StatusValidated, false, true},
+		{types.StatusInvalidated, false, true},
+		{types.StatusTimedOut, false, false},
+		{types.StatusTimedOut, true, false},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.want, replayableStatus(c.status, c.finishQueued), "status %v finish %v", c.status, c.finishQueued)
+	}
+}
+
+// recoveringEngine stands in for an engine backed by payload storage: under a
+// recovery mode it returns stored when set, and it counts model runs.
+type recoveringEngine struct {
+	mu     sync.Mutex
+	stored *devshard.ExecuteResult
+	modes  []devshard.Recovery
+	runs   int
+	seen   chan devshard.Recovery
+}
+
+func (e *recoveringEngine) Execute(_ context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.modes = append(e.modes, req.Recovery)
+	if e.seen != nil {
+		e.seen <- req.Recovery
+	}
+	if req.Recovery != devshard.RecoveryNone && e.stored != nil {
+		cp := *e.stored
+		return &cp, nil
+	}
+	if req.Recovery == devshard.RecoveryStoredOnly {
+		return nil, devshard.ErrNoStoredResponse
+	}
+	e.runs++
+	body := []byte(`{"id":"fresh"}`)
+	h := sha256.Sum256(body)
+	return &devshard.ExecuteResult{ResponseHash: h[:], InputTokens: 1, OutputTokens: 1, ResponseBody: body}, nil
+}
+
+func newRecoveryTestHost(t *testing.T) (*Host, *signing.Secp256k1Signer, types.Diff) {
+	t.Helper()
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 100000, 100)
+	h.storedResponse = func(context.Context, string, uint64, uint64) ([]byte, error) { return nil, nil }
+	return h, user, testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+}
+
+func TestHost_HeldPendingInferenceRecoversBeforeRunning(t *testing.T) {
+	h, _, diff := newRecoveryTestHost(t)
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
+	require.NoError(t, err)
+
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob)
+	require.Equal(t, devshard.RecoveryStoredFirst, resp.ExecutionJob.Recovery,
+		"an inference held before this request may already have a stored response")
+}
+
+func TestHost_StartedInferenceWithoutFinishPublishesStoredFinish(t *testing.T) {
+	h, user, diff := newRecoveryTestHost(t)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob)
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	require.NotNil(t, confirmTx)
+	// A restart loses the in-flight execution and the mempool.
+	h.ReleaseExecution(1)
+	h.mempool.RemoveIncluded(h.MempoolTxs())
+
+	confirmDiff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{confirmDiff}})
+	require.NoError(t, err)
+	rec, ok := h.sm.GetInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+
+	storedHash := sha256.Sum256([]byte(`{"id":"stored"}`))
+	engine := &recoveringEngine{stored: &devshard.ExecuteResult{ResponseHash: storedHash[:], InputTokens: 7, OutputTokens: 3, ResponseBody: []byte(`{"id":"stored"}`)}}
+	h.engine = engine
+
+	resp, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff, confirmDiff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp.Receipt, "a started inference takes no new confirm")
+	require.NotNil(t, resp.ExecutionJob)
+	require.Equal(t, devshard.RecoveryStoredOnly, resp.ExecutionJob.Recovery)
+
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+	require.Zero(t, engine.runs, "a started inference never runs the model again")
+	finish := findMempoolFinish(h.MempoolTxs())
+	require.NotNil(t, finish)
+	require.Equal(t, storedHash[:], finish.GetFinishInference().ResponseHash)
+	require.Equal(t, uint64(7), finish.GetFinishInference().InputTokens)
+	require.Equal(t, uint64(3), finish.GetFinishInference().OutputTokens)
+}
+
+func TestHost_StartedInferenceWithNothingStoredStaysQuiet(t *testing.T) {
+	h, user, diff := newRecoveryTestHost(t)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	h.ReleaseExecution(1)
+	h.mempool.RemoveIncluded(h.MempoolTxs())
+	confirmDiff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{confirmDiff}})
+	require.NoError(t, err)
+
+	engine := &recoveringEngine{}
+	h.engine = engine
+	resp, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff, confirmDiff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp.ExecutionJob)
+
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.ErrorIs(t, err, devshard.ErrNoStoredResponse)
+	require.Zero(t, engine.runs)
+	require.Nil(t, findMempoolFinish(h.MempoolTxs()))
+	_, executing := h.executing[1]
+	require.False(t, executing, "the claim is released after a stored-only miss")
+}
+
+func TestHost_ChallengeRecoveryFollowsWhetherTheInferenceWasHeld(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		held bool
+		want devshard.Recovery
+	}{
+		{"fresh", false, devshard.RecoveryNone},
+		{"held", true, devshard.RecoveryStoredFirst},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h, _, diff := newRecoveryTestHost(t)
+			engine := &recoveringEngine{seen: make(chan devshard.Recovery, 1)}
+			h.engine = engine
+			if c.held {
+				_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
+				require.NoError(t, err)
+			}
+			receipt, _, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{diff})
+			require.NoError(t, err)
+			require.NotNil(t, receipt)
+			select {
+			case got := <-engine.seen:
+				require.Equal(t, c.want, got)
+			case <-time.After(2 * time.Second):
+				t.Fatal("challenge did not start an execution")
+			}
+		})
+	}
 }
 
 func findMempoolConfirm(txs []*types.DevshardTx) *types.DevshardTx {
@@ -2230,7 +2714,7 @@ func TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified(t *testing.T) 
 
 	// Inject a peer-imported Finish for an inference this host did not execute.
 	imported := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
-		FinishInference: &types.MsgFinishInference{InferenceId: 999},
+		FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 999},
 	}}
 	h.HostMempool().AddTx(imported) // ProposedAt=0 sentinel.
 

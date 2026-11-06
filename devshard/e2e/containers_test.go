@@ -167,6 +167,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
 		// POST /height-sync omits. Keep the production seed gate on in citest.
 		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
+		// Production quiet-settle default is 5m; keep 5s so settle waits stay under budget.
+		"DEVSHARD_QUIET_SETTLE_DELAY": "5s",
 	}
 	for k, v := range opts.devshardctlEnvOverrides {
 		devshardctlEnv[k] = v

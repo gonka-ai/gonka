@@ -88,6 +88,7 @@ type runtimeBuildDeps struct {
 	defaultModel string
 	perf         *PerfTracker
 	params       runtimeparams.Provider
+	metrics      *DevshardMetrics
 }
 
 func (d runtimeBuildDeps) validate() error {
