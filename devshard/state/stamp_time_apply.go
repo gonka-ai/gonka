@@ -5,16 +5,17 @@ import (
 	"encoding/hex"
 	"fmt"
 
-	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/types"
 )
 
-// checkObservedStampTimeLocked applies the optimistic map rule on apply.
+// checkObservedStampTimeLocked checks a stamp while applying it.
 // On StampRequiresTime tags, a stamped message (height > 0) with
 // observed_time_ms <= 0 is ErrStampTimeMissing (never ErrHeaderPending).
-// Earlier tags still accept 0. A map miss autotrusts the carried time; a
-// map hit that disagrees rejects. Never waits and never calls HeaderTimeMs.
+// Earlier tags still accept 0. A map miss keeps the carried time. A map
+// hit that disagrees is a warning: apply keeps the carried time, and a
+// later dispute rolls back a timeout decided on it. Compose still rejects
+// that disagreement before signing. Never waits and never calls HeaderTimeMs.
 // Caller holds sm.mu.
 func (sm *StateMachine) checkObservedStampTimeLocked(leg string, height uint64, hash []byte, observedTimeMs int64) error {
 	if height == 0 {
@@ -30,11 +31,8 @@ func (sm *StateMachine) checkObservedStampTimeLocked(leg string, height uint64, 
 	if !ok {
 		return nil
 	}
-	_, err := heightsync.ResolveObservedTimeMs(src, height, hash, observedTimeMs)
-	if err == nil {
-		return nil
-	}
-	return fmt.Errorf("%w: %s height %d hash %s carried=%d", err, leg, height, hex.EncodeToString(hash), observedTimeMs)
+	sm.warnStampVersusMapLocked(src, leg, height, hash, observedTimeMs)
+	return nil
 }
 
 // latestHeaderClock is the newest block a header map still holds.
@@ -52,8 +50,11 @@ type latestHeaderClock interface {
 // That proof is deferred, so this only logs.
 //
 // A carried time before the newest stored block, on a stamp at or above that
-// block, is a local proof the executor backdated the stamp. The confirm or
-// finish is rejected. A stamp below the newest stored block can still carry
+// block, is a local proof the executor backdated the stamp. Compose and
+// challenge evidence reject the confirm or finish. Apply only logs it: the
+// header map is local to each replica, so a reject there would make the
+// replicas disagree on a signed diff. A later dispute rolls back a timeout
+// decided on this time. A stamp below the newest stored block can still carry
 // the floor while the poller has moved on, so that case stays on the floor rule.
 func (sm *StateMachine) checkExecutorStampClockLocked(stage, leg string, height uint64, carried int64) error {
 	if sm == nil || carried <= 0 {
@@ -90,6 +91,9 @@ func (sm *StateMachine) checkExecutorStampClockLocked(stage, leg string, height 
 		"floor_height", floorH,
 		"floor_time_ms", floorMs,
 	)
+	if stage == "apply" {
+		return nil
+	}
 	return fmt.Errorf("%w: %s height %d carried=%d latest_height=%d latest_time_ms=%d",
 		types.ErrStampTimeBeforeChain, leg, height, carried, latestH, latestMs)
 }

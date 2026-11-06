@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/chainoracle/blocks/headertime"
-	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/types"
 )
@@ -82,7 +81,7 @@ func TestApplyStamp_MapMissNoHeaderPending(t *testing.T) {
 	require.NotErrorIs(t, err, types.ErrHeaderPending)
 }
 
-func TestApplyStamp_MapHitDisagreeRejects(t *testing.T) {
+func TestApplyStamp_MapHitDisagreeWarns(t *testing.T) {
 	src := headertime.New()
 	require.NoError(t, src.Seed(100, []byte{0xdd}, 5_000))
 	d := newFloorDriver(t)
@@ -90,11 +89,24 @@ func TestApplyStamp_MapHitDisagreeRejects(t *testing.T) {
 	hash := []byte{0xdd}
 	d.raise(100, hash)
 
+	const carried int64 = 9_000
+	var warns atomic.Int32
+	d.sm.SetStampTimeMismatchHook(func(leg string, height uint64, gotHash []byte, stampMs, mapMs int64) {
+		warns.Add(1)
+		require.Equal(t, "start", leg)
+		require.Equal(t, uint64(100), height)
+		require.Equal(t, hash, gotHash)
+		require.Equal(t, carried, stampMs)
+		require.Equal(t, int64(5_000), mapMs)
+	})
+
 	id := d.next()
-	err := d.apply(startTxWithTime(id, 100, hash, 9_000))
-	require.ErrorIs(t, err, heightsync.ErrStampTimeMismatch)
-	_, ok := d.sm.GetInference(id)
-	require.False(t, ok, "reject must not leave the inference in state")
+	require.NoError(t, d.apply(startTxWithTime(id, 100, hash, carried)))
+	require.Equal(t, int32(1), warns.Load(), "apply keeps a carried time that disagrees with the map")
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, carried, rec.StartedAtTimeMs)
+	require.Equal(t, types.StatusPending, rec.Status)
 }
 
 func TestApplyStamp_MapHitAgreeCopies(t *testing.T) {
@@ -209,16 +221,28 @@ func TestDeferredMapDisagree_WarnsConfirmHeightHashTime(t *testing.T) {
 	require.True(t, sawConfirm.Load(), "confirm carried time vs later map must warn")
 }
 
-func TestApplyHeartbeat_MapHitDisagreeRejects(t *testing.T) {
+func TestApplyHeartbeat_MapHitDisagreeWarns(t *testing.T) {
 	src := headertime.New()
 	hash := []byte{0x01}
 	require.NoError(t, src.Seed(50, hash, 1_000))
 	d := newFloorDriver(t)
 	d.sm.SetHeaderTimes(src)
 
+	const carried int64 = 2_000
+	var warns atomic.Int32
+	d.sm.SetStampTimeMismatchHook(func(leg string, height uint64, gotHash []byte, stampMs, mapMs int64) {
+		warns.Add(1)
+		require.Equal(t, "heartbeat", leg)
+		require.Equal(t, uint64(50), height)
+		require.Equal(t, hash, gotHash)
+		require.Equal(t, carried, stampMs)
+		require.Equal(t, int64(1_000), mapMs)
+	})
+
 	hb := divHeartbeatTx(50, hash)
-	hb.GetHeartbeat().ObservedTimeMs = 2_000
-	require.ErrorIs(t, d.apply(hb), heightsync.ErrStampTimeMismatch)
+	hb.GetHeartbeat().ObservedTimeMs = carried
+	require.NoError(t, d.apply(hb))
+	require.Equal(t, int32(1), warns.Load(), "apply keeps a heartbeat time that disagrees with the map")
 }
 
 func TestApplyTimeout_StillIgnoresMap(t *testing.T) {
@@ -249,17 +273,17 @@ func executorClockDriver(t *testing.T, stamp []byte, mapMs int64) *floorDriver {
 	return d
 }
 
-func TestApplyConfirm_TimeBeforeNewestStoredBlockRejects(t *testing.T) {
+func TestApplyConfirm_TimeBeforeNewestStoredBlockWarns(t *testing.T) {
 	stamp := []byte{0xaa}
 	d := executorClockDriver(t, stamp, 50_000)
 	id := d.next()
 	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
 	logs := captureStateLogs(t)
-	err := d.apply(d.confirmWithTime(id, 100, stamp, 40_000))
-	require.ErrorIs(t, err, types.ErrStampTimeBeforeChain)
+	require.NoError(t, d.apply(d.confirmWithTime(id, 100, stamp, 40_000)))
 	rec, ok := d.sm.GetInference(id)
 	require.True(t, ok)
-	require.Equal(t, types.StatusPending, rec.Status)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Equal(t, int64(40_000), rec.ConfirmedAtTimeMs)
 	require.Contains(t, logs.String(), "executor stamp time is before the newest stored block")
 	require.Contains(t, logs.String(), `"stage":"apply"`)
 }
@@ -282,18 +306,18 @@ func TestComposeConfirm_TimeBeforeNewestStoredBlockDrops(t *testing.T) {
 	require.Contains(t, logs.String(), `"stage":"compose"`)
 }
 
-func TestApplyFinish_TimeBeforeNewestStoredBlockRejects(t *testing.T) {
+func TestApplyFinish_TimeBeforeNewestStoredBlockWarns(t *testing.T) {
 	stamp := []byte{0xac}
 	d := executorClockDriver(t, stamp, 50_000)
 	id := d.next()
 	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
 	require.NoError(t, d.apply(d.confirmWithTime(id, 100, stamp, 50_000)))
 	logs := captureStateLogs(t)
-	err := d.apply(finishWithTime(t, d, id, 100, stamp, 40_000))
-	require.ErrorIs(t, err, types.ErrStampTimeBeforeChain)
+	require.NoError(t, d.apply(finishWithTime(t, d, id, 100, stamp, 40_000)))
 	rec, ok := d.sm.GetInference(id)
 	require.True(t, ok)
-	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Equal(t, types.StatusFinished, rec.Status)
+	require.Contains(t, logs.String(), "executor stamp time is before the newest stored block")
 	require.Contains(t, logs.String(), `"leg":"finish"`)
 }
 
