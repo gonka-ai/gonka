@@ -41,7 +41,7 @@ func (s *proofQueryServer) AccountByAddress(_ context.Context, req *types.QueryA
 	return &types.QueryAccountByAddressResponse{Pubkey: s.pubkeyB64}, nil
 }
 
-func newProofQueryClient(t *testing.T, server *proofQueryServer) (types.QueryClient, func()) {
+func newProofQueryClient(t *testing.T, server types.QueryServer) (types.QueryClient, func()) {
 	t.Helper()
 
 	listener := bufconn.Listen(1024 * 1024)
