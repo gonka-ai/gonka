@@ -78,7 +78,7 @@ func TestBlsFailureRunsInstalledHookAndRefundsPendingMint(t *testing.T) {
 
 	request, err := testApp.BlsKeeper.GetSigningStatus(ctx, requestID)
 	require.NoError(t, err)
-	expiryCtx := ctx.WithBlockHeight(request.DeadlineBlockHeight)
+	expiryCtx := ctx.WithBlockHeight(request.DeadlineBlockHeight).WithEventManager(sdk.NewEventManager())
 	require.NoError(t, testApp.BlsKeeper.ProcessThresholdSigningDeadlines(expiryCtx))
 
 	cancelledRequest, err := testApp.BlsKeeper.GetSigningStatus(expiryCtx, requestID)
@@ -90,12 +90,13 @@ func TestBlsFailureRunsInstalledHookAndRefundsPendingMint(t *testing.T) {
 	require.Equal(t, refundCoins[0], testApp.BankKeeper.GetBalance(expiryCtx, creatorAddr, inferencetypes.BaseCoin))
 	require.True(t, testApp.InferenceKeeper.GetBridgeEscrowBalance(expiryCtx, inferencetypes.BaseCoin).IsZero())
 
-	foundRefundEvent := false
+	eventCounts := make(map[string]int)
 	for _, event := range expiryCtx.EventManager().Events() {
-		if event.Type == "bridge_operation_auto_refunded" {
-			foundRefundEvent = true
-			break
-		}
+		eventCounts[event.Type]++
 	}
-	require.True(t, foundRefundEvent)
+	for _, eventType := range []string{
+		"coin_spent", "coin_received", "transfer", "message", "bridge_operation_auto_refunded",
+	} {
+		require.Equal(t, 1, eventCounts[eventType], "event %s must be emitted once", eventType)
+	}
 }
