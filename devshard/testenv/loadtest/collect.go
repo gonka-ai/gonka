@@ -120,7 +120,7 @@ func (p *jsonlPoller[T]) sample(ctx context.Context, label string) {
 
 // stop ends the schedule, takes one last sample labeled finalLabel unless it
 // is empty, and closes the artifact. It is safe on a nil poller.
-func (p *jsonlPoller[T]) stop(finalLabel string) []T {
+func (p *jsonlPoller[T]) stop(finalLabel string, finalContexts ...context.Context) []T {
 	if p == nil {
 		return nil
 	}
@@ -128,7 +128,11 @@ func (p *jsonlPoller[T]) stop(finalLabel string) []T {
 		p.cancel()
 		<-p.done
 		if finalLabel != "" {
-			p.sample(context.Background(), finalLabel)
+			finalCtx := context.Background()
+			if len(finalContexts) > 0 {
+				finalCtx = finalContexts[0]
+			}
+			p.sample(finalCtx, finalLabel)
 		}
 		if err := p.file.Close(); err != nil {
 			p.errs = append(p.errs, err.Error())

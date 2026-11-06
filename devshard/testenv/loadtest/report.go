@@ -22,6 +22,7 @@ var reportStatusOrder = []string{statusFix, "XPASS", statusInvalid, "XFAIL", sta
 var endStatePrefixes = []string{"devshard.", "escrow_rotation.", "invariants.escrow-accounting-reconciles.", "invariants.no-nonce-left-pending.", "invariants.no-runtime-for-deactivated-escrow."}
 
 type runReport struct {
+	runError       string
 	invariantScope []string
 	gatewayImage   *struct {
 		Image    string `json:"image"`
@@ -70,12 +71,14 @@ func loadRunReport(outputDir string) (runReport, error) {
 	var run runReport
 	var assertions struct {
 		Passed bool              `json:"passed"`
+		Error  string            `json:"error"`
 		Checks []AssertionResult `json:"checks"`
 	}
 	if err := readReportArtifact(outputDir, "assertions.json", true, &assertions); err != nil {
 		return run, err
 	}
 	run.passed, run.checks = assertions.Passed, assertions.Checks
+	run.runError = assertions.Error
 	if err := readReportArtifact(outputDir, "summary.json", false, &run.summary); err != nil {
 		return run, err
 	}
@@ -184,6 +187,9 @@ func (r runReport) render(runName string) string {
 		fmt.Fprintf(&out, "Invariant scope: %s. Other invariant groups were not evaluated.\n\n", strings.Join(r.invariantScope, ", "))
 	}
 	fmt.Fprintf(&out, "Verdict: %s. %s\n\n", verdict, strings.Join(countCells, " · "))
+	if r.runError != "" {
+		fmt.Fprintf(&out, "Run error: %s\n\n", r.runError)
+	}
 	r.renderStalledShare(&out)
 	out.WriteString("FIX: a bound was broken and needs a fix. XPASS: a known bug no longer reproduces; drop its marker. INVALID: a harness stall covers the check. XFAIL: a known bug failed as expected. NOT_JUDGED: the run left no data for the check. PASS: the bound held.\n")
 	r.renderTraffic(&out)

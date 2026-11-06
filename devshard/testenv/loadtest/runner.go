@@ -33,11 +33,15 @@ type RunnerConfig struct {
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
 	// Build runs prebuilt artifacts instead of building them from the checkout.
-	Build        *Build
-	GatewayImage string
+	Build              *Build
+	GatewayImage       string
+	PreparationTimeout time.Duration
+	RunTimeout         time.Duration
+	DiagnosticsTimeout time.Duration
 }
 
 type RunResult struct {
+	WorkloadStarted         bool
 	Summary                 Summary
 	Terminal                TerminalSummary
 	Assertions              []AssertionResult
@@ -143,7 +147,7 @@ type TerminalSummary struct {
 
 func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err error) {
 	if opts.ScenarioPath == "" || opts.TestenvDir == "" || opts.OutputDir == "" {
-		return RunResult{}, fmt.Errorf("scenario path, testenv directory, and output directory are required")
+		return result, fmt.Errorf("scenario path, testenv directory, and output directory are required")
 	}
 	result.OutputDir = opts.OutputDir
 	if opts.MetricsInterval != 0 && opts.MetricsInterval < 100*time.Millisecond {
@@ -151,35 +155,50 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	scenario, err := loadScenario(opts.ScenarioPath, opts.LoadDataset != "")
 	if err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	scenario, opts.Build, err = resolveGatewayImage(scenario, opts.Build, opts.GatewayImage)
 	if err != nil {
 		return result, err
 	}
+	timing, err := newRunTiming(ctx, opts, scenario)
+	if err != nil {
+		return result, err
+	}
+	defer timing.close()
+	parentCtx := ctx
+	ctx = timing.prepare()
 	var replaySelector *replay.Selector
 	var replayModels []string
 	if opts.LoadDataset != "" {
 		dataset, err := replay.LoadFile(opts.LoadDataset)
 		if err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		replayModels = scenario.RequestModels()
 		if err := validateDatasetModels(scenario, dataset); err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		replaySelector = replay.NewSelector(dataset, scenario.Seed)
 	}
 	if err := os.MkdirAll(opts.OutputDir, 0o755); err != nil {
-		return RunResult{}, fmt.Errorf("create result directory: %w", err)
+		return result, fmt.Errorf("create result directory: %w", err)
 	}
+	var savedInputs *RunInputs
 	defer func() {
 		if err != nil {
+			if timing.runCtx == nil && context.Cause(timing.prepCtx) != nil {
+				err = errors.Join(err, context.Cause(timing.prepCtx))
+			}
+			if savedInputs != nil && savedInputs.RunError == "" && !IsAssertionFailure(err) {
+				savedInputs.RunError = err.Error()
+				_ = writeRunInputs(opts.OutputDir, *savedInputs)
+			}
 			_ = writeAssertions(opts.OutputDir, result.Assertions, err)
 		}
 	}()
 	if err := saveRunScenario(opts.ScenarioPath, filepath.Join(opts.OutputDir, "run.yaml"), scenario); err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	profilesDir := opts.ProfilesDir
 	if profilesDir == "" {
@@ -192,13 +211,13 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 		profile, err := LoadProfile(profilesDir, node.Profile)
 		if err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		profiles[node.Profile] = profile
 	}
 	workDir, err := os.MkdirTemp(opts.TestenvDir, "loadtest-")
 	if err != nil {
-		return RunResult{}, fmt.Errorf("create testenv work directory: %w", err)
+		return result, fmt.Errorf("create testenv work directory: %w", err)
 	}
 	result.WorkDir = workDir
 	if !opts.KeepStack {
@@ -206,7 +225,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	if opts.LoadDataset != "" {
 		if err := copyFile(opts.LoadDataset, filepath.Join(workDir, "replay.jsonl")); err != nil {
-			return RunResult{}, fmt.Errorf("copy load dataset: %w", err)
+			return result, fmt.Errorf("copy load dataset: %w", err)
 		}
 	}
 
@@ -217,21 +236,28 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if opts.KeepStack || project == "" {
 			return
 		}
-		_ = runCommandWithEnv(context.Background(), opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), stackCleanupTimeout)
+		defer cancel()
+		_ = runCommandWithEnv(cleanupCtx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
 	}()
 
+	defer func() {
+		if err != nil && project != "" && !result.WorkloadStarted {
+			_ = writeComposeLogs(timing.startDiagnostics(), opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+		}
+	}()
 	if err := refuseConcurrentStacks(ctx, listComposeProjects); err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	dockerArch, err := dockerServerArch(ctx)
 	if err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	devshardd := filepath.Join(opts.TestenvDir, "..", "..", "build", "devshardd")
 	if opts.Build != nil {
 		devshardd = opts.Build.Devshardd
 		if err := recordBuild(ctx, opts.Build, opts.OutputDir); err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		log.Printf("loadtest: build=%s protocol=%s binary=%s", opts.Build.Name, opts.Build.Protocol, opts.Build.BinaryVersion)
 	}
@@ -241,7 +267,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}
 	if err := requireTestenvHooks(scenario, devshardd); err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	const maxStartAttempts = 3
 	log.Printf("loadtest: stage=stack_start scenario=%s", scenario.Scenario)
@@ -250,40 +276,42 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		project = "loadtest-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 		log.Printf("loadtest: starting isolated Docker stack (attempt %d/%d, project %s)", attempt, maxStartAttempts, project)
 		if err := writeRunnerConfig(opts.TestenvDir, workDir, scenario, profiles, replaySelector != nil, replayModels, opts.Build); err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		if err := runCommand(ctx, opts.TestenvDir, "go", "run", "./cmd/gencompose", "-config", filepath.Join(workDir, "config.yaml"), "-out", composePath); err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		if err := fixComposePaths(composePath, opts.TestenvDir); err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		if err := checkChildBinaryArch(devshardd, dockerArch); err != nil {
-			return RunResult{}, err
+			return result, err
 		}
 		err := runCommandWithEnv(ctx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "up", "--build", "--wait", "--detach")
 		if err == nil {
 			break
 		}
 		log.Printf("loadtest: Docker stack start failed: %v", err)
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
-		_ = runCommandWithEnv(context.Background(), opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
+		_ = writeComposeLogs(ctx, opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(parentCtx), stackCleanupTimeout)
+		_ = runCommandWithEnv(cleanupCtx, opts.TestenvDir, composeEnv, "docker", "compose", "-p", project, "-f", composePath, "down", "--volumes", "--remove-orphans")
+		cancel()
 		if !isAddressInUse(err) || attempt == maxStartAttempts {
-			return RunResult{}, err
+			return result, err
 		}
 	}
 	if project == "" {
-		return RunResult{}, fmt.Errorf("start load-test Compose project")
+		return result, fmt.Errorf("start load-test Compose project")
 	}
 
 	cfg, err := config.Load(filepath.Join(workDir, "config.yaml"))
 	if err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	initialEscrowIDs := configuredEscrowIDs(cfg)
 	apiKey, err := envValue(filepath.Join(workDir, ".env"), "TESTENV_ADMIN_API_KEY")
 	if err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	result.GatewayURL = fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port)
 	accountingURL := fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.StatsPort)
@@ -301,33 +329,37 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	}
 	log.Printf("loadtest: waiting for gateway at %s", result.GatewayURL)
 	if err := waitGateway(ctx, result.GatewayURL); err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
-		return RunResult{}, err
+		_ = writeComposeLogs(ctx, opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+		return result, err
 	}
 	var accountingInitial accountingAPIResponse
 	if accountingEnabled(scenario.Assertions.Accounting) {
 		log.Printf("loadtest: stage=accounting_baseline")
 		accountingInitial, err = waitForAccountingSnapshot(ctx, accountingURL, "baseline")
 		if err != nil {
-			_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+			_ = writeComposeLogs(ctx, opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
 			return result, fmt.Errorf("collect accounting baseline: %w", err)
 		}
 	}
 	rotationModels := rotationModelIDs(cfg, replayModels, scenario)
 	if err := applyGatewayScenarioSettings(ctx, result.GatewayURL, apiKey, scenario, rotationModels); err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
-		return RunResult{}, err
+		_ = writeComposeLogs(ctx, opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
+		return result, err
 	}
 	if scenario.Gateway.Implementation == "gateway" {
 		log.Printf("loadtest: stage=gateway_ready implementation=gateway image=%s protocol=%s engine_loser_grace=%s", scenario.Gateway.Image, scenario.Gateway.Protocol, scenario.Gateway.EngineLoserGrace)
 	} else {
 		log.Printf("loadtest: stage=gateway_ready secondary_wait_after_winner=%s", scenario.SecondaryWaitAfterWinner())
 	}
+	if ctx.Err() != nil {
+		return result, context.Cause(ctx)
+	}
+	ctx = timing.startRun()
 	collector, err := startMetricsCollector(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey)
 	if err != nil {
 		return result, fmt.Errorf("start metrics collector: %w", err)
 	}
-	defer func() { result.Metrics = collector.stop() }()
+	defer func() { result.Metrics = collector.stop(timing.startDiagnostics()) }()
 	collector.phase.Store("workload")
 	profiler, err := startCPUProfiler(ctx, opts, cfg, project, composePath, result.GatewayURL, apiKey, scenario.Diagnostics.CPUProfiles, scenario.Diagnostics.ContentionProfiles)
 	if err != nil {
@@ -346,7 +378,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		if err != nil {
 			return result, fmt.Errorf("start invariant collection: %w", err)
 		}
-		defer invariants.stop()
+		defer func() { invariants.stop(timing.startDiagnostics()) }()
 	}
 	faultRunner, err := startEvents(ctx, opts, cfg, project, composePath, scenario)
 	if err != nil {
@@ -360,6 +392,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		}
 	}()
 
+	result.WorkloadStarted = true
 	log.Printf("loadtest: stage=workload_start scenario=%s", scenario.Scenario)
 	summary, err := RunGenerator(ctx, GeneratorConfig{
 		GatewayURL: result.GatewayURL,
@@ -368,28 +401,32 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		OutputDir:  opts.OutputDir,
 		Replay:     replaySelector,
 	})
-	if err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
-		return RunResult{}, err
-	}
 	result.Summary = summary
-	result.Events, err = faultRunner.finish(false)
-	faultErr := err
+	runErr := err
+	if cause := context.Cause(ctx); cause != nil {
+		runErr = errors.Join(runErr, fmt.Errorf("workload interrupted: %w", cause))
+	}
+	result.Events, err = faultRunner.finish(runErr != nil)
+	faultErr := errors.Join(runErr, err)
+	ctx = timing.startDiagnostics()
 	collector.phase.Store("drain")
-	allocations, err := fetchAllocations(ctx, cfg.MockDapi.HTTPPort)
-	if err != nil {
-		_ = writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail())
-		return RunResult{}, err
+	allocations, allocationErr := fetchAllocations(ctx, cfg.MockDapi.HTTPPort)
+	if allocationErr != nil {
+		faultErr = errors.Join(faultErr, fmt.Errorf("collect allocations: %w", allocationErr))
 	}
 	result.Allocations = allocations
-	if err := writeComposeLogsTo(opts.OutputDir, opts.TestenvDir, project, composePath, "compose-pre-drain.log", scenario.Diagnostics.LogTail()); err != nil {
-		return RunResult{}, err
+	if logErr := writeComposeLogsTo(ctx, opts.OutputDir, opts.TestenvDir, project, composePath, "compose-pre-drain.log", scenario.Diagnostics.LogTail()); logErr != nil {
+		faultErr = errors.Join(faultErr, fmt.Errorf("collect pre-drain logs: %w", logErr))
 	}
-	burns, err := readGatewayBurns(filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
-	if err != nil {
-		return RunResult{}, err
+	burns, burnErr := readGatewayBurns(filepath.Join(opts.OutputDir, "compose-pre-drain.log"))
+	if burnErr != nil {
+		faultErr = errors.Join(faultErr, burnErr)
 	}
 	inputs := RunInputs{Started: summary.StartedAt, Allocations: allocations, InitialEscrowIDs: sortedKeySet(initialEscrowIDs), Burns: burns}
+	savedInputs = &inputs
+	if faultErr != nil {
+		inputs.RunError = faultErr.Error()
+	}
 	for _, host := range cfg.Hosts {
 		inputs.Hosts = append(inputs.Hosts, InvariantHost{ID: host.ID, Participant: participantAddress(cfg, host)})
 	}
@@ -433,16 +470,14 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 		return result, fmt.Errorf("evaluate checks: %w", err)
 	}
 	result.Assertions = assertions
-	var assertionErr error
+	assertionErr := faultErr
 	if failures := failedChecks(assertions); len(failures) > 0 {
-		assertionErr = &assertionFailures{Checks: failures}
-	} else if faultErr != nil {
-		assertionErr = faultErr
+		assertionErr = errors.Join(assertionErr, &assertionFailures{Checks: failures})
 	}
 	log.Printf("loadtest: stage=artifacts_collection")
-	if err := writeComposeLogs(opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail()); err != nil {
+	if err := writeComposeLogs(ctx, opts.OutputDir, opts.TestenvDir, project, composePath, scenario.Diagnostics.LogTail()); err != nil {
 		if assertionErr == nil {
-			return RunResult{}, err
+			return result, err
 		}
 		log.Printf("loadtest: final Compose log collection failed: %v", err)
 	}
@@ -467,17 +502,17 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if statsErr == nil {
 		result.MLStats = mlStats
 		if err := writeMLNodeStats(opts.OutputDir, mlStats); err != nil && assertionErr == nil {
-			return RunResult{}, err
+			return result, err
 		}
 	} else if assertionErr == nil {
-		return RunResult{}, statsErr
+		return result, statsErr
 	}
 	_ = writeGatewayInferences(ctx, stateGatewayURL, apiKey, opts.OutputDir)
 	if assertionErr != nil {
 		return result, assertionErr
 	}
 	if err := writeAssertions(opts.OutputDir, result.Assertions, nil); err != nil {
-		return RunResult{}, err
+		return result, err
 	}
 	return result, nil
 }
@@ -888,6 +923,7 @@ func runCommand(ctx context.Context, dir, name string, args ...string) error {
 func runCommandWithEnv(ctx context.Context, dir string, env []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	cmd.WaitDelay = 5 * time.Second
 	if env != nil {
 		cmd.Env = env
 	}
@@ -1535,18 +1571,19 @@ func writeGatewayInferences(ctx context.Context, gatewayURL, apiKey, outputDir s
 	return os.WriteFile(filepath.Join(outputDir, "gateway-inferences.json"), append(body, '\n'), 0o644)
 }
 
-func writeComposeLogs(outputDir, testenvDir, project, composePath, tail string) error {
-	return writeComposeLogsTo(outputDir, testenvDir, project, composePath, "compose.log", tail)
+func writeComposeLogs(ctx context.Context, outputDir, testenvDir, project, composePath, tail string) error {
+	return writeComposeLogsTo(ctx, outputDir, testenvDir, project, composePath, "compose.log", tail)
 }
 
-func writeComposeLogsTo(outputDir, testenvDir, project, composePath, filename, tail string) error {
+func writeComposeLogsTo(ctx context.Context, outputDir, testenvDir, project, composePath, filename, tail string) error {
 	file, err := os.Create(filepath.Join(outputDir, filename))
 	if err != nil {
 		return err
 	}
 	// Stream complete logs to disk instead of buffering them in memory.
-	cmd := exec.Command("docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", tail)
+	cmd := exec.CommandContext(ctx, "docker", "compose", "-p", project, "-f", composePath, "logs", "--no-color", "--tail", tail)
 	cmd.Dir = testenvDir
+	cmd.WaitDelay = 5 * time.Second
 	cmd.Stdout = file
 	cmd.Stderr = file
 	runErr := cmd.Run()

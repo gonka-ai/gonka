@@ -537,12 +537,15 @@ func processChanged(a, b map[string]float64) bool {
 	return false
 }
 
-func (c *metricsCollector) stop() MetricsSummary {
+func (c *metricsCollector) stop(finalContexts ...context.Context) MetricsSummary {
 	c.stopOnce.Do(func() {
 		c.cancel()
 		<-c.done
 		// The stack remains up; collect a final snapshot after drain, even on failure.
 		c.ctx = context.Background()
+		if len(finalContexts) > 0 {
+			c.ctx = finalContexts[0]
+		}
 		c.phase.Store("final")
 		c.sample()
 		if err := c.file.Close(); err != nil {
