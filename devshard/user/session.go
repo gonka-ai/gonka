@@ -3257,6 +3257,83 @@ func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReas
 	return nil
 }
 
+// verifyErrorMissVote checks the signature applyErrorMiss will check, and that
+// VoterSlot belongs to the responder that returned the vote. applyErrorMiss
+// rejects the whole MsgErrorMiss on the first bad vote, so a vote that fails
+// here must not be counted or submitted.
+func (s *Session) verifyErrorMissVote(inferenceID uint64, responseHash []byte, vote *types.ErrorMissVote, expectedAddr string) error {
+	if vote == nil {
+		return fmt.Errorf("%w: nil error-miss vote", types.ErrInvalidVoteSig)
+	}
+	if len(responseHash) == 0 {
+		return fmt.Errorf("%w: no response hash for error-miss vote", types.ErrInvalidVoteSig)
+	}
+	voteData, err := types.CanonicalSignedBytes(&types.ErrorMissVoteContent{
+		EscrowId:     s.escrowID,
+		InferenceId:  inferenceID,
+		Accept:       vote.Accept,
+		ResponseHash: responseHash,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal error-miss vote content: %w", err)
+	}
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+	}
+	if recovered != expectedAddr && !s.sm.HostSignerAllowed(vote.VoterSlot, recovered) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
+	}
+	if owner := s.sm.SlotAddress(vote.VoterSlot); owner != expectedAddr {
+		return fmt.Errorf("%w: slot %d is owned by %s, not by responder %s",
+			types.ErrInvalidVoteSig, vote.VoterSlot, owner, expectedAddr)
+	}
+	return nil
+}
+
+// errorMissVoteResponseHash is the ResponseHash applyErrorMiss will recover
+// the vote against. A finished record already has it. Otherwise the pending
+// finish in this diff is applied first and writes its hash onto the record.
+// The finish artifact is the last resort, for a vote collected before that
+// finish is queued.
+func (s *Session) errorMissVoteResponseHash(inferenceID uint64, artifacts host.TimeoutArtifacts) []byte {
+	if rec, ok := s.sm.GetInference(inferenceID); ok && rec.Status == types.StatusFinished && len(rec.ResponseHash) > 0 {
+		return bytes.Clone(rec.ResponseHash)
+	}
+	if hash := s.pendingFinishResponseHash(inferenceID); len(hash) > 0 {
+		return hash
+	}
+	if msg := finishMessageFromBytes(artifacts.FinishTx); msg != nil && msg.InferenceId == inferenceID && len(msg.ResponseHash) > 0 {
+		return bytes.Clone(msg.ResponseHash)
+	}
+	return nil
+}
+
+func (s *Session) pendingFinishResponseHash(inferenceID uint64) []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, tx := range s.pendingTxs {
+		if tx == nil {
+			continue
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID && len(fi.ResponseHash) > 0 {
+			return bytes.Clone(fi.ResponseHash)
+		}
+	}
+	return nil
+}
+
+func finishMessageFromBytes(finishTx []byte) *types.MsgFinishInference {
+	if len(finishTx) == 0 {
+		return nil
+	}
+	tx := &types.DevshardTx{}
+	if err := proto.Unmarshal(finishTx, tx); err != nil {
+		return nil
+	}
+	return tx.GetFinishInference()
+}
+
 func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64, client HostClient) bool {
 	fetcher, ok := client.(SignatureFetcher)
 	if !ok {
@@ -5037,8 +5114,10 @@ func (s *Session) CollectErrorMissVotes(
 	seenRecovery := make(map[string]struct{})
 	expected := len(deduped)
 	voteThreshold := s.sm.VoteThreshold()
+	responseHash := s.errorMissVoteResponseHash(inferenceID, artifacts)
+	counted := make(map[string]struct{}, expected)
 	var accWeight uint32
-	var errors, rejects int
+	var errors, rejects, invalid int
 	for i := 0; i < expected; i++ {
 		res := <-results
 		if res.err != nil {
@@ -5065,17 +5144,41 @@ func (s *Session) CollectErrorMissVotes(
 			}
 			continue
 		}
+		// Verify before counting. applyErrorMiss rejects the whole message on
+		// the first bad signature, so an unverified accept must not be stored
+		// or added to the weight that decides whether to submit.
+		if vErr := s.verifyErrorMissVote(inferenceID, responseHash, res.vote, res.verifierAddr); vErr != nil {
+			invalid++
+			logging.Stage(ctx, "timeout_vote_result", logFields(
+				res.verifierAddr, "outcome", "invalid", "voter_slot", res.vote.VoterSlot, "error", vErr,
+			)...)
+			logging.Warn("rejected unverified error-miss vote",
+				"subsystem", "session", "escrow_id", s.escrowID,
+				"inference_id", inferenceID, "responder", res.verifierAddr,
+				"voter_slot", res.vote.VoterSlot, "error", vErr)
+			continue
+		}
+		voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
+		if _, dup := counted[voterAddr]; dup {
+			invalid++
+			logging.Warn("rejected duplicate error-miss vote",
+				"subsystem", "session", "escrow_id", s.escrowID,
+				"inference_id", inferenceID, "voter", voterAddr,
+				"voter_slot", res.vote.VoterSlot)
+			continue
+		}
+		counted[voterAddr] = struct{}{}
 		votes = append(votes, res.vote)
-		addr := s.sm.SlotAddress(res.vote.VoterSlot)
-		accWeight += s.sm.AddressSlotCount(addr)
-		logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", true)...)
+		weight := s.sm.AddressSlotCount(voterAddr)
+		accWeight += weight
+		logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", true, "voter_slot", res.vote.VoterSlot, "weight", weight)...)
 		if accWeight > voteThreshold {
 			cancel()
 		}
 	}
 
 	logging.Stage(ctx, "timeout_votes_collected",
-		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
+		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "invalid", invalid, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
 	)
 	return votes, recovery, rejectCauses, nil
 }
@@ -5151,16 +5254,29 @@ func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	return accWeight > threshold
 }
 
+// HasSufficientErrorMissVotes reports whether the accept votes exceed the
+// vote threshold. Votes must already have been verified against their
+// responder — CollectErrorMissVotes only returns verified votes — since this
+// counts the weight of whatever slot each vote claims.
+//
+// Weight is deduplicated by validator address, matching applyErrorMiss: one
+// address cannot contribute its slot count more than once.
 func (s *Session) HasSufficientErrorMissVotes(votes []*types.ErrorMissVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	threshold := s.sm.VoteThreshold()
+	counted := make(map[string]bool, len(votes))
 	var accWeight uint32
 	for _, v := range votes {
-		if v.Accept {
-			addr := s.sm.SlotAddress(v.VoterSlot)
-			accWeight += s.sm.AddressSlotCount(addr)
+		if v == nil || !v.Accept {
+			continue
 		}
+		addr := s.sm.SlotAddress(v.VoterSlot)
+		if addr == "" || counted[addr] {
+			continue
+		}
+		counted[addr] = true
+		accWeight += s.sm.AddressSlotCount(addr)
 	}
 	return accWeight > threshold
 }

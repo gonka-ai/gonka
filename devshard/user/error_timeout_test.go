@@ -536,3 +536,159 @@ func TestTimeoutReasonLogLabel(t *testing.T) {
 	require.Equal(t, "refused", timeoutReasonLogLabel(types.TimeoutReason_TIMEOUT_REASON_REFUSED))
 	require.Equal(t, "unknown", timeoutReasonLogLabel(types.TimeoutReason(99)))
 }
+
+// signedErrorMissVerifier returns an accept signed over hash, attributed to slot.
+type signedErrorMissVerifier struct {
+	signer   *signing.Secp256k1Signer
+	slot     uint32
+	escrowID string
+	hash     []byte
+}
+
+func (v *signedErrorMissVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
+func (v *signedErrorMissVerifier) VerifyErrorMiss(_ context.Context, inferenceID uint64, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	data, err := types.CanonicalSignedBytes(&types.ErrorMissVoteContent{
+		EscrowId:     v.escrowID,
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: v.hash,
+	})
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	sig, err := v.signer.Sign(data)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return true, sig, v.slot, nil, "", nil
+}
+
+// garbageErrorMissVerifier accepts with a signature that recovers to nobody.
+type garbageErrorMissVerifier struct {
+	slot uint32
+}
+
+func (garbageErrorMissVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
+func (v garbageErrorMissVerifier) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return true, []byte{0x01, 0x02, 0x03}, v.slot, nil, "", nil
+}
+
+// garbageErrorMissClient is a host client whose error-miss vote does not verify.
+type garbageErrorMissClient struct {
+	HostClient
+	slot uint32
+}
+
+func (c *garbageErrorMissClient) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
+}
+
+func (c *garbageErrorMissClient) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return true, []byte{0x01, 0x02, 0x03}, c.slot, nil, "", nil
+}
+
+func TestCollectErrorMissVotes_DropsUnverifiedVotes(t *testing.T) {
+	session, hosts, _ := setupSession(t, 7, 100000, 10)
+	const inferenceID = uint64(1) // executor is group index 1, so it is not asked
+	hash := bytes.Repeat([]byte{0x11}, 32)
+	finishBytes, err := proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId: inferenceID, ResponseHash: hash,
+	}}})
+	require.NoError(t, err)
+
+	honest := func(idx int) TimeoutVerifier {
+		return &signedErrorMissVerifier{signer: hosts[idx], slot: uint32(idx), escrowID: "escrow-1", hash: hash}
+	}
+	votes, _, _, err := session.CollectErrorMissVotes(context.Background(), inferenceID, map[int]TimeoutVerifier{
+		0: &signedErrorMissVerifier{signer: hosts[0], slot: 2, escrowID: "escrow-1", hash: hash},
+		2: garbageErrorMissVerifier{slot: 2},
+		3: honest(3),
+		4: honest(4),
+		5: honest(5),
+		6: honest(6),
+	}, nil, host.TimeoutArtifacts{FinishTx: finishBytes})
+	require.NoError(t, err)
+
+	got := make(map[uint32]bool, len(votes))
+	for _, v := range votes {
+		got[v.VoterSlot] = true
+	}
+	require.Equal(t, map[uint32]bool{3: true, 4: true, 5: true, 6: true}, got)
+	require.True(t, session.HasSufficientErrorMissVotes(votes), "four honest votes of weight 1 exceed threshold 3")
+}
+
+func TestHandleErrorMiss_DropsUnverifiedVoteAndAppliesHonestQuorum(t *testing.T) {
+	session, hosts, _ := setupSession(t, 5, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
+	payload := errorMissPayload(t)
+	finishTx, finishBytes := signedErrorFinishTx(t, hosts, nonce, execIdx, payload)
+	session.mu.Lock()
+	session.addPendingTx(finishTx)
+	session.nonceStates[nonce].finished = true
+	session.mu.Unlock()
+
+	wrapAcceptingTimeoutVerifiers(session, hosts)
+	junkIdx := (execIdx + 1) % len(hosts)
+	session.clients[junkIdx] = &garbageErrorMissClient{HostClient: session.clients[junkIdx], slot: uint32(junkIdx)}
+
+	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
+	require.ErrorIs(t, err, ErrInferenceMissed)
+	require.True(t, result.Accepted)
+	require.Equal(t, 3, result.Votes)
+	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+
+	var missVotes []*types.ErrorMissVote
+	for _, diff := range session.Diffs() {
+		for _, tx := range diff.Txs {
+			if em := tx.GetErrorMiss(); em != nil && em.InferenceId == nonce {
+				missVotes = em.Votes
+			}
+		}
+	}
+	require.Len(t, missVotes, 3)
+	for _, v := range missVotes {
+		require.NotEqual(t, uint32(junkIdx), v.VoterSlot)
+	}
+}
+
+func TestHandleErrorMiss_UnverifiedVotesDoNotMeetThreshold(t *testing.T) {
+	session, hosts, _ := setupSession(t, 5, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
+	payload := errorMissPayload(t)
+	finishTx, finishBytes := signedErrorFinishTx(t, hosts, nonce, execIdx, payload)
+	session.mu.Lock()
+	session.addPendingTx(finishTx)
+	session.nonceStates[nonce].finished = true
+	session.mu.Unlock()
+
+	wrapAcceptingTimeoutVerifiers(session, hosts)
+	honest := (execIdx + 1) % len(hosts)
+	for i := range session.clients {
+		if i == execIdx || i == honest {
+			continue
+		}
+		session.clients[i] = &garbageErrorMissClient{HostClient: session.clients[i], slot: uint32(i)}
+	}
+
+	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+	require.False(t, result.Accepted)
+	require.Equal(t, 1, result.Votes)
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+	require.Equal(t, uint32(0), session.StateMachine().SnapshotState().HostStats[uint32(execIdx)].Missed)
+}
