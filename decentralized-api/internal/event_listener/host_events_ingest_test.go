@@ -2,6 +2,7 @@ package event_listener
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 
 	"common/nodemanager/gen"
@@ -230,4 +231,66 @@ func TestHostEvents_IngestVisibleViaGetHostEvents(t *testing.T) {
 	require.False(t, resp.Unchanged)
 	require.Len(t, resp.Events, 1)
 	require.Equal(t, uint64(6), resp.Events[0].Escrow.EscrowId)
+}
+
+type countingEscrowQuerier struct {
+	stubEscrowQuerier
+	calls int
+}
+
+func (c *countingEscrowQuerier) GetEscrow(escrowID string) (*EscrowSlotInfo, error) {
+	c.calls++
+	return c.stubEscrowQuerier.GetEscrow(escrowID)
+}
+
+func TestHostEvents_EscrowSettled_ReusesMembershipFromCreated(t *testing.T) {
+	for _, slots := range [][]string{{"host-a"}, {"other-host"}} {
+		q := &countingEscrowQuerier{stubEscrowQuerier: stubEscrowQuerier{info: &EscrowSlotInfo{Slots: slots}}}
+		el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
+
+		require.NoError(t, (&DevshardEscrowCreatedEventHandler{}).Handle(txEvent(map[string][]string{
+			"devshard_escrow_created.escrow_id": {"5"},
+		}), el))
+		require.NoError(t, (&DevshardEscrowSettledEventHandler{}).Handle(txEvent(map[string][]string{
+			"devshard_escrow_settled.escrow_id": {"5"},
+		}), el))
+		require.Equal(t, 1, q.calls, "settle must not re-query slots fixed at create")
+		want := uint64(0)
+		if slots[0] == "host-a" {
+			want = 2
+		}
+		require.Equal(t, want, ring.Head())
+
+		// memo is consumed: a repeated settle falls back to the chain.
+		require.NoError(t, (&DevshardEscrowSettledEventHandler{}).Handle(txEvent(map[string][]string{
+			"devshard_escrow_settled.escrow_id": {"5"},
+		}), el))
+		require.Equal(t, 2, q.calls)
+	}
+}
+
+func TestHostEvents_EscrowCreated_UnresolvedIsNotMemoized(t *testing.T) {
+	q := &countingEscrowQuerier{stubEscrowQuerier: stubEscrowQuerier{err: errors.New("chain down")}}
+	el, _ := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
+	require.NoError(t, (&DevshardEscrowCreatedEventHandler{}).Handle(txEvent(map[string][]string{
+		"devshard_escrow_created.escrow_id": {"9"},
+	}), el))
+	q.err = nil
+	q.info = &EscrowSlotInfo{Slots: []string{"other-host"}}
+	require.NoError(t, (&DevshardEscrowSettledEventHandler{}).Handle(txEvent(map[string][]string{
+		"devshard_escrow_settled.escrow_id": {"9"},
+	}), el))
+	require.Equal(t, 2, q.calls)
+}
+
+func TestEscrowSlotMemo_Bounded(t *testing.T) {
+	var m escrowSlotMemo
+	for i := 0; i < escrowSlotMemoCap+10; i++ {
+		m.put(strconv.Itoa(i), true)
+	}
+	require.Len(t, m.holds, escrowSlotMemoCap)
+	_, ok := m.take("0")
+	require.False(t, ok)
+	_, ok = m.take(strconv.Itoa(escrowSlotMemoCap + 9))
+	require.True(t, ok)
 }

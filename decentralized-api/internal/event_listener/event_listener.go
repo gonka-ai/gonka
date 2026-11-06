@@ -53,6 +53,7 @@ type EventListener struct {
 	statsStorage          statsstorage.StatsStorage
 	hostEvents            *apiconfig.HostEventRing
 	escrowQuery           escrowQuerier
+	escrowSlots           escrowSlotMemo
 	participantAddress    string
 	onNewBlockHeader      func(chainphase.BlockInfo)
 
