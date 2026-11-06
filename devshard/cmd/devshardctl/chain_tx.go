@@ -53,18 +53,21 @@ func settleEscrowResultFromTx(r *chaintx.SettleDevshardEscrowResult) *SettleDevs
 // reconciliation logic ported from upgrade-0.2.14 needs no changes).
 var errTxNotFound = chaintx.ErrTxNotFound
 
-func newGatewayChainTxClient(conn grpc.ClientConnInterface, settings GatewaySettings, chainID, feeDenom string, feeAmount, gasLimit uint64) (*chaintx.Manager, error) {
+const maxConcurrentEscrowBroadcasts = 8
+
+func newGatewayChainTxClient(conn grpc.ClientConnInterface, settings GatewaySettings, chainID, feeDenom string, feeAmount, gasLimit uint64, broadcastSlots chan struct{}) (*chaintx.Manager, error) {
 	if conn == nil {
 		return nil, fmt.Errorf("chain gRPC connection is required")
 	}
 	defaultFeeDenom, defaultFeeAmount := gatewayTxFee()
 	return chaintx.New(conn, chaintx.Config{
-		ChainID:      firstNonEmpty(chainID, os.Getenv("DEVSHARD_CHAIN_ID"), chaintx.DefaultChainID),
-		FeeDenom:     firstNonEmpty(feeDenom, defaultFeeDenom),
-		FeeAmount:    firstNonZeroUint64(feeAmount, defaultFeeAmount),
-		GasLimit:     firstNonZeroUint64(gasLimit, settings.TxGasLimit, uint64(readInt64Env("DEVSHARD_TX_GAS_LIMIT", int64(chaintx.DefaultGasLimit)))),
-		PollInterval: txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_INTERVAL_MS"), chaintx.DefaultPollInterval),
-		PollTimeout:  txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_TIMEOUT_MS"), chaintx.DefaultPollTimeout),
+		ChainID:        firstNonEmpty(chainID, os.Getenv("DEVSHARD_CHAIN_ID"), chaintx.DefaultChainID),
+		FeeDenom:       firstNonEmpty(feeDenom, defaultFeeDenom),
+		FeeAmount:      firstNonZeroUint64(feeAmount, defaultFeeAmount),
+		GasLimit:       firstNonZeroUint64(gasLimit, settings.TxGasLimit, uint64(readInt64Env("DEVSHARD_TX_GAS_LIMIT", int64(chaintx.DefaultGasLimit)))),
+		PollInterval:   txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_INTERVAL_MS"), chaintx.DefaultPollInterval),
+		PollTimeout:    txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_TIMEOUT_MS"), chaintx.DefaultPollTimeout),
+		BroadcastSlots: broadcastSlots,
 	})
 }
 
