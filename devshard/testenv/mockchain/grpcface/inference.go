@@ -3,11 +3,13 @@ package grpcface
 import (
 	"context"
 
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"devshard/testenv/mockchain/rpcface"
 	"devshard/testenv/mockchain/store"
 )
 
@@ -109,21 +111,44 @@ func (s *InferenceServer) WarmKeyEntry(_ context.Context, req *inferencetypes.Qu
 type CometServer struct {
 	cmtservice.UnimplementedServiceServer
 	store *store.Store
+	rpc   *rpcface.Service
 }
 
 // NewCometServer returns a cmtservice server backed by store.
-func NewCometServer(st *store.Store) *CometServer {
-	return &CometServer{store: st}
+// rpc, when set, fills the block hash and time from the signed headers the
+// JSON-RPC face publishes, so a gRPC reader and the header poller share one stamp.
+func NewCometServer(st *store.Store, rpc *rpcface.Service) *CometServer {
+	return &CometServer{store: st, rpc: rpc}
 }
 
 func (s *CometServer) GetLatestBlock(_ context.Context, _ *cmtservice.GetLatestBlockRequest) (*cmtservice.GetLatestBlockResponse, error) {
-	height := s.store.GetBlockHeight()
+	return s.blockAt(s.store.GetBlockHeight()), nil
+}
+
+func (s *CometServer) GetBlockByHeight(_ context.Context, req *cmtservice.GetBlockByHeightRequest) (*cmtservice.GetBlockByHeightResponse, error) {
+	height := int64(0)
+	if req != nil {
+		height = req.Height
+	}
+	if height <= 0 {
+		height = s.store.GetBlockHeight()
+	}
+	got := s.blockAt(height)
+	return &cmtservice.GetBlockByHeightResponse{BlockId: got.BlockId, SdkBlock: got.SdkBlock}, nil
+}
+
+func (s *CometServer) blockAt(height int64) *cmtservice.GetLatestBlockResponse {
+	hdr := cmtservice.Header{Height: height, ChainID: s.store.GetChainID()}
+	var id *cmtproto.BlockID
+	if s.rpc != nil && height > 0 {
+		hash, at, err := s.rpc.BlockStamp(height)
+		if err == nil && len(hash) > 0 {
+			hdr.Time = at
+			id = &cmtproto.BlockID{Hash: hash}
+		}
+	}
 	return &cmtservice.GetLatestBlockResponse{
-		SdkBlock: &cmtservice.Block{
-			Header: cmtservice.Header{
-				Height:  height,
-				ChainID: s.store.GetChainID(),
-			},
-		},
-	}, nil
+		BlockId:  id,
+		SdkBlock: &cmtservice.Block{Header: hdr},
+	}
 }

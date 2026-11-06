@@ -114,9 +114,10 @@ const nonceOutcomeRetention = 1024
 
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
-	confirmedAt      int64
-	finished         bool
-	feedBehindLogged bool
+	confirmedAt               int64
+	finished                  bool
+	feedBehindLogged          bool
+	confirmTimeMismatchLogged bool
 }
 
 // TimeoutResult reports what happened during timeout handling.
@@ -4460,12 +4461,19 @@ func (s *Session) refusalDeadlineLocked(sendTime time.Time, rec types.InferenceR
 }
 
 // executionDeadlineLocked is the gateway execution trigger. The caller holds
-// s.mu. Open only when the map has time(ConfirmedAtHeight) and the wall clock
-// is past that time by ExecutionTimeout. A missing time does not open the
-// challenge. confirmed_at is the signal for the feed-behind log, not the deadline.
+// s.mu. A confirm that carries ConfirmedAtTimeMs opens from that time plus
+// ExecutionTimeout. A map row that disagrees is a warning; a later dispute
+// rolls the timeout back. A zero carried time still waits for
+// time(ConfirmedAtHeight). confirmed_at is the signal for that feed-behind
+// log, not the deadline.
 func (s *Session) executionDeadlineLocked(nonce uint64, rec types.InferenceRecord, outcome *nonceOutcome, now time.Time) time.Time {
 	interval := timeoutInterval(s.sm.Config().ExecutionTimeout)
 	confirmedMs, ok := s.confirmedHeightTimeLocked(rec)
+	if rec.ConfirmedAtTimeMs > 0 {
+		s.warnConfirmTimeAgainstMapLocked(nonce, rec, outcome, confirmedMs, ok)
+		confirmedMs = rec.ConfirmedAtTimeMs
+		ok = true
+	}
 	d := headertime.Decide(now, confirmedMs, !ok, interval, 0, headertime.CallerGateway)
 	switch d.Outcome {
 	case headertime.OutcomeDue:
@@ -4532,6 +4540,29 @@ func (s *Session) resolveStampTimeLocked(height uint64, hash []byte, candidate i
 		src, _ = s.sm.HeaderTimes().(heightsync.StoredStampTime)
 	}
 	return heightsync.ResolveObservedTimeMs(src, height, hash, candidate)
+}
+
+// warnConfirmTimeAgainstMapLocked logs when the header map has the confirm
+// height and a different time. The deadline keeps ConfirmedAtTimeMs.
+// Caller holds s.mu.
+func (s *Session) warnConfirmTimeAgainstMapLocked(nonce uint64, rec types.InferenceRecord, outcome *nonceOutcome, mapMs int64, found bool) {
+	if !found || mapMs == rec.ConfirmedAtTimeMs {
+		return
+	}
+	if outcome != nil && outcome.confirmTimeMismatchLogged {
+		return
+	}
+	if outcome != nil {
+		outcome.confirmTimeMismatchLogged = true
+	}
+	logging.Warn("claimed confirm time disagrees with the header map; a later dispute rolls back a timeout decided on this time",
+		"subsystem", "user",
+		"escrow", s.escrowID,
+		"nonce", nonce,
+		"height", rec.ConfirmedAtHeight,
+		"carried_time_ms", rec.ConfirmedAtTimeMs,
+		"map_time_ms", mapMs,
+	)
 }
 
 // confirmedHeightTimeLocked reads time(ConfirmedAtHeight) from the map.

@@ -347,6 +347,17 @@ func finishAnswer(release func(bool), accept bool, err error) {
 	release(err == nil && accept)
 }
 
+// executionStampAnchor is the verifier's execution clock. A carried
+// ConfirmedAtTimeMs is that clock. disagree is set when the map has the
+// same stamp and a different time. A zero carried time keeps the map row,
+// and a miss stays a miss.
+func executionStampAnchor(rec *types.InferenceRecord, reason types.TimeoutReason, mapMs int64, found bool) (ms int64, missing, disagree bool) {
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION && rec != nil && rec.ConfirmedAtTimeMs > 0 {
+		return rec.ConfirmedAtTimeMs, false, found && mapMs != rec.ConfirmedAtTimeMs
+	}
+	return mapMs, !found, false
+}
+
 // awaitVerifierDue reports whether the challenge body should run.
 // ready is false when the verifier returns without a vote. The caller owns
 // the single in-flight check. The 60 second wait is a timer on this call.
@@ -371,12 +382,28 @@ func awaitVerifierDue(
 	height, hash := challengeStamp(rec, reason)
 	interval := m.TimeoutInterval(reason)
 	var waitFrom time.Time
+	warned := false
+	anchor := func(mapMs int64, found bool) (int64, bool) {
+		ms, missing, disagree := executionStampAnchor(rec, reason, mapMs, found)
+		if disagree && !warned {
+			warned = true
+			logging.Warn("claimed confirm time disagrees with the header map; a later dispute rolls back a timeout decided on this time",
+				"subsystem", "host",
+				"inference", inferenceID,
+				"height", height,
+				"carried_time_ms", rec.ConfirmedAtTimeMs,
+				"map_time_ms", mapMs,
+			)
+		}
+		return ms, missing
+	}
 
 	for {
 		now := m.VerifierNow()
-		ms, found := m.StampHeaderTime(height, hash)
+		mapMs, found := m.StampHeaderTime(height, hash)
+		ms, missing := anchor(mapMs, found)
 		waited := time.Duration(0)
-		if !found {
+		if missing {
 			if waitFrom.IsZero() {
 				waitFrom = now
 			}
@@ -385,7 +412,7 @@ func awaitVerifierDue(
 				waited = 0
 			}
 		}
-		d := headertime.Decide(now, ms, !found, interval, waited, headertime.CallerVerifier)
+		d := headertime.Decide(now, ms, missing, interval, waited, headertime.CallerVerifier)
 		switch d.Outcome {
 		case headertime.OutcomeDue:
 			return true, nil
@@ -403,8 +430,9 @@ func awaitVerifierDue(
 				return false, err
 			}
 			now = m.VerifierNow()
-			ms, found = m.StampHeaderTime(height, hash)
-			again := headertime.Decide(now, ms, !found, interval, 0, headertime.CallerVerifier)
+			mapMs, found = m.StampHeaderTime(height, hash)
+			ms, missing = anchor(mapMs, found)
+			again := headertime.Decide(now, ms, missing, interval, 0, headertime.CallerVerifier)
 			return again.Outcome == headertime.OutcomeDue, nil
 		case headertime.OutcomeWaiting:
 			left := headertime.AnswerWait - waited

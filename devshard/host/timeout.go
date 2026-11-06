@@ -455,9 +455,9 @@ func VerifyExecutionTimeout(
 		return false, err
 	}
 
-	// This verifier's wall clock against time(ConfirmedAtHeight). A missing
-	// row waits inside the 60 second bound. TimeoutDue stays for callers
-	// that do not read this map.
+	// This verifier's wall clock against ConfirmedAtTimeMs. A zero carried
+	// time still waits on time(ConfirmedAtHeight) inside the 60 second bound.
+	// TimeoutDue stays for callers that do not read this map.
 	ready, err := awaitVerifierDue(ctx, ev, inferenceID, rec, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
 	if err != nil {
 		return false, err

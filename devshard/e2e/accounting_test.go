@@ -81,7 +81,18 @@ func TestE2E_AccountingOverscheduledLoserFinishes(t *testing.T) {
 		},
 	})
 
-	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	// Bootstrap heartbeats raise the floor before chat, so the next executor
+	// is whichever slot the cadence has reached. Wait until that slot is the
+	// delayed host.
+	var nextSlot int
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		nextSlot = int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+		if nextSlot == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
 	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
 
 	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
@@ -185,6 +196,59 @@ func TestE2E_AccountingFinishedUsageUnknown(t *testing.T) {
 		beforeUnknown,
 		"protocol-finished attempt without a recoverable winner should be counted as finished_usage_unknown",
 	)
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
+//  1. Start the three-host environment with one host publishing an empty assistant message.
+//  2. Wait until that host owns the next traffic nonce, so it is the primary.
+//  3. Send one non-streaming completion. The empty stream must not win, and a host with content must.
+//  4. Send a follow-up so the gateway commits the pending finish txs.
+//  5. Assert the client received content, the content host is finished_used, and the empty finish is finished_unused.
+func TestE2E_AccountingEmptyStreamUsesContentHost(t *testing.T) {
+	const emptyCompletionBody = `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":0}}`
+
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			1: {
+				e2econfig.StubInferenceResponseBodyEnv: emptyCompletionBody,
+			},
+		},
+	})
+
+	var nextSlot int
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		nextSlot = int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+		if nextSlot == 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	require.Equal(t, 1, nextSlot, "test setup expects the empty host to own the first traffic nonce")
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeUsed := testutil.AccountingDispositionCount(before, "finished_used")
+	beforeUnused := testutil.AccountingDispositionCount(before, "finished_unused")
+
+	resp := testutil.SendCompletionRaw(t, client, env.clientURL, "accounting empty stream uses content host", testutil.AdminAPIKey)
+	testutil.LogRawResponse(t, "accounting empty stream uses content host completion", resp)
+	testutil.RequireOpenAINonStreamingCompletion(t, resp)
+
+	flush := testutil.SendCompletionRaw(t, client, env.clientURL, "accounting empty stream uses content host flush", testutil.AdminAPIKey)
+	testutil.LogRawResponse(t, "accounting empty stream uses content host flush completion", flush)
+	testutil.RequireOpenAINonStreamingCompletion(t, flush)
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingDispositionCount(resp, "finished_used") > beforeUsed &&
+			testutil.AccountingDispositionCount(resp, "finished_unused") > beforeUnused
+	})
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "finished_used"), beforeUsed, "content host should be counted as finished_used")
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "finished_unused"), beforeUnused, "empty finish should be counted as finished_unused once another host won")
 	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, accounting)
 }

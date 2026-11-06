@@ -4320,8 +4320,12 @@ func deliveredWholeAnswer(inf *inflight) bool {
 
 // attemptCounts reports an attempt the request can be settled on: the protocol nonce closed on a stream
 // that was not empty -- one that never streamed at all, like an in-process client, counts on the finish
-// alone -- or it is the winner whose whole answer already reached the caller.
+// alone -- or it is the winner whose whole answer already reached the caller. A stream that wrote bytes
+// and no content does not settle, so the race can start another host.
 func (e *Redundancy) attemptCounts(inf *inflight, winnerNonce uint64) bool {
+	if contentFreeStream(inf) {
+		return false
+	}
 	if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
 		return true
 	}
@@ -4464,10 +4468,26 @@ func inflightFinished(inf *inflight) bool {
 	if inf.err != nil || inf.resp == nil {
 		return false
 	}
-	if isFailedStreamAttempt(inf) {
+	if isFailedStreamAttempt(inf) || contentFreeStream(inf) {
 		return false
 	}
 	return user.HasMsgFinish(inf.resp.Mempool, inf.nonce)
+}
+
+// contentFreeStream is an attempt that wrote stream bytes and none of them
+// were content. A rejected confirm leaves the receipt flag unset, and that
+// must not let the protocol finish crown this body. An attempt that wrote
+// nothing, such as an in-process client, is not content-free and can still
+// settle on the finish. Host-fault accounting stays on isEmptyStreamAttempt,
+// which still requires the receipt.
+func contentFreeStream(inf *inflight) bool {
+	if inf == nil || inf.probe {
+		return false
+	}
+	if isErrorStreamAttempt(inf) {
+		return false
+	}
+	return inf.outputChunks.Load() > 0 && inf.contentChunks.Load() == 0
 }
 
 // isEmptyStreamAttempt reports whether a non-probe attempt that confirmed
@@ -5136,6 +5156,9 @@ func (e *Redundancy) resolvedWinnerNonce(attempts []*inflight, winnerNonce uint6
 	}
 	for _, inf := range attempts {
 		if inf.probe {
+			continue
+		}
+		if contentFreeStream(inf) {
 			continue
 		}
 		if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {

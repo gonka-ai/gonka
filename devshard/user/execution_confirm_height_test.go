@@ -107,3 +107,35 @@ func TestExecutionDeadlineRetriesUntilConfirmHeightIsStored(t *testing.T) {
 	due := edge.Add(time.Millisecond)
 	require.Equal(t, due.Add(-time.Millisecond), deadlineForConfirm(session, 102, due, outcome))
 }
+
+func TestExecutionDeadlineUsesCarriedConfirmTime(t *testing.T) {
+	stamp := time.Unix(1_700_000_000, 0).UTC()
+	session, src := confirmBelowFloor(t, stamp, false)
+	window := 5 * time.Second
+	carried := stamp.UnixMilli()
+	rec := types.InferenceRecord{
+		Status: types.StatusStarted, ConfirmedAtHeight: 102, ConfirmedAtTimeMs: carried,
+	}
+
+	inside := stamp.Add(time.Second)
+	session.mu.Lock()
+	deadline := session.executionDeadlineLocked(7, rec, &nonceOutcome{}, inside)
+	session.mu.Unlock()
+	require.Equal(t, stamp.Add(window), deadline, "the carried confirm time is the deadline while the map has no row")
+
+	due := stamp.Add(window + time.Millisecond)
+	outcome := &nonceOutcome{confirmedAt: stamp.Unix()}
+	session.mu.Lock()
+	deadline = session.executionDeadlineLocked(7, rec, outcome, due)
+	session.mu.Unlock()
+	require.Equal(t, due.Add(-time.Millisecond), deadline)
+	require.False(t, outcome.feedBehindLogged)
+	require.False(t, outcome.confirmTimeMismatchLogged)
+
+	src.Observe(blocks.HashOnlyHeader(102, stamp.Add(time.Hour), "mockchain", []byte{0xaa}), headertime.OriginDAPI, true)
+	session.mu.Lock()
+	deadline = session.executionDeadlineLocked(7, rec, outcome, due)
+	session.mu.Unlock()
+	require.Equal(t, due.Add(-time.Millisecond), deadline, "a later map row does not move the carried deadline")
+	require.True(t, outcome.confirmTimeMismatchLogged)
+}

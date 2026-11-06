@@ -281,6 +281,11 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		return nil, nil, err
 	}
 
+	oracle, headers := chainOracleFromEnv(ctx)
+	smOpts := []state.SMOption{state.WithVersion(types.EffectiveStateRootAndProtocolVersion)}
+	if headers != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(headers))
+	}
 	sm, err := state.NewStateMachine(
 		cfg.escrowID,
 		sessionConfig,
@@ -289,7 +294,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		cfg.userAddress,
 		verifier,
 		store,
-		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
+		smOpts...,
 	)
 	if err != nil {
 		_ = store.Close()
@@ -362,6 +367,15 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		inferenceEngine = delayedInferenceEngine{inner: inferenceEngine, delay: inferenceDelay}
 	}
 
+	hostOpts := []host.HostOption{
+		host.WithStorage(store),
+		host.WithEpochID(cfg.epochID),
+		host.WithVerifier(verifier),
+		host.WithValidator(stub.NewValidationEngine()),
+	}
+	if oracle != nil {
+		hostOpts = append(hostOpts, host.WithChainOracle(oracle))
+	}
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
@@ -369,10 +383,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		cfg.escrowID,
 		cfg.group,
 		nil,
-		host.WithStorage(store),
-		host.WithEpochID(cfg.epochID),
-		host.WithVerifier(verifier),
-		host.WithValidator(stub.NewValidationEngine()),
+		hostOpts...,
 	)
 	if err != nil {
 		return nil, nil, err

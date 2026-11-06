@@ -15,6 +15,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -187,6 +188,10 @@ func TestBootstrapReply_FillsPeerTipsWithoutSeedRPC(t *testing.T) {
 	}
 	env.session.clients = clients
 	env.session.MarkHeightSeedGate(time.Now().Add(heightSeedGate))
+	// Oracle, poller, and floor share one hash at height 55. The poller
+	// otherwise only has height 100, so the chat gate never sees time(F).
+	_, err := polledSource(t).HeaderTimeMs(55, []byte{0xaa, 0x01})
+	require.NoError(t, err)
 
 	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
 	require.NoError(t, env.session.WaitFloorChat(context.Background()))
@@ -253,6 +258,15 @@ func (f *fixedHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
 		return 0, errors.New("no header time")
 	}
 	return f.ms, nil
+}
+
+// StoredAt is the row the chat gate reads. The hash is the one the oracle,
+// the poller, and the floor share in TestBootstrapReply_FillsPeerTipsWithoutSeedRPC.
+func (f *fixedHeaderTimes) StoredAt(height uint64) (headertime.Record, bool) {
+	if f == nil || f.ms <= 0 || height == 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{Hash: []byte{0xaa, 0x01}, TimeMs: f.ms}, true
 }
 
 func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
