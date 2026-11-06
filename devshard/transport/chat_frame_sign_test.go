@@ -233,6 +233,16 @@ func TestChatFrameVerifier_RejectsTheSamePrefixSignedTwice(t *testing.T) {
 	require.Contains(t, check.Invalid, "behind the stream")
 }
 
+func TestChatFrameVerifier_RejectsAWrongSizeSignatureBeforeQueueingIt(t *testing.T) {
+	for _, size := range []int{signing.CompactSignatureSize - 1, signing.CompactSignatureSize + 1, 1 << 20} {
+		v := NewChatFrameVerifier("escrow-1", 1, testPromptHash, nil)
+		// Far ahead of the stream, so a queued signature would wait.
+		v.Frame(make([]byte, size), 1<<30)
+		require.Contains(t, v.Check().Invalid, "signature is", "size %d", size)
+		require.Empty(t, v.pending, "size %d", size)
+	}
+}
+
 func TestChatFrameVerifier_RejectsAnotherSigner(t *testing.T) {
 	executor := testutil.MustGenerateKey(t)
 	impostor := testutil.MustGenerateKey(t)

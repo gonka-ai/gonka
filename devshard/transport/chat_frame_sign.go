@@ -169,6 +169,12 @@ func (v *ChatFrameVerifier) Frame(sig []byte, streamBytes uint64) {
 	if v.check.Invalid != "" {
 		return
 	}
+	// Checked before queueing, so a signature waiting for its bytes holds at
+	// most CompactSignatureSize of them.
+	if len(sig) != signing.CompactSignatureSize {
+		v.fail("frame %d: its signature is %d bytes, not %d", v.check.Frames, len(sig), signing.CompactSignatureSize)
+		return
+	}
 	// Each signature covers new bytes. This also bounds the verification work
 	// on a stream by its size.
 	if streamBytes <= v.lastAt || streamBytes < v.streamBytes {
