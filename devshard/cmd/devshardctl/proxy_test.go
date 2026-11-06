@@ -1307,6 +1307,71 @@ func TestInterChunkStallDeadlineRearmsWithoutContent(t *testing.T) {
 	require.False(t, fresh.stallCancelExpired(time.Now()))
 }
 
+// TestInterChunkStallPlanSkipsDeadlinesThatCannotChangeState guards awaitRace
+// against arming a timer that fires into a no-op. A disabled cancel
+// (InterChunkStallTimeout=0) leaves cancelDeadline zero, which must not win the
+// earliest-deadline comparison; and a log deadline on an attempt without
+// content cannot open a stall episode (startInterChunkStall declines it), so
+// once it passes it must not be planned again. Either mistake re-arms an
+// immediate timer on every loop iteration until the next real event.
+func TestInterChunkStallPlanSkipsDeadlinesThatCannotChangeState(t *testing.T) {
+	newAttempt := func(anchor time.Time, content bool) *inflight {
+		inf := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now(), done: make(chan struct{})}
+		inf.stallAnchorAt.Store(anchor.UnixNano())
+		if content {
+			inf.contentChunks.Store(1)
+		}
+		return inf
+	}
+
+	t.Run("disabled cancel plans only the log", func(t *testing.T) {
+		setInterChunkStallTimeouts(t, 30*time.Second, 0)
+		anchor := time.Now().Add(-10 * time.Second)
+		inf := newAttempt(anchor, true)
+
+		plan, ok := nextInterChunkStallPlan([]*inflight{inf})
+		require.True(t, ok)
+		require.Equal(t, anchor.Add(30*time.Second).UnixNano(), plan.deadline.UnixNano(),
+			"a zero cancel deadline must not be selected ahead of the log")
+		require.False(t, plan.cancelConfigured)
+
+		_, logged := inf.startInterChunkStall(anchor.Add(31 * time.Second))
+		require.True(t, logged)
+		_, ok = nextInterChunkStallPlan([]*inflight{inf})
+		require.False(t, ok, "with the log delivered and cancel disabled nothing is left to wait for")
+	})
+
+	t.Run("disabled cancel without content plans nothing", func(t *testing.T) {
+		setInterChunkStallTimeouts(t, 30*time.Second, 0)
+		inf := newAttempt(time.Now().Add(-45*time.Second), false)
+
+		_, ok := nextInterChunkStallPlan([]*inflight{inf})
+		require.False(t, ok, "a role-only attempt can neither log nor cancel")
+	})
+
+	t.Run("role-only attempt waits for the cancel", func(t *testing.T) {
+		setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+		anchor := time.Now().Add(-45 * time.Second)
+		inf := newAttempt(anchor, false)
+
+		plan, ok := nextInterChunkStallPlan([]*inflight{inf})
+		require.True(t, ok)
+		require.Equal(t, anchor.Add(60*time.Second).UnixNano(), plan.deadline.UnixNano(),
+			"an expired log deadline that cannot record a stall must not keep waking the loop")
+		require.True(t, plan.cancelConfigured)
+	})
+
+	t.Run("content attempt still logs first", func(t *testing.T) {
+		setInterChunkStallTimeouts(t, 30*time.Second, 60*time.Second)
+		anchor := time.Now().Add(-10 * time.Second)
+		inf := newAttempt(anchor, true)
+
+		plan, ok := nextInterChunkStallPlan([]*inflight{inf})
+		require.True(t, ok)
+		require.Equal(t, anchor.Add(30*time.Second).UnixNano(), plan.deadline.UnixNano())
+	})
+}
+
 // TestRaceWriterStallAnchorIgnoresRepeatedEmptyDeltas pins which forwarded
 // events move the inter-chunk stall anchor. The first event of any kind starts
 // it, so a role chunk followed by silence is still cancelled; after that only a

@@ -2958,7 +2958,10 @@ func interChunkStallDeadline(inf *inflight) (logDeadline, cancelDeadline time.Ti
 	if cancelIssued {
 		return time.Time{}, time.Time{}, false
 	}
-	if !logged && InterChunkStallLogThreshold > 0 {
+	// Only plan the log when it can fire: startInterChunkStall declines to
+	// record a stall before content, so a log deadline on a role-only attempt
+	// would expire into a no-op and keep waking awaitRace until the cancel.
+	if !logged && InterChunkStallLogThreshold > 0 && inf.contentChunks.Load() > 0 {
 		logDeadline = anchor.Add(InterChunkStallLogThreshold)
 	}
 	if InterChunkStallTimeout > 0 {
@@ -2999,10 +3002,11 @@ func nextInterChunkStallPlan(attempts []*inflight) (interChunkStallPlan, bool) {
 		if !candidate {
 			continue
 		}
-		// logDeadline is never zero when the log threshold is configured; when
-		// it is disabled the cancel deadline stands alone.
+		// logDeadline is never zero for a candidate (it falls back to the
+		// cancel deadline); cancelDeadline is zero when cancellation is
+		// disabled and must not win the comparison then.
 		earliest := logDeadline
-		if cancelDeadline.Before(earliest) {
+		if !cancelDeadline.IsZero() && cancelDeadline.Before(earliest) {
 			earliest = cancelDeadline
 		}
 		if !ok || earliest.Before(best.deadline) {
