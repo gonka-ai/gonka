@@ -13,6 +13,8 @@ import (
 
 // BandwidthLimiter provides a simple mechanism to enforce bandwidth limits.
 // Minimalistic approach: use cached epoch data, refresh only when epoch changes.
+const limitRefreshRetryDelay = 30 * time.Second
+
 type BandwidthLimiter struct {
 	mu                    sync.RWMutex
 	limitsPerBlockKB      uint64
@@ -36,6 +38,7 @@ type BandwidthLimiter struct {
 	configManager         ConfigManager
 	cachedLimitEpochIndex uint64
 	cachedWeightLimit     uint64
+	limitRefreshRetryAt   time.Time
 }
 
 // CanAcceptRequest checks both bandwidth and inference count limits.
@@ -170,9 +173,14 @@ func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
 		bl.mu.RUnlock()
 		return
 	}
+	retryAt := bl.limitRefreshRetryAt
 	bl.mu.RUnlock()
 
-	newKBLimit, newInferenceLimit := bl.calculateUniformLimits(currentEpochIndex)
+	if time.Now().Before(retryAt) {
+		return
+	}
+
+	newKBLimit, newInferenceLimit, refreshed := bl.calculateUniformLimits(currentEpochIndex)
 
 	bl.mu.Lock()
 	defer bl.mu.Unlock()
@@ -189,19 +197,25 @@ func (bl *BandwidthLimiter) updateWeightBasedLimit(currentEpochIndex uint64) {
 			"newLimit", newInferenceLimit, "epoch", currentEpochIndex)
 	}
 
+	if !refreshed {
+		bl.limitRefreshRetryAt = time.Now().Add(limitRefreshRetryDelay)
+		return
+	}
+
+	bl.limitRefreshRetryAt = time.Time{}
 	bl.cachedLimitEpochIndex = currentEpochIndex
 }
 
-func (bl *BandwidthLimiter) calculateUniformLimits(currentEpochIndex uint64) (uint64, uint64) {
+func (bl *BandwidthLimiter) calculateUniformLimits(currentEpochIndex uint64) (uint64, uint64, bool) {
 	epochGroupData, err := bl.epochCache.GetCurrentEpochGroupData(currentEpochIndex)
 	if err != nil {
 		logging.Warn("Failed to get epoch data, using default limits", types.Config, "error", err)
-		return bl.defaultLimit, bl.defaultInferenceLimit
+		return bl.defaultLimit, bl.defaultInferenceLimit, false
 	}
 
 	participantCount := uint64(len(epochGroupData.ValidationWeights))
 	if participantCount == 0 {
-		return bl.defaultLimit, bl.defaultInferenceLimit
+		return bl.defaultLimit, bl.defaultInferenceLimit, false
 	}
 
 	kbLimit := bl.defaultLimit / participantCount
@@ -210,12 +224,12 @@ func (bl *BandwidthLimiter) calculateUniformLimits(currentEpochIndex uint64) (ui
 		inferenceLimit = 1 // Minimum of 1 inference per block per node
 	}
 
-	return kbLimit, inferenceLimit
+	return kbLimit, inferenceLimit, true
 }
 
 // calculateUniformLimit is kept for backward compatibility
 func (bl *BandwidthLimiter) calculateUniformLimit(currentEpochIndex uint64) uint64 {
-	kbLimit, _ := bl.calculateUniformLimits(currentEpochIndex)
+	kbLimit, _, _ := bl.calculateUniformLimits(currentEpochIndex)
 	return kbLimit
 }
 

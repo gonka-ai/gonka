@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestPolicyReadinessHandler(t *testing.T) {
@@ -220,5 +224,194 @@ func TestExtractJSONRPCLogItemsRedactsTxPayload(t *testing.T) {
 	}
 	if strings.Contains(items[0].Params, "signed-transaction") || strings.Contains(items[0].Params, "signature") {
 		t.Fatalf("params leaked tx payload: %q", items[0].Params)
+	}
+}
+
+func fakeHostLookup(answers map[string][]net.IP) hostLookupFunc {
+	return func(_ context.Context, host string) ([]net.IP, error) {
+		if ips, ok := answers[host]; ok {
+			return ips, nil
+		}
+		return nil, errors.New("lookup failed")
+	}
+}
+
+func TestResolveParticipantIPsReusesLastKnownOnLookupFailure(t *testing.T) {
+	now := time.Now()
+	participants := []Participant{
+		{InferenceUrl: "http://8.8.8.8:8000"},
+		{InferenceUrl: "http://host-a.example:8000"},
+	}
+	resolvedAt := now.Add(-time.Hour)
+	lastKnown := map[string]hostResolution{"host-a.example": {ips: []net.IP{net.ParseIP("1.1.1.1")}, resolvedAt: resolvedAt}}
+
+	allowed, failures, resolved := resolveParticipantIPs(participants, fakeHostLookup(nil), lastKnown, now)
+
+	if !reflect.DeepEqual(allowed, []string{"1.1.1.1", "8.8.8.8"}) {
+		t.Fatalf("unexpected allowed IPs: %v", allowed)
+	}
+	if failures != 1 {
+		t.Fatalf("expected 1 failure, got %d", failures)
+	}
+	if !resolved["host-a.example"].resolvedAt.Equal(resolvedAt) {
+		t.Fatalf("reusing last known IPs must not refresh their age: %v", resolved)
+	}
+}
+
+func TestResolveParticipantIPsDropsLastKnownAfterGracePeriod(t *testing.T) {
+	now := time.Now()
+	participants := []Participant{
+		{InferenceUrl: "http://8.8.8.8:8000"},
+		{InferenceUrl: "http://host-a.example:8000"},
+	}
+	lastKnown := map[string]hostResolution{"host-a.example": {
+		ips:        []net.IP{net.ParseIP("1.1.1.1")},
+		resolvedAt: now.Add(-lastKnownIPGracePeriod - time.Second),
+	}}
+
+	allowed, failures, resolved := resolveParticipantIPs(participants, fakeHostLookup(nil), lastKnown, now)
+
+	if !reflect.DeepEqual(allowed, []string{"8.8.8.8"}) {
+		t.Fatalf("expired IP must not stay whitelisted: %v", allowed)
+	}
+	if failures != 1 {
+		t.Fatalf("expected 1 failure, got %d", failures)
+	}
+	if _, ok := resolved["host-a.example"]; ok {
+		t.Fatalf("expired host must be forgotten: %v", resolved)
+	}
+}
+
+func TestResolveParticipantIPsMatchesHostnameFormsAcrossSyncs(t *testing.T) {
+	now := time.Now()
+	lastKnown := map[string]hostResolution{"host-a.example": {ips: []net.IP{net.ParseIP("1.1.1.1")}, resolvedAt: now}}
+
+	for _, url := range []string{"http://HOST-A.example:8000", "http://host-a.example.:8000"} {
+		allowed, _, _ := resolveParticipantIPs([]Participant{{InferenceUrl: url}}, fakeHostLookup(nil), lastKnown, now)
+		if !reflect.DeepEqual(allowed, []string{"1.1.1.1"}) {
+			t.Fatalf("%s must reuse the last known IPs, got %v", url, allowed)
+		}
+	}
+}
+
+func TestResolveParticipantIPsDropsDepartedHosts(t *testing.T) {
+	now := time.Now()
+	participants := []Participant{{InferenceUrl: "http://host-b.example:8000"}}
+	lastKnown := map[string]hostResolution{"host-a.example": {ips: []net.IP{net.ParseIP("1.1.1.1")}, resolvedAt: now}}
+	lookup := fakeHostLookup(map[string][]net.IP{"host-b.example": {net.ParseIP("9.9.9.9")}})
+
+	allowed, failures, resolved := resolveParticipantIPs(participants, lookup, lastKnown, now)
+
+	if !reflect.DeepEqual(allowed, []string{"9.9.9.9"}) {
+		t.Fatalf("unexpected allowed IPs: %v", allowed)
+	}
+	if failures != 0 {
+		t.Fatalf("expected no failures, got %d", failures)
+	}
+	if _, ok := resolved["host-a.example"]; ok {
+		t.Fatalf("departed host must not be kept: %v", resolved)
+	}
+}
+
+func TestResolveParticipantIPsNewAnswerReplacesLastKnown(t *testing.T) {
+	now := time.Now()
+	participants := []Participant{{InferenceUrl: "http://host-a.example:8000"}}
+	lastKnown := map[string]hostResolution{"host-a.example": {ips: []net.IP{net.ParseIP("1.1.1.1")}, resolvedAt: now.Add(-time.Hour)}}
+	lookup := fakeHostLookup(map[string][]net.IP{"host-a.example": {net.ParseIP("2.2.2.2")}})
+
+	allowed, _, resolved := resolveParticipantIPs(participants, lookup, lastKnown, now)
+
+	if !reflect.DeepEqual(allowed, []string{"2.2.2.2"}) {
+		t.Fatalf("unexpected allowed IPs: %v", allowed)
+	}
+	if !resolved["host-a.example"].resolvedAt.Equal(now) {
+		t.Fatalf("a fresh answer must reset the age: %v", resolved)
+	}
+}
+
+func TestResolveParticipantIPsHostWithoutHistoryDoesNotBlockOthers(t *testing.T) {
+	participants := []Participant{
+		{InferenceUrl: "http://8.8.8.8:8000"},
+		{InferenceUrl: "http://host-a.example:8000"},
+	}
+
+	allowed, failures, resolved := resolveParticipantIPs(participants, fakeHostLookup(nil), map[string]hostResolution{}, time.Now())
+
+	if !reflect.DeepEqual(allowed, []string{"8.8.8.8"}) {
+		t.Fatalf("unexpected allowed IPs: %v", allowed)
+	}
+	if failures != 1 {
+		t.Fatalf("expected 1 failure, got %d", failures)
+	}
+	if len(resolved) != 0 {
+		t.Fatalf("expected nothing stored for an unresolved host: %v", resolved)
+	}
+}
+
+func TestResolveParticipantIPsAllPrivateIsNotAFailure(t *testing.T) {
+	participants := []Participant{{InferenceUrl: "http://10.1.2.3:8080"}}
+
+	allowed, failures, _ := resolveParticipantIPs(participants, fakeHostLookup(nil), map[string]hostResolution{}, time.Now())
+
+	if len(allowed) != 0 || failures != 0 {
+		t.Fatalf("private literal must yield no IPs and no failure: allowed=%v failures=%d", allowed, failures)
+	}
+}
+
+func TestResolveParticipantIPsLooksUpOriginalHostname(t *testing.T) {
+	var looked []string
+	var mu sync.Mutex
+	lookup := func(_ context.Context, host string) ([]net.IP, error) {
+		mu.Lock()
+		defer mu.Unlock()
+		looked = append(looked, host)
+		return []net.IP{net.ParseIP("1.1.1.1")}, nil
+	}
+
+	_, _, resolved := resolveParticipantIPs([]Participant{{InferenceUrl: "http://HOST-A.example.:8000"}}, lookup, map[string]hostResolution{}, time.Now())
+
+	if !reflect.DeepEqual(looked, []string{"HOST-A.example."}) {
+		t.Fatalf("DNS must see the hostname as configured, got %v", looked)
+	}
+	if _, ok := resolved["host-a.example"]; !ok {
+		t.Fatalf("history must use the canonical key: %v", resolved)
+	}
+}
+
+func TestSyncWhitelistRevokesWhenHistoryExpired(t *testing.T) {
+	const body = `{"active_participants":{"participants":[{"inference_url":"http://host-a.invalid:8000"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	oldURL, oldHosts := ApiUrl, lastResolvedHosts
+	ApiUrl = srv.URL
+	lastResolvedHosts = map[string]hostResolution{"host-a.invalid": {
+		ips:        []net.IP{net.ParseIP("1.1.1.1")},
+		resolvedAt: time.Now().Add(-lastKnownIPGracePeriod - time.Hour),
+	}}
+	defer func() { ApiUrl, lastResolvedHosts = oldURL, oldHosts }()
+
+	err := syncWhitelist()
+	if err != nil && strings.Contains(err.Error(), "preserving existing whitelist state") {
+		t.Fatalf("expired history must not preserve the installed whitelist: %v", err)
+	}
+}
+
+func TestSyncWhitelistKeepsStateWhenNothingResolves(t *testing.T) {
+	const body = `{"active_participants":{"participants":[{"inference_url":"http://host-a.invalid:8000"}]}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	oldURL, oldHosts := ApiUrl, lastResolvedHosts
+	ApiUrl, lastResolvedHosts = srv.URL, map[string]hostResolution{}
+	defer func() { ApiUrl, lastResolvedHosts = oldURL, oldHosts }()
+
+	err := syncWhitelist()
+	if err == nil || !strings.Contains(err.Error(), "preserving existing whitelist state") {
+		t.Fatalf("expected a preservation error, got: %v", err)
 	}
 }

@@ -5,9 +5,12 @@ import (
 	"context"
 	"decentralized-api/cosmosclient"
 	"fmt"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
+	"golang.org/x/sync/singleflight"
 )
 
 // EpochModelThreshold is a per-model inference validation threshold for an epoch,
@@ -18,7 +21,11 @@ type EpochModelThreshold struct {
 	Exponent int32
 }
 
-const maxCachedEpochs = 2
+const (
+	maxCachedEpochs                = 8
+	epochGroupQueryTimeout         = 15 * time.Second
+	maxConcurrentEpochGroupQueries = 4
+)
 
 type cachedEpochData struct {
 	data       *types.EpochGroupData
@@ -32,103 +39,185 @@ type EpochGroupDataCache struct {
 	cachedEpochIndex uint64
 	cachedGroupData  *types.EpochGroupData
 
-	// Multi-epoch cache for GetEpochGroupData (max 2 epochs)
+	// Multi-epoch cache for GetEpochGroupData (newest maxCachedEpochs epochs)
 	epochCache map[uint64]*cachedEpochData
+
+	currentGroupFlight singleflight.Group
+	epochGroupFlight   singleflight.Group
+	querySlots         chan struct{}
+	queryTimeout       time.Duration
 
 	recorder cosmosclient.CosmosMessageClient
 }
 
 func NewEpochGroupDataCache(recorder cosmosclient.CosmosMessageClient) *EpochGroupDataCache {
 	return &EpochGroupDataCache{
-		recorder:   recorder,
-		epochCache: make(map[uint64]*cachedEpochData),
+		recorder:     recorder,
+		epochCache:   make(map[uint64]*cachedEpochData),
+		querySlots:   make(chan struct{}, maxConcurrentEpochGroupQueries),
+		queryTimeout: epochGroupQueryTimeout,
+	}
+}
+
+func boundedEpochQuery[T any](ctx context.Context, slots chan struct{}, query func(context.Context) (T, error)) (T, error) {
+	var zero T
+	select {
+	case slots <- struct{}{}:
+	case <-ctx.Done():
+		return zero, ctx.Err()
+	}
+
+	type queryResult struct {
+		value T
+		err   error
+	}
+	done := make(chan queryResult, 1)
+	go func() {
+		defer func() { <-slots }()
+		value, err := query(ctx)
+		done <- queryResult{value, err}
+	}()
+
+	select {
+	case res := <-done:
+		return res.value, res.err
+	case <-ctx.Done():
+		return zero, ctx.Err()
 	}
 }
 
 func (c *EpochGroupDataCache) GetCurrentEpochGroupData(currentEpochIndex uint64) (*types.EpochGroupData, error) {
+	if data := c.cachedCurrentEpochGroupData(currentEpochIndex); data != nil {
+		return data, nil
+	}
+
+	key := strconv.FormatUint(currentEpochIndex, 10)
+	result, err, _ := c.currentGroupFlight.Do(key, func() (interface{}, error) {
+		return c.fetchCurrentEpochGroupData(currentEpochIndex)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return result.(*types.EpochGroupData), nil
+}
+
+func (c *EpochGroupDataCache) cachedCurrentEpochGroupData(currentEpochIndex uint64) *types.EpochGroupData {
 	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.cachedGroupData != nil && c.cachedEpochIndex == currentEpochIndex {
-		defer c.mu.RUnlock()
-		return c.cachedGroupData, nil
+		return c.cachedGroupData
 	}
-	c.mu.RUnlock()
+	return nil
+}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	if c.cachedGroupData != nil && c.cachedEpochIndex == currentEpochIndex {
-		return c.cachedGroupData, nil
+func (c *EpochGroupDataCache) fetchCurrentEpochGroupData(currentEpochIndex uint64) (*types.EpochGroupData, error) {
+	if data := c.cachedCurrentEpochGroupData(currentEpochIndex); data != nil {
+		return data, nil
 	}
 
-	logging.Info("Fetching new epoch group data", types.Config,
-		"cachedEpochIndex", c.cachedEpochIndex, "currentEpochIndex", currentEpochIndex)
+	logging.Info("Fetching new epoch group data", types.Config, "currentEpochIndex", currentEpochIndex)
 
+	ctx, cancel := context.WithTimeout(context.Background(), c.queryTimeout)
+	defer cancel()
 	queryClient := c.recorder.NewInferenceQueryClient()
 	req := &types.QueryCurrentEpochGroupDataRequest{}
-	resp, err := queryClient.CurrentEpochGroupData(context.Background(), req)
+	resp, err := boundedEpochQuery(ctx, c.querySlots, func(queryCtx context.Context) (*types.QueryCurrentEpochGroupDataResponse, error) {
+		return queryClient.CurrentEpochGroupData(queryCtx, req)
+	})
 	if err != nil {
 		logging.Warn("Failed to query current epoch group data", types.Config, "error", err)
 		return nil, err
 	}
 
-	c.cachedEpochIndex = currentEpochIndex
-	c.cachedGroupData = &resp.EpochGroupData
+	data := &resp.EpochGroupData
+	c.mu.Lock()
+	if c.cachedGroupData == nil || currentEpochIndex >= c.cachedEpochIndex {
+		c.cachedEpochIndex = currentEpochIndex
+		c.cachedGroupData = data
+	}
+	c.mu.Unlock()
 
 	logging.Info("Updated epoch group data cache", types.Config,
 		"epochIndex", currentEpochIndex,
 		"validationWeights", len(resp.EpochGroupData.ValidationWeights))
 
-	return c.cachedGroupData, nil
+	return data, nil
 }
 
 // GetEpochGroupData returns epoch group data for specific epoch.
-// Uses cache, queries chain only on cache miss. Keeps max 2 epochs.
+// Uses cache, queries chain only on cache miss. Keeps the newest maxCachedEpochs epochs.
 //
 // Entries with an empty ValidationWeights set are not treated as authoritative:
 // refreshModelValidationThresholds can populate the cache at epoch start before
 // members are assigned, and a sticky empty cache would make IsActiveParticipant
 // permanently return false (breaking confirmation PoC validation).
 func (c *EpochGroupDataCache) GetEpochGroupData(ctx context.Context, epochIndex uint64) (*types.EpochGroupData, error) {
-	c.mu.RLock()
-	if cached, ok := c.epochCache[epochIndex]; ok && len(cached.addressSet) > 0 {
-		c.mu.RUnlock()
-		return cached.data, nil
+	if data := c.cachedEpochGroupData(epochIndex); data != nil {
+		return data, nil
 	}
-	c.mu.RUnlock()
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 
-	// Double-check after acquiring write lock
+	key := strconv.FormatUint(epochIndex, 10)
+	queryCtx := context.WithoutCancel(ctx)
+	result := c.epochGroupFlight.DoChan(key, func() (interface{}, error) {
+		return c.fetchEpochGroupData(queryCtx, epochIndex)
+	})
+
+	select {
+	case res := <-result:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*types.EpochGroupData), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (c *EpochGroupDataCache) cachedEpochGroupData(epochIndex uint64) *types.EpochGroupData {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if cached, ok := c.epochCache[epochIndex]; ok && len(cached.addressSet) > 0 {
-		return cached.data, nil
+		return cached.data
+	}
+	return nil
+}
+
+func (c *EpochGroupDataCache) fetchEpochGroupData(ctx context.Context, epochIndex uint64) (*types.EpochGroupData, error) {
+	if data := c.cachedEpochGroupData(epochIndex); data != nil {
+		return data, nil
 	}
 
 	logging.Debug("Fetching epoch group data", types.Config, "epochIndex", epochIndex)
 
+	queryCtx, cancel := context.WithTimeout(ctx, c.queryTimeout)
+	defer cancel()
 	queryClient := c.recorder.NewInferenceQueryClient()
-	resp, err := queryClient.EpochGroupData(ctx, &types.QueryGetEpochGroupDataRequest{
-		EpochIndex: epochIndex,
+	resp, err := boundedEpochQuery(queryCtx, c.querySlots, func(boundedCtx context.Context) (*types.QueryGetEpochGroupDataResponse, error) {
+		return queryClient.EpochGroupData(boundedCtx, &types.QueryGetEpochGroupDataRequest{
+			EpochIndex: epochIndex,
+		})
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	// Prune if needed (keep max 2 epochs)
-	if len(c.epochCache) >= maxCachedEpochs {
-		c.pruneOldest(epochIndex)
-	}
-
-	// Build address set for O(1) lookups
 	addressSet := make(map[string]struct{}, len(resp.EpochGroupData.ValidationWeights))
 	for _, vw := range resp.EpochGroupData.ValidationWeights {
 		addressSet[vw.MemberAddress] = struct{}{}
 	}
 
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	c.epochCache[epochIndex] = &cachedEpochData{
 		data:       &resp.EpochGroupData,
 		addressSet: addressSet,
 	}
+	c.pruneToCapacity()
 
 	logging.Debug("Cached epoch group data", types.Config,
 		"epochIndex", epochIndex,
@@ -148,17 +237,15 @@ func (c *EpochGroupDataCache) IsActiveParticipant(ctx context.Context, epochInde
 	c.mu.RUnlock()
 
 	// Cache miss or empty (pre-member) entry — fetch / refresh first
-	_, err := c.GetEpochGroupData(ctx, epochIndex)
+	data, err := c.GetEpochGroupData(ctx, epochIndex)
 	if err != nil {
 		return false, err
 	}
 
-	// Now check again
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if cached, ok := c.epochCache[epochIndex]; ok {
-		_, exists := cached.addressSet[address]
-		return exists, nil
+	for _, vw := range data.ValidationWeights {
+		if vw.MemberAddress == address {
+			return true, nil
+		}
 	}
 	return false, nil
 }
@@ -199,12 +286,17 @@ func (c *EpochGroupDataCache) GetModelValidationThresholds(ctx context.Context, 
 	return out, nil
 }
 
-// pruneOldest removes epochs older than currentEpoch - 1
-func (c *EpochGroupDataCache) pruneOldest(currentEpoch uint64) {
-	for epochId := range c.epochCache {
-		if epochId < currentEpoch-1 {
-			delete(c.epochCache, epochId)
-			logging.Debug("Pruned old epoch from cache", types.Config, "epochId", epochId)
+func (c *EpochGroupDataCache) pruneToCapacity() {
+	for len(c.epochCache) > maxCachedEpochs {
+		var oldest uint64
+		first := true
+		for epochId := range c.epochCache {
+			if first || epochId < oldest {
+				oldest = epochId
+				first = false
+			}
 		}
+		delete(c.epochCache, oldest)
+		logging.Debug("Pruned old epoch from cache", types.Config, "epochId", oldest)
 	}
 }

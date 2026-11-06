@@ -10,6 +10,12 @@ type TendermintClient struct {
 	ChainNodeUrl string
 }
 
+const nodeRPCTimeoutSeconds = 60
+
+func newBoundedNodeRPCClient(address string, timeoutSeconds uint) (*http.HTTP, error) {
+	return http.NewWithTimeout(address, "/websocket", timeoutSeconds)
+}
+
 // NewRpcClient Can be used to query Block, Validators, and other data from the Cosmos SDK node.
 func NewRpcClient(address string) (*http.HTTP, error) {
 	return http.New(address, "/websocket")
