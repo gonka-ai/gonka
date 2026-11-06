@@ -15,6 +15,8 @@ import (
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/stretchr/testify/require"
 
+	"cosmossdk.io/collections"
+
 	"github.com/productscience/inference/app"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
@@ -38,6 +40,12 @@ type dutyCheckTxFixture struct {
 	// warm key.
 	grantee     sdk.AccAddress
 	granteePriv cryptotypes.PrivKey
+	// registered is a registered participant active in no epoch.
+	registered     sdk.AccAddress
+	registeredPriv cryptotypes.PrivKey
+	// previous was active only in the previous epoch.
+	previous     sdk.AccAddress
+	previousPriv cryptotypes.PrivKey
 }
 
 const dutyEpochIndex = uint64(400)
@@ -58,12 +66,18 @@ func setupDutyCheckTx(t *testing.T) dutyCheckTxFixture {
 	outsider := sdk.AccAddress(outsiderPriv.PubKey().Address())
 	granteePriv := secp256k1.GenPrivKey()
 	grantee := sdk.AccAddress(granteePriv.PubKey().Address())
+	registeredPriv := secp256k1.GenPrivKey()
+	registered := sdk.AccAddress(registeredPriv.PubKey().Address())
+	previousPriv := secp256k1.GenPrivKey()
+	previous := sdk.AccAddress(previousPriv.PubKey().Address())
 
 	// All three are funded: the report's point is that funding is not
 	// authorization, so a funded outsider must still be rejected.
 	fundAccount(t, ctx, testApp, participant, partPriv.PubKey())
 	fundAccount(t, ctx, testApp, outsider, outsiderPriv.PubKey())
 	fundAccount(t, ctx, testApp, grantee, granteePriv.PubKey())
+	fundAccount(t, ctx, testApp, registered, registeredPriv.PubKey())
+	fundAccount(t, ctx, testApp, previous, previousPriv.PubKey())
 
 	require.NoError(t, testApp.InferenceKeeper.SetParticipant(ctx, inferencetypes.Participant{
 		Index:   participant.String(),
@@ -71,6 +85,18 @@ func setupDutyCheckTx(t *testing.T) dutyCheckTxFixture {
 		Weight:  10,
 	}))
 	require.NoError(t, testApp.InferenceKeeper.SetEffectiveEpochIndex(ctx, dutyEpochIndex))
+	require.NoError(t, testApp.InferenceKeeper.ActiveParticipantsSet.Set(ctx, collections.Join(dutyEpochIndex, participant)))
+	// registered is registered but in neither epoch's active set.
+	require.NoError(t, testApp.InferenceKeeper.SetParticipant(ctx, inferencetypes.Participant{
+		Index:   registered.String(),
+		Address: registered.String(),
+	}))
+	// previous was active only in the previous epoch.
+	require.NoError(t, testApp.InferenceKeeper.SetParticipant(ctx, inferencetypes.Participant{
+		Index:   previous.String(),
+		Address: previous.String(),
+	}))
+	require.NoError(t, testApp.InferenceKeeper.ActiveParticipantsSet.Set(ctx, collections.Join(dutyEpochIndex-1, previous)))
 
 	// Grant the warm key authority over MsgClaimRewards on behalf of the
 	// participant, mirroring GrantMLOperationalKeyPermissionsToAccount.
@@ -90,13 +116,17 @@ func setupDutyCheckTx(t *testing.T) dutyCheckTxFixture {
 	require.NoError(t, err)
 
 	return dutyCheckTxFixture{
-		testApp:      testApp,
-		participant:  participant,
-		partPriv:     partPriv,
-		outsider:     outsider,
-		outsiderPriv: outsiderPriv,
-		grantee:      grantee,
-		granteePriv:  granteePriv,
+		testApp:        testApp,
+		participant:    participant,
+		partPriv:       partPriv,
+		outsider:       outsider,
+		outsiderPriv:   outsiderPriv,
+		grantee:        grantee,
+		granteePriv:    granteePriv,
+		registered:     registered,
+		registeredPriv: registeredPriv,
+		previous:       previous,
+		previousPriv:   previousPriv,
 	}
 }
 
@@ -234,4 +264,20 @@ func TestNetworkDuty_CheckTx_NonDutyUnaffected(t *testing.T) {
 
 	require.NotContains(t, strings.ToLower(resp.Log), "network duty",
 		"non-duty messages must not be rejected by the duty signer check; log=%q", resp.Log)
+}
+
+// TestNetworkDuty_CheckTx_ClaimRewards_RequiresActiveEpoch: registration is open
+// and free, so MsgClaimRewards is held to its handler's Active | PreviousActive
+// permission rather than registration alone.
+func TestNetworkDuty_CheckTx_ClaimRewards_RequiresActiveEpoch(t *testing.T) {
+	f := setupDutyCheckTx(t)
+
+	resp := runDutyCheckTx(t, f, []sdk.Msg{claimRewardsFor(f.registered)}, f.registered, f.registeredPriv)
+	require.NotEqual(t, uint32(0), resp.Code,
+		"registered but never-active account must be rejected at CheckTx; log=%q", resp.Log)
+	require.Contains(t, resp.Log, inferencetypes.ErrActiveParticipantNotFound.Error())
+
+	resp = runDutyCheckTx(t, f, []sdk.Msg{claimRewardsFor(f.previous)}, f.previous, f.previousPriv)
+	require.Equal(t, uint32(0), resp.Code,
+		"account active in the previous epoch must still be admitted; log=%q", resp.Log)
 }

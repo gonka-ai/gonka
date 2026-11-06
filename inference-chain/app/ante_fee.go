@@ -184,6 +184,10 @@ type dutyAuthorization struct {
 	// escrowAllowList selects the devshard escrow allowlist instead of the
 	// participant registry, matching EscrowAllowListPermission.
 	escrowAllowList bool
+	// activeOrPreviousEpoch additionally requires the actor to be in the
+	// current or previous epoch's ActiveParticipantsSet, matching the
+	// Active | PreviousActive permission of the claim handler.
+	activeOrPreviousEpoch bool
 }
 
 // dutyAuthorizationFor returns the authorization requirement for a fee-exempt
@@ -213,7 +217,7 @@ func dutyAuthorizationFor(msg sdk.Msg) (dutyAuthorization, bool) {
 	case *inferencetypes.MsgSubmitSeed:
 		return dutyAuthorization{actor: m.Creator}, true
 	case *inferencetypes.MsgClaimRewards:
-		return dutyAuthorization{actor: m.Creator}, true
+		return dutyAuthorization{actor: m.Creator, activeOrPreviousEpoch: true}, true
 
 	// Devshard escrow settlement is allowlist-restricted rather than
 	// participant-gated (EscrowAllowListPermission).

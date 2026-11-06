@@ -153,6 +153,9 @@ func (d NetworkDutySignerDecorator) checkDutyActor(ctx sdk.Context, msg sdk.Msg)
 	}
 
 	if d.inferenceKeeper.IsRegisteredParticipant(ctx, auth.actor) {
+		if auth.activeOrPreviousEpoch {
+			return d.checkActiveOrPreviousEpoch(ctx, msg, auth.actor)
+		}
 		return nil
 	}
 	d.inferenceKeeper.LogDebug(
@@ -162,4 +165,24 @@ func (d NetworkDutySignerDecorator) checkDutyActor(ctx sdk.Context, msg sdk.Msg)
 		"creator", auth.actor,
 	)
 	return inferencetypes.ErrParticipantNotFound.Wrap(auth.actor)
+}
+
+// checkActiveOrPreviousEpoch applies the claim handler's own permission
+// (Active | PreviousActive): registration is open and free, so a registered
+// but never-active account would otherwise pass CheckTx and fail in DeliverTx.
+func (d NetworkDutySignerDecorator) checkActiveOrPreviousEpoch(ctx sdk.Context, msg sdk.Msg, actor string) error {
+	addr, err := sdk.AccAddressFromBech32(actor)
+	if err != nil {
+		return inferencetypes.ErrParticipantNotFound.Wrap(actor)
+	}
+	if err := d.inferenceKeeper.RequireActiveOrPreviousActiveParticipant(ctx, addr); err != nil {
+		d.inferenceKeeper.LogDebug(
+			"AnteHandle: NetworkDutySigner - rejecting duty from participant not active in current or previous epoch",
+			inferencetypes.Messages,
+			"msg_type_url", sdk.MsgTypeURL(msg),
+			"creator", actor,
+		)
+		return err
+	}
+	return nil
 }
