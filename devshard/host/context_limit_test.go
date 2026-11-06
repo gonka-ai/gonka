@@ -60,8 +60,12 @@ func TestEmptyBodyVerdictContextLimit(t *testing.T) {
 			limits: fixedLimits{limit: 400000}, prompt: 392499, inputClaim: 392499, outputClaim: 8192,
 			wantFault: types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM, wantCheck: types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS,
 		},
+		"a request within InputSpread of the limit is the client's refusal": {
+			limits: fixedLimits{limit: 400000}, prompt: 391801, inputClaim: 391801,
+			wantFault: types.ChallengeFault_CHALLENGE_FAULT_NONE, wantCheck: types.ChallengeCheck_CHALLENGE_CHECK_CONTEXT_LIMIT, wantRenders: 1,
+		},
 		"request that fits keeps the empty-stream vote": {
-			limits: fixedLimits{limit: 400000}, prompt: 391808, inputClaim: 0,
+			limits: fixedLimits{limit: 400000}, prompt: 391800, inputClaim: 0,
 			wantFault: types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM, wantCheck: types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS, wantRenders: 1,
 		},
 		"no governance limit keeps the empty-stream vote": {

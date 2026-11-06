@@ -65,11 +65,13 @@ func (h *Host) emptyBodyVerdict(ctx context.Context, fetch devshard.ChallengeFet
 		return keptChallengeVote{}, renderReject(err), err.Error()
 	}
 	count.input = rendered
-	if rendered+maxTokens <= limit {
+	// Supported builds count the same prompt up to InputSpread apart, so a
+	// request within that margin of the limit may be an honest refusal.
+	allowance, known := types.UsageAllowanceFor(rec.Model)
+	if rendered+allowance.InputSpread+maxTokens <= limit {
 		return empty, "", ""
 	}
 	terms, err := readExecutedTerms(fetch.Request)
-	allowance, known := types.UsageAllowanceFor(rec.Model)
 	switch {
 	case !known:
 		count.inputSkipped = "model_not_in_table"
