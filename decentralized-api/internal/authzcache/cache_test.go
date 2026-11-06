@@ -10,6 +10,7 @@ import (
 	"time"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -381,4 +382,48 @@ func TestAuthzCache_ExpiredEntriesSweptOnFailedInsert(t *testing.T) {
 	defer cache.mu.RUnlock()
 	require.Len(t, cache.cache, 1)
 	require.Contains(t, cache.cache, granterB+"|/msg/type")
+}
+
+func useGonkaBech32Prefix(t *testing.T) {
+	t.Helper()
+	config := sdk.GetConfig()
+	accountPrefix, pubKeyPrefix := config.GetBech32AccountAddrPrefix(), config.GetBech32AccountPubPrefix()
+	config.SetBech32PrefixForAccount("gonka", "gonkapub")
+	t.Cleanup(func() { config.SetBech32PrefixForAccount(accountPrefix, pubKeyPrefix) })
+}
+
+// Test flow:
+// 1. Set the gonka bech32 prefix, as production does, and restore it when the test ends.
+// 2. Make the chain fail for a valid gonka1 granter and for a malformed gonka1 granter.
+// 3. Look each up twice and require the error both times.
+// 4. Require one chain query and a stored entry for the valid granter, and two chain queries and no entry for the malformed one.
+func TestAuthzCache_FailedLookupCachingUnderGonkaPrefix(t *testing.T) {
+	useGonkaBech32Prefix(t)
+	valid, err := bech32.ConvertAndEncode("gonka", []byte("granterA_20_bytes___"))
+	require.NoError(t, err)
+	malformed := "gonka1notavalidaddress"
+	_, err = sdk.AccAddressFromBech32(valid)
+	require.NoError(t, err)
+	_, err = sdk.AccAddressFromBech32(malformed)
+	require.Error(t, err)
+
+	chain := newFakeChainClient()
+	chainErr := status.Error(codes.Unavailable, "node down")
+	chain.setErr(valid, chainErr)
+	chain.setErr(malformed, chainErr)
+	cache := NewAuthzCache(&fakeRecorder{queryClient: chain})
+
+	for i := 0; i < 2; i++ {
+		_, err = cache.GetPubKeys(context.Background(), valid, "/msg/type")
+		require.ErrorIs(t, err, chainErr)
+		_, err = cache.GetPubKeys(context.Background(), malformed, "/msg/type")
+		require.ErrorIs(t, err, chainErr)
+	}
+	require.Equal(t, 1, chain.callCount(valid))
+	require.Equal(t, 2, chain.callCount(malformed))
+
+	cache.mu.RLock()
+	defer cache.mu.RUnlock()
+	require.Contains(t, cache.cache, valid+"|/msg/type")
+	require.NotContains(t, cache.cache, malformed+"|/msg/type")
 }
