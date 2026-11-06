@@ -1221,6 +1221,133 @@ func fetchEpochInfo() (*EpochResponse, error) {
 	return &epochResp, nil
 }
 
+type hostLookupFunc func(ctx context.Context, host string) ([]net.IP, error)
+
+type hostResolution struct {
+	ips        []net.IP
+	resolvedAt time.Time
+}
+
+const lastKnownIPGracePeriod = 48 * time.Hour
+
+var lastResolvedHosts = map[string]hostResolution{}
+
+func hasExpiredHostResolution(history map[string]hostResolution, now time.Time) bool {
+	for _, resolution := range history {
+		if now.Sub(resolution.resolvedAt) > lastKnownIPGracePeriod {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalHost(host string) string {
+	return strings.ToLower(strings.TrimSuffix(host, "."))
+}
+
+func lookupHostIPs(ctx context.Context, host string) ([]net.IP, error) {
+	resolver := net.Resolver{}
+	resolvedIPs, err := resolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	ips := make([]net.IP, 0, len(resolvedIPs))
+	for _, ipAddr := range resolvedIPs {
+		ips = append(ips, ipAddr.IP)
+	}
+	return ips, nil
+}
+
+func resolveParticipantIPs(
+	participants []Participant,
+	lookup hostLookupFunc,
+	lastKnown map[string]hostResolution,
+	now time.Time,
+) ([]string, int, map[string]hostResolution) {
+	whitelistMap := make(map[string]bool)
+	resolved := make(map[string]hostResolution)
+	failures := 0
+	var mutex sync.Mutex
+
+	concurrency := 20
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+
+	for _, p := range participants {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(p Participant) {
+			defer wg.Done()
+			defer func() { <-sem }()
+
+			if p.InferenceUrl == "" {
+				return
+			}
+
+			cleanUrl := p.InferenceUrl
+			if !strings.HasPrefix(strings.ToLower(cleanUrl), "http") {
+				cleanUrl = "http://" + cleanUrl
+			}
+
+			u, err := url.Parse(cleanUrl)
+			if err != nil {
+				logMsg("Warning - skipping invalid url %s: %v", p.InferenceUrl, err)
+				return
+			}
+
+			host := u.Hostname()
+			var ips []net.IP
+			var resolution hostResolution
+			var historyKey string
+			lookupFailed := false
+
+			if ip := net.ParseIP(host); ip != nil {
+				ips = []net.IP{ip}
+			} else {
+				historyKey = canonicalHost(host)
+				ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+				defer cancel()
+				resolvedIPs, err := lookup(ctx, host)
+				if err != nil {
+					lookupFailed = true
+					if previous, ok := lastKnown[historyKey]; ok && now.Sub(previous.resolvedAt) <= lastKnownIPGracePeriod {
+						resolution = previous
+						ips = previous.ips
+					}
+					logMsg("Warning - could not resolve %s (reusing %d last known IPs): %v", host, len(ips), err)
+				} else {
+					ips = resolvedIPs
+					resolution = hostResolution{ips: resolvedIPs, resolvedAt: now}
+				}
+			}
+
+			mutex.Lock()
+			defer mutex.Unlock()
+			if lookupFailed {
+				failures++
+			}
+			if len(resolution.ips) > 0 {
+				resolved[historyKey] = resolution
+			}
+			for _, ip := range ips {
+				if isPrivateIP(ip) {
+					continue
+				}
+				whitelistMap[ip.String()] = true
+			}
+		}(p)
+	}
+	wg.Wait()
+
+	allowed := make([]string, 0, len(whitelistMap))
+	for ip := range whitelistMap {
+		allowed = append(allowed, ip)
+	}
+	sort.Strings(allowed)
+
+	return allowed, failures, resolved
+}
+
 func syncWhitelist() error {
 	logMsg("Syncing whitelist...")
 
@@ -1245,91 +1372,18 @@ func syncWhitelist() error {
 	}
 
 	// 2. Extract and Resolve IPs (Concurrent)
-	whitelistMap := make(map[string]bool)
-	var mutex sync.Mutex
-	resolver := net.Resolver{}
-
-	// Stats tracking (Atomic)
-	var totalParticipants int64
-
 	participants := pResp.ActiveParticipants.Participants
-	totalParticipants = int64(len(participants))
-
-	// Worker Pool for DNS Resolution
-	concurrency := 20
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-
-	for _, p := range participants {
-		wg.Add(1)
-		sem <- struct{}{} // Acquire token
-		go func(p Participant) {
-			defer wg.Done()
-			defer func() { <-sem }() // Release token
-
-			if p.InferenceUrl == "" {
-				// thread-safe counter increment
-				// casting for atomic not strictly needed for stats, but cleaner to just use mutex or loose stats
-				// keeping simple with mutex for map, loose for stats is fine or use atomic.
-				// upgrading stats to atomic for correctness
-				return // skippedUrl implicitly
-			}
-
-			cleanUrl := p.InferenceUrl
-			if !strings.HasPrefix(strings.ToLower(cleanUrl), "http") {
-				cleanUrl = "http://" + cleanUrl
-			}
-
-			u, err := url.Parse(cleanUrl)
-			if err != nil {
-				logMsg("Warning - skipping invalid url %s: %v", p.InferenceUrl, err)
-				return // skippedUrl
-			}
-
-			host := u.Hostname()
-			var ips []net.IP
-
-			if ip := net.ParseIP(host); ip != nil {
-				ips = []net.IP{ip}
-			} else {
-				func() {
-					ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-					defer cancel()
-					resolvedIPs, err := resolver.LookupIPAddr(ctx, host)
-					if err != nil {
-						logMsg("Warning - could not resolve %s: %v", host, err)
-						return // skippedResolution
-					}
-					for _, ipAddr := range resolvedIPs {
-						ips = append(ips, ipAddr.IP)
-					}
-				}()
-			}
-
-			if len(ips) > 0 {
-				mutex.Lock()
-				for _, ip := range ips {
-					if isPrivateIP(ip) {
-						// skippedPrivate
-						continue
-					}
-					whitelistMap[ip.String()] = true
-				}
-				mutex.Unlock()
-			}
-		}(p)
-	}
-	wg.Wait()
-
-	var allowed []string
-	for ip := range whitelistMap {
-		allowed = append(allowed, ip)
-	}
-
-	sort.Strings(allowed)
+	now := time.Now()
+	historyExpired := hasExpiredHostResolution(lastResolvedHosts, now)
+	allowed, failures, resolved := resolveParticipantIPs(participants, lookupHostIPs, lastResolvedHosts, now)
+	lastResolvedHosts = resolved
 
 	logMsg("Found %d unique public IPs to whitelist (Total scanned: %d).",
-		len(allowed), totalParticipants)
+		len(allowed), len(participants))
+
+	if failures > 0 && len(allowed) == 0 && !historyExpired {
+		return fmt.Errorf("DNS resolution failed for %d host(s) and no public IPs are available - preserving existing whitelist state", failures)
+	}
 
 	// Update In-Memory BanManager (so it doesn't ban these IPs)
 	if GlobalBanManager != nil {
