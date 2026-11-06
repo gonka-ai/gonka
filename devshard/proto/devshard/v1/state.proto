@@ -42,6 +42,7 @@ message InferenceRecordProto {
   uint64 started_at_height = 18;
   uint64 confirmed_at_height = 19;
   bytes  served_hash = 20;
+  uint32 challenger = 21; // 1 + slot whose Valid:false opened the challenge; 0 if none
 }
 
 message InferencesMapProto {

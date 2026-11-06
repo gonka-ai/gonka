@@ -32,6 +32,7 @@ type mutationJournal struct {
 	// post_state_root; it is journaled so a rejected or trial apply cannot
 	// leave a stale id behind.
 	owed      journalMap[uint64, struct{}]
+	open      journalMap[string, uint32]
 	hostStats journalMap[uint32, *types.HostStats]
 	warmKeys  journalMap[uint32, string]
 
@@ -200,6 +201,7 @@ func (sm *StateMachine) undoJournalLocked(j *mutationJournal) {
 	j.sealed.undo(sm.sealedNonces)
 	sm.ensureOwedMapLocked(j.owed.pre)
 	j.owed.undo(sm.owed)
+	j.open.undo(sm.openChallenges)
 	j.hostStats.undo(sm.state.HostStats)
 	j.warmKeys.undo(sm.state.WarmKeys)
 	sm.writeScalarsLocked(j.pre)
@@ -213,6 +215,7 @@ func (sm *StateMachine) detachJournalLocked(j *mutationJournal) {
 	j.committed.capture(sm.committedEntries)
 	j.sealed.capture(sm.sealedNonces)
 	j.owed.capture(sm.owed)
+	j.open.capture(sm.openChallenges)
 	j.hostStats.capture(sm.state.HostStats)
 	j.warmKeys.capture(sm.state.WarmKeys)
 	sm.undoJournalLocked(j)
@@ -236,6 +239,7 @@ func (sm *StateMachine) installJournalLocked(j *mutationJournal) {
 	j.sealed.redo(sm.sealedNonces)
 	sm.ensureOwedMapLocked(j.owed.post)
 	j.owed.redo(sm.owed)
+	j.open.redo(sm.openChallenges)
 	j.hostStats.redo(sm.state.HostStats)
 	j.warmKeys.redo(sm.state.WarmKeys)
 	sm.writeScalarsLocked(j.post)
@@ -282,6 +286,9 @@ func (sm *StateMachine) putInferenceLocked(id uint64, rec *types.InferenceRecord
 }
 
 func (sm *StateMachine) deleteInferenceLocked(id uint64) {
+	if rec := sm.state.Inferences[id]; rec != nil {
+		sm.releaseChallengeLocked(rec)
+	}
 	if j := sm.journal; j != nil {
 		j.inferences.touch(sm.state.Inferences, id)
 	}
