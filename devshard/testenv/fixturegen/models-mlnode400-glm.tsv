@@ -1,0 +1,2 @@
+model	revision	image	tool_header	default_mode	args
+zai-org/GLM-5.3-Flash	04c4e9e95c5da8862dced7e5056455116f83a7e0	local/vllm-cpu-mlnode400:8219a3e2e-render	0	-	--max-model-len 400000 --kv-cache-dtype fp8 --enable-auto-tool-choice --tool-call-parser glm47 --reasoning-parser glm45 --trust-remote-code

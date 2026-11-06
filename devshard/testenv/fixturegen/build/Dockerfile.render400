@@ -1,0 +1,10 @@
+# Render-server fix only (same as the 71ee49c render image): `vllm launch render` builds a VllmConfig
+# without a CacheConfig, which hybrid models such as GLM-5.3-Flash reject; give it one with prefix
+# caching off. The chat serving path is untouched.
+# `base` is the mlnode400 image (docker-bake.hcl).
+FROM base
+RUN F=/opt/venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/render/entry.py \
+ && sed -i 's/^from vllm.config import VllmConfig$/from vllm.config import CacheConfig, VllmConfig/' $F \
+ && sed -i 's/^    vllm_config = VllmConfig(model_config=model_config)$/    vllm_config = VllmConfig(model_config=model_config, cache_config=CacheConfig(enable_prefix_caching=False))/' $F \
+ && grep -q "^from vllm.config import CacheConfig, VllmConfig$" $F \
+ && grep -q "CacheConfig(enable_prefix_caching=False)" $F
