@@ -20,7 +20,7 @@ func (k Keeper) EpochGroupDataAll(ctx context.Context, req *types.QueryAllEpochG
 		k.EpochGroupDataMap,
 		req.Pagination,
 		func(_ collections.Pair[uint64, string], value types.EpochGroupData) (types.EpochGroupData, error) {
-			return value, nil
+			return restoredEpochGroupData(value), nil
 		},
 	)
 

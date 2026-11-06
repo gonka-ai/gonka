@@ -20,8 +20,8 @@ func (k Keeper) ParticipantAll(ctx context.Context, req *types.QueryAllParticipa
 		ctx,
 		k.Participants,
 		req.Pagination,
-		func(_ sdk.AccAddress, value types.Participant) (types.Participant, error) {
-			return value, nil
+		func(address sdk.AccAddress, value types.Participant) (types.Participant, error) {
+			return restoredParticipant(address, value), nil
 		},
 	)
 

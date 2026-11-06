@@ -24,11 +24,12 @@ func (k Keeper) ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeeds
 	defer it.Close()
 
 	for ; it.Valid(); it.Next() {
-		val, err := it.Value()
+		kv, err := it.KeyValue()
 		if err != nil {
 			return nil, status.Error(codes.Internal, "failed to read random seed value")
 		}
-		seeds = append(seeds, &val)
+		seed := restoredRandomSeed(kv.Key, kv.Value)
+		seeds = append(seeds, &seed)
 	}
 
 	return &types.QueryRandomSeedsResponse{Seeds: seeds}, nil
