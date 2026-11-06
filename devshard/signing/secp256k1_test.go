@@ -84,3 +84,37 @@ func TestAddressFromPubKey_InvalidLength(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid pubkey length")
 }
+
+func TestCompactSignature_RecoversAndVerifies(t *testing.T) {
+	signer, err := GenerateKey()
+	require.NoError(t, err)
+	msg := []byte("devshard compact")
+
+	full, err := signer.Sign(msg)
+	require.NoError(t, err)
+	sig, err := CompactSignature(full)
+	require.NoError(t, err)
+	require.Len(t, sig, CompactSignatureSize)
+
+	var matched []byte
+	for _, key := range RecoverCompactPubKeys(msg, sig) {
+		require.True(t, VerifyCompact(key, msg, sig), "every recovered key verifies the signature it came from")
+		if addr, err := AddressFromPubKey(key); err == nil && addr == signer.Address() {
+			matched = key
+		}
+	}
+	require.NotNil(t, matched, "one recovery id gives the signer's key")
+	require.False(t, VerifyCompact(matched, []byte("devshard compacT"), sig))
+
+	other, err := signer.Sign([]byte("another message"))
+	require.NoError(t, err)
+	require.True(t, VerifyCompact(matched, []byte("another message"), other[:CompactSignatureSize]),
+		"the signer's key verifies its next signature too")
+}
+
+func TestCompactSignature_RejectsBadLengths(t *testing.T) {
+	_, err := CompactSignature(make([]byte, 63))
+	require.Error(t, err)
+	require.Nil(t, RecoverCompactPubKeys([]byte("m"), make([]byte, 65)))
+	require.False(t, VerifyCompact(nil, []byte("m"), make([]byte, 65)))
+}

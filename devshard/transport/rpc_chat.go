@@ -114,7 +114,7 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 	if outboundHS != nil {
 		c.markHeightSyncPropagated(outboundHS)
 	}
-	result, err := c.parseChatStream(ctx, cs, stream, receiptHandler)
+	result, err := c.parseChatStream(ctx, cs, stream, receiptHandler, c.chatFrameVerifier(req))
 	if err != nil && !errors.Is(err, ErrSSEStreamTruncated) && !errors.Is(err, ErrSSEEventTooLarge) && !errors.Is(err, ErrSSEStreamTooLarge) {
 		c.finishChatError(path, err)
 		return result, err
@@ -123,6 +123,15 @@ func (c *RPCClient) sendChatOnce(ctx context.Context, req host.HostRequest, stre
 		c.observeResult(path, http.StatusOK)
 	}
 	return result, err
+}
+
+// chatFrameVerifier checks the executor's frame signatures when the request
+// names who may sign them. A Finalize or catch-up send has no answer to check.
+func (c *RPCClient) chatFrameVerifier(req host.HostRequest) *ChatFrameVerifier {
+	if req.Payload == nil || req.FrameSignerAllowed == nil || len(req.PromptHash) == 0 {
+		return nil
+	}
+	return NewChatFrameVerifier(c.escrowID, req.Nonce, req.PromptHash, req.FrameSignerAllowed)
 }
 
 // finishChatError refunds a server quota rejection (those arrive on the first
@@ -163,8 +172,8 @@ func (c *RPCClient) observeConnect(path string, err error) {
 	}
 }
 
-func (c *RPCClient) parseChatStream(ctx context.Context, stream *connect.ServerStreamForClient[rpcpb.ChatFrame], streamWriter io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
-	r := &chatFrameReader{stream: stream}
+func (c *RPCClient) parseChatStream(ctx context.Context, stream *connect.ServerStreamForClient[rpcpb.ChatFrame], streamWriter io.Writer, receiptHandler func(*host.HostResponse), frames *ChatFrameVerifier) (*host.HostResponse, error) {
+	r := &chatFrameReader{stream: stream, frames: frames}
 	br := bufio.NewReader(r)
 	if _, err := br.Peek(1); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -177,10 +186,14 @@ func (c *RPCClient) parseChatStream(ctx context.Context, stream *connect.ServerS
 		return nil, fmt.Errorf("%w: gzip header: %v", ErrSSEStreamTruncated, err)
 	}
 	defer gz.Close()
-	cr := &countingReader{r: gz}
+	cr := &countingReader{r: gz, frames: frames}
 	result, err := c.parseSSEResponse(ctx, cr, streamWriter, receiptHandler)
 	if result != nil {
 		result.StreamBytesRead = cr.n
+		if frames != nil {
+			frames.Close()
+			result.ChatFrames = frames.Check()
+		}
 	}
 	if err != nil && result != nil {
 		return result, err
@@ -190,6 +203,7 @@ func (c *RPCClient) parseChatStream(ctx context.Context, stream *connect.ServerS
 
 type chatFrameReader struct {
 	stream *connect.ServerStreamForClient[rpcpb.ChatFrame]
+	frames *ChatFrameVerifier
 	buf    []byte
 	err    error
 }
@@ -209,7 +223,11 @@ func (r *chatFrameReader) Read(p []byte) (int, error) {
 			r.err = io.EOF
 			return 0, io.EOF
 		}
-		r.buf = append([]byte(nil), r.stream.Msg().GetChunk()...)
+		msg := r.stream.Msg()
+		r.buf = append([]byte(nil), msg.GetChunk()...)
+		if r.frames != nil {
+			r.frames.Frame(msg.GetSig(), msg.GetStreamBytes())
+		}
 	}
 	n := copy(p, r.buf)
 	r.buf = r.buf[n:]

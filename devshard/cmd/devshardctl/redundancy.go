@@ -2477,8 +2477,10 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			}
 		}
 		streamBytes := int64(0)
+		var frames host.ChatFrameCheck
 		if inf.resp != nil {
 			streamBytes = inf.resp.StreamBytesRead
+			frames = inf.resp.ChatFrames
 		}
 		if inf.err != nil {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_failed",
@@ -2505,6 +2507,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			"max_gap_ms", inf.longestChunkGap().Milliseconds(),
 			"max_gap_at_chunk", inf.maxChunkGapAt.Load(),
 			"mean_gap_ms", inf.meanChunkGap().Milliseconds(),
+			"chat_frames", frames.Frames,
+			"chat_frames_signed", frames.Signed,
 		)
 		// A receipt-backed transport-level success that produced zero content
 		// events and did not produce a normal OpenAI error event is true empty
@@ -2562,6 +2566,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		if e.session != nil && bindsReceivedStream(inf) {
 			e.session.BindReceivedStream(inf.nonce, inf.resp.ReceivedResponseHashes)
 		}
+		logChatFrameCheck(ctx, inf)
 	}()
 }
 
