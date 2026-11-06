@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"crypto/sha256"
 	"testing"
 	"time"
@@ -184,4 +185,46 @@ func TestOnlyTheFinishThatAppliesIsJudged(t *testing.T) {
 	applyFinish(session, 6)
 
 	require.Equal(t, []servedBindingReport{{nonce: 6, hostIndex: 0, participantKey: "host-zero", verdict: ServedBindingMismatch}}, reports)
+}
+
+// A host's response can list a second Finish for a nonce the session already
+// holds one for; the session drops it, and a stream that hashes to the
+// dropped one does not bind, before or after the held one applies.
+func TestReceivedStreamBindsOnlyTheFinishTheSessionHolds(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
+	held, _ := signedErrorFinishTx(t, hosts, nonce, execIdx, []byte("held"))
+	dropped, _ := signedErrorFinishTx(t, hosts, nonce, execIdx, []byte("dropped"))
+	heldSum := [32]byte(held.GetFinishInference().ResponseHash)
+	droppedSum := [32]byte(dropped.GetFinishInference().ResponseHash)
+	require.False(t, session.ReceivedStreamBindsFinish(nonce, [][32]byte{heldSum}), "no Finish yet")
+
+	session.mu.Lock()
+	session.addPendingFromHostLocked(execIdx, nil, held)
+	session.addPendingFromHostLocked(execIdx, nil, dropped)
+	queued := 0
+	for _, tx := range session.pendingTxs {
+		if tx.GetFinishInference() != nil {
+			queued++
+		}
+	}
+	session.mu.Unlock()
+	require.Equal(t, 1, queued, "the second Finish is dropped")
+
+	for _, applied := range []bool{false, true} {
+		if applied {
+			require.NoError(t, session.SendPendingDiff(context.Background()))
+			rec, ok := session.StateMachine().Inference(nonce)
+			require.True(t, ok)
+			require.Equal(t, types.StatusFinished, rec.Status)
+		}
+		require.True(t, session.ReceivedStreamBindsFinish(nonce, [][32]byte{heldSum}), "applied=%v", applied)
+		require.True(t, session.ReceivedStreamBindsFinish(nonce, [][32]byte{[32]byte(testutil.TestServedHash)}), "applied=%v", applied)
+		require.False(t, session.ReceivedStreamBindsFinish(nonce, [][32]byte{droppedSum}), "applied=%v", applied)
+		require.False(t, session.ReceivedStreamBindsFinish(nonce, nil), "applied=%v", applied)
+	}
 }

@@ -67,6 +67,7 @@ type Memory struct {
 	sessions         map[string]*sessionData
 	validationLeases map[string]map[memoryLeaseKey]memoryLease
 	escrowCache      map[string]EscrowCacheInfo
+	challengeVotes   map[string]map[uint64]memoryChallengeVote
 }
 
 func NewMemory() *Memory {
