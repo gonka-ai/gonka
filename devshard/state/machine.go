@@ -775,6 +775,10 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 			logDroppedTx(nonce, tx, err)
 			continue
 		}
+		if err := sm.checkTxExecutorStampClockLocked("compose", tx); err != nil {
+			logDroppedTx(nonce, tx, err)
+			continue
+		}
 		if err := sm.applyTxAtomicLocked(tx, nonce); err != nil {
 			if tx.GetStartInference() != nil {
 				return nil, nil, nil, fmt.Errorf("mandatory start inference: %w", err)
@@ -1446,6 +1450,9 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 	if err := sm.checkObservedStampTimeLocked("confirm", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
 		return err
 	}
+	if err := sm.checkExecutorStampClockLocked("apply", "confirm", msg.ObservedHeight, msg.ObservedTimeMs); err != nil {
+		return err
+	}
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAtHeight = anchor.Height
@@ -1604,6 +1611,9 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 		return err
 	}
 	if err := sm.checkObservedStampTimeLocked("finish", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
+		return err
+	}
+	if err := sm.checkExecutorStampClockLocked("apply", "finish", msg.ObservedHeight, msg.ObservedTimeMs); err != nil {
 		return err
 	}
 

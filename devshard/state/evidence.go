@@ -104,6 +104,9 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 				return nil, fmt.Errorf("%w: confirm expects pending, got %d", types.ErrInvalidTransition, status)
 			}
 			err = sm.checkReceiptLocked(rec, msg, allowed)
+			if err == nil {
+				err = sm.checkExecutorStampClockLocked("challenge", "confirm", msg.ObservedHeight, msg.ObservedTimeMs)
+			}
 			status = types.StatusStarted
 		case tx.GetFinishInference() != nil:
 			msg := tx.GetFinishInference()
@@ -112,6 +115,9 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 				return nil, fmt.Errorf("%w: finish expects started, got %d", types.ErrInvalidTransition, status)
 			}
 			_, err = sm.checkFinishLocked(rec, msg, allowed)
+			if err == nil {
+				err = sm.checkExecutorStampClockLocked("challenge", "finish", msg.ObservedHeight, msg.ObservedTimeMs)
+			}
 			status = types.StatusFinished
 		default:
 			return nil, fmt.Errorf("%w: evidence is a ConfirmStart or a Finish", types.ErrInvalidTransition)

@@ -236,3 +236,163 @@ func TestApplyTimeout_StillIgnoresMap(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, types.StatusTimedOut, rec.Status)
 }
+
+// storedHash differs from the executor stamp so the same-hash map check
+// leaves the carried time alone. The newest-block check is what rejects it.
+func executorClockDriver(t *testing.T, stamp []byte, mapMs int64) *floorDriver {
+	t.Helper()
+	src := headertime.New()
+	require.NoError(t, src.Seed(100, []byte{0x11}, mapMs))
+	d := newFloorDriver(t)
+	d.sm.SetHeaderTimes(src)
+	d.raiseWithTime(100, stamp, mapMs)
+	return d
+}
+
+func TestApplyConfirm_TimeBeforeNewestStoredBlockRejects(t *testing.T) {
+	stamp := []byte{0xaa}
+	d := executorClockDriver(t, stamp, 50_000)
+	id := d.next()
+	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
+	logs := captureStateLogs(t)
+	err := d.apply(d.confirmWithTime(id, 100, stamp, 40_000))
+	require.ErrorIs(t, err, types.ErrStampTimeBeforeChain)
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status)
+	require.Contains(t, logs.String(), "executor stamp time is before the newest stored block")
+	require.Contains(t, logs.String(), `"stage":"apply"`)
+}
+
+func TestComposeConfirm_TimeBeforeNewestStoredBlockDrops(t *testing.T) {
+	stamp := []byte{0xab}
+	d := executorClockDriver(t, stamp, 50_000)
+	id := d.next()
+	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
+	logs := captureStateLogs(t)
+	_, applied, err := d.sm.ApplyLocalBestEffort(d.next(), []*types.DevshardTx{
+		d.confirmWithTime(id, 100, stamp, 40_000),
+	})
+	require.NoError(t, err)
+	require.Empty(t, applied)
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status)
+	require.Contains(t, logs.String(), "executor stamp time is before the newest stored block")
+	require.Contains(t, logs.String(), `"stage":"compose"`)
+}
+
+func TestApplyFinish_TimeBeforeNewestStoredBlockRejects(t *testing.T) {
+	stamp := []byte{0xac}
+	d := executorClockDriver(t, stamp, 50_000)
+	id := d.next()
+	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
+	require.NoError(t, d.apply(d.confirmWithTime(id, 100, stamp, 50_000)))
+	logs := captureStateLogs(t)
+	err := d.apply(finishWithTime(t, d, id, 100, stamp, 40_000))
+	require.ErrorIs(t, err, types.ErrStampTimeBeforeChain)
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Contains(t, logs.String(), `"leg":"finish"`)
+}
+
+func TestApplyConfirm_TimeBeforeFloorLogsStrongDeferred(t *testing.T) {
+	src := headertime.New()
+	require.NoError(t, src.Seed(50, []byte{0x01}, 1_000))
+	d := newFloorDriver(t)
+	d.sm.SetHeaderTimes(src)
+	stamp := []byte{0xad}
+	d.raiseWithTime(100, stamp, 50_000)
+	id := d.next()
+	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
+	logs := captureStateLogs(t)
+	require.NoError(t, d.apply(d.confirmWithTime(id, 100, stamp, 40_000)))
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Equal(t, int64(40_000), rec.ConfirmedAtTimeMs)
+	require.Contains(t, logs.String(), "executor stamp time is before the floor; strong check deferred")
+	require.NotContains(t, logs.String(), "newest stored block")
+}
+
+func TestApplyConfirm_FloorCarryBelowNewerMapAllows(t *testing.T) {
+	src := headertime.New()
+	stamp := []byte{0xae}
+	require.NoError(t, src.Seed(100, stamp, 50_000))
+	require.NoError(t, src.Seed(102, []byte{0x02}, 52_000))
+	d := newFloorDriver(t)
+	d.sm.SetHeaderTimes(src)
+	d.raiseWithTime(100, stamp, 50_000)
+	id := d.next()
+	require.NoError(t, d.apply(startTxWithTime(id, 100, stamp, 50_000)))
+	logs := captureStateLogs(t)
+	require.NoError(t, d.apply(d.confirmWithTime(id, 100, stamp, 50_000)))
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	require.Equal(t, int64(50_000), rec.ConfirmedAtTimeMs)
+	require.NotContains(t, logs.String(), "newest stored block")
+	require.NotContains(t, logs.String(), "strong check deferred")
+}
+
+func TestCheckEvidence_TimeBeforeNewestStoredBlockRejectsAndLogs(t *testing.T) {
+	sm, hosts := evidenceSM(t, nil)
+	src := headertime.New()
+	require.NoError(t, src.Seed(42, []byte("block-42"), 42*testutil.HeightClockBlockMs))
+	sm.SetHeaderTimes(src)
+	rec := evidenceRecord(types.StatusPending)
+	const carried int64 = 1_000
+	tx := evidenceConfirmFor(t, hosts[1], "escrow-1", 1, rec, testutil.ReceiptStamp{
+		Height: 42, Hash: []byte("block-42"), TimeMs: carried,
+	})
+	tx.GetConfirmStart().ObservedTimeMs = carried
+	logs := captureStateLogs(t)
+	err := sm.CheckEvidence(rec, tx)
+	require.ErrorIs(t, err, types.ErrStampTimeBeforeChain)
+	require.Contains(t, logs.String(), "executor stamp time is before the newest stored block")
+	require.Contains(t, logs.String(), `"stage":"challenge"`)
+	require.Contains(t, logs.String(), `"leg":"confirm"`)
+}
+
+func TestCheckEvidence_TimeBeforeFloorLogsStrongDeferred(t *testing.T) {
+	sm, hosts := evidenceSM(t, nil)
+	rec := evidenceRecord(types.StatusPending)
+	const carried int64 = 1_000
+	tx := evidenceConfirmFor(t, hosts[1], "escrow-1", 1, rec, testutil.ReceiptStamp{
+		Height: 42, Hash: []byte("block-42"), TimeMs: carried,
+	})
+	tx.GetConfirmStart().ObservedTimeMs = carried
+	logs := captureStateLogs(t)
+	require.NoError(t, sm.CheckEvidence(rec, tx))
+	require.Contains(t, logs.String(), "executor stamp time is before the floor; strong check deferred")
+	require.Contains(t, logs.String(), `"stage":"challenge"`)
+}
+
+func TestCheckEvidence_FinishTimeBeforeNewestStoredBlockRejectsAndLogs(t *testing.T) {
+	sm, hosts := evidenceSM(t, nil)
+	src := headertime.New()
+	require.NoError(t, src.Seed(42, []byte("other"), 42*testutil.HeightClockBlockMs))
+	sm.SetHeaderTimes(src)
+	msg := evidenceFinishMsg("escrow-1", 1)
+	msg.ObservedHeight = 42
+	msg.ObservedBlockHash = []byte("block-42")
+	msg.ObservedTimeMs = 1_000
+	logs := captureStateLogs(t)
+	err := sm.CheckEvidence(evidenceRecord(types.StatusStarted), signedEvidenceFinish(t, hosts[1], msg))
+	require.ErrorIs(t, err, types.ErrStampTimeBeforeChain)
+	require.Contains(t, logs.String(), `"stage":"challenge"`)
+	require.Contains(t, logs.String(), `"leg":"finish"`)
+}
+
+func finishWithTime(t *testing.T, d *floorDriver, id, height uint64, hash []byte, timeMs int64) *types.DevshardTx {
+	t.Helper()
+	rec, ok := d.sm.GetInference(id)
+	require.True(t, ok)
+	msg := &types.MsgFinishInference{
+		InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InputTokens: 80, OutputTokens: 40, ExecutorSlot: rec.ExecutorSlot,
+		EscrowId: "escrow-1", ObservedHeight: height, ObservedBlockHash: hash, ObservedTimeMs: timeMs,
+	}
+	msg.ProposerSig = testutil.SignProposerTx(t, d.hosts[rec.ExecutorSlot], msg)
+	return txFinish(msg)
+}

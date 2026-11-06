@@ -37,6 +37,112 @@ func (sm *StateMachine) checkObservedStampTimeLocked(leg string, height uint64, 
 	return fmt.Errorf("%w: %s height %d hash %s carried=%d", err, leg, height, hex.EncodeToString(hash), observedTimeMs)
 }
 
+// latestHeaderClock is the newest block a header map still holds.
+// *headertime.Source implements it. A source that only answers one height
+// does not, and the newest-block check is skipped.
+type latestHeaderClock interface {
+	LatestStored() (height uint64, timeMs int64, ok bool)
+}
+
+// checkExecutorStampClockLocked compares an executor confirm or finish clock
+// with the floor already in the log and with the newest block in the local
+// header map. Caller holds sm.mu.
+//
+// A carried time before the previous floor needs the strong header proof.
+// That proof is deferred, so this only logs.
+//
+// A carried time before the newest stored block, on a stamp at or above that
+// block, is a local proof the executor backdated the stamp. The confirm or
+// finish is rejected. A stamp below the newest stored block can still carry
+// the floor while the poller has moved on, so that case stays on the floor rule.
+func (sm *StateMachine) checkExecutorStampClockLocked(stage, leg string, height uint64, carried int64) error {
+	if sm == nil || carried <= 0 {
+		return nil
+	}
+	floorH, floorMs := sm.previousFloorClockLocked()
+	latestH, latestMs, latestOK := sm.latestStoredClockLocked()
+	beforeFloor := floorMs > 0 && carried < floorMs
+	beforeLatest := latestOK && latestMs > 0 && height > 0 && height >= latestH && carried < latestMs
+	if beforeFloor {
+		logging.Warn("executor stamp time is before the floor; strong check deferred",
+			"subsystem", "state",
+			"stage", stage,
+			"leg", leg,
+			"escrow_id", sm.state.EscrowID,
+			"height", height,
+			"carried_time_ms", carried,
+			"floor_height", floorH,
+			"floor_time_ms", floorMs,
+		)
+	}
+	if !beforeLatest {
+		return nil
+	}
+	logging.Warn("executor stamp time is before the newest stored block",
+		"subsystem", "state",
+		"stage", stage,
+		"leg", leg,
+		"escrow_id", sm.state.EscrowID,
+		"height", height,
+		"carried_time_ms", carried,
+		"latest_height", latestH,
+		"latest_time_ms", latestMs,
+		"floor_height", floorH,
+		"floor_time_ms", floorMs,
+	)
+	return fmt.Errorf("%w: %s height %d carried=%d latest_height=%d latest_time_ms=%d",
+		types.ErrStampTimeBeforeChain, leg, height, carried, latestH, latestMs)
+}
+
+func (sm *StateMachine) checkTxExecutorStampClockLocked(stage string, tx *types.DevshardTx) error {
+	if tx == nil {
+		return nil
+	}
+	switch {
+	case tx.GetConfirmStart() != nil:
+		msg := tx.GetConfirmStart()
+		return sm.checkExecutorStampClockLocked(stage, "confirm", msg.GetObservedHeight(), msg.GetObservedTimeMs())
+	case tx.GetFinishInference() != nil:
+		msg := tx.GetFinishInference()
+		return sm.checkExecutorStampClockLocked(stage, "finish", msg.GetObservedHeight(), msg.GetObservedTimeMs())
+	default:
+		return nil
+	}
+}
+
+// previousFloorClockLocked is the floor as of the next diff, before this
+// diff's stamps are observed. The map time wins when the stored hash agrees.
+func (sm *StateMachine) previousFloorClockLocked() (height uint64, timeMs int64) {
+	p, err := sm.floorPointLocked(sm.state.LatestNonce + 1)
+	if err != nil || p.Height == 0 {
+		return 0, 0
+	}
+	if src, ok := sm.storedHeadersLocked(); ok {
+		if row, found := src.StoredAt(p.Height); found && row.TimeMs > 0 && stampHashesAgree(p.Hash, row.Hash) {
+			return p.Height, row.TimeMs
+		}
+	}
+	if p.TimeMs > 0 {
+		return p.Height, p.TimeMs
+	}
+	return p.Height, 0
+}
+
+func (sm *StateMachine) latestStoredClockLocked() (height uint64, timeMs int64, ok bool) {
+	src, isClock := sm.headerTimes.(latestHeaderClock)
+	if !isClock || src == nil {
+		return 0, 0, false
+	}
+	return src.LatestStored()
+}
+
+func stampHashesAgree(a, b []byte) bool {
+	if len(a) == 0 || len(b) == 0 {
+		return true
+	}
+	return bytes.Equal(a, b)
+}
+
 // warnDeferredStampTimeMismatches compares carried clocks against the header
 // map after a later poller fill. Warn only; state and floor are not mutated.
 // Covers live start/confirm stamps and the tip floor TimeMs. Safe without
