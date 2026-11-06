@@ -39,9 +39,13 @@ loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
 	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
 	@false
 else
-loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
-	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
+loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name [GATEWAY=devshardctl|gateway]).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(GATEWAY),-gateway $(GATEWAY))
 endif
+
+.PHONY: loadtest-prodlike
+loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min) [GATEWAY=devshardctl|gateway].
+	go run ./cmd/loadtest -scenario loadtest/scenarios/prod-like-15m.yaml $(if $(GATEWAY),-gateway $(GATEWAY))
 
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1

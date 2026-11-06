@@ -1,0 +1,6 @@
+{
+  "models": ["zai-org/GLM-5.3-Flash"],
+  "filters": {
+    "thinking": "force_on"
+  }
+}

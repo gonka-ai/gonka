@@ -1,0 +1,4 @@
+data: {"error":{"code":500,"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.","param":null,"type":"InternalServerError"},"id":"chatcmpl-mockopenai"}
+
+data: [DONE]
+

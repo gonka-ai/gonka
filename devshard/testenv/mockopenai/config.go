@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"hash/fnv"
+	"math"
+	"math/rand/v2"
 	"strconv"
 	"time"
 
@@ -62,6 +64,15 @@ type FaultConfig struct {
 	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
 	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
 	StreamErrorEnvelope bool
+	// EmptyStream answers a stream with a role delta, finish_reason stop and
+	// [DONE] but no content, like a backend that accepted and produced nothing.
+	EmptyStream bool
+	// StreamFirstTokenP99 and StreamChunkP99 turn the fixed delays into
+	// lognormal draws with the fixed value as median. Zero or <= median keeps
+	// the delay fixed. JitterSeed mixes with the request body per request.
+	StreamFirstTokenP99 time.Duration
+	StreamChunkP99      time.Duration
+	JitterSeed          uint64
 }
 
 // ShouldFail deterministically selects requests for a configured failure
@@ -79,6 +90,49 @@ func (f FaultConfig) ShouldFail(body []byte) bool {
 	return float64(sample)/float64(^uint64(0)) < f.FailureRate
 }
 
+// z99 is the standard normal quantile at 0.99.
+const z99 = 2.3263478740408408
+
+// StreamJitter draws per-request stream delays. It is seeded from JitterSeed
+// and the request body, so a given request gets the same delays on every run
+// regardless of arrival order.
+type StreamJitter struct {
+	firstToken, firstTokenP99 time.Duration
+	chunk, chunkP99           time.Duration
+	rng                       *rand.Rand
+}
+
+// NewStreamJitter builds the delay source for one request.
+func (f FaultConfig) NewStreamJitter(body []byte) *StreamJitter {
+	h := fnv.New64a()
+	_, _ = h.Write(body)
+	return &StreamJitter{
+		firstToken:    f.StreamFirstTokenDelay,
+		firstTokenP99: f.StreamFirstTokenP99,
+		chunk:         f.StreamChunkDelay,
+		chunkP99:      f.StreamChunkP99,
+		rng:           rand.New(rand.NewPCG(f.JitterSeed, h.Sum64())),
+	}
+}
+
+// FirstToken returns the delay before the first SSE chunk.
+func (j *StreamJitter) FirstToken() time.Duration {
+	return j.draw(j.firstToken, j.firstTokenP99)
+}
+
+// Chunk returns the delay after one flushed SSE chunk.
+func (j *StreamJitter) Chunk() time.Duration {
+	return j.draw(j.chunk, j.chunkP99)
+}
+
+func (j *StreamJitter) draw(median, p99 time.Duration) time.Duration {
+	if median <= 0 || p99 <= median {
+		return median
+	}
+	sigma := math.Log(float64(p99)/float64(median)) / z99
+	return time.Duration(float64(median) * math.Exp(sigma*j.rng.NormFloat64()))
+}
+
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
 	LatencyMs           *int    `json:"latency_ms,omitempty"`
@@ -91,6 +145,7 @@ type FaultPatch struct {
 	PauseStream         *bool   `json:"pause_stream,omitempty"`
 	StreamErrorEnvelope *bool   `json:"stream_error_envelope,omitempty"`
 	Hang                *bool   `json:"hang,omitempty"`
+	EmptyStream         *bool   `json:"empty_stream,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -123,6 +178,9 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.Hang != nil {
 		dst.Hang = *p.Hang
+	}
+	if p.EmptyStream != nil {
+		dst.EmptyStream = *p.EmptyStream
 	}
 }
 

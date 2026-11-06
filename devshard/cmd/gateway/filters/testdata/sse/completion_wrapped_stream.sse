@@ -1,0 +1,4 @@
+data: {"id":"chatcmpl-cw1","object":"chat.completion","created":13,"model":"model-a","choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"logprobs":{"content":[{"token":"ok","logprob":-0.01}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"total_tokens":5,"completion_tokens":2}}
+
+data: [DONE]
+

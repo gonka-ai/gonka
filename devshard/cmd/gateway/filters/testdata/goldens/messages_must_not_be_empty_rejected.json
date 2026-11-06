@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "messages must not be empty",
+  "status": "rejected"
+}

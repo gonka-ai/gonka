@@ -50,6 +50,26 @@ func TestValidate_VersiondModePostgresRules(t *testing.T) {
 	require.ErrorContains(t, cfg.Validate(), "mode single")
 }
 
+func TestValidate_GatewayDriver(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1a", PrivateKeyHex: "aa"},
+			{ID: "versiond-1", Address: "gonka1b", PrivateKeyHex: "bb"},
+		},
+		User:     config.UserCfg{Address: "gonka1u", PrivateKeyHex: "cc"},
+		Postgres: config.PostgresCfg{Enabled: true},
+	}
+	cfg.ApplyDefaults()
+	require.NoError(t, cfg.Validate(), "an empty driver means devshardctl")
+
+	cfg.Devshardctl.Driver = config.GatewayDriverGateway
+	require.NoError(t, cfg.Validate())
+
+	cfg.Devshardctl.Driver = "nginx"
+	require.ErrorContains(t, cfg.Validate(), "devshardctl.driver")
+}
+
 func TestValidate_SlotsCountOnChainIdentitiesNotContainers(t *testing.T) {
 	cfg := &config.File{
 		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},

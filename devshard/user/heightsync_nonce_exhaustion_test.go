@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -111,6 +112,7 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	// Recover each host from the same persisted snapshot, with the chain limit
 	// enabled. Separate state machines retain independent host state.
 	var limitErrors atomic.Uint64
+	clients = slices.Clone(clients)
 	for i := range keys {
 		_, hostSM, err := RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
 		require.NoError(t, err)

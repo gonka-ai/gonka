@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "response_format.json_schema.schema: serialized size exceeded: limit 16384 bytes",
+  "status": "rejected"
+}
