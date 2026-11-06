@@ -313,27 +313,29 @@ func TestAuthzCache_FailedLookupIsCachedBriefly(t *testing.T) {
 // 3. Look both up again and require each to reach the chain a second time.
 // 4. Require no entry to be stored for granter N.
 func TestAuthzCache_CanceledOrNotFoundIsNotCached(t *testing.T) {
+	granterA := sdk.AccAddress([]byte("granterA_20_bytes___")).String()
+	granterN := sdk.AccAddress([]byte("granterN_20_bytes___")).String()
 	chain := newFakeChainClient()
-	chain.setErr("granterN", status.Error(codes.NotFound, "account not found"))
+	chain.setErr(granterN, status.Error(codes.NotFound, "account not found"))
 	cache := NewAuthzCache(&fakeRecorder{queryClient: chain})
 
 	canceled, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, err := cache.GetPubKeys(canceled, "granterA", "/msg/type")
+	_, err := cache.GetPubKeys(canceled, granterA, "/msg/type")
 	require.ErrorIs(t, err, context.Canceled)
-	_, err = cache.GetPubKeys(context.Background(), "granterN", "/msg/type")
+	_, err = cache.GetPubKeys(context.Background(), granterN, "/msg/type")
 	require.Equal(t, codes.NotFound, status.Code(err))
 
-	_, err = cache.GetPubKeys(context.Background(), "granterA", "/msg/type")
+	_, err = cache.GetPubKeys(context.Background(), granterA, "/msg/type")
 	require.NoError(t, err)
-	_, err = cache.GetPubKeys(context.Background(), "granterN", "/msg/type")
+	_, err = cache.GetPubKeys(context.Background(), granterN, "/msg/type")
 	require.Equal(t, codes.NotFound, status.Code(err))
-	require.Equal(t, 2, chain.callCount("granterA"))
-	require.Equal(t, 2, chain.callCount("granterN"))
+	require.Equal(t, 2, chain.callCount(granterA))
+	require.Equal(t, 2, chain.callCount(granterN))
 
 	cache.mu.RLock()
 	defer cache.mu.RUnlock()
-	require.NotContains(t, cache.cache, "granterN|/msg/type")
+	require.NotContains(t, cache.cache, granterN+"|/msg/type")
 }
 
 // Test flow:
