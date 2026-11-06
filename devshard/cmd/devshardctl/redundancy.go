@@ -615,9 +615,7 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	}
 	e.picker = newSessionPicker(session, model, e.runGhostProbe, throttleBlocked, e.escrowStateBlockReason)
 	if session != nil {
-		e.picker.catchingUp = func(hostIdx int) bool {
-			return session.HostCatchingUp(hostIdx) && session.OtherHostReady(hostIdx)
-		}
+		e.picker.catchingUp = session.HostCatchingUp
 	}
 	e.picker.start()
 	if session != nil {
