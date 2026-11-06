@@ -296,6 +296,8 @@ func TestAdaptive_BootUnimplemented_StartsChain(t *testing.T) {
 	cleanupAdaptive(t, cancel, p)
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
+	// Selecting the chain starts its runner; its first snapshot arrives later.
+	waitForHeight(t, p, 100)
 	assert.Equal(t, int64(100), p.Snapshot().ParamsBlockHeight)
 }
 

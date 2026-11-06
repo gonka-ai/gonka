@@ -35,7 +35,9 @@ message EscrowStateProto {
   uint64 finalize_nonce = 8;
   map<uint64, InferenceRecordProto> inferences = 9;
   map<uint32, HostStatsProto> host_stats = 10;
-  map<uint32, string> warm_keys = 11;
+  // 11 was the v6 warm_keys map (one binding per slot, bound on first use).
+  // v7 keeps a history of bindings instead; see warm_key_history.
+  reserved 11;
   uint64 latest_nonce = 12;
   bytes sealed_acc = 13;
   // Height-sync escrow commit (hashed into the state root). The turn tracker
@@ -49,6 +51,20 @@ message EscrowStateProto {
   uint64 height_sync_turn_k = 18;
   uint64 height_sync_turn_slots = 19;
   string height_sync_turn_reason = 20;
+  // Every warm-key binding ever applied, in slot order and binding order
+  // (hashed into the state root). See docs/warm-keys-v7.md.
+  repeated WarmKeyBindingProto warm_key_history = 21;
+}
+
+// WarmKeyBindingProto is one entry of the warm-key history: address bound to
+// slot_id from from_nonce by the chain log entry grant_id, ended at
+// revoked_at_nonce (0 while live).
+message WarmKeyBindingProto {
+  uint32 slot_id = 1;
+  string address = 2;
+  uint64 from_nonce = 3;
+  uint64 grant_id = 4;
+  uint64 revoked_at_nonce = 5;
 }
 
 // FloorIndexProto is the derived height-sync floor. It is not hashed into the

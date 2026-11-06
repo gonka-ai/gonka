@@ -27,7 +27,7 @@ type WarmKeyPayload struct {
 	Grantee       string
 	GrantID       uint64
 	Height        int64
-	ExpiresAtUnix int64 // unix nanoseconds; 0 when the grant has no expiration
+	ExpiresAtUnix int64 // Unix nanoseconds; 0 when the grant has no expiration
 	End           string
 }
 
@@ -316,6 +316,21 @@ func (r *HostEventRing) Bounds() (head, oldest, generation uint64, empty bool) {
 		oldest = r.buf[r.start].Seq
 	}
 	return r.headLocked(), oldest, r.generation, r.size == 0
+}
+
+// DropBefore evicts a pruned store prefix from the hot tail without changing
+// its generation or head. A stale pruning result cannot affect a newer feed.
+func (r *HostEventRing) DropBefore(generation, seq uint64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if generation != r.generation {
+		return
+	}
+	for r.size > 0 && r.buf[r.start].Seq < seq {
+		r.buf[r.start] = HostEvent{}
+		r.start = (r.start + 1) % r.capacity
+		r.size--
+	}
 }
 
 // Since returns subscribed events with seq > cursor, in order.

@@ -115,3 +115,25 @@ func TestGatewayCheckBalancesReplacesWithATempEscrowInsideTheBridgeWindow(t *tes
 	defer rolesMutex.Unlock()
 	require.Equal(t, []string{rotationRoleTemp}, roles, "a regular escrow minted before PoC is retired by the next rotation tick")
 }
+
+// Test flow:
+//  1. Rotate llama, and register a serving escrow for another model and a deactivated escrow for llama, as between a rotation's deactivation and its replacement serving.
+//  2. Reserve a runtime for llama.
+//  3. Expect llama reported as temporarily unavailable, which clients retry, not as an unsupported model.
+func TestReserveRuntimeForModelReportsARotatingModelAsTemporarilyUnavailable(t *testing.T) {
+	servingEnv := setupTestProxy(t, 3, nil, true)
+	serving := &devshardRuntime{id: "escrow-other", model: "other-model", proxy: servingEnv.proxy, session: servingEnv.session}
+	serving.active.Store(true)
+	rotatingEnv := setupTestProxy(t, 3, nil, true)
+	rotating := &devshardRuntime{id: "escrow-llama", model: "llama", proxy: rotatingEnv.proxy, session: rotatingEnv.session}
+	gateway := NewGateway([]*devshardRuntime{serving, rotating}, NewGatewayLimiter(0, 0), "other-model")
+	rotating.active.Store(false)
+	gateway.settings.EscrowRotation.Enabled = true
+	gateway.settings.EscrowRotation.Models = []EscrowRotationModelSettings{{ModelID: "llama"}}
+
+	_, err := gateway.reserveRuntimeForModel("llama", chatRequestCost{}, nil)
+
+	var unavailable *ModelTemporarilyUnavailableError
+	require.ErrorAs(t, err, &unavailable)
+	require.Equal(t, "llama", unavailable.Model)
+}

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strings"
 
+	cmtbytes "github.com/cometbft/cometbft/libs/bytes"
+	rpcclient "github.com/cometbft/cometbft/rpc/client"
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/cosmos/cosmos-sdk/client"
 	"go.opentelemetry.io/otel"
 	"google.golang.org/grpc"
@@ -35,11 +38,33 @@ func (c observedQueryClientConn) Invoke(ctx context.Context, method string, args
 		queryOp.FinishErr(&spanErr)
 	}()
 	queryCtx = injectGRPCTraceContext(queryCtx)
-	err = c.Context.Invoke(queryCtx, method, args, reply, opts...)
+	callContext := c.Context
+	if callContext.GRPCClient == nil {
+		var node client.CometRPC
+		node, err = callContext.GetNode()
+		if err != nil {
+			spanErr = err
+			return err
+		}
+		// SDK client.Context's ABCI path discards the Invoke context and uses
+		// context.Background(). Bind this invocation's context to the RPC so
+		// cancellation and deadlines reach the actual HTTP request.
+		callContext = callContext.WithClient(contextQueryRPC{CometRPC: node, ctx: queryCtx})
+	}
+	err = callContext.Invoke(queryCtx, method, args, reply, opts...)
 	if err != nil {
 		spanErr = fmt.Errorf("grpc query: service=%s, method=%s: %w", service, rpcMethod, err)
 	}
 	return err
+}
+
+type contextQueryRPC struct {
+	client.CometRPC
+	ctx context.Context
+}
+
+func (c contextQueryRPC) ABCIQueryWithOptions(_ context.Context, path string, data cmtbytes.HexBytes, opts rpcclient.ABCIQueryOptions) (*coretypes.ResultABCIQuery, error) {
+	return c.CometRPC.ABCIQueryWithOptions(c.ctx, path, data, opts)
 }
 
 func (c observedQueryClientConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {

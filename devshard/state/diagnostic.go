@@ -23,11 +23,11 @@ type inferenceDiagEntry struct {
 
 // StateRootMismatchOpts carries optional fields for a mismatch diagnostic log line.
 type StateRootMismatchOpts struct {
-	Side            string
-	Nonce           uint64
-	DiffPostState   []byte
-	ComputedState   []byte
-	SealClock       StateClockWindow
+	Side          string
+	Nonce         uint64
+	DiffPostState []byte
+	ComputedState []byte
+	SealClock     StateClockWindow
 }
 
 // IsPostStateRootMismatchError reports whether err is a post_state_root mismatch,
@@ -114,7 +114,7 @@ func (sm *StateMachine) logStateRootMismatchDiagnosticLocked(opts StateRootMisma
 		"live_inferences_count", len(sm.state.Inferences),
 		"sealed_inferences_count", len(sm.sealedNonces),
 		"phase", sm.state.Phase,
-		"warm_keys_count", len(sm.state.WarmKeys),
+		"warm_key_slots", len(sm.state.WarmKeyHistory),
 		"config_token_price", sm.state.Config.TokenPrice,
 		"config_fee_per_nonce", sm.state.Config.FeePerNonce,
 		"config_vote_threshold", sm.state.Config.VoteThreshold,

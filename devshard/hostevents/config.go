@@ -6,12 +6,19 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+
+	"devshard/bridge"
 )
 
-// Sink receives escrow host-events from the long-poll loop.
+// Sink receives escrow and warm-key host-events from the long-poll loop.
 type Sink interface {
 	WarmEscrow(escrowID string) error
 	OnEscrowSettled(escrowID string) error
+	// OnWarmKeyEvent receives one warm-key log entry as the chain emitted
+	// it: a grant, or an end of one. See docs/warm-keys-v7.md.
+	OnWarmKeyEvent(entry bridge.WarmKeyEntry) error
+	// RehydrateOpenEscrows runs on needs_reset: events may have been lost,
+	// so sessions and the warm-key log copy are re-derived from the chain.
 	RehydrateOpenEscrows()
 }
 

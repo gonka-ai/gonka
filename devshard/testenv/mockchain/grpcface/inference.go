@@ -87,6 +87,24 @@ func (s *InferenceServer) GranteesByMessageType(_ context.Context, req *inferenc
 	return &inferencetypes.QueryGranteesByMessageTypeResponse{Grantees: out}, nil
 }
 
+func (s *InferenceServer) WarmKeyLog(_ context.Context, req *inferencetypes.QueryWarmKeyLogRequest) (*inferencetypes.QueryWarmKeyLogResponse, error) {
+	if req.GetGranter() == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid granter address")
+	}
+	return &inferencetypes.QueryWarmKeyLogResponse{Entries: s.store.GetWarmKeyLog(req.GetGranter())}, nil
+}
+
+func (s *InferenceServer) WarmKeyEntry(_ context.Context, req *inferencetypes.QueryWarmKeyEntryRequest) (*inferencetypes.QueryWarmKeyEntryResponse, error) {
+	if req.GetGranter() == "" || req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+	entry := s.store.GetWarmKeyEntry(req.GetGranter(), req.GetId())
+	if entry == nil {
+		return nil, status.Error(codes.NotFound, "warm-key entry not found")
+	}
+	return &inferencetypes.QueryWarmKeyEntryResponse{Entry: entry}, nil
+}
+
 // CometServer implements cmtservice for GetLatestBlock (Phase 3a).
 type CometServer struct {
 	cmtservice.UnimplementedServiceServer

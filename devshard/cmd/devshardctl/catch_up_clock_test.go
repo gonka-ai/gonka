@@ -48,53 +48,56 @@ func TestEscalationForInflight_ReceiptClockSkipsCatchUp(t *testing.T) {
 	sendTime := time.Now().Add(-2 * receiptTimeoutForInput(params.InputLength))
 
 	plain := &inflight{sendTime: sendTime, done: make(chan struct{})}
-	trig, ok := e.escalationForInflight(plain, params)
+	trig, ok := e.escalationForInflight(plain, params, true)
 	require.True(t, ok)
 	require.Equal(t, "receipt_timeout_wait_elapsed", trig.stage)
 	require.True(t, time.Now().After(trig.deadline), "without a catch-up the receipt is overdue")
 
 	catching := &inflight{sendTime: sendTime, catchUpFirst: true, done: make(chan struct{})}
-	trig, ok = e.escalationForInflight(catching, params)
+	trig, ok = e.escalationForInflight(catching, params, true)
 	require.True(t, ok)
 	require.True(t, trig.deadline.After(time.Now()), "the receipt clock has not started during the catch-up")
 
 	catching.requestSentNano.Store(time.Now().UnixNano())
-	trig, _ = e.escalationForInflight(catching, params)
+	trig, _ = e.escalationForInflight(catching, params, true)
 	require.WithinDuration(t, time.Now().Add(receiptTimeoutForInput(params.InputLength)), trig.deadline, time.Second)
 }
 
 func TestLiveReceiptHolder(t *testing.T) {
 	e := &Redundancy{}
 	params := defaultParams()
+	patience := receiptHolderFirstTokenPatience * e.firstTokenFallbackDelay(params)
 	primary := newTestInflight(1, 1, "h1")
 	primary.sendTime = time.Now()
 	secondary := newTestInflight(2, 2, "h2")
 	secondary.sendTime = time.Now()
 	attempts := []*inflight{primary, secondary}
 
-	holder := func(except *inflight) *inflight {
-		h, _ := e.liveReceiptHolder(attempts, except, params)
+	holder := func() *inflight {
+		h, _ := e.liveReceiptHolder(attempts, params)
 		return h
 	}
-	require.Nil(t, holder(secondary), "no receipt, no holder")
+	require.Nil(t, holder(), "no receipt, no holder")
 
 	primary.setReceiptAt(time.Now())
-	h, until := e.liveReceiptHolder(attempts, secondary, params)
+	h, until := e.liveReceiptHolder(attempts, params)
 	require.Same(t, primary, h)
-	require.WithinDuration(t, primary.sendTime.Add(e.firstTokenFallbackDelay(params)), until, time.Millisecond,
-		"the holder is live until its first-token budget ends")
-	require.Nil(t, holder(primary), "an attempt does not defer to itself")
+	require.WithinDuration(t, primary.sendTime.Add(patience), until, time.Millisecond,
+		"the holder is live for receiptHolderFirstTokenPatience first-token budgets")
 
-	primary.sendTime = time.Now().Add(-time.Hour)
-	require.Nil(t, holder(secondary), "a holder past its first-token budget has lost")
+	primary.sendTime = time.Now().Add(-e.firstTokenFallbackDelay(params) - time.Millisecond)
+	require.Same(t, primary, holder(), "one missed first-token budget does not end the holder")
+
+	primary.sendTime = time.Now().Add(-patience - time.Millisecond)
+	require.Nil(t, holder(), "a holder past its patience has lost")
 
 	primary.setFirstTokenAt(time.Now())
-	h, until = e.liveReceiptHolder(attempts, secondary, params)
+	h, until = e.liveReceiptHolder(attempts, params)
 	require.Same(t, primary, h, "a streaming holder is live")
 	require.True(t, until.IsZero(), "a streaming holder has no first-token deadline")
 
 	close(primary.done)
-	require.Nil(t, holder(secondary), "a finished attempt holds nothing")
+	require.Nil(t, holder(), "a finished attempt holds nothing")
 }
 
 func TestPicker_CatchingUpHost_BurnsGhostNoSend(t *testing.T) {
@@ -186,8 +189,9 @@ func TestRunInference_SecondaryReceiptTimeoutDoesNotFailClosedWhilePrimaryHoldsR
 // Test flow:
 //  1. As above, the last secondary's receipt timeout is put off because the
 //     primary holds a receipt.
-//  2. The primary sends no first token within its 1s budget.
-//  3. The race fails closed at that budget instead of waiting on the hung
+//  2. The primary sends no first token within receiptHolderFirstTokenPatience
+//     of its 300ms budgets.
+//  3. The race fails closed at that patience instead of waiting on the hung
 //     primary, which would only stream after 4s.
 func TestRunInference_DeferredFailClosedFiresWhenTheReceiptHolderStalls(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
@@ -202,14 +206,14 @@ func TestRunInference_DeferredFailClosedFiresWhenTheReceiptHolderStalls(t *testi
 		kc.inner = &lateReceiptThenHangClient{inner: kc.inner, delay: 80 * time.Millisecond, payloads: &payloads}
 	}
 	params := defaultParams()
-	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, time.Second)
+	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 300*time.Millisecond)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	start := time.Now()
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(ctx, params, &buf, nil)
-	require.Error(t, err, "a receipt holder past its first-token budget no longer holds off the fail-closed")
+	require.Error(t, err, "a receipt holder past its patience no longer holds off the fail-closed")
 	require.Less(t, time.Since(start), 3*time.Second, "the race did not wait on the hung primary")
 	require.GreaterOrEqual(t, payloads.Load(), int32(2))
 }

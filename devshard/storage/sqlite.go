@@ -652,15 +652,9 @@ func appendDiffSQLiteTx(tx *sql.Tx, escrowID string, rec types.DiffRecord) error
 		return err
 	}
 
+	// warm_keys_json is kept for the schema only: since v7 the warm-key
+	// history is consensus state carried by the diffs themselves.
 	var warmJSON *string
-	if len(rec.WarmKeyDelta) > 0 {
-		b, err := json.Marshal(rec.WarmKeyDelta)
-		if err != nil {
-			return fmt.Errorf("marshal warm keys: %w", err)
-		}
-		str := string(b)
-		warmJSON = &str
-	}
 
 	res, err := tx.Exec(
 		`INSERT INTO diffs (escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
@@ -799,7 +793,7 @@ func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	defer tx.Rollback()
 
 	rows, err := tx.Query(
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, created_at
 		 FROM diffs
 		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
 		 ORDER BY nonce`,

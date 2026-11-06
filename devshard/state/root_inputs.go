@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -37,8 +38,8 @@ type RootInputs struct {
 	TurnSlots           uint64 `json:"hs_turn_slots"`
 	TurnReason          string `json:"hs_turn_reason,omitempty"`
 
-	WarmKeys  map[uint32]string `json:"warm_keys,omitempty"`
-	HostStats []RootHostStat    `json:"host_stats,omitempty"`
+	WarmKeyHistory []RootWarmKeyBinding `json:"warm_key_history,omitempty"`
+	HostStats      []RootHostStat       `json:"host_stats,omitempty"`
 
 	Inferences        []inferenceDiagEntry `json:"inferences,omitempty"`
 	InferencesOmitted bool                 `json:"inferences_omitted,omitempty"`
@@ -49,6 +50,16 @@ type RootInputs struct {
 	HeightSyncHash string `json:"height_sync_hash"`
 	RestHash       string `json:"rest_hash"`
 	ComputedRoot   string `json:"computed_root"`
+}
+
+// RootWarmKeyBinding is one entry of the warm-key history as it enters
+// warm_keys_hash.
+type RootWarmKeyBinding struct {
+	Slot           uint32 `json:"slot"`
+	Address        string `json:"address"`
+	FromNonce      uint64 `json:"from_nonce"`
+	GrantID        uint64 `json:"grant_id"`
+	RevokedAtNonce uint64 `json:"revoked_at_nonce,omitempty"`
 }
 
 // RootHostStat is one slot's contribution to host_stats_hash.
@@ -124,7 +135,7 @@ func (sm *StateMachine) rootInputsFromComponents(nonce uint64, parts rootCompone
 		TurnK:               hs.TurnK,
 		TurnSlots:           hs.TurnSlots,
 		TurnReason:          hs.Reason,
-		WarmKeys:            mapsClone(st.WarmKeys),
+		WarmKeyHistory:      rootWarmKeyHistory(st.WarmKeyHistory),
 		HostStats:           rootHostStats(st.HostStats),
 		HostStatsHash:       hex.EncodeToString(parts.hostStatsHash),
 		InferencesHash:      hex.EncodeToString(parts.inferencesHash),
@@ -219,7 +230,7 @@ func DiffRootInputs(local, host RootInputs) []string {
 	cmpU("hs_turn_k", local.TurnK, host.TurnK)
 	cmpU("hs_turn_slots", local.TurnSlots, host.TurnSlots)
 	cmp("hs_turn_reason", local.TurnReason, host.TurnReason)
-	cmp("warm_keys", formatWarmKeys(local.WarmKeys), formatWarmKeys(host.WarmKeys))
+	cmp("warm_key_history", formatWarmKeyHistory(local.WarmKeyHistory), formatWarmKeyHistory(host.WarmKeyHistory))
 	cmp("host_stats", formatHostStats(local.HostStats), formatHostStats(host.HostStats))
 	cmp("host_stats_hash", local.HostStatsHash, host.HostStatsHash)
 	cmp("inferences_hash", local.InferencesHash, host.InferencesHash)
@@ -230,18 +241,30 @@ func DiffRootInputs(local, host RootInputs) []string {
 	return out
 }
 
-func formatWarmKeys(keys map[uint32]string) string {
-	if len(keys) == 0 {
-		return ""
+// rootWarmKeyHistory flattens the history in hash order: slots ascending,
+// bindings in their slot's order.
+func rootWarmKeyHistory(h signing.WarmKeyHistory) []RootWarmKeyBinding {
+	slots := make([]uint32, 0, len(h))
+	for slot := range h {
+		slots = append(slots, slot)
 	}
-	ids := make([]uint32, 0, len(keys))
-	for id := range keys {
-		ids = append(ids, id)
+	slices.Sort(slots)
+	var out []RootWarmKeyBinding
+	for _, slot := range slots {
+		for _, b := range h[slot] {
+			out = append(out, RootWarmKeyBinding{
+				Slot: slot, Address: b.Addr, FromNonce: b.FromNonce,
+				GrantID: b.GrantID, RevokedAtNonce: b.RevokedAtNonce,
+			})
+		}
 	}
-	slices.Sort(ids)
-	parts := make([]string, 0, len(ids))
-	for _, id := range ids {
-		parts = append(parts, fmt.Sprintf("%d=%s", id, keys[id]))
+	return out
+}
+
+func formatWarmKeyHistory(entries []RootWarmKeyBinding) string {
+	parts := make([]string, 0, len(entries))
+	for _, b := range entries {
+		parts = append(parts, fmt.Sprintf("%d=%s@%d/%d-%d", b.Slot, b.Address, b.FromNonce, b.GrantID, b.RevokedAtNonce))
 	}
 	return strings.Join(parts, ",")
 }

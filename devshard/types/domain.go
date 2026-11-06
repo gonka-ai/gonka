@@ -3,6 +3,8 @@ package types
 import (
 	"fmt"
 	"strings"
+
+	"devshard/signing"
 )
 
 // DevshardStateRootAndProtocolVersion is the default protocol name when no
@@ -145,9 +147,9 @@ type SessionConfig struct {
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold             uint32
-	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces  uint32
+	VoteThreshold            uint32
+	ValidationRate           uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces uint32
 	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
@@ -169,8 +171,11 @@ type EscrowState struct {
 	FinalizeNonce               uint64
 	Inferences                  map[uint64]*InferenceRecord
 	HostStats                   map[uint32]*HostStats
-	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce                 uint64
+	// WarmKeyHistory is every warm-key binding ever applied, by slot. It
+	// changes only through MsgWarmKeyBind and MsgWarmKeyRevoke and is hashed
+	// into the state root. See docs/warm-keys-v7.md.
+	WarmKeyHistory signing.WarmKeyHistory
+	LatestNonce    uint64
 
 	// Height-sync forced turn + cadence swallow (hashed into state root).
 	HeightSyncForcedStart         uint64
@@ -228,27 +233,9 @@ type Diff struct {
 // DiffRecord is the storage representation: Diff + computed metadata.
 type DiffRecord struct {
 	Diff
-	StateHash    []byte
-	Signatures   map[uint32][]byte
-	WarmKeyDelta map[uint32]string // warm key bindings introduced at this nonce
-	CreatedAt    int64
-}
-
-// ComputeWarmKeyDelta returns entries in after that are not in before.
-func ComputeWarmKeyDelta(before, after map[uint32]string) map[uint32]string {
-	if len(after) == 0 {
-		return nil
-	}
-	var delta map[uint32]string
-	for slotID, addr := range after {
-		if before[slotID] != addr {
-			if delta == nil {
-				delta = make(map[uint32]string)
-			}
-			delta[slotID] = addr
-		}
-	}
-	return delta
+	StateHash  []byte
+	Signatures map[uint32][]byte
+	CreatedAt  int64
 }
 
 // SlotAssignment maps a slot to a validator in the session group.

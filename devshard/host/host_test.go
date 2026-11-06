@@ -1714,9 +1714,11 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
-	// Apply start + confirm with warm key to populate WarmKeys in state.
+	// Bind the warm key and apply start + confirm with it.
 	nonce := uint64(1)
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(1)})
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(uint32(executorIdx), warmSigner.Address(), 1), testutil.StartTx(1),
+	})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
@@ -1730,17 +1732,24 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify warm key binding exists.
-	warmKeys := sm.WarmKeys()
-	require.Equal(t, warmSigner.Address(), warmKeys[uint32(executorIdx)])
+	require.Equal(t, []string{warmSigner.Address()}, sm.WarmKeyHistory().Live(uint32(executorIdx)))
 
 	// Create Host with warmSigner (not in group as cold key).
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, warmSigner, engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
 
-	// Host should have found its slot via WarmKeys check.
+	// Host should have found its slot via the history.
 	require.True(t, h.SlotIDs()[uint32(executorIdx)], "host should own executor slot via warm key")
 	require.Len(t, h.SlotIDs(), 1)
+
+	// Before any bind the grant source alone names the slot.
+	fresh, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
+	h2, err := NewHost(fresh, warmSigner, engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.True(t, h2.SlotIDs()[uint32(executorIdx)], "host should own executor slot via the grant source")
+	require.Empty(t, fresh.WarmKeyHistory(), "slot discovery never binds")
 }
 
 // trackingValidationEngine records Validate calls for test assertions.
@@ -2390,10 +2399,10 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
-	// Create warm key binding via confirm start.
-	// inference 1 % 3 = 1, executor = slot 1.
+	// Bind the warm key for slot 1 and start inference 1 (1 % 3 = 1).
 	nonce := uint64(1)
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(1)})
+	bindAndStart := []*types.DevshardTx{testutil.WarmKeyBindTx(1, warmSigner.Address(), 1), testutil.StartTx(1)}
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, bindAndStart)
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
@@ -2411,7 +2420,7 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	// Create a fresh SM+host for storage population.
 	sm2, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
-	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, bindAndStart)
 	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
 	h2, err := NewHost(sm2, hosts[0], engine, "escrow-1", group, nil,

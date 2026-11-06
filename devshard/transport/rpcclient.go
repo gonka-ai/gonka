@@ -162,6 +162,32 @@ func (c *RPCClient) WaitReady(ctx context.Context) error {
 	}
 }
 
+// DoorRefused reports that the remote host closed this client's escrow
+// door at Attach with a dead-door answer. That is the host's claim.
+func (c *RPCClient) DoorRefused() bool {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return false
+	}
+	return c.conn.doorKilled(c.HTTPClient.escrowID)
+}
+
+// DoorRefusals counts dead-door answers for this client's escrow; unlike
+// DoorRefused it survives another caller's ReviveDoor.
+func (c *RPCClient) DoorRefusals() uint64 {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return 0
+	}
+	return c.conn.doorRefusals(c.HTTPClient.escrowID)
+}
+
+// ReviveDoor lets the next Attach try this client's refused escrow door again.
+func (c *RPCClient) ReviveDoor() {
+	if c == nil || c.conn == nil || c.HTTPClient == nil {
+		return
+	}
+	c.conn.reviveDoor(c.HTTPClient.escrowID)
+}
+
 func (c *RPCClient) Close() {
 	if c == nil || c.closeOnce == nil {
 		return

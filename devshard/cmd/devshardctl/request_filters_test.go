@@ -40,20 +40,20 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":3072`)
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	floor := completionapi.MinTokensFloor
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	explicitMaxTokens := 64
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
 	require.Zero(t, req.MaxCompletionTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_completion_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_completion_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
-	require.EqualValues(t, floor, req.MaxCompletionTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
-	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
+	require.EqualValues(t, explicitMaxTokens, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, explicitMaxTokens))
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"max_completion_tokens":20000,"messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
@@ -62,12 +62,12 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":4096`)
 	require.Contains(t, string(body), `"max_completion_tokens":4096`)
 
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
-	require.EqualValues(t, floor, req.MaxCompletionTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
-	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
+	require.EqualValues(t, explicitMaxTokens, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, explicitMaxTokens))
 }
 
 func TestNormalizeChatRequestUsesProvidedOutputTokenLimits(t *testing.T) {

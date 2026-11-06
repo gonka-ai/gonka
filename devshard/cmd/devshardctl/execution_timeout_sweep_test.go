@@ -132,6 +132,27 @@ func TestSweepExecutionTimeoutsStartsOneEscrowFurtherAlongEachTick(t *testing.T)
 }
 
 // Test flow:
+//  1. Register an escrow at its active nonce cap with two overdue inferences, and a second escrow with one.
+//  2. Run one sweep with a budget of two that starts at the capped escrow.
+//  3. Expect the second escrow's inference timed out: the capped escrow cannot vote, so it must not spend the tick's budget.
+func TestSweepExecutionTimeoutsSpendsNoBudgetOnAnEscrowAtItsNonceCap(t *testing.T) {
+	gateway, cappedRuntime, cappedEnv := newSweepTestGateway(t)
+	secondEnv := setupTestProxy(t, 3, nil, true)
+	secondRuntime := &devshardRuntime{id: "escrow-second", model: "llama", proxy: secondEnv.proxy, session: secondEnv.session}
+	gateway.mu.Lock()
+	gateway.runtimes[secondRuntime.id] = secondRuntime
+	gateway.mu.Unlock()
+	startedInferenceConfirmedAt(t, cappedEnv, time.Now().Add(-time.Hour))
+	startedInferenceConfirmedAt(t, cappedEnv, time.Now().Add(-time.Hour))
+	cappedEnv.session.SetChainMaxNonce(uint32(cappedEnv.session.Nonce() + types.FinalizeNonceReserve(3)))
+	secondNonce := startedInferenceConfirmedAt(t, secondEnv, time.Now().Add(-time.Hour))
+
+	gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{cappedRuntime, secondRuntime}, 2)
+
+	require.Equal(t, types.StatusTimedOut, secondEnv.sm.SnapshotState().Inferences[secondNonce].Status)
+}
+
+// Test flow:
 //  1. Start an overdue inference on an escrow the gateway no longer has registered.
 //  2. Run the sweep over it.
 //  3. Expect it untouched: a retired escrow's session may already be closed, and its settlement owns it now.

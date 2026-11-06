@@ -38,9 +38,32 @@ message DevshardTx {
     MsgHeartbeat heartbeat = 10;
     MsgHeightAck height_ack = 11;
     MsgErrorMiss error_miss = 14;
+    MsgWarmKeyBind warm_key_bind = 15;
+    MsgWarmKeyRevoke warm_key_revoke = 16;
   }
   // cPoC MsgSkipProbe / CarrySkip claim 12 / 13; reserved so they cannot be reused.
   reserved 12, 13;
+}
+
+// MsgWarmKeyBind binds a warm key to a slot from the diff that carries it.
+// The gateway authors it from its grant source; every host confirms grant_id
+// against the chain's warm-key log (the entry of the slot's cold key with
+// that id exists and its grantee is address) before the key counts. The
+// entries of a diff apply before its other transactions, so the key signs
+// for the messages of the same nonce. See docs/warm-keys-v7.md.
+message MsgWarmKeyBind {
+  uint32 slot_id = 1;
+  string address = 2;
+  uint64 grant_id = 3;
+}
+
+// MsgWarmKeyRevoke ends the live binding of address on slot_id whose grant is
+// grant_id, from the diff that carries it. Signatures in earlier diffs keep
+// verifying on replay.
+message MsgWarmKeyRevoke {
+  uint32 slot_id = 1;
+  string address = 2;
+  uint64 grant_id = 3;
 }
 
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.

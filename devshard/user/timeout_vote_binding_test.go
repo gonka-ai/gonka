@@ -435,7 +435,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
 		testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
 	require.NoError(t, err)
-	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier, WithWarmKeyGrantSource(warmGrants(warmKeys, coldKeys)))
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -443,7 +443,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 		_, err = session.SendInference(ctx, defaultParams)
 		require.NoError(t, err)
 	}
-	require.Len(t, userSM.WarmKeys(), 3, "warm bindings cached by the applied receipts")
+	require.Len(t, userSM.WarmKeyHistory(), 3, "warm bindings proposed by the sequencer from the grant source")
 
 	resolverFails = true
 

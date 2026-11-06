@@ -116,17 +116,19 @@ func fetchPayloadsFromExecutor(
 	// than 60s, and the rate-limit retry waits 30s or more.
 	var signErr error
 	payloadResp, err := fetchPayloadsWithRateLimitRetry(ctx, req, func(ctx context.Context) (*commonvalidation.PayloadResponse, error) {
-		timestamp := time.Now().UnixNano()
-		signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
-		if err != nil {
-			signErr = fmt.Errorf("sign request: %w", err)
-			return nil, signErr
-		}
-		return fetchSignedPayloads(
-			ctx, client, rpc, executorInfo.URL, requestPath,
-			inferenceID, validatorAddress, timestamp, epochID, signature,
-			commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
-		)
+		return fetchPastRefusedDoor(ctx, br, rpc, req.EscrowID, func(ctx context.Context) (*commonvalidation.PayloadResponse, error) {
+			timestamp := time.Now().UnixNano()
+			signature, err := signPayloadRequest(recorder, inferenceID, timestamp, validatorAddress, epochID)
+			if err != nil {
+				signErr = fmt.Errorf("sign request: %w", err)
+				return nil, signErr
+			}
+			return fetchSignedPayloads(
+				ctx, client, rpc, executorInfo.URL, requestPath,
+				inferenceID, validatorAddress, timestamp, epochID, signature,
+				commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
+			)
+		})
 	})
 	if signErr != nil {
 		return nil, nil, signErr
@@ -308,6 +310,63 @@ func classifyPayloadFetchError(ctx context.Context, err error) error {
 	return tagExecutorPayloadFault(err)
 }
 
+var (
+	// doorRefusalCheckTimeout bounds the chain query behind fetchPastRefusedDoor.
+	doorRefusalCheckTimeout = 5 * time.Second
+	// doorRefusalRetryGap paces re-Attach on a refused door.
+	doorRefusalRetryGap = 250 * time.Millisecond
+)
+
+// fetchPastRefusedDoor retries fetch while the executor keeps closing the
+// Attach door ("escrow settled / not found") on an escrow this host's chain
+// says is open. A refusal that lasts the whole header budget is the
+// executor's fault, like an executor that never answers Attach. A refusal
+// seen once keeps this attempt retrying even if a concurrent fetch revives
+// the shared door.
+func fetchPastRefusedDoor(ctx context.Context, br bridge.MainnetBridge, rpc *transport.RPCClient, escrowID string, fetch func(context.Context) (*commonvalidation.PayloadResponse, error)) (*commonvalidation.PayloadResponse, error) {
+	deadline := time.Now().Add(payloadFetchHeaderTimeout)
+	seen, refused := rpc.DoorRefusals(), rpc.DoorRefused()
+	checked, open := false, false
+	for {
+		resp, err := fetch(ctx)
+		if err == nil || ctx.Err() != nil || errors.Is(err, errExecutorPayloadFault) ||
+			!errors.Is(err, transport.ErrPeerNotReady) || transport.OutboundPeersReleased() {
+			return resp, err
+		}
+		refused = refused || rpc.DoorRefused() || rpc.DoorRefusals() != seen
+		if !refused {
+			return resp, err
+		}
+		if !checked {
+			checked, open = true, escrowOpen(br, escrowID)
+		}
+		if !open {
+			return resp, err
+		}
+		wait := time.Until(deadline)
+		if wait <= 0 {
+			// Ask again: this host's node may have lagged the settle.
+			if !escrowOpen(br, escrowID) {
+				return resp, err
+			}
+			return nil, tagExecutorPayloadFault(fmt.Errorf("executor refused attach on open escrow %s: %w", escrowID, err))
+		}
+		rpc.ReviveDoor()
+		timer := time.NewTimer(min(doorRefusalRetryGap, wait))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return resp, err
+		case <-timer.C:
+		}
+	}
+}
+
+func escrowOpen(br bridge.MainnetBridge, escrowID string) bool {
+	settled, err := bridge.SettledWithin(br, escrowID, doorRefusalCheckTimeout)
+	return err == nil && !settled
+}
+
 func fetchSignedPayloads(
 	ctx context.Context,
 	client *http.Client,
@@ -323,6 +382,7 @@ func fetchSignedPayloads(
 	if rpc == nil || !rpc.Uses(transport.EndpointPayload) {
 		return nil, errPayloadRPCUnavailable
 	}
+	start := time.Now()
 	waitCtx, cancel := context.WithTimeout(ctx, payloadFetchHeaderTimeout)
 	defer cancel()
 	if err := rpc.WaitReady(waitCtx); err != nil {
@@ -334,13 +394,36 @@ func fetchSignedPayloads(
 		}
 		return nil, err
 	}
-	return fetchPayloadsRPCWithRetry(ctx, rpc, &rpcpb.GetPayloadRequest{
+	req := &rpcpb.GetPayloadRequest{
 		InferenceId:      inferenceID,
 		ValidatorAddress: validatorAddress,
 		Timestamp:        timestamp,
 		EpochId:          epochID,
 		Signature:        []byte(signature), // HTTP Authorization header text
-	}, maxBytes)
+	}
+	deadline := start.Add(payloadFetchHeaderTimeout)
+	for {
+		resp, err := fetchPayloadsRPCWithRetry(ctx, rpc, req, maxBytes)
+		if err == nil || !errors.Is(err, transport.ErrPeerNotReady) || ctx.Err() != nil || transport.OutboundPeersReleased() || rpc.DoorRefused() {
+			return resp, err
+		}
+		// The executor dropped the call and has not re-Attached. Like a
+		// silent executor above, it has until the header budget runs out,
+		// counted from the start of the fetch.
+		if !time.Now().Before(deadline) {
+			return nil, tagExecutorPayloadFault(err)
+		}
+		readyCtx, cancelReady := context.WithDeadline(ctx, deadline)
+		werr := rpc.WaitReady(readyCtx)
+		timedOut := werr != nil && payloadAttachTimedOut(ctx, readyCtx) && !rpc.DoorRefused()
+		cancelReady()
+		if werr != nil {
+			if timedOut {
+				return nil, tagExecutorPayloadFault(err)
+			}
+			return nil, err
+		}
+	}
 }
 
 // payloadAttachTimedOut reports that the handshake wait expired while this

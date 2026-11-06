@@ -51,6 +51,10 @@ type HTTPSessionConfig struct {
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
+	// WarmKeys is the sequencer's grant source for warm-key bind and revoke
+	// proposals. Nil uses Bridge when it implements
+	// bridge.WarmKeyGrantSource, and proposes nothing otherwise.
+	WarmKeys bridge.WarmKeyGrantSource
 	// Optional bind-time timeout overrides. These are mainly for integration
 	// harnesses that need protocol timeouts shorter than production defaults.
 	RefusalTimeoutSeconds   *int64
@@ -249,10 +253,8 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			err = fmt.Errorf("host %s: %w", addr, transport.ErrPeerURLMissing)
 		}
 		if err != nil {
-			if !errors.Is(err, bridge.ErrParticipantNotFound) {
-				logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
-					"escrow", cfg.EscrowID, "participant", addr, "error", err)
-			}
+			logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
+				"escrow", cfg.EscrowID, "participant", addr, "error", err)
 			return nil, err
 		}
 		httpClient := transport.NewHTTPClient(strings.TrimSpace(info.URL), cfg.EscrowID, signer,
@@ -282,6 +284,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			return nil, nil, fmt.Errorf("recover session: %w", recErr)
 		}
 		enableWarmKeyResolver()
+		if src := cfg.warmKeySource(); src != nil {
+			session.SetWarmKeyGrantSource(src)
+		}
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
@@ -348,9 +353,10 @@ var hostLookupOpenWait = transport.DefaultLazyWait
 // openHostClients builds one client per distinct participant in group. A
 // participant whose lookup fails transiently, publishes no URL, or outlasts
 // hostLookupOpenWait does not fail the session: it gets a lazyHostClient that
-// resolves on use, which the gateway's chat picker skips until then.
-// bridge.ErrParticipantNotFound is a definitive chain answer and still fails
-// the open, so the gateway parks the escrow until the participant appears.
+// resolves on use, which the gateway's chat picker skips until then. A
+// participant absent from the chain (bridge.ErrParticipantNotFound) opens the
+// same way, so the escrow serves on the rest of its group and takes the host
+// back once the chain lists it again.
 func openHostClients(escrowID string, group []types.SlotAssignment, build func(addr string) (HostClient, error)) (map[string]HostClient, error) {
 	lazies := make(map[string]*transport.Lazy[HostClient], len(group))
 	for _, slot := range group {
@@ -373,14 +379,6 @@ func openHostClients(escrowID string, group []types.SlotAssignment, build func(a
 	}
 	wg.Wait()
 
-	for _, l := range lazies {
-		if _, err := l.Failure(); errors.Is(err, bridge.ErrParticipantNotFound) {
-			for _, l := range lazies {
-				l.Close()
-			}
-			return nil, err
-		}
-	}
 	out := make(map[string]HostClient, len(lazies))
 	var unresolved []string
 	for addr, l := range lazies {
@@ -415,6 +413,9 @@ func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.S
 }
 
 func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOption {
+	if src := cfg.warmKeySource(); src != nil {
+		extra = append(extra, WithWarmKeyGrantSource(src))
+	}
 	if cfg.Heartbeat != nil {
 		extra = append(extra, WithHeartbeatConfig(*cfg.Heartbeat))
 	}
@@ -428,4 +429,15 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
 	}
 	return extra
+}
+
+// warmKeySource is the configured grant source, or the bridge when it is one.
+func (cfg HTTPSessionConfig) warmKeySource() bridge.WarmKeyGrantSource {
+	if cfg.WarmKeys != nil {
+		return cfg.WarmKeys
+	}
+	if src, ok := cfg.Bridge.(bridge.WarmKeyGrantSource); ok {
+		return src
+	}
+	return nil
 }

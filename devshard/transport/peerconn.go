@@ -259,7 +259,8 @@ type PeerConn struct {
 	doorMu     sync.Mutex
 	doors      map[string]int
 	deadDoors  map[string]struct{}
-	hadDoor    bool // set by the first real addDoor; empty doors then mean none
+	refusals   map[string]uint64 // dead-door answers per id; reviveDoor keeps them
+	hadDoor    bool              // set by the first real addDoor; empty doors then mean none
 	attachDoor string
 	// authByDoor caches PeerAuth clients per escrow. The creator door is
 	// seeded from authDoor; other doors are built once and dropped with the door.
@@ -354,6 +355,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 		doorCh:         make(chan struct{}),
 		doors:          make(map[string]int),
 		deadDoors:      make(map[string]struct{}),
+		refusals:       make(map[string]uint64),
 		attachDoor:     cfg.DoorEscrowID,
 		authByDoor:     make(map[string]rpcpbconnect.PeerAuthServiceClient),
 		authByDoorGRPC: make(map[string]rpcpbconnect.PeerAuthServiceClient),

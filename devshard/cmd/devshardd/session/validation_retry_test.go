@@ -1252,7 +1252,6 @@ func appendTerminalInvalidationDiffToStore(t *testing.T, store storage.Storage, 
 		records, err := store.GetDiffs(escrowID, 1, meta.LatestNonce)
 		require.NoError(t, err)
 		for _, rec := range records {
-			sm.InjectWarmKeys(rec.WarmKeyDelta)
 			_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
 			require.NoError(t, err)
 		}

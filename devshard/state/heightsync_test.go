@@ -190,14 +190,14 @@ func TestApplyLocalBestEffort_WarmKeyAckApplies(t *testing.T) {
 	}
 	warm := testutil.MustGenerateKey(t)
 	sm, _ := newTestSM(t, hosts, 100000)
-	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 	hash := []byte{0xaa}
 
-	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
-		}},
-	}})
+		}}},
+	})
 	require.NoError(t, err)
 
 	ack := &types.MsgHeightAck{
@@ -255,14 +255,14 @@ func TestApplyLocalBestEffort_SiblingWarmAckApplies(t *testing.T) {
 	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
 	require.NoError(t, err)
-	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 	hash := []byte{0xaa}
 
-	_, _, err = sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+	_, _, err = sm.ApplyLocalBestEffort(1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
-		}},
-	}})
+		}}},
+	})
 	require.NoError(t, err)
 
 	ack := &types.MsgHeightAck{
@@ -275,13 +275,13 @@ func TestApplyLocalBestEffort_SiblingWarmAckApplies(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
-	require.NotContains(t, sm.WarmKeys(), uint32(1), "sibling acceptance must not write a new binding")
+	require.Empty(t, sm.WarmKeyHistory()[1], "sibling acceptance must not write a new binding")
 }
 
 func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
-	// Testermint streaming hang: host applyCore L2-checked the signed set
-	// against pre-nonce WarmKeys, so a warm ack that compose admitted via
-	// ResolveWarmKey (or would admit via AcceptWarm) was INVALID on every host.
+	// The bind rides in the same diff as the first ack by the key: entries
+	// apply ahead of the other transactions, so the host's L2 check reads
+	// the binding the sequencer composed against.
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -308,18 +308,26 @@ func TestValidateDiff_WarmAckWithoutCachedBinding(t *testing.T) {
 	}
 	require.NoError(t, heightsync.SignAck(warm, ack))
 	ackTx := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
-	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{ackTx})
+	_, applied, err := composer.ApplyLocalBestEffort(2, []*types.DevshardTx{ackTx, testutil.WarmKeyBindTx(0, warm.Address(), 1)})
 	require.NoError(t, err)
-	require.Len(t, applied, 1)
-	require.Equal(t, warm.Address(), composer.WarmKeys()[0], "apply-path identity must cache the live binding")
+	require.Len(t, applied, 2, "the bind applies first whatever its position, so the ack lands")
+	require.Equal(t, []string{warm.Address()}, composer.WarmKeyHistory().Live(0))
 
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
 	vd, err := hostSM.ValidateDiff(d2)
 	require.NoError(t, err, "host applyCore must accept a warm ack the sequencer just composed")
-	require.Equal(t, warm.Address(), vd.WarmAfter[0], "WarmKeyDelta must capture the ack binding for replay")
 	require.True(t, hostSM.CommitValidated(vd))
 	require.Equal(t, uint64(2), hostSM.LatestNonce())
-	require.Equal(t, warm.Address(), hostSM.WarmKeys()[0])
+	require.Equal(t, []string{warm.Address()}, hostSM.WarmKeyHistory().Live(0))
+
+	fresh, err := NewStateMachine("escrow-1", testutil.DefaultConfig(len(hosts)), testutil.MakeGroup(hosts), 100000, user.Address(),
+		signing.NewSecp256k1Verifier(), testutil.MustMemoryStore(t, "escrow-1", user.Address(), testutil.DefaultConfig(len(hosts)), testutil.MakeGroup(hosts), 100000),
+		WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
+	_, err = fresh.ApplyDiff(d1)
+	require.NoError(t, err)
+	_, err = fresh.ValidateDiff(testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{ackTx}))
+	require.ErrorIs(t, err, heightsync.ErrAckSigInvalid, "without the bind the warm ack is refused: the grant source never binds")
 }
 
 func TestValidateDiff_SameNonceConfirmThenWarmAck(t *testing.T) {
@@ -361,17 +369,17 @@ func TestValidateDiff_SameNonceConfirmThenWarmAck(t *testing.T) {
 		txConfirm(&types.MsgConfirmStart{InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: 1000, ObservedHeight: 50, ObservedBlockHash: hash}),
 		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
 	}
+	candidates = append(candidates, testutil.WarmKeyBindTx(2, warm.Address(), 1))
 	_, applied, err := composer.ApplyLocalBestEffort(2, candidates)
 	require.NoError(t, err)
-	require.Len(t, applied, 3)
+	require.Len(t, applied, 4)
 
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
 	vd, err := hostSM.ValidateDiff(d2)
 	require.NoError(t, err, "same-nonce confirm must not be required before L2 sees the ack")
-	require.Equal(t, warm.Address(), vd.WarmAfter[2])
 	require.True(t, hostSM.CommitValidated(vd))
 	require.Equal(t, uint64(2), hostSM.LatestNonce())
-	require.Equal(t, warm.Address(), hostSM.WarmKeys()[2])
+	require.Equal(t, []string{warm.Address()}, hostSM.WarmKeyHistory().Live(2))
 }
 
 func TestValidateDiff_UnauthorizedWarmAckRejected(t *testing.T) {
@@ -425,16 +433,16 @@ func TestValidateDiff_SiblingWarmAckFromCachedSiblingSlot(t *testing.T) {
 		sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier,
 			testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
 		require.NoError(t, err)
-		sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 		return sm
 	}
 	composer, hostSM := newSM(), newSM()
 	hash := []byte{0xaa}
-	d1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+	d1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
-		}},
-	}})
+		}}},
+	})
 	_, err := composer.ApplyDiff(d1)
 	require.NoError(t, err)
 	_, err = hostSM.ApplyDiff(d1)
@@ -454,9 +462,8 @@ func TestValidateDiff_SiblingWarmAckFromCachedSiblingSlot(t *testing.T) {
 	d2 := testutil.SignDiff(t, user, "escrow-1", 2, applied)
 	vd, err := hostSM.ValidateDiff(d2)
 	require.NoError(t, err, "L2 must accept a warm key already bound on a sibling slot")
-	require.NotContains(t, vd.WarmAfter, uint32(1), "sibling acceptance must not write a new binding")
 	require.True(t, hostSM.CommitValidated(vd))
-	require.NotContains(t, hostSM.WarmKeys(), uint32(1))
+	require.Empty(t, hostSM.WarmKeyHistory()[1], "sibling acceptance must not write a new binding")
 }
 
 func dualWarmSMs(t *testing.T, hosts []*signing.Secp256k1Signer, resolver WarmKeyResolver) (composer, hostSM *StateMachine, user *signing.Secp256k1Signer) {

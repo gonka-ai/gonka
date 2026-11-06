@@ -329,13 +329,11 @@ func (h *Host) applyChunkLocked(ctx context.Context, run []types.Diff, applied m
 		return nil
 	}
 
-	warm := h.sm.WarmKeys()
 	vds, validateErr := h.sm.ValidateDiffs(run)
 	if len(vds) > 0 {
 		recs := make([]types.DiffRecord, len(vds))
 		for k, vd := range vds {
-			recs[k] = types.DiffRecord{Diff: run[k], StateHash: vd.Root, WarmKeyDelta: types.ComputeWarmKeyDelta(warm, vd.WarmAfter)}
-			warm = vd.WarmAfter
+			recs[k] = types.DiffRecord{Diff: run[k], StateHash: vd.Root}
 		}
 		h.mu.Unlock()
 		persistErr := storage.PersistDiffBatch(ctx, h.store, h.escrowID, recs)

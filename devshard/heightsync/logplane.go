@@ -56,16 +56,14 @@ type LogPlaneInput struct {
 type LogPlaneState struct {
 	SlotsNum uint64
 	SlotKeys map[uint32]string
-	// WarmKeys are bound acting keys per slot (same map as escrow state).
-	// Hosts sign height acks with the warm key after cutover; L2 accepts
-	// the cold slot key, this slot's binding, or a sibling slot's binding
-	// for the same validator. Nil or missing slots are fine.
-	WarmKeys map[uint32]string
-	// AcceptWarm is the non-mutating counterpart of finish/vote warm-key
-	// resolution (authz / CheckWarmKey). Live apply and compose both see it,
-	// so a first-time warm ack does not pass sequencer best-effort and then
-	// fail host applyCore. Nil means cache-only (replay, tests). Must not
-	// write WarmKeys: dropped trial txs must not bind a key.
+	// History is the escrow's warm-key binding history as of the diff under
+	// check, its own bind and revoke entries included. L2 accepts the cold
+	// slot key, a warm key bound to the slot at the diff nonce, or a sibling
+	// slot's binding for the same validator. Nil is fine.
+	History signing.WarmKeyHistory
+	// AcceptWarm is a local-admission fallback for a key the history does
+	// not cover. Consensus paths (apply, compose) leave it nil: a key is
+	// bound by a diff entry, never by a lookup.
 	AcceptWarm func(slotID uint32, recovered, expected string) bool
 	Verifier   signing.Verifier
 	Tracker    *TurnTracker
@@ -117,7 +115,7 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 		logLogPlane(in.Nonce, 0, "L1", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "bad_framing")
 	}
-	if err := checkL2(acks, st); err != nil {
+	if err := checkL2(in.Nonce, acks, st); err != nil {
 		logLogPlane(in.Nonce, 0, "L2", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_sig_invalid")
 	}
@@ -253,22 +251,19 @@ func PeerSeenByteLenValid(bits []byte, slotsNum uint32) bool {
 // (warm) key after cutover; an unbound or mismatched signer is still INVALID
 // so a user cannot fabricate an ack.
 //
-// WarmKeys is per-slot and filled lazily on the first applied host-signed
-// message for that slot (confirm/finish/vote/ack). A heartbeat ack can name
-// any slot the host owns, including one that has never executed, so L2 also
-// accepts:
-//   - a warm key already bound on a sibling slot of the same validator
-//   - AcceptWarm, the same authz check finishes use, so applyCore (which
-//     L2-checks the signed set before applyTx) agrees with compose (which
-//     may bind WarmKeys mid-nonce via an earlier confirm)
-func checkL2(acks []ackRef, st LogPlaneState) error {
+// The history is per slot and changes only through MsgWarmKeyBind and
+// MsgWarmKeyRevoke, applied ahead of the other transactions of their diff. A
+// heartbeat ack can name any slot the host owns, including one that has
+// never executed, so L2 also accepts a warm key bound on a sibling slot of
+// the same validator while the named slot has no binding of its own.
+func checkL2(nonce uint64, acks []ackRef, st LogPlaneState) error {
 	if st.Verifier == nil {
 		if len(acks) == 0 {
 			return nil
 		}
 		return fmt.Errorf("%w: verifier required", ErrAckSigInvalid)
 	}
-	actors := st.actors()
+	actors := st.actorsAt(nonce)
 	for _, ref := range acks {
 		key, ok := st.SlotKeys[ref.ack.SlotId]
 		if !ok || key == "" {
@@ -285,10 +280,11 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 	return nil
 }
 
-func (st LogPlaneState) actors() signing.SlotActors {
+func (st LogPlaneState) actorsAt(nonce uint64) signing.SlotActors {
 	return signing.SlotActors{
 		SlotKeys:   st.SlotKeys,
-		WarmKeys:   st.WarmKeys,
+		History:    st.History,
+		Nonce:      nonce,
 		AcceptWarm: st.AcceptWarm,
 	}
 }

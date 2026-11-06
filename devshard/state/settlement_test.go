@@ -39,7 +39,7 @@ func TestBuildSettlement_MerkleProof(t *testing.T) {
 
 	// RestHash should match independently computed value.
 	acc := sealedAccBytes32(st.SealedAcc)
-	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys, types.HeightSyncEscrowCommitFromState(&st))
+	restHash, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeyHistory, types.HeightSyncEscrowCommitFromState(&st))
 	require.NoError(t, err)
 	require.Equal(t, restHash, payload.RestHash)
 }
@@ -253,8 +253,8 @@ func TestVerifySettlement_WarmKeySignatures(t *testing.T) {
 	sigs[2] = sig2
 	payload.Signatures = sigs
 
-	warmKeys := map[uint32]string{1: warmSigner.Address()}
-	root, err := VerifySettlement(*payload, group, verifier, warmKeys)
+	history := signing.WarmKeyHistory{1: {{Addr: warmSigner.Address(), FromNonce: 2, GrantID: 1}}}
+	root, err := VerifySettlement(*payload, group, verifier, history)
 	require.NoError(t, err)
 	require.Len(t, root, 32)
 }
@@ -292,13 +292,17 @@ func TestVerifySettlement_SiblingWarmKeySignatures(t *testing.T) {
 	require.NoError(t, err)
 	payload.Signatures = map[uint32][]byte{0: sig0, 1: sig1, 2: sig2}
 
-	warmKeys := map[uint32]string{0: warm.Address()}
-	_, err = VerifySettlement(*payload, group, verifier, warmKeys)
+	history := signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 2, GrantID: 1}}}
+	_, err = VerifySettlement(*payload, group, verifier, history)
 	require.NoError(t, err, "warm key bound on slot 0 must count for sibling slot 1")
+
+	revoked := signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 2, GrantID: 1, RevokedAtNonce: 5}}}
+	_, err = VerifySettlement(*payload, group, verifier, revoked)
+	require.Error(t, err, "a binding revoked at the settlement nonce no longer signs it")
 }
 
 func TestVerifySettlement_WarmKey_NotInMap(t *testing.T) {
-	// Sign slot 1 with warm key but pass empty warmKeys -- should fail.
+	// Sign slot 1 with warm key but pass an empty history -- should fail.
 	coldSigners := make([]*signing.Secp256k1Signer, 3)
 	for i := range coldSigners {
 		coldSigners[i] = testutil.MustGenerateKey(t)
