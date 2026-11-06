@@ -15,4 +15,7 @@ message PruningState {
   int64 poc_validations_v2_pruned_epoch = 8;
   int64 poc_validation_snapshots_pruned_epoch = 9;
   int64 claim_recipients_pruned_epoch = 10;
+  // Epoch-0 inference pass: last key visited, and whether the pass finished.
+  string epoch_zero_inferences_cursor = 14;
+  bool epoch_zero_inferences_pruned = 15;
 }
