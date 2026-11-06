@@ -94,6 +94,22 @@ func (s *Service) Store() *store.Store {
 	return s.store
 }
 
+// BlockStamp is the hash and time published on JSON-RPC /block and NewBlock
+// for height. Hosts that read the chain over gRPC stamp this same pair.
+func (s *Service) BlockStamp(height int64) (hash []byte, at time.Time, err error) {
+	if s == nil || s.signed == nil || height <= 0 {
+		return nil, time.Time{}, fmt.Errorf("mockchain rpc: no signed header at %d", height)
+	}
+	if err := s.signed.ensureThrough(height); err != nil {
+		return nil, time.Time{}, err
+	}
+	sh, err := s.signed.at(height)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return append([]byte(nil), sh.Header.Hash()...), sh.Header.Time, nil
+}
+
 // EventBus exposes the CometBFT event bus (tests).
 func (s *Service) EventBus() *cmttypes.EventBus {
 	return s.bus

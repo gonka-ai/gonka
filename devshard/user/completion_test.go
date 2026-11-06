@@ -293,7 +293,7 @@ func TestReceiptNotificationsRequireExecutorAuthentication(t *testing.T) {
 				response.ConfirmedAt = 0
 			case "canonical_duplicate":
 				receipt := testutil.SignExecutorReceipt(t, signers[p.HostIdx()], "escrow-1", p.Nonce(), testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens,
-					testutil.ReceiptStamp{Height: response.ObservedHeight, Hash: response.ObservedBlockHash})
+					testutil.ReceiptStamp{Height: response.ObservedHeight, Hash: response.ObservedBlockHash, TimeMs: response.ObservedTimeMs})
 				response.Receipt = receipt
 				require.True(t, s.confirmStartOnReceipt(p.Nonce(), response))
 				require.NoError(t, s.SendPendingDiff(context.Background()))

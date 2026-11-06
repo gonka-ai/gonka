@@ -184,6 +184,41 @@ func TestVerifierRefusalUsesTheStartStamp(t *testing.T) {
 	require.Contains(t, m.asked, uint64(40))
 }
 
+func TestVerifierExecutionUsesCarriedConfirmTime(t *testing.T) {
+	now := time.UnixMilli(time.Now().UnixMilli())
+	m := &scriptMap{
+		now:      now,
+		missing:  true,
+		stamp:    now,
+		interval: time.Minute,
+	}
+	st := stateWithStarted(1, 1)
+	st.Inferences[1].ConfirmedAtHeight = 70
+	st.Inferences[1].ConfirmedAtTimeMs = now.Add(-2 * time.Minute).UnixMilli()
+	exec := &countingExecutor{}
+
+	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, st.Inferences[1], nil, exec, nil, m)
+	require.NoError(t, err)
+	require.True(t, accept, "a missing map row still votes from ConfirmedAtTimeMs")
+	require.Equal(t, int32(1), exec.calls.Load())
+	require.Equal(t, 0, m.afterCount())
+
+	m.ForgetTimeoutVote(1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	m.missing = false
+	m.stamp = now.Add(-time.Hour)
+	m.interval = 2 * time.Minute
+	st.Inferences[1].ConfirmedAtTimeMs = now.UnixMilli()
+	capLog := &capturingLogger{}
+	logging.SetLogger(capLog)
+	t.Cleanup(func() { logging.SetLogger(loggingDiscard{}) })
+	accept, err = VerifyExecutionTimeout(context.Background(), st, 1, st.Inferences[1], nil, exec, nil, m)
+	require.NoError(t, err)
+	require.False(t, accept, "a map row that is already due does not open before the carried confirm time")
+	require.Equal(t, int32(1), exec.calls.Load())
+	_, found := capLog.find("claimed confirm time disagrees with the header map; a later dispute rolls back a timeout decided on this time")
+	require.True(t, found)
+}
+
 func TestVerifierExecutionUsesConfirmedAtHeight(t *testing.T) {
 	now := time.UnixMilli(time.Now().UnixMilli())
 	m := &scriptMap{

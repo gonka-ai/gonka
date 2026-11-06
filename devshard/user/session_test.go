@@ -2415,6 +2415,7 @@ func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
 		ConfirmedAt:       time.Now().Unix(),
 		ObservedHeight:    confirmTx.GetConfirmStart().ObservedHeight,
 		ObservedBlockHash: confirmTx.GetConfirmStart().ObservedBlockHash,
+		ObservedTimeMs:    confirmTx.GetConfirmStart().ObservedTimeMs,
 	}, prepared.diff.Nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
@@ -2658,6 +2659,7 @@ func TestHandleTimeout_ExecutionRejectRecoversFinish(t *testing.T) {
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
 		Receipt: receipt, ConfirmedAt: time.Now().Unix(),
 		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
+		ObservedTimeMs: confirm.GetConfirmStart().ObservedTimeMs,
 	}, nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	startedRec, _ := session.StateMachine().GetInference(nonce)
@@ -2705,6 +2707,7 @@ func TestHandleTimeout_DroppedPendingFinishFallsThroughToVote(t *testing.T) {
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
 		Receipt: receipt, ConfirmedAt: time.Now().Unix(),
 		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
+		ObservedTimeMs: confirm.GetConfirmStart().ObservedTimeMs,
 	}, nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)

@@ -247,8 +247,14 @@ func setupFloorlessHeartbeatSessionTimes(t *testing.T, height *uint64, oracles [
 	config := testutil.DefaultConfig(numHosts)
 	verifier := signing.NewSecp256k1Verifier()
 
-	smOpts := []state.SMOption{state.WithHeaderTimes(polledSource(t))}
-	userSMOpts := []state.SMOption{state.WithHeaderTimes(userTimes)}
+	// Hosts stamp the same header time the gateway will check. A second map
+	// with its own wall clock makes best-effort compose drop the ack.
+	hostTimes := userTimes
+	if hostTimes == nil {
+		hostTimes = polledSource(t)
+	}
+	smOpts := []state.SMOption{state.WithHeaderTimes(hostTimes)}
+	userSMOpts := []state.SMOption{state.WithHeaderTimes(hostTimes)}
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
 		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
