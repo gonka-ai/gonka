@@ -1,11 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"time"
 
 	"devshard/types"
+	"devshard/user"
 )
 
 // emptyStreamVerdictWait bounds how long a held empty-stream strike waits for
@@ -25,7 +25,12 @@ type emptyStreamStrike struct {
 	ctx            context.Context
 	participantKey string
 	stats          QuarantinePayloadStats
-	// outcome is set by a challenge that ended before the strike was held.
+	// received holds the stream's hashes, judged against the Finish the
+	// challenge reports (emptyStreamVerdict).
+	received [][32]byte
+	// result and outcome are set by a challenge that ended before the strike
+	// was held.
+	result  user.ChallengeResult
 	outcome string
 	timer   *time.Timer
 }
@@ -42,16 +47,20 @@ type emptyStreamStrike struct {
 // that apart from a host that generated nothing, so the strike waits for the
 // voters.
 //
-// The voters judge the stored body against the hashes the Finish signs, not
-// what reached the gateway, and an empty stream is challenged instead of put
-// to the served binding. So only a stream that hashes to its Finish is held:
-// one cut on the way, or not the answer the executor signed for, is struck as
-// before, whatever the voters find.
+// The voters judge the stored body against the hashes of the applied Finish,
+// not what reached the gateway, and an empty stream is challenged instead of
+// put to the served binding. So only a stream that hashes to the Finish the
+// session holds is held: one cut on the way, or not the answer the executor
+// signed for, is struck as before, whatever the voters find. A host's
+// response can list a Finish the session dropped, and a queued Finish can be
+// replaced before it applies, so the verdict clears the strike only when the
+// stream also hashes to the Finish the voters judged.
 func (e *Redundancy) holdEmptyStreamStrike(inf *inflight, participantKey string, stats QuarantinePayloadStats) bool {
-	if e.session == nil || !types.ProtocolKnowsChallenge(e.session.StateMachine().ProtocolVersion()) ||
-		!e.session.IsNonceFinished(inf.nonce) || !receivedStreamBindsFinish(inf) {
+	if e.session == nil || inf.resp == nil || !types.ProtocolKnowsChallenge(e.session.StateMachine().ProtocolVersion()) ||
+		!e.session.ReceivedStreamBindsFinish(inf.nonce, inf.resp.ReceivedResponseHashes) {
 		return false
 	}
+	received := inf.resp.ReceivedResponseHashes
 	nonce, ctx := inf.nonce, inf.attemptCtx()
 	e.emptyStrikesMu.Lock()
 	if e.stopped.Load() {
@@ -68,10 +77,10 @@ func (e *Redundancy) holdEmptyStreamStrike(inf *inflight, participantKey string,
 		delete(e.emptyStrikes, nonce)
 		e.emptyStrikesMu.Unlock()
 		strike.timer.Stop()
-		e.applyEmptyStreamStrike(ctx, nonce, participantKey, stats, strike.outcome)
+		e.applyEmptyStreamStrike(ctx, nonce, participantKey, stats, emptyStreamVerdict(strike.result, strike.outcome, received))
 		return true
 	}
-	strike := &emptyStreamStrike{held: true, ctx: ctx, participantKey: participantKey, stats: stats}
+	strike := &emptyStreamStrike{held: true, ctx: ctx, participantKey: participantKey, stats: stats, received: received}
 	strike.timer = time.AfterFunc(emptyStreamVerdictWait, func() { e.expireEmptyStreamStrike(nonce, strike) })
 	if e.emptyStrikes == nil {
 		e.emptyStrikes = make(map[uint64]*emptyStreamStrike)
@@ -82,35 +91,27 @@ func (e *Redundancy) holdEmptyStreamStrike(inf *inflight, participantKey string,
 	return true
 }
 
-// receivedStreamBindsFinish reports whether the stream the gateway received
-// hashes to the response or served hash of the Finish it ended with.
-func receivedStreamBindsFinish(inf *inflight) bool {
-	if inf.resp == nil {
-		return false
+// emptyStreamVerdict is the outcome that settles a strike on a stream with
+// the received hashes. "none" clears the strike only when the stream hashes
+// to the Finish the voters judged; otherwise the verdict is about another
+// answer, and the outcome is "none_unbound".
+func emptyStreamVerdict(result user.ChallengeResult, outcome string, received [][32]byte) string {
+	if outcome == "none" && !result.BindsReceivedStream(received) {
+		return "none_unbound"
 	}
-	for _, tx := range inf.resp.Mempool {
-		finish := tx.GetFinishInference()
-		if finish == nil || finish.InferenceId != inf.nonce {
-			continue
-		}
-		for _, sum := range inf.resp.ReceivedResponseHashes {
-			if bytes.Equal(sum[:], finish.ResponseHash) || bytes.Equal(sum[:], finish.ServedHash) {
-				return true
-			}
-		}
-	}
-	return false
+	return outcome
 }
 
 // settleEmptyStreamStrike takes the outcome of a finished challenge
 // (challengeOutcome) to the strike of the stream it judged. An EMPTY_STREAM
 // challenge can end before its strike is held; the outcome then waits for it.
-func (e *Redundancy) settleEmptyStreamStrike(nonce uint64, reason types.ChallengeReason, outcome string) {
+func (e *Redundancy) settleEmptyStreamStrike(result user.ChallengeResult, outcome string) {
+	nonce := result.Nonce
 	e.emptyStrikesMu.Lock()
 	strike, known := e.emptyStrikes[nonce]
 	if !known {
-		if reason == types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM && !e.stopped.Load() {
-			early := &emptyStreamStrike{outcome: outcome}
+		if result.Reason == types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM && !e.stopped.Load() {
+			early := &emptyStreamStrike{result: result, outcome: outcome}
 			early.timer = time.AfterFunc(emptyStreamVerdictWait, func() { e.expireEmptyStreamStrike(nonce, early) })
 			if e.emptyStrikes == nil {
 				e.emptyStrikes = make(map[uint64]*emptyStreamStrike)
@@ -128,7 +129,7 @@ func (e *Redundancy) settleEmptyStreamStrike(nonce uint64, reason types.Challeng
 	delete(e.emptyStrikes, nonce)
 	e.emptyStrikesMu.Unlock()
 	strike.timer.Stop()
-	e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, outcome)
+	e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, emptyStreamVerdict(result, outcome, strike.received))
 }
 
 // expireEmptyStreamStrike ends the wait of strike: a strike still held is
@@ -165,7 +166,8 @@ func (e *Redundancy) settleEmptyStreamStrikes() {
 // the stored body sound. Only "none" clears it: the voters found no fault,
 // and the hosts that did not answer could not have changed that. An
 // invalidated inference, a fault below the threshold, and a challenge that
-// could not judge the stream (no votes, failed, incomplete, skipped) keep the
+// could not judge the stream (no votes, failed, incomplete, skipped), or
+// judged a Finish this stream does not hash to (none_unbound), keep the
 // strike the gateway applied before the challenge existed.
 func (e *Redundancy) applyEmptyStreamStrike(ctx context.Context, nonce uint64, participantKey string, stats QuarantinePayloadStats, outcome string) {
 	struck := outcome != "none"

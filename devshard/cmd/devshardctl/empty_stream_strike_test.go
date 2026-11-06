@@ -2,41 +2,55 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/types"
 	"devshard/user"
 )
 
 // emptyStrikeEnv is a one-host gateway whose participant strikes are read
-// from the returned limiter.
+// from the returned limiter. Its host applies diffs, so a Finish applies.
 func emptyStrikeEnv(t *testing.T) (*testProxyEnv, *ParticipantRequestLimiter) {
 	t.Helper()
-	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	env := setupTestProxy(t, 1, nil, true)
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
 	return env, limiter
 }
 
 // emptyAttempt is an attempt whose receipt and Finish reached the gateway with
-// no content between them. finished applies the Finish on the session; bound
-// makes the received stream hash to the Finish's served hash.
+// no content between them. finished runs it on the host and applies its
+// Finish on the session; otherwise the response is never processed, so the
+// session holds no Finish. bound makes the received stream hash to the
+// Finish's served hash.
 func emptyAttempt(t *testing.T, env *testProxyEnv, finished, bound bool) *inflight {
 	t.Helper()
 	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
-	resp := applicableResponse(t, env, prepared.Nonce())
+	servedHash := testutil.TestServedHash
+	var resp *host.HostResponse
 	if finished {
+		resp, err = env.session.SendOnly(context.Background(), prepared, nil, nil)
+		require.NoError(t, err)
 		require.NoError(t, env.session.ProcessResponse(prepared.HostIdx(), resp, prepared.Nonce()))
-		require.True(t, env.session.IsNonceFinished(prepared.Nonce()))
+		require.NoError(t, env.session.SendPendingDiff(context.Background()))
+		rec, ok := env.session.StateMachine().Inference(prepared.Nonce())
+		require.True(t, ok)
+		require.Equal(t, types.StatusFinished, rec.Status)
+		servedHash = rec.ServedHash
+	} else {
+		resp = applicableResponse(t, env, prepared.Nonce())
 	}
+	resp.ReceivedResponseHashes = nil
 	if bound {
-		resp.ReceivedResponseHashes = [][32]byte{[32]byte(testutil.TestServedHash)}
+		resp.ReceivedResponseHashes = [][32]byte{[32]byte(servedHash)}
 	}
 	inf := &inflight{
 		hostIdx:  prepared.HostIdx(),
@@ -49,6 +63,17 @@ func emptyAttempt(t *testing.T, env *testProxyEnv, finished, bound bool) *inflig
 	inf.outputChunks.Store(2)
 	require.True(t, isEmptyStreamAttempt(inf))
 	return inf
+}
+
+// judgedResult is a challenge result for inf's nonce that names the Finish
+// the session applied, as RunChallenge does once it asks the hosts.
+func judgedResult(t *testing.T, env *testProxyEnv, inf *inflight, result user.ChallengeResult) user.ChallengeResult {
+	t.Helper()
+	rec, ok := env.session.StateMachine().Inference(inf.nonce)
+	require.True(t, ok)
+	result.Nonce, result.Reason, result.ExecutorIdx = inf.nonce, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM, inf.hostIdx
+	result.ResponseHash, result.ServedHash = rec.ResponseHash, rec.ServedHash
+	return result
 }
 
 func emptyStreamStrikes(env *testProxyEnv, limiter *ParticipantRequestLimiter, inf *inflight) int {
@@ -92,8 +117,7 @@ func TestEmptyStreamStrikeFollowsTheChallenge(t *testing.T) {
 			e.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
 			require.Zero(t, emptyStreamStrikes(env, limiter, inf), "the strike waits for the challenge")
 
-			result := testCase.result
-			result.Nonce, result.Reason, result.ExecutorIdx = inf.nonce, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM, inf.hostIdx
+			result := judgedResult(t, env, inf, testCase.result)
 			require.Equal(t, testCase.outcome, challengeOutcome(result, testCase.err))
 			e.recordChallengeResult(result, testCase.err)
 			want := 0
@@ -122,7 +146,7 @@ func TestEmptyStreamStrikeTakesAnOutcomeThatCameFirst(t *testing.T) {
 			e := env.proxy.redundancy
 			inf := emptyAttempt(t, env, true, true)
 
-			e.settleEmptyStreamStrike(inf.nonce, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM, testCase.outcome)
+			e.settleEmptyStreamStrike(judgedResult(t, env, inf, user.ChallengeResult{}), testCase.outcome)
 			require.Equal(t, 1, waitingEmptyStrikes(e), "the outcome waits for its strike")
 			e.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
 
@@ -188,7 +212,7 @@ func TestEmptyStreamStrikeLandsWhenNoOutcomeComes(t *testing.T) {
 	e.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
 	require.Eventually(t, func() bool { return emptyStreamStrikes(env, limiter, inf) == 1 }, 5*time.Second, 5*time.Millisecond)
 
-	e.settleEmptyStreamStrike(inf.nonce, types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM, "invalidated")
+	e.settleEmptyStreamStrike(judgedResult(t, env, inf, user.ChallengeResult{}), "invalidated")
 	require.Eventually(t, func() bool { return waitingEmptyStrikes(e) == 0 }, 5*time.Second, 5*time.Millisecond,
 		"an outcome no strike claims is dropped when its wait runs out")
 	require.Equal(t, 1, emptyStreamStrikes(env, limiter, inf))
@@ -205,4 +229,69 @@ func TestStopAppliesTheWaitingEmptyStreamStrikes(t *testing.T) {
 	e.Stop()
 	require.Equal(t, 1, emptyStreamStrikes(env, limiter, inf))
 	require.Zero(t, waitingEmptyStrikes(e))
+}
+
+// A host's response can list a second, conflicting Finish for the nonce that
+// the session drops. A stream that hashes to the dropped Finish is struck at
+// once: the voters judge the stored body against the Finish that applied.
+func TestEmptyStreamStrikeIgnoresAFinishTheSessionDropped(t *testing.T) {
+	env, limiter := emptyStrikeEnv(t)
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
+	require.NoError(t, err)
+	resp, err := env.session.SendOnly(context.Background(), prepared, nil, nil)
+	require.NoError(t, err)
+	droppedResponse, droppedServed := sha256.Sum256([]byte("dropped response")), sha256.Sum256([]byte("dropped served"))
+	idx := prepared.HostIdx()
+	dropped := &types.MsgFinishInference{
+		InferenceId:  prepared.Nonce(),
+		EscrowId:     "escrow-proxy",
+		ExecutorSlot: env.group[idx].SlotID,
+		ResponseHash: droppedResponse[:],
+		ServedHash:   droppedServed[:],
+	}
+	dropped.ProposerSig = testutil.SignProposerTx(t, env.hostSigners[idx], dropped)
+	resp.Mempool = append(resp.Mempool, &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: dropped}})
+	require.NoError(t, env.session.ProcessResponse(idx, resp, prepared.Nonce()))
+	require.NoError(t, env.session.SendPendingDiff(context.Background()))
+	rec, ok := env.session.StateMachine().Inference(prepared.Nonce())
+	require.True(t, ok)
+	require.Equal(t, types.StatusFinished, rec.Status)
+	require.NotEqual(t, droppedServed[:], rec.ServedHash, "the first Finish applied")
+
+	resp.ReceivedResponseHashes = [][32]byte{droppedServed}
+	inf := &inflight{hostIdx: idx, nonce: prepared.Nonce(), resp: resp, err: errEmptyStream, sendTime: time.Now().Add(-time.Second)}
+	inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
+	inf.outputChunks.Store(2)
+	require.True(t, isEmptyStreamAttempt(inf))
+
+	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
+	require.Equal(t, 1, emptyStreamStrikes(env, limiter, inf))
+	require.Zero(t, waitingEmptyStrikes(env.proxy.redundancy))
+}
+
+// A queued Finish can be replaced before it applies. A NONE verdict on a
+// Finish the stream does not hash to is about another answer, so it does not
+// clear the strike, whichever of the two came first.
+func TestEmptyStreamStrikeNeedsTheVerdictOnItsOwnFinish(t *testing.T) {
+	other := sha256.Sum256([]byte("another answer"))
+	vote := []*types.ChallengeVote{{Fault: types.ChallengeFault_CHALLENGE_FAULT_NONE}}
+	for _, outcomeFirst := range []bool{false, true} {
+		env, limiter := emptyStrikeEnv(t)
+		e := env.proxy.redundancy
+		inf := emptyAttempt(t, env, true, true)
+		result := judgedResult(t, env, inf, user.ChallengeResult{Votes: vote})
+		result.ResponseHash, result.ServedHash = other[:], other[:]
+		require.Equal(t, "none", challengeOutcome(result, nil))
+
+		if outcomeFirst {
+			e.recordChallengeResult(result, nil)
+			e.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
+		} else {
+			e.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
+			require.Zero(t, emptyStreamStrikes(env, limiter, inf), "the strike waits for the challenge")
+			e.recordChallengeResult(result, nil)
+		}
+		require.Equal(t, 1, emptyStreamStrikes(env, limiter, inf), "outcomeFirst=%v", outcomeFirst)
+		require.Zero(t, waitingEmptyStrikes(e))
+	}
 }

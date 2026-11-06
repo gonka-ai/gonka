@@ -59,6 +59,43 @@ func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
 	s.reportServedBindingLocked(nonce, judgeServedBinding(received, finish.hashes))
 }
 
+// ReceivedStreamBindsFinish reports whether received hashes to the Finish of
+// nonce the session holds: the applied one, or else a queued one that applies
+// to the record. Finishes that were dropped or not queued, though a host's
+// response may still list them, are not consulted. A queued Finish can still
+// be replaced before it applies; the challenge reports the hashes it judged
+// (ChallengeResult.BindsReceivedStream).
+func (s *Session) ReceivedStreamBindsFinish(nonce uint64, received [][32]byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sm == nil || len(received) == 0 {
+		return false
+	}
+	rec, ok := s.sm.Inference(nonce)
+	if !ok {
+		return false
+	}
+	if finishAppliedStatus(rec.Status) {
+		finish := servedFinishHashes{responseHash: rec.ResponseHash, servedHash: rec.ServedHash}
+		return judgeServedBinding(received, finish) == ServedBindingBound
+	}
+	if rec.Status != types.StatusStarted && rec.Status != types.StatusPending {
+		return false
+	}
+	confirm := s.pendingConfirmLocked(nonce)
+	for _, tx := range s.pendingTxs {
+		fi := tx.GetFinishInference()
+		if fi == nil || fi.InferenceId != nonce || !s.evidenceApplies(rec, confirm, tx) {
+			continue
+		}
+		finish := servedFinishHashes{responseHash: fi.ResponseHash, servedHash: fi.ServedHash}
+		if judgeServedBinding(received, finish) == ServedBindingBound {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {
 	nonce := finish.InferenceId
 	challenged := s.challengeFinishAppliedLocked(nonce)

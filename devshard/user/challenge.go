@@ -80,6 +80,17 @@ type ChallengeResult struct {
 	// ReplayFirst is set when a replay vote reached the record before the
 	// challenge tx did: the replay flow owns the record now.
 	ReplayFirst bool
+	// ResponseHash and ServedHash are the hashes of the applied Finish the
+	// voters judged the stored body against; empty when no host was asked.
+	ResponseHash []byte
+	ServedHash   []byte
+}
+
+// BindsReceivedStream reports whether a stream the gateway received hashes to
+// the Finish the voters judged, so the verdict is about that stream.
+func (r ChallengeResult) BindsReceivedStream(received [][32]byte) bool {
+	finish := servedFinishHashes{responseHash: r.ResponseHash, servedHash: r.ServedHash}
+	return judgeServedBinding(received, finish) == ServedBindingBound
 }
 
 type challengeMark struct {
@@ -316,6 +327,8 @@ func (s *Session) RunChallenge(ctx context.Context, nonce uint64, reason types.C
 		return result, nil
 	}
 	responseHash := append([]byte(nil), rec.ResponseHash...)
+	result.ResponseHash = responseHash
+	result.ServedHash = append([]byte(nil), rec.ServedHash...)
 	executorAddr := s.sm.SlotAddress(rec.ExecutorSlot)
 	votes, unanswered, unansweredWeight, _ := s.CollectChallengeVotes(ctx, nonce, reason, responseHash, executorAddr, s.ChallengeVerifiers(), s.challengeAskDeadline(rec, time.Now()))
 	result.Votes = votes
