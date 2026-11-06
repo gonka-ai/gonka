@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -271,6 +272,12 @@ func isTransportDown(err error) bool {
 		errors.Is(err, syscall.ECONNREFUSED)
 }
 
+const cometRPCTimeoutSeconds = 60
+
+func newBoundedCometRPCNode(rpcURL string, timeoutSeconds uint) (*rpchttp.HTTP, error) {
+	return rpchttp.NewWithTimeout(rpcURL, "/websocket", timeoutSeconds)
+}
+
 // newRPCQueryConn builds a Cosmos SDK client.Context that serves generated query
 // clients over CometBFT RPC. With no GRPCClient set, Context.Invoke wraps each
 // query as an ABCI query against the node's gRPC query router. It is wrapped in
@@ -291,7 +298,7 @@ func newRPCQueryConn(rpcURL string) (grpc.ClientConnInterface, error) {
 	if strings.TrimSpace(rpcURL) == "" {
 		return nil, fmt.Errorf("chain: comet rpc url is required for query fallback")
 	}
-	node, err := client.NewClientFromNode(rpcURL)
+	node, err := newBoundedCometRPCNode(rpcURL, cometRPCTimeoutSeconds)
 	if err != nil {
 		return nil, fmt.Errorf("chain: comet rpc client %s: %w", rpcURL, err)
 	}

@@ -125,3 +125,35 @@ func TestGRPCChainTxClient_SettleDevshardEscrow_MockChain(t *testing.T) {
 	require.NotNil(t, escrow)
 	require.True(t, escrow.Settled)
 }
+
+func TestGatewayEscrowCreateWaitsForBroadcastSlot(t *testing.T) {
+	st := seed.Defaults()
+	rpcSvc, err := rpcface.NewService(st, rpcface.Config{BlockInterval: time.Hour})
+	require.NoError(t, err)
+	conn, cleanup := startGRPCWithTx(t, st, rpcSvc)
+	t.Cleanup(cleanup)
+
+	slots := make(chan struct{}, 1)
+	g := &Gateway{chainClient: chain.NewFromConn(conn), escrowChainTxSlots: slots}
+	txMgr, err := g.newChainTxManager(GatewaySettings{TxGasLimit: 456}, "gonka-test", "", 123, 456)
+	require.NoError(t, err)
+	signer, err := signing.GenerateKey()
+	require.NoError(t, err)
+
+	slots <- struct{}{}
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	_, err = txMgr.CreateDevshardEscrow(ctx, signer, 1_000_000, "test-model")
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+
+	<-slots
+	result, err := txMgr.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "test-model")
+	require.NoError(t, err)
+	require.Greater(t, result.EscrowID, uint64(1))
+	require.Empty(t, slots)
+}
+
+func TestNewGatewayLimitsEscrowBroadcasts(t *testing.T) {
+	g := NewGateway(nil, nil, "")
+	require.Equal(t, maxConcurrentEscrowBroadcasts, cap(g.escrowChainTxSlots))
+}

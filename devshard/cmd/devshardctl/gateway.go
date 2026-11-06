@@ -82,6 +82,7 @@ type Gateway struct {
 	rotatorDone                  chan struct{}
 	rotationBreakers             map[string]*rotationBreaker
 	rotationTargetLocks          keyedMutex
+	escrowChainTxSlots           chan struct{}
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
@@ -523,7 +524,7 @@ func (g *Gateway) newChainTxManager(settings GatewaySettings, chainID, feeDenom 
 	if g == nil || g.chainClient == nil {
 		return nil, fmt.Errorf("chain gRPC client is not configured")
 	}
-	return newGatewayChainTxClient(g.chainClient.UnorderedTxConn(), settings, chainID, feeDenom, feeAmount, gasLimit)
+	return newGatewayChainTxClient(g.chainClient.UnorderedTxConn(), settings, chainID, feeDenom, feeAmount, gasLimit, g.escrowChainTxSlots)
 }
 
 func resolveRuntimeRoutePrefix(configured string) string {
@@ -892,6 +893,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		},
 		rotationBreakers:   make(map[string]*rotationBreaker),
 		settlementInFlight: make(map[string]struct{}),
+		escrowChainTxSlots: make(chan struct{}, maxConcurrentEscrowBroadcasts),
 		suspiciousHosts:    make(map[string]struct{}),
 	}
 	g.participantLimiter.SetMetrics(g.metrics)
