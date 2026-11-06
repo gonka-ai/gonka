@@ -333,7 +333,11 @@ func TestSettlementRefundsAnAnchoredReservationTheFloorNeverReached(t *testing.T
 		id := d.next()
 		require.NoError(t, d.startClock(id, 100, hash))
 		if due {
-			d.raiseClock(100+uint64(d.sm.Config().RefusalTimeout), []byte{0x02, 0x00})
+			dueHeight := 100 + uint64(d.sm.Config().RefusalTimeout)
+			d.raiseClock(dueHeight, []byte{0x02, 0x00})
+			d.raiseClock(dueHeight+heightsync.SealDrainFloorLagBlocks, []byte{0x02, 0x04})
+		} else {
+			d.raiseClock(100+heightsync.SealDrainFloorLagBlocks, []byte{0x01, 0x04})
 		}
 		rec, ok := d.sm.GetInference(id)
 		require.True(t, ok)

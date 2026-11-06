@@ -87,8 +87,8 @@ func TestFloorTimeMs_MapPreferOverCarried(t *testing.T) {
 	got, err := d.sm.floorTimeMsLocked(p)
 	d.sm.mu.Unlock()
 	require.NoError(t, err)
-	require.Equal(t, mapMs, got, "map wins over carried floor TimeMs")
-	require.Equal(t, int32(1), warns.Load(), "carried≠map must warn (dispute stand-in)")
+	require.Equal(t, carried, got, "timeouts keep the carried floor time")
+	require.Equal(t, int32(1), warns.Load(), "carried≠map warns; a later dispute rolls the timeout back")
 }
 
 func TestFloorTimeMs_CarriedWhenMapMisses(t *testing.T) {
@@ -156,9 +156,8 @@ func TestWaitFloorTimeIfMissing_TimesOutOnSettlementDrain(t *testing.T) {
 	d.sm.mu.Unlock()
 
 	started := time.Now()
-	err := d.sm.waitFloorTimeIfMissing(nonce)
-	require.ErrorIs(t, err, types.ErrHeaderPending)
-	require.GreaterOrEqual(t, time.Since(started), 30*time.Millisecond)
+	require.NoError(t, d.sm.waitFloorTimeIfMissing(nonce))
+	require.Less(t, time.Since(started), 200*time.Millisecond, "settlement does not wait for the map")
 }
 
 func TestWaitFloorTimeIfMissing_NoWaitWhenCarriedSet(t *testing.T) {
@@ -193,22 +192,10 @@ func TestWaitFloorTimeIfMissing_EnsureHeightsNotHeaderTimeMs(t *testing.T) {
 	nonce := d.sm.state.FinalizeNonce + uint64(len(d.sm.state.Group))
 	d.sm.mu.Unlock()
 
-	done := make(chan error, 1)
-	go func() { done <- d.sm.waitFloorTimeIfMissing(nonce) }()
-
-	require.Eventually(t, func() bool {
-		spy.mu.Lock()
-		n := len(spy.ensureCalls)
-		spy.mu.Unlock()
-		return n > 0
-	}, 200*time.Millisecond, 5*time.Millisecond)
-
-	batches := spy.takeEnsured()
-	require.NotEmpty(t, batches)
-	require.Equal(t, []uint64{100}, batches[0])
-
-	spy.set(time.Hour.Milliseconds())
-	require.NoError(t, <-done)
+	started := time.Now()
+	require.NoError(t, d.sm.waitFloorTimeIfMissing(nonce))
+	require.Less(t, time.Since(started), 200*time.Millisecond)
+	require.Empty(t, spy.takeEnsured(), "settlement does not ask the map for time(F)")
 	require.Zero(t, spy.headerCalls.Load(), "must not call HeaderTimeMs")
 	require.Zero(t, spy.awaitCalls.Load(), "must not call AwaitHeaderTimeMs")
 }

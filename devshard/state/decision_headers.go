@@ -1,25 +1,9 @@
 package state
 
-import (
-	"context"
-	"fmt"
-	"time"
+import "devshard/types"
 
-	"devshard/chainoracle/blocks/headertime"
-	"devshard/types"
-)
-
-// headerHeightEnsure asks the map to fetch specific heights without blocking.
-// *headertime.Source implements it. Prefer this over EnsureFrom for a single
-// floor height (EnsureFrom queues the whole range to the tip).
-type headerHeightEnsure interface {
-	EnsureHeights(heights []uint64)
-}
-
-// withResolvedDecision runs fn while sm.mu is held. On a live apply that is
-// about to settlement-drain, if floor TimeMs is still 0 and the map misses F,
-// it waits for the map (outside the lock) before fn. Drain/seal clocks prefer
-// the map when present (see floorTimeMsLocked). Replay never waits.
+// withResolvedDecision runs fn while sm.mu is held. Seal and drain read the
+// carried floor, so this does not wait on the header map. Replay never waits.
 func (sm *StateMachine) withResolvedDecision(nonce uint64, _ []*types.DevshardTx, replay bool, fn func() error) error {
 	if !replay {
 		if err := sm.waitFloorTimeIfMissing(nonce); err != nil {
@@ -36,94 +20,12 @@ func (sm *StateMachine) withResolvedDecision(nonce uint64, _ []*types.DevshardTx
 	return fn()
 }
 
-// waitFloorTimeIfMissing blocks until the header map stores time(F) when this
-// live apply is about to run the Finalizing→Settlement drain and the floor
-// point has no carried TimeMs. Ordinary applies do not wait. No-op when F is
-// empty, carried time is set, the map already has the row, or drain will not
-// run on this nonce.
-//
-// Outside the lock it may EnsureHeights(F) and wait on the map Watch /
-// StoredAt poll. It never calls HeaderTimeMs or AwaitHeaderTimeMs (those
-// start a filler fetch and can wait under misleading call sites).
+// waitFloorTimeIfMissing is a no-op. Seal and drain read a carried floor
+// point, and TimeoutDue reads the carried time of the current floor. A header
+// map row must not change either clock, so settlement does not wait for one.
 // Caller must not hold sm.mu.
-func (sm *StateMachine) waitFloorTimeIfMissing(nonce uint64) error {
-	if sm == nil {
-		return nil
-	}
-	sm.mu.RLock()
-	if !sm.maySettlementDrainOnNonceLocked(nonce) {
-		sm.mu.RUnlock()
-		return nil
-	}
-	if !sm.floorReady || sm.heightSyncFloor == nil {
-		sm.mu.RUnlock()
-		return nil
-	}
-	p, known := sm.heightSyncFloor.PointAsOf(nonce)
-	if !known || p.Height == 0 || p.TimeMs > 0 {
-		sm.mu.RUnlock()
-		return nil
-	}
-	store, hasStore := sm.storedHeadersLocked()
-	if !hasStore {
-		// Fallback HeaderTimeMs clocks are not a pollable map — cannot wait.
-		// Drain fails closed with ErrFloorTimeMissing under the lock.
-		sm.mu.RUnlock()
-		return nil
-	}
-	if row, found := store.StoredAt(p.Height); found && row.TimeMs > 0 {
-		sm.mu.RUnlock()
-		return nil
-	}
-	height := p.Height
-	src := sm.headerTimes
-	wait := sm.headerWait
-	sm.mu.RUnlock()
-
-	if ensure, ok := src.(headerHeightEnsure); ok && ensure != nil {
-		ensure.EnsureHeights([]uint64{height})
-	}
-	if wait <= 0 {
-		wait = headertime.AnswerWait
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), wait)
-	defer cancel()
-
-	var notify <-chan struct{}
-	if w, ok := src.(HeaderTimeWatch); ok && w != nil {
-		ch := make(chan struct{}, 1)
-		unwatch := w.Watch(func() {
-			select {
-			case ch <- struct{}{}:
-			default:
-			}
-		})
-		if unwatch != nil {
-			defer unwatch()
-		}
-		notify = ch
-	}
-
-	for {
-		sm.mu.RLock()
-		reader, ok := sm.storedHeadersLocked()
-		var ms int64
-		if ok {
-			if row, found := reader.StoredAt(height); found {
-				ms = row.TimeMs
-			}
-		}
-		sm.mu.RUnlock()
-		if ms > 0 {
-			return nil
-		}
-		select {
-		case <-ctx.Done():
-			return fmt.Errorf("%w: height %d", types.ErrHeaderPending, height)
-		case <-notify:
-		case <-time.After(10 * time.Millisecond):
-		}
-	}
+func (sm *StateMachine) waitFloorTimeIfMissing(uint64) error {
+	return nil
 }
 
 // maySettlementDrainOnNonceLocked reports that applying nonce would run

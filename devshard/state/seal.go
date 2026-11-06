@@ -16,7 +16,7 @@ import (
 
 // stateClockWindowFactor sets how many recent live inferences the seal
 // diagnostic scans for min/max confirm times, as a multiple of the group size
-// N. The seal clock itself is time(F) at the seal nonce, not this window.
+// N. The seal clock itself is the carried time four blocks behind F, not this window.
 const stateClockWindowFactor = 3
 
 func autoSealInterval(cfg types.SessionConfig) uint64 {
@@ -513,14 +513,17 @@ func (sm *StateMachine) confirmHeaderMsLocked(rec *types.InferenceRecord) (int64
 	return rec.ConfirmedAtTimeMs, true, nil
 }
 
-// stateClockLocked is time(F) at sealNonce via floorTimeMsLocked (map prefer,
-// else carried). Min/Max are confirm carried times in the live tail, for
-// diagnostics only. Known is false when there is no floor yet or neither map
-// nor carried time is available (skip seal clock gate; never ErrHeaderPending).
-// Caller holds sm.mu.
+// stateClockLocked is the carried time of the floor point at least
+// SealDrainFloorLagBlocks below the current floor. Min/Max are confirm
+// carried times in the live tail, for diagnostics only. Known is false when
+// that lagged point does not exist yet or its carried time is 0 (skip the
+// seal clock gate; never ErrHeaderPending). Caller holds sm.mu.
 func (sm *StateMachine) stateClockLocked(sealNonce uint64) (StateClockWindow, error) {
-	floor, err := sm.floorPointLocked(sealNonce)
+	floor, err := sm.settledFloorPointLocked(sealNonce)
 	if err != nil {
+		if errors.Is(err, types.ErrFloorTimeMissing) {
+			return StateClockWindow{}, nil
+		}
 		return StateClockWindow{}, err
 	}
 	if floor.Height == 0 {

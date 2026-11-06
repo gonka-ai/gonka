@@ -116,23 +116,25 @@ func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 	require.Equal(t, types.StatusStarted, rec.Status)
 	require.Zero(t, rec.ConfirmedAtTimeMs)
 
-	// A committed ack raises F even when the map has not stored that height.
-	// The vote reads the map and does not fetch the chain.
-	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{ack(6, 1_000_000, farHash)}))
+	// TimeoutDue reads the carried time of F. A later map row at that height
+	// does not move the clock; a dispute rolls the decision back if it disagrees.
+	far := &types.MsgHeightAck{RefNonce: 6, SlotId: 2, ObservedHeight: 1_000_000, ObservedBlockHash: farHash,
+		ObservedTimeMs: anchorAt.Add(500 * time.Millisecond).UnixMilli(),
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+	require.NoError(t, heightsync.SignAck(hosts[2], far))
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{{Tx: &types.DevshardTx_HeightAck{HeightAck: far}}}))
 	require.NoError(t, err)
 	floor, _, _ := sm.HeightSyncFloorAsOf(8)
 	require.EqualValues(t, 1_000_000, floor)
-	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrHeaderPending)
+	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrTimeoutNotDue,
+		"carried time(F) is 500ms after the anchor and the window is 1s")
 
-	chain.add(1_000_000, farHash, anchorAt.Add(500*time.Millisecond))
-	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrHeaderPending,
-		"a chain row the poller has not stored does not open the vote")
-
+	chain.add(1_000_000, farHash, anchorAt.Add(time.Hour))
 	hdr, err := chain.At(context.Background(), 1_000_000)
 	require.NoError(t, err)
 	src.Observe(hdr, headertime.OriginChain, false)
 	require.ErrorIs(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION), types.ErrTimeoutNotDue,
-		"the window is the block time, not the distance in heights")
+		"a polled header later than the claimed floor time does not open the vote")
 }
 
 type countingHeaderSource struct {
@@ -272,10 +274,16 @@ func TestExecutionVoteRejectsOnAFinishWhileThatHeightIsMissing(t *testing.T) {
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: id, ExecutorSig: receipt, ObservedHeight: 100, ObservedBlockHash: hash,
 	}}}
-	for n, txs := range [][]*types.DevshardTx{{heartbeat}, {ack(1, 100, hash)}, {heartbeat}, {start}, {confirm}, {heartbeat}, {ack(6, 200, floorHash)}} {
+	for n, txs := range [][]*types.DevshardTx{{heartbeat}, {ack(1, 100, hash)}, {heartbeat}, {start}, {confirm}, {heartbeat}} {
 		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", uint64(n+1), txs))
 		require.NoError(t, err)
 	}
+	floorAck := &types.MsgHeightAck{RefNonce: 6, SlotId: 2, ObservedHeight: 200, ObservedBlockHash: floorHash,
+		ObservedTimeMs: anchorAt.Add(time.Hour).UnixMilli(),
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+	require.NoError(t, heightsync.SignAck(hosts[2], floorAck))
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{{Tx: &types.DevshardTx_HeightAck{HeightAck: floorAck}}}))
+	require.NoError(t, err)
 	require.NoError(t, h.TimeoutDue(id, types.TimeoutReason_TIMEOUT_REASON_EXECUTION))
 	st, rec, ok := sm.SnapshotWithInference(id)
 	require.True(t, ok)

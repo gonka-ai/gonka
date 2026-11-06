@@ -92,34 +92,59 @@ func checkStartStamp(rec *types.InferenceRecord, height uint64, hash []byte) err
 	return fmt.Errorf("%w: confirm stamp %d, start floor %d", types.ErrStampNotFloor, height, want)
 }
 
-// floorTimeMsLocked is time(F) for seal/drain clocks.
-//
-// Policy:
-//  1. Map has height → time: use the map time. If carried TimeMs differs,
-//     warn (dispute stand-in) and still use the map.
-//  2. Map miss + carried TimeMs > 0: use carried.
-//  3. Map miss + carried TimeMs == 0: ErrFloorTimeMissing. Live apply waits
-//     for the map before locking (withResolvedDecision); replay does not.
-//
-// A map row that arrives after drain already settled is ignored — acceptable
-// tradeoff documented in stamped-block-time-revalidation Issue 4.
-// Caller holds sm.mu.
+// floorTimeMsLocked is the carried time of a floor point. The header map does
+// not supply this clock. A stored row whose hash agrees and whose time
+// differs is a warning: a later dispute rolls back a timeout that was decided
+// on this claimed time. Caller holds sm.mu.
 func (sm *StateMachine) floorTimeMsLocked(p heightsync.FloorPoint) (int64, error) {
 	if p.Height == 0 {
 		return 0, nil
 	}
-	if src, ok := sm.storedHeadersLocked(); ok {
-		if row, found := src.StoredAt(p.Height); found && row.TimeMs > 0 {
-			if p.TimeMs > 0 && p.TimeMs != row.TimeMs {
-				sm.emitStampTimeMismatchLocked("floor", p.Height, p.Hash, p.TimeMs, row.TimeMs)
-			}
-			return row.TimeMs, nil
-		}
-	}
 	if p.TimeMs > 0 {
+		sm.warnFloorTimeAgainstMapLocked(p)
 		return p.TimeMs, nil
 	}
 	return 0, fmt.Errorf("%w: height %d", types.ErrFloorTimeMissing, p.Height)
+}
+
+// warnFloorTimeAgainstMapLocked logs a carried floor time that disagrees with
+// a header the poller has since stored. The decision keeps the carried time.
+// Caller holds sm.mu.
+func (sm *StateMachine) warnFloorTimeAgainstMapLocked(p heightsync.FloorPoint) {
+	src, ok := sm.storedHeadersLocked()
+	if !ok {
+		return
+	}
+	row, found := src.StoredAt(p.Height)
+	if !found || row.TimeMs <= 0 || row.TimeMs == p.TimeMs || !stampHashesAgree(p.Hash, row.Hash) {
+		return
+	}
+	logging.Warn("claimed floor time disagrees with the header map; a later dispute rolls back a timeout decided on this time",
+		"subsystem", "state",
+		"escrow_id", sm.state.EscrowID,
+		"height", p.Height,
+		"hash", hex.EncodeToString(p.Hash),
+		"carried_time_ms", p.TimeMs,
+		"map_time_ms", row.TimeMs,
+	)
+	sm.emitStampTimeMismatchLocked("floor", p.Height, p.Hash, p.TimeMs, row.TimeMs)
+}
+
+// settledFloorPointLocked is the seal and drain clock: the newest carried
+// floor point at least SealDrainFloorLagBlocks below the current floor.
+// Caller holds sm.mu.
+func (sm *StateMachine) settledFloorPointLocked(nonce uint64) (heightsync.FloorPoint, error) {
+	if !sm.floorReady {
+		return heightsync.FloorPoint{}, types.ErrFloorNotRestored
+	}
+	p, known, behind := sm.heightSyncFloor.PointBehind(nonce, heightsync.SealDrainFloorLagBlocks)
+	if !known {
+		return heightsync.FloorPoint{}, fmt.Errorf("%w: settled floor as of nonce %d is pruned", types.ErrStampNotFloor, nonce)
+	}
+	if !behind || p.Height == 0 {
+		return heightsync.FloorPoint{}, fmt.Errorf("%w: floor is not yet %d blocks behind a carried point", types.ErrFloorTimeMissing, heightsync.SealDrainFloorLagBlocks)
+	}
+	return p, nil
 }
 
 // stampTimeMsLocked reads a stamp time from the stored header map for gateway
@@ -297,25 +322,20 @@ func (sm *StateMachine) timeoutRemainingChooseLocked(rec *types.InferenceRecord,
 	if err != nil {
 		return 0, err
 	}
-	p, err := sm.floorPointLocked(nonce)
+	var p heightsync.FloorPoint
+	if carriedOnly {
+		// Drain ages against the floor four blocks back, carried time only.
+		p, err = sm.settledFloorPointLocked(nonce)
+	} else {
+		// TimeoutDue ages against the current floor's carried time. A map
+		// row does not move this clock; a later dispute rolls the decision
+		// back when that row disagrees.
+		p, err = sm.floorPointLocked(nonce)
+	}
 	if err != nil {
 		return 0, err
 	}
-	var nowMs int64
-	if carriedOnly {
-		nowMs, err = sm.floorTimeMsLocked(p)
-	} else {
-		// Gateway TimeoutDue: map prefer / carried only (same as drain). Never
-		// HeaderTimeMs under sm.mu — a miss is ErrHeaderPending for the
-		// trigger to retry outside the lock.
-		nowMs, err = sm.floorTimeMsLocked(p)
-		if err != nil && errors.Is(err, types.ErrFloorTimeMissing) {
-			if p.Height == 0 {
-				return 0, fmt.Errorf("%w: no height", types.ErrTimeoutNotArmed)
-			}
-			return 0, fmt.Errorf("%w: height %d", types.ErrHeaderPending, p.Height)
-		}
-	}
+	nowMs, err := sm.floorTimeMsLocked(p)
 	if err != nil {
 		return 0, err
 	}

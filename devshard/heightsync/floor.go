@@ -12,6 +12,13 @@ import (
 // session: at one block per second it is over an hour of continuous advance.
 const DefaultFloorWindow = 4096
 
+// SealDrainFloorLagBlocks is how far behind the latest floor the seal and
+// drain clocks read. The latest floor is one host stamp, and the strong proof
+// is not shipped. Dispute rollback lands later; until then money moves only
+// on a height that already has this many later floor blocks in the log, long
+// enough for a mismatch to have been marked. Four is 2×D (D = 2).
+const SealDrainFloorLagBlocks uint64 = 4
+
 // SequencerSigner is the FloorClaim.Signer of a sequencer-composed stamp
 // (MsgStartInference, MsgHeartbeat). Slot ids are dense from zero, so the top of
 // the range is free for the one party that owns no slot.
@@ -273,6 +280,54 @@ func (f *FloorIndex) appendEntry(e floorEntry) {
 func (f *FloorIndex) AsOf(m uint64) (height uint64, hash []byte, known bool) {
 	p, known := f.PointAsOf(m)
 	return p.Height, p.Hash, known
+}
+
+// PointBehind is the newest retained floor point at nonces below m whose
+// height is at least lag below the current floor. known is false when that
+// point may have been pruned. behind is false when the log has not yet moved
+// lag blocks past a retained point: the latest raise is not a settlement clock.
+// The returned time is the carried TimeMs of that older point.
+func (f *FloorIndex) PointBehind(m, lag uint64) (point FloorPoint, known, behind bool) {
+	cur, known := f.PointAsOf(m)
+	if !known {
+		return FloorPoint{}, false, false
+	}
+	if lag == 0 {
+		if cur.Height == 0 {
+			return FloorPoint{}, true, false
+		}
+		return cur, true, true
+	}
+	if cur.Height <= lag || len(f.entries) == 0 {
+		return FloorPoint{}, true, false
+	}
+	maxH := cur.Height - lag
+	lo, hi := 0, len(f.entries)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if f.entries[mid].height <= maxH {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+	if lo == 0 {
+		if f.truncated {
+			return FloorPoint{}, false, false
+		}
+		return FloorPoint{}, true, false
+	}
+	e := f.entries[lo-1]
+	if e.nonce >= m || e.height > maxH {
+		return FloorPoint{}, true, false
+	}
+	return FloorPoint{
+		Height: e.height,
+		Hash:   append([]byte(nil), e.hash...),
+		Author: e.author,
+		Nonce:  e.nonce,
+		TimeMs: e.timeMs,
+	}, true, true
 }
 
 // PointAsOf is AsOf plus the identity that established the floor.
