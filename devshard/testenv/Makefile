@@ -34,9 +34,6 @@ build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
-PREPARATION_TIMEOUT ?=
-RUN_TIMEOUT ?=
-DIAGNOSTICS_TIMEOUT ?=
 SKIP_DEVSHARDD_BUILD ?= 0
 GATEWAY_IMAGE ?=
 BUILD ?=
@@ -53,7 +50,7 @@ ifeq ($(SKIP_DEVSHARDD_BUILD),1)
 	@test -x ../../build/devshardd || { echo "Missing ../../build/devshardd; run make build-devshardd first" >&2; exit 1; }
 endif
 endif
-	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(strip $(PREPARATION_TIMEOUT)),-preparation-timeout "$(PREPARATION_TIMEOUT)") $(if $(strip $(RUN_TIMEOUT)),-timeout "$(RUN_TIMEOUT)") $(if $(strip $(DIAGNOSTICS_TIMEOUT)),-diagnostics-timeout "$(DIAGNOSTICS_TIMEOUT)") $(if $(strip $(GATEWAY_IMAGE)),-gateway-image "$(GATEWAY_IMAGE)") $(if $(strip $(BUILD)),-build "$(BUILD)") $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(strip $(GATEWAY_IMAGE)),-gateway-image "$(GATEWAY_IMAGE)") $(if $(strip $(BUILD)),-build "$(BUILD)") $(if $(strip $(LOAD_DATASET)),-load-dataset "$(LOAD_DATASET)")
 endif
 
 .PHONY: loadtest-remote

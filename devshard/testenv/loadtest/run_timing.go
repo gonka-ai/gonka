@@ -7,31 +7,23 @@ import (
 	"time"
 )
 
-const defaultPreparationTimeout = 45 * time.Minute
 const stackCleanupTimeout = 2 * time.Minute
 
 type runTiming struct {
 	parent                                   context.Context
-	preparation, run, diagnostics            time.Duration
+	diagnostics                              time.Duration
 	prepCtx, runCtx, diagnosticsCtx          context.Context
 	prepCancel, runCancel, diagnosticsCancel context.CancelFunc
 }
 
-func newRunTiming(parent context.Context, opts RunnerConfig, scenario Scenario) (*runTiming, error) {
-	if opts.PreparationTimeout < 0 || opts.RunTimeout < 0 || opts.DiagnosticsTimeout < 0 {
-		return nil, fmt.Errorf("preparation, run and diagnostics timeouts must be positive")
+// Preparation and workload have no overall deadline. The scenario controls
+// traffic duration; requests retain their own timeouts. Final collection stays
+// bounded independently so cancellation cannot discard partial results.
+func newRunTiming(parent context.Context, scenario Scenario) *runTiming {
+	return &runTiming{
+		parent:      parent,
+		diagnostics: max(5*time.Minute, scenario.DrainDuration()+2*time.Minute),
 	}
-	t := &runTiming{parent: parent, preparation: opts.PreparationTimeout, run: opts.RunTimeout, diagnostics: opts.DiagnosticsTimeout}
-	if t.preparation == 0 {
-		t.preparation = defaultPreparationTimeout
-	}
-	if t.run == 0 {
-		t.run = max(20*time.Minute, scenario.Duration()+scenario.RequestTimeout()+5*time.Minute)
-	}
-	if t.diagnostics == 0 {
-		t.diagnostics = max(5*time.Minute, scenario.DrainDuration()+2*time.Minute)
-	}
-	return t, nil
 }
 
 func phaseContext(parent context.Context, name string, duration time.Duration) (context.Context, context.CancelFunc) {
@@ -42,13 +34,15 @@ func phaseContext(parent context.Context, name string, duration time.Duration) (
 }
 
 func (t *runTiming) prepare() context.Context {
-	t.prepCtx, t.prepCancel = phaseContext(t.parent, "preparation", t.preparation)
+	t.prepCtx, t.prepCancel = context.WithCancel(t.parent)
+	log.Printf("loadtest: stage=preparation_start")
 	return t.prepCtx
 }
 
 func (t *runTiming) startRun() context.Context {
 	t.prepCancel()
-	t.runCtx, t.runCancel = phaseContext(t.parent, "run", t.run)
+	t.runCtx, t.runCancel = context.WithCancel(t.parent)
+	log.Printf("loadtest: stage=run_start")
 	return t.runCtx
 }
 

@@ -1458,32 +1458,20 @@ still apply. Other stack images may still be built by Compose. Omit the flag
 to rebuild DevShard after source changes, or use `BUILD` for a complete
 prebuilt artifact manifest (which already skips this prerequisite).
 
-## Preparation, run and diagnostics timeouts
+## Run duration and cancellation
 
-The runner uses independent budgets:
+Preparation and workload have no overall runner timeout. Preparation continues
+until Gateway is ready or the run is cancelled. Traffic duration is controlled
+by `workload.duration`; individual requests use the scenario's request timeout.
+Ctrl+C cancels preparation or workload.
 
-- `-preparation-timeout` (`PREPARATION_TIMEOUT` in Make): builds and starts the
-  Docker stack and prepares Gateway. Default: 45 minutes.
-- `-timeout` (`RUN_TIMEOUT`): starts after Gateway setup, before workload
-  observers and traffic. Includes completion of in-flight responses. Default:
-  workload duration + request timeout + 5 minutes, at least 20 minutes.
-- `-diagnostics-timeout` (`DIAGNOSTICS_TIMEOUT`): final snapshots, drain and
-  artifact collection. Default: scenario drain timeout + 2 minutes, at least
-  5 minutes. This context survives a run deadline or Ctrl+C. Stack removal has
-  a separate two-minute limit.
+Final diagnostics use a separate internal budget of the scenario drain timeout
+plus 2 minutes, at least 5 minutes, so partial results can still be collected
+after cancellation. Stack removal has a separate two-minute limit. These
+internal limits are not configurable through Make or CLI flags.
 
-For the 16-minute Gateway v7 scenario these defaults are 45, 23 and 5 minutes.
-Preparation cannot consume the run budget. Phase transitions log their actual
-budgets and deadlines. The Make prerequisite that builds `devshardd` happens
-before the runner starts; `SKIP_DEVSHARDD_BUILD=1` reuses that binary.
-
-```bash
-make -C devshard/testenv loadtest \
-  SCENARIO=poc-preserved-load-gateway-v7 \
-  GATEWAY_IMAGE=local/gateway:46ce696a-v2 \
-  SKIP_DEVSHARDD_BUILD=1 \
-  PREPARATION_TIMEOUT=45m RUN_TIMEOUT=23m DIAGNOSTICS_TIMEOUT=5m
-```
+The Make prerequisite that builds `devshardd` happens before the runner starts;
+`SKIP_DEVSHARDD_BUILD=1` reuses that binary.
 
 An interrupted workload keeps `summary.json`, `requests.jsonl` and its partial
 result. Its reason is saved in `run-inputs.json` as `run_error` and displayed

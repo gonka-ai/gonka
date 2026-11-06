@@ -33,11 +33,8 @@ type RunnerConfig struct {
 	// StrictXFail fails the run when a known_bug case passes (XPASS).
 	StrictXFail bool
 	// Build runs prebuilt artifacts instead of building them from the checkout.
-	Build              *Build
-	GatewayImage       string
-	PreparationTimeout time.Duration
-	RunTimeout         time.Duration
-	DiagnosticsTimeout time.Duration
+	Build        *Build
+	GatewayImage string
 }
 
 type RunResult struct {
@@ -161,10 +158,7 @@ func RunScenario(ctx context.Context, opts RunnerConfig) (result RunResult, err 
 	if err != nil {
 		return result, err
 	}
-	timing, err := newRunTiming(ctx, opts, scenario)
-	if err != nil {
-		return result, err
-	}
+	timing := newRunTiming(ctx, scenario)
 	defer timing.close()
 	parentCtx := ctx
 	ctx = timing.prepare()

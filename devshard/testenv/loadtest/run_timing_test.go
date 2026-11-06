@@ -14,34 +14,32 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A slow preparation must not consume the run deadline. Expiring preparation
-// must leave the parent usable, and the recorded cause must identify the phase.
-func TestRunBudgetStartsAfterPreparation(t *testing.T) {
-	timing, err := newRunTiming(context.Background(), RunnerConfig{PreparationTimeout: time.Second, RunTimeout: 100 * time.Millisecond}, testScenario())
-	require.NoError(t, err)
+// Neither preparation nor workload introduces a deadline; user cancellation
+// still propagates to both phases.
+func TestPreparationAndRunHaveNoDeadline(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	timing := newRunTiming(parent, testScenario())
 	defer timing.close()
 	prep := timing.prepare()
-	timer := time.NewTimer(120 * time.Millisecond)
-	defer timer.Stop()
-	select {
-	case <-prep.Done():
-		t.Fatal("preparation ended early")
-	case <-timer.C:
-	}
+	_, hasDeadline := prep.Deadline()
+	require.False(t, hasDeadline)
 	run := timing.startRun()
-	deadline, _ := run.Deadline()
-	require.Greater(t, time.Until(deadline), 80*time.Millisecond)
-	<-run.Done()
-	require.ErrorIs(t, context.Cause(run), context.DeadlineExceeded)
-	require.Contains(t, context.Cause(run).Error(), "run timeout")
+	_, hasDeadline = run.Deadline()
+	require.False(t, hasDeadline)
+	require.ErrorIs(t, prep.Err(), context.Canceled)
+	require.NoError(t, run.Err())
+	cancel()
+	require.ErrorIs(t, run.Err(), context.Canceled)
 }
 
-// Both a run deadline and a user cancellation must permit final HTTP reads,
+// User cancellation must permit final HTTP reads,
 // while the diagnostics budget must still put an upper bound on that work.
 func TestDiagnosticsSurviveCancelledRunAndAreBounded(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
-	timing, err := newRunTiming(parent, RunnerConfig{DiagnosticsTimeout: 100 * time.Millisecond}, testScenario())
-	require.NoError(t, err)
+	timing := newRunTiming(parent, testScenario())
+	require.Equal(t, max(5*time.Minute, testScenario().DrainDuration()+2*time.Minute), timing.diagnostics)
+	timing.diagnostics = 100 * time.Millisecond
 	defer timing.close()
 	timing.prepare()
 	run := timing.startRun()
@@ -105,14 +103,16 @@ func TestCancelledWorkloadKeepsPartialResultsAndFailsRecheck(t *testing.T) {
 	require.Contains(t, completion.Actual, "context deadline exceeded")
 }
 
-func TestPreparationTimeoutIsReportedWithoutCancellingParent(t *testing.T) {
-	timing, err := newRunTiming(context.Background(), RunnerConfig{PreparationTimeout: 10 * time.Millisecond}, testScenario())
-	require.NoError(t, err)
+func TestPreparationCancellationPermitsDiagnostics(t *testing.T) {
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	timing := newRunTiming(parent, testScenario())
 	defer timing.close()
 	prep := timing.prepare()
-	<-prep.Done()
-	require.ErrorIs(t, context.Cause(prep), context.DeadlineExceeded)
-	require.Contains(t, context.Cause(prep).Error(), "preparation timeout")
-	require.NoError(t, timing.parent.Err())
+	cancel()
+	require.ErrorIs(t, context.Cause(prep), context.Canceled)
 	require.NoError(t, timing.startDiagnostics().Err())
+	deadline, bounded := timing.startDiagnostics().Deadline()
+	require.True(t, bounded)
+	require.WithinDuration(t, time.Now().Add(timing.diagnostics), deadline, time.Second)
 }

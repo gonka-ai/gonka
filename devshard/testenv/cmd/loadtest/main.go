@@ -25,9 +25,6 @@ func main() {
 	keepStack := flag.Bool("keep-stack", false, "keep the Docker stack and work directory after the run")
 	loadDataset := flag.String("load-dataset", "", "JSONL dataset with captured client requests and ML responses")
 	metricsInterval := flag.Duration("metrics-interval", time.Second, "process and escrow metrics sampling interval (minimum 100ms)")
-	runTimeout := flag.Duration("timeout", 0, "run budget after preparation, including response completion; default: workload + request timeout + 5m, at least 20m")
-	preparationTimeout := flag.Duration("preparation-timeout", 0, "Docker build/startup timeout; default: 45m")
-	diagnosticsTimeout := flag.Duration("diagnostics-timeout", 0, "final diagnostics/drain timeout, independent of run cancellation; default: drain + 2m, at least 5m")
 	strictXFail := flag.Bool("strict-xfail", false, "fail the run when a known_bug case passes (XPASS)")
 	reportDir := flag.String("report", "", "rebuild report.md and timeline.html, and print a console summary of an existing run, without running")
 	gatewayImage := flag.String("gateway-image", "", "override the standalone gateway image selected by the scenario or -build")
@@ -77,9 +74,7 @@ func main() {
 			log.Fatal(err)
 		}
 	}
-	if *runTimeout < 0 || *preparationTimeout < 0 || *diagnosticsTimeout < 0 {
-		log.Fatal("timeouts must be positive")
-	}
+
 	testenvDir, err := filepath.Abs(".")
 	if err != nil {
 		log.Fatal(err)
@@ -96,19 +91,16 @@ func main() {
 	signalCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 	result, err := loadtest.RunScenario(signalCtx, loadtest.RunnerConfig{
-		ScenarioPath:       *scenarioPath,
-		ProfilesDir:        *profilesDir,
-		TestenvDir:         testenvDir,
-		OutputDir:          *outputDir,
-		KeepStack:          *keepStack,
-		LoadDataset:        *loadDataset,
-		MetricsInterval:    *metricsInterval,
-		StrictXFail:        *strictXFail,
-		Build:              build,
-		GatewayImage:       *gatewayImage,
-		PreparationTimeout: *preparationTimeout,
-		RunTimeout:         *runTimeout,
-		DiagnosticsTimeout: *diagnosticsTimeout,
+		ScenarioPath:    *scenarioPath,
+		ProfilesDir:     *profilesDir,
+		TestenvDir:      testenvDir,
+		OutputDir:       *outputDir,
+		KeepStack:       *keepStack,
+		LoadDataset:     *loadDataset,
+		MetricsInterval: *metricsInterval,
+		StrictXFail:     *strictXFail,
+		Build:           build,
+		GatewayImage:    *gatewayImage,
 	})
 	if err != nil && !result.WorkloadStarted {
 		log.Fatalf("loadtest: workload did not start: %v", err)
