@@ -2,6 +2,8 @@ package internal
 
 import (
 	"decentralized-api/apiconfig"
+	"decentralized-api/cosmosclient"
+	"errors"
 	"math"
 	"sync"
 	"testing"
@@ -377,4 +379,33 @@ func TestBandwidthParameterLoadingWithInferenceLimit(t *testing.T) {
 	limiter := NewBandwidthLimiterFromConfig(configManager, nil, nil)
 	require.NotNil(t, limiter, "BandwidthLimiter should be created successfully")
 	require.Equal(t, uint64(500), limiter.maxInferencesPerBlock, "Limiter should use configured inference limit")
+}
+
+func TestBandwidthLimiter_FailedEpochLookupIsRetried(t *testing.T) {
+	q := newBlockingEpochQueryClient(0)
+	close(q.release)
+	q.err = errors.New("node down")
+	mockCosmos := &cosmosclient.MockCosmosMessageClient{}
+	mockCosmos.On("NewInferenceQueryClient").Return(q)
+	bl := &BandwidthLimiter{
+		recorder:              mockCosmos,
+		epochCache:            NewEpochGroupDataCache(mockCosmos),
+		defaultLimit:          100000,
+		defaultInferenceLimit: 1000,
+	}
+
+	bl.updateWeightBasedLimit(7)
+	require.Zero(t, bl.cachedLimitEpochIndex)
+	require.EqualValues(t, 1, q.calls.Load())
+
+	bl.updateWeightBasedLimit(7)
+	require.EqualValues(t, 1, q.calls.Load())
+
+	q.err = nil
+	bl.limitRefreshRetryAt = time.Now().Add(-time.Second)
+	bl.updateWeightBasedLimit(7)
+
+	require.EqualValues(t, 7, bl.cachedLimitEpochIndex)
+	require.EqualValues(t, 100000, bl.limitsPerBlockKB)
+	require.EqualValues(t, 1000, bl.maxInferencesPerBlock)
 }
