@@ -34,6 +34,16 @@ The user cannot back-date an anchor: a start or receipt stamped anywhere but the
 
 F only moves on host-signed claims (finishes and height acks), so the user cannot advance the timeout clock alone. A host that signs a fabricated future height cannot advance it either: the fabricated block has no header on any honest node, so no verifier can read a time for it, and the gateway does not sequence a floor raise its own chain cannot prove.
 
+Carried `observed_time_ms` is a separate clock from that header lookup. See [Future carried stamp time](#future-carried-stamp-time).
+
+## Future carried stamp time
+
+Seal and drain read the carried `TimeMs` of the floor point four blocks behind the latest floor. `TimeoutDue` reads the carried time of the current floor. A host writes that time as `observed_time_ms` on a height ack, a confirm, or a finish.
+
+Two stamps move it. A host acks height 999,990 and then 1,000,000, each with a bogus hash and a time ten years ahead. The floor becomes 1,000,000. The point four blocks behind it is 999,990, and that point carries the fabricated time. Drain treats every live record as past due and settles it Finished at `ReservedCost`. The user pays for work that never finished. Two Finish stamps on the host's own confirmed inferences do the same. A raise of one or two blocks with a time far ahead does the same: the height checks do not read the time.
+
+The explanation and the bound are in [Async header time for timeout and challenge](./async-header-time-timeout.md#a-carried-time-can-sit-far-ahead-of-the-chain).
+
 ## Redundant validations halt devshard
 
 A second MsgValidation for an already-challenged inference fails because rec.Status != StatusFinished. The failed tx stays in the mempool, goes stale, and causes the host to withhold its signature.

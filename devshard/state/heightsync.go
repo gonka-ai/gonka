@@ -293,7 +293,9 @@ func observeHeightSync(st *types.EscrowState, tracker *heightsync.TurnTracker, f
 	// envelope to refuse. Letting admission feed the floor would give two honest
 	// verifiers different floors and therefore different L0 verdicts for every
 	// later diff — an escrow split. Floor updates therefore run only on apply.
+	before := floorPoints(floor)
 	floor.Observe(nonce, floorClaims(st, txs))
+	logFloorTimeRaises(st.EscrowID, before, floorPoints(floor))
 	for _, mm := range floor.DrainTimeMismatches() {
 		logging.Warn("floor stamp time disagrees with an earlier floor time",
 			"subsystem", "heightsync",
@@ -305,6 +307,41 @@ func observeHeightSync(st *types.EscrowState, tracker *heightsync.TurnTracker, f
 	}
 	st.HeightSyncLastCompletedHeight = tracker.LastCompletedHeight()
 	st.HeightSyncLatestTurnStart = tracker.LatestTurnStart()
+}
+
+func floorPoints(floor *heightsync.FloorIndex) []heightsync.FloorPoint {
+	if floor == nil {
+		return nil
+	}
+	return floor.Points()
+}
+
+// logFloorTimeRaises logs each floor entry whose time this diff set or
+// filled to more than StampTimeRaiseDelta above the entry below it. The
+// stored time stays the claim's value.
+func logFloorTimeRaises(escrowID string, before, after []heightsync.FloorPoint) {
+	prevTime := make(map[uint64]int64, len(before))
+	for _, p := range before {
+		prevTime[p.Height] = p.TimeMs
+	}
+	for i, p := range after {
+		if i == 0 || !timeRaisePastDelta(after[i-1].TimeMs, p.TimeMs) {
+			continue
+		}
+		old, existed := prevTime[p.Height]
+		if existed && old > 0 {
+			continue
+		}
+		logging.Warn(stampTimeRaiseDeferredMsg,
+			"subsystem", "heightsync",
+			"stage", "floor",
+			"escrow_id", escrowID,
+			"height", p.Height,
+			"author", p.Author,
+			"prev_time_ms", after[i-1].TimeMs,
+			"carried_time_ms", p.TimeMs,
+		)
+	}
 }
 
 // heightSyncRestore is the tracker and floor a restore installs.

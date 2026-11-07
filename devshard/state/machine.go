@@ -140,6 +140,11 @@ type StateMachine struct {
 	// deferred map disagrees (warn-only; state is not rolled back).
 	stampTimeMismatchHook func(leg string, height uint64, hash []byte, stampMs, mapMs int64)
 
+	// stampWallClock is the composing gateway's clock, or a verifier's clock
+	// when this machine checks challenge evidence. Nil on apply-only replicas
+	// and in tests. Apply never reads it.
+	stampWallClock func() time.Time
+
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
 	heightSyncFloor *heightsync.FloorIndex
@@ -243,6 +248,13 @@ func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
 
 func WithHeaderTimes(src HeaderTimeSource) SMOption {
 	return func(sm *StateMachine) { sm.headerTimes = src }
+}
+
+// WithStampWallClock sets the clock compose and challenge evidence use to
+// drop a host stamp more than StampFutureSkew ahead of now. Nil leaves those
+// checks clock-free. Apply does not read it.
+func WithStampWallClock(now func() time.Time) SMOption {
+	return func(sm *StateMachine) { sm.stampWallClock = now }
 }
 
 // WithHeaderWait bounds waitFloorTimeIfMissing on settlement drain when
@@ -774,6 +786,12 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 		if err := sm.ackHashMismatchLocked(tx.GetHeightAck()); err != nil {
 			logDroppedTx(nonce, tx, err)
 			continue
+		}
+		if ack := tx.GetHeightAck(); ack != nil {
+			if err := sm.checkStampNotFutureLocked("compose", "ack", ack.GetObservedHeight(), ack.GetObservedTimeMs()); err != nil {
+				logDroppedTx(nonce, tx, err)
+				continue
+			}
 		}
 		if err := sm.checkTxExecutorStampClockLocked("compose", tx); err != nil {
 			logDroppedTx(nonce, tx, err)

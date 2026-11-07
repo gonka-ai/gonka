@@ -165,6 +165,7 @@ func NewLocalSession(cfg LocalSessionConfig) (*Session, *state.StateMachine, err
 	if cfg.HeaderTimes != nil {
 		smOpts = append(smOpts, state.WithHeaderTimes(cfg.HeaderTimes))
 	}
+	smOpts = append(smOpts, state.WithStampWallClock(time.Now))
 	session, sm, err := RecoverSession(store, signer, verifier, cfg.EscrowID, "", meta.Group, clients, smOpts...)
 	if err != nil {
 		store.Close()
@@ -410,6 +411,7 @@ func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.S
 	if cfg.HeaderTimes != nil {
 		extra = append(extra, state.WithHeaderTimes(cfg.HeaderTimes))
 	}
+	extra = append(extra, state.WithStampWallClock(time.Now))
 	return extra
 }
 

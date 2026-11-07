@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"devshard/heightsync"
 	"devshard/signing"
@@ -168,7 +169,7 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append(smOpts, state.WithVersion(recoveredVersion))
+	stateOpts := append(smOpts, state.WithVersion(recoveredVersion), state.WithStampWallClock(time.Now))
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,

@@ -5,9 +5,15 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/types"
 )
+
+// stampTimeRaiseDeferredMsg is the log line for a host stamp whose carried
+// time is more than StampTimeRaiseDelta ahead of the previous floor time.
+// The floor entry keeps that carried time.
+const stampTimeRaiseDeferredMsg = "host stamp time is more than 45s ahead of the floor; strong check deferred"
 
 // checkObservedStampTimeLocked checks a stamp while applying it.
 // On StampRequiresTime tags, a stamped message (height > 0) with
@@ -60,6 +66,9 @@ func (sm *StateMachine) checkExecutorStampClockLocked(stage, leg string, height 
 	if sm == nil || carried <= 0 {
 		return nil
 	}
+	if err := sm.checkStampNotFutureLocked(stage, leg, height, carried); err != nil {
+		return err
+	}
 	floorH, floorMs := sm.previousFloorClockLocked()
 	latestH, latestMs, latestOK := sm.latestStoredClockLocked()
 	beforeFloor := floorMs > 0 && carried < floorMs
@@ -96,6 +105,57 @@ func (sm *StateMachine) checkExecutorStampClockLocked(stage, leg string, height 
 	}
 	return fmt.Errorf("%w: %s height %d carried=%d latest_height=%d latest_time_ms=%d",
 		types.ErrStampTimeBeforeChain, leg, height, carried, latestH, latestMs)
+}
+
+// checkStampNotFutureLocked rejects a host stamp dated more than
+// StampFutureSkew ahead of the wall clock installed on this machine.
+// Apply skips it: replicas with different clocks would split. A nil clock
+// skips it, so replay and tests stay clock-free. Caller holds sm.mu.
+func (sm *StateMachine) checkStampNotFutureLocked(stage, leg string, height uint64, carried int64) error {
+	if sm == nil || carried <= 0 || stage == "apply" || sm.stampWallClock == nil {
+		return nil
+	}
+	now := sm.stampWallClock()
+	if now.IsZero() {
+		return nil
+	}
+	limit := now.UnixMilli() + heightsync.StampFutureSkew.Milliseconds()
+	if carried <= limit {
+		return nil
+	}
+	return fmt.Errorf("%w: %s height %d carried=%d wall_ms=%d",
+		types.ErrStampTimeInFuture, leg, height, carried, now.UnixMilli())
+}
+
+// noteStampTimeRaiseLocked logs a confirm or finish whose carried time is
+// more than StampTimeRaiseDelta ahead of the previous floor. It does not
+// change the stamp or the floor. Caller holds sm.mu.
+func (sm *StateMachine) noteStampTimeRaiseLocked(stage, leg string, height uint64, carried int64) {
+	if sm == nil || carried <= 0 {
+		return
+	}
+	floorH, floorMs := sm.previousFloorClockLocked()
+	if !timeRaisePastDelta(floorMs, carried) {
+		return
+	}
+	logging.Warn(stampTimeRaiseDeferredMsg,
+		"subsystem", "state",
+		"stage", stage,
+		"leg", leg,
+		"escrow_id", sm.state.EscrowID,
+		"height", height,
+		"floor_height", floorH,
+		"prev_time_ms", floorMs,
+		"carried_time_ms", carried,
+	)
+}
+
+func timeRaisePastDelta(prev, carried int64) bool {
+	if prev <= 0 || carried <= 0 {
+		return false
+	}
+	delta := heightsync.StampTimeRaiseDelta.Milliseconds()
+	return carried > prev && carried-prev > delta
 }
 
 func (sm *StateMachine) checkTxExecutorStampClockLocked(stage string, tx *types.DevshardTx) error {

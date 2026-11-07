@@ -2272,6 +2272,7 @@ func (m *HostManager) sessionSMOpts(extra ...state.SMOption) []state.SMOption {
 	if m.headerTimes != nil {
 		extra = append(extra, state.WithHeaderTimes(m.headerTimes))
 	}
+	extra = append(extra, state.WithStampWallClock(time.Now))
 	return extra
 }
 

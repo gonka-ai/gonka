@@ -289,7 +289,10 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 	}
 
 	oracle, headers := chainOracleFromEnv(ctx)
-	smOpts := []state.SMOption{state.WithVersion(types.EffectiveStateRootAndProtocolVersion)}
+	smOpts := []state.SMOption{
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
+		state.WithStampWallClock(time.Now),
+	}
 	if headers != nil {
 		smOpts = append(smOpts, state.WithHeaderTimes(headers))
 	}

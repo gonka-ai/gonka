@@ -105,6 +105,7 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 			}
 			err = sm.checkReceiptLocked(rec, msg, allowed)
 			if err == nil {
+				sm.noteStampTimeRaiseLocked("challenge", "confirm", msg.ObservedHeight, msg.ObservedTimeMs)
 				err = sm.checkExecutorStampClockLocked("challenge", "confirm", msg.ObservedHeight, msg.ObservedTimeMs)
 			}
 			status = types.StatusStarted
@@ -116,6 +117,7 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 			}
 			_, err = sm.checkFinishLocked(rec, msg, allowed)
 			if err == nil {
+				sm.noteStampTimeRaiseLocked("challenge", "finish", msg.ObservedHeight, msg.ObservedTimeMs)
 				err = sm.checkExecutorStampClockLocked("challenge", "finish", msg.ObservedHeight, msg.ObservedTimeMs)
 			}
 			status = types.StatusFinished

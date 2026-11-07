@@ -386,6 +386,25 @@ func (f *FloorIndex) Max() (uint64, []byte) {
 	return h, hash
 }
 
+// Points copies retained entries in nonce order. Callers compare times.
+// The index does not bound a raise.
+func (f *FloorIndex) Points() []FloorPoint {
+	if f == nil || len(f.entries) == 0 {
+		return nil
+	}
+	out := make([]FloorPoint, len(f.entries))
+	for i, e := range f.entries {
+		out[i] = FloorPoint{
+			Height: e.height,
+			Hash:   append([]byte(nil), e.hash...),
+			Author: e.author,
+			Nonce:  e.nonce,
+			TimeMs: e.timeMs,
+		}
+	}
+	return out
+}
+
 // Len reports retained entries. Test and metrics seam for the bound.
 func (f *FloorIndex) Len() int {
 	if f == nil {

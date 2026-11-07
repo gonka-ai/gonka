@@ -26,6 +26,7 @@ var (
 	ErrStampNotFloor                   = errors.New("stamp is not the height-sync floor")
 	ErrStampTimeMissing                = errors.New("stamp requires a non-zero observed_time_ms")
 	ErrStampTimeBeforeChain            = errors.New("executor stamp time is before the newest stored block")
+	ErrStampTimeInFuture               = errors.New("stamp time is ahead of the wall clock")
 	ErrTimeoutNotArmed                 = errors.New("inference has no height anchor for this timeout")
 	ErrTimeoutNotDue                   = errors.New("timeout is not due at the height-sync floor")
 	ErrFloorTimeMissing                = errors.New("height-sync floor has no carried block time")

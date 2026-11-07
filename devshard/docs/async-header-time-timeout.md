@@ -2,7 +2,7 @@
 
 **Status:** Implemented (timeout trigger/answer). Seal/drain clock path superseded by [stamped-block-time-plan.md](stamped-block-time-plan.md).  
 **Implementation:** [async-header-time-timeout-plan.md](async-header-time-timeout-plan.md)  
-**Related:** height-sync floor `F`, `DeltaBlocks` (default 2), legacy `started_at` / `confirmed_at`, stamped `observed_time_ms`  
+**Related:** height-sync floor `F`, `DeltaBlocks` (default 2), legacy `started_at` / `confirmed_at`, stamped `observed_time_ms`, [attacks.md](./attacks.md#future-carried-stamp-time)  
 **Scope:** Where a block time is learned, which messages may wait for it, and how a gateway triggers a timeout challenge.
 
 Historical design note. Timeout trigger/answer rules below still match the shipped plan. Sections that say seal/drain wait on the map, or that the diff carries no header time, are superseded by stamped block time — see callouts.
@@ -138,6 +138,31 @@ A second `VerifyTimeout` for the same inference and the same reason is refused o
 ### Why a stamp cannot point past the chain
 
 A stamp that names a height no process will ever see would leave the map empty forever. Height sync is optimistic, but it has disputes: a floor is raised only by host-signed stamps, and a raise whose `(height, hash)` does not exist on chain is disputed and attributed to the signer that set it. A floor therefore cannot sit in the far future without proof that the claimed height exists on chain. A stamp beyond what the chain has produced is a dispute, not a deadline that never arrives.
+
+That dispute covers the height and the hash. The time carried on the stamp is the next section.
+
+### A carried time can sit far ahead of the chain
+
+Catalog entry: [Future carried stamp time](./attacks.md#future-carried-stamp-time). Implementation: [stamp-time-raise-bound-plan.md](./timeouts/stamp-time-raise-bound-plan.md).
+
+Seal and drain read the carried `TimeMs` of the floor point at least four blocks below the current floor (`SealDrainFloorLagBlocks`). `TimeoutDue` reads the carried time of the current floor. A host-signed ack, confirm, or finish sets that time from its own `observed_time_ms`. The floor keeps the first non-zero time for a `(height, hash)`. A later map row that disagrees is a warning.
+
+Two stamps are enough to move money. A host acks `h=999,990` and then `h=1,000,000`. Both carry a bogus hash and an `observed_time_ms` ten years ahead. F becomes 1,000,000. The point four blocks behind it is 999,990, and that point carries the fabricated time as well. Drain finds every live record past due, and each one settles Finished at `ReservedCost`. The paying user funds work that never finished. Two Finish stamps on the host's own confirmed inferences do the same with no ack. A raise of one or two blocks with a time far ahead does the same.
+
+The height rules do not look at that time:
+
+- L5a marks `|h − local| > D` for acks and heartbeats only.
+- `FilterHostRaises` compares a stamp's height with the response envelope.
+- `refuseFutureLocked` applies to the anchor tally.
+
+Moving the floor time forward settles live records Finished at `ReservedCost`: the user pays. A confirm or finish anchor dated ahead makes that record not yet due, so it refunds as TimedOut: the executor who signed it waits. The floor clock is the one that takes the user's money.
+
+The bound has two parts. The strong proof for a time raise stays deferred, the same way the height delta's proof does.
+
+- A host-signed raise whose carried time is more than 45 seconds above the previous floor time is logged as strong check deferred. The floor entry keeps that carried time. Seal, drain, and `TimeoutDue` keep reading it. Every replica logs the same raise, because the comparison uses the previous floor time and the claim.
+- The gateway does not include, and so does not sign, a host-signed ack, confirm, or finish whose `observed_time_ms` is more than 30 seconds ahead of the gateway's wall clock. A Finish is dropped whole, because its stamp sits inside `proposer_sig`. A verifier applies the same 30 second check to a confirm or finish offered as challenge evidence. Evidence past that skew is not a valid answer, so the timeout vote still lands and the executor takes the Missed.
+
+The paying gateway is the party that refuses to sign the two stamps: both times sit years past its wall clock, so the signed diff never carries them. A diff that already contains the time still applies. Replicas store the fabricated `TimeMs`, log the 45 second raise, and drain can still settle Finished. An honest stamp after an outage can sit more than 45 seconds ahead of the previous floor and still within 30 seconds of the gateway wall clock. The gateway signs it, and apply logs the raise and keeps the time.
 
 ---
 
