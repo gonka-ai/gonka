@@ -9,7 +9,7 @@ Once PoC becomes per-model, the chain must answer two questions:
 1. How does per-model `pocWeight(group_i, p)` become chain-wide `consensusWeight(p)`?
 2. How can the chain accept or reject a model-local PoC result when only members of that model group can validate it directly?
 
-These are related but designed independently. Aggregation decides how much consensus value each model contributes. Delegation lets non-members of a model group transfer voting power to a member so the chain can still reach the `>2/3` acceptance threshold.
+These are related but designed independently. Aggregation decides how much consensus value each model contributes. Delegation lets non-members of a model group transfer voting power to a member so the chain can still reach the PoC acceptance threshold (`validation_vote_threshold_bps`).
 
 ## Three Weight Terms
 
@@ -253,11 +253,11 @@ Inference validation: reads `ValidationWeight.weight` and `ValidationWeight.repu
 
 Host `p`'s PoC result in group `i` is accepted when
 
-`sum(votingPower of approvers) / totalNetworkWeight > 2/3`
+`sum(votingPower of approvers) / totalNetworkWeight > validation_vote_threshold_bps / 10000` (default 5000)
 
-If neither valid nor invalid votes reach 2/3, the guardian tiebreak rule applies: the decision passes only if every voting guardian agrees unanimously. Hosts not in the group and not delegating effectively abstain, which counts against acceptance.
+If neither valid nor invalid votes exceed that threshold, the guardian tiebreak rule applies: the decision passes only if every voting guardian agrees unanimously. Hosts not in the group and not delegating effectively abstain, which counts against acceptance.
 
-Slot sampling uses the same `votingPower` values. For each model, the slot count is `floor(modelVotingPower / totalNetworkWeight * validation_slots)`. Remaining global slots stay empty and behave as abstention. Approval still requires `>2/3` of the full global slot count.
+Slot sampling uses the same `votingPower` values. For each model, the slot count is `floor(modelVotingPower / totalNetworkWeight * validation_slots)`. Remaining global slots stay empty and behave as abstention. Approval still requires more than `validation_vote_threshold_bps / 10000` of the full global slot count.
 
 ## DelegationWeightCalculator
 
@@ -280,7 +280,7 @@ It provides:
 - `ComputeConsensusWeights`
 - `ComputeGroupVotingPowers`
 
-Two calculators handle different concerns. `PoCWeightCalculator` validates individual PoC results (`>2/3` acceptance threshold, slot sampling, guardian tiebreak) and produces raw per-model `pocWeight`. It has no knowledge of cross-model aggregation, delegation economics, or eligibility. `DelegationWeightCalculator` operates after model assignment: it determines eligible groups, applies group caps, computes aggregated `consensusWeight`, resolves participation modes, and computes per-model voting powers. This separation keeps PoC validation independent from the multi-model policy layer.
+Two calculators handle different concerns. `PoCWeightCalculator` validates individual PoC results (`validation_vote_threshold_bps` acceptance threshold, slot sampling, guardian tiebreak) and produces raw per-model `pocWeight`. It has no knowledge of cross-model aggregation, delegation economics, or eligibility. `DelegationWeightCalculator` operates after model assignment: it determines eligible groups, applies group caps, computes aggregated `consensusWeight`, resolves participation modes, and computes per-model voting powers. This separation keeps PoC validation independent from the multi-model policy layer.
 
 Bootstrap pre-eligibility currently checks governance approval, weight threshold, `V_min`, and explicit `>2/3` reachability. Post-PoC eligibility currently checks governance approval, weight threshold, and at least `V_min` members with positive `pocWeight`; an explicit reachability check is not yet enforced in `IsGroupEligible` (see open questions).
 
