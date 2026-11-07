@@ -4192,8 +4192,13 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 		}
 
 		waitCtx := e.raceCleanupRoot()
+		// Live sendTime opens on the gateway wall clock. After a soft vote
+		// failure (verifier map miss / feed_behind), later waits use a zero
+		// sendTime so TimeoutDeadline follows the stamp map like verifiers.
+		sendTime := inf.sendTime
+		softAttempts := 0
 		for {
-			reason, ready, skipped, waitErr := e.session.WaitTimeoutDeadline(waitCtx, inf.nonce, inf.sendTime)
+			reason, ready, skipped, waitErr := e.session.WaitTimeoutDeadline(waitCtx, inf.nonce, sendTime)
 			if !ready {
 				if skipped.DetailReason == "nonce_closed" || (e.session != nil && e.session.IsNonceFinished(inf.nonce)) {
 					logInferenceStage(parent, inf.escrowID, inf.nonce, "timeout_skipped",
@@ -4229,18 +4234,35 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				bgCtx, _ := ensureRequestLogContext(cleanupCtx)
 				kind = timeoutKindForInflight(inf, false)
 				e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
-				result, needsWait, voteErr = e.runVoteTimeout(bgCtx, inf, params, reason)
-				if !needsWait && !timeoutVoteUnjudged(result) {
-					e.forgetRefusalPayload(inf.nonce)
-				}
+				result, needsWait, voteErr = e.session.VoteTimeout(bgCtx, inf.nonce, sendTime, e.inferenceTimeoutPayload(params), reason)
 				if needsWait {
 					e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
 					return
 				}
+				if timeoutVoteUnjudged(result) && softAttempts+1 < maxRefusalSweepAttempts {
+					return
+				}
+				e.forgetRefusalPayload(inf.nonce)
 				e.recordHandleTimeoutResult(bgCtx, inf, params, result, voteErr, false, failStage)
 			})
 			releasePost()
 			if needsWait {
+				continue
+			}
+			if timeoutVoteUnjudged(result) && softAttempts+1 < maxRefusalSweepAttempts {
+				softAttempts++
+				logInferenceStage(parent, inf.escrowID, inf.nonce, "timeout_vote_retry",
+					"host", inf.hostID,
+					"reason", result.Reason,
+					"outcome", result.Outcome,
+					"soft_attempt", softAttempts,
+				)
+				e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", result.Outcome)
+				if err := softTimeoutRetryPause(waitCtx, e.session, inf.nonce); err != nil {
+					e.forgetRefusalPayload(inf.nonce)
+					return
+				}
+				sendTime = time.Time{}
 				continue
 			}
 			return

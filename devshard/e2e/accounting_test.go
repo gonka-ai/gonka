@@ -81,19 +81,7 @@ func TestE2E_AccountingOverscheduledLoserFinishes(t *testing.T) {
 		},
 	})
 
-	// Bootstrap heartbeats raise the floor before chat, so the next executor
-	// is whichever slot the cadence has reached. Wait until that slot is the
-	// delayed host.
-	var nextSlot int
-	deadline := time.Now().Add(90 * time.Second)
-	for {
-		nextSlot = int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-		if nextSlot == 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
+	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
 		"redundancy": map[string]any{
@@ -217,16 +205,7 @@ func TestE2E_AccountingEmptyStreamUsesContentHost(t *testing.T) {
 		},
 	})
 
-	var nextSlot int
-	deadline := time.Now().Add(90 * time.Second)
-	for {
-		nextSlot = int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-		if nextSlot == 1 || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(time.Second)
-	}
-	require.Equal(t, 1, nextSlot, "test setup expects the empty host to own the first traffic nonce")
+	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0
@@ -326,8 +305,7 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 		},
 	})
 
-	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
+	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
 		"redundancy": map[string]any{
@@ -410,8 +388,7 @@ func TestE2E_AccountingNoReceiptTimeoutBecomesUnfinishedRefused(t *testing.T) {
 		},
 	})
 
-	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	require.Equal(t, 1, nextSlot, "test setup expects the delayed-receipt host to own the first traffic nonce")
+	nextSlot := waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
 		"redundancy": map[string]any{
@@ -504,8 +481,7 @@ func TestE2E_AccountingAppliedTimeoutCrossCheck(t *testing.T) {
 		},
 	})
 
-	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
+	nextSlot := waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
 		"redundancy": map[string]any{
@@ -589,8 +565,7 @@ func TestE2E_AccountingFocusedGhostRequestNotSent(t *testing.T) {
 	beforeThrottledProbeGhost := testutil.AccountingGhostCounterCount(before, "participant_throttled_no_send", "probe")
 	beforeAssigned := testutil.AccountingAssignedTotal(before)
 
-	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	require.Equal(t, 1, nextSlot, "test setup expects the HTTP 503 host to own the first traffic nonce")
+	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	testutil.SendCompletions(t, client, env.clientURL, "accounting focused ghost", len(env.hostURLs)+2)
 
@@ -626,8 +601,7 @@ func TestE2E_AccountingGhostStateDivergedNoSendReason(t *testing.T) {
 		},
 	})
 
-	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	require.Equal(t, 1, nextSlot, "test setup expects the diverging host to own the first traffic nonce")
+	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 
 	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0

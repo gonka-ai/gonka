@@ -308,8 +308,8 @@ func TestSweepExecutionTimeoutsSkipsWhileEveryTimeoutVotePlaceIsTaken(t *testing
 
 // Test flow:
 //  1. Leave a Pending refusal whose deadline passed an hour ago, against verifiers that decline every vote.
-//  2. Let its race vote it and wait for the race cleanup to finish.
-//  3. Expect no payload kept for the sweep: the group judged the refusal, so voting it again would only repeat the same round.
+//  2. Let its race vote it (soft-retries insufficient_votes a few times on the map clock) and wait for cleanup.
+//  3. Expect no payload kept for the sweep once soft attempts are exhausted: further votes would only repeat the same round.
 func TestARaceRefusalTheGroupDeclinedLeavesNothingToSweep(t *testing.T) {
 	env := setupManualFloorProxy(t, 3, nil, false)
 	startedAt := time.Now().Add(-time.Hour)
