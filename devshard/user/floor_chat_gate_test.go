@@ -12,7 +12,12 @@ import (
 	"common/chainoracle/blocks"
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
+	"devshard/host"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/state"
+	"devshard/stub"
 	"devshard/transport"
 	"devshard/types"
 )
@@ -614,4 +619,89 @@ func appliedStart(t *testing.T, session *Session) types.InferenceRecord {
 	require.Equal(t, start.ObservedHeight, rec.StartedAtHeight)
 	require.Equal(t, start.ObservedBlockHash, rec.StartedAtBlockHash)
 	return rec
+}
+
+func TestBlockAckParticipantCounts_CollapsesSlots(t *testing.T) {
+	group := []types.SlotAssignment{
+		{SlotID: 0, ValidatorAddress: "A"},
+		{SlotID: 1, ValidatorAddress: "A"},
+		{SlotID: 2, ValidatorAddress: "A"},
+		{SlotID: 3, ValidatorAddress: "B"},
+		{SlotID: 4, ValidatorAddress: "C"},
+	}
+	acked, total := blockAckParticipantCounts(group, []uint32{0, 1, 2})
+	require.Equal(t, 1, acked)
+	require.Equal(t, 3, total)
+	require.False(t, heightSeedQuorum(acked, total), "three slots of one participant are not half of three participants")
+
+	acked, total = blockAckParticipantCounts(group, []uint32{2, 3})
+	require.Equal(t, 2, acked)
+	require.True(t, heightSeedQuorum(acked, total))
+
+	acked, total = blockAckParticipantCounts(group, []uint32{1, 99})
+	require.Equal(t, 1, acked)
+}
+
+// One participant that owns enough slots to pass a slot-half gate still leaves
+// chat closed until half the addresses have a block ack.
+func TestFloorChat_HalfOfParticipantsNotSlots(t *testing.T) {
+	times := &chatGateTimes{ms: freshChatMs()}
+	times.open.Store(true)
+	session, followers := openMultiSlotChatSession(t, times)
+	followers[3].blind.Store(true)
+	followers[4].blind.Store(true)
+	ctx := context.Background()
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.GreaterOrEqual(t, session.StateMachine().HeightSyncSlotsWithBlockAck(), 3,
+		"the multi-slot participant acked each of its slots")
+	st := session.HeightSeedStatus()
+	require.Equal(t, HeightSeedStatePending, st.State)
+	require.Equal(t, 1, st.Seeded)
+	require.Equal(t, 3, st.Slots)
+	session.mu.Lock()
+	ready := session.floorChatReadyLocked()
+	session.mu.Unlock()
+	require.False(t, ready)
+}
+
+func openMultiSlotChatSession(t *testing.T, times *chatGateTimes) (*Session, []*sessionOracle) {
+	t.Helper()
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	owners := []*signing.Secp256k1Signer{signers[0], signers[0], signers[0], signers[1], signers[2]}
+	group := make([]types.SlotAssignment, len(owners))
+	for i, signer := range owners {
+		group[i] = types.SlotAssignment{SlotID: uint32(i), ValidatorAddress: signer.Address()}
+	}
+	oracles, followers := sessionOracles(len(group), 100)
+	user := testutil.MustGenerateKey(t)
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	smOpts := []state.SMOption{state.WithHeaderTimes(times)}
+	clients := make([]HostClient, len(group))
+	for i, signer := range owners {
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
+		h, err := host.NewHost(sm, signer, stub.NewInferenceEngine(), "escrow-1", group, nil,
+			host.WithGrace(100), host.WithChainOracle(oracles[i]))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
+	var height uint64 = 100
+	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
+		WithRequireHeightSeed(true),
+		WithHeightSyncCadence(10, uint64(len(group))),
+		WithObservedHeight(func() (uint64, []byte, bool) {
+			return height, []byte{0xaa}, true
+		}),
+	)
+	require.NoError(t, err)
+	rememberJournal(session)
+	session.MarkHeightSeedGate(time.Now().Add(heightSeedGate))
+	t.Cleanup(func() { _ = session.Close() })
+	return session, followers
 }

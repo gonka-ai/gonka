@@ -444,8 +444,8 @@ type Session struct {
 	heightSeedPhase           atomic.Uint32
 	heightSeedCatalogAdmitted atomic.Bool
 	heightSeedGateUntil       atomic.Int64
-	// floorGateOpened is set once F has a map time and half the slots have
-	// acked a block. That roster bar is bootstrap only. The 30s missed cutoff
+	// floorGateOpened is set once F has a map time and half the participants
+	// have acked a block. That roster bar is bootstrap only. The 30s missed cutoff
 	// applies only before the latch. Afterwards a fresh floor stays open, and
 	// a stale floor stays pending so the first inference can refresh it.
 	floorGateOpened atomic.Bool

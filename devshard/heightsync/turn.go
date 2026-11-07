@@ -116,13 +116,28 @@ func (t *TurnTracker) SlotsNum() uint64 {
 
 // SlotsWithBlockAck is how many distinct slots have an applied ack that
 // carries a block inside the retained turns. An ack with no height does not
-// count. The chat gate uses this as its bootstrap bar. One ack still raises
-// F; this count does not.
+// count. One ack still raises F; this count does not. The chat gate counts
+// participants from BlockAckSlots, not this total.
 func (t *TurnTracker) SlotsWithBlockAck() int {
 	if t == nil {
 		return 0
 	}
 	return len(t.blockAckTurns)
+}
+
+// BlockAckSlots lists the slots counted by SlotsWithBlockAck, in slot order.
+func (t *TurnTracker) BlockAckSlots() []uint32 {
+	if t == nil || len(t.blockAckTurns) == 0 {
+		return nil
+	}
+	out := make([]uint32, 0, len(t.blockAckTurns))
+	for slot, n := range t.blockAckTurns {
+		if n > 0 {
+			out = append(out, slot)
+		}
+	}
+	slices.Sort(out)
+	return out
 }
 
 func blockAckPresent(height uint64, hash []byte) bool {

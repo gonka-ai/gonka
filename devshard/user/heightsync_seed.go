@@ -13,6 +13,7 @@ import (
 	"devshard/logging"
 	"devshard/state"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // heightSyncSeeder is implemented by transport.HTTPClient. In-process clients
@@ -97,7 +98,9 @@ func (e *HeightSeedError) Is(target error) bool {
 
 // HeightSeedStatus is the snapshot exported on /v1/status as height_seed.
 // State is the chat gate: ok, pending, missed, or catalog_pending. Seeded
-// counts slots with an applied ack that carries a block, not seed RPCs.
+// counts participants with an applied ack that carries a block, not seed
+// RPCs and not slots. Slots is that same roster: distinct validator
+// addresses. One block ack from any of a participant's slots counts once.
 type HeightSeedStatus struct {
 	State        string               `json:"state"`
 	Seeded       int                  `json:"seeded"`
@@ -149,8 +152,8 @@ func (s *Session) HeightSeedMissed() bool {
 	return s.heightSeedPhase.Load() == seedPhaseMissed
 }
 
-// HeightSeedStatus returns the chat gate. Seeded is the number of slots with
-// an applied ack that carries a block. The seed RPC snapshot is SeedRPCStatus.
+// HeightSeedStatus returns the chat gate. Seeded is the number of participants
+// with an applied ack that carries a block. The seed RPC snapshot is SeedRPCStatus.
 // The read uses the snapshot published after the last commit and does not
 // take the sequencer lock.
 func (s *Session) HeightSeedStatus() HeightSeedStatus {
@@ -190,7 +193,7 @@ func (s *Session) MarkHeightSeedGate(until time.Time) {
 // WaitFloorChat blocks the first chat request until the floor gate is open,
 // the bootstrap budget has expired, or ctx is done. The 30s budget is the
 // bootstrap cutoff: it becomes missed only while the gate has not opened.
-// Opening takes a map time for F and half the slots. After that, a fresh
+// Opening takes a map time for F and half the participants. After that, a fresh
 // floor stays open without the roster count, and a stale floor stays pending
 // so one refresh can send a span. After the first inference commits, the
 // gate is not consulted. Before the clock starts, the wait is WaitHeightSeedChatBudget
@@ -300,9 +303,9 @@ func (s *Session) WaitFloorWarmup(ctx context.Context) error {
 }
 
 // floorGateSnap is the part of the chat gate that needs the sequencer lock:
-// the floor as of the next nonce, how many slots have acked a block, and the
-// cadence interval. Readers apply the clock, the latch, and the header map
-// themselves.
+// the floor as of the next nonce, how many participants have acked a block,
+// and the cadence interval. Readers apply the clock, the latch, and the
+// header map themselves. seeded and slots are participant counts.
 type floorGateSnap struct {
 	seeded   int
 	slots    int
@@ -316,12 +319,17 @@ func (s *Session) publishFloorGateLocked() {
 	if s == nil {
 		return
 	}
+	var ackedSlots []uint32
+	if s.sm != nil {
+		ackedSlots = s.sm.HeightSyncBlockAckSlots()
+	}
+	acked, participants := blockAckParticipantCounts(s.group, ackedSlots)
 	snap := &floorGateSnap{
-		slots:    len(s.group),
+		seeded:   acked,
+		slots:    participants,
 		interval: s.heartbeatIntervalLocked(),
 	}
 	if s.sm != nil {
-		snap.seeded = s.sm.HeightSyncSlotsWithBlockAck()
 		floor, hash, known := s.sm.HeightSyncFloorAsOf(s.nonce + 1)
 		if known && floor > 0 && heightsync.StampPresent(hash) {
 			snap.floor = floor
@@ -335,7 +343,7 @@ func (s *Session) publishFloorGateLocked() {
 // floorGateStatus is the chat gate without the sequencer lock.
 func (s *Session) floorGateStatus() HeightSeedStatus {
 	snap := s.floorGate.Load()
-	slots := len(s.group)
+	_, slots := blockAckParticipantCounts(s.group, nil)
 	seeded := 0
 	interval := heightsync.DefaultHeartbeatInterval
 	var floor uint64
@@ -368,7 +376,7 @@ func (s *Session) floorGateStatus() HeightSeedStatus {
 		s.floorGateOpened.Store(true)
 		return st
 	}
-	// Bootstrap is done once F has a map time and half the slots have acked.
+	// Bootstrap is done once F has a map time and half the participants have acked.
 	// Freshness is the first inference's wait, so a stale time does not expire
 	// the 30s cutoff.
 	if ok && ms > 0 && quorum {
@@ -431,8 +439,8 @@ func (s *Session) watchHeaderTimes(src state.HeaderTimeSource) {
 // floorChatReadyLocked is the chat gate: F as of the next nonce is non-empty,
 // the gateway map has a positive time for that pair, and that time is within
 // two cadence intervals of the gateway clock. Until the gate has opened, at
-// least half the slots also need an applied ack that carries a block. The
-// read is LookupHeaderTimeMs. Caller holds s.mu.
+// least half the participants also need an applied ack that carries a block.
+// The read is LookupHeaderTimeMs. Caller holds s.mu.
 func (s *Session) floorChatReadyLocked() bool {
 	ready, _ := s.floorChatEvalLocked()
 	return ready
@@ -447,10 +455,10 @@ const (
 )
 
 // floorChatEvalLocked reports whether chat can open, and which span a stale
-// or empty floor still needs. A fresh floor short of half the slots needs no
-// span while bootstrap is open. After the gate has opened, half the slots is
-// not required. A missing map time needs no span: compose already holds that
-// ack. Caller holds s.mu.
+// or empty floor still needs. A fresh floor short of half the participants
+// needs no span while bootstrap is open. After the gate has opened, that
+// half is not required. A missing map time needs no span: compose already
+// holds that ack. Caller holds s.mu.
 func (s *Session) floorChatEvalLocked() (ready bool, refresh floorRefresh) {
 	if s.sm == nil || len(s.group) == 0 {
 		return false, floorRefreshNone
@@ -466,7 +474,8 @@ func (s *Session) floorChatEvalLocked() (ready bool, refresh floorRefresh) {
 	if !s.floorTimeFreshLocked(ms) {
 		return false, floorRefreshStale
 	}
-	if s.floorGateOpened.Load() || heightSeedQuorum(s.sm.HeightSyncSlotsWithBlockAck(), len(s.group)) {
+	acked, participants := blockAckParticipantCounts(s.group, s.sm.HeightSyncBlockAckSlots())
+	if s.floorGateOpened.Load() || heightSeedQuorum(acked, participants) {
 		return true, floorRefreshNone
 	}
 	return false, floorRefreshNone
@@ -948,6 +957,32 @@ func (s *Session) heightSeedWatchLocked() <-chan struct{} {
 	return s.heightSeedWaiters
 }
 
+// blockAckParticipantCounts reports how many distinct validator addresses
+// have a block ack, and how many distinct addresses the group has. One ack
+// from any of a participant's slots counts that participant once. An address
+// with no block ack does not count. Slot ids outside the group are ignored.
+func blockAckParticipantCounts(group []types.SlotAssignment, ackedSlots []uint32) (acked, total int) {
+	if len(group) == 0 {
+		return 0, 0
+	}
+	roster := make(map[string]struct{}, len(group))
+	for _, slot := range group {
+		roster[slot.ValidatorAddress] = struct{}{}
+	}
+	hit := make(map[string]struct{}, len(ackedSlots))
+	for _, id := range ackedSlots {
+		if int(id) >= len(group) {
+			continue
+		}
+		addr := group[id].ValidatorAddress
+		if _, ok := roster[addr]; !ok {
+			continue
+		}
+		hit[addr] = struct{}{}
+	}
+	return len(hit), len(roster)
+}
+
 func uniqueSeedTargets(clients []HostClient) []seedTarget {
 	seen := make(map[heightSyncSeeder]struct{})
 	var targets []seedTarget
@@ -965,9 +1000,9 @@ func uniqueSeedTargets(clients []HostClient) []seedTarget {
 	return targets
 }
 
-// heightSeedQuorum is true when at least half of slots returned an Anchor
-// (seeded*2 >= slots). One slot still requires that one Anchor; two slots
-// succeed on one; three require two.
+// heightSeedQuorum is true at half or more (answered*2 >= total). One
+// requires that one answer; two succeed on one; three require two. The chat
+// gate passes participants. The seed RPC passes its own target list.
 func heightSeedQuorum(seeded, slots int) bool {
 	return slots > 0 && seeded*2 >= slots
 }

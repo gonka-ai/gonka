@@ -230,7 +230,7 @@ func TestBootstrapReply_FillsPeerTipsWithoutSeedRPC(t *testing.T) {
 
 	st := env.session.HeightSeedStatus()
 	require.Equal(t, HeightSeedStateOK, st.State)
-	require.Equal(t, acked, st.Seeded)
+	require.Equal(t, len(ackedAddrs), st.Seeded)
 
 	env.session.mu.Lock()
 	ready := env.session.floorChatReadyLocked()

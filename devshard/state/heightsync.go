@@ -526,6 +526,16 @@ func (sm *StateMachine) HeightSyncSlotsWithBlockAck() int {
 	return sm.turnTracker.SlotsWithBlockAck()
 }
 
+// HeightSyncBlockAckSlots lists the slots counted by HeightSyncSlotsWithBlockAck.
+func (sm *StateMachine) HeightSyncBlockAckSlots() []uint32 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return nil
+	}
+	return sm.turnTracker.BlockAckSlots()
+}
+
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.
 func (sm *StateMachine) HeightSyncTurnRecord(turnStart uint64) *heightsync.SyncTurnRecord {
 	sm.mu.RLock()
