@@ -2,6 +2,7 @@ package poc
 
 import (
 	"context"
+	"sync"
 
 	"common/logging"
 
@@ -45,6 +46,7 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 		return
 	}
 
+	var wg sync.WaitGroup
 	for _, ch := range OpenChallenges.Punishable() {
 		if ch == nil {
 			continue
@@ -72,8 +74,13 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 		}
 		logging.Info("OffChainValidator: validating open PoC challenge", types.PoC,
 			"target", ch.Target(), "start_height", ch.StartHeight(), "work_items", len(workItems))
-		v.executeValidation(ch.StartHeight(), samplingBlockHash, seedHex, challengeParams, sampleSize, nodes, workItems, nil, true)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			v.executeValidation(ch.StartHeight(), samplingBlockHash, seedHex, challengeParams, sampleSize, nodes, workItems, nil, true)
+		}()
 	}
+	wg.Wait()
 }
 
 func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch *types.OpenPoCChallenge, pocParams *types.PocParams) []participantWork {
