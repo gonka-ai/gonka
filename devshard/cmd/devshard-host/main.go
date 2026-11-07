@@ -120,6 +120,13 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, es
 			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
 		),
 	)
+	g.GET("/debug/timeout-clock", func(c echo.Context) error {
+		clock := false
+		if srv != nil && srv.Host() != nil {
+			clock = srv.Host().HeightsyncTimeoutClock()
+		}
+		return timeoutClockDebug(c, clock)
+	})
 	g.GET("/debug/gossip", func(c echo.Context) error {
 		nonce, err := strconv.ParseUint(c.QueryParam("nonce"), 10, 64)
 		if err != nil {
@@ -519,9 +526,22 @@ func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.Exec
 	return nil, errors.New(e.message)
 }
 
+// timeoutClockDebug is the e2e host's bound session clock. The value is the
+// one sessionConfigFromEnv froze, which matches the escrow flag.
+func timeoutClockDebug(c echo.Context, clock bool) error {
+	return c.JSON(http.StatusOK, map[string]any{
+		"heightsync_timeout_clock": clock,
+	})
+}
+
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
 // aligned with devshardctl when escrow params come from mock-chain gRPC.
+// DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK is that escrow flag. Unset is legacy.
 func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
+	clock, err := boolEnv("DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK", false)
+	if err != nil {
+		return types.SessionConfig{}, err
+	}
 	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
 		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),
 		CreateDevshardFee:         uintEnv("DEVSHARD_CREATE_DEVSHARD_FEE", 0),
@@ -533,6 +553,7 @@ func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
 		RefusalTimeout:            int64(uintEnv("DEVSHARD_REFUSAL_TIMEOUT", 0)),
 		ExecutionTimeout:          int64(uintEnv("DEVSHARD_EXECUTION_TIMEOUT", 0)),
+		HeightsyncTimeoutClock:    clock,
 	})
 	overrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
 	if err != nil {

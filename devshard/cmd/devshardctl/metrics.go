@@ -16,6 +16,7 @@ import (
 
 	"common/probe"
 
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/transport"
 )
 
@@ -479,6 +480,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 	)
 
 	m.peerRPCAdoption = transport.NewPeerRPCAdoption(m)
+	headertime.RegisterTimeoutClockMismatch(registry)
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return m
 }

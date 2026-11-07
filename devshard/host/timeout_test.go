@@ -97,7 +97,6 @@ func testPayload() *InferencePayload {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 }
 
@@ -284,6 +283,18 @@ func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], badPayload, nil, executor, nil, due(nil))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: payload mismatch")
+}
+
+func TestVerifyRefused_StartedAtMismatch_Rejects(t *testing.T) {
+	st := stateWithPendingFull(1, 1)
+	executor := &mockExecutorClient{challengeReceipt: []byte("would-return-receipt")}
+	payload := testPayload()
+	payload.StartedAt = st.Inferences[1].StartedAt + 1
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], payload, nil, executor, nil, due(nil))
+	require.NoError(t, err)
+	require.False(t, accept, "should reject: payload started_at is not the record")
+	require.Zero(t, executor.challengePayload, "a mismatched start time is not sent to the executor")
 }
 
 // A finish cannot apply to a pending record, so without its ConfirmStart it
@@ -658,6 +669,7 @@ func TestVerifyTimeoutSuite_HeaderClock(t *testing.T) {
 		{"RefusedDeadlineNotPassed", TestVerifyRefused_DeadlineNotPassed},
 		{"NilPayloadRejects", TestVerifyRefused_NilPayload_Rejects},
 		{"PayloadMismatchRejects", TestVerifyRefused_PayloadMismatch_Rejects},
+		{"StartedAtMismatchRejects", TestVerifyRefused_StartedAtMismatch_Rejects},
 		{"FinishWithoutConfirmDoesNotReject", TestVerifyRefused_FinishWithoutConfirmDoesNotReject},
 		{"CopiesVerifiedReceipt", TestVerifyRefused_CopiesVerifiedReceipt},
 		{"ReceiptForOtherEscrowOrSignerDoesNotReject", TestVerifyRefused_ReceiptForOtherEscrowOrSignerDoesNotReject},

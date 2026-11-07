@@ -24,6 +24,9 @@ type MultiConfigOpts struct {
 	// params and the seed escrow, so the escrow live at boot already has them.
 	RefusalTimeout   int64
 	ExecutionTimeout int64
+	// HeightsyncTimeoutClock nil leaves the seed on the legacy wall clock.
+	// A set value is written on params and the seed escrow together.
+	HeightsyncTimeoutClock *bool
 }
 
 // WriteStackConfig writes the standard two-versiond stack config.
@@ -101,6 +104,10 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 	if opts.ExecutionTimeout > 0 {
 		paramsExtra += fmt.Sprintf("\n  execution_timeout: %d", opts.ExecutionTimeout)
 		escrowExtra += fmt.Sprintf("\n    execution_timeout: %d", opts.ExecutionTimeout)
+	}
+	if opts.HeightsyncTimeoutClock != nil {
+		paramsExtra += fmt.Sprintf("\n  heightsync_timeout_clock: %t", *opts.HeightsyncTimeoutClock)
+		escrowExtra += fmt.Sprintf("\n    heightsync_timeout_clock: %t", *opts.HeightsyncTimeoutClock)
 	}
 
 	var hosts strings.Builder

@@ -622,6 +622,7 @@ func TestVerifierMissingFeedLeavesAnotherConfirmRunning(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(group))
+	config.HeightsyncTimeoutClock = true
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000),
 		state.WithHeaderTimes(src))

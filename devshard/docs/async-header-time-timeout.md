@@ -74,6 +74,8 @@ In that window the executor trusts the carried `F` and puts that same `(height, 
 
 `confirmed_at` is the executor's wall clock when it signs the receipt.
 
+A host that has several of its own `MsgConfirmStart` messages queued for one inference keeps the one with the earliest `ProposedAt`, then the smaller executor signature. `ProposedAt` is the local nonce when this host queued the message. It stays off the signed bytes. v6 kept the earliest `confirmed_at`. That field is inside the receipt, so a later proposal with an earlier wall clock would replace the first signature this host produced. A peer-imported copy has `ProposedAt` 0 and is skipped: this mempool does not verify a gossiped signature.
+
 ---
 
 ## Where header time is used

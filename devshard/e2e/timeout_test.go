@@ -26,10 +26,21 @@ import (
 //  5. Restart slot 1, continue the session, and finalize successfully.
 func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
 	requireE2EEnabled(t)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runE2ETimeoutProtocol(t, header)
+		})
+	}
+}
 
+func runE2ETimeoutProtocol(t *testing.T, header bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
-	env := startE2EEnv(ctx, t, requiredImages(t), timeoutProtocolEnvOptions())
+	env := startE2EEnv(ctx, t, requiredImages(t), timeoutProtocolEnvOptions(header))
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
 	const unavailableSlot = 1
 	status := testutil.GetStatus(t, client, env.clientURL)
@@ -37,6 +48,9 @@ func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
 	require.True(t, ok, "status config should be an object")
 	require.Equal(t, uint64(5), testutil.NumericField(t, config, "refusal_timeout"),
 		"timeout protocol should use the escrow-bound refusal timeout")
+	require.Equal(t, header, config["heightsync_timeout_clock"] == true,
+		"session clock must match the escrow the mock chain seeded")
+	requireHostTimeoutClock(t, client, env, header)
 	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), unavailableSlot)
 	beforeNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
 	env.stopHost(ctx, t, unavailableSlot)
@@ -126,11 +140,22 @@ func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
 //  5. Restart slot 1 without the hang env, continue the session, and finalize.
 func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	requireE2EEnabled(t)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runE2EExecutionTimeoutProtocol(t, header)
+		})
+	}
+}
 
+func runE2EExecutionTimeoutProtocol(t *testing.T, header bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 	const executorSlot = 1
-	opts := timeoutProtocolEnvOptions()
+	opts := timeoutProtocolEnvOptions(header)
 	opts.hostVolumeNames = sqliteHostVolumeNames(t)
 	opts.hostEnvOverrides = map[int]map[string]string{
 		executorSlot: {"DEVSHARD_STUB_EXECUTION_HANG": "true"},
@@ -143,6 +168,9 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	require.True(t, ok, "status config should be an object")
 	require.Equal(t, uint64(17), testutil.NumericField(t, config, "execution_timeout"),
 		"timeout protocol should use the escrow-bound execution timeout")
+	require.Equal(t, header, config["heightsync_timeout_clock"] == true,
+		"session clock must match the escrow the mock chain seeded")
+	requireHostTimeoutClock(t, client, env, header)
 
 	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), executorSlot)
 	beforeNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
@@ -222,15 +250,33 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	testutil.RequireSettlementHostStats(t, settlement, len(testutil.HostPrivateKeys))
 }
 
-func timeoutProtocolEnvOptions() e2eEnvOptions {
+func timeoutProtocolEnvOptions(header bool) e2eEnvOptions {
+	mockChainEnv := map[string]string{
+		"MOCK_CHAIN_CONFIG": "/app/mock-chain-timeout-config.yaml",
+	}
+	hostEnv := map[string]string{
+		"DEVSHARD_REFUSAL_TIMEOUT":   "5",
+		"DEVSHARD_EXECUTION_TIMEOUT": "17",
+	}
+	if header {
+		// The mock chain writes this onto params and the seed escrow. The
+		// gateway binds that escrow. devshard-host binds the same value from
+		// DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK. Unset on the host is legacy.
+		mockChainEnv["MOCK_CHAIN_HEIGHTSYNC_TIMEOUT_CLOCK"] = "true"
+		hostEnv["DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK"] = "true"
+	}
 	return e2eEnvOptions{
-		hostEnv: map[string]string{
-			"DEVSHARD_REFUSAL_TIMEOUT":   "5",
-			"DEVSHARD_EXECUTION_TIMEOUT": "17",
-		},
-		mockChainEnv: map[string]string{
-			"MOCK_CHAIN_CONFIG": "/app/mock-chain-timeout-config.yaml",
-		},
+		hostEnv:      hostEnv,
+		mockChainEnv: mockChainEnv,
+	}
+}
+
+func requireHostTimeoutClock(t *testing.T, client *http.Client, env *e2eEnv, header bool) {
+	t.Helper()
+	for slotID, hostURL := range env.hostControlURLs {
+		body := testutil.GetJSON(t, client, hostURL+e2eHostRoutePrefix+"/debug/timeout-clock")
+		require.Equal(t, header, body["heightsync_timeout_clock"] == true,
+			"host slot %d clock must match the escrow", slotID)
 	}
 }
 
@@ -245,7 +291,7 @@ func TestE2E_AllHostsExecutionHangSurfaces5xx(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 	hang := map[string]string{"DEVSHARD_STUB_EXECUTION_HANG": "true"}
-	opts := timeoutProtocolEnvOptions()
+	opts := timeoutProtocolEnvOptions(false)
 	opts.hostEnvOverrides = map[int]map[string]string{
 		0: hang,
 		1: hang,

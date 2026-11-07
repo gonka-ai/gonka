@@ -319,6 +319,12 @@ func verifyRefusedTimeout(
 	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 		return false, nil // bad payload -> reject timeout
 	}
+	// The refusal payload's StartedAt is the gateway send time stored on the
+	// record. The executor sign path does not use this bind: its receipt wall
+	// clock is its own. A challenge that names a different instant is declined.
+	if payload.StartedAt != rec.StartedAt {
+		return false, nil
+	}
 
 	if executorClient == nil {
 		// VerifyRefusedProgress uses a nil client as a local preflight. That

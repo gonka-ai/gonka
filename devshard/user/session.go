@@ -933,16 +933,45 @@ func (s *Session) dropDiffPrefixLocked() {
 }
 
 // dropSealedOutcomesLocked drops the outcomes of inferences sealed at least nonceOutcomeRetention nonces ago,
-// so a reader between ProcessResponse and IsNonceFinished still finds a fresh one. Caller must hold s.mu.
+// so a reader between ProcessResponse and IsNonceFinished still finds a fresh one.
+// A mismatch sample for a nonce that never had an outcome, such as a sweep, is
+// dropped on the same seal window. Caller must hold s.mu.
 func (s *Session) dropSealedOutcomesLocked() {
-	if s.nonce < nonceOutcomeRetention {
+	if s.nonce < nonceOutcomeRetention || s.sm == nil {
 		return
 	}
-	for nonce := range s.sm.SealedAtOrBefore(slices.Collect(maps.Keys(s.nonceStates)), s.nonce-nonceOutcomeRetention) {
+	cutoff := s.nonce - nonceOutcomeRetention
+	for nonce := range s.sm.SealedAtOrBefore(slices.Collect(maps.Keys(s.nonceStates)), cutoff) {
 		delete(s.nonceStates, nonce)
-		delete(s.clockMismatchOnce, clockMismatchKey{nonce: nonce, kind: "refused"})
-		delete(s.clockMismatchOnce, clockMismatchKey{nonce: nonce, kind: "execution"})
+		s.dropClockMismatchLocked(nonce)
 	}
+	s.dropSealedClockMismatchesLocked(cutoff)
+}
+
+// dropSealedClockMismatchesLocked drops once-keys whose inference was sealed
+// at or before cutoff. The nonce does not have to be in nonceStates.
+// Caller must hold s.mu.
+func (s *Session) dropSealedClockMismatchesLocked(cutoff uint64) {
+	if len(s.clockMismatchOnce) == 0 {
+		return
+	}
+	ids := make([]uint64, 0, len(s.clockMismatchOnce))
+	seen := make(map[uint64]struct{}, len(s.clockMismatchOnce))
+	for key := range s.clockMismatchOnce {
+		if _, ok := seen[key.nonce]; ok {
+			continue
+		}
+		seen[key.nonce] = struct{}{}
+		ids = append(ids, key.nonce)
+	}
+	for nonce := range s.sm.SealedAtOrBefore(ids, cutoff) {
+		s.dropClockMismatchLocked(nonce)
+	}
+}
+
+func (s *Session) dropClockMismatchLocked(nonce uint64) {
+	delete(s.clockMismatchOnce, clockMismatchKey{nonce: nonce, kind: "refused"})
+	delete(s.clockMismatchOnce, clockMismatchKey{nonce: nonce, kind: "execution"})
 }
 
 // dropSignaturesThroughLocked drops signature entries at or below floor.
@@ -4174,13 +4203,11 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 				if !s.nonceStarted(nonce) {
 					// A dropped receipt cannot support an execution timeout. The
 					// refusal path can recover it or refund the still-pending record.
-					reasonLabel = "refused"
-					if s.sm.Config().HeightsyncTimeoutClock {
-						s.mu.Lock()
-						deadline = s.refusalDeadlineLocked(nonce, sendTime, *rec, s.sm.Config().RefusalTimeout)
-						s.mu.Unlock()
-					} else {
-						deadline = legacyWallDeadline(sendTime, s.sm.Config().RefusalTimeout)
+					// Recompute from Due so a zero sendTime uses StartedAt, not the epoch.
+					reasonLabel, deadline = s.TimeoutDeadline(nonce, sendTime)
+					if reasonLabel != "refused" {
+						reasonLabel = "refused"
+						deadline = s.refusalDeadlineFor(nonce, sendTime, *rec)
 					}
 				}
 			}
@@ -4448,10 +4475,19 @@ func (s *Session) recoveryLanded(nonce uint64, reason types.TimeoutReason) bool 
 }
 
 func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
+	return s.timeoutDeadline(nonce, sendTime, true)
+}
+
+// timeoutDeadline is TimeoutDeadline. observeShadow is false for label checks
+// such as inferenceConfirmed, which must not read the header map or record a
+// mismatch on every receipt wake.
+func (s *Session) timeoutDeadline(nonce uint64, sendTime time.Time, observeShadow bool) (string, time.Time) {
 	label, deadline, snap := s.timeoutDeadlineLocked(nonce, sendTime)
 	// The stamp row is compared after s.mu is released. StoredAt takes the
 	// header map lock, and that lock must not nest under the session lock.
-	s.observeLegacyClockShadow(snap)
+	if observeShadow {
+		s.observeLegacyClockShadow(snap)
+	}
 	return label, deadline
 }
 
@@ -4480,6 +4516,8 @@ func (s *Session) timeoutDeadlineLocked(nonce uint64, sendTime time.Time) (strin
 // legacyTimeoutDeadlineLocked is the devshard-0.2.x-v6 wall deadline.
 // outcome.confirmedAt wins while that confirm is still queued or the record
 // has started, then a started record's ConfirmedAt, otherwise sendTime.
+// A zero sendTime uses StartedAt. A missing wall anchor stays ahead and is
+// not the Unix epoch.
 // A Pending record whose confirm was dropped is not a confirmation: the
 // stored time is cleared and the deadline is the refusal arm. Both arms add
 // TimeoutBuffer. It does not invent time.Now() and it does not read the
@@ -4488,22 +4526,78 @@ func (s *Session) timeoutDeadlineLocked(nonce uint64, sendTime time.Time) (strin
 // Caller holds s.mu.
 func (s *Session) legacyTimeoutDeadlineLocked(nonce uint64, sendTime time.Time, cfg types.SessionConfig) (string, time.Time, legacyShadowSnap) {
 	rec, _ := s.sm.GetInference(nonce)
+	now := time.Now()
 	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
 		if rec.Status == types.StatusPending && s.pendingConfirmLocked(nonce) == nil {
 			outcome.confirmedAt = 0
 		} else {
-			anchor := time.Unix(outcome.confirmedAt, 0)
-			deadline := legacyWallDeadline(anchor, cfg.ExecutionTimeout)
-			return "execution", deadline, s.legacyShadowSnapLocked(nonce, "execution", anchor, false, cfg.ExecutionTimeout, rec)
+			return s.legacyDueLocked(nonce, headertime.KindExecution, time.Unix(outcome.confirmedAt, 0), cfg.ExecutionTimeout, rec, now)
 		}
 	}
 	if rec.Status == types.StatusStarted {
-		anchor := time.Unix(rec.ConfirmedAt, 0)
-		deadline := legacyWallDeadline(anchor, cfg.ExecutionTimeout)
-		return "execution", deadline, s.legacyShadowSnapLocked(nonce, "execution", anchor, rec.ConfirmedAt <= 0, cfg.ExecutionTimeout, rec)
+		wall := time.Time{}
+		if rec.ConfirmedAt > 0 {
+			wall = time.Unix(rec.ConfirmedAt, 0)
+		}
+		return s.legacyDueLocked(nonce, headertime.KindExecution, wall, cfg.ExecutionTimeout, rec, now)
 	}
-	deadline := legacyWallDeadline(sendTime, cfg.RefusalTimeout)
-	return "refused", deadline, s.legacyShadowSnapLocked(nonce, "refused", sendTime, sendTime.IsZero(), cfg.RefusalTimeout, rec)
+	return s.legacyDueLocked(nonce, headertime.KindRefused, legacyRefusalWall(sendTime, rec.StartedAt), cfg.RefusalTimeout, rec, now)
+}
+
+// legacyRefusalWall is the wall instant for a legacy refusal. A live attempt
+// passes sendTime, including the Unix epoch, which is already past. A restart
+// passes the zero Time and uses the record's StartedAt. The zero Time with
+// no StartedAt is unarmed, not the epoch.
+func legacyRefusalWall(sendTime time.Time, startedAt int64) time.Time {
+	if !sendTime.IsZero() {
+		return sendTime
+	}
+	if startedAt > 0 {
+		return time.Unix(startedAt, 0)
+	}
+	return time.Time{}
+}
+
+// legacyDueLocked calls headertime.Due for the active legacy deadline.
+// Extra is TimeoutBuffer. A missing anchor does not open. Caller holds s.mu.
+// The Unix epoch is a real anchor and is already past. The zero Time is not.
+func (s *Session) legacyDueLocked(nonce uint64, kind string, wall time.Time, timeoutSeconds int64, rec types.InferenceRecord, now time.Time) (string, time.Time, legacyShadowSnap) {
+	deadline, kind, armed := headertime.Due(headertime.ClockDueInput{
+		Reason:   kind,
+		Now:      now,
+		Wall:     wall,
+		Interval: timeoutInterval(timeoutSeconds),
+		Extra:    TimeoutBuffer,
+		Caller:   headertime.CallerGateway,
+	})
+	if !armed {
+		return kind, now.Add(headertime.FeedPoll), legacyShadowSnap{}
+	}
+	// The epoch is due, and it is not a stamp comparison point.
+	return kind, deadline, s.legacyShadowSnapLocked(nonce, kind, wall, wall.Unix() <= 0, timeoutSeconds, rec)
+}
+
+// refusalDeadlineFor is the refusal deadline after a dropped receipt, using
+// the same Due rules as TimeoutDeadline. Caller does not hold s.mu.
+func (s *Session) refusalDeadlineFor(nonce uint64, sendTime time.Time, rec types.InferenceRecord) time.Time {
+	if s.sm.Config().HeightsyncTimeoutClock {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.refusalDeadlineLocked(nonce, sendTime, rec, s.sm.Config().RefusalTimeout)
+	}
+	now := time.Now()
+	deadline, _, armed := headertime.Due(headertime.ClockDueInput{
+		Reason:   headertime.KindRefused,
+		Now:      now,
+		Wall:     legacyRefusalWall(sendTime, rec.StartedAt),
+		Interval: timeoutInterval(s.sm.Config().RefusalTimeout),
+		Extra:    TimeoutBuffer,
+		Caller:   headertime.CallerGateway,
+	})
+	if !armed {
+		return now.Add(headertime.FeedPoll)
+	}
+	return deadline
 }
 
 // clockMismatchKey is one gateway mismatch sample: a nonce and a timeout kind.
@@ -4555,28 +4649,47 @@ func (s *Session) legacyShadowSnapLocked(nonce uint64, kind string, anchor time.
 	return snap
 }
 
-// observeLegacyClockShadow compares the open deadline with the stamp. Caller
-// does not hold s.mu. The map read happens here; the session lock is taken
-// again only to record a new mismatch.
+// observeLegacyClockShadow compares the wall deadline with the stamp deadline.
+// It reads the header map only once the wall arm is due, which is the decision
+// the vote acts on. Polls while the wall arm is still ahead, and label checks
+// such as inferenceConfirmed, do not get here. A missing stamp is remembered
+// and is not a mismatch: legacy does not need the feed to open. Caller does
+// not hold s.mu.
 func (s *Session) observeLegacyClockShadow(snap legacyShadowSnap) {
 	if !snap.compare {
 		return
 	}
 	now := time.Now()
 	d := legacyTimeoutDuration(snap.timeoutSeconds)
-	wallDue := !now.Before(snap.anchor.Add(d))
-	stampMs, missing := legacyShadowStamp(snap)
-	stampDue := !missing && stampMs > 0 && !now.Before(time.UnixMilli(stampMs).Add(d))
-	if wallDue == stampDue {
+	wallDeadline := snap.anchor.Add(d)
+	if now.Before(wallDeadline) {
 		return
 	}
+	stampMs, missing := legacyShadowStamp(snap)
+	shadow := headertime.CompareLegacyShadow(now, snap.anchor, wallDeadline, stampMs, missing)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if !shadow.Mismatch {
+		// Remember the sample so a later poll does not read the map again.
+		if !s.claimClockMismatchLocked(snap.nonce, snap.kind) {
+			return
+		}
+		if shadow.Cause == "stamp_missing" {
+			recordTimeoutClockMismatch("gateway", snap.kind, s.escrowID, snap.nonce, headertime.DueEval{
+				Active:    headertime.DueSide{Due: true, Wall: true},
+				Shadow:    headertime.DueSide{Due: false},
+				HasShadow: true,
+				Cause:     shadow.Cause,
+			}, snap.anchor.Unix(), stampMs, snap.height)
+		}
+		return
+	}
 	s.noteTimeoutClockEvalLocked(snap.nonce, snap.kind, snap.anchor.Unix(), stampMs, snap.height, headertime.DueEval{
-		Active:    headertime.DueSide{Due: wallDue, Wall: true},
-		Shadow:    headertime.DueSide{Due: stampDue},
+		Active:    headertime.DueSide{Due: true, Wall: true},
+		Shadow:    headertime.DueSide{Due: shadow.StampDue},
 		HasShadow: true,
 		Mismatch:  true,
+		Cause:     shadow.Cause,
 	})
 }
 
@@ -4604,21 +4717,18 @@ func (s *Session) refusalDeadlineLocked(nonce uint64, sendTime time.Time, rec ty
 		wallUnix = rec.StartedAt
 	}
 	startMs, ok := s.startedHeightTimeLocked(rec)
-	eval := headertime.EvalDue(headertime.DueInput{
-		HeightsyncTimeoutClock: s.sm.Config().HeightsyncTimeoutClock,
+	deadline, _, _ := headertime.Due(headertime.ClockDueInput{
+		HeightsyncTimeoutClock: true,
+		Reason:                 headertime.KindRefused,
 		Now:                    now,
-		WallUnix:               wallUnix,
+		WallAnchor:             wallUnix,
 		StampTimeMs:            startMs,
 		StampMissing:           !ok,
+		StampHeight:            rec.StartedAtHeight,
 		Interval:               interval,
 		Caller:                 headertime.CallerGateway,
 	})
-	s.noteTimeoutClockEvalLocked(nonce, "refused", wallUnix, startMs, rec.StartedAtHeight, eval)
-	if eval.Active.Wall && !sendTime.IsZero() {
-		// Absolute wall deadline (sendTime+interval), including when already past.
-		return refusalWallDeadline(sendTime, refusalTimeoutSeconds)
-	}
-	return s.deadlineFromDueEvalLocked(nonce, now, eval, wallUnix, interval, s.nonceStates[nonce], false)
+	return deadline
 }
 
 // executionDeadlineLocked is the header-mode gateway execution trigger.
@@ -4638,17 +4748,50 @@ func (s *Session) executionDeadlineLocked(nonce uint64, rec types.InferenceRecor
 	if wallUnix <= 0 && outcome != nil {
 		wallUnix = outcome.confirmedAt
 	}
-	eval := headertime.EvalDue(headertime.DueInput{
-		HeightsyncTimeoutClock: s.sm.Config().HeightsyncTimeoutClock,
+	deadline, _, _ := headertime.Due(headertime.ClockDueInput{
+		HeightsyncTimeoutClock: true,
+		Reason:                 headertime.KindExecution,
 		Now:                    now,
-		WallUnix:               wallUnix,
+		WallAnchor:             wallUnix,
 		StampTimeMs:            confirmedMs,
 		StampMissing:           !ok,
+		StampHeight:            rec.ConfirmedAtHeight,
 		Interval:               interval,
 		Caller:                 headertime.CallerGateway,
 	})
-	s.noteTimeoutClockEvalLocked(nonce, "execution", wallUnix, confirmedMs, rec.ConfirmedAtHeight, eval)
-	return s.deadlineFromDueEvalLocked(nonce, now, eval, wallUnix, interval, outcome, true)
+	if ok {
+		return deadline
+	}
+	// Stamp miss: Due wakes on FeedPoll. Stretch that wake while the local
+	// confirm wall has not yet passed, and log feed-behind once it has.
+	// The wall instant does not open the challenge.
+	confirmedAt := int64(0)
+	if outcome != nil {
+		confirmedAt = outcome.confirmedAt
+	}
+	if confirmedAt <= 0 {
+		confirmedAt = wallUnix
+	}
+	if outcome != nil && confirmedWallPast(confirmedAt, interval, now) && !outcome.feedBehindLogged {
+		outcome.feedBehindLogged = true
+		logging.Stage(context.Background(), "timeout_block_feed_behind",
+			"escrow", s.escrowID,
+			"nonce", nonce,
+			"reason", "execution",
+			"detail", "gateway block feed is behind the chain",
+		)
+	}
+	wake := headertime.FeedPoll
+	if confirmedAt > 0 && !confirmedWallPast(confirmedAt, interval, now) {
+		until := time.Until(time.Unix(confirmedAt, 0).Add(interval))
+		if until > wake {
+			wake = until
+		}
+	}
+	if wake <= 0 {
+		wake = headertime.FeedPoll
+	}
+	return now.Add(wake)
 }
 
 // noteTimeoutClockEvalLocked records a legacy wall/stamp due mismatch once per
@@ -4686,64 +4829,6 @@ func (s *Session) claimClockMismatchLocked(nonce uint64, kind string) bool {
 	}
 	s.clockMismatchOnce[key] = struct{}{}
 	return true
-}
-
-// deadlineFromDueEvalLocked turns EvalDue into a sleep/open deadline.
-// executionMissing enables the header-mode feed-behind wake when the stamp is
-// missing. Caller holds s.mu.
-func (s *Session) deadlineFromDueEvalLocked(nonce uint64, now time.Time, eval headertime.DueEval, wallUnix int64, interval time.Duration, outcome *nonceOutcome, executionMissing bool) time.Time {
-	if eval.Active.Wall {
-		// Absolute wall+interval (past or future). The vote gate uses
-		// refusalPast; do not rewrite a past wall into now-1ms.
-		if wallUnix <= 0 {
-			return now.Add(executionFeedPoll)
-		}
-		return time.Unix(wallUnix, 0).Add(interval)
-	}
-	if eval.Active.Due {
-		return now.Add(-time.Millisecond)
-	}
-	switch eval.Active.Decision.Outcome {
-	case headertime.OutcomeNotYet:
-		if eval.Active.Decision.Delta <= 0 {
-			return now.Add(time.Millisecond)
-		}
-		return now.Add(eval.Active.Decision.Delta)
-	default:
-		if !executionMissing {
-			return now.Add(executionFeedPoll)
-		}
-		// Header-mode stamp miss: outcome.confirmedAt is the feed-behind
-		// signal (local receipt wall), not Active due. Prefer it over the
-		// record wall so tests/restart can force the behind log.
-		confirmedAt := int64(0)
-		if outcome != nil {
-			confirmedAt = outcome.confirmedAt
-		}
-		if confirmedAt <= 0 {
-			confirmedAt = wallUnix
-		}
-		if outcome != nil && confirmedWallPast(confirmedAt, interval, now) && !outcome.feedBehindLogged {
-			outcome.feedBehindLogged = true
-			logging.Stage(context.Background(), "timeout_block_feed_behind",
-				"escrow", s.escrowID,
-				"nonce", nonce,
-				"reason", "execution",
-				"detail", "gateway block feed is behind the chain",
-			)
-		}
-		wake := executionFeedPoll
-		if confirmedAt > 0 && !confirmedWallPast(confirmedAt, interval, now) {
-			until := time.Until(time.Unix(confirmedAt, 0).Add(interval))
-			if until > wake {
-				wake = until
-			}
-		}
-		if wake <= 0 {
-			wake = executionFeedPoll
-		}
-		return now.Add(wake)
-	}
 }
 
 // headerAtHeight is the height-keyed map read. *headertime.Source implements
@@ -4855,14 +4940,6 @@ func confirmedWallPast(confirmedAt int64, interval time.Duration, now time.Time)
 	return now.After(time.Unix(confirmedAt, 0).Add(interval))
 }
 
-// refusalWallDeadline is sendTime + RefusalTimeout. It does not add
-// TimeoutBuffer and it does not read a header time. Header-mode EvalDue
-// uses it when the active arm is the wall. A timeout that does not fit in
-// a Duration saturates instead of wrapping into the past.
-func refusalWallDeadline(sendTime time.Time, refusalTimeoutSeconds int64) time.Time {
-	return sendTime.Add(timeoutInterval(refusalTimeoutSeconds))
-}
-
 // legacyTimeoutDuration is the timeout plus TimeoutBuffer. A value that does
 // not fit in a Duration saturates instead of wrapping into the past.
 func legacyTimeoutDuration(timeoutSeconds int64) time.Duration {
@@ -4871,12 +4948,6 @@ func legacyTimeoutDuration(timeoutSeconds int64) time.Duration {
 		d += TimeoutBuffer
 	}
 	return d
-}
-
-// legacyWallDeadline is anchor + timeout seconds + TimeoutBuffer, the v6
-// gateway deadline.
-func legacyWallDeadline(anchor time.Time, timeoutSeconds int64) time.Time {
-	return anchor.Add(legacyTimeoutDuration(timeoutSeconds))
 }
 
 // timeoutInterval converts a protocol timeout in seconds. A value that does
@@ -4905,60 +4976,30 @@ func deadlineNotReached(_ string, deadline time.Time) bool {
 	return time.Now().Before(deadline)
 }
 
-func (s *Session) timeoutDueAtFloor(nonce uint64) bool {
-	rec, ok := s.sm.GetInference(nonce)
-	if !ok {
-		return false
-	}
-	reason := types.TimeoutReason_TIMEOUT_REASON_REFUSED
-	switch rec.Status {
-	case types.StatusPending:
-	case types.StatusStarted:
-		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-	default:
-		return false
-	}
-	return s.sm.TimeoutDue(nonce, reason) == nil
-}
-
-func (s *Session) awaitingFloor(nonce uint64, reason types.TimeoutReason) bool {
-	rec, ok := s.sm.GetInference(nonce)
-	if !ok {
-		return false
-	}
-	switch {
-	case rec.Status == types.StatusPending && reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		s.mu.Lock()
-		confirmed := s.pendingConfirmLocked(nonce) != nil
-		s.mu.Unlock()
-		if confirmed {
-			return false
-		}
-	case rec.Status == types.StatusStarted && reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-	default:
-		return false
-	}
-	remaining, err := s.sm.TimeoutRemaining(nonce, reason)
-	return err == nil && remaining > 0
-}
-
-// timeoutUnarmed reports that this inference can never grow a timeout: no
-// start/confirm height. A missing header-map row is ErrHeaderPending, not
-// unarmed — the gateway keeps the completion and retries once the map fills
-// (restart refusal) or the wall-clock sendTime elapses (live refusal).
+// timeoutUnarmed reports that this inference can never grow a timeout.
+// Legacy: the wall anchor for the record's status is missing. A missing
+// height does not drop it. Header: no stamp height and no carried time.
+// A missing header-map row stays armed and the completion retries.
 func (s *Session) timeoutUnarmed(nonce uint64) bool {
 	rec, ok := s.sm.GetInference(nonce)
 	if !ok {
 		return false
 	}
-	reason := types.TimeoutReason_TIMEOUT_REASON_REFUSED
-	if rec.Status == types.StatusStarted {
-		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-	} else if rec.Status != types.StatusPending {
+	header := s.sm.Config().HeightsyncTimeoutClock
+	switch rec.Status {
+	case types.StatusPending:
+		if header {
+			return rec.StartedAtHeight == 0 && rec.StartedAtTimeMs <= 0
+		}
+		return rec.StartedAt <= 0
+	case types.StatusStarted:
+		if header {
+			return rec.ConfirmedAtHeight == 0 && rec.ConfirmedAtTimeMs <= 0
+		}
+		return rec.ConfirmedAt <= 0
+	default:
 		return false
 	}
-	_, err := s.sm.TimeoutRemaining(nonce, reason)
-	return errors.Is(err, types.ErrTimeoutNotArmed)
 }
 
 func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (TimeoutResult, error) {
@@ -5034,7 +5075,7 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 // inferenceConfirmed reports that a receipt with a confirmation stamp is known for nonce, either on
 // the record or queued for the next diff. That is the moment the inference leaves the refusal path.
 func (s *Session) inferenceConfirmed(nonce uint64, sendTime time.Time) bool {
-	reason, _ := s.TimeoutDeadline(nonce, sendTime)
+	reason, _ := s.timeoutDeadline(nonce, sendTime, false)
 	return reason != "refused"
 }
 

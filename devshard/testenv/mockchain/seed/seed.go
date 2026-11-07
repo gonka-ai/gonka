@@ -151,6 +151,7 @@ func FromFile(f *config.File) (*store.Store, error) {
 			ExecutionTimeout:        executionTimeout,
 			ValidationRate:          f.Params.ValidationRate,
 			VoteThresholdFactor:     f.Params.VoteThresholdFactor,
+			HeightsyncTimeoutClock:  boolPtr(f.Params.HeightsyncTimeoutClock),
 		},
 	}
 
@@ -189,6 +190,7 @@ func FromFile(f *config.File) (*store.Store, error) {
 			VoteThresholdFactor:       e.VoteThresholdFactor,
 			RefusalTimeout:            timeoutOrDefault(e.RefusalTimeout, refusalTimeout),
 			ExecutionTimeout:          timeoutOrDefault(e.ExecutionTimeout, executionTimeout),
+			HeightsyncTimeoutClock:    boolPtrOr(e.HeightsyncTimeoutClock, boolPtr(f.Params.HeightsyncTimeoutClock)),
 		}
 	}
 
@@ -262,6 +264,27 @@ func FromFile(f *config.File) (*store.Store, error) {
 	}
 	s.InitAfterLoad()
 	return s, nil
+}
+
+func boolPtr(v *bool) bool {
+	return v != nil && *v
+}
+
+func boolPtrOr(v *bool, fallback bool) bool {
+	if v == nil {
+		return fallback
+	}
+	return *v
+}
+
+// ApplyHeightsyncTimeoutClock writes the clock onto params and every seeded
+// escrow. The bridge binds those escrow rows, so the flag the process was
+// given is the flag the session reads.
+func ApplyHeightsyncTimeoutClock(st *store.Store, on bool) {
+	if st == nil {
+		return
+	}
+	st.SetHeightsyncTimeoutClock(on)
 }
 
 func timeoutOrDefault(value, fallback int64) int64 {

@@ -226,10 +226,9 @@ func (s *Session) guardCompletion(ctx context.Context) error {
 		if err := host.VerifyPayload(&entry.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 			return fmt.Errorf("%w: nonce %d retry payload: %v", ErrInferenceCompletionPending, entry.Nonce, err)
 		}
-		// Zero sendTime: restart path. Legacy uses the v6 wall deadline
-		// (outcome.confirmedAt, else a started record's ConfirmedAt, else the
-		// zero send time plus RefusalTimeout and TimeoutBuffer). Header mode
-		// restores the trigger from the local header map.
+		// Zero sendTime: restart path. Legacy uses the record wall anchor
+		// (StartedAt or ConfirmedAt) plus TimeoutBuffer. Header mode uses
+		// the carried stamp or the header map.
 		result, retryErr := s.HandleTimeout(retryCtx, entry.Nonce, time.Time{}, &entry.Payload)
 		if !s.completionResolved(entry.Nonce) {
 			return fmt.Errorf("%w: nonce %d timeout %s/%s: %v", ErrInferenceCompletionPending, entry.Nonce, result.Outcome, result.DetailReason, retryErr)

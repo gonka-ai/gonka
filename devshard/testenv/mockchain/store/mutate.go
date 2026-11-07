@@ -6,6 +6,22 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
+// SetHeightsyncTimeoutClock freezes the timeout clock on params and every
+// escrow row. False is the legacy wall clock.
+func (s *Store) SetHeightsyncTimeoutClock(on bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.Params.DevshardEscrowParams == nil {
+		s.Params.DevshardEscrowParams = &inferencetypes.DevshardEscrowParams{}
+	}
+	s.Params.DevshardEscrowParams.HeightsyncTimeoutClock = on
+	for _, escrow := range s.Escrows {
+		if escrow != nil {
+			escrow.HeightsyncTimeoutClock = on
+		}
+	}
+}
+
 // PatchDevshardEscrowParams mutates DevshardEscrowParams and stamps params_block_height
 // at the current chain tip (mock-chain analogue of dapi publishing on param change).
 func (s *Store) PatchDevshardEscrowParams(patch func(*inferencetypes.DevshardEscrowParams)) {

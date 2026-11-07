@@ -768,6 +768,7 @@ type statusSessionConfig struct {
 	InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
 	InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
 	AutoSealEveryNNonces      uint32 `json:"auto_seal_every_n_nonces"`
+	HeightsyncTimeoutClock    bool   `json:"heightsync_timeout_clock"`
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -933,6 +934,7 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 			InferenceSealGraceNonces:  cfg.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      cfg.AutoSealEveryNNonces,
+			HeightsyncTimeoutClock:    cfg.HeightsyncTimeoutClock,
 		},
 	}
 	if p.phaseGate != nil {
@@ -1216,11 +1218,12 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 		"latest_nonce":   st.LatestNonce,
 		"finalize_nonce": st.FinalizeNonce,
 		"config": map[string]any{
-			"refusal_timeout":   st.Config.RefusalTimeout,
-			"execution_timeout": st.Config.ExecutionTimeout,
-			"token_price":       st.Config.TokenPrice,
-			"vote_threshold":    st.Config.VoteThreshold,
-			"validation_rate":   st.Config.ValidationRate,
+			"refusal_timeout":          st.Config.RefusalTimeout,
+			"execution_timeout":        st.Config.ExecutionTimeout,
+			"token_price":              st.Config.TokenPrice,
+			"vote_threshold":           st.Config.VoteThreshold,
+			"validation_rate":          st.Config.ValidationRate,
+			"heightsync_timeout_clock": st.Config.HeightsyncTimeoutClock,
 		},
 	}
 

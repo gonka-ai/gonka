@@ -771,9 +771,10 @@ func (e *testProxyEnv) floorReceipt(t *testing.T, nonce uint64, confirmedAt int6
 	t.Helper()
 	record, tracked := e.sm.GetInference(nonce)
 	require.True(t, tracked)
-	stamp := testutil.ReceiptStamp{}
+	stamp := testutil.ReceiptStamp{StartedAt: record.StartedAt, ConfirmedAt: confirmedAt}
 	if record.StartedAtHeight > 0 {
-		stamp = testutil.ReceiptStamp{Height: record.StartedAtHeight, Hash: []byte{0xaa}}
+		stamp.Height = record.StartedAtHeight
+		stamp.Hash = []byte{0xaa}
 	}
 	sig := testutil.SignExecutorReceipt(t, e.verifiers[record.ExecutorSlot].signer, "escrow-proxy", nonce,
 		record.PromptHash, record.Model, record.InputLength, record.MaxTokens, stamp)

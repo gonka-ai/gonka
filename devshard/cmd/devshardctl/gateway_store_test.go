@@ -66,6 +66,7 @@ func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
 		"/devshard/12/v1/state",
 		"/v1/debug/state",
 		"/v1/debug/heightsync",
+		"/v1/debug/timeout-clock",
 		"/v1/debug/rpc-traffic",
 		"/devshard/12/v1/debug/signatures/collect",
 	} {

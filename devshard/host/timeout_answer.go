@@ -15,7 +15,7 @@ import (
 
 // verifierMap is this process's wall clock and stored header times.
 // A verifier without a stored feed keeps the TimeoutDue gate (header mode)
-// or a wall-only EvalDue check (legacy mode).
+// or the wall Due check (legacy mode).
 type verifierMap interface {
 	VerifierNow() time.Time
 	HasHeaderFeed() bool
@@ -409,8 +409,9 @@ func executionStampAnchor(rec *types.InferenceRecord, reason types.TimeoutReason
 // (header mode only). It does not call GetBlockHeader and it does not sleep
 // inside ChallengeReceipt.
 //
-// Legacy (HeightsyncTimeoutClock=false): Active is wall StartedAt/ConfirmedAt;
-// stamp Decide is shadowed for mismatch only — no AnswerWait for Active.
+// Legacy (HeightsyncTimeoutClock=false): Active is wall StartedAt/ConfirmedAt.
+// The stamp is shadowed through CompareLegacyShadow and does not block the
+// wall result. There is no AnswerWait on this path.
 // Header: existing stamp Decide / schedule / feed_behind behaviour.
 func awaitVerifierDue(
 	ctx context.Context,
@@ -458,9 +459,10 @@ func escrowIDOf(ev EvidenceVerifier) string {
 
 // awaitVerifierLegacyDue is the devshard-0.2.x-v6 wall check: the challenge
 // runs once nowUnix-anchor is at least the timeout in whole seconds. Refusal
-// uses StartedAt, execution uses ConfirmedAt. A zero anchor is due. Stamp
-// Decide is shadowed for mismatch only and never blocks the wall result.
-// There is no AnswerWait and no TimeoutBuffer on this check.
+// uses StartedAt, execution uses ConfirmedAt. A zero anchor is due. The
+// stamp comparison is CompareLegacyShadow, the same function the gateway
+// uses, and it never blocks the wall result. There is no AnswerWait and no
+// TimeoutBuffer on this check.
 func awaitVerifierLegacyDue(
 	ev EvidenceVerifier,
 	m verifierMap,
@@ -488,16 +490,28 @@ func awaitVerifierLegacyDue(
 		stampMs, found = rec.ConfirmedAtTimeMs, true
 	}
 	wallUnix := wallUnixForReason(rec, reason)
-	seconds := int64(interval / time.Second)
-	due := now.Unix()-wallUnix >= seconds
-	stamp := headertime.Decide(now, stampMs, !found, interval, 0, headertime.CallerVerifier)
-	stampDue := stamp.Outcome == headertime.OutcomeDue
-	if due != stampDue && claimVerifierClockMismatch(ev, inferenceID, reason) {
+	// A signed anchor of 0 is the Unix epoch and is due once the timeout has
+	// elapsed from 1970. The gateway treats a missing sendTime differently:
+	// it falls back to StartedAt, and if that is also missing the challenge
+	// is unarmed. Do not fold those two zeros together.
+	deadline, _, armed := headertime.Due(headertime.ClockDueInput{
+		Reason:   timeoutKindLabel(reason),
+		Now:      now,
+		Wall:     time.Unix(wallUnix, 0),
+		Interval: interval,
+		Caller:   headertime.CallerVerifier,
+	})
+	due := armed && !now.Before(deadline)
+	shadow := headertime.CompareLegacyShadow(now, time.Unix(wallUnix, 0), deadline, stampMs, !found)
+	// A missing stamp is logged once the wall arm is due. A real disagreement
+	// is recorded whenever this check runs, including while the wall is ahead.
+	if shadow.Cause != "" && (shadow.Mismatch || due) && claimVerifierClockMismatch(ev, inferenceID, reason) {
 		headertime.RecordClockMismatch("verifier", timeoutKindLabel(reason), escrowIDOf(ev), inferenceID, headertime.DueEval{
 			Active:    headertime.DueSide{Due: due, Wall: true},
-			Shadow:    headertime.DueSide{Due: stampDue, Decision: stamp},
+			Shadow:    headertime.DueSide{Due: shadow.StampDue},
 			HasShadow: true,
-			Mismatch:  true,
+			Mismatch:  shadow.Mismatch,
+			Cause:     shadow.Cause,
 		}, wallUnix, stampMs, height)
 	}
 	return due, nil

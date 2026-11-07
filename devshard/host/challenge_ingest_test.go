@@ -26,7 +26,9 @@ func newIngestFixture(t *testing.T) *ingestFixture {
 		hosts: []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)},
 		user:  testutil.MustGenerateKey(t),
 	}
-	f.start = testutil.SignDiff(t, f.user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	start := testutil.StartTx(1)
+	start.GetStartInference().StartedAt = 1000
+	f.start = testutil.SignDiff(t, f.user, "escrow-1", 1, []*types.DevshardTx{start})
 	return f
 }
 
