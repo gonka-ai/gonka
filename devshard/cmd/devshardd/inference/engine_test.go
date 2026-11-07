@@ -220,6 +220,78 @@ func TestDoWithLockedNode_AcquireFailureMarksSpan(t *testing.T) {
 		"nothing was locked, so nothing may be released")
 }
 
+func TestDoWithLockedNodeKeepsSlotUntilStreamingBodyCompletes(t *testing.T) {
+	firstChunkWritten := make(chan struct{})
+	finishFirstBody := make(chan struct{})
+	var finishBodyOnce sync.Once
+	finishBody := func() { finishBodyOnce.Do(func() { close(finishFirstBody) }) }
+	responseReady := make(chan struct{})
+
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("data: first\n\n"))
+		w.(http.Flusher).Flush()
+		close(firstChunkWritten)
+		<-finishFirstBody
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	t.Cleanup(func() {
+		finishBody()
+		mlSrv.Close()
+	})
+
+	var releaseCalls atomic.Int32
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: mlSrv.URL, NodeId: "node-1"}, nil
+		},
+		releaseFunc: func(context.Context, *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
+			releaseCalls.Add(1)
+			return &nmgen.ReleaseMLNodeResponse{}, nil
+		},
+	})
+	eng := newTestEngine(ml, mlnodeclient.NewManager(time.Hour), nil)
+	firstDone := make(chan error, 1)
+	go func() {
+		resp, err := eng.executeMLRequest(context.Background(), "model-a", "42", []byte(`{"stream":true}`))
+		if err == nil {
+			close(responseReady)
+			_, err = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}
+		firstDone <- err
+	}()
+
+	select {
+	case <-firstChunkWritten:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first stream did not produce a chunk")
+	}
+	select {
+	case <-responseReady:
+	case <-time.After(5 * time.Second):
+		t.Fatal("HTTP response headers were not returned")
+	}
+	if got := releaseCalls.Load(); got != 0 {
+		finishBody()
+		select {
+		case <-firstDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("first stream did not stop after releasing the body")
+		}
+		t.Fatalf("slot was released before the streaming body completed: releases=%d", got)
+	}
+	finishBody()
+	select {
+	case err := <-firstDone:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("first stream did not finish")
+	}
+	require.Equal(t, int32(1), releaseCalls.Load())
+}
+
 func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	var acquires, releases atomic.Int32
 	mlHits := atomic.Int32{}
