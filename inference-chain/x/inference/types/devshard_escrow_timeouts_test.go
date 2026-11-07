@@ -16,3 +16,12 @@ func TestDevshardTimeoutsForCreate(t *testing.T) {
 	require.Equal(t, int64(5), DevshardRefusalTimeoutForCreate(params))
 	require.Equal(t, int64(17), DevshardExecutionTimeoutForCreate(params))
 }
+
+func TestDevshardHeightsyncTimeoutClockForCreate(t *testing.T) {
+	require.False(t, DevshardHeightsyncTimeoutClockForCreate(nil))
+	require.False(t, DevshardHeightsyncTimeoutClockForCreate(&DevshardEscrowParams{}))
+	require.False(t, DevshardHeightsyncTimeoutClockForCreate(DefaultDevshardEscrowParams()))
+	require.True(t, DevshardHeightsyncTimeoutClockForCreate(&DevshardEscrowParams{
+		HeightsyncTimeoutClock: true,
+	}))
+}

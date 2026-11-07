@@ -503,6 +503,10 @@ message DevshardEscrowParams {
   // sampled for SPRT. Per-name pass_count still selects settlement
   // verification.
   bool apply_sampled_pass_count = 19;
+  // When true, new escrows use stamp/header-time timeout clocks.
+  // When false (default / omitted), refusal and execution use wall
+  // started_at / confirmed_at. Frozen onto DevshardEscrow at create.
+  bool heightsync_timeout_clock = 20;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

@@ -19,3 +19,13 @@ func DevshardExecutionTimeoutForCreate(ep *DevshardEscrowParams) int64 {
 	}
 	return ep.ExecutionTimeout
 }
+
+// DevshardHeightsyncTimeoutClockForCreate snapshots whether new-escrow
+// timeout due uses stamp/header time (true) or legacy wall
+// started_at/confirmed_at (false). Nil or unset params freeze false.
+func DevshardHeightsyncTimeoutClockForCreate(ep *DevshardEscrowParams) bool {
+	if ep == nil {
+		return false
+	}
+	return ep.HeightsyncTimeoutClock
+}

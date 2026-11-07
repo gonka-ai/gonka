@@ -49,3 +49,43 @@ func TestDevshardEscrow_LegacyBytes_FeesAbsentDecodeZero(t *testing.T) {
 	require.Equal(t, uint64(0), withFees.CreateDevshardFee)
 	require.Equal(t, uint64(0), withFees.FeePerNonce)
 }
+
+// Pre-0.2.18 escrow bytes omit heightsync_timeout_clock; proto3 decode must
+// leave the bool false so old escrows stay on the legacy wall clock.
+func TestDevshardEscrow_LegacyBytes_HeightsyncTimeoutClockAbsentDecodeFalse(t *testing.T) {
+	legacy := &types.DevshardEscrow{
+		Id:         1,
+		Creator:    "gonka1creator",
+		Amount:     100,
+		Slots:      []string{"s"},
+		EpochIndex: 1,
+		AppHash:    "h",
+		TokenPrice: 1,
+		ModelId:    "m",
+	}
+	bz, err := proto.Marshal(legacy)
+	require.NoError(t, err)
+
+	var decoded types.DevshardEscrow
+	require.NoError(t, proto.Unmarshal(bz, &decoded))
+	require.False(t, decoded.HeightsyncTimeoutClock)
+}
+
+func TestDevshardEscrow_ProtoRoundTrip_HeightsyncTimeoutClock(t *testing.T) {
+	orig := &types.DevshardEscrow{
+		Id:                     2,
+		Creator:                "gonka1creator",
+		Amount:                 500,
+		Slots:                  []string{"a"},
+		EpochIndex:             9,
+		ModelId:                "m1",
+		HeightsyncTimeoutClock: true,
+	}
+	bz, err := proto.Marshal(orig)
+	require.NoError(t, err)
+
+	var decoded types.DevshardEscrow
+	require.NoError(t, proto.Unmarshal(bz, &decoded))
+	require.True(t, decoded.HeightsyncTimeoutClock)
+	require.Equal(t, orig, &decoded)
+}

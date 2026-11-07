@@ -109,6 +109,7 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.Equal(t, types.DevshardExecutionTimeoutForCreate(
 		types.DefaultDevshardEscrowParams(),
 	), escrow.ExecutionTimeout)
+	require.False(t, escrow.HeightsyncTimeoutClock)
 	for _, slotAddr := range escrow.Slots {
 		require.Contains(t, subgroupAddrs, slotAddr)
 	}
@@ -263,6 +264,7 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 		MaxNonce:                types.DefaultDevshardMaxNonce,
 		RefusalTimeout:          5,
 		ExecutionTimeout:        17,
+		HeightsyncTimeoutClock:  true,
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
@@ -283,6 +285,7 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 	require.Len(t, escrow.Slots, 8)
 	require.Equal(t, int64(5), escrow.RefusalTimeout)
 	require.Equal(t, int64(17), escrow.ExecutionTimeout)
+	require.True(t, escrow.HeightsyncTimeoutClock)
 }
 
 func TestCreateDevshardEscrow_ModelIDRequired(t *testing.T) {

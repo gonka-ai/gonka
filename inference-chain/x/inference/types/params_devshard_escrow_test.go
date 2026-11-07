@@ -18,6 +18,7 @@ func TestDefaultDevshardEscrowParams_FeeDefaults(t *testing.T) {
 	require.Equal(t, types.DefaultDevshardValidationRate, p.ValidationRate)
 	require.Equal(t, types.DefaultDevshardVoteThresholdFactor, p.VoteThresholdFactor)
 	require.False(t, p.ApplySampledPassCount)
+	require.False(t, p.HeightsyncTimeoutClock)
 	require.NoError(t, p.Validate())
 }
 
@@ -30,6 +31,7 @@ func TestDevshardEscrowParams_ProtoRoundTrip_Phase4Fields(t *testing.T) {
 	orig.CreateDevshardFee = 11_111
 	orig.FeePerNonce = 2_222
 	orig.ApplySampledPassCount = true
+	orig.HeightsyncTimeoutClock = true
 
 	bz, err := proto.Marshal(orig)
 	require.NoError(t, err)
@@ -37,6 +39,14 @@ func TestDevshardEscrowParams_ProtoRoundTrip_Phase4Fields(t *testing.T) {
 	var decoded types.DevshardEscrowParams
 	require.NoError(t, proto.Unmarshal(bz, &decoded))
 	require.Equal(t, orig, &decoded)
+}
+
+func TestDevshardEscrowParams_Validate_HeightsyncTimeoutClockBothValues(t *testing.T) {
+	for _, clock := range []bool{false, true} {
+		p := types.DefaultDevshardEscrowParams()
+		p.HeightsyncTimeoutClock = clock
+		require.NoError(t, p.Validate(), "clock=%v", clock)
+	}
 }
 
 func TestDevshardEscrowParams_Validate_RejectsInvalidPhase4(t *testing.T) {
