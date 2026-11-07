@@ -31,6 +31,10 @@ type scriptMap struct {
 	watches  []func()
 	marks    map[deferralKey]answerMark
 	asked    []uint64
+	// legacyClock selects HeightsyncTimeoutClock=false. Zero value keeps
+	// existing stamp-script behaviour (header mode).
+	legacyClock bool
+	mismatch    map[deferralKey]struct{}
 }
 
 func (s *scriptMap) CheckEvidence(*types.InferenceRecord, ...*types.DevshardTx) error {
@@ -61,6 +65,26 @@ func (s *scriptMap) TimeoutInterval(types.TimeoutReason) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.interval
+}
+
+func (s *scriptMap) HeightsyncTimeoutClock() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return !s.legacyClock
+}
+
+func (s *scriptMap) claimClockMismatch(inferenceID uint64, reason types.TimeoutReason) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.mismatch == nil {
+		s.mismatch = make(map[deferralKey]struct{})
+	}
+	key := deferralKey{inferenceID: inferenceID, reason: reason}
+	if _, seen := s.mismatch[key]; seen {
+		return false
+	}
+	s.mismatch[key] = struct{}{}
+	return true
 }
 
 func (s *scriptMap) After(d time.Duration) <-chan time.Time {

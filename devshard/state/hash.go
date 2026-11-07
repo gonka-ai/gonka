@@ -279,25 +279,28 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 }
 
 // marshalInferenceEntry is the canonical inference bytes in the state root.
-// StartedAtTimeMs and ConfirmedAtTimeMs are omitted on purpose: apply copies
-// carried stamp times into the live record for seal/drain, but the root still
-// commits to stamp heights and hashes only so replicas stay identical when
-// only the header map differs.
+// Wall StartedAt / ConfirmedAt are included so legacy timeout mode is
+// consensus-visible. StartedAtTimeMs and ConfirmedAtTimeMs stay omitted:
+// apply copies carried stamp times into the live record for seal/drain, but
+// the root still commits to stamp heights and hashes (plus wall) so replicas
+// stay identical when only the header map differs.
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
 	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
-		InferenceId:        id,
-		Status:             uint32(r.Status),
-		ExecutorSlot:       r.ExecutorSlot,
-		Model:              r.Model,
-		PromptHash:         r.PromptHash,
-		ResponseHash:       r.ResponseHash,
-		ServedHash:         r.ServedHash,
-		InputLength:        r.InputLength,
-		MaxTokens:          r.MaxTokens,
-		InputTokens:        r.InputTokens,
-		OutputTokens:       r.OutputTokens,
-		ReservedCost:       r.ReservedCost,
-		ActualCost:         r.ActualCost,
+		InferenceId:          id,
+		Status:               uint32(r.Status),
+		ExecutorSlot:         r.ExecutorSlot,
+		Model:                r.Model,
+		PromptHash:           r.PromptHash,
+		ResponseHash:         r.ResponseHash,
+		ServedHash:           r.ServedHash,
+		InputLength:          r.InputLength,
+		MaxTokens:            r.MaxTokens,
+		InputTokens:          r.InputTokens,
+		OutputTokens:         r.OutputTokens,
+		ReservedCost:         r.ReservedCost,
+		ActualCost:           r.ActualCost,
+		StartedAt:            r.StartedAt,
+		ConfirmedAt:          r.ConfirmedAt,
 		StartedAtHeight:      r.StartedAtHeight,
 		StartedAtBlockHash:   r.StartedAtBlockHash,
 		ConfirmedAtHeight:    r.ConfirmedAtHeight,
@@ -330,15 +333,17 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		OutputTokens:         msg.OutputTokens,
 		ReservedCost:         msg.ReservedCost,
 		ActualCost:           msg.ActualCost,
+		StartedAt:            msg.StartedAt,
+		ConfirmedAt:          msg.ConfirmedAt,
 		StartedAtHeight:      msg.StartedAtHeight,
 		StartedAtBlockHash:   append([]byte(nil), msg.StartedAtBlockHash...),
 		ConfirmedAtHeight:    msg.ConfirmedAtHeight,
 		ConfirmedAtBlockHash: append([]byte(nil), msg.ConfirmedAtBlockHash...),
-		StartedAtTimeMs:      msg.StartedAtTimeMs,
-		ConfirmedAtTimeMs:    msg.ConfirmedAtTimeMs,
-		VotesValid:           msg.VotesValid,
-		VotesInvalid:         msg.VotesInvalid,
-		ValidatedBy:          types.Bitmap128FromBytes(msg.ValidatedBy),
+		// Stamp *TimeMs are never written by marshalInferenceEntry; leave zero
+		// on root-decode so seal/drain keep using the live record / floor.
+		VotesValid:  msg.VotesValid,
+		VotesInvalid: msg.VotesInvalid,
+		ValidatedBy:  types.Bitmap128FromBytes(msg.ValidatedBy),
 	}
 	return msg.InferenceId, rec, nil
 }

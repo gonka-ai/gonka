@@ -100,6 +100,8 @@ type InferenceRecord struct {
 	OutputTokens       uint64          `json:"output_tokens,omitempty"`
 	ReservedCost       uint64          `json:"reserved_cost"`
 	ActualCost         uint64          `json:"actual_cost,omitempty"`
+	StartedAt          int64           `json:"started_at,omitempty"`
+	ConfirmedAt        int64           `json:"confirmed_at,omitempty"`
 	StartedAtHeight    uint64          `json:"started_at_height,omitempty"`
 	StartedAtBlockHash []byte          `json:"started_at_block_hash,omitempty"`
 	ConfirmedAtHeight  uint64          `json:"confirmed_at_height,omitempty"`
@@ -205,6 +207,10 @@ type SessionConfig struct {
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
+	// HeightsyncTimeoutClock selects the active timeout clock for this session.
+	// False (default / missing on-chain field) = legacy wall started_at /
+	// confirmed_at. True = stamp / header-time. Frozen from the escrow at bind.
+	HeightsyncTimeoutClock bool
 }
 
 // EscrowState is the full state of a devshard session.

@@ -26,6 +26,11 @@ import (
 	"devshard/types"
 )
 
+// receiptMarshal is the ExecutorReceiptContent preimage encoding. Must match
+// state.StateMachine.checkReceiptLocked (deterministic) so wall + stamp fields
+// verify byte-identically.
+var receiptMarshal = proto.MarshalOptions{Deterministic: true}
+
 // finishGossipGraceRotations is the number of full slot rotations to wait
 // before re-broadcasting a locally-proposed MsgFinishInference that the user
 // sequencer has not yet included in a diff. With round-robin host selection
@@ -1067,7 +1072,8 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 	if err != nil {
 		return nil, err
 	}
-	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
+	confirmedAt := time.Now().Unix()
+	receiptData, err := receiptMarshal.Marshal(&types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,
 		Model:             rec.Model,
@@ -1077,6 +1083,8 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
 		ObservedTimeMs:    obsTime,
+		StartedAt:         rec.StartedAt,
+		ConfirmedAt:       confirmedAt,
 	})
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
@@ -1091,6 +1099,7 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
 		ObservedTimeMs:    obsTime,
+		ConfirmedAt:       confirmedAt,
 	}
 	h.mempool.Add(MempoolEntry{
 		Tx:         &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}},
@@ -1192,7 +1201,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	if err != nil {
 		return nil, 0, nil, nil, outcome, err
 	}
-	sig, confirmedAt := confirm.ExecutorSig, time.Now().Unix()
+	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
 	outcome.observedHeight = confirm.ObservedHeight
 	outcome.observedHash = confirm.ObservedBlockHash
 	outcome.observedTimeMs = confirm.ObservedTimeMs

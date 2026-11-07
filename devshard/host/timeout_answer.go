@@ -14,12 +14,14 @@ import (
 )
 
 // verifierMap is this process's wall clock and stored header times.
-// A verifier without a stored feed keeps the TimeoutDue gate.
+// A verifier without a stored feed keeps the TimeoutDue gate (header mode)
+// or a wall-only EvalDue check (legacy mode).
 type verifierMap interface {
 	VerifierNow() time.Time
 	HasHeaderFeed() bool
 	StampHeaderTime(height uint64, hash []byte) (int64, bool)
 	TimeoutInterval(reason types.TimeoutReason) time.Duration
+	HeightsyncTimeoutClock() bool
 }
 
 // storedHeaderTime is the map read that does not call the filler.
@@ -68,8 +70,9 @@ type answerEntry struct {
 // schedule timer, the feed wait, or the executor call. A voted check has
 // already returned a vote. ignore, feed_behind, and accept=false are not kept.
 type answerHolds struct {
-	mu   sync.Mutex
-	held map[deferralKey]answerEntry
+	mu       sync.Mutex
+	held     map[deferralKey]answerEntry
+	mismatch map[deferralKey]struct{}
 }
 
 func (a *answerHolds) tryHold(inferenceID uint64, reason types.TimeoutReason) (func(bool), error) {
@@ -135,6 +138,22 @@ func (a *answerHolds) lookupVote(inferenceID uint64, reason types.TimeoutReason)
 	return append([]byte(nil), cur.signature...), cur.voterSlot, true
 }
 
+// claimClockMismatch reports the first wall/stamp mismatch for this inference
+// and reason. A later retry of the same pair does not count again.
+func (a *answerHolds) claimClockMismatch(inferenceID uint64, reason types.TimeoutReason) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.mismatch == nil {
+		a.mismatch = make(map[deferralKey]struct{})
+	}
+	key := deferralKey{inferenceID: inferenceID, reason: reason}
+	if _, seen := a.mismatch[key]; seen {
+		return false
+	}
+	a.mismatch[key] = struct{}{}
+	return true
+}
+
 func (a *answerHolds) forget(inferenceID uint64, reason types.TimeoutReason) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -149,11 +168,14 @@ func (a *answerHolds) forget(inferenceID uint64, reason types.TimeoutReason) {
 func (a *answerHolds) forgetInference(inferenceID uint64) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.held == nil {
-		return
+	for _, reason := range []types.TimeoutReason{
+		types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+		types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
+	} {
+		key := deferralKey{inferenceID: inferenceID, reason: reason}
+		delete(a.held, key)
+		delete(a.mismatch, key)
 	}
-	delete(a.held, deferralKey{inferenceID: inferenceID, reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED})
-	delete(a.held, deferralKey{inferenceID: inferenceID, reason: types.TimeoutReason_TIMEOUT_REASON_EXECUTION})
 }
 
 func warnDuplicateChallenge(inferenceID uint64, reason types.TimeoutReason, voted bool) {
@@ -193,6 +215,29 @@ func (h *Host) TimeoutInterval(reason types.TimeoutReason) time.Duration {
 		return 0
 	}
 	return timeoutIntervalOf(h.sm.Config(), reason)
+}
+
+// claimClockMismatch is the once-per (inference, reason) guard for the
+// verifier mismatch counter. A nil host records every call.
+func (h *Host) claimClockMismatch(inferenceID uint64, reason types.TimeoutReason) bool {
+	if h == nil {
+		return true
+	}
+	return h.answerHolds.claimClockMismatch(inferenceID, reason)
+}
+
+func (h *Host) HeightsyncTimeoutClock() bool {
+	if h == nil || h.sm == nil {
+		return false
+	}
+	return h.sm.Config().HeightsyncTimeoutClock
+}
+
+func (h *Host) escrowIDForMismatch() string {
+	if h == nil {
+		return ""
+	}
+	return h.escrowID
 }
 
 func (h *Host) After(d time.Duration) <-chan time.Time {
@@ -360,8 +405,13 @@ func executionStampAnchor(rec *types.InferenceRecord, reason types.TimeoutReason
 
 // awaitVerifierDue reports whether the challenge body should run.
 // ready is false when the verifier returns without a vote. The caller owns
-// the single in-flight check. The 60 second wait is a timer on this call.
-// It does not call GetBlockHeader and it does not sleep inside ChallengeReceipt.
+// the single in-flight check. The 60 second wait is a timer on this call
+// (header mode only). It does not call GetBlockHeader and it does not sleep
+// inside ChallengeReceipt.
+//
+// Legacy (HeightsyncTimeoutClock=false): Active is wall StartedAt/ConfirmedAt;
+// stamp Decide is shadowed for mismatch only — no AnswerWait for Active.
+// Header: existing stamp Decide / schedule / feed_behind behaviour.
 func awaitVerifierDue(
 	ctx context.Context,
 	ev EvidenceVerifier,
@@ -370,12 +420,109 @@ func awaitVerifierDue(
 	reason types.TimeoutReason,
 ) (bool, error) {
 	m, ok := ev.(verifierMap)
+	if ok && m != nil && !m.HeightsyncTimeoutClock() {
+		return awaitVerifierLegacyDue(ev, m, inferenceID, rec, reason)
+	}
 	if !ok || m == nil || !m.HasHeaderFeed() {
 		if timeoutDue(ev, inferenceID, reason) {
 			return true, nil
 		}
 		return false, nil
 	}
+	return awaitVerifierStampDue(ctx, ev, m, inferenceID, rec, reason)
+}
+
+func wallUnixForReason(rec *types.InferenceRecord, reason types.TimeoutReason) int64 {
+	if rec == nil {
+		return 0
+	}
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		return rec.ConfirmedAt
+	}
+	return rec.StartedAt
+}
+
+func timeoutKindLabel(reason types.TimeoutReason) string {
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		return "execution"
+	}
+	return "refused"
+}
+
+func escrowIDOf(ev EvidenceVerifier) string {
+	if h, ok := ev.(interface{ escrowIDForMismatch() string }); ok {
+		return h.escrowIDForMismatch()
+	}
+	return ""
+}
+
+// awaitVerifierLegacyDue is the devshard-0.2.x-v6 wall check: the challenge
+// runs once nowUnix-anchor is at least the timeout in whole seconds. Refusal
+// uses StartedAt, execution uses ConfirmedAt. A zero anchor is due. Stamp
+// Decide is shadowed for mismatch only and never blocks the wall result.
+// There is no AnswerWait and no TimeoutBuffer on this check.
+func awaitVerifierLegacyDue(
+	ev EvidenceVerifier,
+	m verifierMap,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	reason types.TimeoutReason,
+) (bool, error) {
+	now := time.Now()
+	if m != nil {
+		now = m.VerifierNow()
+	}
+	interval := time.Duration(0)
+	if m != nil {
+		interval = m.TimeoutInterval(reason)
+	} else {
+		interval = headertime.AnswerWait
+	}
+	height, hash := challengeStamp(rec, reason)
+	stampMs, found := int64(0), false
+	if m != nil && m.HasHeaderFeed() {
+		mapMs, mapFound := m.StampHeaderTime(height, hash)
+		ms, missing, _ := executionStampAnchor(rec, reason, mapMs, mapFound)
+		stampMs, found = ms, !missing
+	} else if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION && rec != nil && rec.ConfirmedAtTimeMs > 0 {
+		stampMs, found = rec.ConfirmedAtTimeMs, true
+	}
+	wallUnix := wallUnixForReason(rec, reason)
+	seconds := int64(interval / time.Second)
+	due := now.Unix()-wallUnix >= seconds
+	stamp := headertime.Decide(now, stampMs, !found, interval, 0, headertime.CallerVerifier)
+	stampDue := stamp.Outcome == headertime.OutcomeDue
+	if due != stampDue && claimVerifierClockMismatch(ev, inferenceID, reason) {
+		headertime.RecordClockMismatch("verifier", timeoutKindLabel(reason), escrowIDOf(ev), inferenceID, headertime.DueEval{
+			Active:    headertime.DueSide{Due: due, Wall: true},
+			Shadow:    headertime.DueSide{Due: stampDue, Decision: stamp},
+			HasShadow: true,
+			Mismatch:  true,
+		}, wallUnix, stampMs, height)
+	}
+	return due, nil
+}
+
+// claimVerifierClockMismatch is true the first time this inference and reason
+// disagree. Evidence without the guard records every call.
+func claimVerifierClockMismatch(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) bool {
+	once, ok := ev.(interface {
+		claimClockMismatch(uint64, types.TimeoutReason) bool
+	})
+	if !ok {
+		return true
+	}
+	return once.claimClockMismatch(inferenceID, reason)
+}
+
+func awaitVerifierStampDue(
+	ctx context.Context,
+	ev EvidenceVerifier,
+	m verifierMap,
+	inferenceID uint64,
+	rec *types.InferenceRecord,
+	reason types.TimeoutReason,
+) (bool, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}

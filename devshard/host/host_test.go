@@ -288,8 +288,9 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 		EscrowId:          "escrow-1",
 		ObservedHeight:    100,
 		ObservedBlockHash: []byte{0xaa},
+		ConfirmedAt:       resp.ConfirmedAt,
 	}
-	data, err := proto.Marshal(receiptContent)
+	data, err := receiptMarshal.Marshal(receiptContent)
 	require.NoError(t, err)
 	addr, err := verifier.RecoverAddress(data, resp.Receipt)
 	require.NoError(t, err)
@@ -1044,17 +1045,19 @@ func countMempoolConfirms(txs []*types.DevshardTx, inferenceID uint64) int {
 	return n
 }
 
-// signTestReceipt signs an unstamped executor receipt for rec, as the host does
-// when it has no oracle.
+// signTestReceipt signs an unstamped executor receipt for rec. confirmedAt is
+// bound into the receipt preimage with rec.StartedAt so apply/verify match.
 func signTestReceipt(t *testing.T, signer *signing.Secp256k1Signer, inferenceID uint64, rec types.InferenceRecord, confirmedAt int64) []byte {
 	t.Helper()
-	data, err := proto.Marshal(&types.ExecutorReceiptContent{
+	data, err := receiptMarshal.Marshal(&types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
 		PromptHash:  rec.PromptHash,
 		Model:       rec.Model,
 		InputLength: rec.InputLength,
 		MaxTokens:   rec.MaxTokens,
 		EscrowId:    "escrow-1",
+		StartedAt:   rec.StartedAt,
+		ConfirmedAt: confirmedAt,
 	})
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
@@ -1081,6 +1084,7 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	queued := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: signTestReceipt(t, hosts[1], 1, rec, earlier),
+		ConfirmedAt: earlier,
 	}}}
 	h.mempool.RemoveIncluded([]*types.DevshardTx{findMempoolConfirm(h.MempoolTxs())})
 	h.mempool.Add(MempoolEntry{Tx: queued, ProposedAt: 1})
@@ -1088,6 +1092,7 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	retry, err := h.HandleRequest(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, queued.GetConfirmStart().ExecutorSig, retry.Receipt, "a retry while pending returns the queued receipt")
+	require.Equal(t, earlier, retry.ConfirmedAt, "retry exposes the queued confirm wall clock")
 	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1), "a retry must not queue a second ConfirmStart")
 
 	challenge, _, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
@@ -1102,6 +1107,7 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 		ExecutorSig:       retry.Receipt,
 		ObservedHeight:    retry.ObservedHeight,
 		ObservedBlockHash: retry.ObservedBlockHash,
+		ConfirmedAt:       retry.ConfirmedAt,
 	}}}
 	confirmDiff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{landed})
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{confirmDiff}})

@@ -1409,6 +1409,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNo
 		InputLength:        msg.InputLength,
 		MaxTokens:          msg.MaxTokens,
 		ReservedCost:       reservedCost,
+		StartedAt:          msg.StartedAt,
 		StartedAtHeight:    anchor.Height,
 		StartedAtBlockHash: append([]byte(nil), anchor.Hash...),
 	}
@@ -1455,6 +1456,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart, diffNonce 
 	}
 
 	rec.Status = types.StatusStarted
+	rec.ConfirmedAt = msg.ConfirmedAt
 	rec.ConfirmedAtHeight = anchor.Height
 	if heightsync.StampPresent(anchor.Hash) {
 		rec.ConfirmedAtBlockHash = append([]byte(nil), anchor.Hash...)
@@ -1504,6 +1506,8 @@ func (sm *StateMachine) checkReceiptLocked(rec *types.InferenceRecord, msg *type
 		ObservedHeight:    msg.ObservedHeight,
 		ObservedBlockHash: msg.ObservedBlockHash,
 		ObservedTimeMs:    msg.ObservedTimeMs,
+		StartedAt:         rec.StartedAt,
+		ConfirmedAt:       msg.ConfirmedAt,
 	}
 	receiptData, err := deterministicMarshal.Marshal(receiptContent)
 	if err != nil {

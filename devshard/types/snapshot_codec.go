@@ -59,6 +59,7 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 			InferenceSealGraceNonces:  cfg.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      cfg.AutoSealEveryNNonces,
+			HeightsyncTimeoutClock:    cfg.HeightsyncTimeoutClock,
 		},
 		Group:                         group,
 		Balance:                       state.Balance,
@@ -137,6 +138,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 			InferenceSealGraceNonces:  p.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: p.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      p.AutoSealEveryNNonces,
+			HeightsyncTimeoutClock:    p.HeightsyncTimeoutClock,
 		}
 	}
 
@@ -206,8 +208,10 @@ func inferenceRecordToProto(id uint64, rec *InferenceRecord) *InferenceRecordPro
 		MaxTokens:          rec.MaxTokens,
 		InputTokens:        rec.InputTokens,
 		OutputTokens:       rec.OutputTokens,
-		ReservedCost:       rec.ReservedCost,
-		ActualCost:         rec.ActualCost,
+		ReservedCost:         rec.ReservedCost,
+		ActualCost:           rec.ActualCost,
+		StartedAt:            rec.StartedAt,
+		ConfirmedAt:          rec.ConfirmedAt,
 		StartedAtHeight:      rec.StartedAtHeight,
 		StartedAtBlockHash:   append([]byte(nil), rec.StartedAtBlockHash...),
 		ConfirmedAtHeight:    rec.ConfirmedAtHeight,
@@ -237,6 +241,8 @@ func inferenceRecordFromProto(msg *InferenceRecordProto) *InferenceRecord {
 		OutputTokens:         msg.OutputTokens,
 		ReservedCost:         msg.ReservedCost,
 		ActualCost:           msg.ActualCost,
+		StartedAt:            msg.StartedAt,
+		ConfirmedAt:          msg.ConfirmedAt,
 		StartedAtHeight:      msg.StartedAtHeight,
 		StartedAtBlockHash:   append([]byte(nil), msg.StartedAtBlockHash...),
 		ConfirmedAtHeight:    msg.ConfirmedAtHeight,

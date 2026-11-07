@@ -35,6 +35,8 @@ func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Sign
 		EscrowId:          session.escrowID,
 		ObservedHeight:    stamp.Height,
 		ObservedBlockHash: stamp.Hash,
+		StartedAt:         record.StartedAt,
+		ConfirmedAt:       confirmedAt,
 	})
 	require.NoError(t, err)
 	signature, err := hosts[record.ExecutorSlot].Sign(receipt)
@@ -58,7 +60,10 @@ func startedNonce(t *testing.T, session *Session, hosts []*signing.Secp256k1Sign
 //  2. Forget the session's in-memory outcome for it, as a gateway restart does.
 //  3. Expect an execution deadline from the wall clock against time(ConfirmedAtHeight). The forgotten wall clock of the receipt is not the deadline.
 func TestTimeoutDeadlineReadsTheConfirmedHeightAfterARestart(t *testing.T) {
-	session, hosts, _, _ := setupArmedSession(t, 3, 1_000_000, 0)
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(hosts))
+	config.HeightsyncTimeoutClock = true
+	session, _, _ := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 1_000_000, 0)
 	nonce := startedNonce(t, session, hosts, time.Now().Unix())
 
 	session.mu.Lock()
@@ -80,10 +85,9 @@ func TestTimeoutDeadlineReadsTheConfirmedHeightAfterARestart(t *testing.T) {
 
 // Test flow:
 //  1. Prepare an inference that no host has confirmed.
-//  2. Expect a refusal deadline counted from the send time, the only reason the chain admits for it.
+//  2. Expect a refusal deadline counted from the send time plus TimeoutBuffer,
+//     the v6 legacy wall deadline.
 func TestTimeoutDeadlineKeepsARecordWithoutTheStampRefused(t *testing.T) {
-	// This deadline used to include TimeoutBuffer. Adding the buffer back makes
-	// the equality fail.
 	prev := TimeoutBuffer
 	TimeoutBuffer = 5 * time.Second
 	t.Cleanup(func() { TimeoutBuffer = prev })
@@ -95,7 +99,7 @@ func TestTimeoutDeadlineKeepsARecordWithoutTheStampRefused(t *testing.T) {
 	reason, deadline := session.TimeoutDeadline(nonce, sendTime)
 
 	require.Equal(t, "refused", reason)
-	require.Equal(t, sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second), deadline)
+	require.Equal(t, sendTime.Add(time.Duration(session.sm.Config().RefusalTimeout)*time.Second+TimeoutBuffer), deadline)
 }
 
 // countingHeaders counts map reads. ms == 0 is an empty map. AwaitHeaderTimeMs
@@ -170,20 +174,17 @@ func TestRefusalOpensOnTheGatewayWallClock(t *testing.T) {
 
 	reason, deadline := session.TimeoutDeadline(nonce, sendTime)
 	require.Equal(t, "refused", reason)
-	require.Equal(t, sendTime.Add(refusal), deadline)
-	require.Zero(t, headers.calls.Load(), "an empty map is not read")
+	require.Equal(t, sendTime.Add(refusal+TimeoutBuffer), deadline)
 	require.False(t, refusalPast(deadline.Add(-time.Millisecond), deadline), "one millisecond earlier is not past the deadline")
 	require.True(t, refusalPast(deadline.Add(time.Millisecond), deadline))
 
-	// A header time for the start stamp, far enough ahead that the floor check
-	// would call the refusal due now. The wall-clock deadline does not move,
-	// and the map is still not read.
+	// A header time for the start stamp, far enough ahead that stamp Decide
+	// would be due. Legacy Active stays on the wall; the deadline does not move.
 	headers.ms.Store(time.Now().Add(24 * time.Hour).UnixMilli())
 	headers.calls.Store(0)
 	reason, filled := session.TimeoutDeadline(nonce, sendTime)
 	require.Equal(t, "refused", reason)
 	require.Equal(t, deadline, filled)
-	require.Zero(t, headers.calls.Load())
 
 	session.StateMachine().SetHeaderTimes(headers)
 	headers.ms.Store(0)
@@ -206,7 +207,7 @@ func TestRefusalOpensOnTheGatewayWallClock(t *testing.T) {
 
 	headers.calls.Store(0)
 	headers.ms.Store(0)
-	pastSend := time.Now().Add(-refusal - time.Millisecond)
+	pastSend := time.Now().Add(-refusal - TimeoutBuffer - time.Millisecond)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	waitReason, ready, skipped, err := session.WaitTimeoutDeadline(ctx, nonce, pastSend)
@@ -225,7 +226,10 @@ func TestRefusalOpensOnTheGatewayWallClock(t *testing.T) {
 //  2. Empty map → refusal stays closed (poll), not ErrTimeoutNotArmed.
 //  3. Seed time(StartedAtHeight) past RefusalTimeout → deadline opens from the map.
 func TestRefusalDeadlineRestoresFromTheHeaderMapAfterRestart(t *testing.T) {
-	session, hosts, _, _ := setupArmedSession(t, 3, 1_000_000, 0)
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(hosts))
+	config.HeightsyncTimeoutClock = true
+	session, _, _ := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 1_000_000, 0)
 	nonce := prepareNonce(t, session)
 	rec, ok := session.sm.GetInference(nonce)
 	require.True(t, ok)
@@ -271,6 +275,7 @@ func TestExecutionOpensOnTheConfirmedHeight(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	config := testutil.DefaultConfig(len(hosts))
 	config.ExecutionTimeout = 5
+	config.HeightsyncTimeoutClock = true
 	session, _, rig := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 1_000_000, 0)
 	nonce := startedNonce(t, session, hosts, time.Now().Unix())
 	pending := prepareNonce(t, session)
@@ -349,12 +354,15 @@ func TestExecutionOpensOnTheConfirmedHeight(t *testing.T) {
 	require.Zero(t, headers.awaited.Load(), "the gap did not call AwaitHeaderTimeMs")
 	require.Zero(t, headers.blockGets.Load(), "the gap did not call GetBlockHeader")
 
-	// A refusal in the same test still opens from the wall clock on an empty map.
-	headers.byHeight = nil
+	// Header-mode refusal needs a start stamp past RefusalTimeout (sendTime alone
+	// does not open). Seed the map for the pending nonce's start height.
+	pendingRec, ok := session.sm.GetInference(pending)
+	require.True(t, ok)
+	headers.byHeight = map[uint64]int64{pendingRec.StartedAtHeight: time.Now().Add(-refusal - time.Millisecond).UnixMilli()}
 	headers.ms.Store(0)
+	session.StateMachine().SetHeaderTimes(headers)
 	opened.Store(0)
-	pastSend := time.Now().Add(-refusal - time.Millisecond)
-	result, _, _ = session.VoteTimeout(context.Background(), pending, pastSend, nil, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	result, _, _ = session.VoteTimeout(context.Background(), pending, time.Time{}, nil, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 	require.Positive(t, opened.Load())
 	require.Equal(t, "refused", result.Reason)
 	require.NotEqual(t, "skipped", result.Outcome)
@@ -370,6 +378,7 @@ func TestExecutionOpensWhenConfirmSitsBelowTheFloor(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	config := testutil.DefaultConfig(len(hosts))
 	config.ExecutionTimeout = 5
+	config.HeightsyncTimeoutClock = true
 	session, _, rig := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 1_000_000, 0)
 	for i := range session.clients {
 		session.clients[i] = noReceiptClient{HostClient: session.clients[i]}
@@ -397,11 +406,12 @@ func TestExecutionOpensWhenConfirmSitsBelowTheFloor(t *testing.T) {
 	require.True(t, known)
 	require.GreaterOrEqual(t, floor, uint64(105))
 
+	confirmedAt := time.Now().Unix()
 	sig := testutil.SignExecutorReceipt(t, hosts[pending.ExecutorSlot], session.escrowID, nonce,
 		pending.PromptHash, pending.Model, pending.InputLength, pending.MaxTokens,
-		testutil.ReceiptStamp{Height: confirmHeight, Hash: hash})
+		testutil.ReceiptStamp{Height: confirmHeight, Hash: hash, StartedAt: pending.StartedAt, ConfirmedAt: confirmedAt})
 	require.NoError(t, session.ProcessResponse(int(nonce%uint64(len(hosts))), &host.HostResponse{
-		Nonce: nonce, Receipt: sig, ConfirmedAt: time.Now().Unix(),
+		Nonce: nonce, Receipt: sig, ConfirmedAt: confirmedAt,
 		ObservedHeight: confirmHeight, ObservedBlockHash: hash,
 	}, nonce))
 	require.NoError(t, session.SendPendingDiff(context.Background()))
@@ -467,16 +477,27 @@ func TestExecutionOpensWhenConfirmSitsBelowTheFloor(t *testing.T) {
 }
 
 func TestTimeoutDeadlineDoesNotOverflowWhenRemainingDurationIsSaturated(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	config := testutil.DefaultConfig(len(hosts))
-	config.RefusalTimeout, config.ExecutionTimeout = math.MaxInt64, math.MaxInt64
-	session, _, _ := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 1_000_000, 0)
-	pending := prepareNonce(t, session)
-	reason, deadline := session.TimeoutDeadline(pending, time.Now())
-	require.Equal(t, "refused", reason)
-	require.True(t, deadline.After(time.Now().Add(time.Hour)))
-	started := startedNonce(t, session, hosts, time.Now().Unix())
-	reason, deadline = session.TimeoutDeadline(started, time.Now())
-	require.Equal(t, "execution", reason)
-	require.True(t, deadline.After(time.Now().Add(time.Hour)))
+	for _, tc := range []struct {
+		name   string
+		header bool
+	}{
+		{name: "legacy"},
+		{name: "header", header: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+			config := testutil.DefaultConfig(len(hosts))
+			config.HeightsyncTimeoutClock = tc.header
+			config.RefusalTimeout, config.ExecutionTimeout = math.MaxInt64, math.MaxInt64
+			session, _, _ := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 1_000_000, 0)
+			pending := prepareNonce(t, session)
+			reason, deadline := session.TimeoutDeadline(pending, time.Now())
+			require.Equal(t, "refused", reason)
+			require.True(t, deadline.After(time.Now().Add(time.Hour)), "saturated refusal stays in the future")
+			started := startedNonce(t, session, hosts, time.Now().Unix())
+			reason, deadline = session.TimeoutDeadline(started, time.Now())
+			require.Equal(t, "execution", reason)
+			require.True(t, deadline.After(time.Now().Add(time.Hour)), "saturated execution stays in the future")
+		})
+	}
 }

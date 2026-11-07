@@ -64,6 +64,7 @@ func TestStartCompose_FillsObservedTimeFromMap(t *testing.T) {
 	require.NotNil(t, start)
 	require.Equal(t, floor, start.ObservedHeight)
 	require.Equal(t, row.TimeMs, start.ObservedTimeMs)
+	require.Equal(t, int64(1000), start.StartedAt, "compose writes wall StartedAt alongside stamp fields")
 }
 
 func TestStartCompose_EmptyMapUsesFloorTime(t *testing.T) {

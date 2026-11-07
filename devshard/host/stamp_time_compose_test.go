@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
@@ -97,13 +96,16 @@ func TestConfirmStart_ComposeFillsTimeFromMap(t *testing.T) {
 	confirm := h.mempool.QueuedConfirmStart(nonce)
 	require.NotNil(t, confirm)
 	require.Equal(t, wantTime, confirm.ObservedTimeMs)
+	require.NotZero(t, confirm.ConfirmedAt)
+	require.Equal(t, confirm.ConfirmedAt, resp.ConfirmedAt)
 
 	content := &types.ExecutorReceiptContent{
 		InferenceId: nonce, PromptHash: testutil.TestPromptHash[:], Model: "llama",
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, EscrowId: "escrow-1",
 		ObservedHeight: 100, ObservedBlockHash: hash, ObservedTimeMs: wantTime,
+		ConfirmedAt: confirm.ConfirmedAt,
 	}
-	data, err := proto.Marshal(content)
+	data, err := receiptMarshal.Marshal(content)
 	require.NoError(t, err)
 	addr, err := signing.NewSecp256k1Verifier().RecoverAddress(data, resp.Receipt)
 	require.NoError(t, err)

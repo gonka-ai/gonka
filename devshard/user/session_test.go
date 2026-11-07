@@ -2263,8 +2263,8 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 	}
 
 	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
-	// TimeoutDeadline counts the execution deadline from the committed record, so the signed receipt itself has to carry a stamp whose deadline is already past.
-	const confirmedAt = int64(1000)
+	// TimeoutDeadline on the legacy clock counts from outcome.confirmedAt.
+	confirmedAt := time.Now().Unix()
 	_, confirmTx := stampedReceiptResponse(t, session, hosts[execIdx], prepared.diff.Nonce)
 
 	session.mu.Lock()
@@ -2283,7 +2283,7 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 
 	_, deadline := session.TimeoutDeadline(prepared.diff.Nonce, time.Unix(0, 0))
 	exec := time.Duration(session.StateMachine().Config().ExecutionTimeout) * time.Second
-	require.WithinDuration(t, time.UnixMilli(stamp).Add(exec), deadline, 5*time.Second)
+	require.Equal(t, time.Unix(confirmedAt, 0).Add(exec+TimeoutBuffer), deadline)
 
 	beforeDiffs := len(session.Diffs())
 	for i, c := range session.clients {
@@ -2334,10 +2334,20 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 	require.NoError(t, err)
 	require.NotEmpty(t, liveReceipt)
 
-	// The host stamps its own receipt with the wall clock, but TimeoutDeadline counts the execution deadline from the committed record, so the session confirms on a receipt already past its deadline.
+	// Confirm with a wall clock already past ExecutionTimeout so the vote path
+	// is due; the receipt and MsgConfirmStart ConfirmedAt must match.
 	const confirmedAt = int64(1000)
-	receiptResp, _ := stampedReceiptResponse(t, session, signers[execIdx], prepared.diff.Nonce)
-	receiptResp.ConfirmedAt = confirmedAt
+	rec, ok := session.StateMachine().GetInference(prepared.diff.Nonce)
+	require.True(t, ok)
+	stamp := floorStampOf(&rec)
+	stamp.StartedAt = rec.StartedAt
+	stamp.ConfirmedAt = confirmedAt
+	sig := testutil.SignExecutorReceipt(t, signers[execIdx], session.escrowID, prepared.diff.Nonce,
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
+	receiptResp := &host.HostResponse{
+		Nonce: prepared.diff.Nonce, Receipt: sig, ConfirmedAt: confirmedAt,
+		ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash,
+	}
 	require.NoError(t, session.ProcessResponse(execIdx, receiptResp, prepared.diff.Nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
@@ -2412,7 +2422,7 @@ func TestHandleTimeout_UnapplicablePendingFinishStillVotes(t *testing.T) {
 	require.NotNil(t, confirmTx)
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
 		Receipt:           receipt,
-		ConfirmedAt:       time.Now().Unix(),
+		ConfirmedAt:       confirmTx.GetConfirmStart().ConfirmedAt,
 		ObservedHeight:    confirmTx.GetConfirmStart().ObservedHeight,
 		ObservedBlockHash: confirmTx.GetConfirmStart().ObservedBlockHash,
 		ObservedTimeMs:    confirmTx.GetConfirmStart().ObservedTimeMs,
@@ -2657,7 +2667,7 @@ func TestHandleTimeout_ExecutionRejectRecoversFinish(t *testing.T) {
 	confirm := findRecoveryConfirmStart(executor.MempoolTxs(), nonce)
 	require.NotNil(t, confirm)
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
-		Receipt: receipt, ConfirmedAt: time.Now().Unix(),
+		Receipt: receipt, ConfirmedAt: confirm.GetConfirmStart().ConfirmedAt,
 		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
 		ObservedTimeMs: confirm.GetConfirmStart().ObservedTimeMs,
 	}, nonce))
@@ -2705,7 +2715,7 @@ func TestHandleTimeout_DroppedPendingFinishFallsThroughToVote(t *testing.T) {
 	confirm := findRecoveryConfirmStart(executor.MempoolTxs(), nonce)
 	require.NotNil(t, confirm)
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
-		Receipt: receipt, ConfirmedAt: time.Now().Unix(),
+		Receipt: receipt, ConfirmedAt: confirm.GetConfirmStart().ConfirmedAt,
 		ObservedHeight: confirm.GetConfirmStart().ObservedHeight, ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
 		ObservedTimeMs: confirm.GetConfirmStart().ObservedTimeMs,
 	}, nonce))
@@ -2734,32 +2744,58 @@ func TestHandleTimeout_DroppedReceiptFallsBackToRefusalVote(t *testing.T) {
 	previous := TimeoutBuffer
 	TimeoutBuffer = 0
 	t.Cleanup(func() { TimeoutBuffer = previous })
-	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	config := testutil.DefaultConfig(len(signers))
-	config.RefusalTimeout = 1
-	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
-	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
-	prepared, err := session.PrepareInference(context.Background(), params)
-	require.NoError(t, err)
-	rig.raise(t, session, 100_000)
-	nonce := prepared.Nonce()
-	startedRec, ok := session.StateMachine().GetInference(nonce)
-	require.True(t, ok)
-	rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), startedRec.StartedAtHeight, startedRec.StartedAtBlockHash), time.Second)
-	session.mu.Lock()
-	session.nonceStates[nonce].confirmedAt = 1 // stale receipt observation; no ConfirmStart can land
-	session.mu.Unlock()
-	for i, client := range session.clients {
-		session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: session.group, slotIdx: i}}
+
+	// Both clocks vote refusal when a receipt time is remembered and no
+	// ConfirmStart is queued. Legacy clears that time so the deadline is the
+	// v6 refusal arm. Header mode never treats it as the execution clock.
+	for _, tc := range []struct {
+		name             string
+		header           bool
+		staleConfirmedAt int64
+	}{
+		{name: "legacy", staleConfirmedAt: 1},
+		{name: "header", header: true, staleConfirmedAt: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+			config := testutil.DefaultConfig(len(signers))
+			config.RefusalTimeout = 1
+			config.HeightsyncTimeoutClock = tc.header
+			session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, 100000, 10)
+			params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+			prepared, err := session.PrepareInference(context.Background(), params)
+			require.NoError(t, err)
+			rig.raise(t, session, 100_000)
+			nonce := prepared.Nonce()
+			startedRec, ok := session.StateMachine().GetInference(nonce)
+			require.True(t, ok)
+			rig.coverTimeout(t, session, headerStampMs(t, session.StateMachine(), startedRec.StartedAtHeight, startedRec.StartedAtBlockHash), time.Second)
+			if tc.staleConfirmedAt > 0 {
+				session.mu.Lock()
+				session.nonceStates[nonce].confirmedAt = tc.staleConfirmedAt
+				session.mu.Unlock()
+			}
+			for i, client := range session.clients {
+				session.clients[i] = &timeoutVoteClient{HostClient: client, mockTimeoutVerifier: &mockTimeoutVerifier{accept: true, signer: signers[i], group: session.group, slotIdx: i}}
+			}
+			payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
+			voteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result, err := session.HandleTimeout(voteCtx, nonce, time.Unix(0, 0), payload)
+			require.Error(t, err)
+			require.Equal(t, "refused", result.Reason)
+			require.True(t, result.Applied)
+			require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+			session.mu.Lock()
+			left := session.nonceStates[nonce].confirmedAt
+			session.mu.Unlock()
+			if tc.header {
+				require.Equal(t, tc.staleConfirmedAt, left)
+			} else {
+				require.Zero(t, left)
+			}
+		})
 	}
-	payload := &host.InferencePayload{Prompt: params.Prompt, Model: params.Model, InputLength: params.InputLength, MaxTokens: params.MaxTokens, StartedAt: params.StartedAt}
-	voteCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	result, err := session.HandleTimeout(voteCtx, nonce, time.Unix(0, 0), payload)
-	require.Error(t, err)
-	require.Equal(t, "refused", result.Reason)
-	require.True(t, result.Applied)
-	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 }
 
 func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {

@@ -74,6 +74,7 @@ func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	config.ExecutionTimeout = 1
+	config.HeightsyncTimeoutClock = true
 	anchorAt := time.Unix(1_800_000_000, 0)
 	hash, farHash := []byte{0xaa}, []byte{0xcc}
 	chain := newHeaderChain()
@@ -238,6 +239,7 @@ func TestExecutionVoteRejectsOnAFinishWhileThatHeightIsMissing(t *testing.T) {
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	config.ExecutionTimeout = 1
+	config.HeightsyncTimeoutClock = true
 	anchorAt := time.Now().Add(-2 * time.Second)
 	hash, floorHash := []byte{0xaa}, []byte{0xbb}
 	chain := newHeaderChain()

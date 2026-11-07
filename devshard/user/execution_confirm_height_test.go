@@ -24,6 +24,7 @@ func confirmBelowFloor(t *testing.T, stamp time.Time, storeConfirm bool) (*Sessi
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{signer})
 	config := testutil.DefaultConfig(len(group))
 	config.ExecutionTimeout = 5
+	config.HeightsyncTimeoutClock = true
 	src := headertime.New()
 	hash := []byte{0xaa}
 	store := func(height uint64, at time.Time) {

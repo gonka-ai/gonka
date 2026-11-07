@@ -403,10 +403,14 @@ func stampedReceiptResponse(t *testing.T, session *Session, signer signing.Signe
 	rec, ok := session.StateMachine().GetInference(nonce)
 	require.True(t, ok)
 	stamp := floorStampOf(&rec)
+	confirmedAt := time.Now().Unix()
+	stamp.StartedAt = rec.StartedAt
+	stamp.ConfirmedAt = confirmedAt
 	sig := testutil.SignExecutorReceipt(t, signer, session.escrowID, nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
-	resp := &host.HostResponse{Nonce: nonce, Receipt: sig, ConfirmedAt: time.Now().Unix(), ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash}
+	resp := &host.HostResponse{Nonce: nonce, Receipt: sig, ConfirmedAt: confirmedAt, ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash}
 	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: nonce, ExecutorSig: sig, ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash,
+		InferenceId: nonce, ExecutorSig: sig, ConfirmedAt: confirmedAt,
+		ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash,
 	}}}
 	return resp, tx
 }

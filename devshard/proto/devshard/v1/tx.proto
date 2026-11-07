@@ -16,8 +16,10 @@ message MsgStartInference {
   string model = 3;
   uint64 input_length = 4;
   uint64 max_tokens = 5;
-  reserved 6;
-  reserved "started_at";
+  // started_at is the gateway wall clock in Unix seconds (legacy timeout clock).
+  // Restored at its original field number (same type/meaning as before the
+  // stamp-only tombstone).
+  int64 started_at = 6;
   uint64 observed_height = 7;
   bytes  observed_block_hash = 8;
   // protocol_version is the destshard runtime the gateway bound for this
@@ -33,8 +35,10 @@ message MsgStartInference {
 message MsgConfirmStart {
   uint64 inference_id = 1;
   bytes  executor_sig = 2;
-  reserved 3;
-  reserved "confirmed_at";
+  // confirmed_at is the executor wall clock in Unix seconds (legacy timeout clock).
+  // Restored at its original field number (same type/meaning as before the
+  // stamp-only tombstone).
+  int64 confirmed_at = 3;
   uint64 observed_height = 4;
   bytes  observed_block_hash = 5;
   int64  observed_time_ms = 6;
