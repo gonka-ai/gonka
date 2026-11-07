@@ -64,3 +64,32 @@ func TestMsgUpdateParams(t *testing.T) {
 		})
 	}
 }
+
+func TestMsgUpdateParams_HeightsyncTimeoutClock(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	wctx := sdk.UnwrapSDKContext(ctx)
+
+	params := types.DefaultParams()
+	require.False(t, params.DevshardEscrowParams.HeightsyncTimeoutClock)
+	require.NoError(t, k.SetParams(ctx, params))
+
+	params.DevshardEscrowParams.HeightsyncTimeoutClock = true
+	_, err := ms.UpdateParams(wctx, &types.MsgUpdateParams{
+		Authority: k.GetAuthority(),
+		Params:    params,
+	})
+	require.NoError(t, err)
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.True(t, got.DevshardEscrowParams.HeightsyncTimeoutClock)
+
+	params.DevshardEscrowParams.HeightsyncTimeoutClock = false
+	_, err = ms.UpdateParams(wctx, &types.MsgUpdateParams{
+		Authority: k.GetAuthority(),
+		Params:    params,
+	})
+	require.NoError(t, err)
+	got, err = k.GetParams(ctx)
+	require.NoError(t, err)
+	require.False(t, got.DevshardEscrowParams.HeightsyncTimeoutClock)
+}
