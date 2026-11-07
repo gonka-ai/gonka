@@ -40,7 +40,11 @@ func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
 func runE2ETimeoutProtocol(t *testing.T, header bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
-	env := startE2EEnv(ctx, t, requiredImages(t), timeoutProtocolEnvOptions(header))
+	opts := timeoutProtocolEnvOptions(header)
+	// The restarted slot already acked the bootstrap prefix. Keep its sqlite
+	// so catch-up does not skip that prefix and the host can still sign.
+	opts.hostVolumeNames = sqliteHostVolumeNames(t)
+	env := startE2EEnv(ctx, t, requiredImages(t), opts)
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
 	const unavailableSlot = 1
 	status := testutil.GetStatus(t, client, env.clientURL)

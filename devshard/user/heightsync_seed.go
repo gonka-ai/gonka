@@ -1007,6 +1007,16 @@ func heightSeedQuorum(seeded, slots int) bool {
 	return slots > 0 && seeded*2 >= slots
 }
 
+// ChatGateParticipantQuorum is the bootstrap chat rule. acked is the number of
+// distinct validator addresses among ackedSlots; participants is the number of
+// distinct addresses in the group. One block ack from any of an address's
+// slots counts once. A slot outside the group does not count. The gate opens
+// at half or more: two participants open on one, three need two.
+func ChatGateParticipantQuorum(group []types.SlotAssignment, ackedSlots []uint32) (open bool, acked, participants int) {
+	acked, participants = blockAckParticipantCounts(group, ackedSlots)
+	return heightSeedQuorum(acked, participants), acked, participants
+}
+
 type seedTarget struct {
 	slot   int
 	seeder heightSyncSeeder

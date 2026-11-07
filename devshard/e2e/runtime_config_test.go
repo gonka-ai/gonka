@@ -67,6 +67,16 @@ func runChainBackedRuntimeConfigStatus(t *testing.T, header bool) {
 	feePerNonce := testutil.NumericField(t, config, "fee_per_nonce")
 	require.Equal(t, uint64(1_000_000)-createFee-feePerNonce*nonce, testutil.NumericField(t, status, "balance"),
 		"balance should be the seed minus the create fee and one fee per applied nonce")
+
+	// height_seed.slots is distinct validator addresses. This escrow has one
+	// slot per address, so the count matches the host count. The gate is open
+	// once at least half of those participants have acked a block.
+	seed, ok := status["height_seed"].(map[string]any)
+	require.True(t, ok, "status should report the chat gate")
+	require.Equal(t, "ok", seed["state"])
+	participants := testutil.NumericField(t, seed, "slots")
+	require.Equal(t, uint64(len(env.hostURLs)), participants)
+	require.GreaterOrEqual(t, testutil.NumericField(t, seed, "seeded")*2, participants)
 }
 
 // Test flow:

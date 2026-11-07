@@ -306,11 +306,32 @@ func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 
 func containerURL(ctx context.Context, t *testing.T, container testcontainers.Container, portName string) string {
 	t.Helper()
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, nat.Port(portName))
-	require.NoError(t, err)
-	return "http://" + host + ":" + port.Port()
+	deadline := time.Now().Add(15 * time.Second)
+	var last error
+	for {
+		host, err := container.Host(ctx)
+		port, portErr := container.MappedPort(ctx, nat.Port(portName))
+		if err == nil && portErr == nil {
+			return "http://" + host + ":" + port.Port()
+		}
+		if err != nil {
+			last = err
+		} else {
+			last = portErr
+		}
+		if ctx.Err() != nil || !time.Now().Before(deadline) || !dockerStartRetryable(last) {
+			require.NoError(t, last)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+func dockerStartRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "not found")
 }
 
 func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {
@@ -356,32 +377,42 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			WithStartupTimeout(testutil.DefaultRequestTimeout)
 	}
 
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:          spec.image,
-			Env:            spec.env,
-			ExposedPorts:   exposedPorts,
-			Networks:       []string{e.networkName},
-			NetworkAliases: map[string][]string{e.networkName: spec.aliases},
-			Tmpfs:          spec.tmpfs,
-			HostConfigModifier: func(hostConfig *container.HostConfig) {
-				hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
+	var started testcontainers.Container
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		started, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image:          spec.image,
+				Env:            spec.env,
+				ExposedPorts:   exposedPorts,
+				Networks:       []string{e.networkName},
+				NetworkAliases: map[string][]string{e.networkName: spec.aliases},
+				Tmpfs:          spec.tmpfs,
+				HostConfigModifier: func(hostConfig *container.HostConfig) {
+					hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
+				},
+				WaitingFor: waitStrategy,
 			},
-			WaitingFor: waitStrategy,
-		},
-		Started: true,
-		Logger:  quietTestcontainersLogger{},
-	})
-	if err != nil {
-		if container != nil {
-			dumpContainerLogs(ctx, t, spec.name, container)
-			_ = container.Terminate(context.Background())
+			Started: true,
+			Logger:  quietTestcontainersLogger{},
+		})
+		if err == nil {
+			break
 		}
-		t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
+		if started != nil {
+			dumpContainerLogs(ctx, t, spec.name, started)
+			_ = started.Terminate(context.Background())
+			started = nil
+		}
+		if attempt == 3 || !dockerStartRetryable(err) {
+			t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
+		}
+		t.Logf("retrying start %s after docker API error: %v", spec.name, err)
+		time.Sleep(time.Second)
 	}
-	e.containers = append(e.containers, namedContainer{name: spec.name, container: container})
+	e.containers = append(e.containers, namedContainer{name: spec.name, container: started})
 	testutil.DebugLogf(t, "container %s is ready", spec.name)
-	return container
+	return started
 }
 
 func sqliteHostVolumeNames(t *testing.T) []string {

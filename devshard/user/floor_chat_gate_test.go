@@ -663,6 +663,19 @@ func TestFloorChat_HalfOfParticipantsNotSlots(t *testing.T) {
 	ready := session.floorChatReadyLocked()
 	session.mu.Unlock()
 	require.False(t, ready)
+
+	// One real block ack from the second address is the second participant.
+	// Two of three opens the gate.
+	followers[3].blind.Store(false)
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	st = session.HeightSeedStatus()
+	require.Equal(t, HeightSeedStateOK, st.State)
+	require.GreaterOrEqual(t, st.Seeded, 2)
+	require.Equal(t, 3, st.Slots)
+	session.mu.Lock()
+	ready = session.floorChatReadyLocked()
+	session.mu.Unlock()
+	require.True(t, ready)
 }
 
 func openMultiSlotChatSession(t *testing.T, times *chatGateTimes) (*Session, []*sessionOracle) {

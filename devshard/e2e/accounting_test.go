@@ -6,10 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/e2e/testutil"
 	"devshard/internal/e2econfig"
+	"devshard/types"
 )
 
 // Test flow:
@@ -275,11 +277,11 @@ func TestE2E_AccountingLiveInFlightIsCountedOnce(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the three-host environment once on each timeout clock, with the next assigned host acknowledging the request and then never finishing it.
-//  2. Shorten only this e2e run's protocol and redundancy timeout windows.
-//  3. Send one non-streaming completion asynchronously and observe its sent nonce in-flight.
-//  4. Let redundancy return a fast secondary winner while timeout handling runs for the hung send.
-//  5. Poll accounting until in_flight drops and an unfinished disposition appears.
+//  1. Start the three-host environment once on each timeout clock. Slot 1 acks the receipt and then hangs the execution.
+//  2. Shorten redundancy so a secondary still answers the client.
+//  3. Send one non-streaming completion and wait until slot 1's inference is started.
+//  4. Leave that host up until the escrow execution timeout is in the host log.
+//  5. The secondary serves the client. Accounting shows that finish and the hung slot's chain miss.
 func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 	for _, header := range []bool{false, true} {
 		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
@@ -290,61 +292,51 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 
 func runAccountingLiveSendTimeout(t *testing.T, header bool) {
 	t.Helper()
-	const shortProtocolTimeoutSeconds = "1"
-
-	env, client := startNonStreamingEnvWithOptions(t, withHeightsyncTimeoutClock(e2eEnvOptions{
-		hostEnvOverrides: map[int]map[string]string{
-			0: {
-				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
-				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
-			},
-			1: {
-				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
-				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
-				"DEVSHARD_STUB_EXECUTION_HANG":       "true",
-			},
-			2: {
-				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
-				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
-			},
-		},
-		devshardctlEnvOverrides: map[string]string{
-			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
-			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
-		},
-	}, header))
+	opts := timeoutProtocolEnvOptions(header)
+	opts.hostEnvOverrides = map[int]map[string]string{
+		1: {"DEVSHARD_STUB_EXECUTION_HANG": "true"},
+	}
+	env, client := startNonStreamingEnvWithOptions(t, opts)
 	requireHostTimeoutClock(t, client, env, header)
-
-	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
-
-	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
-		"redundancy": map[string]any{
-			"receipt_timeout_ms":               int64(200),
-			"non_stream_response_floor_ms":     int64(300),
-			"non_stream_no_content_timeout_ms": int64(800),
-			"non_stream_max_attempt_wait_ms":   int64(900),
-			"secondary_wait_after_winner_ms":   int64(250),
-		},
-	})
+	overrideSecondaryWaitAfterWinnerMS(t, client, env.clientURL, 500)
 
 	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0
 	})
-	beforeUnfinished := testutil.AccountingUnfinishedTotal(before)
+	beforeFinished := testutil.AccountingDispositionCount(before, "finished_used")
+	beforeMisses := testutil.AccountingProtocolMissTotal(before)
 
+	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
+	beforeNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
 	done := make(chan testutil.RawResponseResult, 1)
 	go func() {
 		resp, err := testutil.SendCompletionRawE(client, env.clientURL, "accounting live send timeout", testutil.AdminAPIKey)
 		done <- testutil.RawResponseResult{Response: resp, Err: err}
 	}()
 
-	inFlight := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
-		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
-	})
-	inFlightCount := testutil.AccountingInFlightTotal(inFlight)
-	require.Greater(t, inFlightCount, uint64(0), "accounting should expose the live sent nonce as in_flight")
-	testutil.RequireAccountingResponseCoherent(t, inFlight, "stub-model")
-	testutil.RequireNonceAccountingBalanced(t, inFlight)
+	receiptDeadline := time.Now().Add(45 * time.Second)
+	var saw []string
+	receiptSeen := false
+	for time.Now().Before(receiptDeadline) {
+		saw = saw[:0]
+		for id := beforeNonce + 1; id <= beforeNonce+8; id++ {
+			inference, found := testutil.InferenceStatus(t, client, env.clientURL, id)
+			if !found {
+				continue
+			}
+			status, _ := inference["status"].(string)
+			saw = append(saw, fmt.Sprintf("%d:%s:slot=%d", id, status, testutil.NumericField(t, inference, "executor_slot")))
+			if (status == "started" || status == "timed_out") && testutil.NumericField(t, inference, "executor_slot") == 1 {
+				receiptSeen = true
+				break
+			}
+		}
+		if receiptSeen {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	require.Truef(t, receiptSeen, "slot 1 should publish a receipt before the execution timeout, before_nonce=%d saw=%v", beforeNonce, saw)
 
 	select {
 	case result := <-done:
@@ -355,14 +347,32 @@ func runAccountingLiveSendTimeout(t *testing.T, header bool) {
 		t.Fatal("timed out waiting for timeout-backed completion")
 	}
 
+	var timeoutTx testutil.TimeoutInferenceTransaction
+	timeoutSeen := assert.Eventually(t, func() bool {
+		latestNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
+		for _, hostURL := range env.hostControlURLs {
+			transaction, found := testutil.FindTimeoutInferenceTransaction(
+				t, client, hostURL, e2eHostRoutePrefix, defaultEscrowID, latestNonce,
+			)
+			if found && transaction.Reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+				timeoutTx = transaction
+				return true
+			}
+		}
+		return false
+	}, 45*time.Second, 250*time.Millisecond, "host storage should include the execution timeout")
+	require.True(t, timeoutSeen, "host storage should include the execution timeout")
+	require.Equal(t, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, timeoutTx.Reason)
+
 	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0 &&
-			testutil.AccountingInFlightTotal(resp) < inFlightCount &&
-			testutil.AccountingUnfinishedTotal(resp) > beforeUnfinished
+			testutil.AccountingDispositionCount(resp, "finished_used") > beforeFinished &&
+			testutil.AccountingProtocolMissTotal(resp) > beforeMisses
 	})
-	require.Less(t, testutil.AccountingInFlightTotal(accounting), inFlightCount, "timed-out live send should leave the in_flight bucket")
-	require.Greater(t, testutil.AccountingUnfinishedTotal(accounting), beforeUnfinished, "timed-out live send should become an unfinished disposition")
-	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "finished_used"), beforeFinished,
+		"the secondary should serve the client")
+	require.Greater(t, testutil.AccountingProtocolMissTotal(accounting), beforeMisses,
+		"the hung executor should be counted missed")
 	testutil.RequireNonceAccountingBalanced(t, accounting)
 }
 
