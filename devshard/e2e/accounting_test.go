@@ -275,15 +275,24 @@ func TestE2E_AccountingLiveInFlightIsCountedOnce(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the three-host environment with the next assigned host delaying inference.
+//  1. Start the three-host environment once on each timeout clock, with the next assigned host acknowledging the request and then never finishing it.
 //  2. Shorten only this e2e run's protocol and redundancy timeout windows.
 //  3. Send one non-streaming completion asynchronously and observe its sent nonce in-flight.
-//  4. Let redundancy return a fast secondary winner while timeout handling runs for the slow send.
+//  4. Let redundancy return a fast secondary winner while timeout handling runs for the hung send.
 //  5. Poll accounting until in_flight drops and an unfinished disposition appears.
 func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
+			runAccountingLiveSendTimeout(t, header)
+		})
+	}
+}
+
+func runAccountingLiveSendTimeout(t *testing.T, header bool) {
+	t.Helper()
 	const shortProtocolTimeoutSeconds = "1"
 
-	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+	env, client := startNonStreamingEnvWithOptions(t, withHeightsyncTimeoutClock(e2eEnvOptions{
 		hostEnvOverrides: map[int]map[string]string{
 			0: {
 				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
@@ -292,7 +301,7 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 			1: {
 				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
 				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
-				"DEVSHARD_STUB_INFERENCE_DELAY_MS":   "8000",
+				"DEVSHARD_STUB_EXECUTION_HANG":       "true",
 			},
 			2: {
 				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
@@ -303,7 +312,8 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
 			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
 		},
-	})
+	}, header))
+	requireHostTimeoutClock(t, client, env, header)
 
 	waitNextTrafficSlot(t, client, env.clientURL, len(env.hostURLs), 1)
 

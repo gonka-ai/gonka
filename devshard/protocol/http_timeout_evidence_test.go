@@ -209,85 +209,99 @@ func TestHTTP_RefusedTimeout_ForgedReceiptTimesOut(t *testing.T) {
 
 func TestHTTP_ExecutionTimeout_ForgedFinishTimesOut(t *testing.T) {
 	for _, wiring := range httpEvidenceWirings {
-		t.Run(wiring.name, func(t *testing.T) {
-			withHTTPTimeoutBuffer(t, 0)
-			config := testutil.DefaultConfig(5)
-			config.ExecutionTimeout = 0
-			env, _ := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
-			ctx := context.Background()
+		for _, header := range []bool{false, true} {
+			name := wiring.name + "/legacy"
+			if header {
+				name = wiring.name + "/header"
+			}
+			t.Run(name, func(t *testing.T) {
+				withHTTPTimeoutBuffer(t, 0)
+				config := testutil.DefaultConfig(5)
+				config.ExecutionTimeout = 0
+				config.HeightsyncTimeoutClock = header
+				env, _ := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
+				ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
-			require.NoError(t, err)
-			executorIdx := prepared.HostIdx()
-			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
-			require.NoError(t, env.session.ProcessResponse(executorIdx, signedReceiptResponse(t, env, executorIdx, prepared.Nonce()), prepared.Nonce()))
-			require.NoError(t, env.session.SendPendingDiff(ctx))
-			require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
+				prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
+				require.NoError(t, err)
+				executorIdx := prepared.HostIdx()
+				rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
+				require.NoError(t, env.session.ProcessResponse(executorIdx, signedReceiptResponse(t, env, executorIdx, prepared.Nonce()), prepared.Nonce()))
+				require.NoError(t, env.session.SendPendingDiff(ctx))
+				require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 
-			forger := &forgingExecutor{}
-			routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
-			env.session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
+				forger := &forgingExecutor{}
+				routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
+				env.session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
 
-			result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
-			require.Error(t, err)
-			require.Equal(t, "execution", result.Reason)
-			require.True(t, result.Applied, "a finish the executor did not sign must not block the timeout: %+v", result)
-			require.Positive(t, forger.challenges.Load())
+				result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
+				require.Error(t, err)
+				require.Equal(t, "execution", result.Reason)
+				require.True(t, result.Applied, "a finish the executor did not sign must not block the timeout: %+v", result)
+				require.Positive(t, forger.challenges.Load())
 
-			st := env.session.StateMachine().SnapshotState()
-			require.Equal(t, types.StatusTimedOut, st.Inferences[prepared.Nonce()].Status)
-			require.Equal(t, uint32(1), st.HostStats[rec.ExecutorSlot].Missed)
-			requireNoEvidenceCopied(t, env, executorIdx, prepared.Nonce())
-		})
+				st := env.session.StateMachine().SnapshotState()
+				require.Equal(t, types.StatusTimedOut, st.Inferences[prepared.Nonce()].Status)
+				require.Equal(t, uint32(1), st.HostStats[rec.ExecutorSlot].Missed)
+				requireNoEvidenceCopied(t, env, executorIdx, prepared.Nonce())
+			})
+		}
 	}
 }
 
 func TestHTTP_ExecutionTimeout_ExecutorFinishIsSequenced(t *testing.T) {
 	for _, wiring := range httpEvidenceWirings {
-		t.Run(wiring.name, func(t *testing.T) {
-			withHTTPTimeoutBuffer(t, 0)
-			config := testutil.DefaultConfig(5)
-			config.ExecutionTimeout = 0
-			env, rig := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
-			ctx := context.Background()
+		for _, header := range []bool{false, true} {
+			name := wiring.name + "/legacy"
+			if header {
+				name = wiring.name + "/header"
+			}
+			t.Run(name, func(t *testing.T) {
+				withHTTPTimeoutBuffer(t, 0)
+				config := testutil.DefaultConfig(5)
+				config.ExecutionTimeout = 0
+				config.HeightsyncTimeoutClock = header
+				env, rig := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
+				ctx := context.Background()
 
-			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
-			require.NoError(t, err)
-			executorIdx := prepared.HostIdx()
-			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
-			require.NoError(t, env.session.ProcessResponse(executorIdx, signedReceiptResponse(t, env, executorIdx, prepared.Nonce()), prepared.Nonce()))
-			require.NoError(t, env.session.SendPendingDiff(ctx))
-			require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
+				prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
+				require.NoError(t, err)
+				executorIdx := prepared.HostIdx()
+				rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
+				require.NoError(t, env.session.ProcessResponse(executorIdx, signedReceiptResponse(t, env, executorIdx, prepared.Nonce()), prepared.Nonce()))
+				require.NoError(t, env.session.SendPendingDiff(ctx))
+				require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 
-			forger := &forgingExecutor{signAsExecutor: true}
-			routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
-			require.Nil(t, findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
-				"the finish exists only in the challenge response")
-			env.session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
+				forger := &forgingExecutor{signAsExecutor: true}
+				routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
+				require.Nil(t, findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
+					"the finish exists only in the challenge response")
+				env.session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
 
-			votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), rig.journal())
-			require.NoError(t, err)
-			require.Empty(t, votes)
-			copied := requireFinishInVerifierMempools(t, env, executorIdx, prepared.Nonce())
-			require.Nil(t, findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
-				"the executor host is not a voter and does not receive the copy")
-			recovered := findFinish(recovery, prepared.Nonce())
-			require.NotNil(t, recovered)
-			require.Equal(t, types.TxHash(copied), types.TxHash(recovered))
+				votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), rig.journal())
+				require.NoError(t, err)
+				require.Empty(t, votes)
+				copied := requireFinishInVerifierMempools(t, env, executorIdx, prepared.Nonce())
+				require.Nil(t, findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
+					"the executor host is not a voter and does not receive the copy")
+				recovered := findFinish(recovery, prepared.Nonce())
+				require.NotNil(t, recovered)
+				require.Equal(t, types.TxHash(copied), types.TxHash(recovered))
 
-			result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
-			require.NoError(t, err, "an executor-signed finish is recovery, not a timeout: %+v", result)
-			require.Equal(t, "execution", result.Reason)
-			require.Zero(t, result.Votes)
-			require.Positive(t, forger.challenges.Load())
+				result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
+				require.NoError(t, err, "an executor-signed finish is recovery, not a timeout: %+v", result)
+				require.Equal(t, "execution", result.Reason)
+				require.Zero(t, result.Votes)
+				require.Positive(t, forger.challenges.Load())
 
-			st := env.session.StateMachine().SnapshotState()
-			require.Equal(t, types.StatusFinished, st.Inferences[prepared.Nonce()].Status)
-			require.Zero(t, st.HostStats[rec.ExecutorSlot].Missed)
-			diffs := rig.journal()
-			require.NotEmpty(t, diffs)
-			require.NotNil(t, findFinish(diffs[len(diffs)-1].Txs, prepared.Nonce()),
-				"the finish from the challenge response is in the diff the user sent")
-		})
+				st := env.session.StateMachine().SnapshotState()
+				require.Equal(t, types.StatusFinished, st.Inferences[prepared.Nonce()].Status)
+				require.Zero(t, st.HostStats[rec.ExecutorSlot].Missed)
+				diffs := rig.journal()
+				require.NotEmpty(t, diffs)
+				require.NotNil(t, findFinish(diffs[len(diffs)-1].Txs, prepared.Nonce()),
+					"the finish from the challenge response is in the diff the user sent")
+			})
+		}
 	}
 }

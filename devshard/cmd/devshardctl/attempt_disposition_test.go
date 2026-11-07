@@ -238,12 +238,24 @@ func TestRunInferenceStampsDispositionOnEveryAttemptSpan(t *testing.T) {
 // recorded its outcome, while still reporting the race duration rather than
 // the timeout duration.
 func TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runInferenceStampsTimeoutOutcomeOnAttemptSpan(t, header)
+		})
+	}
+}
+
+func runInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T, header bool) {
 	zeroReceiptTimeout(t)
 	oldBuffer := user.TimeoutBuffer
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
-	env := setupLiveFloorProxy(t, 3, nil, true)
+	env := setupLiveFloorProxyClock(t, 3, nil, true, header)
 	env.killables[1].Kill()
 	rec := withAttemptSpanRecorder(t)
 

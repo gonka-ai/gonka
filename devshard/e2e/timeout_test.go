@@ -250,6 +250,34 @@ func runE2EExecutionTimeoutProtocol(t *testing.T, header bool) {
 	testutil.RequireSettlementHostStats(t, settlement, len(testutil.HostPrivateKeys))
 }
 
+func timeoutClockSubtest(header bool) string {
+	if header {
+		return "header"
+	}
+	return "legacy"
+}
+
+// withHeightsyncTimeoutClock turns the escrow and every host onto the stamp
+// clock. False leaves both on the legacy wall, which is the process default.
+func withHeightsyncTimeoutClock(opts e2eEnvOptions, header bool) e2eEnvOptions {
+	if !header {
+		return opts
+	}
+	mockChainEnv := make(map[string]string, len(opts.mockChainEnv)+1)
+	for k, v := range opts.mockChainEnv {
+		mockChainEnv[k] = v
+	}
+	mockChainEnv["MOCK_CHAIN_HEIGHTSYNC_TIMEOUT_CLOCK"] = "true"
+	hostEnv := make(map[string]string, len(opts.hostEnv)+1)
+	for k, v := range opts.hostEnv {
+		hostEnv[k] = v
+	}
+	hostEnv["DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK"] = "true"
+	opts.mockChainEnv = mockChainEnv
+	opts.hostEnv = hostEnv
+	return opts
+}
+
 func timeoutProtocolEnvOptions(header bool) e2eEnvOptions {
 	mockChainEnv := map[string]string{
 		"MOCK_CHAIN_CONFIG": "/app/mock-chain-timeout-config.yaml",

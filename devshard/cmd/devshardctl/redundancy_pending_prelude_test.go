@@ -817,6 +817,10 @@ func (c *roleOnlyFloodClient) Send(ctx context.Context, _ host.HostRequest, stre
 	if receiptHandler != nil {
 		receiptHandler(&host.HostResponse{})
 	}
+	// A timeout vote calls Send with no stream. There is nothing to flood.
+	if stream == nil {
+		return &host.HostResponse{}, ctx.Err()
+	}
 	for ctx.Err() == nil {
 		if _, err := io.WriteString(stream, roleOnlyEvent); err != nil {
 			return nil, err
@@ -826,11 +830,23 @@ func (c *roleOnlyFloodClient) Send(ctx context.Context, _ host.HostRequest, stre
 }
 
 func TestRunInference_PreludeOverflowFailsOverToAHealthyHost(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runPreludeOverflowFailsOverToAHealthyHost(t, header)
+		})
+	}
+}
+
+func runPreludeOverflowFailsOverToAHealthyHost(t *testing.T, header bool) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	shortRefusalWindow(t)
 	assertPendingCountersDrained(t)
 	withPendingPreludeCap(t, 4*1024)
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupTestProxyClock(t, 3, nil, true, header)
 	flood := &roleOnlyFloodClient{}
 	env.killables[1].inner = flood
 	cleanupFinished := raceCleanupFinished(env.proxy.redundancy)

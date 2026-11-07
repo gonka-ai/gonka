@@ -230,13 +230,24 @@ func signedReceiptResponse(t *testing.T, env *httpTestEnv, executorIdx int, nonc
 	t.Helper()
 	rec, ok := env.session.StateMachine().GetInference(nonce)
 	require.True(t, ok)
-	stamp := testutil.ReceiptStamp{}
+	// One second in the past arms both clocks: legacy ages ConfirmedAt,
+	// header ages the carried stamp time. ExecutionTimeout 0 is then due.
+	past := time.Now().Add(-time.Second)
+	stamp := testutil.ReceiptStamp{StartedAt: rec.StartedAt, ConfirmedAt: past.Unix()}
 	if rec.StartedAtHeight > 0 {
-		stamp = testutil.ReceiptStamp{Height: rec.StartedAtHeight, Hash: []byte{0xaa}}
+		stamp.Height = rec.StartedAtHeight
+		stamp.Hash = []byte{0xaa}
+		stamp.TimeMs = past.UnixMilli()
 	}
 	receipt := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", nonce,
 		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
-	return &host.HostResponse{Receipt: receipt, ConfirmedAt: time.Now().Unix(), ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash}
+	return &host.HostResponse{
+		Receipt:           receipt,
+		ConfirmedAt:       stamp.ConfirmedAt,
+		ObservedHeight:    stamp.Height,
+		ObservedBlockHash: stamp.Hash,
+		ObservedTimeMs:    stamp.TimeMs,
+	}
 }
 
 func floorDiffs(t *testing.T, user, slot0 *signing.Secp256k1Signer, ref, slots, height uint64) []types.Diff {

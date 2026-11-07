@@ -1412,7 +1412,22 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 // T1: withheld payload → refused-timeout votes reject → session recovery
 // diff carries the executor's MsgConfirmStart and a peer SM applies it.
 func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) {
-	env, rig := setupArmedHTTPEnv(t, 3, 1000000, 100)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testHTTPHonestRecoveryConfirmStart(t, header)
+		})
+	}
+}
+
+func testHTTPHonestRecoveryConfirmStart(t *testing.T, header bool) {
+	t.Helper()
+	cfg := testutil.DefaultConfig(3)
+	cfg.HeightsyncTimeoutClock = header
+	env, rig := setupArmedHTTPEnv(t, 3, 1000000, 100, cfg)
 	ctx := context.Background()
 
 	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
@@ -1435,7 +1450,7 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 	require.True(t, ok)
 	cs := got.GetConfirmStart()
 	want := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens,
-		testutil.ReceiptStamp{Height: cs.ObservedHeight, Hash: cs.ObservedBlockHash, TimeMs: cs.ObservedTimeMs})
+		testutil.ReceiptStamp{Height: cs.ObservedHeight, Hash: cs.ObservedBlockHash, TimeMs: cs.ObservedTimeMs, StartedAt: rec.StartedAt, ConfirmedAt: cs.ConfirmedAt})
 	require.Equal(t, want, cs.ExecutorSig, "session must copy the executor's receipt, not mint a new ConfirmStart")
 
 	peer := rig.peerBefore(t, env, recovery.Nonce)

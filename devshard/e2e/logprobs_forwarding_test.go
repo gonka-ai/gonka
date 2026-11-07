@@ -24,25 +24,36 @@ func requireEveryStreamBound(t *testing.T, client *http.Client, clientURL string
 }
 
 // startProcessedStreamEnv brings up a stand whose hosts answer through the executor's own processor.
-func startProcessedStreamEnv(t *testing.T, logprobsOptimization string) (*e2eEnv, *http.Client) {
+func startProcessedStreamEnv(t *testing.T, logprobsOptimization string, header bool) (*e2eEnv, *http.Client) {
 	t.Helper()
 	hostEnv := map[string]string{e2econfig.StubInferenceProcessedStreamEnv: "true"}
 	if logprobsOptimization != "" {
 		hostEnv["DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED"] = logprobsOptimization
 	}
-	return startNonStreamingEnvWithOptions(t, e2eEnvOptions{hostEnv: hostEnv})
+	env, client := startNonStreamingEnvWithOptions(t, withHeightsyncTimeoutClock(e2eEnvOptions{hostEnv: hostEnv}, header))
+	requireHostTimeoutClock(t, client, env, header)
+	return env, client
 }
 
 // Test flow:
-//  1. Start the three-host environment with the logprobs optimization on and hosts answering through the executor's processor.
-//  2. Send one streaming completion that does not ask for logprobs, and wait until its Finish is queued.
-//  3. Send one streaming completion that asks for logprobs with one alternative. Its diff applies the silent stream's Finish.
+//  1. Start the three-host environment once on each timeout clock, with the logprobs optimization on and hosts answering through the executor's processor.
+//  2. Send one streaming completion that does not ask for logprobs, and wait until its Finish is queued or already applied.
+//  3. Send one streaming completion that asks for logprobs with one alternative. Its diff applies the silent stream's Finish when that Finish is still queued.
 //  4. Assert the silent client is shown no logprobs and the asking client is shown the host's own positions.
 //  5. Assert neither client is shown the serving engine's bookkeeping.
-//  6. Wait until the asking stream's Finish is queued, then send one more completion so the next diff applies it.
+//  6. Wait until the asking stream's Finish is queued or already applied, then send one more completion so a still-queued Finish is applied.
 //  7. Assert the gateway bound both streams to their signed Finish: the silent one by served_hash, the asking one by response_hash.
 func TestE2E_LogprobsReachOnlyAskingClientsWithTheOptimizationOn(t *testing.T) {
-	env, client := startProcessedStreamEnv(t, "true")
+	for _, header := range []bool{false, true} {
+		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
+			runLogprobsReachOnlyAskingClients(t, header)
+		})
+	}
+}
+
+func runLogprobsReachOnlyAskingClients(t *testing.T, header bool) {
+	t.Helper()
+	env, client := startProcessedStreamEnv(t, "true", header)
 
 	silent := testutil.SendStreamingCompletion(t, client, env.clientURL, "logprobs not asked, optimization on")
 	waitForPendingFinish(t, client, env.clientURL, inferenceIDFromStream(t, silent))
@@ -59,15 +70,24 @@ func TestE2E_LogprobsReachOnlyAskingClientsWithTheOptimizationOn(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the three-host environment with the logprobs optimization off and hosts answering through the executor's processor.
-//  2. Send one streaming completion that does not ask for logprobs, and wait until its Finish is queued.
-//  3. Send one streaming completion that asks for logprobs with one alternative. Its diff applies the silent stream's Finish.
+//  1. Start the three-host environment once on each timeout clock, with the logprobs optimization off and hosts answering through the executor's processor.
+//  2. Send one streaming completion that does not ask for logprobs, and wait until its Finish is queued or already applied.
+//  3. Send one streaming completion that asks for logprobs with one alternative. Its diff applies the silent stream's Finish when that Finish is still queued.
 //  4. Assert the executor now forwards logprobs for every request yet the gateway still withholds them from the silent client.
 //  5. Assert the asking client keeps the host's own positions and neither client is shown the serving engine's bookkeeping.
-//  6. Wait until the asking stream's Finish is queued, then send one more completion so the next diff applies it.
+//  6. Wait until the asking stream's Finish is queued or already applied, then send one more completion so a still-queued Finish is applied.
 //  7. Assert the gateway bound both streams to their signed Finish by response_hash.
 func TestE2E_LogprobsStayWithheldFromSilentClientsWithTheOptimizationOff(t *testing.T) {
-	env, client := startProcessedStreamEnv(t, "false")
+	for _, header := range []bool{false, true} {
+		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
+			runLogprobsStayWithheldFromSilentClients(t, header)
+		})
+	}
+}
+
+func runLogprobsStayWithheldFromSilentClients(t *testing.T, header bool) {
+	t.Helper()
+	env, client := startProcessedStreamEnv(t, "false", header)
 
 	silent := testutil.SendStreamingCompletion(t, client, env.clientURL, "logprobs not asked, optimization off")
 	waitForPendingFinish(t, client, env.clientURL, inferenceIDFromStream(t, silent))

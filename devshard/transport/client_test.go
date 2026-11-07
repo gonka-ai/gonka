@@ -46,10 +46,16 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 
 func setupClientTestEnvWithHostSigner(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host, *signing.Secp256k1Signer) {
 	t.Helper()
+	return setupClientTestEnvClock(t, false)
+}
+
+func setupClientTestEnvClock(t *testing.T, header bool) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host, *signing.Secp256k1Signer) {
+	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
 	config := testutil.DefaultConfig(1)
+	config.HeightsyncTimeoutClock = header
 	verifier := signing.NewSecp256k1Verifier()
 
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
@@ -172,7 +178,19 @@ func TestHTTPClient_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 }
 
 func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
-	client, _, userSigner, _, h, hostSigner := setupClientTestEnvWithHostSigner(t)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testVerifyTimeoutReturnsRecoveryMempool(t, header)
+		})
+	}
+}
+
+func testVerifyTimeoutReturnsRecoveryMempool(t *testing.T, header bool) {
+	client, _, userSigner, _, h, hostSigner := setupClientTestEnvClock(t, header)
 	ctx := context.Background()
 
 	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
@@ -191,6 +209,7 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
 	}
 	start := testutil.StartTx(3)
+	start.GetStartInference().StartedAt = 1000
 	start.GetStartInference().ObservedHeight = 100
 	start.GetStartInference().ObservedBlockHash = []byte{0x01}
 	start.GetStartInference().ObservedTimeMs = startAt

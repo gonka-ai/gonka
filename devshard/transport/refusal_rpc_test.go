@@ -303,23 +303,17 @@ func refusalPayloadRequest() transport.VerifyTimeoutRequest {
 	}
 }
 
-// newRefusalJournalServer is a verifier whose store holds refusalJournalDiffs
-// contiguous diffs and whose escrow state says the same tip. The live
-// inference map stays one pending record; the journal is not replayed into it.
-func newRefusalJournalServer(t *testing.T) (*transport.Server, []byte) {
-	t.Helper()
-	return newRefusalJournalServerN(t, refusalJournalDiffs)
-}
-
-// newRefusalJournalServerN is a verifier whose store holds n contiguous diffs
-// and whose escrow state says the same tip. The live inference map stays one
-// pending record; the journal is not replayed into it.
-func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
+// newRefusalJournalServerClock is a verifier whose store holds n contiguous
+// diffs and whose escrow state says the same tip. The live inference map
+// stays one pending record; the journal is not replayed into it. header
+// selects the stamp clock; false keeps the legacy wall.
+func newRefusalJournalServerClock(t *testing.T, n int, header bool) (*transport.Server, []byte) {
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(group))
+	config.HeightsyncTimeoutClock = header
 	verifier := signing.NewSecp256k1Verifier()
 	root := bytes.Repeat([]byte{0x11}, 32)
 
@@ -352,6 +346,7 @@ func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
 			Model:        "llama",
 			InputLength:  100,
 			MaxTokens:    testutil.TestMaxTokens,
+			StartedAt:    1000,
 		},
 	}
 	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
@@ -432,7 +427,19 @@ func runRefusalCheck(t *testing.T, srv *transport.Server, exec *recordingExecuto
 // executor is sent every nonce once, in order, then the payload.
 // Today each case sends the journal in one request.
 func TestRefusalChallengePagesStayUnderReadCap(t *testing.T) {
-	srv, root := newRefusalJournalServer(t)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testRefusalChallengePagesStayUnderReadCap(t, header)
+		})
+	}
+}
+
+func testRefusalChallengePagesStayUnderReadCap(t *testing.T, header bool) {
+	srv, root := newRefusalJournalServerClock(t, refusalJournalDiffs, header)
 	req := refusalPayloadRequest()
 
 	t.Run("matching root", func(t *testing.T) {
@@ -471,7 +478,19 @@ func TestRefusalChallengePagesStayUnderReadCap(t *testing.T) {
 // check covers a down executor, one behind, and one caught up. A verify
 // budget that expires returns the error and does not accept.
 func TestRefusalLargeJournal(t *testing.T) {
-	srv, root := newRefusalJournalServerN(t, refusalLargeJournalDiffs)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testRefusalLargeJournal(t, header)
+		})
+	}
+}
+
+func testRefusalLargeJournal(t *testing.T, header bool) {
+	srv, root := newRefusalJournalServerClock(t, refusalLargeJournalDiffs, header)
 	runtime.GC()
 	var seeded runtime.MemStats
 	runtime.ReadMemStats(&seeded)
