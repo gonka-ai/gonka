@@ -19,6 +19,18 @@ func TestARefusedSettleClosesAdmission(t *testing.T) {
 	require.True(t, runtime.settlementPending.Load(), "the drain hook has to know a settle is owed")
 }
 
+func TestSettleDevshardOnChainForceBypassesBusyCheck(t *testing.T) {
+	runtime := &devshardRuntime{id: "77", model: "m"}
+	runtime.active.Store(true)
+	runtime.pendingRaceCleanup.Add(1)
+	gateway := newFinalizeTestGateway(t, runtime)
+
+	_, err := gateway.settleDevshardOnChain(t.Context(), "77", adminSettleEscrowRequest{Force: true})
+
+	require.Error(t, err, "the test key is not a valid signer, so settle still fails further down")
+	require.NotErrorIs(t, err, errDevshardBusy, "force must bypass the busy check")
+}
+
 func TestRuntimeStatusReportsBothHalvesOfTheBarrier(t *testing.T) {
 	runtime := &devshardRuntime{id: "62147", model: "m"}
 	runtime.active.Store(true)

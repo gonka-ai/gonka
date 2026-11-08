@@ -74,7 +74,7 @@ func signedErrorFinish(t *testing.T, hosts []*signing.Secp256k1Signer, inference
 	t.Helper()
 	msg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: responseHash,
+		ResponseHash: responseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  0,
 		OutputTokens: outputTokens,
 		ExecutorSlot: executorSlot,
@@ -132,7 +132,6 @@ func TestVerifyErrorMiss_NoWaitGuard(t *testing.T) {
 	e.st = stateWithStartedAt(1, 1, now)
 	require.Greater(t, e.st.Config.RefusalTimeout, int64(0))
 	require.Greater(t, e.st.Config.ExecutionTimeout, int64(0))
-	require.Equal(t, now, e.st.Inferences[1].ConfirmedAt)
 
 	accept, err := e.verify(e.finishTx, e.payload, nil)
 	require.NoError(t, err)
@@ -213,7 +212,7 @@ func TestVerifyErrorMiss_TamperedFinishRejects(t *testing.T) {
 	t.Run("non-executor signer", func(t *testing.T) {
 		msg := &types.MsgFinishInference{
 			InferenceId:  1,
-			ResponseHash: e.hash,
+			ResponseHash: e.hash, ServedHash: testutil.TestServedHash,
 			ExecutorSlot: 1,
 			EscrowId:     "escrow-1",
 		}
@@ -270,7 +269,7 @@ func TestVerifyErrorMiss_WrongInferenceOrEscrowRejects(t *testing.T) {
 	t.Run("different escrow", func(t *testing.T) {
 		msg := &types.MsgFinishInference{
 			InferenceId:  1,
-			ResponseHash: e.hash,
+			ResponseHash: e.hash, ServedHash: testutil.TestServedHash,
 			ExecutorSlot: 1,
 			EscrowId:     "escrow-other",
 		}
@@ -391,7 +390,7 @@ func TestVerifyErrorMiss_RejectCauses(t *testing.T) {
 
 	badSigner := &types.MsgFinishInference{
 		InferenceId:  1,
-		ResponseHash: e.hash,
+		ResponseHash: e.hash, ServedHash: testutil.TestServedHash,
 		ExecutorSlot: 1,
 		EscrowId:     "escrow-1",
 	}

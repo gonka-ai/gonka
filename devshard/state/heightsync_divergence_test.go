@@ -55,7 +55,7 @@ func divAckTx(t *testing.T, signer *signing.Secp256k1Signer, turnSeq, refNonce u
 func divStartTx(id, height uint64, hash []byte) *types.DevshardTx {
 	return txStart(&types.MsgStartInference{
 		InferenceId: id, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		ObservedHeight: height, ObservedBlockHash: hash,
 	})
 }
@@ -66,10 +66,10 @@ func divStartTx(id, height uint64, hash []byte) *types.DevshardTx {
 // attestation rather than something the sequencer wrote.
 func divConfirmTx(t *testing.T, executor *signing.Secp256k1Signer, id, height uint64, hash []byte) *types.DevshardTx {
 	t.Helper()
-	sig := testutil.SignExecutorReceipt(t, executor, "escrow-1", id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
+	sig := testutil.SignExecutorReceipt(t, executor, "escrow-1", id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens,
 		testutil.ReceiptStamp{Height: height, Hash: hash})
 	return txConfirm(&types.MsgConfirmStart{
-		InferenceId: id, ExecutorSig: sig, ConfirmedAt: 1000,
+		InferenceId: id, ExecutorSig: sig,
 		ObservedHeight: height, ObservedBlockHash: hash,
 	})
 }
@@ -77,7 +77,7 @@ func divConfirmTx(t *testing.T, executor *signing.Secp256k1Signer, id, height ui
 func divFinishTx(t *testing.T, executor *signing.Secp256k1Signer, id uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
 	t.Helper()
 	msg := &types.MsgFinishInference{
-		InferenceId: id, ResponseHash: []byte("response"),
+		InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot,
 		EscrowId: "escrow-1", ObservedHeight: height, ObservedBlockHash: hash,
 	}

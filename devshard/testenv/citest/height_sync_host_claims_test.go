@@ -54,6 +54,11 @@ func composeLogsContains(stack *harness.Stack, needle string, services ...string
 	return err == nil && ok
 }
 
+func composeLogsHaveField(stack *harness.Stack, field harness.LogField, services ...string) bool {
+	out, err := stack.ComposeLogsAll(services...)
+	return err == nil && harness.LogsContainFields(out, field)
+}
+
 func dumpHeightSyncLogs(t *testing.T, stack *harness.Stack, services ...string) {
 	t.Helper()
 	out, err := stack.ComposeLogsAll(services...)
@@ -91,9 +96,9 @@ func TestContainerE2E_HeightSync_HostLowerHeightAutoAligns(t *testing.T) {
 	require.GreaterOrEqual(t, spread, 15.0, "solo lag of 20 must show up as height_spread")
 
 	logs := composeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
-	require.True(t, strings.Contains(logs, "delta=-"),
+	require.True(t, harness.LogsContainFields(logs, harness.LogNumberPrefixField("delta", "-")),
 		"operators must see a negative delta for the lagging host; logs:\n%s", logs)
-	require.Contains(t, logs, "trust_level=peer_aligned")
+	require.True(t, harness.LogsContainFields(logs, harness.LogStringField("trust_level", "peer_aligned")))
 }
 
 // TestContainerE2E_HeightSync_HostFutureHeightBeyondD is scenario B: the solo
@@ -116,7 +121,7 @@ func TestContainerE2E_HeightSync_HostFutureHeightBeyondD(t *testing.T) {
 	})
 
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
-		return composeLogsContains(stack, "trust_level=untrusted_peer", "devshardctl", "versiond-0", "versiond-1", solo)
+		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "devshardctl", "versiond-0", "versiond-1", solo)
 	})
 	require.True(t, ok, "future claim |Δ|>D must log trust_level=untrusted_peer")
 
@@ -141,7 +146,7 @@ func TestContainerE2E_HeightSync_HostFabricatedHashInsideD(t *testing.T) {
 	postHeightSyncChat(t, cfg, eps, "citest height-sync fabricated hash seed c")
 
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
-		return composeLogsContains(stack, "trust_level=untrusted_peer", "devshardctl", "versiond-0", "versiond-1", solo)
+		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "devshardctl", "versiond-0", "versiond-1", solo)
 	})
 	require.True(t, ok, "H+1 fabricated claim must log untrusted_peer before reconcile")
 

@@ -11,6 +11,8 @@
 **/*.log
 direct.log
 test-logs-*/
+# citest stack workdirs; container-written data/ under them can be unreadable
+devshard/testenv/citest-*/
 
 # Dependency caches
 **/.gradle/
@@ -23,6 +25,11 @@ test-logs-*/
 **/.cache
 **/.pytest_cache
 **/__pycache__
+
+# Reproducible local load-test artifacts. They can contain one file per failed
+# request and must never be sent to a Docker build context.
+devshard/testenv/loadtest/results/
+devshard/testenv/loadtest-*/
 
 # Environment files
 **/.venv

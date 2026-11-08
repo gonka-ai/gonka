@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"common/storage/pgpool"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -43,7 +45,17 @@ type PostgresStorage struct {
 }
 
 func NewPostgresStorage(ctx context.Context) (*PostgresStorage, error) {
-	pool, err := pgxpool.New(ctx, "")
+	// pgxpool.ParseConfig reads the standard libpq env vars. The pool cap
+	// matches the other Postgres pools so a CPU-sized default cannot exhaust
+	// max_connections.
+	cfg, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+	if err := pgpool.ConfigureMaxConns(cfg); err != nil {
+		return nil, err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}

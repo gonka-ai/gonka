@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGatewayPhase7_Smoke exercises devshardctl → versiond-router → devshardd → mock-openai.
+// TestGatewaySingleHostSmoke exercises devshardctl → versiond-router → devshardd → mock-openai.
 // Requires Docker, a linux devshardd at ../../build/devshardd, and TESTENV_GATEWAY_SMOKE=1.
-func TestGatewayPhase7_Smoke(t *testing.T) {
+func TestGatewaySingleHostSmoke(t *testing.T) {
 	if os.Getenv("TESTENV_GATEWAY_SMOKE") != "1" {
 		t.Skip("set TESTENV_GATEWAY_SMOKE=1 to run full-stack gateway smoke (Docker)")
 	}

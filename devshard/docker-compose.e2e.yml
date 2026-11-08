@@ -4,7 +4,12 @@ services:
     working_dir: /app
     volumes:
       - .:/app
+      # Module root is /app, so the go.mod replace common => ../common is /common.
+      - ../common:/common
       - /var/run/docker.sock:/var/run/docker.sock
+      # CI supplies bind paths restored by actions/cache; local runs use volumes.
+      - ${DEVSHARD_E2E_GOMODCACHE:-e2e-go-mod}:/go/pkg/mod
+      - ${DEVSHARD_E2E_GOCACHE:-e2e-go-build}:/root/.cache/go-build
     extra_hosts:
       - host.docker.internal:host-gateway
     tmpfs:
@@ -18,6 +23,8 @@ services:
       DEVSHARD_E2E_GOTESTSUM: ${DEVSHARD_E2E_GOTESTSUM:-gotest.tools/gotestsum@v1.13.0}
       DEVSHARD_E2E_DEBUG: ${DEVSHARD_E2E_DEBUG:-}
       GOTMPDIR: /tmp
+      GOMODCACHE: /go/pkg/mod
+      GOCACHE: /root/.cache/go-build
       TESTCONTAINERS_HOST_OVERRIDE: host.docker.internal
     command:
       - sh
@@ -32,3 +39,7 @@ services:
           --format "$$format" \
           --junitfile build/test-results/e2e/junit.xml \
           -- ./e2e -count=1 -v
+
+volumes:
+  e2e-go-mod:
+  e2e-go-build:

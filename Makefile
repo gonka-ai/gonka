@@ -86,10 +86,12 @@ edge-api-build-docker:
 		DOCKER_PLATFORM=$(DOCKER_PLATFORM) DOCKER_GOOS=$(DOCKER_GOOS) DOCKER_GOARCH=$(DOCKER_GOARCH)
 
 versiond-router-build-docker:
-	@make -C versiond-router build-docker SET_LATEST=1
+	@make -C versiond-router build-docker SET_LATEST=1 \
+		DOCKER_PLATFORM=$(DOCKER_PLATFORM)
 
 edge-api-router-build-docker:
-	@make -C edge-api-router build-docker SET_LATEST=1
+	@make -C edge-api-router build-docker SET_LATEST=1 \
+		DOCKER_PLATFORM=$(DOCKER_PLATFORM)
 
 testapp-server-build-docker:
 	@echo "Building testapp-server docker image ($(DOCKER_PLATFORM))..."

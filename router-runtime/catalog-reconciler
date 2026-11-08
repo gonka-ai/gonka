@@ -539,12 +539,18 @@ assign_slot() {
     [ -z "$response" ] || return 1
 }
 
-set_slot_server_state() {
-    action=$1 backend=$2
+# Callers pass the JSON slot in the global `backend` and keep using that name
+# after enable or disable returns (slot-map reclaim, accepted-route repair).
+# This script has no local scope, so these helpers must not assign `backend`:
+# the twin call would replace it with ${backend}_rpc, and the following
+# `set map` would target a key the slot map does not contain.
+apply_slot_server_state() {
+    slot_action=$1
+    slot_backend=$2
     commands=
     index=1
     while [ "$index" -le "$server_capacity" ]; do
-        command="$action server $backend/$server_prefix$index"
+        command="$slot_action server $slot_backend/$server_prefix$index"
         if [ -n "$commands" ]; then
             commands="$commands; $command"
         else
@@ -554,6 +560,23 @@ set_slot_server_state() {
     done
     response=$(runtime "$commands" 2>&1) || return 1
     [ -z "$response" ]
+}
+
+# The _rpc twin is the native-gRPC backend for the same slot. Enabling or
+# disabling one without the other would leave Connect on a server the JSON
+# pool has already withdrawn, or the reverse.
+set_slot_server_state() {
+    slot_action=$1
+    slot_backend=$2
+    apply_slot_server_state "$slot_action" "$slot_backend" || return 1
+    case "$slot_backend" in
+        *_rpc) return 0 ;;
+    esac
+    case "$slot_backend" in
+        "$backend_prefix"*)
+            apply_slot_server_state "$slot_action" "${slot_backend}_rpc" || return 1
+            ;;
+    esac
 }
 
 enable_slot() {

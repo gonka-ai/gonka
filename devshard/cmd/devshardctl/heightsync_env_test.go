@@ -12,6 +12,7 @@ import (
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/transport"
+	"devshard/user"
 )
 
 func resetHeightSyncForTest() {
@@ -115,6 +116,39 @@ func TestParseUintEnv(t *testing.T) {
 	require.Equal(t, uint64(10), v)
 }
 
+func TestHeightSyncHeartbeatFromEnv(t *testing.T) {
+	t.Setenv(envHeightSyncHeartbeat, "")
+	require.False(t, heightSyncHeartbeatFromEnv())
+	require.True(t, !heightSyncHeartbeatFromEnv(), "unset is the bit gateway.go stores in DisableHeightSyncHeartbeat")
+
+	for _, v := range []string{"true", "1", "on", "TRUE", " On "} {
+		t.Setenv(envHeightSyncHeartbeat, v)
+		require.True(t, heightSyncHeartbeatFromEnv(), v)
+		require.False(t, !heightSyncHeartbeatFromEnv(), v)
+	}
+	for _, v := range []string{"false", "0", "off", "no", "yes", "maybe", "TRUEISH"} {
+		t.Setenv(envHeightSyncHeartbeat, v)
+		require.False(t, heightSyncHeartbeatFromEnv(), v)
+	}
+}
+
+func TestQuietSettleDelayFromEnv(t *testing.T) {
+	t.Setenv(envQuietSettleDelay, "")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "5s")
+	require.Equal(t, user.TestQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "2m")
+	require.Equal(t, 2*time.Minute, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "0s")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "not-a-duration")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+}
+
 func TestGatewayChainOracle_FlagValues(t *testing.T) {
 	t.Setenv(envGatewayChainOracle, "")
 	require.False(t, gatewayChainOracleFromEnv())
@@ -136,14 +170,14 @@ func TestGatewayChainOracle_DefaultOffDoesNotMint(t *testing.T) {
 	t.Setenv("DEVSHARD_CHAIN_RPC", "http://127.0.0.1:26657")
 
 	require.NoError(t, initGatewayHeightSync(nil, "http://127.0.0.1:26657"))
-	require.Nil(t, hsSt, "follower must not start when the flag is unset")
+	require.NotNil(t, hsSt, "the follower always starts: timeouts read block times through it")
+	require.NotNil(t, gatewayHeaderTimes())
 
 	cfg, err := extraClientConfigFromEnv()
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
-	require.Nil(t, cfg.HeightSyncLogOracle)
-	require.Nil(t, hsSt)
+	require.Nil(t, cfg.HeightSyncLogOracle, "the log oracle stays behind the flag")
 
 	got, err, miss := cfg.HeightSync.Decide(context.Background(), heightsync.DecideHints{Nonce: 1})
 	require.NoError(t, err)

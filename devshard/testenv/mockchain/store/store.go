@@ -29,8 +29,8 @@ type Store struct {
 	ParamsBlockHeight int64
 	// NextPocStartBlockHeight is the upcoming epoch PoC anchor (EpochContext.NextPoCStart).
 	NextPocStartBlockHeight int64
-	Params                 inferencetypes.Params
-	Epoch             inferencetypes.Epoch
+	Params                  inferencetypes.Params
+	Epoch                   inferencetypes.Epoch
 
 	Participants   map[string]*inferencetypes.Participant
 	Escrows        map[uint64]*inferencetypes.DevshardEscrow
@@ -46,7 +46,8 @@ type Store struct {
 	// escrowQueryFault, when true, makes DevshardEscrow gRPC queries fail. It
 	// lets citest simulate an unavailable request-time escrow fetch path so the
 	// devshardd escrow long-poll warm cache is exercised.
-	escrowQueryFault bool
+	escrowQueryFault      bool
+	participantQueryFault bool
 }
 
 // Account holds Cosmos auth sequence state for LCD tx signing (Phase 3c).
@@ -280,6 +281,20 @@ func (s *Store) EscrowQueryFaulted() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.escrowQueryFault
+}
+
+// ParticipantQueryFaulted reports whether Participant queries should fail.
+func (s *Store) ParticipantQueryFaulted() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.participantQueryFault
+}
+
+// SetParticipantQueryFault toggles Participant query failures (test injection).
+func (s *Store) SetParticipantQueryFault(faulted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.participantQueryFault = faulted
 }
 
 // AdvanceBlock increments the latest block height and returns the new value.

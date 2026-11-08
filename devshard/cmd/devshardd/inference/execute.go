@@ -3,10 +3,13 @@ package inference
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 
 	"common/completionapi"
+	"common/storage/payloads"
 	devshardpkg "devshard"
 	"devshard/observability"
 )
@@ -15,6 +18,7 @@ type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*ht
 
 type processedExecutionResponse struct {
 	responseHash []byte
+	servedHash   []byte
 	inputTokens  uint64
 	outputTokens uint64
 	responseBody []byte
@@ -27,6 +31,8 @@ func executeInference(
 	payloadEpoch uint64,
 	execute mlRequestExecutor,
 	chainParams ChainParamsProvider,
+	logprobsOptimizationEnabled bool,
+	vocabularySize func() int,
 ) (*devshardpkg.ExecuteResult, error) {
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
@@ -35,6 +41,10 @@ func executeInference(
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}
+	// The executor does not trust the gateway's check: an out-of-range stop id crashes the node.
+	if err := checkStopTokenIDs(modified.NewBody, vocabularySize); err != nil {
+		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, err)
+	}
 
 	resp, err := execute(ctx, req.Model, modified.NewBody)
 	if err != nil {
@@ -42,7 +52,10 @@ func executeInference(
 	}
 	defer resp.Body.Close()
 
-	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, modified.AsksForLogprobs)
+	processor := completionapi.NewExecutorResponseProcessor(inferenceID, modified.AsksForLogprobs)
+	processor.SetLogprobsOptimization(req.LogprobsOptimizationOverride, logprobsOptimizationEnabled)
+
+	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, processor)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, err)
 	}
@@ -54,19 +67,27 @@ func executeInference(
 		return nil, observability.Classify(observability.ReasonCanonicalizePromptErr, observability.WhereRuntimeExecute, fmt.Errorf("canonicalize prompt: %w", err))
 	}
 
-	if err := store.Store(
+	err = store.Store(
 		ctx,
 		req.EscrowID,
 		req.InferenceID,
 		payloadEpoch,
 		promptPayload,
 		processed.responseBody,
-	); err != nil {
+	)
+	if errors.Is(err, payloads.ErrAlreadyStored) {
+		// An earlier run of this inference stored first; validators fetch
+		// those bytes, so the finish commits their hashes.
+		reader, _ := store.(PayloadReader)
+		return storedExecutionResult(ctx, req, reader, payloadEpoch)
+	}
+	if err != nil {
 		return nil, observability.Classify(observability.ReasonPayloadStoreErr, observability.WhereRuntimeExecute, fmt.Errorf("store payloads: %w", err))
 	}
 
 	return &devshardpkg.ExecuteResult{
 		ResponseHash: processed.responseHash,
+		ServedHash:   processed.servedHash,
 		InputTokens:  processed.inputTokens,
 		OutputTokens: processed.outputTokens,
 		ResponseBody: processed.responseBody,
@@ -77,10 +98,8 @@ func processExecutionHTTPResponse(
 	req devshardpkg.ExecuteRequest,
 	resp *http.Response,
 	inferenceID string,
-	forwardLogprobs bool,
+	processor *completionapi.ExecutorResponseProcessor,
 ) (*processedExecutionResponse, error) {
-	processor := completionapi.NewExecutorResponseProcessor(inferenceID, forwardLogprobs)
-
 	isSSE := completionapi.IsEventStream(resp)
 
 	if req.ResponseWriter != nil && isSSE {
@@ -112,6 +131,10 @@ func processExecutionHTTPResponse(
 
 	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
+	servedHash, err := processor.GetServedHash()
+	if err != nil {
+		return nil, fmt.Errorf("get served hash: %w", err)
+	}
 	usage, err := processor.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
@@ -119,8 +142,21 @@ func processExecutionHTTPResponse(
 
 	return &processedExecutionResponse{
 		responseHash: hash[:],
+		servedHash:   servedHash[:],
 		inputTokens:  usage.PromptTokens,
 		outputTokens: usage.CompletionTokens,
 		responseBody: bodyBytes,
 	}, nil
+}
+
+// checkStopTokenIDs resolves vocabularySize only for a request with stop ids: the lookup can block on the chain.
+func checkStopTokenIDs(body []byte, vocabularySize func() int) error {
+	var requestMap map[string]interface{}
+	if err := json.Unmarshal(body, &requestMap); err != nil {
+		return fmt.Errorf("modify request body: %w", err)
+	}
+	if !completionapi.HasStopTokenIDs(requestMap) {
+		return nil
+	}
+	return completionapi.ValidateStopTokenIDs(requestMap, vocabularySize())
 }

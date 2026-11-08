@@ -159,20 +159,19 @@ func (r *obsTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) uin
 	r.t.Helper()
 	executorSlot := uint32(inferenceID % uint64(len(r.group)))
 	executorSigner := r.hosts[executorSlot]
-	confirmedAt := int64(2000) + int64(inferenceID)
 
 	r.applyDiff(startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
 
 	execSig := testutil.SignExecutorReceipt(r.t, executorSigner, r.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
+		InferenceId: inferenceID, ExecutorSig: execSig,
 	}}}
 	r.applyDiff(startNonce+1, []*types.DevshardTx{confirmTx})
 
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: r.stub.ResponseHash,
+		ResponseHash: r.stub.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  r.stub.InputTokens,
 		OutputTokens: r.stub.OutputTokens,
 		ExecutorSlot: executorSlot,
@@ -393,9 +392,9 @@ func TestHost_ApplyAndPersist_ValidationObs_ValidateAndSealSameDiff(t *testing.T
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 0, 1)
 
 	// Terminal invalid vote; host records vote obs after SM terminal persist inside ApplyDiff.
-	r.applyDiff(next, []*types.DevshardTx{r.signValidationVote(1, 1, false)})
+	r.applyDiff(next, []*types.DevshardTx{r.signValidationVote(1, 2, false)})
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 0, 1)
-	waitObsCompletedForSlot(t, r.store, r.escrowID, 1, 1)
+	waitObsCompletedForSlot(t, r.store, r.escrowID, 2, 1)
 }
 
 func TestHost_ApplyAndPersist_ValidationObs_NoRecordOnUserLocalCompose(t *testing.T) {
@@ -497,12 +496,12 @@ func TestHost_ValidateAsync_DoesNotRecordObsBeforeDiff(t *testing.T) {
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		InferenceId: 1, ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40,
 		ExecutorSlot: 1, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
@@ -557,12 +556,12 @@ func TestHost_ValidateAsync_RecordsObsAfterDiffApplied(t *testing.T) {
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		InferenceId: 1, ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40,
 		ExecutorSlot: 1, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
@@ -627,9 +626,9 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 	next++
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 0, 1)
 
-	r.applyDiff(next, []*types.DevshardTx{r.signValidationVote(inferenceID, 1, false)})
+	r.applyDiff(next, []*types.DevshardTx{r.signValidationVote(inferenceID, 2, false)})
 	next++
-	waitObsCompletedForSlot(t, r.store, r.escrowID, 1, 1)
+	waitObsCompletedForSlot(t, r.store, r.escrowID, 2, 1)
 	waitObsRowCount(t, r.store, r.escrowID, 2)
 
 	next = r.awaitTerminalSeal(inferenceID, next)
@@ -639,11 +638,12 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 	beforeObs := snapshotValidationObs(t, r.store, r.escrowID)
 	require.Len(t, beforeObs, 2)
 
-	// Late validation on a slot that never recorded obs must fail before async write.
+	// Late validation on a sealed inference must fail before async write; slot 2
+	// keeps only the obs row from its vote.
 	err := r.applyDiffExpectError(next, []*types.DevshardTx{r.signValidation(inferenceID, 2, true)})
 	require.Error(t, err)
 	require.ErrorIs(t, err, types.ErrInferenceSealed)
 
 	waitValidationObsUnchanged(t, r.store, r.escrowID, beforeObs)
-	require.Equal(t, uint32(0), obsCompletedForSlot(t, r.store, r.escrowID, 2))
+	require.Equal(t, uint32(1), obsCompletedForSlot(t, r.store, r.escrowID, 2))
 }

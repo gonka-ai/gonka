@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -15,6 +16,7 @@ import (
 // should appear twice in the attempt list.
 func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 	zeroReceiptTimeout(t)
+	allowSpeculativeAttemptsOnWholeGroup(t)
 	env := setupTestProxy(t, 4, nil, true)
 
 	// Kill the primary (host 1) and its natural secondary (host 2).
@@ -26,9 +28,17 @@ func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 	require.NoError(t, err, "host 3 should accept and produce a result")
 
+	// The winner can return before speculative losers finish. Request perf
+	// records are published by the background finalizer in that case.
+	require.Eventually(t, func() bool {
+		return len(env.proxy.perf.RecentRequests()) > 0
+	}, testWaitLimit, 10*time.Millisecond, "background finalizer should record the request")
+
 	requests := env.proxy.perf.RecentRequests()
 	require.NotEmpty(t, requests)
 	last := requests[len(requests)-1]
+	require.Equal(t, 3, last.WinnerHostIdx)
+	require.GreaterOrEqual(t, len(last.Hosts), 3, "both failed hosts and the winner must be recorded")
 
 	// Each host index must appear at most once in the attempt list.
 	seen := map[int]bool{}
@@ -38,4 +48,17 @@ func TestRunInference_PickerTracksTriedHostsAcrossRetries(t *testing.T) {
 			h.HostIdx)
 		seen[h.HostIdx] = true
 	}
+}
+
+// Test flow:
+//  1. Set the speculative attempt cap to its default, restoring the previous value afterwards.
+//  2. Ask a sixteen-host redundancy for its attempt cap.
+//  3. Require the default to be two and the cap to follow it.
+func TestMaxSpeculativeAttemptsDefaultsToTwo(t *testing.T) {
+	previous := CurrentMaxSpeculativeAttempts()
+	t.Cleanup(func() { SetMaxSpeculativeAttempts(previous) })
+	SetMaxSpeculativeAttempts(DefaultMaxSpeculativeAttempts)
+
+	require.Equal(t, 2, DefaultMaxSpeculativeAttempts)
+	require.Equal(t, 2, (&Redundancy{groupSize: 16}).maxAttempts())
 }

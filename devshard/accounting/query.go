@@ -96,12 +96,16 @@ func (t *Tracker) liveRequests(filter QueryFilter) uint64 {
 // view copies everything a query reads. Meta.Slots is shared because it is
 // copied once at registration and never mutated after. nonceState.Counted is
 // only tested for nil, never dereferenced.
+//
+// The per-nonce sets are folded into per-slot totals here, on top of whatever
+// the pre-set layout left behind, so the rest of the query path sees one shape
+// regardless of which layout the escrow was loaded from.
 func (e *escrowState) view(id string) escrowView {
 	out := escrowView{
 		id:              id,
 		meta:            e.Meta,
 		latest:          e.Latest,
-		counters:        make(map[CounterKey]uint64, len(e.Counters)),
+		counters:        make(map[CounterKey]uint64, len(e.Counters)+len(e.ProtocolOnly)),
 		hostStats:       make(map[uint32]types.HostStats, len(e.HostStats)),
 		challengeBySlot: copyUint32Map(e.ChallengeBySlot),
 		validatedBySlot: copyUint32Map(e.ValidatedBySlot),
@@ -113,6 +117,17 @@ func (e *escrowState) view(id string) escrowView {
 	}
 	for key, count := range e.Counters {
 		out.counters[key] = count
+	}
+	for _, slot := range e.ProtocolOnly {
+		out.counters[CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly}]++
+	}
+	for _, rec := range e.Challenge {
+		if !rec.Resolved {
+			out.challengeBySlot[rec.Slot]++
+		}
+	}
+	for _, slot := range e.Invalid {
+		out.invalidBySlot[slot]++
 	}
 	for slot, stats := range e.HostStats {
 		out.hostStats[slot] = stats
@@ -179,6 +194,8 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			record.ProtocolInvalid += slotRecord.ProtocolInvalid
 			record.RequiredValidations += slotRecord.RequiredValidations
 			record.CompletedValidations += slotRecord.CompletedValidations
+			record.ProtocolValidated += slotRecord.ProtocolValidated
+			record.ProtocolFinished += slotRecord.ProtocolFinished
 			record.ValidationsPerformed += slotRecord.ValidationsPerformed
 			record.TimeoutsApplied += slotRecord.TimeoutsApplied
 			record.UnresolvedChallenges += slotRecord.UnresolvedChallenges
@@ -325,6 +342,8 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 		record.ProtocolInvalid = uint64(stats.Invalid)
 		record.RequiredValidations = uint64(stats.RequiredValidations)
 		record.CompletedValidations = uint64(stats.CompletedValidations)
+		record.ProtocolValidated = uint64(stats.Validated)
+		record.ProtocolFinished = uint64(stats.Finished)
 	}
 	record.ValidationsPerformed = escrow.validatedBySlot[slot]
 	record.TimeoutsApplied = escrow.timedOutBySlot[slot]
@@ -389,6 +408,8 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 			summary.ProtocolMisses += record.ProtocolMisses
 			summary.RequiredValidations += record.RequiredValidations
 			summary.CompletedValidations += record.CompletedValidations
+			summary.ProtocolValidated += record.ProtocolValidated
+			summary.ProtocolFinished += record.ProtocolFinished
 			summary.ProtocolInvalid += record.ProtocolInvalid
 			summary.UnresolvedChallenges += record.UnresolvedChallenges
 			summary.InFlight += record.InFlight

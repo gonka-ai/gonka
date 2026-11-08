@@ -1,0 +1,569 @@
+#!/usr/bin/env bash
+# One HAProxy process with `bind proto h2` and `hard-stop-after`, started the
+# way the entrypoint starts it (`haproxy -W -db`), and a Go client that holds
+# a Watch and a Chat on one HTTP/2 connection.
+#
+# Soft stop: SIGUSR1 while the Chat body is still held. The body still
+# arrives, the listener is closed, and once the client ends its Watch stream
+# HAProxy exits on its own, long before hard-stop-after. (The Go client, like
+# the devshard peer, closes a drained connection after its last stream; the
+# test does not tell whether HAProxy would also exit under an idle connection
+# a client keeps open.)
+#
+# Expiry: SIGUSR1 while a Watch is held that the client never releases. The
+# backend ends the stream on its own after a session TTL, as the child does
+# once the peer's token no longer opens (checked on each heartbeat, so TTL
+# plus skew plus one heartbeat), and HAProxy exits right after that, well
+# before hard-stop-after. This is the Watch bound on a slot drain under a
+# peer that does not refresh.
+#
+# Hard stop: SIGUSR1 while a Watch is held and never released and the backend
+# never ends it. HAProxy exits at hard-stop-after, so a held stream cannot
+# outlive the stop budget.
+#
+# Entrypoint: with ROUTER_IMAGE set to a built versiond-router image, the
+# real entrypoint is soft-stopped while a Watch is held through it and while
+# its catalog reconciler loop is retrying an unreachable catalog. The loop
+# and its program must be gone as soon as the stop is forwarded (the Runtime
+# socket closes with the listeners, so from then on the loop could only fail
+# and restart every second), the held Watch must still be served until
+# hard-stop-after, and the container must exit right after that: the
+# master-worker process waits for every child, so nothing may outlive HAProxy.
+set -Eeuo pipefail
+
+router_image=${ROUTER_IMAGE:-}
+
+haproxy_image=${HAPROXY_IMAGE:-haproxy:3.2-alpine}
+tmpdir=$(mktemp -d)
+# The container runs as the unprivileged haproxy user and reads the config
+# through a bind mount, so the directory and the files must be world-readable.
+chmod 755 "$tmpdir"
+proxy=
+client_pid=
+backend_pid=
+trap cleanup EXIT
+
+fail() {
+    failed=1
+    echo "soft-stop_test: $*" >&2
+    exit 1
+}
+
+cleanup() {
+    if [[ -n $proxy ]]; then
+        docker logs "$proxy" >"$tmpdir/proxy.log" 2>&1 || true
+        docker rm -f "$proxy" >/dev/null 2>&1 || true
+    fi
+    if [[ -n $client_pid ]]; then
+        kill "$client_pid" >/dev/null 2>&1 || true
+        wait "$client_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ -n $backend_pid ]]; then
+        kill "$backend_pid" >/dev/null 2>&1 || true
+    fi
+    if [[ ${failed:-0} -ne 0 ]]; then
+        echo "--- proxy ---" >&2
+        cat "$tmpdir/proxy.log" >&2 || true
+        echo "--- paths ---" >&2
+        cat "$tmpdir/paths" >&2 || true
+        echo "--- client ---" >&2
+        cat "$tmpdir/client.status" "$tmpdir/client.err" >&2 || true
+    fi
+    rm -rf "$tmpdir"
+}
+
+command -v python3 >/dev/null || fail "python3 is required for the backend"
+command -v docker >/dev/null || fail "docker is required"
+command -v go >/dev/null || fail "go is required for the client"
+
+port=$(python3 -c 'import socket; s=socket.socket(); s.bind(("0.0.0.0", 0)); print(s.getsockname()[1]); s.close()')
+cat >"$tmpdir/backend.py" <<'EOF'
+import sys, time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def do_GET(self):
+        with open(sys.argv[2], "a", encoding="utf-8") as paths:
+            paths.write(self.path + "\n")
+        path, _, query = self.path.partition("?")
+        if path.endswith("/readyz") or path.endswith("/healthz"):
+            # A router's own checks on its versiond: answered at once. The
+            # peer-RPC twin requires the body a versiond with h2c sends.
+            body = b"peer-rpc-ok" if "peer-rpc=1" in query else b"ready"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        if path.endswith("PeerAuthService/Watch"):
+            # A Watch answers only when the peer ends it, the proxy resets it,
+            # or (?ttl=N) the session expires N seconds in, the way the child
+            # ends Watch once the token no longer opens.
+            ttl = 120
+            for part in query.split("&"):
+                if part.startswith("ttl="):
+                    ttl = int(part[4:])
+            time.sleep(ttl)
+            body = b"watch-ok"
+            self.send_response(200)
+            self.send_header("content-type", "text/plain")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        body = b"chat-ok"
+        self.send_response(200)
+        self.send_header("content-type", "text/plain")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.flush()
+        time.sleep(6)
+        self.wfile.write(body)
+
+    def log_message(self, fmt, *args):
+        return
+
+    def handle(self):
+        # A reset Watch (hard stop) closes this socket under the handler.
+        try:
+            super().handle()
+        except (ConnectionResetError, BrokenPipeError):
+            pass
+
+ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1])), Handler).serve_forever()
+EOF
+: >"$tmpdir/paths"
+python3 "$tmpdir/backend.py" "$port" "$tmpdir/paths" &
+backend_pid=$!
+for _ in $(seq 1 50); do
+    python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1).close()" 2>/dev/null && break
+    sleep 0.1
+done
+python3 -c "import socket; socket.create_connection(('127.0.0.1', $port), 1).close()" 2>/dev/null \
+    || fail "backend did not accept connections on $port"
+
+# The same global and defaults shape as the rendered router config: proto h2
+# frontend, hard-stop-after in global. The value is the only difference
+# between the two runs.
+write_config() {
+    cat >"$tmpdir/$1.cfg" <<EOF
+global
+    log stdout format raw local0
+    hard-stop-after $2s
+    tune.h2.max-concurrent-streams 100
+
+defaults
+    mode http
+    option httplog
+    log global
+    timeout connect 3s
+    timeout client 180s
+    timeout server 180s
+    timeout http-request 60s
+
+frontend fe
+    bind :8080 proto h2
+    default_backend app
+
+backend app
+    server app host.docker.internal:${port}
+EOF
+    chmod 644 "$tmpdir/$1.cfg"
+}
+
+launch_proxy() {
+    proxy=gonka-soft-stop-$1
+    docker rm -f "$proxy" >/dev/null 2>&1 || true
+    docker run -d --name "$proxy" \
+        --add-host=host.docker.internal:host-gateway \
+        -p 127.0.0.1::8080 \
+        -v "$tmpdir/$2.cfg:/tmp/haproxy.cfg:ro" \
+        "$haproxy_image" \
+        haproxy -W -db -f /tmp/haproxy.cfg \
+        >/dev/null
+}
+
+proxy_running() {
+    [[ $(docker inspect --format '{{.State.Running}}' "$proxy" 2>/dev/null) == true ]]
+}
+
+# Docker publishes the host port before HAProxy binds inside the container,
+# and a closed listener still accepts the TCP connect at the port proxy. Only
+# an HTTP/2 preface answered with SETTINGS proves that HAProxy is serving.
+h2_answers() {
+    python3 - "$1" <<'EOF'
+import socket, sys
+try:
+    s = socket.create_connection(("127.0.0.1", int(sys.argv[1])), 2)
+    s.sendall(b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" + b"\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+    s.settimeout(2)
+    data = s.recv(64)
+except (OSError, socket.timeout):
+    data = b""
+sys.exit(0 if data else 1)
+EOF
+}
+
+wait_listener() {
+    local hostport=$1 _
+    for _ in $(seq 1 100); do
+        h2_answers "${hostport##*:}" && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+# Seconds since the container started, for the timing assertions.
+proxy_age() {
+    python3 - "$(docker inspect --format '{{.State.StartedAt}}' "$proxy")" <<'EOF'
+import datetime, sys
+started = datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00")[:26] + "+00:00") if "." in sys.argv[1] else datetime.datetime.fromisoformat(sys.argv[1].replace("Z", "+00:00"))
+print(int((datetime.datetime.now(datetime.timezone.utc) - started).total_seconds()))
+EOF
+}
+
+wait_for() {
+    local pattern=$1 tries=$2 _
+    for _ in $(seq 1 "$tries"); do
+        grep -q "$pattern" "$tmpdir/client.status" 2>/dev/null && return 0
+        sleep 0.25
+    done
+    return 1
+}
+
+wait_exit() {
+    local tries=$1 _
+    for _ in $(seq 1 "$tries"); do
+        proxy_running || return 0
+        sleep 0.25
+    done
+    return 1
+}
+
+# One HTTP/2 connection. Mode "release": open Watch and Chat, read the Chat
+# body, then end the Watch stream and keep the connection open and idle.
+# Mode "hold": open Watch only and keep it until the proxy resets it.
+# Mode "expire:N": open Watch with ?ttl=N, never cancel it, and keep the
+# process alive after the backend has ended it; the client does nothing a
+# drain could depend on. "watch-open" is written before the request is sent;
+# the backend's request log ($tmpdir/paths) says when the stream has reached
+# the proxy. An optional fourth argument is a path prefix for both requests
+# (a router routes by the version segment).
+cat >"$tmpdir/client.go" <<'EOF'
+package main
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+	"time"
+
+	"golang.org/x/net/http2"
+)
+
+func note(path, line string) {
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	fmt.Fprintln(f, line)
+	_ = f.Sync()
+	_ = f.Close()
+}
+
+func main() {
+	hostport, status, mode := os.Args[1], os.Args[2], os.Args[3]
+	prefix := ""
+	if len(os.Args) > 4 {
+		prefix = os.Args[4]
+	}
+	conn, err := net.Dial("tcp", hostport)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	cc, err := (&http2.Transport{AllowHTTP: true}).NewClientConn(conn)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	// Watch has no response until the peer ends it or the proxy resets it, so
+	// RoundTrip blocks on the headers; the stream is open from its first frame.
+	watchCtx, endWatch := context.WithCancel(context.Background())
+	defer endWatch()
+	watchURL := "http://h2c" + prefix + "/devshard.transport.v1.PeerAuthService/Watch"
+	if ttl, ok := strings.CutPrefix(mode, "expire:"); ok {
+		watchURL += "?ttl=" + ttl
+		mode = "expire"
+	}
+	watchReq, _ := http.NewRequestWithContext(watchCtx, http.MethodGet, watchURL, nil)
+	note(status, "watch-open")
+	watchEnd := make(chan string, 1)
+	go func() {
+		resp, err := cc.RoundTrip(watchReq)
+		if err != nil {
+			if watchCtx.Err() != nil {
+				watchEnd <- "watch-ended"
+			} else {
+				watchEnd <- "watch-reset"
+			}
+			return
+		}
+		// Only the backend's own answer, read to its end, is a clean
+		// session end. A proxy error page or a reset after the headers
+		// is not.
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK || string(body) != "watch-ok" {
+			watchEnd <- "watch-reset"
+			return
+		}
+		watchEnd <- "watch-done"
+	}()
+	if mode == "hold" {
+		note(status, <-watchEnd)
+		return
+	}
+	if mode == "expire" {
+		// The session expires on the backend; the client neither cancels
+		// the stream nor exits, so only the stream's own end can let the
+		// proxy go.
+		note(status, <-watchEnd)
+		time.Sleep(120 * time.Second)
+		return
+	}
+	chatReq, _ := http.NewRequest(http.MethodGet, "http://h2c"+prefix+"/v1/chat", nil)
+	chat, err := cc.RoundTrip(chatReq)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "chat:", err)
+		os.Exit(1)
+	}
+	note(status, "chat-headers")
+	body, err := io.ReadAll(chat.Body)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "chat body:", err)
+		os.Exit(1)
+	}
+	note(status, string(body))
+	// The peer ends its Watch (token refresh reopens it elsewhere). After
+	// GOAWAY the transport closes the drained connection once its last
+	// stream ends, as the devshard peer does. The process stays alive so a
+	// client exit cannot be what ends the proxy.
+	endWatch()
+	note(status, <-watchEnd)
+	note(status, "watch-released")
+	time.Sleep(120 * time.Second)
+}
+EOF
+cat >"$tmpdir/go.mod" <<'EOF'
+module h2client
+
+go 1.23
+
+require golang.org/x/net v0.49.0
+EOF
+(
+    cd "$tmpdir"
+    GOMODCACHE="${GOMODCACHE:-$HOME/go/pkg/mod}" GOCACHE="${GOCACHE:-$HOME/.cache/go-build}" \
+        go mod tidy >/dev/null 2>&1
+    GOMODCACHE="${GOMODCACHE:-$HOME/go/pkg/mod}" GOCACHE="${GOCACHE:-$HOME/.cache/go-build}" \
+        go build -o client .
+) || fail "client build failed"
+
+run_client() {
+    : >"$tmpdir/client.status"
+    "$tmpdir/client" "$1" "$tmpdir/client.status" "$2" "${3:-}" >"$tmpdir/client.out" 2>"$tmpdir/client.err" &
+    client_pid=$!
+}
+
+stop_client() {
+    if [[ -n $client_pid ]]; then
+        kill "$client_pid" >/dev/null 2>&1 || true
+        wait "$client_pid" >/dev/null 2>&1 || true
+        client_pid=
+    fi
+}
+
+# --- soft stop: streams finish, exit after the last one, well before hard-stop-after ---
+write_config soft 60
+launch_proxy "soft-$$" soft
+hostport=$(docker port "$proxy" 8080 | head -n 1)
+[[ -n $hostport ]] || fail "haproxy published no host port"
+wait_listener "$hostport" || fail "haproxy did not open its listener"
+run_client "$hostport" release
+wait_for chat-headers 100 || fail "chat headers did not arrive: $(cat "$tmpdir/client.err")"
+grep -q 'PeerAuthService/Watch' "$tmpdir/paths" || fail "watch did not reach the backend"
+grep -q chat-ok "$tmpdir/client.status" && fail "chat body finished before soft stop was signaled"
+
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+signaled_at=$(proxy_age)
+sleep 1
+proxy_running || fail "proxy exited at soft stop while the chat body was still held"
+if h2_answers "${hostport##*:}"; then
+    fail "listener still serves new connections after soft stop"
+fi
+# The body arrives while the stop is pending; once the client ends its Watch
+# the proxy may exit at once, so no liveness check belongs after this line.
+wait_for chat-ok 60 || fail "chat body was cut off by soft stop: $(cat "$tmpdir/client.status")"
+wait_for watch-released 20 || fail "client did not release its watch: $(cat "$tmpdir/client.status")"
+wait_exit 40 || fail "haproxy did not exit after the last stream ended: $(cat "$tmpdir/client.status")"
+exited_at=$(proxy_age)
+(( exited_at - signaled_at < 30 )) || fail "haproxy exited only at hard-stop-after: signaled ${signaled_at}s, exited ${exited_at}s"
+grep -q 'exit status\|chat body:' "$tmpdir/client.err" && fail "client error: $(cat "$tmpdir/client.err")"
+stop_client
+docker rm -f "$proxy" >/dev/null
+proxy=
+
+# --- expiry: a Watch the client never releases ends with the session, and so does the drain ---
+: >"$tmpdir/paths"
+write_config expire 60
+launch_proxy "expire-$$" expire
+hostport=$(docker port "$proxy" 8080 | head -n 1)
+wait_listener "$hostport" || fail "haproxy did not open its listener for the expiry phase"
+run_client "$hostport" expire:8
+wait_for watch-open 100 || fail "expiring watch did not open: $(cat "$tmpdir/client.err")"
+for _ in $(seq 1 100); do
+    grep -q 'PeerAuthService/Watch?ttl=8' "$tmpdir/paths" && break
+    sleep 0.1
+done
+grep -q 'PeerAuthService/Watch?ttl=8' "$tmpdir/paths" || fail "expiring watch did not reach the backend"
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+signaled_at=$(proxy_age)
+sleep 2
+proxy_running || fail "proxy exited at soft stop while the expiring watch was still held"
+if h2_answers "${hostport##*:}"; then
+    fail "listener still serves new connections after soft stop (expiry phase)"
+fi
+# The backend ends the stream about 8 s after it opened. Nothing else ends
+# it: the client holds it and stays up. HAProxy must then exit on its own.
+wait_for watch-done 60 || fail "the backend did not end the expiring watch: $(cat "$tmpdir/client.status")"
+grep -q 'watch-reset' "$tmpdir/client.status" && fail "the expiring watch was reset instead of ending with the session"
+wait_exit 40 || fail "haproxy did not exit after the expiring watch ended: $(cat "$tmpdir/client.status")"
+exited_at=$(proxy_age)
+(( exited_at - signaled_at < 30 )) || fail "haproxy waited for hard-stop-after instead of the session end: signaled ${signaled_at}s, exited ${exited_at}s"
+stop_client
+docker rm -f "$proxy" >/dev/null
+proxy=
+
+# --- hard stop: a held Watch is reset at hard-stop-after and the process exits ---
+# A fresh request log: the earlier Watches must not stand in for this one.
+: >"$tmpdir/paths"
+write_config hard 5
+launch_proxy "hard-$$" hard
+hostport=$(docker port "$proxy" 8080 | head -n 1)
+wait_listener "$hostport" || fail "haproxy did not open its listener for the hard stop"
+run_client "$hostport" hold
+wait_for watch-open 100 || fail "watch did not open: $(cat "$tmpdir/client.err")"
+for _ in $(seq 1 100); do
+    grep -q 'PeerAuthService/Watch' "$tmpdir/paths" && break
+    sleep 0.1
+done
+grep -q 'PeerAuthService/Watch' "$tmpdir/paths" || fail "held watch did not reach the backend"
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+signaled_at=$(proxy_age)
+sleep 2
+proxy_running || fail "proxy exited before hard-stop-after with a watch held"
+wait_exit 60 || fail "haproxy did not exit at hard-stop-after with a watch held"
+exited_at=$(proxy_age)
+(( exited_at - signaled_at <= 12 )) || fail "hard stop took too long: signaled ${signaled_at}s, exited ${exited_at}s"
+wait_for watch-reset 20 || fail "held watch was not reset by the hard stop: $(cat "$tmpdir/client.status")"
+stop_client
+docker rm -f "$proxy" >/dev/null
+proxy=
+
+# --- entrypoint: the reconciler loop does not hold the master after the worker exits ---
+if [[ -z $router_image ]]; then
+    echo "soft-stop_test: ok (entrypoint phase skipped: ROUTER_IMAGE is not set)"
+    exit 0
+fi
+: >"$tmpdir/paths"
+proxy=gonka-soft-stop-entry-$$
+docker rm -f "$proxy" >/dev/null 2>&1 || true
+# The test backend is the one versiond of a v4 pool: its /readyz and
+# /v4/healthz answer at once, so the router admits it and routes a held
+# Watch to it. The catalog is unreachable, so the reconciler loop is in its
+# retry cycle the whole time, with a poll long enough that its program is
+# asleep, deferring TERM, when the stop comes: the entrypoint then has to
+# kill it to bound the cleanup. The backend is named by the host gateway's
+# address: a name from --add-host is not visible to HAProxy's Docker DNS
+# resolver, an IPv4 literal needs no resolver.
+gateway_ip=$(docker run --rm --add-host=host.docker.internal:host-gateway "$haproxy_image" \
+    getent hosts host.docker.internal | awk '{ print $1; exit }')
+[[ -n $gateway_ip ]] || fail "could not resolve the host gateway address"
+docker run -d --name "$proxy" \
+    -p 127.0.0.1::8080 -p 127.0.0.1::8081 \
+    -e "VERSIOND_HOSTS=${gateway_ip}:${port}" -e VERSIOND_VERSIONS=v4 \
+    -e VERSIOND_ROUTER_BACKEND_H2=false \
+    -e VERSIOND_ROUTER_HARD_STOP_SECONDS=12 \
+    -e VERSIOND_ROUTING_CATALOG_URL=http://127.0.0.1:1/versions \
+    -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=60 \
+    -e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=1 \
+    "$router_image" >/dev/null
+loaded=0
+for _ in $(seq 1 120); do
+    if docker logs "$proxy" 2>&1 | grep -q 'Loading success'; then
+        loaded=1
+        break
+    fi
+    sleep 0.25
+done
+[[ $loaded == 1 ]] || fail "the router image did not start: $(docker logs "$proxy" 2>&1 | tail -5)"
+hostport=$(docker port "$proxy" 8080 | head -n 1)
+admitted=0
+for _ in $(seq 1 120); do
+    if curl -fsS -m 2 "http://${hostport}/v4/healthz" >/dev/null 2>&1; then
+        admitted=1
+        break
+    fi
+    sleep 0.25
+done
+[[ $admitted == 1 ]] || fail "the router image did not admit the test backend for v4: $(docker logs "$proxy" 2>&1 | tail -5)"
+# Peer RPC is the router's proto h2 bind; its v4 twin admits the backend
+# once /readyz?peer-rpc=1 has answered peer-rpc-ok.
+rpc_hostport=$(docker port "$proxy" 8081 | head -n 1)
+rpc_admitted=0
+for _ in $(seq 1 120); do
+    if curl -fsS -m 2 --http2-prior-knowledge "http://${rpc_hostport}/v4/readyz" >/dev/null 2>&1; then
+        rpc_admitted=1
+        break
+    fi
+    sleep 0.25
+done
+[[ $rpc_admitted == 1 ]] || fail "the router image did not admit the test backend for v4 peer RPC: $(docker logs "$proxy" 2>&1 | tail -5)"
+docker exec "$proxy" ps -o comm | grep -q 'catalog-reconci' || fail "the catalog reconciler loop is not running"
+run_client "$rpc_hostport" hold /v4/sessions/entry/rpc
+wait_for watch-open 100 || fail "watch did not open through the router image: $(cat "$tmpdir/client.err")"
+for _ in $(seq 1 100); do
+    grep -q 'PeerAuthService/Watch' "$tmpdir/paths" && break
+    sleep 0.1
+done
+grep -q 'PeerAuthService/Watch' "$tmpdir/paths" || fail "held watch did not reach the backend through the router image"
+restarts_before=$(docker logs "$proxy" 2>&1 | grep -c 'catalog reconciler exited' || true)
+docker kill --signal SIGUSR1 "$proxy" >/dev/null
+signaled_at=$(proxy_age)
+# The program is asleep for its 60 s poll: the entrypoint kills it after 5 s.
+sleep 7
+proxy_running || fail "the router image exited at soft stop while a watch was held"
+if docker exec "$proxy" ps -o comm 2>/dev/null | grep -q 'catalog-reconci'; then
+    fail "the catalog reconciler is still running 7 s after the soft stop: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
+fi
+restarts_after=$(docker logs "$proxy" 2>&1 | grep -c 'catalog reconciler exited' || true)
+(( restarts_after <= restarts_before + 1 )) || \
+    fail "the reconciler loop kept restarting during the drain: $restarts_before before the stop, $restarts_after after"
+wait_exit 80 || fail "the router image did not exit at hard-stop-after with a watch held: $(docker exec "$proxy" ps -o pid,ppid,comm 2>/dev/null)"
+exited_at=$(proxy_age)
+(( exited_at - signaled_at <= 20 )) || fail "the router image exited late: signaled ${signaled_at}s, exited ${exited_at}s"
+wait_for watch-reset 20 || fail "the held watch was not reset by the router image's hard stop: $(cat "$tmpdir/client.status")"
+[[ $(docker inspect --format '{{.State.ExitCode}}' "$proxy") == 0 ]] \
+    || fail "the router image exited with status $(docker inspect --format '{{.State.ExitCode}}' "$proxy")"
+stop_client
+
+echo "soft-stop_test: ok"

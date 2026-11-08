@@ -68,6 +68,35 @@ const (
 	UsageUnknownValue Usage = "unknown"
 )
 
+// UsageFor classifies an attempt against the race winner. Single definition:
+// the gateway uses it to label the attempt span, the recorder to label the
+// counter, so the two can never disagree.
+func UsageFor(nonce, winnerNonce uint64) Usage {
+	switch {
+	case winnerNonce == 0:
+		return UsageUnknownValue
+	case nonce == winnerNonce:
+		return UsageWinner
+	default:
+		return UsageLoser
+	}
+}
+
+// DispositionForUsage maps a settled Usage onto its finished_* disposition.
+// Returns "" for an unsettled attempt, which is not yet classifiable.
+func DispositionForUsage(usage Usage) Disposition {
+	switch usage {
+	case UsageWinner:
+		return DispositionFinishedUsed
+	case UsageLoser:
+		return DispositionFinishedUnused
+	case UsageUnknownValue:
+		return DispositionFinishedUsageUnknown
+	default:
+		return ""
+	}
+}
+
 type TimeoutKind string
 
 const (
@@ -222,6 +251,8 @@ type SlotRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ProtocolValidated     uint64                    `json:"protocol_validated"`
+	ProtocolFinished      uint64                    `json:"protocol_finished"`
 	ValidationsPerformed  uint64                    `json:"validations_performed"`
 	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
@@ -258,6 +289,8 @@ type ParticipantRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ProtocolValidated     uint64                    `json:"protocol_validated"`
+	ProtocolFinished      uint64                    `json:"protocol_finished"`
 	ValidationsPerformed  uint64                    `json:"validations_performed"`
 	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
@@ -286,6 +319,8 @@ type EpochSummary struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ProtocolValidated     uint64                    `json:"protocol_validated"`
+	ProtocolFinished      uint64                    `json:"protocol_finished"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
 	InFlightRequests      uint64                    `json:"in_flight_requests"`
