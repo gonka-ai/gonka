@@ -1,12 +1,15 @@
 package inference
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"common/completionapi"
 	"common/storage/payloads"
@@ -37,7 +40,13 @@ func executeInference(
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
-	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
+	tokenIDLimit := 0
+	if completionapi.RequestNeedsVocabulary(req.Prompt) {
+		if tokenIDLimit = vocabularySize(); tokenIDLimit <= 0 {
+			return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", completionapi.ErrVocabularyUnknown))
+		}
+	}
+	modified, err := completionapi.ModifyRequestBodyForVocabulary(req.Prompt, seed, chainParams.LogprobsMode(), tokenIDLimit)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}
@@ -101,13 +110,18 @@ func processExecutionHTTPResponse(
 	processor *completionapi.ExecutorResponseProcessor,
 ) (*processedExecutionResponse, error) {
 	isSSE := completionapi.IsEventStream(resp)
+	streamProcessor := compactingClientFaultProcessor{ResponseProcessor: processor}
+
+	if !isSSE && isClientFaultStatus(resp.StatusCode) {
+		return processClientFaultResponse(req, resp, processor)
+	}
 
 	if req.ResponseWriter != nil && isSSE {
-		if err := proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+		if err := proxyResponse(resp, req.ResponseWriter, true, streamProcessor, inferenceID); err != nil {
 			return nil, fmt.Errorf("relay response: %w", err)
 		}
 	} else {
-		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
+		if err := completionapi.ProcessHTTPResponse(resp, streamProcessor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
 		}
 	}
@@ -135,9 +149,12 @@ func processExecutionHTTPResponse(
 	if err != nil {
 		return nil, fmt.Errorf("get served hash: %w", err)
 	}
-	usage, err := processor.GetUsage()
-	if err != nil {
-		return nil, fmt.Errorf("get usage: %w", err)
+	usage := &completionapi.Usage{}
+	if !completionapi.IsClientFaultErrorResponse(bodyBytes) {
+		usage, err = processor.GetUsage()
+		if err != nil {
+			return nil, fmt.Errorf("get usage: %w", err)
+		}
 	}
 
 	return &processedExecutionResponse{
@@ -159,4 +176,69 @@ func checkStopTokenIDs(body []byte, vocabularySize func() int) error {
 		return nil
 	}
 	return completionapi.ValidateStopTokenIDs(requestMap, vocabularySize())
+}
+
+func isClientFaultStatus(statusCode int) bool {
+	return statusCode == http.StatusBadRequest || statusCode == http.StatusUnprocessableEntity
+}
+
+func processClientFaultResponse(
+	req devshardpkg.ExecuteRequest,
+	resp *http.Response,
+	processor *completionapi.ExecutorResponseProcessor,
+) (*processedExecutionResponse, error) {
+	body, err := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
+	if err != nil {
+		return nil, fmt.Errorf("read client fault response: %w", err)
+	}
+	body = completionapi.CompactClientFaultBody(bytes.TrimSpace(body))
+	forwarded, err := processor.ProcessStreamedResponse(completionapi.DataPrefix + string(body))
+	if err != nil {
+		return nil, fmt.Errorf("upstream status %d: %w", resp.StatusCode, err)
+	}
+
+	done, err := processor.ProcessStreamedResponse("data: [DONE]")
+	if err != nil {
+		return nil, fmt.Errorf("process client fault terminator: %w", err)
+	}
+	bodyBytes, err := processor.GetResponseBytes()
+	if err != nil {
+		return nil, fmt.Errorf("get body bytes: %w", err)
+	}
+	if !completionapi.IsClientFaultErrorResponse(bodyBytes) {
+		return nil, fmt.Errorf("upstream status %d without a client fault error body", resp.StatusCode)
+	}
+
+	if req.ResponseWriter != nil {
+		fmt.Fprintf(req.ResponseWriter, "%s\n\n%s\n\n", forwarded, done)
+		if f, ok := req.ResponseWriter.(http.Flusher); ok {
+			f.Flush()
+		}
+	}
+
+	hash := sha256.Sum256(bodyBytes)
+	servedHash, err := processor.GetServedHash()
+	if err != nil {
+		return nil, fmt.Errorf("get served hash: %w", err)
+	}
+
+	return &processedExecutionResponse{
+		responseHash: hash[:],
+		servedHash:   servedHash[:],
+		responseBody: bodyBytes,
+	}, nil
+}
+
+type compactingClientFaultProcessor struct {
+	completionapi.ResponseProcessor
+}
+
+func (p compactingClientFaultProcessor) ProcessStreamedResponse(line string) (string, error) {
+	if len(line) > completionapi.MaxClientFaultBodyBytes && strings.HasPrefix(line, completionapi.DataPrefix) {
+		body := []byte(strings.TrimPrefix(line, completionapi.DataPrefix))
+		if compact := completionapi.CompactClientFaultBody(body); !bytes.Equal(compact, body) {
+			line = completionapi.DataPrefix + string(compact)
+		}
+	}
+	return p.ResponseProcessor.ProcessStreamedResponse(line)
 }

@@ -26,6 +26,10 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 }
 
 func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, logprobsMode string) (*ModifiedRequest, error) {
+	return ModifyRequestBodyForVocabulary(requestBytes, defaultSeed, logprobsMode, 0)
+}
+
+func ModifyRequestBodyForVocabulary(requestBytes []byte, defaultSeed int32, logprobsMode string, vocabularySize int) (*ModifiedRequest, error) {
 	var requestMap map[string]interface{}
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
 		return nil, err
@@ -44,6 +48,7 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
 	EnforceTokenBudget(requestMap)
+	boundTokenIDs(requestMap, TokenIDLimit(vocabularySize))
 
 	// Only clamp when the caller asked: injecting n into a request that never
 	// carried it would change the body we sign for a broker that never set it.

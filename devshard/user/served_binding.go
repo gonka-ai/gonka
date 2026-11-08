@@ -26,6 +26,11 @@ type waitingReceivedStream struct {
 	receivedAt time.Time
 }
 
+type appliedFinishTx struct {
+	tx        *types.DevshardTx
+	appliedAt time.Time
+}
+
 type waitingAppliedFinish struct {
 	hashes    servedFinishHashes
 	appliedAt time.Time
@@ -100,6 +105,11 @@ func (s *Session) forgetExpiredServedBindingsLocked(now time.Time) {
 	for nonce, finish := range s.appliedFinishHashes {
 		if now.Sub(finish.appliedAt) > retention {
 			delete(s.appliedFinishHashes, nonce)
+		}
+	}
+	for nonce, finish := range s.appliedFinishTxs {
+		if now.Sub(finish.appliedAt) > retention {
+			delete(s.appliedFinishTxs, nonce)
 		}
 	}
 }

@@ -1,8 +1,10 @@
 package completionapi
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -120,4 +122,152 @@ func streamedLinesHaveUnparseableData(lines []string) bool {
 		}
 	}
 	return false
+}
+
+func IsClientFaultError(details ErrorDetails) bool {
+	switch strings.TrimSpace(details.Code) {
+	case "400", "422":
+		return true
+	}
+	return false
+}
+
+func IsClientFaultErrorResponse(responsePayload []byte) bool {
+	var serialized SerializedStreamedResponse
+	if err := json.Unmarshal(responsePayload, &serialized); err != nil || len(serialized.Events) == 0 {
+		return false
+	}
+	if streamedLinesHaveUnparseableData(serialized.Events) {
+		return false
+	}
+	foundClientFault := false
+	for _, line := range serialized.Events {
+		payload, ok := sseDataJSON(line)
+		if !ok {
+			continue
+		}
+		if chunkCarriesOutput(payload) {
+			return false
+		}
+		if details, isError := terminalErrorFromLines([]string{line}); isError {
+			if !IsClientFaultError(details) {
+				return false
+			}
+			foundClientFault = true
+		}
+	}
+	return foundClientFault
+}
+
+const (
+	MaxClientFaultBodyBytes    = 16 << 10
+	maxClientFaultMessageBytes = 8 << 10
+	maxClientFaultTypeBytes    = 256
+)
+
+type compactClientFaultError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	Type    string `json:"type,omitempty"`
+}
+
+type compactClientFault struct {
+	Error compactClientFaultError `json:"error"`
+}
+
+func CompactClientFaultBody(body []byte) []byte {
+	if len(body) <= MaxClientFaultBodyBytes || !bytes.Contains(body, []byte(`"error"`)) {
+		return body
+	}
+	details, isError := terminalErrorFromLines([]string{DataPrefix + string(body)})
+	if !isError || !IsClientFaultError(details) || chunkCarriesOutput(body) {
+		return body
+	}
+	code, err := strconv.Atoi(strings.TrimSpace(details.Code))
+	if err != nil {
+		return body
+	}
+	compact, err := json.Marshal(compactClientFault{Error: compactClientFaultError{
+		Code:    code,
+		Message: truncateUTF8(details.Message, maxClientFaultMessageBytes),
+		Type:    truncateUTF8(details.Type, maxClientFaultTypeBytes),
+	}})
+	if err != nil {
+		return body
+	}
+	return compact
+}
+
+func truncateUTF8(value string, limit int) string {
+	if len(value) <= limit {
+		return value
+	}
+	return strings.ToValidUTF8(value[:limit], "")
+}
+
+func IsUnbilledClientFault(responsePayload []byte, inputTokens, outputTokens uint64) bool {
+	return inputTokens == 0 && outputTokens == 0 && IsClientFaultErrorResponse(responsePayload)
+}
+
+type outputMessage struct {
+	Content          string            `json:"content"`
+	ReasoningContent string            `json:"reasoning_content"`
+	Reasoning        string            `json:"reasoning"`
+	ToolCalls        []json.RawMessage `json:"tool_calls"`
+	Refusal          string            `json:"refusal"`
+	FunctionCall     *json.RawMessage  `json:"function_call"`
+}
+
+func (m *outputMessage) carriesOutput() bool {
+	return m != nil && (m.Content != "" || m.ReasoningContent != "" || m.Reasoning != "" || len(m.ToolCalls) > 0 || m.Refusal != "" || m.FunctionCall != nil)
+}
+
+func StreamedLineProvesOutput(line string) bool {
+	payload, isData := sseDataJSON(line)
+	if !isData {
+		return false
+	}
+	carries, decoded := chunkOutput(payload)
+	return decoded && carries
+}
+
+func ResponseProvesOutput(body []byte) bool {
+	carries, decoded := chunkOutput(body)
+	return decoded && carries
+}
+
+func chunkCarriesOutput(payload []byte) bool {
+	carries, decoded := chunkOutput(payload)
+	return carries || !decoded
+}
+
+func chunkOutput(payload []byte) (carries, decoded bool) {
+	var chunk struct {
+		Choices []struct {
+			Delta    *outputMessage `json:"delta"`
+			Message  *outputMessage `json:"message"`
+			Text     string         `json:"text"`
+			Logprobs *struct {
+				Content []json.RawMessage `json:"content"`
+			} `json:"logprobs"`
+		} `json:"choices"`
+		Usage *struct {
+			CompletionTokens uint64 `json:"completion_tokens"`
+		} `json:"usage"`
+	}
+	if err := json.Unmarshal(payload, &chunk); err != nil {
+		return false, false
+	}
+	if chunk.Usage != nil && chunk.Usage.CompletionTokens > 0 {
+		return true, true
+	}
+	for _, choice := range chunk.Choices {
+		if choice.Delta.carriesOutput() || choice.Message.carriesOutput() || choice.Text != "" {
+			return true, true
+		}
+		if choice.Logprobs != nil && len(choice.Logprobs.Content) > 0 {
+			return true, true
+		}
+	}
+	return false, true
 }

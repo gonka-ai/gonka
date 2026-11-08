@@ -208,6 +208,30 @@ func TestQuietSettle_PinnedFinishStaysQueued(t *testing.T) {
 	}
 }
 
+func TestQuietSettle_UnpinnedFinishSettlesWithoutAnotherRequest(t *testing.T) {
+	for _, heartbeatOff := range []bool{false, true} {
+		name := "heartbeat_on"
+		if heartbeatOff {
+			name = "heartbeat_off"
+		}
+		t.Run(name, func(t *testing.T) {
+			session, nonce := sessionWithQueuedReceiptAndFinish(t, heartbeatOff, WithQuietSettleDelay(40*time.Millisecond))
+			session.PinPendingFinish(nonce)
+			require.NoError(t, session.DrainUnpinnedPending(context.Background()))
+			require.Equal(t, types.StatusStarted, mustInference(t, session, nonce).Status)
+			require.NotNil(t, pendingFinishFor(session, nonce))
+			session.ArmQuietSettle()
+
+			session.UnpinPendingFinish(nonce)
+
+			require.Eventually(t, func() bool {
+				return mustInference(t, session, nonce).Status == types.StatusFinished
+			}, 2*time.Second, 10*time.Millisecond, "an unpinned Finish must settle on its own")
+			require.Nil(t, pendingFinishFor(session, nonce))
+		})
+	}
+}
+
 // Each inference is one nonce. The receipt and Finish of inference K ride
 // the Start diff of inference K+1. A heartbeat span may add nonces, and
 // those diffs are not inferences.
