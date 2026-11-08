@@ -136,6 +136,28 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
 	},
 }
 
+var sqliteSnapshotMigrationSteps = []migrate.Step{
+	{
+		ID:   1,
+		Name: "snapshots",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS snapshots (
+    escrow_id  TEXT PRIMARY KEY,
+    nonce      INTEGER NOT NULL,
+    state_data BLOB NOT NULL,
+    created_at INTEGER NOT NULL DEFAULT 0
+)`},
+	},
+}
+
+// MigrateSnapshotPool applies schema migrations for a per-epoch snapshot file.
+func MigrateSnapshotPool(ctx context.Context, db *sql.DB) error {
+	if err := migrate.ApplySQLite(ctx, db, sqliteSnapshotMigrationSteps); err != nil {
+		return fmt.Errorf("devshard sqlite snapshot migrate: %w", err)
+	}
+	return nil
+}
+
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.
 func MigrateEpochPool(ctx context.Context, db *sql.DB) error {
 	if err := migrate.ApplySQLite(ctx, db, sqliteEpochMigrationSteps); err != nil {

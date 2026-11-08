@@ -356,7 +356,7 @@ func quarantineSQLiteArtifacts(storeDir string) error {
 		return err
 	}
 	for _, ent := range entries {
-		if ent.IsDir() || !epochFileRegex.MatchString(ent.Name()) {
+		if ent.IsDir() || !(epochFileRegex.MatchString(ent.Name()) || epochSnapshotFileRegex.MatchString(ent.Name())) {
 			continue
 		}
 		path := filepath.Join(storeDir, ent.Name())
