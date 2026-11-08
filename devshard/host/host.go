@@ -488,6 +488,9 @@ func (h *Host) StateHead() (uint64, []byte, error) {
 func (h *Host) MempoolTxs() []*types.DevshardTx {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.sm != nil {
+		h.mempool.DropStaleHeightAcks(h.sm.HeightSyncPrunedBelow())
+	}
 	return h.mempool.Txs()
 }
 
@@ -531,12 +534,13 @@ func (h *Host) EscrowID() string { return h.escrowID }
 // MemoryCounts is the size of the maps that retain an escrow in this process.
 // Lengths only: nothing is copied and no record is visited.
 type MemoryCounts struct {
-	EscrowID   string
-	Live       int
-	Sealed     int
-	Mempool    int
-	Executing  int
-	Validating int
+	EscrowID        string
+	Live            int
+	Sealed          int
+	HeartbeatNonces int
+	Mempool         int
+	Executing       int
+	Validating      int
 }
 
 func (h *Host) MemoryCounts() MemoryCounts {
@@ -546,6 +550,7 @@ func (h *Host) MemoryCounts() MemoryCounts {
 	out := MemoryCounts{EscrowID: h.escrowID}
 	if h.sm != nil {
 		out.Live, out.Sealed = h.sm.LiveAndSealedCounts()
+		out.HeartbeatNonces = h.sm.HeartbeatNonceCount()
 	}
 	if h.mempool != nil {
 		out.Mempool = h.mempool.Len()
@@ -750,6 +755,10 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	if h.repairProbe != nil {
 		go h.MaybeRepair(context.WithoutCancel(ctx))
+	}
+
+	if h.sm != nil {
+		h.mempool.DropStaleHeightAcks(h.sm.HeightSyncPrunedBelow())
 	}
 
 	return &HostResponse{

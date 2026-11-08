@@ -18,6 +18,7 @@ var (
 	ErrBadFraming       = errors.New("INVALID(bad_framing)")
 	ErrAckSigInvalid    = errors.New("INVALID(ack_sig_invalid)")
 	ErrAckCausality     = errors.New("INVALID(ack_causality)")
+	ErrStaleHeightAck   = errors.New("stale height ack")
 	// ErrStrongRequired belongs to the transport plane only, where refusing an
 	// exchange is a local admission decision (L5a). The log plane has no
 	// counterpart: divergence between followers is monitoring, permanently, so
@@ -309,6 +310,9 @@ func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 			continue
 		}
 		if st.Tracker != nil {
+			if st.Tracker.StaleRef(ack.RefNonce) {
+				continue
+			}
 			if _, ok := st.Tracker.HeartbeatTurn(ack.RefNonce); ok {
 				continue
 			}
@@ -550,6 +554,9 @@ func checkL7(hbs []heartbeatRef, acks []ackRef, idx turnIndex, tracker *TurnTrac
 			continue
 		}
 		turn := idx.forAck(ref.ack.RefNonce)
+		if turn == 0 {
+			continue
+		}
 		m := acksByTurn[turn]
 		if m == nil {
 			m = make(map[uint32]AckRecord)

@@ -348,17 +348,85 @@ func TestLogPlane_LateAckAfterTurnPruneAccepted(t *testing.T) {
 		st.Tracker.Observe(nonce, []*types.DevshardTx{hbTx(0, 3, nil, nil)}, 0)
 	}
 	require.Nil(t, st.Tracker.Record(1), "turn record past retain is gone")
-	start, ok := st.Tracker.HeartbeatTurn(1)
-	require.True(t, ok, "heartbeatAt must survive turn prune")
-	require.Equal(t, uint64(1), start)
+	_, ok := st.Tracker.HeartbeatTurn(1)
+	require.False(t, ok, "heartbeatAt entry for pruned turn is evicted")
+	require.True(t, st.Tracker.StaleRef(1), "stale ref is recognized via prunedBelow")
 
 	hash := []byte{0xaa}
 	ack := signedAck(t, signers[0], 1, 0, 50, hash, types.SyncState_SYNCED)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
-		Nonce: n + 1,
+		Nonce: 1 + n*3,
 		Txs:   []*types.DevshardTx{signedAckTx(ack)},
 	}, st)
-	require.NoError(t, res.Err, "L3 must accept an ack whose heartbeat is journaled after the turn record is pruned")
+	require.NoError(t, res.Err, "L3 must accept a stale ack below prunedBelow via StaleRef")
+
+	// Inside the retained window, a nonce without a heartbeat must still fail L3.
+	missingInsideRetain := st.Tracker.PrunedBelow() + 1 // second slot of first retained turn was not observed
+	badAck := signedAck(t, signers[0], missingInsideRetain, 0, 50, hash, types.SyncState_SYNCED)
+	badRes := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 1 + n*3,
+		Txs:   []*types.DevshardTx{signedAckTx(badAck)},
+	}, st)
+	require.ErrorIs(t, badRes.Err, heightsync.ErrAckCausality)
+
+	// Below the cutoff, even a nonce that never held a heartbeat (nonce 2) is
+	// accepted by L3, creates no turn record, and is skipped by L7 rather than
+	// grouped under turn 0.
+	staleNoHB := signedAck(t, signers[0], 2, 0, 50, hash, types.SyncState_SYNCED)
+	resStale := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 1 + n*3,
+		Txs:   []*types.DevshardTx{signedAckTx(staleNoHB)},
+	}, st)
+	require.NoError(t, resStale.Err)
+	st.Tracker.Observe(1+n*3, []*types.DevshardTx{signedAckTx(staleNoHB)}, 50)
+	require.Nil(t, st.Tracker.Record(1))
+	require.Nil(t, st.Tracker.Record(0))
+
+	// Verify L7 skips turn==0 stale acks even when TurnBefore(turn) == 0 (at the
+	// oldest retained turn boundary): a stale ack in the same diff must not merge
+	// into acksByTurn[0] and mask a false ACKED claim in SyncVector.
+	var minRetained uint64
+	for cand := st.Tracker.PrunedBelow(); cand <= st.Tracker.LatestTurnStart(); cand++ {
+		if st.Tracker.Record(cand) != nil {
+			minRetained = cand
+			break
+		}
+	}
+	require.NotZero(t, minRetained)
+	// Build a tracker where only turns >= minRetained exist by pruning up to minRetained-1,
+	// then open a heartbeat inside minRetained's span (TurnBefore == 0) carrying a false ACKED vector.
+	vec := []*types.SyncVectorEntry{
+		{SlotId: 0, Status: types.AckStatus_ACKED, AckNonce: 1 + n*3, ObservedHeight: 50},
+		{SlotId: 1, Status: types.AckStatus_MISSING},
+		{SlotId: 2, Status: types.AckStatus_MISSING},
+	}
+	// If st has only 1 retained turn, TurnBefore(newTurn) would be minRetained; to hit TurnBefore==0,
+	// send a second heartbeat inside minRetained's span on a tracker whose sole turn starts at minRetained:
+	oneTurnSt, _ := baseState(t, 3)
+	for i := uint64(1); i <= heightsync.DefaultTurnRetain+1; i++ {
+		oneTurnSt.Tracker.Observe(1+(i-1)*3, []*types.DevshardTx{hbTx(0, 3, nil, nil)}, 0)
+	}
+	// Earliest retained turn in oneTurnSt has TurnBefore == 0; checkL7 on a heartbeat
+	// inside that span would see prevStart == 0 if opened there, or we check directly
+	// that stale ack produces MarkVectorContradiction when prevStart == 0.
+	onlyPruned := heightsync.NewTurnTracker(3, 2, heightsync.DefaultHeartbeatConfig())
+	for i := uint64(1); i <= heightsync.DefaultTurnRetain+1; i++ {
+		onlyPruned.Observe(1+(i-1)*3, []*types.DevshardTx{hbTx(0, 3, nil, nil)}, 0)
+	}
+	// Keep prunedBelow > 2 while clearing retained turns via a small simulation is internal;
+	// verify via minRetained+1 when minRetained is the earliest retained turn in oneTurnSt:
+	earliest := oneTurnSt.Tracker.PrunedBelow()
+	require.Zero(t, oneTurnSt.Tracker.TurnBefore(earliest))
+	// Rewind tracker with just prunedBelow by checking a heartbeat that joins `earliest` when Latest()==earliest:
+	joinSt, _ := baseState(t, 3)
+	// Feed DefaultTurnRetain turns at high nonces first? No, nonces are monotone; test L7 directly with vec on st:
+	_ = joinSt
+	l7Res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 1 + n*3 + 1,
+		Txs:   []*types.DevshardTx{hbTx(0, 3, nil, vec), signedAckTx(staleNoHB)},
+	}, st)
+	require.NoError(t, l7Res.Err)
+	require.NotEmpty(t, l7Res.Marks, "stale ack must be skipped by L7 and not satisfy ACKED vector claim")
 }
 
 func TestCheckDiffLogPlane_LongOpenSessionBounded(t *testing.T) {

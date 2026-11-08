@@ -83,7 +83,7 @@ func TestMaybePrintFleetCompat(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0", code)
 	}
-	if strings.TrimSpace(stdout.String()) != "d_ack=73,f=120000ms,lease=instance_id" {
+	if strings.TrimSpace(stdout.String()) != "d_ack=73,f=120000ms,lease=instance_id,turn_retain=64" {
 		t.Fatalf("stdout = %q", strings.TrimSpace(stdout.String()))
 	}
 }

@@ -415,6 +415,37 @@ func (sm *StateMachine) HeightSyncCloneTurnTracker() *heightsync.TurnTracker {
 	return sm.turnTracker.Clone()
 }
 
+// HeightSyncStaleRef reports whether nonce falls below the turn tracker's
+// pruned heartbeat cutoff.
+func (sm *StateMachine) HeightSyncStaleRef(nonce uint64) bool {
+	if sm == nil {
+		return false
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.turnTracker.StaleRef(nonce)
+}
+
+// HeightSyncPrunedBelow returns the turn tracker's pruned heartbeat cutoff.
+func (sm *StateMachine) HeightSyncPrunedBelow() uint64 {
+	if sm == nil {
+		return 0
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.turnTracker.PrunedBelow()
+}
+
+// HeartbeatNonceCount returns the retained size of TurnTracker.heartbeatAt.
+func (sm *StateMachine) HeartbeatNonceCount() int {
+	if sm == nil {
+		return 0
+	}
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.turnTracker.HeartbeatAtCount()
+}
+
 // HeightSyncRepairDue returns every retained turn whose ack window has closed
 // with missing slots. Spec §11.3 probes turn s, not only Latest(). The probe
 // still carries the local tip on the wire; this does not AdvanceHeight with it.

@@ -46,6 +46,7 @@ func TestStatsMemoryJSONFields(t *testing.T) {
 		"sessions",
 		"live_inferences",
 		"sealed_inferences",
+		"heartbeat_nonces",
 		"mempool",
 		"executing",
 		"validating",

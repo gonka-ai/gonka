@@ -687,6 +687,7 @@ type MemoryCounts struct {
 	EscrowID        string
 	Live            int
 	Sealed          int
+	HeartbeatNonces int
 	RetainedDiffs   int
 	PendingTxs      int
 	SignatureNonces int
@@ -706,6 +707,7 @@ func (s *Session) MemoryCounts() MemoryCounts {
 	out := MemoryCounts{EscrowID: s.escrowID}
 	if s.sm != nil {
 		out.Live, out.Sealed = s.sm.LiveAndSealedCounts()
+		out.HeartbeatNonces = s.sm.HeartbeatNonceCount()
 	}
 	s.mu.Lock()
 	out.RetainedDiffs = len(s.diffs)

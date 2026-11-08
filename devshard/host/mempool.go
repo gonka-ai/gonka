@@ -143,6 +143,24 @@ func (m *Mempool) QueuedConfirmStart(inferenceID uint64) *types.MsgConfirmStart 
 	return out
 }
 
+// DropStaleHeightAcks removes queued MsgHeightAck entries whose ref_nonce falls
+// below prunedBelow so hosts stop proposing stale acks on subsequent exchanges.
+func (m *Mempool) DropStaleHeightAcks(prunedBelow uint64) {
+	if m == nil || prunedBelow == 0 {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for h, e := range m.entries {
+		if e.Tx == nil {
+			continue
+		}
+		if ack := e.Tx.GetHeightAck(); ack != nil && ack.RefNonce < prunedBelow {
+			delete(m.entries, h)
+		}
+	}
+}
+
 func (m *Mempool) Txs() []*types.DevshardTx {
 	m.mu.Lock()
 	defer m.mu.Unlock()

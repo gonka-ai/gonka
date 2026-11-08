@@ -2030,14 +2030,15 @@ func (m *HostManager) signPayloadResponse(inferenceID string, promptPayload, res
 
 // SessionMemory is the retained-map sizes across loaded sessions.
 type SessionMemory struct {
-	Sessions    int
-	Live        int
-	Sealed      int
-	Mempool     int
-	Executing   int
-	Validating  int
-	Fattest     string
-	FattestLive int
+	Sessions        int
+	Live            int
+	Sealed          int
+	HeartbeatNonces int
+	Mempool         int
+	Executing       int
+	Validating      int
+	Fattest         string
+	FattestLive     int
 }
 
 // SessionMemoryCounts sums map lengths across loaded sessions. It copies the
@@ -2064,6 +2065,7 @@ func (m *HostManager) SessionMemoryCounts() SessionMemory {
 		c := srv.Host().MemoryCounts()
 		out.Live += c.Live
 		out.Sealed += c.Sealed
+		out.HeartbeatNonces += c.HeartbeatNonces
 		out.Mempool += c.Mempool
 		out.Executing += c.Executing
 		out.Validating += c.Validating
