@@ -13,7 +13,6 @@ import (
 	"time"
 
 	json "github.com/goccy/go-json"
-	"google.golang.org/protobuf/proto"
 
 	"github.com/labstack/echo/v4"
 
@@ -965,7 +964,7 @@ func (s *Server) ServeGossipNonce(req GossipNonceRequest) error {
 		EscrowId:  s.host.EscrowID(),
 		Nonce:     req.Nonce,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	if err != nil {
 		return fmt.Errorf("%w: %v", errGossipMarshal, err)
 	}

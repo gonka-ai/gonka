@@ -244,7 +244,7 @@ func TestHost_SignsState(t *testing.T) {
 		EscrowId:  "escrow-1",
 		Nonce:     1,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 
 	addr, err := verifier.RecoverAddress(sigData, resp.StateSig)
@@ -835,7 +835,7 @@ func TestHost_AccumulateGossipSig(t *testing.T) {
 		EscrowId:  "escrow-1",
 		Nonce:     1,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 	peerSig, err := hosts[1].Sign(sigData)
 	require.NoError(t, err)
@@ -875,7 +875,7 @@ func TestHost_AccumulateGossipSig_WrongSigner(t *testing.T) {
 		EscrowId:  "escrow-1",
 		Nonce:     1,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 	wrongSig, err := hosts[2].Sign(sigData)
 	require.NoError(t, err)
@@ -953,7 +953,7 @@ func TestHost_FinalizationThreshold(t *testing.T) {
 		EscrowId:  "escrow-1",
 		Nonce:     1,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 	sig1, err := hosts[1].Sign(sigData)
 	require.NoError(t, err)
@@ -2412,7 +2412,7 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 		EscrowId:  "escrow-1",
 		Nonce:     2,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 	warmSig, err := warmSigner.Sign(sigData)
 	require.NoError(t, err)

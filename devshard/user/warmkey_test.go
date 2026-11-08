@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -117,7 +116,7 @@ func TestProcessResponse_WarmKey_Rejected(t *testing.T) {
 	sigContent := &types.StateSignatureContent{
 		StateRoot: root, EscrowId: "escrow-1", Nonce: 1,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 	stateSig, err := warmKeys[1].Sign(sigData)
 	require.NoError(t, err)
@@ -159,7 +158,7 @@ func TestProcessResponse_WarmKey_NoResolver(t *testing.T) {
 	sigContent := &types.StateSignatureContent{
 		StateRoot: root, EscrowId: "escrow-1", Nonce: 1,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, err)
 	stateSig, err := warmKeys[1].Sign(sigData)
 	require.NoError(t, err)

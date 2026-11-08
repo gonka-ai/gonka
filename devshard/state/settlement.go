@@ -70,7 +70,7 @@ func VerifySettlement(
 		EscrowId:  payload.EscrowID,
 		Nonce:     payload.Nonce,
 	}
-	sigData, err := deterministicMarshal.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	if err != nil {
 		return nil, fmt.Errorf("marshal signature content: %w", err)
 	}

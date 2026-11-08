@@ -14,7 +14,6 @@ import (
 	json "github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard"
 	"devshard/host"
@@ -480,7 +479,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 		EscrowId:  "escrow-1",
 		Nonce:     2,
 	}
-	sigData, merr := proto.Marshal(sigContent)
+	sigData, merr := types.CanonicalSignedBytes(sigContent)
 	require.NoError(t, merr)
 	warmStateSig, err := warmSigner.Sign(sigData)
 	require.NoError(t, err)
