@@ -271,8 +271,9 @@ it is queried once, then carried.
 
 ### Caching and timeouts
 
-`ChainBridge.VerifyWarmKey` memoises `(warm, validator) -> bool` in a
-`sync.Map` for the process lifetime, so a repeatedly-probed key costs one query.
+`ChainBridge.VerifyWarmKey` memoises `(warm, validator) -> bool`: positives for
+the process lifetime, negatives up to 4096 (`bridge.WarmKeyCache`), so a
+repeatedly-probed key costs one query.
 Each query is bounded by a 10s timeout, because callers reach the resolver from
 state-machine apply while holding session locks and an unresponsive node must
 not stall the escrow.
