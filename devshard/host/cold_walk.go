@@ -14,6 +14,10 @@ import (
 // payload alone. A check that only waited does not count.
 const coldCatchUpAttempts = 2
 
+// silentExecutorChecks is how many checks in a row may end on this verifier's
+// deadline during an executor call before the next such check accepts.
+const silentExecutorChecks = 2
+
 // coldWalkLongNonces is the suffix length past which a walk from a reported
 // tip takes the gate. A cold walk always takes it.
 const coldWalkLongNonces = 256
@@ -38,6 +42,10 @@ type coldWalkExec struct {
 	bound bool
 	// reached is set when the executor answered a catch-up page of this walk.
 	reached bool
+	// silent counts checks in a row that ended on an unanswered executor call.
+	silent int
+	// silentTip is the highest root-matched tip read after an answered page.
+	silentTip uint64
 }
 
 // walkHead is what the first SessionHead says about the walk ahead.
@@ -208,6 +216,35 @@ func (g *ColdWalks) Finish(key string, requestCanceled bool) {
 	st.running = false
 	close(st.done)
 	st.done = nil
+}
+
+// noteSilent counts one more check that ended on an unanswered executor call
+// and returns the count.
+func (g *ColdWalks) noteSilent(key string) int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.exec(key)
+	st.silent++
+	return st.silent
+}
+
+// raiseSilentTip records a root-matched tip read after an answered page and
+// reports whether it is above every such tip seen for this executor.
+func (g *ColdWalks) raiseSilentTip(key string, nonce uint64) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st := g.exec(key)
+	if nonce <= st.silentTip {
+		return false
+	}
+	st.silentTip = nonce
+	return true
+}
+
+func (g *ColdWalks) clearSilent(key string) {
+	g.mu.Lock()
+	g.exec(key).silent = 0
+	g.mu.Unlock()
 }
 
 // pageAnswered records that the executor answered a catch-up page of the
