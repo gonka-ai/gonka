@@ -125,8 +125,10 @@ func (c *gatedReceiptClient) Send(ctx context.Context, req host.HostRequest, str
 	return c.inner.Send(ctx, req, stream, wrapped)
 }
 
-// timedClient records when the Send call on its host started and when it returned, so a test can compare
-// a recorded duration with the interval it actually observed.
+// timedClient records the chat Send on its host. A Finish or catch-up on the
+// same client has no payload and can return a few milliseconds after the
+// attempt is marked ended, so counting that call stretches the span past the
+// recorded duration.
 type timedClient struct {
 	inner user.HostClient
 
@@ -136,15 +138,22 @@ type timedClient struct {
 }
 
 func (c *timedClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
-	c.mu.Lock()
-	if c.entered.IsZero() {
-		c.entered = time.Now()
+	chat := req.Payload != nil
+	if chat {
+		c.mu.Lock()
+		if c.entered.IsZero() {
+			c.entered = time.Now()
+		}
+		c.mu.Unlock()
 	}
-	c.mu.Unlock()
 	resp, err := c.inner.Send(ctx, req, stream, receiptHandler)
-	c.mu.Lock()
-	c.returned = time.Now()
-	c.mu.Unlock()
+	if chat {
+		c.mu.Lock()
+		if c.returned.IsZero() {
+			c.returned = time.Now()
+		}
+		c.mu.Unlock()
+	}
 	return resp, err
 }
 
@@ -239,11 +248,12 @@ func TestRunInferenceRecordsEachAttemptDurationAtItsOwnEnd(t *testing.T) {
 	}
 	require.NotNil(t, winner, "a host other than the slow one must have won")
 	require.NotNil(t, slow, "the slow attempt must be recorded")
-	// Each recorded duration is compared with the interval the test observed around that host's Send call.
-	// The recorded value covers at least that interval, because the send time is stamped before the call and
-	// the end is recorded after it. The winner returned before the slow attempt was released, which is at
-	// least holdAfterWinner before the request settled; a duration taken at settlement would exceed its own
-	// interval by more than that.
+	// Each recorded duration is compared with the chat Send on that host. The
+	// recorded value covers at least that interval, because the send time is
+	// stamped before the call and the end is recorded after it. The winner
+	// returned before the slow attempt was released, which is at least
+	// holdAfterWinner before the request settled; a duration taken at
+	// settlement would exceed its own interval by more than that.
 	winnerSpan := timed[winner.HostIdx].interval()
 	slowSpan := timed[slow.HostIdx].interval()
 	require.GreaterOrEqual(t, winner.TotalTimeMs, float64(winnerSpan.Milliseconds()))

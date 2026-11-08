@@ -15,6 +15,7 @@ rm -f build/test-results/e2e/junit.xml build/test-results/e2e/junit-*.xml
 export PATH="$(go env GOPATH)/bin:${PATH}"
 go install "${DEVSHARD_E2E_GOTESTSUM:-gotest.tools/gotestsum@v1.13.0}"
 go test -c -o /tmp/e2e.test ./e2e
+e2e_pkg=$(go list -f '{{.ImportPath}}' ./e2e)
 
 /tmp/e2e.test -test.list '^Test' > /tmp/e2e-tests.txt
 
@@ -88,9 +89,12 @@ run_shard() {
   name=$1
   regex=$2
   echo "=== e2e shard ${name} ==="
+  # --raw-command reads go test -json events. The compiled binary prints the
+  # text format, so test2json has to sit in front of it.
   gotestsum --format "$format" \
     --junitfile "build/test-results/e2e/junit-${name}.xml" \
     --raw-command -- \
+    go tool test2json -t -p "$e2e_pkg" \
     /tmp/e2e.test -test.count=1 -test.v -test.timeout 25m -test.run "$regex"
   echo "=== e2e shard ${name} done ==="
 }

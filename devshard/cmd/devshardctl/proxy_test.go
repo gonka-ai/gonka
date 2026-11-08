@@ -1790,29 +1790,60 @@ func TestRunInference_AStateRootDivergenceThatSurvivesTheReplayBlocksTheHost(t *
 	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
+	var reqMu sync.Mutex
+	var seen []host.HostRequest
+	divergent.onSend = func(req host.HostRequest) {
+		reqMu.Lock()
+		seen = append(seen, req)
+		reqMu.Unlock()
+	}
+	dispatches := func() []host.HostRequest {
+		reqMu.Lock()
+		defer reqMu.Unlock()
+		return inferenceDispatches(append([]host.HostRequest(nil), seen...))
+	}
 	divergent.ForceError(errors.New(divergenceUpstreamError))
 
-	for range 2 {
+	var first bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 1
+	}, time.Second, 5*time.Millisecond)
+	require.EqualValues(t, uint64(1), dispatchNonces(dispatches())[0])
+
+	// The winner Finish publishes on its own nonce and can take this host's
+	// next slot before the replay is composed. The error stays forced, so the
+	// replay disagrees too.
+	require.Eventually(t, func() bool {
+		return env.session.Nonce() > 2
+	}, 2*time.Second, 5*time.Millisecond, "the winner finish is published before the replay")
+
+	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
+
+	for range 4 {
+		if len(dispatchNonces(dispatches())) >= 2 {
+			break
+		}
 		var body bytes.Buffer
 		require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &body, nil))
 	}
-
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 2
+	}, time.Second, 5*time.Millisecond, "the replay has to reach this host")
 	require.Eventually(t, func() bool {
 		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 		return blocked
-	}, time.Second, 10*time.Millisecond)
+	}, 2*time.Second, 10*time.Millisecond, "a replay that disagreed again blocks the host")
 
 	// Even if the host would answer now, this escrow must stop sending it
 	// real traffic because its local state no longer matches our diff chain.
+	// A probe or catch-up can still arrive with no payload.
 	divergent.ForceError(nil)
-	lastNonce := divergent.LastRequest().Nonce
+	before := len(dispatches())
 	var after bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &after, nil))
-	// The picker burns a diverged host's nonce with an empty probe so the
-	// queue can move on. That probe is not a request.
-	if got := divergent.LastRequest(); got != nil && got.Nonce != lastNonce {
-		require.Nil(t, got.Payload)
-	}
+	require.Equal(t, before, len(dispatches()), "a blocked host must not be asked to run another chat")
 
 	reason, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.True(t, blocked)
