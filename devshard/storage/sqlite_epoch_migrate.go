@@ -134,6 +134,18 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
 		Name:       "sessions_obs_rebuild_pending",
 		Statements: []string{`ALTER TABLE sessions ADD COLUMN obs_rebuild_pending INTEGER NOT NULL DEFAULT 0`},
 	},
+	// The gateway's completion journal, next to the diffs it guards, so a Start and its obligation commit together.
+	{
+		ID:   9,
+		Name: "inference_completions",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS inference_completions (
+    escrow_id  TEXT NOT NULL,
+    nonce      INTEGER NOT NULL,
+    entry_json BLOB NOT NULL,
+    PRIMARY KEY (escrow_id, nonce)
+)`},
+	},
 }
 
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.

@@ -43,6 +43,21 @@ func AppendDiffWithRetryUnlocked(ctx context.Context, store Storage, escrowID st
 	if store == nil {
 		return fmt.Errorf("AppendDiffWithRetry: nil store")
 	}
+	return persistDiffWithRetry(ctx, escrowID, rec.Nonce, func() error { return store.AppendDiff(escrowID, rec) }, lock, unlock)
+}
+
+// AppendDiffWithCompletionsRetry is AppendDiffWithRetry for a diff written together with its escrow's completion
+// journal changes (CompletionJournal.AppendDiffWithCompletions). ErrCompletionConflict is returned without retry.
+func AppendDiffWithCompletionsRetry(ctx context.Context, journal CompletionJournal, escrowID string, rec types.DiffRecord, w CompletionWrite) error {
+	if journal == nil {
+		return fmt.Errorf("AppendDiffWithCompletionsRetry: nil journal")
+	}
+	return persistDiffWithRetry(ctx, escrowID, rec.Nonce, func() error {
+		return journal.AppendDiffWithCompletions(escrowID, rec, w)
+	}, nil, nil)
+}
+
+func persistDiffWithRetry(ctx context.Context, escrowID string, nonce uint64, write func() error, lock, unlock func()) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -52,14 +67,14 @@ func AppendDiffWithRetryUnlocked(ctx context.Context, store Storage, escrowID st
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		last = store.AppendDiff(escrowID, rec)
+		last = write()
 		if last == nil {
 			if attempt > 1 {
 				observability.IncDiffPersistRetry("success")
 			}
 			return nil
 		}
-		if errors.Is(last, ErrDiffFork) {
+		if errors.Is(last, ErrDiffFork) || errors.Is(last, ErrCompletionConflict) {
 			return last
 		}
 		if attempt == DefaultPersistMaxAttempts {
@@ -86,7 +101,7 @@ func AppendDiffWithRetryUnlocked(ctx context.Context, store Storage, escrowID st
 	observability.IncDiffPersistRetry("exhausted")
 	slog.ErrorContext(ctx, "diff_persist_exhausted",
 		"escrow_id", escrowID,
-		"nonce", rec.Nonce,
+		"nonce", nonce,
 		"attempts", DefaultPersistMaxAttempts,
 		"error", last,
 	)
