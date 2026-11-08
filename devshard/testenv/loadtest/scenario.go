@@ -2,12 +2,17 @@
 package loadtest
 
 import (
+	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"devshard/testenv/mockopenai"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,6 +44,10 @@ type Diagnostics struct {
 	CPUProfiles              []CPUProfileWindow `yaml:"cpu_profiles"`
 	DisablePeriodicSnapshots bool               `yaml:"disable_periodic_snapshots"`
 	ContentionProfiles       bool               `yaml:"contention_profiles"`
+	// Export copies the hosts' databases and every mock ML node's request log into the output
+	// directory before the stack stops, for checks that compare what the ML produced with what the
+	// hosts recorded (export.go).
+	Export bool `yaml:"export"`
 }
 
 type ProfileSnapshot struct {
@@ -72,6 +81,7 @@ type Gateway struct {
 type GatewayParticipantThrottle struct {
 	TransportFailureQuarantine string `yaml:"transport_failure_quarantine"`
 	HTTPQuarantine             string `yaml:"http_quarantine"`
+	EmptyStreamQuarantine      string `yaml:"empty_stream_quarantine"`
 }
 
 type GatewayRedundancy struct {
@@ -113,16 +123,39 @@ type HostFault struct {
 type ChainTopology struct {
 	EscrowAmount uint64 `yaml:"escrow_amount"`
 	MaxNonce     uint32 `yaml:"max_nonce"`
+	// ValidationThreshold is the replay similarity bar the chain hands the hosts for every model.
+	// Unset keeps the testenv default, 0.50, which no logprob mismatch can fail: one position adds
+	// less than 0.5 to the distance, so similarity with matching tokens stays above 0.5.
+	ValidationThreshold *ChainDecimal `yaml:"validation_threshold"`
+	// Escrows is how many escrows of the request model the gateway holds during the load, as an operator
+	// that funds several does; it spreads the requests over them. The first is the configured one, the
+	// rest are created through the gateway admin API before the load. 0 and 1 keep the one.
+	Escrows int `yaml:"escrows"`
+}
+
+// ChainDecimal is a chain decimal, value × 10^exponent; mainnet's 0.958 is value 958, exponent -3.
+type ChainDecimal struct {
+	Value    int64 `yaml:"value"`
+	Exponent int32 `yaml:"exponent"`
 }
 
 type MockMLTopology struct {
 	Allocator string       `yaml:"allocator"`
 	Nodes     []MockMLNode `yaml:"nodes"`
+	// Rules are fault rules every node of the scenario runs after its profile's own, so a rule fires
+	// whichever node the pool hands the request it selects.
+	Rules []mockopenai.FaultRule `yaml:"rules"`
 }
 
 type MockMLNode struct {
 	Name    string `yaml:"name"`
 	Profile string `yaml:"profile"`
+	// Host binds the node to one versiond host in mock-dapi; empty keeps it
+	// in the shared pool.
+	Host string `yaml:"host"`
+	// MaxConcurrent caps the AcquireMLNode locks mock-dapi hands out on the
+	// node at once, as the dapi broker caps a node; 0 is unlimited.
+	MaxConcurrent int `yaml:"max_concurrent"`
 }
 
 type Workload struct {
@@ -183,8 +216,15 @@ type Assertions struct {
 	} `yaml:"devshard"`
 	MockML struct {
 		RequireEachNodeUsed bool `yaml:"require_each_node_used"`
+		// RequireFullNode makes a promises run not valid when no ML node was ever full (none queued a
+		// request for a worker or refused one at capacity): the run did not load its nodes the way it
+		// was meant to.
+		RequireFullNode bool `yaml:"require_full_node"`
 	} `yaml:"mock_ml"`
 	Accounting AccountingAssertions `yaml:"accounting"`
+	// Promises holds the exported run to the system properties of citest/harness (CheckLoadtestRun)
+	// and writes report.json and report.md; a violation fails the run.
+	Promises bool `yaml:"promises"`
 }
 
 type AccountingAssertions struct {
@@ -205,6 +245,57 @@ type Profile struct {
 	FailureRate   float64 `yaml:"failure_rate"`
 	HTTPStatus    int     `yaml:"http_status"`
 	Failures      []any   `yaml:"failures"`
+	// Chaos makes the node a dishonest executor: each execution gets one answer shape drawn by these
+	// weights (mockopenai chaos actions, e.g. wrong_answer, odd_usage). A validator's replay is
+	// always answered honestly, so a shape other than ok is one the protocol should catch.
+	Chaos *ProfileChaos `yaml:"chaos"`
+	// Oracle answers a validator's replay from the enforced tokens it carries, and reports usage as the
+	// tokens emitted. ChunkTokens is how many tokens one streamed chunk carries. FirstContentMs and
+	// ExecMs schedule a streamed execution from the request start; ReplayMs delays replays only.
+	Oracle         bool `yaml:"oracle"`
+	ChunkTokens    int  `yaml:"chunk_tokens"`
+	FirstContentMs int  `yaml:"first_content_ms"`
+	ExecMs         int  `yaml:"exec_ms"`
+	ReplayMs       int  `yaml:"replay_ms"`
+	// Rules inject a fault into the requests they select by phase, seed or prompt text; the generator
+	// tags every prompt with "[load-request:<id>]".
+	Rules []mockopenai.FaultRule `yaml:"rules"`
+}
+
+// ProfileChaos is the chaos part of an ML node profile.
+type ProfileChaos struct {
+	Seed    int64          `yaml:"seed"`
+	Weights map[string]int `yaml:"weights"`
+}
+
+// rulesJSON is the mock's MOCK_OPENAI_RULES_JSON for a node of the profile: the profile's rules, then
+// the ones the scenario gives every node; empty when there are none.
+func (p Profile) rulesJSON(scenarioRules ...mockopenai.FaultRule) (string, error) {
+	rules := append(slices.Clone(p.Rules), scenarioRules...)
+	if len(rules) == 0 {
+		return "", nil
+	}
+	if err := mockopenai.ValidateRules(rules); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(rules)
+	return string(raw), err
+}
+
+// chaosJSON is the mock's MOCK_OPENAI_CHAOS_JSON for the profile, empty when it has no chaos.
+func (p Profile) chaosJSON() (string, error) {
+	if p.Chaos == nil {
+		return "", nil
+	}
+	c := mockopenai.ChaosConfig{Enabled: true, Seed: p.Chaos.Seed, Weights: p.Chaos.Weights}
+	if len(c.Weights) == 0 {
+		return "", fmt.Errorf("chaos needs weights")
+	}
+	if err := c.Validate(); err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(c)
+	return string(raw), err
 }
 
 func LoadScenario(path string) (Scenario, error) {
@@ -232,6 +323,18 @@ func LoadProfile(dir, name string) (Profile, error) {
 	}
 	if _, err := time.ParseDuration(profile.TokenInterval); err != nil {
 		return Profile{}, fmt.Errorf("profile %s token_interval: %w", path, err)
+	}
+	if _, err := profile.chaosJSON(); err != nil {
+		return Profile{}, fmt.Errorf("profile %s chaos: %w", path, err)
+	}
+	if _, err := profile.rulesJSON(); err != nil {
+		return Profile{}, fmt.Errorf("profile %s rules: %w", path, err)
+	}
+	if profile.ChunkTokens < 0 || profile.FirstContentMs < 0 || profile.ExecMs < 0 || profile.ReplayMs < 0 {
+		return Profile{}, fmt.Errorf("profile %s chunk_tokens, first_content_ms, exec_ms and replay_ms must be non-negative", path)
+	}
+	if profile.ExecMs > 0 && profile.ExecMs < profile.FirstContentMs {
+		return Profile{}, fmt.Errorf("profile %s exec_ms (the last chunk) must not come before first_content_ms", path)
 	}
 	if profile.Workers <= 0 || profile.Queue < 0 {
 		return Profile{}, fmt.Errorf("profile %s workers must be positive and queue non-negative", path)
@@ -269,6 +372,16 @@ func (s Scenario) Validate() error {
 	if s.Topology.Chain.EscrowAmount == 0 || s.Topology.Chain.MaxNonce == 0 {
 		return fmt.Errorf("topology.chain requires positive escrow_amount and max_nonce")
 	}
+	// A similarity is at most 1, so a bar of 1 or more fails every honest replay.
+	if t := s.Topology.Chain.ValidationThreshold; t != nil && (t.Value <= 0 || t.Exponent >= 0 || float64(t.Value) >= math.Pow10(int(-t.Exponent))) {
+		return fmt.Errorf("topology.chain.validation_threshold must be above 0 and below 1")
+	}
+	if s.Topology.Chain.Escrows < 0 || s.Topology.Chain.Escrows > maxScenarioEscrows {
+		return fmt.Errorf("topology.chain.escrows must be between 0 and %d", maxScenarioEscrows)
+	}
+	if err := mockopenai.ValidateRules(s.Topology.MockML.Rules); err != nil {
+		return fmt.Errorf("topology.mock_ml.rules: %w", err)
+	}
 	if s.Topology.MockML.Allocator != "round_robin" {
 		return fmt.Errorf("mock DAPI scenarios require mock_ml allocator round_robin")
 	}
@@ -283,6 +396,9 @@ func (s Scenario) Validate() error {
 		if _, exists := seen[node.Name]; exists {
 			return fmt.Errorf("duplicate mock_ml node %q", node.Name)
 		}
+		if node.MaxConcurrent < 0 {
+			return fmt.Errorf("mock_ml node %q max_concurrent must be non-negative", node.Name)
+		}
 		seen[node.Name] = struct{}{}
 	}
 	if s.Workload.MaxInFlight <= 0 {
@@ -293,6 +409,9 @@ func (s Scenario) Validate() error {
 		return fmt.Errorf("workload duration: %w", err)
 	}
 	if err := validateHostFaults(s.Topology, s.Workload.HostFaults, duration); err != nil {
+		return err
+	}
+	if err := s.validateTopologyBindings(); err != nil {
 		return err
 	}
 	protocolTimeouts := map[string]string{
@@ -400,6 +519,7 @@ func (s Scenario) Validate() error {
 	for name, value := range map[string]string{
 		"transport_failure_quarantine": s.Gateway.ParticipantThrottle.TransportFailureQuarantine,
 		"http_quarantine":              s.Gateway.ParticipantThrottle.HTTPQuarantine,
+		"empty_stream_quarantine":      s.Gateway.ParticipantThrottle.EmptyStreamQuarantine,
 	} {
 		if value == "" {
 			continue
@@ -432,6 +552,13 @@ func (s Scenario) Validate() error {
 	}
 	if _, err := time.ParseDuration(s.DrainTimeout); err != nil {
 		return fmt.Errorf("drain_timeout: %w", err)
+	}
+	if s.Assertions.Promises && !s.Diagnostics.Export {
+		return fmt.Errorf("assertions.promises requires diagnostics.export")
+	}
+	// The checks find the executor of every inference in compose.log; a cut log hides the early ones.
+	if s.Assertions.Promises && s.Diagnostics.LogTail() != "all" {
+		return fmt.Errorf("assertions.promises requires diagnostics.logs.tail: all")
 	}
 	return nil
 }
@@ -469,6 +596,18 @@ func loadYAML(path string, out any) error {
 	}
 	if err := yaml.Unmarshal(body, out); err != nil {
 		return fmt.Errorf("parse %s: %w", path, err)
+	}
+	return nil
+}
+
+func (s Scenario) validateTopologyBindings() error {
+	for i, node := range s.Topology.MockML.Nodes {
+		if node.Host == "" {
+			continue
+		}
+		if s.Topology.Participants == 0 || !validTopologyHost(node.Host, s.Topology.Participants) {
+			return fmt.Errorf("topology.mock_ml.nodes[%d].host must be a versiond host of an explicit topology.participants", i)
+		}
 	}
 	return nil
 }

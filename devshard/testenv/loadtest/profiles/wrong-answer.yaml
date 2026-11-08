@@ -1,0 +1,15 @@
+schema_version: v1
+profile: wrong-answer
+
+# A dishonest executor: one execution in five is answered with logprobs the replay will not
+# confirm. Validators' replays are answered honestly.
+ttft: 2ms
+token_interval: 0s
+workers: 100
+queue: 500
+failures: []
+chaos:
+  seed: 7
+  weights:
+    ok: 4
+    wrong_answer: 1

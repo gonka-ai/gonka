@@ -6,6 +6,7 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -135,6 +136,24 @@ type MockOpenAINodeCfg struct {
 	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
+	// ChaosJSON is the mock's chaos config (the chaos object of POST /testenv/fault) the node runs
+	// with from the start; empty answers every execution honestly.
+	ChaosJSON string `yaml:"chaos_json,omitempty"`
+	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
+	// that host acquires it. Empty keeps the node in the shared pool.
+	Host string `yaml:"host,omitempty"`
+	// MaxConcurrent caps the AcquireMLNode locks mock-dapi hands out on this
+	// node at once, as the dapi broker caps a node; 0 is unlimited.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty"`
+	// Oracle answers a replay from the enforced tokens it carries; ChunkTokens groups streamed tokens;
+	// FirstContentMs and ExecMs schedule a streamed execution; ReplayMs delays replays only. RulesJSON
+	// is the node's fault rules (the body of POST /testenv/rules).
+	Oracle         bool   `yaml:"oracle,omitempty"`
+	ChunkTokens    int    `yaml:"chunk_tokens,omitempty"`
+	FirstContentMs int    `yaml:"first_content_ms,omitempty"`
+	ExecMs         int    `yaml:"exec_ms,omitempty"`
+	ReplayMs       int    `yaml:"replay_ms,omitempty"`
+	RulesJSON      string `yaml:"rules_json,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -739,6 +758,10 @@ func (c *File) Validate() error {
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
 	}
+	hostIDs := make(map[string]bool, len(c.Hosts))
+	for _, h := range c.Hosts {
+		hostIDs[h.ID] = true
+	}
 	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
 	for i, node := range c.MockOpenAI.Nodes {
 		if strings.TrimSpace(node.Name) == "" {
@@ -755,6 +778,21 @@ func (c *File) Validate() error {
 		}
 		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
 			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		if node.Host != "" && !hostIDs[node.Host] {
+			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
+		}
+		if node.MaxConcurrent < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d].max_concurrent must be non-negative", i)
+		}
+		if node.ChunkTokens < 0 || node.FirstContentMs < 0 || node.ExecMs < 0 || node.ReplayMs < 0 {
+			return fmt.Errorf("mock_openai.nodes[%d] chunk_tokens, first_content_ms, exec_ms and replay_ms must be non-negative", i)
+		}
+		if node.RulesJSON != "" {
+			var rules []map[string]any
+			if err := json.Unmarshal([]byte(node.RulesJSON), &rules); err != nil {
+				return fmt.Errorf("mock_openai.nodes[%d] rules_json must be a JSON list of rules: %w", i, err)
+			}
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

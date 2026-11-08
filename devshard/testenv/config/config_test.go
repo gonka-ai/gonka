@@ -92,3 +92,33 @@ func TestPostgresServices(t *testing.T) {
 	cfg.Postgres.Enabled = false
 	require.Empty(t, config.PostgresServices(cfg))
 }
+
+func TestValidate_MockNodeOracleKnobs(t *testing.T) {
+	base := func() *config.File {
+		cfg := &config.File{
+			Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+			Hosts:    []config.HostCfg{{ID: "versiond-0", Address: "gonka1a", PrivateKeyHex: "aa"}},
+			User:     config.UserCfg{Address: "gonka1u", PrivateKeyHex: "cc"},
+			Postgres: config.PostgresCfg{Enabled: true},
+		}
+		cfg.ApplyDefaults()
+		cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{{Name: "mock-openai-0", Workers: 1}}
+		return cfg
+	}
+	cfg := base()
+	cfg.MockOpenAI.Nodes[0].RulesJSON = `[{"name":"x","seeds":[1],"http_status":503}]`
+	require.NoError(t, cfg.Validate())
+
+	for name, tune := range map[string]func(*config.MockOpenAINodeCfg){
+		"negative chunk_tokens":     func(n *config.MockOpenAINodeCfg) { n.ChunkTokens = -1 },
+		"negative first_content_ms": func(n *config.MockOpenAINodeCfg) { n.FirstContentMs = -1 },
+		"negative exec_ms":          func(n *config.MockOpenAINodeCfg) { n.ExecMs = -1 },
+		"negative replay_ms":        func(n *config.MockOpenAINodeCfg) { n.ReplayMs = -1 },
+		"rules_json not a list":     func(n *config.MockOpenAINodeCfg) { n.RulesJSON = `{"name":"x"}` },
+		"rules_json broken":         func(n *config.MockOpenAINodeCfg) { n.RulesJSON = `[{"name":` },
+	} {
+		cfg := base()
+		tune(&cfg.MockOpenAI.Nodes[0])
+		require.ErrorContains(t, cfg.Validate(), "mock_openai.nodes[0]", name)
+	}
+}

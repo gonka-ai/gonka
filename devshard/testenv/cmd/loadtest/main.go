@@ -121,6 +121,7 @@ func printSummary(result loadtest.RunResult, passed bool) {
 		fmt.Fprintf(os.Stdout, "  finished:         %d\n", terminal.Finished)
 		fmt.Fprintf(os.Stdout, "  orphaned:         %d\n", terminal.Orphaned)
 		fmt.Fprintf(os.Stdout, "  ghost:            %d\n", terminal.Ghost)
+		fmt.Fprintf(os.Stdout, "  settling:         %d\n", terminal.Settling)
 		fmt.Fprintf(os.Stdout, "  total:             %d\n", terminal.Total)
 		fmt.Fprintf(os.Stdout, "  ghost rate:       %.2f%%\n", terminal.GhostRate*100)
 		statuses := formatIntCounts(terminal.Statuses)

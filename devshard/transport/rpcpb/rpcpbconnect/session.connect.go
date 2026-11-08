@@ -47,6 +47,9 @@ const (
 	// SessionServiceVerifyErrorMissProcedure is the fully-qualified name of the SessionService's
 	// VerifyErrorMiss RPC.
 	SessionServiceVerifyErrorMissProcedure = "/devshard.transport.v1.SessionService/VerifyErrorMiss"
+	// SessionServiceVerifyChallengeProcedure is the fully-qualified name of the SessionService's
+	// VerifyChallenge RPC.
+	SessionServiceVerifyChallengeProcedure = "/devshard.transport.v1.SessionService/VerifyChallenge"
 	// SessionServiceChallengeReceiptProcedure is the fully-qualified name of the SessionService's
 	// ChallengeReceipt RPC.
 	SessionServiceChallengeReceiptProcedure = "/devshard.transport.v1.SessionService/ChallengeReceipt"
@@ -69,6 +72,7 @@ type SessionServiceClient interface {
 	RepairHeightSync(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.RepairResponse], error)
 	VerifyTimeout(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyTimeoutResponse], error)
 	VerifyErrorMiss(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error)
+	VerifyChallenge(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyChallengeResponse], error)
 	ChallengeReceipt(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error)
 	GetDiffs(context.Context, *connect.Request[rpcpb.GetDiffsRequest]) (*connect.Response[rpcpb.GetDiffsResponse], error)
 	GetMempool(context.Context, *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error)
@@ -117,6 +121,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("VerifyErrorMiss")),
 			connect.WithClientOptions(opts...),
 		),
+		verifyChallenge: connect.NewClient[rpcpb.SignedEnvelope, rpcpb.VerifyChallengeResponse](
+			httpClient,
+			baseURL+SessionServiceVerifyChallengeProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("VerifyChallenge")),
+			connect.WithClientOptions(opts...),
+		),
 		challengeReceipt: connect.NewClient[rpcpb.SignedEnvelope, rpcpb.ChallengeReceiptResponse](
 			httpClient,
 			baseURL+SessionServiceChallengeReceiptProcedure,
@@ -157,6 +167,7 @@ type sessionServiceClient struct {
 	repairHeightSync *connect.Client[rpcpb.SignedEnvelope, rpcpb.RepairResponse]
 	verifyTimeout    *connect.Client[rpcpb.SignedEnvelope, rpcpb.VerifyTimeoutResponse]
 	verifyErrorMiss  *connect.Client[rpcpb.SignedEnvelope, rpcpb.VerifyErrorMissResponse]
+	verifyChallenge  *connect.Client[rpcpb.SignedEnvelope, rpcpb.VerifyChallengeResponse]
 	challengeReceipt *connect.Client[rpcpb.SignedEnvelope, rpcpb.ChallengeReceiptResponse]
 	getDiffs         *connect.Client[rpcpb.GetDiffsRequest, rpcpb.GetDiffsResponse]
 	getMempool       *connect.Client[rpcpb.GetMempoolRequest, rpcpb.GetMempoolResponse]
@@ -187,6 +198,11 @@ func (c *sessionServiceClient) VerifyTimeout(ctx context.Context, req *connect.R
 // VerifyErrorMiss calls devshard.transport.v1.SessionService.VerifyErrorMiss.
 func (c *sessionServiceClient) VerifyErrorMiss(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error) {
 	return c.verifyErrorMiss.CallUnary(ctx, req)
+}
+
+// VerifyChallenge calls devshard.transport.v1.SessionService.VerifyChallenge.
+func (c *sessionServiceClient) VerifyChallenge(ctx context.Context, req *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyChallengeResponse], error) {
+	return c.verifyChallenge.CallUnary(ctx, req)
 }
 
 // ChallengeReceipt calls devshard.transport.v1.SessionService.ChallengeReceipt.
@@ -221,6 +237,7 @@ type SessionServiceHandler interface {
 	RepairHeightSync(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.RepairResponse], error)
 	VerifyTimeout(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyTimeoutResponse], error)
 	VerifyErrorMiss(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error)
+	VerifyChallenge(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyChallengeResponse], error)
 	ChallengeReceipt(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error)
 	GetDiffs(context.Context, *connect.Request[rpcpb.GetDiffsRequest]) (*connect.Response[rpcpb.GetDiffsResponse], error)
 	GetMempool(context.Context, *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error)
@@ -265,6 +282,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("VerifyErrorMiss")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceVerifyChallengeHandler := connect.NewUnaryHandler(
+		SessionServiceVerifyChallengeProcedure,
+		svc.VerifyChallenge,
+		connect.WithSchema(sessionServiceMethods.ByName("VerifyChallenge")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceChallengeReceiptHandler := connect.NewUnaryHandler(
 		SessionServiceChallengeReceiptProcedure,
 		svc.ChallengeReceipt,
@@ -307,6 +330,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceVerifyTimeoutHandler.ServeHTTP(w, r)
 		case SessionServiceVerifyErrorMissProcedure:
 			sessionServiceVerifyErrorMissHandler.ServeHTTP(w, r)
+		case SessionServiceVerifyChallengeProcedure:
+			sessionServiceVerifyChallengeHandler.ServeHTTP(w, r)
 		case SessionServiceChallengeReceiptProcedure:
 			sessionServiceChallengeReceiptHandler.ServeHTTP(w, r)
 		case SessionServiceGetDiffsProcedure:
@@ -344,6 +369,10 @@ func (UnimplementedSessionServiceHandler) VerifyTimeout(context.Context, *connec
 
 func (UnimplementedSessionServiceHandler) VerifyErrorMiss(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("devshard.transport.v1.SessionService.VerifyErrorMiss is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) VerifyChallenge(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyChallengeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("devshard.transport.v1.SessionService.VerifyChallenge is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) ChallengeReceipt(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error) {

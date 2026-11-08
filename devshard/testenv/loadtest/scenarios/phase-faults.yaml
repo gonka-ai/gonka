@@ -1,0 +1,96 @@
+schema_version: v1
+scenario: phase-faults
+seed: 23002
+
+# Faults aimed at one phase, execution or replay. Two oracle nodes take 1.5 s to replay; one streams
+# each execution for 40 s, so the client gives up after its 30 s timeout while the node is still
+# sending; one is plain. Each host draws only from its own node, mock-openai-N on versiond-N, as a
+# participant's dapi owns its nodes on the network: versiond-0 and versiond-2 replay slowly and the slow
+# executions are versiond-3's. Every node runs the fault rules below, so a rule fires whichever host
+# takes the request: the replays of requests whose index ends in 7 drop the connection, those ending
+# in 3 answer 503, and the first execution of request 000007 on each node drops the connection, a
+# transport error the host retries without that node; holding no other, it gets none from the dapi and
+# that execution ends in an error. A replay that failed leaves the voter without a verdict, never a
+# charge of the executor; an execution the client abandoned is not a lost token.
+# The client errors of the slow node are expected: about one request in three, as versiond-3 is a
+# participant without an HA pair and executes about a third of the requests (175 of 525 executions in
+# a run with this load), and a request whose first execution it takes times out at the client. A rule
+# that never fired leaves the run not valid.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+    escrows: 4
+    validation_threshold:
+      value: 958
+      exponent: -3
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: oracle-replay-slow
+        host: versiond-0
+      - name: mock-openai-1
+        profile: oracle-chunk1
+        host: versiond-1
+      - name: mock-openai-2
+        profile: oracle-replay-slow
+        host: versiond-2
+      - name: mock-openai-3
+        profile: oracle-exec-slow
+        host: versiond-3
+    rules:
+      - name: execution-transport-error
+        phase: execute
+        prompt_contains: "000007]"
+        times: 1
+        abort: true
+      - name: replay-transport-error
+        phase: replay
+        prompt_contains: "7]"
+        abort: true
+      - name: replay-busy
+        phase: replay
+        prompt_contains: "3]"
+        http_status: 503
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  max_in_flight: 64
+  duration: 2m
+  traffic:
+    type: constant
+    rps: 4
+  request:
+    model: test-model
+    # The gateway streams every execution from the ML node whatever the client asked.
+    stream: false
+    max_tokens: 32
+    messages:
+      - role: user
+        content: "phase faults request"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.4
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  promises: true
+
+diagnostics:
+  export: true
+  logs:
+    tail: all
+
+drain_timeout: 3m

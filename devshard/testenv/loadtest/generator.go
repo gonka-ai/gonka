@@ -253,13 +253,16 @@ func droppedRequest(scenario Scenario, index uint64) RequestResult {
 	}
 }
 
+// clientTimeout is how long the generator waits for one answer before it gives the request up.
+const clientTimeout = 30 * time.Second
+
 func defaultHTTPClient(concurrency int) *http.Client {
 	connections := concurrency * 2
 	if connections < 2 {
 		connections = 2
 	}
 	return &http.Client{
-		Timeout: 30 * time.Second,
+		Timeout: clientTimeout,
 		Transport: &http.Transport{
 			Proxy:               http.ProxyFromEnvironment,
 			MaxIdleConns:        connections,
