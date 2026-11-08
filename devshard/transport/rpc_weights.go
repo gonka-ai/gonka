@@ -31,7 +31,8 @@ func RPCProcedureWeight(procedure string) int {
 	case rpcpbconnect.SessionServiceRepairHeightSyncProcedure:
 		return RPCWeightRepair
 	case rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
-		rpcpbconnect.SessionServiceVerifyErrorMissProcedure:
+		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceVerifyChallengeProcedure:
 		return RPCWeightVerify
 	case rpcpbconnect.SessionServiceChallengeReceiptProcedure:
 		return RPCWeightChallenge

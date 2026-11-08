@@ -742,6 +742,28 @@ func TestValidator_Validate_BoundsTokenIDsByResolvedVocabulary(t *testing.T) {
 	}
 }
 
+func TestValidatorReplayRemovesUnsafeUsageFields(t *testing.T) {
+	prompt := []byte(`{"messages":[{"role":"user","content":"hello"}],"max_tokens":16,"logit_bias":{"159":100},"bad_words":["hi"],"allowed_token_ids":[159],"truncate_prompt_tokens":1}`)
+	response := []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"logprobs":{"content":[{"token":"42","logprob":-0.5,"top_logprobs":[{"token":"42","logprob":-0.5}]}]}}]}`)
+	fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+		return prompt, response, nil
+	}
+	var replayBody []byte
+	executeML := func(_ context.Context, _, _ string, body []byte) (*http.Response, error) {
+		replayBody = append([]byte(nil), body...)
+		return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
+	}
+	validator := newFaultTestValidator(10, true, fetch, executeML, nil)
+	validator.vocabularySizes = stubVocabularyResolver{vocabularySize: 43}
+	_, err := validator.Validate(context.Background(), faultReq(10))
+	require.NoError(t, err)
+	require.NotEmpty(t, replayBody, "replay must reach the ML node")
+	for _, field := range []string{"logit_bias", "bad_words", "allowed_token_ids", "truncate_prompt_tokens"} {
+		require.NotContains(t, string(replayBody), `"`+field+`"`)
+	}
+	require.Contains(t, string(replayBody), `"hello"`)
+}
+
 func taggedFetch(err error) payloadFetchFunc {
 	return func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
 		return nil, nil, err

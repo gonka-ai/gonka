@@ -1,0 +1,17 @@
+# Render-only CPU image of the gonka vLLM fork (release/v0.28.0-glm53 @ 71ee49c): the fork's CPU wheel over the
+# stock vLLM 0.28.0 CPU image, without dependency changes. triton-cpu is not needed for render.
+# The `wheel` build context is the fork's `vllm-build` stage (docker-bake.hcl, target mlnode310).
+ARG BASE_IMAGE=vllm/vllm-openai-cpu:v0.28.0-x86_64
+FROM ${BASE_IMAGE}
+ARG FORK_SHA=unknown
+LABEL fixturegen.fork-ref="release/v0.28.0-glm53" fixturegen.fork-sha="${FORK_SHA}"
+RUN --mount=type=bind,from=wheel,source=/vllm-workspace/dist,target=/wheel \
+    uv pip install --python /opt/venv/bin/python --no-deps --reinstall /wheel/vllm-*.whl
+# Render allocates no KV cache, but VllmConfig defaults to prefix caching on. For the hybrid MLA/mamba GLM-5.3-Flash
+# the model config then sizes mamba blocks for prefix caching and the CPU platform turns it off afterwards, which the
+# config validator rejects. Build the render config with prefix caching off from the start.
+RUN F=/opt/venv/lib/python3.12/site-packages/vllm/entrypoints/cli/launch.py \
+ && sed -i 's/^from vllm.config import VllmConfig$/from vllm.config import CacheConfig, VllmConfig/' $F \
+ && sed -i 's/^    vllm_config = VllmConfig(model_config=model_config)$/    vllm_config = VllmConfig(model_config=model_config, cache_config=CacheConfig(enable_prefix_caching=False))/' $F \
+ && grep -q "^from vllm.config import CacheConfig, VllmConfig$" $F \
+ && grep -q "CacheConfig(enable_prefix_caching=False)" $F

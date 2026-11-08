@@ -414,6 +414,11 @@ var defaultParameterCatalog = defaultVLLMParameterCatalog()
 // value, so reject instead); the mustBe*/elementsMustBe* validators reject wrong-typed
 // scalars and array elements at the gateway boundary rather than forwarding them for an
 // opaque upstream 400.
+const tokenBanMessage = "banning tokens is not supported by the Gonka network (see: https://github.com/gonka-ai/gonka/blob/main/docs/chat-api/troubleshooting.md#reject-token-bans)"
+const truncatePromptMessage = "truncate_prompt_tokens is not supported by the Gonka network (see: https://github.com/gonka-ai/gonka/blob/main/docs/chat-api/troubleshooting.md#reject-truncate-prompt)"
+const allowedTokenIDsMessage = "allowed_token_ids is not supported by the Gonka network (see: https://github.com/gonka-ai/gonka/blob/main/docs/chat-api/troubleshooting.md#reject-token-bans)"
+const logitBiasMessage = "logit_bias is not supported by the Gonka network (see: https://github.com/gonka-ai/gonka/blob/main/docs/chat-api/troubleshooting.md#reject-logit-bias)"
+
 var (
 	rejectNonPositiveNumber = ParameterHandlerAdapter{Handler: paramvalidators.RejectNumberParameter{
 		Allow:   func(value float64) bool { return value > 0 },
@@ -422,6 +427,36 @@ var (
 	rejectInvalidTopK = ParameterHandlerAdapter{Handler: paramvalidators.RejectNumberParameter{
 		Allow:   func(value float64) bool { return value == -1 || value >= 1 },
 		Message: "must be -1 or a positive integer",
+	}}
+	// A request that bans tokens (bad_words) or biases them (logit_bias) makes an honest model spell
+	// the same text in other tokens: a ban forces smaller ones, a bias can force tokens that decode
+	// to no text at all. Its output token count can then exceed twice what a voter's render of that
+	// text counts, and the voter would take the honest claim for an inflated one. The gateway rejects
+	// these requests instead of stripping the field: a stripped ban would return text the client
+	// asked never to see. Reasoning models of OpenAI and Azure OpenAI do not accept logit_bias
+	// either. Penalties for repeated tokens (frequency_penalty, presence_penalty, repetition_penalty)
+	// force nothing and pass.
+	rejectTokenBan = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{
+		Valid:   func(any) bool { return false },
+		Message: tokenBanMessage,
+	}}
+	rejectTruncatePrompt = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{
+		Valid:   func(any) bool { return false },
+		Message: truncatePromptMessage,
+	}}
+	rejectAllowedTokenIDs = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{
+		Valid: func(value any) bool {
+			ids, ok := value.([]any)
+			return ok && len(ids) == 0
+		},
+		Message: allowedTokenIDsMessage,
+	}}
+	rejectLogitBias = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{
+		Valid: func(value any) bool {
+			biases, ok := value.(map[string]any)
+			return ok && len(biases) == 0
+		},
+		Message: logitBiasMessage,
 	}}
 	mustBeBool           = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{Valid: paramvalidators.IsJSONBool, Message: "must be a boolean"}}
 	mustBeUint           = ParameterHandlerAdapter{Handler: paramvalidators.ValidateUintParameter{}}
@@ -450,7 +485,14 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("repetition_penalty").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxRepetitionPenalty)}}).
 				withRule(RequestFilterStagePostLimits, rejectNonPositiveNumber),
+			newParameter("truncate_prompt_tokens").
+				withRule(RequestFilterStagePreValidation, rejectTruncatePrompt).
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}),
+			newParameter("allowed_token_ids").
+				withRule(RequestFilterStagePreValidation, rejectAllowedTokenIDs).
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}),
 			newParameter("logit_bias").
+				withRule(RequestFilterStagePostLimits, rejectLogitBias).
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatMapParameter{StripNonFinite: true, Min: floatPointer(LogitBiasMinValue), Max: floatPointer(LogitBiasMaxValue), DropFieldIfEmpty: true, MaxEntries: LogitBiasMaxEntries}}),
 			newParameter("stop").
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
@@ -542,7 +584,9 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					},
 					DropFieldIfEmpty: true,
 				}}).
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: BadWordsMaxEntries, MaxEntryLen: BadWordsMaxEntryLen}}),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: BadWordsMaxEntries, MaxEntryLen: BadWordsMaxEntryLen}}).
+				// Whatever survives the empty-entry strip is a ban.
+				withRule(RequestFilterStagePreValidation, rejectTokenBan),
 			// OpenAI Chat Completions standard observability fields. No inference-side
 			// semantics on the vLLM upstream; clients send them for end-user tracking,
 			// distributed tracing, agent control, and streaming token accounting.

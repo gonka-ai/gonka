@@ -6,7 +6,10 @@
 # the same GitHub Release as the host zip (Devshard Release vX.Y.Z[-rcN]).
 #
 # workflow_dispatch can select any subset of decentralized-api, inference-chain,
-# versiond, versiond-router, proxy, and proxy-router.
+# versiond, versiond-router, proxy, proxy-router, and devshard-render.
+# devshard-render (devshard/Dockerfile.render, the CPU render server for usage
+# challenge votes) is built on manual runs only; its version_tag is the vLLM
+# version it is built on, e.g. v0.32.0.
 name: Build Docker images
 
 on:
@@ -37,6 +40,10 @@ on:
         default: false
       build_proxy_router:
         description: 'Build proxy-router'
+        type: boolean
+        default: false
+      build_devshard_render:
+        description: 'Build devshard-render'
         type: boolean
         default: false
       version_tag:
@@ -77,6 +84,7 @@ jobs:
       build_versiond_router: ${{ steps.out.outputs.build_versiond_router }}
       build_proxy: ${{ steps.out.outputs.build_proxy }}
       build_proxy_router: ${{ steps.out.outputs.build_proxy_router }}
+      build_devshard_render: ${{ steps.out.outputs.build_devshard_render }}
       owner_type: ${{ steps.out.outputs.owner_type }}
     steps:
       - name: Checkout code
@@ -94,6 +102,7 @@ jobs:
           IN_ROUTER: ${{ github.event.inputs.build_versiond_router }}
           IN_PROXY: ${{ github.event.inputs.build_proxy }}
           IN_PROXY_ROUTER: ${{ github.event.inputs.build_proxy_router }}
+          IN_RENDER: ${{ github.event.inputs.build_devshard_render }}
           IN_VERSION_TAG: ${{ github.event.inputs.version_tag }}
           IN_PUSH: ${{ github.event.inputs.push_to_registry }}
         run: |
@@ -118,6 +127,7 @@ jobs:
               echo 'build_versiond_router=true'
               echo 'build_proxy=true'
               echo 'build_proxy_router=true'
+              echo 'build_devshard_render=false'
             } >> "$GITHUB_OUTPUT"
           else
             dapi=false
@@ -126,13 +136,15 @@ jobs:
             router=false
             proxy=false
             proxy_router=false
+            render=false
             [ "${IN_DAPI:-false}" = true ] && dapi=true
             [ "${IN_INFERENCE:-false}" = true ] && inference=true
             [ "${IN_VERSIOND:-false}" = true ] && versiond=true
             [ "${IN_ROUTER:-false}" = true ] && router=true
             [ "${IN_PROXY:-false}" = true ] && proxy=true
             [ "${IN_PROXY_ROUTER:-false}" = true ] && proxy_router=true
-            if [ "$dapi" = false ] && [ "$inference" = false ] && [ "$versiond" = false ] && [ "$router" = false ] && [ "$proxy" = false ] && [ "$proxy_router" = false ]; then
+            [ "${IN_RENDER:-false}" = true ] && render=true
+            if [ "$dapi" = false ] && [ "$inference" = false ] && [ "$versiond" = false ] && [ "$router" = false ] && [ "$proxy" = false ] && [ "$proxy_router" = false ] && [ "$render" = false ]; then
               echo 'select at least one image' >&2
               exit 1
             fi
@@ -157,6 +169,7 @@ jobs:
               echo "build_versiond_router=$router"
               echo "build_proxy=$proxy"
               echo "build_proxy_router=$proxy_router"
+              echo "build_devshard_render=$render"
             } >> "$GITHUB_OUTPUT"
           fi
 
@@ -240,7 +253,7 @@ jobs:
 
   build-join:
     needs: classify
-    if: needs.classify.outputs.build_versiond == 'true' || needs.classify.outputs.build_versiond_router == 'true' || needs.classify.outputs.build_proxy == 'true' || needs.classify.outputs.build_proxy_router == 'true'
+    if: needs.classify.outputs.build_versiond == 'true' || needs.classify.outputs.build_versiond_router == 'true' || needs.classify.outputs.build_proxy == 'true' || needs.classify.outputs.build_proxy_router == 'true' || needs.classify.outputs.build_devshard_render == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -262,6 +275,10 @@ jobs:
             package: proxy-router
             file: ./proxy-router/Dockerfile
             context: .
+          - id: devshard-render
+            package: devshard-render
+            file: ./devshard/Dockerfile.render
+            context: ./devshard
     steps:
       - name: Decide whether to build
         id: select
@@ -279,6 +296,9 @@ jobs:
               ;;
             proxy-router)
               [ "${{ needs.classify.outputs.build_proxy_router }}" = true ] || skip=true
+              ;;
+            devshard-render)
+              [ "${{ needs.classify.outputs.build_devshard_render }}" = true ] || skip=true
               ;;
           esac
           echo "skip=$skip" >> "$GITHUB_OUTPUT"
@@ -396,4 +416,7 @@ jobs:
           fi
           if [ "${{ needs.classify.outputs.build_proxy_router }}" = true ]; then
             echo "- \`${{ needs.classify.outputs.image_proxy_router }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "${{ needs.classify.outputs.build_devshard_render }}" = true ]; then
+            echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/devshard-render:${{ needs.classify.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi

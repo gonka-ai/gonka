@@ -103,3 +103,34 @@ func TestAnAttemptThatErroredAfterItsAnswerIsStillBound(t *testing.T) {
 		})
 	}
 }
+
+// Test flow:
+//  1. Build attempts of one prepared request: a whole stream, one whose scan lost text, one cut by an overlong
+//     prelude, and a probe.
+//  2. Read what each stream carried for the byte bounds.
+//  3. Assert the whole stream is measured, the lost and cut ones are unmeasured, so their claims go to the
+//     voters, and the probe is not judged.
+func TestServedTextMarksAStreamTheScanLostAsUnmeasured(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	prepared := prepareForGhost(t, env.session, "llama")
+
+	whole := &inflight{prepared: prepared}
+	whole.textBytes.Store(12)
+	text := servedText(whole)
+	require.True(t, text.Measured)
+	require.False(t, text.Unmeasured)
+	require.Equal(t, uint64(12), text.Bytes)
+
+	lost := &inflight{prepared: prepared}
+	lost.textBytes.Store(12)
+	lost.textLost.Store(true)
+	require.Equal(t, user.ServedText{Unmeasured: true}, servedText(lost))
+
+	cut := &inflight{prepared: prepared}
+	cut.preludeOverflow.Store(true)
+	require.Equal(t, user.ServedText{Unmeasured: true}, servedText(cut))
+
+	probe := &inflight{prepared: prepared, probe: true}
+	probe.textLost.Store(true)
+	require.Equal(t, user.ServedText{}, servedText(probe))
+}
