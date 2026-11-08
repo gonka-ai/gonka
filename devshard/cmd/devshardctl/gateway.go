@@ -4442,6 +4442,8 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 	}
 	var req struct {
 		ParticipantKey string `json:"participant_key"`
+		Forget         bool   `json:"forget"`
+		ClearProbation bool   `json:"clear_probation"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
@@ -4455,11 +4457,21 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":{"message":"participant limiter not configured"}}`, http.StatusServiceUnavailable)
 		return
 	}
-	cleared := g.participantLimiter.ClearQuarantine(req.ParticipantKey)
-	writeJSON(w, map[string]any{
+	forget := req.Forget || req.ClearProbation
+	var cleared bool
+	if forget {
+		cleared = g.participantLimiter.ForgetParticipant(req.ParticipantKey)
+	} else {
+		cleared = g.participantLimiter.ClearQuarantine(req.ParticipantKey)
+	}
+	resp := map[string]any{
 		"participant_key": req.ParticipantKey,
 		"cleared":         cleared,
-	})
+	}
+	if forget {
+		resp["probation_cleared"] = cleared
+	}
+	writeJSON(w, resp)
 }
 
 // handleAdminAccountingPurge discards one epoch's ledger. It sits under /v1/admin so the admin API key

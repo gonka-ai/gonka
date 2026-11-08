@@ -889,6 +889,23 @@ func (l *ParticipantRequestLimiter) ClearQuarantine(participantKey string) bool 
 	return true
 }
 
+// ForgetParticipant lifts quarantine and clears failure-strike probation so an
+// operator can recover a fleet where every participant entered probation at once.
+func (l *ParticipantRequestLimiter) ForgetParticipant(participantKey string) bool {
+	if participantKey == "" {
+		return false
+	}
+	l.lock()
+	defer l.unlock()
+	if _, ok := l.participants[participantKey]; !ok {
+		return false
+	}
+	delete(l.participants, participantKey)
+	l.persistDeleteLocked(participantKey)
+	log.Printf("participant_quarantine_forgotten participant_key=%s", participantKey)
+	return true
+}
+
 func (l *ParticipantRequestLimiter) SetMetrics(metrics *DevshardMetrics) {
 	l.lock()
 	defer l.unlock()
@@ -1406,10 +1423,17 @@ func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statu
 	case statusCode == http.StatusUnauthorized && participantPathKind(path) == "inference" && strings.Contains(strings.ToLower(body), "timestamp drift"):
 		return l.transportFailureQuarantine
 	case (statusCode == http.StatusNotFound || statusCode == http.StatusForbidden) && participantPathKind(path) == "inference":
+		if statusCode == http.StatusForbidden && isRestrictedToEscrowOwner(body) {
+			return 0
+		}
 		return l.transportFailureQuarantine
 	default:
 		return 0
 	}
+}
+
+func isRestrictedToEscrowOwner(body string) bool {
+	return strings.Contains(strings.ToLower(body), "restricted to escrow owner")
 }
 
 func isSenderRateRefusal(statusCode int, body string) bool {

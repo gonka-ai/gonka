@@ -13,7 +13,11 @@ func suspiciousWinnerRelease(attempts []*inflight) (*inflight, bool) {
 		if attempt.probe {
 			continue
 		}
-		if attempt.hasFirstToken() {
+		// Only a non-suspicious rival that has started streaming can crown itself
+		// ahead of a deferred suspicious answer; another suspicious rival would
+		// also defer and otherwise trigger fail-closed deadlock when all hosts
+		// are on probation.
+		if !attempt.suspicious && attempt.hasFirstToken() {
 			return nil, false
 		}
 		rivals++
