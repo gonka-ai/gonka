@@ -255,18 +255,28 @@ func runInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T, header bool) {
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
-	env := setupLiveFloorProxyClock(t, 3, nil, true, header)
-	env.killables[1].Kill()
+	// Keep heartbeat nonces out of dispatch until the failed attempt exists.
+	env := setupSeededLiveFloorProxyClock(t, 3, nil, true, header)
+	failedNonce := env.session.Nonce() + 1
+	failedSlot := int(failedNonce % uint64(len(env.killables)))
+	env.killables[failedSlot].Kill()
 	rec := withAttemptSpanRecorder(t)
 
 	ctx, req := observability.StartGatewayRequest(context.Background())
 	var buf bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(ctx, defaultParams(), &buf, nil))
+	failed, found := env.sm.GetInference(failedNonce)
+	require.True(t, found, "the request must create the intended failed attempt")
+	require.EqualValues(t, failedSlot, failed.ExecutorSlot)
+	require.Zero(t, failed.ConfirmedAt, "the disabled host must not return a receipt")
+	// Timeout evaluation still uses the normal heartbeat and voting path.
+	env.session.StartHeartbeatLoop()
 
 	var timedOut sdktrace.ReadOnlySpan
 	require.Eventually(t, func() bool {
 		for _, s := range attemptSpans(rec) {
-			if spanAttrMap(s)[string(observability.AttrTimeoutOutcome)] != nil {
+			attrs := spanAttrMap(s)
+			if attrs[string(observability.AttrNonce)] == int64(failedNonce) && attrs[string(observability.AttrTimeoutOutcome)] != nil {
 				timedOut = s
 				return true
 			}
