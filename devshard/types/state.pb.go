@@ -188,6 +188,7 @@ type InferenceRecordProto struct {
 	StartedAtBlockHash []byte                 `protobuf:"bytes,21,opt,name=started_at_block_hash,json=startedAtBlockHash,proto3" json:"started_at_block_hash,omitempty"`
 	StartedAtTimeMs    int64                  `protobuf:"varint,22,opt,name=started_at_time_ms,json=startedAtTimeMs,proto3" json:"started_at_time_ms,omitempty"`
 	ConfirmedAtTimeMs  int64                  `protobuf:"varint,23,opt,name=confirmed_at_time_ms,json=confirmedAtTimeMs,proto3" json:"confirmed_at_time_ms,omitempty"`
+	UsageChallenged    bool                   `protobuf:"varint,24,opt,name=usage_challenged,json=usageChallenged,proto3" json:"usage_challenged,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -369,6 +370,13 @@ func (x *InferenceRecordProto) GetConfirmedAtTimeMs() int64 {
 	return 0
 }
 
+func (x *InferenceRecordProto) GetUsageChallenged() bool {
+	if x != nil {
+		return x.UsageChallenged
+	}
+	return false
+}
+
 type InferencesMapProto struct {
 	state         protoimpl.MessageState  `protogen:"open.v1"`
 	Entries       []*InferenceRecordProto `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
@@ -428,7 +436,7 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"\tvalidated\x18\a \x01(\rR\tvalidated\x12\x1a\n" +
 	"\bfinished\x18\b \x01(\rR\bfinished\"J\n" +
 	"\x11HostStatsMapProto\x125\n" +
-	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xbf\x06\n" +
+	"\aentries\x18\x01 \x03(\v2\x1b.devshard.v1.HostStatsProtoR\aentries\"\xea\x06\n" +
 	"\x14InferenceRecordProto\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06status\x18\x02 \x01(\rR\x06status\x12#\n" +
@@ -456,7 +464,8 @@ const file_devshard_v1_state_proto_rawDesc = "" +
 	"servedHash\x121\n" +
 	"\x15started_at_block_hash\x18\x15 \x01(\fR\x12startedAtBlockHash\x12+\n" +
 	"\x12started_at_time_ms\x18\x16 \x01(\x03R\x0fstartedAtTimeMs\x12/\n" +
-	"\x14confirmed_at_time_ms\x18\x17 \x01(\x03R\x11confirmedAtTimeMsJ\x04\b\r\x10\x0eJ\x04\b\x0e\x10\x0fR\n" +
+	"\x14confirmed_at_time_ms\x18\x17 \x01(\x03R\x11confirmedAtTimeMs\x12)\n" +
+	"\x10usage_challenged\x18\x18 \x01(\bR\x0fusageChallengedJ\x04\b\r\x10\x0eJ\x04\b\x0e\x10\x0fR\n" +
 	"started_atR\fconfirmed_at\"Q\n" +
 	"\x12InferencesMapProto\x12;\n" +
 	"\aentries\x18\x01 \x03(\v2!.devshard.v1.InferenceRecordProtoR\aentriesB\x10Z\x0edevshard/typesb\x06proto3"

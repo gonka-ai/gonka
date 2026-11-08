@@ -150,3 +150,18 @@ func TestProcessIdentityIgnoresWallClockShift(t *testing.T) {
 	after["loadtest_process_start_ticks"] = 456
 	require.True(t, processChanged(before, after))
 }
+
+// Test flow:
+//  1. A gateway scrape with the heap goal and the stack in use.
+//  2. Parse it.
+//  3. Check both are kept: the live heap check reads them at the phase boundaries.
+func TestParseRuntimeMetricsKeepsTheLiveHeapGauges(t *testing.T) {
+	values, _, err := parseRuntimeMetrics(`# TYPE go_memstats_next_gc_bytes gauge
+go_memstats_next_gc_bytes 4.194304e+06
+# TYPE go_memstats_stack_inuse_bytes gauge
+go_memstats_stack_inuse_bytes 655360
+`)
+	require.NoError(t, err)
+	require.Equal(t, 4194304.0, values["go_memstats_next_gc_bytes"])
+	require.Equal(t, 655360.0, values["go_memstats_stack_inuse_bytes"])
+}

@@ -1,0 +1,77 @@
+schema_version: v1
+scenario: chunk-shapes
+seed: 23001
+
+# Streamed answers grouped one token per chunk and four tokens per chunk, on one arrival schedule:
+# two oracle nodes send one token per SSE chunk, two send four, and all four send the first content at
+# 50 ms and the last chunk at 400 ms. Each host draws only from its own node, mock-openai-N on
+# versiond-N, as a participant's dapi owns its nodes on the network, so versiond-0 and versiond-2 get one
+# token per chunk and versiond-1 and versiond-3 four: each grouping runs on a host of the HA pair and on a
+# solo participant. A host must count every token of a chunk, whatever the grouping:
+# a Finish below what the node sent, a challenge or an invalid vote on one grouping and not on the other
+# is the parser's. Validators replay what the executor stored and the oracle answers from exactly those
+# tokens, so a sequence the host cut comes back short.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+    escrows: 4
+    validation_threshold:
+      value: 958
+      exponent: -3
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: oracle-chunk1
+        host: versiond-0
+      - name: mock-openai-1
+        profile: oracle-chunk4
+        host: versiond-1
+      - name: mock-openai-2
+        profile: oracle-chunk1
+        host: versiond-2
+      - name: mock-openai-3
+        profile: oracle-chunk4
+        host: versiond-3
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 30s
+
+workload:
+  max_in_flight: 64
+  duration: 2m
+  traffic:
+    type: constant
+    rps: 4
+  request:
+    model: test-model
+    # The gateway streams every execution from the ML node whatever the client asked.
+    stream: false
+    max_tokens: 32
+    messages:
+      - role: user
+        content: "chunk shapes request"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.05
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  promises: true
+
+diagnostics:
+  export: true
+  logs:
+    tail: all
+
+drain_timeout: 2m

@@ -1,0 +1,83 @@
+schema_version: v1
+scenario: shared-endpoint
+seed: 23004
+
+# Several escrows on one participant's ML node, as on the network: the gateway holds four escrows of
+# the model and spreads the requests over them, and each host draws only from its own oracle node,
+# mock-openai-N on versiond-N, one node per host shared by every escrow that host serves. What a node
+# carries is the sum over those escrows, executions and replays. The four nodes together keep up with
+# the load; the nodes of the solo participants versiond-2 and versiond-3 carry about a third of it each
+# and fall behind. A full node queues a request until a worker frees, as vLLM does, so everything on it
+# slows down. The checks hold the run to what stays promised: a served request finishes, every deadline
+# closes, a Finish counts the tokens the ML sent, an executor whose ML answered in full and a request
+# the client spoiled are not charged, and the drain settles every inference. The client errors are
+# expected; the run reports how many.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+    escrows: 4
+    validation_threshold:
+      value: 958
+      exponent: -3
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: oracle-shared
+        host: versiond-0
+      - name: mock-openai-1
+        profile: oracle-shared
+        host: versiond-1
+      - name: mock-openai-2
+        profile: oracle-shared
+        host: versiond-2
+      - name: mock-openai-3
+        profile: oracle-shared
+        host: versiond-3
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 30s
+
+workload:
+  # A full node holds a request in its queue, so a request can stay open up to the client's 30 s
+  # timeout; the generator keeps room for 16 rps over that long instead of dropping requests the nodes
+  # never saw.
+  max_in_flight: 480
+  duration: 2m
+  traffic:
+    type: constant
+    rps: 16
+  request:
+    model: test-model
+    # The gateway streams every execution from the ML node whatever the client asked.
+    stream: false
+    max_tokens: 32
+    messages:
+      - role: user
+        content: "shared endpoint request"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.5
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+    # A run in which no node was ever full measured nothing of what this scenario is for.
+    require_full_node: true
+  promises: true
+
+diagnostics:
+  export: true
+  logs:
+    tail: all
+
+drain_timeout: 2m

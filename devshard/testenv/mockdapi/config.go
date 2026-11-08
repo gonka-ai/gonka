@@ -1,10 +1,15 @@
 package mockdapi
 
 import (
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
+	"devshard/testenv/gatewayphase"
 )
 
 // Config wires mock-dapi listeners and upstream mock-chain.
@@ -23,7 +28,8 @@ type Config struct {
 	BinaryDir         string
 	// BlockSeed seeds the mock block observer (deterministic headers).
 	BlockSeed int64
-	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.
+	// GatewayBlockHeight / GatewayEpochIndex pin the devshardctl public-API
+	// stubs; both zero makes them follow mock-chain block height and epoch.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64
 	// OmitBlockRoutes emulates 0.2.15 / pre-#1738 dapi: no HTTP /block/* and
@@ -31,6 +37,14 @@ type Config struct {
 	// takes the 15-minute skip. /healthz and /versions remain so versiond
 	// still boots.
 	OmitBlockRoutes bool
+	// MLNodeHosts binds node IDs to host IDs and HostAddrs maps gRPC peer IPs
+	// or DNS names to host IDs. A mapped caller draws only from its host's
+	// nodes; the rest share the unbound nodes. Both empty keeps the global pool.
+	MLNodeHosts map[string]string
+	HostAddrs   map[string]string
+	// PhaseSchedule is the gateway phase timeline from mock-dapi start;
+	// POST /testenv/phase replaces it at runtime.
+	PhaseSchedule []gatewayphase.Step
 }
 
 // MLNode is one Mock ML endpoint exposed through AcquireMLNode.
@@ -52,4 +66,49 @@ func DefaultConfig() Config {
 			{Name: "v2", Binary: "file:///opt/devshard/devshardd", SHA256: "0000000000000000000000000000000000000000000000000000000000000000"},
 		},
 	}
+}
+
+// ParsePairsEnv parses "key=value,key=value" (MOCK_ML_NODE_HOSTS,
+// MOCK_DAPI_HOST_ADDRS). Empty input yields an empty map.
+func ParsePairsEnv(raw string) (map[string]string, error) {
+	out := make(map[string]string)
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		key, value, ok := strings.Cut(part, "=")
+		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
+		if !ok || key == "" || value == "" {
+			return nil, fmt.Errorf("invalid entry %q (want key=value)", part)
+		}
+		if _, dup := out[key]; dup {
+			return nil, fmt.Errorf("duplicate key %q", key)
+		}
+		out[key] = value
+	}
+	return out, nil
+}
+
+// ApplyMaxConcurrentEnv sets MaxConcurrent on the nodes named in raw
+// (MOCK_ML_NODE_MAX_CONCURRENT, "node=n,..."). Like the dapi broker, a node
+// holding n locks is skipped until one is released; unnamed nodes stay
+// unlimited.
+func ApplyMaxConcurrentEnv(nodes []MLNode, raw string) error {
+	pairs, err := ParsePairsEnv(raw)
+	if err != nil {
+		return err
+	}
+	for id, value := range pairs {
+		n, err := strconv.Atoi(value)
+		if err != nil || n <= 0 {
+			return fmt.Errorf("node %q: max concurrent %q must be a positive integer", id, value)
+		}
+		i := slices.IndexFunc(nodes, func(node MLNode) bool { return node.ID == id })
+		if i < 0 {
+			return fmt.Errorf("node %q is not in the ML node pool", id)
+		}
+		nodes[i].MaxConcurrent = n
+	}
+	return nil
 }

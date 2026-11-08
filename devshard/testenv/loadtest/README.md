@@ -32,6 +32,50 @@ Run artifacts are written under
 different directory and `-keep-stack` to leave the Docker stack running for
 post-run inspection.
 
+`-promises` holds any scenario to the system promises (see
+[Assertions](#assertions)) without editing it: the run turns on
+`diagnostics.export`, complete logs and `assertions.promises`, and its
+`run.yaml` records the scenario as it ran.
+
+### Baseline before and after a change
+
+A baseline runs every scenario with `-promises`, one at a time, and keeps going
+past a run that fails:
+
+```bash
+make -C devshard/testenv loadtest-baseline OUT=loadtest/results/baseline-before
+```
+
+`SCENARIOS="drain faults-host"` runs a subset; `OUT` defaults to
+`loadtest/results/baseline-<timestamp>`. No config is needed beforehand: a
+clean checkout starts from the gencompose defaults. Each scenario leaves its run
+directory, its console log (`<scenario>.log`) and its exit code
+(`<scenario>/exit-code`) in `OUT`, and the target ends with `OUT/summary.md`: a
+row per scenario with the runner's exit code, the requests and failed requests,
+the runner's own failed checks and the promise verdict (`held` when every check
+held, `held 3, not measured 9` and the like when some gave no verdict, the
+violated checks, `not valid; ` before either when the run is not valid, or
+`no report` when the run never got to the checks), then
+the promise table over the runs. `go run ./cmd/promisecheck -summarize OUT`
+prints it again.
+
+Run a second baseline on the change into another directory, then compare:
+
+```bash
+make -C devshard/testenv loadtest-baseline OUT=loadtest/results/baseline-after
+make -C devshard/testenv loadtest-baseline-compare \
+  BEFORE=loadtest/results/baseline-before AFTER=loadtest/results/baseline-after
+```
+
+The comparison has a row per scenario of either baseline. A cell that changed
+is bold, `before → after`: an exit code, the runner's failed checks, the promise
+verdict or one check (`ok`, a violation count, `obs`, `—`). On a run that is not
+valid a check keeps its verdict, marked `(run not valid)`, so a violation it
+measured still shows and still counts as a change. Requests and failed requests
+are shown as `before / after` without a mark, since they move a little from run
+to run. A scenario missing on one side reads `absent`. The last line counts the
+changed cells; zero means the change moved no verdict, of a run or of a check.
+
 ## Catch-up scenario
 
 `catch-up` runs three participants at 16 RPS for five minutes. At 90 seconds
@@ -64,14 +108,28 @@ connections, and storage; it models a stalled host. Start times are relative to
 the workload start. Pauses must finish within the workload. Faults for one host
 must be ordered and not overlap; different hosts run independently.
 
-Host faults only inject the scheduled pause and resume. Each fault produces a
-`host_faults.<index>.<host>.applied` assertion checking that both commands
-succeeded. Host catch-up validation is separate from fault injection and is not
-performed here.
+`host_faults` is an alias for `pause` entries of `workload.events` (see
+[Event timeline](#event-timeline)); entry N becomes event `host_faults-N`.
+Both forms accept an optional `recovery` duration, default `60s`, which bounds
+the exclusion of throttled/catching-up burns after the actual unpause time.
+Use `recovery: 0s` to count those burns immediately after resume. Invalid or
+negative durations are rejected. This bound is independent of protocol sweep
+grace and does not extend other invariant windows. Keep workload time after
+recovery so a participant that stays behind can exceed the ghost-rate limit;
+`missrate-catch-up` uses `recovery: 30s` to leave a 20s observation tail.
+Each event produces an `events.<id>.<action>.<target>.applied` assertion
+checking that the action and its revert succeeded. Host catch-up validation is
+separate from fault injection and is not performed here.
 
-`host-faults.json` records configured windows, pause/resume timestamps, and
-command failures. Cancellation and error paths attempt unpause with a separate
+`events.json` records planned windows, real start and end timestamps, and
+command failures. Cancellation and error paths run the revert with a separate
 cleanup context, including when `-keep-stack` is set.
+
+Every step logs `stage=applied`, `stage=reverted` or `stage=error step=...`
+when it happens. Docker steps (pause, throttle, kill, restart, tripfile) get
+90 s; mock HTTP steps get 15 s. At the end the runner logs
+`stage=events fired=N/M` and a `stage=not_fired` line per event that never
+applied, and the run fails.
 
 The trial scenario permits a 5% client error rate to account for requests that
 hit the frozen participant. Adjust this assertion separately from the
@@ -87,6 +145,175 @@ seconds after resume. Other targets remain active throughout that window.
 Compare hot functions and sample proportions across windows; total CPU sample
 counts cover different amounts of active time. The middle window includes
 both the pause and resumed activity rather than isolating catch-up alone.
+
+## Event timeline
+
+`workload.events` schedules faults relative to the workload start:
+
+```yaml
+cases:
+  - {id: receipt-then-empty-stream, title: receipt then empty stream}
+  - {id: host-under-poc-challenge, title: host under PoC challenge, known_bug: "#1823"}
+
+workload:
+  events:
+    - {id: receipt-then-empty-stream, case: receipt-then-empty-stream, action: ml_fault, target: mock-openai-3, at: 2m, until: 3m,
+       params: {patch: {empty_stream: true}}}
+    - {id: gateway-killed-mid-race, action: gateway_restart, at: 5m40s, params: {signal: KILL}}
+```
+
+| Action | Target | Apply / revert |
+| --- | --- | --- |
+| `pause` | versiond host | `docker compose pause` / `unpause`; `until` required; optional `recovery` bounds expected catch-up burns after resume (default `60s`) |
+| `throttle` | versiond host | read the container's `HostConfig.NanoCpus`, then `docker update --cpus <params.cpus>` / `docker update --cpus` back to the read limit, or to the Docker host's `NCPU` if it had none, since `docker update --cpus 0` leaves the limit unchanged and Docker offers no update that removes it; `until` required |
+| `container_restart` | versiond host | `docker compose restart` / `start`; no `until` |
+| `container_kill` | versiond host | `docker compose kill -s <params.signal, default KILL>` / `start` at `until` (or at once) |
+| `gateway_restart` | `devshardctl` (implicit) | as `container_kill` on the gateway |
+| `ml_fault` | mock_ml node | `POST /testenv/fault <params.patch>` / the same keys at zero values (lifting `pause_stream` also releases held streams) |
+| `tripfile` | versiond host | `touch` / `rm -f` of `params.file` in the executor fault dir (`/tmp` by default) |
+| `chain_participant` | versiond host | mock-chain `POST /testenv/participant {address, mode}` with `params.mode` `unavailable` or `absent` / mode `ok` |
+| `epoch_advance` | `mock-chain` (implicit) | without `until`: mock-chain `POST /testenv/epoch {advance: true}`, no revert. With `until`: mock-dapi `POST /testenv/phase` with `params.phases` (`at=phase,...` from the window start; default PoCGenerate, then PoCValidate for the last third) / epoch advance, then phase back to Inference |
+| `dapi_challenge` | versiond host | mock-dapi `POST /testenv/challenge {host, on: true}` / `on: false` |
+| `marker` | versiond host | nothing; gives a fault caused by topology or traffic (such as a tight peer budget) a window and a case; `until` required |
+
+Events on one host must not overlap; an `ml_fault` on a node bound to
+a host (`topology.mock_ml.nodes[].host`) counts as that host. `gateway_restart`
+and `epoch_advance` are global and must not overlap each other.
+
+`events.json` holds one record per event: `id, case, action, target, params, planned_start, planned_end, started_at, ended_at, error`, plus optional `recovery` when configured. Times are RFC 3339; `started_at`/`ended_at` are null when the step did not happen. `started_at` is when the apply step began, because the fault takes effect somewhere inside it (a `docker compose kill` of the gateway cuts connections up to two seconds before the command returns); `ended_at` is when the revert step returned. Saved-run rechecks use the recorded `recovery`, or the `60s` default for older pause records.
+
+Checks whose `case` has `known_bug` set are reported as `XFAIL` when they fail
+and do not fail the run. A passing one is `XPASS` and logged as a warning;
+`-strict-xfail` makes it fail the run.
+
+The runner refuses to start while another `loadtest-*` Compose project is
+running.
+
+## Production-like 15-minute scenario
+
+`prod-like-15m` runs five participants for 15 minutes and injects one
+adversarial case after another, then checks the end-of-run invariants:
+
+```bash
+make -C devshard/testenv loadtest-prodlike   # same as SCENARIO=prod-like-15m
+```
+
+It runs from a clean worktree: without `config/config.yaml` the runner starts
+from the `gencompose` defaults. Before `up` it checks that `build/devshardd`
+matches the Docker server arch, because versiond cannot start a child of the
+wrong arch. Each mix model gets its own escrow and gateway runtime
+(`DEVSHARDS_JSON`).
+
+P0 (`versiond-0/1`, the HA pair) and P1 (`versiond-2`) are never faulted and
+are the honest controls. P2 = `versiond-3`, P3 = `versiond-4`, P4 =
+`versiond-5`. Each container has its own `prod-like` mock ML node, so an ML
+fault lands on one participant. Traffic is 1m@8, 1m@16, 8m@16, 2m at the
+peak and 3m@16 rps over `model-a` (70 %, settles) and `model-b` (30 %,
+`settlement_enabled: false`), half streamed and half with logprobs. All
+quarantines are 45 s, so a host is back before its next case. P4 boots with
+`rpc_chats_per_min: 300`: the runner sets `DEVSHARD_RPC_MSGS_PER_MIN` to 300 x
+`transport.RPCWeightChat`, so the budget keeps biting if the Chat weight
+changes. The peak is one knob, `workload.traffic.peak_rps` (default 32), used
+by every stage marked `peak: true`.
+
+| Window | Host | Fault | What happens |
+| --- | --- | --- | --- |
+| 02:00-03:00 | P2 | `receipt-then-empty-stream` | the host sends its receipt, then the ML node's stream ends with no content |
+| 03:15-04:15 | P3 | `ml-server-returns-429` | the ML node answers 429 |
+| 04:00-05:00 | P4 | `host-paused-then-catches-up` | the host is frozen, then catches up from its store |
+| 05:00-06:30 | P2 | `host-hangs-after-first-token` | the ML node sends one token and holds the stream |
+| 05:40 | gateway | `gateway-killed-mid-race` | the gateway gets SIGKILL and is started again, inside `host-hangs-after-first-token` |
+| 07:30-08:30 | global | `epoch-change-with-poc` | PoCGenerate, then PoCValidate, then the next epoch |
+| 08:45-09:30 | P2 | `host-withholds-payload` | the drop-payload trip file makes the host withhold payloads |
+| 09:00-10:00 | P3 | `host-under-poc-challenge` | a PoC challenge: ML-node acquires answer ResourceExhausted |
+| 00:00-15:00 | P4 | `host-over-peer-chat-budget` | the host's peer Chat budget is spent (background marker, see below) |
+| 10:30-12:15 | P3 | `timeout-vote-fanout` | the ML node hangs during the 32 rps stage, so every host votes the nonces timed out |
+| 12:30-13:15 | P2 | `host-public-port-down` | `devshard-fault-public-down`: the public port answers 503 while admin `/ready` answers 200 |
+| 13:00-13:30 | P4 | `participant-unavailable-on-chain` | the chain reports the participant unavailable |
+| 13:30-14:00 | P4 | `participant-absent-on-chain` | the chain no longer lists the participant |
+| 13:40 | gateway | `gateway-restart-while-participant-absent` | the gateway restarts while P4 is absent (`no-escrow-falsely-marked-missing`) |
+
+The two chain steps share the case `participant-unavailable-then-absent-on-chain`.
+`escrow-rotation-per-model-settlement`, `logprobs-responses-compress`,
+`sqlite-payloads-in-zstd-files`, `session-nonce-within-max-nonce` (the session
+nonce never passes `max_nonce`) and `honest-hosts-get-no-http-5xx` cover the
+whole run. Cases with known bugs on `devshard-0.2.x-v6` are XFAIL:
+`host-under-poc-challenge` (#1823, not in the tip) and
+`session-nonce-within-max-nonce` (`nonce-overrun`, not yet filed).
+`host-over-peer-chat-budget`, `timeout-vote-fanout` and
+`deactivated-escrow-runtime-retired` keep their #1988 marker until a run on
+192318583, which merged #1988, shows XPASS; the fix for
+`gateway-restart-while-participant-absent` is in the tip, so
+`no-escrow-falsely-marked-missing` is a normal check. An XPASS means the fix
+landed and the marker should go. `logprobs-responses-compress` relies on the
+mock fix of #1987, merged into the tip. prod-like-15m keeps its faults and timing so old
+reports stay comparable, except the execution timeout and the `timeout-vote-fanout` hang (below). Its split scenarios (scenarios/README.md) dropped the
+`deactivated-escrow-runtime-retired` marker after
+`no-runtime-for-deactivated-escrow` passed in every v6 run. prod-like-steady
+gives P4 a budget low enough for `host-over-peer-chat-budget` to fire,
+because 300 never does: P4 serves about 4 Chats a second at 16 rps.
+
+prod-like-15m uses `execution_timeout: 90s`, as the split scenarios do
+(scenarios/README.md, "Execution timeout"). The protocol timeout also cancels a
+live model run (#2003), and the 2048-token class runs 45–63 s, so a 30 s timeout
+cut honest hosts off at their deadline and charged them misses.
+`timeout-vote-fanout` needs the timeout to fire inside its hang, so the hang
+lasts 1m45s: a hung nonce times out 90–95 s after it starts. prod-like-15m pins
+no grace, so its grace is the default 4m10s (5 s + 90 s + 2m5s + 30 s).
+
+P4's budget is set at boot, so `host-over-peer-chat-budget` is a
+`background: true` marker over the whole workload. A background window may
+overlap other events on its host; misses and quarantines inside those events'
+windows count for them, not for the marker. It is left out of the
+per-event and quiet split of `error-rate-and-latency`, out of
+`recovery-after-fault` and out of the catch-up exclusion of
+`honest-hosts-agree-on-state`. `observe: host_rate_limited` makes
+`faults-fired-and-ml-nodes-bound` require an
+increase of P4's `devshard_request_terminal_total{terminal="no_receipt_interrupted",reason="rate_limited"}`.
+The gateway's own `devshard_peer_rpc_budget_*` waits are not on its
+`/metrics` at the tip (only devshardd serves that registry), so the runner
+keeps those series from the hosts only.
+
+P3 (`versiond-4`) runs `DEVSHARD_STORAGE_MODE=sqlite`, so its payloads go only
+to zstd files under `/opt/versiond/data/<version>/payloads` (`--data-dir` from
+versiond, plus `payloads`). The other hosts keep payloads in Postgres. After
+drain, `payload-files-are-zstd` tars up to 256 of those files out with `docker compose exec` into
+`payload-sample/versiond-4/` and passes when there are at least 20, each starts
+with the zstd magic `28 b5 2f fd`, the total size is below the decompressed
+size, and each decodes to `{"prompt_payload", "response_payload"}` with a JSON
+prompt. An empty directory fails: the file path never ran. Adding
+`DEVSHARD_PAYLOAD_ZSTD_ENABLED: "false"` to `versiond-4`'s env is the control,
+and `payload-files-are-zstd` must fail.
+
+sqlite hosts keep no validation leases (the sqlite lease store is a no-op,
+`storage/leases.go`), so `no-skipped-validation-leases` excludes them by name, logs the exclusion and
+lists it in the check's expected value and in the `no-skipped-validation-leases` table.
+The check reads the lease table from every Postgres service of the stack: one `devshard-postgres-<host>` per on-chain participant with `topology.storage: per_participant`, the single `devshard-postgres` otherwise. It does not probe a service whose hosts are all excluded, since a sqlite host's Postgres never gets the lease table; a service shared with an included host is still read. A service it cannot read fails the check as `unavailable` and names the service in the details; the rows from the services it could read are still judged.
+
+| Invariant | What it checks |
+| --- | --- |
+| `misses-only-in-fault-windows` | No protocol miss on honest participants; every miss lies in a fault window; waived windows charge none |
+| `escrow-accounting-reconciles` | One settle per deactivated escrow; balance, settled nonce and cost reconcile; `final_nonce_le_max`: final session nonce <= chain `max_nonce` |
+| `honest-hosts-agree-on-state` | Honest hosts agree on state roots; settles match; no fork detected |
+| `no-nonce-left-pending` | Pending work stays younger than the sweep bound, burned nonces apart; clean end state, burned nonces and warm-up-only escrows apart |
+| `no-runtime-for-deactivated-escrow` | No resident runtime for a deactivated escrow |
+| `quarantines-match-faults` | Quarantines only on faulty participants, with the expected reason family; each single quarantine within its duration, and none outliving the fault it started in |
+| `error-rate-and-latency` | Quiet-window latency and error rate; per-event error-rate bounds over the requests only that event touched; none of the escrow-rotation-gap answers (400 `unsupported model`, 503 `temporarily unavailable`) or 502 `nonce exceeds chain max_nonce limit` anywhere in the run |
+| `recovery-after-fault` | Error rate recovers within 60 s (90 s after a gateway restart), judged before the next fault starts |
+| `no-restarts-or-resource-growth` | No unplanned restarts; goroutine and live-heap trends, the gateway chat cache and each escrow's host runtime left out |
+| `faults-fired-and-ml-nodes-bound` | Every event fired; ML nodes stay bound to their hosts |
+| `no-skipped-validation-leases` | No skipped validation lease for honest hosts (Postgres hosts; sqlite hosts excluded) |
+| `no-admission-during-poc` | No admission during PoC-blocking phases |
+| `responses-compress` | No "did not compress" log line |
+| `payload-files-are-zstd` | Payload files on sqlite hosts are zstd |
+| `no-http-5xx-on-honest-hosts` | Honest participants get no new `http_503`/`http_error` attempt failures outside global event windows |
+| `no-escrow-falsely-marked-missing` | No escrow is marked inactive as "escrow missing on chain" while mock-chain still has it |
+
+`error-rate-and-latency` and `recovery-after-fault` count only requests the generator sent; a request dropped at `max_in_flight` is reported in the `dropped_by_generator` column, never as an error. `error-rate-and-latency` attributes each request to the faults active at any moment between its start and its end, and only when none was active, to the graced tails its start falls in. A gateway restart is active from its kill until the first request that starts after the gateway is back and succeeds, or its 90 s recovery budget if sooner, so a restarted gateway that cannot serve yet is charged to the restart. `recovery-after-fault` still measures recovery, and what cuts it short, from the moment the process is back. A request touched by one fault is judged against that fault's bound; a request touched by several is reported under their overlap (a table row named `host-hangs-after-first-token+gateway-killed-mid-race`, say) and judged by none of them, and the event's check names the overlaps it was judged without. `recovery-after-fault` scans 30 s buckets after an event only until another fault becomes active; when that comes before the event recovered and inside its budget, the check passes as `not judged` and names what cut it short. Events placed back to back therefore leave `recovery-after-fault` little to judge, and a fault judged in its own time needs some traffic no other fault touches.
+
+The `devshard-fault-public-down` trip file is compiled only with the
+`devshard_testenv` build tag (`cmd/devshardd/public_fault_testenv.go`); it is
+read from `DEVSHARD_TESTENV_EXECUTOR_FAULT_DIR` (`/tmp` by default).
 
 ## Container logs
 
@@ -107,7 +334,7 @@ Omitting `targets` captures Gateway and all configured hosts. Each list must
 have distinct increasing offsets within the workload. Hosts use their child's
 private admin listener. A paused container cannot be sampled; errors are saved
 in `profile-snapshots.json` along with actual start/finish times and file paths.
-Each snapshot request has a 15-second deadline and runs independently of other
+Each snapshot request has a 60-second deadline and runs independently of other
 scheduled snapshots. Collection errors are diagnostic and do not fail workload
 assertions.
 
@@ -156,7 +383,9 @@ integer to choose another limit, or `all` to collect all available container
 logs. The setting applies to `compose-pre-drain.log`, final `compose.log`, and
 log collection on error paths. Logs stream directly to files. `catch-up` uses
 `all` to retain quarantine and recovery events from the beginning of the run.
-Full collection still depends on logs retained by Docker's logging driver.
+Full collection still depends on logs retained by Docker's logging driver; the
+runner gives every container of a load-test stack `json-file` with `1g` x 3, so
+a busy service keeps the start of the run.
 
 ## Miss-rate and catch-up scenario
 
@@ -175,8 +404,8 @@ cross-checks for the paused participant:
 
 ```yaml
 protocol:
-  refusal_timeout: 2s
-  execution_timeout: 5s
+  refusal_timeout: 10s
+  execution_timeout: 30s
 
 workload:
   host_faults:
@@ -319,9 +548,10 @@ Each scenario is a self-contained YAML file. The main sections are:
 | Section | Purpose |
 | --- | --- |
 | `schema_version`, `scenario`, `seed` | Scenario identity and reproducible random selection. |
-| `topology` | Participants, storage mode, chain limits, and Mock ML nodes. |
-| `workload` | Duration, concurrency, traffic model, host faults, and request template. |
-| `gateway` | Gateway redundancy and optional escrow rotation settings. |
+| `topology` | Participants, per-host env, storage mode, chain limits, and Mock ML nodes. |
+| `workload` | Duration, concurrency, traffic model, event timeline, and request template or mix. |
+| `gateway` | Gateway redundancy, quarantines, and optional escrow rotation settings. |
+| `cases` | Case IDs for events and checks, with optional `known_bug` markers. |
 | `assertions` | Checks that determine whether the run passes. |
 | `drain_timeout` | Deadline for post-workload DevShard cleanup checks. |
 
@@ -374,9 +604,76 @@ assertions:
 drain_timeout: 30s
 ```
 
+`topology.chain.validation_threshold` sets the replay similarity bar the chain
+hands the hosts for every model, as a chain decimal (`{value: 958, exponent: -3}`
+is mainnet's 0.958); it must lie between 0 and 1. When omitted, the testenv
+default 0.50 stays, which no logprob mismatch can fail.
+
+`topology.chain.escrows` is how many escrows of the request model the Gateway
+holds during the load, as on the network: the first is the configured one, the
+runner creates the rest through `POST /v1/admin/escrows` before the load and
+waits up to three minutes for `/v1/admin/devshards` to list them. The Gateway
+spreads the requests over them by load. 0 and 1 keep the single escrow; at most 16.
+
+### Request mix and per-host settings
+
+`workload.request.mix` draws each request's parameters from weighted choices.
+The draw depends only on `seed` and the request's sequence number, so a rerun
+sends the same mix. Dimensions left out use the fixed `request` fields:
+
+```yaml
+workload:
+  request:
+    model: model-a
+    timeout: 2m          # client timeout per request; default 30s
+    messages: [{role: user, content: "fallback prompt"}]
+    mix:
+      stream_ratio: 0.5
+      logprobs_ratio: 0.5
+      top_logprobs: 5
+      max_tokens: [{value: 32, weight: 40}, {value: 128, weight: 35}, {value: 512, weight: 20}, {value: 2048, weight: 5}]
+      temperature: [{value: 0, weight: 1}, {value: 0.7, weight: 1}]
+      prompts:
+        - {value: [{role: user, content: "short prompt"}], weight: 1}
+      models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
+```
+
+With more than one mix model the runner creates one escrow and epoch group per
+model, as for replay datasets. Streamed responses are classified per request in
+`requests.jsonl` (`stream_outcome`) and counted in `summary.json`
+(`stream_outcomes`): `completed` (content and `[DONE]`), `empty_stream`
+(`[DONE]` without content), `partial` (cut or garbled before `[DONE]`), and
+`error_envelope` (an in-stream error event). Only `completed` counts as a
+successful request.
+
+```yaml
+topology:
+  hosts:
+    - id: versiond-5
+      env: {DEVSHARD_RPC_MSGS_PER_MIN: "3000"}
+  mock_ml:
+    nodes:
+      - {name: mock-openai-5, profile: fast, host: versiond-5}
+
+gateway:
+  participant_throttle:
+    empty_stream_quarantine: 45s
+    stalled_winner_quarantine: 45s
+  escrow_rotation:
+    models:
+      - {model: model-b, settlement_enabled: false}
+```
+
+`topology.hosts[].env` adds variables to one versiond container or replaces a
+`${VAR:-default}` setting of the same name; a key that collides with a fixed
+setting fails compose generation. `mock_ml.nodes[].host` is passed to mock-dapi
+as `MOCK_ML_NODE_HOSTS` (`node=host` pairs) with `MOCK_DAPI_HOST_ADDRS`
+(`ip=host`). `escrow_rotation.models[]` overrides settlement for one rotated
+model; other models keep the global `settlement_enabled`.
+
 There is no separate `thresholds` or fail-fast configuration. A run evaluates
 all enabled assertions and prints every result before returning a failure.
-`assertions.requests.error_rate` is the maximum permitted client error rate.
+`assertions.requests.error_rate` is the maximum permitted error rate over the requests sent to the gateway. `assertions.requests.dropped_rate` bounds the share of planned requests the generator never sent, dropped at `max_in_flight` or skipped as `generator_behind`; when unset it takes the `error_rate` value.
 
 ## Traffic profiles
 
@@ -390,7 +687,7 @@ the runner uses `closed_loop` for compatibility with the original scenarios.
 | `ramp` | `from_rps`, `to_rps` | Increases or decreases the target rate linearly over the workload duration. |
 | `sine` | `min_rps`, `max_rps`, `period` | Oscillates between the minimum and maximum rate. |
 | `spikes` | `base_rps`, `spike_rps`, `spike_duration`, `interval` | Sends at `spike_rps` at the beginning of each interval and at `base_rps` otherwise. |
-| `stages` | `stages[].duration`, `stages[].rps` | Runs a fixed sequence of rates. Stage durations must add up exactly to `workload.duration`. |
+| `stages` | `stages[].duration`, `stages[].rps` or `stages[].peak`, optional `peak_rps` | Runs a fixed sequence of rates. Stage durations must add up exactly to `workload.duration`. A `peak: true` stage runs at `peak_rps` (default 32). |
 
 Examples:
 
@@ -419,10 +716,7 @@ traffic:
   interval: 1m
 ```
 
-For rate-based profiles, `max_in_flight` remains a concurrency cap. If all
-slots are occupied when the scheduler wants to send a request, that request is
-recorded as dropped by the generator. This is reflected in the client summary
-and in the `requests.error_rate` assertion details.
+For rate-based profiles, each arrival is scheduled from the previous scheduled arrival, so a late wake-up sends the slots it missed at once. A slot more than 1 s behind, or still unsent when the workload ends, is recorded as `dropped_by_generator` with error `generator_behind` instead, which bounds a catch-up burst to one second's worth of requests and keeps the shortfall in `requests.dropped_rate`. `max_in_flight` remains a concurrency cap. If all slots are occupied when the scheduler wants to send a request, that request is recorded as dropped by the generator. A drop means requests in flight run long enough to fill every slot; it is a latency signal, not a gateway error, so it is counted by `requests.dropped_rate` and kept out of `requests.error_rate`.
 
 ## Mock ML profiles
 
@@ -436,6 +730,14 @@ The profile controls response timing and failure behavior:
 | `slow` | Longer first-token and per-token delays. |
 | `failing` | Delayed responses with a configured HTTP failure rate and status. |
 | `timeout` | Requests are accepted but intentionally never complete. |
+| `overclaim` | One execution in five reports usage of 3n+7 tokens for n sent. |
+| `wrong-answer` | One execution in five answers with logprobs the replay does not confirm. |
+| `empty-stream` | Every execution answers with no content. |
+| `oracle-chunk1` | Oracle mode, one token per streamed chunk, first content at 50 ms and the last chunk at 400 ms, replays in 1 s. |
+| `oracle-chunk4` | `oracle-chunk1` with four tokens per chunk. |
+| `oracle-exec-slow` | `oracle-chunk1` whose executions stream for 40 s, past the generator's 30 s client timeout. |
+| `oracle-replay-slow` | `oracle-chunk1` whose replays take 1.5 s. |
+| `oracle-shared` | `oracle-chunk1` with room for 5 requests and a queue of 512; a full node queues a request until a worker frees, as vLLM does, instead of answering 503. |
 
 Profile fields currently supported:
 
@@ -456,6 +758,60 @@ the delay between later chunks. `workers` and `queue` bound the Mock ML
 capacity. `failure_rate` and `http_status` are used by failure profiles;
 `hang: true` creates a timeout-style node.
 
+`chaos` makes the node a dishonest executor. Each execution gets one answer
+shape drawn by `weights` from the mock's chaos actions (`ok`, `odd_usage`,
+`wrong_answer`, `empty` and others), seeded by `seed`; a validator's replay is
+always answered honestly, so any shape other than `ok` is one the protocol
+should catch:
+
+```yaml
+chaos:
+  seed: 7
+  weights:
+    ok: 4
+    odd_usage: 1
+```
+
+Every Mock ML node of a load-test stack reports `usage.completion_tokens` as the
+tokens it sent, as vLLM does, so a host's Finish can be compared with it.
+
+`oracle` set to `true` makes the node a replay oracle: a validator's replay is answered
+from the enforced tokens it carries, exactly as received (their ids, their
+alternatives, their count), with logprobs that depend only on each token's rank;
+the original answer is built by the same rule, so a replay of a full sequence
+matches it and a replay of a sequence a host cut comes back short. A replay that
+asks to stream, as the validator's always does, is answered as SSE. The other
+knobs, `chunk_tokens`, `first_content_ms`, `exec_ms`, `replay_ms` and `rules`,
+shape the answer:
+
+```yaml
+oracle: true
+chunk_tokens: 4         # tokens per streamed chunk, of an execution and of a replay; 0 and 1 send one
+first_content_ms: 50    # the first content chunk of a streamed execution, from the request start
+exec_ms: 400            # the last chunk; the others go out evenly between (not before first_content_ms)
+replay_ms: 1000         # service time of a replay; executions are not delayed
+rules:
+  - name: replay-busy   # unique on the node; the request log and stats name the rule that fired
+    phase: replay       # execute or replay; empty matches both
+    prompt_contains: "3]"
+    times: 0            # how often the rule fires on this node; 0 is every match
+    http_status: 503    # 400-599
+```
+
+A rule selects requests by `seeds` (the request's seed field) or
+`prompt_contains` (a substring of the message text), at least one of the two, and
+by `phase`. The generator ends every prompt with
+`[load-request:<scenario>-<seed>-<index>]`, the index as six digits, so a
+substring such as `000007]` names one request and `7]` every tenth. Unless the
+client sends a seed, the host sends the inference id as the seed of an execution
+and the validator replays with the same number, so `seeds` names an inference in
+both phases and on every escrow that reached that id; `phase` tells them apart.
+The actions are `delay_ms` (first), then `abort` (drop the connection) or
+`http_status`, and `prelude_chunks` with `prelude_hold_ms` (role-only chunks
+before the content of a streamed execution, then a pause). `rules` under
+`topology.mock_ml` in a scenario go to every node after its profile's own, so a
+rule fires whichever node the pool hands the request.
+
 To add a profile, create `profiles/<name>.yaml` with `schema_version: v1`, the
 same value in `profile`, valid duration fields, a positive `workers` value, and
 a non-negative `queue` value. Reference it from a scenario node:
@@ -467,6 +823,25 @@ mock_ml:
     - name: mock-openai-0
       profile: realistic
 ```
+
+A node may also set `host` and `max_concurrent`:
+
+```yaml
+    - name: mock-openai-3
+      profile: overclaim
+      host: versiond-3
+      max_concurrent: 4
+```
+
+`host` binds the node to one versiond container, as a participant's dapi owns
+its nodes: mock-dapi hands that container only its own nodes, and the other
+containers share the unbound ones (or every node, if all are bound). It must be
+a `versiond-N` of an explicit `topology.participants`. Bind a node to every
+container that executes, or that container draws from the others' nodes.
+
+`max_concurrent` caps the AcquireMLNode locks mock-dapi hands out on the node
+at once, as the dapi broker refuses a node holding its `MaxConcurrent` locks; a
+release frees a slot. 0 (the default) is unlimited.
 
 ## Captured request datasets
 
@@ -512,6 +887,9 @@ Gateway lets speculative losers finish after a winner is selected.
 `drain_timeout` is the load-test deadline for the DevShard orphan check and
 should be long enough for the configured Gateway grace period when cleanup is
 part of the scenario.
+A run with `promises: true` waits at least as long as its export hold (below):
+the Gateway times out an inference left open only after its execution
+timeout, its grace and a sweep, which can outlast a short drain.
 
 Participant quarantine durations can be shortened for recovery tests:
 
@@ -530,8 +908,10 @@ and `participant_throttle.http_quarantine_ms` respectively.
 `catch-up` uses `70s` for both so the host can become eligible during the run.
 The timer starts when an error triggers quarantine, not when the
 container resumes. Further failures can quarantine the host again. Expiration
-does not validate that the host has caught up. Empty-stream and stalled-winner
-quarantine durations are configured separately in the Gateway.
+does not validate that the host has caught up. `empty_stream_quarantine`
+(Gateway default `30m`) goes to `participant_throttle.empty_stream_quarantine_ms`;
+`usage-challenge-wave` cuts it to `1s` so hosts that served an empty stream keep
+winning. `stalled_winner_quarantine` is set the same way.
 
 For escrow rotation, configure the Gateway explicitly:
 
@@ -562,12 +942,15 @@ the workload to exercise rotation, while keeping enough headroom for protocol
 finalization and settlement. This keeps the test aligned with the same
 `DevshardEscrowParams.max_nonce` that hosts enforce.
 
-When `assertions.devshard.no_orphaned_work` is enabled, the runner polls
-`/v1/debug/inferences` until every non-ghost record has a terminal status
-(`finished`, `validated`, `invalidated`, or `timed_out`). The DevShard record
-count does not have to equal the number of client requests: cache hits,
-speculative attempts, and ghost probes can make those counts different. An
-empty successful debug snapshot is also considered clean.
+When `assertions.devshard.no_orphaned_work` is enabled, the runner polls `/v1/debug/inferences` until every non-ghost record of an active escrow has a terminal status (`finished`, `validated`, `invalidated`, or `timed_out`). With escrow rotation it reads every runtime the gateway lists: an unfinished record of a deactivated escrow counts as `sealed`, because settlement closes it as it stands and `escrow-accounting-reconciles` judges that settlement, including escrows whose model has settlement off. With invariants enabled, an unfinished record of an active escrow younger than the pending-age bound of `no-nonce-left-pending` counts as `in_flight`: the timeout sweep has not reached it yet. The check fails only on `orphaned` records, those past that bound or, without invariants, any unfinished one at the drain deadline. The DevShard record count does not have to equal the number of client requests: cache hits, speculative attempts, and ghost probes can make those counts different. An empty successful debug snapshot is also considered clean. A warm-up probe a host served is left to settlement and counted as `settling`: no request follows it to carry its receipt and Finish, so they wait for the escrow's next diff. Ghost and warm-up slots are read from the gateway trace by escrow and nonce.
+
+A ghost is a nonce the gateway committed and never sent (it burned the nonce). The runner reads every `ghost_probe_skipped` line of `compose-pre-drain.log`, in the text or the JSON log format, with its escrow, nonce, host and reason; the host is the last 8 characters of the participant address. Ghosts are not orphans, and the ghost rate is ghosts over records.
+
+A burn with reason `participant_ejected_no_send` or `participant_cut_off_no_send` is left out of both while its host is inside one of its fault windows, grace included (the windows of `misses-only-in-fault-windows`): the fault made the gateway eject or cut off that host.
+
+A burn with reason `participant_throttled_no_send` or `participant_catching_up_no_send` is left out during its host's pause and until `recovery` after the actual resume (default `60s`, including the `host_faults` alias). The interval ends exclusively: a burn exactly at resume plus recovery already counts. This uses its own recovery bound, not the protocol sweep grace. A host still catching up after that bound contributes to the ghost rate and can fail the check even if redundancy keeps all client requests successful.
+
+Those two reasons are also left out in a window of a fault that observes `host_rate_limited`, with the existing sweep grace and background windows included: a host over its peer Chat budget refuses Chats, so the gateway throttles it and it falls behind (in `prod-like-steady` that is P4 for the whole run). Burns outside those windows, and burns for any other reason, still count. The check's actual value reports the left-out burns as `ghost_excluded=N`.
 
 ## Assertions
 
@@ -577,13 +960,225 @@ Assertions are declared in the scenario and are evaluated after the workload:
 | --- | --- |
 | `requests.http_status` | Requires the configured HTTP status for successful client requests. |
 | `requests.terminal_outcome` | Requires the configured client outcome, usually `completed`. |
-| `requests.error_rate` | Limits HTTP failures and generator drops. |
+| `requests.error_rate` | Limits failures among the requests sent to the gateway. |
+| `requests.dropped_rate` | Limits requests the generator never sent, at `max_in_flight` or as `generator_behind`; defaults to `error_rate`. |
 | `mock_ml.require_each_node_used` | Requires every configured Mock ML node to receive an allocation. |
-| `devshard.no_orphaned_work` | Checks terminal DevShard state and the configured ghost-rate limit. |
+| `mock_ml.require_full_node` | With `promises`: the run is not valid unless a node was full: a Mock ML node queued a request for a worker (`queued_ms` in its log) or answered one 503 at capacity. |
+| `devshard.no_orphaned_work` | Checks that active escrows leave no record unfinished past its deadline, and the configured ghost-rate limit. |
 | `escrow_rotation.require_new_escrow` | Requires a new escrow after rotation. |
+| `promises` | Holds the exported run to the system properties below; requires `diagnostics.export` and `diagnostics.logs.tail: all`. |
+| `invariants.enabled` | Runs the end-of-run invariants and writes `invariants.json`. |
+
+With `promises: true` the runner checks the run after the export and writes
+`promises.json` and `promises.md`:
+
+| Property | Holds |
+| --- | --- |
+| `inference_closes_in_time` | Every started inference leaves Pending and Started through Finish, a timeout or an error miss by its deadline: the escrow's refusal timeout from Start while Pending, its execution timeout from ConfirmStart while Started, plus the grace and the period of the Gateway's timeout sweep and a minute for the votes to reach a diff. |
+| `served_request_finished` | A request the client got a 200 for has a Finish on every exported host's chain. |
+| `paid_output_within_produced` | A Finish the executor was paid for claims no more output tokens than its Start allowed, nor a count other than the ML node produced for that execution. A Finish whose inference the validators' votes or a usage challenge invalidated was not paid: the invalidation took its pay back to the escrow, and the report counts such an overclaim apart as caught, not as a violation. A host only behind the longest chain of an escrow is judged on that chain. Whether an honest Finish was wrongly invalidated is for `charge_only_the_guilty` to judge. |
+| `charge_only_the_guilty` | An executor the ML log shows answering in full is not charged a miss, nor an invalidation: the validators' invalid votes of both phases, or the fault votes of a usage challenge, weighing more than the session's vote threshold. A request the client spoiled charges no host, and an answer with forged logprobs is not voted valid. An honest executor that answered in full and was then stopped is, once picked for validation, voted invalid and loses the payment by design: it cannot serve its payload (the prompt and the response with its logprobs), and a validator that cannot fetch the payload votes false (#1647, #2002). The report counts such inferences apart, not as violations, each with the fault, the validators' payload misses and the loss. A stop counts when a validator wrote that it voted false for want of the executor's payload (`validation voting false: executor payload unavailable` in `compose.log`, the vote's reason `executor_payload_unavailable`) while a fault of the runner kept the executor's host from serving it: a pause, a container kill or restart, or the public port taken down by trip file; a throttle, a PoC challenge, a marker, a chain participant mode or a dropped payload does not count. The invalidation is the stop's when the invalid weight of the other validators is not above the vote threshold. A timeout miss of an honest executor is likewise counted apart when such a fault stopped its host between the inference's start and its timeout deadline (the escrow's refusal timeout from the Start, or its execution timeout from the ConfirmStart, plus the gateway's 5 s skew): the host could not finish the stream, and the protocol charges any executor that does not finish in time. Without a stopping fault of the executor's host in that window, or with the escrow's timeouts unknown, the miss stays a violation. Invalid votes on an escrow whose session row no host holds cannot be weighed, and the check then gives no verdict. An invalid vote that did not invalidate an executor that answered in full and kept running is an observation. |
+| `escrow_money_conserved` | The escrow balance adds up: deposited equals spent plus reserved plus left plus fees, with each host's chain replayed through the state machine. |
+| `gateway_heap_bounded` | The Gateway heap grows per request by no more than k times the bytes of the answer the client read (`promisecheck -heap-per-response-byte`; without k it is reported without a verdict). |
+| `gateway_live_heap_returns` | The Gateway live heap after the drain returns to its level before the load, within the allowance. |
+| `client_error_answered_4xx` | A request the ML node refused as malformed gets a 4xx to the client, not a 5xx. |
+| `hosts_converge` | All hosts of a settled escrow reach one nonce and one post-state root. |
+| `ml_node_locks_released` | Every ML node lock a host takes is released. |
+| `one_nonce_per_request` | A request spends one escrow nonce: nonces burned without sending, per host and minute, are counted against the requests; burns inside a host's fault windows are the fault's (`promisecheck -burn-allowance`; without one it is reported without a verdict). |
+| `quarantine_only_when_faulted` | An honest participant is not quarantined outside its fault windows plus the run's timeouts and the Gateway's sweep; a burst of one quarantine's lines is one quarantine. A run whose ML nodes failed or lied, or whose mock log is missing or not whole, gets no verdict. |
+
+The last three read `compose.log` and give no verdict when it holds only the
+tail of each container's log.
+
+Both deadline checks judge each host's chain on its own, except a host whose
+chain of an escrow is a matching, shorter prefix of the longest one: the Gateway
+sends each diff to one host and the others catch up on their next request, so
+such a host is only behind and the inference is judged on the longest chain (an
+observation names it). An inference closed by the export is judged, whatever its
+deadline, and so is a request the client got a 200 for once its Finish is on every
+host; one still open within its deadline at the export is listed as open, not
+judged; the export time is when the export started. So that every inference is
+judged, a run with `promises: true` holds the export while the Gateway still
+holds an inference Pending or Started within its deadline (the timeout of the
+escrow's session config, the Gateway's grace and sweep, and the checks' minute of
+slack), or while an inference not Finished on every host's chain is within its
+deadline on one of them, as both checks judge the chains (a host only behind is
+left to the longest chain). It reads the Gateway every 5 s and the chains every
+30 s: the diffs, sessions and escrow cache of every Postgres database, after the
+first read only the diffs it does not hold yet, and the SQLite files of a host on
+SQLite, laid out as in the export. Burned nonces and served warm-up probes are
+left to settlement. The hold ends, on a fresh read of both, when nothing is open
+within its deadline (an open inference of a settled escrow holds the export until
+its deadline, and the check reports the escrow settled with it live), or at the
+latest an inference confirmed at the end of the load is due: the largest timeout
+plus 4 min 5 s after the load ends. A read that fails holds the export to that
+limit. A scenario without `protocol` timeouts runs on the
+chain's defaults, which the mock-chain seed puts in place of `refusal_timeout`
+and `execution_timeout` 0 in `config.yaml`: 60 s and 32 min
+(`DefaultDevshardRefusalTimeout` and `DefaultDevshardExecutionTimeout` of
+`x/inference/types`), so its hold lasts at most 36 min 5 s.
+
+`promises.md` opens with a one-line verdict, then a table with one row per
+property: what it promises, held, violated or not measured, the number of
+violations and what was judged. The first five violations of each property follow,
+each naming the hosts, the escrow, the inference and the numbers; `promises.json`
+holds them all. The inferences invalidated after an honest execution because the executor was
+stopped before validation follow in a section of their own. Observations come last: what was not judged and why, how many
+client requests were tied to inferences (through the prompt each host stores
+with the request tag, or by model, seed and start time where no prompt was
+exported), and what the Gateway logged of the usage challenges (outcomes,
+reasons, the voters' answers and the time from a challenge's start to its
+outcome).
+
+A run whose generator dropped requests, whose dishonest node never answered
+dishonestly, whose fault rule never fired, whose deadline checks judged nothing,
+whose nodes bound to hosts were also handed to a caller mock-dapi maps to no
+host (the `unmapped` row of `host-stats.json`, or no `host-stats.json` to tell),
+or whose export lost what the checks read (a host's diffs or
+sessions, its SQLite files, the mock log) is reported as not valid and fails the
+check; the verdict line says why. A gap elsewhere in the export, such as a table
+over the file bound, is an observation. A finished
+run can be checked again with `go run ./cmd/promisecheck -loadtest
+loadtest/results/<timestamp>` in `devshard/testenv`, which knows no profiles and
+so leaves out the dishonest-node check; it exits 1 on a violation, 2 when the run
+cannot be read or the report not written, and 3 when the run is not valid.
+`dishonest-executor-overclaim`, `dishonest-executor-wrong-answer` and
+`usage-challenge-wave` use it; `dishonest-executor-honest` and
+`usage-challenge-wave-honest` are the same runs with every node honest.
+
+Four scenarios hold the shape of an ML node's stream and its timing to the same
+checks, each on four escrows with one oracle node per host, `mock-openai-N` on
+`versiond-N`:
+
+| Scenario | What it varies |
+| --- | --- |
+| `chunk-shapes` | Two nodes send one token per chunk and two send four, on one schedule. A host has to count every token whatever the grouping. |
+| `phase-faults` | Slow replays, an execution that outlives the client's timeout, and fault rules on every node: replays of requests ending in 7 drop the connection, those ending in 3 answer 503, and request 000007's first execution on each node drops the connection. A failed replay must not charge the executor. |
+| `drain` | A minute of load, then none: everything in flight, the replays owed and the timeouts due have to settle. |
+| `shared-endpoint` | Every escrow a host serves draws from that host's node, one node per host. The four nodes together keep up with the load and the nodes of the solo hosts do not; a full node queues requests as vLLM does and everything on it slows down. Served requests must still finish, deadlines close, Finish counts match the ML, an executor whose ML answered in full and a request the client spoiled are not charged, and the drain settles everything. |
+
+With `invariants.enabled`, the runner polls gateway throttle snapshots (5 s),
+pending work (10 s), host `/stats/*` (30 s), and gateway accounting at every
+event boundary. After drain it reads the mock-chain settle txs, the gateway
+devshard list and inferences, the lease table of each Postgres service, and a payload-file
+sample from each `DEVSHARD_STORAGE_MODE=sqlite` host, then evaluates
+each invariant per event window from `events.json`:
+
+```yaml
+assertions:
+  invariants:
+    enabled: true
+    baseline: {from: 1m, to: 2m}       # reference for quiet-window latency
+    trend_early: {from: 3m, to: 5m}    # goroutine comparison of no-restarts-or-resource-growth
+    trend_late: {from: 13m30s, to: 15m}
+    grace: 3m10s                       # default refusal + execution + 2m5s sweep grace + 30 s sweep tick
+    max_pending_age: 3m40s             # default is the grace formula plus 30 s
+    # ties a run-level invariant, or one check such as
+    # escrow-accounting-reconciles.final_nonce_le_max, to a known_bug case
+    cases: {no-runtime-for-deactivated-escrow: deactivated-escrow-runtime-retired}
+```
+
+Two bounds in detail:
+
+- `no-nonce-left-pending.max_pending_age` leaves out the nonces the gateway burned. A burned nonce is never sent, so no timeout is voted on it and it stays pending until its escrow closes. The check reports burned nonces apart, as `burned_max` and `burned_samples_over` in its actual value and `burned_max_age_seconds` and `burned_samples_over_limit` in its table. A `pending.jsonl` written before samples kept `open_started` keeps its old ages, with a note in the table.
+- `no-nonce-left-pending.clean_end_state` leaves out the same burned nonces, and an escrow whose session nonce is still 1 at the final poll: the gateway created it during the drain and sent only its warm-up probe, whose finish waits for the next request's diff. Both are listed apart in the details (`burned_open=N`, `warm-up only`) and counted in `apart=N`.
+- `error-rate-and-latency.rotation_gap_errors` counts requests answered 400 `unsupported model` (503 `model ... is temporarily unavailable` when the model is in `model_limits`) and `error-rate-and-latency.max_nonce_errors` those answered 502 `nonce exceeds chain max_nonce limit`; each allows none, anywhere in the run, and is a FIX, because both are the gateway's own behaviour that the error-rate bounds would otherwise absorb. The first happens in the gap between an escrow's deactivation and its replacement: routing skips an escrow at its nonce limit, the gateway deactivates it before it creates the replacement on chain, and with one escrow per model (`target_count: 1`) nothing serves the model until the replacement is resident, which took 22 ms to 1.06 s in the saved runs while the chain transaction ran. A client retrying after that gap succeeds, but a 400 tells it not to. The second comes from escrows that still hold more routed requests than the 200 nonces the gateway keeps short of the hosts' active cap. A scenario can tie either check to a `known_bug` case through `invariants.cases`.
+- `quarantines-match-faults.durations` judges each single quarantine: its `quarantine_until` less the poll that first showed it. A quarantine the gateway renews as it ends starts a new one, so a fault that keeps failing a host is not read as one long quarantine. An episode still fails when it outlives the latest fault it can have started in by more than the duration and one tick; an earlier fault whose grace it also falls in is not blamed.
+- `no-restarts-or-resource-growth.heap_slope` fits the slope to the live heap: the lowest `go_memstats_heap_alloc_bytes` of each 30 s, since heap in use also holds garbage up to the GC goal. It subtracts `devshard_gateway_cache_bytes` in each sample. The gateway's chat cache keeps every response for an hour up to 256 MiB, so in a 10 to 18 minute run it fills all run; when any steady sample lacks the cache series, as on devshardctl, which does not export it, the gateway's row is not judged and the check is `NOT_JUDGED` unless a host fails. `heap_minus_cache` in the row says the cache was subtracted. On a host it also subtracts 3.36 MiB, the 20 000-slot validation queue, for every escrow created since the first steady sample. The gateway row stays unjudged without that series: the cache size can be rebuilt from the gateway's `gateway_cache_stored` lines (it matches `chatResponseCache.Set` in the heap profiles), but the gateway's heap less that rebuilt cache moves between -34 and +5 MiB/min with the load and with when its GCs fall, against a 1 MiB/min bound, and the cache fills only 7 to 12 minutes in, leaving too short a window after it. The gateway row needs devshardctl to export `devshard_gateway_cache_bytes` (the byte total of `chatResponseCache.Stats()`), and its live heap after GC (runtime/metrics `/gc/heap/live:bytes`) to judge growth this small under changing load.
+- `no-restarts-or-resource-growth.goroutines` allows a host 20 more goroutines for every escrow created between the early and the late window. A host keeps a runtime with 20 validation workers per escrow until the epoch is evicted, and the scenarios rotate an escrow every few minutes, so this is growth by design; the row reports `escrows_created_between_windows`.
+- Both trends start a host's steady samples 2 minutes after its first finished request (`devshard_request_terminal_total` above 0), and move its early window as far, when that is later than the run's own warm-up: the second replica of P0's HA pair can get no traffic for the first minutes. The row reports `steady_from` then.
+
+Event params can state what a fault should cause: `expect_quarantine` (`none`
+or a comma list of `http`, `transport`, `empty_stream`, `stalled_winner`,
+`sender_rate`),
+`waive_misses: true`, and `max_error_rate`. A `dapi_challenge` event waives
+misses and forbids an `empty_stream` quarantine by default. An `ml_fault` that
+hangs or holds the stream (`hang`, `pause_stream`) allows `stalled_winner`,
+`transport` and `empty_stream`: the host has sent its receipt but no content
+when the gateway gives up on the attempt, and the gateway reports that as an
+empty stream. That is the only reason it can give: it counts any attempt with a
+receipt and no content chunk as an empty stream, cancelled or not; a stalled
+winner must have won and sent content; and its own cancel of a losing attempt
+is never a transport failure. Under `pause_stream` only the requests that hold
+one of the mock's workers get the first token; the rest wait in its queue. `faults-fired-and-ml-nodes-bound` checks that
+each event fired; it never becomes XFAIL, because a fault that did not fire
+makes the run invalid.
 
 The final report prints each check with its expected value, actual value, and
 diagnostic details. Failed checks are also listed in `assertions.json`.
+
+### Run report
+
+Every run ends with `report.md` in its directory, also printed to the console, built from `summary.json`, `assertions.json`, `events.json` and `invariants.json` only. Its template does not change between runs: a verdict line counting every status, the run's stalled share (`harness_health.invalid_fraction`) right under it, then (1) client traffic with the error and drop bounds and the quiet window, (2) one row per fault with its own requests, errors, bound and recovery, (3) the overlaps several faults touched at once, (4) the end state (orphans, settlement, pending age, resident runtimes), and (5) every check sorted by status. Each check carries one status:
+
+| Status | Meaning |
+| --- | --- |
+| `FIX` | A bound was broken; the gateway or the host needs a fix. |
+| `XPASS` | A `known_bug` case passed; drop its marker if the fix landed. |
+| `INVALID` | A harness stall covers every window the check judged. |
+| `XFAIL` | A `known_bug` case failed as expected. |
+| `NOT_JUDGED` | The run left no data for the check, such as a fault every request of which another fault also touched. |
+| `PASS` | The bound held. |
+
+`go run ./cmd/loadtest -report <run directory>` rebuilds the report of an earlier run without starting a stack.
+
+`go run ./cmd/loadtest -recheck <run directory>` judges every check of an earlier run again without a stack, from the files in its directory, and rewrites `assertions.json`, `invariants.json` and `report.md` there (a run held to the promises is held to them again, last, as the live run is, and `promises.json` and `promises.md` are rewritten too; the Mock ML profiles come from `loadtest/profiles`, so run it from the testenv directory); copy the directory first to keep the run's own result. It exits 1 when a check fails. A live run judges its checks the same way: it writes what it read from the stack after the workload to `run-inputs.json`, then evaluates from the directory with the same code, so `-recheck` on a run made by the same binary gives the same `assertions.json`. A run saved before `run-inputs.json` existed is judged from what its other files hold. Its host-to-participant map comes from `host-stats.jsonl`, its allocations from `ml-stats.json` and its burns from `compose-pre-drain.log` (decompress `compose-pre-drain.log.gz` first). The drain check, the escrow-rotation check and the checks that need the gateway devshard list, the chain ledger or the lease table report `unavailable`, and the runner logs a `recheck:` line for each of these gaps.
+
+#### Old codes
+
+Reports written before checks, cases and events got descriptive names use short codes. A check named `invariants.I7.c1-empty-stream.error_rate` there is `invariants.error-rate-and-latency.receipt-then-empty-stream.error_rate` now; the bounds and the logic behind each name are unchanged. `-report` looks checks up by the new names, so rebuild an older run's report with the binary that wrote it.
+
+| Old code | Kind | Name |
+| --- | --- | --- |
+| `I1` | invariant | `misses-only-in-fault-windows` |
+| `I2` | invariant | `escrow-accounting-reconciles` |
+| `I3` | invariant | `honest-hosts-agree-on-state` |
+| `I4` | invariant | `no-nonce-left-pending` |
+| `I5` | invariant | `no-runtime-for-deactivated-escrow` |
+| `I6` | invariant | `quarantines-match-faults` |
+| `I7` | invariant | `error-rate-and-latency` |
+| `I8` | invariant | `recovery-after-fault` |
+| `I9` | invariant | `no-restarts-or-resource-growth` |
+| `I10` | invariant | `faults-fired-and-ml-nodes-bound` |
+| `I11` | invariant | `no-skipped-validation-leases` |
+| `I12` | invariant | `no-admission-during-poc` |
+| `I13` | invariant | `responses-compress` |
+| `I14` | invariant | `payload-files-are-zstd` |
+| `I15` | invariant | `no-http-5xx-on-honest-hosts` |
+| `I16` | invariant | `no-escrow-falsely-marked-missing` |
+| `C1` | case | `receipt-then-empty-stream` |
+| `C2a` | case | `ml-server-returns-429` |
+| `C2b` | case | `host-over-peer-chat-budget` |
+| `C3` | case | `host-hangs-after-first-token` |
+| `C4` | case | `host-under-poc-challenge` |
+| `C5` | case | `host-paused-then-catches-up` |
+| `C6` | case | `gateway-killed-mid-race` |
+| `C7` | case | `escrow-rotation-per-model-settlement` |
+| `C7-I5` | case | `deactivated-escrow-runtime-retired` |
+| `C8` | case | `epoch-change-with-poc` |
+| `C9` | case | `host-public-port-down` |
+| `C10` | case | `participant-unavailable-then-absent-on-chain` |
+| `C11` | case | `timeout-vote-fanout` |
+| `C12` | case | `logprobs-responses-compress` |
+| `C13` | case | `host-withholds-payload` |
+| `C14` | case | `sqlite-payloads-in-zstd-files` |
+| `N1` | case | `session-nonce-within-max-nonce` |
+| `N7` | case | `gateway-restart-while-participant-absent` |
+| `B22` | case | `honest-hosts-get-no-http-5xx` |
+| `c1-empty-stream` | event | `receipt-then-empty-stream` |
+| `c2a-ml-429` | event | `ml-server-returns-429` |
+| `c2b-budget` | event | `host-over-peer-chat-budget` |
+| `c3-hang` | event | `host-hangs-after-first-token` |
+| `c4-challenge` | event | `host-under-poc-challenge` |
+| `c5-pause` | event | `host-paused-then-catches-up` |
+| `c6-gateway-kill` | event | `gateway-killed-mid-race` |
+| `c8-epoch` | event | `epoch-change-with-poc` |
+| `c9-public-down` | event | `host-public-port-down` |
+| `c10-unavailable` | event | `participant-unavailable-on-chain` |
+| `c10-absent` | event | `participant-absent-on-chain` |
+| `c11-vote-fanout` | event | `timeout-vote-fanout` |
+| `c13-drop-payload` | event | `host-withholds-payload` |
+| `n7-restart-absent` | event | `gateway-restart-while-participant-absent` |
 
 ## Artifacts
 
@@ -596,16 +1191,24 @@ records, summaries, state snapshots, and logs:
 | `summary.json` | Client workload counts, latency, duration, and per-minute windows. |
 | `metrics.jsonl` | Process memory/CPU/GC and per-escrow state time series. |
 | `metrics-summary.json` | Sampled peaks, counter deltas, initial/final state, and collection errors. |
-| `host-faults.json` | Optional host pause/resume timings and command errors. |
+| `events.json` | Planned and real windows of every scheduled event, and command errors. |
+| `invariants.json` | Invariant results, honest set, fault windows, and per-invariant tables. |
+| `payload-sample/<host>/` | `payload-files-are-zstd` copy of up to 256 payload files from each sqlite host. |
+| `accounting-snapshots.jsonl`, `throttle.jsonl`, `pending.jsonl`, `host-stats.jsonl`, `dapi-host-stats.jsonl` | Invariant inputs sampled during the run. Each `pending.jsonl` sample keeps every open nonce's start time (`open_started`). |
+| `run-inputs.json` | What the checks read from the stack after the workload: the drain check's last read, burned nonces, allocations, escrow IDs, accounting, the gateway devshard list and inferences, the chain ledger, leases, payload sample stats, log-derived counts, and how much of `metrics.jsonl` was judged. `-recheck` reads it. |
 | `cpu-profiles.json`, `contention-profiles.json`, `profiles/` | Optional CPU, goroutine, mutex, and block profile manifests and captures. |
 | `requests.jsonl` | One record per generated request and response outcome. |
 | `assertions.json` | All evaluated assertions and `failed_assertions`. |
+| `report.md` | The run report in its fixed template; see [Run report](#run-report). |
 | `ml-stats.json` | Per-node allocations, responses, failures, timeouts, and replay counters. |
+| `host-stats.json` | Mock-dapi's rows per versiond host: its nodes, allocations, acquire errors and challenge rejections, with callers it maps to no host under `unmapped`. |
 | `gateway-inferences.json` | Gateway inference records collected for diagnosis. |
 | `gateway-state.json` | Gateway diff, nonce, pending transaction, and applied-key counts. |
 | `compose-pre-drain.log` | Container logs captured before the drain check. |
 | `compose.log` | Final container logs captured after the drain check. |
 | `failures/` | Individual failed-request bundles, subject to the runner's artifact cap. |
+| `export/` | With `diagnostics.export: true`: every Postgres database as CSV (`db-<service>/postgres/`), SQLite files of hosts that keep sessions in them, and the merged request log of every Mock ML node (`mock-log.json`), with `EXPORT-MANIFEST.json`. |
+| `promises.json`, `promises.md` | With `assertions.promises: true`: the property checks of the run. |
 
 The two Compose log snapshots are intentional: the pre-drain snapshot shows
 the state at the point where cleanup begins, while the final snapshot shows

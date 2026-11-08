@@ -62,6 +62,14 @@ func (s *InferenceServer) Participant(_ context.Context, req *inferencetypes.Que
 	if s.store.ParticipantQueryFaulted() {
 		return nil, status.Error(codes.Unavailable, "participant query faulted (testenv)")
 	}
+	switch s.store.GetParticipantMode(req.GetIndex()) {
+	case store.ParticipantModeUnavailable:
+		// Not codes.Unavailable: common/chain reads that as "gRPC down" and moves
+		// every query to CometBFT RPC for 30 min, which mock-chain does not serve.
+		return nil, status.Error(codes.DeadlineExceeded, "participant query unavailable (testenv)")
+	case store.ParticipantModeAbsent:
+		return nil, status.Errorf(codes.NotFound, "participant %s not found (testenv)", req.GetIndex())
+	}
 	p := s.store.GetParticipant(req.GetIndex())
 	if p == nil {
 		return nil, status.Error(codes.NotFound, "not found")

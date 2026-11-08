@@ -111,6 +111,8 @@ func TestRPCProcedureWeight_Table(t *testing.T) {
 	require.Equal(t, RPCWeightGetPayload, RPCProcedureWeight(rpcpbconnect.PayloadServiceGetPayloadProcedure))
 	require.Equal(t, RPCWeightChat, RPCProcedureWeight(rpcpbconnect.SessionServiceChatProcedure))
 	require.Equal(t, RPCWeightChallenge, RPCProcedureWeight(rpcpbconnect.SessionServiceChallengeReceiptProcedure))
+	require.Equal(t, RPCWeightVerify, RPCProcedureWeight(rpcpbconnect.SessionServiceVerifyChallengeProcedure),
+		"a challenge vote costs what a timeout or error-miss vote does")
 	require.Equal(t, RPCWeightGossipTxs, RPCProcedureWeight(rpcpbconnect.GossipServiceTxsProcedure))
 	require.Equal(t, RPCWeightGetSignatures, RPCProcedureWeight(rpcpbconnect.GossipServiceNonceProcedure))
 	require.Equal(t, RPCWeightGetSignatures, RPCProcedureWeight(rpcpbconnect.SessionServiceGetSignaturesProcedure))

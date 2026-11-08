@@ -1,0 +1,75 @@
+schema_version: v1
+scenario: drain
+seed: 23003
+
+# Arrivals stop and service goes on. A minute of load at 16 requests a second on four oracle nodes, one
+# for each host, mock-openai-N on versiond-N, as a participant's dapi owns its nodes on the network, then
+# no new requests: what the hosts and the gateway hold in flight, the replays the validators still owe
+# and the timeouts still due must settle. The runner drains for up to two minutes, then holds the
+# export until the last inference of the load is past its deadline (execution timeout plus the
+# gateway's sweep grace and a minute), so every inference is judged: one left Pending or Started at
+# the export is a violation.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+    escrows: 4
+    validation_threshold:
+      value: 958
+      exponent: -3
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: oracle-chunk1
+        host: versiond-0
+      - name: mock-openai-1
+        profile: oracle-chunk1
+        host: versiond-1
+      - name: mock-openai-2
+        profile: oracle-chunk1
+        host: versiond-2
+      - name: mock-openai-3
+        profile: oracle-chunk1
+        host: versiond-3
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 30s
+
+workload:
+  max_in_flight: 64
+  duration: 1m
+  traffic:
+    type: constant
+    rps: 16
+  request:
+    model: test-model
+    # The gateway streams every execution from the ML node whatever the client asked.
+    stream: false
+    max_tokens: 32
+    messages:
+      - role: user
+        content: "drain request"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.05
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  promises: true
+
+diagnostics:
+  export: true
+  logs:
+    tail: all
+
+drain_timeout: 2m
