@@ -16,6 +16,7 @@ import (
 
 	"common/probe"
 
+	"devshard/host"
 	"devshard/transport"
 )
 
@@ -331,7 +332,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		errorMissVerifyRejects: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_error_miss_verify_rejects_total",
-				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
+				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body, other) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
 			},
 			[]string{"cause", "completeness"},
 		),
@@ -522,7 +523,7 @@ func (m *DevshardMetrics) Wrap(next http.Handler) http.Handler {
 		recorder := &metricsResponseWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(recorder, r)
 
-		method := r.Method
+		method := normalizeMetricsMethod(r.Method)
 		status := strconv.Itoa(recorder.status)
 		m.httpRequests.WithLabelValues(path, method, status).Inc()
 		m.httpRequestDuration.WithLabelValues(path, method).Observe(time.Since(start).Seconds())
@@ -750,9 +751,22 @@ func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string
 		return
 	}
 	m.errorMissVerifyRejects.WithLabelValues(
-		metricLabel(cause, "unknown"),
+		errorMissVerifyRejectCause(cause),
 		metricLabel(completeness, "unknown"),
 	).Inc()
+}
+
+// errorMissVerifyRejectCause keeps the peer-supplied reject_cause to the
+// verifier's named causes; anything else is "other".
+func errorMissVerifyRejectCause(cause string) string {
+	cause = strings.TrimSpace(cause)
+	if cause == "" {
+		return "unknown"
+	}
+	if _, ok := metricsRejectCauses[cause]; ok {
+		return cause
+	}
+	return metricsOtherLabel
 }
 
 func (m *DevshardMetrics) RecordServedBinding(verdict string) {
@@ -1442,6 +1456,49 @@ func (w *metricsResponseWriter) Unwrap() http.ResponseWriter {
 	return w.ResponseWriter
 }
 
+// Unknown paths and methods share one label: any caller can send them without
+// an API key, and each distinct value would add series for the process lifetime.
+var (
+	metricsGatewayPaths = setOf(
+		"/", "/v1/models", "/v1/chat/completions", "/v1/status",
+		"/v1/admin/state", "/v1/admin/settings", "/v1/admin/devshards", "/v1/admin/escrows",
+		"/v1/admin/participants/unquarantine", "/v1/admin/suspicious-hosts", "/v1/admin/accounting/purge",
+		"/v1/debug/rotation", "/v1/debug/memstats", "/v1/debug/memory", "/v1/debug/heightsync", "/v1/debug/rpc-traffic",
+		"/v1/finalize", "/v1/state", "/v1/debug/pending", "/v1/debug/state", "/v1/debug/state-sizes",
+		"/v1/debug/perf", "/v1/debug/pairwise", "/v1/debug/signatures", "/v1/debug/inferences",
+		"/v1/debug/signatures/collect", "/v1/debug/sync-hosts",
+		"/debug/pprof/", "/debug/pprof/cmdline", "/debug/pprof/profile", "/debug/pprof/symbol", "/debug/pprof/trace",
+		"/debug/pprof/goroutine", "/debug/pprof/heap", "/debug/pprof/allocs", "/debug/pprof/block",
+		"/debug/pprof/mutex", "/debug/pprof/threadcreate",
+	)
+	metricsDevshardPaths = setOf(
+		"/", "/openapi.json", "/v1/models", "/v1/chat/completions", "/v1/finalize", "/v1/status", "/v1/state",
+		"/v1/debug/pending", "/v1/debug/state", "/v1/debug/state-sizes", "/v1/debug/perf", "/v1/debug/pairwise",
+		"/v1/debug/signatures", "/v1/debug/inferences", "/v1/debug/signatures/collect", "/v1/debug/sync-hosts",
+	)
+	metricsAdminActions = setOf("activate", "deactivate", "settle", "participants")
+	metricsMethods      = setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+	metricsRejectCauses = setOf(host.ErrorTimeoutRejectNoFinishTx, host.ErrorTimeoutRejectNoPayload,
+		host.ErrorTimeoutRejectSig, host.ErrorTimeoutRejectHashMismatch, host.ErrorTimeoutRejectNotErrorBody)
+)
+
+const metricsOtherLabel = "other"
+
+func setOf(values ...string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, v := range values {
+		out[v] = struct{}{}
+	}
+	return out
+}
+
+func normalizeMetricsMethod(method string) string {
+	if _, ok := metricsMethods[method]; ok {
+		return method
+	}
+	return metricsOtherLabel
+}
+
 func normalizeMetricsPath(path string) string {
 	switch {
 	case path == "":
@@ -1450,6 +1507,12 @@ func normalizeMetricsPath(path string) string {
 		return path
 	case strings.HasPrefix(path, "/devshard/"):
 		if devshardID, inner, ok := parseDevshardPath(path); ok && devshardID != "" {
+			if strings.HasPrefix(inner, "/v1/requests/") {
+				return "/devshard/{id}/v1/requests/{request_id}"
+			}
+			if _, known := metricsDevshardPaths[inner]; !known {
+				inner = "/" + metricsOtherLabel
+			}
 			return "/devshard/{id}" + inner
 		}
 		return "/devshard/{id}"
@@ -1457,6 +1520,9 @@ func normalizeMetricsPath(path string) string {
 		trimmed := strings.Trim(strings.TrimPrefix(path, "/v1/admin/devshards/"), "/")
 		parts := strings.Split(trimmed, "/")
 		if len(parts) >= 2 && parts[0] != "" {
+			if _, known := metricsAdminActions[parts[1]]; !known {
+				return "/v1/admin/devshards/{id}/" + metricsOtherLabel
+			}
 			return "/v1/admin/devshards/{id}/" + parts[1]
 		}
 		if len(parts) >= 1 && parts[0] != "" {
@@ -1464,7 +1530,10 @@ func normalizeMetricsPath(path string) string {
 		}
 		return "/v1/admin/devshards"
 	default:
-		return path
+		if _, known := metricsGatewayPaths[path]; known {
+			return path
+		}
+		return metricsOtherLabel
 	}
 }
 
