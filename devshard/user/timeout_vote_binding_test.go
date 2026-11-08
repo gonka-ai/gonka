@@ -469,3 +469,74 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	require.True(t, session.HasSufficientTimeoutVotes(votes),
 		"cached warm bindings must verify without reaching the resolver")
 }
+
+// Slot 4 is bound to warm1 and votes with warm2, a second key its cold address
+// also granted. Apply rejects that vote and with it the whole message, so the
+// collector must drop it and keep the honest quorum.
+func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *testing.T) {
+	const n = 5
+	coldKeys := makeKeys(t, n)
+	warm1 := makeKeys(t, n)
+	warm2 := makeKeys(t, n)
+	granted := make(map[string]string, 2*n)
+	for i := range coldKeys {
+		granted[warm1[i].Address()] = coldKeys[i].Address()
+		granted[warm2[i].Address()] = coldKeys[i].Address()
+	}
+	resolver := state.WarmKeyResolver(func(warmAddr, coldAddr string) (bool, error) {
+		return granted[warmAddr] == coldAddr, nil
+	})
+
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(coldKeys)
+	config := testutil.DefaultConfig(n) // threshold 2
+	verifier := signing.NewSecp256k1Verifier()
+	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+	clients := make([]HostClient, n)
+	for i := range coldKeys {
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
+			testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
+		require.NoError(t, err)
+		h, err := host.NewHost(sm, coldKeys[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
+	require.NoError(t, err)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = session.SendInference(ctx, defaultParams)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
+	userSM.InjectWarmKeys(map[uint32]string{4: warm1[4].Address()})
+
+	honest := func(i int) TimeoutVerifier {
+		return &delayedVerifier{
+			inner: &mockTimeoutVerifier{accept: true, signer: coldKeys[i], group: group, slotIdx: i},
+			delay: 50 * time.Millisecond,
+		}
+	}
+	// Executor is slot 1.
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+		&host.InferencePayload{
+			Prompt: testutil.TestPrompt, Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		}, map[int]TimeoutVerifier{
+			0: honest(0), 2: honest(2), 3: honest(3),
+			4: &mockTimeoutVerifier{accept: true, signer: warm2[4], group: group, slotIdx: 4},
+		}, nil)
+	require.NoError(t, err)
+	for _, v := range votes {
+		require.NotEqual(t, uint32(4), v.VoterSlot, "the warm2 vote must not be collected")
+	}
+	require.True(t, session.HasSufficientTimeoutVotes(votes))
+
+	before := userSM.SnapshotState()
+	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(1, votes)})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, types.StatusTimedOut, userSM.SnapshotState().Inferences[1].Status)
+}
