@@ -108,12 +108,14 @@ type failingBackend struct {
 	fail        bool
 	lastDirty   []string
 	lastDeleted []string
+	lastPurged  []uint64
 }
 
 func (f *failingBackend) Load(context.Context, *Tracker) error { return nil }
 
-func (f *failingBackend) Save(_ context.Context, _ storeSnapshot, dirtyIDs, deletedIDs []string) error {
+func (f *failingBackend) Save(_ context.Context, snap storeSnapshot, dirtyIDs, deletedIDs []string) error {
 	f.lastDirty, f.lastDeleted = dirtyIDs, deletedIDs
+	f.lastPurged = append([]uint64(nil), snap.PurgedEpochs...)
 	if f.fail {
 		return errors.New("save rejected")
 	}

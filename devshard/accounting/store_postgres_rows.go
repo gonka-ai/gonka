@@ -278,6 +278,12 @@ CREATE TABLE IF NOT EXISTS accounting_writers (
 	updated_at TEXT NOT NULL,
 	writer_errors BIGINT NOT NULL
 );
+-- One row per epoch an operator purged. A peer that still holds the escrow
+-- reads this and deletes instead of upserting, so its next flush cannot
+-- recreate the rows.
+CREATE TABLE IF NOT EXISTS accounting_purged_epochs (
+	epoch BIGINT PRIMARY KEY
+);
 `
 
 // loadedLedger is the merged read side: escrow totals plus, per escrow, the
@@ -311,6 +317,25 @@ func (l *loadedLedger) blob(escrowID string) *escrowBlob {
 		l.blobs[escrowID] = blob
 	}
 	return blob
+}
+
+// omitPurged drops escrows whose epoch was tombstoned, including the peer
+// baseline, so a load cannot bring the epoch back or subtract a stale share.
+func (l *loadedLedger) omitPurged(epochs map[uint64]struct{}) {
+	if l == nil || len(epochs) == 0 {
+		return
+	}
+	for id, blob := range l.blobs {
+		if blob == nil {
+			continue
+		}
+		if _, ok := epochs[blob.Meta.CreationEpoch]; !ok {
+			continue
+		}
+		delete(l.blobs, id)
+		delete(l.peers, id)
+		delete(l.states, id)
+	}
 }
 
 func (l *loadedLedger) peer(escrowID string) *escrowContribution {
