@@ -556,6 +556,10 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 	}
 	require.True(t, session.HasSufficientTimeoutVotes(votes))
 
+	// The hand-rolled session starts this inference on an empty floor, so
+	// StartedAtHeight stays 0. A refusal applies only once that stamp is set.
+	statetest.ArmRefusalDue(t, userSM, 1)
+
 	before := userSM.SnapshotState()
 	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(1, votes)})
 	require.NoError(t, err)
