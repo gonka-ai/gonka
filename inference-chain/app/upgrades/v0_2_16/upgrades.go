@@ -471,6 +471,10 @@ func applyFeeGroupUpgradeInfo(ctx context.Context, k keeper.Keeper, infoJSON str
 	return nil
 }
 
+// migrateDevshardApprovedVersions moves the params allowlist into the
+// approved-version store. This handler already ran on mainnet (v0.2.16-post3);
+// do not stamp pass_count here. Policy rows for those names are written by
+// the v0.2.18 upgrade, which is the release that actually ships them.
 func migrateDevshardApprovedVersions(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {

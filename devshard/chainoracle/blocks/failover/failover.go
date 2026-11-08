@@ -1,9 +1,9 @@
 // Package failover is the host/gateway BlockOracle. Latest prefers a live
 // Comet NewBlock cache, then NodeManager GetBlockHeader, then chain
 // GetLatestBlock. Comet is skipped when the WS is down or the last Observe
-// is older than CometMaxAge. GetBlockHeader(0) backs off 1m → 5m → 15m on
-// any non-success. Unimplemented (old dapi) re-probes every
-// NMUnimplementedReprobe (15m). Dummy / not found / transient use 1m → 5m → 15m.
+// is older than CometMaxAge. GetBlockHeader(0) backs off 1m → 5m on any
+// non-success, so dapi is tried again at least every 5m while chain serves.
+// Unimplemented (old dapi) re-probes every NMUnimplementedReprobe (5m).
 // GetLatestBlock is at most once per ChainRefresh; within that window the
 // last chain header is reused. At prefers the cached window, then
 // GetBlockHeader (same Unimplemented / backoff skip as Latest), then chain
@@ -45,15 +45,14 @@ const (
 	// GetBlockHeader / GetBlockByHeight for that height.
 	AtNegativeTTL = 5 * time.Second
 	// NMUnimplementedReprobe is how long GetBlockHeader is skipped after
-	// Unimplemented. Same as the last 1m→5m→15m step; old dapi is retried
-	// so an upgrade is picked up without a process restart.
-	NMUnimplementedReprobe = 15 * time.Minute
+	// Unimplemented. Same as the last 1m→5m step; old dapi is retried so an
+	// upgrade is picked up without a process restart.
+	NMUnimplementedReprobe = 5 * time.Minute
 	atMissCap              = 128
 )
 
 var nmBackoffSchedule = []time.Duration{
 	time.Minute,
-	5 * time.Minute,
 	NMUnimplementedReprobe,
 }
 
@@ -257,7 +256,7 @@ func (o *Oracle) noteNMOutcome(now time.Time, h *blocks.Header, err error) {
 		o.nmNextTry = now.Add(NMUnimplementedReprobe)
 		o.mu.Unlock()
 		if entered {
-			logging.Warn("heightsync: GetBlockHeader unimplemented; retrying every 15m", "heightsync",
+			logging.Warn("heightsync: GetBlockHeader unimplemented; retrying periodically", "heightsync",
 				"retry", NMUnimplementedReprobe.String())
 		}
 		return

@@ -1,10 +1,17 @@
 package nodemanager
 
 import (
+	"bytes"
 	"testing"
+	"time"
 
 	"common/nodemanager/gen"
 
+	"github.com/cometbft/cometbft/crypto/tmhash"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
+	cmttypes "github.com/cometbft/cometbft/types"
+	gogoproto "github.com/cosmos/gogoproto/proto"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -36,12 +43,21 @@ func TestNodeManager_GetHostEvents_WireFormat_FieldNumbersStable(t *testing.T) {
 	assertFieldNum(t, (&gen.GetHostEventsRequest{}).ProtoReflect().Descriptor(), "max_wait_seconds", 2)
 	assertFieldNum(t, (&gen.GetHostEventsRequest{}).ProtoReflect().Descriptor(), "subscribe", 3)
 	assertFieldNum(t, (&gen.GetHostEventsRequest{}).ProtoReflect().Descriptor(), "generation", 4)
+	assertFieldNum(t, (&gen.GetHostEventsRequest{}).ProtoReflect().Descriptor(), "after_height", 5)
 
 	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "seq", 1)
 	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "kind", 2)
 	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "observed_at_unix", 3)
 	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "escrow", 12)
 	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "maintenance", 13)
+	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "warm_key", 14)
+	assertFieldNum(t, (&gen.HostEvent{}).ProtoReflect().Descriptor(), "block", 15)
+
+	assertFieldNum(t, (&gen.BlockPayload{}).ProtoReflect().Descriptor(), "height", 1)
+	assertFieldNum(t, (&gen.BlockPayload{}).ProtoReflect().Descriptor(), "hash", 2)
+	assertFieldNum(t, (&gen.BlockPayload{}).ProtoReflect().Descriptor(), "header_time_unix_ms", 3)
+	assertFieldNum(t, (&gen.BlockPayload{}).ProtoReflect().Descriptor(), "epoch_index", 4)
+	assertFieldNum(t, (&gen.BlockPayload{}).ProtoReflect().Descriptor(), "header", 5)
 
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "unchanged", 1)
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "events", 2)
@@ -50,6 +66,7 @@ func TestNodeManager_GetHostEvents_WireFormat_FieldNumbersStable(t *testing.T) {
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "needs_reset", 5)
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "open_escrow_count", 6)
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "escrow_load", 7)
+	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "supported_kinds", 8)
 
 	assertFieldNum(t, (&gen.EscrowLoad{}).ProtoReflect().Descriptor(), "escrow_id", 1)
 	assertFieldNum(t, (&gen.EscrowLoad{}).ProtoReflect().Descriptor(), "requests_per_min", 2)
@@ -68,6 +85,9 @@ func TestNodeManager_GetHostEvents_WireFormat_FieldNumbersStable(t *testing.T) {
 	require.Equal(t, int32(4), int32(gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED))
 	require.Equal(t, int32(5), int32(gen.HostEventKind_HOST_EVENT_KIND_MAINTENANCE_SCHEDULED))
 	require.Equal(t, int32(6), int32(gen.HostEventKind_HOST_EVENT_KIND_MAINTENANCE_CANCELED))
+	require.Equal(t, int32(7), int32(gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED))
+	require.Equal(t, int32(8), int32(gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED))
+	require.Equal(t, int32(9), int32(gen.HostEventKind_HOST_EVENT_KIND_BLOCK))
 }
 
 func TestNodeManager_GetHostEvents_WireFormat_RoundTrip(t *testing.T) {
@@ -118,6 +138,84 @@ func TestNodeManager_GetHostEvents_WireFormat_LegacyRuntimeConfigBytesStillDecod
 	require.NoError(t, proto.Unmarshal(legacyBytes, req))
 	require.Equal(t, int64(100), req.ClientParamsBlockHeight)
 	require.Equal(t, int32(0), req.MaxWaitSeconds)
+}
+
+func TestNodeManager_GetHostEvents_WireFormat_OldPeerOmitsNewFields(t *testing.T) {
+	// A peer built before after_height and supported_kinds omits those fields.
+	// proto3 zero values encode the same way: the tags are absent, and decoding
+	// them yields zero.
+	req := &gen.GetHostEventsRequest{Cursor: 1, Generation: 2}
+	raw, err := proto.Marshal(req)
+	require.NoError(t, err)
+	require.NotContains(t, raw, []byte{0x28}) // field 5, varint
+
+	decoded := &gen.GetHostEventsRequest{}
+	require.NoError(t, proto.Unmarshal(raw, decoded))
+	require.Equal(t, uint64(0), decoded.GetAfterHeight())
+	require.Equal(t, uint64(1), decoded.GetCursor())
+
+	resp := &gen.GetHostEventsResponse{NextCursor: 9, Generation: 2}
+	raw, err = proto.Marshal(resp)
+	require.NoError(t, err)
+	require.NotContains(t, raw, []byte{0x42}) // field 8, length-delimited; packed enum is wire type 2
+
+	decodedResp := &gen.GetHostEventsResponse{}
+	require.NoError(t, proto.Unmarshal(raw, decodedResp))
+	require.Empty(t, decodedResp.GetSupportedKinds())
+	require.Equal(t, uint64(9), decodedResp.GetNextCursor())
+}
+
+func TestNodeManager_GetHostEvents_BlockPayload_HeaderRoundTrip(t *testing.T) {
+	at := time.UnixMilli(1_700_000_000_123).UTC()
+	hdr := cmttypes.Header{
+		Version: cmtversion.Consensus{Block: 11},
+		ChainID: "gonka-test",
+		Height:  42,
+		Time:    at,
+		LastBlockID: cmttypes.BlockID{
+			Hash: bytes.Repeat([]byte{1}, tmhash.Size),
+			PartSetHeader: cmttypes.PartSetHeader{
+				Total: 1,
+				Hash:  bytes.Repeat([]byte{2}, tmhash.Size),
+			},
+		},
+		LastCommitHash:     bytes.Repeat([]byte{3}, tmhash.Size),
+		DataHash:           bytes.Repeat([]byte{4}, tmhash.Size),
+		ValidatorsHash:     bytes.Repeat([]byte{5}, tmhash.Size),
+		NextValidatorsHash: bytes.Repeat([]byte{6}, tmhash.Size),
+		ConsensusHash:      bytes.Repeat([]byte{7}, tmhash.Size),
+		AppHash:            []byte{9, 9, 9},
+		LastResultsHash:    bytes.Repeat([]byte{8}, tmhash.Size),
+		EvidenceHash:       bytes.Repeat([]byte{10}, tmhash.Size),
+		ProposerAddress:    bytes.Repeat([]byte{11}, 20),
+	}
+	rawHeader, err := gogoproto.Marshal(hdr.ToProto())
+	require.NoError(t, err)
+
+	ev := &gen.HostEvent{
+		Seq:  1,
+		Kind: gen.HostEventKind_HOST_EVENT_KIND_BLOCK,
+		Block: &gen.BlockPayload{
+			Height:           hdr.Height,
+			Hash:             append([]byte(nil), hdr.Hash()...),
+			HeaderTimeUnixMs: hdr.Time.UnixMilli(),
+			EpochIndex:       3,
+			Header:           rawHeader,
+		},
+	}
+	raw, err := proto.Marshal(ev)
+	require.NoError(t, err)
+	decoded := &gen.HostEvent{}
+	require.NoError(t, proto.Unmarshal(raw, decoded))
+	require.True(t, proto.Equal(ev, decoded))
+
+	var gotPB cmtproto.Header
+	require.NoError(t, gogoproto.Unmarshal(decoded.GetBlock().GetHeader(), &gotPB))
+	got, err := cmttypes.HeaderFromProto(&gotPB)
+	require.NoError(t, err)
+	require.Equal(t, decoded.GetBlock().GetHash(), []byte(got.Hash()))
+	require.Equal(t, decoded.GetBlock().GetHeaderTimeUnixMs(), got.Time.UnixMilli())
+	require.Len(t, decoded.GetBlock().GetHash(), tmhash.Size)
 }
 
 func assertFieldNum(t *testing.T, md protoreflect.MessageDescriptor, name string, want protoreflect.FieldNumber) {

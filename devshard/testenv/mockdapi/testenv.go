@@ -21,6 +21,31 @@ type EscrowCreatedRequest struct {
 	Amount     string `json:"amount,omitempty"`
 }
 
+// StallRequest is POST /testenv/host-events/stall.
+type StallRequest struct {
+	Stalled bool `json:"stalled"`
+}
+
+// WarmKeyRequest is POST /testenv/host-events/warm-key.
+type WarmKeyRequest struct {
+	Granter       string `json:"granter"`
+	Grantee       string `json:"grantee"`
+	GrantID       uint64 `json:"grant_id"`
+	Height        int64  `json:"height"`
+	ExpiresAtUnix int64  `json:"expires_at_unix"`
+	End           string `json:"end"`
+}
+
+// BlockAppendRequest is POST /testenv/host-events/block. Hash and Header are
+// taken as given, including a header that does not hash to hash.
+type BlockAppendRequest struct {
+	Height           int64  `json:"height"`
+	Hash             []byte `json:"hash"`
+	HeaderTimeUnixMs int64  `json:"header_time_unix_ms"`
+	EpochIndex       uint64 `json:"epoch_index"`
+	Header           []byte `json:"header"`
+}
+
 func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(context.Context) error, versions *versionStore, hostEvents *hostEventRing) {
 	g.POST("/testenv/params", func(c echo.Context) error {
 		if admin == nil || admin.BaseURL() == "" {
@@ -122,6 +147,62 @@ func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(cont
 			ModelId:    req.ModelID,
 			Creator:    req.Creator,
 			Amount:     req.Amount,
+		})
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "seq": seq})
+	})
+	g.POST("/testenv/host-events/stall", func(c echo.Context) error {
+		if hostEvents == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mock-dapi host events not configured")
+		}
+		var req StallRequest
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		hostEvents.SetStalled(req.Stalled)
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "stalled": req.Stalled})
+	})
+	g.POST("/testenv/host-events/generation", func(c echo.Context) error {
+		if hostEvents == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mock-dapi host events not configured")
+		}
+		genID := hostEvents.BumpGeneration()
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "generation": genID})
+	})
+	g.POST("/testenv/host-events/warm-key", func(c echo.Context) error {
+		if hostEvents == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mock-dapi host events not configured")
+		}
+		var req WarmKeyRequest
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		seq := hostEvents.AppendWarmKey(&gen.WarmKeyPayload{
+			Granter:       req.Granter,
+			Grantee:       req.Grantee,
+			GrantId:       req.GrantID,
+			Height:        req.Height,
+			ExpiresAtUnix: req.ExpiresAtUnix,
+			End:           req.End,
+		})
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "seq": seq})
+	})
+	g.POST("/testenv/host-events/block", func(c echo.Context) error {
+		if hostEvents == nil {
+			return echo.NewHTTPError(http.StatusServiceUnavailable, "mock-dapi host events not configured")
+		}
+		var req BlockAppendRequest
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if req.Height <= 0 {
+			return echo.NewHTTPError(http.StatusBadRequest, "height is required")
+		}
+		seq := hostEvents.AppendBlock(&gen.BlockPayload{
+			Height:           req.Height,
+			Hash:             req.Hash,
+			HeaderTimeUnixMs: req.HeaderTimeUnixMs,
+			EpochIndex:       req.EpochIndex,
+			Header:           req.Header,
 		})
 		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "seq": seq})
 	})

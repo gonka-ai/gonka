@@ -20576,10 +20576,11 @@ func (x *fastReflection_DelegationParams) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_DevshardApprovedVersion        protoreflect.MessageDescriptor
-	fd_DevshardApprovedVersion_name   protoreflect.FieldDescriptor
-	fd_DevshardApprovedVersion_binary protoreflect.FieldDescriptor
-	fd_DevshardApprovedVersion_sha256 protoreflect.FieldDescriptor
+	md_DevshardApprovedVersion            protoreflect.MessageDescriptor
+	fd_DevshardApprovedVersion_name       protoreflect.FieldDescriptor
+	fd_DevshardApprovedVersion_binary     protoreflect.FieldDescriptor
+	fd_DevshardApprovedVersion_sha256     protoreflect.FieldDescriptor
+	fd_DevshardApprovedVersion_pass_count protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -20588,6 +20589,7 @@ func init() {
 	fd_DevshardApprovedVersion_name = md_DevshardApprovedVersion.Fields().ByName("name")
 	fd_DevshardApprovedVersion_binary = md_DevshardApprovedVersion.Fields().ByName("binary")
 	fd_DevshardApprovedVersion_sha256 = md_DevshardApprovedVersion.Fields().ByName("sha256")
+	fd_DevshardApprovedVersion_pass_count = md_DevshardApprovedVersion.Fields().ByName("pass_count")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardApprovedVersion)(nil)
@@ -20673,6 +20675,12 @@ func (x *fastReflection_DevshardApprovedVersion) Range(f func(protoreflect.Field
 			return
 		}
 	}
+	if x.PassCount != 0 {
+		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.PassCount))
+		if !f(fd_DevshardApprovedVersion_pass_count, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -20694,6 +20702,8 @@ func (x *fastReflection_DevshardApprovedVersion) Has(fd protoreflect.FieldDescri
 		return x.Binary != ""
 	case "inference.inference.DevshardApprovedVersion.sha256":
 		return x.Sha256 != ""
+	case "inference.inference.DevshardApprovedVersion.pass_count":
+		return x.PassCount != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardApprovedVersion"))
@@ -20716,6 +20726,8 @@ func (x *fastReflection_DevshardApprovedVersion) Clear(fd protoreflect.FieldDesc
 		x.Binary = ""
 	case "inference.inference.DevshardApprovedVersion.sha256":
 		x.Sha256 = ""
+	case "inference.inference.DevshardApprovedVersion.pass_count":
+		x.PassCount = 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardApprovedVersion"))
@@ -20741,6 +20753,9 @@ func (x *fastReflection_DevshardApprovedVersion) Get(descriptor protoreflect.Fie
 	case "inference.inference.DevshardApprovedVersion.sha256":
 		value := x.Sha256
 		return protoreflect.ValueOfString(value)
+	case "inference.inference.DevshardApprovedVersion.pass_count":
+		value := x.PassCount
+		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardApprovedVersion"))
@@ -20767,6 +20782,8 @@ func (x *fastReflection_DevshardApprovedVersion) Set(fd protoreflect.FieldDescri
 		x.Binary = value.Interface().(string)
 	case "inference.inference.DevshardApprovedVersion.sha256":
 		x.Sha256 = value.Interface().(string)
+	case "inference.inference.DevshardApprovedVersion.pass_count":
+		x.PassCount = (DevshardPassCount)(value.Enum())
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardApprovedVersion"))
@@ -20793,6 +20810,8 @@ func (x *fastReflection_DevshardApprovedVersion) Mutable(fd protoreflect.FieldDe
 		panic(fmt.Errorf("field binary of message inference.inference.DevshardApprovedVersion is not mutable"))
 	case "inference.inference.DevshardApprovedVersion.sha256":
 		panic(fmt.Errorf("field sha256 of message inference.inference.DevshardApprovedVersion is not mutable"))
+	case "inference.inference.DevshardApprovedVersion.pass_count":
+		panic(fmt.Errorf("field pass_count of message inference.inference.DevshardApprovedVersion is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardApprovedVersion"))
@@ -20812,6 +20831,8 @@ func (x *fastReflection_DevshardApprovedVersion) NewField(fd protoreflect.FieldD
 		return protoreflect.ValueOfString("")
 	case "inference.inference.DevshardApprovedVersion.sha256":
 		return protoreflect.ValueOfString("")
+	case "inference.inference.DevshardApprovedVersion.pass_count":
+		return protoreflect.ValueOfEnum(0)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardApprovedVersion"))
@@ -20893,6 +20914,9 @@ func (x *fastReflection_DevshardApprovedVersion) ProtoMethods() *protoiface.Meth
 		if l > 0 {
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.PassCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.PassCount))
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -20921,6 +20945,11 @@ func (x *fastReflection_DevshardApprovedVersion) ProtoMethods() *protoiface.Meth
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.PassCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PassCount))
+			i--
+			dAtA[i] = 0x20
 		}
 		if len(x.Sha256) > 0 {
 			i -= len(x.Sha256)
@@ -21088,6 +21117,493 @@ func (x *fastReflection_DevshardApprovedVersion) ProtoMethods() *protoiface.Meth
 				}
 				x.Sha256 = string(dAtA[iNdEx:postIndex])
 				iNdEx = postIndex
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PassCount", wireType)
+				}
+				x.PassCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PassCount |= DevshardPassCount(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_DevshardVersionPolicy            protoreflect.MessageDescriptor
+	fd_DevshardVersionPolicy_name       protoreflect.FieldDescriptor
+	fd_DevshardVersionPolicy_pass_count protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_inference_params_proto_init()
+	md_DevshardVersionPolicy = File_inference_inference_params_proto.Messages().ByName("DevshardVersionPolicy")
+	fd_DevshardVersionPolicy_name = md_DevshardVersionPolicy.Fields().ByName("name")
+	fd_DevshardVersionPolicy_pass_count = md_DevshardVersionPolicy.Fields().ByName("pass_count")
+}
+
+var _ protoreflect.Message = (*fastReflection_DevshardVersionPolicy)(nil)
+
+type fastReflection_DevshardVersionPolicy DevshardVersionPolicy
+
+func (x *DevshardVersionPolicy) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_DevshardVersionPolicy)(x)
+}
+
+func (x *DevshardVersionPolicy) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_inference_params_proto_msgTypes[25]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_DevshardVersionPolicy_messageType fastReflection_DevshardVersionPolicy_messageType
+var _ protoreflect.MessageType = fastReflection_DevshardVersionPolicy_messageType{}
+
+type fastReflection_DevshardVersionPolicy_messageType struct{}
+
+func (x fastReflection_DevshardVersionPolicy_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_DevshardVersionPolicy)(nil)
+}
+func (x fastReflection_DevshardVersionPolicy_messageType) New() protoreflect.Message {
+	return new(fastReflection_DevshardVersionPolicy)
+}
+func (x fastReflection_DevshardVersionPolicy_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_DevshardVersionPolicy
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_DevshardVersionPolicy) Descriptor() protoreflect.MessageDescriptor {
+	return md_DevshardVersionPolicy
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_DevshardVersionPolicy) Type() protoreflect.MessageType {
+	return _fastReflection_DevshardVersionPolicy_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_DevshardVersionPolicy) New() protoreflect.Message {
+	return new(fastReflection_DevshardVersionPolicy)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_DevshardVersionPolicy) Interface() protoreflect.ProtoMessage {
+	return (*DevshardVersionPolicy)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_DevshardVersionPolicy) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.Name != "" {
+		value := protoreflect.ValueOfString(x.Name)
+		if !f(fd_DevshardVersionPolicy_name, value) {
+			return
+		}
+	}
+	if x.PassCount != 0 {
+		value := protoreflect.ValueOfEnum((protoreflect.EnumNumber)(x.PassCount))
+		if !f(fd_DevshardVersionPolicy_pass_count, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_DevshardVersionPolicy) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.inference.DevshardVersionPolicy.name":
+		return x.Name != ""
+	case "inference.inference.DevshardVersionPolicy.pass_count":
+		return x.PassCount != 0
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardVersionPolicy"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardVersionPolicy does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardVersionPolicy) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.inference.DevshardVersionPolicy.name":
+		x.Name = ""
+	case "inference.inference.DevshardVersionPolicy.pass_count":
+		x.PassCount = 0
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardVersionPolicy"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardVersionPolicy does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_DevshardVersionPolicy) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.inference.DevshardVersionPolicy.name":
+		value := x.Name
+		return protoreflect.ValueOfString(value)
+	case "inference.inference.DevshardVersionPolicy.pass_count":
+		value := x.PassCount
+		return protoreflect.ValueOfEnum((protoreflect.EnumNumber)(value))
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardVersionPolicy"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardVersionPolicy does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardVersionPolicy) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.inference.DevshardVersionPolicy.name":
+		x.Name = value.Interface().(string)
+	case "inference.inference.DevshardVersionPolicy.pass_count":
+		x.PassCount = (DevshardPassCount)(value.Enum())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardVersionPolicy"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardVersionPolicy does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardVersionPolicy) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.DevshardVersionPolicy.name":
+		panic(fmt.Errorf("field name of message inference.inference.DevshardVersionPolicy is not mutable"))
+	case "inference.inference.DevshardVersionPolicy.pass_count":
+		panic(fmt.Errorf("field pass_count of message inference.inference.DevshardVersionPolicy is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardVersionPolicy"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardVersionPolicy does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_DevshardVersionPolicy) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.inference.DevshardVersionPolicy.name":
+		return protoreflect.ValueOfString("")
+	case "inference.inference.DevshardVersionPolicy.pass_count":
+		return protoreflect.ValueOfEnum(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardVersionPolicy"))
+		}
+		panic(fmt.Errorf("message inference.inference.DevshardVersionPolicy does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_DevshardVersionPolicy) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.inference.DevshardVersionPolicy", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_DevshardVersionPolicy) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_DevshardVersionPolicy) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_DevshardVersionPolicy) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_DevshardVersionPolicy) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*DevshardVersionPolicy)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		l = len(x.Name)
+		if l > 0 {
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.PassCount != 0 {
+			n += 1 + runtime.Sov(uint64(x.PassCount))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*DevshardVersionPolicy)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.PassCount != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PassCount))
+			i--
+			dAtA[i] = 0x10
+		}
+		if len(x.Name) > 0 {
+			i -= len(x.Name)
+			copy(dAtA[i:], x.Name)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.Name)))
+			i--
+			dAtA[i] = 0xa
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*DevshardVersionPolicy)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DevshardVersionPolicy: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DevshardVersionPolicy: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 2 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Name", wireType)
+				}
+				var stringLen uint64
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					stringLen |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				intStringLen := int(stringLen)
+				if intStringLen < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				postIndex := iNdEx + intStringLen
+				if postIndex < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if postIndex > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				x.Name = string(dAtA[iNdEx:postIndex])
+				iNdEx = postIndex
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PassCount", wireType)
+				}
+				x.PassCount = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PassCount |= DevshardPassCount(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -21240,6 +21756,7 @@ var (
 	fd_DevshardEscrowParams_validation_rate                      protoreflect.FieldDescriptor
 	fd_DevshardEscrowParams_vote_threshold_factor                protoreflect.FieldDescriptor
 	fd_DevshardEscrowParams_default_auto_seal_every_n_nonces     protoreflect.FieldDescriptor
+	fd_DevshardEscrowParams_apply_sampled_pass_count             protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -21263,6 +21780,7 @@ func init() {
 	fd_DevshardEscrowParams_validation_rate = md_DevshardEscrowParams.Fields().ByName("validation_rate")
 	fd_DevshardEscrowParams_vote_threshold_factor = md_DevshardEscrowParams.Fields().ByName("vote_threshold_factor")
 	fd_DevshardEscrowParams_default_auto_seal_every_n_nonces = md_DevshardEscrowParams.Fields().ByName("default_auto_seal_every_n_nonces")
+	fd_DevshardEscrowParams_apply_sampled_pass_count = md_DevshardEscrowParams.Fields().ByName("apply_sampled_pass_count")
 }
 
 var _ protoreflect.Message = (*fastReflection_DevshardEscrowParams)(nil)
@@ -21274,7 +21792,7 @@ func (x *DevshardEscrowParams) ProtoReflect() protoreflect.Message {
 }
 
 func (x *DevshardEscrowParams) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[25]
+	mi := &file_inference_inference_params_proto_msgTypes[26]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -21438,6 +21956,12 @@ func (x *fastReflection_DevshardEscrowParams) Range(f func(protoreflect.FieldDes
 			return
 		}
 	}
+	if x.ApplySampledPassCount != false {
+		value := protoreflect.ValueOfBool(x.ApplySampledPassCount)
+		if !f(fd_DevshardEscrowParams_apply_sampled_pass_count, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -21489,6 +22013,8 @@ func (x *fastReflection_DevshardEscrowParams) Has(fd protoreflect.FieldDescripto
 		return x.VoteThresholdFactor != uint32(0)
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		return x.DefaultAutoSealEveryNNonces != uint32(0)
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		return x.ApplySampledPassCount != false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21541,6 +22067,8 @@ func (x *fastReflection_DevshardEscrowParams) Clear(fd protoreflect.FieldDescrip
 		x.VoteThresholdFactor = uint32(0)
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		x.DefaultAutoSealEveryNNonces = uint32(0)
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		x.ApplySampledPassCount = false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21617,6 +22145,9 @@ func (x *fastReflection_DevshardEscrowParams) Get(descriptor protoreflect.FieldD
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		value := x.DefaultAutoSealEveryNNonces
 		return protoreflect.ValueOfUint32(value)
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		value := x.ApplySampledPassCount
+		return protoreflect.ValueOfBool(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21677,6 +22208,8 @@ func (x *fastReflection_DevshardEscrowParams) Set(fd protoreflect.FieldDescripto
 		x.VoteThresholdFactor = uint32(value.Uint())
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		x.DefaultAutoSealEveryNNonces = uint32(value.Uint())
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		x.ApplySampledPassCount = value.Bool()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21741,6 +22274,8 @@ func (x *fastReflection_DevshardEscrowParams) Mutable(fd protoreflect.FieldDescr
 		panic(fmt.Errorf("field vote_threshold_factor of message inference.inference.DevshardEscrowParams is not mutable"))
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		panic(fmt.Errorf("field default_auto_seal_every_n_nonces of message inference.inference.DevshardEscrowParams is not mutable"))
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		panic(fmt.Errorf("field apply_sampled_pass_count of message inference.inference.DevshardEscrowParams is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21792,6 +22327,8 @@ func (x *fastReflection_DevshardEscrowParams) NewField(fd protoreflect.FieldDesc
 		return protoreflect.ValueOfUint32(uint32(0))
 	case "inference.inference.DevshardEscrowParams.default_auto_seal_every_n_nonces":
 		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.inference.DevshardEscrowParams.apply_sampled_pass_count":
+		return protoreflect.ValueOfBool(false)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DevshardEscrowParams"))
@@ -21921,6 +22458,9 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 		if x.DefaultAutoSealEveryNNonces != 0 {
 			n += 2 + runtime.Sov(uint64(x.DefaultAutoSealEveryNNonces))
 		}
+		if x.ApplySampledPassCount {
+			n += 3
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -21949,6 +22489,18 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ApplySampledPassCount {
+			i--
+			if x.ApplySampledPassCount {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
+			}
+			i--
+			dAtA[i] = 0x1
+			i--
+			dAtA[i] = 0x98
 		}
 		if x.DefaultAutoSealEveryNNonces != 0 {
 			i = runtime.EncodeVarint(dAtA, i, uint64(x.DefaultAutoSealEveryNNonces))
@@ -22486,6 +23038,26 @@ func (x *fastReflection_DevshardEscrowParams) ProtoMethods() *protoiface.Methods
 						break
 					}
 				}
+			case 19:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ApplySampledPassCount", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.ApplySampledPassCount = bool(v != 0)
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -22646,7 +23218,7 @@ func (x *FeeParams) ProtoReflect() protoreflect.Message {
 }
 
 func (x *FeeParams) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[26]
+	mi := &file_inference_inference_params_proto_msgTypes[27]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23307,7 +23879,7 @@ func (x *PeriodBase) ProtoReflect() protoreflect.Message {
 }
 
 func (x *PeriodBase) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[27]
+	mi := &file_inference_inference_params_proto_msgTypes[28]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -23876,7 +24448,7 @@ func (x *FeeGroup) ProtoReflect() protoreflect.Message {
 }
 
 func (x *FeeGroup) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[28]
+	mi := &file_inference_inference_params_proto_msgTypes[29]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -24512,7 +25084,7 @@ func (x *MsgGasRule) ProtoReflect() protoreflect.Message {
 }
 
 func (x *MsgGasRule) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[29]
+	mi := &file_inference_inference_params_proto_msgTypes[30]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -25383,7 +25955,7 @@ func (x *StoredDeltaParams) ProtoReflect() protoreflect.Message {
 }
 
 func (x *StoredDeltaParams) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[30]
+	mi := &file_inference_inference_params_proto_msgTypes[31]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26051,7 +26623,7 @@ func (x *StoredBytesParams) ProtoReflect() protoreflect.Message {
 }
 
 func (x *StoredBytesParams) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[31]
+	mi := &file_inference_inference_params_proto_msgTypes[32]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26519,7 +27091,7 @@ func (x *RepeatedLenParams) ProtoReflect() protoreflect.Message {
 }
 
 func (x *RepeatedLenParams) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_params_proto_msgTypes[32]
+	mi := &file_inference_inference_params_proto_msgTypes[33]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -26977,6 +27549,69 @@ const (
 	// Verify that runtime/protoimpl is sufficiently up-to-date.
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
+
+// DevshardPassCount selects how settlement host stats become SPRT passes.
+// Proto3 omitempty: omitted JSON is UNSPECIFIED (0). Governance JSON also
+// accepts case-insensitive "derived" / "sampled"; any other value is
+// UNSPECIFIED (does not fail the tx).
+type DevshardPassCount int32
+
+const (
+	// Omitted JSON, or any value that is not SAMPLED/DERIVED. Keep the stored
+	// policy; SAMPLED if the name is new (Put). An already-approved name with
+	// no policy row yet stays DERIVED. Unstamped genesis / upgrade names still
+	// record DERIVED.
+	DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED DevshardPassCount = 0
+	// HostStats.validated, capped by 2 * finished * validation_rate_bps / 10000 + 2.
+	// Default for a new Put name when pass_count is omitted or mistyped.
+	// Older payloads that omit validated/finished still settle (0 passes).
+	DevshardPassCount_DEVSHARD_PASS_COUNT_SAMPLED DevshardPassCount = 1
+	// assigned - missed - invalid (the 0.2.16 formula). Older binaries; the
+	// v0.2.18 upgrade stamps existing names. Live names without a recorded
+	// policy score as DERIVED. apply_sampled_pass_count is ignored.
+	DevshardPassCount_DEVSHARD_PASS_COUNT_DERIVED DevshardPassCount = 2
+)
+
+// Enum value maps for DevshardPassCount.
+var (
+	DevshardPassCount_name = map[int32]string{
+		0: "DEVSHARD_PASS_COUNT_UNSPECIFIED",
+		1: "DEVSHARD_PASS_COUNT_SAMPLED",
+		2: "DEVSHARD_PASS_COUNT_DERIVED",
+	}
+	DevshardPassCount_value = map[string]int32{
+		"DEVSHARD_PASS_COUNT_UNSPECIFIED": 0,
+		"DEVSHARD_PASS_COUNT_SAMPLED":     1,
+		"DEVSHARD_PASS_COUNT_DERIVED":     2,
+	}
+)
+
+func (x DevshardPassCount) Enum() *DevshardPassCount {
+	p := new(DevshardPassCount)
+	*p = x
+	return p
+}
+
+func (x DevshardPassCount) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DevshardPassCount) Descriptor() protoreflect.EnumDescriptor {
+	return file_inference_inference_params_proto_enumTypes[0].Descriptor()
+}
+
+func (DevshardPassCount) Type() protoreflect.EnumType {
+	return &file_inference_inference_params_proto_enumTypes[0]
+}
+
+func (x DevshardPassCount) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DevshardPassCount.Descriptor instead.
+func (DevshardPassCount) EnumDescriptor() ([]byte, []int) {
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{0}
+}
 
 // Params defines the parameters for the module.
 type Params struct {
@@ -29212,6 +29847,10 @@ type DevshardApprovedVersion struct {
 	Binary string `protobuf:"bytes,2,opt,name=binary,proto3" json:"binary,omitempty"`
 	// Hash of binary to check if update is already installed
 	Sha256 string `protobuf:"bytes,3,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	// How settlement host stats become SPRT passes. Omitted JSON is UNSPECIFIED:
+	// keep the stored policy, DERIVED for an already-approved name with no
+	// policy row, or SAMPLED for a new name. An explicit value overwrites.
+	PassCount DevshardPassCount `protobuf:"varint,4,opt,name=pass_count,json=passCount,proto3,enum=inference.inference.DevshardPassCount" json:"pass_count,omitempty"`
 }
 
 func (x *DevshardApprovedVersion) Reset() {
@@ -29255,6 +29894,61 @@ func (x *DevshardApprovedVersion) GetSha256() string {
 	return ""
 }
 
+func (x *DevshardApprovedVersion) GetPassCount() DevshardPassCount {
+	if x != nil {
+		return x.PassCount
+	}
+	return DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED
+}
+
+// DevshardVersionPolicy is the recorded pass_count for a version name.
+// Survives MsgDeleteDevshardApprovedVersion so a later re-approval with
+// omitted pass_count keeps the same scoring. An explicit pass_count on
+// Put / genesis JSON overwrites it.
+type DevshardVersionPolicy struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// Recorded pass_count for this version name. Must be SAMPLED or DERIVED.
+	PassCount DevshardPassCount `protobuf:"varint,2,opt,name=pass_count,json=passCount,proto3,enum=inference.inference.DevshardPassCount" json:"pass_count,omitempty"`
+}
+
+func (x *DevshardVersionPolicy) Reset() {
+	*x = DevshardVersionPolicy{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_inference_params_proto_msgTypes[25]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DevshardVersionPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DevshardVersionPolicy) ProtoMessage() {}
+
+// Deprecated: Use DevshardVersionPolicy.ProtoReflect.Descriptor instead.
+func (*DevshardVersionPolicy) Descriptor() ([]byte, []int) {
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *DevshardVersionPolicy) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *DevshardVersionPolicy) GetPassCount() DevshardPassCount {
+	if x != nil {
+		return x.PassCount
+	}
+	return DevshardPassCount_DEVSHARD_PASS_COUNT_UNSPECIFIED
+}
+
 // DevshardEscrowParams defines governance-controlled parameters for devshard escrow creation and settlement.
 type DevshardEscrowParams struct {
 	state         protoimpl.MessageState
@@ -29284,12 +29978,19 @@ type DevshardEscrowParams struct {
 	ValidationRate                   uint32                     `protobuf:"varint,16,opt,name=validation_rate,json=validationRate,proto3" json:"validation_rate,omitempty"`
 	VoteThresholdFactor              uint32                     `protobuf:"varint,17,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"` // percent, e.g. 50 == 50%
 	DefaultAutoSealEveryNNonces      uint32                     `protobuf:"varint,18,opt,name=default_auto_seal_every_n_nonces,json=defaultAutoSealEveryNNonces,proto3" json:"default_auto_seal_every_n_nonces,omitempty"`
+	// Chain-wide, SAMPLED names only. DERIVED names always credit
+	// assigned-missed-invalid and never log sampled. When false (default),
+	// SAMPLED names keep derived for SPRT punishment and log sampled
+	// (warn if derived exceeds the SPRT cap). When true, SAMPLED names apply
+	// sampled for SPRT. Per-name pass_count still selects settlement
+	// verification.
+	ApplySampledPassCount bool `protobuf:"varint,19,opt,name=apply_sampled_pass_count,json=applySampledPassCount,proto3" json:"apply_sampled_pass_count,omitempty"`
 }
 
 func (x *DevshardEscrowParams) Reset() {
 	*x = DevshardEscrowParams{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[25]
+		mi := &file_inference_inference_params_proto_msgTypes[26]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29303,7 +30004,7 @@ func (*DevshardEscrowParams) ProtoMessage() {}
 
 // Deprecated: Use DevshardEscrowParams.ProtoReflect.Descriptor instead.
 func (*DevshardEscrowParams) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{25}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *DevshardEscrowParams) GetMinAmount() uint64 {
@@ -29433,6 +30134,13 @@ func (x *DevshardEscrowParams) GetDefaultAutoSealEveryNNonces() uint32 {
 	return 0
 }
 
+func (x *DevshardEscrowParams) GetApplySampledPassCount() bool {
+	if x != nil {
+		return x.ApplySampledPassCount
+	}
+	return false
+}
+
 // FeeParams defines governance-controlled parameters for consensus-level
 // transaction fee enforcement. Adjustable via MsgUpdateParams governance proposal.
 type FeeParams struct {
@@ -29457,7 +30165,7 @@ type FeeParams struct {
 func (x *FeeParams) Reset() {
 	*x = FeeParams{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[26]
+		mi := &file_inference_inference_params_proto_msgTypes[27]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29471,7 +30179,7 @@ func (*FeeParams) ProtoMessage() {}
 
 // Deprecated: Use FeeParams.ProtoReflect.Descriptor instead.
 func (*FeeParams) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{26}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *FeeParams) GetMinGasPriceNgonka() uint64 {
@@ -29524,7 +30232,7 @@ type PeriodBase struct {
 func (x *PeriodBase) Reset() {
 	*x = PeriodBase{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[27]
+		mi := &file_inference_inference_params_proto_msgTypes[28]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29538,7 +30246,7 @@ func (*PeriodBase) ProtoMessage() {}
 
 // Deprecated: Use PeriodBase.ProtoReflect.Descriptor instead.
 func (*PeriodBase) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{27}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *PeriodBase) GetGas() uint64 {
@@ -29578,7 +30286,7 @@ type FeeGroup struct {
 func (x *FeeGroup) Reset() {
 	*x = FeeGroup{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[28]
+		mi := &file_inference_inference_params_proto_msgTypes[29]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29592,7 +30300,7 @@ func (*FeeGroup) ProtoMessage() {}
 
 // Deprecated: Use FeeGroup.ProtoReflect.Descriptor instead.
 func (*FeeGroup) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{28}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *FeeGroup) GetName() string {
@@ -29642,7 +30350,7 @@ type MsgGasRule struct {
 func (x *MsgGasRule) Reset() {
 	*x = MsgGasRule{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[29]
+		mi := &file_inference_inference_params_proto_msgTypes[30]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29656,7 +30364,7 @@ func (*MsgGasRule) ProtoMessage() {}
 
 // Deprecated: Use MsgGasRule.ProtoReflect.Descriptor instead.
 func (*MsgGasRule) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{29}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *MsgGasRule) GetTypeUrl() string {
@@ -29738,7 +30446,7 @@ type StoredDeltaParams struct {
 func (x *StoredDeltaParams) Reset() {
 	*x = StoredDeltaParams{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[30]
+		mi := &file_inference_inference_params_proto_msgTypes[31]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29752,7 +30460,7 @@ func (*StoredDeltaParams) ProtoMessage() {}
 
 // Deprecated: Use StoredDeltaParams.ProtoReflect.Descriptor instead.
 func (*StoredDeltaParams) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{30}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *StoredDeltaParams) GetGasPerUnit() uint64 {
@@ -29805,7 +30513,7 @@ type StoredBytesParams struct {
 func (x *StoredBytesParams) Reset() {
 	*x = StoredBytesParams{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[31]
+		mi := &file_inference_inference_params_proto_msgTypes[32]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29819,7 +30527,7 @@ func (*StoredBytesParams) ProtoMessage() {}
 
 // Deprecated: Use StoredBytesParams.ProtoReflect.Descriptor instead.
 func (*StoredBytesParams) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{31}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *StoredBytesParams) GetGasPerUnit() uint64 {
@@ -29848,7 +30556,7 @@ type RepeatedLenParams struct {
 func (x *RepeatedLenParams) Reset() {
 	*x = RepeatedLenParams{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_params_proto_msgTypes[32]
+		mi := &file_inference_inference_params_proto_msgTypes[33]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -29862,7 +30570,7 @@ func (*RepeatedLenParams) ProtoMessage() {}
 
 // Deprecated: Use RepeatedLenParams.ProtoReflect.Descriptor instead.
 func (*RepeatedLenParams) Descriptor() ([]byte, []int) {
-	return file_inference_inference_params_proto_rawDescGZIP(), []int{32}
+	return file_inference_inference_params_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *RepeatedLenParams) GetGasPerUnit() uint64 {
@@ -30707,169 +31415,192 @@ var file_inference_inference_params_proto_rawDesc = []byte{
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x1d, 0x6d,
 	0x61, 0x78, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x56, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x50, 0x6f, 0x77,
 	0x65, 0x72, 0x50, 0x65, 0x72, 0x63, 0x65, 0x6e, 0x74, 0x61, 0x67, 0x65, 0x3a, 0x04, 0xe8, 0xa0,
-	0x1f, 0x01, 0x22, 0x63, 0x0a, 0x17, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70,
-	0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x12, 0x0a,
-	0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d,
-	0x65, 0x12, 0x16, 0x0a, 0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x68, 0x61,
-	0x32, 0x35, 0x36, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x68, 0x61, 0x32, 0x35,
-	0x36, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xad, 0x07, 0x0a, 0x14, 0x44, 0x65, 0x76, 0x73,
-	0x68, 0x61, 0x72, 0x64, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
-	0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x69, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x69, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12,
-	0x1d, 0x0a, 0x0a, 0x6d, 0x61, 0x78, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x61, 0x78, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x31,
-	0x0a, 0x15, 0x6d, 0x61, 0x78, 0x5f, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x5f, 0x70, 0x65,
-	0x72, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x12, 0x6d,
-	0x61, 0x78, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x50, 0x65, 0x72, 0x45, 0x70, 0x6f, 0x63,
-	0x68, 0x12, 0x1d, 0x0a, 0x0a, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x73, 0x69, 0x7a, 0x65, 0x18,
-	0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x09, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x53, 0x69, 0x7a, 0x65,
-	0x12, 0x3a, 0x0a, 0x19, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x5f, 0x63, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x18, 0x05, 0x20,
-	0x03, 0x28, 0x09, 0x52, 0x17, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x43, 0x72, 0x65, 0x61,
-	0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x12, 0x1f, 0x0a, 0x0b,
-	0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x06, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0a, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x50, 0x72, 0x69, 0x63, 0x65, 0x12, 0x5d, 0x0a,
-	0x11, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x5f, 0x76, 0x65, 0x72, 0x73, 0x69, 0x6f,
-	0x6e, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44,
-	0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56,
-	0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x42, 0x02, 0x18, 0x01, 0x52, 0x10, 0x61, 0x70, 0x70, 0x72,
-	0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x1b, 0x0a, 0x09,
-	0x6d, 0x61, 0x78, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x08, 0x20, 0x01, 0x28, 0x0d, 0x52,
-	0x08, 0x6d, 0x61, 0x78, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x3a, 0x0a, 0x19, 0x64, 0x65, 0x76,
-	0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x5f, 0x65,
-	0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x08, 0x52, 0x17, 0x64, 0x65,
-	0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73, 0x45, 0x6e,
-	0x61, 0x62, 0x6c, 0x65, 0x64, 0x12, 0x4c, 0x0a, 0x23, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74,
-	0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x61, 0x6c, 0x5f,
-	0x67, 0x72, 0x61, 0x63, 0x65, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x0a, 0x20, 0x01,
-	0x28, 0x0d, 0x52, 0x1f, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x53, 0x65, 0x61, 0x6c, 0x47, 0x72, 0x61, 0x63, 0x65, 0x4e, 0x6f, 0x6e,
-	0x63, 0x65, 0x73, 0x12, 0x4e, 0x0a, 0x24, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x61, 0x6c, 0x5f, 0x67, 0x72,
-	0x61, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x63, 0x6f, 0x6e, 0x64, 0x73, 0x18, 0x0b, 0x20, 0x01, 0x28,
-	0x0d, 0x52, 0x20, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x53, 0x65, 0x61, 0x6c, 0x47, 0x72, 0x61, 0x63, 0x65, 0x53, 0x65, 0x63, 0x6f,
-	0x6e, 0x64, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x5f, 0x64, 0x65,
-	0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x66, 0x65, 0x65, 0x18, 0x0c, 0x20, 0x01, 0x28, 0x04,
-	0x52, 0x11, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64,
-	0x46, 0x65, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x66, 0x65, 0x65, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x6e,
-	0x6f, 0x6e, 0x63, 0x65, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x66, 0x65, 0x65, 0x50,
-	0x65, 0x72, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x27, 0x0a, 0x0f, 0x72, 0x65, 0x66, 0x75, 0x73,
-	0x61, 0x6c, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x18, 0x0e, 0x20, 0x01, 0x28, 0x03,
-	0x52, 0x0e, 0x72, 0x65, 0x66, 0x75, 0x73, 0x61, 0x6c, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74,
-	0x12, 0x2b, 0x0a, 0x11, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x74, 0x69,
-	0x6d, 0x65, 0x6f, 0x75, 0x74, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x65, 0x78, 0x65,
-	0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x12, 0x27, 0x0a,
-	0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x72, 0x61, 0x74, 0x65,
-	0x18, 0x10, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x52, 0x61, 0x74, 0x65, 0x12, 0x32, 0x0a, 0x15, 0x76, 0x6f, 0x74, 0x65, 0x5f, 0x74,
-	0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x5f, 0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x18,
-	0x11, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x13, 0x76, 0x6f, 0x74, 0x65, 0x54, 0x68, 0x72, 0x65, 0x73,
-	0x68, 0x6f, 0x6c, 0x64, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x45, 0x0a, 0x20, 0x64, 0x65,
-	0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x61, 0x75, 0x74, 0x6f, 0x5f, 0x73, 0x65, 0x61, 0x6c, 0x5f,
-	0x65, 0x76, 0x65, 0x72, 0x79, 0x5f, 0x6e, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x12,
-	0x20, 0x01, 0x28, 0x0d, 0x52, 0x1b, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x41, 0x75, 0x74,
-	0x6f, 0x53, 0x65, 0x61, 0x6c, 0x45, 0x76, 0x65, 0x72, 0x79, 0x4e, 0x4e, 0x6f, 0x6e, 0x63, 0x65,
-	0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x82, 0x02, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x50,
-	0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x2f, 0x0a, 0x14, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73,
-	0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x5f, 0x6e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x11, 0x6d, 0x69, 0x6e, 0x47, 0x61, 0x73, 0x50, 0x72, 0x69, 0x63, 0x65,
-	0x4e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x12, 0x2e, 0x0a, 0x13, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x76,
-	0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x18, 0x02, 0x20,
-	0x01, 0x28, 0x04, 0x52, 0x11, 0x62, 0x61, 0x73, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x47, 0x61, 0x73, 0x12, 0x29, 0x0a, 0x11, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x65,
-	0x72, 0x5f, 0x70, 0x6f, 0x63, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28,
-	0x04, 0x52, 0x0e, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x50, 0x6f, 0x63, 0x43, 0x6f, 0x75, 0x6e,
-	0x74, 0x12, 0x2c, 0x0a, 0x12, 0x65, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x5f, 0x66, 0x65, 0x65,
-	0x5f, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x09, 0x52, 0x10, 0x65,
-	0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x46, 0x65, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x12,
-	0x35, 0x0a, 0x06, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32,
-	0x1d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x46, 0x65, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x52, 0x06,
-	0x67, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x6a, 0x0a, 0x0a,
-	0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x42, 0x61, 0x73, 0x65, 0x12, 0x10, 0x0a, 0x03, 0x67, 0x61,
-	0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x03, 0x67, 0x61, 0x73, 0x12, 0x1f, 0x0a, 0x0b,
-	0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28,
-	0x09, 0x52, 0x0a, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x54, 0x79, 0x70, 0x65, 0x12, 0x23, 0x0a,
-	0x0d, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x5f, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x18, 0x03,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x0c, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x4c, 0x65, 0x6e, 0x67,
-	0x74, 0x68, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xb2, 0x01, 0x0a, 0x08, 0x46, 0x65, 0x65,
-	0x47, 0x72, 0x6f, 0x75, 0x70, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20,
-	0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x6d, 0x69, 0x6e,
-	0x5f, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04,
-	0x52, 0x0b, 0x6d, 0x69, 0x6e, 0x47, 0x61, 0x73, 0x50, 0x72, 0x69, 0x63, 0x65, 0x12, 0x33, 0x0a,
-	0x04, 0x62, 0x61, 0x73, 0x65, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e,
-	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x42, 0x61, 0x73, 0x65, 0x52, 0x04, 0x62, 0x61,
-	0x73, 0x65, 0x12, 0x33, 0x0a, 0x04, 0x6d, 0x73, 0x67, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b,
-	0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d, 0x73, 0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c,
-	0x65, 0x52, 0x04, 0x6d, 0x73, 0x67, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xc6, 0x03,
-	0x0a, 0x0a, 0x4d, 0x73, 0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65, 0x12, 0x19, 0x0a, 0x08,
-	0x74, 0x79, 0x70, 0x65, 0x5f, 0x75, 0x72, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
-	0x74, 0x79, 0x70, 0x65, 0x55, 0x72, 0x6c, 0x12, 0x33, 0x0a, 0x04, 0x62, 0x61, 0x73, 0x65, 0x18,
-	0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
-	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x65, 0x72, 0x69,
-	0x6f, 0x64, 0x42, 0x61, 0x73, 0x65, 0x52, 0x04, 0x62, 0x61, 0x73, 0x65, 0x12, 0x72, 0x0a, 0x0c,
-	0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x5f, 0x64, 0x65, 0x6c, 0x74, 0x61, 0x18, 0x03, 0x20, 0x01,
-	0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44,
-	0x65, 0x6c, 0x74, 0x61, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x25, 0xb2, 0xe7, 0xb0, 0x2a,
-	0x20, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x4d, 0x73, 0x67, 0x47, 0x61,
-	0x73, 0x52, 0x75, 0x6c, 0x65, 0x2f, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44, 0x65, 0x6c, 0x74,
-	0x61, 0x48, 0x00, 0x52, 0x0b, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44, 0x65, 0x6c, 0x74, 0x61,
-	0x12, 0x72, 0x0a, 0x0c, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x74, 0x65, 0x73,
-	0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x74, 0x6f,
-	0x72, 0x65, 0x64, 0x42, 0x79, 0x74, 0x65, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x25,
-	0xb2, 0xe7, 0xb0, 0x2a, 0x20, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x4d,
-	0x73, 0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65, 0x2f, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64,
-	0x42, 0x79, 0x74, 0x65, 0x73, 0x48, 0x00, 0x52, 0x0b, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x42,
-	0x79, 0x74, 0x65, 0x73, 0x12, 0x72, 0x0a, 0x0c, 0x72, 0x65, 0x70, 0x65, 0x61, 0x74, 0x65, 0x64,
-	0x5f, 0x6c, 0x65, 0x6e, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66,
+	0x1f, 0x01, 0x22, 0xaa, 0x01, 0x0a, 0x17, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41,
+	0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x12, 0x12,
+	0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61,
+	0x6d, 0x65, 0x12, 0x16, 0x0a, 0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x06, 0x62, 0x69, 0x6e, 0x61, 0x72, 0x79, 0x12, 0x16, 0x0a, 0x06, 0x73, 0x68,
+	0x61, 0x32, 0x35, 0x36, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x73, 0x68, 0x61, 0x32,
+	0x35, 0x36, 0x12, 0x45, 0x0a, 0x0a, 0x70, 0x61, 0x73, 0x73, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74,
+	0x18, 0x04, 0x20, 0x01, 0x28, 0x0e, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x76,
+	0x73, 0x68, 0x61, 0x72, 0x64, 0x50, 0x61, 0x73, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x09,
+	0x70, 0x61, 0x73, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22,
+	0x78, 0x0a, 0x15, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69,
+	0x6f, 0x6e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x12, 0x45, 0x0a, 0x0a,
+	0x70, 0x61, 0x73, 0x73, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0e,
+	0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x50,
+	0x61, 0x73, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x52, 0x09, 0x70, 0x61, 0x73, 0x73, 0x43, 0x6f,
+	0x75, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xe6, 0x07, 0x0a, 0x14, 0x44, 0x65,
+	0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x50, 0x61, 0x72, 0x61,
+	0x6d, 0x73, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x69, 0x6e, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x69, 0x6e, 0x41, 0x6d, 0x6f, 0x75, 0x6e,
+	0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x6d, 0x61, 0x78, 0x5f, 0x61, 0x6d, 0x6f, 0x75, 0x6e, 0x74, 0x18,
+	0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x6d, 0x61, 0x78, 0x41, 0x6d, 0x6f, 0x75, 0x6e, 0x74,
+	0x12, 0x31, 0x0a, 0x15, 0x6d, 0x61, 0x78, 0x5f, 0x65, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x5f,
+	0x70, 0x65, 0x72, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52,
+	0x12, 0x6d, 0x61, 0x78, 0x45, 0x73, 0x63, 0x72, 0x6f, 0x77, 0x73, 0x50, 0x65, 0x72, 0x45, 0x70,
+	0x6f, 0x63, 0x68, 0x12, 0x1d, 0x0a, 0x0a, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x5f, 0x73, 0x69, 0x7a,
+	0x65, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x09, 0x67, 0x72, 0x6f, 0x75, 0x70, 0x53, 0x69,
+	0x7a, 0x65, 0x12, 0x3a, 0x0a, 0x19, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x5f, 0x63, 0x72,
+	0x65, 0x61, 0x74, 0x6f, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x18,
+	0x05, 0x20, 0x03, 0x28, 0x09, 0x52, 0x17, 0x61, 0x6c, 0x6c, 0x6f, 0x77, 0x65, 0x64, 0x43, 0x72,
+	0x65, 0x61, 0x74, 0x6f, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x65, 0x73, 0x12, 0x1f,
+	0x0a, 0x0b, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x5f, 0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x06, 0x20,
+	0x01, 0x28, 0x04, 0x52, 0x0a, 0x74, 0x6f, 0x6b, 0x65, 0x6e, 0x50, 0x72, 0x69, 0x63, 0x65, 0x12,
+	0x5d, 0x0a, 0x11, 0x61, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x5f, 0x76, 0x65, 0x72, 0x73,
+	0x69, 0x6f, 0x6e, 0x73, 0x18, 0x07, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x2c, 0x2e, 0x69, 0x6e, 0x66,
 	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x52, 0x65, 0x70, 0x65, 0x61, 0x74, 0x65, 0x64, 0x4c, 0x65, 0x6e, 0x50, 0x61, 0x72, 0x61,
-	0x6d, 0x73, 0x42, 0x25, 0xb2, 0xe7, 0xb0, 0x2a, 0x20, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x2f, 0x4d, 0x73, 0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65, 0x2f, 0x52, 0x65,
-	0x70, 0x65, 0x61, 0x74, 0x65, 0x64, 0x4c, 0x65, 0x6e, 0x48, 0x00, 0x52, 0x0b, 0x72, 0x65, 0x70,
-	0x65, 0x61, 0x74, 0x65, 0x64, 0x4c, 0x65, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0x06,
-	0x0a, 0x04, 0x66, 0x75, 0x6e, 0x63, 0x22, 0xb0, 0x01, 0x0a, 0x11, 0x53, 0x74, 0x6f, 0x72, 0x65,
-	0x64, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x20, 0x0a, 0x0c,
-	0x67, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x01, 0x20, 0x01,
-	0x28, 0x04, 0x52, 0x0a, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x55, 0x6e, 0x69, 0x74, 0x12, 0x14,
-	0x0a, 0x05, 0x69, 0x74, 0x65, 0x6d, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69,
-	0x74, 0x65, 0x6d, 0x73, 0x12, 0x1f, 0x0a, 0x0b, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x5f, 0x66, 0x69,
-	0x65, 0x6c, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x76, 0x61, 0x6c, 0x75, 0x65,
-	0x46, 0x69, 0x65, 0x6c, 0x64, 0x12, 0x19, 0x0a, 0x08, 0x69, 0x64, 0x5f, 0x66, 0x69, 0x65, 0x6c,
-	0x64, 0x18, 0x04, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x69, 0x64, 0x46, 0x69, 0x65, 0x6c, 0x64,
-	0x12, 0x21, 0x0a, 0x0c, 0x73, 0x63, 0x6f, 0x70, 0x65, 0x5f, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x73,
-	0x18, 0x05, 0x20, 0x03, 0x28, 0x09, 0x52, 0x0b, 0x73, 0x63, 0x6f, 0x70, 0x65, 0x46, 0x69, 0x65,
-	0x6c, 0x64, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x4f, 0x0a, 0x11, 0x53, 0x74, 0x6f,
-	0x72, 0x65, 0x64, 0x42, 0x79, 0x74, 0x65, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x20,
-	0x0a, 0x0c, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x01,
-	0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x55, 0x6e, 0x69, 0x74,
-	0x12, 0x12, 0x0a, 0x04, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04,
-	0x75, 0x6e, 0x69, 0x74, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x51, 0x0a, 0x11, 0x52, 0x65,
-	0x70, 0x65, 0x61, 0x74, 0x65, 0x64, 0x4c, 0x65, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12,
-	0x20, 0x0a, 0x0c, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x55, 0x6e, 0x69,
-	0x74, 0x12, 0x14, 0x0a, 0x05, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x05, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0xb9, 0x01,
-	0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d,
-	0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73,
-	0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02,
-	0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61,
-	0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a,
-	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f,
-	0x33,
+	0x2e, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x41, 0x70, 0x70, 0x72, 0x6f, 0x76, 0x65,
+	0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x42, 0x02, 0x18, 0x01, 0x52, 0x10, 0x61, 0x70,
+	0x70, 0x72, 0x6f, 0x76, 0x65, 0x64, 0x56, 0x65, 0x72, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x1b,
+	0x0a, 0x09, 0x6d, 0x61, 0x78, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x08, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x08, 0x6d, 0x61, 0x78, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x3a, 0x0a, 0x19, 0x64,
+	0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x72, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73,
+	0x5f, 0x65, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x18, 0x09, 0x20, 0x01, 0x28, 0x08, 0x52, 0x17,
+	0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x73,
+	0x45, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x12, 0x4c, 0x0a, 0x23, 0x64, 0x65, 0x66, 0x61, 0x75,
+	0x6c, 0x74, 0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x61,
+	0x6c, 0x5f, 0x67, 0x72, 0x61, 0x63, 0x65, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73, 0x18, 0x0a,
+	0x20, 0x01, 0x28, 0x0d, 0x52, 0x1f, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x49, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x65, 0x61, 0x6c, 0x47, 0x72, 0x61, 0x63, 0x65, 0x4e,
+	0x6f, 0x6e, 0x63, 0x65, 0x73, 0x12, 0x4e, 0x0a, 0x24, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74,
+	0x5f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x61, 0x6c, 0x5f,
+	0x67, 0x72, 0x61, 0x63, 0x65, 0x5f, 0x73, 0x65, 0x63, 0x6f, 0x6e, 0x64, 0x73, 0x18, 0x0b, 0x20,
+	0x01, 0x28, 0x0d, 0x52, 0x20, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x53, 0x65, 0x61, 0x6c, 0x47, 0x72, 0x61, 0x63, 0x65, 0x53, 0x65,
+	0x63, 0x6f, 0x6e, 0x64, 0x73, 0x12, 0x2e, 0x0a, 0x13, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x5f,
+	0x64, 0x65, 0x76, 0x73, 0x68, 0x61, 0x72, 0x64, 0x5f, 0x66, 0x65, 0x65, 0x18, 0x0c, 0x20, 0x01,
+	0x28, 0x04, 0x52, 0x11, 0x63, 0x72, 0x65, 0x61, 0x74, 0x65, 0x44, 0x65, 0x76, 0x73, 0x68, 0x61,
+	0x72, 0x64, 0x46, 0x65, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x66, 0x65, 0x65, 0x5f, 0x70, 0x65, 0x72,
+	0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x18, 0x0d, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x66, 0x65,
+	0x65, 0x50, 0x65, 0x72, 0x4e, 0x6f, 0x6e, 0x63, 0x65, 0x12, 0x27, 0x0a, 0x0f, 0x72, 0x65, 0x66,
+	0x75, 0x73, 0x61, 0x6c, 0x5f, 0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x18, 0x0e, 0x20, 0x01,
+	0x28, 0x03, 0x52, 0x0e, 0x72, 0x65, 0x66, 0x75, 0x73, 0x61, 0x6c, 0x54, 0x69, 0x6d, 0x65, 0x6f,
+	0x75, 0x74, 0x12, 0x2b, 0x0a, 0x11, 0x65, 0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x5f,
+	0x74, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x18, 0x0f, 0x20, 0x01, 0x28, 0x03, 0x52, 0x10, 0x65,
+	0x78, 0x65, 0x63, 0x75, 0x74, 0x69, 0x6f, 0x6e, 0x54, 0x69, 0x6d, 0x65, 0x6f, 0x75, 0x74, 0x12,
+	0x27, 0x0a, 0x0f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x72, 0x61,
+	0x74, 0x65, 0x18, 0x10, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x52, 0x61, 0x74, 0x65, 0x12, 0x32, 0x0a, 0x15, 0x76, 0x6f, 0x74, 0x65,
+	0x5f, 0x74, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x5f, 0x66, 0x61, 0x63, 0x74, 0x6f,
+	0x72, 0x18, 0x11, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x13, 0x76, 0x6f, 0x74, 0x65, 0x54, 0x68, 0x72,
+	0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x45, 0x0a, 0x20,
+	0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x5f, 0x61, 0x75, 0x74, 0x6f, 0x5f, 0x73, 0x65, 0x61,
+	0x6c, 0x5f, 0x65, 0x76, 0x65, 0x72, 0x79, 0x5f, 0x6e, 0x5f, 0x6e, 0x6f, 0x6e, 0x63, 0x65, 0x73,
+	0x18, 0x12, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x1b, 0x64, 0x65, 0x66, 0x61, 0x75, 0x6c, 0x74, 0x41,
+	0x75, 0x74, 0x6f, 0x53, 0x65, 0x61, 0x6c, 0x45, 0x76, 0x65, 0x72, 0x79, 0x4e, 0x4e, 0x6f, 0x6e,
+	0x63, 0x65, 0x73, 0x12, 0x37, 0x0a, 0x18, 0x61, 0x70, 0x70, 0x6c, 0x79, 0x5f, 0x73, 0x61, 0x6d,
+	0x70, 0x6c, 0x65, 0x64, 0x5f, 0x70, 0x61, 0x73, 0x73, 0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18,
+	0x13, 0x20, 0x01, 0x28, 0x08, 0x52, 0x15, 0x61, 0x70, 0x70, 0x6c, 0x79, 0x53, 0x61, 0x6d, 0x70,
+	0x6c, 0x65, 0x64, 0x50, 0x61, 0x73, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x3a, 0x04, 0xe8, 0xa0,
+	0x1f, 0x01, 0x22, 0x82, 0x02, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73,
+	0x12, 0x2f, 0x0a, 0x14, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x72, 0x69, 0x63,
+	0x65, 0x5f, 0x6e, 0x67, 0x6f, 0x6e, 0x6b, 0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11,
+	0x6d, 0x69, 0x6e, 0x47, 0x61, 0x73, 0x50, 0x72, 0x69, 0x63, 0x65, 0x4e, 0x67, 0x6f, 0x6e, 0x6b,
+	0x61, 0x12, 0x2e, 0x0a, 0x13, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x76, 0x61, 0x6c, 0x69, 0x64, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x11,
+	0x62, 0x61, 0x73, 0x65, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x47, 0x61,
+	0x73, 0x12, 0x29, 0x0a, 0x11, 0x67, 0x61, 0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x70, 0x6f, 0x63,
+	0x5f, 0x63, 0x6f, 0x75, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x67, 0x61,
+	0x73, 0x50, 0x65, 0x72, 0x50, 0x6f, 0x63, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x2c, 0x0a, 0x12,
+	0x65, 0x6e, 0x61, 0x62, 0x6c, 0x65, 0x64, 0x5f, 0x66, 0x65, 0x65, 0x5f, 0x67, 0x72, 0x6f, 0x75,
+	0x70, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x09, 0x52, 0x10, 0x65, 0x6e, 0x61, 0x62, 0x6c, 0x65,
+	0x64, 0x46, 0x65, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x73, 0x12, 0x35, 0x0a, 0x06, 0x67, 0x72,
+	0x6f, 0x75, 0x70, 0x73, 0x18, 0x05, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1d, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x2e, 0x46, 0x65, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x52, 0x06, 0x67, 0x72, 0x6f, 0x75, 0x70,
+	0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x6a, 0x0a, 0x0a, 0x50, 0x65, 0x72, 0x69, 0x6f,
+	0x64, 0x42, 0x61, 0x73, 0x65, 0x12, 0x10, 0x0a, 0x03, 0x67, 0x61, 0x73, 0x18, 0x01, 0x20, 0x01,
+	0x28, 0x04, 0x52, 0x03, 0x67, 0x61, 0x73, 0x12, 0x1f, 0x0a, 0x0b, 0x70, 0x65, 0x72, 0x69, 0x6f,
+	0x64, 0x5f, 0x74, 0x79, 0x70, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x70, 0x65,
+	0x72, 0x69, 0x6f, 0x64, 0x54, 0x79, 0x70, 0x65, 0x12, 0x23, 0x0a, 0x0d, 0x70, 0x65, 0x72, 0x69,
+	0x6f, 0x64, 0x5f, 0x6c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0c, 0x70, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x4c, 0x65, 0x6e, 0x67, 0x74, 0x68, 0x3a, 0x04, 0xe8,
+	0xa0, 0x1f, 0x01, 0x22, 0xb2, 0x01, 0x0a, 0x08, 0x46, 0x65, 0x65, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x12, 0x12, 0x0a, 0x04, 0x6e, 0x61, 0x6d, 0x65, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04,
+	0x6e, 0x61, 0x6d, 0x65, 0x12, 0x22, 0x0a, 0x0d, 0x6d, 0x69, 0x6e, 0x5f, 0x67, 0x61, 0x73, 0x5f,
+	0x70, 0x72, 0x69, 0x63, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0b, 0x6d, 0x69, 0x6e,
+	0x47, 0x61, 0x73, 0x50, 0x72, 0x69, 0x63, 0x65, 0x12, 0x33, 0x0a, 0x04, 0x62, 0x61, 0x73, 0x65,
+	0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
+	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x65, 0x72,
+	0x69, 0x6f, 0x64, 0x42, 0x61, 0x73, 0x65, 0x52, 0x04, 0x62, 0x61, 0x73, 0x65, 0x12, 0x33, 0x0a,
+	0x04, 0x6d, 0x73, 0x67, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x4d, 0x73, 0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65, 0x52, 0x04, 0x6d, 0x73,
+	0x67, 0x73, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0xc6, 0x03, 0x0a, 0x0a, 0x4d, 0x73, 0x67,
+	0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65, 0x12, 0x19, 0x0a, 0x08, 0x74, 0x79, 0x70, 0x65, 0x5f,
+	0x75, 0x72, 0x6c, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x74, 0x79, 0x70, 0x65, 0x55,
+	0x72, 0x6c, 0x12, 0x33, 0x0a, 0x04, 0x62, 0x61, 0x73, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b,
+	0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x50, 0x65, 0x72, 0x69, 0x6f, 0x64, 0x42, 0x61, 0x73,
+	0x65, 0x52, 0x04, 0x62, 0x61, 0x73, 0x65, 0x12, 0x72, 0x0a, 0x0c, 0x73, 0x74, 0x6f, 0x72, 0x65,
+	0x64, 0x5f, 0x64, 0x65, 0x6c, 0x74, 0x61, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x50,
+	0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x25, 0xb2, 0xe7, 0xb0, 0x2a, 0x20, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x4d, 0x73, 0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65,
+	0x2f, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x48, 0x00, 0x52, 0x0b,
+	0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44, 0x65, 0x6c, 0x74, 0x61, 0x12, 0x72, 0x0a, 0x0c, 0x73,
+	0x74, 0x6f, 0x72, 0x65, 0x64, 0x5f, 0x62, 0x79, 0x74, 0x65, 0x73, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x42, 0x79,
+	0x74, 0x65, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x25, 0xb2, 0xe7, 0xb0, 0x2a, 0x20,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x4d, 0x73, 0x67, 0x47, 0x61, 0x73,
+	0x52, 0x75, 0x6c, 0x65, 0x2f, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x42, 0x79, 0x74, 0x65, 0x73,
+	0x48, 0x00, 0x52, 0x0b, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x42, 0x79, 0x74, 0x65, 0x73, 0x12,
+	0x72, 0x0a, 0x0c, 0x72, 0x65, 0x70, 0x65, 0x61, 0x74, 0x65, 0x64, 0x5f, 0x6c, 0x65, 0x6e, 0x18,
+	0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x26, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x52, 0x65, 0x70, 0x65,
+	0x61, 0x74, 0x65, 0x64, 0x4c, 0x65, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x42, 0x25, 0xb2,
+	0xe7, 0xb0, 0x2a, 0x20, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x4d, 0x73,
+	0x67, 0x47, 0x61, 0x73, 0x52, 0x75, 0x6c, 0x65, 0x2f, 0x52, 0x65, 0x70, 0x65, 0x61, 0x74, 0x65,
+	0x64, 0x4c, 0x65, 0x6e, 0x48, 0x00, 0x52, 0x0b, 0x72, 0x65, 0x70, 0x65, 0x61, 0x74, 0x65, 0x64,
+	0x4c, 0x65, 0x6e, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x42, 0x06, 0x0a, 0x04, 0x66, 0x75, 0x6e,
+	0x63, 0x22, 0xb0, 0x01, 0x0a, 0x11, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x44, 0x65, 0x6c, 0x74,
+	0x61, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x20, 0x0a, 0x0c, 0x67, 0x61, 0x73, 0x5f, 0x70,
+	0x65, 0x72, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x67,
+	0x61, 0x73, 0x50, 0x65, 0x72, 0x55, 0x6e, 0x69, 0x74, 0x12, 0x14, 0x0a, 0x05, 0x69, 0x74, 0x65,
+	0x6d, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x69, 0x74, 0x65, 0x6d, 0x73, 0x12,
+	0x1f, 0x0a, 0x0b, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x5f, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x18, 0x03,
+	0x20, 0x01, 0x28, 0x09, 0x52, 0x0a, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64,
+	0x12, 0x19, 0x0a, 0x08, 0x69, 0x64, 0x5f, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x18, 0x04, 0x20, 0x01,
+	0x28, 0x09, 0x52, 0x07, 0x69, 0x64, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x12, 0x21, 0x0a, 0x0c, 0x73,
+	0x63, 0x6f, 0x70, 0x65, 0x5f, 0x66, 0x69, 0x65, 0x6c, 0x64, 0x73, 0x18, 0x05, 0x20, 0x03, 0x28,
+	0x09, 0x52, 0x0b, 0x73, 0x63, 0x6f, 0x70, 0x65, 0x46, 0x69, 0x65, 0x6c, 0x64, 0x73, 0x3a, 0x04,
+	0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x4f, 0x0a, 0x11, 0x53, 0x74, 0x6f, 0x72, 0x65, 0x64, 0x42, 0x79,
+	0x74, 0x65, 0x73, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x20, 0x0a, 0x0c, 0x67, 0x61, 0x73,
+	0x5f, 0x70, 0x65, 0x72, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52,
+	0x0a, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x55, 0x6e, 0x69, 0x74, 0x12, 0x12, 0x0a, 0x04, 0x75,
+	0x6e, 0x69, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x04, 0x75, 0x6e, 0x69, 0x74, 0x3a,
+	0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x22, 0x51, 0x0a, 0x11, 0x52, 0x65, 0x70, 0x65, 0x61, 0x74, 0x65,
+	0x64, 0x4c, 0x65, 0x6e, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x20, 0x0a, 0x0c, 0x67, 0x61,
+	0x73, 0x5f, 0x70, 0x65, 0x72, 0x5f, 0x75, 0x6e, 0x69, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x0a, 0x67, 0x61, 0x73, 0x50, 0x65, 0x72, 0x55, 0x6e, 0x69, 0x74, 0x12, 0x14, 0x0a, 0x05,
+	0x66, 0x69, 0x65, 0x6c, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x09, 0x52, 0x05, 0x66, 0x69, 0x65,
+	0x6c, 0x64, 0x3a, 0x04, 0xe8, 0xa0, 0x1f, 0x01, 0x2a, 0x7a, 0x0a, 0x11, 0x44, 0x65, 0x76, 0x73,
+	0x68, 0x61, 0x72, 0x64, 0x50, 0x61, 0x73, 0x73, 0x43, 0x6f, 0x75, 0x6e, 0x74, 0x12, 0x23, 0x0a,
+	0x1f, 0x44, 0x45, 0x56, 0x53, 0x48, 0x41, 0x52, 0x44, 0x5f, 0x50, 0x41, 0x53, 0x53, 0x5f, 0x43,
+	0x4f, 0x55, 0x4e, 0x54, 0x5f, 0x55, 0x4e, 0x53, 0x50, 0x45, 0x43, 0x49, 0x46, 0x49, 0x45, 0x44,
+	0x10, 0x00, 0x12, 0x1f, 0x0a, 0x1b, 0x44, 0x45, 0x56, 0x53, 0x48, 0x41, 0x52, 0x44, 0x5f, 0x50,
+	0x41, 0x53, 0x53, 0x5f, 0x43, 0x4f, 0x55, 0x4e, 0x54, 0x5f, 0x53, 0x41, 0x4d, 0x50, 0x4c, 0x45,
+	0x44, 0x10, 0x01, 0x12, 0x1f, 0x0a, 0x1b, 0x44, 0x45, 0x56, 0x53, 0x48, 0x41, 0x52, 0x44, 0x5f,
+	0x50, 0x41, 0x53, 0x53, 0x5f, 0x43, 0x4f, 0x55, 0x4e, 0x54, 0x5f, 0x44, 0x45, 0x52, 0x49, 0x56,
+	0x45, 0x44, 0x10, 0x02, 0x42, 0xb9, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66,
+	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x42, 0x0b, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a,
+	0x24, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70,
+	0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xca, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50,
+	0x42, 0x4d, 0x65, 0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65,
+	0x72, 0x65, 0x6e, 0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
+	0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -30884,139 +31615,144 @@ func file_inference_inference_params_proto_rawDescGZIP() []byte {
 	return file_inference_inference_params_proto_rawDescData
 }
 
-var file_inference_inference_params_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_inference_inference_params_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_inference_inference_params_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_inference_inference_params_proto_goTypes = []interface{}{
-	(*Params)(nil),                        // 0: inference.inference.Params
-	(*PoCChallengeParams)(nil),            // 1: inference.inference.PoCChallengeParams
-	(*MaintenanceParams)(nil),             // 2: inference.inference.MaintenanceParams
-	(*GenesisOnlyParams)(nil),             // 3: inference.inference.GenesisOnlyParams
-	(*TokenomicsParams)(nil),              // 4: inference.inference.TokenomicsParams
-	(*EpochParams)(nil),                   // 5: inference.inference.EpochParams
-	(*ValidationParams)(nil),              // 6: inference.inference.ValidationParams
-	(*PoCModelParams)(nil),                // 7: inference.inference.PoCModelParams
-	(*PoCStatTestParams)(nil),             // 8: inference.inference.PoCStatTestParams
-	(*PoCModelConfig)(nil),                // 9: inference.inference.PoCModelConfig
-	(*DynamicCoefficientModelConfig)(nil), // 10: inference.inference.DynamicCoefficientModelConfig
-	(*DynamicCoefficientParams)(nil),      // 11: inference.inference.DynamicCoefficientParams
-	(*PocParams)(nil),                     // 12: inference.inference.PocParams
-	(*Decimal)(nil),                       // 13: inference.inference.Decimal
-	(*CollateralParams)(nil),              // 14: inference.inference.CollateralParams
-	(*BitcoinRewardParams)(nil),           // 15: inference.inference.BitcoinRewardParams
-	(*DynamicPricingParams)(nil),          // 16: inference.inference.DynamicPricingParams
-	(*BandwidthLimitsParams)(nil),         // 17: inference.inference.BandwidthLimitsParams
-	(*ConfirmationPoCParams)(nil),         // 18: inference.inference.ConfirmationPoCParams
-	(*GenesisGuardianParams)(nil),         // 19: inference.inference.GenesisGuardianParams
-	(*DeveloperAccessParams)(nil),         // 20: inference.inference.DeveloperAccessParams
-	(*ParticipantAccessParams)(nil),       // 21: inference.inference.ParticipantAccessParams
-	(*TransferAgentAccessParams)(nil),     // 22: inference.inference.TransferAgentAccessParams
-	(*DelegationParams)(nil),              // 23: inference.inference.DelegationParams
-	(*DevshardApprovedVersion)(nil),       // 24: inference.inference.DevshardApprovedVersion
-	(*DevshardEscrowParams)(nil),          // 25: inference.inference.DevshardEscrowParams
-	(*FeeParams)(nil),                     // 26: inference.inference.FeeParams
-	(*PeriodBase)(nil),                    // 27: inference.inference.PeriodBase
-	(*FeeGroup)(nil),                      // 28: inference.inference.FeeGroup
-	(*MsgGasRule)(nil),                    // 29: inference.inference.MsgGasRule
-	(*StoredDeltaParams)(nil),             // 30: inference.inference.StoredDeltaParams
-	(*StoredBytesParams)(nil),             // 31: inference.inference.StoredBytesParams
-	(*RepeatedLenParams)(nil),             // 32: inference.inference.RepeatedLenParams
+	(DevshardPassCount)(0),                // 0: inference.inference.DevshardPassCount
+	(*Params)(nil),                        // 1: inference.inference.Params
+	(*PoCChallengeParams)(nil),            // 2: inference.inference.PoCChallengeParams
+	(*MaintenanceParams)(nil),             // 3: inference.inference.MaintenanceParams
+	(*GenesisOnlyParams)(nil),             // 4: inference.inference.GenesisOnlyParams
+	(*TokenomicsParams)(nil),              // 5: inference.inference.TokenomicsParams
+	(*EpochParams)(nil),                   // 6: inference.inference.EpochParams
+	(*ValidationParams)(nil),              // 7: inference.inference.ValidationParams
+	(*PoCModelParams)(nil),                // 8: inference.inference.PoCModelParams
+	(*PoCStatTestParams)(nil),             // 9: inference.inference.PoCStatTestParams
+	(*PoCModelConfig)(nil),                // 10: inference.inference.PoCModelConfig
+	(*DynamicCoefficientModelConfig)(nil), // 11: inference.inference.DynamicCoefficientModelConfig
+	(*DynamicCoefficientParams)(nil),      // 12: inference.inference.DynamicCoefficientParams
+	(*PocParams)(nil),                     // 13: inference.inference.PocParams
+	(*Decimal)(nil),                       // 14: inference.inference.Decimal
+	(*CollateralParams)(nil),              // 15: inference.inference.CollateralParams
+	(*BitcoinRewardParams)(nil),           // 16: inference.inference.BitcoinRewardParams
+	(*DynamicPricingParams)(nil),          // 17: inference.inference.DynamicPricingParams
+	(*BandwidthLimitsParams)(nil),         // 18: inference.inference.BandwidthLimitsParams
+	(*ConfirmationPoCParams)(nil),         // 19: inference.inference.ConfirmationPoCParams
+	(*GenesisGuardianParams)(nil),         // 20: inference.inference.GenesisGuardianParams
+	(*DeveloperAccessParams)(nil),         // 21: inference.inference.DeveloperAccessParams
+	(*ParticipantAccessParams)(nil),       // 22: inference.inference.ParticipantAccessParams
+	(*TransferAgentAccessParams)(nil),     // 23: inference.inference.TransferAgentAccessParams
+	(*DelegationParams)(nil),              // 24: inference.inference.DelegationParams
+	(*DevshardApprovedVersion)(nil),       // 25: inference.inference.DevshardApprovedVersion
+	(*DevshardVersionPolicy)(nil),         // 26: inference.inference.DevshardVersionPolicy
+	(*DevshardEscrowParams)(nil),          // 27: inference.inference.DevshardEscrowParams
+	(*FeeParams)(nil),                     // 28: inference.inference.FeeParams
+	(*PeriodBase)(nil),                    // 29: inference.inference.PeriodBase
+	(*FeeGroup)(nil),                      // 30: inference.inference.FeeGroup
+	(*MsgGasRule)(nil),                    // 31: inference.inference.MsgGasRule
+	(*StoredDeltaParams)(nil),             // 32: inference.inference.StoredDeltaParams
+	(*StoredBytesParams)(nil),             // 33: inference.inference.StoredBytesParams
+	(*RepeatedLenParams)(nil),             // 34: inference.inference.RepeatedLenParams
 }
 var file_inference_inference_params_proto_depIdxs = []int32{
-	5,  // 0: inference.inference.Params.epoch_params:type_name -> inference.inference.EpochParams
-	6,  // 1: inference.inference.Params.validation_params:type_name -> inference.inference.ValidationParams
-	12, // 2: inference.inference.Params.poc_params:type_name -> inference.inference.PocParams
-	4,  // 3: inference.inference.Params.tokenomics_params:type_name -> inference.inference.TokenomicsParams
-	14, // 4: inference.inference.Params.collateral_params:type_name -> inference.inference.CollateralParams
-	15, // 5: inference.inference.Params.bitcoin_reward_params:type_name -> inference.inference.BitcoinRewardParams
-	16, // 6: inference.inference.Params.dynamic_pricing_params:type_name -> inference.inference.DynamicPricingParams
-	17, // 7: inference.inference.Params.bandwidth_limits_params:type_name -> inference.inference.BandwidthLimitsParams
-	18, // 8: inference.inference.Params.confirmation_poc_params:type_name -> inference.inference.ConfirmationPoCParams
-	19, // 9: inference.inference.Params.genesis_guardian_params:type_name -> inference.inference.GenesisGuardianParams
-	20, // 10: inference.inference.Params.developer_access_params:type_name -> inference.inference.DeveloperAccessParams
-	21, // 11: inference.inference.Params.participant_access_params:type_name -> inference.inference.ParticipantAccessParams
-	22, // 12: inference.inference.Params.transfer_agent_access_params:type_name -> inference.inference.TransferAgentAccessParams
-	25, // 13: inference.inference.Params.devshard_escrow_params:type_name -> inference.inference.DevshardEscrowParams
-	26, // 14: inference.inference.Params.fee_params:type_name -> inference.inference.FeeParams
-	23, // 15: inference.inference.Params.delegation_params:type_name -> inference.inference.DelegationParams
-	2,  // 16: inference.inference.Params.maintenance_params:type_name -> inference.inference.MaintenanceParams
-	1,  // 17: inference.inference.Params.poc_challenge_params:type_name -> inference.inference.PoCChallengeParams
-	13, // 18: inference.inference.PoCChallengeParams.payment_ratio:type_name -> inference.inference.Decimal
-	13, // 19: inference.inference.GenesisOnlyParams.max_individual_power_percentage:type_name -> inference.inference.Decimal
-	13, // 20: inference.inference.GenesisOnlyParams.genesis_guardian_multiplier:type_name -> inference.inference.Decimal
-	13, // 21: inference.inference.TokenomicsParams.subsidy_reduction_interval:type_name -> inference.inference.Decimal
-	13, // 22: inference.inference.TokenomicsParams.subsidy_reduction_amount:type_name -> inference.inference.Decimal
-	13, // 23: inference.inference.TokenomicsParams.current_subsidy_percentage:type_name -> inference.inference.Decimal
-	13, // 24: inference.inference.EpochParams.poc_slot_allocation:type_name -> inference.inference.Decimal
-	13, // 25: inference.inference.ValidationParams.false_positive_rate:type_name -> inference.inference.Decimal
-	13, // 26: inference.inference.ValidationParams.pass_value:type_name -> inference.inference.Decimal
-	13, // 27: inference.inference.ValidationParams.min_validation_average:type_name -> inference.inference.Decimal
-	13, // 28: inference.inference.ValidationParams.max_validation_average:type_name -> inference.inference.Decimal
-	13, // 29: inference.inference.ValidationParams.min_validation_halfway:type_name -> inference.inference.Decimal
-	13, // 30: inference.inference.ValidationParams.miss_percentage_cutoff:type_name -> inference.inference.Decimal
-	13, // 31: inference.inference.ValidationParams.miss_requests_penalty:type_name -> inference.inference.Decimal
-	13, // 32: inference.inference.ValidationParams.invalid_reputation_preserve:type_name -> inference.inference.Decimal
-	13, // 33: inference.inference.ValidationParams.bad_participant_invalidation_rate:type_name -> inference.inference.Decimal
-	13, // 34: inference.inference.ValidationParams.invalidation_h_threshold:type_name -> inference.inference.Decimal
-	13, // 35: inference.inference.ValidationParams.downtime_good_percentage:type_name -> inference.inference.Decimal
-	13, // 36: inference.inference.ValidationParams.downtime_bad_percentage:type_name -> inference.inference.Decimal
-	13, // 37: inference.inference.ValidationParams.downtime_h_threshold:type_name -> inference.inference.Decimal
-	13, // 38: inference.inference.ValidationParams.downtime_reputation_preserve:type_name -> inference.inference.Decimal
-	13, // 39: inference.inference.ValidationParams.quick_failure_threshold:type_name -> inference.inference.Decimal
-	13, // 40: inference.inference.ValidationParams.binom_test_p0:type_name -> inference.inference.Decimal
-	13, // 41: inference.inference.PoCModelParams.ffn_dim_multiplier:type_name -> inference.inference.Decimal
-	13, // 42: inference.inference.PoCModelParams.norm_eps:type_name -> inference.inference.Decimal
-	13, // 43: inference.inference.PoCModelParams.r_target:type_name -> inference.inference.Decimal
-	13, // 44: inference.inference.PoCStatTestParams.dist_threshold:type_name -> inference.inference.Decimal
-	13, // 45: inference.inference.PoCStatTestParams.p_mismatch:type_name -> inference.inference.Decimal
-	13, // 46: inference.inference.PoCStatTestParams.p_value_threshold:type_name -> inference.inference.Decimal
-	8,  // 47: inference.inference.PoCModelConfig.stat_test:type_name -> inference.inference.PoCStatTestParams
-	13, // 48: inference.inference.PoCModelConfig.weight_scale_factor:type_name -> inference.inference.Decimal
-	10, // 49: inference.inference.PoCModelConfig.dynamic_coefficient:type_name -> inference.inference.DynamicCoefficientModelConfig
-	13, // 50: inference.inference.DynamicCoefficientModelConfig.coeff_min:type_name -> inference.inference.Decimal
-	13, // 51: inference.inference.DynamicCoefficientModelConfig.coeff_max:type_name -> inference.inference.Decimal
-	13, // 52: inference.inference.DynamicCoefficientModelConfig.relative_difficulty:type_name -> inference.inference.Decimal
-	13, // 53: inference.inference.DynamicCoefficientParams.step_min:type_name -> inference.inference.Decimal
-	13, // 54: inference.inference.DynamicCoefficientParams.step_max:type_name -> inference.inference.Decimal
-	13, // 55: inference.inference.DynamicCoefficientParams.bootstrap_step_max:type_name -> inference.inference.Decimal
-	13, // 56: inference.inference.PocParams.weight_scale_factor:type_name -> inference.inference.Decimal
-	7,  // 57: inference.inference.PocParams.model_params:type_name -> inference.inference.PoCModelParams
-	8,  // 58: inference.inference.PocParams.stat_test:type_name -> inference.inference.PoCStatTestParams
-	9,  // 59: inference.inference.PocParams.models:type_name -> inference.inference.PoCModelConfig
-	11, // 60: inference.inference.PocParams.dynamic_coefficient_params:type_name -> inference.inference.DynamicCoefficientParams
-	13, // 61: inference.inference.CollateralParams.slash_fraction_invalid:type_name -> inference.inference.Decimal
-	13, // 62: inference.inference.CollateralParams.slash_fraction_downtime:type_name -> inference.inference.Decimal
-	13, // 63: inference.inference.CollateralParams.downtime_missed_percentage_threshold:type_name -> inference.inference.Decimal
-	13, // 64: inference.inference.CollateralParams.base_weight_ratio:type_name -> inference.inference.Decimal
-	13, // 65: inference.inference.CollateralParams.collateral_per_weight_unit:type_name -> inference.inference.Decimal
-	13, // 66: inference.inference.BitcoinRewardParams.decay_rate:type_name -> inference.inference.Decimal
-	13, // 67: inference.inference.BitcoinRewardParams.utilization_bonus_factor:type_name -> inference.inference.Decimal
-	13, // 68: inference.inference.BitcoinRewardParams.full_coverage_bonus_factor:type_name -> inference.inference.Decimal
-	13, // 69: inference.inference.BitcoinRewardParams.partial_coverage_bonus_factor:type_name -> inference.inference.Decimal
-	13, // 70: inference.inference.DynamicPricingParams.stability_zone_lower_bound:type_name -> inference.inference.Decimal
-	13, // 71: inference.inference.DynamicPricingParams.stability_zone_upper_bound:type_name -> inference.inference.Decimal
-	13, // 72: inference.inference.DynamicPricingParams.price_elasticity:type_name -> inference.inference.Decimal
-	13, // 73: inference.inference.BandwidthLimitsParams.kb_per_input_token:type_name -> inference.inference.Decimal
-	13, // 74: inference.inference.BandwidthLimitsParams.kb_per_output_token:type_name -> inference.inference.Decimal
-	13, // 75: inference.inference.ConfirmationPoCParams.alpha_threshold:type_name -> inference.inference.Decimal
-	13, // 76: inference.inference.ConfirmationPoCParams.slash_fraction:type_name -> inference.inference.Decimal
-	13, // 77: inference.inference.DelegationParams.refusal_penalty:type_name -> inference.inference.Decimal
-	13, // 78: inference.inference.DelegationParams.no_participation_penalty:type_name -> inference.inference.Decimal
-	13, // 79: inference.inference.DelegationParams.delegation_share:type_name -> inference.inference.Decimal
-	13, // 80: inference.inference.DelegationParams.w_threshold:type_name -> inference.inference.Decimal
-	13, // 81: inference.inference.DelegationParams.cap_factor:type_name -> inference.inference.Decimal
-	13, // 82: inference.inference.DelegationParams.max_model_voting_power_percentage:type_name -> inference.inference.Decimal
-	24, // 83: inference.inference.DevshardEscrowParams.approved_versions:type_name -> inference.inference.DevshardApprovedVersion
-	28, // 84: inference.inference.FeeParams.groups:type_name -> inference.inference.FeeGroup
-	27, // 85: inference.inference.FeeGroup.base:type_name -> inference.inference.PeriodBase
-	29, // 86: inference.inference.FeeGroup.msgs:type_name -> inference.inference.MsgGasRule
-	27, // 87: inference.inference.MsgGasRule.base:type_name -> inference.inference.PeriodBase
-	30, // 88: inference.inference.MsgGasRule.stored_delta:type_name -> inference.inference.StoredDeltaParams
-	31, // 89: inference.inference.MsgGasRule.stored_bytes:type_name -> inference.inference.StoredBytesParams
-	32, // 90: inference.inference.MsgGasRule.repeated_len:type_name -> inference.inference.RepeatedLenParams
-	91, // [91:91] is the sub-list for method output_type
-	91, // [91:91] is the sub-list for method input_type
-	91, // [91:91] is the sub-list for extension type_name
-	91, // [91:91] is the sub-list for extension extendee
-	0,  // [0:91] is the sub-list for field type_name
+	6,  // 0: inference.inference.Params.epoch_params:type_name -> inference.inference.EpochParams
+	7,  // 1: inference.inference.Params.validation_params:type_name -> inference.inference.ValidationParams
+	13, // 2: inference.inference.Params.poc_params:type_name -> inference.inference.PocParams
+	5,  // 3: inference.inference.Params.tokenomics_params:type_name -> inference.inference.TokenomicsParams
+	15, // 4: inference.inference.Params.collateral_params:type_name -> inference.inference.CollateralParams
+	16, // 5: inference.inference.Params.bitcoin_reward_params:type_name -> inference.inference.BitcoinRewardParams
+	17, // 6: inference.inference.Params.dynamic_pricing_params:type_name -> inference.inference.DynamicPricingParams
+	18, // 7: inference.inference.Params.bandwidth_limits_params:type_name -> inference.inference.BandwidthLimitsParams
+	19, // 8: inference.inference.Params.confirmation_poc_params:type_name -> inference.inference.ConfirmationPoCParams
+	20, // 9: inference.inference.Params.genesis_guardian_params:type_name -> inference.inference.GenesisGuardianParams
+	21, // 10: inference.inference.Params.developer_access_params:type_name -> inference.inference.DeveloperAccessParams
+	22, // 11: inference.inference.Params.participant_access_params:type_name -> inference.inference.ParticipantAccessParams
+	23, // 12: inference.inference.Params.transfer_agent_access_params:type_name -> inference.inference.TransferAgentAccessParams
+	27, // 13: inference.inference.Params.devshard_escrow_params:type_name -> inference.inference.DevshardEscrowParams
+	28, // 14: inference.inference.Params.fee_params:type_name -> inference.inference.FeeParams
+	24, // 15: inference.inference.Params.delegation_params:type_name -> inference.inference.DelegationParams
+	3,  // 16: inference.inference.Params.maintenance_params:type_name -> inference.inference.MaintenanceParams
+	2,  // 17: inference.inference.Params.poc_challenge_params:type_name -> inference.inference.PoCChallengeParams
+	14, // 18: inference.inference.PoCChallengeParams.payment_ratio:type_name -> inference.inference.Decimal
+	14, // 19: inference.inference.GenesisOnlyParams.max_individual_power_percentage:type_name -> inference.inference.Decimal
+	14, // 20: inference.inference.GenesisOnlyParams.genesis_guardian_multiplier:type_name -> inference.inference.Decimal
+	14, // 21: inference.inference.TokenomicsParams.subsidy_reduction_interval:type_name -> inference.inference.Decimal
+	14, // 22: inference.inference.TokenomicsParams.subsidy_reduction_amount:type_name -> inference.inference.Decimal
+	14, // 23: inference.inference.TokenomicsParams.current_subsidy_percentage:type_name -> inference.inference.Decimal
+	14, // 24: inference.inference.EpochParams.poc_slot_allocation:type_name -> inference.inference.Decimal
+	14, // 25: inference.inference.ValidationParams.false_positive_rate:type_name -> inference.inference.Decimal
+	14, // 26: inference.inference.ValidationParams.pass_value:type_name -> inference.inference.Decimal
+	14, // 27: inference.inference.ValidationParams.min_validation_average:type_name -> inference.inference.Decimal
+	14, // 28: inference.inference.ValidationParams.max_validation_average:type_name -> inference.inference.Decimal
+	14, // 29: inference.inference.ValidationParams.min_validation_halfway:type_name -> inference.inference.Decimal
+	14, // 30: inference.inference.ValidationParams.miss_percentage_cutoff:type_name -> inference.inference.Decimal
+	14, // 31: inference.inference.ValidationParams.miss_requests_penalty:type_name -> inference.inference.Decimal
+	14, // 32: inference.inference.ValidationParams.invalid_reputation_preserve:type_name -> inference.inference.Decimal
+	14, // 33: inference.inference.ValidationParams.bad_participant_invalidation_rate:type_name -> inference.inference.Decimal
+	14, // 34: inference.inference.ValidationParams.invalidation_h_threshold:type_name -> inference.inference.Decimal
+	14, // 35: inference.inference.ValidationParams.downtime_good_percentage:type_name -> inference.inference.Decimal
+	14, // 36: inference.inference.ValidationParams.downtime_bad_percentage:type_name -> inference.inference.Decimal
+	14, // 37: inference.inference.ValidationParams.downtime_h_threshold:type_name -> inference.inference.Decimal
+	14, // 38: inference.inference.ValidationParams.downtime_reputation_preserve:type_name -> inference.inference.Decimal
+	14, // 39: inference.inference.ValidationParams.quick_failure_threshold:type_name -> inference.inference.Decimal
+	14, // 40: inference.inference.ValidationParams.binom_test_p0:type_name -> inference.inference.Decimal
+	14, // 41: inference.inference.PoCModelParams.ffn_dim_multiplier:type_name -> inference.inference.Decimal
+	14, // 42: inference.inference.PoCModelParams.norm_eps:type_name -> inference.inference.Decimal
+	14, // 43: inference.inference.PoCModelParams.r_target:type_name -> inference.inference.Decimal
+	14, // 44: inference.inference.PoCStatTestParams.dist_threshold:type_name -> inference.inference.Decimal
+	14, // 45: inference.inference.PoCStatTestParams.p_mismatch:type_name -> inference.inference.Decimal
+	14, // 46: inference.inference.PoCStatTestParams.p_value_threshold:type_name -> inference.inference.Decimal
+	9,  // 47: inference.inference.PoCModelConfig.stat_test:type_name -> inference.inference.PoCStatTestParams
+	14, // 48: inference.inference.PoCModelConfig.weight_scale_factor:type_name -> inference.inference.Decimal
+	11, // 49: inference.inference.PoCModelConfig.dynamic_coefficient:type_name -> inference.inference.DynamicCoefficientModelConfig
+	14, // 50: inference.inference.DynamicCoefficientModelConfig.coeff_min:type_name -> inference.inference.Decimal
+	14, // 51: inference.inference.DynamicCoefficientModelConfig.coeff_max:type_name -> inference.inference.Decimal
+	14, // 52: inference.inference.DynamicCoefficientModelConfig.relative_difficulty:type_name -> inference.inference.Decimal
+	14, // 53: inference.inference.DynamicCoefficientParams.step_min:type_name -> inference.inference.Decimal
+	14, // 54: inference.inference.DynamicCoefficientParams.step_max:type_name -> inference.inference.Decimal
+	14, // 55: inference.inference.DynamicCoefficientParams.bootstrap_step_max:type_name -> inference.inference.Decimal
+	14, // 56: inference.inference.PocParams.weight_scale_factor:type_name -> inference.inference.Decimal
+	8,  // 57: inference.inference.PocParams.model_params:type_name -> inference.inference.PoCModelParams
+	9,  // 58: inference.inference.PocParams.stat_test:type_name -> inference.inference.PoCStatTestParams
+	10, // 59: inference.inference.PocParams.models:type_name -> inference.inference.PoCModelConfig
+	12, // 60: inference.inference.PocParams.dynamic_coefficient_params:type_name -> inference.inference.DynamicCoefficientParams
+	14, // 61: inference.inference.CollateralParams.slash_fraction_invalid:type_name -> inference.inference.Decimal
+	14, // 62: inference.inference.CollateralParams.slash_fraction_downtime:type_name -> inference.inference.Decimal
+	14, // 63: inference.inference.CollateralParams.downtime_missed_percentage_threshold:type_name -> inference.inference.Decimal
+	14, // 64: inference.inference.CollateralParams.base_weight_ratio:type_name -> inference.inference.Decimal
+	14, // 65: inference.inference.CollateralParams.collateral_per_weight_unit:type_name -> inference.inference.Decimal
+	14, // 66: inference.inference.BitcoinRewardParams.decay_rate:type_name -> inference.inference.Decimal
+	14, // 67: inference.inference.BitcoinRewardParams.utilization_bonus_factor:type_name -> inference.inference.Decimal
+	14, // 68: inference.inference.BitcoinRewardParams.full_coverage_bonus_factor:type_name -> inference.inference.Decimal
+	14, // 69: inference.inference.BitcoinRewardParams.partial_coverage_bonus_factor:type_name -> inference.inference.Decimal
+	14, // 70: inference.inference.DynamicPricingParams.stability_zone_lower_bound:type_name -> inference.inference.Decimal
+	14, // 71: inference.inference.DynamicPricingParams.stability_zone_upper_bound:type_name -> inference.inference.Decimal
+	14, // 72: inference.inference.DynamicPricingParams.price_elasticity:type_name -> inference.inference.Decimal
+	14, // 73: inference.inference.BandwidthLimitsParams.kb_per_input_token:type_name -> inference.inference.Decimal
+	14, // 74: inference.inference.BandwidthLimitsParams.kb_per_output_token:type_name -> inference.inference.Decimal
+	14, // 75: inference.inference.ConfirmationPoCParams.alpha_threshold:type_name -> inference.inference.Decimal
+	14, // 76: inference.inference.ConfirmationPoCParams.slash_fraction:type_name -> inference.inference.Decimal
+	14, // 77: inference.inference.DelegationParams.refusal_penalty:type_name -> inference.inference.Decimal
+	14, // 78: inference.inference.DelegationParams.no_participation_penalty:type_name -> inference.inference.Decimal
+	14, // 79: inference.inference.DelegationParams.delegation_share:type_name -> inference.inference.Decimal
+	14, // 80: inference.inference.DelegationParams.w_threshold:type_name -> inference.inference.Decimal
+	14, // 81: inference.inference.DelegationParams.cap_factor:type_name -> inference.inference.Decimal
+	14, // 82: inference.inference.DelegationParams.max_model_voting_power_percentage:type_name -> inference.inference.Decimal
+	0,  // 83: inference.inference.DevshardApprovedVersion.pass_count:type_name -> inference.inference.DevshardPassCount
+	0,  // 84: inference.inference.DevshardVersionPolicy.pass_count:type_name -> inference.inference.DevshardPassCount
+	25, // 85: inference.inference.DevshardEscrowParams.approved_versions:type_name -> inference.inference.DevshardApprovedVersion
+	30, // 86: inference.inference.FeeParams.groups:type_name -> inference.inference.FeeGroup
+	29, // 87: inference.inference.FeeGroup.base:type_name -> inference.inference.PeriodBase
+	31, // 88: inference.inference.FeeGroup.msgs:type_name -> inference.inference.MsgGasRule
+	29, // 89: inference.inference.MsgGasRule.base:type_name -> inference.inference.PeriodBase
+	32, // 90: inference.inference.MsgGasRule.stored_delta:type_name -> inference.inference.StoredDeltaParams
+	33, // 91: inference.inference.MsgGasRule.stored_bytes:type_name -> inference.inference.StoredBytesParams
+	34, // 92: inference.inference.MsgGasRule.repeated_len:type_name -> inference.inference.RepeatedLenParams
+	93, // [93:93] is the sub-list for method output_type
+	93, // [93:93] is the sub-list for method input_type
+	93, // [93:93] is the sub-list for extension type_name
+	93, // [93:93] is the sub-list for extension extendee
+	0,  // [0:93] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_params_proto_init() }
@@ -31326,7 +32062,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[25].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DevshardEscrowParams); i {
+			switch v := v.(*DevshardVersionPolicy); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31338,7 +32074,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[26].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FeeParams); i {
+			switch v := v.(*DevshardEscrowParams); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31350,7 +32086,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[27].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PeriodBase); i {
+			switch v := v.(*FeeParams); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31362,7 +32098,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[28].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FeeGroup); i {
+			switch v := v.(*PeriodBase); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31374,7 +32110,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[29].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MsgGasRule); i {
+			switch v := v.(*FeeGroup); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31386,7 +32122,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[30].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StoredDeltaParams); i {
+			switch v := v.(*MsgGasRule); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31398,7 +32134,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[31].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*StoredBytesParams); i {
+			switch v := v.(*StoredDeltaParams); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -31410,6 +32146,18 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 		file_inference_inference_params_proto_msgTypes[32].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*StoredBytesParams); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_inference_params_proto_msgTypes[33].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*RepeatedLenParams); i {
 			case 0:
 				return &v.state
@@ -31422,7 +32170,7 @@ func file_inference_inference_params_proto_init() {
 			}
 		}
 	}
-	file_inference_inference_params_proto_msgTypes[29].OneofWrappers = []interface{}{
+	file_inference_inference_params_proto_msgTypes[30].OneofWrappers = []interface{}{
 		(*MsgGasRule_StoredDelta)(nil),
 		(*MsgGasRule_StoredBytes)(nil),
 		(*MsgGasRule_RepeatedLen)(nil),
@@ -31432,13 +32180,14 @@ func file_inference_inference_params_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_params_proto_rawDesc,
-			NumEnums:      0,
-			NumMessages:   33,
+			NumEnums:      1,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_inference_inference_params_proto_goTypes,
 		DependencyIndexes: file_inference_inference_params_proto_depIdxs,
+		EnumInfos:         file_inference_inference_params_proto_enumTypes,
 		MessageInfos:      file_inference_inference_params_proto_msgTypes,
 	}.Build()
 	File_inference_inference_params_proto = out.File
