@@ -28,6 +28,7 @@ import "inference/inference/epoch.proto";
 import "inference/inference/mlnode_version.proto";
 import "inference/inference/excluded_participant.proto";
 import "inference/inference/confirmation_poc_event.proto";
+import "inference/inference/warm_key_log.proto";
 import "inference/inference/liquidity_pool.proto";
 import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
@@ -498,6 +499,17 @@ service Query {
 
   rpc DevshardApprovedVersions (QueryDevshardApprovedVersionsRequest) returns (QueryDevshardApprovedVersionsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/devshard_approved_versions";
+  }
+
+  // Queries one entry of a participant's warm-key log by id. The answer never
+  // changes once the entry exists.
+  rpc WarmKeyEntry (QueryWarmKeyEntryRequest) returns (QueryWarmKeyEntryResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/warm_key_entry/{granter}/{id}";
+  }
+
+  // Queries a participant's whole warm-key log, live and ended entries, in id order.
+  rpc WarmKeyLog (QueryWarmKeyLogRequest) returns (QueryWarmKeyLogResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/warm_key_log/{granter}";
   }
 
   rpc OpenPoCChallenges (QueryOpenPoCChallengesRequest) returns (QueryOpenPoCChallengesResponse) {
@@ -1263,6 +1275,23 @@ message QueryGetDevshardEscrowRequest {
 message QueryGetDevshardEscrowResponse {
   DevshardEscrow escrow = 1;
   bool found = 2;
+}
+
+message QueryWarmKeyEntryRequest {
+  string granter = 1;
+  uint64 id = 2;
+}
+
+message QueryWarmKeyEntryResponse {
+  WarmKeyLogEntry entry = 1;
+}
+
+message QueryWarmKeyLogRequest {
+  string granter = 1;
+}
+
+message QueryWarmKeyLogResponse {
+  repeated WarmKeyLogEntry entries = 1;
 }
 
 message QueryGetDevshardHostEpochStatsRequest {

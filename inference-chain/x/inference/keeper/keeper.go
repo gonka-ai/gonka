@@ -108,11 +108,11 @@ type (
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Devshard escrow collections
-		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
-		DevshardEscrowCounter     collections.Item[uint64]
-		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
-		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
-		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		DevshardEscrows             collections.Map[uint64, types.DevshardEscrow]
+		DevshardEscrowCounter       collections.Item[uint64]
+		DevshardEscrowEpochCount    collections.Map[uint64, uint64]
+		DevshardHostEpochStatsMap   collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
+		DevshardEscrowsByEpoch      collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
 		DevshardApprovedVersionsMap collections.Map[string, types.DevshardApprovedVersion]
 		// Maintenance window collections
 		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
@@ -142,10 +142,15 @@ type (
 		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
 		// Secondary index for pruning stale recipient overrides by epoch.
 		// Must be updated atomically with ClaimRecipients.
-		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		PoCChallenges          collections.Map[sdk.AccAddress, types.PoCChallenge]
-		PoCChallengeCommits    collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
+		ClaimRecipientsByEpoch  collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		PoCChallenges           collections.Map[sdk.AccAddress, types.PoCChallenge]
+		PoCChallengeCommits     collections.Map[collections.Pair[sdk.AccAddress, string], types.PoCV2StoreCommit]
 		PoCChallengeValidations collections.Map[collections.Triple[sdk.AccAddress, string, sdk.AccAddress], types.PoCValidationV2]
+		// Warm-key log: append-only record of warm-key grants per granter.
+		// See warm_key_log.go.
+		WarmKeyLogEntriesMap collections.Map[collections.Pair[sdk.AccAddress, uint64], types.WarmKeyLogEntry]
+		WarmKeyLogNextID     collections.Map[sdk.AccAddress, uint64]
+		WarmKeyLive          collections.Map[collections.Pair[sdk.AccAddress, sdk.AccAddress], uint64]
 	}
 )
 
@@ -707,6 +712,27 @@ func NewKeeper(
 			"poc_challenge_validation",
 			collections.TripleKeyCodec(sdk.AccAddressKey, collections.StringKey, sdk.AccAddressKey),
 			codec.CollValue[types.PoCValidationV2](cdc),
+		),
+		WarmKeyLogEntriesMap: collections.NewMap(
+			sb,
+			types.WarmKeyLogPrefix,
+			"warm_key_log",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
+			codec.CollValue[types.WarmKeyLogEntry](cdc),
+		),
+		WarmKeyLogNextID: collections.NewMap(
+			sb,
+			types.WarmKeyLogNextIDPrefix,
+			"warm_key_log_next_id",
+			sdk.AccAddressKey,
+			collections.Uint64Value,
+		),
+		WarmKeyLive: collections.NewMap(
+			sb,
+			types.WarmKeyLivePrefix,
+			"warm_key_live",
+			collections.PairKeyCodec(sdk.AccAddressKey, sdk.AccAddressKey),
+			collections.Uint64Value,
 		),
 	}
 

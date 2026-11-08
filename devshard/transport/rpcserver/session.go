@@ -312,7 +312,7 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	_, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
+	peer, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}
@@ -325,7 +325,7 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	srv, err := h.bindStartProof(ctx, "rpc_verify_timeout", func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
+	srv, err := h.bindOwnerStartProof(ctx, "rpc_verify_timeout", peer, func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +347,7 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if req == nil || req.Msg == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
 	}
-	_, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
+	peer, _, payload, err := h.signedPeerPayload(ctx, req.Msg)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +360,7 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	srv, err := h.bindStartProof(ctx, "rpc_verify_error_miss", func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
+	srv, err := h.bindOwnerStartProof(ctx, "rpc_verify_error_miss", peer, func() ([]types.Diff, error) { return diffs, nil }, types.StartProtocolVersion(diffs))
 	if err != nil {
 		return nil, err
 	}
@@ -455,11 +455,33 @@ func (h *SessionHandler) signedPeerPayload(ctx context.Context, env *rpcpb.Signe
 
 // bindStartProof opens an existing session or creates one from a creator-signed
 // MsgStartInference in diffs. The caller must already have checked the envelope.
+// Owner-or-group: ChallengeReceipt (verifier → executor).
 func (h *SessionHandler) bindStartProof(ctx context.Context, route string, decode func() ([]types.Diff, error), claimedVersion string) (SessionCore, error) {
 	peer, escrow, err := requirePeer(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return h.bindStartProofAuth(ctx, route, peer, escrow, decode, claimedVersion, requireOwnerOrGroup)
+}
+
+// bindOwnerStartProof is bindStartProof restricted to the escrow owner
+// (gateway). VerifyTimeout / VerifyErrorMiss use this so a group member
+// cannot spend the host's single answer.
+func (h *SessionHandler) bindOwnerStartProof(ctx context.Context, route, peer string, decode func() ([]types.Diff, error), claimedVersion string) (SessionCore, error) {
+	_, escrow, err := requirePeer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return h.bindStartProofAuth(ctx, route, peer, escrow, decode, claimedVersion, requireOwner)
+}
+
+func (h *SessionHandler) bindStartProofAuth(
+	ctx context.Context,
+	route, peer, escrow string,
+	decode func() ([]types.Diff, error),
+	claimedVersion string,
+	auth func(SessionCore, string) error,
+) (SessionCore, error) {
 	if h.lookup == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("session lookup not configured"))
 	}
@@ -476,7 +498,7 @@ func (h *SessionHandler) bindStartProof(ctx context.Context, route string, decod
 	if !srv.AllowsSender(peer) {
 		return nil, connect.NewError(connect.CodePermissionDenied, errors.New("peer is not a known participant"))
 	}
-	if err := requireOwnerOrGroup(srv, peer); err != nil {
+	if err := auth(srv, peer); err != nil {
 		return nil, err
 	}
 	return srv, nil
@@ -511,12 +533,8 @@ func mapInferenceError(err error) error {
 					transport.DevshardErrorStorageBusy,
 				)
 			}
-			if errors.Is(err, types.ErrHeaderPending) {
-				return withDevshardError(
-					connect.NewError(connect.CodeUnavailable, inner),
-					transport.DevshardErrorHeaderPending,
-				)
-			}
+			// ErrHeaderPending (AnswerWait / rare residual) is ordinary unavailable —
+			// no header_pending tag; challenge apply no longer depends on it.
 			return connect.NewError(connect.CodeUnavailable, inner)
 		default:
 			return connect.NewError(connect.CodeInternal, inner)
@@ -542,10 +560,8 @@ func mapCoreError(err error) error {
 		)
 	}
 	if errors.Is(err, types.ErrHeaderPending) {
-		return withDevshardError(
-			connect.NewError(connect.CodeUnavailable, errors.New(err.Error())),
-			transport.DevshardErrorHeaderPending,
-		)
+		// Ordinary unavailable: map lag is no longer a distinct challenge wire code.
+		return connect.NewError(connect.CodeUnavailable, errors.New(err.Error()))
 	}
 	if errors.Is(err, transport.ErrNoStorage) || errors.Is(err, transport.ErrHeightSyncSeedDisabled) {
 		return connect.NewError(connect.CodeNotFound, err)

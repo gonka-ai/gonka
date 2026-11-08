@@ -548,7 +548,8 @@ func newCatchUpWorld(t *testing.T) catchUpWorld {
 	group := testutil.MakeGroup(signers)
 	config := testutil.DefaultConfig(len(signers))
 	preview, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), signing.NewSecp256k1Verifier(),
-		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000),
+		state.WithVersion("v6"))
 	require.NoError(t, err)
 	start := testutil.StartTx(1)
 	start.GetStartInference().Model = strings.Repeat("m", transport.MinGzipBodyBytes)
@@ -564,7 +565,8 @@ func newCatchUpWorld(t *testing.T) catchUpWorld {
 func (w catchUpWorld) root(t *testing.T, diff types.Diff) []byte {
 	t.Helper()
 	sm, err := state.NewStateMachine("escrow-1", w.config, w.group, 10000, w.user.Address(), signing.NewSecp256k1Verifier(),
-		testutil.MustMemoryStore(t, "escrow-1", w.user.Address(), w.config, w.group, 10000))
+		testutil.MustMemoryStore(t, "escrow-1", w.user.Address(), w.config, w.group, 10000),
+		state.WithVersion("v6"))
 	require.NoError(t, err)
 	h, err := host.NewHost(sm, w.signers[0], stub.NewInferenceEngine(), "escrow-1", w.group, nil)
 	require.NoError(t, err)

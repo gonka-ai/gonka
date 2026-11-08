@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"bytes"
 	"context"
 	"sync"
 	"sync/atomic"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/chainoracle/blocks"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -19,12 +21,30 @@ import (
 	"devshard/user"
 )
 
-type rigOracle struct{ height *atomic.Int64 }
+type rigOracle struct {
+	height *atomic.Int64
+	rig    *protocolRig
+}
+
+func (o rigOracle) header(height int64) *blocks.Header {
+	if height <= 0 && o.height != nil {
+		height = o.height.Load()
+	}
+	at := time.Unix(1, 0).UTC()
+	if o.rig != nil && height > 0 {
+		if ms, ok := o.rig.storedTime(uint64(height)); ok {
+			at = time.UnixMilli(ms).UTC()
+		}
+	}
+	return blocks.HashOnlyHeader(height, at, "fake-chain", []byte{0xaa})
+}
 
 func (o rigOracle) Latest(context.Context) (*blocks.Header, error) {
-	return blocks.HashOnlyHeader(o.height.Load(), time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+	return o.header(0), nil
 }
-func (o rigOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) { return o.Latest(ctx) }
+func (o rigOracle) At(_ context.Context, height int64) (*blocks.Header, error) {
+	return o.header(height), nil
+}
 func (o rigOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, blocks.ErrProveNotImplemented
 }
@@ -40,6 +60,62 @@ type protocolRig struct {
 	oracles []blocks.BlockOracle
 	mu      sync.Mutex
 	diffs   []types.Diff
+	times   map[uint64]int64
+}
+
+// protocolHeaders is the stored map the HTTP stack's timeout votes read.
+// A height is recorded the first time the rig's clock sits on it.
+type protocolHeaders struct{ rig *protocolRig }
+
+func (p protocolHeaders) StoredAt(height uint64) (headertime.Record, bool) {
+	if p.rig == nil || height == 0 {
+		return headertime.Record{}, false
+	}
+	ms, ok := p.rig.storedTime(height)
+	if !ok {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{Hash: []byte{0xaa}, TimeMs: ms}, true
+}
+
+func (p protocolHeaders) HeaderTimeMs(height uint64, hash []byte) (int64, error) {
+	rec, ok := p.StoredAt(height)
+	if !ok {
+		return 0, types.ErrHeaderPending
+	}
+	if len(hash) > 0 && len(rec.Hash) > 0 && !bytes.Equal(hash, rec.Hash) {
+		return 0, types.ErrHeaderMismatch
+	}
+	return rec.TimeMs, nil
+}
+
+func (r *protocolRig) remember(height uint64) {
+	if r == nil || height == 0 {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.times == nil {
+		r.times = map[uint64]int64{}
+	}
+	if _, ok := r.times[height]; ok {
+		return
+	}
+	ms := time.Unix(0, r.clock.Load()).UnixMilli()
+	if ms <= 0 {
+		ms = time.Now().UnixMilli()
+	}
+	r.times[height] = ms
+}
+
+func (r *protocolRig) storedTime(height uint64) (int64, bool) {
+	if r == nil || height == 0 || height > uint64(r.height.Load()) {
+		return 0, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ms, ok := r.times[height]
+	return ms, ok && ms > 0
 }
 
 func (r *protocolRig) observe(session *user.Session) {
@@ -81,20 +157,25 @@ func (r *protocolRig) diffAt(t *testing.T, nonce uint64) types.Diff {
 }
 
 func stampedReceiptResponse(receipt []byte, confirm *types.DevshardTx) *host.HostResponse {
+	cs := confirm.GetConfirmStart()
 	return &host.HostResponse{
 		Receipt:           receipt,
 		ConfirmedAt:       time.Now().Unix(),
-		ObservedHeight:    confirm.GetConfirmStart().ObservedHeight,
-		ObservedBlockHash: confirm.GetConfirmStart().ObservedBlockHash,
+		ObservedHeight:    cs.GetObservedHeight(),
+		ObservedBlockHash: cs.GetObservedBlockHash(),
+		ObservedTimeMs:    cs.GetObservedTimeMs(),
 	}
 }
 
 func newProtocolRig(n int) *protocolRig {
 	r := &protocolRig{}
 	r.height.Store(100)
-	r.clock.Store(time.Now().UnixNano())
+	// The refusal window is 60s and the verifier reads the start block's wall
+	// time. A stamp from this instant is already past that window.
+	r.clock.Store(time.Now().Add(-2 * time.Minute).UnixNano())
+	r.remember(100)
 	for range n {
-		r.oracles = append(r.oracles, rigOracle{height: &r.height})
+		r.oracles = append(r.oracles, rigOracle{height: &r.height, rig: r})
 	}
 	return r
 }
@@ -128,6 +209,7 @@ func (r *protocolRig) raise(t *testing.T, session *user.Session, h uint64) {
 	ctx := context.Background()
 	for range 8 {
 		r.clock.Add(int64(time.Hour))
+		r.remember(h)
 		_ = session.MaybeHeartbeat(ctx)
 		_ = session.SendPendingDiff(ctx)
 		if f, _, _ := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1); f >= h {
@@ -148,20 +230,32 @@ func signedReceiptResponse(t *testing.T, env *httpTestEnv, executorIdx int, nonc
 	t.Helper()
 	rec, ok := env.session.StateMachine().GetInference(nonce)
 	require.True(t, ok)
-	stamp := testutil.ReceiptStamp{}
+	// One second in the past arms both clocks: legacy ages ConfirmedAt,
+	// header ages the carried stamp time. ExecutionTimeout 0 is then due.
+	past := time.Now().Add(-time.Second)
+	stamp := testutil.ReceiptStamp{StartedAt: rec.StartedAt, ConfirmedAt: past.Unix()}
 	if rec.StartedAtHeight > 0 {
-		stamp = testutil.ReceiptStamp{Height: rec.StartedAtHeight, Hash: []byte{0xaa}}
+		stamp.Height = rec.StartedAtHeight
+		stamp.Hash = []byte{0xaa}
+		stamp.TimeMs = past.UnixMilli()
 	}
 	receipt := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", nonce,
 		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
-	return &host.HostResponse{Receipt: receipt, ConfirmedAt: time.Now().Unix(), ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash}
+	return &host.HostResponse{
+		Receipt:           receipt,
+		ConfirmedAt:       stamp.ConfirmedAt,
+		ObservedHeight:    stamp.Height,
+		ObservedBlockHash: stamp.Hash,
+		ObservedTimeMs:    stamp.TimeMs,
+	}
 }
 
 func floorDiffs(t *testing.T, user, slot0 *signing.Secp256k1Signer, ref, slots, height uint64) []types.Diff {
 	t.Helper()
 	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{SlotsNum: slots, Reason: string(heightsync.ReasonQuietSession)}}}
 	ack := &types.MsgHeightAck{RefNonce: ref, SlotId: 0, ObservedHeight: height, ObservedBlockHash: []byte{0xaa},
-		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+		ObservedTimeMs: int64(height) * testutil.HeightClockBlockMs,
+		SyncState:      types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
 	require.NoError(t, heightsync.SignAck(slot0, ack))
 	return []types.Diff{
 		testutil.SignDiff(t, user, "escrow-1", ref, []*types.DevshardTx{hb}),

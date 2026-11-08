@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"devshard/bridge"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/seed"
 
@@ -85,4 +86,45 @@ func TestFromFile_OmittedTimeoutsUseDefaults(t *testing.T) {
 	require.NotNil(t, escrow)
 	require.Equal(t, params.RefusalTimeout, escrow.RefusalTimeout)
 	require.Equal(t, params.ExecutionTimeout, escrow.ExecutionTimeout)
+	require.False(t, params.HeightsyncTimeoutClock)
+	require.False(t, escrow.HeightsyncTimeoutClock)
+}
+
+func TestFromFile_HeightsyncTimeoutClock(t *testing.T) {
+	header := true
+	st, err := seed.FromFile(&config.File{
+		Params:  config.Params{HeightsyncTimeoutClock: &header},
+		Escrows: []config.Escrow{{ID: 7}},
+	})
+	require.NoError(t, err)
+	require.True(t, st.GetParams().DevshardEscrowParams.HeightsyncTimeoutClock)
+	require.True(t, st.GetEscrow(7).HeightsyncTimeoutClock)
+
+	legacy := false
+	st, err = seed.FromFile(&config.File{
+		Params: config.Params{HeightsyncTimeoutClock: &header},
+		Escrows: []config.Escrow{{
+			ID:                     8,
+			HeightsyncTimeoutClock: &legacy,
+		}},
+	})
+	require.NoError(t, err)
+	require.True(t, st.GetParams().DevshardEscrowParams.HeightsyncTimeoutClock)
+	require.False(t, st.GetEscrow(8).HeightsyncTimeoutClock, "an escrow value overrides params")
+}
+
+func TestApplyHeightsyncTimeoutClockBindsTheEscrow(t *testing.T) {
+	st, err := seed.FromFile(&config.File{Escrows: []config.Escrow{{ID: 1, AppHash: "aa"}}})
+	require.NoError(t, err)
+	require.False(t, st.GetEscrow(1).HeightsyncTimeoutClock)
+
+	seed.ApplyHeightsyncTimeoutClock(st, true)
+	escrow := st.GetEscrow(1)
+	require.True(t, escrow.HeightsyncTimeoutClock)
+	require.True(t, st.GetParams().DevshardEscrowParams.HeightsyncTimeoutClock)
+
+	info, err := bridge.EscrowInfoFromQuery(1, escrow)
+	require.NoError(t, err)
+	cfg := bridge.SessionConfigAtBind(3, info)
+	require.True(t, cfg.HeightsyncTimeoutClock, "the session binds the escrow flag, not a process-only override")
 }

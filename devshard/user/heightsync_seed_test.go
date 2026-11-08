@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,15 +15,16 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/transport"
-	"devshard/types"
 
 	"common/chainoracle/blocks"
 )
@@ -81,7 +83,16 @@ type seedEnv struct {
 	slots    []seedSlot
 }
 
+// setupSeedSession gives each host its own block hash at height 55.
 func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seedEnv {
+	t.Helper()
+	return setupSeedSessionHashes(t, seedRPC, func(i int) []byte { return []byte{0xaa, byte(i + 1)} }, opts...)
+}
+
+// setupSeedSessionHashes is setupSeedSession with host i reporting hash(i).
+// Acks raise F only while they agree on the hash at a height, so a test that
+// needs several block acks gives every host the same hash.
+func setupSeedSessionHashes(t *testing.T, seedRPC []bool, hash func(i int) []byte, opts ...SessionOption) *seedEnv {
 	t.Helper()
 	n := len(seedRPC)
 	hosts := make([]*signing.Secp256k1Signer, n)
@@ -100,9 +111,9 @@ func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seed
 	slots := make([]seedSlot, n)
 	clients := make([]HostClient, n)
 	for i := range hosts {
-		or := &sessionOracle{hash: []byte{0xaa, byte(i + 1)}}
+		or := &sessionOracle{hash: hash(i)}
 		or.height.Store(55)
-		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, state.WithHeaderTimes(polledSource(t)))
 		store := storage.NewMemory()
 		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 			EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion, Config: config, Group: group, InitialBalance: 100000,
@@ -136,7 +147,7 @@ func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seed
 		clients[i] = c
 	}
 
-	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, state.WithHeaderTimes(polledSource(t)))
 	sessionOpts := append([]SessionOption{WithHeightSyncCadence(10, uint64(n))}, opts...)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, sessionOpts...)
 	require.NoError(t, err)
@@ -152,8 +163,112 @@ func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seed
 // and sync_state need. What it cannot do is put that height in Diff. A verifier
 // reading the log sees only the number; the Anchor that justified it never
 // entered the log, so a seeded stamp and an invented one are indistinguishable
-// there — and that is exactly the P1 hole. So the log waits for a host-signed
-// stamp of its own, and until then the cadence stays disarmed.
+// there — and that is exactly the P1 hole. The seed itself writes nothing.
+// The opening heartbeat is unstamped; a host ack of its tip is what raises F.
+func TestBootstrapReply_FillsPeerTipsWithoutSeedRPC(t *testing.T) {
+	var seedPosts atomic.Int32
+	env := setupSeedSessionHashes(t, []bool{false, false, false},
+		func(int) []byte { return []byte{0xaa, 0x01} }, WithRequireHeightSeed(true))
+	clients := make([]HostClient, len(env.slots))
+	for i := range env.slots {
+		inner := env.slots[i].server.Config.Handler
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasSuffix(r.URL.Path, "/height-sync") {
+				seedPosts.Add(1)
+			}
+			inner.ServeHTTP(w, r)
+		}))
+		t.Cleanup(proxy.Close)
+		cfg := seedHTTPConfig()
+		cfg.RoutePrefix = seedTestRoutePrefix
+		cfg.QueryTimeout = 2 * time.Second
+		cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, uint64(len(env.slots)), heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+		cfg.HeightSyncPeerTips = env.peerTips
+		clients[i] = transport.NewHTTPClient(proxy.URL, "escrow-1", env.session.signer, cfg)
+	}
+	env.session.clients = clients
+	env.session.MarkHeightSeedGate(time.Now().Add(heightSeedGate))
+	// Oracle, poller, and floor share one hash at height 55. The poller
+	// otherwise only has height 100, so the chat gate never sees time(F).
+	_, err := polledSource(t).HeaderTimeMs(55, []byte{0xaa, 0x01})
+	require.NoError(t, err)
+
+	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
+	require.NoError(t, env.session.WaitFloorChat(context.Background()))
+	require.Zero(t, seedPosts.Load(), "chat and the bootstrap span must not call SeedHeightSync")
+
+	sm := env.session.StateMachine()
+	floor, _, known := sm.HeightSyncFloorAsOf(env.session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(55), floor)
+	acked := sm.HeightSyncSlotsWithBlockAck()
+	ackedAddrs := map[string]struct{}{}
+	for n := uint64(1); n <= env.session.Nonce(); n++ {
+		rec := sm.HeightSyncTurnRecord(n)
+		if rec == nil {
+			continue
+		}
+		for slot, ack := range rec.Acks {
+			if ack.Height > 0 && heightsync.StampPresent(ack.Hash) {
+				ackedAddrs[env.session.group[slot].ValidatorAddress] = struct{}{}
+			}
+		}
+	}
+	require.GreaterOrEqual(t, len(ackedAddrs), 2, "half the roster acked a block")
+	require.Equal(t, acked, len(ackedAddrs))
+
+	tips := env.peerTips.PerOriginator(time.Now())
+	got := map[string]int64{}
+	for _, tip := range tips {
+		if tip.Height > 0 && tip.Verified {
+			got[tip.Originator] = tip.Height
+		}
+	}
+	for addr := range ackedAddrs {
+		require.Equal(t, int64(55), got[addr], "acked host %s is missing from the peer-tip cache", addr)
+	}
+
+	st := env.session.HeightSeedStatus()
+	require.Equal(t, HeightSeedStateOK, st.State)
+	require.Equal(t, len(ackedAddrs), st.Seeded)
+
+	env.session.mu.Lock()
+	ready := env.session.floorChatReadyLocked()
+	env.session.mu.Unlock()
+	require.True(t, ready)
+
+	stale := time.Now().Add(-(2*heightsync.DefaultHeartbeatInterval + time.Second)).UnixMilli()
+	env.session.StateMachine().SetHeaderTimes(&fixedHeaderTimes{ms: stale})
+	require.Equal(t, HeightSeedStatePending, env.session.HeightSeedStatus().State)
+	env.session.mu.Lock()
+	ready = env.session.floorChatReadyLocked()
+	env.session.mu.Unlock()
+	require.False(t, ready)
+
+	env.session.StateMachine().SetHeaderTimes(&fixedHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
+	require.Equal(t, HeightSeedStateOK, env.session.HeightSeedStatus().State)
+}
+
+type fixedHeaderTimes struct {
+	ms int64
+}
+
+func (f *fixedHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
+	if f == nil || f.ms <= 0 {
+		return 0, errors.New("no header time")
+	}
+	return f.ms, nil
+}
+
+// StoredAt is the row the chat gate reads. The hash is the one the oracle,
+// the poller, and the floor share in TestBootstrapReply_FillsPeerTipsWithoutSeedRPC.
+func (f *fixedHeaderTimes) StoredAt(height uint64) (headertime.Record, bool) {
+	if f == nil || f.ms <= 0 || height == 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{Hash: []byte{0xaa, 0x01}, TimeMs: f.ms}, true
+}
+
 func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
 	env := setupSeedSession(t, []bool{true, true, true})
 	ctx := context.Background()
@@ -170,38 +285,23 @@ func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
 	require.Equal(t, uint64(0), env.session.Nonce(), "seed consumes no nonce")
 	require.Empty(t, env.session.Diffs())
 
-	require.NoError(t, env.session.MaybeHeartbeat(ctx))
-	require.Empty(t, env.session.Diffs(),
-		"a seeded height is not F: it may ride the envelope, never the log")
-	require.Equal(t, 1, env.session.HeartbeatSkippedNoHeight())
-
-	// One inference, and the executor's own stamp sets F. Now the log has a
-	// height the verifier can attribute, and the heartbeat carries that.
-	_, err := env.session.SendInference(ctx, InferenceParams{
-		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})
-	require.NoError(t, err)
-	require.NoError(t, env.session.SendPendingDiff(ctx))
-	base := env.session.Nonce()
-
 	rememberJournal(env.session)
 	require.NoError(t, env.session.MaybeHeartbeat(ctx))
-	var hb *types.MsgHeartbeat
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(env.session)),
+		"the opening span carries no height; the seed anchor is not copied onto it")
 	for _, d := range seenDiffs(env.session) {
-		if d.Nonce <= base {
-			continue
-		}
 		for _, tx := range d.Txs {
-			if inner := tx.GetHeartbeat(); inner != nil && hb == nil {
-				hb = inner
+			if hb := tx.GetHeartbeat(); hb != nil {
+				require.Zero(t, hb.ObservedHeight)
+				require.Empty(t, hb.ObservedBlockHash)
 			}
 		}
 	}
-	require.NotNil(t, hb, "the first host stamp arms the cadence")
-	require.Equal(t, uint64(55), hb.ObservedHeight)
-	require.True(t, heightsync.StampPresent(hb.ObservedBlockHash),
-		"the floor's hash rides the heartbeat, so the stamp is checkable against the log")
+	floor, hash, known := env.session.StateMachine().HeightSyncFloorAsOf(env.session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(55), floor, "the host ack of its tip raises F; the seed anchor does not")
+	require.NotEmpty(t, hash)
+	require.Zero(t, env.session.HeartbeatSkippedNoHeight())
 }
 
 func TestSeed_FanOutSurvivesDeadSlot(t *testing.T) {
@@ -248,23 +348,23 @@ func TestSeed_TotalMissDegradesNeverFails(t *testing.T) {
 	_, ok := env.slots[0].client.ObservedHeightNow()
 	require.False(t, ok)
 
+	rememberJournal(env.session)
 	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
-	require.Empty(t, env.session.Diffs())
-	require.Equal(t, 1, env.session.HeartbeatSkippedNoHeight())
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(env.session)))
+	require.Zero(t, env.session.HeartbeatSkippedNoHeight())
 
 	_, err := env.session.SendInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err, "total seed miss must not fail the session")
-	require.Equal(t, uint64(1), env.session.Nonce())
+	require.Greater(t, env.session.Nonce(), uint64(0))
 }
 
 func TestSeed_DoesNotAdvanceHLastOrConsumeNonce(t *testing.T) {
 	// Seed is a transport read: it proves nothing about the log, so it neither
-	// completes a turn nor discharges the obligation. The turn it owes simply
-	// cannot open yet, because there is no F to stamp — the obligation stays
-	// armed and the skip is counted rather than silently forgotten.
+	// completes a turn nor consumes a nonce. The opening span that follows is
+	// unstamped; the seed anchor is not the height it carries.
 	env := setupSeedSession(t, []bool{true, true, true})
 	env.session.SeedHeightSync(context.Background())
 
@@ -273,11 +373,11 @@ func TestSeed_DoesNotAdvanceHLastOrConsumeNonce(t *testing.T) {
 	require.Equal(t, uint64(0), env.session.HeartbeatTurnTracker().LastCompletedHeight())
 	require.False(t, env.session.HeartbeatTurnTracker().CompletedAtOrAbove(55))
 
+	rememberJournal(env.session)
 	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
-	require.Empty(t, env.session.Diffs(), "a seeded height is not F and does not enter the log")
-	require.Equal(t, 1, env.session.HeartbeatSkippedNoHeight(),
-		"seeded session that never worked still owes a turn; it just has nothing to stamp yet")
-	require.Zero(t, env.session.HeartbeatTurnovers())
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(env.session)),
+		"the seed anchor stays off the heartbeat; the opening span carries no height")
+	require.Zero(t, env.session.HeartbeatSkippedNoHeight())
 }
 
 func TestSeed_DeclinedSlotsAreReprobed(t *testing.T) {
@@ -638,7 +738,7 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 	env.session.SeedHeightSync(context.Background())
 	require.Less(t, time.Since(start), 5*time.Second, "gap 1 must miss immediately, not after the 30s gate")
 	require.True(t, env.session.HeightSeedMissed())
-	st := env.session.HeightSeedStatus()
+	st := env.session.SeedRPCStatus()
 	require.Equal(t, HeightSeedStateMissed, st.State)
 	require.Equal(t, 1, st.Seeded)
 	declined := 0
@@ -651,7 +751,7 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 
 	serve[1].Store(true)
 	require.Eventually(t, func() bool {
-		return env.session.HeightSeedStatus().State == HeightSeedStateOK
+		return env.session.SeedRPCStatus().State == HeightSeedStateOK
 	}, 12*time.Second, 50*time.Millisecond, "re-probing a declined slot must be able to reach ok")
 	require.False(t, env.session.HeightSeedMissed())
 	require.Greater(t, hits[1].Load(), int32(1))
@@ -682,20 +782,16 @@ func TestHeartbeatDisabled_SeedGateStillBlocks(t *testing.T) {
 	env.session.StartHeartbeatLoop()
 	require.True(t, logs.contains("heartbeat loop disabled"))
 	require.Nil(t, env.session.heartbeatStop)
-	require.NotNil(t, env.session.heightSeedStop, "disabling the cadence must still start the seed loop")
+	require.Nil(t, env.session.heightSeedStop, "the gateway does not start the seed loop")
+	require.NotNil(t, env.session.bootstrapStop, "the bootstrap span still waits for catalog")
 
-	waitCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	err := env.session.WaitHeightSeed(waitCtx)
-	cancel()
-	var se *HeightSeedError
-	require.ErrorAs(t, err, &se)
-	require.Equal(t, transport.DevshardErrorCatalogPending, se.Code)
+	require.Equal(t, HeightSeedStateCatalogPending, env.session.HeightSeedStatus().State)
 	require.Equal(t, base, env.session.Nonce())
 
 	// captureInfoLog restores logging.current in a cleanup, and cleanups run
 	// LIFO, so that write happens before setupSeedSession closes the session.
-	// The seed loop is still in WaitRouterCatalog calling logging.Debug until
-	// Close. Stop it here so the restore does not race that read.
+	// The bootstrap span is still in WaitRouterCatalog calling logging.Debug
+	// until Close. Stop it here so the restore does not race that read.
 	require.NoError(t, env.session.Close())
 }
 
@@ -733,13 +829,13 @@ func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
 	require.ErrorAs(t, err, &se)
 	require.Equal(t, transport.DevshardErrorCatalogPending, se.Code)
 	require.False(t, env.session.HeightSeedMissed())
-	require.Equal(t, HeightSeedStateCatalogPending, env.session.HeightSeedStatus().State)
+	require.Equal(t, HeightSeedStateCatalogPending, env.session.SeedRPCStatus().State)
 	require.Zero(t, env.session.heightSeedGateUntil.Load(), "30s clock must not start during catalog wait")
 	require.Zero(t, seedHits.Load(), "seed POSTs must wait for catalog admission")
 
 	catalogReady.Store(true)
 	require.Eventually(t, func() bool {
-		return env.session.HeightSeedStatus().State == HeightSeedStateOK
+		return env.session.SeedRPCStatus().State == HeightSeedStateOK
 	}, 5*time.Second, 50*time.Millisecond)
 	require.Greater(t, env.session.heightSeedGateUntil.Load(), int64(0))
 	require.False(t, env.session.HeightSeedMissed())
@@ -776,7 +872,7 @@ func TestSeed_Gap4AdmissionErrorIsRetryLater(t *testing.T) {
 	require.False(t, env.session.HeightSeedMissed(),
 		"local admission rejection is retry-later, not an immediate gap-1 miss")
 	require.Greater(t, admission.hits.Load(), int32(1), "seed loop must keep attempting throttled slots")
-	st := env.session.HeightSeedStatus()
+	st := env.session.SeedRPCStatus()
 	require.Equal(t, HeightSeedStatePending, st.State)
 	require.Equal(t, 1, len(st.SlotOutcomes))
 	require.Equal(t, seedRetryLater.String(), st.SlotOutcomes[0].Verdict)
@@ -847,7 +943,7 @@ func TestSeed_WarmLogOracleDoesNotCountTowardQuorum(t *testing.T) {
 
 	env.session.SeedHeightSync(context.Background())
 	require.True(t, env.session.HeightSeedMissed())
-	require.Equal(t, 0, env.session.HeightSeedStatus().Seeded)
+	require.Equal(t, 0, env.session.SeedRPCStatus().Seeded)
 
 	c := env.session.clients[0].(*transport.HTTPClient)
 	h, ok := c.ObservedHeightNow()
@@ -870,7 +966,7 @@ func TestSeed_CourierWorksWithWarmLogOracle(t *testing.T) {
 
 	env.session.SeedHeightSync(context.Background())
 	require.False(t, env.session.HeightSeedMissed())
-	require.Equal(t, HeightSeedStateOK, env.session.HeightSeedStatus().State)
+	require.Equal(t, HeightSeedStateOK, env.session.SeedRPCStatus().State)
 
 	c := env.session.clients[0].(*transport.HTTPClient)
 	h, ok := c.ObservedHeightNow()

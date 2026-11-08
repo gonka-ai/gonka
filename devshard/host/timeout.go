@@ -6,14 +6,14 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"sync"
-	"time"
+	"io"
+	"net"
+	"syscall"
 
 	"google.golang.org/protobuf/proto"
 
 	"common/completionapi"
 
-	"devshard/heightsync"
 	"devshard/state"
 	"devshard/types"
 )
@@ -55,76 +55,6 @@ func (h *Host) CheckEvidence(rec *types.InferenceRecord, txs ...*types.DevshardT
 	return h.sm.CheckEvidence(rec, txs...)
 }
 
-const PendingEvidenceTipSlack = 3
-
-const pendingEvidenceTipTimeout = 2 * time.Second
-
-const PendingEvidenceDeferWindow = 60 * time.Second
-
-const pendingEvidenceForget = time.Hour
-
-type deferralKey struct {
-	inferenceID uint64
-	reason      types.TimeoutReason
-}
-
-type evidenceDeferrals struct {
-	mu    sync.Mutex
-	first map[deferralKey]time.Time
-	clock func() time.Time
-}
-
-func (d *evidenceDeferrals) allow(inferenceID uint64, reason types.TimeoutReason) bool {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	now := time.Now()
-	if d.clock != nil {
-		now = d.clock()
-	}
-	if d.first == nil {
-		d.first = make(map[deferralKey]time.Time)
-	}
-	for id, at := range d.first {
-		if now.Sub(at) > pendingEvidenceForget {
-			delete(d.first, id)
-		}
-	}
-	key := deferralKey{inferenceID: inferenceID, reason: reason}
-	at, seen := d.first[key]
-	if !seen {
-		d.first[key] = now
-		return true
-	}
-	return now.Sub(at) <= PendingEvidenceDeferWindow
-}
-
-func (h *Host) PendingEvidenceDeferrable(reason types.TimeoutReason, txs ...*types.DevshardTx) bool {
-	var top, inferenceID uint64
-	for _, tx := range txs {
-		if height, _, ok := heightsync.RefStamp(tx); ok && height > top {
-			top = height
-		}
-		if fi := tx.GetFinishInference(); fi != nil {
-			inferenceID = fi.InferenceId
-		} else if cs := tx.GetConfirmStart(); cs != nil && inferenceID == 0 {
-			inferenceID = cs.InferenceId
-		}
-	}
-	if top > 0 {
-		ctx, cancel := context.WithTimeout(context.Background(), pendingEvidenceTipTimeout)
-		tip, err := h.LatestHeight(ctx)
-		cancel()
-		if err == nil && tip > 0 && top > uint64(tip)+PendingEvidenceTipSlack {
-			return false
-		}
-	}
-	return h.evidenceDeferrals.allow(inferenceID, reason)
-}
-
-func (h *Host) HeaderPendingDeferrable(inferenceID uint64, reason types.TimeoutReason) bool {
-	return h.evidenceDeferrals.allow(inferenceID, reason)
-}
-
 func (h *Host) TimeoutDue(inferenceID uint64, reason types.TimeoutReason) error {
 	return h.sm.TimeoutDue(inferenceID, reason)
 }
@@ -136,43 +66,18 @@ func timeoutDue(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutRea
 var (
 	_ FinishProposerVerifier = (*Host)(nil)
 	_ EvidenceVerifier       = (*Host)(nil)
-	_ PendingEvidenceJudge   = (*Host)(nil)
 )
 
 // verifiedConfirm returns the first ConfirmStart for inferenceID in pool that
 // would apply to rec. A non-nil receipt must equal its ExecutorSig.
 func verifiedConfirm(ev EvidenceVerifier, inferenceID uint64, rec *types.InferenceRecord, receipt []byte, pool []*types.DevshardTx) *types.DevshardTx {
-	tx, _ := verifiedConfirmOrPending(ev, inferenceID, rec, receipt, pool, types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED)
-	return tx
+	return verifiedConfirmIn(ev, inferenceID, rec, receipt, pool)
 }
 
-type PendingEvidenceJudge interface {
-	PendingEvidenceDeferrable(reason types.TimeoutReason, txs ...*types.DevshardTx) bool
-	HeaderPendingDeferrable(inferenceID uint64, reason types.TimeoutReason) bool
-}
-
-func headerPendingDefers(ev EvidenceVerifier, inferenceID uint64, reason types.TimeoutReason) bool {
-	judge, ok := ev.(PendingEvidenceJudge)
-	return ok && judge.HeaderPendingDeferrable(inferenceID, reason)
-}
-
-func evidencePending(ev EvidenceVerifier, err error, seq []*types.DevshardTx, reason types.TimeoutReason) bool {
-	if reason == types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED || !errors.Is(err, types.ErrHeaderPending) {
-		return false
-	}
-	judge, ok := ev.(PendingEvidenceJudge)
-	return ok && judge.PendingEvidenceDeferrable(reason, seq...)
-}
-
-func evidencePendingErr(inferenceID uint64) error {
-	return fmt.Errorf("%w: evidence for inference %d waits for a block header", types.ErrHeaderPending, inferenceID)
-}
-
-func verifiedConfirmOrPending(ev EvidenceVerifier, inferenceID uint64, rec *types.InferenceRecord, receipt []byte, pool []*types.DevshardTx, reason types.TimeoutReason) (*types.DevshardTx, bool) {
+func verifiedConfirmIn(ev EvidenceVerifier, inferenceID uint64, rec *types.InferenceRecord, receipt []byte, pool []*types.DevshardTx) *types.DevshardTx {
 	if ev == nil || rec == nil {
-		return nil, false
+		return nil
 	}
-	pending := false
 	checks := 0
 	for _, tx := range pool {
 		cs := tx.GetConfirmStart()
@@ -183,17 +88,15 @@ func verifiedConfirmOrPending(ev EvidenceVerifier, inferenceID uint64, rec *type
 			continue
 		}
 		if checks == maxEvidenceChecks {
-			return nil, pending
+			return nil
 		}
 		checks++
 		seq := state.EvidenceSequence(rec, nil, tx)
-		err := ev.CheckEvidence(rec, seq...)
-		if err == nil {
-			return tx, false
+		if ev.CheckEvidence(rec, seq...) == nil {
+			return tx
 		}
-		pending = pending || evidencePending(ev, err, seq, reason)
 	}
-	return nil, pending
+	return nil
 }
 
 // verifiedFinish returns the first Finish for inferenceID in pool that would
@@ -201,15 +104,13 @@ func verifiedConfirmOrPending(ev EvidenceVerifier, inferenceID uint64, rec *type
 // when the record is still pending. Escrow, slot, and the signature are
 // decided by CheckEvidence, the same check the gateway uses.
 func verifiedFinish(ev EvidenceVerifier, escrowID string, inferenceID uint64, rec *types.InferenceRecord, confirm *types.DevshardTx, pool []*types.DevshardTx) *types.DevshardTx {
-	tx, _ := verifiedFinishOrPending(ev, escrowID, inferenceID, rec, confirm, pool, types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED)
-	return tx
+	return verifiedFinishIn(ev, escrowID, inferenceID, rec, confirm, pool)
 }
 
-func verifiedFinishOrPending(ev EvidenceVerifier, escrowID string, inferenceID uint64, rec *types.InferenceRecord, confirm *types.DevshardTx, pool []*types.DevshardTx, reason types.TimeoutReason) (*types.DevshardTx, bool) {
+func verifiedFinishIn(ev EvidenceVerifier, escrowID string, inferenceID uint64, rec *types.InferenceRecord, confirm *types.DevshardTx, pool []*types.DevshardTx) *types.DevshardTx {
 	if ev == nil || rec == nil {
-		return nil, false
+		return nil
 	}
-	pending := false
 	checks := 0
 	for _, tx := range pool {
 		fi := tx.GetFinishInference()
@@ -224,16 +125,14 @@ func verifiedFinishOrPending(ev EvidenceVerifier, escrowID string, inferenceID u
 			continue
 		}
 		if checks == maxEvidenceChecks {
-			return nil, pending
+			return nil
 		}
 		checks++
-		err := ev.CheckEvidence(rec, seq...)
-		if err == nil {
-			return tx, false
+		if ev.CheckEvidence(rec, seq...) == nil {
+			return tx
 		}
-		pending = pending || evidencePending(ev, err, seq, reason)
 	}
-	return nil, pending
+	return nil
 }
 
 // ExecutorClient contacts the executor host to check inference status.
@@ -353,7 +252,7 @@ func VerifyRefusedTimeout(
 	ingest TxSink,
 	ev EvidenceVerifier,
 ) (bool, error) {
-	return verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev)
+	return verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev, nil)
 }
 
 type refusedChallenge int
@@ -375,26 +274,40 @@ func verifyRefusedTimeout(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
-) (bool, error) {
+	unreachable func(error) bool,
+) (accept bool, err error) {
 	if rec == nil {
 		return false, fmt.Errorf("inference %d not found", inferenceID)
 	}
 	if rec.Status != types.StatusPending {
+		forgetAnswer(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
 		return false, fmt.Errorf("inference %d: expected pending, got %d", inferenceID, rec.Status)
 	}
 
-	// Reject unless the height floor the next diff applies at has cleared
-	// the start anchor by the refusal window: the gate applyTimeout runs.
-	if !timeoutDue(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED) {
+	var release func(bool)
+	ctx, release, err = beginAnswer(ctx, ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	if release != nil {
+		defer func() { finishAnswer(release, accept, err) }()
+	}
+	if err != nil {
+		return false, err
+	}
+
+	// This verifier's wall clock against time(start stamp). A missing row
+	// waits inside the 60 second bound. TimeoutDue stays for callers that
+	// do not read this map.
+	ready, err := awaitVerifierDue(ctx, ev, inferenceID, rec, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
 		return false, nil
 	}
 
 	// Fast path: a verified MsgConfirmStart in the local mempool. A finish
 	// alone cannot apply to a pending record, so it is not evidence here.
-	if confirm, pending := verifiedConfirmOrPending(ev, inferenceID, rec, nil, localMempool, types.TimeoutReason_TIMEOUT_REASON_REFUSED); confirm != nil {
+	if confirm := verifiedConfirmIn(ev, inferenceID, rec, nil, localMempool); confirm != nil {
 		return false, nil
-	} else if pending {
-		return false, evidencePendingErr(inferenceID)
 	}
 
 	// No payload to challenge with: decline like the bad-payload branch below, don't error.
@@ -406,20 +319,55 @@ func verifyRefusedTimeout(
 	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens); err != nil {
 		return false, nil // bad payload -> reject timeout
 	}
+	// The refusal payload's StartedAt is the gateway send time stored on the
+	// record. The executor sign path does not use this bind: its receipt wall
+	// clock is its own. A challenge that names a different instant is declined.
+	if payload.StartedAt != rec.StartedAt {
+		return false, nil
+	}
 
 	if executorClient == nil {
+		// VerifyRefusedProgress uses a nil client as a local preflight. That
+		// true means "gates passed, continue to challenge" — not a cast vote.
+		// Drop the hold so the real challenge can take it (or the nil-client
+		// tip/nonce short path can challenge next).
+		if release != nil {
+			release(false)
+			release = nil
+		}
 		return true, nil
 	}
 	outcome, callErr := challengeRefused(ctx, st.EscrowID, inferenceID, rec, payload, diffs, executorClient, ingest, ev)
-	return finishRefusedChallenge(outcome, callErr, func() bool { return headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED) })
+	return finishRefusedChallenge(outcome, callErr, unreachable)
 }
 
-func finishRefusedChallenge(outcome refusedChallenge, callErr error, deferPending func() bool) (bool, error) {
-	if errors.Is(callErr, types.ErrHeaderPending) && deferPending() {
-		return false, callErr
+// defaultRefusedUnreachable is used when VerifyRefusedTimeout has no transport
+// classifier. Plain ErrHeaderPending is not a yes; net/context failures are.
+// Production refusal goes through VerifyRefusedProgress with executorUnreachable.
+func defaultRefusedUnreachable(err error) bool {
+	if err == nil || errors.Is(err, types.ErrHeaderPending) {
+		return false
 	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) ||
+		errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ETIMEDOUT) {
+		return true
+	}
+	var netErr net.Error
+	return errors.As(err, &netErr)
+}
+
+// finishRefusedChallenge accepts the refusal only when the challenge error is
+// unreachable (same rule as classifyChallenge). Answered soft failures,
+// including plain ErrHeaderPending, are not a yes vote.
+func finishRefusedChallenge(outcome refusedChallenge, callErr error, unreachable func(error) bool) (bool, error) {
 	if callErr != nil {
-		return true, nil
+		if unreachable == nil {
+			unreachable = defaultRefusedUnreachable
+		}
+		return unreachable(callErr), nil
 	}
 	return outcome != refusedReceipt, nil
 }
@@ -458,11 +406,8 @@ func judgeRefusedChallenge(
 	}
 	// The receipt counts only as the ExecutorSig of a queued ConfirmStart
 	// that verifies for this escrow and this inference.
-	confirmTx, pending := verifiedConfirmOrPending(ev, inferenceID, rec, receipt, mempool, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	confirmTx := verifiedConfirmIn(ev, inferenceID, rec, receipt, mempool)
 	if confirmTx == nil {
-		if pending {
-			return refusedNoReceipt, evidencePendingErr(inferenceID)
-		}
 		return refusedNoReceipt, nil
 	}
 	// Copy the verified txs. Same bytes the executor queued — do not mint a
@@ -498,49 +443,55 @@ func VerifyExecutionTimeout(
 	executorClient ExecutorClient,
 	ingest TxSink,
 	ev EvidenceVerifier,
-) (bool, error) {
+) (accept bool, err error) {
 	if rec == nil {
 		return false, fmt.Errorf("inference %d not found", inferenceID)
 	}
 	if rec.Status != types.StatusStarted {
+		forgetAnswer(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
 		return false, fmt.Errorf("inference %d: expected started, got %d", inferenceID, rec.Status)
 	}
 
-	// Reject unless the height floor the next diff applies at has cleared
-	// the confirm anchor by the execution window: the gate applyTimeout runs.
-	if !timeoutDue(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION) {
+	var release func(bool)
+	ctx, release, err = beginAnswer(ctx, ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	if release != nil {
+		defer func() { finishAnswer(release, accept, err) }()
+	}
+	if err != nil {
+		return false, err
+	}
+
+	// This verifier's wall clock against ConfirmedAtTimeMs. A zero carried
+	// time still waits on time(ConfirmedAtHeight) inside the 60 second bound.
+	// TimeoutDue stays for callers that do not read this map.
+	ready, err := awaitVerifierDue(ctx, ev, inferenceID, rec, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	if err != nil {
+		return false, err
+	}
+	if !ready {
 		return false, nil
 	}
 
 	// Fast path: a verified MsgFinishInference in the local mempool.
-	finish, pending := verifiedFinishOrPending(ev, st.EscrowID, inferenceID, rec, nil, localMempool, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	finish := verifiedFinishIn(ev, st.EscrowID, inferenceID, rec, nil, localMempool)
 	if finish != nil {
 		return false, nil
 	}
 
 	// One challenge, no journal. A nil payload does not sign a receipt or
-	// start execution. A host that never applied the start has no finish
-	// to return, and the timeout stands.
+	// start execution. A host that cannot serve has no finish to return,
+	// and the timeout stands.
 	if executorClient != nil {
 		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, nil)
-		if errors.Is(err, types.ErrHeaderPending) && headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION) {
-			return false, err
-		}
 		if err == nil {
-			finishTx, remotePending := verifiedFinishOrPending(ev, st.EscrowID, inferenceID, rec, nil, executorMempool, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+			finishTx := verifiedFinishIn(ev, st.EscrowID, inferenceID, rec, nil, executorMempool)
 			if finishTx != nil {
 				if ingest != nil {
 					ingest.AddTx(finishTx)
 				}
 				return false, nil
 			}
-			pending = pending || remotePending
 		}
-		// An unreachable executor supports the timeout claim, and a finish
-		// that does not verify is not evidence the work completed.
-	}
-	if pending {
-		return false, evidencePendingErr(inferenceID)
 	}
 
 	return true, nil

@@ -9,6 +9,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
+
+	"devshard/chainoracle/blocks/headertime"
 )
 
 func TestClassifyMLNodeHTTP(t *testing.T) {
@@ -237,4 +239,45 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestHostMetricsScrapeIncludesClockMismatch(t *testing.T) {
+	ensureMetrics()
+	headertime.RegisterTimeoutClockMismatch(Registry())
+	before, _ := hostClockMismatchValue()
+	headertime.RecordClockMismatch("verifier", "execution", "escrow-host", 2, headertime.DueEval{
+		Active:    headertime.DueSide{Due: true, Wall: true},
+		Shadow:    headertime.DueSide{Due: false},
+		HasShadow: true,
+		Mismatch:  true,
+	}, 1_700_000_000, 0, 2)
+	got, ok := hostClockMismatchValue()
+	if !ok {
+		t.Fatal("devshard_timeout_clock_mismatch_total{side=verifier,kind=execution} is not on the host registry")
+	}
+	if got != before+1 {
+		t.Fatalf("host mismatch counter = %v, want %v", got, before+1)
+	}
+}
+
+func hostClockMismatchValue() (float64, bool) {
+	families, err := Registry().Gather()
+	if err != nil {
+		return 0, false
+	}
+	for _, family := range families {
+		if family.GetName() != "devshard_timeout_clock_mismatch_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["side"] == "verifier" && labels["kind"] == "execution" && metric.GetCounter() != nil {
+				return metric.GetCounter().GetValue(), true
+			}
+		}
+	}
+	return 0, false
 }

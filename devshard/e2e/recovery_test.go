@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/e2e/testutil"
+	"devshard/internal/e2econfig"
 )
 
 // shortenRaceCleanupWait keeps recovery finalize from waiting out the default
@@ -129,25 +130,44 @@ func TestE2E_PostgresHostRestartRecovery(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the default three-host environment with Postgres-backed hosts.
+//  1. Start the three-host environment once on each timeout clock, with Postgres-backed hosts and a short protocol timeout.
 //  2. Send several OpenAI-style chat completion requests through devshardctl.
 //  3. Capture the session nonce before restart.
 //  4. Restart all devshard-host containers against their original Postgres databases.
 //  5. Continue sending requests through devshardctl.
 //  6. Assert the session nonce did not regress.
-//  7. Finalize the devshard session and verify the settlement contract.
+//  7. Finalize the devshard session and verify the settlement contract. A nonce left armed across the restart becomes due inside the finalize vote.
 func TestE2E_PostgresAllHostsRestartRecovery(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
+			runPostgresAllHostsRestartRecovery(t, header)
+		})
+	}
+}
+
+func runPostgresAllHostsRestartRecovery(t *testing.T, header bool) {
+	t.Helper()
 	requireE2EEnabled(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	t.Cleanup(cancel)
 
 	images := requiredImages(t)
-	env := startE2EEnv(ctx, t, images, e2eEnvOptions{
+	const shortProtocolTimeoutSeconds = "5"
+	env := startE2EEnv(ctx, t, images, withHeightsyncTimeoutClock(e2eEnvOptions{
 		usePostgresStorage: true,
-	})
+		hostEnv: map[string]string{
+			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+		},
+		devshardctlEnvOverrides: map[string]string{
+			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+		},
+	}, header))
 
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
+	requireHostTimeoutClock(t, client, env, header)
 	shortenRaceCleanupWait(t, client, env.clientURL)
 	testutil.SendCompletions(t, client, env.clientURL, "postgres all-host restart before", 3)
 	beforeRestart := testutil.LatestSessionNonce(t, client, env.clientURL)

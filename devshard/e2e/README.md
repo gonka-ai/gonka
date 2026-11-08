@@ -35,6 +35,10 @@ Run only the test suite using already-built images:
 make -C devshard e2e-test
 ```
 
+The runner compiles the test binary once, then runs three shards at the same
+time. Each shard's clock is 25 minutes. The short shard is every test that is
+not listed as a long accounting test or a timeout-protocol test.
+
 Run one focused test:
 
 ```sh
@@ -56,10 +60,12 @@ behavior rather than container create/start/stop noise.
 
 ## Reports
 
-The Compose runner uses `gotestsum` and writes a JUnit report to:
+The Compose runner uses `gotestsum` and writes one JUnit report per shard:
 
 ```text
-devshard/build/test-results/e2e/junit.xml
+devshard/build/test-results/e2e/junit-short.xml
+devshard/build/test-results/e2e/junit-accounting.xml
+devshard/build/test-results/e2e/junit-timeout.xml
 ```
 
 CI uploads this report as `devshard-e2e-junit-report` and publishes it as the

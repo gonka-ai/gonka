@@ -4192,8 +4192,13 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 		}
 
 		waitCtx := e.raceCleanupRoot()
+		// Live sendTime opens on the gateway wall clock. After a soft vote
+		// failure (verifier map miss / feed_behind), later waits use a zero
+		// sendTime so TimeoutDeadline follows the stamp map like verifiers.
+		sendTime := inf.sendTime
+		softAttempts := 0
 		for {
-			reason, ready, skipped, waitErr := e.session.WaitTimeoutDeadline(waitCtx, inf.nonce, inf.sendTime)
+			reason, ready, skipped, waitErr := e.session.WaitTimeoutDeadline(waitCtx, inf.nonce, sendTime)
 			if !ready {
 				if skipped.DetailReason == "nonce_closed" || (e.session != nil && e.session.IsNonceFinished(inf.nonce)) {
 					logInferenceStage(parent, inf.escrowID, inf.nonce, "timeout_skipped",
@@ -4229,18 +4234,35 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				bgCtx, _ := ensureRequestLogContext(cleanupCtx)
 				kind = timeoutKindForInflight(inf, false)
 				e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
-				result, needsWait, voteErr = e.runVoteTimeout(bgCtx, inf, params, reason)
-				if !needsWait && !timeoutVoteUnjudged(result) {
-					e.forgetRefusalPayload(inf.nonce)
-				}
+				result, needsWait, voteErr = e.session.VoteTimeout(bgCtx, inf.nonce, sendTime, e.inferenceTimeoutPayload(params), reason)
 				if needsWait {
 					e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
 					return
 				}
+				if timeoutVoteUnjudged(result) && softAttempts+1 < maxRefusalSweepAttempts {
+					return
+				}
+				e.forgetRefusalPayload(inf.nonce)
 				e.recordHandleTimeoutResult(bgCtx, inf, params, result, voteErr, false, failStage)
 			})
 			releasePost()
 			if needsWait {
+				continue
+			}
+			if timeoutVoteUnjudged(result) && softAttempts+1 < maxRefusalSweepAttempts {
+				softAttempts++
+				logInferenceStage(parent, inf.escrowID, inf.nonce, "timeout_vote_retry",
+					"host", inf.hostID,
+					"reason", result.Reason,
+					"outcome", result.Outcome,
+					"soft_attempt", softAttempts,
+				)
+				e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", result.Outcome)
+				if err := softTimeoutRetryPause(waitCtx, e.session, inf.nonce); err != nil {
+					e.forgetRefusalPayload(inf.nonce)
+					return
+				}
+				sendTime = time.Time{}
 				continue
 			}
 			return
@@ -4320,8 +4342,12 @@ func deliveredWholeAnswer(inf *inflight) bool {
 
 // attemptCounts reports an attempt the request can be settled on: the protocol nonce closed on a stream
 // that was not empty -- one that never streamed at all, like an in-process client, counts on the finish
-// alone -- or it is the winner whose whole answer already reached the caller.
+// alone -- or it is the winner whose whole answer already reached the caller. A stream that wrote bytes
+// and no content does not settle, so the race can start another host.
 func (e *Redundancy) attemptCounts(inf *inflight, winnerNonce uint64) bool {
+	if contentFreeStream(inf) {
+		return false
+	}
 	if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
 		return true
 	}
@@ -4464,10 +4490,26 @@ func inflightFinished(inf *inflight) bool {
 	if inf.err != nil || inf.resp == nil {
 		return false
 	}
-	if isFailedStreamAttempt(inf) {
+	if isFailedStreamAttempt(inf) || contentFreeStream(inf) {
 		return false
 	}
 	return user.HasMsgFinish(inf.resp.Mempool, inf.nonce)
+}
+
+// contentFreeStream is an attempt that wrote stream bytes and none of them
+// were content. A rejected confirm leaves the receipt flag unset, and that
+// must not let the protocol finish crown this body. An attempt that wrote
+// nothing, such as an in-process client, is not content-free and can still
+// settle on the finish. Host-fault accounting stays on isEmptyStreamAttempt,
+// which still requires the receipt.
+func contentFreeStream(inf *inflight) bool {
+	if inf == nil || inf.probe {
+		return false
+	}
+	if isErrorStreamAttempt(inf) {
+		return false
+	}
+	return inf.outputChunks.Load() > 0 && inf.contentChunks.Load() == 0
 }
 
 // isEmptyStreamAttempt reports whether a non-probe attempt that confirmed
@@ -4862,9 +4904,8 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	}
 	// Leave the receipt and Finish queued for the next Start diff, which
 	// already pays FeePerNonce. Arm the quiet settle for the request that
-	// has no successor. The cadence is off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
-	// is set, and this request is already marked finished in memory, so no
-	// timeout goroutine will compose them later.
+	// has no successor. This request is already marked finished in memory, so
+	// no timeout goroutine will compose the leftover later.
 	if e.session != nil {
 		e.session.ArmQuietSettle()
 	}
@@ -5137,6 +5178,9 @@ func (e *Redundancy) resolvedWinnerNonce(attempts []*inflight, winnerNonce uint6
 	}
 	for _, inf := range attempts {
 		if inf.probe {
+			continue
+		}
+		if contentFreeStream(inf) {
 			continue
 		}
 		if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {

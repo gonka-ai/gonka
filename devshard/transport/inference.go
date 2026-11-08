@@ -108,7 +108,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 				"HandleInference: storage busy", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
 		}
 		if errors.Is(err, types.ErrHeaderPending) {
-			call.Sink.Header().Set(HeaderDevshardError, DevshardErrorHeaderPending)
+			// Ordinary 503: no header_pending tag (challenge/apply no longer need it).
 			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 				"HandleInference: header pending", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
 		}

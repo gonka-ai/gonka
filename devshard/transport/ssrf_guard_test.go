@@ -5,6 +5,9 @@ import (
 	"testing"
 
 	"common/httpguard"
+
+	"devshard/host"
+	"devshard/state"
 )
 
 // TestMain enables the permissive dialer for this package's tests. They point
@@ -13,5 +16,7 @@ import (
 // would otherwise reject every loopback connection.
 func TestMain(m *testing.M) {
 	httpguard.SetAllowPrivate(true)
+	state.SetFixtureProtocolVersion("v6")
+	host.SetTestChainTip(host.StaticTipOracle(1))
 	os.Exit(m.Run())
 }

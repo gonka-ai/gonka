@@ -111,9 +111,12 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	t.Cleanup(func() { env.terminate(context.Background(), t) })
 
 	mockChain := env.startContainer(ctx, t, containerSpec{
-		name:    mockChainAlias,
-		image:   images.mockChain,
-		port:    "9090/tcp",
+		name:  mockChainAlias,
+		image: images.mockChain,
+		port:  "9090/tcp",
+		extraPorts: []string{
+			"26657/tcp",
+		},
 		aliases: []string{mockChainAlias},
 		env:     opts.mockChainEnv,
 		waitLog: "mock-chain gRPC listening",
@@ -153,6 +156,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		"DEVSHARD_E2E":           "1",
 		"DEVSHARD_ESCROW_ID":     defaultEscrowID,
 		"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+		"DEVSHARD_CHAIN_RPC":     "http://" + mockChainAlias + ":26657",
+		"NODE_RPC_URL":           "http://" + mockChainAlias + ":26657",
 		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
 		"DEVSHARD_PARAMS_SOURCE": "chain",
 		"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
@@ -164,9 +169,6 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		// Hosts are Docker DNS names that resolve to private IPs.
 		// Production leaves this unset so the dial-time SSRF guard stays on.
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
-		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
-		// POST /height-sync omits. Keep the production seed gate on in citest.
-		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
 		// Production quiet-settle default is 5m; keep 5s so settle waits stay under budget.
 		"DEVSHARD_QUIET_SETTLE_DELAY": "5s",
 	}
@@ -248,6 +250,9 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
 		"DEVSHARD_E2E":               "1",
 		"DEVSHARD_STUB_INFERENCE":    "1",
+		"DEVSHARD_CHAIN_RPC":         "http://" + mockChainAlias + ":26657",
+		"NODE_RPC_URL":               "http://" + mockChainAlias + ":26657",
+		"NODE_GRPC_URL":              mockChainAlias + ":9090",
 		// Peer URLs are compose aliases on the test network (private IPs).
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
 	}
@@ -301,11 +306,32 @@ func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 
 func containerURL(ctx context.Context, t *testing.T, container testcontainers.Container, portName string) string {
 	t.Helper()
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, nat.Port(portName))
-	require.NoError(t, err)
-	return "http://" + host + ":" + port.Port()
+	deadline := time.Now().Add(15 * time.Second)
+	var last error
+	for {
+		host, err := container.Host(ctx)
+		port, portErr := container.MappedPort(ctx, nat.Port(portName))
+		if err == nil && portErr == nil {
+			return "http://" + host + ":" + port.Port()
+		}
+		if err != nil {
+			last = err
+		} else {
+			last = portErr
+		}
+		if ctx.Err() != nil || !time.Now().Before(deadline) || !dockerStartRetryable(last) {
+			require.NoError(t, last)
+		}
+		time.Sleep(300 * time.Millisecond)
+	}
+}
+
+func dockerStartRetryable(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "not found")
 }
 
 func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {
@@ -351,32 +377,42 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			WithStartupTimeout(testutil.DefaultRequestTimeout)
 	}
 
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
-		ContainerRequest: testcontainers.ContainerRequest{
-			Image:          spec.image,
-			Env:            spec.env,
-			ExposedPorts:   exposedPorts,
-			Networks:       []string{e.networkName},
-			NetworkAliases: map[string][]string{e.networkName: spec.aliases},
-			Tmpfs:          spec.tmpfs,
-			HostConfigModifier: func(hostConfig *container.HostConfig) {
-				hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
+	var started testcontainers.Container
+	var err error
+	for attempt := 1; attempt <= 3; attempt++ {
+		started, err = testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+			ContainerRequest: testcontainers.ContainerRequest{
+				Image:          spec.image,
+				Env:            spec.env,
+				ExposedPorts:   exposedPorts,
+				Networks:       []string{e.networkName},
+				NetworkAliases: map[string][]string{e.networkName: spec.aliases},
+				Tmpfs:          spec.tmpfs,
+				HostConfigModifier: func(hostConfig *container.HostConfig) {
+					hostConfig.Mounts = append(hostConfig.Mounts, spec.mounts...)
+				},
+				WaitingFor: waitStrategy,
 			},
-			WaitingFor: waitStrategy,
-		},
-		Started: true,
-		Logger:  quietTestcontainersLogger{},
-	})
-	if err != nil {
-		if container != nil {
-			dumpContainerLogs(ctx, t, spec.name, container)
-			_ = container.Terminate(context.Background())
+			Started: true,
+			Logger:  quietTestcontainersLogger{},
+		})
+		if err == nil {
+			break
 		}
-		t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
+		if started != nil {
+			dumpContainerLogs(ctx, t, spec.name, started)
+			_ = started.Terminate(context.Background())
+			started = nil
+		}
+		if attempt == 3 || !dockerStartRetryable(err) {
+			t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
+		}
+		t.Logf("retrying start %s after docker API error: %v", spec.name, err)
+		time.Sleep(time.Second)
 	}
-	e.containers = append(e.containers, namedContainer{name: spec.name, container: container})
+	e.containers = append(e.containers, namedContainer{name: spec.name, container: started})
 	testutil.DebugLogf(t, "container %s is ready", spec.name)
-	return container
+	return started
 }
 
 func sqliteHostVolumeNames(t *testing.T) []string {

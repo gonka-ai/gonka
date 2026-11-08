@@ -2,8 +2,8 @@ package transport
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -34,7 +34,7 @@ type countingPeer struct {
 
 func (p *countingPeer) ChallengeReceipt(context.Context, uint64, *host.InferencePayload, []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	p.challenges.Add(1)
-	return nil, nil, errors.New("executor down")
+	return nil, nil, fmt.Errorf("challenge-receipt: %w", net.ErrClosed)
 }
 
 func (p *countingPeer) Close() { p.closed.Store(true) }
@@ -76,10 +76,20 @@ func (r *countingResolver) last() *countingPeer {
 // inference 1 whose refusal deadline has passed. Slot 1 is its executor.
 func newPeerTestServer(t *testing.T) *Server {
 	t.Helper()
+	return newPeerTestServerClock(t, false)
+}
+
+// newPeerTestServerClock is newPeerTestServer with the escrow clock selected.
+// The start's StartedAt matches refusedVerifyRequest, so the refusal bind
+// passes. ArmRefusalDue makes the header stamp due; StartedAt 1000 is the
+// Unix epoch plus a thousand seconds, so the legacy wall is due too.
+func newPeerTestServerClock(t *testing.T, header bool) *Server {
+	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(group))
+	config.HeightsyncTimeoutClock = header
 	verifier := signing.NewSecp256k1Verifier()
 
 	sm, err := state.NewStateMachine(peerTestEscrow, config, group, 100000, user.Address(), verifier,
@@ -97,7 +107,9 @@ func newPeerTestServer(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
-	start := testutil.SignDiff(t, user, peerTestEscrow, 1, []*types.DevshardTx{testutil.StartTx(1)})
+	startTx := testutil.StartTx(1)
+	startTx.GetStartInference().StartedAt = 1000
+	start := testutil.SignDiff(t, user, peerTestEscrow, 1, []*types.DevshardTx{startTx})
 	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{start}})
 	require.NoError(t, err)
 	require.Equal(t, types.StatusPending, h.SnapshotState().Inferences[1].Status)
@@ -127,18 +139,37 @@ func refusedVerifyRequest() VerifyTimeoutRequest {
 //  2. Vote a refused timeout twice.
 //  3. Expect the resolver to run once and the executor to be challenged on both votes.
 func TestServeVerifyTimeout_ResolvesMissingExecutorOnFirstVote(t *testing.T) {
-	srv := newPeerTestServer(t)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testResolvesMissingExecutorOnFirstVote(t, header)
+		})
+	}
+}
+
+func testResolvesMissingExecutorOnFirstVote(t *testing.T, header bool) {
+	srv := newPeerTestServerClock(t, header)
 	r := &countingResolver{}
 	srv.SetPeerClients(map[int]HostPeerClient{})
 	srv.SetPeerResolver(r.resolve)
 
-	for i := 0; i < 2; i++ {
-		resp, err := srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
-		require.NoError(t, err)
-		require.True(t, resp.Accept, "an executor that does not answer the challenge supports the timeout")
-	}
-	require.EqualValues(t, 1, r.calls.Load(), "the resolved client is kept for the next vote")
-	require.EqualValues(t, 2, r.last().challenges.Load(), "each vote challenges the executor")
+	resp, err := srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
+	require.NoError(t, err)
+	require.True(t, resp.Accept, "an executor that does not answer the challenge supports the timeout")
+	require.NotEmpty(t, resp.Signature)
+	firstSig := append([]byte(nil), resp.Signature...)
+	firstSlot := resp.VoterSlot
+	resp, err = srv.ServeVerifyTimeout(context.Background(), refusedVerifyRequest())
+	require.NoError(t, err)
+	require.True(t, resp.Accept, "a gateway retry replays the stored accept vote")
+	require.Equal(t, firstSig, resp.Signature)
+	require.Equal(t, firstSlot, resp.VoterSlot)
+	require.Empty(t, resp.Mempool)
+	require.EqualValues(t, 1, r.calls.Load(), "the resolved client is kept")
+	require.EqualValues(t, 1, r.last().challenges.Load(), "the remembered vote does not challenge the executor again")
 	require.Contains(t, srv.PeerClients(), 1)
 }
 
@@ -162,7 +193,19 @@ func TestServeVerifyTimeout_UnresolvedExecutorAbstains(t *testing.T) {
 //  2. Vote a refused timeout.
 //  3. Expect accept: no one can dial that executor, the gateway included.
 func TestServeVerifyTimeout_ExecutorWithoutURLIsUnreachable(t *testing.T) {
-	srv := newPeerTestServer(t)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testExecutorWithoutURLIsUnreachable(t, header)
+		})
+	}
+}
+
+func testExecutorWithoutURLIsUnreachable(t *testing.T, header bool) {
+	srv := newPeerTestServerClock(t, header)
 	r := &countingResolver{err: fmt.Errorf("slot 1: %w", ErrPeerURLMissing)}
 	srv.SetPeerResolver(r.resolve)
 

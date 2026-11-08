@@ -26,6 +26,11 @@ import (
 	"devshard/types"
 )
 
+// receiptMarshal is the ExecutorReceiptContent preimage encoding. Must match
+// state.StateMachine.checkReceiptLocked (deterministic) so wall + stamp fields
+// verify byte-identically.
+var receiptMarshal = proto.MarshalOptions{Deterministic: true}
+
 // finishGossipGraceRotations is the number of full slot rotations to wait
 // before re-broadcasting a locally-proposed MsgFinishInference that the user
 // sequencer has not yet included in a diff. With round-robin host selection
@@ -70,6 +75,7 @@ type HostResponse struct {
 	ConfirmedAt       int64  // executor wall-clock timestamp, 0 if not executor
 	ObservedHeight    uint64 // executor stamp; 0 if unstamped
 	ObservedBlockHash []byte
+	ObservedTimeMs    int64 // header time for the stamp; 0 if unset
 	// EnvelopeHeight is the response-leg HeightSyncSection.mainnet_height when
 	// the hop attached a section (HasEnvelope). Honest compose uses it to drop
 	// a host-signed raise that does not match this hop's envelope (spec §14).
@@ -94,6 +100,7 @@ type receiptOutcome struct {
 	executionExpected bool
 	observedHeight    uint64
 	observedHash      []byte
+	observedTimeMs    int64
 	// lookupStored means the inference already ran here and the caller loads
 	// its stored body outside the host lock. No execution claim is held.
 	lookupStored bool
@@ -186,8 +193,14 @@ type Host struct {
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
 
 	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
-	oracle            blocks.BlockOracle
-	evidenceDeferrals evidenceDeferrals
+	oracle blocks.BlockOracle
+
+	// answerNow and answerAfter are the verifier's wall clock and timer.
+	// Tests set them. Production leaves both nil: waitAnswer uses time.Now
+	// and time.NewTimer (stopped on early return).
+	answerNow   func() time.Time
+	answerAfter func(time.Duration) <-chan time.Time
+	answerHolds answerHolds
 
 	// peerSeen and heartbeatCfg serve host-signed height acks (spec §10.4).
 	// peerSeen is the spec §11.2 bitmap (Diff acks and repair HEIGHT).
@@ -293,6 +306,9 @@ func NewHost(
 	}
 	for _, opt := range opts {
 		opt(h)
+	}
+	if h.oracle == nil {
+		h.oracle = testChainTip
 	}
 	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
 	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
@@ -445,6 +461,40 @@ func WithGrace(grace uint64) HostOption {
 
 // ErrNoChainOracle is returned by Host.LatestHeight when no BlockOracle was configured.
 var ErrNoChainOracle = errors.New("host: no chain oracle configured")
+
+// testChainTip is empty in production. Tests set it so a host built without
+// WithChainOracle still has a header to stamp on an executor receipt.
+// WithChainOracle wins when the caller passes one.
+var testChainTip blocks.BlockOracle
+
+// SetTestChainTip installs the oracle NewHost uses when WithChainOracle is
+// omitted. Production leaves it unset.
+func SetTestChainTip(o blocks.BlockOracle) { testChainTip = o }
+
+// StaticTipOracle reports one height and hash for every read.
+func StaticTipOracle(height int64) blocks.BlockOracle {
+	return staticTipOracle{height: height}
+}
+
+type staticTipOracle struct{ height int64 }
+
+func (o staticTipOracle) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(o.height, time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+}
+
+func (o staticTipOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
+	return o.Latest(ctx)
+}
+
+func (o staticTipOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+
+func (o staticTipOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
+}
 
 // WithChainOracle injects a mainnet BlockOracle. LatestHeight returns ErrNoChainOracle when omitted.
 func WithChainOracle(o blocks.BlockOracle) HostOption {
@@ -672,7 +722,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	if diffsApplied {
 		lastAppliedTxs = req.Diffs[len(req.Diffs)-1].Txs
 	}
-	newlyApplied, err := h.applyDiffsAwaitingHeadersLocked(ctx, req.Diffs)
+	newlyApplied, err := h.applyDiffsLocked(ctx, req.Diffs)
 	if err != nil {
 		h.mu.Unlock()
 		if errors.Is(err, types.ErrNonceLimitExceeded) {
@@ -760,6 +810,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		ConfirmedAt:        confirmedAt,
 		ObservedHeight:     receiptOutcome.observedHeight,
 		ObservedBlockHash:  append([]byte(nil), receiptOutcome.observedHash...),
+		ObservedTimeMs:     receiptOutcome.observedTimeMs,
 		Mempool:            h.mempool.Txs(),
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
@@ -990,18 +1041,39 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 	return stateSig, root, nonce, nil
 }
 
+// errConfirmAwaitingHeader means this response carries no receipt. The host
+// has no usable header and no floor to carry, so there is nothing honest to
+// stamp. A later request for the same nonce signs once a header exists.
+var errConfirmAwaitingHeader = errors.New("confirm awaiting a block header")
+
 // confirmStartLocked returns the executor receipt for a pending inference as a
 // MsgConfirmStart queued in the mempool. A receipt this host already queued is
 // returned as is, so every retry hands out the same bytes: whichever copy lands
 // in a diff, RemoveIncluded clears the queued one. Otherwise it signs a new
-// receipt stamped with the height-sync floor as of inferenceID, and queues it.
-// Caller must hold h.mu.
+// receipt at max(the header it just read, F(inferenceID)). An empty result
+// returns errConfirmAwaitingHeader and queues nothing. Caller must hold h.mu.
 func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord, hdr *blocks.Header, hdrErr error) (*types.MsgConfirmStart, error) {
 	if queued := h.mempool.QueuedConfirmStart(inferenceID); queued != nil {
 		return queued, nil
 	}
-	obsH, obsHash := state.StartStamp(&rec)
-	receiptData, err := proto.Marshal(&types.ExecutorReceiptContent{
+	tipH, tipHash := headerStamp(hdr, hdrErr)
+	obsH, obsHash := h.referenceStamp(inferenceID, tipH, tipHash)
+	if obsH == 0 || !heightsync.StampPresent(obsHash) {
+		return nil, errConfirmAwaitingHeader
+	}
+	var tipTime int64
+	if obsH == tipH {
+		tipTime = headerStampTime(hdr, hdrErr)
+	}
+	if tipTime <= 0 {
+		tipTime = h.floorStampCandidate(inferenceID, obsH)
+	}
+	obsTime, err := h.resolveStampTime(obsH, obsHash, tipTime)
+	if err != nil {
+		return nil, err
+	}
+	confirmedAt := time.Now().Unix()
+	receiptData, err := receiptMarshal.Marshal(&types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,
 		Model:             rec.Model,
@@ -1010,6 +1082,9 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 		EscrowId:          h.escrowID,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
+		ObservedTimeMs:    obsTime,
+		StartedAt:         rec.StartedAt,
+		ConfirmedAt:       confirmedAt,
 	})
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
@@ -1023,6 +1098,8 @@ func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord,
 		ExecutorSig:       sig,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
+		ObservedTimeMs:    obsTime,
+		ConfirmedAt:       confirmedAt,
 	}
 	h.mempool.Add(MempoolEntry{
 		Tx:         &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}},
@@ -1117,12 +1194,17 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	// The ConfirmStart is queued in the mempool so it survives HTTP failures:
 	// if the response is lost (e.g. 503), the next request delivers it.
 	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
+	if errors.Is(err, errConfirmAwaitingHeader) {
+		outcome.reason = observability.ReasonNoReceipt
+		return nil, 0, nil, nil, outcome, nil
+	}
 	if err != nil {
 		return nil, 0, nil, nil, outcome, err
 	}
-	sig, confirmedAt := confirm.ExecutorSig, time.Now().Unix()
+	sig, confirmedAt := confirm.ExecutorSig, confirm.ConfirmedAt
 	outcome.observedHeight = confirm.ObservedHeight
 	outcome.observedHash = confirm.ObservedBlockHash
+	outcome.observedTimeMs = confirm.ObservedTimeMs
 
 	// Dedup: return receipt (proves executor alive) but skip execution.
 	if alreadyExecuting {
@@ -1311,11 +1393,32 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
 
-	obsH, obsHash := h.observedTip(ctx)
+	tipH, tipHash, tipTime := h.observedTipWithTime(ctx)
+	var envH uint64
+	var envHash []byte
 	if job != nil {
-		obsH, obsHash = heightsync.FinishObserved(job.ResponseEnvelopeHeight, job.ResponseEnvelopeHash, obsH, obsHash)
+		envH, envHash = job.ResponseEnvelopeHeight, job.ResponseEnvelopeHash
 	}
+	obsH, obsHash := heightsync.FinishObserved(envH, envHash, tipH, tipHash)
+	candidate := int64(0)
+	if obsH == tipH && bytes.Equal(obsHash, tipHash) {
+		candidate = tipTime
+	}
+	preLiftH := obsH
 	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
+	if obsH != preLiftH || candidate <= 0 {
+		if floorTime := h.floorStampCandidate(inferenceID, obsH); floorTime > 0 {
+			candidate = floorTime
+		} else if obsH != preLiftH {
+			candidate = 0
+		}
+	}
+	obsTime, timeErr := h.resolveStampTime(obsH, obsHash, candidate)
+	if timeErr != nil {
+		return result, observability.FailReceiptOrphan(ctx, h.escrowID,
+			observability.ReasonSignFinishErr, observability.WhereHostPublishFinish,
+			observability.StageFinished, "stamp time mismatch", timeErr, "inference_id", inferenceID)
+	}
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,
 		ResponseHash:      result.ResponseHash,
@@ -1326,6 +1429,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		EscrowId:          h.escrowID,
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
+		ObservedTimeMs:    obsTime,
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {
