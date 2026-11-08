@@ -110,3 +110,23 @@ func (loggingDiscard) Info(string, ...any)  {}
 func (loggingDiscard) Error(string, ...any) {}
 func (loggingDiscard) Warn(string, ...any)  {}
 func (loggingDiscard) Debug(string, ...any) {}
+
+func TestHost_FinishObsPruneIsThrottled(t *testing.T) {
+	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{}, nil)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	retention := h.finishObsRetention()
+	t0 := time.Now()
+	h.recordFinishObsLocked(1, 1, t0)
+	h.recordFinishObsLocked(2, 2, t0.Add(retention-30*time.Second)) // sweeps, 1 still live
+	// Within the sweep interval an expired entry may linger...
+	h.recordFinishObsLocked(3, 3, t0.Add(retention+time.Second))
+	_, ok := h.finishObs[1]
+	require.True(t, ok)
+	// ...and is dropped by the next sweep.
+	h.recordFinishObsLocked(4, 4, t0.Add(retention+31*time.Second))
+	_, ok = h.finishObs[1]
+	require.False(t, ok)
+	require.Len(t, h.finishObs, 3)
+}
