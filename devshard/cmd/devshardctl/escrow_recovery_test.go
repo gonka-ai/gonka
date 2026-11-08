@@ -145,7 +145,7 @@ func TestCreateRotationEscrowIntentFirstThenPersistAndClear(t *testing.T) {
 	require.NoError(t, err)
 
 	record := devshardIDs(t, store)["777"]
-	require.Equal(t, "6", record.ProtocolVersion, "replacement escrow uses the default protocol")
+	require.Equal(t, "7", record.ProtocolVersion, "replacement escrow uses the default protocol")
 	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, commitments, "commitment cleared after persist")

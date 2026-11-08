@@ -55,6 +55,7 @@ type DevshardMetrics struct {
 	errorMissVerifyRejects *prometheus.CounterVec
 	chatCache              *prometheus.CounterVec
 	servedBindings         *prometheus.CounterVec
+	challenges             *prometheus.CounterVec
 
 	// Host ping observability (common/probe sink). Fleet warm RTT histogram
 	// cannot share the gauge name, so it uses _warm_rtt_seconds.
@@ -349,6 +350,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"verdict"},
 		),
+		challenges: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_challenges_total",
+				Help: "Usage challenges by reason, executor participant key and outcome: invalidated, below_threshold, none (no fault in the stored body, and the unanswered hosts could not have changed it), incomplete (no fault, but enough hosts unanswered to have invalidated), no_votes, failed, unsupported_protocol, nonce_cap, replay_first.",
+			},
+			[]string{"reason", "participant_key", "outcome"},
+		),
 		hostPingUp: prometheus.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Name: "devshard_gateway_host_ping_up",
@@ -464,6 +472,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.errorMissVerifyRejects,
 		m.chatCache,
 		m.servedBindings,
+		m.challenges,
 		m.hostPingUp,
 		m.hostPingRTT,
 		m.hostPingWarmRTT,
@@ -760,6 +769,13 @@ func (m *DevshardMetrics) RecordServedBinding(verdict string) {
 		return
 	}
 	m.servedBindings.WithLabelValues(metricLabel(verdict, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordChallenge(reason, executor, outcome string) {
+	if m == nil {
+		return
+	}
+	m.challenges.WithLabelValues(metricLabel(reason, "unknown"), metricLabel(executor, "unknown"), metricLabel(outcome, "unknown")).Inc()
 }
 
 func (m *DevshardMetrics) ObserveRequestSample(sample RequestSample) {

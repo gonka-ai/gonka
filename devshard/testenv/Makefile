@@ -85,19 +85,19 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll citest-timeout-evidence
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-cross-version-compat test-gateway-smoke
+.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-cross-version-compat citest-usage-challenge-old-hosts test-gateway-smoke
 .PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites. citest-baseline-smoke, citest-mixed-fleet,
-# citest-peerrpc-cross-version-compat, and
-# citest-height-sync-dapi-compat are manual only (pinned images).
+# citest-peerrpc-cross-version-compat, citest-usage-challenge-old-hosts and
+# citest-height-sync-dapi-compat are manual only (pinned images or binaries).
 # citest-dapi-correlation is a focused subset of citest-observability.
 # All of those stay out of the auto-discovered CI matrix.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-cross-version-compat|citest-height-sync-dapi-compat|citest-dapi-correlation' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-baseline-smoke|citest-mixed-fleet|citest-peerrpc-cross-version-compat|citest-usage-challenge-old-hosts|citest-height-sync-dapi-compat|citest-dapi-correlation' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
@@ -114,7 +114,7 @@ STACK_CITEST_PATTERN := ^Test(StackSmoke|BaselineSmoke|RouterStickiness|ParamsLo
 BASELINE_VERSIOND_IMAGE ?= devshard-versiond:0.2.15-v5
 BASELINE_VERSIOND_ROUTER_IMAGE ?= devshard-versiond-router:0.2.15-v5
 # §8.2 RPC-on columns.
-PEER_RPC_ENDPOINTS := signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat
+PEER_RPC_ENDPOINTS := signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat
 # Native gRPC on the no-proxy stack. Peers dial versiond-router:8080 with
 # prior-knowledge HTTP/2, the same listen that serves JSON; the HTTP/2 probe
 # is the client default. Pin targets must not inherit this.
@@ -291,6 +291,29 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, Connect over HTTP/1.1, no prox
 		DEVSHARD_RPC_H2_UPGRADE=false \
 		DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 		TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestMixedFleetNoProxy$$' -count=1 -v -timeout 30m
+
+# Rollout gate for the usage challenge: this tree's gateway while every host
+# still runs the previous release line's devshardd, which has no
+# VerifyChallenge. The child is built from USAGE_CHALLENGE_BASELINE_REF, the
+# last commit of that line before the procedure: the line itself moves on and
+# soon carries it, so its tip is not an old host.
+USAGE_CHALLENGE_BASELINE_BRANCH ?= devshard-0.2.x-v6
+USAGE_CHALLENGE_BASELINE_REF ?= 67230e4dc
+USAGE_CHALLENGE_BASELINE_CHILD := $(CURDIR)/baselines/devshardd-$(USAGE_CHALLENGE_BASELINE_BRANCH)
+citest-usage-challenge-old-hosts: ## Usage challenge on a fleet whose hosts have no VerifyChallenge yet.
+	$(MAKE) build-devshardd
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE $(MAKE) citest-images
+	BASELINE_BRANCH=$(USAGE_CHALLENGE_BASELINE_BRANCH) \
+		BASELINE_REF=$(USAGE_CHALLENGE_BASELINE_REF) \
+		BASELINE_VERSIOND_IMAGE=devshard-versiond:$(USAGE_CHALLENGE_BASELINE_BRANCH) \
+		BASELINE_VERSIOND_ROUTER_IMAGE=devshard-versiond-router:$(USAGE_CHALLENGE_BASELINE_BRANCH) \
+		BASELINE_DEVSHARDD_BUILDER_IMAGE=devshardd-builder:$(USAGE_CHALLENGE_BASELINE_BRANCH) \
+		BASELINE_DEVSHARDD_PATH=$(USAGE_CHALLENGE_BASELINE_CHILD) \
+		BASELINE_PIN_FILE=$(CURDIR)/baselines/$(USAGE_CHALLENGE_BASELINE_BRANCH).txt \
+		./scripts/build-baseline-infra.sh
+	env -u TESTENV_VERSIOND_IMAGE -u TESTENV_VERSIOND_ROUTER_IMAGE \
+		TESTENV_CITEST=1 TESTENV_MIXED_CHILD_BINARY=$(USAGE_CHALLENGE_BASELINE_CHILD) \
+		go test -tags=testenvci ./citest/ -run '^TestUsageChallengeOnOldHosts$$' -count=1 -v -timeout 30m
 
 # Manual compatibility gate: it needs both baseline images and a baseline child
 # binary built from the pinned source ref. The tests intentionally use the
