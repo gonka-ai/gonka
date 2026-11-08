@@ -483,6 +483,9 @@ type killableClient struct {
 	err            error
 	last           *host.HostRequest
 	receivedHashes [][32]byte
+	// onSend observes each request after it is recorded. A later protocol send
+	// replaces last, so a test that needs the chat itself watches here.
+	onSend func(host.HostRequest)
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -491,7 +494,11 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream 
 	c.last = &reqCopy
 	forcedErr := c.err
 	receivedHashes := c.receivedHashes
+	onSend := c.onSend
 	c.mu.Unlock()
+	if onSend != nil {
+		onSend(reqCopy)
+	}
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}
@@ -1699,28 +1706,83 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 
 const divergenceUpstreamError = `http /sessions/escrow-proxy/chat/completions: status 500: {"error":"apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"}`
 
+// inferenceDispatches are the chats a host was asked to run. A Finish or
+// catch-up for an earlier winner is a HostRequest with no payload, and that
+// send can land on this same slot before or after the replay.
+func inferenceDispatches(reqs []host.HostRequest) []host.HostRequest {
+	var out []host.HostRequest
+	for _, req := range reqs {
+		if req.Payload != nil {
+			out = append(out, req)
+		}
+	}
+	return out
+}
+
 // A host rolls the diff back when its root disagrees, so its state survives intact and one replay of the
 // retained chain is worth trying before the escrow writes it off.
 func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T) {
 	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
+	var reqMu sync.Mutex
+	var seen []host.HostRequest
+	divergent.onSend = func(req host.HostRequest) {
+		reqMu.Lock()
+		seen = append(seen, req)
+		reqMu.Unlock()
+	}
+	dispatches := func() []host.HostRequest {
+		reqMu.Lock()
+		defer reqMu.Unlock()
+		return inferenceDispatches(append([]host.HostRequest(nil), seen...))
+	}
 	divergent.ForceError(errors.New(divergenceUpstreamError))
 
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
-	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	// The failed chat returns with the winner, while its own send can still be
+	// entering. The dispatch log is the request, once that send has started.
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 1
+	}, time.Second, 5*time.Millisecond)
+	require.EqualValues(t, uint64(1), dispatchNonces(dispatches())[0])
+
+	// The winner's Finish is published on its own nonce once the race cleanup
+	// runs. Let that land before the replay, so the next chat is not racing
+	// that publish for this host's slot.
+	divergent.ForceError(nil)
+	require.Eventually(t, func() bool {
+		return env.session.Nonce() > 2
+	}, 2*time.Second, 5*time.Millisecond, "the winner finish is published before the replay")
 
 	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
 
-	divergent.ForceError(nil)
-	var second bytes.Buffer
-	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
-	require.EqualValues(t, 3, divergent.LastRequest().Nonce, "the host has to be dispatched to again to prove itself")
+	for range 4 {
+		if len(dispatchNonces(dispatches())) >= 2 {
+			break
+		}
+		var body bytes.Buffer
+		require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &body, nil))
+	}
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 2
+	}, time.Second, 5*time.Millisecond, "the host has to be dispatched to again to prove itself")
+	got := dispatchNonces(dispatches())
+	require.EqualValues(t, uint64(1), got[0])
+	require.Greater(t, got[1], got[0], "replay dispatches %v", got)
 
 	_, blocked = env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.False(t, blocked, "a host that agreed on the replay must not be written off")
+}
+
+func dispatchNonces(reqs []host.HostRequest) []uint64 {
+	nonces := make([]uint64, len(reqs))
+	for i, req := range reqs {
+		nonces[i] = req.Nonce
+	}
+	return nonces
 }
 
 // A disagreement that survives the replay is the evidence the block wanted.

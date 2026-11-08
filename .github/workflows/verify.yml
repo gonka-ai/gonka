@@ -682,14 +682,14 @@ jobs:
         if: always()
         with:
           name: devshard-e2e-junit-report
-          path: devshard/build/test-results/e2e/junit.xml
+          path: devshard/build/test-results/e2e/junit-*.xml
 
       - name: Report E2E Test Results in GitHub
         if: always()
         uses: dorny/test-reporter@v1
         with:
           name: Devshard E2E Tests
-          path: devshard/build/test-results/e2e/junit.xml
+          path: devshard/build/test-results/e2e/junit-*.xml
           reporter: java-junit
 
   test-devshard-postgres-migration:
