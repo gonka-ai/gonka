@@ -876,22 +876,18 @@ func TestNormalizeChatRequestKeepsExplicitToolChoiceValues(t *testing.T) {
 }
 
 func TestNormalizeChatRequestStripsEmptyBadWords(t *testing.T) {
-	body, _, err := normalizeChatRequest([]byte(`{
+	_, _, err := normalizeChatRequest([]byte(`{
 		"bad_words": ["", "   ", "keep"],
 		"messages": [{"role": "user", "content": "hello"}]
 	}`))
-	require.NoError(t, err)
+	require.ErrorContains(t, err, "bad_words")
 
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	require.Equal(t, []any{"keep"}, raw["bad_words"])
-
-	body, _, err = normalizeChatRequest([]byte(`{
+	body, _, err := normalizeChatRequest([]byte(`{
 		"bad_words": ["", "\t", "\n"],
 		"messages": [{"role": "user", "content": "hello"}]
 	}`))
 	require.NoError(t, err)
-	raw = map[string]any{}
+	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
 	require.NotContains(t, raw, "bad_words")
 }
@@ -923,20 +919,22 @@ func TestNormalizeChatRequestStripsWhitespaceOnlyBadWordsResearchCases(t *testin
 				"bad_words": ` + tt.badWords + `,
 				"messages": [{"role": "user", "content": "hello"}]
 			}`))
+			if tt.want != nil {
+				require.ErrorContains(t, err, "bad_words")
+				require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, 0))
+				return
+			}
 			require.NoError(t, err)
 
 			var raw map[string]any
 			require.NoError(t, json.Unmarshal(body, &raw))
-			if tt.want == nil {
-				require.NotContains(t, raw, "bad_words")
-				return
-			}
-			require.Equal(t, tt.want, raw["bad_words"])
+			require.NotContains(t, raw, "bad_words")
 		})
 	}
 }
 
-func TestNormalizeChatRequestKeepsSafeBadWordsResearchCases(t *testing.T) {
+func TestNormalizeChatRequestRejectsBadWordsResearchCases(t *testing.T) {
+	// want lists the entries that survive the empty-entry strip; any survivor makes the request a ban.
 	tests := []struct {
 		name     string
 		badWords string
@@ -964,15 +962,16 @@ func TestNormalizeChatRequestKeepsSafeBadWordsResearchCases(t *testing.T) {
 				"bad_words": ` + tt.badWords + `,
 				"messages": [{"role": "user", "content": "hello"}]
 			}`))
+			if tt.want != nil {
+				require.ErrorContains(t, err, "bad_words")
+				require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, 0))
+				return
+			}
 			require.NoError(t, err)
 
 			var raw map[string]any
 			require.NoError(t, json.Unmarshal(body, &raw))
-			if tt.want == nil {
-				require.NotContains(t, raw, "bad_words")
-				return
-			}
-			require.Equal(t, tt.want, raw["bad_words"])
+			require.NotContains(t, raw, "bad_words")
 		})
 	}
 }
@@ -1056,25 +1055,53 @@ func TestNormalizeChatRequestSanitizesRepetitionPenalty(t *testing.T) {
 	require.Equal(t, MaxRepetitionPenalty, raw["repetition_penalty"])
 }
 
-func TestNormalizeChatRequestStripsOutOfRangeLogitBias(t *testing.T) {
+// Any bias is rejected, whatever its weight or key; an empty map asks for nothing and is dropped.
+func TestNormalizeChatRequestRejectsLogitBias(t *testing.T) {
+	for _, bias := range []string{`{"1": 10}`, `{"1": 0}`, `{"1": -0.5}`, `{"2": 101}`, `{"1_59": 100}`, `{"1": "5"}`, `[1]`} {
+		_, _, err := normalizeChatRequest([]byte(`{
+			"logit_bias": ` + bias + `,
+			"messages": [{"role": "user", "content": "hello"}]
+		}`))
+		require.ErrorContains(t, err, "logit_bias is not supported", bias)
+		require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, 0), bias)
+	}
+
 	body, _, err := normalizeChatRequest([]byte(`{
-		"logit_bias": {"0": 1e30, "1": 10, "2": -101},
+		"logit_bias": {},
 		"messages": [{"role": "user", "content": "hello"}]
 	}`))
 	require.NoError(t, err)
-
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.Equal(t, map[string]any{"1": float64(10)}, raw["logit_bias"])
-
-	body, _, err = normalizeChatRequest([]byte(`{
-		"logit_bias": {"0": 1e30},
-		"messages": [{"role": "user", "content": "hello"}]
-	}`))
-	require.NoError(t, err)
-	raw = map[string]any{}
-	require.NoError(t, json.Unmarshal(body, &raw))
 	require.NotContains(t, raw, "logit_bias")
+}
+
+func TestNormalizeChatRequestRejectsAllowedTokenIDs(t *testing.T) {
+	for _, ids := range []string{`[159]`, `[1,2]`, `{"1": 1}`, `"159"`} {
+		_, _, err := normalizeChatRequest([]byte(`{"allowed_token_ids":` + ids + `,"messages":[{"role":"user","content":"hello"}]}`))
+		require.ErrorContains(t, err, "allowed_token_ids is not supported", ids)
+		require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, 0), ids)
+	}
+	for _, ids := range []string{`[]`, `null`} {
+		body, _, err := normalizeChatRequest([]byte(`{"allowed_token_ids":` + ids + `,"messages":[{"role":"user","content":"hello"}]}`))
+		require.NoError(t, err)
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(body, &raw))
+		require.NotContains(t, raw, "allowed_token_ids")
+	}
+}
+
+func TestNormalizeChatRequestRejectsTruncatePromptTokens(t *testing.T) {
+	for _, value := range []string{`1`, `-1`, `0`, `"1"`, `[]`} {
+		_, _, err := normalizeChatRequest([]byte(`{"truncate_prompt_tokens":` + value + `,"messages":[{"role":"user","content":"hello"}]}`))
+		require.ErrorContains(t, err, "truncate_prompt_tokens is not supported", value)
+		require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, 0), value)
+	}
+	body, _, err := normalizeChatRequest([]byte(`{"truncate_prompt_tokens":null,"messages":[{"role":"user","content":"hello"}]}`))
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.NotContains(t, raw, "truncate_prompt_tokens")
 }
 
 func TestNormalizeChatRequestRejectsInvalidJSON(t *testing.T) {

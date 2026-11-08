@@ -14,6 +14,53 @@ import (
 	"devshard/observability"
 )
 
+// usageCountUnsafeFields can make an honest token count exceed the rendered bound: token bans
+// and biases can force fragments, while prompt truncation can erase the difference between an
+// empty and a full assistant turn. The gateway rejects them; the executor, validators and voters
+// also drop them because the gateway that signed the prompt is not trusted to have done so.
+var usageCountUnsafeFields = []string{"logit_bias", "bad_words", "allowed_token_ids", "truncate_prompt_tokens"}
+
+// withoutUsageCountUnsafeFields removes fields that make the usage count unreliable. A prompt
+// without those fields, or one that is not a JSON object, is returned as it is.
+func withoutUsageCountUnsafeFields(prompt []byte) []byte {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(prompt, &fields); err != nil {
+		return prompt
+	}
+	found := false
+	for _, name := range usageCountUnsafeFields {
+		if _, ok := fields[name]; ok {
+			delete(fields, name)
+			found = true
+		}
+	}
+	if !found {
+		return prompt
+	}
+	stripped, err := json.Marshal(fields)
+	if err != nil {
+		return prompt
+	}
+	return stripped
+}
+
+// prepareExecutionPrompt keeps generated reasoning and its token metadata in
+// the ML response. Only the execution copy changes; stored and signed prompts
+// retain the gateway's original fields.
+func prepareExecutionPrompt(prompt []byte) []byte {
+	prompt = withoutUsageCountUnsafeFields(prompt)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(prompt, &fields); err != nil || fields == nil {
+		return prompt
+	}
+	fields["include_reasoning"] = json.RawMessage("true")
+	prepared, err := json.Marshal(fields)
+	if err != nil {
+		return prompt
+	}
+	return prepared
+}
+
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
 
 type processedExecutionResponse struct {
@@ -37,7 +84,7 @@ func executeInference(
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
-	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(req.Prompt, seed, chainParams.LogprobsMode())
+	modified, err := completionapi.ModifyRequestBodyWithLogprobsMode(prepareExecutionPrompt(req.Prompt), seed, chainParams.LogprobsMode())
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}

@@ -1,0 +1,23 @@
+# CPU render server for usage challenge votes: `vllm launch render` runs a
+# model's chat template and tokenizer without weights or a GPU. One image
+# serves every model; the model and its serving arguments are the command.
+#
+#   docker run <image> <model> --revision <rev> <serving args> --port 8000
+
+FROM vllm/vllm-openai-cpu:v0.32.0-x86_64@sha256:827ef38187f9b52f2bb838695ef815ec5b65f4bf3e4c061b002b2b0a19cb0701
+
+# `vllm launch render` builds its VllmConfig without a cache config, so the
+# default one with prefix caching on is used. For a hybrid MLA model such as
+# GLM-5.3-Flash the model config then sizes its cache blocks for prefix
+# caching, the CPU platform turns prefix caching off on CPUs without AMX, and
+# the config check stops the server with "--mamba-block-size can only be set
+# with --enable-prefix-caching". A render server holds no KV cache, so the edit
+# passes a cache config with prefix caching off. The grep checks fail the build
+# if the file no longer matches. Drop this step once vLLM ships the fix.
+RUN F=/opt/venv/lib/python3.12/site-packages/vllm/entrypoints/launchers/render/entry.py \
+ && sed -i 's/^from vllm.config import VllmConfig$/from vllm.config import CacheConfig, VllmConfig/' $F \
+ && sed -i 's/^        model_config=model_config,$/        model_config=model_config,\n        cache_config=CacheConfig(enable_prefix_caching=False),/' $F \
+ && grep -q "^from vllm.config import CacheConfig, VllmConfig$" $F \
+ && grep -q "cache_config=CacheConfig(enable_prefix_caching=False)," $F
+
+ENTRYPOINT ["vllm", "launch", "render"]

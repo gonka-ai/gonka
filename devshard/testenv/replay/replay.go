@@ -3,11 +3,14 @@ package replay
 
 import (
 	"bufio"
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -25,19 +28,65 @@ type Response struct {
 
 // Sample is one captured client request and the response that a replay ML
 // node should produce for it.
+//
+// A sample with Recorded set also carries the exact Request the ML node got
+// and is looked up by RequestFingerprint of that request instead of by
+// model and messages, so recordings that share a prompt stay apart.
 type Sample struct {
+	Name        string    `json:"name,omitempty"`
 	Model       string    `json:"model"`
 	Stream      bool      `json:"stream"`
 	Temperature float64   `json:"temperature"`
 	MaxTokens   int64     `json:"max_tokens"`
 	Messages    []Message `json:"messages"`
 	Response    Response  `json:"response"`
+
+	Request  json.RawMessage `json:"request,omitempty"`
+	Recorded *Recorded       `json:"recorded,omitempty"`
+	Build    *Build          `json:"build,omitempty"`
+	// ClientRequest is the body the client sent before the gateway and the
+	// executor rewrote it into Request, when the recording kept it.
+	ClientRequest json.RawMessage `json:"client_request,omitempty"`
+	// Render holds what the build's render server counted for the recording,
+	// when it kept that.
+	Render *RenderCounts `json:"render,omitempty"`
+}
+
+// RenderCounts are the counts of a build's own render server for a
+// recording: Input the prompt of its request, Output the served assistant
+// turn (rendered after the request, less an empty turn), and TurnBytes the
+// text bytes of that turn.
+type RenderCounts struct {
+	Input     uint64 `json:"input"`
+	Output    uint64 `json:"output"`
+	TurnBytes uint64 `json:"turn_bytes"`
+}
+
+// Recorded is what an ML node returned for Sample.Request, kept as raw JSON so
+// a replay serves the same bytes: Stream holds the SSE data payloads in order
+// without the closing [DONE], NonStream the body of the same answer served
+// without streaming.
+type Recorded struct {
+	Stream    []json.RawMessage `json:"stream"`
+	NonStream json.RawMessage   `json:"nonstream"`
+}
+
+// Build names the serving build a recording came from.
+type Build struct {
+	Model    string `json:"model,omitempty"`
+	Revision string `json:"revision,omitempty"`
+	Variant  string `json:"variant,omitempty"`
+	Commit   string `json:"commit,omitempty"`
 }
 
 type Dataset struct {
 	samples       []Sample
 	byFingerprint map[string]int
 	byMessages    map[string]int
+	byRequest     map[string]int
+	// byRender finds the recordings of the request a voter renders: more
+	// than one when they differ only in their output limits.
+	byRender map[string][]int
 }
 
 func LoadFile(path string) (*Dataset, error) {
@@ -46,12 +95,18 @@ func LoadFile(path string) (*Dataset, error) {
 		return nil, fmt.Errorf("open replay file: %w", err)
 	}
 	defer file.Close()
+	input, err := decompressed(file)
+	if err != nil {
+		return nil, fmt.Errorf("open replay file: %w", err)
+	}
 
 	dataset := &Dataset{
 		byFingerprint: make(map[string]int),
 		byMessages:    make(map[string]int),
+		byRequest:     make(map[string]int),
+		byRender:      make(map[string][]int),
 	}
-	scanner := bufio.NewScanner(file)
+	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	line := 0
 	for scanner.Scan() {
@@ -66,6 +121,23 @@ func LoadFile(path string) (*Dataset, error) {
 		}
 		if err := validateSample(sample); err != nil {
 			return nil, fmt.Errorf("replay file line %d: %w", line, err)
+		}
+		if sample.Recorded != nil {
+			fingerprint, err := RequestFingerprint(sample.Request)
+			if err != nil {
+				return nil, fmt.Errorf("replay file line %d: request: %w", line, err)
+			}
+			if _, exists := dataset.byRequest[fingerprint]; exists {
+				return nil, fmt.Errorf("replay file line %d: duplicate recorded request fingerprint %s", line, fingerprint)
+			}
+			dataset.byRequest[fingerprint] = len(dataset.samples)
+			render, err := RenderFingerprint(sample.Request)
+			if err != nil {
+				return nil, fmt.Errorf("replay file line %d: request: %w", line, err)
+			}
+			dataset.byRender[render] = append(dataset.byRender[render], len(dataset.samples))
+			dataset.samples = append(dataset.samples, cloneSample(sample))
+			continue
 		}
 		fingerprint := Fingerprint(sample.Model, sample.Messages)
 		if _, exists := dataset.byFingerprint[fingerprint]; exists {
@@ -86,6 +158,16 @@ func LoadFile(path string) (*Dataset, error) {
 		return nil, fmt.Errorf("replay file contains no samples")
 	}
 	return dataset, nil
+}
+
+// decompressed reads a gzip file through gzip and any other file as is. It goes by content, not
+// by name, because harnesses copy the replay file into a container as replay.jsonl.
+func decompressed(file io.Reader) (io.Reader, error) {
+	buffered := bufio.NewReader(file)
+	if magic, err := buffered.Peek(2); err == nil && magic[0] == 0x1f && magic[1] == 0x8b {
+		return gzip.NewReader(buffered)
+	}
+	return buffered, nil
 }
 
 func (d *Dataset) Len() int {
@@ -136,6 +218,54 @@ func (d *Dataset) Lookup(model string, messages []Message) (Sample, int, bool) {
 	return cloneSample(d.samples[index]), index, true
 }
 
+// LookupRequest finds the recorded sample for a chat request body by its
+// RequestFingerprint. Samples without a recording are not searched.
+func (d *Dataset) LookupRequest(body []byte) (Sample, int, bool) {
+	if d == nil || len(d.byRequest) == 0 {
+		return Sample{}, 0, false
+	}
+	fingerprint, err := RequestFingerprint(body)
+	if err != nil {
+		return Sample{}, 0, false
+	}
+	index, ok := d.byRequest[fingerprint]
+	if !ok {
+		return Sample{}, 0, false
+	}
+	return cloneSample(d.samples[index]), index, true
+}
+
+// LookupRender finds the recorded samples whose request a renderer was sent:
+// the request without its output limits, which a render leaves out, so
+// recordings that differ only in those limits all match.
+func (d *Dataset) LookupRender(body []byte) []Sample {
+	if d == nil {
+		return nil
+	}
+	fingerprint, err := RenderFingerprint(body)
+	if err != nil {
+		return nil
+	}
+	samples := make([]Sample, 0, len(d.byRender[fingerprint]))
+	for _, index := range d.byRender[fingerprint] {
+		samples = append(samples, cloneSample(d.samples[index]))
+	}
+	return samples
+}
+
+// LookupName finds the recorded sample of model with the given name.
+func (d *Dataset) LookupName(model, name string) (Sample, bool) {
+	if d == nil || name == "" {
+		return Sample{}, false
+	}
+	for _, sample := range d.samples {
+		if sample.Recorded != nil && sample.Model == model && sample.Name == name {
+			return cloneSample(sample), true
+		}
+	}
+	return Sample{}, false
+}
+
 // Selector makes a deterministic pseudo-random selection with replacement.
 // The request index makes selection independent of goroutine scheduling.
 type Selector struct {
@@ -175,6 +305,106 @@ func MessagesFingerprint(messages []Message) string {
 	return hex.EncodeToString(digest[:])
 }
 
+// requestKeyFields are the chat request fields that decide a recorded answer:
+// the rendered prompt (messages, tools, tool_choice, chat_template_kwargs) and
+// what may end or constrain the output. Everything else is left out on
+// purpose. A recorded answer is a fixed token sequence rather than a sample,
+// so sampling knobs and seed do not pick it, and the validator replays with
+// its own seed anyway. stream, stream_options, logprobs, top_logprobs,
+// return_token_ids, skip_special_tokens and n are forced on the way to the ML
+// node, and the validator replay forces stream on and adds enforced_tokens
+// and logprobs_mode, so none of them may split an executor request from its
+// validator replay.
+var requestKeyFields = []string{
+	"model",
+	"messages",
+	"tools",
+	"tool_choice",
+	"chat_template_kwargs",
+	"max_tokens",
+	"min_tokens",
+	"stop",
+	"stop_token_ids",
+	"bad_words",
+	"logit_bias",
+	"response_format",
+	"structured_outputs",
+}
+
+// RequestFingerprint hashes the requestKeyFields of a chat request body after
+// the normalization the request gets before it reaches the ML node: one output
+// limit (max_tokens, else max_completion_tokens, as the executor resolves it),
+// tool_choice "auto" when tools are given without one and none without tools,
+// a single stop string as a one-element list, and empty values and a zero
+// min_tokens as absent. Object keys are sorted, so key order never matters.
+func RequestFingerprint(body []byte) (string, error) {
+	return requestFingerprint(body, true)
+}
+
+// RenderFingerprint is RequestFingerprint without the output limits
+// (max_tokens, max_completion_tokens, min_tokens): the prompt a renderer
+// counts does not depend on them.
+func RenderFingerprint(body []byte) (string, error) {
+	return requestFingerprint(body, false)
+}
+
+func requestFingerprint(body []byte, withLimits bool) (string, error) {
+	var request map[string]any
+	if err := json.Unmarshal(body, &request); err != nil {
+		return "", err
+	}
+	if request == nil {
+		return "", fmt.Errorf("request must be a JSON object")
+	}
+	key := make(map[string]any, len(requestKeyFields))
+	for _, name := range requestKeyFields {
+		if value, ok := request[name]; ok && !emptyJSONValue(value) {
+			key[name] = value
+		}
+	}
+	if _, ok := key["max_tokens"]; !ok {
+		if value, ok := request["max_completion_tokens"]; ok && !emptyJSONValue(value) {
+			key["max_tokens"] = value
+		}
+	}
+	if _, ok := key["tools"]; !ok {
+		delete(key, "tool_choice")
+	} else if _, ok := key["tool_choice"]; !ok {
+		key["tool_choice"] = "auto"
+	}
+	if stop, ok := key["stop"].(string); ok {
+		key["stop"] = []any{stop}
+	}
+	if minTokens, ok := key["min_tokens"].(float64); ok && minTokens == 0 {
+		delete(key, "min_tokens")
+	}
+	if !withLimits {
+		delete(key, "max_tokens")
+		delete(key, "min_tokens")
+	}
+	encoded, err := json.Marshal(key)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(encoded)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func emptyJSONValue(value any) bool {
+	switch typed := value.(type) {
+	case nil:
+		return true
+	case string:
+		return typed == ""
+	case []any:
+		return len(typed) == 0
+	case map[string]any:
+		return len(typed) == 0
+	default:
+		return false
+	}
+}
+
 func validateSample(sample Sample) error {
 	if strings.TrimSpace(sample.Model) == "" {
 		return fmt.Errorf("model is required")
@@ -193,10 +423,49 @@ func validateSample(sample Sample) error {
 	if sample.MaxTokens < 0 {
 		return fmt.Errorf("max_tokens must not be negative")
 	}
+	if sample.Recorded != nil {
+		return validateRecorded(sample)
+	}
 	return nil
+}
+
+func validateRecorded(sample Sample) error {
+	if len(sample.Request) == 0 {
+		return fmt.Errorf("a recorded sample needs its request")
+	}
+	var request struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(sample.Request, &request); err != nil {
+		return fmt.Errorf("request: %w", err)
+	}
+	if request.Model != sample.Model {
+		return fmt.Errorf("request model %q differs from sample model %q", request.Model, sample.Model)
+	}
+	if len(sample.Recorded.Stream) == 0 {
+		return fmt.Errorf("recorded.stream is required")
+	}
+	for i, chunk := range sample.Recorded.Stream {
+		if !isJSONObject(chunk) {
+			return fmt.Errorf("recorded.stream[%d] must be a JSON object", i)
+		}
+	}
+	if !isJSONObject(sample.Recorded.NonStream) {
+		return fmt.Errorf("recorded.nonstream must be a JSON object")
+	}
+	return nil
+}
+
+func isJSONObject(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) > 0 && trimmed[0] == '{'
 }
 
 func cloneSample(sample Sample) Sample {
 	sample.Messages = append([]Message(nil), sample.Messages...)
+	if sample.Render != nil {
+		counts := *sample.Render
+		sample.Render = &counts
+	}
 	return sample
 }

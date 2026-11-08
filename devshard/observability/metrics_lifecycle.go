@@ -23,6 +23,9 @@ var (
 	validationTotal          *prometheus.CounterVec
 	validationOrphanTotal    *prometheus.CounterVec
 	validationFaultTotal     *prometheus.CounterVec
+	challengeVotesTotal      *prometheus.CounterVec
+	challengeVoteChecks      *prometheus.CounterVec
+	challengeRenderSeconds   *prometheus.HistogramVec
 	validationQueueDrops     prometheus.Counter
 	payloadRequestTotal      *prometheus.CounterVec
 	payloadFetchTTFB         prometheus.Histogram
@@ -138,6 +141,19 @@ func initRegistry() {
 		Name: "devshard_validation_executor_fault_total",
 		Help: "Validations that voted false because the executor did not serve usable payloads.",
 	}, []string{"reason"})
+	challengeVotesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_challenge_votes_total",
+		Help: "Usage challenge verdicts this host kept, by fault (none, payload_unavailable, hash_mismatch, empty_stream, usage_inflated), or the reason no vote was kept (unchecked, late, no_render, render_busy).",
+	}, []string{"fault"})
+	challengeVoteChecks = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_challenge_vote_checks_total",
+		Help: "Usage challenge faults this host kept, by the check that found them (hash, positions, rendered_output, rendered_input).",
+	}, []string{"check"})
+	challengeRenderSeconds = prometheus.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "devshard_challenge_render_seconds",
+		Help:    "Time a challenge vote spent counting on the ML node or the model's render server, by count (output, input), model (the usage allowance table, or other) and outcome (ok, refused, busy, failed).",
+		Buckets: durationBuckets,
+	}, []string{"count", "model", "outcome"})
 	validationQueueDrops = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "devshard_validation_queue_drops_total",
 		Help: "Validation jobs dropped because the queue was full.",
@@ -338,6 +354,9 @@ func initRegistry() {
 		validationTotal,
 		validationOrphanTotal,
 		validationFaultTotal,
+		challengeVotesTotal,
+		challengeVoteChecks,
+		challengeRenderSeconds,
 		validationQueueDrops,
 		payloadRequestTotal,
 		payloadFetchTTFB,
@@ -503,6 +522,38 @@ func IncValidationOrphan(reason Reason) {
 func IncValidationExecutorFault(reason Reason) {
 	ensureMetrics()
 	validationFaultTotal.WithLabelValues(string(reason)).Inc()
+}
+
+// IncChallengeVote counts one kept challenge verdict. "unchecked" is a fetch
+// that ended without a verdict (a local failure); "late" is a challenge first
+// asked after the window, whose failed fetch is no vote.
+func IncChallengeVote(fault string) {
+	ensureMetrics()
+	challengeVotesTotal.WithLabelValues(fault).Inc()
+}
+
+// IncChallengeVoteCheck counts one kept fault by the check that found it.
+func IncChallengeVoteCheck(check string) {
+	ensureMetrics()
+	challengeVoteChecks.WithLabelValues(check).Inc()
+}
+
+// ChallengeVoteCheckCounter exposes one check series of the kept-fault counter.
+func ChallengeVoteCheckCounter(check string) prometheus.Counter {
+	ensureMetrics()
+	return challengeVoteChecks.WithLabelValues(check)
+}
+
+// ObserveChallengeRender records one render server count of a challenge vote.
+func ObserveChallengeRender(count, model, outcome string, seconds float64) {
+	ensureMetrics()
+	challengeRenderSeconds.WithLabelValues(count, model, outcome).Observe(seconds)
+}
+
+// ChallengeVoteCounter exposes one fault series of the kept-vote counter.
+func ChallengeVoteCounter(fault string) prometheus.Counter {
+	ensureMetrics()
+	return challengeVotesTotal.WithLabelValues(fault)
 }
 
 func IncValidationQueueDrop() {

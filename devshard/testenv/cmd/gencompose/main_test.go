@@ -9,10 +9,12 @@ import (
 	"testing"
 
 	"common/chain"
+	"devshard/host"
 	"devshard/signing"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/seed"
+	"devshard/types"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -607,4 +609,58 @@ func TestFillConfig_MaterializesKeyrings(t *testing.T) {
 	}
 	_, err := os.Stat(filepath.Join(keyringBase, "keyhash"))
 	require.NoError(t, err)
+}
+
+func TestRenderURLs_PointTheRecordedModelsAtTheMockNodes(t *testing.T) {
+	require.Empty(t, renderURLs(&config.File{}), "echo answers have no counts")
+
+	cfg := &config.File{}
+	cfg.MockOpenAI.ReplayFile = "/fixtures/replay.jsonl"
+	cfg.MockOpenAI.HTTPPort = 8088
+	cfg.MockOpenAI.Nodes = []config.MockOpenAINodeCfg{{Name: "mock-openai-0"}, {Name: "mock-openai-1"}}
+	urls, err := host.ParseRenderURLs(renderURLs(cfg))
+	require.NoError(t, err)
+	nodes := []string{"http://mock-openai-0:8088", "http://mock-openai-1:8088"}
+	require.Equal(t, map[string][]string{
+		types.DeepSeekV4FlashModelID: nodes,
+		types.MiniMaxM27ModelID:      nodes,
+		types.GLM53FlashModelID:      nodes,
+	}, urls)
+}
+
+// The render servers reach every host's environment when a replay file is
+// loaded, and the generated file still parses; without one no host gets them.
+func TestWriteCompose_RenderURLsWithAReplayFile(t *testing.T) {
+	for _, replayFile := range []string{"", "/fixtures/replay.jsonl"} {
+		dir := t.TempDir()
+		cfg := defaultConfig()
+		cfg.MLNodes = 2
+		require.NoError(t, fillConfig(cfg))
+		cfg.MockOpenAI.ReplayFile = replayFile
+		outPath := filepath.Join(dir, "docker-compose.yml")
+		require.NoError(t, writeCompose(cfg, outPath))
+		body, err := os.ReadFile(outPath)
+		require.NoError(t, err)
+
+		var compose struct {
+			Services map[string]struct {
+				Environment map[string]string `yaml:"environment"`
+			} `yaml:"services"`
+		}
+		require.NoError(t, yaml.Unmarshal(body, &compose))
+		hosts := 0
+		for name, service := range compose.Services {
+			if _, isHost := service.Environment["KEY_NAME"]; !isHost {
+				require.NotContains(t, service.Environment, "DEVSHARD_RENDER_URLS", name)
+				continue
+			}
+			hosts++
+			if replayFile == "" {
+				require.NotContains(t, service.Environment, "DEVSHARD_RENDER_URLS", name)
+				continue
+			}
+			require.Equal(t, renderURLs(cfg), service.Environment["DEVSHARD_RENDER_URLS"], name)
+		}
+		require.NotZero(t, hosts)
+	}
 }
