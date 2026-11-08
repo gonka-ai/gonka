@@ -519,21 +519,12 @@ func (sm *StateMachine) stateClockLocked() StateClockWindow {
 		window = stateClockWindowFactor
 	}
 
-	ids := make([]uint64, 0, len(sm.state.Inferences))
-	for id := range sm.state.Inferences {
-		ids = append(ids, id)
-	}
-	slices.Sort(ids)
-
 	// Inference id == start nonce, so the highest ids are the most recently
 	// started. Scan the tail window once over confirmed records only.
-	start := 0
-	if len(ids) > window {
-		start = len(ids) - window
-	}
+	ids := tailIDs(sm.state.Inferences, window)
 	var minConfirmed, maxConfirmed int64
 	confirmedInWindow := 0
-	for _, id := range ids[start:] {
+	for _, id := range ids {
 		c := sm.state.Inferences[id].ConfirmedAtTimeMs
 		if c <= 0 {
 			continue
@@ -571,19 +562,6 @@ func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
 	return sm.stateClockLocked()
 }
 
-// autoSealCandidate is one seal-eligible live inference and how the grace gates
-// evaluated at this seal nonce.
-type autoSealCandidate struct {
-	ID               uint64 `json:"id"`
-	Status           uint8  `json:"status"`
-	ConfirmedAtMs    int64  `json:"confirmed_at_time_ms"`
-	NonceGateOK      bool   `json:"nonce_gate_ok"`
-	ClockGateSkipped bool   `json:"clock_gate_skipped"`
-	ClockGateOK      bool   `json:"clock_gate_ok"`
-	GraceRemainingMs int64  `json:"grace_remaining_ms,omitempty"`
-	Eligible         bool   `json:"eligible"`
-}
-
 func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	side string,
 	sealNonce uint64,
@@ -591,10 +569,10 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	sealGraceNonces uint64,
 	graceSeconds int64,
 	stateClockMs int64,
-	candidates []autoSealCandidate,
+	candidates int,
 	sealed []uint64,
 ) {
-	if len(candidates) == 0 && len(sealed) == 0 {
+	if candidates == 0 && len(sealed) == 0 {
 		return
 	}
 	executionTimeout := sm.state.Config.ExecutionTimeout
@@ -609,7 +587,7 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"execution_timeout", executionTimeout,
 		"finished_clock_required_ms", secondsToMs(FinishedClockRequiredSeconds(graceSeconds, executionTimeout)),
 		"state_clock_confirmed_at_ms", stateClockMs,
-		"candidates_count", len(candidates),
+		"candidates_count", candidates,
 		"sealed_count", len(sealed),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
@@ -656,27 +634,17 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	clockWin := sm.stateClockLocked()
 	stateClockMs := clockWin.ClockMs
 
-	var candidates []autoSealCandidate
+	candidates := 0
 	var eligible []uint64
 	for id, rec := range sm.state.Inferences {
 		if !sealEligibleStatus(rec.Status) {
 			continue
 		}
-		candidate := autoSealCandidate{
-			ID:            id,
-			Status:        uint8(rec.Status),
-			ConfirmedAtMs: rec.ConfirmedAtTimeMs,
-		}
-		candidate.NonceGateOK = sealNonce >= id+sealGraceNonces
-		if !candidate.NonceGateOK {
-			candidates = append(candidates, candidate)
+		candidates++
+		if sealNonce < id+sealGraceNonces {
 			continue
 		}
 		if terminalAutoSealStatus(rec.Status) {
-			candidate.ClockGateSkipped = true
-			candidate.ClockGateOK = true
-			candidate.Eligible = true
-			candidates = append(candidates, candidate)
 			eligible = append(eligible, id)
 			continue
 		}
@@ -684,27 +652,10 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		if stateClockMs > rec.ConfirmedAtTimeMs {
 			elapsed = stateClockMs - rec.ConfirmedAtTimeMs
 		}
-		if elapsed < requiredMs {
-			candidate.GraceRemainingMs = requiredMs - elapsed
+		if clockWin.Known && elapsed >= requiredMs {
+			eligible = append(eligible, id)
 		}
-		candidate.ClockGateOK = clockWin.Known && candidate.GraceRemainingMs == 0
-		candidate.Eligible = candidate.ClockGateOK
-		candidates = append(candidates, candidate)
-		if !candidate.ClockGateOK {
-			continue
-		}
-		eligible = append(eligible, id)
 	}
-	slices.SortFunc(candidates, func(a, b autoSealCandidate) int {
-		switch {
-		case a.ID < b.ID:
-			return -1
-		case a.ID > b.ID:
-			return 1
-		default:
-			return 0
-		}
-	})
 	if len(eligible) == 0 {
 		sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClockMs, candidates, nil)
 		return nil, clockWin, nil
@@ -1283,4 +1234,33 @@ func inferenceRecordFromObsRow(row storage.InferenceRow) types.InferenceRecord {
 		VotesInvalid:      row.SealedVotesInvalid,
 		ValidatedBy:       types.Bitmap128FromBytes(row.SealedValidatedBy),
 	}
+}
+
+// tailIDs returns the n highest ids of m in ascending order.
+func tailIDs(m map[uint64]*types.InferenceRecord, n int) []uint64 {
+	if len(m) <= n {
+		ids := make([]uint64, 0, len(m))
+		for id := range m {
+			ids = append(ids, id)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	top := make([]uint64, 0, n)
+	for id := range m {
+		if len(top) < n {
+			top = append(top, id)
+			if len(top) == n {
+				slices.Sort(top)
+			}
+			continue
+		}
+		if id <= top[0] {
+			continue
+		}
+		i, _ := slices.BinarySearch(top, id)
+		copy(top[:i-1], top[1:i])
+		top[i-1] = id
+	}
+	return top
 }
