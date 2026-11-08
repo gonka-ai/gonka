@@ -82,6 +82,9 @@ func runE2ETimeoutProtocol(t *testing.T, header bool) {
 	require.True(t, timeoutApplied, "refused inference should become timed out")
 	require.Equal(t, uint64(unavailableSlot), testutil.NumericField(t, timedOut, "executor_slot"))
 
+	// Compose persists MsgTimeoutInference on the gateway before any host stores
+	// it. The diff is addressed to nonce%group, the stopped slot, and that
+	// send uses QueryTimeout (30s) before the next live host stores it.
 	var timeoutTx testutil.TimeoutInferenceTransaction
 	timeoutTransactionApplied := assert.Eventually(t, func() bool {
 		latestNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
@@ -98,7 +101,7 @@ func runE2ETimeoutProtocol(t *testing.T, header bool) {
 			}
 		}
 		return false
-	}, 10*time.Second, 250*time.Millisecond, "host storage should include MsgTimeoutInference")
+	}, 45*time.Second, 250*time.Millisecond, "host storage should include MsgTimeoutInference")
 	require.True(t, timeoutTransactionApplied, "host storage should include MsgTimeoutInference")
 	state := testutil.GetJSON(t, client, env.clientURL+"/v1/state")
 	session, ok := state["session"].(map[string]any)
