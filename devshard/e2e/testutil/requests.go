@@ -239,25 +239,102 @@ type TimeoutInferenceTransaction struct {
 
 func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) (TimeoutInferenceTransaction, bool) {
 	t.Helper()
+	return findTimeoutInference(t, client, hostURL, routePrefix, escrowID, toNonce, func(TimeoutInferenceTransaction) bool {
+		return true
+	})
+}
+
+// FindTimeoutInferenceFor returns the first stored timeout for one inference
+// and reason. An earlier timeout of another inference or reason is skipped.
+func FindTimeoutInferenceFor(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce, inferenceID uint64, reason types.TimeoutReason) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	tx, found, err := findTimeoutInferenceE(t, client, hostURL, routePrefix, escrowID, toNonce, func(tx TimeoutInferenceTransaction) bool {
+		return tx.InferenceID == inferenceID && tx.Reason == reason
+	})
+	require.NoError(t, err)
+	return tx, found
+}
+
+// FindTimeoutInferenceForLimited is FindTimeoutInferenceFor with per-host
+// budget. A host that does not answer within that budget is a miss, so one
+// slow diff read does not spend the caller's whole wait.
+func FindTimeoutInferenceForLimited(t *testing.T, client *http.Client, perHost time.Duration, hostURL, routePrefix, escrowID string, toNonce, inferenceID uint64, reason types.TimeoutReason) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	short := &http.Client{Timeout: perHost}
+	if client != nil {
+		short.Transport = client.Transport
+	}
+	tx, found, err := findTimeoutInferenceE(t, short, hostURL, routePrefix, escrowID, toNonce, func(tx TimeoutInferenceTransaction) bool {
+		return tx.InferenceID == inferenceID && tx.Reason == reason
+	})
+	if err != nil {
+		t.Logf("host diff scan %s: %v", hostURL, err)
+		return TimeoutInferenceTransaction{}, false
+	}
+	return tx, found
+}
+
+// ListTimeoutInferenceTransactionsLimited returns every stored timeout a host
+// answers with inside perHost. A host that does not answer yields none.
+func ListTimeoutInferenceTransactionsLimited(t *testing.T, client *http.Client, perHost time.Duration, hostURL, routePrefix, escrowID string, toNonce uint64) []TimeoutInferenceTransaction {
+	t.Helper()
+	short := &http.Client{Timeout: perHost}
+	if client != nil {
+		short.Transport = client.Transport
+	}
+	found, err := listTimeoutInferencesE(t, short, hostURL, routePrefix, escrowID, toNonce)
+	if err != nil {
+		t.Logf("host diff scan %s: %v", hostURL, err)
+		return nil
+	}
+	return found
+}
+
+func findTimeoutInference(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64, match func(TimeoutInferenceTransaction) bool) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	tx, found, err := findTimeoutInferenceE(t, client, hostURL, routePrefix, escrowID, toNonce, match)
+	require.NoError(t, err)
+	return tx, found
+}
+
+func findTimeoutInferenceE(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64, match func(TimeoutInferenceTransaction) bool) (TimeoutInferenceTransaction, bool, error) {
+	t.Helper()
+	found, err := listTimeoutInferencesE(t, client, hostURL, routePrefix, escrowID, toNonce)
+	if err != nil {
+		return TimeoutInferenceTransaction{}, false, err
+	}
+	for _, tx := range found {
+		if match(tx) {
+			return tx, true, nil
+		}
+	}
+	return TimeoutInferenceTransaction{}, false, nil
+}
+
+func listTimeoutInferencesE(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) ([]TimeoutInferenceTransaction, error) {
+	t.Helper()
+	var found []TimeoutInferenceTransaction
 	for from := uint64(1); from <= toNonce; {
 		to := from + uint64(storage.DiffPageMaxNonces) - 1
 		if to > toNonce {
 			to = toNonce
 		}
-		diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
-		if tx, found := timeoutInferenceInDiffs(t, diffs); found {
-			return tx, true
+		diffs, err := getJSONArrayE(client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
+		if err != nil {
+			return nil, err
 		}
+		found = append(found, timeoutInferencesInDiffs(t, diffs)...)
 		if to == toNonce {
 			break
 		}
 		from = to + 1
 	}
-	return TimeoutInferenceTransaction{}, false
+	return found, nil
 }
 
-func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransaction, bool) {
+func timeoutInferencesInDiffs(t *testing.T, diffs []any) []TimeoutInferenceTransaction {
 	t.Helper()
+	var found []TimeoutInferenceTransaction
 	for _, raw := range diffs {
 		record, ok := raw.(map[string]any)
 		require.True(t, ok, "host diff record should be an object")
@@ -279,15 +356,15 @@ func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransac
 			for i, vote := range timeout.Votes {
 				voterSlots[i] = vote.VoterSlot
 			}
-			return TimeoutInferenceTransaction{
+			found = append(found, TimeoutInferenceTransaction{
 				Nonce:       content.Nonce,
 				InferenceID: timeout.InferenceId,
 				Reason:      timeout.Reason,
 				VoterSlots:  voterSlots,
-			}, true
+			})
 		}
 	}
-	return TimeoutInferenceTransaction{}, false
+	return found
 }
 
 func InferenceStatus(t *testing.T, client *http.Client, clientURL string, inferenceID uint64) (map[string]any, bool) {

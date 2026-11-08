@@ -279,8 +279,8 @@ func TestE2E_AccountingLiveInFlightIsCountedOnce(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment once on each timeout clock. Slot 1 acks the receipt and then hangs the execution.
 //  2. Shorten redundancy so a secondary still answers the client.
-//  3. Send one non-streaming completion and wait until slot 1's inference is started.
-//  4. Leave that host up until the escrow execution timeout is in the host log.
+//  3. Send one non-streaming completion and wait until slot 1's inference is started at a receipt height.
+//  4. Wait until that inference is execution-timed-out, then until a live host stores that timeout.
 //  5. The secondary serves the client. Accounting shows that finish and the hung slot's chain miss.
 func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 	for _, header := range []bool{false, true} {
@@ -316,27 +316,42 @@ func runAccountingLiveSendTimeout(t *testing.T, header bool) {
 
 	receiptDeadline := time.Now().Add(45 * time.Second)
 	var saw []string
-	receiptSeen := false
+	var inferenceID uint64
+	var refusedID uint64
 	for time.Now().Before(receiptDeadline) {
 		saw = saw[:0]
+		refusedID = 0
 		for id := beforeNonce + 1; id <= beforeNonce+8; id++ {
 			inference, found := testutil.InferenceStatus(t, client, env.clientURL, id)
 			if !found {
 				continue
 			}
 			status, _ := inference["status"].(string)
-			saw = append(saw, fmt.Sprintf("%d:%s:slot=%d", id, status, testutil.NumericField(t, inference, "executor_slot")))
-			if (status == "started" || status == "timed_out") && testutil.NumericField(t, inference, "executor_slot") == 1 {
-				receiptSeen = true
+			slot := testutil.NumericField(t, inference, "executor_slot")
+			confirmedHeight := testutil.NumericField(t, inference, "confirmed_at_height")
+			saw = append(saw, fmt.Sprintf("%d:%s:slot=%d:height=%d", id, status, slot, confirmedHeight))
+			if slot != 1 {
+				continue
+			}
+			// A refusal is timed_out with no receipt height. It is not the
+			// execution-timeout case, and it must not satisfy this wait.
+			if confirmedHeight == 0 {
+				if status == "timed_out" {
+					refusedID = id
+				}
+				continue
+			}
+			if status == "started" || status == "timed_out" {
+				inferenceID = id
 				break
 			}
 		}
-		if receiptSeen {
+		if inferenceID != 0 {
 			break
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	require.Truef(t, receiptSeen, "slot 1 should publish a receipt before the execution timeout, before_nonce=%d saw=%v", beforeNonce, saw)
+	require.NotZerof(t, inferenceID, "slot 1 should publish a receipt height before the execution timeout, before_nonce=%d refused=%d saw=%v", beforeNonce, refusedID, saw)
 
 	select {
 	case result := <-done:
@@ -347,21 +362,54 @@ func runAccountingLiveSendTimeout(t *testing.T, header bool) {
 		t.Fatal("timed out waiting for timeout-backed completion")
 	}
 
+	// Legacy execution is due 17s + the 5s buffer after the receipt wall.
+	// This wait is only the gateway record, so a hung host diff read cannot spend it.
+	var timedOut map[string]any
+	gatewayTimedOut := assert.Eventually(t, func() bool {
+		inference, found := testutil.InferenceStatus(t, client, env.clientURL, inferenceID)
+		if !found || inference["status"] != "timed_out" {
+			return false
+		}
+		if testutil.NumericField(t, inference, "confirmed_at_height") == 0 {
+			return false
+		}
+		timedOut = inference
+		return true
+	}, 60*time.Second, 500*time.Millisecond, "inference %d should become execution timed out", inferenceID)
+	if !gatewayTimedOut {
+		inference, found := testutil.InferenceStatus(t, client, env.clientURL, inferenceID)
+		t.Logf("execution timeout missing on gateway inference=%d found=%v record=%v", inferenceID, found, inference)
+	}
+	require.Truef(t, gatewayTimedOut, "inference %d should become execution timed out", inferenceID)
+	require.NotZero(t, testutil.NumericField(t, timedOut, "confirmed_at_height"))
+
+	const hungSlot = 1
+	const hostDiffBudget = 2 * time.Second
 	var timeoutTx testutil.TimeoutInferenceTransaction
 	timeoutSeen := assert.Eventually(t, func() bool {
 		latestNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
-		for _, hostURL := range env.hostControlURLs {
-			transaction, found := testutil.FindTimeoutInferenceTransaction(
-				t, client, hostURL, e2eHostRoutePrefix, defaultEscrowID, latestNonce,
+		for _, hostURL := range accountingTimeoutHostOrder(env.hostControlURLs, hungSlot) {
+			transaction, ok := testutil.FindTimeoutInferenceForLimited(
+				t, client, hostDiffBudget, hostURL, e2eHostRoutePrefix, defaultEscrowID, latestNonce,
+				inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION,
 			)
-			if found && transaction.Reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+			if ok {
 				timeoutTx = transaction
 				return true
 			}
 		}
 		return false
-	}, 45*time.Second, 250*time.Millisecond, "host storage should include the execution timeout")
-	require.True(t, timeoutSeen, "host storage should include the execution timeout")
+	}, 45*time.Second, 500*time.Millisecond, "host storage should include the execution timeout for inference %d", inferenceID)
+	if !timeoutSeen {
+		latestNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
+		for slot, hostURL := range env.hostControlURLs {
+			stored := testutil.ListTimeoutInferenceTransactionsLimited(
+				t, client, hostDiffBudget, hostURL, e2eHostRoutePrefix, defaultEscrowID, latestNonce,
+			)
+			t.Logf("host slot %d stored timeouts through nonce %d: %+v", slot, latestNonce, stored)
+		}
+	}
+	require.Truef(t, timeoutSeen, "host storage should include the execution timeout for inference %d", inferenceID)
 	require.Equal(t, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, timeoutTx.Reason)
 
 	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
@@ -374,6 +422,27 @@ func runAccountingLiveSendTimeout(t *testing.T, header bool) {
 	require.Greater(t, testutil.AccountingProtocolMissTotal(accounting), beforeMisses,
 		"the hung executor should be counted missed")
 	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// accountingTimeoutHostOrder reads hosts that are still serving diffs before
+// the executor whose stub execution is hung. A slow read of that host must
+// not hide a timeout already stored on a live host.
+func accountingTimeoutHostOrder(urls []string, hungSlot int) []string {
+	ordered := make([]string, 0, len(urls))
+	var hung string
+	haveHung := false
+	for i, url := range urls {
+		if i == hungSlot {
+			hung = url
+			haveHung = true
+			continue
+		}
+		ordered = append(ordered, url)
+	}
+	if haveHung {
+		ordered = append(ordered, hung)
+	}
+	return ordered
 }
 
 // Test flow:
