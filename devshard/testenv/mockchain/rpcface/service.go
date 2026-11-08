@@ -33,6 +33,7 @@ type Config struct {
 // Service owns the event bus, block ticker, and tx event publishing for mock-chain RPC.
 type Service struct {
 	store *store.Store
+	chain *headerChain
 	bus   *cmttypes.EventBus
 	env   *core.Environment
 
@@ -69,6 +70,7 @@ func NewService(st *store.Store, config Config) (*Service, error) {
 
 	return &Service{
 		store:              st,
+		chain:              newHeaderChain(st, interval),
 		bus:                bus,
 		env:                env,
 		blockInterval:      interval,
@@ -123,7 +125,11 @@ func (s *Service) PublishEscrowSettled(id uint64, settler string, totalPayout, f
 }
 
 func (s *Service) publishNewBlock(height int64) error {
-	return s.bus.PublishEventNewBlock(newBlockEvent(s.store.GetChainID(), height))
+	mb, err := s.chain.at(height)
+	if err != nil {
+		return err
+	}
+	return s.bus.PublishEventNewBlock(cmttypes.EventDataNewBlock{Block: mb.block, BlockID: mb.id})
 }
 
 func (s *Service) runBlockTicker(ctx context.Context) {
@@ -149,7 +155,7 @@ func (s *Service) runBlockTicker(ctx context.Context) {
 }
 
 func (s *Service) routes() map[string]*rpcserver.RPCFunc {
-	st := s.store
+	st, chain := s.store, s.chain
 	return map[string]*rpcserver.RPCFunc{
 		"subscribe":       rpcserver.NewWSRPCFunc(s.env.Subscribe, "query"),
 		"unsubscribe":     rpcserver.NewWSRPCFunc(s.env.Unsubscribe, "query"),
@@ -160,8 +166,32 @@ func (s *Service) routes() map[string]*rpcserver.RPCFunc {
 			"",
 		),
 		"block": rpcserver.NewRPCFunc(
-			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultBlock, error) { return blockHandler(st, height) },
+			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultBlock, error) { return blockHandler(st, chain, height) },
 			"height",
+		),
+		"header": rpcserver.NewRPCFunc(
+			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultHeader, error) {
+				return headerHandler(st, chain, height)
+			},
+			"height",
+		),
+		"commit": rpcserver.NewRPCFunc(
+			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultCommit, error) {
+				return commitHandler(st, chain, height)
+			},
+			"height",
+		),
+		"validators": rpcserver.NewRPCFunc(
+			func(_ *rpctypes.Context, height *int64, page, _ *int) (*ctypes.ResultValidators, error) {
+				return validatorsHandler(st, chain, height, page)
+			},
+			"height,page,per_page",
+		),
+		"blockchain": rpcserver.NewRPCFunc(
+			func(_ *rpctypes.Context, minHeight, maxHeight int64) (*ctypes.ResultBlockchainInfo, error) {
+				return blockchainHandler(st, chain, minHeight, maxHeight)
+			},
+			"minHeight,maxHeight",
 		),
 	}
 }

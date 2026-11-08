@@ -45,7 +45,6 @@ func startBed(t *testing.T, configure ...func(*mockdapi.Config)) testBed {
 	cfg.ChainTestenvURL = adminHTTP.URL
 	// Disable background poll; tests drive RefreshRuntimeConfig explicitly via /testenv/*.
 	cfg.ChainPollInterval = time.Hour
-	cfg.BlockInterval = 50 * time.Millisecond
 	for _, apply := range configure {
 		apply(&cfg)
 	}

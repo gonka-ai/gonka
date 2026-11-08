@@ -13,13 +13,12 @@ import (
 
 	"common/chain"
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/observer"
 	"common/nodemanager/gen"
 	commonobs "common/observability"
 	commonruntimeconfig "common/runtimeconfig"
-	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
-	"devshard/signing"
 	"devshard/testenv/gatewayphase"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockchain/fetcher"
@@ -39,7 +38,7 @@ type Service struct {
 	paramsSrv      *params.Server
 	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
-	blockMock      *observer.Mock
+	blocks         *observer.Oracle
 	admin          *adminface.Client
 	versions       *versionStore
 	hostEvents     *hostEventRing
@@ -69,11 +68,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.ChainPollInterval <= 0 {
 		cfg.ChainPollInterval = time.Second
 	}
-	if cfg.BlockInterval <= 0 {
-		cfg.BlockInterval = time.Second
-	}
-	if cfg.ChainID == "" {
-		cfg.ChainID = "gonka-test"
+	if cfg.ChainRPCAddr == "" && !cfg.OmitBlockRoutes {
+		return nil, errors.New("mockdapi: ChainRPCAddr is required for block routes")
 	}
 	if len(cfg.Versions) == 0 {
 		cfg.Versions = DefaultConfig().Versions
@@ -107,13 +103,17 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, err
 	}
 
-	blockMock, err := newBlockMock(cfg)
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
+	var blockOracle *observer.Oracle
+	if cfg.ChainRPCAddr != "" {
+		// Same block source as dapi: mock-chain CometBFT RPC, commits verified.
+		blockOracle, err = observer.NewTendermint(observer.TendermintConfig{RPCURL: cfg.ChainRPCAddr, VerifyCommits: true})
+		if err != nil {
+			_ = conn.Close()
+			return nil, fmt.Errorf("mockdapi: chain block oracle: %w", err)
+		}
 	}
 	hostEvents := newHostEventRing()
-	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, blockMock, cfg.OmitBlockRoutes, cfg.MLNodes)
+	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, oracleOrNil(blockOracle), cfg.OmitBlockRoutes, cfg.MLNodes)
 
 	s := &Service{
 		cfg:            cfg,
@@ -121,7 +121,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		paramsSrv:      paramsSrv,
 		nodeManager:    nodeManager,
 		runtimeFetcher: runtimeFetcher,
-		blockMock:      blockMock,
+		blocks:         blockOracle,
 		admin:          adminClient,
 		versions:       newVersionStore(cfg.Versions),
 		hostEvents:     hostEvents,
@@ -129,30 +129,12 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	return s, nil
 }
 
-func newBlockMock(cfg Config) (*observer.Mock, error) {
-	signer, err := signing.GenerateKey()
-	if err != nil {
-		return nil, err
+// oracleOrNil keeps a nil *observer.Oracle a nil blocks.BlockOracle.
+func oracleOrNil(o *observer.Oracle) blocks.BlockOracle {
+	if o == nil {
+		return nil
 	}
-	addrBytes, err := blocks.AddressBytes(signer.CompressedPublicKeyBytes())
-	if err != nil {
-		return nil, err
-	}
-	mock, err := observer.NewMock(observer.MockConfig{
-		ChainID:       cfg.ChainID,
-		Validators:    []observer.MockValidator{{Signer: signer, Address: addrBytes, Power: 1}},
-		BlockInterval: cfg.BlockInterval,
-		Seed:          cfg.BlockSeed,
-		Start:         time.Unix(1_700_000_000, 0).UTC(),
-		InitialHeight: 1,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if _, err := mock.AdvanceOne(); err != nil {
-		return nil, err
-	}
-	return mock, nil
+	return o
 }
 
 // Run starts gRPC, HTTP, background poll loops until ctx ends.
@@ -183,7 +165,6 @@ func (s *Service) RunOn(ctx context.Context, grpcL, httpL net.Listener) error {
 	}
 	errCh := make(chan error, 4)
 	go func() { errCh <- s.runBlockSync(ctx) }()
-	go func() { errCh <- s.blockMock.Run(ctx) }()
 	go func() { errCh <- s.serveGRPCOn(ctx, grpcL) }()
 	go func() { errCh <- s.serveHTTPOn(ctx, httpL) }()
 
@@ -234,7 +215,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	e := echo.New()
 	e.HideBanner = true
 	cosrv.Mount(e.Group(""), cosrv.Config{
-		Blocks:          s.blockMock,
+		Blocks:          oracleOrNil(s.blocks),
 		OmitBlocks:      s.cfg.OmitBlockRoutes,
 		VersionProvider: s.versions,
 	})
@@ -333,10 +314,10 @@ func (s *Service) ParamsSource() *params.CachedSource {
 	return s.paramsSrc
 }
 
-// BlockOracle returns the mock block observer for tests.
-func (s *Service) BlockOracle() *observer.Mock {
+// BlockOracle returns the chain block oracle (tests).
+func (s *Service) BlockOracle() blocks.BlockOracle {
 	if s == nil {
 		return nil
 	}
-	return s.blockMock
+	return oracleOrNil(s.blocks)
 }

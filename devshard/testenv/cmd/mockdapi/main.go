@@ -38,7 +38,6 @@ func main() {
 		}
 		cfg.MLNodes = nodes
 	}
-	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
 	if v := versionFromEnv(); v.Name != "" {
 		cfg.Versions = []cosrv.Version{v}
@@ -46,11 +45,6 @@ func main() {
 	if v := os.Getenv("MOCK_DAPI_CHAIN_POLL_INTERVAL"); v != "" {
 		if d, err := time.ParseDuration(v); err == nil {
 			cfg.ChainPollInterval = d
-		}
-	}
-	if v := os.Getenv("MOCK_DAPI_BLOCK_INTERVAL"); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			cfg.BlockInterval = d
 		}
 	}
 	cfg.OmitBlockRoutes = envTruthy("MOCK_DAPI_OMIT_BLOCK_ROUTES")

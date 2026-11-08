@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"common/chainoracle/blocks"
 	"devshard/cmd/devshardd/events"
 )
 
@@ -14,6 +15,9 @@ func (s *Service) runBlockSync(ctx context.Context) error {
 	}
 	l := events.NewListener(s.cfg.ChainRPCAddr)
 	l.OnNewBlock(func(ctx context.Context, e events.NewBlockEvent) {
+		if s.blocks != nil {
+			s.blocks.Observe(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
+		}
 		if err := s.syncRuntimeConfigAtBlock(ctx, e.BlockHeight); err != nil {
 			slog.Warn("mockdapi: runtime config block sync failed", "height", e.BlockHeight, "err", err)
 		}
