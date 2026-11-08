@@ -476,8 +476,14 @@ type Session struct {
 	floorGateWaiters  chan struct{}
 	floorGateWaiting  atomic.Int32
 	headerWatchCancel func()
+
+	// floorRefresh is shared by callers; their cancellation only ends their wait.
+	floorRefreshMu     sync.Mutex
+	floorRefreshDone   chan struct{}
+	floorRefreshCancel context.CancelFunc
+	floorRefreshClosed bool
 	// firstInferenceStarted is set when the first MsgStartInference commits.
-	// The floor gate applies to that inference only.
+	// Later admissions retain freshness checks after bootstrap.
 	firstInferenceStarted atomic.Bool
 	heightSeedOK          map[int]struct{}
 	heightSeedLast        map[int]seedSlotRecord
@@ -1513,13 +1519,14 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	return diff, hostIdx, nil
 }
 
-// MarkFirstInferenceStarted records that a start has committed, so the floor
-// chat gate is no longer consulted. A committed start sets this itself.
+// MarkFirstInferenceStarted records a completed bootstrap on recovered sessions.
+// Subsequent requests still require a fresh floor.
 func (s *Session) MarkFirstInferenceStarted() {
 	if s == nil {
 		return
 	}
 	s.firstInferenceStarted.Store(true)
+	s.floorGateOpened.Store(true)
 }
 
 func (s *Session) noteFirstInferenceLocked(txs []*types.DevshardTx) {
@@ -1529,6 +1536,7 @@ func (s *Session) noteFirstInferenceLocked(txs []*types.DevshardTx) {
 	for _, tx := range txs {
 		if tx != nil && tx.GetStartInference() != nil {
 			s.firstInferenceStarted.Store(true)
+			s.floorGateOpened.Store(true)
 			return
 		}
 	}
@@ -1932,6 +1940,11 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	}()
 	if s.finalizeInFlight.Load() {
 		return nil, types.ErrSessionFinalizing
+	}
+	// The protocol that introduced challenges also requires a fresh floor
+	// at dispatch. Earlier sessions retain their original compose rules.
+	if s.floorFreshnessRequired() && !s.floorChatReadyLocked() {
+		return nil, heightSeedErrorFromStatus(HeightSeedStatus{State: HeightSeedStatePending})
 	}
 
 	nonce := s.nonce + 1
@@ -5213,6 +5226,7 @@ func shortAddress(addr string) string {
 // (PeerConn Attach/Watch), and closes the underlying storage, if any.
 // Safe to call multiple times.
 func (s *Session) Close() error {
+	s.stopFloorRefresh()
 	s.floorGateMu.Lock()
 	cancel := s.headerWatchCancel
 	s.headerWatchCancel = nil

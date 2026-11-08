@@ -85,7 +85,7 @@ func (e *HeightSeedError) Error() string {
 	if e.Code == transport.DevshardErrorCatalogPending {
 		return fmt.Sprintf("router catalog not admitted yet, retry: %d/%d hosts returned a height anchor", e.Seeded, e.Slots)
 	}
-	return fmt.Sprintf("not seeded yet, retry: %d/%d hosts returned a height anchor", e.Seeded, e.Slots)
+	return fmt.Sprintf("height-sync floor not ready; retry: %d/%d participants", e.Seeded, e.Slots)
 }
 
 func (e *HeightSeedError) Is(target error) bool {
@@ -190,14 +190,90 @@ func (s *Session) MarkHeightSeedGate(until time.Time) {
 	s.floorGateNotify()
 }
 
-// WaitFloorChat blocks the first chat request until the floor gate is open,
-// the bootstrap budget has expired, or ctx is done. The 30s budget is the
-// bootstrap cutoff: it becomes missed only while the gate has not opened.
-// Opening takes a map time for F and half the participants. After that, a fresh
-// floor stays open without the roster count, and a stale floor stays pending
-// so one refresh can send a span. After the first inference commits, the
-// gate is not consulted. Before the clock starts, the wait is WaitHeightSeedChatBudget
-// and the error is catalog_pending.
+// floorFreshnessRequired follows the protocol boundary of the challenge
+// whose fixed deadline consumes the floor time. Earlier sessions keep their
+// existing bootstrap and direct-compose behavior.
+func (s *Session) floorFreshnessRequired() bool {
+	return s != nil && s.sm != nil && types.ProtocolKnowsChallenge(s.sm.ProtocolVersion())
+}
+
+type floorChatBudgetKey struct{}
+
+// WithFloorChatBudget preserves one post-bootstrap admission deadline across
+// the proxy and picker. It does not cancel the context used for generation.
+func (s *Session) WithFloorChatBudget(ctx context.Context) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !s.floorFreshnessRequired() {
+		return ctx
+	}
+	if !s.floorGateOpened.Load() {
+		_ = s.floorGateStatus()
+	}
+	if !s.floorGateOpened.Load() {
+		return ctx
+	}
+	if _, ok := ctx.Value(floorChatBudgetKey{}).(time.Time); ok {
+		return ctx
+	}
+	return context.WithValue(ctx, floorChatBudgetKey{}, time.Now().Add(WaitHeightSeedChatBudget))
+}
+
+// floorRefreshNeeded only reads the published floor and local header map.
+// Missing map time is a wait, not a completed attempt to refresh the floor.
+func (s *Session) floorRefreshNeeded() bool {
+	snap := s.floorGate.Load()
+	if snap == nil || snap.floor == 0 {
+		return true
+	}
+	ms, ok := s.sm.LookupHeaderTimeMs(snap.floor, snap.hash)
+	return ok && ms > 0 && !floorTimeFreshAt(s.gateNow(), ms, snap.interval)
+}
+
+func (s *Session) startFloorRefresh() <-chan struct{} {
+	s.floorRefreshMu.Lock()
+	defer s.floorRefreshMu.Unlock()
+	if s.floorRefreshClosed {
+		return nil
+	}
+	if s.floorRefreshDone != nil {
+		return s.floorRefreshDone
+	}
+	budget := WaitHeightSeedChatBudget
+	if !s.floorGateOpened.Load() {
+		budget = heightSeedGate
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	done := make(chan struct{})
+	s.floorRefreshDone, s.floorRefreshCancel = done, cancel
+	go func() {
+		defer cancel()
+		_ = s.refreshFloorForChat(ctx)
+		s.floorRefreshMu.Lock()
+		s.floorRefreshDone, s.floorRefreshCancel = nil, nil
+		close(done)
+		s.floorRefreshMu.Unlock()
+		s.floorGateNotify()
+	}()
+	return done
+}
+
+func (s *Session) stopFloorRefresh() {
+	s.floorRefreshMu.Lock()
+	s.floorRefreshClosed = true
+	done, cancel := s.floorRefreshDone, s.floorRefreshCancel
+	s.floorRefreshMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+// WaitFloorChat requires a fresh applied floor before each chat. The initial
+// bootstrap retains its cutoff; later waits share a bounded request budget.
 func (s *Session) WaitFloorChat(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -205,15 +281,30 @@ func (s *Session) WaitFloorChat(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s.heightSeedGateUntil.Load() == 0 {
-		if _, ok := ctx.Deadline(); !ok {
+	ctx = s.WithFloorChatBudget(ctx)
+	budgeted := false
+	if deadline, ok := ctx.Value(floorChatBudgetKey{}).(time.Time); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+		budgeted = true
+	} else if s.heightSeedGateUntil.Load() == 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, WaitHeightSeedChatBudget)
+		defer cancel()
+		budgeted = true
+	}
+	var refreshDone <-chan struct{}
+	refreshed := false
+	for {
+		// Bootstrap may have completed while this caller was waiting for a header.
+		if !budgeted && s.floorFreshnessRequired() && s.floorGateOpened.Load() {
 			var cancel context.CancelFunc
 			ctx, cancel = context.WithTimeout(ctx, WaitHeightSeedChatBudget)
 			defer cancel()
+			budgeted = true
 		}
-	}
-	refreshed := false
-	for {
+		ch := s.floorGateWatch()
 		st := s.floorGateStatus()
 		switch st.State {
 		case HeightSeedStateOK:
@@ -221,20 +312,16 @@ func (s *Session) WaitFloorChat(ctx context.Context) error {
 		case HeightSeedStateMissed:
 			return heightSeedErrorFromStatus(st)
 		}
-		if !refreshed && st.State == HeightSeedStatePending {
-			refreshed = true
-			if err := s.refreshFloorForChat(ctx); err != nil {
-				return err
+		if !refreshed && st.State == HeightSeedStatePending && s.floorRefreshNeeded() {
+			if ctx.Err() != nil {
+				return heightSeedErrorFromStatus(st)
 			}
+			refreshDone = s.startFloorRefresh()
+			if refreshDone == nil {
+				return heightSeedErrorFromStatus(st)
+			}
+			refreshed = true
 			continue
-		}
-		ch := s.floorGateWatch()
-		st = s.floorGateStatus()
-		switch st.State {
-		case HeightSeedStateOK:
-			return nil
-		case HeightSeedStateMissed:
-			return heightSeedErrorFromStatus(st)
 		}
 		var timer *time.Timer
 		var timerC <-chan time.Time
@@ -258,6 +345,12 @@ func (s *Session) WaitFloorChat(ctx context.Context) error {
 				return nil
 			}
 			return heightSeedErrorFromStatus(st)
+		case <-refreshDone:
+			refreshDone = nil
+			s.floorGateWaiting.Add(-1)
+			if timer != nil {
+				timer.Stop()
+			}
 		case <-ch:
 			s.floorGateWaiting.Add(-1)
 			if timer != nil {
@@ -356,10 +449,10 @@ func (s *Session) floorGateStatus() HeightSeedStatus {
 		hash = snap.hash
 	}
 	st := HeightSeedStatus{Seeded: seeded, Slots: slots, State: HeightSeedStateOK}
-	if s.firstInferenceStarted.Load() {
+	if s.firstInferenceStarted.Load() && !s.floorFreshnessRequired() {
 		return st
 	}
-	if !s.heightSeedCatalogAdmitted.Load() {
+	if !s.heightSeedCatalogAdmitted.Load() && !s.firstInferenceStarted.Load() {
 		st.State = HeightSeedStateCatalogPending
 		return st
 	}

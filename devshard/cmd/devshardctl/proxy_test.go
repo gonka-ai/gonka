@@ -911,7 +911,7 @@ func setupTestProxyFloor(t *testing.T, numHosts int, engines []devshard.Inferenc
 	return setupTestProxyFloorClock(t, numHosts, engines, verifierAccept, balance, feePerNonce, chain, false, 0)
 }
 
-func setupTestProxyFloorClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64, chain *testChain, header bool, executionTimeout int64) *testProxyEnv {
+func setupTestProxyFloorClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64, chain *testChain, header bool, executionTimeout int64, smOpts ...state.SMOption) *testProxyEnv {
 	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
@@ -943,7 +943,7 @@ func setupTestProxyFloorClock(t *testing.T, numHosts int, engines []devshard.Inf
 	verifiers := make([]*verifierClient, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier, state.WithHeaderTimes(hostChain))
+		sm := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier, append([]state.SMOption{state.WithHeaderTimes(hostChain)}, smOpts...)...)
 		var engine devshard.InferenceEngine
 		if engines != nil {
 			engine = engines[i]
@@ -965,7 +965,7 @@ func setupTestProxyFloorClock(t *testing.T, numHosts int, engines []devshard.Inf
 		clients[i] = verifiers[i]
 	}
 
-	userSM := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier, state.WithHeaderTimes(hostChain))
+	userSM := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier, append([]state.SMOption{state.WithHeaderTimes(hostChain)}, smOpts...)...)
 	var sessionOpts []user.SessionOption
 	if chain != nil {
 		sessionOpts = append(sessionOpts,
@@ -3194,4 +3194,38 @@ func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
 	}, 10*time.Second, 25*time.Millisecond, "the open nonce never reached a timeout vote")
+}
+
+func TestProxyChatStaleFloorReturns503WithoutStartingInference(t *testing.T) {
+	env := setupV7FloorGateProxy(t)
+	env.chain.clock.Store(time.Now().UnixNano())
+	env.session.SetDisableHeightSyncHeartbeat(true)
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+	require.Equal(t, user.HeightSeedStatePending, env.session.HeightSeedStatus().State)
+
+	before := len(env.sm.SnapshotState().Inferences)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+	env.proxy.handleChatCompletions(rec, req)
+	require.NoError(t, req.Context().Err(), "the internal floor budget expires while the client is still connected")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, transport.DevshardErrorHeightSeedIncomplete, rec.Header().Get(transport.HeaderDevshardError))
+	require.Equal(t, before, len(env.sm.SnapshotState().Inferences))
+}
+
+// setupV7FloorGateProxy establishes the real v7 bootstrap before advancing
+// the gateway clock to simulate idle time. Stored block times stay immutable.
+func setupV7FloorGateProxy(t *testing.T) *testProxyEnv {
+	t.Helper()
+	initial := time.Now().Add(-time.Minute)
+	chain := &testChain{start: initial}
+	chain.manual.Store(100)
+	chain.clock.Store(initial.UnixNano())
+	env := setupTestProxyFloorClock(t, 3, nil, true, 1_000_000, 0, chain, false, 0,
+		state.WithStateRootAndProtocolVersion(types.DevshardStateRootAndProtocolVersion))
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
+	require.Equal(t, user.HeightSeedStateOK, env.session.HeightSeedStatus().State)
+	env.session.SetDisableHeightSyncHeartbeat(true)
+	return env
 }

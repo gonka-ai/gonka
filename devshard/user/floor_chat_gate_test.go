@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -102,9 +103,14 @@ func (g *chatGateTimes) gateCalls() (header, await int32) {
 
 func openChatSession(t *testing.T, oracles []blocks.BlockOracle, times *chatGateTimes, extra ...SessionOption) *Session {
 	t.Helper()
+	return openChatSessionVersion(t, types.DevshardStateRootAndProtocolVersion, oracles, times, extra...)
+}
+
+func openChatSessionVersion(t *testing.T, version string, oracles []blocks.BlockOracle, times *chatGateTimes, extra ...SessionOption) *Session {
+	t.Helper()
 	var height uint64 = 100
-	opts := append([]SessionOption{WithRequireHeightSeed(true)}, extra...)
-	session := setupFloorlessHeartbeatSessionTimes(t, &height, oracles, times, opts...)
+	opts := extra
+	session := setupFloorlessHeartbeatSessionVersion(t, version, &height, oracles, times, opts...)
 	session.MarkHeightSeedGate(time.Now().Add(heightSeedGate))
 	t.Cleanup(func() { _ = session.Close() })
 	return session
@@ -421,7 +427,7 @@ func TestFloorWarmupWaitsPastTheBootstrapDeadline(t *testing.T) {
 	case <-time.After(50 * time.Millisecond):
 	}
 
-	session.MarkFirstInferenceStarted()
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
 	session.floorGateNotify()
 	select {
 	case err := <-errCh:
@@ -571,7 +577,7 @@ func TestFloorChat_WaiterWakesWhenMapTimeReturns(t *testing.T) {
 	require.Equal(t, HeightSeedStateOK, session.HeightSeedStatus().State)
 }
 
-func TestFloorChat_LaterInferenceSkipsStaleGate(t *testing.T) {
+func TestFloorChat_LaterInferenceRequiresFreshFloor(t *testing.T) {
 	interval := heightsync.DefaultHeartbeatInterval
 	now := time.Unix(1_700_000_000, 0).UTC()
 	oracles, followers := sessionOracles(3, 100)
@@ -588,8 +594,10 @@ func TestFloorChat_LaterInferenceSkipsStaleGate(t *testing.T) {
 	times.set(100, now.Add(-(2*interval + time.Second)).UnixMilli())
 	session.MarkHeightSeedGate(time.Now().Add(-time.Second))
 	base := session.Nonce()
-	require.Equal(t, HeightSeedStateOK, session.HeightSeedStatus().State)
-	require.NoError(t, session.WaitFloorChat(context.Background()))
+	require.Equal(t, HeightSeedStatePending, session.HeightSeedStatus().State)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	require.Error(t, session.WaitFloorChat(ctx))
 	require.Equal(t, base, session.Nonce())
 }
 
@@ -717,4 +725,272 @@ func openMultiSlotChatSession(t *testing.T, times *chatGateTimes) (*Session, []*
 	session.MarkHeightSeedGate(time.Now().Add(heightSeedGate))
 	t.Cleanup(func() { _ = session.Close() })
 	return session, followers
+}
+
+func TestFloorChat_PrepareRejectsStaleFloorBeforeChooser(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, now.UnixMilli())
+	opts := append(clockedCadence(now, heightsync.DefaultHeartbeatInterval), WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	session := openChatSessionVersion(t, types.DevshardStateRootAndProtocolVersion, oracles, times, opts...)
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	require.Equal(t, HeightSeedStateOK, session.HeightSeedStatus().State)
+	_ = appliedStart(t, session)
+	times.set(100, now.Add(-time.Hour).UnixMilli())
+	before := session.Nonce()
+	called := false
+	_, err := session.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+		called = true
+		return InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens}, false, context.Background(), nil
+	})
+	require.Error(t, err)
+	require.False(t, called, "stale admission must not let the chooser consume a queued request")
+	require.Equal(t, before, session.Nonce())
+}
+
+func TestFloorChat_MissingTimeBecomesStaleThenRefreshes(t *testing.T) {
+	interval := heightsync.DefaultHeartbeatInterval
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	oracles, followers := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, clock.Now().UnixMilli())
+	session := openChatSession(t, oracles, times, WithHeartbeatClock(clock.Now), WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	_ = appliedStart(t, session)
+	clock.Advance(3 * interval)
+	times.open.Store(false)
+	times.set(200, clock.Now().UnixMilli())
+	for _, follower := range followers {
+		follower.height.Store(200)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- session.WaitFloorChat(ctx) }()
+	require.Eventually(t, func() bool { return session.floorGateWaiting.Load() > 0 }, 500*time.Millisecond, time.Millisecond)
+	times.open.Store(true)
+	session.floorGateNotify()
+	require.NoError(t, <-done)
+	floor, _, known := session.sm.HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(200), floor)
+}
+
+func TestFloorChat_PostBootstrapWaitHasBudget(t *testing.T) {
+	now := time.Now()
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, now.UnixMilli())
+	session := openChatSession(t, oracles, times, WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	_ = appliedStart(t, session)
+	times.open.Store(false)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- session.WaitFloorChat(ctx) }()
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	case <-time.After(WaitHeightSeedChatBudget + time.Second):
+		cancel()
+		<-done
+		t.Fatal("post-bootstrap admission exceeded the floor wait budget")
+	}
+}
+
+type floorRoundBlock struct {
+	release chan struct{}
+	started chan struct{}
+	once    sync.Once
+}
+
+type heldFloorClient struct {
+	HostClient
+	round *floorRoundBlock
+}
+
+func (c heldFloorClient) Send(ctx context.Context, req host.HostRequest, writer io.Writer, receipt func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.round.once.Do(func() { close(c.round.started) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-c.round.release:
+	}
+	return c.HostClient.Send(ctx, req, writer, receipt)
+}
+
+func TestFloorChat_CancelledCallerDoesNotCancelSharedRefresh(t *testing.T) {
+	interval := heightsync.DefaultHeartbeatInterval
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	oracles, followers := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, clock.Now().UnixMilli())
+	session := openChatSession(t, oracles, times, WithHeartbeatClock(clock.Now), WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	_ = appliedStart(t, session)
+	clock.Advance(3 * interval)
+	times.set(200, clock.Now().UnixMilli())
+	for _, follower := range followers {
+		follower.height.Store(200)
+	}
+	round := &floorRoundBlock{release: make(chan struct{}), started: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(round.release) })
+	t.Cleanup(release)
+	for i, client := range session.clients {
+		session.clients[i] = heldFloorClient{HostClient: client, round: round}
+	}
+	before := session.Nonce()
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	defer firstCancel()
+	first := make(chan error, 1)
+	go func() { first <- session.WaitFloorChat(firstCtx) }()
+	select {
+	case <-round.started:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not start")
+	}
+	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
+	defer secondCancel()
+	second := make(chan error, 1)
+	go func() { second <- session.WaitFloorChat(secondCtx) }()
+	require.Eventually(t, func() bool { return session.floorGateWaiting.Load() >= 2 }, time.Second, time.Millisecond)
+	firstCancel()
+	require.Error(t, <-first)
+	release()
+	require.NoError(t, <-second)
+	floor, _, known := session.sm.HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(200), floor)
+	spans := 0
+	for _, diff := range seenDiffs(session) {
+		if diff.Nonce <= before {
+			continue
+		}
+		for _, tx := range diff.Txs {
+			if hb := tx.GetHeartbeat(); hb != nil && hb.ObservedHeight == 100 {
+				spans++
+			}
+		}
+	}
+	require.Equal(t, len(session.group), spans, "concurrent callers must share one height span")
+}
+
+func TestFloorChat_SuccessfulExchangeWithoutFreshFloorDoesNotAdmit(t *testing.T) {
+	interval := heightsync.DefaultHeartbeatInterval
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, clock.Now().UnixMilli())
+	session := openChatSession(t, oracles, times, WithHeartbeatClock(clock.Now), WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	_ = appliedStart(t, session)
+	clock.Advance(3 * interval)
+	before := session.Nonce()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	require.Error(t, session.WaitFloorChat(ctx))
+	require.Equal(t, HeightSeedStatePending, session.HeightSeedStatus().State)
+	for _, diff := range seenDiffs(session) {
+		if diff.Nonce <= before {
+			continue
+		}
+		for _, tx := range diff.Txs {
+			require.Nil(t, tx.GetStartInference(), "a successful RPC is not floor readiness")
+		}
+	}
+}
+
+func TestFloorChat_BudgetSurvivesRepeatedWaits(t *testing.T) {
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{ms: freshChatMs()}
+	times.open.Store(true)
+	session := openChatSession(t, oracles, times, WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	ctx := session.WithFloorChatBudget(context.Background())
+	deadline, ok := ctx.Value(floorChatBudgetKey{}).(time.Time)
+	require.True(t, ok)
+	require.Equal(t, deadline, session.WithFloorChatBudget(ctx).Value(floorChatBudgetKey{}))
+}
+
+func TestFloorChat_ExpiredCallerDoesNotStartRefresh(t *testing.T) {
+	interval := heightsync.DefaultHeartbeatInterval
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, clock.Now().UnixMilli())
+	session := openChatSession(t, oracles, times, WithHeartbeatClock(clock.Now), WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	_ = appliedStart(t, session)
+	clock.Advance(3 * interval)
+	before := session.Nonce()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Error(t, session.WaitFloorChat(ctx))
+	require.Equal(t, before, session.Nonce())
+	session.floorRefreshMu.Lock()
+	require.Nil(t, session.floorRefreshDone)
+	session.floorRefreshMu.Unlock()
+}
+
+func TestFloorChat_CloseCancelsSharedRefresh(t *testing.T) {
+	interval := heightsync.DefaultHeartbeatInterval
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0).UTC()}
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{}
+	times.open.Store(true)
+	times.set(100, clock.Now().UnixMilli())
+	session := openChatSession(t, oracles, times, WithHeartbeatClock(clock.Now), WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	_ = appliedStart(t, session)
+	clock.Advance(3 * interval)
+	round := &floorRoundBlock{release: make(chan struct{}), started: make(chan struct{})}
+	release := sync.OnceFunc(func() { close(round.release) })
+	t.Cleanup(release)
+	for i, client := range session.clients {
+		session.clients[i] = heldFloorClient{HostClient: client, round: round}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	waiter := make(chan error, 1)
+	go func() { waiter <- session.WaitFloorChat(ctx) }()
+	select {
+	case <-round.started:
+	case <-time.After(time.Second):
+		t.Fatal("refresh did not start")
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- session.Close() }()
+	select {
+	case err := <-closed:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel shared refresh")
+	}
+	require.Nil(t, session.startFloorRefresh(), "closed sessions do not start another operation")
+	cancel()
+	require.Error(t, <-waiter)
+}
+
+func TestFloorChat_RepeatedWaitUsesOriginalDeadline(t *testing.T) {
+	oracles, _ := sessionOracles(3, 100)
+	times := &chatGateTimes{ms: freshChatMs()}
+	times.open.Store(true)
+	session := openChatSession(t, oracles, times, WithDisableHeightSyncHeartbeat(true), WithRequireHeightSeed(false))
+	require.NoError(t, session.sendBootstrapSpan(context.Background()))
+	ctx := session.WithFloorChatBudget(context.Background())
+	require.NoError(t, session.WaitFloorChat(ctx))
+	// Consume the actual admission budget, then retry with the same request.
+	times.open.Store(false)
+	require.Error(t, session.WaitFloorChat(ctx))
+	started := time.Now()
+	require.Error(t, session.WaitFloorChat(ctx))
+	require.Less(t, time.Since(started), 250*time.Millisecond, "retry must not allocate another two seconds")
 }

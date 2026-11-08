@@ -219,29 +219,23 @@ func (s *Session) refreshFloorForChat(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	_, mode := s.floorChatEvalLocked()
-	s.mu.Unlock()
-	switch mode {
-	case floorRefreshBootstrap:
-		return s.sendBootstrapSpan(ctx)
-	case floorRefreshStale:
-		s.mu.Lock()
-		recent := s.floorSpanRecentLocked(s.nowLocked())
+	if mode == floorRefreshBootstrap {
 		s.mu.Unlock()
-		if recent {
-			return nil
-		}
-		span, err := s.composeSpan(true)
-		s.dispatchHeartbeatSpan(ctx, span)
-		if err != nil {
-			s.publishHeightSyncView()
-			return err
-		}
-		err = s.flushHeartbeatAckRounds(ctx)
-		s.publishHeightSyncView()
-		return err
-	default:
+		return s.sendBootstrapSpan(ctx)
+	}
+	if mode != floorRefreshStale || s.floorSpanRecentLocked(s.nowLocked()) {
+		s.mu.Unlock()
 		return nil
 	}
+	// Check and compose under one lock; dispatch uses the shared operation's context.
+	span, err := s.composeSpanLocked(true)
+	s.mu.Unlock()
+	s.dispatchHeartbeatSpan(ctx, span)
+	if err == nil {
+		err = s.flushHeartbeatAckRounds(ctx)
+	}
+	s.publishHeightSyncView()
+	return err
 }
 
 // floorSpanRecentLocked reports that this session opened a height span within
@@ -562,6 +556,10 @@ func (s *Session) composeSpan(force bool) ([]composedDiff, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	return s.composeSpanLocked(force)
+}
+
+func (s *Session) composeSpanLocked(force bool) ([]composedDiff, error) {
 	now := s.nowLocked()
 	hNow, hash, ok := s.referenceStampLocked(s.nonce + 1)
 	if !ok || hNow == 0 {

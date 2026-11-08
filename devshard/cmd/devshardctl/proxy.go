@@ -268,6 +268,9 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	r = r.WithContext(withClientResponseIntent(r.Context(), resolveClientResponseIntent(r.Context(), req)))
 
+	if p.session != nil {
+		r = r.WithContext(p.session.WithFloorChatBudget(r.Context()))
+	}
 	if err := p.waitHeightSeed(r.Context()); err != nil {
 		logRequestStage(ctx, "proxy_height_seed_blocked", "escrow", p.escrowID, "error", err)
 		writeHeightSeedError(w, err)

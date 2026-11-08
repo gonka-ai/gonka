@@ -237,6 +237,11 @@ func setupFloorlessHeartbeatSession(t *testing.T, height *uint64, oracles []bloc
 
 func setupFloorlessHeartbeatSessionTimes(t *testing.T, height *uint64, oracles []blocks.BlockOracle, userTimes state.HeaderTimeSource, extra ...SessionOption) *Session {
 	t.Helper()
+	return setupFloorlessHeartbeatSessionVersion(t, "v6", height, oracles, userTimes, extra...)
+}
+
+func setupFloorlessHeartbeatSessionVersion(t *testing.T, version string, height *uint64, oracles []blocks.BlockOracle, userTimes state.HeaderTimeSource, extra ...SessionOption) *Session {
+	t.Helper()
 	const numHosts = 3
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hosts {
@@ -253,8 +258,8 @@ func setupFloorlessHeartbeatSessionTimes(t *testing.T, height *uint64, oracles [
 	if hostTimes == nil {
 		hostTimes = polledSource(t)
 	}
-	smOpts := []state.SMOption{state.WithHeaderTimes(hostTimes)}
-	userSMOpts := []state.SMOption{state.WithHeaderTimes(hostTimes)}
+	smOpts := []state.SMOption{state.WithHeaderTimes(hostTimes), state.WithStateRootAndProtocolVersion(version)}
+	userSMOpts := []state.SMOption{state.WithHeaderTimes(hostTimes), state.WithStateRootAndProtocolVersion(version)}
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
 		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)

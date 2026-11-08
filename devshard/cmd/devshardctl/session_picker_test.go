@@ -913,3 +913,72 @@ func waitReply(t *testing.T, req *pickerRequest, timeout time.Duration) pickerRe
 		return pickerResult{}
 	}
 }
+
+func TestPicker_FloorWaitFailureKeepsOtherQueuedRequests(t *testing.T) {
+	env := setupV7FloorGateProxy(t)
+	env.chain.clock.Store(time.Now().UnixNano())
+	env.proxy.redundancy.picker.stop()
+	env.session.SetDisableHeightSyncHeartbeat(true)
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+	require.Equal(t, user.HeightSeedStatePending, env.session.HeightSeedStatus().State)
+	floor, _, known := env.sm.HeightSyncFloorAsOf(env.session.Nonce() + 1)
+	require.True(t, known)
+
+	p := newSessionPicker(env.session, "llama", nil, nil, nil)
+	first := defaultPickerRequest()
+	firstCtx, firstCancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer firstCancel()
+	first.ctx = firstCtx
+	second := defaultPickerRequest()
+	secondCtx, secondCancel := context.WithTimeout(context.Background(), time.Second)
+	defer secondCancel()
+	second.ctx = secondCtx
+	p.submit(first)
+	p.submit(second)
+	p.start()
+	t.Cleanup(p.stop)
+	firstResult := waitReply(t, first, time.Second)
+	require.Error(t, firstResult.err)
+	require.Nil(t, firstResult.prepared)
+	require.Equal(t, 1, p.queueLen(), "only the expired caller leaves the queue")
+	select {
+	case result := <-second.reply:
+		t.Fatalf("other caller was failed before its deadline: %v", result.err)
+	default:
+	}
+	env.chain.manual.Store(int64(floor + 100))
+	env.chain.setHeightTime(floor+100, time.Now().UnixMilli())
+	require.NoError(t, env.session.DriveTimeoutFloor(context.Background()))
+	secondResult := waitReply(t, second, time.Second)
+	require.NoError(t, secondResult.err)
+	require.NotNil(t, secondResult.prepared)
+}
+
+func TestPicker_StopCancelsBlockedFloorWait(t *testing.T) {
+	env := setupV7FloorGateProxy(t)
+	env.proxy.redundancy.picker.stop()
+	env.sm.SetHeaderTimes(&countingHeaderTimes{})
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+	before := len(env.sm.SnapshotState().Inferences)
+	p := newSessionPicker(env.session, "llama", nil, nil, nil)
+	request := defaultPickerRequest()
+	p.submit(request)
+	p.start()
+	t.Cleanup(p.stop)
+	require.Eventually(t, func() bool {
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		return request.floorCtx != nil
+	}, time.Second, time.Millisecond)
+	// Stopping the dispatcher ends its wait without composing a client Start.
+	done := make(chan struct{})
+	go func() { p.stop(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("picker stop waited for bootstrap cutoff")
+	}
+	result := waitReply(t, request, time.Second)
+	require.ErrorIs(t, result.err, errPickerStopped)
+	require.Equal(t, before, len(env.sm.SnapshotState().Inferences))
+}
