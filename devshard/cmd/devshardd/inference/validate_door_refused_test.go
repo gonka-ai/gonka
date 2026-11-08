@@ -79,19 +79,30 @@ func doorExecutor(t *testing.T, allow rpcserver.AllowPeer, drop, serve bool) (*t
 	}))
 	t.Cleanup(srv.Close)
 	t.Cleanup(auth.Close)
-	pc := transport.NewPeerConn(transport.PeerConnConfig{BaseURL: srv.URL, HostAddress: hostAddr, Signer: peer, DirectMux: true, DoorEscrowID: "escrow-1", WatchStale: time.Minute})
+	pc := transport.NewPeerConn(transport.PeerConnConfig{
+		BaseURL: srv.URL, HostAddress: hostAddr, Signer: peer, DirectMux: true,
+		DoorEscrowID: "escrow-1", WatchStale: time.Minute,
+		BackoffMin: 50 * time.Millisecond / testTimingScale,
+		BackoffMax: 5 * time.Second / testTimingScale,
+		// Use the upper end of the allowed jitter range for repeatable retries.
+		Jitter: func(d time.Duration) time.Duration { return d },
+	})
 	t.Cleanup(pc.Close)
 	pc.Start()
 	return transport.NewRPCClient(transport.NewHTTPClient(srv.URL, "escrow-1", peer), pc, transport.ParseRPCEndpoints(transport.EndpointPayload)), served, srv
 }
 
-const testBudget = 400 * time.Millisecond
+const (
+	testTimingScale = 25
+	testBudget      = 10 * time.Second / testTimingScale
+)
 
-// doorTimings shortens the header budget, the chain check and the re-Attach gap.
+// doorTimings scales the header budget, chain check and retry gap together
+// with the peer's Attach backoff in doorExecutor.
 func doorTimings(t *testing.T) {
 	t.Helper()
 	oldHeader, oldCheck, oldGap := payloadFetchHeaderTimeout, doorRefusalCheckTimeout, doorRefusalRetryGap
-	payloadFetchHeaderTimeout, doorRefusalCheckTimeout, doorRefusalRetryGap = testBudget, time.Second, 20*time.Millisecond
+	payloadFetchHeaderTimeout, doorRefusalCheckTimeout, doorRefusalRetryGap = testBudget, 5*time.Second/testTimingScale, 250*time.Millisecond/testTimingScale
 	t.Cleanup(func() {
 		payloadFetchHeaderTimeout, doorRefusalCheckTimeout, doorRefusalRetryGap = oldHeader, oldCheck, oldGap
 	})

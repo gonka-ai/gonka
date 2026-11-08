@@ -23,7 +23,7 @@ func (c *captureStageLogger) Debug(string, ...any)       {}
 
 func TestStageJSONReachesSetLogger(t *testing.T) {
 	capture := &captureStageLogger{}
-	prev := current
+	prev := currentLogger()
 	SetLogger(capture)
 	structuredStages.Store(true)
 	t.Cleanup(func() {
@@ -37,7 +37,7 @@ func TestStageJSONReachesSetLogger(t *testing.T) {
 
 func TestErrorCtxReachesSetLogger(t *testing.T) {
 	capture := &captureStageLogger{}
-	prev := current
+	prev := currentLogger()
 	SetLogger(capture)
 	t.Cleanup(func() { SetLogger(prev) })
 
@@ -49,7 +49,7 @@ func TestStageDefaultLoggerStampsTraceID(t *testing.T) {
 	var buf bytes.Buffer
 	prevLogger := slog.Default()
 	prevFormat := commonobs.LogFormat()
-	prev := current
+	prev := currentLogger()
 	SetLogger(&slogLogger{})
 	commonobs.InstallLoggerWithOptions(commonobs.LoggerOptions{
 		Format: "json",
