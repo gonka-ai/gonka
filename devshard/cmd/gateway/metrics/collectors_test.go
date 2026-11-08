@@ -430,6 +430,21 @@ func TestTheAccountingCollectorReportsEveryRowTheLedgerLost(t *testing.T) {
 	expectCounter(t, telemetry, "devshard_gateway_accounting_retention_sweeps_failed_total", labels{}, 3)
 }
 
+type fixedOwedVotes struct{ stats store.OwedVoteStats }
+
+func (f fixedOwedVotes) Stats() store.OwedVoteStats { return f.stats }
+
+// Test flow:
+//  1. Register an `OwedVotesCollector` backed by a `fixedOwedVotes` reporting dropped and failed counts.
+//  2. Assert the writes-lost counter reports the dropped count under cause "shed" and the failed count under cause "write_failed".
+func TestTheOwedVotesCollectorReportsEveryWriteTheStoreLost(t *testing.T) {
+	telemetry := New()
+	telemetry.Register(NewOwedVotesCollector(fixedOwedVotes{stats: store.OwedVoteStats{Dropped: 5, Failed: 3}}))
+
+	expectCounter(t, telemetry, "devshard_gateway_owed_vote_writes_lost_total", labels{"cause": "shed"}, 5)
+	expectCounter(t, telemetry, "devshard_gateway_owed_vote_writes_lost_total", labels{"cause": "write_failed"}, 3)
+}
+
 // Test flow:
 //  1. Build a limits harness and register a `LimitsCollector`.
 //  2. Acquire one request for a participant and model (a window is per participant and per model), keeping it held.

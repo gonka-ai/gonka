@@ -101,7 +101,7 @@ Before the chain client is asked at all, the manager refuses a create whose `amo
 | tx landed, produced an escrow | write the devshard row, drop the commitment |
 | tx landed, produced no escrow | drop the commitment — terminal, it will never produce one |
 | tx not found, inside its TTL | keep it; retry next tick |
-| tx not found, past its TTL | drop the commitment; a fresh create is correct |
+| tx not found, past its TTL | adopt the escrow it created if a bounded walk of the chain's escrow ids finds one; otherwise drop the commitment, a fresh create is correct ([`escrow/README.md`](../escrow/README.md), "Reconciling a commitment row") |
 | endpoint unreachable | keep it; an unreachable endpoint is not an answer |
 
 The TTL window is `commitmentReconcileGrace` = `chain.UnorderedTxTTL` (9 min) + 2 min of index lag. A row with no `created_at` (legacy or malformed) counts as **still pending** — keeping a commitment costs one row, dropping one prematurely costs a duplicate escrow.

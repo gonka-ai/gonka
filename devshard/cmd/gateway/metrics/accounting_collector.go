@@ -40,7 +40,7 @@ func (c *AccountingCollector) Collect(ch chan<- prometheus.Metric) {
 	}
 	stats := c.ledger.Stats()
 	counter(ch, c.written, float64(stats.Written))
-	counter(ch, c.lost, float64(stats.Dropped), "shed")
-	counter(ch, c.lost, float64(stats.Failed), "write_failed")
+	counter(ch, c.lost, float64(stats.Dropped), lostCauseShed)
+	counter(ch, c.lost, float64(stats.Failed), lostCauseWriteFailed)
 	counter(ch, c.sweepFailed, float64(stats.SweepFailed))
 }

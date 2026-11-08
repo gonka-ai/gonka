@@ -13,6 +13,8 @@ type EscrowInfo struct {
 	Balance    uint64
 	EpochIndex uint64
 	Settled    bool
+	Creator    string
+	ModelID    string
 }
 
 // GetEscrow reports found=false only when the chain says the escrow is absent. See README.md, "The gRPC transport".

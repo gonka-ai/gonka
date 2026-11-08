@@ -21,8 +21,9 @@ type Store struct {
 	retryBackoff time.Duration
 	retryable    func(error) bool
 
-	mu     sync.Mutex
-	ledger *Ledger
+	mu        sync.Mutex
+	ledger    *Ledger
+	owedVotes *OwedVotes
 }
 
 const (
@@ -109,6 +110,16 @@ var migrations = []string{
 		updated_at TEXT NOT NULL
 	);`,
 	`ALTER TABLE request_accounting ADD COLUMN input_tokens_source TEXT NOT NULL DEFAULT 'bytes_estimate'`,
+	`CREATE TABLE IF NOT EXISTS owed_refusal_votes (
+		escrow_id TEXT NOT NULL,
+		nonce INTEGER NOT NULL,
+		started_at TEXT NOT NULL,
+		request_id TEXT NOT NULL DEFAULT '',
+		participant TEXT NOT NULL DEFAULT '',
+		model TEXT NOT NULL DEFAULT '',
+		prompt BLOB NOT NULL,
+		PRIMARY KEY (escrow_id, nonce)
+	);`,
 }
 
 // ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The devshardctl-database guard".
@@ -233,14 +244,17 @@ func applyMigration(executor statementExecutor, statement string) error {
 	return err
 }
 
-// Close drains the accounting ledger first, so no queued row outlives the connection it needs.
+// Close drains the accounting ledger and the owed votes first, so no queued row outlives the connection it needs.
 func (s *Store) Close() error {
 	s.mu.Lock()
-	ledger := s.ledger
+	ledger, owedVotes := s.ledger, s.owedVotes
 	s.mu.Unlock()
 	var ledgerErr error
 	if ledger != nil {
 		ledgerErr = ledger.Close()
+	}
+	if owedVotes != nil {
+		owedVotes.drain()
 	}
 	if err := s.db.Close(); err != nil {
 		return fmt.Errorf("closing gateway store: %w", err)
