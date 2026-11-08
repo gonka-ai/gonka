@@ -50,7 +50,7 @@ func fieldValue(fields []any, key string) any {
 //  3. Assert the field count equals `loggedFieldSlots`, the widest finished-request line's hand-counted reservation.
 func TestARequestFinishedLineFitsWhatItReserves(t *testing.T) {
 	line := RequestLine{
-		RequestID: "request-1", Model: "qwen", EscrowID: "escrow-1", ClientStream: true, Outcome: servedOutcome(),
+		RequestID: "request-1", Model: "qwen", APIKeyID: "acf99d94", EscrowID: "escrow-1", ClientStream: true, Outcome: servedOutcome(),
 		Verdict: "served", Elapsed: 3 * time.Second, RaceErr: errors.New("race"), DeliverErr: errors.New("deliver"),
 	}
 

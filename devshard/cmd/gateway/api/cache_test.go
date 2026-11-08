@@ -817,3 +817,44 @@ func TestCacheKeySeparatesTheEmptyAnswerFlag(t *testing.T) {
 		t.Error("the empty-answer flag does not change the cache key")
 	}
 }
+
+// Test flow:
+//  1. For each error object a host may fold into a non-streamed reply after content, make inference stream content and then that error object.
+//  2. Send the same chat completion twice.
+//  3. Assert two races ran: the host's own body is unfinished, so the gateway's message the client read is not replayed either.
+func TestAHostErrorFoldedAfterContentIsNotReplayed(t *testing.T) {
+	errorObjects := map[string]string{
+		"a request fault with a message":    `{"message":"context too long","code":400}`,
+		"a request fault with no message":   `{"message":"","code":400}`,
+		"a bad request naming a rate limit": `{"message":"slow down","type":"BadRequestError","code":"rate_limit_exceeded"}`,
+	}
+	for name, errorObject := range errorObjects {
+		t.Run(name, func(t *testing.T) {
+			live := newHarness(t)
+			live.inference.chunks = []string{`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n", `data: {"error":` + errorObject + "}\n\n", "data: [DONE]\n\n"}
+			live.inference.outcome = engine.RaceOutcome{EscrowID: "7"}
+
+			live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a"))
+			live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a"))
+
+			if got := live.inference.runs.Load(); got != 2 {
+				t.Fatalf("races: got %d, want 2 (a folded host error is no answer to replay)", got)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Build a cache recorder for a reply recorded under an escrow.
+//  2. Ask why its entry is refused when the race reports the host body's own refusal, and when it reports a failed race.
+//  3. Assert the host body's refusal is counted under its own reason and the failed race under `race_failed`.
+func TestARefusalByTheHostsOwnBodyIsCountedUnderItsOwnReason(t *testing.T) {
+	recorder := newCacheRecorder(httptest.NewRecorder(), 1<<20, false, nil)
+
+	if got := recorder.entryRefusal(hostBodyRefusedError{refusal: filters.CacheRefusedFailure}, "7"); got != filters.CacheRefusedFailure {
+		t.Fatalf("entryRefusal(host body refused) = %q, want %q", got, filters.CacheRefusedFailure)
+	}
+	if got := recorder.entryRefusal(engine.ErrAllAttemptsFailed, "7"); got != cacheRefusedRaceFailed {
+		t.Fatalf("entryRefusal(failed race) = %q, want %q", got, cacheRefusedRaceFailed)
+	}
+}

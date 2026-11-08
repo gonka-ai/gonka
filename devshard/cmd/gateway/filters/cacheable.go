@@ -177,11 +177,15 @@ func DecodeUpstreamError(payload []byte) (UpstreamError, bool) {
 
 func mayCarryUpstreamError(payload []byte) bool {
 	return anyKeyMatches(payload, func(name []byte, valueAt int) bool {
-		if bytes.EqualFold(name, []byte("error")) {
-			return true
-		}
-		return bytes.EqualFold(name, []byte("object")) && !plainStringOtherThan(payload[valueAt:], "error")
+		return namesUpstreamError(payload, name, valueAt)
 	})
+}
+
+func namesUpstreamError(payload, name []byte, valueAt int) bool {
+	if bytes.EqualFold(name, []byte("error")) {
+		return true
+	}
+	return bytes.EqualFold(name, []byte("object")) && !plainStringOtherThan(payload[valueAt:], "error")
 }
 
 func plainStringOtherThan(value []byte, excluded string) bool {

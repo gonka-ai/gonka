@@ -9,11 +9,12 @@ import (
 )
 
 // finishRequest hands the journal what a finished request can no longer be asked. See README.md, "What a finished request records".
-func (s *Server) finishRequest(requestID string, normalized filters.Result, outcome engine.RaceOutcome, verdict string, stream *clientStream, elapsed time.Duration, raceErr, deliverErr error) {
+func (s *Server) finishRequest(requestID, apiKeyID string, normalized filters.Result, outcome engine.RaceOutcome, verdict string, stream *clientStream, elapsed time.Duration, raceErr, deliverErr error) {
 	written, terminated := stream.delivered()
 	s.events.RequestFinished(journal.RequestLine{
 		RequestID:    requestID,
 		Model:        normalized.Model,
+		APIKeyID:     apiKeyID,
 		EscrowID:     outcome.EscrowID,
 		ClientStream: normalized.ClientStream,
 		Outcome:      outcome,

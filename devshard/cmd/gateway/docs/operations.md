@@ -363,11 +363,12 @@ One more line belongs to the same family, on the money side rather than the rout
 
 | Field | What it settles |
 | --- | --- |
+| `api_key_id` | the client API key the request was made with: the first eight hex characters of the key's SHA-256 (`printf %s "$KEY" \| sha256sum \| cut -c1-8`), `admin` for the admin key, `none` when no configured client key matched (no key or an unknown one). The limiter's refusal line carries it too, so one key's share of the traffic and of the refusals can be read from the log |
 | `escrow` | the escrow the race ran on; absent when no escrow was picked |
 | `host` / `hosts` | `host` is the crowned attempt's host; with nobody crowned, `hosts` lists every host tried, comma-separated; a race that ran no attempt carries neither |
 | `bytes` | how much actually reached the client, counted at the socket — the strip rewrites events on the way out |
 | `terminated` | whether the SSE terminator went with them; without it a client waits out its own timeout on a reply it already has |
-| `outcome` | `served`, `failed_mid_stream`, or `failed_before_first_byte` — the last distinguishes a reply the client can retry from one it cannot |
+| `outcome` | `served`, `failed_mid_stream`, or `failed_before_first_byte` — the last distinguishes a reply the client can retry from one it cannot; `served` with an `error` field is a host error the gateway answered in its own words |
 | `deliver_error` | the failure that reached the client instead of the last bytes: the case no status code can express, because a stream commits 200 on its first byte |
 | `nonce_finished` | whether the crowned attempt's nonce closed on the chain. A served request with `false` here answered the client and left the escrow owing a vote for that nonce. Absent when nobody was crowned |
 

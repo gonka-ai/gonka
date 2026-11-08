@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"cmp"
 	"crypto/sha256"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -285,11 +286,14 @@ func (w *cacheRecorder) cannotBuildEntry(unstorable error, escrowID string) bool
 }
 
 func (w *cacheRecorder) entryRefusal(unstorable error, escrowID string) string {
+	var refusedByHostBody hostBodyRefusedError
 	switch {
 	case w.overflowed:
 		return cacheRefusedTooLarge
 	case w.writeErr != nil:
 		return cacheRefusedWriteFailed
+	case errors.As(unstorable, &refusedByHostBody):
+		return refusedByHostBody.refusal
 	case unstorable != nil:
 		return cacheRefusedRaceFailed
 	case w.body.Len() == 0:

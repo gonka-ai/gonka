@@ -78,7 +78,7 @@ func BenchmarkRewriteEventPlainChunk(b *testing.B) {
 	event := []byte("data: " + plainChunkPayload)
 	b.ReportAllocs()
 	for range b.N {
-		_, _ = rewriteEvent(event, LogprobIntent{}, false)
+		_, _, _ = rewriteEvent(event, LogprobIntent{}, false)
 	}
 }
 

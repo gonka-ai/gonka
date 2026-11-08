@@ -21,7 +21,7 @@ var (
 	ErrAnswerTruncated  = errors.New("host stopped before the answer finished")
 )
 
-// HostApplicationError is an upstream refusal that is the response; the API writes its message under HTTPStatus. See README.md, "Errors the engine returns".
+// HostApplicationError is an upstream refusal that is the response; the API answers it in its own words under HTTPStatus. See README.md, "Errors the engine returns".
 type HostApplicationError struct {
 	Code    string
 	Type    string
@@ -47,7 +47,7 @@ func (e *HostApplicationError) HTTPStatus() int {
 		return http.StatusBadGateway
 	}
 	if code, err := strconv.Atoi(e.Code); err == nil && isClientOrServerStatus(code) {
-		return code
+		return gatewayStatusFor(code)
 	}
 	if strings.Contains(strings.ToLower(e.Type), "badrequest") {
 		return http.StatusBadRequest
@@ -93,6 +93,21 @@ func StatusForError(err error) int {
 
 func isThrottleStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable
+}
+
+// BlamesHost reports whether the status the gateway answers puts the failure on the host rather than the request.
+func (e *HostApplicationError) BlamesHost() bool {
+	return e.HTTPStatus() >= http.StatusInternalServerError
+}
+
+func gatewayStatusFor(hostStatus int) int {
+	switch {
+	case hostStatus == http.StatusBadRequest, hostStatus == http.StatusRequestEntityTooLarge, hostStatus == http.StatusUnprocessableEntity:
+		return hostStatus
+	case isThrottleStatus(hostStatus):
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusBadGateway
 }
 
 func isClientOrServerStatus(status int) bool {

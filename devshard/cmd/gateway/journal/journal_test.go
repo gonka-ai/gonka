@@ -344,13 +344,13 @@ func TestARequestFinishedLineSurvivesAFullProgressBacklogThatDropsARequestThrott
 	release := holdConsumer(t, events, ledger)
 
 	events.RecordStep(engine.RaceStep{Kind: engine.RaceStepNonceCommitted})
-	events.RequestFinished(RequestLine{RequestID: "request-1", Model: "qwen", Verdict: "served"})
+	events.RequestFinished(RequestLine{RequestID: "request-1", Model: "qwen", APIKeyID: "acf99d94", Verdict: "served"})
 	events.RequestThrottled(RequestLine{RequestID: "request-2", Model: "qwen", LimiterReason: "too_many_requests"})
 	release()
 	events.Flush()
 
 	lines.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "stream", false,
+		"request", "request-1", "model", "qwen", "api_key_id", "acf99d94", "stream", false,
 		"input_tokens", uint64(0), "output_tokens", int64(0),
 		"outcome", "served", "bytes", int64(0), "terminated", false, "duration_ms", int64(0),
 	}})

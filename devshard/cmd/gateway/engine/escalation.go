@@ -99,6 +99,7 @@ type EscalationAttempt struct {
 	Stalled         bool
 	NonceFinished   bool
 	EmptyStream     bool
+	ErrorBlamesHost bool
 	LaunchTime      time.Time
 	ClockStart      time.Time
 	ReceiptTime     time.Time
@@ -231,9 +232,8 @@ func (p EscalationPolicy) hedgeWait(attempt *EscalationAttempt, request Escalati
 	return max(p.HedgeFirstTokenFloor, curve)
 }
 
-// answered reports an attempt that finished its nonce with something a client can render; an empty stream closes its nonce and still leaves nothing.
 func (attempt *EscalationAttempt) answered() bool {
-	return attempt.Done && attempt.NonceFinished && !attempt.EmptyStream
+	return attempt.Done && attempt.NonceFinished && !attempt.EmptyStream && !attempt.ErrorBlamesHost
 }
 
 // owedDeadline is the deadline a running attempt's host is judged on once, whether or not the race may still escalate. See race.md, "Deadlines".

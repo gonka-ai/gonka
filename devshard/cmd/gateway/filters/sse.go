@@ -27,21 +27,49 @@ func EachSSEDataPayload(events []byte, visit func(payload []byte) bool) {
 	})
 }
 
+// DropUpstreamErrorEvents removes every event whose joined payload carries an upstream error and reports the first one it removed.
+func DropUpstreamErrorEvents(events []byte) (kept []byte, first UpstreamError, dropped bool) {
+	kept, consumed := events, 0
+	forEachSSEEvent(events, func(event []byte) bool {
+		failure, carried := eventFailure(event)
+		switch {
+		case carried && !dropped:
+			kept, first, dropped = append([]byte(nil), events[:consumed]...), failure, true
+		case !carried && dropped:
+			kept = append(kept, event...)
+		}
+		consumed += len(event)
+		return false
+	})
+	return kept, first, dropped
+}
+
+func eventFailure(event []byte) (UpstreamError, bool) {
+	_, payload, held := eventPayload(event)
+	if !held {
+		return UpstreamError{}, false
+	}
+	return DecodeUpstreamError(bytes.TrimSpace(payload))
+}
+
 // SSEEventTerminated reports whether these bytes end an event, so a caller does not glue the next one on.
 func SSEEventTerminated(events []byte) bool {
 	return bytes.HasSuffix(events, sseEventSeparator) || bytes.HasSuffix(events, sseEventSeparatorCRLF)
 }
 
-// TrimSSEDone drops a terminating [DONE] so the gateway writes its own. See ../api/README.md, "Streaming the reply".
+// TrimSSEDone drops every [DONE] event so the gateway writes its own. See ../api/README.md, "Streaming the reply".
 func TrimSSEDone(events []byte) []byte {
 	if !HasSSEDone(events) {
 		return events
 	}
-	cut := bytes.LastIndex(events, sseDataParsePrefix)
-	if cut < 0 {
-		return events
-	}
-	return bytes.TrimRight(events[:cut], jsonWhitespace)
+	var kept []byte
+	forEachSSEEvent(events, func(event []byte) bool {
+		if !HasSSEDone(event) {
+			kept = append(kept, event...)
+		}
+		return false
+	})
+	return bytes.TrimRight(kept, jsonWhitespace)
 }
 
 // HasSSEDone is line-anchored, so a "[DONE]" inside a content delta is not read as the terminator.
