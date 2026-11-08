@@ -82,7 +82,20 @@ func (s *Server) SetPeerResolver(resolve PeerResolver) {
 	s.peers.mu.Unlock()
 	if s.host != nil {
 		s.host.SetRepairProbe(s.RepairProbe)
+		s.host.SetCatchUpSource(s.catchUpPeerClient)
 	}
+}
+
+func (s *Server) catchUpPeerClient(ctx context.Context, slot int) (host.PeerCatchUpClient, error) {
+	pc, err := s.peerClient(ctx, slot)
+	if err != nil || pc == nil {
+		return nil, err
+	}
+	cu, ok := pc.(host.PeerCatchUpClient)
+	if !ok {
+		return nil, nil
+	}
+	return cu, nil
 }
 
 // StartPeerLookups resolves slots in the background so the first repair

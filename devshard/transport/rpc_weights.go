@@ -45,7 +45,8 @@ func RPCProcedureWeight(procedure string) int {
 		return RPCWeightGetMempool
 	case rpcpbconnect.PayloadServiceGetPayloadProcedure:
 		return RPCWeightGetPayload
-	case rpcpbconnect.SessionServiceGetDiffsProcedure:
+	case rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetSnapshotProcedure:
 		return RPCWeightGetDiffs
 	case rpcpbconnect.PeerAuthServiceWatchProcedure,
 		rpcpbconnect.PeerAuthServiceAttachProcedure:

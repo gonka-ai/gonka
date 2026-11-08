@@ -1228,12 +1228,21 @@ func (c *HTTPClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Dif
 // stores no diffs for are skipped. An error from fn stops the walk and is
 // returned unwrapped.
 func (c *HTTPClient) GetDiffPages(ctx context.Context, fromNonce, toNonce uint64, fn func([]types.Diff) error) error {
+	return walkDiffPages(ctx, fromNonce, toNonce, c.getDiffWindow, fn)
+}
+
+func walkDiffPages(
+	ctx context.Context,
+	fromNonce, toNonce uint64,
+	fetchWindow func(ctx context.Context, from, to uint64) ([]types.Diff, error),
+	fn func([]types.Diff) error,
+) error {
 	for from := fromNonce; from <= toNonce; {
 		hi := diffPageEnd(from, toNonce, storage.DiffPageMaxNonces)
-		page, err := c.getDiffWindow(ctx, from, hi)
+		page, err := fetchWindow(ctx, from, hi)
 		for err != nil && errors.Is(err, storage.ErrDiffPageLimit) && hi > from {
 			hi = from + (hi-from)/2
-			page, err = c.getDiffWindow(ctx, from, hi)
+			page, err = fetchWindow(ctx, from, hi)
 		}
 		if err != nil {
 			return fmt.Errorf("get diffs %d..%d: %w", from, hi, err)
@@ -1249,6 +1258,53 @@ func (c *HTTPClient) GetDiffPages(ctx context.Context, fromNonce, toNonce uint64
 		from = hi + 1
 	}
 	return nil
+}
+
+// SnapshotJSON is the HTTP test-harness wire payload for GET .../snapshot.
+type SnapshotJSON struct {
+	Nonce        uint64            `json:"nonce"`
+	Snapshot     []byte            `json:"snapshot"`
+	AnchorDiff   *DiffJSON         `json:"anchor_diff,omitempty"`
+	FloorRefDiff *DiffJSON         `json:"floor_ref_diff,omitempty"`
+	Signatures   map[uint32][]byte `json:"signatures,omitempty"`
+}
+
+// GetSnapshot fetches a state snapshot at or below maxNonce from a peer.
+func (c *HTTPClient) GetSnapshot(ctx context.Context, maxNonce uint64) (*host.PeerSnapshot, error) {
+	if err := c.errIfRetiredHTTP(); err != nil {
+		return nil, err
+	}
+	var wire SnapshotJSON
+	path := fmt.Sprintf("/sessions/%s/snapshot?max_nonce=%d", c.escrowID, maxNonce)
+	if err := c.getBounded(ctx, path, c.config.QueryTimeout, maxDiffPageBodyBytes, &wire); err != nil {
+		var status *UpstreamStatusError
+		if errors.As(err, &status) && status.StatusCode == http.StatusNotFound {
+			return nil, storage.ErrSnapshotNotFound
+		}
+		return nil, fmt.Errorf("get snapshot: %w", err)
+	}
+	if wire.AnchorDiff == nil {
+		return nil, storage.ErrSnapshotNotFound
+	}
+	anchor, err := DiffFromJSON(*wire.AnchorDiff)
+	if err != nil {
+		return nil, fmt.Errorf("decode snapshot anchor diff: %w", err)
+	}
+	var floorRef *types.Diff
+	if wire.FloorRefDiff != nil {
+		d, fErr := DiffFromJSON(*wire.FloorRefDiff)
+		if fErr != nil {
+			return nil, fmt.Errorf("decode snapshot floor diff: %w", fErr)
+		}
+		floorRef = &d
+	}
+	return &host.PeerSnapshot{
+		Nonce:        wire.Nonce,
+		Snapshot:     wire.Snapshot,
+		AnchorDiff:   &anchor,
+		FloorRefDiff: floorRef,
+		Signatures:   wire.Signatures,
+	}, nil
 }
 
 func diffPageEnd(from, to uint64, maxNonces int) uint64 {

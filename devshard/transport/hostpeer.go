@@ -9,8 +9,8 @@ import (
 	"devshard/signing"
 )
 
-// HostPeerClient is a slot's outbound client for repair probes and timeout
-// verification. *HTTPClient and *RPCClient implement it.
+// HostPeerClient is a slot's outbound client for repair probes, catch-up, and
+// timeout verification. *HTTPClient and *RPCClient implement it.
 type HostPeerClient interface {
 	host.ExecutorClient
 	HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error)
@@ -49,4 +49,6 @@ var (
 	_ host.ChallengeCatchUpPreparer   = (*RPCClient)(nil)
 	_ host.ChallengeReceiptWireSender = (*HTTPClient)(nil)
 	_ host.ChallengeReceiptWireSender = (*RPCClient)(nil)
+	_ host.PeerCatchUpClient          = (*HTTPClient)(nil)
+	_ host.PeerCatchUpClient          = (*RPCClient)(nil)
 )

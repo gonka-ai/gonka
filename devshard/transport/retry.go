@@ -223,6 +223,8 @@ func connectAdmissionPath(escrowID, procedure string) string {
 		return "/sessions/" + escrowID + "/chat/completions"
 	case rpcpbconnect.SessionServiceGetDiffsProcedure:
 		return "/sessions/" + escrowID + "/diffs"
+	case rpcpbconnect.SessionServiceGetSnapshotProcedure:
+		return "/sessions/" + escrowID + "/snapshot"
 	case rpcpbconnect.SessionServiceGetMempoolProcedure:
 		return "/sessions/" + escrowID + "/mempool"
 	case rpcpbconnect.SessionServiceGetStateProcedure:

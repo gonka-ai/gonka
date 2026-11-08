@@ -52,6 +52,9 @@ const (
 	SessionServiceChallengeReceiptProcedure = "/devshard.transport.v1.SessionService/ChallengeReceipt"
 	// SessionServiceGetDiffsProcedure is the fully-qualified name of the SessionService's GetDiffs RPC.
 	SessionServiceGetDiffsProcedure = "/devshard.transport.v1.SessionService/GetDiffs"
+	// SessionServiceGetSnapshotProcedure is the fully-qualified name of the SessionService's
+	// GetSnapshot RPC.
+	SessionServiceGetSnapshotProcedure = "/devshard.transport.v1.SessionService/GetSnapshot"
 	// SessionServiceGetMempoolProcedure is the fully-qualified name of the SessionService's GetMempool
 	// RPC.
 	SessionServiceGetMempoolProcedure = "/devshard.transport.v1.SessionService/GetMempool"
@@ -71,6 +74,7 @@ type SessionServiceClient interface {
 	VerifyErrorMiss(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error)
 	ChallengeReceipt(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error)
 	GetDiffs(context.Context, *connect.Request[rpcpb.GetDiffsRequest]) (*connect.Response[rpcpb.GetDiffsResponse], error)
+	GetSnapshot(context.Context, *connect.Request[rpcpb.GetSnapshotRequest]) (*connect.Response[rpcpb.GetSnapshotResponse], error)
 	GetMempool(context.Context, *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error)
 	GetState(context.Context, *connect.Request[rpcpb.GetStateRequest]) (*connect.Response[rpcpb.GetStateResponse], error)
 	GetSignatures(context.Context, *connect.Request[rpcpb.GetSignaturesRequest]) (*connect.Response[rpcpb.GetSignaturesResponse], error)
@@ -129,6 +133,12 @@ func NewSessionServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(sessionServiceMethods.ByName("GetDiffs")),
 			connect.WithClientOptions(opts...),
 		),
+		getSnapshot: connect.NewClient[rpcpb.GetSnapshotRequest, rpcpb.GetSnapshotResponse](
+			httpClient,
+			baseURL+SessionServiceGetSnapshotProcedure,
+			connect.WithSchema(sessionServiceMethods.ByName("GetSnapshot")),
+			connect.WithClientOptions(opts...),
+		),
 		getMempool: connect.NewClient[rpcpb.GetMempoolRequest, rpcpb.GetMempoolResponse](
 			httpClient,
 			baseURL+SessionServiceGetMempoolProcedure,
@@ -159,6 +169,7 @@ type sessionServiceClient struct {
 	verifyErrorMiss  *connect.Client[rpcpb.SignedEnvelope, rpcpb.VerifyErrorMissResponse]
 	challengeReceipt *connect.Client[rpcpb.SignedEnvelope, rpcpb.ChallengeReceiptResponse]
 	getDiffs         *connect.Client[rpcpb.GetDiffsRequest, rpcpb.GetDiffsResponse]
+	getSnapshot      *connect.Client[rpcpb.GetSnapshotRequest, rpcpb.GetSnapshotResponse]
 	getMempool       *connect.Client[rpcpb.GetMempoolRequest, rpcpb.GetMempoolResponse]
 	getState         *connect.Client[rpcpb.GetStateRequest, rpcpb.GetStateResponse]
 	getSignatures    *connect.Client[rpcpb.GetSignaturesRequest, rpcpb.GetSignaturesResponse]
@@ -199,6 +210,11 @@ func (c *sessionServiceClient) GetDiffs(ctx context.Context, req *connect.Reques
 	return c.getDiffs.CallUnary(ctx, req)
 }
 
+// GetSnapshot calls devshard.transport.v1.SessionService.GetSnapshot.
+func (c *sessionServiceClient) GetSnapshot(ctx context.Context, req *connect.Request[rpcpb.GetSnapshotRequest]) (*connect.Response[rpcpb.GetSnapshotResponse], error) {
+	return c.getSnapshot.CallUnary(ctx, req)
+}
+
 // GetMempool calls devshard.transport.v1.SessionService.GetMempool.
 func (c *sessionServiceClient) GetMempool(ctx context.Context, req *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error) {
 	return c.getMempool.CallUnary(ctx, req)
@@ -223,6 +239,7 @@ type SessionServiceHandler interface {
 	VerifyErrorMiss(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.VerifyErrorMissResponse], error)
 	ChallengeReceipt(context.Context, *connect.Request[rpcpb.SignedEnvelope]) (*connect.Response[rpcpb.ChallengeReceiptResponse], error)
 	GetDiffs(context.Context, *connect.Request[rpcpb.GetDiffsRequest]) (*connect.Response[rpcpb.GetDiffsResponse], error)
+	GetSnapshot(context.Context, *connect.Request[rpcpb.GetSnapshotRequest]) (*connect.Response[rpcpb.GetSnapshotResponse], error)
 	GetMempool(context.Context, *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error)
 	GetState(context.Context, *connect.Request[rpcpb.GetStateRequest]) (*connect.Response[rpcpb.GetStateResponse], error)
 	GetSignatures(context.Context, *connect.Request[rpcpb.GetSignaturesRequest]) (*connect.Response[rpcpb.GetSignaturesResponse], error)
@@ -277,6 +294,12 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 		connect.WithSchema(sessionServiceMethods.ByName("GetDiffs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	sessionServiceGetSnapshotHandler := connect.NewUnaryHandler(
+		SessionServiceGetSnapshotProcedure,
+		svc.GetSnapshot,
+		connect.WithSchema(sessionServiceMethods.ByName("GetSnapshot")),
+		connect.WithHandlerOptions(opts...),
+	)
 	sessionServiceGetMempoolHandler := connect.NewUnaryHandler(
 		SessionServiceGetMempoolProcedure,
 		svc.GetMempool,
@@ -311,6 +334,8 @@ func NewSessionServiceHandler(svc SessionServiceHandler, opts ...connect.Handler
 			sessionServiceChallengeReceiptHandler.ServeHTTP(w, r)
 		case SessionServiceGetDiffsProcedure:
 			sessionServiceGetDiffsHandler.ServeHTTP(w, r)
+		case SessionServiceGetSnapshotProcedure:
+			sessionServiceGetSnapshotHandler.ServeHTTP(w, r)
 		case SessionServiceGetMempoolProcedure:
 			sessionServiceGetMempoolHandler.ServeHTTP(w, r)
 		case SessionServiceGetStateProcedure:
@@ -352,6 +377,10 @@ func (UnimplementedSessionServiceHandler) ChallengeReceipt(context.Context, *con
 
 func (UnimplementedSessionServiceHandler) GetDiffs(context.Context, *connect.Request[rpcpb.GetDiffsRequest]) (*connect.Response[rpcpb.GetDiffsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("devshard.transport.v1.SessionService.GetDiffs is not implemented"))
+}
+
+func (UnimplementedSessionServiceHandler) GetSnapshot(context.Context, *connect.Request[rpcpb.GetSnapshotRequest]) (*connect.Response[rpcpb.GetSnapshotResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("devshard.transport.v1.SessionService.GetSnapshot is not implemented"))
 }
 
 func (UnimplementedSessionServiceHandler) GetMempool(context.Context, *connect.Request[rpcpb.GetMempoolRequest]) (*connect.Response[rpcpb.GetMempoolResponse], error) {

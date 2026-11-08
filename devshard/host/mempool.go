@@ -166,3 +166,61 @@ func (m *Mempool) Len() int {
 func (m *Mempool) AddTx(tx *types.DevshardTx) {
 	m.Add(MempoolEntry{Tx: tx, ProposedAt: 0})
 }
+
+// PruneAdoptedSnapshot drops mempool entries that are already reflected in or
+// superseded by st when a lagging host adopts a verified snapshot at
+// st.LatestNonce without replaying every intermediate diff through
+// RemoveIncluded.
+func (m *Mempool) PruneAdoptedSnapshot(st *types.EscrowState) {
+	if m == nil || st == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for h, e := range m.entries {
+		if e.Tx == nil {
+			delete(m.entries, h)
+			continue
+		}
+		switch inner := e.Tx.GetTx().(type) {
+		case *types.DevshardTx_ConfirmStart:
+			rec := st.Inferences[inner.ConfirmStart.GetInferenceId()]
+			if rec == nil || rec.Status != types.StatusPending {
+				delete(m.entries, h)
+			}
+		case *types.DevshardTx_FinishInference:
+			rec := st.Inferences[inner.FinishInference.GetInferenceId()]
+			if rec == nil || (rec.Status != types.StatusPending && rec.Status != types.StatusStarted) {
+				delete(m.entries, h)
+			}
+		case *types.DevshardTx_Validation:
+			val := inner.Validation
+			rec := st.Inferences[val.GetInferenceId()]
+			if rec == nil || rec.ValidatedBy.IsSet(val.GetValidatorSlot()) ||
+				(rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged) {
+				delete(m.entries, h)
+			}
+		case *types.DevshardTx_ValidationVote:
+			rec := st.Inferences[inner.ValidationVote.GetInferenceId()]
+			if rec == nil || rec.Status != types.StatusChallenged {
+				delete(m.entries, h)
+			}
+		case *types.DevshardTx_TimeoutInference:
+			rec := st.Inferences[inner.TimeoutInference.GetInferenceId()]
+			if rec == nil || (rec.Status != types.StatusPending && rec.Status != types.StatusStarted) {
+				delete(m.entries, h)
+			}
+		case *types.DevshardTx_ErrorMiss:
+			rec := st.Inferences[inner.ErrorMiss.GetInferenceId()]
+			if rec == nil || (rec.Status != types.StatusPending && rec.Status != types.StatusStarted) {
+				delete(m.entries, h)
+			}
+		case *types.DevshardTx_HeightAck:
+			ack := inner.HeightAck
+			maxAge := uint64(len(st.Group)) * 4
+			if st.Phase != types.PhaseActive || (ack.GetRefNonce() <= st.LatestNonce && ack.GetRefNonce()+maxAge < st.LatestNonce) {
+				delete(m.entries, h)
+			}
+		}
+	}
+}

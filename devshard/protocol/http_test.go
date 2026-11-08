@@ -90,6 +90,7 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
 	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
+	g.GET("/sessions/:id/snapshot", srv.HandleGetSnapshot)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
 }

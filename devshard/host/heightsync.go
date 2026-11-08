@@ -37,6 +37,7 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 	slotsNum := uint64(len(h.group))
 	now := time.Now()
 	var mine []heartbeatTarget
+	var acked map[[2]uint64]struct{}
 	for _, diff := range diffs {
 		for _, tx := range diff.Txs {
 			if tx == nil {
@@ -52,6 +53,12 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 			// repair HEIGHT. Sequencer-composed heartbeats are not.
 			if ack := tx.GetHeightAck(); ack != nil {
 				h.peerSeen.MarkFresh(ack.SlotId, ack.ObservedHeight, now)
+				if h.slotIDs[ack.SlotId] {
+					if acked == nil {
+						acked = make(map[[2]uint64]struct{})
+					}
+					acked[[2]uint64{ack.RefNonce, uint64(ack.SlotId)}] = struct{}{}
+				}
 			}
 		}
 	}
@@ -60,6 +67,9 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 	}
 
 	for _, item := range mine {
+		if _, done := acked[[2]uint64{item.nonce, uint64(item.slot)}]; done {
+			continue
+		}
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, now)
 		if err := heightsync.SignAck(h.signer, ack); err != nil {
 			logging.Warn("height ack sign failed", "subsystem", "heightsync",

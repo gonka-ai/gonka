@@ -71,6 +71,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	if s.pendingUntrustedBySession != nil {
 		s.reconcilePendingUntrusted(call.SessionID, oracleHdr)
 	}
+	_ = s.host.PreCatchUpForRequest(ctx, req)
 	inboundVal := s.classifyInboundHeightSync(req.Nonce, unwrapped.HeightSync, oracleHdr)
 	if inboundVal.Result == heightsync.ResultInvalidStaleOrigin {
 		heightsync.IncStaleOriginRejected()
