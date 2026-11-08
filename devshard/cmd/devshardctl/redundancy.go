@@ -944,8 +944,9 @@ type inflight struct {
 	// progress, 0 outside one. The session takes this time out of the grace
 	// it gives a stream still open after its Finish: the client drives it,
 	// not the executor.
-	clientWriteNanos atomic.Int64
-	clientWriteSince atomic.Int64
+	clientWriteMu    sync.Mutex
+	clientWriteNanos int64
+	clientWriteSince int64
 
 	// A host emits one token format for the whole answer, so the first chunk carrying logprobs settles
 	// it and the rest are not parsed.
@@ -2239,18 +2240,24 @@ func (rw *raceWriter) Flush() {
 // the attempt's client wait.
 func (inf *inflight) clientWrite(write func() error) error {
 	start := time.Now().UnixNano()
-	inf.clientWriteSince.Store(start)
+	inf.clientWriteMu.Lock()
+	inf.clientWriteSince = start
+	inf.clientWriteMu.Unlock()
 	err := write()
-	inf.clientWriteSince.Store(0)
-	inf.clientWriteNanos.Add(time.Now().UnixNano() - start)
+	inf.clientWriteMu.Lock()
+	inf.clientWriteNanos += time.Now().UnixNano() - start
+	inf.clientWriteSince = 0
+	inf.clientWriteMu.Unlock()
 	return err
 }
 
 // clientWait is how long this attempt's relay has stood in writes to the
 // gateway's client, the write in progress included.
 func (inf *inflight) clientWait() time.Duration {
-	waited := inf.clientWriteNanos.Load()
-	if since := inf.clientWriteSince.Load(); since != 0 {
+	inf.clientWriteMu.Lock()
+	defer inf.clientWriteMu.Unlock()
+	waited := inf.clientWriteNanos
+	if since := inf.clientWriteSince; since != 0 {
 		waited += time.Now().UnixNano() - since
 	}
 	return time.Duration(waited)
