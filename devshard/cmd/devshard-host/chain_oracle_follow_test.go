@@ -84,6 +84,27 @@ func TestObserveChainProgressBackfillsGaps(t *testing.T) {
 	}
 }
 
+func TestBackfillChainHeadersStoresHeightsBelowTheTip(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0).UTC()
+	times := map[int64]time.Time{}
+	for h := int64(1); h <= 5; h++ {
+		times[h] = now.Add(time.Duration(h) * time.Second)
+	}
+	oracle := &scriptOracle{tip: 5, times: times, at: map[int64]int{}}
+	src := headertime.New()
+	src.Observe(blocks.HashOnlyHeader(5, times[5], "test", []byte{5}), headertime.OriginChain, false)
+
+	backfillChainHeaders(context.Background(), oracle, src, 5)
+
+	for _, height := range []uint64{1, 2, 3, 4, 5} {
+		rec, ok := src.StoredAt(height)
+		require.True(t, ok, "height %d", height)
+		require.Equal(t, []byte{byte(height)}, rec.Hash)
+	}
+	require.Equal(t, 1, oracle.at[1])
+	require.Zero(t, oracle.at[5], "the seeded tip is already stored")
+}
+
 func TestObserveChainProgressNoopWhenTipUnchanged(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0).UTC()
 	oracle := &scriptOracle{

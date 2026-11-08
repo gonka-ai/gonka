@@ -20,6 +20,15 @@ import (
 // second; this keeps StampHeaderTime(startH) findable before AnswerWait.
 const headerFollowInterval = 500 * time.Millisecond
 
+// headerBackfillLimit is how many heights below the seeded tip are stored
+// before the host serves. A restart seeds Latest, and a timeout vote reads
+// the confirmation height already behind that tip.
+const headerBackfillLimit = 2048
+
+// headerBackfillBudget bounds the startup walk so a tall chain cannot hold
+// /health for the whole history.
+const headerBackfillBudget = 30 * time.Second
+
 // chainOracleFromEnv attaches the chain the e2e stack points at. Without it
 // a heartbeat ack has no block, and the gateway chat gate stays unseeded.
 // An empty env keeps the standalone host unchanged.
@@ -57,9 +66,40 @@ func chainOracleFromEnv(ctx context.Context) (blocks.BlockOracle, state.HeaderTi
 		src.Observe(hdr, headertime.OriginChain, false)
 		last = hdr.Height
 		log.Printf("chain oracle: seeded header height=%d", hdr.Height)
+		fillCtx, fillCancel := context.WithTimeout(ctx, headerBackfillBudget)
+		backfillChainHeaders(fillCtx, oracle, src, last)
+		fillCancel()
 	}
 	go followChainHeaders(ctx, oracle, src, last)
 	return oracle, src
+}
+
+// backfillChainHeaders stores confirmation heights behind the seeded tip so
+// a timeout vote can read them. The follow loop then keeps heights the tip
+// moves past.
+func backfillChainHeaders(ctx context.Context, oracle blocks.BlockOracle, src *headertime.Source, tip int64) {
+	if oracle == nil || src == nil || tip <= 1 {
+		return
+	}
+	from := tip - headerBackfillLimit
+	if from < 1 {
+		from = 1
+	}
+	stored := 0
+	for h := tip - 1; h >= from; h-- {
+		if ctx.Err() != nil {
+			break
+		}
+		mid, err := oracle.At(ctx, h)
+		if err != nil || mid == nil || mid.Height <= 0 || len(mid.BlockHash) == 0 {
+			continue
+		}
+		src.Observe(mid, headertime.OriginChain, false)
+		stored++
+	}
+	if stored > 0 {
+		log.Printf("chain oracle: backfilled %d headers below height %d", stored, tip)
+	}
 }
 
 // followChainHeaders keeps the header-time map aligned with the advancing

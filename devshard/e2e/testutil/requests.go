@@ -314,11 +314,12 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 }
 
 // The gateway refuses finalize with 409 while the escrow still has work in
-// flight. Race cleanup outlives the winning completion: it waits up to
-// SecondaryWaitAfterWinner plus a short cancel join for speculative losers.
-// Not-yet-due HandleTimeout waits sleep off pendingRaceCleanup and only hold
-// it briefly for the vote at the protocol deadline. Wait for the drain, then
-// finalize.
+// flight, and with 503 while a journaled nonce is still inside its protocol
+// timeout. One 503 attempt waits 30s, then asks for a retry. Race cleanup
+// outlives the winning completion: it waits up to SecondaryWaitAfterWinner
+// plus a short cancel join for speculative losers. A refusal armed at the
+// default 60s, or a restarted header verifier still inside its stamp wait,
+// outlives that single attempt. Keep retrying through the drain window.
 const (
 	finalizeDrainWait = 6 * time.Minute
 	finalizeDrainPoll = 100 * time.Millisecond
@@ -339,12 +340,22 @@ func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string)
 	deadline := time.Now().Add(finalizeDrainWait)
 	for {
 		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
-		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
+		if !finalizeRetryable(resp) || !time.Now().Before(deadline) {
 			require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, resp.Body)
 			require.NotNil(t, resp.JSON, "response body should be JSON: %s", resp.Body)
 			return resp.JSON
 		}
-		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
+		DebugLogf(t, "finalize refused with %d, retrying: %s", resp.StatusCode, resp.Body)
 		time.Sleep(finalizeDrainPoll)
 	}
+}
+
+// finalizeRetryable is a drain the next call can still finish. 409 is work
+// still in flight. 503 is a journaled nonce whose timeout attempt ended with
+// the 30s budget while the protocol deadline was still ahead.
+func finalizeRetryable(resp RawResponse) bool {
+	if resp.StatusCode == http.StatusConflict {
+		return true
+	}
+	return resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(resp.Body, "inference completion pending")
 }
