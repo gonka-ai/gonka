@@ -62,7 +62,7 @@ for p in "$2"/[0-9]*; do
   found=$((found+1))
   addr=$(tr '\000' '\n' < "$p/environ" | sed -n 's/^DEVSHARD_ADMIN_ADDR=//p')
 done
-[ "$found" -eq 1 ] || { echo 'expected exactly one devshardd child' >&2; exit 1; }
+[ "$found" -eq 1 ] || { echo "expected exactly one devshardd child, found $found" >&2; exit 1; }
 case "$addr" in
   127.0.0.1:[0-9]*|localhost:[0-9]*) ;;
   *) echo 'missing or unsupported child admin address' >&2; exit 1 ;;

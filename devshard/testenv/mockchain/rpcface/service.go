@@ -12,8 +12,8 @@ import (
 	"github.com/cometbft/cometbft/libs/log"
 	"github.com/cometbft/cometbft/rpc/core"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
-	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	rpcserver "github.com/cometbft/cometbft/rpc/jsonrpc/server"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	cmttypes "github.com/cometbft/cometbft/types"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"

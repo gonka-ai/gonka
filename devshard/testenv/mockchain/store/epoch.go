@@ -95,6 +95,7 @@ func (s *Store) ApplyEpochAdvance(plan EpochAdvancePlan) inferencetypes.Epoch {
 	if plan.ToHeight > 0 {
 		s.BlockHeight = plan.ToHeight
 	}
+	s.carryEpochGroupsForwardLocked(plan.NewEpoch.Index-1, plan.NewEpoch.Index)
 	s.Epoch = plan.NewEpoch
 	s.NextPocStartBlockHeight = plan.NewNextPoc
 	s.publishParamsAtLocked(plan.ToHeight)
@@ -109,6 +110,7 @@ func (s *Store) AdvanceEpochWithoutCatchUp() inferencetypes.Epoch {
 	if s.Epoch.Index == 0 {
 		s.Epoch.Index = 1
 	}
+	s.carryEpochGroupsForwardLocked(s.Epoch.Index, s.Epoch.Index+1)
 	s.Epoch.Index++
 	s.Epoch.PocStartBlockHeight = s.BlockHeight
 	if s.Epoch.PocStartBlockHeight <= 0 {
@@ -117,4 +119,21 @@ func (s *Store) AdvanceEpochWithoutCatchUp() inferencetypes.Epoch {
 	s.NextPocStartBlockHeight = s.Epoch.PocStartBlockHeight + s.epochLengthLocked()
 	s.publishParamsAtLocked(s.BlockHeight)
 	return s.Epoch
+}
+
+// carryEpochGroupsForwardLocked copies each model snapshot of epoch from to epoch to, as the chain snapshots every model at an epoch switch; a group already set for to is kept.
+func (s *Store) carryEpochGroupsForwardLocked(from, to uint64) {
+	for key, group := range s.EpochGroupData {
+		next := EpochGroupKey{EpochIndex: to, ModelID: key.ModelID}
+		if key.EpochIndex != from || group == nil || s.EpochGroupData[next] != nil {
+			continue
+		}
+		carried := *group
+		carried.EpochIndex = to
+		if group.ModelSnapshot != nil {
+			snapshot := *group.ModelSnapshot
+			carried.ModelSnapshot = &snapshot
+		}
+		s.EpochGroupData[next] = &carried
+	}
 }

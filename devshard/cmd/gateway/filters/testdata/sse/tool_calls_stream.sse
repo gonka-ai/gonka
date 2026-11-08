@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":2,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":2,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"tool_calls":[{"id":"call-1","type":"function","index":0,"function":{"name":"get_weather"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":2,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"q\":\"sf\"}"}}]},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":2,"model":"Qwen/Qwen3","choices":[{"index":0,"delta":{"content":""},"finish_reason":"tool_calls"}]}
+
+data: {"id":"chatcmpl-2","object":"chat.completion.chunk","created":2,"model":"Qwen/Qwen3","choices":[],"usage":{"prompt_tokens":20,"total_tokens":40,"completion_tokens":20}}
+
+data: [DONE]
+

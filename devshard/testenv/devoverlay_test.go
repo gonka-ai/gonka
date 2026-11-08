@@ -80,14 +80,14 @@ var airConfigSpecs = []airConfigSpec{
 }
 
 type airCfg struct {
-	root        string
-	tmpDir      string
-	buildCmd    string
-	buildBin    string
-	delay       int
-	killDelay   string
-	stopOnError string
-	includeExts []string
+	root         string
+	tmpDir       string
+	buildCmd     string
+	buildBin     string
+	delay        int
+	killDelay    string
+	stopOnError  string
+	includeExts  []string
 	exclDirCount int
 }
 

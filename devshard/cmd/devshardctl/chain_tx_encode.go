@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"devshard/gatewayproto"
 	"devshard/signing"
 )
 
@@ -62,47 +63,48 @@ func encodeMsgSettleDevshardEscrow(settler string, settlement SettlementJSON) ([
 	if err != nil {
 		return nil, fmt.Errorf("decode rest_hash: %w", err)
 	}
-	var out []byte
-	out = appendBytesField(out, 1, []byte(settler))
-	out = appendVarintField(out, 2, escrowID)
-	out = appendBytesField(out, 3, stateRoot)
-	out = appendVarintField(out, 4, settlement.Nonce)
-	out = appendBytesField(out, 5, restHash)
+	input := gatewayproto.SettlementInput{
+		EscrowID: escrowID, StateRoot: stateRoot, Nonce: settlement.Nonce, RestHash: restHash,
+		Fees: settlement.Fees, Version: settlement.StateRootAndProtocolVersion,
+	}
 	for _, hs := range settlement.HostStats {
-		out = appendBytesField(out, 6, encodeSettlementHostStats(hs))
+		input.HostStats = append(input.HostStats, settlementHostStatFromJSON(hs))
 	}
 	for _, sig := range settlement.Signatures {
-		encoded, err := encodeSlotSignature(sig)
+		decoded, err := settlementSignatureFromJSON(sig)
 		if err != nil {
 			return nil, err
 		}
-		out = appendBytesField(out, 7, encoded)
+		input.SlotSigs = append(input.SlotSigs, decoded)
 	}
-	out = appendVarintField(out, 8, settlement.Fees)
-	out = appendBytesField(out, 9, []byte(settlement.StateRootAndProtocolVersion))
-	return out, nil
+	return gatewayproto.MarshalLegacySettlement(settler, input)
+}
+
+func settlementHostStatFromJSON(hs HostStatsJSON) gatewayproto.SettlementHostStat {
+	return gatewayproto.SettlementHostStat{
+		SlotID: hs.SlotID, Missed: hs.Missed, Invalid: hs.Invalid, Cost: hs.Cost,
+		RequiredValidations: hs.RequiredValidations, CompletedValidations: hs.CompletedValidations,
+	}
 }
 
 func encodeSettlementHostStats(hs HostStatsJSON) []byte {
-	var out []byte
-	out = appendVarintField(out, 1, uint64(hs.SlotID))
-	out = appendVarintField(out, 2, uint64(hs.Missed))
-	out = appendVarintField(out, 3, uint64(hs.Invalid))
-	out = appendVarintField(out, 4, hs.Cost)
-	out = appendVarintField(out, 5, uint64(hs.RequiredValidations))
-	out = appendVarintField(out, 6, uint64(hs.CompletedValidations))
-	return out
+	return gatewayproto.MarshalLegacyHostStat(settlementHostStatFromJSON(hs))
+}
+
+func settlementSignatureFromJSON(sig SlotSignatureJSON) (gatewayproto.SettlementSlotSig, error) {
+	sigBytes, err := base64.StdEncoding.DecodeString(sig.Signature)
+	if err != nil {
+		return gatewayproto.SettlementSlotSig{}, fmt.Errorf("decode signature for slot %d: %w", sig.SlotID, err)
+	}
+	return gatewayproto.SettlementSlotSig{SlotID: uint64(sig.SlotID), Signature: sigBytes}, nil
 }
 
 func encodeSlotSignature(sig SlotSignatureJSON) ([]byte, error) {
-	sigBytes, err := base64.StdEncoding.DecodeString(sig.Signature)
+	decoded, err := settlementSignatureFromJSON(sig)
 	if err != nil {
-		return nil, fmt.Errorf("decode signature for slot %d: %w", sig.SlotID, err)
+		return nil, err
 	}
-	var out []byte
-	out = appendVarintField(out, 1, uint64(sig.SlotID))
-	out = appendBytesField(out, 2, sigBytes)
-	return out, nil
+	return gatewayproto.MarshalLegacySlotSignature(decoded), nil
 }
 
 func encodeSecp256k1PubKey(key []byte) []byte {

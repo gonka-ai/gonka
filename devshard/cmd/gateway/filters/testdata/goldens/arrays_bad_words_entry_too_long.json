@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "bad_words[0]: string length 129 exceeds limit 128",
+  "status": "rejected"
+}

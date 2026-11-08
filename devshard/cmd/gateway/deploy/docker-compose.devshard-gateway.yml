@@ -1,0 +1,38 @@
+services:
+  devshard-gateway:
+    container_name: ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
+    image: ${GATEWAY_IMAGE:-kovec/gateway:v4.1.1}
+    env_file:
+      - ${DEVSHARD_ENV_FILE:-./config.devshard-gateway.env}
+    volumes:
+      - ${DEVSHARD_STORAGE_HOST_DIR:-.devshard-gateway}:${DEVSHARD_STORAGE_DIR:-/root/.devshard-gateway}
+    environment:
+      GOMEMLIMIT: ${DEVSHARD_GOMEMLIMIT:-3400MiB}
+    expose:
+      - "8080"
+      - "9091"
+    ports:
+      - "127.0.0.1:${GATEWAY_HOST_PORT:-18080}:8080"
+      - "127.0.0.1:${DEVSHARD_STATS_HOST_PORT:-19091}:9091"
+    networks:
+      join_default:
+        aliases:
+          - ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
+          - devshard-pool
+    restart: unless-stopped
+    # Docker kills 10 s after SIGTERM by default, the gateway's own shutdown grace; this covers the grace,
+    # the journal's floor, the final accounting snapshot and the store close. See docs/operations.md, "Shutdown".
+    stop_grace_period: 30s
+    healthcheck:
+      # /healthz, not /v1/status: both survive the kill switch, but /v1/status builds the status
+      # of every escrow on each probe, and /healthz does no work.
+      # Not /metrics either: there every probe is a full scrape. See README.md.
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  join_default:
+    external: true

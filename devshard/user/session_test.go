@@ -1842,6 +1842,45 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 	require.Len(t, root, 32)
 }
 
+// countingAbsentClient is a group member the chain no longer lists, counting how often it is asked.
+type countingAbsentClient struct {
+	calls atomic.Int32
+}
+
+func (c *countingAbsentClient) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	c.calls.Add(1)
+	return nil, fmt.Errorf("host gone: %w", ErrHostAbsentFromChain)
+}
+
+// Test flow:
+//  1. Open a three-host session where only slot 1 serves and slots 0 and 2 are absent from the chain, with three collection retries.
+//  2. Serve nonce 1 on slot 1, then collect signatures at it, which can never reach quorum.
+//  3. Assert each absent slot was asked once: a host the chain no longer lists will not answer a retry either.
+func TestCollectSignaturesAsksAHostAbsentFromTheChainOnce(t *testing.T) {
+	hostSigners := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := testutil.DefaultConfig(len(hostSigners))
+	verifier := signing.NewSecp256k1Verifier()
+	hostMachine := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+	served, err := host.NewHost(hostMachine, hostSigners[1], stub.NewInferenceEngine(), "escrow-1", group, nil)
+	require.NoError(t, err)
+	absent := []*countingAbsentClient{{}, {}}
+	clients := []HostClient{absent[0], &InProcessClient{Host: served}, absent[1]}
+	userMachine := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+	session, err := NewSession(userMachine, userKey, "escrow-1", group, clients, verifier, WithCollectRetry(3, time.Millisecond, time.Second))
+	require.NoError(t, err)
+	_, err = session.SendInference(context.Background(), InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	before := []int32{absent[0].calls.Load(), absent[1].calls.Load()}
+
+	session.CollectSignatures(context.Background(), session.Nonce())
+
+	require.Equal(t, []int32{before[0] + 1, before[1] + 1}, []int32{absent[0].calls.Load(), absent[1].calls.Load()})
+}
+
 // setupDeadHostSession creates a session where only aliveCount hosts work.
 // Slots [0, aliveCount) are real InProcessClients; the rest are ErrorClients.
 func setupDeadHostSession(t *testing.T, numHosts, aliveCount int, balance uint64, grace uint64) *Session {

@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "logit_bias: map size 1025 exceeds limit 1024",
+  "status": "rejected"
+}
