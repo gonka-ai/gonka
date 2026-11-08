@@ -1010,6 +1010,87 @@ func (x *ErrorMissVoteContent) GetResponseHash() []byte {
 	return nil
 }
 
+// ChatFrameSignatureContent is what the executor signs on a peer RPC
+// ChatFrame. stream_hash is the running hash over every uncompressed byte of
+// the Chat stream up to and including that frame, so the newest valid
+// signature covers the whole prefix. CanonicalSignedBytes prefixes
+// "devshard.chatframe.v1".
+type ChatFrameSignatureContent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	InferenceId   uint64                 `protobuf:"varint,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"` // 1 for the first signed frame
+	StreamHash    []byte                 `protobuf:"bytes,4,opt,name=stream_hash,json=streamHash,proto3" json:"stream_hash,omitempty"`
+	StreamBytes   uint64                 `protobuf:"varint,5,opt,name=stream_bytes,json=streamBytes,proto3" json:"stream_bytes,omitempty"` // uncompressed bytes stream_hash covers
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatFrameSignatureContent) Reset() {
+	*x = ChatFrameSignatureContent{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatFrameSignatureContent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatFrameSignatureContent) ProtoMessage() {}
+
+func (x *ChatFrameSignatureContent) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatFrameSignatureContent.ProtoReflect.Descriptor instead.
+func (*ChatFrameSignatureContent) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *ChatFrameSignatureContent) GetEscrowId() string {
+	if x != nil {
+		return x.EscrowId
+	}
+	return ""
+}
+
+func (x *ChatFrameSignatureContent) GetInferenceId() uint64 {
+	if x != nil {
+		return x.InferenceId
+	}
+	return 0
+}
+
+func (x *ChatFrameSignatureContent) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *ChatFrameSignatureContent) GetStreamHash() []byte {
+	if x != nil {
+		return x.StreamHash
+	}
+	return nil
+}
+
+func (x *ChatFrameSignatureContent) GetStreamBytes() uint64 {
+	if x != nil {
+		return x.StreamBytes
+	}
+	return 0
+}
+
 // StateSignatureContent is what a host signs for state attestation.
 type StateSignatureContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1022,7 +1103,7 @@ type StateSignatureContent struct {
 
 func (x *StateSignatureContent) Reset() {
 	*x = StateSignatureContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	mi := &file_devshard_v1_diff_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1034,7 +1115,7 @@ func (x *StateSignatureContent) String() string {
 func (*StateSignatureContent) ProtoMessage() {}
 
 func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	mi := &file_devshard_v1_diff_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1047,7 +1128,7 @@ func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateSignatureContent.ProtoReflect.Descriptor instead.
 func (*StateSignatureContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{9}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *StateSignatureContent) GetStateRoot() []byte {
@@ -1151,7 +1232,14 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
 	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06accept\x18\x03 \x01(\bR\x06accept\x12#\n" +
-	"\rresponse_hash\x18\x04 \x01(\fR\fresponseHash\"i\n" +
+	"\rresponse_hash\x18\x04 \x01(\fR\fresponseHash\"\xb1\x01\n" +
+	"\x19ChatFrameSignatureContent\x12\x1b\n" +
+	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
+	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x12\x10\n" +
+	"\x03seq\x18\x03 \x01(\x04R\x03seq\x12\x1f\n" +
+	"\vstream_hash\x18\x04 \x01(\fR\n" +
+	"streamHash\x12!\n" +
+	"\fstream_bytes\x18\x05 \x01(\x04R\vstreamBytes\"i\n" +
 	"\x15StateSignatureContent\x12\x1d\n" +
 	"\n" +
 	"state_root\x18\x01 \x01(\fR\tstateRoot\x12\x1b\n" +
@@ -1184,49 +1272,50 @@ func file_devshard_v1_diff_proto_rawDescGZIP() []byte {
 }
 
 var file_devshard_v1_diff_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_devshard_v1_diff_proto_goTypes = []any{
-	(AckStatus)(0),                 // 0: devshard.v1.AckStatus
-	(SyncState)(0),                 // 1: devshard.v1.SyncState
-	(*DiffContent)(nil),            // 2: devshard.v1.DiffContent
-	(*MsgForceHeightSyncTurn)(nil), // 3: devshard.v1.MsgForceHeightSyncTurn
-	(*DevshardTx)(nil),             // 4: devshard.v1.DevshardTx
-	(*MsgHeartbeat)(nil),           // 5: devshard.v1.MsgHeartbeat
-	(*MsgHeightAck)(nil),           // 6: devshard.v1.MsgHeightAck
-	(*SyncVectorEntry)(nil),        // 7: devshard.v1.SyncVectorEntry
-	(*ExecutorReceiptContent)(nil), // 8: devshard.v1.ExecutorReceiptContent
-	(*TimeoutVoteContent)(nil),     // 9: devshard.v1.TimeoutVoteContent
-	(*ErrorMissVoteContent)(nil),   // 10: devshard.v1.ErrorMissVoteContent
-	(*StateSignatureContent)(nil),  // 11: devshard.v1.StateSignatureContent
-	(*MsgStartInference)(nil),      // 12: devshard.v1.MsgStartInference
-	(*MsgConfirmStart)(nil),        // 13: devshard.v1.MsgConfirmStart
-	(*MsgFinishInference)(nil),     // 14: devshard.v1.MsgFinishInference
-	(*MsgTimeoutInference)(nil),    // 15: devshard.v1.MsgTimeoutInference
-	(*MsgValidation)(nil),          // 16: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),      // 17: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),          // 18: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),       // 19: devshard.v1.MsgFinalizeRound
-	(*MsgErrorMiss)(nil),           // 20: devshard.v1.MsgErrorMiss
-	(TimeoutReason)(0),             // 21: devshard.v1.TimeoutReason
+	(AckStatus)(0),                    // 0: devshard.v1.AckStatus
+	(SyncState)(0),                    // 1: devshard.v1.SyncState
+	(*DiffContent)(nil),               // 2: devshard.v1.DiffContent
+	(*MsgForceHeightSyncTurn)(nil),    // 3: devshard.v1.MsgForceHeightSyncTurn
+	(*DevshardTx)(nil),                // 4: devshard.v1.DevshardTx
+	(*MsgHeartbeat)(nil),              // 5: devshard.v1.MsgHeartbeat
+	(*MsgHeightAck)(nil),              // 6: devshard.v1.MsgHeightAck
+	(*SyncVectorEntry)(nil),           // 7: devshard.v1.SyncVectorEntry
+	(*ExecutorReceiptContent)(nil),    // 8: devshard.v1.ExecutorReceiptContent
+	(*TimeoutVoteContent)(nil),        // 9: devshard.v1.TimeoutVoteContent
+	(*ErrorMissVoteContent)(nil),      // 10: devshard.v1.ErrorMissVoteContent
+	(*ChatFrameSignatureContent)(nil), // 11: devshard.v1.ChatFrameSignatureContent
+	(*StateSignatureContent)(nil),     // 12: devshard.v1.StateSignatureContent
+	(*MsgStartInference)(nil),         // 13: devshard.v1.MsgStartInference
+	(*MsgConfirmStart)(nil),           // 14: devshard.v1.MsgConfirmStart
+	(*MsgFinishInference)(nil),        // 15: devshard.v1.MsgFinishInference
+	(*MsgTimeoutInference)(nil),       // 16: devshard.v1.MsgTimeoutInference
+	(*MsgValidation)(nil),             // 17: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),         // 18: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),             // 19: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),          // 20: devshard.v1.MsgFinalizeRound
+	(*MsgErrorMiss)(nil),              // 21: devshard.v1.MsgErrorMiss
+	(TimeoutReason)(0),                // 22: devshard.v1.TimeoutReason
 }
 var file_devshard_v1_diff_proto_depIdxs = []int32{
 	4,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
-	12, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
-	13, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
-	14, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
-	15, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
-	16, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
-	17, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
-	18, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
-	19, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
+	13, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
+	14, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
+	15, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
+	16, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
+	17, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
+	18, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
+	19, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
+	20, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
 	3,  // 9: devshard.v1.DevshardTx.force_height_sync_turn:type_name -> devshard.v1.MsgForceHeightSyncTurn
 	5,  // 10: devshard.v1.DevshardTx.heartbeat:type_name -> devshard.v1.MsgHeartbeat
 	6,  // 11: devshard.v1.DevshardTx.height_ack:type_name -> devshard.v1.MsgHeightAck
-	20, // 12: devshard.v1.DevshardTx.error_miss:type_name -> devshard.v1.MsgErrorMiss
+	21, // 12: devshard.v1.DevshardTx.error_miss:type_name -> devshard.v1.MsgErrorMiss
 	7,  // 13: devshard.v1.MsgHeartbeat.sync_vector:type_name -> devshard.v1.SyncVectorEntry
 	1,  // 14: devshard.v1.MsgHeightAck.sync_state:type_name -> devshard.v1.SyncState
 	0,  // 15: devshard.v1.SyncVectorEntry.status:type_name -> devshard.v1.AckStatus
-	21, // 16: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
+	22, // 16: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
 	17, // [17:17] is the sub-list for method output_type
 	17, // [17:17] is the sub-list for method input_type
 	17, // [17:17] is the sub-list for extension type_name
@@ -1260,7 +1349,7 @@ func file_devshard_v1_diff_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_diff_proto_rawDesc), len(file_devshard_v1_diff_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   10,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

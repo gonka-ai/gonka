@@ -243,8 +243,15 @@ func (x *InferenceRequest) GetForceHeightSyncAnchor() bool {
 }
 
 type ChatFrame struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Chunk         []byte                 `protobuf:"bytes,1,opt,name=chunk,proto3" json:"chunk,omitempty"` // opaque gzip-stream bytes, sync-flushed per event
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Chunk []byte                 `protobuf:"bytes,1,opt,name=chunk,proto3" json:"chunk,omitempty"` // opaque gzip-stream bytes, sync-flushed per event
+	// sig is the executor's 64-byte R||S signature over
+	// ChatFrameSignatureContent, outside the gzip body. Empty on a frame the
+	// schedule does not sign and on hosts that predate signed frames.
+	Sig []byte `protobuf:"bytes,2,opt,name=sig,proto3" json:"sig,omitempty"`
+	// stream_bytes is how many uncompressed bytes of the stream sig covers:
+	// everything up to the end of this frame. Set only with sig.
+	StreamBytes   uint64 `protobuf:"varint,3,opt,name=stream_bytes,json=streamBytes,proto3" json:"stream_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -284,6 +291,20 @@ func (x *ChatFrame) GetChunk() []byte {
 		return x.Chunk
 	}
 	return nil
+}
+
+func (x *ChatFrame) GetSig() []byte {
+	if x != nil {
+		return x.Sig
+	}
+	return nil
+}
+
+func (x *ChatFrame) GetStreamBytes() uint64 {
+	if x != nil {
+		return x.StreamBytes
+	}
+	return 0
 }
 
 type HeightSyncSection struct {
@@ -1441,9 +1462,11 @@ const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"\x05nonce\x18\x02 \x01(\x04R\x05nonce\x128\n" +
 	"\apayload\x18\x03 \x01(\v2\x1e.devshard.transport.v1.PayloadR\apayload\x12\x16\n" +
 	"\x06stream\x18\x04 \x01(\bR\x06stream\x127\n" +
-	"\x18force_height_sync_anchor\x18\x05 \x01(\bR\x15forceHeightSyncAnchor\"!\n" +
+	"\x18force_height_sync_anchor\x18\x05 \x01(\bR\x15forceHeightSyncAnchor\"V\n" +
 	"\tChatFrame\x12\x14\n" +
-	"\x05chunk\x18\x01 \x01(\fR\x05chunk\"\xbe\x03\n" +
+	"\x05chunk\x18\x01 \x01(\fR\x05chunk\x12\x10\n" +
+	"\x03sig\x18\x02 \x01(\fR\x03sig\x12!\n" +
+	"\fstream_bytes\x18\x03 \x01(\x04R\vstreamBytes\"\xbe\x03\n" +
 	"\x11HeightSyncSection\x12\x19\n" +
 	"\bchain_id\x18\x01 \x01(\tR\achainId\x12\x1d\n" +
 	"\n" +
