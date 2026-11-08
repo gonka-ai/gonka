@@ -1,12 +1,25 @@
 # Devshard v6 bounty estimation
 
-Proposed USDT payouts for the v6 line, then the two estimation methods used as supporting analysis for package-sized contributors.
+Proposed USDT payouts for the v6 line, the PRs behind the small payouts, then the two estimation methods used as supporting analysis for package-sized contributors.
+
+## Funding sources (pools)
+
+On-chain payouts for this proposal come from two governance-controlled balances. IBC USDT denom: `ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4` (6 decimals).
+
+| Pool | Address | What this proposal uses |
+| --- | --- | --- |
+| Community pool (distribution module) | `gonka1jv65s3grqf6v6jl3dp4t6c9t9rk99cd8h2rzwa` | **10,000 USDT** via `MsgCommunityPoolSpend`, and **85,000 GNK** via `MsgCommunityPoolSpend` into gov then `MsgBatchTransferWithVesting` (365 epochs) |
+| Community sale contract | `gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2` | Remaining USDT via gov-executed `withdraw_ibc` (adminned by the gov module `gonka10d07y265gmmuvt4z0w9aw880jnsr700j2h5m33`) |
+
+Balances as of height ~6,936,883 (2026-11-07): community pool **10,000 USDT**; community sale **~60,850 USDT**. No other module account holds this USDT for bounty spend. Vested GNK is funded from the **community pool**, not the gov module’s own balance (gov is only a pass-through for the vesting messages).
 
 **Lead roles.** Alexander Kuprin leads **devshard**, Daniil Yankouski leads **gateway**, Anatoly Kuznetsov leads **testing automation**. Lead work includes testing, design, and maintenance across the release — not only the commits under their own PRs — and **cannot** be measured in the same metrics and terms as other contributors. The same per-PR metrics used for others are **not** applied to these three. If Method 1 / Method 2 below were applied to the leads, their bounty payments would land about **1.5×–2.0×** higher than the payout table. Short, very localized contributions have a historical practice of being overpaid relative to those metrics; that is deliberate — strong motivation for bug-hunting and for attracting contributors.
 
 **Shared load-test work.** A large part of open [#2089](https://github.com/gonka-ai/gonka/pull/2089) (prod-like 15m loadtest) was done by Daniil Yankouski and Anatoly Kuznetsov, not only by the PR author.
 
-**Vested GNK (separate from USDT).** Alexander Kuprin: **30,000** vested GNK. Daniil Yankouski: **55,000** vested GNK.
+**Vested GNK (separate from USDT).** Alexander Kuprin: **30,000** vested GNK. Daniil Yankouski: **55,000** vested GNK. Vesting period for the v6 payout proposal: **365 epochs**. Funded from the **community pool** (not the gov module balance).
+
+**@shd / dsh.** Paid in the DevShard v5 bounty for protocol review and formalization (including height-sync). Not included in this v6 USDT table; audit work is deferred to the **v7** payout.
 
 ---
 
@@ -24,16 +37,55 @@ USDT (and vested GNK where noted) for the v6 line. The table below is the propos
 | aikuznetsov     | `gonka1frlfyz2wtltdy47dq3w9pwc8ruvjvlthp2lh53`                                | 19,125 USDT                         |
 | zpoken          | `gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt` (joint with staaason; confirm) | mainnet upgrade                     |
 | staaason        | `gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt` (joint with zpoken; confirm)   | mainnet upgrade                     |
-| cyberdelamain   | `gonka15u0r3mf6t7zsfuslusnyt7hsjrq357yumpe8st`                                | 5,000 USDT                          |
+| cyberdelamain   | `gonka15u0r3mf6t7zsfuslusnyt7hsjrq357yumpe8st`                                | 5,500 USDT                          |
 | vitaly-andr     | `gonka1uqt4hue8tljwwgdkvtthyl3n8kkkqtydyns4cm`                                | 500 USDT                            |
 | redstartechno   | `gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l`                                | 300 USDT                            |
 | Ryanchen911     | `gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57`                                | 500 USDT                            |
 | aleksandr-cstl  | UNKNOWN — never paid on chain, ask                                            | 300 USDT                            |
 
+**snevolin 9,000.** Review that led to significant changes on the HA / peer-RPC path, plus **3,000** for rearranging HA docs — **9,000** total.
 
 
 
-**USDT subtotal (numeric rows):** 20,000 + 14,500 + 9,000 + 19,125 + 5,000 + 500 + 300 + 500 + 300 = **69,225**. zpoken and staaason are paid on the mainnet upgrade path (joint wallet). kaileido is included in qdanik.
+**USDT subtotal (numeric rows):** 20,000 + 14,500 + 9,000 + 19,125 + 5,500 + 500 + 300 + 500 + 300 = **69,725**. zpoken and staaason are paid on the mainnet upgrade path (joint wallet). kaileido is included in qdanik.
+
+---
+
+
+
+## Small bounty PRs
+
+The 300–500 USDT rows. These are short, localized contributions. Method 1 and Method 2 are not applied.
+
+### aleksandr-cstl — 300 USDT
+
+- [#1827](https://github.com/gonka-ai/gonka/pull/1827) — reject incomplete chat cache entries. Merged to `devshard-0.2.x-v6`.
+
+### Ryanchen911 — 500 USDT
+
+3 commits.
+
+- [#1890](https://github.com/gonka-ai/gonka/pull/1890) — wrap chain query errors with `ClassifyQueryError` for HTTP 503 on transient failures, re-landed on v6, plus test coverage.
+- [#1491](https://github.com/gonka-ai/gonka/pull/1491) — dial-time SSRF guard for participant InferenceUrl ([#1470](https://github.com/gonka-ai/gonka/issues/1470)), merged via main.
+
+### redstartechno — 300 USDT
+
+6 commits.
+
+- [#1514](https://github.com/gonka-ai/gonka/pull/1514) — block inference admission during gateway finalize.
+- [#1784](https://github.com/gonka-ai/gonka/pull/1784) — escrow cache field parity guard and params-dataflow doc fix.
+- Earlier host fixes: [#1460](https://github.com/gonka-ai/gonka/pull/1460) challenge receipt returned without blocking on execution; [#1512](https://github.com/gonka-ai/gonka/pull/1512) `validationQueue` concurrent close guard; [#1336](https://github.com/gonka-ai/gonka/pull/1336) payload storage prune retry.
+- Open: [#2108](https://github.com/gonka-ai/gonka/pull/2108) — cap per-host load in PoC generation.
+- Commented on [#1792](https://github.com/gonka-ai/gonka/pull/1792).
+
+### vitaly-andr — 500 USDT
+
+2 commits.
+
+- [#1937](https://github.com/gonka-ai/gonka/pull/1937) — measure attempt duration when the attempt ends.
+- [#2017](https://github.com/gonka-ai/gonka/pull/2017) — honor `storage: per_participant` in load-test compose.
+- Closed unmerged: [#2053](https://github.com/gonka-ai/gonka/pull/2053) — refused-timeout answered-tip catch-up.
+- 3 discussion comments on [#1792](https://github.com/gonka-ai/gonka/pull/1792).
 
 ---
 
@@ -49,8 +101,8 @@ Two methods used to price package-sized work on `devshard-0.2.x-v6`. They calibr
 | a-kuprin + akup (lead)   | — (not applied)       | — (not applied)         | 20,000 USDT + 30,000vested GNK |
 | qdanik + kaileido (lead) | — (not applied)       | — (not applied)         | 14,500 USDT + 55,000vested GNK |
 | aikuznetsov (lead)       | — (not applied)       | — (not applied)         | 19,125 USDT                    |
-| snevolin                 | 7,000                 | 8,100                   | 9,000 USDT                     |
-| cyberdelamain            | 6,000                 | 4,300                   | 5,000 USDT                     |
+| snevolin                 | 8,000                 | 9,100                   | 9,000 USDT                     |
+| cyberdelamain            | 6,000                 | 4,300                   | 5,500 USDT                     |
 
 
 Line columns in the PR tables below are production Go/proto and tests (`*_test.go`, test scripts, testdata). Docs, generated stubs, and config are excluded. Complexity is the Method 1 1–5 mark. Method 2 folds follow-ups into the named package rather than paying each PR alone.
@@ -61,7 +113,7 @@ Line columns in the PR tables below are production Go/proto and tests (`*_test.g
 
 ## Merged PRs by contributor
 
-Base branch `devshard-0.2.x-v6`, unless noted. Closed-unmerged and open PRs are excluded.
+Base branch `devshard-0.2.x-v6`, unless noted. Closed-unmerged and open PRs are excluded. The 300–500 USDT rows are listed under Small bounty PRs, not in these tables.
 
 ### a-kuprin + akup
 
@@ -132,8 +184,9 @@ Base branch `devshard-0.2.x-v6`, unless noted. Closed-unmerged and open PRs are 
 | [#2041](https://github.com/gonka-ai/gonka/pull/2041) | 0          | 569       | 2          | Port, fallback, and soft-stop | HAProxy soft-stop; drop h2-watch-drain supervisor          |
 | [#1744](https://github.com/gonka-ai/gonka/pull/1744) | 0          | 0         | 1          | (docs; L = 0)                 | HA setup follow-up after review (docs only)                |
 | [#2109](https://github.com/gonka-ai/gonka/pull/2109) | 0          | 0         | 1          | (docs; L = 0)                 | Sync HA host installation guide for v6 (docs only)         |
-| Review                                               | —          | —         | —          | Flat add-on                   | 2,000 USDT                                                 |
-| **Sum**                                              | **626**    | **2,776** | **8**      |                               | Method 1: 4k + 1k + 2k review = 7,000                      |
+| Review                                               | —          | —         | —          | Flat add-on                   | 3,000 USDT (led to significant changes)                    |
+| Docs rearrange                                       | —          | —         | —          | Flat add-on                   | Included in the 9,000 proposed payout                      |
+| **Sum**                                              | **626**    | **2,776** | **8**      |                               | Method 1: 4k + 1k + 3k review = 8,000; proposed **9,000**  |
 
 
 
@@ -199,9 +252,9 @@ A backport of an already-scored design scores 2. Design intent and authorship ma
 | ----------------- | --------------------------- | ----------------------------------------------------------------------------- | ------------- |
 | a-kuprin + akup   | 66                          | Peer RPC as designed subsystem (~15k) + escrow/gateway generation (~23k)      | 38,000        |
 | qdanik + kaileido | 44                          | `served_hash` + short-output (~6k each) + remaining gateway ports/fixes (~6k) | 18,000        |
-| snevolin          | 8                           | Port/fallback feature (~4k) + soft-stop (~1k) + review (2k)                   | 7,000         |
+| snevolin          | 8                           | Port/fallback feature (~4k) + soft-stop (~1k) + review (3k)                   | 8,000         |
 | cyberdelamain     | 19                          | Three bug-fix rows (~4k) + review (2k)                                        | 6,000         |
-| **Total**         |                             |                                                                               | **69,000**    |
+| **Total**         |                             |                                                                               | **70,000**    |
 
 
 
@@ -218,7 +271,7 @@ A backport of an already-scored design scores 2. Design intent and authorship ma
 | qdanik        | Remaining gateway features, ports, review fixes                        | 2–4 set    | 6,000  |
 | snevolin      | Peer RPC on InferenceUrl + H2/H1 fallback                              | 4          | 4,000  |
 | snevolin      | HAProxy soft-stop                                                      | 2          | 1,000  |
-| snevolin      | Review                                                                 | —          | 2,000  |
+| snevolin      | Review (led to significant changes)                                    | —          | 3,000  |
 | cyberdelamain | Payload / vote-false fixes                                             | 2–3        | 2,000  |
 | cyberdelamain | Catch-up lock / stale lease                                            | 2–3        | 1,000  |
 | cyberdelamain | Startup / fold / tests                                                 | 1–2        | 1,000  |
@@ -285,9 +338,9 @@ Reviews stay outside the formula as a flat add-on.
 | ----------------- | ---------- | ---------- | ---------- | ------------- |
 | a-kuprin + akup   | 42,190     | 53,063     | 6          | 44,800        |
 | qdanik + kaileido | 7,583      | 14,129     | 4          | 28,400        |
-| snevolin          | 626        | 2,776      | 1 + review | 8,100         |
+| snevolin          | 626        | 2,776      | 1 + review | 9,100         |
 | cyberdelamain     | 409        | 1,036      | 1 + review | 4,300         |
-| **Total**         | **50,808** | **71,004** |            | **85,600**    |
+| **Total**         | **50,808** | **71,004** |            | **86,600**    |
 
 
 
@@ -310,8 +363,8 @@ Reviews stay outside the formula as a flat add-on.
 | qdanik, other gateway changes                                       | 0.3 | 4,056      | 8.31       | 6,815      | 8.83        | 7,464  | 8.92    | 3,000      |
 | **qdanik v6**                                                       |     | **7,583**  |            | **14,129** |             |        |         | **28,400** |
 | snevolin, port, fallback, and soft-stop                             | 0.7 | 626        | 6.44       | 2,776      | 7.93        | 2,014  | 7.61    | 6,100      |
-| snevolin, review                                                    | —   |            |            |            |             |        |         | 2,000      |
-| **snevolin v6**                                                     |     | **626**    |            | **2,776**  |             |        |         | **8,100**  |
+| snevolin, review (led to significant changes)                       | —   |            |            |            |             |        |         | 3,000      |
+| **snevolin v6**                                                     |     | **626**    |            | **2,776**  |             |        |         | **9,100**  |
 | cyberdelamain, the v6 fixes                                         | 0.3 | 409        | 6.02       | 1,036      | 6.94        | 927    | 6.83    | 2,300      |
 | cyberdelamain, review                                               | —   |            |            |            |             |        |         | 2,000      |
 | **cyberdelamain v6**                                                |     | **409**    |            | **1,036**  |             |        |         | **4,300**  |
