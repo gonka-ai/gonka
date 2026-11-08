@@ -741,13 +741,19 @@ func setupLiveFloorProxy(t *testing.T, numHosts int, engines []devshard.Inferenc
 
 func setupLiveFloorProxyClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, header bool) *testProxyEnv {
 	t.Helper()
+	env := setupSeededLiveFloorProxyClock(t, numHosts, engines, verifierAccept, header)
+	env.session.StartHeartbeatLoop()
+	return env
+}
+
+func setupSeededLiveFloorProxyClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, header bool) *testProxyEnv {
+	t.Helper()
 	env := setupTestProxyFloorClock(t, numHosts, engines, verifierAccept, 1_000_000, 0, &testChain{live: true, start: time.Now()}, header, 0)
 	_, err := env.session.SendInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	require.NoError(t, env.session.SendPendingDiff(context.Background()))
 	f, _, _ := env.sm.HeightSyncFloorAsOf(env.session.Nonce() + 1)
 	require.NotZero(t, f, "the bootstrap inference's finish seeds the floor")
-	env.session.StartHeartbeatLoop()
 	return env
 }
 
