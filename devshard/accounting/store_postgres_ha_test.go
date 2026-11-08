@@ -276,6 +276,264 @@ func TestPostgresAccountingPruneRemovesEveryWriterRow(t *testing.T) {
 	}
 }
 
+// TestPostgresAccountingPurgeEpochRemovesRows checks that an operator purge
+// deletes the escrow and its counters. SQLite rewrites the whole table, so
+// this only fails on Postgres, where an unnamed delete leaves the rows.
+func TestPostgresAccountingPurgeEpochRemovesRows(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	tr, err := OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	require.NoError(t, err)
+	tr.now = func() time.Time { return accountingTestNow }
+	registerEscrow(t, tr, "e-keep", 8, "m")
+	registerEscrow(t, tr, "e-gone", 9, "m")
+	require.NoError(t, tr.RecordDiff("e-keep", 1, false))
+	require.NoError(t, tr.RecordDiff("e-gone", 2, false))
+	require.NoError(t, tr.RecordHostStats("e-keep", 0, types.HostStats{Missed: 1, Cost: 10}))
+	require.NoError(t, tr.RecordHostStats("e-gone", 0, types.HostStats{Missed: 4, Cost: 20}))
+	require.NoError(t, tr.Flush(ctx))
+
+	removed, err := tr.PurgeEpoch(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+	require.NoError(t, tr.Close())
+
+	reopened, err := OpenTracker(filepath.Join(t.TempDir(), "reopen.db"), 0, time.Hour)
+	require.NoError(t, err)
+	defer reopened.Close()
+	require.Zero(t, protocolOnlyTotal(t, reopened, 9))
+	require.Equal(t, uint64(1), protocolOnlyTotal(t, reopened, 8))
+	require.Equal(t, uint32(1), reopened.escrows["e-keep"].HostStats[0].Missed)
+
+	pool, err := pgxpool.New(ctx, "")
+	require.NoError(t, err)
+	defer pool.Close()
+	for _, table := range []string{
+		"accounting_escrow_state",
+		"accounting_escrow_counters",
+		"accounting_escrow_slot_counts",
+		"accounting_escrow_host_stats",
+		"accounting_escrow_invalid_nonces",
+		"accounting_escrow_protocol_nonces",
+		"accounting_escrow_challenges",
+	} {
+		var gone, kept int
+		require.NoError(t, pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE escrow_id = $1", "e-gone").Scan(&gone))
+		require.Zerof(t, gone, "%s still holds rows for the purged escrow", table)
+		require.NoError(t, pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE escrow_id = $1", "e-keep").Scan(&kept))
+		switch table {
+		case "accounting_escrow_state", "accounting_escrow_protocol_nonces", "accounting_escrow_host_stats":
+			require.NotZerof(t, kept, "%s lost the epoch that was not purged", table)
+		}
+	}
+}
+
+// TestPostgresAccountingPurgeEpochTombstoneBlocksPeer covers a second gateway
+// that still holds a purged escrow. Its next flush must delete the rows it
+// would otherwise upsert, drop the epoch from its own query view, and leave a
+// tombstone that a later load honors. The epoch it did not purge stays.
+func TestPostgresAccountingPurgeEpochTombstoneBlocksPeer(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	a := openWriterTracker(t, "writer-a")
+	registerEscrow(t, a, "e-keep", 8, "m")
+	registerEscrow(t, a, "e-gone", 9, "m")
+	require.NoError(t, a.RecordDiff("e-keep", 1, false))
+	require.NoError(t, a.RecordDiff("e-gone", 2, false))
+	require.NoError(t, a.RecordHostStats("e-keep", 0, types.HostStats{Missed: 1, Cost: 10}))
+	require.NoError(t, a.RecordHostStats("e-gone", 0, types.HostStats{Missed: 4, Cost: 20}))
+	require.NoError(t, a.Flush(ctx))
+
+	b := openWriterTracker(t, "writer-b")
+	require.NoError(t, b.RecordDiff("e-gone", 3, false))
+	require.NoError(t, b.RecordHostStats("e-gone", 0, types.HostStats{Missed: 5, Cost: 30}))
+	require.NoError(t, b.Flush(ctx))
+	require.Equal(t, uint64(2), protocolOnlyTotal(t, b, 9))
+
+	removed, err := a.PurgeEpoch(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+	require.Equal(t, []uint64{9}, purgedEpochs(t, ctx))
+	require.NotEmpty(t, b.Query(QueryFilter{EpochIndex: 9}), "the peer still serves the epoch from memory")
+
+	// Save, rather than Flush, so the snapshot is taken while the peer still
+	// holds the escrow. Flush would have dropped it first.
+	require.NoError(t, b.RecordDiff("e-keep", 4, false))
+	require.NoError(t, b.RecordDiff("e-gone", 6, false))
+	require.NoError(t, b.store.Save(ctx, b))
+	requireEscrowRowCounts(t, ctx, "e-gone", 0)
+	requireEscrowRowCounts(t, ctx, "e-keep", -1)
+	require.NotEmpty(t, b.Query(QueryFilter{EpochIndex: 9}), "the save does not drop the peer's memory")
+
+	require.NoError(t, b.Flush(ctx))
+	require.Empty(t, b.Query(QueryFilter{EpochIndex: 9}))
+	require.NotEmpty(t, b.Query(QueryFilter{EpochIndex: 8}))
+	before, _ := b.ErrorCounts()
+	require.NoError(t, b.RecordDiff("e-gone", 7, false))
+	after, _ := b.ErrorCounts()
+	require.Equal(t, before, after, "a fact for a dropped escrow is discarded without counting as a recorder error")
+	requireEscrowRowCounts(t, ctx, "e-gone", 0)
+
+	require.NoError(t, a.Close())
+	require.NoError(t, b.Close())
+
+	reopened := openWriterTracker(t, "writer-c")
+	defer reopened.Close()
+	require.Empty(t, reopened.Query(QueryFilter{EpochIndex: 9}))
+	require.Equal(t, uint64(2), protocolOnlyTotal(t, reopened, 8))
+	requireEscrowRowCounts(t, ctx, "e-gone", 0)
+	require.Equal(t, []uint64{9}, purgedEpochs(t, ctx))
+}
+
+// requireEscrowRowCounts checks every escrow table. want < 0 means the escrow
+// must still have its state row; want >= 0 means every table has that many rows.
+func requireEscrowRowCounts(t *testing.T, ctx context.Context, escrowID string, want int) {
+	t.Helper()
+	pool, err := pgxpool.New(ctx, "")
+	require.NoError(t, err)
+	defer pool.Close()
+	for _, table := range []string{
+		"accounting_escrow_state",
+		"accounting_escrow_counters",
+		"accounting_escrow_slot_counts",
+		"accounting_escrow_host_stats",
+		"accounting_escrow_invalid_nonces",
+		"accounting_escrow_protocol_nonces",
+		"accounting_escrow_challenges",
+	} {
+		var n int
+		require.NoError(t, pool.QueryRow(ctx,
+			"SELECT COUNT(*) FROM "+table+" WHERE escrow_id = $1", escrowID).Scan(&n))
+		if want < 0 {
+			if table == "accounting_escrow_state" {
+				require.NotZerof(t, n, "%s lost %s", table, escrowID)
+			}
+			continue
+		}
+		require.Equalf(t, want, n, "%s holds %s", table, escrowID)
+	}
+}
+
+func purgedEpochs(t *testing.T, ctx context.Context) []uint64 {
+	t.Helper()
+	pool, err := pgxpool.New(ctx, "")
+	require.NoError(t, err)
+	defer pool.Close()
+	rows, err := pool.Query(ctx, `SELECT epoch FROM accounting_purged_epochs ORDER BY epoch`)
+	require.NoError(t, err)
+	defer rows.Close()
+	var out []uint64
+	for rows.Next() {
+		var epoch int64
+		require.NoError(t, rows.Scan(&epoch))
+		out = append(out, uint64(epoch))
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// TestPostgresAccountingReregisterKeepsTheEscrow covers a session that attaches
+// again after the escrow was armed for deletion and before the delete was
+// saved. The row, including observations already committed, has to stay.
+func TestPostgresAccountingReregisterKeepsTheEscrow(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	tr := openWriterTracker(t, "writer-rereg")
+	defer tr.Close()
+	registerEscrow(t, tr, "e-back", 14, "m")
+	require.NoError(t, tr.RecordDiff("e-back", 2, false))
+	require.NoError(t, tr.Flush(ctx))
+
+	tr.mu.Lock()
+	delete(tr.escrows, "e-back")
+	if tr.pendingDeletes == nil {
+		tr.pendingDeletes = make(map[string]struct{})
+	}
+	tr.pendingDeletes["e-back"] = struct{}{}
+	tr.mu.Unlock()
+
+	registerEscrow(t, tr, "e-back", 14, "m")
+	require.NoError(t, tr.RecordDiff("e-back", 5, false))
+	require.NoError(t, tr.Flush(ctx))
+	require.Equal(t, []uint64{2, 5}, protocolNonces(t, ctx, "e-back"))
+}
+
+// TestPostgresAccountingDirtyAndDeletedIsNotWritten covers one snapshot that
+// names an escrow as both changed and deleted. The delete runs, and the dirty
+// copy is not written back afterwards.
+func TestPostgresAccountingDirtyAndDeletedIsNotWritten(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	tr := openWriterTracker(t, "writer-both")
+	defer tr.Close()
+	registerEscrow(t, tr, "e-both", 15, "m")
+	require.NoError(t, tr.RecordDiff("e-both", 2, false))
+	require.NoError(t, tr.Flush(ctx))
+
+	tr.mu.Lock()
+	if tr.pendingDeletes == nil {
+		tr.pendingDeletes = make(map[string]struct{})
+	}
+	tr.pendingDeletes["e-both"] = struct{}{}
+	tr.mu.Unlock()
+	require.NoError(t, tr.RecordDiff("e-both", 9, false))
+	require.NoError(t, tr.Flush(ctx))
+
+	require.Empty(t, protocolNonces(t, ctx, "e-both"))
+	requireEscrowRowCounts(t, ctx, "e-both", 0)
+	require.NotEmpty(t, tr.Query(QueryFilter{EpochIndex: 15}), "memory still holds the escrow the save refused to write")
+}
+
+// TestPostgresAccountingPurgedEpochStaysQuiet covers a live session and a
+// restart. Facts for the purged escrow do not count as recorder errors, and
+// registering that epoch again is refused on this process and on the next one.
+func TestPostgresAccountingPurgedEpochStaysQuiet(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	a := openWriterTracker(t, "writer-a")
+	registerEscrow(t, a, "e-gone", 9, "m")
+	require.NoError(t, a.RecordDiff("e-gone", 2, false))
+	require.NoError(t, a.Flush(ctx))
+	meta := a.escrows["e-gone"].Meta
+
+	b := openWriterTracker(t, "writer-b")
+	removed, err := a.PurgeEpoch(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, 1, removed)
+
+	before, _ := a.ErrorCounts()
+	require.NoError(t, a.RecordDiff("e-gone", 3, false))
+	after, _ := a.ErrorCounts()
+	require.Equal(t, before, after)
+	require.ErrorIs(t, a.RegisterEscrow(meta), ErrEpochPurged)
+
+	require.NoError(t, b.Flush(ctx))
+	peerBefore, _ := b.ErrorCounts()
+	require.NoError(t, b.RecordDiff("e-gone", 4, false))
+	peerAfter, _ := b.ErrorCounts()
+	require.Equal(t, peerBefore, peerAfter)
+	require.Empty(t, b.Query(QueryFilter{EpochIndex: 9}))
+	require.ErrorIs(t, b.RegisterEscrow(meta), ErrEpochPurged)
+	requireEscrowRowCounts(t, ctx, "e-gone", 0)
+
+	require.NoError(t, a.Close())
+	require.NoError(t, b.Close())
+
+	reopened := openWriterTracker(t, "writer-c")
+	defer reopened.Close()
+	require.ErrorIs(t, reopened.RegisterEscrow(meta), ErrEpochPurged)
+	require.Empty(t, reopened.Query(QueryFilter{EpochIndex: 9}))
+	registerEscrow(t, reopened, "e-new", 10, "m")
+	require.NotEmpty(t, reopened.Query(QueryFilter{EpochIndex: 10}))
+}
+
 // TestPostgresAccountingImportsLegacyBlobLedger covers the one-shot conversion
 // of the previous one-blob-per-escrow layout.
 func TestPostgresAccountingImportsLegacyBlobLedger(t *testing.T) {
