@@ -67,4 +67,16 @@ func TestMockChainGRPC_CreateDevshardEscrowTx(t *testing.T) {
 	require.Equal(t, "test-model", resp.Escrow.ModelId)
 	require.Equal(t, int64(5), resp.Escrow.RefusalTimeout)
 	require.Equal(t, int64(17), resp.Escrow.ExecutionTimeout)
+	require.False(t, resp.Escrow.HeightsyncTimeoutClock)
+
+	st.PatchDevshardEscrowParams(func(params *inferencetypes.DevshardEscrowParams) {
+		params.HeightsyncTimeoutClock = true
+	})
+	result, err = txMgr.CreateDevshardEscrow(context.Background(), signer, 500_000, "test-model")
+	require.NoError(t, err)
+	resp, err = chainClient.InferenceQueryClient().DevshardEscrow(context.Background(),
+		&inferencetypes.QueryGetDevshardEscrowRequest{Id: result.EscrowID})
+	require.NoError(t, err)
+	require.True(t, resp.Found)
+	require.True(t, resp.Escrow.HeightsyncTimeoutClock, "create freezes the params clock onto the escrow")
 }

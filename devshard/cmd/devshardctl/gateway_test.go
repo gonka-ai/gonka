@@ -1399,7 +1399,7 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
-func TestRuntimeRoutePrefixDefaultsToV7(t *testing.T) {
+func TestRuntimeRoutePrefixDefaultsToEffectiveVersion(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
 	require.Equal(t, "/devshard/v7", resolveRuntimeRoutePrefix(""))
 }

@@ -116,7 +116,7 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
 	}
-	return nil
+	return sm.checkObservedStampTimeLocked("heartbeat", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs)
 }
 
 // applyHeightAck accepts MsgHeightAck into Diff while Active. Log-plane L0–L7
@@ -142,6 +142,10 @@ func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if !sm.hostSignerAllowedLocked(msg.SlotId, recovered) {
 		return fmt.Errorf("%w: expected %s, got %s", heightsync.ErrAckSigInvalid, expected, recovered)
 	}
+	if err := sm.checkObservedStampTimeLocked("height_ack", msg.ObservedHeight, msg.ObservedBlockHash, msg.ObservedTimeMs); err != nil {
+		return err
+	}
+	sm.noteAcceptedHostAckLocked(msg)
 	return nil
 }
 
@@ -214,6 +218,35 @@ func (sm *StateMachine) HeightSyncFloorAsOf(nonce uint64) (uint64, []byte, bool)
 	return h, append([]byte(nil), hash...), known
 }
 
+// HeightSyncFloorPointAsOf is F(m) with hash, author, and carried TimeMs.
+func (sm *StateMachine) HeightSyncFloorPointAsOf(nonce uint64) (heightsync.FloorPoint, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.heightSyncFloor == nil || !sm.floorReady {
+		return heightsync.FloorPoint{}, false
+	}
+	p, known := sm.heightSyncFloor.PointAsOf(nonce)
+	if !known {
+		return heightsync.FloorPoint{}, false
+	}
+	if len(p.Hash) > 0 {
+		p.Hash = append([]byte(nil), p.Hash...)
+	}
+	return p, true
+}
+
+// FloorPointAtHeight is the floor entry whose height is exactly height, with
+// its block hash. The index stores running maxima only. A confirm between two
+// maxima is absent here; the execution deadline reads the header map by height.
+func (sm *StateMachine) FloorPointAtHeight(height uint64) (heightsync.FloorPoint, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.heightSyncFloor == nil || !sm.floorReady {
+		return heightsync.FloorPoint{}, false
+	}
+	return sm.heightSyncFloor.PointAtHeight(height)
+}
+
 // HeightSyncFloorReady reports whether the floor is a consistent fold of
 // 1..LatestNonce. Producers omit stamps when this is false rather than
 // writing a raw oracle tip against a missing F.
@@ -260,9 +293,55 @@ func observeHeightSync(st *types.EscrowState, tracker *heightsync.TurnTracker, f
 	// envelope to refuse. Letting admission feed the floor would give two honest
 	// verifiers different floors and therefore different L0 verdicts for every
 	// later diff — an escrow split. Floor updates therefore run only on apply.
+	before := floorPoints(floor)
 	floor.Observe(nonce, floorClaims(st, txs))
+	logFloorTimeRaises(st.EscrowID, before, floorPoints(floor))
+	for _, mm := range floor.DrainTimeMismatches() {
+		logging.Warn("floor stamp time disagrees with an earlier floor time",
+			"subsystem", "heightsync",
+			"height", mm.Height,
+			"hash", fmt.Sprintf("%x", mm.Hash),
+			"kept_time_ms", mm.Kept,
+			"got_time_ms", mm.Got,
+		)
+	}
 	st.HeightSyncLastCompletedHeight = tracker.LastCompletedHeight()
 	st.HeightSyncLatestTurnStart = tracker.LatestTurnStart()
+}
+
+func floorPoints(floor *heightsync.FloorIndex) []heightsync.FloorPoint {
+	if floor == nil {
+		return nil
+	}
+	return floor.Points()
+}
+
+// logFloorTimeRaises logs each floor entry whose time this diff set or
+// filled to more than StampTimeRaiseDelta above the entry below it. The
+// stored time stays the claim's value.
+func logFloorTimeRaises(escrowID string, before, after []heightsync.FloorPoint) {
+	prevTime := make(map[uint64]int64, len(before))
+	for _, p := range before {
+		prevTime[p.Height] = p.TimeMs
+	}
+	for i, p := range after {
+		if i == 0 || !timeRaisePastDelta(after[i-1].TimeMs, p.TimeMs) {
+			continue
+		}
+		old, existed := prevTime[p.Height]
+		if existed && old > 0 {
+			continue
+		}
+		logging.Warn(stampTimeRaiseDeferredMsg,
+			"subsystem", "heightsync",
+			"stage", "floor",
+			"escrow_id", escrowID,
+			"height", p.Height,
+			"author", p.Author,
+			"prev_time_ms", after[i-1].TimeMs,
+			"carried_time_ms", p.TimeMs,
+		)
+	}
 }
 
 // heightSyncRestore is the tracker and floor a restore installs.
@@ -390,9 +469,34 @@ func floorClaims(st *types.EscrowState, txs []*types.DevshardTx) []heightsync.Fl
 			}
 			signer = rec.ExecutorSlot
 		}
-		claims = append(claims, heightsync.FloorClaim{Signer: signer, Height: h, Hash: hash})
+		claims = append(claims, heightsync.FloorClaim{
+			Signer: signer,
+			Height: h,
+			Hash:   hash,
+			TimeMs: stampObservedTimeMs(tx),
+		})
 	}
 	return claims
+}
+
+func stampObservedTimeMs(tx *types.DevshardTx) int64 {
+	if tx == nil {
+		return 0
+	}
+	switch {
+	case tx.GetStartInference() != nil:
+		return tx.GetStartInference().GetObservedTimeMs()
+	case tx.GetConfirmStart() != nil:
+		return tx.GetConfirmStart().GetObservedTimeMs()
+	case tx.GetFinishInference() != nil:
+		return tx.GetFinishInference().GetObservedTimeMs()
+	case tx.GetHeartbeat() != nil:
+		return tx.GetHeartbeat().GetObservedTimeMs()
+	case tx.GetHeightAck() != nil:
+		return tx.GetHeightAck().GetObservedTimeMs()
+	default:
+		return 0
+	}
 }
 
 // HeightSyncLatestTurnStart is the span-start nonce of the newest turn folded from
@@ -446,6 +550,27 @@ func (sm *StateMachine) HeightSyncMissingAcks(turnStart uint64) []uint32 {
 		return nil
 	}
 	return sm.turnTracker.MissingAcksDue(turnStart, sm.turnTracker.LastCompletedHeight())
+}
+
+// HeightSyncSlotsWithBlockAck counts distinct slots whose applied ack carries
+// a block. It does not call out and does not read an oracle tip.
+func (sm *StateMachine) HeightSyncSlotsWithBlockAck() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return 0
+	}
+	return sm.turnTracker.SlotsWithBlockAck()
+}
+
+// HeightSyncBlockAckSlots lists the slots counted by HeightSyncSlotsWithBlockAck.
+func (sm *StateMachine) HeightSyncBlockAckSlots() []uint32 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return nil
+	}
+	return sm.turnTracker.BlockAckSlots()
 }
 
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.

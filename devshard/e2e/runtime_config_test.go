@@ -11,13 +11,25 @@ import (
 )
 
 // Test flow:
-//  1. Read runtime status from devshardctl.
-//  2. Wait for the mock-chain inference phase to be reported.
-//  3. Assert the status identifies the seeded escrow and its initial balance.
-//  4. Assert every deliberately non-default escrow configuration field is
-//     applied from mock-chain.
+//  1. Start the environment once on the legacy wall clock and once on the stamp clock.
+//  2. Read runtime status from devshardctl.
+//  3. Wait for the mock-chain inference phase to be reported.
+//  4. Assert the status identifies the seeded escrow and a balance that
+//     subtracts the create fee and one fee for every applied nonce.
+//  5. Assert every deliberately non-default escrow configuration field is
+//     applied from mock-chain, including which timeout clock is bound.
 func TestE2E_ChainBackedRuntimeConfigStatus(t *testing.T) {
-	env, client := startNonStreamingEnv(t)
+	for _, header := range []bool{false, true} {
+		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
+			runChainBackedRuntimeConfigStatus(t, header)
+		})
+	}
+}
+
+func runChainBackedRuntimeConfigStatus(t *testing.T, header bool) {
+	t.Helper()
+	env, client := startNonStreamingEnvWithOptions(t, withHeightsyncTimeoutClock(e2eEnvOptions{}, header))
+	requireHostTimeoutClock(t, client, env, header)
 
 	var status map[string]any
 	require.Eventually(t, func() bool {
@@ -27,7 +39,6 @@ func TestE2E_ChainBackedRuntimeConfigStatus(t *testing.T) {
 
 	require.Equal(t, defaultEscrowID, status["escrow_id"])
 	require.Equal(t, "active", status["phase"])
-	require.Equal(t, uint64(1_000_000-12_345), testutil.NumericField(t, status, "balance"))
 	requestsBlocked, ok := status["requests_blocked"].(bool)
 	require.True(t, ok, "requests_blocked should be a boolean")
 	require.False(t, requestsBlocked, "mock-chain inference phase should admit requests")
@@ -47,6 +58,25 @@ func TestE2E_ChainBackedRuntimeConfigStatus(t *testing.T) {
 		require.Equalf(t, want, testutil.NumericField(t, config, field),
 			"status config %s should match the configured mock-chain escrow value", field)
 	}
+	require.Equal(t, header, config["heightsync_timeout_clock"] == true, "status must report the bound timeout clock")
+
+	// Heartbeats are applied nonces and each one charges fee_per_nonce, so the
+	// balance moves with the nonce on this same status snapshot.
+	nonce := testutil.NumericField(t, status, "nonce")
+	createFee := testutil.NumericField(t, config, "create_devshard_fee")
+	feePerNonce := testutil.NumericField(t, config, "fee_per_nonce")
+	require.Equal(t, uint64(1_000_000)-createFee-feePerNonce*nonce, testutil.NumericField(t, status, "balance"),
+		"balance should be the seed minus the create fee and one fee per applied nonce")
+
+	// height_seed.slots is distinct validator addresses. This escrow has one
+	// slot per address, so the count matches the host count. The gate is open
+	// once at least half of those participants have acked a block.
+	seed, ok := status["height_seed"].(map[string]any)
+	require.True(t, ok, "status should report the chat gate")
+	require.Equal(t, "ok", seed["state"])
+	participants := testutil.NumericField(t, seed, "slots")
+	require.Equal(t, uint64(len(env.hostURLs)), participants)
+	require.GreaterOrEqual(t, testutil.NumericField(t, seed, "seeded")*2, participants)
 }
 
 // Test flow:

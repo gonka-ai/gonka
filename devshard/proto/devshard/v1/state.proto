@@ -36,8 +36,11 @@ message InferenceRecordProto {
   uint64 output_tokens = 10;
   uint64 reserved_cost = 11;
   uint64 actual_cost = 12;
-  reserved 13, 14;
-  reserved "started_at", "confirmed_at";
+  // Wall clocks (Unix seconds) for legacy timeout mode. Zero = unset / stamp-only.
+  // Restored at original field numbers (same type/meaning as before the
+  // stamp-only tombstone).
+  int64 started_at = 13;
+  int64 confirmed_at = 14;
   uint32 votes_valid = 15;
   uint32 votes_invalid = 16;
   bytes  validated_by = 17;
@@ -47,7 +50,10 @@ message InferenceRecordProto {
   bytes  started_at_block_hash = 21;
   int64  started_at_time_ms = 22;
   int64  confirmed_at_time_ms = 23;
-  bool   usage_challenged = 24;
+  // confirmed_at_block_hash is the confirm stamp's observed_block_hash
+  // (MsgConfirmStart). Empty on pre-field records and unstamped confirms.
+  bytes  confirmed_at_block_hash = 24;
+  bool   usage_challenged = 25;
 }
 
 message InferencesMapProto {

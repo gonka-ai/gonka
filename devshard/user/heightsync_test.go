@@ -41,7 +41,10 @@ func (o *sessionOracle) Latest(context.Context) (*blocks.Header, error) {
 		return nil, errors.New("follower unavailable")
 	}
 	h := o.height.Load()
-	return blocks.HashOnlyHeader(h, time.Unix(1, 0).UTC(), "fake-chain", append([]byte(nil), o.hash...)), nil
+	// Zero header time: compose fills observed_time_ms from the header map
+	// when present (optimistic map rule). A fixed fake time would disagree
+	// with the poller and reject ConfirmStart / Finish / HeightAck.
+	return blocks.HashOnlyHeader(h, time.Time{}, "fake-chain", append([]byte(nil), o.hash...)), nil
 }
 func (o *sessionOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
 	return o.Latest(ctx)
@@ -162,11 +165,10 @@ func TestUser_ForceHeightSyncTurn_SlotsNumFollowsGroupNotCadenceOverride(t *test
 // bootstrap inference and then go away, so acks are ORACLE_UNAVAILABLE while the
 // escrow still has logical time.
 //
-// Blindness has to be arrived at rather than started from. Since §10.3.1 a
-// heartbeat may not open until a host-signed stamp has set F, so a roster that
-// could never read a height has no floor, no truthful observed_height, and
-// therefore no cadence at all — see TestHeartbeat_NoFloorSkipsUntilFirstInference.
-// A follower that dies mid-session is also the failure that actually happens.
+// Blindness has to be arrived at rather than started from. A roster that
+// could never read a height still receives the unstamped opening span, and
+// its acks carry no height, so F stays empty. A follower that dies
+// mid-session is the failure that actually happens.
 func setupHeartbeatSession(t *testing.T, height *uint64) *Session {
 	t.Helper()
 	return setupBlindHeartbeatSession(t, height)
@@ -193,9 +195,9 @@ func sessionOracles(n int, height uint64) ([]blocks.BlockOracle, []*sessionOracl
 	return oracles, own
 }
 
-// setupHeartbeatSessionWithOracles builds the roster and runs the one inference
-// §10.3.1 requires before the cadence can start: F is seeded by a host stamp, and
-// only then does MsgHeartbeat have a height it may carry.
+// setupHeartbeatSessionWithOracles builds the roster and runs one inference
+// so F is already a host stamp. The ordinary cadence then copies that floor.
+// The unstamped opening span is the path exercised on a floorless session.
 func setupHeartbeatSessionWithOracles(t *testing.T, height *uint64, oracles []blocks.BlockOracle, extra ...SessionOption) *Session {
 	t.Helper()
 	session := setupFloorlessHeartbeatSession(t, height, oracles, extra...)
@@ -230,6 +232,11 @@ func seedFloorByInference(t *testing.T, session *Session) {
 // ones that drive the scheduler directly, want it.
 func setupFloorlessHeartbeatSession(t *testing.T, height *uint64, oracles []blocks.BlockOracle, extra ...SessionOption) *Session {
 	t.Helper()
+	return setupFloorlessHeartbeatSessionTimes(t, height, oracles, polledSource(t), extra...)
+}
+
+func setupFloorlessHeartbeatSessionTimes(t *testing.T, height *uint64, oracles []blocks.BlockOracle, userTimes state.HeaderTimeSource, extra ...SessionOption) *Session {
+	t.Helper()
 	const numHosts = 3
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hosts {
@@ -240,9 +247,17 @@ func setupFloorlessHeartbeatSession(t *testing.T, height *uint64, oracles []bloc
 	config := testutil.DefaultConfig(numHosts)
 	verifier := signing.NewSecp256k1Verifier()
 
+	// Hosts stamp the same header time the gateway will check. A second map
+	// with its own wall clock makes best-effort compose drop the ack.
+	hostTimes := userTimes
+	if hostTimes == nil {
+		hostTimes = polledSource(t)
+	}
+	smOpts := []state.SMOption{state.WithHeaderTimes(hostTimes)}
+	userSMOpts := []state.SMOption{state.WithHeaderTimes(hostTimes)}
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, smOpts...)
 		opts := []host.HostOption{host.WithGrace(100)}
 		if i < len(oracles) && oracles[i] != nil {
 			opts = append(opts, host.WithChainOracle(oracles[i]))
@@ -252,7 +267,7 @@ func setupFloorlessHeartbeatSession(t *testing.T, height *uint64, oracles []bloc
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, userSMOpts...)
 	opts := []SessionOption{
 		WithHeightSyncCadence(10, uint64(numHosts)),
 		WithObservedHeight(func() (uint64, []byte, bool) {
@@ -490,35 +505,109 @@ func TestHeartbeat_ForceSlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
 	require.Equal(t, base+3, force.EndNonce)
 }
 
-// TestHeartbeat_NoFloorSkipsUntilFirstInference is §10.3.1 on the producer side.
-//
-// The courier tip is available here — the fixture hands the session a height — and
-// it still may not heartbeat, because that tip is not a height the user read from
-// any chain. Only a host-signed stamp can seed F, and F is the only thing a
-// heartbeat may carry. So the loop stays disarmed until one inference has run,
-// which is also what closes P1: there is no user-chosen integer left to write.
-func TestHeartbeat_NoFloorSkipsUntilFirstInference(t *testing.T) {
+// TestBootstrapSpan_UnstampedWhileFloorEmpty is the opening span. The courier
+// tip is available and is not written onto the heartbeat. The heartbeats do
+// not raise F. A host ack of its tip does, and a second call sends no further
+// unstamped heartbeat.
+func TestBootstrapSpan_UnstampedWhileFloorEmpty(t *testing.T) {
 	var height uint64 = 100
 	oracles, _ := sessionOracles(3, height)
 	session := setupFloorlessHeartbeatSession(t, &height, oracles)
+	ctx := context.Background()
 
-	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	require.Empty(t, seenDiffs(session), "no floor: nothing truthful to stamp, so no turn opens")
-	require.Equal(t, 1, session.HeartbeatSkippedNoHeight())
-	require.Equal(t, uint64(0), session.Nonce())
+	span, err := session.composeBootstrapOnly()
+	require.NoError(t, err)
+	require.Len(t, heartbeatDiffsAfter(spanDiffs(span), 0), 3)
+	for _, d := range spanDiffs(span) {
+		for _, tx := range d.Txs {
+			require.Nil(t, tx.GetForceHeightSyncTurn(),
+				"an unstamped span must not open a forced turn")
+			hb := tx.GetHeartbeat()
+			if hb == nil {
+				continue
+			}
+			require.Zero(t, hb.ObservedHeight)
+			require.Empty(t, hb.ObservedBlockHash)
+		}
+	}
+	floor, hash, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Zero(t, floor)
+	require.Empty(t, hash)
+	require.Empty(t, session.StateMachine().HeightSyncMarks())
+	require.Zero(t, session.HeartbeatSkippedNoHeight())
 
-	seedFloorByInference(t, session)
+	session.dispatchHeartbeatSpan(ctx, span)
+	require.NoError(t, session.flushHeartbeatAckRounds(ctx))
+	require.False(t, session.StateMachine().HeightSyncForcedTurnActive(1),
+		"bootstrap must not leave a forced window for the host to audit")
+	for _, c := range session.clients {
+		require.Nil(t, c.(*InProcessClient).Host.HeightSyncEscrowHints(10, 3),
+			"a host with no forced window does not record force_request_anchor_missing")
+	}
+	floor, hash, known = session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(100), floor)
+	require.Equal(t, []byte{0xaa}, hash)
+	require.Empty(t, session.StateMachine().HeightSyncMarks())
+
+	nonce := session.Nonce()
+	unstamped := unstampedHeartbeats(seenDiffs(session))
+	require.NoError(t, session.sendBootstrapSpan(ctx))
+	require.Equal(t, nonce, session.Nonce())
+	require.Equal(t, unstamped, unstampedHeartbeats(seenDiffs(session)))
+}
+
+// TestBootstrapSpan_SeedGateSendsWhenCadenceOff starts the same loop the seed
+// gate starts. The quiet-session cadence stays off.
+func TestBootstrapSpan_SeedGateSendsWhenCadenceOff(t *testing.T) {
+	var height uint64 = 100
+	oracles, _ := sessionOracles(3, height)
+	session := setupFloorlessHeartbeatSession(t, &height, oracles,
+		WithRequireHeightSeed(true), WithDisableHeightSyncHeartbeat(true))
+	t.Cleanup(func() { _ = session.Close() })
+
+	session.StartHeartbeatLoop()
+	require.Eventually(t, func() bool {
+		return len(unstampedHeartbeats(seenDiffs(session))) >= 3
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Nil(t, session.heartbeatStop)
+	for _, hb := range unstampedHeartbeats(seenDiffs(session)) {
+		require.Zero(t, hb.ObservedHeight)
+		require.Empty(t, hb.ObservedBlockHash)
+	}
+	var onFirstSlots int
+	for _, d := range seenDiffs(session) {
+		if d.Nonce >= 1 && d.Nonce <= 3 {
+			for _, tx := range d.Txs {
+				if tx.GetHeartbeat() != nil {
+					onFirstSlots++
+				}
+			}
+		}
+	}
+	require.Equal(t, 3, onFirstSlots)
+}
+
+func TestBootstrapSpan_ExistingFloorStaysStamped(t *testing.T) {
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 	span := heartbeatDiffsAfter(seenDiffs(session), base)
-	require.NotEmpty(t, span, "the first host stamp arms the cadence")
-	require.Equal(t, uint64(100), span[0].Txs[1].GetHeartbeat().ObservedHeight)
+	require.NotEmpty(t, span)
+	for _, d := range span {
+		hb := d.Txs[len(d.Txs)-1].GetHeartbeat()
+		require.NotNil(t, hb)
+		require.Equal(t, uint64(100), hb.ObservedHeight)
+		require.NotEmpty(t, hb.ObservedBlockHash)
+	}
+	require.Zero(t, unstampedHeartbeats(seenDiffs(session)))
 }
 
-// TestHeartbeat_NoHeightAnywhereSkips: a session whose hosts have no follower at
-// all never acquires a floor, so it never heartbeats. Hosts see silence and arm
-// close-ready on T_idle, which is the same path as a session that never spoke.
-func TestHeartbeat_NoHeightAnywhereSkips(t *testing.T) {
+// TestBootstrapSpan_BlindHostsDoNotRaiseFloor: an ack with no header carries
+// no height, so applying it leaves F empty.
+func TestBootstrapSpan_BlindHostsDoNotRaiseFloor(t *testing.T) {
 	var height uint64
 	oracles, followers := sessionOracles(3, 0)
 	for _, o := range followers {
@@ -526,9 +615,120 @@ func TestHeartbeat_NoHeightAnywhereSkips(t *testing.T) {
 	}
 	session := setupFloorlessHeartbeatSession(t, &height, oracles)
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	require.Empty(t, seenDiffs(session))
-	require.Equal(t, 1, session.HeartbeatSkippedNoHeight())
-	require.Equal(t, uint64(0), session.Nonce())
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(session)))
+	require.Zero(t, session.HeartbeatSkippedNoHeight())
+	floor, hash, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Zero(t, floor)
+	require.Empty(t, hash)
+	for _, ack := range heightAcksInDiffs(seenDiffs(session)) {
+		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState)
+		require.Zero(t, ack.ObservedHeight)
+		require.Empty(t, ack.ObservedBlockHash)
+	}
+}
+
+// TestBootstrapSpan_AckAppliesBeforeTheGatewayMap applies a host ack while the
+// polled map has no row for that height. Chat still waits for the time; the ack does not.
+func TestBootstrapSpan_AckAppliesBeforeTheGatewayMap(t *testing.T) {
+	var height uint64 = 100
+	oracles, _ := sessionOracles(3, height)
+	gate := &gateHeaderTimes{}
+	session := setupFloorlessHeartbeatSessionTimes(t, &height, oracles, gate)
+	ctx := context.Background()
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.NotEmpty(t, unstampedHeartbeats(seenDiffs(session)))
+	acks := heightAcksInDiffs(seenDiffs(session))
+	require.NotEmpty(t, acks)
+	require.Equal(t, types.SyncState_SYNCED, acks[0].SyncState)
+	require.Equal(t, uint64(100), acks[0].ObservedHeight)
+	require.Empty(t, acksIn(session.PendingTxs()))
+	floor, _, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(100), floor)
+	require.False(t, gate.open.Load(), "applying the ack did not wait for the map")
+}
+
+// TestBootstrapSpan_ContradictingAckIsLeftOut leaves an ack out of the log when
+// the polled map already has a different hash at that height.
+func TestBootstrapSpan_ContradictingAckIsLeftOut(t *testing.T) {
+	var height uint64 = 100
+	oracles, _ := sessionOracles(3, height)
+	gate := &gateHeaderTimes{stored: []byte{0xbb}}
+	session := setupFloorlessHeartbeatSessionTimes(t, &height, oracles, gate)
+
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+	require.Empty(t, heightAcksInDiffs(seenDiffs(session)))
+	require.Empty(t, acksIn(session.PendingTxs()))
+	floor, _, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Zero(t, floor)
+}
+
+type gateHeaderTimes struct {
+	open    atomic.Bool
+	stored  []byte
+	hostAck []byte
+}
+
+func (g *gateHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
+	if !g.open.Load() {
+		return 0, types.ErrHeaderPending
+	}
+	return 1_000, nil
+}
+
+func (g *gateHeaderTimes) StoredHash(uint64) ([]byte, bool) {
+	if g == nil || len(g.stored) == 0 {
+		return nil, false
+	}
+	return append([]byte(nil), g.stored...), true
+}
+
+func (g *gateHeaderTimes) HostAckHash(uint64) ([]byte, bool) {
+	if g == nil || len(g.hostAck) == 0 {
+		return nil, false
+	}
+	return append([]byte(nil), g.hostAck...), true
+}
+
+func (g *gateHeaderTimes) NoteHostAck(_ uint64, hash []byte) {
+	if g == nil || len(hash) == 0 || len(g.hostAck) > 0 {
+		return
+	}
+	g.hostAck = append([]byte(nil), hash...)
+}
+
+func spanDiffs(span []composedDiff) []types.Diff {
+	out := make([]types.Diff, len(span))
+	for i, item := range span {
+		out[i] = item.diff
+	}
+	return out
+}
+
+func unstampedHeartbeats(diffs []types.Diff) []*types.MsgHeartbeat {
+	var out []*types.MsgHeartbeat
+	for _, d := range diffs {
+		for _, tx := range d.Txs {
+			hb := tx.GetHeartbeat()
+			if hb != nil && hb.ObservedHeight == 0 && len(hb.ObservedBlockHash) == 0 {
+				out = append(out, hb)
+			}
+		}
+	}
+	return out
+}
+
+func acksIn(txs []*types.DevshardTx) []*types.MsgHeightAck {
+	var out []*types.MsgHeightAck
+	for _, tx := range txs {
+		if ack := tx.GetHeightAck(); ack != nil {
+			out = append(out, ack)
+		}
+	}
+	return out
 }
 
 func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
@@ -665,7 +865,7 @@ func setupWarmHeartbeatSession(t *testing.T, height *uint64) (*Session, []*signi
 	group := testutil.MakeGroup(coldKeys)
 	config := testutil.DefaultConfig(numHosts)
 	verifier := signing.NewSecp256k1Verifier()
-	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+	smOpts := []state.SMOption{state.WithHeaderTimes(polledSource(t)), state.WithWarmKeyResolver(resolver)}
 
 	clients := make([]HostClient, numHosts)
 	for i := range coldKeys {

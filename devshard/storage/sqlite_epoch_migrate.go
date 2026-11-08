@@ -135,7 +135,12 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
 		Statements: []string{`ALTER TABLE sessions ADD COLUMN obs_rebuild_pending INTEGER NOT NULL DEFAULT 0`},
 	},
 	{
-		ID:   9,
+		ID:         9,
+		Name:       "diffs_header_times",
+		Statements: []string{`ALTER TABLE diffs ADD COLUMN header_times_json TEXT`},
+	},
+	{
+		ID:   10,
 		Name: "challenge_votes",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS challenge_votes (
@@ -147,7 +152,7 @@ CREATE TABLE IF NOT EXISTS challenge_votes (
 )`},
 	},
 	{
-		ID:         10,
+		ID:         11,
 		Name:       "sealed_inferences_usage_challenged",
 		Statements: []string{`ALTER TABLE sealed_inferences ADD COLUMN sealed_usage_challenged INTEGER NOT NULL DEFAULT 0`},
 	},

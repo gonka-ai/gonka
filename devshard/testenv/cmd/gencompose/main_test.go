@@ -495,6 +495,31 @@ func TestWriteCompose_MockDapiObservabilityEnv(t *testing.T) {
 	require.Equal(t, "${LOG_FORMAT:-json}", env["LOG_FORMAT"])
 }
 
+func TestWriteCompose_GatewayNodeManagerAddr(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+
+	env := compose.Services["devshardctl"].Environment
+	require.NotEmpty(t, env, "devshardctl service missing from generated compose")
+	want := "mock-dapi:9400"
+	require.Equal(t, want, env["NODE_MANAGER_ADDR"])
+	require.Equal(t, want, env["DEVSHARD_NODE_MANAGER_ADDR"])
+}
+
 func TestWriteCompose_ContentionProfilesEnv(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()

@@ -1389,7 +1389,7 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx,
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at, header_times_json
 		 FROM devshard_diffs
 		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
 		 ORDER BY nonce`,

@@ -15,6 +15,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/logging"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/transport"
 	"devshard/types"
 )
@@ -212,7 +213,7 @@ func finishedChallengeSession(t *testing.T) (*Session, []*signing.Secp256k1Signe
 // the test config's vote threshold is numHosts / 2.
 func finishedChallengeSessionOf(t *testing.T, numHosts int) (*Session, []*signing.Secp256k1Signer, uint64, int, []byte) {
 	t.Helper()
-	session, hosts, _ := setupSession(t, numHosts, 100000, 10)
+	session, hosts := setupChallengeProtocolSession(t, numHosts, testutil.DefaultConfig(numHosts))
 	nonce, execIdx, responseHash := finishChallengeInference(t, session, hosts, numHosts)
 	return session, hosts, nonce, execIdx, responseHash
 }
@@ -225,7 +226,7 @@ func finishedChallengeSessionSealingEveryNonce(t *testing.T) (*Session, []*signi
 	config := testutil.DefaultConfig(3)
 	config.AutoSealEveryNNonces = 1
 	config.InferenceSealGraceNonces = 1
-	session, hosts, _ := setupSessionWithConfigAndEngine(t, 3, 100000, 10, config, nil)
+	session, hosts := setupChallengeProtocolSession(t, 3, config)
 	nonce, execIdx, responseHash := finishChallengeInference(t, session, hosts, 3)
 	return session, hosts, nonce, execIdx, responseHash
 }
@@ -238,18 +239,39 @@ func finishChallengeInference(t *testing.T, session *Session, hosts []*signing.S
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
+	prepared, err := session.PrepareInference(context.Background(), params)
+	require.NoError(t, err)
+	nonce, execIdx := prepared.Nonce(), prepared.HostIdx()
+	rec, ok := session.sm.GetInference(nonce)
+	require.True(t, ok)
+	confirmedAt := time.Now().Unix()
+	stamp := testutil.ReceiptStamp{Height: rec.StartedAtHeight, Hash: rec.StartedAtBlockHash, TimeMs: rec.StartedAtTimeMs, StartedAt: rec.StartedAt, ConfirmedAt: confirmedAt}
+	receipt := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
+	confirm := &types.MsgConfirmStart{InferenceId: nonce, ExecutorSig: receipt, ConfirmedAt: confirmedAt, ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash, ObservedTimeMs: stamp.TimeMs}
+	require.NoError(t, session.sm.CheckEvidence(&rec, &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}}))
+	session.mu.Lock()
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}})
+	session.mu.Unlock()
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+	rec, ok = session.sm.GetInference(nonce)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
 	finishTx, _ := signedErrorFinishTx(t, hosts, nonce, execIdx, []byte(`{"events":["data: [DONE]"]}`))
+	finish := finishTx.GetFinishInference()
+	finish.ObservedHeight, finish.ObservedBlockHash, finish.ObservedTimeMs = stamp.Height, stamp.Hash, stamp.TimeMs
+	finish.ProposerSig = nil
+	finish.ProposerSig = testutil.SignProposerTx(t, hosts[execIdx], finish)
+	require.NoError(t, session.sm.CheckEvidence(&rec, finishTx))
 	session.mu.Lock()
 	session.addPendingTx(finishTx)
 	session.nonceStates[nonce].finished = true
 	session.mu.Unlock()
 	require.NoError(t, session.SendPendingDiff(context.Background()))
-	rec, ok := session.StateMachine().Inference(nonce)
+	finished, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
-	require.Equal(t, types.StatusFinished, rec.Status)
+	require.Equal(t, types.StatusFinished, finished.Status)
 	require.Equal(t, uint32(numHosts/2), session.StateMachine().VoteThreshold())
-	return nonce, execIdx, append([]byte(nil), rec.ResponseHash...)
+	return nonce, execIdx, append([]byte(nil), finished.ResponseHash...)
 }
 
 func fastChallengeReask(t *testing.T) {
@@ -928,7 +950,16 @@ func TestCollectChallengeVotes_ResourceExhaustedWaitsForRetryAfter(t *testing.T)
 				}
 				// A fault from each voter: with NONE the first answer would settle the
 				// outcome and the second host would not be asked again at all.
-				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", testCase.err)},
+				// Real RPC failures are separate objects; Meta initializes its map
+				// lazily, so sharing one error between concurrent peers races in the mock.
+				original := testCase.err.(*connect.Error)
+				peerError := connect.NewError(original.Code(), original.Unwrap())
+				for key, values := range original.Meta() {
+					for _, value := range values {
+						peerError.Meta().Add(key, value)
+					}
+				}
+				client := &scriptedChallengeClient{HostClient: c, errs: []error{fmt.Errorf("verify-challenge: %w", peerError)},
 					answers: []*transport.VerifyChallengeResponse{
 						signedChallengeAnswer(t, hosts[i], nonce, uint32(i), types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, responseHash),
 					}}
@@ -1010,4 +1041,18 @@ func TestAnOpenStreamChallengeKeepsTheFinishForTheServedBinding(t *testing.T) {
 			require.NotContains(t, session.streamsOpen, uint64(15))
 		})
 	}
+}
+
+func setupChallengeProtocolSession(t *testing.T, numHosts int, config types.SessionConfig) (*Session, []*signing.Secp256k1Signer) {
+	t.Helper()
+	session, hosts, _ := setupSessionWithConfigAndEngine(t, numHosts, 100000, 10, config, nil,
+		state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion))
+	session.SetDisableHeightSyncHeartbeat(true)
+	t.Cleanup(func() { _ = session.Close() })
+	if types.ProtocolKnowsChallenge(session.sm.ProtocolVersion()) {
+		session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+		require.NoError(t, session.sendBootstrapSpan(context.Background()))
+		require.Equal(t, HeightSeedStateOK, session.HeightSeedStatus().State)
+	}
+	return session, hosts
 }

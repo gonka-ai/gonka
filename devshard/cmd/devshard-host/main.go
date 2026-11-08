@@ -120,6 +120,13 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, es
 			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
 		),
 	)
+	g.GET("/debug/timeout-clock", func(c echo.Context) error {
+		clock := false
+		if srv != nil && srv.Host() != nil {
+			clock = srv.Host().HeightsyncTimeoutClock()
+		}
+		return timeoutClockDebug(c, clock)
+	})
 	g.GET("/debug/gossip", func(c echo.Context) error {
 		nonce, err := strconv.ParseUint(c.QueryParam("nonce"), 10, 64)
 		if err != nil {
@@ -281,6 +288,14 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		return nil, nil, err
 	}
 
+	oracle, headers := chainOracleFromEnv(ctx)
+	smOpts := []state.SMOption{
+		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
+		state.WithStampWallClock(time.Now),
+	}
+	if headers != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(headers))
+	}
 	sm, err := state.NewStateMachine(
 		cfg.escrowID,
 		sessionConfig,
@@ -289,7 +304,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		cfg.userAddress,
 		verifier,
 		store,
-		state.WithVersion(types.EffectiveStateRootAndProtocolVersion),
+		smOpts...,
 	)
 	if err != nil {
 		_ = store.Close()
@@ -362,6 +377,15 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		inferenceEngine = delayedInferenceEngine{inner: inferenceEngine, delay: inferenceDelay}
 	}
 
+	hostOpts := []host.HostOption{
+		host.WithStorage(store),
+		host.WithEpochID(cfg.epochID),
+		host.WithVerifier(verifier),
+		host.WithValidator(stub.NewValidationEngine()),
+	}
+	if oracle != nil {
+		hostOpts = append(hostOpts, host.WithChainOracle(oracle))
+	}
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
@@ -369,10 +393,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		cfg.escrowID,
 		cfg.group,
 		nil,
-		host.WithStorage(store),
-		host.WithEpochID(cfg.epochID),
-		host.WithVerifier(verifier),
-		host.WithValidator(stub.NewValidationEngine()),
+		hostOpts...,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -508,9 +529,22 @@ func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.Exec
 	return nil, errors.New(e.message)
 }
 
+// timeoutClockDebug is the e2e host's bound session clock. The value is the
+// one sessionConfigFromEnv froze, which matches the escrow flag.
+func timeoutClockDebug(c echo.Context, clock bool) error {
+	return c.JSON(http.StatusOK, map[string]any{
+		"heightsync_timeout_clock": clock,
+	})
+}
+
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
 // aligned with devshardctl when escrow params come from mock-chain gRPC.
+// DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK is that escrow flag. Unset is legacy.
 func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
+	clock, err := boolEnv("DEVSHARD_HEIGHTSYNC_TIMEOUT_CLOCK", false)
+	if err != nil {
+		return types.SessionConfig{}, err
+	}
 	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
 		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),
 		CreateDevshardFee:         uintEnv("DEVSHARD_CREATE_DEVSHARD_FEE", 0),
@@ -522,6 +556,7 @@ func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
 		RefusalTimeout:            int64(uintEnv("DEVSHARD_REFUSAL_TIMEOUT", 0)),
 		ExecutionTimeout:          int64(uintEnv("DEVSHARD_EXECUTION_TIMEOUT", 0)),
+		HeightsyncTimeoutClock:    clock,
 	})
 	overrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
 	if err != nil {

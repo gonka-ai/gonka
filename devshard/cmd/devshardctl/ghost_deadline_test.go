@@ -43,7 +43,10 @@ func ghostNonceVerifier(t *testing.T, params user.InferenceParams) (*state.State
 		rec := st.Inferences[1]
 		rec.StartedAtHeight, rec.StartedAtBlockHash, rec.StartedAtTimeMs = 1, []byte{0x01}, testutil.HeightClockBlockMs
 		floor := heightsync.NewFloorIndex()
-		floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{Signer: 0, Height: height, Hash: []byte{byte(height)}}})
+		floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{
+			Signer: 0, Height: height, Hash: []byte{byte(height)},
+			TimeMs: int64(height) * testutil.HeightClockBlockMs,
+		}})
 		require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 	}
 	payload := &host.InferencePayload{

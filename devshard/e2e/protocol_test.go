@@ -24,18 +24,36 @@ func TestE2E_ProtocolSignatureQuorumConvergence(t *testing.T) {
 	env, client := startNonStreamingEnv(t)
 	testutil.SendCompletions(t, client, env.clientURL, "signature quorum", 3)
 
-	latestNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
-	require.NotZero(t, latestNonce, "completion requests should advance the session nonce")
+	// Heartbeats can raise LatestSessionNonce between reads. Wait until a
+	// collect for some nonce at or past the post-completion tip reports quorum.
+	trafficNonce := testutil.LatestSessionNonce(t, client, env.clientURL)
+	require.NotZero(t, trafficNonce, "completion requests should advance the session nonce")
 
-	beforeCollection := testutil.GetSignatureStatus(t, client, env.clientURL)
-	require.Equal(t, latestNonce, testutil.NumericField(t, beforeCollection, "current_nonce"))
-	require.Equal(t, uint64(len(testutil.HostPrivateKeys)), testutil.NumericField(t, beforeCollection, "total_slots"))
-
-	collection := testutil.CollectSignatures(t, client, env.clientURL, latestNonce)
-	testutil.RequireSignatureCollectionQuorum(t, collection, latestNonce, len(testutil.HostPrivateKeys))
-
-	afterCollection := testutil.GetSignatureStatus(t, client, env.clientURL)
-	testutil.RequireSignatureStatusQuorum(t, afterCollection, latestNonce, len(testutil.HostPrivateKeys))
+	var (
+		status      map[string]any
+		collection  map[string]any
+		quorumNonce uint64
+	)
+	require.Eventually(t, func() bool {
+		status = testutil.GetSignatureStatus(t, client, env.clientURL)
+		if testutil.NumericField(t, status, "total_slots") != uint64(len(testutil.HostPrivateKeys)) {
+			return false
+		}
+		quorumNonce = testutil.NumericField(t, status, "highest_quorum_nonce")
+		if quorumNonce < trafficNonce {
+			quorumNonce = testutil.NumericField(t, status, "current_nonce")
+		}
+		if quorumNonce < trafficNonce {
+			return false
+		}
+		collection = testutil.CollectSignatures(t, client, env.clientURL, quorumNonce)
+		threshold := testutil.NumericField(t, collection, "quorum_threshold")
+		weight := testutil.NumericField(t, collection, "sig_weight")
+		hasQuorum, ok := collection["has_quorum"].(bool)
+		return ok && hasQuorum && weight >= threshold
+	}, 45*time.Second, 500*time.Millisecond, "a nonce at or past traffic should reach signature quorum")
+	testutil.RequireSignatureCollectionQuorum(t, collection, quorumNonce, len(testutil.HostPrivateKeys))
+	_ = status
 }
 
 // Test flow:

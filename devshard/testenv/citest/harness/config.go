@@ -36,6 +36,9 @@ type MultiConfigOpts struct {
 	// PostgresPerParticipant gives every on-chain identity a Postgres of its
 	// own, as operators run them; by default the stack shares one.
 	PostgresPerParticipant bool
+	// HeightsyncTimeoutClock nil leaves the seed on the legacy wall clock.
+	// A set value is written on params and the seed escrow together.
+	HeightsyncTimeoutClock *bool
 }
 
 // recordedReplayPath is where the generated compose mounts the replay file
@@ -137,6 +140,10 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 		require.NoError(t, err)
 		require.NoError(t, os.WriteFile(filepath.Join(dir, "replay.jsonl"), data, 0o644))
 		mockOpenAIExtra = "\n  replay_file: " + recordedReplayPath
+	}
+	if opts.HeightsyncTimeoutClock != nil {
+		paramsExtra += fmt.Sprintf("\n  heightsync_timeout_clock: %t", *opts.HeightsyncTimeoutClock)
+		escrowExtra += fmt.Sprintf("\n    heightsync_timeout_clock: %t", *opts.HeightsyncTimeoutClock)
 	}
 
 	var hosts strings.Builder

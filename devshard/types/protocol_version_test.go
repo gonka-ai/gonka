@@ -13,4 +13,25 @@ func TestEffectiveStateRootAndProtocolVersion_default(t *testing.T) {
 	if DefaultProtocolVersion != ProtocolV7 {
 		t.Fatalf("DefaultProtocolVersion is %q, want %q", DefaultProtocolVersion, ProtocolV7)
 	}
+	if !StartRequiresFloor(DevshardStateRootAndProtocolVersion) {
+		t.Fatal("v7 requires a floor on start")
+	}
+	if StartRequiresFloor("v6") {
+		t.Fatal("v6 still replays an empty first start")
+	}
+	if !StartRequiresFloor(StartRequiresFloorProtocolVersion) {
+		t.Fatal("v7 requires a floor on start")
+	}
+	if StartRequiresFloor("dev") {
+		t.Fatal("a non-numeric tag keeps the earlier rule")
+	}
+	if !StampRequiresTime(DevshardStateRootAndProtocolVersion) {
+		t.Fatal("v7 requires observed_time_ms on stamps")
+	}
+	if StampRequiresTime("v6") {
+		t.Fatal("v6 still accepts zero stamp times")
+	}
+	if StampRequiresTime("dev") {
+		t.Fatal("a non-numeric tag keeps the earlier rule")
+	}
 }

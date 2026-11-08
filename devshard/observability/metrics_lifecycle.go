@@ -8,6 +8,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"devshard/chainoracle/blocks/headertime"
 )
 
 var (
@@ -400,6 +402,7 @@ func initRegistry() {
 	diffsWaited = challengeDiffsTotal.WithLabelValues("waited")
 	retryClaimFailed = challengeClaimRetries.WithLabelValues("claim_failed")
 	retryGap = challengeClaimRetries.WithLabelValues("gap")
+	headertime.RegisterTimeoutClockMismatch(registry)
 }
 
 // RegisterRuntimeCollectors registers the standard Go runtime / process

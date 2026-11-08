@@ -442,6 +442,14 @@ func TestMapInferenceError_UnavailableLabel(t *testing.T) {
 	require.ErrorAs(t, err, &ce)
 	require.Empty(t, ce.Meta().Get(transport.HeaderDevshardError))
 	require.Contains(t, err.Error(), "draining")
+
+	pending := echo.NewHTTPError(http.StatusServiceUnavailable, types.ErrHeaderPending.Error()).SetInternal(types.ErrHeaderPending)
+	for _, err := range []error{mapInferenceError(pending), mapCoreError(types.ErrHeaderPending)} {
+		require.Equal(t, connect.CodeUnavailable, connect.CodeOf(err))
+		require.ErrorAs(t, err, &ce)
+		require.Empty(t, ce.Meta().Get(transport.HeaderDevshardError),
+			"ErrHeaderPending is ordinary unavailable, not header_pending")
+	}
 }
 
 func TestSessionHandler_GetSignaturesLookupClassified(t *testing.T) {
@@ -676,16 +684,26 @@ func TestSessionHandler_OwnerVsGroup(t *testing.T) {
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
 		require.Contains(t, err.Error(), "restricted to escrow owner")
 	})
-	t.Run("group member can verify timeout", func(t *testing.T) {
+	t.Run("group member cannot verify timeout", func(t *testing.T) {
 		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
 		_, err := env.session.VerifyTimeout(context.Background(), withSession(
 			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
-		require.NoError(t, err)
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "restricted to escrow owner")
 	})
-	t.Run("group member can verify error miss", func(t *testing.T) {
+	t.Run("group member cannot verify error miss", func(t *testing.T) {
 		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
 		_, err := env.session.VerifyErrorMiss(context.Background(), withSession(
 			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyErrorMissRequest{})), env.token))
+		require.Error(t, err)
+		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
+		require.Contains(t, err.Error(), "restricted to escrow owner")
+	})
+	t.Run("owner can verify timeout", func(t *testing.T) {
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
+		_, err := env.session.VerifyTimeout(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
 		require.NoError(t, err)
 	})
 	t.Run("verify uses the start proof, not the owner bind", func(t *testing.T) {
@@ -745,7 +763,7 @@ func TestSessionHandler_OwnerVsGroup(t *testing.T) {
 			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))
 		require.Error(t, err)
 		require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err))
-		require.Contains(t, err.Error(), "restricted to escrow owner or group member")
+		require.Contains(t, err.Error(), "restricted to escrow owner")
 	})
 	t.Run("bound host does not decode challenge diffs", func(t *testing.T) {
 		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
@@ -962,7 +980,7 @@ func TestChat_NoReceiptBeforeServeInference(t *testing.T) {
 	})
 
 	t.Run("verify stays off the chat counter", func(t *testing.T) {
-		env := newSessionEnv(t, stubLookup{core: stubCore{member: true}}, "escrow-1")
+		env := newSessionEnv(t, stubLookup{core: stubCore{owner: true}}, "escrow-1")
 		wantSame(observability.ReasonOwnerErr, func() {
 			_, err := env.session.VerifyTimeout(context.Background(), withSession(
 				connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{})), env.token))

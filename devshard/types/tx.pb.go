@@ -241,21 +241,28 @@ func (ChallengeCheck) EnumDescriptor() ([]byte, []int) {
 }
 
 type MsgStartInference struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId       uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	PromptHash        []byte                 `protobuf:"bytes,2,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
-	Model             string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
-	InputLength       uint64                 `protobuf:"varint,4,opt,name=input_length,json=inputLength,proto3" json:"input_length,omitempty"`
-	MaxTokens         uint64                 `protobuf:"varint,5,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	ObservedHeight    uint64                 `protobuf:"varint,7,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
-	ObservedBlockHash []byte                 `protobuf:"bytes,8,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	PromptHash  []byte                 `protobuf:"bytes,2,opt,name=prompt_hash,json=promptHash,proto3" json:"prompt_hash,omitempty"`
+	Model       string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
+	InputLength uint64                 `protobuf:"varint,4,opt,name=input_length,json=inputLength,proto3" json:"input_length,omitempty"`
+	MaxTokens   uint64                 `protobuf:"varint,5,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
+	// started_at is the gateway wall clock in Unix seconds (legacy timeout clock).
+	// Restored at its original field number (same type/meaning as before the
+	// stamp-only tombstone).
+	StartedAt         int64  `protobuf:"varint,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	ObservedHeight    uint64 `protobuf:"varint,7,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
+	ObservedBlockHash []byte `protobuf:"bytes,8,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	// protocol_version is the destshard runtime the gateway bound for this
 	// escrow (approved_versions.name / route prefix). It is inside the
 	// user-signed Diff so a later ChallengeReceipt can prove which version
 	// may CreateSession on a host the gateway never pinged.
 	ProtocolVersion string `protobuf:"bytes,9,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// observed_time_ms is the Comet header time for (observed_height,
+	// observed_block_hash), in milliseconds. Zero means unset (legacy / optimistic miss).
+	ObservedTimeMs int64 `protobuf:"varint,10,opt,name=observed_time_ms,json=observedTimeMs,proto3" json:"observed_time_ms,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *MsgStartInference) Reset() {
@@ -323,6 +330,13 @@ func (x *MsgStartInference) GetMaxTokens() uint64 {
 	return 0
 }
 
+func (x *MsgStartInference) GetStartedAt() int64 {
+	if x != nil {
+		return x.StartedAt
+	}
+	return 0
+}
+
 func (x *MsgStartInference) GetObservedHeight() uint64 {
 	if x != nil {
 		return x.ObservedHeight
@@ -344,12 +358,24 @@ func (x *MsgStartInference) GetProtocolVersion() string {
 	return ""
 }
 
+func (x *MsgStartInference) GetObservedTimeMs() int64 {
+	if x != nil {
+		return x.ObservedTimeMs
+	}
+	return 0
+}
+
 type MsgConfirmStart struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId       uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	ExecutorSig       []byte                 `protobuf:"bytes,2,opt,name=executor_sig,json=executorSig,proto3" json:"executor_sig,omitempty"`
-	ObservedHeight    uint64                 `protobuf:"varint,4,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
-	ObservedBlockHash []byte                 `protobuf:"bytes,5,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	ExecutorSig []byte                 `protobuf:"bytes,2,opt,name=executor_sig,json=executorSig,proto3" json:"executor_sig,omitempty"`
+	// confirmed_at is the executor wall clock in Unix seconds (legacy timeout clock).
+	// Restored at its original field number (same type/meaning as before the
+	// stamp-only tombstone).
+	ConfirmedAt       int64  `protobuf:"varint,3,opt,name=confirmed_at,json=confirmedAt,proto3" json:"confirmed_at,omitempty"`
+	ObservedHeight    uint64 `protobuf:"varint,4,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
+	ObservedBlockHash []byte `protobuf:"bytes,5,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	ObservedTimeMs    int64  `protobuf:"varint,6,opt,name=observed_time_ms,json=observedTimeMs,proto3" json:"observed_time_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -398,6 +424,13 @@ func (x *MsgConfirmStart) GetExecutorSig() []byte {
 	return nil
 }
 
+func (x *MsgConfirmStart) GetConfirmedAt() int64 {
+	if x != nil {
+		return x.ConfirmedAt
+	}
+	return 0
+}
+
 func (x *MsgConfirmStart) GetObservedHeight() uint64 {
 	if x != nil {
 		return x.ObservedHeight
@@ -412,6 +445,13 @@ func (x *MsgConfirmStart) GetObservedBlockHash() []byte {
 	return nil
 }
 
+func (x *MsgConfirmStart) GetObservedTimeMs() int64 {
+	if x != nil {
+		return x.ObservedTimeMs
+	}
+	return 0
+}
+
 type MsgFinishInference struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	InferenceId       uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
@@ -424,6 +464,7 @@ type MsgFinishInference struct {
 	ObservedHeight    uint64                 `protobuf:"varint,8,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,9,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	ServedHash        []byte                 `protobuf:"bytes,10,opt,name=served_hash,json=servedHash,proto3" json:"served_hash,omitempty"`
+	ObservedTimeMs    int64                  `protobuf:"varint,11,opt,name=observed_time_ms,json=observedTimeMs,proto3" json:"observed_time_ms,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -526,6 +567,13 @@ func (x *MsgFinishInference) GetServedHash() []byte {
 		return x.ServedHash
 	}
 	return nil
+}
+
+func (x *MsgFinishInference) GetObservedTimeMs() int64 {
+	if x != nil {
+		return x.ObservedTimeMs
+	}
+	return 0
 }
 
 type MsgTimeoutInference struct {
@@ -1166,7 +1214,7 @@ var File_devshard_v1_tx_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\n" +
-	"\x14devshard/v1/tx.proto\x12\vdevshard.v1\"\xc5\x02\n" +
+	"\x14devshard/v1/tx.proto\x12\vdevshard.v1\"\xfc\x02\n" +
 	"\x11MsgStartInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
 	"\vprompt_hash\x18\x02 \x01(\fR\n" +
@@ -1174,16 +1222,21 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12!\n" +
 	"\finput_length\x18\x04 \x01(\x04R\vinputLength\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\x05 \x01(\x04R\tmaxTokens\x12'\n" +
+	"max_tokens\x18\x05 \x01(\x04R\tmaxTokens\x12\x1d\n" +
+	"\n" +
+	"started_at\x18\x06 \x01(\x03R\tstartedAt\x12'\n" +
 	"\x0fobserved_height\x18\a \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\b \x01(\fR\x11observedBlockHash\x12)\n" +
-	"\x10protocol_version\x18\t \x01(\tR\x0fprotocolVersionJ\x04\b\x06\x10\aR\n" +
-	"started_at\"\xc4\x01\n" +
+	"\x10protocol_version\x18\t \x01(\tR\x0fprotocolVersion\x12(\n" +
+	"\x10observed_time_ms\x18\n" +
+	" \x01(\x03R\x0eobservedTimeMs\"\xfd\x01\n" +
 	"\x0fMsgConfirmStart\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12!\n" +
-	"\fexecutor_sig\x18\x02 \x01(\fR\vexecutorSig\x12'\n" +
+	"\fexecutor_sig\x18\x02 \x01(\fR\vexecutorSig\x12!\n" +
+	"\fconfirmed_at\x18\x03 \x01(\x03R\vconfirmedAt\x12'\n" +
 	"\x0fobserved_height\x18\x04 \x01(\x04R\x0eobservedHeight\x12.\n" +
-	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHashJ\x04\b\x03\x10\x04R\fconfirmed_at\"\x83\x03\n" +
+	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHash\x12(\n" +
+	"\x10observed_time_ms\x18\x06 \x01(\x03R\x0eobservedTimeMs\"\xad\x03\n" +
 	"\x12MsgFinishInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12#\n" +
 	"\rresponse_hash\x18\x02 \x01(\fR\fresponseHash\x12!\n" +
@@ -1196,7 +1249,8 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\x13observed_block_hash\x18\t \x01(\fR\x11observedBlockHash\x12\x1f\n" +
 	"\vserved_hash\x18\n" +
 	" \x01(\fR\n" +
-	"servedHash\"\x9c\x01\n" +
+	"servedHash\x12(\n" +
+	"\x10observed_time_ms\x18\v \x01(\x03R\x0eobservedTimeMs\"\x9c\x01\n" +
 	"\x13MsgTimeoutInference\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x122\n" +
 	"\x06reason\x18\x02 \x01(\x0e2\x1a.devshard.v1.TimeoutReasonR\x06reason\x12.\n" +

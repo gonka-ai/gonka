@@ -497,8 +497,11 @@ func newExecutorHost(t *testing.T, n int, v signing.Verifier) (*Host, []types.Di
 	require.NoError(t, err)
 	engine := newBlockingInferenceEngine()
 	t.Cleanup(func() { close(engine.release) })
+	oracle := &fakeOracle{}
+	oracle.setHeight(100)
+	oracle.setHash([]byte{0xaa})
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil,
-		WithGrace(uint64(n)+10), WithStorage(store), WithVerifier(v))
+		WithGrace(uint64(n)+10), WithStorage(store), WithVerifier(v), WithChainOracle(oracle))
 	require.NoError(t, err)
 	return h, diffs, store
 }

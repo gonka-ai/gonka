@@ -296,9 +296,16 @@ ALTER TABLE devshard_validation_credits
     ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
 	},
 	{
+		ID:   21,
+		Name: "devshard_diffs_header_times",
+		Statements: []string{`
+ALTER TABLE devshard_diffs
+    ADD COLUMN IF NOT EXISTS header_times_json TEXT`},
+	},
+	{
 		// One row per challenged inference this participant voted on. HA
 		// replicas share it, so they answer a challenge with one verdict.
-		ID:   21,
+		ID:   22,
 		Name: "devshard_challenge_votes_parent",
 		Statements: []string{`
 CREATE TABLE IF NOT EXISTS devshard_challenge_votes (
@@ -311,7 +318,7 @@ CREATE TABLE IF NOT EXISTS devshard_challenge_votes (
 ) PARTITION BY RANGE (epoch_id)`},
 	},
 	{
-		ID:   22,
+		ID:   23,
 		Name: "devshard_sealed_inferences_usage_challenged",
 		Statements: []string{`
 ALTER TABLE devshard_sealed_inferences

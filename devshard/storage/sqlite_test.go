@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -853,4 +854,36 @@ func TestSQLite_PruneBefore_CloseErrorStillCleansFilesAndMeta(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, db.pruneBefore(3), "second prune should not retry closed pools")
+}
+
+func TestSQLite_HeaderTimesLegacyDecodeOnly(t *testing.T) {
+	db := newTestSQLite(t)
+	require.NoError(t, db.CreateSession(defaultParams()))
+	want := []types.HeaderTimeRow{{Height: 10, Hash: []byte{0xab}, TimeMs: 1000}}
+	rec := types.DiffRecord{
+		Diff:             types.Diff{Nonce: 1, UserSig: []byte{1}},
+		StateHash:        []byte{2},
+		HeaderTimesKnown: true,
+		HeaderTimes:      want,
+	}
+	require.NoError(t, db.AppendDiff("escrow-1", rec))
+	got, err := db.GetDiffs("escrow-1", 1, 1)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.False(t, got[0].HeaderTimesKnown, "new persists do not write header_times_json")
+	require.Nil(t, got[0].HeaderTimes)
+
+	pool, _, err := db.poolFor("escrow-1")
+	require.NoError(t, err)
+	blob, err := json.Marshal(want)
+	require.NoError(t, err)
+	_, err = pool.writeDB.Exec(
+		`UPDATE diffs SET header_times_json = ? WHERE escrow_id = ? AND nonce = ?`,
+		string(blob), "escrow-1", 1,
+	)
+	require.NoError(t, err)
+	got, err = db.GetDiffs("escrow-1", 1, 1)
+	require.NoError(t, err)
+	require.True(t, got[0].HeaderTimesKnown)
+	require.Equal(t, want, got[0].HeaderTimes)
 }

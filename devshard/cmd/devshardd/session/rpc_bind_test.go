@@ -60,12 +60,12 @@ func TestRPCChallenge_BindsColdEscrowOnLiveHandshake(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 
 	const inferenceID uint64 = 1
-	diff := testutil.SignDiff(t, user, escrowB, inferenceID, []*types.DevshardTx{testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)})
+	diff := testutil.SignDiff(t, user, escrowB, inferenceID, []*types.DevshardTx{testutil.StartTxVersioned(inferenceID, "v6")})
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 	inner := transport.ChallengeReceiptRequestToProto(transport.ChallengeReceiptRequest{
 		InferenceID:     inferenceID,
-		ProtocolVersion: testutil.RuntimeTestVersion,
+		ProtocolVersion: "v6",
 		Payload: &transport.PayloadJSON{
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",

@@ -124,6 +124,8 @@ Two strings, same governance slot:
 | Protocol name (`approved_versions.name`) | `v4` | Routing `/devshard/v4/`, session bind, state-root / settlement tag |
 | Binary build id | `0.2.14-v4-r2` | Link-time build stamp: logs, `--print-binary-version`, versiond `/healthz`, and `GET …/stats/shards` `binary_version` |
 
+Unstamped source / local `go test` defaults to `types.DevshardStateRootAndProtocolVersion` (`v7`). Release builds set the same string via `DEVSHARD_VERSION` so it matches `approved_versions.name`. `v7` requires a floor on start (`StartRequiresFloor`) and non-zero `observed_time_ms` on stamped messages (`StampRequiresTime`); `v6` still accepts an empty first start and zero stamp times. See [stamped-block-time-plan.md](timeouts/stamped-block-time-plan.md).
+
 Protocol name is what binds sessions and settlements. Binary build id is what
 distinguishes two artifacts that share the same protocol name (same-name SHA
 roll). Clients can poll stats during a roll and watch `binary_version` drift

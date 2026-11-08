@@ -33,7 +33,19 @@ func TestTimeoutEvidence(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootTimeoutEvidenceStack(t, "citest-timeout-evidence-*")
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runTimeoutEvidence(t, header)
+		})
+	}
+}
+
+func runTimeoutEvidence(t *testing.T, header bool) {
+	stack, cfg, eps := harness.BootTimeoutEvidenceStackClock(t, "citest-timeout-evidence-*", header)
 	client := harness.GatewayChatClient()
 	adminKey := harness.TestenvAdminAPIKey
 	t.Cleanup(func() {

@@ -129,10 +129,14 @@ func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []by
 	return sig
 }
 
-// ReceiptStamp is the optional observed_height pair on ExecutorReceiptContent.
+// ReceiptStamp is the optional observed_height / wall-clock pair on
+// ExecutorReceiptContent.
 type ReceiptStamp struct {
-	Height uint64
-	Hash   []byte
+	Height      uint64
+	Hash        []byte
+	TimeMs      int64
+	StartedAt   int64
+	ConfirmedAt int64
 }
 
 func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, stamp ...ReceiptStamp) []byte {
@@ -145,9 +149,14 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 		MaxTokens:   maxTokens,
 		EscrowId:    escrowID,
 	}
-	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
-		content.ObservedHeight = stamp[0].Height
-		content.ObservedBlockHash = stamp[0].Hash
+	if len(stamp) > 0 {
+		if len(stamp[0].Hash) > 0 {
+			content.ObservedHeight = stamp[0].Height
+			content.ObservedBlockHash = stamp[0].Hash
+			content.ObservedTimeMs = stamp[0].TimeMs
+		}
+		content.StartedAt = stamp[0].StartedAt
+		content.ConfirmedAt = stamp[0].ConfirmedAt
 	}
 	data, err := deterministicMarshal.Marshal(content)
 	require.NoError(t, err)

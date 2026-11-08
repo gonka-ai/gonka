@@ -359,11 +359,13 @@ func TestApplyDiff_Challenge_VoteRejections(t *testing.T) {
 // field, so the tx has no message set and the whole diff is refused. That is
 // why MsgChallenge ships under a new protocol version.
 func TestApplyDiff_Challenge_UnknownToOlderBinaryRejectsTheDiff(t *testing.T) {
-	sm, user, hosts, before := finishedForChallenge(t)
-	votes := challengeVotes(t, hosts, 1, testutil.TestResponseHash, []challengeVoteSpec{
+	d, id := finishedForChallengeV7(t)
+	sm, user, hosts, before := d.sm, d.user, d.hosts, d.sm.SnapshotState()
+	require.Equal(t, types.StatusFinished, before.Inferences[id].Status)
+	votes := challengeVotes(t, hosts, id, testutil.TestResponseHash, []challengeVoteSpec{
 		{0, types.ChallengeFault_CHALLENGE_FAULT_NONE},
 	})
-	wire, err := proto.Marshal(txChallenge(&types.MsgChallenge{InferenceId: 1, Votes: votes}))
+	wire, err := proto.Marshal(txChallenge(&types.MsgChallenge{InferenceId: id, Votes: votes}))
 	require.NoError(t, err)
 	num, typ, n := protowire.ConsumeTag(wire)
 	require.Equal(t, protowire.Number(15), num)
@@ -436,16 +438,59 @@ func TestFoldInferenceRecords_ChallengeMatchesLive(t *testing.T) {
 }
 
 func TestInferenceEntry_ChallengedRoundTrips(t *testing.T) {
-	rec := &types.InferenceRecord{Status: types.StatusFinished, PromptHash: []byte("p"), UsageChallenged: true}
+	rec := &types.InferenceRecord{Status: types.StatusFinished, PromptHash: []byte("p"), UsageChallenged: true, ConfirmedAtBlockHash: []byte("confirm-block")}
 	data, err := marshalInferenceEntry(7, rec)
 	require.NoError(t, err)
 	id, got, err := unmarshalInferenceEntry(data)
 	require.NoError(t, err)
 	require.Equal(t, uint64(7), id)
 	require.True(t, got.UsageChallenged)
+	require.Equal(t, rec.ConfirmedAtBlockHash, got.ConfirmedAtBlockHash)
 
 	rec.UsageChallenged = false
 	plain, err := marshalInferenceEntry(7, rec)
 	require.NoError(t, err)
 	require.NotEqual(t, data, plain, "the mark is part of the committed entry, so it moves the state root")
+}
+
+func finishedForChallengeV7(t *testing.T) (*floorDriver, uint64) {
+	t.Helper()
+	// Exercise the new protocol with its required signed floor, independently
+	// of the legacy v6 helper used by the older state-machine tests.
+	d := newProtocolFloorDriver(t, types.DevshardStateRootAndProtocolVersion)
+	hash := []byte{0xa7}
+	const stampTimeMs int64 = 1_700_000_000_000
+	d.raiseWithTime(100, hash, stampTimeMs)
+	id := d.next()
+	require.NoError(t, d.apply(startTxWithTime(id, 100, hash, stampTimeMs)))
+	require.NoError(t, d.apply(d.confirmWithTime(id, 100, hash, stampTimeMs)))
+	slot := uint32(id % uint64(len(d.hosts)))
+	finish := &types.MsgFinishInference{
+		InferenceId: id, ExecutorSlot: slot, EscrowId: "escrow-1",
+		ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InputTokens: 80, OutputTokens: 40,
+		ObservedHeight: 100, ObservedBlockHash: hash, ObservedTimeMs: stampTimeMs,
+	}
+	finish.ProposerSig = testutil.SignProposerTx(t, d.hosts[slot], finish)
+	require.NoError(t, d.apply(txFinish(finish)))
+	return d, id
+}
+
+func TestApplyDiff_Challenge_V7InvalidatesFinishedInference(t *testing.T) {
+	d, id := finishedForChallengeV7(t)
+	before := d.sm.SnapshotState()
+	rec := before.Inferences[id]
+	specs := make([]challengeVoteSpec, 0, len(d.hosts)-1)
+	for i := range d.hosts {
+		if uint32(i) != rec.ExecutorSlot {
+			specs = append(specs, challengeVoteSpec{uint32(i), types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM})
+		}
+	}
+	votes := challengeVotes(t, d.hosts, id, rec.ResponseHash, specs)
+	require.NoError(t, applyChallengeDiff(t, d.sm, d.user, &types.MsgChallenge{InferenceId: id, Votes: votes}))
+	after := d.sm.SnapshotState()
+	require.Equal(t, types.StatusInvalidated, after.Inferences[id].Status)
+	require.True(t, after.Inferences[id].UsageChallenged)
+	require.Equal(t, before.Balance+rec.ActualCost, after.Balance)
+	require.Equal(t, before.HostStats[rec.ExecutorSlot].Invalid+1, after.HostStats[rec.ExecutorSlot].Invalid)
 }

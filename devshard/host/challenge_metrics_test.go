@@ -23,7 +23,7 @@ func TestVerifyChallenge_CountsKeptVotesByFault(t *testing.T) {
 	before := promtest.ToFloat64(observability.ChallengeVoteCounter("hash_mismatch"))
 
 	for range 2 {
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH, answer.Fault)
 	}

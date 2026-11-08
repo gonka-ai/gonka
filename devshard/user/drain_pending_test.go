@@ -32,15 +32,20 @@ func TestDrainUnpinnedPending_PublishesReceiptAndFinish(t *testing.T) {
 			nonceBefore := session.Nonce()
 			require.NotNil(t, pendingFinishFor(session, nonce))
 
-			// Heartbeat off returns immediately. Heartbeat on still skips here:
-			// this session has no floor, so the cadence refuses to open and
-			// does not drain. Either way the receipt stays queued until Drain.
+			// Heartbeat off returns immediately. Heartbeat on sends the unstamped
+			// opening span, which uses nonces, and leaves the queued receipt
+			// where it is. Drain is what publishes it.
 			require.NoError(t, session.MaybeHeartbeat(context.Background()))
 			still, ok := session.StateMachine().Inference(nonce)
 			require.True(t, ok)
 			require.Equal(t, types.StatusPending, still.Status, "the cadence must not be what publishes this receipt")
-			require.Equal(t, nonceBefore, session.Nonce())
+			if heartbeatOff {
+				require.Equal(t, nonceBefore, session.Nonce())
+			} else {
+				require.Greater(t, session.Nonce(), nonceBefore)
+			}
 
+			turnovers := session.HeartbeatTurnovers()
 			require.NoError(t, session.DrainUnpinnedPending(context.Background()))
 
 			got, ok := session.StateMachine().Inference(nonce)
@@ -48,7 +53,7 @@ func TestDrainUnpinnedPending_PublishesReceiptAndFinish(t *testing.T) {
 			require.Equal(t, types.StatusFinished, got.Status)
 			require.Nil(t, pendingFinishFor(session, nonce))
 			require.Greater(t, session.StateMachine().Balance(), held, "finish must return the unused reservation")
-			require.Zero(t, session.HeartbeatTurnovers(), "draining a receipt must not open a heartbeat turn")
+			require.Equal(t, turnovers, session.HeartbeatTurnovers(), "draining a receipt must not open a heartbeat turn")
 
 			settled := session.Nonce()
 			require.NoError(t, session.DrainUnpinnedPending(context.Background()))

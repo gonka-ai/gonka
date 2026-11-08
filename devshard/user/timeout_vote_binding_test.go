@@ -52,6 +52,7 @@ type timeoutVoteFixture struct {
 	signers []*signing.Secp256k1Signer
 	group   []types.SlotAssignment
 	config  types.SessionConfig
+	rig     *floorRig
 	id      uint64
 }
 
@@ -64,7 +65,7 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 	}
 	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 4, 1})
 	config := types.SessionConfig{
-		RefusalTimeout:   60,
+		RefusalTimeout:   1,
 		ExecutionTimeout: 1200,
 		TokenPrice:       1,
 		FeePerNonce:      5,
@@ -94,7 +95,16 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 	rig.raise(t, session, 100_000)
 	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
 
-	return &timeoutVoteFixture{session: session, userSM: userSM, signers: signers, group: group, config: config, id: id}
+	return &timeoutVoteFixture{session: session, userSM: userSM, signers: signers, group: group, config: config, rig: rig, id: id}
+}
+
+// coverRefusal waits out RefusalTimeout after the start stamp, then moves the
+// floor. The chain accepts a refusal only once the new floor's polled header
+// time is past the start stamp's header time by that window.
+func (f *timeoutVoteFixture) coverRefusal(t *testing.T) {
+	t.Helper()
+	rec := f.userSM.SnapshotState().Inferences[f.id]
+	f.rig.coverTimeout(t, f.session, headerStampMs(t, f.userSM, rec.StartedAtHeight, rec.StartedAtBlockHash), time.Second)
 }
 
 func (f *timeoutVoteFixture) dropHostReceipts() {
@@ -181,6 +191,7 @@ func TestCollectTimeoutVotes_SpoofedVoteDoesNotDisplaceHonestQuorum(t *testing.T
 			"no vote may be credited to the spoofing responder")
 	}
 	require.True(t, f.session.HasSufficientTimeoutVotes(votes), "honest weight exceeds threshold 3")
+	f.coverRefusal(t)
 
 	before := f.userSM.SnapshotState()
 	_, applied, err := f.userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(f.id, votes)})
@@ -250,11 +261,13 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 	userKey := testutil.MustGenerateKey(t)
 	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 4, 1})
 	config := types.SessionConfig{
-		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, FeePerNonce: 5,
+		RefusalTimeout: 1, ExecutionTimeout: 1200, TokenPrice: 1, FeePerNonce: 5,
 		VoteThreshold: uint32(len(group)) / 2, // 3
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	id := uint64(len(group)) + 1
+	feed := openPollFeed(t)
+	feed.progress(t, 100)
 
 	signVote := func(s *signing.Secp256k1Signer, slot uint32) *types.TimeoutVote {
 		data, err := types.CanonicalSignedBytes(&types.TimeoutVoteContent{
@@ -281,22 +294,30 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 		}})
 		require.NoError(t, err)
 		require.Len(t, applied, 1)
-		raiseRawFloor(t, sm, signers[0], uint64(len(group)), 100_000)
 	}
 
 	// signers[2] (slot 2, weight 4) + signers[3] (slot 6, weight 1) = 5 > 3.
 	honest := []*types.TimeoutVote{signVote(signers[2], 2), signVote(signers[3], 6)}
 	spoofed := signVote(signers[0], 2) // own key, someone else's slot
 
-	clean := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+	clean := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier, state.WithHeaderTimes(feed.gateway))
 	seed(clean)
+	stamp, ok := feed.gateway.StoredAt(100)
+	require.True(t, ok)
+	target := time.UnixMilli(stamp.TimeMs).Add(time.Second)
+	if d := time.Until(target); d > 0 {
+		time.Sleep(d + 30*time.Millisecond)
+	}
+	feed.progress(t, 101)
+	raiseRawFloor(t, clean, signers[0], uint64(len(group)), 101)
 	_, applied, err := clean.ApplyLocalBestEffort(clean.LatestNonce()+1, []*types.DevshardTx{timeoutTxFor(id, honest)})
 	require.NoError(t, err)
 	require.Len(t, applied, 1, "honest quorum alone applies")
 	require.Equal(t, types.StatusTimedOut, clean.SnapshotState().Inferences[id].Status)
 
-	poisoned := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+	poisoned := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier, state.WithHeaderTimes(feed.gateway))
 	seed(poisoned)
+	raiseRawFloor(t, poisoned, signers[0], uint64(len(group)), 101)
 	before := poisoned.SnapshotState()
 	all := append(append([]*types.TimeoutVote{}, honest...), spoofed)
 	_, applied, err = poisoned.ApplyLocalBestEffort(poisoned.LatestNonce()+1, []*types.DevshardTx{timeoutTxFor(id, all)})
@@ -342,6 +363,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 			6: &mockTimeoutVerifier{accept: true, signer: f.signers[3], group: f.group, slotIdx: 6},
 		})
 		require.True(t, f.session.HasSufficientTimeoutVotes(votes))
+		f.coverRefusal(t)
 
 		f.session.AddPendingTimeoutTx(f.id, types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes)
 		diff, err := f.session.sendPendingDiff(context.Background(), nil, nil)
@@ -425,14 +447,14 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	group := testutil.MakeGroup(coldKeys)
 	config := testutil.DefaultConfig(3)
 	verifier := signing.NewSecp256k1Verifier()
-	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver), state.WithHeaderTimes(polledSource(t))}
 
 	clients := make([]HostClient, 3)
 	for i := range coldKeys {
 		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
 			testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
 		require.NoError(t, err)
-		h, err := host.NewHost(sm, warmKeys[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
+		h, err := host.NewHost(sm, warmKeys[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10), host.WithChainOracle(testTip()))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
@@ -468,4 +490,79 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	require.NoError(t, err)
 	require.True(t, session.HasSufficientTimeoutVotes(votes),
 		"cached warm bindings must verify without reaching the resolver")
+}
+
+// Slot 4 is bound to warm1 and votes with warm2, a second key its cold address
+// also granted. Apply rejects that vote and with it the whole message, so the
+// collector must drop it and keep the honest quorum.
+func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *testing.T) {
+	const n = 5
+	coldKeys := makeKeys(t, n)
+	warm1 := makeKeys(t, n)
+	warm2 := makeKeys(t, n)
+	granted := make(map[string]string, 2*n)
+	for i := range coldKeys {
+		granted[warm1[i].Address()] = coldKeys[i].Address()
+		granted[warm2[i].Address()] = coldKeys[i].Address()
+	}
+	resolver := state.WarmKeyResolver(func(warmAddr, coldAddr string) (bool, error) {
+		return granted[warmAddr] == coldAddr, nil
+	})
+
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(coldKeys)
+	config := testutil.DefaultConfig(n) // threshold 2
+	verifier := signing.NewSecp256k1Verifier()
+	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+	clients := make([]HostClient, n)
+	for i := range coldKeys {
+		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
+			testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
+		require.NoError(t, err)
+		h, err := host.NewHost(sm, coldKeys[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
+	require.NoError(t, err)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = session.SendInference(ctx, defaultParams)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
+	userSM.InjectWarmKeys(map[uint32]string{4: warm1[4].Address()})
+
+	honest := func(i int) TimeoutVerifier {
+		return &delayedVerifier{
+			inner: &mockTimeoutVerifier{accept: true, signer: coldKeys[i], group: group, slotIdx: i},
+			delay: 50 * time.Millisecond,
+		}
+	}
+	// Executor is slot 1.
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+		&host.InferencePayload{
+			Prompt: testutil.TestPrompt, Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		}, map[int]TimeoutVerifier{
+			0: honest(0), 2: honest(2), 3: honest(3),
+			4: &mockTimeoutVerifier{accept: true, signer: warm2[4], group: group, slotIdx: 4},
+		}, nil)
+	require.NoError(t, err)
+	for _, v := range votes {
+		require.NotEqual(t, uint32(4), v.VoterSlot, "the warm2 vote must not be collected")
+	}
+	require.True(t, session.HasSufficientTimeoutVotes(votes))
+
+	// The hand-rolled session starts this inference on an empty floor, so
+	// StartedAtHeight stays 0. A refusal applies only once that stamp is set.
+	statetest.ArmRefusalDue(t, userSM, 1)
+
+	before := userSM.SnapshotState()
+	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(1, votes)})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, types.StatusTimedOut, userSM.SnapshotState().Inferences[1].Status)
 }

@@ -108,12 +108,12 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance))
+		sm, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 		require.NoError(t, err)
 		h, err := host.NewHost(
 			sm, hosts[i], stub.NewInferenceEngine(),
 			"escrow-validation", group, nil,
-			host.WithGrace(grace), host.WithValidator(validators[i]),
+			host.WithGrace(grace), host.WithValidator(validators[i]), host.WithChainOracle(testTip()),
 		)
 		require.NoError(t, err)
 		h.Start()
@@ -121,7 +121,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance))
+	userSM, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-validation", group, clients, verifier)
 	require.NoError(t, err)
@@ -236,12 +236,12 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-fetch-fail", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fetch-fail", user.Address(), config, group, balance))
+		sm, err := state.NewStateMachine("escrow-fetch-fail", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fetch-fail", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 		require.NoError(t, err)
 		h, err := host.NewHost(
 			sm, hosts[i], stub.NewInferenceEngine(),
 			"escrow-fetch-fail", group, nil,
-			host.WithGrace(grace), host.WithValidator(validators[i]),
+			host.WithGrace(grace), host.WithValidator(validators[i]), host.WithChainOracle(testTip()),
 		)
 		require.NoError(t, err)
 		h.Start()
@@ -249,7 +249,7 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-fetch-fail", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fetch-fail", user.Address(), config, group, balance))
+	userSM, err := state.NewStateMachine("escrow-fetch-fail", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fetch-fail", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-fetch-fail", group, clients, verifier)
 	require.NoError(t, err)
@@ -363,12 +363,12 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	// runs once per inference, not three times.
 	hostBySigner := make([]*host.Host, len(hosts))
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance))
+		sm, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 		require.NoError(t, err)
 		h, err := host.NewHost(
 			sm, hosts[i], stub.NewInferenceEngine(),
 			"escrow-multi", group, nil,
-			host.WithGrace(grace), host.WithValidator(validators[i]),
+			host.WithGrace(grace), host.WithValidator(validators[i]), host.WithChainOracle(testTip()),
 		)
 		require.NoError(t, err)
 		h.Start()
@@ -386,7 +386,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		require.NotNil(t, clients[i], "no client for slot %d", i)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance))
+	userSM, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance), state.WithHeaderTimes(polledSource(t)))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-multi", group, clients, verifier)
 	require.NoError(t, err)

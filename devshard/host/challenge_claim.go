@@ -78,6 +78,9 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	// rejects the MsgFinishInference this execution produces as an invalid
 	// transition. Only reachable while the record is still pending.
 	confirm, err := h.confirmStartLocked(inferenceID, rec, hdr, hdrErr)
+	if errors.Is(err, errConfirmAwaitingHeader) {
+		return nil, 0, nil, nil
+	}
 	if err != nil {
 		return nil, 0, nil, err
 	}

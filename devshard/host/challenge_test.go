@@ -1,6 +1,7 @@
 package host
 
 import (
+	"common/chainoracle/blocks"
 	"context"
 	"encoding/json"
 	"sync"
@@ -75,7 +76,10 @@ var bodyWithPositions = []byte(`{"events":["data: {\"id\":\"x\",\"choices\":[{\"
 
 const challengeEscrow = "escrow-1"
 
-// newChallengeFixture signs start, confirm and finish diffs for inference 1
+// The opening three nonces establish the floor; nonce 4 still assigns slot 1.
+const challengeInferenceID uint64 = 4
+
+// newChallengeFixture signs start, confirm and finish diffs for inference 4
 // on three hosts; slot 1 executes it and claims 40 output tokens.
 func newChallengeFixture(t *testing.T) *challengeFixture {
 	t.Helper()
@@ -95,20 +99,20 @@ func newChallengeFixtureFor(t *testing.T, model string, outputTokens uint64) *ch
 	config := testutil.DefaultConfig(len(f.hosts))
 	config.ExecutionTimeout = 1
 	f.store = testutil.MustMemoryStore(t, challengeEscrow, f.user.Address(), config, group, 10000)
-	receipt := testutil.SignExecutorReceipt(t, f.hosts[1], challengeEscrow, 1, testutil.TestPromptHash[:], model, 100, testutil.TestMaxTokens)
+	receipt := testutil.SignExecutorReceipt(t, f.hosts[1], challengeEscrow, challengeInferenceID, testutil.TestPromptHash[:], model, 100, testutil.TestMaxTokens)
 	finish := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InferenceId: challengeInferenceID, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 80, OutputTokens: outputTokens, ExecutorSlot: 1, EscrowId: challengeEscrow,
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, f.hosts[1], finish)
-	start := testutil.StartTx(1)
+	start := testutil.StartTx(challengeInferenceID)
 	start.GetStartInference().Model = model
 	f.diffs = []types.Diff{
-		testutil.SignDiff(t, f.user, challengeEscrow, 1, []*types.DevshardTx{start}),
-		testutil.SignDiff(t, f.user, challengeEscrow, 2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: receipt,
+		testutil.SignDiff(t, f.user, challengeEscrow, 4, []*types.DevshardTx{start}),
+		testutil.SignDiff(t, f.user, challengeEscrow, 5, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: challengeInferenceID, ExecutorSig: receipt,
 		}}}}),
-		testutil.SignDiff(t, f.user, challengeEscrow, 3, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}}),
+		testutil.SignDiff(t, f.user, challengeEscrow, 6, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}}),
 	}
 	return f
 }
@@ -126,36 +130,47 @@ func (f *challengeFixture) voter(t *testing.T, hostIdx int, fetcher devshard.Val
 	if f.sealGrace > 0 {
 		config.InferenceSealGraceSeconds = f.sealGrace
 	}
-	// Establish a host-signed floor between Start and ConfirmStart. The
-	// receipt still carries Start's empty floor, while confirmation takes
-	// its time from the newer floor's chain header, as in the live protocol.
-	diffs := f.diffs
-	var opts []state.SMOption
+	// A real signed bootstrap precedes the Start. Stamp times are carried by
+	// messages on v7; the local header map is verification data, not apply time.
+	diffs := make([]types.Diff, 0, 6)
+	opts := []state.SMOption{state.WithStateRootAndProtocolVersion("v6")}
 	if !f.confirmedAt.IsZero() {
 		hash := []byte{0xaa}
-		chain := newHeaderChain()
-		chain.add(100, hash, f.confirmedAt)
-		opts = append(opts, state.WithHeaderTimes(headertime.New(chain)))
+		ms := f.confirmedAt.UnixMilli()
+		source := headertime.New()
+		source.Observe(blocks.HashOnlyHeader(100, f.confirmedAt, "fixture", hash), headertime.OriginChain, true)
+		opts = []state.SMOption{state.WithStateRootAndProtocolVersion(types.DevshardStateRootAndProtocolVersion), state.WithHeaderTimes(source)}
 		heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			SlotsNum: uint64(len(f.hosts)), Reason: string(heightsync.ReasonQuietSession),
 		}}}
-		ack := &types.MsgHeightAck{RefNonce: 2, SlotId: 2, ObservedHeight: 100, ObservedBlockHash: hash,
+		ack := &types.MsgHeightAck{RefNonce: 1, SlotId: 2, ObservedHeight: 100, ObservedBlockHash: hash, ObservedTimeMs: ms,
 			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
 		require.NoError(t, heightsync.SignAck(f.hosts[2], ack))
-		original := f.diffs[2].Txs[0].GetFinishInference()
-		finish := &types.MsgFinishInference{
-			InferenceId: 1, ResponseHash: original.ResponseHash, ServedHash: original.ServedHash,
-			InputTokens: original.InputTokens, OutputTokens: original.OutputTokens,
-			ExecutorSlot: 1, EscrowId: challengeEscrow, ObservedHeight: 100, ObservedBlockHash: hash,
+		start := *f.diffs[0].Txs[0].GetStartInference()
+		start.ObservedHeight, start.ObservedBlockHash, start.ObservedTimeMs = 100, hash, ms
+		receipt := testutil.SignExecutorReceipt(t, f.hosts[1], challengeEscrow, challengeInferenceID,
+			start.PromptHash, start.Model, start.InputLength, start.MaxTokens, testutil.ReceiptStamp{Height: 100, Hash: hash, TimeMs: ms})
+		confirm := &types.MsgConfirmStart{InferenceId: challengeInferenceID, ExecutorSig: receipt,
+			ObservedHeight: 100, ObservedBlockHash: hash, ObservedTimeMs: ms}
+		finish := *f.diffs[2].Txs[0].GetFinishInference()
+		finish.ObservedHeight, finish.ObservedBlockHash, finish.ObservedTimeMs = 100, hash, ms
+		finish.ProposerSig = nil
+		finish.ProposerSig = testutil.SignProposerTx(t, f.hosts[1], &finish)
+		diffs = append(diffs,
+			testutil.SignDiff(t, f.user, challengeEscrow, 1, []*types.DevshardTx{heartbeat}),
+			testutil.SignDiff(t, f.user, challengeEscrow, 2, []*types.DevshardTx{{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}}),
+			testutil.SignDiff(t, f.user, challengeEscrow, 3, nil),
+			testutil.SignDiff(t, f.user, challengeEscrow, 4, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &start}}}),
+			testutil.SignDiff(t, f.user, challengeEscrow, 5, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: confirm}}}),
+			testutil.SignDiff(t, f.user, challengeEscrow, 6, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: &finish}}}),
+		)
+	} else {
+		// Historical unstamped records remain safe to inspect without accusing
+		// payload unavailability. They use the legacy protocol that permits them.
+		for nonce := uint64(1); nonce < challengeInferenceID; nonce++ {
+			diffs = append(diffs, testutil.SignDiff(t, f.user, challengeEscrow, nonce, nil))
 		}
-		finish.ProposerSig = testutil.SignProposerTx(t, f.hosts[1], finish)
-		diffs = []types.Diff{
-			f.diffs[0],
-			testutil.SignDiff(t, f.user, challengeEscrow, 2, []*types.DevshardTx{heartbeat}),
-			testutil.SignDiff(t, f.user, challengeEscrow, 3, []*types.DevshardTx{{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}}),
-			testutil.SignDiff(t, f.user, challengeEscrow, 4, f.diffs[1].Txs),
-			testutil.SignDiff(t, f.user, challengeEscrow, 5, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}}),
-		}
+		diffs = append(diffs, f.diffs...)
 	}
 	sm, err := state.NewStateMachine(challengeEscrow, config, group, 10000, f.user.Address(), signing.NewSecp256k1Verifier(), f.store, opts...)
 	require.NoError(t, err)
@@ -163,7 +178,7 @@ func (f *challengeFixture) voter(t *testing.T, hostIdx int, fetcher devshard.Val
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 	h.ApplyCatchUpDiffs(diffs)
-	rec, ok := sm.GetInference(1)
+	rec, ok := sm.GetInference(challengeInferenceID)
 	require.True(t, ok)
 	require.Equal(t, types.StatusFinished, rec.Status)
 	if !f.confirmedAt.IsZero() {
@@ -189,7 +204,7 @@ func TestVerifyChallenge_FixedWindow(t *testing.T) {
 				h.Close()
 				h = f.voter(t, 0, fetcher, 60)
 			}
-			answer, err := h.VerifyChallenge(context.Background(), 1)
+			answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 			require.NoError(t, err)
 			require.False(t, answer.Pending, "delivery and restart must not open a new window")
 			require.Equal(t, ChallengeRejectLate, answer.RejectCause)
@@ -202,10 +217,10 @@ func TestVerifyChallenge_FixedWindow(t *testing.T) {
 		f.confirmedAt = time.Now().Add(-10 * time.Second).Truncate(time.Second)
 		fetcher := &scriptedChallengeFetcher{gate: make(chan struct{}), script: []devshard.ChallengeFetch{down}}
 		h := f.voter(t, 0, fetcher, 60)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.True(t, answer.Pending)
-		data, settled, err := f.store.LoadOrStoreChallengeVote(challengeEscrow, 1, nil)
+		data, settled, err := f.store.LoadOrStoreChallengeVote(challengeEscrow, challengeInferenceID, nil)
 		require.NoError(t, err)
 		require.False(t, settled)
 		var kept keptChallengeVote
@@ -217,7 +232,7 @@ func TestVerifyChallenge_FixedWindow(t *testing.T) {
 		f.confirmedAt = time.Time{}
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{down}}
 		h := f.voter(t, 0, fetcher, 1)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.False(t, answer.Pending)
 		require.Empty(t, answer.Signature)
@@ -240,7 +255,7 @@ func TestVerifyChallenge_UnarmedStillChecksEvidence(t *testing.T) {
 			f.confirmedAt = time.Time{}
 			fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{tc.fetch}}
 			h := f.voter(t, 0, fetcher, 60)
-			answer, err := h.VerifyChallenge(context.Background(), 1)
+			answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 			require.NoError(t, err)
 			require.Equal(t, tc.fault, answer.Fault)
 			requireVoteSignedBy(t, f.hosts[0], answer)
@@ -254,11 +269,11 @@ func TestVerifyChallenge_StoredDeadlineCannotExtendWindow(t *testing.T) {
 	f := newChallengeFixture(t)
 	pending, err := json.Marshal(keptChallengeVote{Deadline: time.Now().Add(time.Hour).Unix()})
 	require.NoError(t, err)
-	_, _, err = f.store.LoadOrStoreChallengeVote(challengeEscrow, 1, pending)
+	_, _, err = f.store.LoadOrStoreChallengeVote(challengeEscrow, challengeInferenceID, pending)
 	require.NoError(t, err)
 	fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchRetry, ExecutorSide: true}}}
 	h := f.voter(t, 0, fetcher, 1)
-	answer, err := h.VerifyChallenge(context.Background(), 1)
+	answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.False(t, answer.Pending, "an overlong stored allowance cannot extend the fixed window")
 	require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, answer.Fault)
@@ -276,7 +291,7 @@ func requireVoteSignedBy(t *testing.T, signer *signing.Secp256k1Signer, answer C
 	t.Helper()
 	preimage, err := types.CanonicalSignedBytes(&types.ChallengeVoteContent{
 		EscrowId:     challengeEscrow,
-		InferenceId:  1,
+		InferenceId:  challengeInferenceID,
 		Fault:        answer.Fault,
 		Check:        answer.Check,
 		Deviation:    answer.Deviation,
@@ -318,7 +333,7 @@ func TestVerifyChallenge_Verdicts(t *testing.T) {
 			f := newChallengeFixture(t)
 			fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{tc.fetch}}
 			h := f.voter(t, 0, fetcher, 60)
-			answer, err := h.VerifyChallenge(context.Background(), 1)
+			answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 			require.NoError(t, err)
 			require.False(t, answer.Pending)
 			require.Empty(t, answer.RejectCause)
@@ -349,7 +364,7 @@ func TestVerifyChallenge_RetriesInsideTheWindow(t *testing.T) {
 		f := newChallengeFixture(t)
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{restart, rateLimited, restart, fetched}}
 		h := f.voter(t, 0, fetcher, 60)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, answer.Fault)
 		require.Equal(t, int32(4), fetcher.calls.Load())
@@ -359,7 +374,7 @@ func TestVerifyChallenge_RetriesInsideTheWindow(t *testing.T) {
 		f := newChallengeFixture(t)
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{restart}}
 		h := f.voter(t, 0, fetcher, 1)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, answer.Fault)
 		require.Greater(t, fetcher.calls.Load(), int32(1), "the host retried before it voted")
@@ -371,7 +386,7 @@ func TestVerifyChallenge_RetriesInsideTheWindow(t *testing.T) {
 		ownPeer := devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchRetry, Cause: "own peer not ready"}
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{ownPeer}}
 		h := f.voter(t, 0, fetcher, 1)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, ChallengeRejectUnchecked, answer.RejectCause)
 		require.Empty(t, answer.Signature)
@@ -381,7 +396,7 @@ func TestVerifyChallenge_RetriesInsideTheWindow(t *testing.T) {
 		f := newChallengeFixture(t)
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchLocal}}}
 		h := f.voter(t, 0, fetcher, 60)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, ChallengeRejectUnchecked, answer.RejectCause)
 		require.Equal(t, int32(1), fetcher.calls.Load())
@@ -409,7 +424,7 @@ func TestVerifyChallenge_LateFirstRequestIsNoFault(t *testing.T) {
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{restart}}
 		h, _ := lateVoter(t, fetcher)
 		for range 2 {
-			answer, err := h.VerifyChallenge(context.Background(), 1)
+			answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 			require.NoError(t, err)
 			require.Empty(t, answer.Signature, "a fault vote %s after a second of retries", answer.Fault)
 			require.Equal(t, ChallengeRejectLate, answer.RejectCause)
@@ -419,7 +434,7 @@ func TestVerifyChallenge_LateFirstRequestIsNoFault(t *testing.T) {
 	t.Run("executor answers", func(t *testing.T) {
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{fetched}}
 		h, f := lateVoter(t, fetcher)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, answer.Fault)
 		requireVoteSignedBy(t, f.hosts[0], answer)
@@ -436,19 +451,19 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 			gate:   make(chan struct{}),
 		}
 		h := f.voter(t, 0, fetcher, 60)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.True(t, answer.Pending)
 		require.Empty(t, answer.Signature)
 
-		again, err := h.VerifyChallenge(context.Background(), 1)
+		again, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.True(t, again.Pending, "a repeat joins the open fetch")
 
 		close(fetcher.gate)
 		var first ChallengeAnswer
 		require.Eventually(t, func() bool {
-			first, err = h.VerifyChallenge(context.Background(), 1)
+			first, err = h.VerifyChallenge(context.Background(), challengeInferenceID)
 			return err == nil && !first.Pending
 		}, 5*time.Second, 5*time.Millisecond)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, first.Fault)
@@ -457,7 +472,7 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 		fetcher.mu.Lock()
 		fetcher.script = []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: bodyWithPositions}}
 		fetcher.mu.Unlock()
-		second, err := h.VerifyChallenge(context.Background(), 1)
+		second, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, first, second)
 		require.Equal(t, int32(1), fetcher.calls.Load())
@@ -467,14 +482,14 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 		f := newChallengeFixture(t)
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchMismatch}}}
 		before := f.voter(t, 0, fetcher, 60)
-		voted, err := before.VerifyChallenge(context.Background(), 1)
+		voted, err := before.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH, voted.Fault)
 		before.Close()
 
 		restartedFetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: bodyWithPositions}}}
 		after := f.voter(t, 0, restartedFetcher, 60)
-		kept, err := after.VerifyChallenge(context.Background(), 1)
+		kept, err := after.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, voted, kept)
 		require.Zero(t, restartedFetcher.calls.Load())
@@ -488,14 +503,14 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 		deadline := f.confirmedAt.Add(time.Second + time.Minute).Unix()
 		pending, err := json.Marshal(keptChallengeVote{Deadline: deadline})
 		require.NoError(t, err)
-		_, _, err = f.store.LoadOrStoreChallengeVote(challengeEscrow, 1, pending)
+		_, _, err = f.store.LoadOrStoreChallengeVote(challengeEscrow, challengeInferenceID, pending)
 		require.NoError(t, err)
 		blocked := &scriptedChallengeFetcher{
 			script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: bodyWithPositions}},
 			gate:   make(chan struct{}),
 		}
 		before := f.voter(t, 0, blocked, 60)
-		answer, err := before.VerifyChallenge(context.Background(), 1)
+		answer, err := before.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.True(t, answer.Pending)
 		before.Close()
@@ -507,7 +522,7 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 		up := devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchFetched, Response: bodyWithPositions}
 		resumed := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{down, down, up}}
 		after := f.voter(t, 0, resumed, 60)
-		data, settled, err := f.store.LoadOrStoreChallengeVote(challengeEscrow, 1, nil)
+		data, settled, err := f.store.LoadOrStoreChallengeVote(challengeEscrow, challengeInferenceID, nil)
 		require.NoError(t, err)
 		require.False(t, settled)
 		var pendingAfter keptChallengeVote
@@ -515,7 +530,7 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 		require.Equal(t, deadline, pendingAfter.Deadline)
 		var kept ChallengeAnswer
 		require.Eventually(t, func() bool {
-			kept, err = after.VerifyChallenge(context.Background(), 1)
+			kept, err = after.VerifyChallenge(context.Background(), challengeInferenceID)
 			return err == nil && !kept.Pending
 		}, 10*time.Second, 20*time.Millisecond)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_NONE, kept.Fault)
@@ -529,7 +544,7 @@ func TestVerifyChallenge_OneVerdictPerInference(t *testing.T) {
 		fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{down}}
 		h := f.voter(t, 0, fetcher, 60)
 
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, ChallengeRejectLate, answer.RejectCause, "an executor that is down when a late challenge comes is not at fault")
 		require.Equal(t, int32(1), fetcher.calls.Load(), "one attempt, no retries")
@@ -569,7 +584,7 @@ func TestVerifyChallenge_EmptyStream(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newChallengeFixture(t)
 			h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{tc.fetch}}, 60)
-			answer, err := h.VerifyChallenge(context.Background(), 1)
+			answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 			require.NoError(t, err)
 			require.Equal(t, tc.wantFault, answer.Fault)
 			require.Equal(t, tc.wantCheck, answer.Check)
@@ -581,7 +596,7 @@ func TestVerifyChallenge_EmptyStream(t *testing.T) {
 	t.Run("a stream challenge counts positions too", func(t *testing.T) {
 		f := newChallengeFixture(t)
 		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: noPositions}}}, 60)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM, answer.Fault)
 	})
@@ -592,9 +607,9 @@ func TestVerifyChallenge_EmptyStream(t *testing.T) {
 	t.Run("an earlier stream challenge does not hide an empty body", func(t *testing.T) {
 		f := newChallengeFixture(t)
 		h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: noPositions}}}, 60)
-		_, err := h.VerifyChallenge(context.Background(), 1)
+		_, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
-		answer, err := h.VerifyChallenge(context.Background(), 1)
+		answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 		require.NoError(t, err)
 		require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM, answer.Fault)
 	})
@@ -606,7 +621,7 @@ func TestVerifyChallenge_Rejects(t *testing.T) {
 	fetcher := &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchUnavailable}}}
 
 	executor := f.voter(t, 1, fetcher, 60)
-	answer, err := executor.VerifyChallenge(context.Background(), 1)
+	answer, err := executor.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.Equal(t, ChallengeRejectExecutor, answer.RejectCause)
 
@@ -616,7 +631,7 @@ func TestVerifyChallenge_Rejects(t *testing.T) {
 	require.Equal(t, ChallengeRejectNotLive, answer.RejectCause)
 
 	noFetcher := f.voter(t, 2, stub.NewValidationEngine(), 60)
-	answer, err = noFetcher.VerifyChallenge(context.Background(), 1)
+	answer, err = noFetcher.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.Equal(t, ChallengeRejectUnsupported, answer.RejectCause)
 	require.Zero(t, fetcher.calls.Load())
@@ -634,13 +649,13 @@ func TestVerifyChallenge_RepeatAskWhileFetchingAnswersAtOnce(t *testing.T) {
 	}
 	h := f.voter(t, 0, fetcher, 60)
 	first := time.Now()
-	answer, err := h.VerifyChallenge(context.Background(), 1)
+	answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.True(t, answer.Pending)
 	require.GreaterOrEqual(t, time.Since(first), 2*time.Second, "the first ask waits for the fetch")
 
 	again := time.Now()
-	answer, err = h.VerifyChallenge(context.Background(), 1)
+	answer, err = h.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.True(t, answer.Pending)
 	require.Less(t, time.Since(again), 500*time.Millisecond, "a repeat ask does not wait")
@@ -682,7 +697,7 @@ func TestVerifyChallenge_AFetchPastTheWindowIsCut(t *testing.T) {
 		onCut: &devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchRetry, ExecutorSide: true, Cause: "executor did not answer the payload call before the deadline"},
 	}
 	h := f.voter(t, 0, fetcher, 1)
-	answer, err := h.VerifyChallenge(context.Background(), 1)
+	answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.True(t, answer.Pending)
 
@@ -690,7 +705,7 @@ func TestVerifyChallenge_AFetchPastTheWindowIsCut(t *testing.T) {
 	// it past the window plus the grace.
 	var kept ChallengeAnswer
 	require.Eventually(t, func() bool {
-		kept, err = h.VerifyChallenge(context.Background(), 1)
+		kept, err = h.VerifyChallenge(context.Background(), challengeInferenceID)
 		return err == nil && !kept.Pending
 	}, 3*time.Second, 20*time.Millisecond, "the vote settles without the fetch returning")
 	require.Equal(t, types.ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE, kept.Fault, "an attempt the executor left unanswered inside the window")
@@ -715,13 +730,13 @@ func TestVerifyChallenge_ACutOnThisHostsSideLeavesTheVoteUnchecked(t *testing.T)
 		onCut:  &devshard.ChallengeFetch{Outcome: devshard.ChallengeFetchLocal, Cause: "resolve executor pubkeys: context deadline exceeded"},
 	}
 	h := f.voter(t, 0, fetcher, 1)
-	answer, err := h.VerifyChallenge(context.Background(), 1)
+	answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 	require.NoError(t, err)
 	require.True(t, answer.Pending)
 
 	var kept ChallengeAnswer
 	require.Eventually(t, func() bool {
-		kept, err = h.VerifyChallenge(context.Background(), 1)
+		kept, err = h.VerifyChallenge(context.Background(), challengeInferenceID)
 		return err == nil && !kept.Pending
 	}, 3*time.Second, 20*time.Millisecond, "the answer settles once the fetch is cut")
 	require.Equal(t, ChallengeRejectUnchecked, kept.RejectCause, "a cut on this host's side is no vote against the executor")
@@ -750,7 +765,7 @@ func TestVerifyChallenge_ModelBurnEmptyIsNoFault(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			f := newChallengeFixtureFor(t, testCase.model, testCase.output)
 			h := f.voter(t, 0, &scriptedChallengeFetcher{script: []devshard.ChallengeFetch{{Outcome: devshard.ChallengeFetchFetched, Response: noPositions}}}, 60)
-			answer, err := h.VerifyChallenge(context.Background(), 1)
+			answer, err := h.VerifyChallenge(context.Background(), challengeInferenceID)
 			require.NoError(t, err)
 			require.Equal(t, testCase.wantFault, answer.Fault)
 			requireVoteSignedBy(t, f.hosts[0], answer)
