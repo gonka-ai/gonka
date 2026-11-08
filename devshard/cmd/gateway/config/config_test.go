@@ -45,6 +45,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Limits.Concurrency.PoCRequestsPer10000Weight", configuration.Limits.Concurrency.PoCRequestsPer10000Weight, 10.0},
 		{"Limits.MaxInputTokensInFlight", configuration.Limits.MaxInputTokensInFlight, int64(0)},
 		{"Limits.AdmissionQueueWaitMS", configuration.Limits.AdmissionQueueWaitMS, int64(300_000)},
+		{"Limits.MinClientReadBytesPerSecond", configuration.Limits.MinClientReadBytesPerSecond, int64(65_536)},
 		{"Limits.FallbackMaxModelLen", configuration.Limits.FallbackMaxModelLen, int64(1_000_000)},
 		{"Limits.HostWindows.Input.MinRequests", configuration.Limits.HostWindows.Input.MinRequests, int64(16)},
 		{"Limits.HostWindows.Input.InitialRequests", configuration.Limits.HostWindows.Input.InitialRequests, int64(32)},
@@ -160,6 +161,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"poc_max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.PoCRequestsPer10000Weight = maxConcurrentRequests + 1 }, "poc_max_concurrent_requests_per_10000_weight"},
 		{"max_input_tokens_in_flight negative", func(c *Config) { c.Limits.MaxInputTokensInFlight = -1 }, "max_input_tokens_in_flight"},
 		{"admission_queue_wait_ms negative", func(c *Config) { c.Limits.AdmissionQueueWaitMS = -1 }, "admission_queue_wait_ms"},
+		{"min_client_read_bytes_per_second too low", func(c *Config) { c.Limits.MinClientReadBytesPerSecond = 0 }, "min_client_read_bytes_per_second"},
+		{"min_client_read_bytes_per_second too high", func(c *Config) { c.Limits.MinClientReadBytesPerSecond = maxMinClientReadBytesPerSecond + 1 }, "min_client_read_bytes_per_second"},
 		{"host_input_window_min_requests too low", func(c *Config) { c.Limits.HostWindows.Input.MinRequests = 0 }, "host_input_window_min_requests"},
 		{"host_input_window_initial_requests below min", func(c *Config) {
 			c.Limits.HostWindows.Input.InitialRequests = c.Limits.HostWindows.Input.MinRequests - 1

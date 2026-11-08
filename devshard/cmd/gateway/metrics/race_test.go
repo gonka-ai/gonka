@@ -189,7 +189,7 @@ func TestASuspiciousAttemptIsCountedAsNoWinner(t *testing.T) {
 }
 
 // Test flow:
-//  1. Table-driven: each case builds a `RaceOutcome` with a distinct lifecycle state (no attempts, escrow missing, balance exhausted, client gone before any attempt, client gone with a losing attempt) and the failure reason it must report.
+//  1. Table-driven: each case builds a `RaceOutcome` with a distinct lifecycle state (no attempts, escrow missing, balance exhausted, client gone before any attempt, client gone with a losing attempt, a reply the gateway refused with a losing attempt) and the failure reason it must report.
 //  2. For each case, record the race.
 //  3. Assert the request counter reports a failure under the case's expected reason.
 func TestALifecycleFailureNamesItselfRatherThanAnAttempt(t *testing.T) {
@@ -234,6 +234,23 @@ func TestALifecycleFailureNamesItselfRatherThanAnAttempt(t *testing.T) {
 				}},
 			},
 			expected: "client_cancelled",
+		},
+		{
+			name: "the gateway refused to carry the reply and no attempt won",
+			outcome: engine.RaceOutcome{
+				Model:     "qwen",
+				Decision:  "primary",
+				Lifecycle: engine.Lifecycle{ReplyRefused: true},
+				Attempts: []engine.AttemptOutcome{{
+					Participant: "gonka1loser",
+					Nonce:       13,
+					Role:        "primary",
+					StartReason: "primary",
+					SendTime:    at(0),
+					Terminal:    engine.TerminalErrorStream,
+				}},
+			},
+			expected: "reply_refused",
 		},
 	}
 	for _, testCase := range testCases {

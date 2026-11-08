@@ -22,4 +22,5 @@ const (
 	reasonNoAttempts       = "no_attempts"
 	reasonEscrowMissing    = "escrow_missing"
 	reasonBalanceExhausted = "balance_exhausted"
+	reasonReplyRefused     = "reply_refused"
 )

@@ -27,6 +27,8 @@ const (
 	maxConcurrentRequests    = 10_000_000
 	maxAdmissionQueuePerSlot = 10_000
 
+	maxMinClientReadBytesPerSecond = 1 << 30
+
 	maxConsecutiveBurns   = 1_000
 	maxDispatchQueueDepth = 65_536
 
@@ -143,6 +145,9 @@ func (c *Config) validateLimits(complain func(format string, args ...any)) {
 	}
 	if c.Limits.AdmissionQueueWaitMS < 0 {
 		complain("admission_queue_wait_ms: %d must be >= 0", c.Limits.AdmissionQueueWaitMS)
+	}
+	if c.Limits.MinClientReadBytesPerSecond < 1 || c.Limits.MinClientReadBytesPerSecond > maxMinClientReadBytesPerSecond {
+		complain("min_client_read_bytes_per_second: %d must be between 1 and %d", c.Limits.MinClientReadBytesPerSecond, maxMinClientReadBytesPerSecond)
 	}
 	validateRequestWindow("host_input_window", c.Limits.HostWindows.Input, complain)
 	validateRequestWindow("host_output_window", c.Limits.HostWindows.Output, complain)

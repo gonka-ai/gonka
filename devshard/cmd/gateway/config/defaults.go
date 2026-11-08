@@ -35,10 +35,11 @@ func Defaults() Config {
 			PollTimeoutMS:  chain.DefaultPollTimeout.Milliseconds(),
 		},
 		Limits: Limits{
-			DefaultMaxTokens:         int64(filters.DefaultRequestMaxTokens),
-			ForceUpstreamStreaming:   true,
-			MaxBufferedResponseBytes: 512 << 20,
-			MaxTokensCap:             int64(filters.RequestMaxTokensCap),
+			DefaultMaxTokens:            int64(filters.DefaultRequestMaxTokens),
+			ForceUpstreamStreaming:      true,
+			MaxBufferedResponseBytes:    512 << 20,
+			MinClientReadBytesPerSecond: 64 << 10,
+			MaxTokensCap:                int64(filters.RequestMaxTokensCap),
 			Concurrency: Concurrency{
 				MaxRequests:               2048,
 				RequestsPer10000Weight:    5,

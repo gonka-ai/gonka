@@ -4,13 +4,69 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/filters"
 )
+
+type failingSocket struct{ *httptest.ResponseRecorder }
+
+func (failingSocket) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
+
+// Test flow:
+//  1. Drive a `clientStream` into each of the gateway's own refusals: a reply buffer too small for the reply, written and then closed; an event past the carry bound, folded and streamed.
+//  2. Drive a streamed `clientStream` over a socket whose write fails.
+//  3. Assert every refusal wraps `engine.ErrReplyRefused` and keeps its own cause.
+//  4. Assert the socket's failure is passed on as it is, not as a refusal.
+func TestTheGatewaysOwnRefusalsAreMarkedAndASocketFailureIsNot(t *testing.T) {
+	oversizedEvent := bytes.Repeat([]byte("x"), maxBufferedResponseBytes+1)
+	for _, testCase := range []struct {
+		name      string
+		refuse    func() error
+		wantCause error
+		refused   bool
+	}{
+		{"the reply buffer is full", func() error {
+			_, err := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, NewBufferBudget(1<<10)).Write(bytes.Repeat([]byte("y"), 2<<10))
+			return err
+		}, ErrResponseBufferFull, true},
+		{"a reply closed after its buffer refused it", func() error {
+			stream := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, NewBufferBudget(1<<10))
+			_, _ = stream.Write(bytes.Repeat([]byte("y"), 2<<10))
+			return stream.Close()
+		}, ErrResponseBufferFull, true},
+		{"a folded event past the carry bound", func() error {
+			_, err := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, nil).Write(oversizedEvent)
+			return err
+		}, filters.ErrStreamCarryOverflow, true},
+		{"a streamed event past the carry bound", func() error {
+			_, err := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, nil).Write(oversizedEvent)
+			return err
+		}, filters.ErrStreamCarryOverflow, true},
+		{"a socket whose write fails", func() error {
+			_, err := newClientStream(failingSocket{httptest.NewRecorder()}, "req-1", true, false, filters.LogprobIntent{}, nil).Write([]byte(`data: {"choices":[{"index":0,"delta":{"content":"a"}}]}` + "\n\n"))
+			return err
+		}, io.ErrClosedPipe, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := testCase.refuse()
+			if err == nil {
+				t.Fatal("no error, want one")
+			}
+			if !errors.Is(err, testCase.wantCause) {
+				t.Errorf("error = %v, want it to wrap %v", err, testCase.wantCause)
+			}
+			if refused := errors.Is(err, engine.ErrReplyRefused); refused != testCase.refused {
+				t.Errorf("error %v is a refusal = %t, want %t", err, refused, testCase.refused)
+			}
+		})
+	}
+}
 
 // Test flow:
 //  1. Create a non-streaming `clientStream` and write 1MB chunks to it in a loop, past `maxBufferedResponseBytes`.

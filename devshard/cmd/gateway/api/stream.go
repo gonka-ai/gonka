@@ -74,25 +74,16 @@ func (c *clientStream) Write(chunk []byte) (int, error) {
 		return len(chunk), nil
 	}
 	if !c.streaming {
-		written, err := c.folder.Write(chunk)
+		written, err := c.foldLocked(chunk)
 		if err != nil {
-			return 0, err
-		}
-		if held := c.folder.Held(); held > maxBufferedResponseBytes {
-			return 0, fmt.Errorf("buffered response exceeds %d bytes", maxBufferedResponseBytes)
-		} else if owed := held - c.charged; owed > 0 {
-			if !c.budget.reserve(owed) {
-				c.overBudget = true
-				return 0, ErrResponseBufferFull
-			}
-			c.charged += owed
+			return 0, refuse(err)
 		}
 		return written, nil
 	}
 	c.beginLocked("text/event-stream")
 	rewritten, err := c.rewriter.Write(chunk)
 	if err != nil {
-		return 0, err
+		return 0, refuse(err)
 	}
 	if forwarded := filters.TrimSSEDone(rewritten); len(forwarded) > 0 {
 		if _, writeErr := c.emitLocked(forwarded); writeErr != nil {
@@ -101,6 +92,25 @@ func (c *clientStream) Write(chunk []byte) (int, error) {
 	}
 	return len(chunk), nil
 }
+
+func (c *clientStream) foldLocked(chunk []byte) (int, error) {
+	written, err := c.folder.Write(chunk)
+	if err != nil {
+		return 0, err
+	}
+	if held := c.folder.Held(); held > maxBufferedResponseBytes {
+		return 0, fmt.Errorf("buffered response exceeds %d bytes", maxBufferedResponseBytes)
+	} else if owed := held - c.charged; owed > 0 {
+		if !c.budget.reserve(owed) {
+			c.overBudget = true
+			return 0, ErrResponseBufferFull
+		}
+		c.charged += owed
+	}
+	return written, nil
+}
+
+func refuse(err error) error { return fmt.Errorf("%w: %w", engine.ErrReplyRefused, err) }
 
 func (c *clientStream) Flush() {
 	c.mu.Lock()
@@ -131,7 +141,7 @@ func (c *clientStream) Close() error {
 	if c.overBudget {
 		writeError(c.writer, http.StatusServiceUnavailable, ErrResponseBufferFull.Error())
 		c.started = true
-		return ErrResponseBufferFull
+		return refuse(ErrResponseBufferFull)
 	}
 	body := c.folder.Body()
 	c.beginStatusLocked("application/json", statusForAssembled(body))

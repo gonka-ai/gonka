@@ -15,6 +15,7 @@ type Tunables struct {
 	ForceUpstreamStreaming                 *bool    `json:"force_upstream_streaming,omitempty"`
 	LogprobsOptimization                   *bool    `json:"logprobs_optimization,omitempty"`
 	MaxBufferedResponseBytes               *int64   `json:"max_buffered_response_bytes,omitempty"`
+	MinClientReadBytesPerSecond            *int64   `json:"min_client_read_bytes_per_second,omitempty"`
 	WarmNewEscrows                         *bool    `json:"warm_new_escrows,omitempty"`
 	Disabled                               *bool    `json:"disabled,omitempty"`
 	DisabledMessage                        *string  `json:"disabled_message,omitempty"`

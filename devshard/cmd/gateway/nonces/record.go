@@ -112,7 +112,7 @@ func (n *Recorder) RecordProbe(escrowID string, attempt accounting.Attempt) erro
 
 // A winner crowned after its client left needs its own terminal, or that population is unfindable.
 func terminalFor(outcome engine.RaceOutcome, attempt engine.AttemptOutcome) string {
-	if outcome.Lifecycle.ClientGone && outcome.IsWinner(attempt) {
+	if outcome.Lifecycle.ReplyUndelivered() && outcome.IsWinner(attempt) {
 		return accounting.TerminalClientGone
 	}
 	return attempt.Terminal.String()
