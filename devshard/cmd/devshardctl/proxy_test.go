@@ -719,6 +719,9 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 func setupLiveFloorProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
 	t.Helper()
 	env := setupSeededFloorProxy(t, numHosts, engines, verifierAccept, &testChain{live: true, start: time.Now()})
+	// The gateway leaves the heartbeat cadence off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is on;
+	// StartHeartbeatLoop still starts the height-seed loop.
+	env.session.SetDisableHeightSyncHeartbeat(true)
 	env.session.StartHeartbeatLoop()
 	return env
 }
@@ -1573,6 +1576,7 @@ func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T
 	divergent.ForceError(nil)
 	var second bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
+	env.proxy.redundancy.waitRaceCleanups()
 	require.EqualValues(t, 3, divergent.LastRequest().Nonce, "the host has to be dispatched to again to prove itself")
 
 	_, blocked = env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
@@ -2691,9 +2695,10 @@ func TestRunInference_AllHostsHangBeforeReceiptFailsClosed(t *testing.T) {
 type lateReceiptThenContentClient struct {
 	receiptDelay time.Duration
 	contentDelay time.Duration
+	receipt      func(nonce uint64) *host.HostResponse
 }
 
-func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+func (c *lateReceiptThenContentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	for _, delay := range []time.Duration{c.receiptDelay, c.contentDelay} {
 		select {
 		case <-time.After(delay):
@@ -2701,7 +2706,7 @@ func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostReq
 			return nil, ctx.Err()
 		}
 		if receiptHandler != nil {
-			receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+			receiptHandler(c.receipt(req.Nonce))
 			receiptHandler = nil
 			continue
 		}
@@ -2725,8 +2730,13 @@ func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostReq
 func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttemptLimit(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 40*time.Millisecond, 400*time.Millisecond, 0, 50*time.Millisecond)
-	slowHost := lateReceiptThenContentClient{receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
+	slowHost := &lateReceiptThenContentClient{receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
 	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	slowHost.receipt = func(nonce uint64) *host.HostResponse {
+		resp := applicableResponse(t, env, nonce)
+		resp.Mempool = nil
+		return resp
+	}
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 400*time.Millisecond)
 
@@ -2744,8 +2754,13 @@ func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttem
 func TestRunInference_AtTheAttemptLimitAReceiptedAttemptPastOneFirstTokenBudgetIsServed(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 40*time.Millisecond, 100*time.Millisecond, 0, 50*time.Millisecond)
-	slowHost := lateReceiptThenContentClient{receiptDelay: 10 * time.Millisecond, contentDelay: 170 * time.Millisecond}
+	slowHost := &lateReceiptThenContentClient{receiptDelay: 10 * time.Millisecond, contentDelay: 170 * time.Millisecond}
 	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	slowHost.receipt = func(nonce uint64) *host.HostResponse {
+		resp := applicableResponse(t, env, nonce)
+		resp.Mempool = nil
+		return resp
+	}
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 100*time.Millisecond)
 
