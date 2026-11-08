@@ -57,6 +57,11 @@ type HTTPSessionConfig struct {
 	// harnesses that need protocol timeouts shorter than production defaults.
 	RefusalTimeoutSeconds   *int64
 	ExecutionTimeoutSeconds *int64
+	// AllowHostStateRecovery enables reconstructing session state from
+	// Creator-signed diffs on the escrow's hosts when local SQLite recovery is
+	// unrecoverable or missing. Used exclusively on settlement paths so an
+	// unservable escrow can still be settled with real host stats.
+	AllowHostStateRecovery bool
 }
 
 // hostClientConfig is the transport config one host client runs with.
@@ -222,12 +227,12 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	config = types.NormalizeSessionConfig(config, len(group))
 
 	storagePath := resolveHTTPSessionStoragePath(cfg.EscrowID, cfg.StoragePath)
-	if err := os.MkdirAll(filepath.Dir(storagePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(storagePath), 0755); err != nil && !cfg.AllowHostStateRecovery {
 		return nil, nil, fmt.Errorf("create storage dir: %w", err)
 	}
-	sqlStore, err := storage.NewSQLite(storagePath)
-	if err != nil {
-		return nil, nil, fmt.Errorf("open storage: %w", err)
+	sqlStore, sqlOpenErr := storage.NewSQLite(storagePath)
+	if sqlOpenErr != nil && !cfg.AllowHostStateRecovery {
+		return nil, nil, fmt.Errorf("open storage: %w", sqlOpenErr)
 	}
 
 	clients := make([]HostClient, len(group))
@@ -266,7 +271,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 	clientCache, err := openHostClients(cfg.EscrowID, group, build)
 	if err != nil {
-		sqlStore.Close()
+		if sqlStore != nil {
+			sqlStore.Close()
+		}
 		return nil, nil, err
 	}
 	for i, slot := range group {
@@ -274,19 +281,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		clients[i] = clientCache[slot.ValidatorAddress]
 	}
 
-	// Check if there is an existing session to recover from.
-	_, metaErr := sqlStore.GetSessionMeta(cfg.EscrowID)
-	if metaErr == nil {
-		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
-		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
-			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
-		)
-		if recErr != nil {
-			closeHostClients(hostClientsFromCache(clientCache))
-			sqlStore.Close()
-			return nil, nil, fmt.Errorf("recover session: %w", recErr)
-		}
-		enableWarmKeyResolver()
+	wireRecoveredSession := func(session *Session) {
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
@@ -298,7 +293,60 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
 		}
 		session.SetHeightSyncPeerTips(sharedPeerTips)
+	}
+
+	recoverFromHosts := func(localCause error) (*Session, *state.StateMachine, error) {
+		if sqlStore != nil {
+			sqlStore.Close()
+			sqlStore = nil
+		}
+		session, recSM, hostErr := RecoverSessionFromHosts(
+			context.Background(),
+			signer,
+			verifier,
+			cfg.EscrowID,
+			sessionVersion,
+			escrow.EpochID,
+			escrow.CreatorAddress,
+			escrow.Amount,
+			config,
+			group,
+			clients,
+			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey))...,
+		)
+		if hostErr != nil {
+			closeHostClients(hostClientsFromCache(clientCache))
+			return nil, nil, fmt.Errorf("recover session from hosts after %v: %w", localCause, hostErr)
+		}
+		wireRecoveredSession(session)
 		return session, recSM, nil
+	}
+
+	if sqlStore == nil {
+		return recoverFromHosts(sqlOpenErr)
+	}
+
+	// Check if there is an existing session to recover from.
+	_, metaErr := sqlStore.GetSessionMeta(cfg.EscrowID)
+	if metaErr == nil {
+		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
+		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
+			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
+		)
+		if recErr != nil {
+			if cfg.AllowHostStateRecovery && errors.Is(recErr, ErrLocalStateUnrecoverable) {
+				return recoverFromHosts(recErr)
+			}
+			closeHostClients(hostClientsFromCache(clientCache))
+			sqlStore.Close()
+			return nil, nil, fmt.Errorf("recover session: %w", recErr)
+		}
+		enableWarmKeyResolver()
+		wireRecoveredSession(session)
+		return session, recSM, nil
+	}
+	if cfg.AllowHostStateRecovery {
+		return recoverFromHosts(metaErr)
 	}
 	if !errors.Is(metaErr, storage.ErrSessionNotFound) {
 		closeHostClients(hostClientsFromCache(clientCache))
