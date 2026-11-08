@@ -301,6 +301,20 @@ func (m *Manager) accountInfo(ctx context.Context, address string) (chainAccount
 }
 
 func (m *Manager) broadcastTx(ctx context.Context, txBytes []byte) (string, error) {
+	if slots := m.cfg.BroadcastSlots; slots != nil {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+		case <-ctx.Done():
+			return "", ctx.Err()
+		}
+	}
 	svc := txtypes.NewServiceClient(m.client)
 	resp, err := svc.BroadcastTx(ctx, &txtypes.BroadcastTxRequest{
 		TxBytes: txBytes,
