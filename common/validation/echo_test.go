@@ -203,11 +203,11 @@ func TestExecuteEchoValidation_InflatedCountsAndRejectedIDsFail(t *testing.T) {
 
 func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
 	th := EchoThresholdsFor("deepseek-ai/DeepSeek-V4-Flash-0731")
-	// 500 positions at an honest 3.8%: 19 expected, the 99.5% bound at 30.
-	require.True(t, th.Pass(EchoSignals{Steps: 500, Count: 30, Z: 0}))
-	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 31, Z: 0}))
+	// 500 positions at an honest 5 %: 25 expected, the 99.5 % bound at 38.
+	require.True(t, th.Pass(EchoSignals{Steps: 500, Count: 38, Z: 0}))
+	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 39, Z: 0}))
 	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, Z: -3.1}))
-	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, MaxGap: 3.6}))
+	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, MaxGap: 5.1}))
 	// Without a calibration only Z decides.
 	require.True(t, EchoThresholdsFor("other/model").Pass(EchoSignals{Steps: 500, Count: 200, MaxGap: 20, Z: -2.9}))
 }

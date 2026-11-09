@@ -86,11 +86,14 @@ type EchoThresholds struct {
 	MaxGap   float64
 }
 
-// echoThresholds: honest DeepSeek-V4-Flash-0731 FP8 on one B300 and honest
-// Qwen3-0.6B on one RTX 3090, 2026-11-04, 64 answers each; FlipRate is the
-// share of positions off the winner, MaxGap the largest gap seen.
+// echoThresholds: honest DeepSeek-V4-Flash-0731 FP8 with executor and
+// validator on one B300, on 2xH200 and across the two (512 scored answers,
+// 2026-11-09: 3.4-4.1 % of positions off the winner, largest gap 4.9) and
+// honest Qwen3-0.6B on one RTX 3090 (2026-11-04, 64 answers). FlipRate is the
+// honest share of positions off the winner with a margin for the length bound,
+// MaxGap the largest honest gap seen with a margin.
 var echoThresholds = map[string]EchoThresholds{
-	"deepseek-ai/DeepSeek-V4-Flash-0731": {ZMin: -3, FlipRate: 0.038, MaxGap: 3.5},
+	"deepseek-ai/DeepSeek-V4-Flash-0731": {ZMin: -3, FlipRate: 0.05, MaxGap: 5},
 	"Qwen/Qwen3-0.6B":                    {ZMin: -3, FlipRate: 0.006, MaxGap: 6.4},
 }
 
