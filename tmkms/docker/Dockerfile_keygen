@@ -1,31 +1,64 @@
-FROM rust:latest
+# syntax=docker/dockerfile:1.4
+#
+# tmkms signer image (generates a consensus key on first start).
+#
+# - tmkms 0.14.0, NOT 0.15.0: 0.15.0 drops the vote-extension signature on the
+#   wire (iqlusioninc/tmkms#1174); see devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md (F7).
+# - Built from the checksum-pinned crates.io source with a reviewed lockfile
+#   (tmkms/build/tmkms-0.14.0.Cargo.lock): patch-level security updates over the
+#   upstream lock (bytes, time, tracing-subscriber, anyhow, keccak, futures, spin);
+#   see devshard/docs/block-bls-beacon-step1-gaps.md (M1).
+# - Multi-stage: the runtime image carries only the binary, Python for
+#   tmkms-pubkey and the entrypoint scripts; tmkms runs as a non-root user (M2).
 
-ENV RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"
+ARG RUST_IMAGE=rust:1.91-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65
+ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
-RUN apt-get update && apt-get install -y \
-  libusb-1.0-0-dev \
-  pkg-config \
-  python3 \
-  python3-cryptography \
-  python3-nacl \
-  --no-install-recommends && \
-  rm -rf /var/lib/apt/lists/*
+FROM ${RUST_IMAGE} AS builder
+ARG TARGETARCH
+ARG TMKMS_VERSION=0.14.0
+ARG TMKMS_CRATE_SHA256=4c61273ef1e4290b4fb055e0b9cfb006c567740446f5cbe7959ed6dba0cfb77a
 
-RUN cargo install tmkms --features=softsign --version=0.12.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl pkg-config libusb-1.0-0-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN curl -fsSL "https://static.crates.io/crates/tmkms/tmkms-${TMKMS_VERSION}.crate" -o tmkms.crate \
+  && echo "${TMKMS_CRATE_SHA256}  tmkms.crate" | sha256sum -c - \
+  && tar xzf tmkms.crate
+COPY build/tmkms-${TMKMS_VERSION}.Cargo.lock /build/tmkms-${TMKMS_VERSION}/Cargo.lock
+RUN cd "tmkms-${TMKMS_VERSION}" \
+  && if [ "$TARGETARCH" = "amd64" ]; then export RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"; fi \
+  && cargo build --release --locked --features softsign \
+  && install -m 0755 target/release/tmkms /usr/local/bin/tmkms
+
+FROM ${RUNTIME_IMAGE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libusb-1.0-0 python3 python3-cryptography python3-nacl \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --uid 10001 --user-group --home-dir /nonexistent --shell /usr/sbin/nologin tmkms \
+  && chmod 0711 /root
+
+COPY --from=builder /usr/local/bin/tmkms /usr/local/bin/tmkms
 
 WORKDIR /root
 
-RUN tmkms init /app/tmkms_init_data
-
+# Template copied into an empty /root/.tmkms volume on first start. No secrets
+# here: the KMS identity key is generated per install by init.sh (previously
+# `tmkms init` at build time baked one shared key into every image).
 ARG TMKMS_TOML=tmkms.toml
+RUN mkdir -p /app/tmkms_init_data/secrets /app/tmkms_init_data/state
 COPY ${TMKMS_TOML} /app/tmkms_init_data/tmkms.toml
-COPY docker/init.sh /root/init.sh
-RUN chmod +x /root/init.sh
 
+COPY docker/init.sh /root/init.sh
+COPY docker/migrate-toml.sh /root/migrate-toml.sh
+COPY docker/rollback-toml.sh /root/rollback-toml.sh
 COPY pubkey.py /usr/local/bin/tmkms-pubkey
-RUN chmod +x /usr/local/bin/tmkms-pubkey
+RUN chmod +x /root/init.sh /root/migrate-toml.sh /root/rollback-toml.sh /usr/local/bin/tmkms-pubkey
 
 ENV WITHKEYGEN=true
+# init.sh starts as root (volume ownership, migration, key generation) and
+# drops to the `tmkms` user for `tmkms start`; TMKMS_RUN_AS=root opts out.
 ENTRYPOINT ["/root/init.sh"]
-
-

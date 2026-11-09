@@ -1,0 +1,80 @@
+name: tmkms config migration and rollback
+
+# Guards the in-place tmkms.toml migration (sign_extensions / protocol_version)
+# that operators rely on when swapping the tmkms image before CometBFT vote
+# extensions are enabled, and the rollback to the legacy tmkms 0.12 image
+# (block BLS beacon plan, Step 0; review finding H2).
+
+on:
+  pull_request:
+    paths:
+      - tmkms/docker/**
+      - tmkms/template/**
+      - tmkms/build/**
+      - .github/workflows/tmkms-config-migration.yml
+  push:
+    branches: [main]
+    paths:
+      - tmkms/docker/**
+      - tmkms/template/**
+      - tmkms/build/**
+      - .github/workflows/tmkms-config-migration.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  migrate-toml:
+    name: Migrate legacy tmkms.toml
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Shellcheck
+        run: |
+          shellcheck \
+            tmkms/docker/migrate-toml.sh tmkms/docker/migrate-toml_test.sh \
+            tmkms/docker/rollback-toml.sh tmkms/docker/rollback-toml_test.sh \
+            tmkms/docker/rollback-smoke_test.sh
+
+      - name: Migration tests
+        run: sh tmkms/docker/migrate-toml_test.sh
+
+      - name: Rollback tests
+        run: sh tmkms/docker/rollback-toml_test.sh
+
+  rollback-smoke:
+    name: Legacy tmkms 0.12 starts after rollback
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Rollback smoke against the production legacy image
+        run: sh tmkms/docker/rollback-smoke_test.sh
+
+  lockfile-audit:
+    name: cargo audit of the tmkms lockfile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      # Accepted residuals are documented in tmkms/build/README.md; anything new fails.
+      - name: Audit tmkms/build/tmkms-0.14.0.Cargo.lock
+        run: |
+          cargo audit --file tmkms/build/tmkms-0.14.0.Cargo.lock \
+            --deny unsound --deny yanked \
+            --ignore RUSTSEC-2026-0387 \
+            --ignore RUSTSEC-2024-0421 \
+            --ignore RUSTSEC-2026-0258 \
+            --ignore RUSTSEC-2026-0386 \
+            --ignore RUSTSEC-2019-0036

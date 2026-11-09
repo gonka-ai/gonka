@@ -430,6 +430,32 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "comet-validator-set"))
     }
 
+    fun getCometValidatorsAt(height: Long): CometValidatorsResponse = wrapLog("getCometValidatorsAt", false) {
+        execAndParse(listOf("query", "comet-validator-set", height.toString()))
+    }
+
+    /**
+     * Validator addresses (hex, upper case) whose precommit for height-1 was
+     * committed in block [height]'s LastCommit (block_id_flag COMMIT).
+     * Parsed leniently from `query block --type=height` JSON, which is either
+     * the block itself or wrapped in {"block": ...}.
+     */
+    fun getLastCommitSigners(height: Long): Set<String> = wrapLog("getLastCommitSigners", false) {
+        val raw = exec(listOf(config.execName, "query", "block", "--type=height", height.toString(), "--output", "json"))
+            .joinToString("")
+        val root = com.google.gson.JsonParser.parseString(raw.substring(raw.indexOf('{'))).asJsonObject
+        val block = if (root.has("block")) root.getAsJsonObject("block") else root
+        val lastCommit = block.getAsJsonObject("last_commit") ?: block.getAsJsonObject("lastCommit")
+            ?: error("no last_commit in block $height")
+        lastCommit.getAsJsonArray("signatures").mapNotNull { el ->
+            val sig = el.asJsonObject
+            val flag = (sig.get("block_id_flag") ?: sig.get("blockIdFlag"))?.asString ?: ""
+            val committed = flag == "BLOCK_ID_FLAG_COMMIT" || flag == "2"
+            val addr = (sig.get("validator_address") ?: sig.get("validatorAddress"))?.asString
+            if (committed && !addr.isNullOrBlank()) normalizeValidatorAddress(addr) else null
+        }.toSet()
+    }
+
     data class TokenomicsWrapper(val tokenomicsData: TokenomicsData)
 
     fun getTokenomics(): TokenomicsWrapper = wrapLog("getTokenomics", false) {
@@ -817,8 +843,23 @@ data class ApplicationCLI(
         return exec(listOf(config.execName, "comet", "show-address"))[0]
     }
 
+    /**
+     * Consensus pubkey the running node actually signs with.
+     *
+     * Prefer `status`: with a remote signer (tmkms) it reports the signer's key.
+     * `comet show-validator` is wrong in that case, because `inferenced start`
+     * always regenerates a local priv_validator_key.json (SDK `LoadOrGenFilePV`)
+     * that the node then ignores in favour of the remote signer; registering that
+     * key makes the validator unable to sign once it joins the set.
+     * Falls back to `show-validator` when the node's RPC is not up yet.
+     */
     fun getValidatorInfo(): Pubkey2 = wrapLog("getValidatorInfo", infoLevel = false) {
-        execAndParse(listOf("comet", "show-validator"), includeOutputFlag = false)
+        val fromStatus = runCatching { getStatus().validatorInfo.pubKey }.getOrNull()
+        if (fromStatus != null && fromStatus.value.isNotBlank()) {
+            Pubkey2(type = "/cosmos.crypto.ed25519.PubKey", key = fromStatus.value)
+        } else {
+            execAndParse(listOf("comet", "show-validator"), includeOutputFlag = false)
+        }
     }
 
     fun getGovernanceProposals(): GovernanceProposals = wrapLog("getGovernanceProposals", infoLevel = false) {
@@ -1096,3 +1137,8 @@ data class CliRetryRule(
         }
     }
 }
+
+/** Comet validator addresses appear as hex or base64 depending on the endpoint; normalize to upper-case hex. */
+fun normalizeValidatorAddress(addr: String): String =
+    if (addr.matches(Regex("^[0-9A-Fa-f]{40}$"))) addr.uppercase()
+    else java.util.Base64.getDecoder().decode(addr).joinToString("") { "%02X".format(it) }

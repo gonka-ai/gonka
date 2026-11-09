@@ -298,6 +298,10 @@ func New(
 
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
+	// Vote-extension / proposal / pre-block handlers for the block BLS beacon.
+	// Must be registered before app.Load seals the BaseApp.
+	app.registerBeaconABCI(appOpts)
+
 	// SendRestriction configuration is handled automatically through dependency injection
 	// The restrictions module provides its SendRestrictionFn with the "bank-send-restrictions" group tag
 	// The bank module automatically collects and applies all registered send restrictions

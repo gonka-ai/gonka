@@ -14,6 +14,29 @@ data class AppExport(
     val initialHeight: Int,
     val appHash: String,
     val appState: AppState,
+    val consensus: ConsensusGenesis? = null,
+    // Legacy CometBFT layout (top-level `consensus_params`), as written by join
+    // nodes that fetch genesis from a peer's RPC.
+    val consensusParams: ConsensusGenesisParams? = null,
+) {
+    /** vote_extensions_enable_height from either genesis layout (null if absent). */
+    val voteExtensionsEnableHeight: Long?
+        get() = consensus?.params?.abci?.voteExtensionsEnableHeight
+            ?: consensusParams?.abci?.voteExtensionsEnableHeight
+}
+
+/** Top-level CometBFT `consensus` section of genesis.json (only what tests need). */
+data class ConsensusGenesis(
+    val params: ConsensusGenesisParams? = null,
+)
+
+data class ConsensusGenesisParams(
+    val abci: AbciGenesisParams? = null,
+)
+
+data class AbciGenesisParams(
+    // genesis encodes int64 as a JSON string ("2"); Gson parses it into Long.
+    val voteExtensionsEnableHeight: Long? = null,
 )
 
 data class AppState(

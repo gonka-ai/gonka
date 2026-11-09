@@ -1,0 +1,29 @@
+# Tendermint KMS basic configuration file
+## Chain Configuration
+[[chain]]
+id = "gonka-mainnet"
+key_format = { type = "bech32", account_key_prefix = "gonka", consensus_key_prefix = "gonka" }
+# state_file stores information about the latest signature to prevent double-signing.
+# It is critical for validator security and must accompany the validator during all migrations and restarts.
+state_file = "/root/.tmkms/state/priv_validator_state.json"
+
+## Signing Provider Configuration
+### Software-based Signer Configuration
+[[providers.softsign]]
+chain_ids = ["gonka-mainnet"]
+key_type = "consensus"
+# path to validator's private key
+path = "/root/.tmkms/secrets/priv_validator_key.softsign"
+
+## Validator Configuration
+[[validator]]
+chain_id = "gonka-mainnet"
+# addr is the address that TMKMS should connect to in order to sign blocks.
+# The port must match the value of priv_validator_laddr specified in the validator’s config.toml
+# (inside the Docker container, if TMKMS and the validator are running in the same Docker network).
+addr = "tcp://<validator_addr:port>"
+# secret_key is the connection secret key (not the validator's private key!),
+# used by TMKMS to establish a secure connection with the validator node. DO NOT MODIFY.
+secret_key = "/root/.tmkms/secrets/kms-identity.key"
+protocol_version = "v0.34"
+reconnect = true

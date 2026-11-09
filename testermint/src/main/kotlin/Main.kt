@@ -451,8 +451,20 @@ val inferenceConfig = ApplicationConfig(
     denom = "ngonka",
     stateDirName = ".inference",
     // TODO: probably need to add more to the spec here, so if tests change them we change back
-    genesisSpec = createSpec()
+    genesisSpec = createSpec(),
+    voteExtensionsEnableHeight = voteExtensionsHeightFromEnv(),
 )
+
+/**
+ * TESTERMINT_VE_ENABLE_HEIGHT=<n> runs every test that uses [inferenceConfig]
+ * with CometBFT vote extensions enabled from height n (the block BLS beacon
+ * regression job uses 2). Unset = vote extensions off, as on mainnet today.
+ */
+fun voteExtensionsHeightFromEnv(): Long? =
+    System.getenv("TESTERMINT_VE_ENABLE_HEIGHT")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+        it.toLongOrNull()?.takeIf { h -> h >= 0 }
+            ?: error("TESTERMINT_VE_ENABLE_HEIGHT must be a non-negative integer, got '$it'")
+    }
 
 fun createSpec(epochLength: Long = 15L, epochShift: Int = 0): Spec<AppState> = spec {
     this[AppState::gov] = spec<GovState> {

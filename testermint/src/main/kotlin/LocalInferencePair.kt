@@ -533,6 +533,25 @@ data class LocalInferencePair(
             null
         }
 
+    /** Recent stdout/stderr of a sibling container of this pair (e.g. "node", "tmkms"). */
+    fun readSiblingLogs(serviceName: String, tail: Int = 500): String = wrapLog("readSiblingLogs", false) {
+        val output = ExecCaptureOutput()
+        val containerId = siblingContainerId(serviceName)
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            val command = dockerClient.logContainerCmd(containerId)
+                .withStdOut(true)
+                .withStdErr(true)
+                .withTimestamps(false)
+            if (tail > 0) {
+                command.withTail(tail)
+            }
+            val callback = command.exec(output)
+            callback.awaitCompletion(10, TimeUnit.SECONDS)
+            callback.close()
+        }
+        output.output.joinToString("")
+    }
+
     fun readVersiondLogs(tail: Int = 200): String = wrapLog("readVersiondLogs", false) {
         val output = ExecCaptureOutput()
         val containerId = siblingContainerId("versiond")
@@ -1379,6 +1398,11 @@ data class ApplicationConfig(
     // that need to enable optional features (e.g. running devshardd under
     // versiond) without polluting the JVM-wide environment.
     val additionalEnvVars: Map<String, String> = emptyMap(),
+    // CometBFT consensus param `abci.vote_extensions_enable_height` written into
+    // genesis (top-level `consensus` section, next to `app_state`). null = leave
+    // the chain default (0 = disabled). Part of cluster matching, so a running
+    // cluster with a different value is rebooted.
+    val voteExtensionsEnableHeight: Long? = null,
 ) {
     val mountDir: String
         get() = "./$chainId/$pairName:/root/$stateDirName"

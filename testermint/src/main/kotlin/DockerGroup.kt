@@ -2,6 +2,7 @@ package com.productscience
 
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
+import com.productscience.data.AppExport
 import com.productscience.data.AppState
 import com.productscience.data.Spec
 import com.productscience.data.UnfundedInferenceParticipant
@@ -762,8 +763,14 @@ data class DockerGroup(
         if (Files.exists(publicHtmlDir)) {
             publicHtmlDir.copyToRecursively(filesDir, overwrite = true, followLinks = false)
         }
-        val jsonOverrides = config.genesisSpec?.toJson(cosmosJson)?.let { "{ \"app_state\": $it }" } ?: "{}"
-        Files.writeString(inferenceDir.resolve("genesis_overrides.json"), jsonOverrides, StandardOpenOption.CREATE)
+        val jsonOverrides = genesisOverridesJson(config)
+        Files.writeString(
+            inferenceDir.resolve("genesis_overrides.json"),
+            jsonOverrides,
+            StandardOpenOption.CREATE,
+            StandardOpenOption.TRUNCATE_EXISTING,
+            StandardOpenOption.WRITE,
+        )
         Logger.info("Setup files for keyName={}", pairName)
     }
 
@@ -1201,6 +1208,26 @@ fun setupLocalCluster(joinCount: Int, config: ApplicationConfig, reboot: Boolean
     }
 }
 
+/**
+ * Builds genesis_overrides.json. The node's init script deep-merges it into the
+ * whole genesis (`jq '. * input'`), so top-level sections other than app_state
+ * (e.g. CometBFT `consensus.params`) can be overridden too.
+ */
+fun genesisOverridesJson(config: ApplicationConfig): String {
+    val sections = mutableListOf<String>()
+    config.genesisSpec?.toJson(cosmosJson)?.let { sections += "\"app_state\": $it" }
+    config.voteExtensionsEnableHeight?.let { height ->
+        require(height >= 0) { "voteExtensionsEnableHeight must be >= 0, got $height" }
+        sections += "\"consensus\": { \"params\": { \"abci\": { \"vote_extensions_enable_height\": \"$height\" } } }"
+    }
+    return if (sections.isEmpty()) "{}" else sections.joinToString(prefix = "{ ", separator = ", ", postfix = " }")
+}
+
+fun voteExtensionsHeightMatches(config: ApplicationConfig, genesis: AppExport): Boolean {
+    val actual = genesis.voteExtensionsEnableHeight ?: 0L
+    return actual == (config.voteExtensionsEnableHeight ?: 0L)
+}
+
 @OptIn(ExperimentalContracts::class)
 fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: ApplicationConfig): Boolean {
     contract {
@@ -1209,6 +1236,13 @@ fun clusterMatchesConfig(cluster: LocalCluster?, joinCount: Int, config: Applica
     if (cluster == null) return false
     if (cluster.joinPairs.size != joinCount) return false
     val genesisState = cluster.genesis.node.getGenesisState()
+    if (!voteExtensionsHeightMatches(config, genesisState)) {
+        Logger.info(
+            "Cluster vote_extensions_enable_height does not match config (want {}), rebooting",
+            config.voteExtensionsEnableHeight ?: 0L
+        )
+        return false
+    }
     return config.genesisSpec?.matches(genesisState.appState) != false
 }
 

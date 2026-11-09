@@ -1,30 +1,62 @@
-FROM rust:latest
+# syntax=docker/dockerfile:1.4
+#
+# tmkms signer image that imports an existing consensus key.
+#
+# Same builder and runtime hardening as Dockerfile_keygen (tmkms 0.14.0 from a
+# checksum-pinned crate + reviewed lockfile, multi-stage, non-root runtime).
+#
+# WARNING (pre-existing, devshard/docs/block-bls-beacon-step1-gaps.md P1): this
+# image copies priv_validator_key.json into its layers at build time. Never push
+# it to a registry; prefer mounting the key at runtime.
 
-ENV RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"
+ARG RUST_IMAGE=rust:1.91-slim-bookworm@sha256:8514999d4786ef12efe89239e86b3d0a021b94b9d35108c8efe6c79ca7dc1a65
+ARG RUNTIME_IMAGE=debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 
-RUN apt-get update && apt-get install -y \
-  libusb-1.0-0-dev \
-  pkg-config \
-  --no-install-recommends && \
-  rm -rf /var/lib/apt/lists/*
+FROM ${RUST_IMAGE} AS builder
+ARG TARGETARCH
+ARG TMKMS_VERSION=0.14.0
+ARG TMKMS_CRATE_SHA256=4c61273ef1e4290b4fb055e0b9cfb006c567740446f5cbe7959ed6dba0cfb77a
 
-RUN cargo install tmkms --features=softsign --version=0.12.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl pkg-config libusb-1.0-0-dev \
+  && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN curl -fsSL "https://static.crates.io/crates/tmkms/tmkms-${TMKMS_VERSION}.crate" -o tmkms.crate \
+  && echo "${TMKMS_CRATE_SHA256}  tmkms.crate" | sha256sum -c - \
+  && tar xzf tmkms.crate
+COPY build/tmkms-${TMKMS_VERSION}.Cargo.lock /build/tmkms-${TMKMS_VERSION}/Cargo.lock
+RUN cd "tmkms-${TMKMS_VERSION}" \
+  && if [ "$TARGETARCH" = "amd64" ]; then export RUSTFLAGS="-Ctarget-feature=+aes,+ssse3"; fi \
+  && cargo build --release --locked --features softsign \
+  && install -m 0755 target/release/tmkms /usr/local/bin/tmkms
+
+FROM ${RUNTIME_IMAGE}
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libusb-1.0-0 python3 python3-cryptography python3-nacl \
+  && rm -rf /var/lib/apt/lists/* \
+  && useradd --system --uid 10001 --user-group --home-dir /nonexistent --shell /usr/sbin/nologin tmkms \
+  && chmod 0711 /root
+
+COPY --from=builder /usr/local/bin/tmkms /usr/local/bin/tmkms
 
 WORKDIR /root
-
-RUN tmkms init /app/tmkms_init_data
 
 ARG TMKMS_TOML=tmkms.toml
 ARG PRIV_VALIDATOR_KEY=priv_validator_key.json
 ARG PRIV_VALIDATOR_STATE=priv_validator_state.json
 
+RUN mkdir -p /app/tmkms_init_data/secrets /app/tmkms_init_data/state
 COPY ${TMKMS_TOML} /app/tmkms_init_data/tmkms.toml
 COPY ${PRIV_VALIDATOR_KEY} /app/tmkms_init_data/secrets/priv_validator_key.json
 COPY ${PRIV_VALIDATOR_STATE} /app/tmkms_init_data/state/priv_validator_state.json
+RUN tmkms softsign import /app/tmkms_init_data/secrets/priv_validator_key.json /app/tmkms_init_data/secrets/priv_validator_key.softsign
 
 COPY docker/init.sh /root/init.sh
-RUN chmod +x /root/init.sh
-
-RUN tmkms softsign import /app/tmkms_init_data/secrets/priv_validator_key.json /app/tmkms_init_data/secrets/priv_validator_key.softsign
+COPY docker/migrate-toml.sh /root/migrate-toml.sh
+COPY docker/rollback-toml.sh /root/rollback-toml.sh
+COPY pubkey.py /usr/local/bin/tmkms-pubkey
+RUN chmod +x /root/init.sh /root/migrate-toml.sh /root/rollback-toml.sh /usr/local/bin/tmkms-pubkey
 
 ENTRYPOINT ["/root/init.sh"]
