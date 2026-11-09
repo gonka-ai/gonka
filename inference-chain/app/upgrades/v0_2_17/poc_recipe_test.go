@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -42,16 +41,14 @@ func TestUpgradeFreezesActiveEpochRecipe(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, found)
 
-			consensus := &memConsensusParams{params: cmtproto.ConsensusParams{
-				Block: &cmtproto.BlockParams{MaxBytes: 22_020_096, MaxGas: -1},
-			}}
-			handler := CreateUpgradeHandler(module.NewManager(), module.NewConfigurator(nil, nil, nil), k, consensus)
+			handler := CreateUpgradeHandler(module.NewManager(), module.NewConfigurator(nil, nil, nil), k)
 			_, err = handler(ctx, upgradetypes.Plan{Name: UpgradeName}, module.VersionMap{"capability": 1})
 			require.NoError(t, err)
-			stored, err := consensus.Get(ctx)
+			upgraded, err := k.GetParams(ctx)
 			require.NoError(t, err)
-			require.Equal(t, int64(22_020_096), stored.Block.MaxBytes)
-			require.Equal(t, blockMaxGas, stored.Block.MaxGas)
+			require.Equal(t, types.MaxGroupGas, upgraded.FeeParams.GroupByName(types.FeeGroupWasm).MaxGas)
+			require.Equal(t, types.MaxGroupGas, upgraded.FeeParams.GroupByName(types.FeeGroupIBC).MaxGas)
+			require.NotContains(t, upgraded.FeeParams.EnabledFeeGroups, types.FeeGroupIBC)
 			recipe, found, err := k.GetEpochPocRecipe(ctx, 5)
 			require.NoError(t, err)
 			require.True(t, found)

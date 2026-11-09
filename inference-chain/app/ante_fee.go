@@ -203,32 +203,37 @@ func (d FeeGroupRepeatedLenDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, sim
 // during both CheckTx and DeliverTx.
 func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper) ante.TxFeeChecker {
 	return func(ctx sdk.Context, tx sdk.Tx) (sdk.Coins, int64, error) {
-		// If bypass flag is set, allow zero fees but preserve priority
-		// set by the bypass decorator.
-		if IsNetworkDutyBypassed(ctx) {
-			return sdk.Coins{}, ctx.Priority(), nil
-		}
-
 		feeTx, ok := tx.(sdk.FeeTx)
 		if !ok {
 			return nil, 0, errorsmod.Wrap(sdkerrors.ErrTxDecode, "Tx must implement FeeTx")
-		}
-
-		feeCoins := feeTx.GetFee()
-		gas := feeTx.GetGas()
-
-		var fp *inferencetypes.FeeParams
-		if inferenceKeeper != nil {
-			params, err := inferenceKeeper.GetParams(ctx)
-			if err == nil {
-				fp = params.FeeParams
-			}
 		}
 
 		inners, err := unwrapFeeMsgs(tx.GetMsgs(), inferenceKeeper)
 		if err != nil {
 			return nil, 0, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, err.Error())
 		}
+
+		var fp *inferencetypes.FeeParams
+		if inferenceKeeper != nil {
+			params, err := inferenceKeeper.GetParams(ctx)
+			if err != nil {
+				return nil, 0, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, err.Error())
+			}
+			fp = params.FeeParams
+		}
+		if err := enforceDeclaredGroupGas(ctx, inferenceKeeper, fp, inners, feeTx.GetGas()); err != nil {
+			return nil, 0, err
+		}
+
+		// If bypass flag is set, allow zero fees but preserve priority
+		// set by the bypass decorator. The declared-gas ceiling above still
+		// applies to a bypassed transaction.
+		if IsNetworkDutyBypassed(ctx) {
+			return sdk.Coins{}, ctx.Priority(), nil
+		}
+
+		feeCoins := feeTx.GetFee()
+		gas := feeTx.GetGas()
 
 		price := uint64(0)
 		if fp != nil {

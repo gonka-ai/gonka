@@ -3145,6 +3145,10 @@ type FeeGroup struct {
 	Base        *PeriodBase `protobuf:"bytes,3,opt,name=base,proto3" json:"base,omitempty"`
 	// Extra-gas rules only. Coin price comes from compiled group membership and min_gas_price.
 	Msgs []*MsgGasRule `protobuf:"bytes,4,rep,name=msgs,proto3" json:"msgs,omitempty"`
+	// Maximum declared gas for one transaction containing a message in this
+	// group, and the per-block declared-gas budget for the group.
+	// 0 means this group has no additional ceiling.
+	MaxGas uint64 `protobuf:"varint,5,opt,name=max_gas,json=maxGas,proto3" json:"max_gas,omitempty"`
 }
 
 func (m *FeeGroup) Reset()         { *m = FeeGroup{} }
@@ -3206,6 +3210,13 @@ func (m *FeeGroup) GetMsgs() []*MsgGasRule {
 		return m.Msgs
 	}
 	return nil
+}
+
+func (m *FeeGroup) GetMaxGas() uint64 {
+	if m != nil {
+		return m.MaxGas
+	}
+	return 0
 }
 
 type MsgGasRule struct {
@@ -5333,6 +5344,9 @@ func (this *FeeGroup) Equal(that interface{}) bool {
 		return false
 	}
 	if this.MinGasPrice != that1.MinGasPrice {
+		return false
+	}
+	if this.MaxGas != that1.MaxGas {
 		return false
 	}
 	if !this.Base.Equal(that1.Base) {
@@ -8270,6 +8284,11 @@ func (m *FeeGroup) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.MaxGas != 0 {
+		i = encodeVarintParams(dAtA, i, uint64(m.MaxGas))
+		i--
+		dAtA[i] = 0x28
+	}
 	if len(m.Msgs) > 0 {
 		for iNdEx := len(m.Msgs) - 1; iNdEx >= 0; iNdEx-- {
 			{
@@ -9731,6 +9750,9 @@ func (m *FeeGroup) Size() (n int) {
 			l = e.Size()
 			n += 1 + l + sovParams(uint64(l))
 		}
+	}
+	if m.MaxGas != 0 {
+		n += 1 + sovParams(uint64(m.MaxGas))
 	}
 	return n
 }
@@ -17675,6 +17697,25 @@ func (m *FeeGroup) Unmarshal(dAtA []byte) error {
 				return err
 			}
 			iNdEx = postIndex
+		case 5:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field MaxGas", wireType)
+			}
+			m.MaxGas = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowParams
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.MaxGas |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipParams(dAtA[iNdEx:])

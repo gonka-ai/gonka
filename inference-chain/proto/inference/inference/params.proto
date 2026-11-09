@@ -555,6 +555,10 @@ message FeeGroup {
   PeriodBase base = 3;
   // Extra-gas rules only. Coin price comes from compiled group membership and min_gas_price.
   repeated MsgGasRule msgs = 4;
+  // Maximum declared gas for one transaction containing a message in this
+  // group, and the per-block declared-gas budget for the group.
+  // 0 means this group has no additional ceiling.
+  uint64 max_gas = 5;
 }
 
 message MsgGasRule {

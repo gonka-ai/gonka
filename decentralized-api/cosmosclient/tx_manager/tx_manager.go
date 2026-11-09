@@ -55,9 +55,11 @@ const (
 
 	maxBlockTimeDrift = 120 * time.Second
 
-	// BatchGasLimit is the gas limit for batch transactions.
-	// Must not exceed NetworkDutyFeeBypassDecorator.GasCap so that fee-exempt
-	// duty transactions are not rejected by the gas cap check.
+	// BatchGasLimit is the maximum gas one transaction may declare.
+	// DAPI puts several messages in that one transaction. This is not a
+	// per-message cap and not the block gas limit. It must not exceed
+	// NetworkDutyFeeBypassDecorator.GasCap so a fee-exempt duty transaction
+	// is not rejected by the duty gas cap.
 	BatchGasLimit = 1_000_000_000
 )
 

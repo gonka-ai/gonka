@@ -6,8 +6,8 @@
 // on the model. Admission defaults are written when stored params do not have
 // them yet, then retained accounts and weights are repaired. After migrations,
 // the wasm fee group is enabled at 1000 ngonka/gas, the epoch fee group carries the new
-// store-commit key price, the onboarding fee group is enabled, and
-// block.max_gas is set to 200,000,000.
+// store-commit key price, the onboarding fee group is enabled, and WASM and IBC
+// receive a 100,000,000 declared-gas ceiling. block.max_gas stays unchanged.
 package v0_2_17
 
 import (
@@ -16,7 +16,6 @@ import (
 	"slices"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
@@ -31,21 +30,10 @@ const wasmMinGasPriceNgonka uint64 = 1000
 // onboardingMinGasPriceNgonka stays at the cosmos group rate.
 const onboardingMinGasPriceNgonka uint64 = 1
 
-// blockMaxGas is the finite consensus block gas limit. It sits above the
-// 160,050,000 gas limit current BLS transactions declare.
-const blockMaxGas int64 = 200_000_000
-
-// consensusParamsStore is the consensus module's params item.
-type consensusParamsStore interface {
-	Get(ctx context.Context) (cmtproto.ConsensusParams, error)
-	Set(ctx context.Context, params cmtproto.ConsensusParams) error
-}
-
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
 	k keeper.Keeper,
-	consensusParams consensusParamsStore,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -66,6 +54,12 @@ func CreateUpgradeHandler(
 		// and epoch-group rewrites then run before this block's epoch stage.
 		if err := k.RepairEpochValidationState(ctx); err != nil {
 			return nil, err
+		}
+
+		// Stored fee params are the v0.2.16 tree. DefaultFeeParams is not
+		// reapplied. Write the ceilings before any params.Validate call.
+		if err := ensureGroupGasCeilings(ctx, k); err != nil {
+			return fromVM, err
 		}
 
 		if err := migratePocSchemeBlocks(ctx, k); err != nil {
@@ -91,7 +85,11 @@ func CreateUpgradeHandler(
 			return toVM, err
 		}
 
-		// After migrations, so a fee-params migration cannot drop these groups.
+		// Migration 14 may replace a nil or empty fee tree from DefaultFeeParams.
+		// Re-apply the ceilings so that result still has WASM and IBC.
+		if err := ensureGroupGasCeilings(ctx, k); err != nil {
+			return toVM, err
+		}
 		// The signer/stage validation cap is gone in this binary, so the epoch
 		// fee group must carry the new store-commit key price in the same upgrade.
 		if err := enableWasmFeeGroup(ctx, k); err != nil {
@@ -101,9 +99,6 @@ func CreateUpgradeHandler(
 			return toVM, err
 		}
 		if err := enableOnboardingFeeGroup(ctx, k); err != nil {
-			return toVM, err
-		}
-		if err := setBlockMaxGas(ctx, consensusParams, k); err != nil {
 			return toVM, err
 		}
 
@@ -134,6 +129,9 @@ func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
 	} else if group.MinGasPrice == 0 {
 		group.MinGasPrice = wasmMinGasPriceNgonka
 	}
+	if group.MaxGas == 0 {
+		group.MaxGas = types.MaxGroupGas
+	}
 	if !slices.Contains(fp.EnabledFeeGroups, types.FeeGroupWasm) {
 		fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupWasm)
 	}
@@ -147,25 +145,39 @@ func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
 	return k.SetParams(ctx, params)
 }
 
-// setBlockMaxGas writes the finite block gas limit. Max bytes and the other
-// consensus fields stay as they are.
-func setBlockMaxGas(ctx context.Context, store consensusParamsStore, k keeper.Keeper) error {
-	if store == nil {
-		return fmt.Errorf("consensus params store is nil")
-	}
-	params, err := store.Get(ctx)
+// ensureGroupGasCeilings writes the WASM and IBC declared-gas ceilings.
+// Either group is created when missing. IBC is not added to
+// enabled_fee_groups. Every other group keeps max_gas at 0.
+func ensureGroupGasCeilings(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
-	if params.Block == nil {
-		return fmt.Errorf("consensus block params missing")
+	if params.FeeParams == nil {
+		params.FeeParams = types.DefaultFeeParams()
 	}
-	params.Block.MaxGas = blockMaxGas
-	if err := store.Set(ctx, params); err != nil {
+	fp := params.FeeParams
+	for _, name := range []string{types.FeeGroupWasm, types.FeeGroupIBC} {
+		group := fp.GroupByName(name)
+		if group == nil {
+			group = &types.FeeGroup{Name: name}
+			fp.Groups = append(fp.Groups, group)
+		}
+		group.MaxGas = types.MaxGroupGas
+	}
+	for _, group := range fp.Groups {
+		if group == nil || types.IsRequiredCappedFeeGroup(group.Name) {
+			continue
+		}
+		group.MaxGas = 0
+	}
+	if err := fp.Validate(); err != nil {
 		return err
 	}
-	k.LogInfo("set block max gas", types.Upgrades, "max_gas", blockMaxGas)
-	return nil
+	k.LogInfo("set wasm and ibc gas ceilings", types.Upgrades,
+		"max_gas", types.MaxGroupGas,
+		"enabled_fee_groups", fp.EnabledFeeGroups)
+	return k.SetParams(ctx, params)
 }
 
 // updateEpochFeeGroup writes the activation price for a newly inserted

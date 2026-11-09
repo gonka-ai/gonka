@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	storetypes "cosmossdk.io/store/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/bls/types"
@@ -93,6 +94,77 @@ func TestRequestThresholdSignature_SkipsDealerPartReads(t *testing.T) {
 
 	require.Less(t, signUsed, fullUsed/2,
 		"signing request %d must stay under half of the full epoch load %d", signUsed, fullUsed)
+}
+
+func TestSubmitDealerPart_GasIndependentOfEarlierDealers(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	ctx = ctx.WithBlockHeight(10)
+	participants := make([]types.BLSParticipantInfo, gasRegressionN)
+	for i := range participants {
+		participants[i] = types.BLSParticipantInfo{
+			Address:        string(rune('a' + i)),
+			SlotStartIndex: uint32(i),
+			SlotEndIndex:   uint32(i),
+		}
+	}
+
+	const emptyEpoch = uint64(20)
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:                   emptyEpoch,
+		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		TSlotsDegree:              1,
+		Participants:              participants,
+	}))
+	emptyUsed := submitDealerGas(t, k, ctx, dealerPartMsg(participants[0].Address, emptyEpoch, len(participants)))
+
+	const seededEpoch = uint64(21)
+	require.NoError(t, k.SetEpochBLSData(ctx, types.EpochBLSData{
+		EpochId:                   seededEpoch,
+		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		TSlotsDegree:              1,
+		Participants:              participants,
+	}))
+	for i := 0; i < gasRegressionN-1; i++ {
+		require.NoError(t, k.SetDealerPart(ctx, seededEpoch, uint32(i), makeDealerPart(participants[i].Address)))
+	}
+
+	fullCtx := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	fullStart := fullCtx.GasMeter().GasConsumed()
+	_, err := k.GetEpochBLSData(fullCtx, seededEpoch)
+	require.NoError(t, err)
+	fullUsed := fullCtx.GasMeter().GasConsumed() - fullStart
+
+	seededUsed := submitDealerGas(t, k, ctx, dealerPartMsg(participants[gasRegressionN-1].Address, seededEpoch, len(participants)))
+
+	require.Less(t, seededUsed, emptyUsed*2,
+		"submit with %d earlier parts used %d, empty epoch used %d", gasRegressionN-1, seededUsed, emptyUsed)
+	require.Less(t, seededUsed, fullUsed/2,
+		"submit %d must stay under half of the full epoch load %d", seededUsed, fullUsed)
+}
+
+func dealerPartMsg(creator string, epochID uint64, participants int) *types.MsgSubmitDealerPart {
+	cipher := make([]byte, types.MinEncryptedShareCiphertextLen)
+	shares := make([]types.EncryptedSharesForParticipant, participants)
+	for i := range shares {
+		shares[i] = types.EncryptedSharesForParticipant{EncryptedShares: [][]byte{cipher}}
+	}
+	return &types.MsgSubmitDealerPart{
+		Creator:                        creator,
+		EpochId:                        epochID,
+		Commitments:                    [][]byte{[]byte("c0"), []byte("c1")},
+		EncryptedSharesForParticipants: shares,
+	}
+}
+
+func submitDealerGas(t *testing.T, k Keeper, ctx sdk.Context, msg *types.MsgSubmitDealerPart) storetypes.Gas {
+	t.Helper()
+	metered := ctx.WithGasMeter(storetypes.NewInfiniteGasMeter())
+	start := metered.GasMeter().GasConsumed()
+	_, err := NewMsgServerImpl(k).SubmitDealerPart(metered, msg)
+	require.NoError(t, err)
+	return metered.GasMeter().GasConsumed() - start
 }
 
 func TestSetEpochBLSData_GasBoundedWhenSplitFieldsNulled(t *testing.T) {
