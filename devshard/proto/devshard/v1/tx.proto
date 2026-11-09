@@ -16,8 +16,10 @@ message MsgStartInference {
   string model = 3;
   uint64 input_length = 4;
   uint64 max_tokens = 5;
-  reserved 6;
-  reserved "started_at";
+  // started_at is the gateway wall clock in Unix seconds (legacy timeout clock).
+  // Restored at its original field number (same type/meaning as before the
+  // stamp-only tombstone).
+  int64 started_at = 6;
   uint64 observed_height = 7;
   bytes  observed_block_hash = 8;
   // protocol_version is the destshard runtime the gateway bound for this
@@ -25,15 +27,21 @@ message MsgStartInference {
   // user-signed Diff so a later ChallengeReceipt can prove which version
   // may CreateSession on a host the gateway never pinged.
   string protocol_version = 9;
+  // observed_time_ms is the Comet header time for (observed_height,
+  // observed_block_hash), in milliseconds. Zero means unset (legacy / optimistic miss).
+  int64 observed_time_ms = 10;
 }
 
 message MsgConfirmStart {
   uint64 inference_id = 1;
   bytes  executor_sig = 2;
-  reserved 3;
-  reserved "confirmed_at";
+  // confirmed_at is the executor wall clock in Unix seconds (legacy timeout clock).
+  // Restored at its original field number (same type/meaning as before the
+  // stamp-only tombstone).
+  int64 confirmed_at = 3;
   uint64 observed_height = 4;
   bytes  observed_block_hash = 5;
+  int64  observed_time_ms = 6;
 }
 
 message MsgFinishInference {
@@ -47,6 +55,7 @@ message MsgFinishInference {
   uint64 observed_height = 8;
   bytes  observed_block_hash = 9;
   bytes  served_hash = 10;
+  int64  observed_time_ms = 11;
 }
 
 message MsgTimeoutInference {
@@ -75,6 +84,63 @@ message ErrorMissVote {
   uint32 voter_slot = 1;
   bool   accept = 2;
   bytes  signature = 3;
+}
+
+// ChallengeReason is why the gateway challenged a finished inference.
+// The byte-bound reasons are added after STREAM_UNBOUND and EMPTY_STREAM.
+enum ChallengeReason {
+  CHALLENGE_REASON_UNSPECIFIED = 0;
+  // The stream was cut before [DONE] and devshard_meta, it was complete and
+  // matched neither hash the Finish carries, or it was still open a grace
+  // after its Finish applied.
+  CHALLENGE_REASON_STREAM_UNBOUND = 1;
+  // The receipt was applied and the stream ended with no content.
+  CHALLENGE_REASON_EMPTY_STREAM = 2;
+}
+
+// ChallengeFault is what a voter found on the body it fetched from the
+// executor. NONE is a valid vote: the checks this host ran found no fault.
+enum ChallengeFault {
+  CHALLENGE_FAULT_NONE = 0;
+  // The executor did not serve the body for the whole fetch window, said it
+  // was gone while the escrow epoch is inside its retention, or sent a body
+  // above the size limit.
+  CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE = 1;
+  // The prompt, the body or the served view does not hash to what the
+  // Finish signed, or the executor's payload signature does not verify.
+  CHALLENGE_FAULT_HASH_MISMATCH = 2;
+  // The body matches its hashes but holds no generated positions.
+  CHALLENGE_FAULT_EMPTY_STREAM = 3;
+  // The claim is above what the body holds: the token count check, which no
+  // voter runs yet.
+  CHALLENGE_FAULT_USAGE_INFLATED = 4;
+}
+
+// ChallengeCheck names the check behind a fault.
+enum ChallengeCheck {
+  CHALLENGE_CHECK_UNSPECIFIED = 0;
+  CHALLENGE_CHECK_HASH = 1;
+  CHALLENGE_CHECK_POSITIONS = 2;
+}
+
+// MsgChallenge carries the hosts' signed verdicts on a finished inference the
+// gateway challenged. Faults of any kind are summed into one tally; above
+// VoteThreshold the inference is invalidated, below it the inference stays
+// finished and paid. The executor's own address does not vote, and only the
+// first MsgChallenge for an inference counts.
+message MsgChallenge {
+  uint64 inference_id = 1;
+  repeated ChallengeVote votes = 2;
+}
+
+// ChallengeVote is one host's signed ChallengeVoteContent. The escrow id,
+// the inference id and the response hash come from the state.
+message ChallengeVote {
+  uint32         voter_slot = 1;
+  ChallengeFault fault = 2;
+  ChallengeCheck check = 3;
+  int64          deviation = 4;
+  bytes          signature = 5;
 }
 
 message MsgValidation {

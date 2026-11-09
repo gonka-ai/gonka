@@ -185,12 +185,17 @@ func TestRPCClient_WaitReadyFailsWhenDoorsExhausted(t *testing.T) {
 	require.Less(t, time.Since(start), 300*time.Millisecond)
 
 	rpc99 := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "99", signer), pc, ParseRPCEndpoints(EndpointChat))
-	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
-	defer cancel()
+	const liveDoorWait = 80 * time.Millisecond
+	// The deadline starts inside WithTimeout, before this clock. A timer can also
+	// fire a little early, so the floor sits under the nominal wait.
 	start = time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), liveDoorWait)
+	defer cancel()
 	err = rpc99.WaitReady(ctx)
 	require.ErrorIs(t, err, ErrPeerNotReady)
-	require.GreaterOrEqual(t, time.Since(start), 80*time.Millisecond, "a live door must wait on Attach, not fail immediately")
+	elapsed := time.Since(start)
+	require.GreaterOrEqual(t, elapsed, liveDoorWait-15*time.Millisecond, "a live door must wait on Attach, not fail immediately")
+	require.Less(t, elapsed, 300*time.Millisecond)
 }
 
 func TestRPCClient_WaitReadyWakesOnPublishToken(t *testing.T) {

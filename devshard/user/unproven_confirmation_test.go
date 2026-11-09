@@ -34,8 +34,11 @@ func signedExecutorReceipt(t *testing.T, session *Session, hosts []*signing.Secp
 	rec, ok := session.sm.GetInference(nonce)
 	require.True(t, ok)
 	require.Less(t, int(rec.ExecutorSlot), len(hosts))
+	stamp := floorStampOf(&rec)
+	stamp.StartedAt = rec.StartedAt
+	stamp.ConfirmedAt = confirmedAt
 	return testutil.SignExecutorReceipt(t, hosts[rec.ExecutorSlot], session.escrowID, nonce,
-		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, floorStampOf(&rec))
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
 }
 
 // A confirmation timestamp only becomes chain state through the receipt that signs it. Without the
@@ -98,8 +101,11 @@ func TestProcessResponse_AReceiptFromAnotherSlotIsNotBelieved(t *testing.T) {
 	require.True(t, ok)
 	other := hosts[(int(rec.ExecutorSlot)+1)%len(hosts)]
 	confirmedAt := time.Now().Unix()
+	stamp := floorStampOf(&rec)
+	stamp.StartedAt = rec.StartedAt
+	stamp.ConfirmedAt = confirmedAt
 	receipt := testutil.SignExecutorReceipt(t, other, session.escrowID, nonce,
-		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens)
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
 
 	require.NoError(t, session.ProcessResponse(int(nonce%3), &host.HostResponse{
 		Nonce: nonce, Receipt: receipt, ConfirmedAt: confirmedAt,

@@ -622,6 +622,7 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	e.picker.start()
 	if session != nil {
 		session.SetServedBindingHandler(e.handleServedBinding)
+		session.SetChallengeHandler(e.handleChallenge)
 	}
 	return e
 }
@@ -937,6 +938,15 @@ type inflight struct {
 	participantClassifyBytes *atomic.Int64
 
 	usageComplTokens atomic.Int64
+
+	// clientWriteNanos is the time the relay has stood in writes to the
+	// gateway's client; clientWriteSince is the start of the write in
+	// progress, 0 outside one. The session takes this time out of the grace
+	// it gives a stream still open after its Finish: the client drives it,
+	// not the executor.
+	clientWriteMu    sync.Mutex
+	clientWriteNanos int64
+	clientWriteSince int64
 
 	// A host emits one token format for the whole answer, so the first chunk carrying logprobs settles
 	// it and the rest are not parsed.
@@ -1869,7 +1879,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// bytes (role chunk, etc.) before the current write so SSE event
 		// ordering is preserved end-to-end.
 		if !hadContentBefore && len(rw.inf.pendingBuf) > 0 && rw.group.w != nil {
-			if _, err := rw.group.w.Write(rw.inf.pendingBuf); err != nil {
+			if err := rw.inf.clientWrite(func() error { _, err := rw.group.w.Write(rw.inf.pendingBuf); return err }); err != nil {
 				rw.inf.releasePendingBuf()
 				return 0, err
 			}
@@ -1878,7 +1888,9 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		if rw.group.w == nil {
 			return len(p), nil
 		}
-		return rw.group.w.Write(p)
+		var n int
+		err := rw.inf.clientWrite(func() (err error) { n, err = rw.group.w.Write(p); return err })
+		return n, err
 
 	case winnerNonce != 0:
 		// Another attempt has already won; suppress this attempt's stream
@@ -2220,8 +2232,35 @@ func (rw *raceWriter) Flush() {
 		return
 	}
 	if f, ok := rw.group.w.(http.Flusher); ok {
-		f.Flush()
+		_ = rw.inf.clientWrite(func() error { f.Flush(); return nil })
 	}
+}
+
+// clientWrite runs a write to the gateway's client and adds its duration to
+// the attempt's client wait.
+func (inf *inflight) clientWrite(write func() error) error {
+	start := time.Now().UnixNano()
+	inf.clientWriteMu.Lock()
+	inf.clientWriteSince = start
+	inf.clientWriteMu.Unlock()
+	err := write()
+	inf.clientWriteMu.Lock()
+	inf.clientWriteNanos += time.Now().UnixNano() - start
+	inf.clientWriteSince = 0
+	inf.clientWriteMu.Unlock()
+	return err
+}
+
+// clientWait is how long this attempt's relay has stood in writes to the
+// gateway's client, the write in progress included.
+func (inf *inflight) clientWait() time.Duration {
+	inf.clientWriteMu.Lock()
+	defer inf.clientWriteMu.Unlock()
+	waited := inf.clientWriteNanos
+	if since := inf.clientWriteSince; since != 0 {
+		waited += time.Now().UnixNano() - since
+	}
+	return time.Duration(waited)
 }
 
 // RunInference prepares and sends an inference, optionally racing a secondary.
@@ -2465,10 +2504,22 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 					"panic", fmt.Sprint(r),
 					"stack", string(debug.Stack()),
 				)
+				// The gateway's own failure, not the executor's stream: closed
+				// with nothing to challenge, or the stream would be challenged
+				// as open past the grace.
+				if e.session != nil {
+					e.session.StreamEnded(inf.nonce)
+				}
 			}
 		}()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
+		if e.session != nil {
+			e.session.StreamOpened(inf.nonce, inf.clientWait)
+		}
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		// Read before the deferred cancel: a cancelled attempt context means
+		// the gateway cut this stream itself (race loser, drain cap, stop).
+		gatewayCut := attemptCtx.Err() != nil
 		inf.markEnded(time.Now())
 		if inf.preludeOverflow.Load() {
 			inf.err = errPendingPreludeTooLarge
@@ -2481,6 +2532,10 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			streamBytes = inf.resp.StreamBytesRead
 		}
 		if inf.err != nil {
+			// The event the cut landed in is still in the classifier: counted
+			// before the stream is closed, or a cut inside a content event
+			// would be challenged as an empty stream.
+			rw.flushClassify()
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_failed",
 				append([]any{
 					"host", inf.hostID,
@@ -2494,6 +2549,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			)
 			e.maybeRecordEscrowStateDivergence(ctx, inf, inf.err)
 			e.maybeRecordVersionRefusal(inf)
+			e.closeAttemptStream(inf, gatewayCut || phaseTransitionCut(inf))
 			return
 		}
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed",
@@ -2559,9 +2615,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"poc_reason", currentPoCPhaseReason(),
 			)
 		}
-		if e.session != nil && bindsReceivedStream(inf) {
-			e.session.BindReceivedStream(inf.nonce, inf.resp.ReceivedResponseHashes)
-		}
+		e.closeAttemptStream(inf, gatewayCut)
 	}()
 }
 
@@ -4192,8 +4246,13 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 		}
 
 		waitCtx := e.raceCleanupRoot()
+		// Live sendTime opens on the gateway wall clock. After a soft vote
+		// failure (verifier map miss / feed_behind), later waits use a zero
+		// sendTime so TimeoutDeadline follows the stamp map like verifiers.
+		sendTime := inf.sendTime
+		softAttempts := 0
 		for {
-			reason, ready, skipped, waitErr := e.session.WaitTimeoutDeadline(waitCtx, inf.nonce, inf.sendTime)
+			reason, ready, skipped, waitErr := e.session.WaitTimeoutDeadline(waitCtx, inf.nonce, sendTime)
 			if !ready {
 				if skipped.DetailReason == "nonce_closed" || (e.session != nil && e.session.IsNonceFinished(inf.nonce)) {
 					logInferenceStage(parent, inf.escrowID, inf.nonce, "timeout_skipped",
@@ -4229,18 +4288,35 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 				bgCtx, _ := ensureRequestLogContext(cleanupCtx)
 				kind = timeoutKindForInflight(inf, false)
 				e.recordGatewayTimeoutAction(inf, params, kind, "started", "none")
-				result, needsWait, voteErr = e.runVoteTimeout(bgCtx, inf, params, reason)
-				if !needsWait && !timeoutVoteUnjudged(result) {
-					e.forgetRefusalPayload(inf.nonce)
-				}
+				result, needsWait, voteErr = e.session.VoteTimeout(bgCtx, inf.nonce, sendTime, e.inferenceTimeoutPayload(params), reason)
 				if needsWait {
 					e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
 					return
 				}
+				if timeoutVoteUnjudged(result) && softAttempts+1 < maxRefusalSweepAttempts {
+					return
+				}
+				e.forgetRefusalPayload(inf.nonce)
 				e.recordHandleTimeoutResult(bgCtx, inf, params, result, voteErr, false, failStage)
 			})
 			releasePost()
 			if needsWait {
+				continue
+			}
+			if timeoutVoteUnjudged(result) && softAttempts+1 < maxRefusalSweepAttempts {
+				softAttempts++
+				logInferenceStage(parent, inf.escrowID, inf.nonce, "timeout_vote_retry",
+					"host", inf.hostID,
+					"reason", result.Reason,
+					"outcome", result.Outcome,
+					"soft_attempt", softAttempts,
+				)
+				e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", result.Outcome)
+				if err := softTimeoutRetryPause(waitCtx, e.session, inf.nonce); err != nil {
+					e.forgetRefusalPayload(inf.nonce)
+					return
+				}
+				sendTime = time.Time{}
 				continue
 			}
 			return
@@ -4320,8 +4396,12 @@ func deliveredWholeAnswer(inf *inflight) bool {
 
 // attemptCounts reports an attempt the request can be settled on: the protocol nonce closed on a stream
 // that was not empty -- one that never streamed at all, like an in-process client, counts on the finish
-// alone -- or it is the winner whose whole answer already reached the caller.
+// alone -- or it is the winner whose whole answer already reached the caller. A stream that wrote bytes
+// and no content does not settle, so the race can start another host.
 func (e *Redundancy) attemptCounts(inf *inflight, winnerNonce uint64) bool {
+	if contentFreeStream(inf) {
+		return false
+	}
 	if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
 		return true
 	}
@@ -4464,10 +4544,26 @@ func inflightFinished(inf *inflight) bool {
 	if inf.err != nil || inf.resp == nil {
 		return false
 	}
-	if isFailedStreamAttempt(inf) {
+	if isFailedStreamAttempt(inf) || contentFreeStream(inf) {
 		return false
 	}
 	return user.HasMsgFinish(inf.resp.Mempool, inf.nonce)
+}
+
+// contentFreeStream is an attempt that wrote stream bytes and none of them
+// were content. A rejected confirm leaves the receipt flag unset, and that
+// must not let the protocol finish crown this body. An attempt that wrote
+// nothing, such as an in-process client, is not content-free and can still
+// settle on the finish. Host-fault accounting stays on isEmptyStreamAttempt,
+// which still requires the receipt.
+func contentFreeStream(inf *inflight) bool {
+	if inf == nil || inf.probe {
+		return false
+	}
+	if isErrorStreamAttempt(inf) {
+		return false
+	}
+	return inf.outputChunks.Load() > 0 && inf.contentChunks.Load() == 0
 }
 
 // isEmptyStreamAttempt reports whether a non-probe attempt that confirmed
@@ -4862,9 +4958,8 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	}
 	// Leave the receipt and Finish queued for the next Start diff, which
 	// already pays FeePerNonce. Arm the quiet settle for the request that
-	// has no successor. The cadence is off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
-	// is set, and this request is already marked finished in memory, so no
-	// timeout goroutine will compose them later.
+	// has no successor. This request is already marked finished in memory, so
+	// no timeout goroutine will compose the leftover later.
 	if e.session != nil {
 		e.session.ArmQuietSettle()
 	}
@@ -5137,6 +5232,9 @@ func (e *Redundancy) resolvedWinnerNonce(attempts []*inflight, winnerNonce uint6
 	}
 	for _, inf := range attempts {
 		if inf.probe {
+			continue
+		}
+		if contentFreeStream(inf) {
 			continue
 		}
 		if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {

@@ -2,11 +2,11 @@ package user
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"devshard/heightsync"
 	"devshard/signing"
@@ -169,7 +169,7 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append(smOpts, state.WithVersion(recoveredVersion))
+	stateOpts := append(smOpts, state.WithVersion(recoveredVersion), state.WithStampWallClock(time.Now))
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
@@ -316,12 +316,7 @@ func RecoverSession(
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			var root []byte
-			applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
-				var err error
-				root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
-				return err
-			})
+			root, applyErr := sm.ApplyLocalPersistedRecord(rec)
 			if applyErr != nil {
 				if errors.Is(applyErr, types.ErrInvalidNonce) {
 					return fmt.Errorf("%w: replay nonce %d: %w",
@@ -395,6 +390,10 @@ func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*S
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
+	// A diff that stored its header rows replayed from those rows. Catch up
+	// from the lowest unfinished start so later timeout checks and the chat
+	// gate can read heights that were not on a diff record.
+	sm.WarmUnfinishedHeaders()
 	restoreHeartbeatProducer(sess, sm)
 	// Signatures are loaded only from the slowest cursor on; the trim marks
 	// the nonces below it as read-from-store.
@@ -504,6 +503,7 @@ func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
+	defer sess.publishFloorGateLocked()
 	if clone := sm.HeightSyncCloneTurnTracker(); clone != nil {
 		sess.turnTracker = clone
 	}

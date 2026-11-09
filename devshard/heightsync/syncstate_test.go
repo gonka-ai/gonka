@@ -64,6 +64,19 @@ func TestEvaluateSyncState_Table(t *testing.T) {
 	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, down)
 
 	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, heightsync.EvaluateSyncState(ctx, nil, 500, cfg))
+
+	unstamped := heightsync.EvaluateSyncState(ctx, &evalOracle{hdr: hashOnly}, 0, cfg)
+	require.Equal(t, types.SyncState_SYNCED, unstamped, "a heartbeat with no stamp is not a height to catch up to")
+
+	unstampedDown := heightsync.EvaluateSyncState(ctx, &evalOracle{err: context.Canceled}, 0, cfg)
+	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, unstampedDown)
+
+	unstampedStale := heightsync.EvaluateSyncState(ctx, &evalOracle{hdr: hashOnly, stale: true}, 0, cfg)
+	require.Equal(t, types.SyncState_ORACLE_STALE, unstampedStale)
+
+	tip := blocks.HashOnlyHeader(int64(100+heightsync.DefaultSyncDeltaBlocks+1), time.Unix(1, 0).UTC(), "gonka-test", []byte{1, 2, 3})
+	stillCatching := heightsync.EvaluateSyncState(ctx, &evalOracle{hdr: tip}, 100, cfg)
+	require.Equal(t, types.SyncState_CATCHING_UP, stillCatching)
 }
 
 func TestEvaluateSyncStateFromHeader_DoesNotCallLatest(t *testing.T) {

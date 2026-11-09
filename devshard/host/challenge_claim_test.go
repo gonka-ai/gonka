@@ -497,8 +497,11 @@ func newExecutorHost(t *testing.T, n int, v signing.Verifier) (*Host, []types.Di
 	require.NoError(t, err)
 	engine := newBlockingInferenceEngine()
 	t.Cleanup(func() { close(engine.release) })
+	oracle := &fakeOracle{}
+	oracle.setHeight(100)
+	oracle.setHash([]byte{0xaa})
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil,
-		WithGrace(uint64(n)+10), WithStorage(store), WithVerifier(v))
+		WithGrace(uint64(n)+10), WithStorage(store), WithVerifier(v), WithChainOracle(oracle))
 	require.NoError(t, err)
 	return h, diffs, store
 }
@@ -825,8 +828,17 @@ func TestChallengeStackedSharedBatchFailureRetriesOnce(t *testing.T) {
 	f := newWriterFixture(t, 10)
 	f.store.before = func(context.Context) error { return errors.New("disk") }
 	release := make(chan struct{})
+	releaseWriter := sync.OnceFunc(func() { close(release) })
 	testBeforeTakeQueue = func() { <-release }
-	t.Cleanup(func() { testBeforeTakeQueue = nil })
+	t.Cleanup(func() {
+		releaseWriter()
+		require.Eventually(t, func() bool {
+			f.host.writer.mu.Lock()
+			defer f.host.writer.mu.Unlock()
+			return !f.host.writer.running
+		}, 2*time.Second, time.Millisecond, "writer must exit before its test hook is removed")
+		testBeforeTakeQueue = nil
+	})
 	low, err := diffWiresFromDiffs(f.diffs[:5])
 	require.NoError(t, err)
 	high, err := diffWiresFromDiffs(f.diffs[5:])
@@ -850,7 +862,7 @@ func TestChallengeStackedSharedBatchFailureRetriesOnce(t *testing.T) {
 		second <- err
 	}()
 	require.Eventually(t, func() bool { return f.queued() == 2 }, 2*time.Second, time.Millisecond)
-	close(release)
+	releaseWriter()
 
 	require.Error(t, <-first)
 	err = <-second

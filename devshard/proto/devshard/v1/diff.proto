@@ -38,6 +38,7 @@ message DevshardTx {
     MsgHeartbeat heartbeat = 10;
     MsgHeightAck height_ack = 11;
     MsgErrorMiss error_miss = 14;
+    MsgChallenge challenge = 15;
   }
   // cPoC MsgSkipProbe / CarrySkip claim 12 / 13; reserved so they cannot be reused.
   reserved 12, 13;
@@ -56,6 +57,7 @@ message MsgHeartbeat {
   uint64 slots_num                     = 4;
   string reason                        = 5; // height_cadence|quiet_session|forced|cpoc_band
   repeated SyncVectorEntry sync_vector = 6; // status of the preceding turn
+  int64  observed_time_ms              = 7;
 }
 
 // MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
@@ -70,7 +72,8 @@ message MsgHeightAck {
   bytes     observed_block_hash = 5;
   SyncState sync_state          = 6;
   bytes     peer_seen           = 7; // bitmap, bit j = "slot j fresh within F"
-  bytes     host_sig            = 8; // over fields 2–7, domain heightsync.ack.v1
+  bytes     host_sig            = 8; // over all fields except host_sig, domain heightsync.ack.v1
+  int64     observed_time_ms    = 9;
 }
 
 message SyncVectorEntry {
@@ -103,11 +106,15 @@ message ExecutorReceiptContent {
   string model = 3;
   uint64 input_length = 4;
   uint64 max_tokens = 5;
-  reserved 6, 8;
-  reserved "started_at", "confirmed_at";
+  // Wall clocks (Unix seconds) bound into executor_sig for legacy timeout mode.
+  // Restored at original field numbers (same type/meaning as before the
+  // stamp-only tombstone).
+  int64 started_at = 6;
   string escrow_id = 7;
+  int64 confirmed_at = 8;
   uint64 observed_height = 9;
   bytes  observed_block_hash = 10;
+  int64  observed_time_ms = 11;
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
@@ -128,6 +135,19 @@ message ErrorMissVoteContent {
   uint64 inference_id = 2;
   bool   accept = 3;
   bytes  response_hash = 4;
+}
+
+// ChallengeVoteContent is what a host signs for a ChallengeVote.
+// CanonicalSignedBytes prefixes "devshard.challengevote.v1". check and
+// deviation (the claim minus the count) are inside the signature, so the diff
+// log shows on which check and by how much an executor lost a payment.
+message ChallengeVoteContent {
+  string         escrow_id = 1;
+  uint64         inference_id = 2;
+  ChallengeFault fault = 3;
+  ChallengeCheck check = 4;
+  int64          deviation = 5;
+  bytes          response_hash = 6;
 }
 
 // StateSignatureContent is what a host signs for state attestation.

@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"common/nodemanager/gen"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"common/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -46,6 +46,35 @@ func TestNodeManager_GetHostEvents_CursorZeroReplaysRetained(t *testing.T) {
 	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED, resp.Events[0].Kind)
 	require.Equal(t, uint64(11), resp.Events[0].Escrow.EscrowId)
 	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, resp.Events[1].Kind)
+}
+
+func TestNodeManager_GetHostEvents_BlockHashAndHeaderMatchRing(t *testing.T) {
+	ring := testHostEventRing(t)
+	ev := apiconfig.HostEvent{
+		Kind: apiconfig.HostEventKindBlock,
+		Block: &apiconfig.BlockPayload{
+			Height:           42,
+			Hash:             []byte{1, 2, 3, 4},
+			HeaderTimeUnixMs: 1_700_000_000_123,
+			EpochIndex:       3,
+			Header:           []byte{9, 9, 8, 8, 7},
+		},
+	}
+	ring.Append(ev)
+
+	srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring))
+	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
+		Subscribe:  []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_BLOCK},
+		Generation: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, resp.Events, 1)
+	got := resp.Events[0].GetBlock()
+	require.Equal(t, ev.Block.Hash, got.GetHash())
+	require.Equal(t, ev.Block.Header, got.GetHeader())
+	require.Equal(t, ev.Block.Height, got.GetHeight())
+	require.Equal(t, ev.Block.HeaderTimeUnixMs, got.GetHeaderTimeUnixMs())
+	require.Equal(t, ev.Block.EpochIndex, got.GetEpochIndex())
 }
 
 func TestNodeManager_GetHostEvents_NilRingFailedPrecondition(t *testing.T) {
@@ -329,4 +358,35 @@ func TestNodeManager_AcquireMLNode_RecordsEscrowLoad(t *testing.T) {
 	snap := load.Snapshot()
 	require.Len(t, snap, 1)
 	require.Equal(t, uint64(11), snap[0].EscrowID)
+}
+
+// Test flow:
+//  1. Build the timed-out response from a re-read that found one subscribed event, from one that found none, and
+//     from one that needs a reset.
+//  2. Assert the event travels in the response with next_cursor past it instead of being dropped as "unchanged",
+//     an empty re-read is "unchanged", and a reset is reported as such.
+func TestNodeManager_GetHostEvents_TimedOutPollReturnsWhatTheReReadFound(t *testing.T) {
+	ring := testHostEventRing(t)
+	srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring))
+	ring.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindWarmKeyGranted, WarmKey: &apiconfig.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantID: 2, Height: 10}})
+
+	late := ring.Since(0, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted})
+	resp := srv.hostEventsTimedOutResponse(late, false)
+	require.False(t, resp.Unchanged)
+	require.False(t, resp.NeedsReset)
+	require.Len(t, resp.Events, 1)
+	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED, resp.Events[0].Kind)
+	require.Equal(t, "warm", resp.Events[0].WarmKey.Grantee)
+	require.Equal(t, uint64(2), resp.Events[0].WarmKey.GrantId)
+	require.Equal(t, uint64(1), resp.NextCursor)
+
+	none := ring.Since(1, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted})
+	resp = srv.hostEventsTimedOutResponse(none, false)
+	require.True(t, resp.Unchanged)
+	require.Empty(t, resp.Events)
+
+	reset := ring.Since(5, 1, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted})
+	resp = srv.hostEventsTimedOutResponse(reset, false)
+	require.True(t, resp.NeedsReset)
+	require.False(t, resp.Unchanged)
 }

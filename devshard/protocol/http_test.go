@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"common/httpguard"
 
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/gossip"
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -33,6 +35,8 @@ import (
 // would block the loopback connections.
 func TestMain(m *testing.M) {
 	httpguard.SetAllowPrivate(true)
+	state.SetFixtureProtocolVersion("v6")
+	host.SetTestChainTip(host.StaticTipOracle(100))
 	os.Exit(m.Run())
 }
 
@@ -49,6 +53,7 @@ type httpTestEnv struct {
 	config      types.SessionConfig
 	stores      []*storage.Memory
 	gossips     []*gossip.Gossip
+	headers     protocolHeaders
 }
 
 type recoveryVerifierClient struct {
@@ -142,15 +147,25 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 	servers := make([]*transport.Server, numHosts)
 	httpServers := make([]*httptest.Server, numHosts)
 	stores := make([]*storage.Memory, numHosts)
+	var tipHeight atomic.Int64
+	tipHeight.Store(100)
 
+	var headers protocolHeaders
+	if rig != nil {
+		headers = protocolHeaders{rig: rig}
+	}
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
+		smOpts := []state.SMOption{}
+		if rig != nil {
+			smOpts = append(smOpts, state.WithHeaderTimes(headers))
+		}
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance), smOpts...)
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		store := storage.NewMemory()
 		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 			EscrowID:       "escrow-1",
-			Version:        testutil.RuntimeTestVersion,
+			Version:        "v6",
 			Config:         config,
 			Group:          group,
 			InitialBalance: balance,
@@ -163,6 +178,8 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		}
 		if rig != nil {
 			hostOpts = append(hostOpts, host.WithChainOracle(rig.oracles[i]))
+		} else {
+			hostOpts = append(hostOpts, host.WithChainOracle(rigOracle{height: &tipHeight}))
 		}
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil, hostOpts...)
 		require.NoError(t, err)
@@ -215,7 +232,11 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		srv.SetGossip(g)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
+	userOpts := []state.SMOption{}
+	if rig != nil {
+		userOpts = append(userOpts, state.WithHeaderTimes(headers))
+	}
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance), userOpts...)
 	require.NoError(t, err)
 	var sessionOpts []user.SessionOption
 	if rig != nil {
@@ -237,6 +258,7 @@ func setupHTTPEnvRig(t *testing.T, numHosts int, balance, grace uint64, hostVeri
 		config:      config,
 		stores:      stores,
 		gossips:     gossips,
+		headers:     headers,
 	}
 }
 
@@ -253,6 +275,10 @@ func setupArmedRecoveryVerifierEnv(t *testing.T, numHosts int, recovery []*types
 func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery []*types.DevshardTx, opts ...user.SessionOption) (*user.Session, *recoveryVerifierSource) {
 	t.Helper()
 	verifier := signing.NewSecp256k1Verifier()
+	smOpts := []state.SMOption{}
+	if env.headers.rig != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(env.headers))
+	}
 	sm, err := state.NewStateMachine(
 		"escrow-1",
 		env.config,
@@ -261,6 +287,7 @@ func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery [
 		env.userSigner.Address(),
 		verifier,
 		testutil.MustMemoryStore(t, "escrow-1", env.userSigner.Address(), env.config, env.group, 1000000),
+		smOpts...,
 	)
 	require.NoError(t, err)
 
@@ -273,6 +300,22 @@ func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery [
 	session, err := user.NewSession(sm, env.userSigner, "escrow-1", env.group, clients, verifier, opts...)
 	require.NoError(t, err)
 	return session, source
+}
+
+type protocolHeaderTimes struct{ ms int64 }
+
+func (p protocolHeaderTimes) HeaderTimeMs(uint64, []byte) (int64, error) {
+	if p.ms <= 0 {
+		return 0, types.ErrHeaderPending
+	}
+	return p.ms, nil
+}
+
+func (p protocolHeaderTimes) StoredAt(uint64) (headertime.Record, bool) {
+	if p.ms <= 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{TimeMs: p.ms}, true
 }
 
 func withHTTPTimeoutBuffer(t *testing.T, d time.Duration) {
@@ -666,6 +709,7 @@ func TestHTTP_ExecutionTimeoutDoesNotUseConfirmStartRecovery(t *testing.T) {
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 	beforeDiffs := len(session.Diffs())
+	session.StateMachine().SetHeaderTimes(protocolHeaderTimes{ms: time.Now().Add(-time.Second).UnixMilli()})
 
 	_, err = session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
 	require.Error(t, err)
@@ -728,7 +772,25 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
-	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	// A verifier that has already voted replays that vote. Hold one back so the
+	// second round is a verifier that has not answered yet.
+	all := env.session.TimeoutVerifiers()
+	first := make(map[int]user.TimeoutVerifier, len(all))
+	var freshKey int
+	var fresh user.TimeoutVerifier
+	held := false
+	for k, v := range all {
+		if k == executorIdx {
+			continue
+		}
+		if !held {
+			freshKey, fresh = k, v
+			held = true
+			continue
+		}
+		first[k] = v
+	}
+	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), first, env.session.Diffs())
 	require.NoError(t, err)
 	require.True(t, len(votes) > int(env.config.VoteThreshold), "challenge response timeouts should initially look like executor unreachable")
 	require.Empty(t, recovery)
@@ -749,7 +811,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		srv.SetPeerClients(transport.HTTPPeerClients(peers))
 	}
 
-	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), map[int]user.TimeoutVerifier{freshKey: fresh}, env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "once the executor recovery tx is reachable, timeout should no longer pass as clean refused")
 	require.NotNil(t, findConfirmStart(recovery, prepared.Nonce()), "next check must surface executor ConfirmStart as recovery")
@@ -800,10 +862,7 @@ func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
 	confirmTx := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce())
 	require.NotNil(t, confirmTx)
 
-	require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{
-		Receipt:     receipt,
-		ConfirmedAt: time.Now().Unix(),
-	}, prepared.Nonce()))
+	require.NoError(t, env.session.ProcessResponse(executorIdx, stampedReceiptResponse(receipt, confirmTx), prepared.Nonce()))
 	// executeAsync queues Finish after ChallengeReceipt returns. The publish
 	// response copies the mempool once, so the finish must already be there.
 	require.Eventually(t, func() bool {
@@ -1353,7 +1412,22 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 // T1: withheld payload → refused-timeout votes reject → session recovery
 // diff carries the executor's MsgConfirmStart and a peer SM applies it.
 func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) {
-	env, rig := setupArmedHTTPEnv(t, 3, 1000000, 100)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			testHTTPHonestRecoveryConfirmStart(t, header)
+		})
+	}
+}
+
+func testHTTPHonestRecoveryConfirmStart(t *testing.T, header bool) {
+	t.Helper()
+	cfg := testutil.DefaultConfig(3)
+	cfg.HeightsyncTimeoutClock = header
+	env, rig := setupArmedHTTPEnv(t, 3, 1000000, 100, cfg)
 	ctx := context.Background()
 
 	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
@@ -1374,10 +1448,10 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 
 	rec, ok := env.session.StateMachine().GetInference(nonce)
 	require.True(t, ok)
+	cs := got.GetConfirmStart()
 	want := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", nonce, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens,
-		testutil.ReceiptStamp{Height: rec.StartedAtHeight, Hash: rec.StartedAtBlockHash})
-	require.Equal(t, want, got.GetConfirmStart().ExecutorSig, "session must copy the executor's receipt, not mint a new ConfirmStart")
-	require.Equal(t, rec.StartedAtHeight, got.GetConfirmStart().ObservedHeight)
+		testutil.ReceiptStamp{Height: cs.ObservedHeight, Hash: cs.ObservedBlockHash, TimeMs: cs.ObservedTimeMs, StartedAt: rec.StartedAt, ConfirmedAt: cs.ConfirmedAt})
+	require.Equal(t, want, cs.ExecutorSig, "session must copy the executor's receipt, not mint a new ConfirmStart")
 
 	peer := rig.peerBefore(t, env, recovery.Nonce)
 	require.Equal(t, types.StatusPending, peer.SnapshotState().Inferences[nonce].Status)
@@ -1538,6 +1612,10 @@ func countConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
 
 func newPeerSM(t *testing.T, env *httpTestEnv, balance uint64) *state.StateMachine {
 	t.Helper()
+	smOpts := []state.SMOption{}
+	if env.headers.rig != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(env.headers))
+	}
 	sm, err := state.NewStateMachine(
 		"escrow-1",
 		env.config,
@@ -1546,6 +1624,7 @@ func newPeerSM(t *testing.T, env *httpTestEnv, balance uint64) *state.StateMachi
 		env.userSigner.Address(),
 		signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", env.userSigner.Address(), env.config, env.group, balance),
+		smOpts...,
 	)
 	require.NoError(t, err)
 	return sm

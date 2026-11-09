@@ -182,7 +182,7 @@ func startEscrowWarmup(rt *devshardRuntime, recorder sendRecorder, metrics warmu
 		escrowID:    rt.id,
 		model:       rt.model,
 		waitCatalog: rt.session.WaitRouterCatalog,
-		waitSeed:    rt.session.WaitHeightSeedReady,
+		waitSeed:    rt.session.WaitFloorWarmup,
 	}
 	go warmUntilStopped(deps, rt.session.Nonce(), rt.stopped)
 }
@@ -205,7 +205,7 @@ func warmUntilStopped(deps warmupDeps, latestNonce uint64, stop <-chan struct{})
 	}
 	if deps.waitSeed != nil {
 		if err := deps.waitSeed(ctx); err != nil {
-			log.Printf("escrow_warmup_stopped_before_height_seed escrow=%s error=%v", deps.escrowID, err)
+			log.Printf("escrow_warmup_stopped_before_floor escrow=%s error=%v", deps.escrowID, err)
 			return
 		}
 	}

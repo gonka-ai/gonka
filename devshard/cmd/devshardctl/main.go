@@ -214,7 +214,11 @@ func main() {
 	}
 
 	handler := buildGatewayHandler(gateway, runtimeOpts)
-	serveGateway(handler, runtimeOpts.port, len(gateway.runtimeOrder))
+	if err := listenGateway(gatewayHeaderTimes(), func() {
+		serveGateway(handler, runtimeOpts.port, len(gateway.runtimeOrder))
+	}); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func mustLoadRuntimeOptions(flags cliFlags) runtimeOptions {
@@ -466,11 +470,11 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	if err != nil {
 		log.Fatalf("dial chain gRPC %s: %v", gatewayState.Settings.ChainGRPC, err)
 	}
-	if err := initGatewayHeightSync(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC)); err != nil {
+	if err := initGatewayHeightSyncDir(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC), baseStorageDir); err != nil {
 		log.Fatalf("height sync oracle: %v", err)
 	}
-	if gatewayHeaderTimes() == nil {
-		log.Printf("header_times_unwired: no chain source for block times; inferences cannot start once hosts stamp a height-sync floor")
+	if err := requireGatewayHeaderTimes(gatewayHeaderTimes()); err != nil {
+		log.Fatal(err)
 	}
 
 	perfStore, err := NewPerfStore(ctx, baseStorageDir)

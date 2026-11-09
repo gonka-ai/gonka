@@ -38,13 +38,17 @@ func startPendingConfirmForErrorMiss(t *testing.T, session *Session, hosts []*si
 	nonce = prepared.diff.Nonce
 	execIdx = int(nonce % uint64(len(session.clients)))
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
+	rec, ok := session.sm.GetInference(nonce)
+	require.True(t, ok)
+	const confirmedAt int64 = 1000
+	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens,
+		testutil.ReceiptStamp{StartedAt: rec.StartedAt, ConfirmedAt: confirmedAt})
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: nonce, ExecutorSig: execSig,
+		InferenceId: nonce, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
 	}}}
 	session.mu.Lock()
 	session.addPendingTx(confirm)
-	session.nonceStates[nonce].confirmedAt = 1000
+	session.nonceStates[nonce].confirmedAt = confirmedAt
 	session.mu.Unlock()
 	require.Equal(t, types.StatusPending, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 	return nonce, execIdx

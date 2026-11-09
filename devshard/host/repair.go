@@ -173,14 +173,19 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 }
 
 func (h *Host) observedTip(ctx context.Context) (uint64, []byte) {
+	hgt, hash, _ := h.observedTipWithTime(ctx)
+	return hgt, hash
+}
+
+func (h *Host) observedTipWithTime(ctx context.Context) (uint64, []byte, int64) {
 	if h.oracle == nil {
-		return 0, nil
+		return 0, nil, 0
 	}
 	hdr, err := h.oracle.Latest(ctx)
 	if err != nil || hdr == nil || hdr.Height <= 0 {
-		return 0, nil
+		return 0, nil, 0
 	}
-	return uint64(hdr.Height), append([]byte(nil), hdr.BlockHash...)
+	return uint64(hdr.Height), append([]byte(nil), hdr.BlockHash...), heightsync.HeaderTimeMs(hdr.Time)
 }
 
 func (h *Host) ingestRepairHeight(slot uint32, resp *heightsync.RepairResponse) {
@@ -256,8 +261,10 @@ func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.Re
 			hb: &types.MsgHeartbeat{ObservedHeight: hRef},
 		}
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, time.Now())
-		if err := heightsync.SignAck(h.signer, ack); err == nil {
-			resp.Ack = ack
+		if ack != nil {
+			if err := heightsync.SignAck(h.signer, ack); err == nil {
+				resp.Ack = ack
+			}
 		}
 	}
 

@@ -149,8 +149,11 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	sentAt := time.Now().Add(-2 * time.Second)
 	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
 
-	// StartedAt is stamped when the request arrives, so it never postdates the send; backdating one
-	// without the other would ask verifiers to judge a deadline that has not run yet.
+	// The vote follows the wall clock. The timeout lands only once the floor's
+	// block time has passed the start by the refusal window.
+	require.Eventually(t, func() bool {
+		return env.sm.TimeoutDue(prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED) == nil
+	}, 5*time.Second, 20*time.Millisecond, "the refusal is due once the floor's block time passes the start")
 	result, err := env.session.HandleTimeout(context.Background(), prepared.Nonce(), sentAt, &host.InferencePayload{
 		Prompt:      params.Prompt,
 		Model:       params.Model,

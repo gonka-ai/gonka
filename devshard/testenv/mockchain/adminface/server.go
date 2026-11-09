@@ -20,11 +20,12 @@ import (
 
 // ParamsRequest patches devshard escrow params on the mock-chain store.
 type ParamsRequest struct {
-	MaxNonce            *uint32 `json:"max_nonce,omitempty"`
-	RefusalTimeout      *int64  `json:"refusal_timeout,omitempty"`
-	ExecutionTimeout    *int64  `json:"execution_timeout,omitempty"`
-	ValidationRate      *uint32 `json:"validation_rate,omitempty"`
-	VoteThresholdFactor *uint32 `json:"vote_threshold_factor,omitempty"`
+	MaxNonce               *uint32 `json:"max_nonce,omitempty"`
+	RefusalTimeout         *int64  `json:"refusal_timeout,omitempty"`
+	ExecutionTimeout       *int64  `json:"execution_timeout,omitempty"`
+	ValidationRate         *uint32 `json:"validation_rate,omitempty"`
+	VoteThresholdFactor    *uint32 `json:"vote_threshold_factor,omitempty"`
+	HeightsyncTimeoutClock *bool   `json:"heightsync_timeout_clock,omitempty"`
 }
 
 // EpochRequest sets or advances epoch metadata.
@@ -86,6 +87,9 @@ func handleParams(st *store.Store) echo.HandlerFunc {
 			if req.VoteThresholdFactor != nil {
 				p.VoteThresholdFactor = *req.VoteThresholdFactor
 			}
+			if req.HeightsyncTimeoutClock != nil {
+				p.HeightsyncTimeoutClock = *req.HeightsyncTimeoutClock
+			}
 		})
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	}
@@ -93,9 +97,9 @@ func handleParams(st *store.Store) echo.HandlerFunc {
 
 // RevisionResponse reports mock-chain block and params revision heights.
 type RevisionResponse struct {
-	BlockHeight             int64 `json:"block_height"`
-	ParamsBlockHeight       int64 `json:"params_block_height"`
-	NextPocStartBlockHeight int64 `json:"next_poc_start_block_height"`
+	BlockHeight             int64  `json:"block_height"`
+	ParamsBlockHeight       int64  `json:"params_block_height"`
+	NextPocStartBlockHeight int64  `json:"next_poc_start_block_height"`
 	EpochIndex              uint64 `json:"epoch_index"`
 }
 

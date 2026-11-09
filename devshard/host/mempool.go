@@ -119,7 +119,12 @@ func (m *Mempool) HasFinish(inferenceID uint64) bool {
 // QueuedConfirmStart returns the MsgConfirmStart this host proposed for
 // inferenceID, or nil. Peer-imported entries (ProposedAt == 0) are skipped:
 // AddTx does not verify signatures, so a gossiped copy must not stand in for
-// this host's own receipt. With several queued, the earliest proposed wins.
+// this host's own receipt. With several of this host's receipts queued, the
+// earliest ProposedAt wins, then the smaller executor signature. ProposedAt
+// is the local nonce when this host queued the message. v6 picked the
+// earliest confirmed_at. That field is inside the signed receipt, so a later
+// proposal with an earlier wall clock would replace the first signature this
+// host produced.
 func (m *Mempool) QueuedConfirmStart(inferenceID uint64) *types.MsgConfirmStart {
 	if m == nil {
 		return nil

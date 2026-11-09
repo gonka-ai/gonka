@@ -35,7 +35,9 @@ const (
 	DevshardErrorCatalogPending       = "catalog_pending"
 	// DevshardErrorStorageBusy is a diff write that could not reach storage
 	// before the request deadline. Nothing was applied; resending is safe.
-	DevshardErrorStorageBusy   = "storage_busy"
+	DevshardErrorStorageBusy = "storage_busy"
+	// DevshardErrorHeaderPending is a legacy wire code. Servers no longer set it;
+	// ErrHeaderPending surfaces as ordinary unavailable.
 	DevshardErrorHeaderPending = "header_pending"
 	// DevshardErrorHTTPSessionRetired is Phase 7: the Echo session route is
 	// gone. Callers use Connect /sessions/{id}/rpc/ instead.

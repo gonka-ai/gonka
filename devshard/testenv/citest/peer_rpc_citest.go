@@ -16,7 +16,7 @@ import (
 )
 
 // peerRPCEndpoints is the §8.2 "RPC on" set (HTTP/1.1, no proxy).
-const peerRPCEndpoints = "signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat"
+const peerRPCEndpoints = "signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat"
 
 // h2UpgradeOff is DEVSHARD_RPC_H2_UPGRADE=false: Connect over HTTP/1.1 only.
 // Unset is on: HTTP/2 first, HTTP/1.1 when the origin does not speak it.

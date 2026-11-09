@@ -655,7 +655,10 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var forwardedInference bool
 	var sawMeta bool // true once we observe a devshard_meta tail
 	received := completionapi.NewReceivedResponseHasher()
-	defer func() { result.ReceivedResponseHashes = received.Sums() }()
+	defer func() {
+		result.ReceivedResponseHashes = received.Sums()
+		result.ReceivedComplete = received.Complete()
+	}()
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
@@ -1029,7 +1032,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, nil, TagHeaderPending(err)
+		return nil, nil, err
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
@@ -1077,7 +1080,7 @@ func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, nil, TagHeaderPending(err)
+		return nil, nil, err
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {

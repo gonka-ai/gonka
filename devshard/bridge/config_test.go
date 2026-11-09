@@ -42,4 +42,23 @@ func TestSessionConfigAtBind_NilEscrowUsesDefaults(t *testing.T) {
 	const groupSize = 16
 	cfg := SessionConfigAtBind(groupSize, nil)
 	assert.Equal(t, uint32(5000), cfg.ValidationRate)
+	assert.False(t, cfg.HeightsyncTimeoutClock)
+}
+
+func TestSessionConfigAtBind_HeightsyncTimeoutClockOmittedIsFalse(t *testing.T) {
+	const groupSize = 3
+	cfg := SessionConfigAtBind(groupSize, &EscrowInfo{
+		TokenPrice: 1,
+		// HeightsyncTimeoutClock omitted → legacy wall
+	})
+	assert.False(t, cfg.HeightsyncTimeoutClock)
+}
+
+func TestSessionConfigAtBind_HeightsyncTimeoutClockTrue(t *testing.T) {
+	const groupSize = 3
+	cfg := SessionConfigAtBind(groupSize, &EscrowInfo{
+		TokenPrice:             1,
+		HeightsyncTimeoutClock: true,
+	})
+	assert.True(t, cfg.HeightsyncTimeoutClock)
 }

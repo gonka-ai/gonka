@@ -239,25 +239,102 @@ type TimeoutInferenceTransaction struct {
 
 func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) (TimeoutInferenceTransaction, bool) {
 	t.Helper()
+	return findTimeoutInference(t, client, hostURL, routePrefix, escrowID, toNonce, func(TimeoutInferenceTransaction) bool {
+		return true
+	})
+}
+
+// FindTimeoutInferenceFor returns the first stored timeout for one inference
+// and reason. An earlier timeout of another inference or reason is skipped.
+func FindTimeoutInferenceFor(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce, inferenceID uint64, reason types.TimeoutReason) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	tx, found, err := findTimeoutInferenceE(t, client, hostURL, routePrefix, escrowID, toNonce, func(tx TimeoutInferenceTransaction) bool {
+		return tx.InferenceID == inferenceID && tx.Reason == reason
+	})
+	require.NoError(t, err)
+	return tx, found
+}
+
+// FindTimeoutInferenceForLimited is FindTimeoutInferenceFor with per-host
+// budget. A host that does not answer within that budget is a miss, so one
+// slow diff read does not spend the caller's whole wait.
+func FindTimeoutInferenceForLimited(t *testing.T, client *http.Client, perHost time.Duration, hostURL, routePrefix, escrowID string, toNonce, inferenceID uint64, reason types.TimeoutReason) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	short := &http.Client{Timeout: perHost}
+	if client != nil {
+		short.Transport = client.Transport
+	}
+	tx, found, err := findTimeoutInferenceE(t, short, hostURL, routePrefix, escrowID, toNonce, func(tx TimeoutInferenceTransaction) bool {
+		return tx.InferenceID == inferenceID && tx.Reason == reason
+	})
+	if err != nil {
+		t.Logf("host diff scan %s: %v", hostURL, err)
+		return TimeoutInferenceTransaction{}, false
+	}
+	return tx, found
+}
+
+// ListTimeoutInferenceTransactionsLimited returns every stored timeout a host
+// answers with inside perHost. A host that does not answer yields none.
+func ListTimeoutInferenceTransactionsLimited(t *testing.T, client *http.Client, perHost time.Duration, hostURL, routePrefix, escrowID string, toNonce uint64) []TimeoutInferenceTransaction {
+	t.Helper()
+	short := &http.Client{Timeout: perHost}
+	if client != nil {
+		short.Transport = client.Transport
+	}
+	found, err := listTimeoutInferencesE(t, short, hostURL, routePrefix, escrowID, toNonce)
+	if err != nil {
+		t.Logf("host diff scan %s: %v", hostURL, err)
+		return nil
+	}
+	return found
+}
+
+func findTimeoutInference(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64, match func(TimeoutInferenceTransaction) bool) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	tx, found, err := findTimeoutInferenceE(t, client, hostURL, routePrefix, escrowID, toNonce, match)
+	require.NoError(t, err)
+	return tx, found
+}
+
+func findTimeoutInferenceE(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64, match func(TimeoutInferenceTransaction) bool) (TimeoutInferenceTransaction, bool, error) {
+	t.Helper()
+	found, err := listTimeoutInferencesE(t, client, hostURL, routePrefix, escrowID, toNonce)
+	if err != nil {
+		return TimeoutInferenceTransaction{}, false, err
+	}
+	for _, tx := range found {
+		if match(tx) {
+			return tx, true, nil
+		}
+	}
+	return TimeoutInferenceTransaction{}, false, nil
+}
+
+func listTimeoutInferencesE(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) ([]TimeoutInferenceTransaction, error) {
+	t.Helper()
+	var found []TimeoutInferenceTransaction
 	for from := uint64(1); from <= toNonce; {
 		to := from + uint64(storage.DiffPageMaxNonces) - 1
 		if to > toNonce {
 			to = toNonce
 		}
-		diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
-		if tx, found := timeoutInferenceInDiffs(t, diffs); found {
-			return tx, true
+		diffs, err := getJSONArrayE(client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=%d&to=%d", hostURL, routePrefix, escrowID, from, to))
+		if err != nil {
+			return nil, err
 		}
+		found = append(found, timeoutInferencesInDiffs(t, diffs)...)
 		if to == toNonce {
 			break
 		}
 		from = to + 1
 	}
-	return TimeoutInferenceTransaction{}, false
+	return found, nil
 }
 
-func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransaction, bool) {
+func timeoutInferencesInDiffs(t *testing.T, diffs []any) []TimeoutInferenceTransaction {
 	t.Helper()
+	var found []TimeoutInferenceTransaction
 	for _, raw := range diffs {
 		record, ok := raw.(map[string]any)
 		require.True(t, ok, "host diff record should be an object")
@@ -279,15 +356,15 @@ func timeoutInferenceInDiffs(t *testing.T, diffs []any) (TimeoutInferenceTransac
 			for i, vote := range timeout.Votes {
 				voterSlots[i] = vote.VoterSlot
 			}
-			return TimeoutInferenceTransaction{
+			found = append(found, TimeoutInferenceTransaction{
 				Nonce:       content.Nonce,
 				InferenceID: timeout.InferenceId,
 				Reason:      timeout.Reason,
 				VoterSlots:  voterSlots,
-			}, true
+			})
 		}
 	}
-	return TimeoutInferenceTransaction{}, false
+	return found
 }
 
 func InferenceStatus(t *testing.T, client *http.Client, clientURL string, inferenceID uint64) (map[string]any, bool) {
@@ -314,11 +391,12 @@ func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefi
 }
 
 // The gateway refuses finalize with 409 while the escrow still has work in
-// flight. Race cleanup outlives the winning completion: it waits up to
-// SecondaryWaitAfterWinner plus a short cancel join for speculative losers.
-// Not-yet-due HandleTimeout waits sleep off pendingRaceCleanup and only hold
-// it briefly for the vote at the protocol deadline. Wait for the drain, then
-// finalize.
+// flight, and with 503 while a journaled nonce is still inside its protocol
+// timeout. One 503 attempt waits 30s, then asks for a retry. Race cleanup
+// outlives the winning completion: it waits up to SecondaryWaitAfterWinner
+// plus a short cancel join for speculative losers. A refusal armed at the
+// default 60s, or a restarted header verifier still inside its stamp wait,
+// outlives that single attempt. Keep retrying through the drain window.
 const (
 	finalizeDrainWait = 6 * time.Minute
 	finalizeDrainPoll = 100 * time.Millisecond
@@ -339,12 +417,22 @@ func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string)
 	deadline := time.Now().Add(finalizeDrainWait)
 	for {
 		resp := PostJSONRaw(t, client, url, map[string]any{}, AdminAPIKey)
-		if resp.StatusCode != http.StatusConflict || !time.Now().Before(deadline) {
+		if !finalizeRetryable(resp) || !time.Now().Before(deadline) {
 			require.Less(t, resp.StatusCode, 300, "POST %s returned %d: %s", url, resp.StatusCode, resp.Body)
 			require.NotNil(t, resp.JSON, "response body should be JSON: %s", resp.Body)
 			return resp.JSON
 		}
-		DebugLogf(t, "finalize refused with 409, retrying: %s", resp.Body)
+		DebugLogf(t, "finalize refused with %d, retrying: %s", resp.StatusCode, resp.Body)
 		time.Sleep(finalizeDrainPoll)
 	}
+}
+
+// finalizeRetryable is a drain the next call can still finish. 409 is work
+// still in flight. 503 is a journaled nonce whose timeout attempt ended with
+// the 30s budget while the protocol deadline was still ahead.
+func finalizeRetryable(resp RawResponse) bool {
+	if resp.StatusCode == http.StatusConflict {
+		return true
+	}
+	return resp.StatusCode == http.StatusServiceUnavailable && strings.Contains(resp.Body, "inference completion pending")
 }

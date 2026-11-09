@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"devshard/types"
+	"devshard/user"
 
 	"github.com/stretchr/testify/require"
 )
@@ -281,36 +282,29 @@ func TestGatewayCheckBalancesKeepsAHeldEscrowWhoseStartedReservationTheSweepCanR
 	require.Equal(t, "on_hold", reason)
 }
 
-type fakeTimeoutClock map[uint64]time.Duration
-
-func (c fakeTimeoutClock) TimeoutRemaining(id uint64, _ types.TimeoutReason) (time.Duration, error) {
-	remaining, armed := c[id]
-	if !armed {
-		return 0, types.ErrTimeoutNotArmed
-	}
-	return remaining, nil
-}
-
 // Test flow:
-//  1. Build one record per status, and Pending records whose refusal is still blocks away, due at the floor, and never armed.
+//  1. Build one record per status, and Pending records whose wall refusal is still ahead, already due, and missing its StartedAt.
 //  2. Summarize them at a fixed moment.
 //  3. Expect per-status counts and costs, the two overdue Pending records, and the latest Pending deadline at the furthest remaining window.
 //  4. Started and disputed money always counts as recoverable; overdue Pending money counts only while a vote may still be running.
 func TestSummarizeEscrowHoldInFlightCountsEachStatusAndItsDeadline(t *testing.T) {
+	prev := user.TimeoutBuffer
+	user.TimeoutBuffer = 0
+	t.Cleanup(func() { user.TimeoutBuffer = prev })
 	now := time.Unix(10_000, 0)
-	clock := fakeTimeoutClock{1: 60 * time.Second, 2: 0, 4: 120 * time.Second}
+	cfg := types.SessionConfig{RefusalTimeout: 60}
 	inferences := map[uint64]*types.InferenceRecord{
-		1: {Status: types.StatusPending, ReservedCost: 10},
-		2: {Status: types.StatusPending, ReservedCost: 30},
+		1: {Status: types.StatusPending, ReservedCost: 10, StartedAt: now.Unix()},
+		2: {Status: types.StatusPending, ReservedCost: 30, StartedAt: now.Unix() - 60},
 		3: {Status: types.StatusPending, ReservedCost: 100},
-		4: {Status: types.StatusPending, ReservedCost: 200},
+		4: {Status: types.StatusPending, ReservedCost: 200, StartedAt: now.Unix() + 60},
 		5: {Status: types.StatusStarted, ReservedCost: 20},
 		6: {Status: types.StatusChallenged, ReservedCost: 1000, ActualCost: 40},
 		7: {Status: types.StatusFinished, ReservedCost: 80, ActualCost: 80},
 		8: {Status: types.StatusTimedOut, ReservedCost: 160},
 	}
 
-	summary := summarizeEscrowHoldInFlight(inferences, clock, now)
+	summary := summarizeEscrowHoldInFlight(inferences, cfg, nil, now)
 
 	require.Equal(t, 4, summary.pendingCount)
 	require.EqualValues(t, 340, summary.pendingCost)
@@ -318,7 +312,7 @@ func TestSummarizeEscrowHoldInFlightCountsEachStatusAndItsDeadline(t *testing.T)
 	require.EqualValues(t, 20, summary.startedCost)
 	require.Equal(t, 1, summary.challengedCount)
 	require.EqualValues(t, 40, summary.challengedCost)
-	require.Equal(t, 2, summary.overduePendingCount, "a refusal due at the floor and one that can never be armed are overdue")
+	require.Equal(t, 2, summary.overduePendingCount, "a refusal past StartedAt and one with no StartedAt are overdue")
 	require.EqualValues(t, 130, summary.overduePendingCost)
 	require.EqualValues(t, 270, summary.recoverable(false), "an overdue Pending reservation no vote is working on will not come back")
 	require.EqualValues(t, 400, summary.recoverable(true), "a running vote may still refund an overdue Pending reservation")
@@ -490,4 +484,42 @@ func TestGatewayCheckBalancesDoesNotHoldAnEscrowItCannotReplace(t *testing.T) {
 	accepts, _ := runtime.acceptsNewInferences()
 	require.True(t, accepts, "an escrow rotation cannot replace must keep serving instead of being held forever")
 	require.Empty(t, devshardIDs(t, gateway.store)[runtime.id].OnHoldSince)
+}
+
+// Legacy hold ages StartedAt. A stamp that is already due does not make a
+// fresh wall anchor overdue, and a wall anchor past the refusal window is
+// overdue while the stamp is still in the future.
+func TestSummarizeEscrowHoldInFlightLegacyFollowsStartedAt(t *testing.T) {
+	prev := user.TimeoutBuffer
+	user.TimeoutBuffer = 5 * time.Second
+	t.Cleanup(func() { user.TimeoutBuffer = prev })
+	now := time.Unix(1_800_000_000, 0)
+	cfg := types.SessionConfig{RefusalTimeout: 60}
+	pastWall := now.Add(-(60*time.Second + user.TimeoutBuffer + time.Second)).Unix()
+	freshWall := now.Add(-time.Second).Unix()
+	inferences := map[uint64]*types.InferenceRecord{
+		1: {Status: types.StatusPending, ReservedCost: 10, StartedAt: pastWall, StartedAtTimeMs: now.UnixMilli()},
+		2: {Status: types.StatusPending, ReservedCost: 20, StartedAt: freshWall, StartedAtTimeMs: now.Add(-time.Hour).UnixMilli()},
+	}
+
+	summary := summarizeEscrowHoldInFlight(inferences, cfg, nil, now)
+
+	require.Equal(t, 1, summary.overduePendingCount)
+	require.EqualValues(t, 10, summary.overduePendingCost)
+}
+
+// Header hold ages the stamp. A past wall with no stamp is not overdue.
+// A due stamp is overdue while the wall anchor is still fresh.
+func TestSummarizeEscrowHoldInFlightHeaderFollowsTheStamp(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	cfg := types.SessionConfig{HeightsyncTimeoutClock: true, RefusalTimeout: 60}
+	inferences := map[uint64]*types.InferenceRecord{
+		1: {Status: types.StatusPending, ReservedCost: 10, StartedAt: now.Add(-time.Hour).Unix(), StartedAtHeight: 9},
+		2: {Status: types.StatusPending, ReservedCost: 20, StartedAt: now.Unix(), StartedAtTimeMs: now.Add(-time.Hour).UnixMilli()},
+	}
+
+	summary := summarizeEscrowHoldInFlight(inferences, cfg, nil, now)
+
+	require.Equal(t, 1, summary.overduePendingCount)
+	require.EqualValues(t, 20, summary.overduePendingCost)
 }

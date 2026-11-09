@@ -69,6 +69,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/types"
 	"devshard/user"
 )
 
@@ -141,6 +142,7 @@ type pickerRequest struct {
 	params              user.InferenceParams
 	excludeParticipants map[string]bool // participant keys this request has already tried
 	ctx                 context.Context
+	floorCtx            context.Context // admission budget, owned by the dispatcher
 	submitTime          time.Time
 	reply               chan pickerResult // buffered; one write only
 }
@@ -199,12 +201,17 @@ type sessionPicker struct {
 	done   bool
 	notify chan struct{} // signaled (non-blocking) on submit or stop
 
-	stopOnce sync.Once
-	stopped  chan struct{}
+	waitStopCtx context.Context
+	cancelWait  context.CancelFunc
+	stopOnce    sync.Once
+	stopped     chan struct{}
 }
 
 func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker, stateBlocked stateBlockChecker) *sessionPicker {
+	waitCtx, cancelWait := context.WithCancel(context.Background())
 	return &sessionPicker{
+		waitStopCtx:     waitCtx,
+		cancelWait:      cancelWait,
 		session:         session,
 		model:           model,
 		dispatchGhost:   dispatchGhost,
@@ -254,6 +261,7 @@ func (p *sessionPicker) stop() {
 	p.stopOnce.Do(func() {
 		p.mu.Lock()
 		p.done = true
+		p.cancelWait()
 		for _, r := range p.queue {
 			r.reply <- pickerResult{err: errPickerStopped}
 		}
@@ -341,6 +349,10 @@ func (p *sessionPicker) run() {
 			continue
 		}
 
+		if !p.waitForFloor() {
+			continue
+		}
+
 		nonceBefore := p.session.Nonce()
 
 		// Phase 2: try to dispatch one nonce. The chooser runs under
@@ -363,6 +375,9 @@ func (p *sessionPicker) run() {
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 			p.mu.Lock()
 			defer p.mu.Unlock()
+			if p.done {
+				return user.InferenceParams{}, false, nil, errPickerStopped
+			}
 			p.dropCanceledLocked()
 
 			// Branch 1a: PoC required for this host. Real requests
@@ -454,7 +469,11 @@ func (p *sessionPicker) run() {
 		})
 
 		// Phase 3: act on chooser outcome.
+		var floorErr *user.HeightSeedError
 		switch {
+		case errors.As(err, &floorErr):
+			// No chooser ran and no request was consumed. Reuse its remaining budget.
+			continue
 		case errors.Is(err, errPickerEmpty):
 			// Queue went empty during dispatch (race with cancel /
 			// drop). Loop and re-evaluate.
@@ -544,6 +563,53 @@ func (p *sessionPicker) run() {
 		// to its own caller).
 		chosen.reply <- pickerResult{prepared: prepared, isProbe: false, err: nil}
 	}
+}
+
+// waitForFloor waits outside both picker and Session locks. A refusal belongs
+// to the caller whose budget expired; unrelated queued callers remain queued.
+func (p *sessionPicker) waitForFloor() bool {
+	p.mu.Lock()
+	if len(p.queue) == 0 || p.done {
+		p.mu.Unlock()
+		return false
+	}
+	request := p.queue[0]
+	if request.floorCtx == nil {
+		request.floorCtx = p.session.WithFloorChatBudget(request.ctx)
+	}
+	ctx := request.floorCtx
+	p.mu.Unlock()
+	// The new per-dispatch gate follows the challenge protocol boundary.
+	// Legacy sessions retain the existing HTTP bootstrap and picker rules.
+	sm := p.session.StateMachine()
+	if !types.ProtocolKnowsChallenge(sm.ProtocolVersion()) {
+		return !p.isStopped()
+	}
+	waitCtx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(p.waitStopCtx, cancel)
+	err := p.session.WaitFloorChat(waitCtx)
+	stop()
+	cancel()
+	p.mu.Lock()
+	if p.done {
+		p.mu.Unlock()
+		return false
+	}
+	if err == nil {
+		request.floorCtx = p.session.WithFloorChatBudget(ctx)
+		p.mu.Unlock()
+		return true
+	}
+
+	for i, queued := range p.queue {
+		if queued == request {
+			p.queue = append(p.queue[:i], p.queue[i+1:]...)
+			request.reply <- pickerResult{err: err}
+			break
+		}
+	}
+	p.mu.Unlock()
+	return false
 }
 
 // computeAvailableParticipants returns the set of participant keys
