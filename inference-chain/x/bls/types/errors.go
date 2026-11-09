@@ -8,8 +8,10 @@ import (
 
 // x/bls module sentinel errors
 var (
-	ErrInvalidSigner        = sdkerrors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
-	ErrSample               = sdkerrors.Register(ModuleName, 1101, "sample error")
-	ErrEpochBLSDataNotFound = sdkerrors.Register(ModuleName, 1102, "epoch BLS data not found")
-	ErrDeprecated           = sdkerrors.Register(ModuleName, 1103, "this message type is deprecated")
+	ErrInvalidSigner          = sdkerrors.Register(ModuleName, 1100, "expected gov account as only signer for proposal message")
+	ErrSample                 = sdkerrors.Register(ModuleName, 1101, "sample error")
+	ErrEpochBLSDataNotFound   = sdkerrors.Register(ModuleName, 1102, "epoch BLS data not found")
+	ErrDeprecated             = sdkerrors.Register(ModuleName, 1103, "this message type is deprecated")
+	ErrNotDKGParticipant      = sdkerrors.Register(ModuleName, 1104, "not a DKG participant of the epoch")
+	ErrSigningRequestNotFound = sdkerrors.Register(ModuleName, 1105, "threshold signing request not found")
 )

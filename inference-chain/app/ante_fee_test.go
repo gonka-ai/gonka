@@ -349,9 +349,9 @@ func TestNetworkDutyBypass_ClaimRewardsRequiresActiveEpoch(t *testing.T) {
 			claim := &inferencetypes.MsgClaimRewards{Creator: actor.String()}
 			seed := &inferencetypes.MsgSubmitSeed{Creator: actor.String()}
 
-			require.Equal(t, tc.wantClaim, isAuthorizedNetworkDuty(ctx, claim, ik),
+			require.Equal(t, tc.wantClaim, isAuthorizedNetworkDuty(ctx, claim, ik, nil),
 				"claim waiver must follow the handler's current-or-previous check")
-			require.True(t, isAuthorizedNetworkDuty(ctx, seed, ik),
+			require.True(t, isAuthorizedNetworkDuty(ctx, seed, ik, nil),
 				"other duties keep the registration predicate")
 		})
 	}
@@ -527,7 +527,7 @@ func TestIsNetworkDuty_MsgExec_FailsClosed(t *testing.T) {
 	execMsg := &authztypes.MsgExec{Grantee: "cosmos1test"}
 
 	// nil keeper: fail closed
-	require.False(t, isNetworkDuty(newTestContext(), execMsg, nil),
+	require.False(t, isNetworkDuty(newTestContext(), execMsg, nil, nil),
 		"MsgExec should fail closed with nil keeper")
 }
 
@@ -537,7 +537,7 @@ func TestIsNetworkDuty_EmptyMsgExec_NotDuty(t *testing.T) {
 	authztypes.RegisterInterfaces(ir)
 
 	empty := &authztypes.MsgExec{Grantee: "cosmos1test"}
-	require.False(t, isNetworkDuty(newTestContext(), empty, &k),
+	require.False(t, isNetworkDuty(newTestContext(), empty, &k, nil),
 		"empty MsgExec must not be treated as an all-exempt network duty")
 
 	decorator := NetworkDutyFeeBypassDecorator{
@@ -594,19 +594,19 @@ func TestIsNetworkDuty_MsgExec_OneLevelDuty(t *testing.T) {
 
 	grantee := sdk.AccAddress("granteeaddr________")
 	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgClaimRewards{Creator: actor}})
-	require.True(t, isNetworkDuty(ctx, &exec, &k), "one-level DAPI MsgExec of an authorized duty must classify as duty")
+	require.True(t, isNetworkDuty(ctx, &exec, &k, nil), "one-level DAPI MsgExec of an authorized duty must classify as duty")
 
 	mixed := authztypes.NewMsgExec(grantee, []sdk.Msg{
 		&inferencetypes.MsgClaimRewards{Creator: actor},
 		&inferencetypes.MsgPoCV2StoreCommit{},
 	})
-	require.False(t, isNetworkDuty(ctx, &mixed, &k), "mixed duty+paying MsgExec must not bypass")
+	require.False(t, isNetworkDuty(ctx, &mixed, &k, nil), "mixed duty+paying MsgExec must not bypass")
 }
 
 func TestIsNetworkDuty_NonExecNonExempt(t *testing.T) {
 	// Non-MsgExec, non-exempt message
-	require.False(t, isNetworkDuty(newTestContext(), &banktypes.MsgSend{}, nil))
-	require.False(t, isNetworkDuty(newTestContext(), &inferencetypes.MsgPoCV2StoreCommit{}, nil))
+	require.False(t, isNetworkDuty(newTestContext(), &banktypes.MsgSend{}, nil, nil))
+	require.False(t, isNetworkDuty(newTestContext(), &inferencetypes.MsgPoCV2StoreCommit{}, nil, nil))
 }
 
 // TestIsNetworkDuty_ExemptTypeAloneIsNotEnough is the regression guard for
@@ -614,7 +614,7 @@ func TestIsNetworkDuty_NonExecNonExempt(t *testing.T) {
 // actor must be established, so a nil keeper fails closed even for a duty type
 // that would previously have been bypassed on type alone.
 func TestIsNetworkDuty_ExemptTypeAloneIsNotEnough(t *testing.T) {
-	require.False(t, isNetworkDuty(newTestContext(), &blstypes.MsgSubmitDealerPart{Creator: "gonka1duty"}, nil),
+	require.False(t, isNetworkDuty(newTestContext(), &blstypes.MsgSubmitDealerPart{Creator: "gonka1duty"}, nil, nil),
 		"exempt type must not be bypassed without an authorized actor")
 	_, exempt := dutyAuthorizationFor(&blstypes.MsgSubmitDealerPart{})
 	require.True(t, exempt,

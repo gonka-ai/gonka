@@ -37,6 +37,7 @@ type HandlerOptions struct {
 	TXCounterStoreService corestoretypes.KVStoreService
 	CircuitKeeper         *circuitkeeper.Keeper
 	InferenceKeeper       *inferencemodulekeeper.Keeper
+	BlsKeeper             BLSMembershipKeeper
 	Codec                 codec.Codec
 	AuthzKeeper           AuthzAuthorizationKeeper
 	GenesisTransfer       GenesisTransferChecker
@@ -217,6 +218,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		},
 		NetworkDutyFeeBypassDecorator{
 			InferenceKeeper: options.InferenceKeeper,
+			BlsKeeper:       options.BlsKeeper,
 			// Cap for fee-exempt duty transactions. Sized at 3x the DAPI's
 			// BatchGasLimit (1B, see decentralized-api/cosmosclient/tx_manager/
 			// tx_manager.go:58) to accommodate the largest legitimate batched
@@ -256,7 +258,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// makes the check meaningful — creator/settler is the declared
 		// cosmos.msg.v1.signer, so by here it is an authenticated address
 		// rather than an attacker-chosen string (#1539).
-		NewNetworkDutySignerDecorator(options.InferenceKeeper),
+		NewNetworkDutySignerDecorator(options.InferenceKeeper, options.BlsKeeper),
 		// The one ungrouped message: reject in CheckTx what its handler would
 		// reject in DeliverTx, after sig verification like the checks above.
 		NewGenesisTransferEarlyRejectDecorator(options.InferenceKeeper, options.GenesisTransfer),
@@ -284,6 +286,7 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 			NodeConfig:            &nodeConfig,
 			WasmKeeper:            &app.WasmKeeper,
 			InferenceKeeper:       &app.InferenceKeeper,
+			BlsKeeper:             app.BlsKeeper,
 			Codec:                 app.appCodec,
 			AuthzKeeper:           &app.AuthzKeeper,
 			GenesisTransfer:       app.GenesistransferKeeper,

@@ -1,9 +1,12 @@
 package app
 
 import (
+	"errors"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 
+	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
@@ -33,10 +36,17 @@ import (
 // mempool admission is tightened without altering the state machine.
 type NetworkDutySignerDecorator struct {
 	inferenceKeeper *inferencemodulekeeper.Keeper
+	blsKeeper       BLSMembershipKeeper
 }
 
-func NewNetworkDutySignerDecorator(ik *inferencemodulekeeper.Keeper) NetworkDutySignerDecorator {
-	return NetworkDutySignerDecorator{inferenceKeeper: ik}
+// BLSMembershipKeeper is the read-only BLS keeper surface the decorator needs.
+type BLSMembershipKeeper interface {
+	IsEpochBLSParticipant(ctx sdk.Context, epochID uint64, addr string) (bool, error)
+	SigningRequestEpoch(ctx sdk.Context, requestID []byte) (uint64, error)
+}
+
+func NewNetworkDutySignerDecorator(ik *inferencemodulekeeper.Keeper, bk BLSMembershipKeeper) NetworkDutySignerDecorator {
+	return NetworkDutySignerDecorator{inferenceKeeper: ik, blsKeeper: bk}
 }
 
 func (d NetworkDutySignerDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
@@ -156,6 +166,9 @@ func (d NetworkDutySignerDecorator) checkDutyActor(ctx sdk.Context, msg sdk.Msg)
 		if auth.activeOrPreviousEpoch {
 			return d.checkActiveOrPreviousEpoch(ctx, msg, auth.actor)
 		}
+		if auth.blsMember {
+			return d.checkBLSMember(ctx, msg, auth.actor)
+		}
 		return nil
 	}
 	d.inferenceKeeper.LogDebug(
@@ -185,4 +198,59 @@ func (d NetworkDutySignerDecorator) checkActiveOrPreviousEpoch(ctx sdk.Context, 
 		return err
 	}
 	return nil
+}
+
+// checkBLSMember rejects a BLS duty from a non-member of its DKG epoch. Only
+// "not found" rejects; other read errors pass, so a store error never keeps a member out.
+func (d NetworkDutySignerDecorator) checkBLSMember(ctx sdk.Context, msg sdk.Msg, actor string) error {
+	if d.blsKeeper == nil {
+		return nil
+	}
+	member, err := blsDutyMember(ctx, d.blsKeeper, msg, actor)
+	if err != nil {
+		if errors.Is(err, blstypes.ErrEpochBLSDataNotFound) || errors.Is(err, blstypes.ErrSigningRequestNotFound) {
+			return err
+		}
+		return nil
+	}
+	if member {
+		return nil
+	}
+	d.inferenceKeeper.LogDebug(
+		"AnteHandle: NetworkDutySigner - rejecting BLS duty from non-member of the DKG epoch",
+		inferencetypes.Messages,
+		"msg_type_url", sdk.MsgTypeURL(msg),
+		"creator", actor,
+	)
+	return blstypes.ErrNotDKGParticipant.Wrap(actor)
+}
+
+// blsDutyMember mirrors the participant list each BLS handler scans,
+// including group key validation's fallback to NewEpochId.
+func blsDutyMember(ctx sdk.Context, bk BLSMembershipKeeper, msg sdk.Msg, actor string) (bool, error) {
+	switch m := msg.(type) {
+	case *blstypes.MsgSubmitDealerPart:
+		return bk.IsEpochBLSParticipant(ctx, m.EpochId, actor)
+	case *blstypes.MsgSubmitVerificationVector:
+		return bk.IsEpochBLSParticipant(ctx, m.EpochId, actor)
+	case *blstypes.MsgRespondDealerComplaints:
+		return bk.IsEpochBLSParticipant(ctx, m.EpochId, actor)
+	case *blstypes.MsgSubmitGroupKeyValidationSignature:
+		if m.NewEpochId <= 1 {
+			return false, nil
+		}
+		member, err := bk.IsEpochBLSParticipant(ctx, m.NewEpochId-1, actor)
+		if errors.Is(err, blstypes.ErrEpochBLSDataNotFound) {
+			return bk.IsEpochBLSParticipant(ctx, m.NewEpochId, actor)
+		}
+		return member, err
+	case *blstypes.MsgSubmitPartialSignature:
+		epochID, err := bk.SigningRequestEpoch(ctx, m.RequestId)
+		if err != nil {
+			return false, err
+		}
+		return bk.IsEpochBLSParticipant(ctx, epochID, actor)
+	default:
+		return true, nil
+	}
 }
