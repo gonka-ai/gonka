@@ -1,0 +1,15 @@
+schema_version: v1
+profile: empty-stream
+
+# A dishonest executor: every execution answers with a role delta, finish_reason stop and no
+# content, so the host signs a receipt for a stream with no generated token. The gateway challenges
+# each such win (EMPTY_STREAM) and the voters find no position in the stored body.
+ttft: 2ms
+token_interval: 0s
+workers: 100
+queue: 500
+failures: []
+chaos:
+  seed: 7
+  weights:
+    empty: 1

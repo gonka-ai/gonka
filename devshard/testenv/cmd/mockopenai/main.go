@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
 	"os/signal"
@@ -20,6 +21,19 @@ func main() {
 	cfg.Faults = faultsFromEnv()
 	cfg.Workers = intFromEnv("MOCK_OPENAI_WORKERS")
 	cfg.Queue = intFromEnv("MOCK_OPENAI_QUEUE")
+	if raw := os.Getenv("MOCK_OPENAI_CHAOS_JSON"); raw != "" {
+		// The chaos object of POST /testenv/fault, on from the start: a node that answers some of its
+		// executions dishonestly for the whole run.
+		var c mockopenai.ChaosConfig
+		if err := json.Unmarshal([]byte(raw), &c); err != nil {
+			log.Fatalf("mock-openai: MOCK_OPENAI_CHAOS_JSON: %v", err)
+		}
+		c.Enabled = true
+		if err := c.Validate(); err != nil {
+			log.Fatalf("mock-openai: MOCK_OPENAI_CHAOS_JSON: %v", err)
+		}
+		cfg.Chaos = c
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -85,6 +99,9 @@ func faultsFromEnv() mockopenai.FaultConfig {
 	}
 	if envTruthy("MOCK_OPENAI_HANG") {
 		f.Hang = true
+	}
+	if envTruthy("MOCK_OPENAI_HONEST_USAGE") {
+		f.HonestUsage = true
 	}
 	return f
 }

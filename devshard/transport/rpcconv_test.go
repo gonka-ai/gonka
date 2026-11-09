@@ -206,3 +206,22 @@ func TestGossipTxs_BytesRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, decoded)
 }
+
+func TestVerifyChallenge_ProtoRoundTrip(t *testing.T) {
+	in := VerifyChallengeRequest{
+		InferenceID: 7,
+		Reason:      types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM,
+		Diffs:       []DiffJSON{{Nonce: 3, Txs: []byte{1}, UserSig: []byte{2}}},
+	}
+	require.Equal(t, in, VerifyChallengeRequestFromProto(VerifyChallengeRequestToProto(in)))
+	resp := &VerifyChallengeResponse{
+		Fault:     types.ChallengeFault_CHALLENGE_FAULT_EMPTY_STREAM,
+		Check:     types.ChallengeCheck_CHALLENGE_CHECK_POSITIONS,
+		Deviation: 40,
+		Signature: []byte{9},
+		VoterSlot: 2,
+	}
+	require.Equal(t, resp, VerifyChallengeResponseFromProto(VerifyChallengeResponseToProto(resp)))
+	pending := &VerifyChallengeResponse{Pending: true}
+	require.Equal(t, pending, VerifyChallengeResponseFromProto(VerifyChallengeResponseToProto(pending)))
+}

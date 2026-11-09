@@ -156,7 +156,9 @@ integer to choose another limit, or `all` to collect all available container
 logs. The setting applies to `compose-pre-drain.log`, final `compose.log`, and
 log collection on error paths. Logs stream directly to files. `catch-up` uses
 `all` to retain quarantine and recovery events from the beginning of the run.
-Full collection still depends on logs retained by Docker's logging driver.
+Full collection still depends on logs retained by Docker's logging driver; the
+runner gives every container of a load-test stack `json-file` with `1g` x 3, so
+a busy service keeps the start of the run.
 
 ## Miss-rate and catch-up scenario
 
@@ -374,6 +376,17 @@ assertions:
 drain_timeout: 30s
 ```
 
+`topology.chain.validation_threshold` sets the replay similarity bar the chain
+hands the hosts for every model, as a chain decimal (`{value: 958, exponent: -3}`
+is mainnet's 0.958); it must lie between 0 and 1. When omitted, the testenv
+default 0.50 stays, which no logprob mismatch can fail.
+
+`topology.chain.escrows` is how many escrows of the request model the Gateway
+holds during the load, as on the network: the first is the configured one, the
+runner creates the rest through `POST /v1/admin/escrows` before the load and
+waits up to three minutes for `/v1/admin/devshards` to list them. The Gateway
+spreads the requests over them by load. 0 and 1 keep the single escrow; at most 16.
+
 There is no separate `thresholds` or fail-fast configuration. A run evaluates
 all enabled assertions and prints every result before returning a failure.
 `assertions.requests.error_rate` is the maximum permitted client error rate.
@@ -436,6 +449,9 @@ The profile controls response timing and failure behavior:
 | `slow` | Longer first-token and per-token delays. |
 | `failing` | Delayed responses with a configured HTTP failure rate and status. |
 | `timeout` | Requests are accepted but intentionally never complete. |
+| `overclaim` | One execution in five reports usage of 3n+7 tokens for n sent. |
+| `wrong-answer` | One execution in five answers with logprobs the replay does not confirm. |
+| `empty-stream` | Every execution answers with no content. |
 
 Profile fields currently supported:
 
@@ -456,6 +472,23 @@ the delay between later chunks. `workers` and `queue` bound the Mock ML
 capacity. `failure_rate` and `http_status` are used by failure profiles;
 `hang: true` creates a timeout-style node.
 
+`chaos` makes the node a dishonest executor. Each execution gets one answer
+shape drawn by `weights` from the mock's chaos actions (`ok`, `odd_usage`,
+`wrong_answer`, `empty` and others), seeded by `seed`; a validator's replay is
+always answered honestly, so any shape other than `ok` is one the protocol
+should catch:
+
+```yaml
+chaos:
+  seed: 7
+  weights:
+    ok: 4
+    odd_usage: 1
+```
+
+Every Mock ML node of a load-test stack reports `usage.completion_tokens` as the
+tokens it sent, as vLLM does, so a host's Finish can be compared with it.
+
 To add a profile, create `profiles/<name>.yaml` with `schema_version: v1`, the
 same value in `profile`, valid duration fields, a positive `workers` value, and
 a non-negative `queue` value. Reference it from a scenario node:
@@ -467,6 +500,25 @@ mock_ml:
     - name: mock-openai-0
       profile: realistic
 ```
+
+A node may also set `host` and `max_concurrent`:
+
+```yaml
+    - name: mock-openai-3
+      profile: overclaim
+      host: versiond-3
+      max_concurrent: 4
+```
+
+`host` binds the node to one versiond container, as a participant's dapi owns
+its nodes: mock-dapi hands that container only its own nodes, and the other
+containers share the unbound ones (or every node, if all are bound). It must be
+a `versiond-N` of an explicit `topology.participants`. Bind a node to every
+container that executes, or that container draws from the others' nodes.
+
+`max_concurrent` caps the AcquireMLNode locks mock-dapi hands out on the node
+at once, as the dapi broker refuses a node holding its `MaxConcurrent` locks; a
+release frees a slot. 0 (the default) is unlimited.
 
 ## Captured request datasets
 
@@ -530,8 +582,10 @@ and `participant_throttle.http_quarantine_ms` respectively.
 `catch-up` uses `70s` for both so the host can become eligible during the run.
 The timer starts when an error triggers quarantine, not when the
 container resumes. Further failures can quarantine the host again. Expiration
-does not validate that the host has caught up. Empty-stream and stalled-winner
-quarantine durations are configured separately in the Gateway.
+does not validate that the host has caught up. `empty_stream_quarantine`
+(Gateway default `30m`) goes to `participant_throttle.empty_stream_quarantine_ms`;
+`usage-challenge-wave` cuts it to `1s` so hosts that served an empty stream keep
+winning. The stalled-winner quarantine is configured separately in the Gateway.
 
 For escrow rotation, configure the Gateway explicitly:
 
@@ -581,6 +635,39 @@ Assertions are declared in the scenario and are evaluated after the workload:
 | `mock_ml.require_each_node_used` | Requires every configured Mock ML node to receive an allocation. |
 | `devshard.no_orphaned_work` | Checks terminal DevShard state and the configured ghost-rate limit. |
 | `escrow_rotation.require_new_escrow` | Requires a new escrow after rotation. |
+| `promises` | Holds the exported run to the system properties below; requires `diagnostics.export` and `diagnostics.logs.tail: all`. |
+
+With `promises: true` the runner checks the run after the export and writes
+`report.json` and `report.md`:
+
+| Property | Holds |
+| --- | --- |
+| `paid_output_within_produced` | A host's Finish claims no more output tokens than its Start allowed, nor a count other than the ML node produced for that execution. |
+| `charge_only_the_guilty` | An executor the ML log shows answering in full is not charged a miss, an invalid or an invalidation by a usage challenge whose fault votes outweigh the session's vote threshold, a request the client spoiled charges no host, and an answer with forged logprobs is not voted valid. |
+
+`report.md` opens with a one-line verdict, then a table with one row per
+property: what it promises, held, violated or not measured, the number of
+violations and what was judged. The first five violations of each property follow,
+each naming the hosts, the escrow, the inference and the numbers; `report.json`
+holds them all. Observations come last: what was not judged and why, how many
+client requests were tied to inferences (through the prompt each host stores
+with the request tag, or by model, seed and start time where no prompt was
+exported), and what the Gateway logged of the usage challenges (outcomes,
+reasons, the voters' answers and the time from a challenge's start to its
+outcome).
+
+A run whose generator dropped requests, whose dishonest node never answered
+dishonestly, or whose export lost what the checks read (a host's diffs or
+sessions, its SQLite files, the mock log) is reported as not valid and fails the
+check; the verdict line says why. A gap elsewhere in the export, such as a table
+over the file bound, is an observation. A finished
+run can be checked again with `go run ./cmd/promisecheck -loadtest
+loadtest/results/<timestamp>` in `devshard/testenv`, which knows no profiles and
+so leaves out the dishonest-node check; it exits 1 on a violation, 2 when the run
+cannot be read or the report not written, and 3 when the run is not valid.
+`dishonest-executor-overclaim`, `dishonest-executor-wrong-answer` and
+`usage-challenge-wave` use it; `dishonest-executor-honest` and
+`usage-challenge-wave-honest` are the same runs with every node honest.
 
 The final report prints each check with its expected value, actual value, and
 diagnostic details. Failed checks are also listed in `assertions.json`.
@@ -606,6 +693,8 @@ records, summaries, state snapshots, and logs:
 | `compose-pre-drain.log` | Container logs captured before the drain check. |
 | `compose.log` | Final container logs captured after the drain check. |
 | `failures/` | Individual failed-request bundles, subject to the runner's artifact cap. |
+| `export/` | With `diagnostics.export: true`: every Postgres database as CSV (`db-<service>/postgres/`), SQLite files of hosts that keep sessions in them, and the merged request log of every Mock ML node (`mock-log.json`), with `EXPORT-MANIFEST.json`. |
+| `report.json`, `report.md` | With `assertions.promises: true`: the property checks of the run. |
 
 The two Compose log snapshots are intentional: the pre-drain snapshot shows
 the state at the point where cleanup begins, while the final snapshot shows
