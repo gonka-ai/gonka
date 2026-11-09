@@ -547,6 +547,14 @@ func ExecuteValidationWithPolicy(
 		}, nil
 	}
 
+	// Any other non-2xx carries no completion to compare. It is the validator's own node failing,
+	// like a 5xx, so return an error instead of a verdict.
+	if statusCode < 200 || statusCode >= 300 {
+		logging.Warn("validator node refused the replay; no verdict", types.Validation,
+			"inferenceId", inferenceID, "status", statusCode)
+		return nil, fmt.Errorf("validator node answered HTTP %d", statusCode)
+	}
+
 	logging.Debug("responseValidation", types.Validation, "validation", string(respBodyBytes))
 	responseValidation, err := parseReplayResponse(respBodyBytes)
 	if err != nil {
