@@ -51,9 +51,10 @@ The devshard gateway decides, per phase, which miners can take inference traffic
 ### Tracking Capability (`versions_cache.go`)
 
 - `VersionsCache` runs as a background poller on the gate's lifecycle. It reads each candidate miner's `/v1/versions` and records, per `(miner, node_id)`, whether that node reports `poc_validation_inference`.
-- `IsNodeValidationCapable(miner, nodeID)` answers the per-node question. It returns `false` for an unknown miner or node, a failed fetch, or an entry older than the cache TTL.
+- The poller only fetches while a PoC or confirmation PoC episode is active in relaxed mode, from generation on, so the answers are ready when validation starts. Outside those episodes it sends no requests. While active, a successful answer is refetched every minute and a failed fetch is retried every 15 seconds. A miner whose inference URL changes loses its cached answer.
+- `IsNodeValidationCapable(miner, nodeID)` answers the per-node question. It returns `false` for an unknown miner or node, a miner with no successful fetch, or an answer older than the cache TTL (5 minutes). A failed refresh keeps the last good answer until that TTL.
 - The poller holds its lock only to copy the candidate set and to store results. It does not hold the lock across the HTTP call, so a slow miner does not block reads from the refresh path.
-- `refresh` feeds the candidate set from the participants response on every poll, so the cache stays warm and is ready when the phase turns to validation.
+- `refresh` feeds the candidate set from the participants response, turns the poller on and off with the phase, and republishes the merged routing set on every validation refresh so capability learned mid-phase takes effect.
 
 ### Merging the Sets (`phase_gate.go`)
 
@@ -82,7 +83,7 @@ Every unknown resolves to "not capable", so a miner or node is never offered tra
 
 - A node whose `/api/v1/state` response does not include `poc_validation_inference` reports `false`.
 - A miner whose `/v1/versions` cannot be reached or parsed contributes no capable nodes.
-- A cache entry past its TTL is treated as unknown until the next poll refreshes it.
+- An answer past its TTL is treated as unknown until a later fetch succeeds.
 - A nil broker or a missing node returns `false`.
 
 ## Key Implementation Files
