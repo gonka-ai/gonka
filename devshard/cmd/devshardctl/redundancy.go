@@ -2953,8 +2953,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					stopTimer(escalationTimer)
 					stopTimer(stallTimer)
 					stopTimer(winnerHardTimeoutTimer)
-					e.recordWinnerTerminalFailureOnce(inf, params, w)
-					// Settled as the failure it is: the caller keeps the answer, the host keeps the strike.
+					// The caller keeps the answer; the settle judges the host once the nonce finishes or its deadline passes.
 					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
 						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, w,
 							raceFinishOptions{clientGone: clientFlag})
@@ -3806,30 +3805,35 @@ func (e *Redundancy) recordGatewayUserVisibleWin(attempts []*inflight, params us
 	}
 }
 
-func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight) {
-	if e == nil || e.metrics == nil || len(failed) == 0 {
-		return
-	}
+// hiddenFailure is the attempt a successful request's hidden failure is counted under: the first non-probe one in failed other than except.
+func hiddenFailure(failed []*inflight, except *inflight) *inflight {
 	for _, inf := range failed {
-		if inf == nil || inf.probe {
-			continue
+		if inf != nil && !inf.probe && inf != except {
+			return inf
 		}
-		e.metrics.RecordGatewayHiddenFailure(model, "protected", inf.failureReasonOnce(e.session, e.model))
+	}
+	return nil
+}
+
+func (e *Redundancy) recordGatewayHiddenFailure(model string, inf *inflight) {
+	if e == nil || e.metrics == nil || inf == nil {
 		return
 	}
+	e.metrics.RecordGatewayHiddenFailure(model, "protected", inf.failureReasonOnce(e.session, e.model))
 }
 
 func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string, detailReasons ...string) {
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	detailReason := inf.failureReasonOnce(e.session, e.model)
 	timeoutReason := reason
 	if len(detailReasons) > 0 && detailReasons[0] != "" {
 		timeoutReason = detailReasons[0]
 	}
-	e.accounting.TimeoutResult(inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
+	// Only a recorded action reads the reason, so a scheduled vote does not latch it before the nonce settles.
 	if accounting.TimeoutActionRecorded(action, reason) {
+		detailReason := inf.failureReasonOnce(e.session, e.model)
+		e.accounting.TimeoutResult(inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
 		outcome := accounting.TimeoutOutcomeFromAction(action, reason)
 		inf.applyCounterKeyAttrs(accounting.CounterKey{
 			SlotID:                 uint32(inf.hostIdx),
@@ -4820,6 +4824,31 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 	e.recordPostContentWinnerFailureOnce(inf, params)
 }
 
+// settleServedWinnerSample judges a winner served before its nonce finished: a finish by the nonce's timeout deadline is a responsive sample, a nonce still open then takes the stalled-winner strike.
+// A non-nil hiddenFailed means the request's hidden failure is counted under this winner, so it waits for the same verdict.
+// The wait runs off the drain barrier on raceCleanupWG, and Stop ends it without a verdict on the winner.
+func (e *Redundancy) settleServedWinnerSample(ctx context.Context, inf *inflight, params user.InferenceParams, winnerNonce uint64, hiddenFailed []*inflight) {
+	_, deadline := e.session.TimeoutDeadline(inf.nonce, inf.sendTime)
+	streamEnded := inf.sendTime.Add(inf.attemptDuration(time.Now()))
+	e.raceCleanupWG.Add(1)
+	go func() {
+		defer e.raceCleanupWG.Done()
+		waitCtx := e.raceCleanupRoot()
+		finished := e.session.WaitNonceFinished(waitCtx, inf.nonce, deadline)
+		if !finished && waitCtx.Err() == nil {
+			e.recordGatewayHiddenFailure(params.Model, hiddenFailure(hiddenFailed, nil))
+			e.recordWinnerTerminalFailureOnce(inf, params, winnerNonce)
+			return
+		}
+		e.recordGatewayHiddenFailure(params.Model, hiddenFailure(hiddenFailed, inf))
+		if finished {
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "winner_finish_arrived_late",
+				"host", inf.hostID, "elapsed_ms", time.Since(streamEnded).Milliseconds())
+			e.recordSampleOnce(inf, params, true)
+		}
+	}()
+}
+
 func (e *Redundancy) processInflightOnce(inf *inflight) error {
 	if inf == nil || inflightStillSending(inf) {
 		// SendOnly may still write resp/err; ProcessResponse must wait for done.
@@ -4972,8 +5001,14 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	effectiveSuccess := anySucceeded && !opts.forceTreatAsFailure
 	// The caller keeps the answer, but a winner whose nonce never closed is still a fault on the host's
 	// record. Judged here rather than in the doneCh branch, which does not always reach it first.
+	// A finish can still land after the stream ends, so a served request's winner is judged only once it lands or the deadline passes.
+	var deferredWinner *inflight
 	if winner := inflightByNonce(attempts, winnerNonce); deliveredWholeAnswer(winner) && !e.session.IsNonceFinished(winnerNonce) {
-		e.recordWinnerTerminalFailureOnce(winner, params, winnerNonce)
+		if effectiveSuccess {
+			deferredWinner = winner
+		} else {
+			e.recordWinnerTerminalFailureOnce(winner, params, winnerNonce)
+		}
 	}
 	if !effectiveSuccess {
 		if opts.recordFailureSamples {
@@ -5012,7 +5047,9 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			// Abandoned send may still write err/resp; sample only after done.
 			continue
 		}
-		e.recordSampleOnce(inf, params, true)
+		if inf != deferredWinner {
+			e.recordSampleOnce(inf, params, true)
+		}
 		involvement = append(involvement, e.buildInvolvement(inf, winnerNonce, params))
 	}
 	e.perf.RecordRequest(RequestRecord{
@@ -5040,7 +5077,16 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	e.completeAccountingRequest(ctx, winnerNonce, decision, "success")
 	e.recordGatewayRequestOutcome(params.Model, "success", "none")
 	e.recordGatewayUserVisibleWin(attempts, params, winnerNonce)
-	e.recordGatewayHiddenFailure(params.Model, failed)
+	// A hidden failure counted under the served winner waits for the winner's verdict.
+	hidden := hiddenFailure(failed, nil)
+	if deferredWinner != nil && hidden == deferredWinner {
+		e.settleServedWinnerSample(ctx, deferredWinner, params, winnerNonce, failed)
+	} else {
+		e.recordGatewayHiddenFailure(params.Model, hidden)
+		if deferredWinner != nil {
+			e.settleServedWinnerSample(ctx, deferredWinner, params, winnerNonce, nil)
+		}
+	}
 	logRequestStage(ctx, "request_succeeded", "escrow", e.devshardID, "winner_nonce", winnerNonce, "decision", decision.Reason)
 	if len(failed) == 0 {
 		e.logRequestSettled(ctx, winnerNonce, decision, "success")
