@@ -66,6 +66,7 @@ func initRootCmd(
 		SetRpcServers(),
 		SetTrustedBlock(),
 		PatchToml(),
+		StateStatsCommand(),
 	)
 }
 
