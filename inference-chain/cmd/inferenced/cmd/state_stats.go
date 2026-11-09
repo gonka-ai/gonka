@@ -95,6 +95,10 @@ against a stopped node's home directory or a restored snapshot.`,
 				height <= 0, // loadLatest when no explicit height requested
 				serverCtx.Viper,
 				[]wasmkeeper.Option{},
+				// Same options as node startup, so app.toml settings such as
+				// iavl-disable-fastnode apply. Without them IAVL may build and
+				// persist the fast-node index while loading the store.
+				server.DefaultBaseappOptions(serverCtx.Viper)...,
 			)
 			if err != nil {
 				return fmt.Errorf("instantiate app: %w", err)

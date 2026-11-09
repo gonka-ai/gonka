@@ -114,6 +114,10 @@ func StatePrefixCatalog() []StatePrefix {
 		{Name: "TokenomicsData", Bytes: []byte(TokenomicsDataKey)},
 		{Name: "GenesisOnlyData", Bytes: []byte(GenesisOnlyDataKey)},
 		{Name: "MLNodeVersion", Bytes: []byte(MLNodeVersionKey)},
+		// Covers both ActiveParticipantsFullKey and ActiveParticipantsFullKeyV1.
+		// Its first byte 'A' equals PreservedNodesSnapshotPrefix, so without
+		// this longer entry these keys would be misattributed to that bucket.
+		{Name: "ActiveParticipants", Bytes: []byte(ActiveParticipantsKeyPrefixV1)},
 
 		// Developer inference statistics indexes. String literals mirror the
 		// constants in keeper/developer_stats_store.go (referenced here directly

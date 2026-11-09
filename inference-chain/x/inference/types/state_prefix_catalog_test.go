@@ -93,6 +93,25 @@ func TestMatchStatePrefixLongestWins(t *testing.T) {
 	require.NotNil(t, match)
 	require.Equal(t, "DeveloperStatsByModel", match.Name)
 
+	// ActiveParticipants keys start with 'A', the same byte as the
+	// PreservedNodesSnapshot collection prefix; both key forms must still be
+	// attributed to ActiveParticipants.
+	for _, key := range [][]byte{
+		ActiveParticipantsFullKey(1),
+		ActiveParticipantsFullKey(418),
+		ActiveParticipantsFullKeyV1(1),
+		ActiveParticipantsFullKeyV1(418),
+	} {
+		match = MatchStatePrefix(catalog, key)
+		require.NotNil(t, match)
+		require.Equalf(t, "ActiveParticipants", match.Name, "key %q", key)
+	}
+
+	snapshotKey := append([]byte(PreservedNodesSnapshotPrefix), 0x00, 0x01)
+	match = MatchStatePrefix(catalog, snapshotKey)
+	require.NotNil(t, match)
+	require.Equal(t, "PreservedNodesSnapshot", match.Name)
+
 	// An unknown leading byte returns no match.
 	require.Nil(t, MatchStatePrefix(catalog, []byte{0xff, 0x00}))
 }
