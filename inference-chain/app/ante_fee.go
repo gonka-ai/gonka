@@ -171,7 +171,17 @@ func isAuthorizedNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemoduleke
 	if auth.escrowAllowList {
 		return ik.IsAllowedEscrowCreator(ctx, auth.actor)
 	}
-	return ik.IsRegisteredParticipant(ctx, auth.actor)
+	if !ik.IsRegisteredParticipant(ctx, auth.actor) {
+		return false
+	}
+	// Mirror NetworkDutySignerDecorator: that check only runs in CheckTx, while
+	// GonkaFeeChecker also runs in DeliverTx, so a claim included without
+	// passing CheckTx must not get the waiver on registration alone.
+	if auth.activeOrPreviousEpoch {
+		addr, err := sdk.AccAddressFromBech32(auth.actor)
+		return err == nil && ik.RequireActiveOrPreviousActiveParticipant(ctx, addr) == nil
+	}
+	return true
 }
 
 // dutyAuthorization describes who must be authorized for a fee-exempt duty and

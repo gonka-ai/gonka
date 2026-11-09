@@ -68,9 +68,10 @@ func (k Keeper) GetParticipant(
 //
 // Used by NetworkDutyFeeBypassDecorator to decide whether the fee waiver is
 // owed, which must not depend on the shorter-lived ActiveParticipantsSet: that
-// set only retains ~2 epochs, so gating on it would strip the waiver from
-// legitimate previous-epoch claims and from BLS traffic for the epoch being
-// rotated. Errors are reported as "not registered" so callers fail closed.
+// set only retains ~2 epochs, so gating every duty on it would strip the waiver
+// from BLS traffic for the epoch being rotated. MsgClaimRewards additionally
+// applies its handler's current-or-previous check (dutyAuthorizationFor).
+// Errors are reported as "not registered" so callers fail closed.
 func (k Keeper) IsRegisteredParticipant(ctx context.Context, index string) bool {
 	addr, err := sdk.AccAddressFromBech32(index)
 	if err != nil {

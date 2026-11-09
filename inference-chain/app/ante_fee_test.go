@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/log"
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
@@ -112,6 +113,8 @@ func TestDutyAuthorizationFor(t *testing.T) {
 			require.Equal(t, actor, auth.actor, "actor must come from the message body")
 			require.Equal(t, name == "MsgSettleDevshardEscrow", auth.escrowAllowList,
 				"only escrow settlement uses the allowlist registry")
+			require.Equal(t, name == "MsgClaimRewards", auth.activeOrPreviousEpoch,
+				"only claim rewards uses the current-or-previous active check")
 		})
 	}
 
@@ -293,18 +296,65 @@ func TestNetworkDutyBypass_MixedMessages_NoBypass(t *testing.T) {
 // bypass tests.
 func dutyActor() sdk.AccAddress { return sdk.AccAddress([]byte("duty-actor-000000000")) }
 
+const dutyTestEpoch = uint64(400)
+
 // registeredDutyKeeper returns a real inference keeper with actor registered as
-// a participant. After #1539 the waiver depends on the actor's authorization,
-// so tests that exercise the bypass path (rather than the fail-closed path)
-// need real keeper state instead of a nil keeper.
+// a participant and active in the current epoch. After #1539 the waiver depends
+// on the actor's authorization, so tests that exercise the bypass path (rather
+// than the fail-closed path) need real keeper state instead of a nil keeper.
 func registeredDutyKeeper(t *testing.T, actor sdk.AccAddress) (*inferencemodulekeeper.Keeper, sdk.Context) {
+	t.Helper()
+	k, ctx := registeredInactiveDutyKeeper(t, actor)
+	require.NoError(t, k.ActiveParticipantsSet.Set(ctx, collections.Join(dutyTestEpoch, actor)))
+	return k, ctx
+}
+
+// registeredInactiveDutyKeeper registers actor without making it active in any
+// epoch. Registration is open and free, so any account can reach this state.
+func registeredInactiveDutyKeeper(t *testing.T, actor sdk.AccAddress) (*inferencemodulekeeper.Keeper, sdk.Context) {
 	t.Helper()
 	k, ctx := testkeeper.InferenceKeeper(t)
 	require.NoError(t, k.Participants.Set(ctx, actor, inferencetypes.Participant{
 		Index:   actor.String(),
 		Address: actor.String(),
 	}))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, dutyTestEpoch))
 	return &k, ctx.WithMinGasPrices(sdk.DecCoins{sdk.NewDecCoin("ngonka", math.NewInt(10))})
+}
+
+// TestNetworkDutyBypass_ClaimRewardsRequiresActiveEpoch: the fee waiver for
+// MsgClaimRewards follows the same Active | PreviousActive check as
+// NetworkDutySignerDecorator. The waiver is also consulted in DeliverTx, where
+// the signer decorator does not run, so the two layers must agree.
+func TestNetworkDutyBypass_ClaimRewardsRequiresActiveEpoch(t *testing.T) {
+	actor := dutyActor()
+	cases := []struct {
+		name      string
+		active    []uint64
+		wantClaim bool
+	}{
+		{name: "registered only", wantClaim: false},
+		{name: "active current epoch", active: []uint64{dutyTestEpoch}, wantClaim: true},
+		{name: "active previous epoch", active: []uint64{dutyTestEpoch - 1}, wantClaim: true},
+		{name: "active two epochs ago", active: []uint64{dutyTestEpoch - 2}, wantClaim: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Build bech32 strings only after the keeper fixture has set the
+			// gonka prefix: AccAddress.String() caches its first result.
+			ik, ctx := registeredInactiveDutyKeeper(t, actor)
+			for _, epoch := range tc.active {
+				require.NoError(t, ik.ActiveParticipantsSet.Set(ctx, collections.Join(epoch, actor)))
+			}
+			claim := &inferencetypes.MsgClaimRewards{Creator: actor.String()}
+			seed := &inferencetypes.MsgSubmitSeed{Creator: actor.String()}
+
+			require.Equal(t, tc.wantClaim, isAuthorizedNetworkDuty(ctx, claim, ik),
+				"claim waiver must follow the handler's current-or-previous check")
+			require.True(t, isAuthorizedNetworkDuty(ctx, seed, ik),
+				"other duties keep the registration predicate")
+		})
+	}
 }
 
 // TestNetworkDutyBypass_RegisteredActorIsBypassed asserts the intended
@@ -531,12 +581,16 @@ func TestIsNetworkDuty_MsgExec_OneLevelDuty(t *testing.T) {
 	// The inner duty's actor must be a registered participant for the waiver to
 	// apply (#1539): classification now requires authorization, not the type
 	// alone.
-	actor := sdk.AccAddress("duty-actor-address__").String()
+	actorAddr := sdk.AccAddress("duty-actor-address__")
+	actor := actorAddr.String()
 	require.NoError(t, k.SetParticipant(ctx, inferencetypes.Participant{
 		Index:   actor,
 		Address: actor,
 		Weight:  10,
 	}))
+	// MsgClaimRewards additionally requires current-or-previous activity.
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, dutyTestEpoch))
+	require.NoError(t, k.ActiveParticipantsSet.Set(ctx, collections.Join(dutyTestEpoch, actorAddr)))
 
 	grantee := sdk.AccAddress("granteeaddr________")
 	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgClaimRewards{Creator: actor}})
