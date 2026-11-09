@@ -4540,7 +4540,8 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		return
 	}
 	if inf != nil && (errors.Is(inf.processErr, types.ErrStateHashMismatch) ||
-		errors.Is(inf.processErr, user.ErrLocalRootUnavailable)) {
+		errors.Is(inf.processErr, user.ErrLocalRootUnavailable) ||
+		errors.Is(inf.err, user.ErrLocalCatchUpRead)) {
 		return
 	}
 	if e.longResponsePerfExempt(inf) {
