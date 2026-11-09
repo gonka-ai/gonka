@@ -507,11 +507,26 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
 
-	ctx := context.Background()
-	_, err = session.SendInference(ctx, defaultParams)
+	// Arm the timeout as the chain would: a start anchored on a verified
+	// header, then a floor far past the refusal window.
+	id := uint64(n) + 1
+	raiseRawFloor(t, userSM, coldKeys[0], n, 100)
+	for userSM.LatestNonce()+1 < id {
+		_, _, err := userSM.ApplyLocalBestEffort(userSM.LatestNonce()+1, nil)
+		require.NoError(t, err)
+	}
+	_, started, err := userSM.ApplyLocalBestEffort(id, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: id, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+			ObservedHeight: 100, ObservedBlockHash: []byte{0xaa},
+		}},
+	}})
 	require.NoError(t, err)
-	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
+	require.Len(t, started, 1)
+	raiseRawFloor(t, userSM, coldKeys[0], n, 100_000)
+	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
 	userSM.InjectWarmKeys(map[uint32]string{4: warm1[4].Address()})
+	ctx := context.Background()
 
 	honest := func(i int) TimeoutVerifier {
 		return &delayedVerifier{
@@ -520,7 +535,7 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 		}
 	}
 	// Executor is slot 1.
-	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, id, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -535,8 +550,8 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 	require.True(t, session.HasSufficientTimeoutVotes(votes))
 
 	before := userSM.SnapshotState()
-	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(1, votes)})
+	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(id, votes)})
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
-	require.Equal(t, types.StatusTimedOut, userSM.SnapshotState().Inferences[1].Status)
+	require.Equal(t, types.StatusTimedOut, userSM.SnapshotState().Inferences[id].Status)
 }
