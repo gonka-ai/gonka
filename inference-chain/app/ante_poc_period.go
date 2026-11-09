@@ -172,6 +172,11 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageSender(ctx sdk.Context, m
 	return nil
 }
 
+// checkMessage rejects PoC messages submitted outside their stage window,
+// unwrapping a single authz MsgExec level to find them. Nested MsgExec is
+// rejected outright (errNestedMsgExec): production wrapping is one level, and a
+// flat reject matches NetworkDutySignerDecorator and
+// MsgExecAuthorizationDecorator on the same CheckTx-only chain.
 func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	switch m := msg.(type) {
 	case *inferencetypes.MsgSubmitPocBatch,

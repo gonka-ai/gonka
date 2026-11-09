@@ -1,0 +1,256 @@
+package app
+
+import (
+	"errors"
+
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
+
+	blstypes "github.com/productscience/inference/x/bls/types"
+	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+)
+
+// NetworkDutySignerDecorator rejects fee-exempt network-duty transactions during
+// CheckTx when the actor named in the message is not authorized to perform that
+// duty (#1539).
+//
+// Why an ante gate is needed at all: NetworkDutyFeeBypassDecorator waives fees
+// for ~12 duty message types based on the Go type alone, and it runs before
+// SigVerificationDecorator. The real authorization for those types lives in the
+// message handlers, which SDK 0.53 only runs in DeliverTx — after mempool
+// admission and block inclusion. So any funded account could get zero-fee duty
+// transactions gossiped, sig-verified by every validator and written into a
+// block, only to fail later with "participant is not active".
+//
+// Why rejecting and not merely withholding the waiver: FeeParams
+// .MinGasPriceNgonka is 0 on the live network (set by the v0_2_12 upgrade
+// handler, "temporary due to issue in gas estimations"). With a zero minimum,
+// GonkaFeeChecker accepts any fee whether or not the bypass flag is set, so
+// withholding the waiver on its own does not currently keep anything out of the
+// mempool. Withholding is kept as defense in depth for when governance raises
+// the minimum; this decorator is what closes the gap today.
+//
+// CheckTx-only, matching PocPeriodValidationDecorator and
+// BridgeExchangeEarlyRejectDecorator: DeliverTx still runs the full handler, so
+// mempool admission is tightened without altering the state machine.
+type NetworkDutySignerDecorator struct {
+	inferenceKeeper *inferencemodulekeeper.Keeper
+	blsKeeper       BLSMembershipKeeper
+}
+
+// BLSMembershipKeeper is the read-only BLS keeper surface the decorator needs.
+type BLSMembershipKeeper interface {
+	IsEpochBLSParticipant(ctx sdk.Context, epochID uint64, addr string) (bool, error)
+	SigningRequestEpoch(ctx sdk.Context, requestID []byte) (uint64, error)
+}
+
+func NewNetworkDutySignerDecorator(ik *inferencemodulekeeper.Keeper, bk BLSMembershipKeeper) NetworkDutySignerDecorator {
+	return NetworkDutySignerDecorator{inferenceKeeper: ik, blsKeeper: bk}
+}
+
+func (d NetworkDutySignerDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if simulate {
+		return next(ctx, tx, simulate)
+	}
+	// ReCheckTx is included: a duty actor can be removed from the escrow
+	// allowlist while the tx sits in the mempool.
+	if !ctx.IsCheckTx() {
+		return next(ctx, tx, simulate)
+	}
+	// Without a keeper we cannot evaluate authorization. Pass through rather
+	// than reject so a misconfigured ante chain cannot stall duty traffic; the
+	// fee bypass separately fails closed in that case.
+	if d.inferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+
+	for _, msg := range tx.GetMsgs() {
+		if err := d.checkMessage(ctx, msg); err != nil {
+			return ctx, err
+		}
+	}
+	return next(ctx, tx, simulate)
+}
+
+// checkMessage authorizes one top-level message, unwrapping a single authz
+// MsgExec level. Nested MsgExec is rejected outright (errNestedMsgExec):
+// production wrapping is exactly one level (the DAPI's warm key → participant),
+// and a flat reject matches MsgExecAuthorizationDecorator and
+// PocPeriodValidationDecorator, which sit on the same CheckTx-only chain.
+//
+// A direct (non-MsgExec) duty is authorized by the actor named in its body. A
+// one-level MsgExec additionally requires the authz grant that DeliverTx would
+// require of the grantee, because inside MsgExec the signature only proves the
+// grantee signed — not that the named actor authorized it.
+func (d NetworkDutySignerDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
+	execMsg, isExec := msg.(*authztypes.MsgExec)
+	if !isExec {
+		return d.checkDutyActor(ctx, msg)
+	}
+
+	for _, innerMsg := range execMsg.Msgs {
+		var unwrapped sdk.Msg
+		if err := d.inferenceKeeper.Codec().UnpackAny(innerMsg, &unwrapped); err != nil {
+			// Undecodable inner message: not provably a duty, so not ours to
+			// reject. ValidateBasic / the authz handler will deal with it.
+			continue
+		}
+		if _, nested := unwrapped.(*authztypes.MsgExec); nested {
+			return errNestedMsgExec
+		}
+		if _, isDuty := dutyAuthorizationFor(unwrapped); !isDuty {
+			continue
+		}
+		if err := d.checkDutyActor(ctx, unwrapped); err != nil {
+			return err
+		}
+		if err := d.checkExecGrant(ctx, execMsg.Grantee, unwrapped); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkExecGrant verifies the MsgExec grantee is actually authorized to act for
+// the duty actor named in the inner message.
+func (d NetworkDutySignerDecorator) checkExecGrant(ctx sdk.Context, grantee string, inner sdk.Msg) error {
+	auth, exempt := dutyAuthorizationFor(inner)
+	if !exempt {
+		return nil
+	}
+	msgTypeURL := sdk.MsgTypeURL(inner)
+	if d.inferenceKeeper.HasGrantForMsg(ctx, auth.actor, grantee, msgTypeURL) {
+		return nil
+	}
+	d.inferenceKeeper.LogDebug(
+		"AnteHandle: NetworkDutySigner - rejecting MsgExec duty without an authz grant",
+		inferencetypes.Messages,
+		"msg_type_url", msgTypeURL,
+		"granter", auth.actor,
+		"grantee", grantee,
+	)
+	return authztypes.ErrNoAuthorizationFound.Wrapf(
+		"grantee %s has no grant from %s for %s", grantee, auth.actor, msgTypeURL)
+}
+
+// checkDutyActor rejects a duty message whose actor is not authorized. The
+// actor is read from the message body (Creator, or Settler for escrow
+// settlement), never from the tx signer: in warm-key mode the grantee signs
+// while the body names the cold account that is the real protocol participant
+// (see tx_manager.go broadcastMessagesAtAttempt and cosmosclient.go, which sets
+// Creator = icc.Address). Checking the signer would reject that path.
+//
+// Errors are the registered inference errors, so API-side classifiers can match
+// them via types.Err*.Error() instead of raw-log substrings.
+func (d NetworkDutySignerDecorator) checkDutyActor(ctx sdk.Context, msg sdk.Msg) error {
+	auth, exempt := dutyAuthorizationFor(msg)
+	if !exempt {
+		return nil
+	}
+
+	if auth.escrowAllowList {
+		if d.inferenceKeeper.IsAllowedEscrowCreator(ctx, auth.actor) {
+			return nil
+		}
+		d.inferenceKeeper.LogDebug(
+			"AnteHandle: NetworkDutySigner - rejecting escrow settlement from non-allowlisted settler",
+			inferencetypes.Messages,
+			"msg_type_url", sdk.MsgTypeURL(msg),
+			"settler", auth.actor,
+		)
+		return inferencetypes.ErrNotAllowedEscrowCreator.Wrap(auth.actor)
+	}
+
+	if d.inferenceKeeper.IsRegisteredParticipant(ctx, auth.actor) {
+		if auth.activeOrPreviousEpoch {
+			return d.checkActiveOrPreviousEpoch(ctx, msg, auth.actor)
+		}
+		if auth.blsMember {
+			return d.checkBLSMember(ctx, msg, auth.actor)
+		}
+		return nil
+	}
+	d.inferenceKeeper.LogDebug(
+		"AnteHandle: NetworkDutySigner - rejecting network duty from unregistered participant",
+		inferencetypes.Messages,
+		"msg_type_url", sdk.MsgTypeURL(msg),
+		"creator", auth.actor,
+	)
+	return inferencetypes.ErrParticipantNotFound.Wrap(auth.actor)
+}
+
+// checkActiveOrPreviousEpoch applies the claim handler's own permission
+// (Active | PreviousActive): registration is open and free, so a registered
+// but never-active account would otherwise pass CheckTx and fail in DeliverTx.
+func (d NetworkDutySignerDecorator) checkActiveOrPreviousEpoch(ctx sdk.Context, msg sdk.Msg, actor string) error {
+	addr, err := sdk.AccAddressFromBech32(actor)
+	if err != nil {
+		return inferencetypes.ErrParticipantNotFound.Wrap(actor)
+	}
+	if err := d.inferenceKeeper.RequireActiveOrPreviousActiveParticipant(ctx, addr); err != nil {
+		d.inferenceKeeper.LogDebug(
+			"AnteHandle: NetworkDutySigner - rejecting duty from participant not active in current or previous epoch",
+			inferencetypes.Messages,
+			"msg_type_url", sdk.MsgTypeURL(msg),
+			"creator", actor,
+		)
+		return err
+	}
+	return nil
+}
+
+// checkBLSMember rejects a BLS duty from a non-member of its DKG epoch. Only
+// "not found" rejects; other read errors pass, so a store error never keeps a member out.
+func (d NetworkDutySignerDecorator) checkBLSMember(ctx sdk.Context, msg sdk.Msg, actor string) error {
+	if d.blsKeeper == nil {
+		return nil
+	}
+	member, err := blsDutyMember(ctx, d.blsKeeper, msg, actor)
+	if err != nil {
+		if errors.Is(err, blstypes.ErrEpochBLSDataNotFound) || errors.Is(err, blstypes.ErrSigningRequestNotFound) {
+			return err
+		}
+		return nil
+	}
+	if member {
+		return nil
+	}
+	d.inferenceKeeper.LogDebug(
+		"AnteHandle: NetworkDutySigner - rejecting BLS duty from non-member of the DKG epoch",
+		inferencetypes.Messages,
+		"msg_type_url", sdk.MsgTypeURL(msg),
+		"creator", actor,
+	)
+	return blstypes.ErrNotDKGParticipant.Wrap(actor)
+}
+
+// blsDutyMember mirrors the participant list each BLS handler scans,
+// including group key validation's fallback to NewEpochId.
+func blsDutyMember(ctx sdk.Context, bk BLSMembershipKeeper, msg sdk.Msg, actor string) (bool, error) {
+	switch m := msg.(type) {
+	case *blstypes.MsgSubmitDealerPart:
+		return bk.IsEpochBLSParticipant(ctx, m.EpochId, actor)
+	case *blstypes.MsgSubmitVerificationVector:
+		return bk.IsEpochBLSParticipant(ctx, m.EpochId, actor)
+	case *blstypes.MsgRespondDealerComplaints:
+		return bk.IsEpochBLSParticipant(ctx, m.EpochId, actor)
+	case *blstypes.MsgSubmitGroupKeyValidationSignature:
+		if m.NewEpochId <= 1 {
+			return false, nil
+		}
+		member, err := bk.IsEpochBLSParticipant(ctx, m.NewEpochId-1, actor)
+		if errors.Is(err, blstypes.ErrEpochBLSDataNotFound) {
+			return bk.IsEpochBLSParticipant(ctx, m.NewEpochId, actor)
+		}
+		return member, err
+	case *blstypes.MsgSubmitPartialSignature:
+		epochID, err := bk.SigningRequestEpoch(ctx, m.RequestId)
+		if err != nil {
+			return false, err
+		}
+		return bk.IsEpochBLSParticipant(ctx, epochID, actor)
+	default:
+		return true, nil
+	}
+}
