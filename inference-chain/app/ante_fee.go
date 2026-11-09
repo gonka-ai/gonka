@@ -54,6 +54,7 @@ func IsNetworkDutyBypassed(ctx sdk.Context) bool {
 // Follows the same pattern as LiquidityPoolFeeBypassDecorator.
 type NetworkDutyFeeBypassDecorator struct {
 	InferenceKeeper *inferencemodulekeeper.Keeper
+	BlsKeeper       BLSMembershipKeeper
 	GasCap          uint64 // maximum gas for bypassed txs to prevent block-space abuse
 	Priority        int64  // priority boost so zero-fee duty txs aren't starved
 }
@@ -73,7 +74,7 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 	// NetworkDutySignerDecorator is what rejects unauthorized duty txs outright.
 	allExempt := true
 	for _, msg := range msgs {
-		if !isNetworkDuty(ctx, msg, d.InferenceKeeper) {
+		if !isNetworkDuty(ctx, msg, d.InferenceKeeper, d.BlsKeeper) {
 			allExempt = false
 			break
 		}
@@ -116,7 +117,7 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 // never granting it. Nested wrappers cannot be used to smuggle a duty past this
 // function into a free transaction. NetworkDutySignerDecorator does descend
 // (see checkMessage), because there the failure mode is admitting a tx.
-func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
+func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper, bk BLSMembershipKeeper) bool {
 	if execMsg, ok := msg.(*authztypes.MsgExec); ok {
 		if ik == nil {
 			return false // fail closed
@@ -134,13 +135,13 @@ func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keepe
 			if _, isNestedExec := unwrapped.(*authztypes.MsgExec); isNestedExec {
 				return false
 			}
-			if !isAuthorizedNetworkDuty(ctx, unwrapped, ik) {
+			if !isAuthorizedNetworkDuty(ctx, unwrapped, ik, bk) {
 				return false
 			}
 		}
 		return true
 	}
-	return isAuthorizedNetworkDuty(ctx, msg, ik)
+	return isAuthorizedNetworkDuty(ctx, msg, ik, bk)
 }
 
 // isAuthorizedNetworkDuty reports whether msg is an exempt duty type AND its
@@ -160,7 +161,7 @@ func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keepe
 //
 // Fails closed on a nil keeper so a misconfigured ante chain cannot grant the
 // waiver.
-func isAuthorizedNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
+func isAuthorizedNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper, bk BLSMembershipKeeper) bool {
 	auth, exempt := dutyAuthorizationFor(msg)
 	if !exempt {
 		return false
@@ -181,6 +182,15 @@ func isAuthorizedNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemoduleke
 		addr, err := sdk.AccAddressFromBech32(auth.actor)
 		return err == nil && ik.RequireActiveOrPreviousActiveParticipant(ctx, addr) == nil
 	}
+	// Same for BLS duties: the waiver needs the DKG membership that
+	// checkBLSMember requires in CheckTx. Any read error withholds it.
+	if auth.blsMember {
+		if bk == nil {
+			return false // fail closed
+		}
+		member, err := blsDutyMember(ctx, bk, msg, auth.actor)
+		return err == nil && member
+	}
 	return true
 }
 
@@ -198,6 +208,9 @@ type dutyAuthorization struct {
 	// current or previous epoch's ActiveParticipantsSet, matching the
 	// Active | PreviousActive permission of the claim handler.
 	activeOrPreviousEpoch bool
+	// blsMember additionally requires the actor to be a DKG participant of
+	// the epoch the BLS handler reads (see blsDutyMember).
+	blsMember bool
 }
 
 // dutyAuthorizationFor returns the authorization requirement for a fee-exempt
@@ -234,19 +247,19 @@ func dutyAuthorizationFor(msg sdk.Msg) (dutyAuthorization, bool) {
 	case *inferencetypes.MsgSettleDevshardEscrow:
 		return dutyAuthorization{actor: m.Settler, escrowAllowList: true}, true
 
-	// BLS DKG duties. Each handler scans the epoch's own participant list for
-	// Creator; requiring registration is weaker and cannot reject a member of
-	// that list, while still excluding arbitrary accounts.
+	// BLS DKG duties. Each handler scans an epoch's own participant list for
+	// Creator; registration alone is free, so CheckTx and the fee waiver also
+	// check that list (blsDutyMember).
 	case *blstypes.MsgSubmitDealerPart:
-		return dutyAuthorization{actor: m.Creator}, true
+		return dutyAuthorization{actor: m.Creator, blsMember: true}, true
 	case *blstypes.MsgSubmitVerificationVector:
-		return dutyAuthorization{actor: m.Creator}, true
+		return dutyAuthorization{actor: m.Creator, blsMember: true}, true
 	case *blstypes.MsgSubmitGroupKeyValidationSignature:
-		return dutyAuthorization{actor: m.Creator}, true
+		return dutyAuthorization{actor: m.Creator, blsMember: true}, true
 	case *blstypes.MsgSubmitPartialSignature:
-		return dutyAuthorization{actor: m.Creator}, true
+		return dutyAuthorization{actor: m.Creator, blsMember: true}, true
 	case *blstypes.MsgRespondDealerComplaints:
-		return dutyAuthorization{actor: m.Creator}, true
+		return dutyAuthorization{actor: m.Creator, blsMember: true}, true
 
 	default:
 		return dutyAuthorization{}, false

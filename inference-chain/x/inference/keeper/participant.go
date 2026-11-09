@@ -59,18 +59,18 @@ func (k Keeper) GetParticipant(
 
 // IsRegisteredParticipant reports whether index is a registered participant.
 //
-// Registration is the weakest predicate that still covers every fee-exempt
-// network duty: MessagePermissions gates those handlers on
-// ParticipantPermission, ActiveParticipantPermission or an in-handler scan of
-// the epoch's BLS participant list, and every ActiveParticipant is built from a
+// Registration is the weakest predicate that still covers every non-BLS
+// fee-exempt network duty: MessagePermissions gates those handlers on
+// ParticipantPermission or ActiveParticipantPermission,
+// and every ActiveParticipant is built from a
 // registered one (module/chainvalidation.go). It is therefore a superset of
 // what DeliverTx requires and cannot reject traffic a handler would accept.
 //
 // Used by NetworkDutyFeeBypassDecorator to decide whether the fee waiver is
 // owed, which must not depend on the shorter-lived ActiveParticipantsSet: that
 // set only retains ~2 epochs, so gating every duty on it would strip the waiver
-// from BLS traffic for the epoch being rotated. MsgClaimRewards additionally
-// applies its handler's current-or-previous check (dutyAuthorizationFor).
+// from BLS traffic for the epoch being rotated. MsgClaimRewards and BLS duties
+// add their handler's own check on top (dutyAuthorizationFor).
 // Errors are reported as "not registered" so callers fail closed.
 func (k Keeper) IsRegisteredParticipant(ctx context.Context, index string) bool {
 	addr, err := sdk.AccAddressFromBech32(index)
