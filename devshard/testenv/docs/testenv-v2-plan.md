@@ -1011,7 +1011,7 @@ on mock-chain (proxied by mock-dapi); `POST /testenv/fault` on mock-openai.
 A5 is specified as step 10 of [`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md). It boots a **3-host** stack (`BootErrorMissAdversarialStack`) so two non-executor verifiers can exceed `VoteThreshold`. Settlement is asserted via live `HostStats.Missed` (what the settlement tx copies), not a chain settlement tx.
 
 Run: `make citest-adversarial` or
-`TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_'`.
+`TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestLostFirstChunk|TestMLUpstream5xx|TestStaleEscrow|TestBadWarmKey|TestErrorFinishMiss)$'`.
 
 **Exit:** ≥1 multi-host adversarial scenario in Go citest ✅ (A1–A4 on 2× versiond stack; A5 on 3-host stack).
 

@@ -920,7 +920,7 @@ Gateway (`devshard/cmd/devshardctl`):
   → no `MsgErrorMiss`. (There is no env flag to silence emit.)
 - Insufficient votes → today's behaviour, request still fails cleanly.
 
-E2E (`devshard/testenv/citest` `TestA5_ErrorFinishMiss`): mock-openai fault
+E2E (`devshard/testenv/citest` `TestErrorFinishMiss`): mock-openai fault
 returning `200` + SSE error envelope (companion to
 `a2_ml_upstream_5xx_test.go`, which covers HTTP 5xx). Assert `Missed` on the
 executor slot, host `Cost` unwound, no validation job.
