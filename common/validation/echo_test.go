@@ -212,6 +212,11 @@ func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
 	mm := EchoThresholdsFor("MiniMaxAI/MiniMax-M2.7")
 	require.True(t, mm.Pass(EchoSignals{Steps: 500, Count: 44, Z: 0}))
 	require.False(t, mm.Pass(EchoSignals{Steps: 500, Count: 45, Z: 0}))
+	// GLM: 500 positions at an honest 4 %: 20 expected, the 99.5 % bound at 31.
+	glm := EchoThresholdsFor("zai-org/GLM-5.3-Flash")
+	require.True(t, glm.Pass(EchoSignals{Steps: 500, Count: 31, Z: 0}))
+	require.False(t, glm.Pass(EchoSignals{Steps: 500, Count: 32, Z: 0}))
+	require.False(t, glm.Pass(EchoSignals{Steps: 500, Count: 0, MaxGap: 5.6}))
 	// Without a calibration only Z decides.
 	require.True(t, EchoThresholdsFor("other/model").Pass(EchoSignals{Steps: 500, Count: 200, MaxGap: 20, Z: -2.9}))
 }
