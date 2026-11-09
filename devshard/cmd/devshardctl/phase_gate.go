@@ -23,7 +23,15 @@ import (
 )
 
 const (
-	defaultChainPhasePollInterval = 5 * time.Second
+	chainPhasePollEnvInterval = "DEVSHARD_GATEWAY_CHAIN_PHASE_POLL_INTERVAL"
+	versionsPollEnvInterval   = "DEVSHARD_GATEWAY_VERSIONS_POLL_INTERVAL"
+
+	// Default proxy api_zone allows 10 req/min per client IP. Each refresh can
+	// query both /v1/epochs/latest and /v1/epochs/current/participants (8 req/min
+	// at 15s), plus 1 req/min for /v1/versions at 60s = 9 req/min worst case when
+	// PublicAPI is also a candidate miner.
+	defaultChainPhasePollInterval = 15 * time.Second
+	defaultVersionsPollInterval   = 60 * time.Second
 
 	// versionsTTLPollMultiplier scales the poll interval into how long a
 	// /v1/versions fetch stays fresh, so entries survive a couple of missed polls
@@ -64,6 +72,7 @@ type ChainPhaseGate struct {
 	preservedSnapshotEndpoint     string
 	client                        *http.Client
 	pollInterval                  time.Duration
+	versionsPollInterval          time.Duration
 	defaultMaxSpeculativeAttempts int
 
 	mu       sync.RWMutex
@@ -264,8 +273,12 @@ func (e *RequestAdmissionError) Error() string {
 
 func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
 	baseURL = strings.TrimSpace(baseURL)
+	var versionsPollInterval time.Duration
 	if pollInterval <= 0 {
-		pollInterval = defaultChainPhasePollInterval
+		pollInterval = readDurationEnv(chainPhasePollEnvInterval, defaultChainPhasePollInterval)
+		versionsPollInterval = readDurationEnv(versionsPollEnvInterval, defaultVersionsPollInterval)
+	} else {
+		versionsPollInterval = readDurationEnv(versionsPollEnvInterval, pollInterval)
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
 	endpoint := ""
@@ -279,8 +292,9 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 		participantsEndpoint:          participantsEndpoint,
 		client:                        client,
 		pollInterval:                  pollInterval,
+		versionsPollInterval:          versionsPollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
-		versions:                      NewVersionsCache(client, versionsTTLPollMultiplier*pollInterval),
+		versions:                      NewVersionsCache(client, versionsTTLPollMultiplier*versionsPollInterval),
 		stopCh:                        make(chan struct{}),
 		doneCh:                        make(chan struct{}),
 	}
@@ -320,7 +334,11 @@ func (g *ChainPhaseGate) Start() {
 			<-g.stopCh
 			cancel()
 		}()
-		go g.versions.Run(ctx, g.pollInterval)
+		versionsInterval := g.versionsPollInterval
+		if versionsInterval <= 0 {
+			versionsInterval = g.pollInterval
+		}
+		go g.versions.Run(ctx, versionsInterval)
 	}
 	go g.run()
 }
