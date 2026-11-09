@@ -776,7 +776,7 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 		{
 			name:  "local ML 503 does not vote",
 			fetch: okFetch,
-			executeML: func(context.Context, string, string, []byte) (*http.Response, error) {
+			executeML: func(context.Context, string, string, string, []byte) (*http.Response, error) {
 				return nil, errors.New("ml node 503")
 			},
 			voteFalse:  true,
@@ -787,7 +787,7 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 		{
 			name:  "threshold resolve does not vote",
 			fetch: okFetch,
-			executeML: func(context.Context, string, string, []byte) (*http.Response, error) {
+			executeML: func(context.Context, string, string, string, []byte) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
 			},
 			thresholds: stubThresholdResolver{err: errors.New("threshold unavailable")},

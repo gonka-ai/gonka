@@ -41,11 +41,38 @@ var modelVocab = map[string]int{
 	"Qwen/Qwen3-0.6B":                    151936,
 }
 
+// modelEOS are the generation_config eos_token_id(s) of each served model:
+// vLLM masks them while min_tokens is not reached, and an answer that
+// finishes with "stop" must end on one of them.
+var modelEOS = map[string][]int{
+	"deepseek-ai/DeepSeek-V4-Flash-0731": {1},
+	"zai-org/GLM-5.3-Flash":              {154820, 154827, 154829},
+	"MiniMaxAI/MiniMax-M2.7":             {200020},
+	"Qwen/Qwen3-0.6B":                    {151645, 151643},
+}
+
+// ChatPath renders the stored request on the validator's engine: one token
+// with return_token_ids gives the prompt ids the validator itself derives.
+const ChatPath = "/v1/chat/completions"
+
+// ErrEchoUnsupported marks a request the echo cannot judge: a grammar the
+// validator does not see, or a thinking budget that forces a token.
+var ErrEchoUnsupported = errors.New("echo validation: unsupported request")
+
+// lengthRuleContextCap is the smallest max_model_len a node is expected to
+// serve; an answer cut by the context can only be longer than that, so the
+// length rule is applied below it.
+const lengthRuleContextCap = 32768
+
 // TapeParams are the sampling parameters the executor's tape ran under.
 type TapeParams struct {
 	Temperature float64
 	TopP        float64
 	TopK        int
+	// MinTokens and MaxTokens are the budget devshard pins on the request;
+	// end tokens are masked before MinTokens and the answer stops at MaxTokens.
+	MinTokens int
+	MaxTokens int
 }
 
 func tapeParams(requestMap map[string]interface{}) TapeParams {
@@ -58,6 +85,12 @@ func tapeParams(requestMap map[string]interface{}) TapeParams {
 	}
 	if v, ok := requestMap["top_k"].(float64); ok {
 		p.TopK = int(v)
+	}
+	if v, ok := requestMap["min_tokens"].(float64); ok {
+		p.MinTokens = int(v)
+	}
+	if v, ok := requestMap["max_tokens"].(float64); ok {
+		p.MaxTokens = int(v)
 	}
 	return p
 }
@@ -115,15 +148,24 @@ func (t EchoThresholds) Pass(s EchoSignals) bool {
 	if s.Steps == 0 || s.Z < t.ZMin {
 		return false
 	}
-	if t.FlipRate > 0 {
-		n := float64(s.Steps)
-		// The honest count is binomial; this is its 99.5% bound.
-		bound := t.FlipRate*n + 2.576*math.Sqrt(n*t.FlipRate*(1-t.FlipRate)) + 0.5
-		if float64(s.Count) > bound {
-			return false
-		}
+	if !t.CountPasses(s.Steps, s.Count, 2.576) {
+		return false
 	}
 	return t.MaxGap == 0 || s.MaxGap <= t.MaxGap
+}
+
+// CountPasses is the binomial bound on the positions off the winner: the
+// honest count over steps positions is Binomial(steps, FlipRate), and quantile
+// is the normal quantile of the bound (2.576 for 99.5 %). It applies to one
+// answer and to the pooled positions of a participant alike. Without a
+// calibration it always passes.
+func (t EchoThresholds) CountPasses(steps, count int, quantile float64) bool {
+	if t.FlipRate <= 0 || steps <= 0 {
+		return true
+	}
+	n := float64(steps)
+	bound := t.FlipRate*n + quantile*math.Sqrt(n*t.FlipRate*(1-t.FlipRate)) + 0.5
+	return float64(count) <= bound
 }
 
 // EchoValidationResult holds the signals of a scored answer.
@@ -140,11 +182,23 @@ func (r EchoValidationResult) IsSuccessful() bool {
 // ScoreEcho scores an answer from the validator's logprobs of its positions:
 // logprobs[t] maps a token to its raw logprob at position t and includes the
 // answer's own token out[t].
-func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p TapeParams) EchoSignals {
+//
+// eos are the model's end tokens: before p.MinTokens positions the engine
+// masks them, so they leave the kept set there.
+func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p TapeParams, eos []int) EchoSignals {
 	var s EchoSignals
 	var sumR float64
 	for t, x := range out {
-		kept, sx, logPTilde := keptSet(logprobs[t], x, p)
+		var masked map[int]bool
+		if t < p.MinTokens && len(eos) > 0 {
+			masked = make(map[int]bool, len(eos))
+			for _, e := range eos {
+				if e != x {
+					masked[e] = true
+				}
+			}
+		}
+		kept, sx, logPTilde := keptSet(logprobs[t], x, p, masked)
 		noise := make(map[int]float64, len(kept)+1)
 		for _, c := range kept {
 			noise[c.token] = TapeNoise(seed, uint32(t), vocab, c.token)
@@ -184,7 +238,10 @@ type candidate struct {
 // scaled logits; with the scaled logit of x and log of its processed
 // probability. Beyond the list the mass of the distribution is known only at
 // temperature 1, where the logprobs are normalised.
-func keptSet(toks map[int]float64, x int, p TapeParams) ([]candidate, float64, float64) {
+//
+// masked tokens (end tokens before min_tokens) are dropped from the set the
+// way the engine drops them, after the tail mass is taken from the full head.
+func keptSet(toks map[int]float64, x int, p TapeParams, masked map[int]bool) ([]candidate, float64, float64) {
 	T := p.Temperature
 	head := make([]candidate, 0, len(toks))
 	for tok, lp := range toks {
@@ -199,17 +256,25 @@ func keptSet(toks map[int]float64, x int, p TapeParams) ([]candidate, float64, f
 	if len(head) > EchoTopLogprobs {
 		head = head[:EchoTopLogprobs]
 	}
-	cand, tail := head, 0.0
-	if p.TopK > 0 && p.TopK <= EchoTopLogprobs {
-		if len(cand) > p.TopK {
-			cand = cand[:p.TopK]
-		}
-	} else if T == 1 {
+	tail := 0.0
+	if !(p.TopK > 0 && p.TopK <= EchoTopLogprobs) && T == 1 {
 		mass := 0.0
 		for _, c := range head {
 			mass += math.Exp(c.score)
 		}
 		tail = math.Max(0, 1-mass)
+	}
+	cand := head
+	if len(masked) > 0 {
+		cand = make([]candidate, 0, len(head))
+		for _, c := range head {
+			if !masked[c.token] {
+				cand = append(cand, c)
+			}
+		}
+	}
+	if p.TopK > 0 && p.TopK <= EchoTopLogprobs && len(cand) > p.TopK {
+		cand = cand[:p.TopK]
 	}
 	m := cand[0].score / T
 	z := 0.0
@@ -340,12 +405,17 @@ func tokenIDsOf(body []byte) (prompt, out []int, err error) {
 // ExecuteEchoValidation validates a stored inference on the executor's tape: the
 // answer's token ids are scored against the validator's own logprobs and the
 // noise the request's seed fixes. execute must POST the body to EchoPath.
+//
+// Before the echo the validator renders the request itself (ChatPath, one
+// token) and requires the executor's prompt ids to equal its own, and checks
+// the answer's end against finish_reason and the pinned token budget. A
+// request the echo cannot judge returns ErrEchoUnsupported.
 func ExecuteEchoValidation(
 	ctx context.Context,
 	inferenceID string,
 	promptPayload []byte,
 	responsePayload []byte,
-	execute func(ctx context.Context, body []byte) (*http.Response, error),
+	execute func(ctx context.Context, path string, body []byte) (*http.Response, error),
 	claimedInputTokens, claimedOutputTokens uint64,
 ) (ValidationResult, error) {
 	modified, err := completionapi.ModifyRequestBody(promptPayload, validationReplaySeed(inferenceID))
@@ -356,6 +426,9 @@ func ExecuteEchoValidation(
 	if err := json.Unmarshal(modified.NewBody, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
 	}
+	if reason := unsupportedReason(requestMap); reason != "" {
+		return nil, fmt.Errorf("%w: %s", ErrEchoUnsupported, reason)
+	}
 	model, _ := requestMap["model"].(string)
 	vocab, ok := modelVocab[model]
 	if !ok {
@@ -363,7 +436,6 @@ func ExecuteEchoValidation(
 	}
 	seedValue, _ := requestMap["seed"].(float64)
 	seed := uint64(int64(seedValue))
-
 	prompt, out, err := StoredTokenIDs(responsePayload)
 	if err != nil {
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Stored response carries no token ids.", Error: err}, nil
@@ -376,34 +448,226 @@ func ExecuteEchoValidation(
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 	}
 
+	renderBody, err := promptIDsRequestBody(requestMap)
+	if err != nil {
+		return nil, err
+	}
+	status, rendered, err := post(ctx, execute, ChatPath, renderBody)
+	if err != nil {
+		return nil, err
+	}
+	if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot render the stored request."}, nil
+	}
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("echo validation: render status %d: %s", status, bytes.TrimSpace(rendered))
+	}
+	ownPrompt, _, err := tokenIDsOf(rendered)
+	if err != nil || len(ownPrompt) == 0 {
+		return nil, fmt.Errorf("echo validation: rendered request carries no prompt ids: %v", err)
+	}
+	if !equalIDs(ownPrompt, prompt) {
+		logging.Warn("validation failed: prompt ids differ from the request", types.Validation,
+			"inferenceId", inferenceID, "executor", len(prompt), "validator", len(ownPrompt))
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Prompt token ids differ from the request."}, nil
+	}
+
+	params := tapeParams(requestMap)
+	if reason := answerShapeReason(model, prompt, out, StoredFinishReason(responsePayload), params, hasStopStrings(requestMap)); reason != "" {
+		logging.Warn("validation failed: "+reason, types.Validation, "inferenceId", inferenceID, "answer", len(out))
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: reason}, nil
+	}
+
 	body, err := EchoRequestBody(model, prompt, out)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := execute(ctx, body)
+	status, respBody, err := post(ctx, execute, EchoPath, body)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
+	if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
 		// The echo holds nothing but the executor's own token ids.
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot embed the stored token ids."}, nil
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("echo validation: status %d: %s", resp.StatusCode, bytes.TrimSpace(respBody))
+	if status != http.StatusOK {
+		return nil, fmt.Errorf("echo validation: status %d: %s", status, bytes.TrimSpace(respBody))
 	}
 	logprobs, err := ParseEcho(respBody, len(prompt), len(out))
 	if err != nil {
 		return nil, err
 	}
-	signals := ScoreEcho(logprobs, out, seed, vocab, tapeParams(requestMap))
+	signals := ScoreEcho(logprobs, out, seed, vocab, params, modelEOS[model])
 	return &EchoValidationResult{
 		BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBody},
 		Model:                model,
 		Signals:              signals,
 	}, nil
+}
+
+func post(ctx context.Context, execute func(context.Context, string, []byte) (*http.Response, error), path string, body []byte) (int, []byte, error) {
+	resp, err := execute(ctx, path, body)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, err
+	}
+	return resp.StatusCode, respBody, nil
+}
+
+func equalIDs(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// unsupportedReason names what keeps the echo from judging a request: a
+// grammar (the validator does not see the mask the executor sampled under) or
+// a thinking budget (it forces a token the tape never chose).
+func unsupportedReason(requestMap map[string]interface{}) string {
+	if GrammarConstrained(requestMap) {
+		return "grammar-constrained request"
+	}
+	if _, ok := requestMap["thinking_token_budget"]; ok {
+		return "thinking budget forces a token"
+	}
+	if kw, ok := requestMap["chat_template_kwargs"].(map[string]interface{}); ok {
+		if _, ok := kw["thinking_budget"]; ok {
+			return "thinking budget forces a token"
+		}
+	}
+	return ""
+}
+
+// GrammarConstrained reports a request whose sampling the engine restricts
+// with a grammar: a structured response_format, a forced tool choice, or a
+// guided decoding field.
+func GrammarConstrained(requestMap map[string]interface{}) bool {
+	if rf, ok := requestMap["response_format"].(map[string]interface{}); ok {
+		if t, _ := rf["type"].(string); t != "" && t != "text" {
+			return true
+		}
+	}
+	switch tc := requestMap["tool_choice"].(type) {
+	case string:
+		if tc == "required" {
+			return true
+		}
+	case map[string]interface{}:
+		return true
+	}
+	for _, key := range []string{"guided_json", "guided_regex", "guided_grammar", "guided_choice", "structured_outputs"} {
+		if _, ok := requestMap[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func hasStopStrings(requestMap map[string]interface{}) bool {
+	switch stop := requestMap["stop"].(type) {
+	case string:
+		return stop != ""
+	case []interface{}:
+		return len(stop) > 0
+	}
+	return false
+}
+
+// promptIDsRequestBody is the stored request as a one-token chat completion
+// with return_token_ids: its prompt_token_ids are the validator's own rendering
+// of the messages, tools and template arguments.
+func promptIDsRequestBody(requestMap map[string]interface{}) ([]byte, error) {
+	render := make(map[string]interface{}, len(requestMap))
+	for k, v := range requestMap {
+		render[k] = v
+	}
+	render["stream"] = false
+	delete(render, "stream_options")
+	render["max_tokens"] = 1
+	render["max_completion_tokens"] = 1
+	render["min_tokens"] = 1
+	render["logprobs"] = false
+	delete(render, "top_logprobs")
+	delete(render, "logprobs_mode")
+	render["return_token_ids"] = true
+	if _, ok := render["n"]; ok {
+		render["n"] = 1
+	}
+	return json.Marshal(render)
+}
+
+// StoredFinishReason is the finish_reason of the stored answer: the choice's
+// in a JSON body, the last non-empty one in the events of a stream.
+func StoredFinishReason(responsePayload []byte) string {
+	var streamed completionapi.SerializedStreamedResponse
+	if json.Unmarshal(responsePayload, &streamed) == nil && len(streamed.Events) > 0 {
+		finish := ""
+		for _, line := range streamed.Events {
+			data, ok := strings.CutPrefix(line, "data: ")
+			if !ok || strings.TrimSpace(data) == "[DONE]" {
+				continue
+			}
+			if f := finishReasonOf([]byte(data)); f != "" {
+				finish = f
+			}
+		}
+		return finish
+	}
+	return finishReasonOf(responsePayload)
+}
+
+func finishReasonOf(body []byte) string {
+	var resp struct {
+		Choices []struct {
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(body, &resp) != nil || len(resp.Choices) == 0 {
+		return ""
+	}
+	return resp.Choices[0].FinishReason
+}
+
+// answerShapeReason checks the end of the answer against how it finished: an
+// answer that stopped must end on an end token (unless the request carried
+// stop strings) and not before min_tokens; an answer cut by length must hold
+// max_tokens unless the context itself could have cut it.
+func answerShapeReason(model string, prompt, out []int, finish string, p TapeParams, stopStrings bool) string {
+	if len(out) == 0 {
+		return "Empty answer."
+	}
+	eos := modelEOS[model]
+	switch finish {
+	case "stop", "tool_calls":
+		if p.MinTokens > 0 && len(out) < p.MinTokens {
+			return "Answer stopped before min_tokens."
+		}
+		if !stopStrings && len(eos) > 0 && !contains(eos, out[len(out)-1]) {
+			return "Answer stopped without an end token."
+		}
+	case "length":
+		if p.MaxTokens > 0 && len(out) < p.MaxTokens && len(prompt)+len(out) < lengthRuleContextCap {
+			return "Answer cut before max_tokens."
+		}
+	}
+	return ""
+}
+
+func contains(ids []int, x int) bool {
+	for _, id := range ids {
+		if id == x {
+			return true
+		}
+	}
+	return false
 }

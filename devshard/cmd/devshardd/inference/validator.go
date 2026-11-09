@@ -51,11 +51,21 @@ type Validator struct {
 	payloadHTTPClient       *http.Client
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
+	pool                    *flipPool
 }
 
 type payloadFetchFunc func(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error)
 
-type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error)
+type mlExecuteFunc func(ctx context.Context, model, escrowID, path string, body []byte) (*http.Response, error)
+
+// The pooled bound over a participant's recent answers uses the 99.9 %
+// quantile and needs a few answers before it speaks.
+const (
+	pooledQuantile   = 3.09
+	pooledMinAnswers = 4
+	poolWindow       = 32
+	poolMaxAge       = 24 * time.Hour
+)
 
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
@@ -82,6 +92,7 @@ func NewValidator(
 		thresholds:              thresholds,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 		payloadHTTPClient:       newPayloadFetchClient(),
+		pool:                    newFlipPool(poolWindow, poolMaxAge),
 	}
 }
 
@@ -126,11 +137,16 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		inferenceID,
 		promptPayload,
 		responsePayload,
-		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return v.executeMLRequest(ctx, req.Model, req.EscrowID, commonvalidation.EchoPath, body)
+		func(ctx context.Context, path string, body []byte) (*http.Response, error) {
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, path, body)
 		},
 		req.InputTokens, req.OutputTokens,
 	)
+	if errors.Is(err, commonvalidation.ErrEchoUnsupported) {
+		logging.Info("devshard validation skipped: the echo cannot judge this request",
+			types.Validation, "inferenceId", inferenceID, "executor", req.ExecutorAddress, "cause", err.Error())
+		return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationSkipped, err)
+	}
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)
 	}
@@ -140,7 +156,31 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate,
 			fmt.Errorf("evaluate validation result: %w", err))
 	}
-	return &devshardpkg.ValidateResult{Valid: valid}, nil
+	verdict := &devshardpkg.ValidateResult{Valid: valid}
+	if echo, ok := result.(*commonvalidation.EchoValidationResult); ok {
+		verdict.Reason = "echo_fail"
+		if valid {
+			verdict.Reason = "echo_pass"
+		}
+		verdict.Details = []any{"steps", echo.Signals.Steps, "count", echo.Signals.Count,
+			"z", echo.Signals.Z, "max_gap", echo.Signals.MaxGap}
+		if v.pool != nil {
+			answers, steps, count := v.pool.Observe(req.ExecutorAddress, req.Model, echo.Signals.Steps, echo.Signals.Count)
+			pooled := commonvalidation.EchoThresholdsFor(req.Model).CountPasses(steps, count, pooledQuantile)
+			verdict.Details = append(verdict.Details, "pooled_answers", answers, "pooled_steps", steps, "pooled_count", count)
+			if valid && answers >= pooledMinAnswers && !pooled {
+				verdict.Valid = false
+				verdict.Reason = "pooled_flips"
+				logging.Warn("validation failed: the participant's pooled positions are off the winner",
+					types.Validation, "inferenceId", inferenceID, "executor", req.ExecutorAddress,
+					"answers", answers, "steps", steps, "count", count)
+			}
+		}
+	} else if inv, ok := result.(*commonvalidation.InvalidInferenceResult); ok {
+		verdict.Reason = "invalid"
+		verdict.Details = []any{"cause", inv.Reason}
+	}
+	return verdict, nil
 }
 
 func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error) {
@@ -259,7 +299,7 @@ func evaluateValidationResult(
 
 func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID, path string, body []byte) (*http.Response, error) {
 	if v.executeML != nil {
-		return v.executeML(ctx, model, escrowID, body)
+		return v.executeML(ctx, model, escrowID, path, body)
 	}
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + path
