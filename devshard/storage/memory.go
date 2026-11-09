@@ -59,6 +59,7 @@ type sessionData struct {
 	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
 	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
 	obsRebuildPending      bool
+	ownFinishes            map[uint64][]byte
 }
 
 // Memory is an in-memory storage implementation for testing.
