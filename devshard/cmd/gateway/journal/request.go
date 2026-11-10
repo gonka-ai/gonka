@@ -10,6 +10,7 @@ import (
 type RequestLine struct {
 	RequestID     string
 	Model         string
+	APIKeyID      string
 	EscrowID      string
 	ClientStream  bool
 	Outcome       engine.RaceOutcome

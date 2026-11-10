@@ -246,7 +246,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 			written := serveCached(w, requestID, entry)
 			hitCount := prompt.countSoFar()
 			s.events.RequestFinished(journal.RequestLine{
-				RequestID: requestID, Model: normalized.Model, EscrowID: entry.escrowID,
+				RequestID: requestID, Model: normalized.Model, APIKeyID: identity.caller(), EscrowID: entry.escrowID,
 				ClientStream: entry.stream, Bytes: written, CacheHit: true,
 				Outcome: engine.RaceOutcome{InputTokens: hitCount.tokens, InputTokensSource: hitCount.source},
 			})
@@ -263,7 +263,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		if throttled, ours := rateLimited(err); ours && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, throttled.Label())
 			s.events.RequestThrottled(journal.RequestLine{
-				RequestID: requestID, Model: normalized.Model, LimiterReason: throttled.Label(),
+				RequestID: requestID, Model: normalized.Model, APIKeyID: identity.caller(), LimiterReason: throttled.Label(),
 			})
 		}
 		s.writeErrorFor(w, err)
@@ -280,12 +280,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	if s.cache == nil {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization, slot)
+		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization, slot)
 		return
 	}
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
 	defer recorder.releaseBudget()
-	outcome, hiddenFailure := s.race(recorder, r, requestID, normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization, slot)
+	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization, slot)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
 	if !storable {
@@ -362,7 +362,7 @@ func authorizeModel(configured config.Limits, model string, identity credentials
 }
 
 // race returns the outcome and the failure the reply's status could not carry. See README.md, "Streaming the reply".
-func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool, slot *limiterSlot) (engine.RaceOutcome, error) {
+func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool, slot *limiterSlot) (engine.RaceOutcome, error) {
 	startedAt := s.now()
 	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, prompt.tokens, s.buffers)
 	defer client.discard()
@@ -393,10 +393,10 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, 
 	if err != nil {
 		s.capture.attemptsFailed(r, requestID, normalized, err)
 		if !client.closeUnstarted() {
-			s.finishRequest(requestID, normalized, outcome, deliveryFailedMidStream, client, s.now().Sub(startedAt), err, client.Fail(err))
+			s.finishRequest(requestID, apiKeyID, normalized, outcome, deliveryFailedMidStream, client, s.now().Sub(startedAt), err, client.Fail(err))
 			return outcome, err
 		}
-		s.finishRequest(requestID, normalized, outcome, deliveryFailedBeforeFirstByte, client, s.now().Sub(startedAt), err, nil)
+		s.finishRequest(requestID, apiKeyID, normalized, outcome, deliveryFailedBeforeFirstByte, client, s.now().Sub(startedAt), err, nil)
 		w.Header().Set(RequestIDHeader, requestID)
 		s.writeErrorFor(w, err)
 		return outcome, nil
@@ -411,6 +411,6 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, 
 	if closeErr != nil {
 		delivery = deliveryFailedMidStream
 	}
-	s.finishRequest(requestID, normalized, outcome, delivery, client, s.now().Sub(startedAt), nil, closeErr)
-	return outcome, closeErr
+	s.finishRequest(requestID, apiKeyID, normalized, outcome, delivery, client, s.now().Sub(startedAt), client.answeredHostFailure(), closeErr)
+	return outcome, cmp.Or(closeErr, client.replayRefusal())
 }

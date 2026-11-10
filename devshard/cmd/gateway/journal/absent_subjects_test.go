@@ -26,6 +26,7 @@ func TestARequestThatReachedNoEscrowNamesNoEscrowAndNoHost(t *testing.T) {
 	events := newJournal(t, Settings{Lines: lines})
 
 	events.RequestFinished(RequestLine{
+		APIKeyID:  "acf99d94",
 		RequestID: "request-1", Model: "qwen", ClientStream: true,
 		Outcome: engine.RaceOutcome{Model: "qwen"},
 		Verdict: "failed_before_first_byte", Elapsed: time.Second, RaceErr: engine.ErrAllAttemptsFailed,
@@ -33,7 +34,7 @@ func TestARequestThatReachedNoEscrowNamesNoEscrowAndNoHost(t *testing.T) {
 	events.Flush()
 
 	lines.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "stream", true,
+		"request", "request-1", "model", "qwen", "api_key_id", "acf99d94", "stream", true,
 		"input_tokens", uint64(0), "output_tokens", int64(0),
 		"outcome", "failed_before_first_byte", "bytes", int64(0), "terminated", false, "duration_ms", int64(1000),
 		"error", "every attempt failed",
@@ -51,6 +52,7 @@ func TestARequestNobodyWonNamesEveryHostItTried(t *testing.T) {
 	events := newJournal(t, Settings{Lines: lines})
 
 	events.RequestFinished(RequestLine{
+		APIKeyID:  "acf99d94",
 		RequestID: "request-2", Model: "qwen", EscrowID: "escrow-1", ClientStream: true,
 		Outcome: engine.RaceOutcome{Model: "qwen", InputTokens: 12, Attempts: []engine.AttemptOutcome{
 			{Participant: hostAlpha, Nonce: 5},
@@ -61,7 +63,7 @@ func TestARequestNobodyWonNamesEveryHostItTried(t *testing.T) {
 	events.Flush()
 
 	lines.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
-		"request", "request-2", "model", "qwen", "escrow", "escrow-1", "stream", true,
+		"request", "request-2", "model", "qwen", "api_key_id", "acf99d94", "escrow", "escrow-1", "stream", true,
 		"input_tokens", uint64(12), "output_tokens", int64(0), "hosts", "aaaaaaaa,bbbbbbbb",
 		"outcome", "failed_before_first_byte", "bytes", int64(0), "terminated", false, "duration_ms", int64(2000),
 		"error", "every attempt failed",
@@ -78,6 +80,7 @@ func TestARequestWithAWinnerNamesOnlyTheWinner(t *testing.T) {
 	events := newJournal(t, Settings{Lines: lines})
 
 	events.RequestFinished(RequestLine{
+		APIKeyID:  "acf99d94",
 		RequestID: "request-3", Model: "qwen", EscrowID: "escrow-1", ClientStream: true,
 		Outcome: engine.RaceOutcome{Model: "qwen", InputTokens: 12, WinnerNonce: 6, Succeeded: true, Attempts: []engine.AttemptOutcome{
 			{Participant: hostAlpha, Nonce: 5},
@@ -88,7 +91,7 @@ func TestARequestWithAWinnerNamesOnlyTheWinner(t *testing.T) {
 	events.Flush()
 
 	lines.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
-		"request", "request-3", "model", "qwen", "escrow", "escrow-1", "stream", true,
+		"request", "request-3", "model", "qwen", "api_key_id", "acf99d94", "escrow", "escrow-1", "stream", true,
 		"input_tokens", uint64(12), "output_tokens", int64(40), "host", "bbbbbbbb",
 		"outcome", "served", "bytes", int64(512), "terminated", true, "duration_ms", int64(3000),
 		"nonce_finished", true,

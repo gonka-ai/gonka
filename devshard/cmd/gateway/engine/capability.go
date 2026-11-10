@@ -104,6 +104,13 @@ func rejectsRequest(attempt AttemptOutcome) bool {
 		filters.IsCacheableUpstreamError(http.StatusBadRequest, []byte(attempt.ErrorPayload))
 }
 
+func errorBlamesHost(attempt AttemptOutcome) bool {
+	if attempt.Terminal != TerminalErrorStream || attempt.ContentSource != "" {
+		return false
+	}
+	return (&HostApplicationError{Code: attempt.ErrorCode, Type: attempt.ErrorType}).BlamesHost()
+}
+
 type CapabilityRecorder interface {
 	RecordContextLimit(participant, model string, maxTokens uint64)
 	RecordToolUnsupported(participant, model string)

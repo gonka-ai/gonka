@@ -150,6 +150,51 @@ func TestStreamRewriter_ChunkEventsAndErrorsAreNotConverted(t *testing.T) {
 }
 
 // Test flow:
+//  1. For an error object, the flat `"object":"error"` shape, a payload with a non-finite bareword, two data lines and an unterminated last event, each sent beside a complete `choices[].message`, write the event to the rewriter and close it.
+//  2. Assert the output is not converted to chunks and still carries the upstream error.
+//  3. Write a complete `choices[].message` beside `"error":null` and assert it is converted to chunks.
+func TestStreamRewriter_AnErrorBesideAMessageIsNotConverted(t *testing.T) {
+	message := `"choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}]`
+	rewrite := func(t *testing.T, event string) []byte {
+		rewriter := NewStreamRewriter(LogprobIntent{}, true, 0)
+		written, err := rewriter.Write([]byte(event))
+		if err != nil {
+			t.Fatalf("Write() = %v", err)
+		}
+		tail, err := rewriter.Close()
+		if err != nil {
+			t.Fatalf("Close() = %v", err)
+		}
+		return append(written, tail...)
+	}
+	cases := []struct {
+		name  string
+		event string
+	}{
+		{name: "an_error_object", event: `data: {"error":{"message":"boom","code":401},` + message + "}\n\n"},
+		{name: "the_flat_error_shape", event: `data: {"object":"error","message":"boom","code":503,` + message + "}\n\n"},
+		{name: "a_non_finite_bareword", event: `data: {"error":{"message":"boom","code":401},"score":NaN,` + message + "}\n\n"},
+		{name: "two_data_lines", event: "data: {\"error\":{\"message\":\"boom\",\"code\":401},\ndata: " + message + "}\n\n"},
+		{name: "an_unterminated_last_event", event: `data: {"error":{"message":"boom","code":401},` + message + "}"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := rewrite(t, testCase.event)
+
+			if bytes.Contains(got, []byte(chunkObject)) {
+				t.Fatalf("output = %s, want the event unconverted", got)
+			}
+			if _, carried := eventFailure(got); !carried {
+				t.Fatalf("output = %s, want it to still carry the upstream error", got)
+			}
+		})
+	}
+	if got := rewrite(t, `data: {"error":null,`+message+"}\n\n"); !bytes.Contains(got, []byte(chunkObject)) {
+		t.Fatalf("output = %s, want a null error not to stop the conversion", got)
+	}
+}
+
+// Test flow:
 //  1. Split a fixture event's bytes mid-way through its `top_logprobs` field.
 //  2. Write the two halves to the rewriter in two separate calls.
 //  3. Assert the first (incomplete) write emits nothing, and the joined output strips internal fields while keeping the sibling `content`.
@@ -757,7 +802,7 @@ func TestACompletionWithNonFiniteNumbersStillConvertsToChunks(t *testing.T) {
 }
 
 func rewriteEventOnly(event []byte, intent LogprobIntent, keepUsage bool) []byte {
-	rewritten, _ := rewriteEvent(event, intent, keepUsage, 0)
+	rewritten, _, _ := rewriteEvent(event, intent, keepUsage, 0)
 	return rewritten
 }
 

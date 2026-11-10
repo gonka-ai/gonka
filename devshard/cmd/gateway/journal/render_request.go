@@ -10,7 +10,7 @@ import (
 
 // See ../docs/operations.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
 const (
-	loggedFieldSlots    = 32
+	loggedFieldSlots    = 34
 	MaxLoggedErrorBytes = 256
 
 	cacheHitOutcome = "cache_hit"
@@ -19,7 +19,7 @@ const (
 // renderRequestFinished writes both shapes: the short one of a cache hit, and the record of a raced request.
 func renderRequestFinished(lines logSink, line *RequestLine) {
 	if line.CacheHit {
-		lines.Info("request finished", logkey.Request, line.RequestID, logkey.Model, line.Model,
+		lines.Info("request finished", logkey.Request, line.RequestID, logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID,
 			logkey.Escrow, line.EscrowID, logkey.Stream, line.ClientStream, logkey.InputTokens, line.Outcome.InputTokens,
 			logkey.InputTokensSource, string(line.Outcome.InputTokensSource), logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes)
 		return
@@ -34,7 +34,7 @@ func renderRequestFinished(lines logSink, line *RequestLine) {
 
 func renderRequestThrottled(lines logSink, line *RequestLine) {
 	lines.Warn("gateway limiter turned a request away", logkey.Request, line.RequestID,
-		logkey.Model, line.Model, logkey.Reason, line.LimiterReason)
+		logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID, logkey.Reason, line.LimiterReason)
 }
 
 func renderRequestBodyUnread(lines logSink, line *RequestLine) {
@@ -50,7 +50,7 @@ func renderReplyNotCached(lines logSink, line *RequestLine) {
 // requestFinishedFields builds the line in a slice reserved for the widest one a finished request can carry.
 func requestFinishedFields(line *RequestLine) []any {
 	fields := make([]any, 0, loggedFieldSlots)
-	fields = append(fields, logkey.Request, line.RequestID, logkey.Model, line.Model)
+	fields = append(fields, logkey.Request, line.RequestID, logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID)
 	if line.EscrowID != "" {
 		fields = append(fields, logkey.Escrow, line.EscrowID)
 	}

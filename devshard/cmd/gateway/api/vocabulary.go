@@ -85,3 +85,17 @@ const (
 
 // A stored filter row the gateway read without a problem.
 const problemNone = ""
+
+// What a request record names as its caller when no client API key matched.
+const (
+	callerAdmin     = "admin"
+	callerAnonymous = "none"
+)
+
+// What a client reads when a host's error ends its request. See README.md, "Errors and statuses".
+const (
+	hostRejectedRequestMessage = "an upstream host rejected the request"
+	hostFailedMessage          = "an upstream host failed to answer the request"
+	hostsOverloadedMessage     = "upstream hosts are overloaded; retry the request"
+	hostExcerptSeparator       = ": "
+)

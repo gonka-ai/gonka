@@ -26,20 +26,22 @@ type clientStream struct {
 	mu     sync.Mutex
 	closed bool
 
-	writer       http.ResponseWriter
-	controller   *http.ResponseController
-	requestID    string
-	streaming    bool
-	logprobs     filters.LogprobIntent
-	rewriter     *filters.StreamRewriter
-	folder       *filters.BodyFolder
-	budget       *BufferBudget
-	charged      int64
-	overBudget   bool
-	written      int64
-	started      bool
-	terminated   bool
-	pendingEvent bool
+	writer            http.ResponseWriter
+	controller        *http.ResponseController
+	requestID         string
+	streaming         bool
+	logprobs          filters.LogprobIntent
+	rewriter          *filters.StreamRewriter
+	folder            *filters.BodyFolder
+	budget            *BufferBudget
+	charged           int64
+	overBudget        bool
+	written           int64
+	started           bool
+	terminated        bool
+	pendingEvent      bool
+	replayRefusedBy   error
+	answeredHostError *engine.HostApplicationError
 }
 
 func newClientStream(w http.ResponseWriter, requestID string, streaming, usage bool, logprobs filters.LogprobIntent, promptTokens uint64, budget *BufferBudget) *clientStream {
@@ -85,10 +87,8 @@ func (c *clientStream) Write(chunk []byte) (int, error) {
 	if err != nil {
 		return 0, refuse(err)
 	}
-	if forwarded := filters.TrimSSEDone(rewritten); len(forwarded) > 0 {
-		if _, writeErr := c.emitLocked(forwarded); writeErr != nil {
-			return 0, writeErr
-		}
+	if err := c.emitHostEventsLocked(rewritten); err != nil {
+		return 0, err
 	}
 	return len(chunk), nil
 }
@@ -133,6 +133,11 @@ func (c *clientStream) Close() error {
 	defer func() { c.closed = true }()
 	if c.streaming {
 		tailErr := c.flushTailLocked()
+		if c.answeredHostError != nil {
+			if _, err := c.emitLocked(errorEvent(c.answeredHostError)); err != nil {
+				return err
+			}
+		}
 		if err := c.terminateLocked(); err != nil {
 			return err
 		}
@@ -143,9 +148,16 @@ func (c *clientStream) Close() error {
 		c.started = true
 		return refuse(ErrResponseBufferFull)
 	}
-	body := c.folder.Body()
-	c.beginStatusLocked("application/json", statusForAssembled(body))
-	written, err := c.writer.Write(body)
+	folded := c.folder.Body()
+	status, reply, hostErr := assembleReply(folded)
+	if hostErr != nil {
+		c.answeredHostError = hostErr
+		if refusal := filters.CacheRefusal(status, folded); refusal != filters.CacheStorable {
+			c.replayRefusedBy = hostBodyRefusedError{refusal: refusal}
+		}
+	}
+	c.beginStatusLocked("application/json", status)
+	written, err := c.writer.Write(reply)
 	c.written += int64(written)
 	return err
 }
@@ -194,11 +206,25 @@ func (c *clientStream) Fail(cause error) error {
 
 func (c *clientStream) flushTailLocked() error {
 	tail, err := c.rewriter.Close()
-	if forwarded := filters.TrimSSEDone(tail); len(forwarded) > 0 {
-		if _, writeErr := c.emitLocked(forwarded); writeErr != nil {
-			return writeErr
-		}
+	if writeErr := c.emitHostEventsLocked(tail); writeErr != nil {
+		return writeErr
 	}
+	return err
+}
+
+func (c *clientStream) emitHostEventsLocked(rewritten []byte) error {
+	if c.rewriter.LastOutputMayCarryUpstreamError() {
+		kept, failure, dropped := filters.DropUpstreamErrorEvents(rewritten)
+		if dropped && c.answeredHostError == nil {
+			c.answeredHostError = hostErrorFrom(failure)
+		}
+		rewritten = kept
+	}
+	forwarded := filters.TrimSSEDone(rewritten)
+	if len(forwarded) == 0 {
+		return nil
+	}
+	_, err := c.emitLocked(forwarded)
 	return err
 }
 
@@ -229,7 +255,7 @@ func (c *clientStream) emitLocked(events []byte) (int, error) {
 }
 
 func errorEvent(cause error) []byte {
-	payload, err := json.Marshal(errorEnvelope{Error: errorDetail{Message: cause.Error()}})
+	payload, err := json.Marshal(errorEnvelope{Error: detailForError(cause)})
 	if err != nil {
 		return nil
 	}
@@ -251,15 +277,39 @@ func writeChatHeaders(header http.Header, requestID, escrowID, contentType strin
 	}
 }
 
-// statusForAssembled chooses the status from the whole body. See README.md, "Streaming the reply".
-func statusForAssembled(body []byte) int {
+func assembleReply(body []byte) (status int, reply []byte, hostErr *engine.HostApplicationError) {
 	if bytes.Equal(body, filters.TruncatedResponseBody) || bytes.Equal(body, filters.NoResponseDataBody) {
-		return http.StatusBadGateway
+		return http.StatusBadGateway, body, nil
 	}
-	if failure, carried := filters.UpstreamFailure(body); carried {
-		return (&engine.HostApplicationError{Code: failure.Code, Type: failure.Type, Message: failure.Message}).HTTPStatus()
+	failure, carried := filters.UpstreamFailure(body)
+	if !carried {
+		return http.StatusOK, body, nil
 	}
-	return http.StatusOK
+	hostErr = hostErrorFrom(failure)
+	reply, err := json.Marshal(errorEnvelope{Error: detailForError(hostErr)})
+	if err != nil {
+		return http.StatusBadGateway, filters.NoResponseDataBody, hostErr
+	}
+	return hostErr.HTTPStatus(), reply, hostErr
+}
+
+func hostErrorFrom(failure filters.UpstreamError) *engine.HostApplicationError {
+	return &engine.HostApplicationError{Code: failure.Code, Type: failure.Type, Message: failure.Message}
+}
+
+func (c *clientStream) replayRefusal() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.replayRefusedBy
+}
+
+func (c *clientStream) answeredHostFailure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.answeredHostError == nil {
+		return nil
+	}
+	return c.answeredHostError
 }
 
 func (c *clientStream) beginLocked(contentType string) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net/http"
@@ -16,7 +17,7 @@ import (
 	"devshard/cmd/gateway/internal/strictjson"
 )
 
-// The body limits are in README.md, "Reading a body"; the client write bound in "Streaming the reply"; hostCatchUpReserveBytes is in request.md.
+// The body limits are in README.md, "Reading a body"; the client write bound in "Streaming the reply"; hostCatchUpReserveBytes is in request.md; apiKeyIDBytes is in README.md, "Authentication and the kill switch".
 const (
 	chatIngestLimit = filters.MaxBodyBytes
 
@@ -27,12 +28,15 @@ const (
 	clientWriteChunkBytes   = 64 << 10
 
 	bodyReadStart = 16 << 10
+
+	apiKeyIDBytes = 4
 )
 
 // credentials is one request's resolved identity, computed only where an answer is used.
 type credentials struct {
-	admin  bool
-	apiKey bool
+	admin    bool
+	apiKey   bool
+	apiKeyID string
 }
 
 // keyGate compares a bearer against configured keys. See README.md, "Authentication and the kill switch".
@@ -69,18 +73,23 @@ func bearerKey(authorization string) (string, bool) {
 	return fields[1], true
 }
 
-// authenticate compares every configured key, so the time taken does not depend on which one matched.
 func (g keyGate) authenticate(authorization string) bool {
+	_, matched := g.match(authorization)
+	return matched
+}
+
+// match compares every configured key, so the time taken does not depend on which one matched.
+func (g keyGate) match(authorization string) ([sha256.Size]byte, bool) {
 	presented, hasBearer := bearerKey(authorization)
 	if !g.configured || !hasBearer {
-		return false
+		return [sha256.Size]byte{}, false
 	}
 	digest := sha256.Sum256([]byte(presented))
 	matched := 0
 	for _, configured := range g.digests {
 		matched |= subtle.ConstantTimeCompare(digest[:], configured[:])
 	}
-	return matched == 1
+	return digest, matched == 1
 }
 
 // requireAdmin gates the operator routes. See README.md, "Authentication and the kill switch".
@@ -121,10 +130,22 @@ func (s *Server) resolveCredentials(r *http.Request) credentials {
 
 func (s *Server) compareKeys(authorization string) credentials {
 	gates := s.keyGates()
-	return credentials{
-		admin:  gates.admin.authenticate(authorization),
-		apiKey: gates.client.authenticate(authorization),
+	clientDigest, apiKey := gates.client.match(authorization)
+	identity := credentials{admin: gates.admin.authenticate(authorization), apiKey: apiKey}
+	if apiKey {
+		identity.apiKeyID = hex.EncodeToString(clientDigest[:apiKeyIDBytes])
 	}
+	return identity
+}
+
+func (c credentials) caller() string {
+	switch {
+	case c.apiKey:
+		return c.apiKeyID
+	case c.admin:
+		return callerAdmin
+	}
+	return callerAnonymous
 }
 
 // keyGates hashes the configured keys once per snapshot: every request compares, none re-digests.

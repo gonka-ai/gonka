@@ -145,7 +145,7 @@ func requireSameRewrite(t *testing.T, event []byte, intent LogprobIntent, keepUs
 	if !held {
 		return
 	}
-	got, gotMalformed := rewriteEvent(event, intent, keepUsage, 0)
+	got, gotMalformed, _ := rewriteEvent(event, intent, keepUsage, 0)
 	want, wantMalformed := rewriteDecodedEvent(event, dataLines, payload, intent, keepUsage, 0)
 	if gotMalformed != wantMalformed || (got == nil) != (want == nil) {
 		t.Fatalf("rewriteEvent(%q, %+v) = %q (malformed %v), the full rewrite %q (malformed %v)", event, intent, got, gotMalformed, want, wantMalformed)

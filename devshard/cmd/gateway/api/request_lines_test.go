@@ -22,7 +22,7 @@ func TestAServedRequestWritesItsRecord(t *testing.T) {
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "escrow", "7", "stream", false,
+		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
 		"input_tokens", uint64(0), "output_tokens", int64(0),
 		"outcome", "served", "bytes", int64(response.Body.Len()), "terminated", false, "duration_ms", int64(0),
 	}})
@@ -42,7 +42,7 @@ func TestAServedRequestWithAWinnerWritesTheWinnersFacts(t *testing.T) {
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "escrow", "7", "stream", false,
+		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
 		"input_tokens", uint64(1024), "output_tokens", int64(384), "host", "qqqqqqqq",
 		"outcome", "served", "bytes", int64(response.Body.Len()), "terminated", false, "duration_ms", int64(0),
 		"nonce_finished", false, "host_clock_offset_ms", int64(400), "host_receipt_ms", int64(200),
@@ -64,7 +64,7 @@ func TestARaceThatFailedBeforeItsFirstByteWritesItsRecordAtWarn(t *testing.T) {
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "escrow", "7", "stream", false,
+		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
 		"input_tokens", uint64(0), "output_tokens", int64(0),
 		"outcome", "failed_before_first_byte", "bytes", int64(0), "terminated", false, "duration_ms", int64(0),
 		"error", "every attempt failed",
@@ -86,7 +86,7 @@ func TestAStreamThatFailedMidAnswerWritesItsRecordAtWarn(t *testing.T) {
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "escrow", "7", "stream", true,
+		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", true,
 		"input_tokens", uint64(0), "output_tokens", int64(0),
 		"outcome", "failed_mid_stream", "bytes", int64(response.Body.Len()), "terminated", true, "duration_ms", int64(0),
 		"error", "every attempt failed",
@@ -105,7 +105,7 @@ func TestACacheHitWritesTheShortRecord(t *testing.T) {
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
-		"request", "request-1", "model", "qwen", "escrow", "7", "stream", false,
+		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
 		"input_tokens", filters.EstimatedPromptTokens(int(live.inference.raced.Load().InputBytes)), "input_tokens_source", "bytes_estimate",
 		"outcome", "cache_hit", "bytes", int64(replay.Body.Len()),
 	}})
@@ -124,7 +124,7 @@ func TestALimiterRefusalIsLoggedWithTheCapItHit(t *testing.T) {
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "gateway limiter turned a request away", Fields: []any{
-		"request", "request-1", "model", "qwen", "reason", "concurrent_requests",
+		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "reason", "concurrent_requests",
 	}})
 }
 

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	json "github.com/goccy/go-json"
 
@@ -27,7 +28,14 @@ import (
 	"devshard/types"
 )
 
-const noHostRetryAfter = time.Second
+// The Retry-After a shard without room answers with, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
+const (
+	noHostRetryAfter       = time.Second
+	maxHostExcerptBytes    = 512
+	noHostExcerpt          = ""
+	invalidUTF8Replacement = ""
+	unprintableReplacement = ' '
+)
 
 var (
 	ErrUnknownDevshard = errors.New("unknown devshard")
@@ -42,6 +50,12 @@ var (
 
 	ErrInvalidEscrowID = errors.New("escrow id is not a chain escrow id")
 )
+
+type hostBodyRefusedError struct{ refusal string }
+
+func (e hostBodyRefusedError) Error() string {
+	return "the host's own error body is not a reply to replay: " + e.refusal
+}
 
 // UnsupportedModelError lists the routable models so a client can correct the request in one trip.
 type UnsupportedModelError struct {
@@ -278,7 +292,37 @@ func detailForError(err error) errorDetail {
 	if errors.As(err, &tooLong) {
 		return errorDetail{Message: err.Error(), Type: errorTypeInvalidRequest, Code: errorCodeContextLengthExceeded}
 	}
+	var hostErr *engine.HostApplicationError
+	if errors.As(err, &hostErr) {
+		return errorDetail{Message: hostErrorMessage(hostErr)}
+	}
 	return errorDetail{Message: err.Error()}
+}
+
+func hostErrorMessage(hostErr *engine.HostApplicationError) string {
+	switch status := hostErr.HTTPStatus(); {
+	case status == http.StatusServiceUnavailable:
+		return hostsOverloadedMessage
+	case hostErr.BlamesHost():
+		return hostFailedMessage
+	}
+	excerpt := hostExcerpt(hostErr.Message)
+	if excerpt == noHostExcerpt {
+		return hostRejectedRequestMessage
+	}
+	return hostRejectedRequestMessage + hostExcerptSeparator + excerpt
+}
+
+func hostExcerpt(message string) string {
+	cut := strings.ToValidUTF8(message[:min(len(message), maxHostExcerptBytes)], invalidUTF8Replacement)
+	return strings.TrimSpace(strings.Map(printableRune, cut))
+}
+
+func printableRune(r rune) rune {
+	if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+		return unprintableReplacement
+	}
+	return r
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload any) {

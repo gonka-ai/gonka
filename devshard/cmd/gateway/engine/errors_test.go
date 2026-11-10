@@ -69,7 +69,9 @@ func TestHostApplicationErrorHTTPStatus(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "code_outside_the_error_range_is_ignored", hostErr: &HostApplicationError{Code: "200", Type: "BadRequestError"}, wantStatus: http.StatusBadRequest},
-		{name: "numeric_code", hostErr: &HostApplicationError{Code: "429"}, wantStatus: http.StatusTooManyRequests},
+		{name: "request_fault_code", hostErr: &HostApplicationError{Code: "422"}, wantStatus: http.StatusUnprocessableEntity},
+		{name: "throttle_code", hostErr: &HostApplicationError{Code: "429"}, wantStatus: http.StatusServiceUnavailable},
+		{name: "host_fault_code", hostErr: &HostApplicationError{Code: "401"}, wantStatus: http.StatusBadGateway},
 		{name: "non_numeric_code_with_bad_request_type", hostErr: &HostApplicationError{Code: "invalid_request_error", Type: "BadRequestError"}, wantStatus: http.StatusBadRequest},
 		{name: "unknown_shape", hostErr: &HostApplicationError{Message: "something broke"}, wantStatus: http.StatusBadGateway},
 		{name: "nil", hostErr: nil, wantStatus: http.StatusBadGateway},
@@ -140,7 +142,7 @@ func TestStatusForError(t *testing.T) {
 	}{
 		{name: "success", err: nil, wantStatus: http.StatusOK},
 		{name: "host_application_error", err: &HostApplicationError{Code: "400"}, wantStatus: http.StatusBadRequest},
-		{name: "wrapped_host_application_error", err: fmt.Errorf("race: %w", &HostApplicationError{Code: "404"}), wantStatus: http.StatusNotFound},
+		{name: "wrapped_host_application_error", err: fmt.Errorf("race: %w", &HostApplicationError{Code: "413"}), wantStatus: http.StatusRequestEntityTooLarge},
 		{name: "upstream_throttled", err: &transport.UpstreamStatusError{StatusCode: http.StatusTooManyRequests}, wantStatus: http.StatusTooManyRequests},
 		{name: "upstream_unavailable", err: &transport.UpstreamStatusError{StatusCode: http.StatusServiceUnavailable}, wantStatus: http.StatusTooManyRequests},
 		{name: "upstream_server_error", err: &transport.UpstreamStatusError{StatusCode: http.StatusInternalServerError}, wantStatus: http.StatusBadGateway},
