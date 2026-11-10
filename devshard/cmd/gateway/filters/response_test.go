@@ -25,7 +25,7 @@ func readSSEFixture(t *testing.T, name string) []byte {
 // rewriteWholeStream drives one StreamRewriter over the whole stream and returns everything it emits.
 func rewriteWholeStream(t *testing.T, stream []byte) []byte {
 	t.Helper()
-	rewriter := NewStreamRewriter(LogprobIntent{}, true)
+	rewriter := NewStreamRewriter(LogprobIntent{}, true, 0)
 	emitted, err := rewriter.Write(stream)
 	if err != nil {
 		t.Fatalf("Write() = %v", err)
@@ -212,7 +212,7 @@ func TestStreamRewriterFixture_ChunkByChunkMatchesWholeStream(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			input := readSSEFixture(t, name)
 			whole := rewriteWholeStream(t, input)
-			rewriter := NewStreamRewriter(LogprobIntent{}, true)
+			rewriter := NewStreamRewriter(LogprobIntent{}, true, 0)
 			var chunked bytes.Buffer
 			for _, event := range splitCompleteEvents(t, input) {
 				emitted, err := rewriter.Write(event)
@@ -246,7 +246,7 @@ func TestStreamRewriterFixture_TruncatedEventIsDroppedAndReported(t *testing.T) 
 		t.Fatalf("fixture no longer contains a mid-event top_logprobs split point")
 	}
 
-	rewriter := NewStreamRewriter(LogprobIntent{}, true)
+	rewriter := NewStreamRewriter(LogprobIntent{}, true, 0)
 	emitted, err := rewriter.Write(target[:splitAt])
 	if err != nil {
 		t.Fatalf("Write() = %v", err)
@@ -285,7 +285,7 @@ func TestStripResponseBody_RemovesAllInternalFieldsAtAnyDepth(t *testing.T) {
 		"prompt_token_ids": [9, 8, 7],
 		"prompt_logprobs": null
 	}`)
-	got := stripResponseBody(body, LogprobIntent{})
+	got := stripResponseBody(body, LogprobIntent{}, 0)
 	var decoded map[string]any
 	if err := json.Unmarshal(got, &decoded); err != nil {
 		t.Fatalf("stripResponseBody(, LogprobIntent{}) produced invalid JSON: %v (%q)", err, got)
@@ -317,7 +317,7 @@ func TestStripResponseBody_RemovesAllInternalFieldsAtAnyDepth(t *testing.T) {
 //  2. Assert the output is byte-for-byte unchanged.
 func TestStripResponseBody_NoChangeReturnsEquivalentBytes(t *testing.T) {
 	body := []byte(`{"id":"chatcmpl-plain","choices":[{"message":{"content":"hi"}}]}`)
-	got := stripResponseBody(body, LogprobIntent{})
+	got := stripResponseBody(body, LogprobIntent{}, 0)
 	if !bytes.Equal(got, body) {
 		t.Errorf("stripResponseBody(, LogprobIntent{}) = %q, want unchanged %q", got, body)
 	}
@@ -328,7 +328,7 @@ func TestStripResponseBody_NoChangeReturnsEquivalentBytes(t *testing.T) {
 //  2. Assert the output passes through unchanged.
 func TestStripResponseBody_MalformedBodyPassesThroughUnchanged(t *testing.T) {
 	body := []byte(`this is not json`)
-	got := stripResponseBody(body, LogprobIntent{})
+	got := stripResponseBody(body, LogprobIntent{}, 0)
 	if !bytes.Equal(got, body) {
 		t.Errorf("stripResponseBody(, LogprobIntent{}) = %q, want unchanged %q", got, body)
 	}
@@ -338,7 +338,7 @@ func TestStripResponseBody_MalformedBodyPassesThroughUnchanged(t *testing.T) {
 //  1. Strip an empty byte slice.
 //  2. Assert the output stays empty.
 func TestStripResponseBody_EmptyBodyPassesThroughUnchanged(t *testing.T) {
-	got := stripResponseBody([]byte{}, LogprobIntent{})
+	got := stripResponseBody([]byte{}, LogprobIntent{}, 0)
 	if len(got) != 0 {
 		t.Errorf("stripResponseBody(, LogprobIntent{}) = %q, want empty", got)
 	}
@@ -349,7 +349,7 @@ func TestStripResponseBody_EmptyBodyPassesThroughUnchanged(t *testing.T) {
 //  2. Assert the decoded output no longer has a prompt_logprobs key at all.
 func TestStripResponseBody_NullValuedFieldAlsoStripped(t *testing.T) {
 	body := []byte(`{"id":"x","prompt_logprobs":null,"choices":[]}`)
-	got := stripResponseBody(body, LogprobIntent{})
+	got := stripResponseBody(body, LogprobIntent{}, 0)
 	var decoded map[string]any
 	if err := json.Unmarshal(got, &decoded); err != nil {
 		t.Fatalf("invalid JSON output: %v", err)
@@ -513,7 +513,7 @@ func TestHasNonCacheableErrorFindsFailuresRegardlessOfFraming(t *testing.T) {
 func TestStripKeepsIntegersTooLargeForFloat64(t *testing.T) {
 	body := []byte(`{"id":"c","seed":9007199254740993,"logprobs":{"content":[]},"choices":[]}`)
 
-	stripped := string(stripResponseBody(body, LogprobIntent{}))
+	stripped := string(stripResponseBody(body, LogprobIntent{}, 0))
 
 	if !strings.Contains(stripped, `"seed":9007199254740993`) {
 		t.Fatalf("seed was rewritten: %s", stripped)
@@ -529,7 +529,7 @@ func TestStripKeepsIntegersTooLargeForFloat64(t *testing.T) {
 func TestStripLeavesABodyWithTrailingJunkAlone(t *testing.T) {
 	body := []byte(`{"logprobs":{"content":[]}} {"and":"more"}`)
 
-	if got := string(stripResponseBody(body, LogprobIntent{})); got != string(body) {
+	if got := string(stripResponseBody(body, LogprobIntent{}, 0)); got != string(body) {
 		t.Fatalf("a malformed body was rewritten:\n got %s\nwant %s", got, body)
 	}
 }
@@ -542,7 +542,7 @@ func TestADeeplyNestedResponseCannotCrashTheProcess(t *testing.T) {
 	for _, depth := range []int{1_000, 1_000_000, 3_000_000} {
 		body := []byte(`{"logprobs":1,"a":` + strings.Repeat("[", depth) + strings.Repeat("]", depth) + `}`)
 
-		if got := stripResponseBody(body, LogprobIntent{}); len(got) == 0 {
+		if got := stripResponseBody(body, LogprobIntent{}, 0); len(got) == 0 {
 			t.Fatalf("depth %d produced nothing", depth)
 		}
 	}
@@ -554,13 +554,13 @@ func TestADeeplyNestedResponseCannotCrashTheProcess(t *testing.T) {
 //  3. Assert the deep body still contains logprobs, since past the limit the body is unparseable and passes through whole.
 func TestPastTheDepthLimitTheStripIsBypassed(t *testing.T) {
 	shallow := []byte(`{"logprobs":1,"a":[[]]}`)
-	if strings.Contains(string(stripResponseBody(shallow, LogprobIntent{})), "logprobs") {
+	if strings.Contains(string(stripResponseBody(shallow, LogprobIntent{}, 0)), "logprobs") {
 		t.Fatal("a shallow body kept its internal field")
 	}
 
 	deep := []byte(`{"logprobs":1,"a":` + strings.Repeat("[", 100_000) + strings.Repeat("]", 100_000) + `}`)
 
-	if !strings.Contains(string(stripResponseBody(deep, LogprobIntent{})), "logprobs") {
+	if !strings.Contains(string(stripResponseBody(deep, LogprobIntent{}, 0)), "logprobs") {
 		t.Fatal("the deep body was stripped after all -- then this test, and the bypass it documents, are stale")
 	}
 }
@@ -572,7 +572,7 @@ func TestPastTheDepthLimitTheStripIsBypassed(t *testing.T) {
 func TestAnOutOfRangeNumberDoesNotDisableTheStrip(t *testing.T) {
 	body := []byte(`{"choices":[{"message":{"content":"hi"},"logprobs":{"a":1}}],"seed":1e999}`)
 
-	stripped := string(stripResponseBody(body, LogprobIntent{}))
+	stripped := string(stripResponseBody(body, LogprobIntent{}, 0))
 
 	if strings.Contains(stripped, "logprobs") {
 		t.Fatalf("one out-of-range number turned the strip off: %s", stripped)
@@ -588,7 +588,7 @@ func TestAnOutOfRangeNumberDoesNotDisableTheStrip(t *testing.T) {
 func TestGeneratedMarkupIsNotEscaped(t *testing.T) {
 	body := []byte(`{"choices":[{"message":{"content":"<div> a & b"}}],"logprobs":{}}`)
 
-	if got := string(stripResponseBody(body, LogprobIntent{})); !strings.Contains(got, "<div> a & b") {
+	if got := string(stripResponseBody(body, LogprobIntent{}, 0)); !strings.Contains(got, "<div> a & b") {
 		t.Fatalf("markup was escaped on the way out: %s", got)
 	}
 }
@@ -616,7 +616,7 @@ func TestTheStripFollowsWhatTheClientAskedFor(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			stripped := string(stripResponseBody(body, testCase.intent))
+			stripped := string(stripResponseBody(body, testCase.intent, 0))
 
 			if held := strings.Contains(stripped, `"logprob"`); held != testCase.wantLogprobs {
 				t.Fatalf("logprob present = %v, want %v: %s", held, testCase.wantLogprobs, stripped)
@@ -698,7 +698,7 @@ func TestEveryStrippedFieldIsRemoved(t *testing.T) {
 	for _, field := range clientStrippedFields {
 		body := []byte(`{"choices":[{"index":0,"` + field + `":{"content":[]}}]}`)
 
-		stripped := stripResponseBody(body, LogprobIntent{})
+		stripped := stripResponseBody(body, LogprobIntent{}, 0)
 
 		if bytes.Contains(stripped, []byte(field)) {
 			t.Fatalf("field %q survived the strip: %s", field, stripped)
@@ -714,7 +714,7 @@ func TestEveryStrippedFieldIsRemoved(t *testing.T) {
 func TestABodyCarryingNonFiniteNumbersIsStillStrippedAndDelivered(t *testing.T) {
 	body := []byte(`{"choices":[{"message":{"content":"hi"},"logprobs":{"content":[{"logprob":-Infinity}]}}],"token_ids":[7],"prompt_logprobs":[1]}`)
 
-	stripped := stripResponseBody(body, LogprobIntent{})
+	stripped := stripResponseBody(body, LogprobIntent{}, 0)
 
 	for _, internal := range []string{"token_ids", "prompt_logprobs", "logprob"} {
 		if bytes.Contains(stripped, []byte(internal)) {
@@ -742,7 +742,7 @@ func TestNonFiniteWordsInsideStringsAreLeftAlone(t *testing.T) {
 		t.Fatal("the body parses on its own, so normalisation never runs and this test is vacuous")
 	}
 
-	stripped := stripResponseBody(body, LogprobIntent{})
+	stripped := stripResponseBody(body, LogprobIntent{}, 0)
 
 	if !bytes.Contains(stripped, []byte(`the value is NaN, or -Infinity`)) {
 		t.Fatalf("content was rewritten: %s", stripped)
@@ -1010,7 +1010,7 @@ func TestAStreamCarryingBarewordsStaysCacheableAfterTheStrip(t *testing.T) {
 	event := []byte(`data: {"choices":[{"index":0,"delta":{"content":"ok"},` +
 		`"logprobs":{"content":[{"token":"ok","logprob":-Infinity}]},"finish_reason":"stop"}]}` + "\n\n")
 
-	rewritten, err := NewStreamRewriter(LogprobIntent{Keep: true, KeepTop: true}, true).Write(event)
+	rewritten, err := NewStreamRewriter(LogprobIntent{Keep: true, KeepTop: true}, true, 0).Write(event)
 	if err != nil {
 		t.Fatalf("Write(): %v", err)
 	}

@@ -28,7 +28,7 @@ func bodyReadFailure(w http.ResponseWriter, err error) error {
 	// An expired read deadline stops the server's drain of the unread body from waiting on a client that has stopped sending.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now())
 	var oversized *http.MaxBytesError
-	if errors.As(err, &oversized) {
+	if errors.As(err, &oversized) || errors.Is(err, ErrRequestBodiesFull) {
 		return err
 	}
 	w.Header().Set("Connection", "close")

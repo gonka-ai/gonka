@@ -248,7 +248,8 @@ func shardHasNoRoom(err error) bool {
 	return errors.Is(err, scheduler.ErrHostsBusy) ||
 		errors.Is(err, scheduler.ErrNoEscrowCapacity) ||
 		errors.Is(err, scheduler.ErrEscrowBusy) ||
-		errors.Is(err, ErrResponseBufferFull)
+		errors.Is(err, ErrResponseBufferFull) ||
+		errors.Is(err, ErrRequestBodiesFull)
 }
 
 // Retry-After is rounded up: a zero would tell a client to retry immediately, which a queue timeout does not mean.

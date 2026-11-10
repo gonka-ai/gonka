@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"devshard/cmd/gateway/filters"
 	"devshard/user"
 )
 
@@ -38,6 +39,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Tx.GasLimit", configuration.Tx.GasLimit, int64(700_000)},
 		{"Tx.PollIntervalMS", configuration.Tx.PollIntervalMS, int64(2_000)},
 		{"Tx.PollTimeoutMS", configuration.Tx.PollTimeoutMS, int64(45_000)},
+		{"Tx.CallTimeoutMS", configuration.Tx.CallTimeoutMS, int64(10_000)},
 		{"Limits.DefaultMaxTokens", configuration.Limits.DefaultMaxTokens, int64(4096)},
 		{"Limits.MaxTokensCap", configuration.Limits.MaxTokensCap, int64(4096)},
 		{"Limits.Concurrency.MaxRequests", configuration.Limits.Concurrency.MaxRequests, int64(2_048)},
@@ -151,6 +153,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"tx_gas_limit too low", func(c *Config) { c.Tx.GasLimit = 0 }, "tx_gas_limit"},
 		{"tx_poll_interval_ms too low", func(c *Config) { c.Tx.PollIntervalMS = 0 }, "tx_poll_interval_ms"},
 		{"tx_poll_timeout_ms below interval", func(c *Config) { c.Tx.PollTimeoutMS = 100 }, "tx_poll_timeout_ms"},
+		{"tx_call_timeout_ms too low", func(c *Config) { c.Tx.CallTimeoutMS = 0 }, "tx_call_timeout_ms"},
+		{"tx_call_timeout_ms above the poll timeout", func(c *Config) { c.Tx.CallTimeoutMS = c.Tx.PollTimeoutMS + 1 }, "tx_call_timeout_ms"},
 		{"default_max_tokens too low", func(c *Config) { c.Limits.DefaultMaxTokens = 0 }, "default_max_tokens"},
 		{"max_tokens_cap too low", func(c *Config) { c.Limits.MaxTokensCap = 0 }, "max_tokens_cap"},
 		{"max_concurrent_requests negative", func(c *Config) { c.Limits.Concurrency.MaxRequests = -1 }, "max_concurrent_requests"},
@@ -159,6 +163,7 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.RequestsPer10000Weight = maxConcurrentRequests + 1 }, "max_concurrent_requests_per_10000_weight"},
 		{"poc_max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.PoCRequestsPer10000Weight = maxConcurrentRequests + 1 }, "poc_max_concurrent_requests_per_10000_weight"},
 		{"max_input_tokens_in_flight negative", func(c *Config) { c.Limits.MaxInputTokensInFlight = -1 }, "max_input_tokens_in_flight"},
+		{"max_buffered_request_bytes below one body", func(c *Config) { c.Limits.MaxBufferedRequestBytes = filters.MaxBodyBytes - 1 }, "max_buffered_request_bytes"},
 		{"admission_queue_wait_ms negative", func(c *Config) { c.Limits.AdmissionQueueWaitMS = -1 }, "admission_queue_wait_ms"},
 		{"host_input_window_min_requests too low", func(c *Config) { c.Limits.HostWindows.Input.MinRequests = 0 }, "host_input_window_min_requests"},
 		{"host_input_window_initial_requests below min", func(c *Config) {

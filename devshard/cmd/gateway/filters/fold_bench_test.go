@@ -15,7 +15,7 @@ func BenchmarkBodyFolderProductionStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(streamBytes))
 	for b.Loop() {
-		folder := NewBodyFolder(LogprobIntent{})
+		folder := NewBodyFolder(LogprobIntent{}, 0)
 		for _, event := range events {
 			if _, err := folder.Write(event); err != nil {
 				b.Fatal(err)
@@ -31,7 +31,7 @@ func BenchmarkBodyFolderPlainContentStream(b *testing.B) {
 	events := plainContentStream(512)
 	b.ReportAllocs()
 	for b.Loop() {
-		folder := NewBodyFolder(LogprobIntent{})
+		folder := NewBodyFolder(LogprobIntent{}, 0)
 		for _, event := range events {
 			if _, err := folder.Write(event); err != nil {
 				b.Fatal(err)
@@ -57,7 +57,7 @@ func BenchmarkBodyFolderTestdataStreams(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(stream)))
 			for b.Loop() {
-				folder := NewBodyFolder(LogprobIntent{})
+				folder := NewBodyFolder(LogprobIntent{}, 0)
 				if _, err := folder.Write(stream); err != nil {
 					b.Fatal(err)
 				}

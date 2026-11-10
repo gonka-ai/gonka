@@ -17,8 +17,8 @@ import (
 //  4. Assert the second write is refused with `ErrResponseBufferFull`, since together they exceed the shared ceiling.
 func TestTheBudgetBoundsEveryBufferedReplyTogether(t *testing.T) {
 	budget := NewBufferBudget(1 << 10)
-	first := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, budget)
-	second := newClientStream(httptest.NewRecorder(), "req-2", false, false, filters.LogprobIntent{}, budget)
+	first := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, 0, budget)
+	second := newClientStream(httptest.NewRecorder(), "req-2", false, false, filters.LogprobIntent{}, 0, budget)
 
 	if _, err := first.Write(bytes.Repeat([]byte("x"), 800)); err != nil {
 		t.Fatalf("the first reply was refused with room to spare: %v", err)
@@ -45,7 +45,7 @@ func TestAFullBufferIsAnsweredAsTheShardHavingNoRoom(t *testing.T) {
 //  3. Discard the same stream again and assert held bytes stay at zero, so a repeated discard cannot take the budget negative.
 func TestDiscardGivesTheBudgetBackOnEveryPath(t *testing.T) {
 	budget := NewBufferBudget(1 << 10)
-	stream := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, budget)
+	stream := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, 0, budget)
 	if _, err := stream.Write(bytes.Repeat([]byte("x"), 900)); err != nil {
 		t.Fatalf("Write(): %v", err)
 	}
@@ -67,7 +67,7 @@ func TestDiscardGivesTheBudgetBackOnEveryPath(t *testing.T) {
 //  3. Assert the budget's held bytes stay at zero, since streaming replies are not buffered.
 func TestAStreamingReplyIsNotChargedToTheBudget(t *testing.T) {
 	budget := NewBufferBudget(1 << 10)
-	stream := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, budget)
+	stream := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, 0, budget)
 
 	if _, err := stream.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n")); err != nil {
 		t.Fatalf("Write(): %v", err)

@@ -14,7 +14,7 @@ func BenchmarkStreamRewriterRealChunk(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(chunk)))
 	for range b.N {
-		rewriter := NewStreamRewriter(LogprobIntent{}, true)
+		rewriter := NewStreamRewriter(LogprobIntent{}, true, 0)
 		if _, err := rewriter.Write(chunk); err != nil {
 			b.Fatal(err)
 		}
@@ -51,7 +51,7 @@ func BenchmarkStreamRewriterProductionStream(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(streamBytes))
 	for b.Loop() {
-		rewriter := NewStreamRewriter(LogprobIntent{}, false)
+		rewriter := NewStreamRewriter(LogprobIntent{}, false, 0)
 		for _, event := range events {
 			if _, err := rewriter.Write(event); err != nil {
 				b.Fatal(err)

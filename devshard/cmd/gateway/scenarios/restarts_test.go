@@ -8,6 +8,7 @@ import (
 
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/liquidity"
 	"devshard/cmd/gateway/nonces"
 	"devshard/types"
@@ -358,6 +359,70 @@ func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
 		expectThat{label: "the restarted ledger holds the saved tokens", verify: sameAsSaved},
 		advance{by: afterTheRestart},
 		expectThat{label: "the restarted ledger still holds the saved tokens", verify: sameAsSaved},
+	}
+	runSteps(t, spec)
+}
+
+// Test flow:
+//  1. Take participant 0, slot 0 of the seeded escrow, offline, send eight requests one after another, and record every Pending nonce on slot 0, whose refusal vote the gateway now owes, with the slot's miss count and cost.
+//  2. Restart the gateway at once and advance four minutes, the window in which the same votes land without a restart.
+//  3. Assert no recorded nonce is still Pending and slot 0 was charged one miss per recorded nonce since the restart: the restarted gateway posted the votes the old one owed.
+//  4. Settle the seeded escrow as the operator and advance one tick.
+//  5. Assert the chain settled the escrow and slot 0 was paid none of the recorded nonces' reserve.
+func TestARefusalVoteOwedAtARestartIsPostedByTheNextGateway(t *testing.T) {
+	const refusingSlot uint32 = 0
+	spec := defaultSpec()
+	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
+	owed := map[uint64]types.InferenceRecord{}
+	var slotAtRestart types.HostStats
+	slotMissedEveryOwedNonce := func(harness *gatewayHarness) error {
+		stats := slotStats(harness, harness.seededIDs[0])[refusingSlot]
+		if want := slotAtRestart.Missed + uint32(len(owed)); stats == nil || stats.Missed != want {
+			return fmt.Errorf("slot %d stats = %+v, want Missed %d: %d at the restart plus one per owed nonce", refusingSlot, stats, want, slotAtRestart.Missed)
+		}
+		return nil
+	}
+	spec.steps = []harnessStep{
+		sendRequests{promptBytes: 200, maxTokens: 64, count: 8, sequential: true},
+		expectThat{label: "Pending records on the refusing slot whose votes are owed", verify: func(harness *gatewayHarness) error {
+			_, _, state, built := machineMoney(harness, harness.seededIDs[0])
+			if !built || state.HostStats[refusingSlot] == nil {
+				return fmt.Errorf("machineMoney(%s) built = %v, want the seeded escrow's machine with slot %d stats", harness.seededIDs[0], built, refusingSlot)
+			}
+			for nonce, record := range state.Inferences {
+				if record.Status == types.StatusPending && record.ExecutorSlot == refusingSlot {
+					owed[nonce] = *record
+				}
+			}
+			if len(owed) == 0 {
+				return fmt.Errorf("no Pending record on slot %d, want the refused nonces the gateway owes a vote", refusingSlot)
+			}
+			slotAtRestart = *state.HostStats[refusingSlot]
+			return nil
+		}},
+		restartGateway{},
+		advance{by: 4 * time.Minute},
+		expectThat{label: "the restarted gateway posted the owed votes", verify: func(harness *gatewayHarness) error {
+			_, _, state, _ := machineMoney(harness, harness.seededIDs[0])
+			for nonce := range owed {
+				if record, live := state.Inferences[nonce]; live && record.Status == types.StatusPending {
+					return fmt.Errorf("nonce %d = %+v, want voted out of Pending", nonce, record)
+				}
+			}
+			return slotMissedEveryOwedNonce(harness)
+		}},
+		operatorSettles{escrowID: seededID(0)},
+		advance{by: escrow.TickInterval},
+		expectThat{label: "finalize paid the refusing slot nothing for the owed nonces", verify: func(harness *gatewayHarness) error {
+			if record, known := harness.chain.escrowRecord(parseEscrowID(harness.seededIDs[0])); !known || !record.settled {
+				return fmt.Errorf("escrowRecord(%s) = %+v, want settled", harness.seededIDs[0], record)
+			}
+			stats := slotStats(harness, harness.seededIDs[0])[refusingSlot]
+			if stats == nil || stats.Cost != slotAtRestart.Cost {
+				return fmt.Errorf("slot %d stats = %+v, want cost %d as at the restart", refusingSlot, stats, slotAtRestart.Cost)
+			}
+			return slotMissedEveryOwedNonce(harness)
+		}},
 	}
 	runSteps(t, spec)
 }

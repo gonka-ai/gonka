@@ -71,8 +71,8 @@ func fieldSet(fields []string) map[string]struct{} {
 }
 
 // stripResponseBody removes the hidden fields at any depth; a malformed body passes through unchanged.
-func stripResponseBody(body []byte, intent LogprobIntent) []byte {
-	filtered, _, outcome := stripInternalFields(body, intent)
+func stripResponseBody(body []byte, intent LogprobIntent, promptTokens uint64) []byte {
+	filtered, _, outcome := stripInternalFields(body, intent, promptTokens)
 	if outcome != stripRewritten {
 		return body
 	}
@@ -113,12 +113,13 @@ func stripDecodedFields(decoded any, intent LogprobIntent) bool {
 }
 
 // stripInternalFields hands back what it decoded so a caller can ask the payload a further question without decoding it a second time.
-func stripInternalFields(payload []byte, intent LogprobIntent) ([]byte, any, stripOutcome) {
+func stripInternalFields(payload []byte, intent LogprobIntent, promptTokens uint64) ([]byte, any, stripOutcome) {
 	decoded, normalized, ok := decodePayload(payload)
 	if !ok {
 		return nil, nil, stripMalformed
 	}
-	if !stripDecodedFields(decoded, intent) && !normalized {
+	stripped := stripDecodedFields(decoded, intent)
+	if !boundCachedTokens(decoded, promptTokens) && !stripped && !normalized {
 		return nil, decoded, stripUnchanged
 	}
 	encoded, err := encodeCompact(decoded)

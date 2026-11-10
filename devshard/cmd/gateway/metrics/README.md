@@ -4,7 +4,7 @@ The only package that knows Prometheus exists.
 
 ## What it owns
 
-- **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, journal, nonce ledger.
+- **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, owed votes, journal, nonce ledger.
 - **Recorders** (`race.go`, `dispatch_recorder.go`, `limit_recorder.go`, `stats_tokenizer_recorder.go`) — the write side, called by the subsystems that produce the facts.
 - **Label discipline** (`labels.go`) — what may become a label and what may not.
 
@@ -49,6 +49,10 @@ The race recorder's own label strings live in `vocabulary.go`, beside the packag
 - **The limits collector folds the configured model list into the models with live traffic**, so a model with no in-flight request still reports its capacity, and no model is emitted twice.
 
 The response writer that records a status also forwards `Flush`, so streaming handlers keep working when wrapped, and exposes `Unwrap` for the standard-library calls that reach the underlying writer by type assertion.
+
+## Scrapes
+
+`Handler` returns one promhttp handler, built in `New`, so its bounds hold across scrapes: at most `maxConcurrentScrapes` (4) run the collectors at once and one past that is answered 503 without collecting; a scrape still collecting after `scrapeTimeout` (10 s) is answered 503, and its collectors keep their slot until they finish. `/metrics` carries no credential and every scrape walks every collector, so the cap is what bounds that cost; one Prometheus scraping one target never meets it.
 
 ## Read next
 

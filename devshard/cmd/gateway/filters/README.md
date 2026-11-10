@@ -293,6 +293,10 @@ Content is accepted as a non-blank string, or as a non-empty array of `{type: "t
 
 `decodeLogprobIntent` is lenient: only an explicit `true` counts as a request, so a value of the wrong shape reads as "not asked". The gateway forwards both fields as the client sent them, `top_logprobs` capped at `completionapi.ForcedTopLogprobs`; the host pins both on for the engine, since validation needs them, and forwards the logprob family back only to a client that asked.
 
+### Cached prompt tokens
+
+A host reports how much of the prompt its prefix cache served in `usage.prompt_tokens_details.cached_tokens`, the OpenAI field. The number is the host's claim and is for display only: the engine, the ledgers and host scoring read the host's raw bytes, never this field. Before it reaches the client, `boundCachedTokens` clamps an integer to the range from 0 to the gateway's own prompt count (`engine.Request.InputTokens`, handed to `NewStreamRewriter` and `NewBodyFolder`), deletes a value that is not an integer, and leaves `null` as `null`. A usage without the field gets none: the gateway never invents a 0. The prompt count leaves out the chat template, so a nearly complete cache hit can read slightly below what the host reported. An event that carries the field is always re-encoded, so a key the host repeated cannot show the client a second value. vLLM fills the field only when it runs with `--enable-prompt-tokens-details`; without it the field is `null`.
+
 ### Non-finite barewords
 
 A backend writes `NaN`, `Infinity` and `-Infinity` as barewords for a probability of zero or an overflow. None is valid JSON, so a body carrying one parses nowhere: the buffered path would forward it with every internal field intact, and the streaming path would drop the event and the client's answer with it.
@@ -380,7 +384,7 @@ A lower bound is enough for the race: it only asks whether the request could fit
 
 `rewriteEvent` forwards only what the decoded payload says the client may see. A host controls the event's raw bytes: it can spell a key with a `\u` escape, repeat a key, or split one object across two data lines, and each defeats a naive byte-wise check while the client's own decoder reads the object whole. The two byte-level paths below are held to the decoded answer and decline every one of those spellings.
 
-Most events need no decision at all: a host strips the logprob family before sending when the client asked for none, so a plain content chunk carries nothing to remove. `carriesNothingToRewrite` proves that without decoding, for a client that asked for no logprobs and an event on one data line. It walks the payload's keys at every depth, unescapes a key that carries a `\` escape before comparing it, compares without regard to case, and only then checks that the whole payload is one valid object. Any key in `clientStrippedFields`, `message`, or `usage` when the client did not ask for it sends the event through the full decode. So does anything that fails the check. A spelling the check might misread costs a decode, never a leak, and `FuzzFastPathAgreesWithTheFullRewrite` holds it to forwarding only what the full rewrite would forward byte for byte.
+Most events need no decision at all: a host strips the logprob family before sending when the client asked for none, so a plain content chunk carries nothing to remove. `carriesNothingToRewrite` proves that without decoding, for a client that asked for no logprobs and an event on one data line. It walks the payload's keys at every depth, unescapes a key that carries a `\` escape before comparing it, compares without regard to case, and only then checks that the whole payload is one valid object. Any key in `clientStrippedFields`, `message`, `cached_tokens`, or `usage` when the client did not ask for it sends the event through the full decode. So does anything that fails the check. A spelling the check might misread costs a decode, never a leak, and `FuzzFastPathAgreesWithTheFullRewrite` holds it to forwarding only what the full rewrite would forward byte for byte.
 
 ### Stripping without decoding
 
@@ -388,7 +392,7 @@ A host forwards the logprob family to a client that asked for logprobs, so every
 
 `stripMembersWithoutDecoding` (`strip_members.go`) applies `stripDecodedFields` to the bytes instead: it copies the payload member by member, skips every member the intent hides, and writes `[]` for `top_logprobs` when the client kept logprobs but not their alternatives. It runs only on a payload `encoding/json` accepts whole, and declines a key carrying a `\` escape and a key repeated within one object, the two spellings whose decoded reading differs from their bytes; a declined payload takes the decoding path. The output keeps the host's key order and number spellings where the decoding path re-encodes them sorted, so the bytes differ while every decoder reads the same value.
 
-The rewriter uses it for an event on one data line unless the event carries `usage` it must drop or a `message` it must convert, both of which reshape the event (`stripWithoutDecoding`).
+The rewriter uses it for an event on one data line unless the event carries `usage` it must drop, a `message` it must convert, or a `cached_tokens` it must bound, each of which reshapes the event (`stripWithoutDecoding`).
 
 `TestStrippingWithoutDecodingMatchesDecoding` and `FuzzStrippingWithoutDecodingMatchesDecoding` hold it, for every logprob intent, to decoding to exactly what decoding and `stripDecodedFields` produce and to reporting a change exactly when they change the value. `BenchmarkStreamRewriterStandStream` measures it on a stand-shaped stream for every intent: one decode and one encode per chunk become one validation and one copy.
 
