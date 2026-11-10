@@ -72,6 +72,13 @@ def load_config_from_env(hf_home: str = None):
         "TX_GAS_PRICES": "1ngonka",
         # Only checked when TX_GAS_PRICES is set (paid txs need funded cold key).
         "GRANT_MIN_SPENDABLE_NGONKA": "20000000000",
+        # Sent from the genesis cold key to each join cold key after genesis.
+        # Kept >= GRANT_MIN_SPENDABLE_NGONKA so the join funding wait can finish.
+        "JOIN_COLD_FUND_NGONKA": "20000000000",
+        # Left on the genesis cold key after every expected join has been funded.
+        "GENESIS_RESERVE_NGONKA": "20000000000",
+        # How many join cold keys the genesis treasury can fund.
+        "EXPECTED_JOINS": "8",
         "JOIN_FUND_WAIT_SECONDS": "600",
         "POSTGRES_HOST": "postgres",
         "POSTGRES_PORT": "5432",
@@ -1046,11 +1053,20 @@ def add_genesis_account(account_key: AccountKey):
     if not config_file.exists():
         raise FileNotFoundError(f"Config file not found: {config_file}")
     
-    print(f"Adding genesis account for address: {account_key.address}")
+    treasury = genesis_cold_account_ngonka()
+    print(
+        f"Adding genesis account for address: {account_key.address} "
+        f"with {treasury}ngonka "
+        f"(reserve {CONFIG_ENV.get('GENESIS_RESERVE_NGONKA')} + "
+        f"{CONFIG_ENV.get('EXPECTED_JOINS')} joins * {join_cold_fund_ngonka()})"
+    )
     
     # Now run the genesis add-genesis-account command
     compose_files = get_compose_files_arg(include_mlnode=True)
-    genesis_cmd = f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T node sh -lc \"inferenced genesis add-genesis-account {account_key.address} 150000000ngonka\"'"
+    genesis_cmd = (
+        f"bash -c 'source {config_file} && docker compose {compose_files} run --rm --no-deps -T node "
+        f"sh -lc \"inferenced genesis add-genesis-account {account_key.address} {treasury}ngonka\"'"
+    )
 
     print("Running genesis add-genesis-account command...")
     genesis_result = subprocess.run(
@@ -1967,32 +1983,46 @@ def query_spendable_balance_ngonka(address: str, node_rpc_url: str) -> int:
     return 0
 
 
+def _int_config(name: str, default: str) -> int:
+    raw = str(CONFIG_ENV.get(name, default)).strip()
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+    if value < 0:
+        raise ValueError(f"{name} must be >= 0, got {value}")
+    return value
+
+
+def join_cold_fund_ngonka() -> int:
+    """Amount the genesis cold key sends to one join cold key.
+
+    At least GRANT_MIN_SPENDABLE_NGONKA, so the join funding wait can finish.
+    """
+    fund = _int_config("JOIN_COLD_FUND_NGONKA", "20000000000")
+    grant_min = _int_config("GRANT_MIN_SPENDABLE_NGONKA", "20000000000")
+    return max(fund, grant_min)
+
+
+def genesis_cold_account_ngonka() -> int:
+    """Genesis cold-key balance: own reserve plus one funding transfer per expected join."""
+    reserve = _int_config("GENESIS_RESERVE_NGONKA", "20000000000")
+    joins = _int_config("EXPECTED_JOINS", "8")
+    return reserve + joins * join_cold_fund_ngonka()
+
+
 def _grant_funding_instructions(cold_address: str, warm_address: str, min_ngonka: int) -> str:
     chain_id = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet-4")
-    seed_api = (CONFIG_ENV.get("SEED_API_URL") or "<seed-api-url>").rstrip("/")
-    seed_rpc = CONFIG_ENV.get("SEED_NODE_RPC_URL") or f"{seed_api}/chain-rpc/"
-    amount = f"{min_ngonka}ngonka"
-    gas_prices = (CONFIG_ENV.get("TX_GAS_PRICES") or "1ngonka").strip()
+    amount = join_cold_fund_ngonka()
     return f"""
-Join cold account needs GNK to pay grant-ml-ops-permissions gas (~11+ GNK).
+Join cold account {cold_address} has too little ngonka to grant warm key {warm_address} (need >= {min_ngonka}).
 
-1) On the funded GENESIS host, send coins to this join cold key:
+On the GENESIS host, with the same TESTNET_BASE_DIR, KEYRING_PASSWORD, and CHAIN_ID used for genesis, run:
 
-   inferenced tx bank send <funded-key-name> {cold_address} {amount} \\
-     --from <funded-key-name> --chain-id {chain_id} \\
-     --node {seed_rpc} -y --gas auto --gas-prices {gas_prices}
+   python3 launch.py --mode fund-join --address {cold_address} --chainid {chain_id}
 
-2) Verify balance:
-
-   curl -s {seed_api}/v2/accounts/{cold_address} | jq .
-
-3) Run grant on the join host:
-
-   printf '%s\\n%s\\n' "$KEYRING_PASSWORD" "$KEYRING_PASSWORD" | \\
-     inferenced tx inference grant-ml-ops-permissions {COLD_KEY_NAME} {warm_address} \\
-     --from {COLD_KEY_NAME} --keyring-backend file --home {INFERENCED_STATE_DIR} \\
-     --chain-id {chain_id} --node tcp://127.0.0.1:26657 -y \\
-     --gas auto --gas-adjustment 1.5 --gas-prices {gas_prices}
+That sends {amount}ngonka from the genesis cold key ({COLD_KEY_NAME}) and leaves GENESIS_RESERVE_NGONKA on it.
+This join keeps waiting, then continues the grant on its own. Do not wipe the join keyring while it waits.
 """
 
 
@@ -2704,6 +2734,128 @@ def join_route(account_key: AccountKey, chain_id: str) -> AccountKey:
     return warm_key
 
 
+_BANK_SEND_FEE_BUFFER_NGONKA = 500_000
+
+
+def _require_gonka_address(address: str) -> str:
+    address = (address or "").strip()
+    if not re.fullmatch(r"gonka1[a-z0-9]{20,80}", address):
+        raise ValueError(f"--address must be a gonka bech32 account, got {address!r}")
+    return address
+
+
+def fund_join_cold_account(address: str):
+    """Send JOIN_COLD_FUND_NGONKA from the existing genesis cold key. Does not reset the host."""
+    address = _require_gonka_address(address)
+    inferenced_binary = INFERENCED_BINARY.path
+    if not inferenced_binary.exists():
+        raise FileNotFoundError(
+            f"Inferenced binary not found at {inferenced_binary}. "
+            "Run this on the genesis host after genesis has been created."
+        )
+
+    keyring_password = CONFIG_ENV.get("KEYRING_PASSWORD")
+    chain_id = CONFIG_ENV.get("CHAIN_ID")
+    node_rpc_url = CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
+    if not keyring_password:
+        raise ValueError("KEYRING_PASSWORD not found in CONFIG_ENV")
+    if not chain_id:
+        raise ValueError("CHAIN_ID not found in CONFIG_ENV")
+
+    amount = join_cold_fund_ngonka()
+    reserve = _int_config("GENESIS_RESERVE_NGONKA", "20000000000")
+    sender = load_existing_cold_account_key()
+    if sender.address == address:
+        raise ValueError(f"Refusing to fund the genesis cold key itself ({address})")
+
+    node = _normalize_node_rpc_url(node_rpc_url)
+    recipient_balance = query_spendable_balance_ngonka(address, node_rpc_url)
+    if recipient_balance >= amount:
+        print(
+            f"{address} already has {recipient_balance} ngonka "
+            f"(need >= {amount}). No transfer."
+        )
+        return
+
+    sender_balance = query_spendable_balance_ngonka(sender.address, node_rpc_url)
+    fee_buffer = _BANK_SEND_FEE_BUFFER_NGONKA
+    minimum_sender = amount + fee_buffer + reserve
+    if sender_balance < minimum_sender:
+        raise RuntimeError(
+            f"Genesis cold key {sender.address} has {sender_balance} ngonka. "
+            f"Sending {amount} and keeping reserve {reserve} needs >= {minimum_sender}. "
+            "This balance is fixed at genesis by GENESIS_RESERVE_NGONKA and EXPECTED_JOINS. "
+            "A chain already created with the old 150000000 allocation cannot pay this transfer."
+        )
+
+    gas_prices = (CONFIG_ENV.get("TX_GAS_PRICES") or "1ngonka").strip()
+    cmd = [
+        str(inferenced_binary),
+        "tx", "bank", "send",
+        COLD_KEY_NAME,
+        address,
+        f"{amount}ngonka",
+        "--from", COLD_KEY_NAME,
+        "--keyring-backend", "file",
+        "--home", str(INFERENCED_STATE_DIR),
+        "--chain-id", chain_id,
+        "--node", node,
+        "-y",
+        "--gas", "auto",
+        "--gas-adjustment", "1.5",
+        "-o", "json",
+    ]
+    if gas_prices:
+        cmd.extend(["--gas-prices", gas_prices])
+
+    print(
+        f"Sending {amount}ngonka from {sender.address} ({sender_balance} ngonka) "
+        f"to {address} ({recipient_balance} ngonka)"
+    )
+    process = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = process.communicate(input=f"{keyring_password}\n{keyring_password}\n")
+    combined = (stdout or "") + "\n" + (stderr or "")
+    if process.returncode != 0 or "insufficient funds" in combined.lower():
+        print(combined)
+        raise subprocess.CalledProcessError(process.returncode or 1, cmd, output=stdout, stderr=stderr)
+
+    tx_code = None
+    tx_hash = ""
+    try:
+        payload = json.loads(stdout)
+        if isinstance(payload, dict):
+            response = payload.get("tx_response") if isinstance(payload.get("tx_response"), dict) else payload
+            tx_code = response.get("code")
+            tx_hash = response.get("txhash") or ""
+    except json.JSONDecodeError:
+        print(stdout)
+        if stderr:
+            print(stderr)
+
+    if tx_code not in (None, 0, "0"):
+        print(combined)
+        raise RuntimeError(f"bank send failed with code {tx_code} tx {tx_hash}")
+
+    print(f"Broadcast bank send {tx_hash or '(hash not in output)'}")
+    deadline = time.time() + 90
+    while time.time() < deadline:
+        recipient_balance = query_spendable_balance_ngonka(address, node_rpc_url)
+        if recipient_balance >= amount:
+            print(f"Join cold account funded: {address} has {recipient_balance} ngonka")
+            return
+        time.sleep(3)
+    raise TimeoutError(
+        f"Broadcast {tx_hash} did not raise {address} to {amount} ngonka within 90s "
+        f"(last balance {recipient_balance})"
+    )
+
+
 def parse_arguments():
     """Parse command-line arguments"""
     parser = argparse.ArgumentParser(
@@ -2717,6 +2869,9 @@ Examples:
   
   # Run in join mode (export host-specific env first: PUBLIC_URL, KEY_NAME, KEYRING_PASSWORD, SEED_*)
   python launch.py --mode join --branch testnet/main --chainid gonka-testnet-4
+
+  # After genesis, fund one join cold key from the genesis host. Does not reset the chain.
+  python launch.py --mode fund-join --address gonka1... --chainid gonka-testnet-4
   
   # Use specific branch
   python launch.py --branch nebius-test-net
@@ -2731,9 +2886,15 @@ Examples:
     
     parser.add_argument(
         "--mode",
-        choices=["genesis", "join"],
+        choices=["genesis", "join", "fund-join"],
         default="genesis",
-        help="Operation mode: 'genesis' for genesis node setup, 'join' for joining existing network (default: genesis)"
+        help="Operation mode: 'genesis' creates the chain, 'join' joins it, 'fund-join' sends GNK from the genesis cold key to --address"
+    )
+    
+    parser.add_argument(
+        "--address",
+        default="",
+        help="Join cold-key address to fund. Required for --mode fund-join."
     )
     
     parser.add_argument(
@@ -2764,6 +2925,11 @@ def main():
     # Store Chain ID in CONFIG_ENV so it permeates to config.env and Docker containers
     CONFIG_ENV["CHAIN_ID"] = args.chainid
     print(f"Using Chain ID: {args.chainid}")
+
+    if args.mode == "fund-join":
+        print("Running in FUND-JOIN mode (no chain reset)")
+        fund_join_cold_account(args.address)
+        return
     
     # Determine operation mode
     is_genesis = (args.mode == "genesis")
