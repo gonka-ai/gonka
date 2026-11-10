@@ -20,6 +20,7 @@ type epochInfo struct {
 	IsConfirmationPoCActive      bool
 	ConfirmationPoCPhase         ConfirmationPoCPhase
 	ConfirmationPoCTriggerHeight int64
+	InPoCLeadWindow              bool
 }
 
 type chainEpochInfoResponse struct {
