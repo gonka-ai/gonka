@@ -296,6 +296,9 @@ func New(
 	maintenanceAdapter := NewMaintenanceSlashingAdapter(&app.InferenceKeeper)
 	app.SlashingKeeper.SetMaintenanceChecker(maintenanceAdapter)
 
+	// Keep tombstoned validators out of the epoch validator-set recompute.
+	app.StakingKeeper.SetTombstoneChecker(app.SlashingKeeper.IsTombstoned)
+
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
 
 	// SendRestriction configuration is handled automatically through dependency injection
