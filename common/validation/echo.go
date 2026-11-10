@@ -418,6 +418,7 @@ func ReplayRequestBody(requestMap map[string]interface{}, out []int) ([]byte, er
 	req["top_logprobs"] = EchoTopLogprobs
 	req["logprobs_mode"] = replayLogprobsMode
 	req["return_token_ids"] = true
+	req["return_tokens_as_token_ids"] = true
 	req["max_tokens"] = len(out)
 	req["stream"] = false
 	for _, key := range []string{"stream_options", "stop", "stop_token_ids", "enforced_str"} {
@@ -428,7 +429,7 @@ func ReplayRequestBody(requestMap map[string]interface{}, out []int) ([]byte, er
 
 // ParseReplay returns the processed logprobs of every replayed position from
 // a chat completion with enforced_tokens. The engine must return the whole
-// answer and its tokens as ids (--return-tokens-as-token-ids); decoded text
+// answer and its tokens as ids (return_tokens_as_token_ids); decoded text
 // leaves the answer unsupported.
 func ParseReplay(body []byte, out []int) ([]map[int]float64, error) {
 	var resp struct {

@@ -434,6 +434,7 @@ func TestReplayRequestBody_ForcesTheAnswerUnderTheEnginesSampler(t *testing.T) {
 	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
 	require.Equal(t, float64(EchoTopLogprobs), m["top_logprobs"])
 	require.Equal(t, float64(7), m["seed"])
+	require.Equal(t, true, m["return_tokens_as_token_ids"])
 	require.NotContains(t, m, "stop")
 	require.NotContains(t, m, "stream_options")
 	require.JSONEq(t, `{"tokens":[{"token":"5","top_tokens":[]},{"token":"6","top_tokens":[]}]}`, string(mustJSON(m["enforced_tokens"])))
