@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"slices"
+
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/perf"
 )
@@ -59,9 +61,16 @@ func (o RaceOutcome) emptyStreamUnderPoCBypass(a AttemptOutcome) bool {
 	return a.emptyStream() && o.PoCBypassActive
 }
 
+func (o RaceOutcome) emptyOnAnotherHost(a AttemptOutcome) bool {
+	return a.Terminal == TerminalEmptyStream && a.NonceFinished && !o.Succeeded &&
+		slices.ContainsFunc(o.Attempts, func(other AttemptOutcome) bool {
+			return other.Participant != a.Participant && other.emptyStream() && other.NonceFinished
+		})
+}
+
 // exemptOnBothLadders holds the rungs the verdict ladder shares with the sample ladder. See race.md, "The exemption ladder".
 func (o RaceOutcome) exemptOnBothLadders(a AttemptOutcome) bool {
-	return a.PhaseTransitionAborted || a.StateDivergent || a.LocalFault || a.GatewayPressure || o.longResponseExempt(a) || o.emptyStreamUnderPoCBypass(a)
+	return a.PhaseTransitionAborted || a.StateDivergent || a.LocalFault || a.GatewayPressure || o.longResponseExempt(a) || o.emptyStreamUnderPoCBypass(a) || o.emptyOnAnotherHost(a)
 }
 
 // sampleExemption is the whole ladder of reasons an attempt contributes no perf sample. See README, "The exemption ladder".
@@ -150,7 +159,7 @@ func (o RaceOutcome) observeCrowning(crown crownGate) {
 
 // JudgesCrowning reports that this attempt says something about the host's crowning. See README, "Crown denial".
 func (o RaceOutcome) JudgesCrowning(a AttemptOutcome) bool {
-	if a.PhaseTransitionAborted || o.PoCBypassActive {
+	if a.PhaseTransitionAborted || o.PoCBypassActive || o.emptyOnAnotherHost(a) {
 		return false
 	}
 	return a.Terminal == TerminalEmptyStream || o.served(a)
