@@ -341,15 +341,17 @@ func TestTheContextCheckWaitsForAPromptCountSlotBeforeCounting(t *testing.T) {
 
 // Test flow:
 //  1. Send a request for `/v1//models`, a path the mux cleans, through the gateway's handler over a recorder that records write deadlines.
-//  2. Assert it is answered by the mux's own redirect with a write deadline armed before it went out.
+//  2. Assert it is answered by the mux's own redirect, the status and Location a bare `http.ServeMux` gives the same path on this Go version, with a write deadline armed before it went out.
 func TestARedirectTheMuxAnswersItselfGoesOutWithAWriteDeadline(t *testing.T) {
 	live := newHarness(t)
 	redirected := &writeDeadlineRecorder{ResponseRecorder: httptest.NewRecorder()}
 
 	live.requestInto(t, redirected, http.MethodGet, "/v1//models", "", nil)
 
-	if redirected.Code != http.StatusTemporaryRedirect {
-		t.Fatalf("status for /v1//models = %d, want the mux's %d", redirected.Code, http.StatusTemporaryRedirect)
+	bare := httptest.NewRecorder()
+	http.NewServeMux().ServeHTTP(bare, httptest.NewRequest(http.MethodGet, "/v1//models", nil))
+	if redirected.Code != bare.Code || redirected.Header().Get("Location") != bare.Header().Get("Location") {
+		t.Fatalf("answer for /v1//models = %d to %q, want the bare mux's %d to %q", redirected.Code, redirected.Header().Get("Location"), bare.Code, bare.Header().Get("Location"))
 	}
 	if len(redirected.events) == 0 || !redirected.events[0].isDeadline {
 		t.Errorf("the mux's redirect wrote %+v, want a write deadline armed before anything was written", redirected.events)
