@@ -39,6 +39,23 @@ var modelVocab = map[string]int{
 	"zai-org/GLM-5.3-Flash":              154880,
 	"MiniMaxAI/MiniMax-M2.7":             200064,
 	"Qwen/Qwen3-0.6B":                    151936,
+	"Qwen/Qwen3-4B-Instruct-2507":        151936,
+	"Qwen/Qwen2.5-1.5B-Instruct":         151936,
+	"Qwen/Qwen2.5-7B-Instruct":           152064,
+}
+
+// modelDefaults are the sampling parameters vLLM applies when a request
+// leaves them out: generation_config.json of the model (vLLM's
+// --generation-config auto, which the node configs do not override). The
+// executor sampled under them, so the validator's kept set must use them too.
+var modelDefaults = map[string]TapeParams{
+	"deepseek-ai/DeepSeek-V4-Flash-0731": {Temperature: 1, TopP: 1},
+	"zai-org/GLM-5.3-Flash":              {Temperature: 1, TopP: 0.95},
+	"MiniMaxAI/MiniMax-M2.7":             {Temperature: 1, TopP: 0.95, TopK: 40},
+	"Qwen/Qwen3-0.6B":                    {Temperature: 0.6, TopP: 0.95, TopK: 20},
+	"Qwen/Qwen3-4B-Instruct-2507":        {Temperature: 0.7, TopP: 0.8, TopK: 20},
+	"Qwen/Qwen2.5-1.5B-Instruct":         {Temperature: 0.7, TopP: 0.8, TopK: 20},
+	"Qwen/Qwen2.5-7B-Instruct":           {Temperature: 0.7, TopP: 0.8, TopK: 20},
 }
 
 // modelEOS are the generation_config eos_token_id(s) of each served model:
@@ -49,6 +66,9 @@ var modelEOS = map[string][]int{
 	"zai-org/GLM-5.3-Flash":              {154820, 154827, 154829},
 	"MiniMaxAI/MiniMax-M2.7":             {200020},
 	"Qwen/Qwen3-0.6B":                    {151645, 151643},
+	"Qwen/Qwen3-4B-Instruct-2507":        {151645, 151643},
+	"Qwen/Qwen2.5-1.5B-Instruct":         {151645, 151643},
+	"Qwen/Qwen2.5-7B-Instruct":           {151645, 151643},
 }
 
 // ChatPath renders the stored request on the validator's engine: one token
@@ -77,6 +97,11 @@ type TapeParams struct {
 
 func tapeParams(requestMap map[string]interface{}) TapeParams {
 	p := TapeParams{Temperature: 1, TopP: 1}
+	if model, _ := requestMap["model"].(string); model != "" {
+		if d, ok := modelDefaults[model]; ok {
+			p = d
+		}
+	}
 	if v, ok := requestMap["temperature"].(float64); ok {
 		p.Temperature = v
 	}

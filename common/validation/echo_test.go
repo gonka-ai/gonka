@@ -360,3 +360,15 @@ func TestExecuteEchoValidation_AnswerShapeRulesApply(t *testing.T) {
 	require.IsType(t, &InvalidInferenceResult{}, result)
 	require.Equal(t, "Answer cut before max_tokens.", result.(*InvalidInferenceResult).Reason)
 }
+
+// A request without sampling fields runs under the model's generation_config,
+// which vLLM applies by default; the validator's kept set must follow it.
+func TestTapeParams_ModelDefaultsFillMissingFields(t *testing.T) {
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"MiniMaxAI/MiniMax-M2.7","messages":[]}`), &m))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 0.95, TopK: 40}, tapeParams(m))
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"MiniMaxAI/MiniMax-M2.7","top_p":1,"top_k":0,"min_tokens":64,"max_tokens":256}`), &m))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 1, TopK: 0, MinTokens: 64, MaxTokens: 256}, tapeParams(m))
+	require.NoError(t, json.Unmarshal([]byte(`{"model":"other/model"}`), &m))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 1}, tapeParams(m))
+}
