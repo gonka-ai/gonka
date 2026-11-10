@@ -756,6 +756,26 @@ func (am AppModule) runWeightPipeline(
 	}, nil
 }
 
+// haltOrContinueEmptyEpoch returns err for every epoch after the first transition.
+// A fresh chain has no prior epoch group to carry, so an empty set on upcoming
+// epoch 0 or 1 is logged and the block is allowed to commit.
+func (am AppModule) haltOrContinueEmptyEpoch(ctx context.Context, upcomingEpoch types.Epoch, err error) error {
+	if upcomingEpoch.Index > 1 {
+		return err
+	}
+	am.LogError("onEndOfPoCValidationStage: no eligible participants for the first epoch; continuing", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"error", err.Error())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+		"epoch_error",
+		sdk.NewAttribute("stage", "empty_epoch_fallback"),
+		sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+		sdk.NewAttribute("error_category", "epoch_formation"),
+	))
+	return nil
+}
+
 // onEndOfPoCValidationStage handles all epoch formation logic at the end of PoC validation.
 // This stage is responsible for:
 // - Account settling from the previous epoch
@@ -841,7 +861,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		computed.freshNodeIDs,
 	)
 	if len(activeParticipants) == 0 {
-		return fmt.Errorf("no eligible participants for upcoming epoch %d", upcomingEpoch.Index)
+		// Epochs 0 and 1 have no previous validator set to carry. Failing the
+		// block here panics consensus on a fresh chain. Later epochs keep the
+		// error so a truly empty carry still halts.
+		return am.haltOrContinueEmptyEpoch(ctx, *upcomingEpoch,
+			fmt.Errorf("no eligible participants for upcoming epoch %d", upcomingEpoch.Index))
 	}
 
 	params, err := am.keeper.GetParams(ctx)
@@ -875,7 +899,8 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 		activeParticipants, _ = am.seatAndGuardParticipants(ctx, *upcomingEpoch, nil, nil)
 		if len(activeParticipants) == 0 {
-			return fmt.Errorf("no eligible fallback participants for upcoming epoch %d", upcomingEpoch.Index)
+			return am.haltOrContinueEmptyEpoch(ctx, *upcomingEpoch,
+				fmt.Errorf("no eligible fallback participants for upcoming epoch %d", upcomingEpoch.Index))
 		}
 		pipelinePrevious = previous
 		pipeline, err = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)

@@ -565,6 +565,36 @@ func TestOnEndOfPoCValidationStage_EmptyFallbackHalts(t *testing.T) {
 	requireNoFormationOutput(t, fixture)
 }
 
+func TestOnEndOfPoCValidationStage_FirstEpochEmptySetContinues(t *testing.T) {
+	fixture := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 0, 2)
+	require.NoError(t, fixture.keeper.SetEffectiveEpochIndex(fixture.ctx, 0))
+	require.NoError(t, fixture.keeper.SetEpoch(fixture.ctx, &types.Epoch{Index: 0, PocStartBlockHeight: 0}))
+	require.NoError(t, fixture.keeper.SetEpoch(fixture.ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 160}))
+	fixture.upcomingEpoch = types.Epoch{Index: 1, PocStartBlockHeight: 160}
+
+	err := fixture.module.onEndOfPoCValidationStage(fixture.ctx, 250, 1_000)
+	require.NoError(t, err)
+	_, found := fixture.keeper.GetActiveParticipants(fixture.ctx, fixture.upcomingEpoch.Index)
+	require.False(t, found)
+
+	var stage, epoch string
+	for _, event := range fixture.ctx.EventManager().Events() {
+		if event.Type != "epoch_error" {
+			continue
+		}
+		for _, attribute := range event.Attributes {
+			switch attribute.Key {
+			case "stage":
+				stage = attribute.Value
+			case "epoch":
+				epoch = attribute.Value
+			}
+		}
+	}
+	require.Equal(t, "empty_epoch_fallback", stage)
+	require.Equal(t, "1", epoch)
+}
+
 func TestOnEndOfPoCValidationStage_FailedRetryHalts(t *testing.T) {
 	fixture := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 1, 0)
 	fixture.addFreshPoC(t, 100)
