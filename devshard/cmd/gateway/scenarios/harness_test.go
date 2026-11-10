@@ -764,8 +764,8 @@ func TestHarnessRestartsTheGatewayOnTheSameStore(t *testing.T) {
 // Test flow:
 //  1. Boot with a guarantee of one, take participant 0 offline, send eight requests one after another and assert the seeded escrow holds a Pending record, whose refusal vote the gateway owes at +65 s.
 //  2. Restart the gateway at once and assert the restart severed the session the abandoned shutdown left open.
-//  3. Send one more request, advance two minutes, and assert every request was answered 200 and the Pending record is still Pending: the owed vote died with the old process instead of holding the restart.
-func TestHarnessRestartCutsTheVotesTheOldGatewayOwed(t *testing.T) {
+//  3. Send one more request, advance two minutes, and assert every request was answered 200 and no record is still Pending: the restart did not wait for the owed vote, and the restarted gateway posted it.
+func TestHarnessRestartLeavesTheOwedVotesToTheNextGateway(t *testing.T) {
 	spec := plannerSpec()
 	spec.model.fullContextSlots = 1
 	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
@@ -788,7 +788,12 @@ func TestHarnessRestartCutsTheVotesTheOldGatewayOwed(t *testing.T) {
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 1, sequential: true},
 		advance{by: 2 * time.Minute},
 		expectThat{label: "the restarted gateway answers", verify: everyAnswer(9, http.StatusOK)},
-		pendingOwed,
+		expectThat{label: "the restarted gateway posted the owed vote", verify: func(harness *gatewayHarness) error {
+			if hasRecord(harness, harness.seededIDs[0], types.StatusPending) {
+				return fmt.Errorf("hasRecord(%s, Pending) = true, want the owed vote posted", harness.seededIDs[0])
+			}
+			return nil
+		}},
 	}
 	runSteps(t, spec)
 }

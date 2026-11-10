@@ -178,7 +178,7 @@ Three places, each with its own guard:
 
 | Risk | Guard |
 | --- | --- |
-| a committed nonce nobody settles | the race's drain barrier: shutdown waits, within its grace period, for the owed votes that fall due inside it; a refusal vote due later is lost at the restart and finalize pays that nonce in full |
+| a committed nonce nobody settles | the race's drain barrier: shutdown waits, within its grace period, for the owed votes that fall due inside it; a refusal vote due later is kept in the store with its prompt and posted by the next boot ([race.md](./race.md), "Owed refusal votes across a restart") |
 | an escrow that pays for work it did not receive | [`accounting`](../accounting/) cross-checks its own counts against the chain's |
 | a reply held in memory until the process dies | a per-request cap, a process-wide ceiling, and folding as chunks arrive |
 

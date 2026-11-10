@@ -137,6 +137,7 @@ type gateway struct {
 	manager      *escrow.Manager
 	router       *scheduler.Scheduler
 	races        *engine.Engine
+	owedVotes    *api.OwedVotes
 	finishes     *finishNotice
 	limiter      *limits.GatewayLimiter
 	participants *limits.ParticipantLimiter
@@ -307,6 +308,12 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		return nil, err
 	}
 
+	owedVoteBook, err := gatewayStore.NewOwedVotes()
+	if err != nil {
+		return nil, err
+	}
+	owedVotes := api.NewOwedVotes(owedVoteBook)
+
 	suspicious, err := newSuspiciousHosts(ctx, gatewayStore)
 	if err != nil {
 		return nil, err
@@ -333,6 +340,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Journal:    events,
 		Suspicious: suspicious.Suspicious,
 		Timeouts:   sessions.Poster,
+		OwedVotes:  owedVotes,
 		Now:        clock,
 		E2E:        engine.E2EOverrides{HardTimeout: e2e.StreamingHardTimeout},
 	})
@@ -361,6 +369,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		metrics.NewChainCollector(observer, clock),
 		metrics.NewTransportCollector(transport.DefaultHostConnectionTracker()),
 		metrics.NewAccountingCollector(ledger),
+		metrics.NewOwedVotesCollector(owedVoteBook),
 		metrics.NewJournalCollector(journalCounts(events)),
 		metrics.NewNonceLedgerCollector(recorder.UnknownEscrowFacts),
 		metrics.NewFundingCollector(fundingModels(manager), deadlineCounts(manager)),
@@ -420,6 +429,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		manager:      manager,
 		router:       router,
 		races:        races,
+		owedVotes:    owedVotes,
 		finishes:     finishes,
 		limiter:      gatewayLimiter,
 		participants: participants,

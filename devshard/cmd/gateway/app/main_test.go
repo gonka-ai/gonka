@@ -436,7 +436,7 @@ func scrape(t *testing.T, baseURL string) string {
 
 // Test flow:
 //  1. Compose a gateway.
-//  2. For each owner (limits, perf, registry, chain, transport, accounting, journal, funding), build a fresh collector describing the same families.
+//  2. For each owner (limits, perf, registry, chain, transport, accounting, owed votes, journal, funding), build a fresh collector describing the same families.
 //  3. Try registering it on the gateway's own telemetry registry.
 //  4. Assert registration is refused, since a refusal proves compose already registered that owner's collector.
 func TestEveryOwnerCollectorIsRegisteredOnTheGatewaysRegistry(t *testing.T) {
@@ -453,6 +453,7 @@ func TestEveryOwnerCollectorIsRegisteredOnTheGatewaysRegistry(t *testing.T) {
 		{name: "chain", collector: metrics.NewChainCollector(nil, time.Now)},
 		{name: "transport", collector: metrics.NewTransportCollector(nil)},
 		{name: "accounting", collector: metrics.NewAccountingCollector(nil)},
+		{name: "owed votes", collector: metrics.NewOwedVotesCollector(nil)},
 		{name: "journal", collector: metrics.NewJournalCollector(nil)},
 		{name: "nonce ledger", collector: metrics.NewNonceLedgerCollector(nil)},
 		{name: "funding", collector: metrics.NewFundingCollector(nil, nil)},

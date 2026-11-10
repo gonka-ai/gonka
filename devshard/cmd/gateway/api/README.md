@@ -124,6 +124,8 @@ A request's prompt is counted at most once. `checkContext` reads the prompt for 
 
 `RaceLedger` is how the engine's single recording point reaches the ledger; nothing else writes a row.
 
+`OwedVotes` is how the engine's owed refusal votes reach the store's book: it keeps the prompt out of the race's `user.InferenceParams`, the one field a vote needs that the session cannot rebuild, and hands it back as the params `Poster` resolves a poster from when the votes are replayed at boot.
+
 ## The views a response is built from
 
 `filterOptions` is where the operator's configuration becomes the request-shaping rules. Forcing is expressed as its opposite there so that an `Options` built without it keeps forcing.

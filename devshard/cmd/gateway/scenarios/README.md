@@ -59,7 +59,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestHarnessBootsAndAnswersInsideABubble` | every other test assumes the composed gateway boots and serves inside a bubble | one request over a funded escrow is answered 200 and the shutdown leaves nothing running |
 | `TestAQuietEscrowSequencesItsReceipts` | the harness must sequence a quiet escrow's receipts as production's heartbeat does, or timeouts are never voted | stalled attempts become Started with their executor's stamp, then TimedOut with one Missed per attempt on their executor |
 | `TestHarnessRestartsTheGatewayOnTheSameStore` | restart tests rely on a second boot over the same store, chain and hosts | requests before and after a restart are answered 200 and the seeded row stays active |
-| `TestHarnessRestartCutsTheVotesTheOldGatewayOwed` | a restart must sever the old process's sessions, as an exit does | the open session is severed and the refusal vote the old gateway owed dies with it |
+| `TestHarnessRestartLeavesTheOwedVotesToTheNextGateway` | a restart must sever the old process's sessions, as an exit does, without waiting for the votes the old process owed | the open session is severed, and the refusal vote the old gateway owed is posted by the restarted one |
 | `TestHarnessOperatorStepsActOnTheRunningGateway` | operator steps must reach the running gateway, not a copy | wallet funding, the operator's create, deactivate and settle, and a contradicted missing report each take effect |
 
 ### Assertions — `assertions_test.go`
@@ -246,6 +246,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestNoSurplusRetireBeforeTheDemandWindowFills` | after a restart demand is unknown; surplus must wait for the window | nothing retires before the window fills, and surplus retires after |
 | `TestAColdStartWithoutAnEpochCreatesNothing` | without an epoch no deadline or create decision is sound | with no epoch index, and with epoch 8 named but no block height while the escrow of chain epoch 7 would sit inside its margin, nothing is parked, settled, narrated or created and the escrow keeps serving |
 | `TestARestartKeepsTheLedgersTokenCounts` | the nonce ledger's token counts are history the tracker reads; a restart must neither lose nor repeat them | with finishes no sweep read when the restart begins, the ledger the shutdown saved counts them, and the restarted ledger holds the same input tokens, output tokens, counted nonces and estimated error after its first sweep and thirty seconds later |
+| `TestARefusalVoteOwedAtARestartIsPostedByTheNextGateway` | a refusal vote still owed at a restart is kept in the store with its prompt and replayed by the next gateway (operations.md, "Boot", step 7) | the owed nonces leave Pending with one miss each on the refusing slot, and settlement pays that slot none of their reserve |
 
 ### Seeds — `seeds_test.go`
 
