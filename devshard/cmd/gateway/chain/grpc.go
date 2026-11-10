@@ -232,6 +232,8 @@ func (g *GRPCChain) Escrow(ctx context.Context, escrowID uint64) (EscrowInfo, bo
 		Balance:    response.GetEscrow().GetAmount(),
 		EpochIndex: response.GetEscrow().GetEpochIndex(),
 		Settled:    response.GetEscrow().GetSettled(),
+		Creator:    response.GetEscrow().GetCreator(),
+		ModelID:    response.GetEscrow().GetModelId(),
 	}, true, nil
 }
 

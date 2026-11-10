@@ -67,7 +67,7 @@ func FuzzFastPathAgreesWithTheFullRewrite(f *testing.F) {
 		if !held || dataLines != 1 {
 			return
 		}
-		rewritten, malformed := rewriteDecodedEvent(event, dataLines, decodedPayload, LogprobIntent{}, keepUsage)
+		rewritten, malformed := rewriteDecodedEvent(event, dataLines, decodedPayload, LogprobIntent{}, keepUsage, 0)
 		if malformed || !bytes.Equal(rewritten, event) {
 			t.Fatalf("the fast path passed %q, which the full rewrite turns into %q (malformed %v)", payload, rewritten, malformed)
 		}
@@ -78,7 +78,7 @@ func BenchmarkRewriteEventPlainChunk(b *testing.B) {
 	event := []byte("data: " + plainChunkPayload)
 	b.ReportAllocs()
 	for range b.N {
-		_, _, _ = rewriteEvent(event, LogprobIntent{}, false)
+		_, _, _ = rewriteEvent(event, LogprobIntent{}, false, 0)
 	}
 }
 

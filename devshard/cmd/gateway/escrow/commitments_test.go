@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -941,4 +942,114 @@ func TestABelowFloorRefusalLeavesTheCreateBreakerClosed(t *testing.T) {
 	if manager.breaker.gated("model-a", roleRegular) {
 		t.Fatal("the create breaker opened on a refusal no chain call made")
 	}
+}
+
+// Test flow:
+//  1. Seed a regular row for escrow 300 and build a rotation manager over a chain on which every create lands and funds an escrow the by-id query reports with its creator and model, but whose tx lookup answers not found, as a node without that height's tx index does; the first create's wait for its escrow id fails, so its commitment stays open.
+//  2. Call prepareBridge for a model with a temp_count of one and assert one escrow is funded on chain and one commitment is open.
+//  3. Advance the clock past the reconcile grace, run reconcile, and assert the commitment is cleared and the landed escrow has a temp row: the walk above escrow 300 found it.
+//  4. Call prepareBridge once per tick until the create breaker the first failure opened has cooled, and assert no second escrow is funded.
+func TestALandedCreateTheNodeCannotFindIsAdoptedNotBoughtAgain(t *testing.T) {
+	testStore := newFakeStore()
+	testStore.devshards["300"] = store.DevshardRecord{EscrowID: "300", Model: "model-a", Active: true, RotationRole: roleRegular}
+	var fundedEscrowIDs []uint64
+	m := newRotationManager(t, testStore, nil, false)
+	signer, _ := m.signer.SignerFor("MODEL_A_KEY")
+	m.tx = &fakeTxClient{
+		createEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, _ uint64, _ string, onPrepared func(string) error) (chain.CreateEscrowResult, error) {
+			escrowID := uint64(300 + len(fundedEscrowIDs) + 1)
+			txHash := fmt.Sprintf("TX-%d", escrowID)
+			if err := onPrepared(txHash); err != nil {
+				return chain.CreateEscrowResult{}, err
+			}
+			fundedEscrowIDs = append(fundedEscrowIDs, escrowID)
+			if len(fundedEscrowIDs) == 1 {
+				return chain.CreateEscrowResult{}, fmt.Errorf("tx %s was broadcast but not confirmed", txHash)
+			}
+			return chain.CreateEscrowResult{EscrowID: escrowID, TxHash: txHash}, nil
+		},
+		getTxEscrowIDFn: func(context.Context, string) (uint64, bool, error) { return 0, false, chain.ErrTxNotFound },
+		getEscrowFn: func(_ context.Context, escrowID string) (chain.EscrowInfo, bool, error) {
+			if !slices.Contains(fundedEscrowIDs, mustParseEscrowID(t, escrowID)) {
+				return chain.EscrowInfo{}, false, nil
+			}
+			return chain.EscrowInfo{EscrowID: escrowID, Balance: 1000, Creator: signer.Address(), ModelID: "model-a"}, true, nil
+		},
+	}
+	now := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return now }
+	snapshot := servedSnapshot(9, 500, "model-a")
+	models := []ModelConfig{{ModelID: "model-a", TempCount: 1, TargetCount: 3, Amount: 1000, PrivateKeyEnv: "MODEL_A_KEY"}}
+
+	_ = m.prepareBridge(context.Background(), snapshot, models, nil)
+	if commitments, _ := testStore.LoadCommitments(context.Background()); len(fundedEscrowIDs) != 1 || len(commitments) != 1 {
+		t.Fatalf("funded %v with %d open commitments, want one landed create and its commitment", fundedEscrowIDs, len(commitments))
+	}
+
+	now = now.Add(commitmentReconcileGrace + time.Second)
+	if err := m.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile() = %v, want nil", err)
+	}
+	if commitments, _ := testStore.LoadCommitments(context.Background()); len(commitments) != 0 {
+		t.Fatalf("LoadCommitments() = %+v, want the commitment of the landed create cleared", commitments)
+	}
+	adopted, registered := testStore.snapshotDevshard(strconv.FormatUint(fundedEscrowIDs[0], 10))
+	if !registered || adopted.RotationRole != roleTemp || adopted.Model != "model-a" {
+		t.Fatalf("escrow %d row = %+v, %v, want the landed escrow adopted as a model-a temp", fundedEscrowIDs[0], adopted, registered)
+	}
+
+	for range maxCreateBreakerCooldownTicks + 1 {
+		devshards, _ := testStore.ListDevshards(context.Background())
+		_ = m.prepareBridge(context.Background(), snapshot, models, devshards)
+	}
+	if len(fundedEscrowIDs) != 1 {
+		t.Fatalf("funded %v, want the adopted escrow only", fundedEscrowIDs)
+	}
+}
+
+// Test flow:
+//  1. Seed a regular row for escrow 100 and an open commitment past the reconcile grace whose tx the node cannot find, over a chain holding an unsettled model-a escrow of the same signer at 100 + adoptionWalkLimit + 1 and other creators' escrows on every id below it.
+//  2. Run reconcile and assert the chain was asked for exactly adoptionWalkLimit escrows, the commitment is cleared and the escrow beyond the limit has no row.
+func TestTheAdoptionWalkStopsAtItsLimit(t *testing.T) {
+	testStore := newFakeStore()
+	testStore.devshards["100"] = store.DevshardRecord{EscrowID: "100", Model: "model-a", Active: true, RotationRole: roleRegular}
+	m := newRotationManager(t, testStore, nil, false)
+	signer, _ := m.signer.SignerFor("MODEL_A_KEY")
+	beyondLimit := uint64(100 + adoptionWalkLimit + 1)
+	lookups := 0
+	m.tx = &fakeTxClient{
+		getTxEscrowIDFn: func(context.Context, string) (uint64, bool, error) { return 0, false, chain.ErrTxNotFound },
+		getEscrowFn: func(_ context.Context, escrowID string) (chain.EscrowInfo, bool, error) {
+			lookups++
+			if mustParseEscrowID(t, escrowID) == beyondLimit {
+				return chain.EscrowInfo{EscrowID: escrowID, Creator: signer.Address(), ModelID: "model-a"}, true, nil
+			}
+			return chain.EscrowInfo{EscrowID: escrowID, Creator: "someone-else", ModelID: "model-a"}, true, nil
+		},
+	}
+	createdAt := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
+	m.now = func() time.Time { return createdAt.Add(commitmentReconcileGrace + time.Second) }
+	testStore.commitments["TX-LOST"] = store.Commitment{TxHash: "TX-LOST", Model: "model-a", Role: roleTemp, PrivateKeyEnv: "MODEL_A_KEY", CreatedAt: createdAt}
+
+	if err := m.reconcile(context.Background()); err != nil {
+		t.Fatalf("reconcile() = %v, want nil", err)
+	}
+	if lookups != adoptionWalkLimit {
+		t.Fatalf("GetEscrow called %d times, want adoptionWalkLimit = %d", lookups, adoptionWalkLimit)
+	}
+	if commitments, _ := testStore.LoadCommitments(context.Background()); len(commitments) != 0 {
+		t.Fatalf("LoadCommitments() = %+v, want the commitment cleared past the walk", commitments)
+	}
+	if _, registered := testStore.snapshotDevshard(strconv.FormatUint(beyondLimit, 10)); registered {
+		t.Fatalf("escrow %d has a row, want none: it lies beyond the walk's limit", beyondLimit)
+	}
+}
+
+func mustParseEscrowID(t *testing.T, escrowID string) uint64 {
+	t.Helper()
+	parsed, err := strconv.ParseUint(escrowID, 10, 64)
+	if err != nil {
+		t.Fatalf("escrow id %q is not a number: %v", escrowID, err)
+	}
+	return parsed
 }

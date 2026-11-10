@@ -579,3 +579,45 @@ func TestEveryConnectionCarriesThePragmas(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Open a store in its own directory and checkpoint it, so the main database file holds everything written so far.
+//  2. Save one commitment and assert it reads back.
+//  3. Copy the main database file alone into a fresh directory, as a machine that lost the unsynced log would find it, and open a store on it.
+//  4. Assert the copy holds the commitment: an acknowledged intent is in the main file, not only in the log `synchronous` NORMAL leaves unsynced.
+func TestAnAcknowledgedCommitmentIsInTheMainDatabaseFile(t *testing.T) {
+	storageDir := t.TempDir()
+	gatewayStore, err := Open(storageDir)
+	if err != nil {
+		t.Fatalf("Open(): %v", err)
+	}
+	t.Cleanup(func() { gatewayStore.Close() })
+	if _, err := gatewayStore.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)"); err != nil {
+		t.Fatalf("checkpoint: %v", err)
+	}
+
+	commitment := Commitment{TxHash: "TX-INTENT", Model: "model-a", Role: RoleTemp, Epoch: 9, PrivateKeyEnv: "MODEL_A_KEY", BlockHeight: 500, CreatedAt: time.Unix(1_700_000_000, 0).UTC()}
+	if err := gatewayStore.SaveCommitment(context.Background(), commitment); err != nil {
+		t.Fatalf("SaveCommitment(): %v", err)
+	}
+	if saved, err := gatewayStore.LoadCommitments(context.Background()); err != nil || len(saved) != 1 {
+		t.Fatalf("LoadCommitments() = %+v, %v, want the saved commitment", saved, err)
+	}
+
+	mainFile, err := os.ReadFile(filepath.Join(storageDir, gatewayDatabaseFileName))
+	if err != nil {
+		t.Fatalf("reading the main database file: %v", err)
+	}
+	survivorDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(survivorDir, gatewayDatabaseFileName), mainFile, 0o600); err != nil {
+		t.Fatalf("writing the copy: %v", err)
+	}
+	survivor, err := Open(survivorDir)
+	if err != nil {
+		t.Fatalf("Open(copy): %v", err)
+	}
+	t.Cleanup(func() { survivor.Close() })
+	if recovered, err := survivor.LoadCommitments(context.Background()); err != nil || len(recovered) != 1 || recovered[0] != commitment {
+		t.Fatalf("LoadCommitments(copy) = %+v, %v, want %+v: the commitment must reach the main file before SaveCommitment returns", recovered, err, commitment)
+	}
+}

@@ -8,7 +8,7 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 
 | # | Step | Where | Fails with |
 | --- | --- | --- | --- |
-| 1 | read the body, capped at 10 MiB | `readBody`, `chatIngestLimit` = `filters.MaxBodyBytes` | 413 |
+| 1 | refuse a caller whose credentials reach no model, then read the body, capped at 10 MiB and within the body budget | `reachesAnyModel`, then `readBody`, `chatIngestLimit` = `filters.MaxBodyBytes`, `max_buffered_request_bytes` | 401 before any byte is read; 413; 503 when the budget is full |
 | 2 | normalise the request | `filters.NormalizeRequest`, options from `filterOptions` | 400 |
 | 3 | will it fit a host-bound body once encoded | inline in `chat`: `transport.PromptWireBytes` + `hostCatchUpReserveBytes` against `transport.MaxHostRequestBytes` | 413 |
 | 4 | authorise the model for this caller | `authorizeModel` | 400 when the model is absent; 401 |
@@ -82,7 +82,7 @@ The request's prompt tokens are counted at most once, and the request carries th
 
 In either mode a cache hit's `request finished` line carries the count so far: the context check's, else the byte estimate marked `bytes_estimate`.
 
-At most `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` counts run at step 9 at once, half the processors by default. The gate never waits: a request that finds it full carries the byte estimate, marked `bytes_estimate`, so step 9's counts take at most that many processors and the rest of the gateway keeps its own; `devshard_gateway_prompt_count_gate_full_total` counts those requests by model. The context check's count does not pass the gate, because a prompt that may not fit must be counted to be refused. The client decides when that count runs, with a prompt long enough or a `max_tokens` large enough that the byte bound misses the context, and it runs before admission, so the gate does not bound it.
+At most `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` counts run at step 9 at once, half the processors by default. The gate never waits: a request that finds it full carries the byte estimate, marked `bytes_estimate`, so step 9's counts take at most that many processors and the rest of the gateway keeps its own; `devshard_gateway_prompt_count_gate_full_total` counts those requests by model. The context check's count takes the same gate but waits for a slot instead of skipping, because a prompt that may not fit must be counted to be refused. The client decides when that count runs, with a prompt long enough or a `max_tokens` large enough that the byte bound misses the context, so the gate is what keeps those counts to the same processors. A request whose client leaves while it waits ends there.
 
 | Source | When | Tokens |
 | --- | --- | --- |
@@ -135,6 +135,7 @@ Two shapes, decided by what the client asked for, not by what the host sends —
 | --- | --- |
 | `logprob`, `logprobs`, `top_logprobs` | only if the client asked (`logprobs: true`) |
 | `token_ids`, `prompt_token_ids`, `prompt_logprobs` | never |
+| `usage` | when streaming, only if the client asked (`stream_options.include_usage`); always otherwise. As the host reported it, except `prompt_tokens_details.cached_tokens`, which is bounded by the gateway's prompt count ([`filters/README.md`](../filters/README.md), "Cached prompt tokens") |
 
 The "always stripped" list is **derived** from the two above, not written out a second time — a second hand-written list can omit a field the first strips, which leaks `top_logprobs`.
 
@@ -148,6 +149,7 @@ The "always stripped" list is **derived** from the two above, not written out a 
 | `MaxStreamCarryBytes` | 32 MiB | one unterminated SSE event |
 | `maxBufferedResponseBytes` | 32 MiB | one reply being assembled |
 | `max_buffered_response_bytes` | 512 MiB | **every** reply being assembled, and every reply being recorded for the response cache, at once; a recording the budget cannot hold stops and that reply is not cached, while the client still receives it whole. Recordings and assemblies spend the one budget, so a non-streamed reply that is also recorded is counted twice while both copies are held, and an assembly refused while recordings fill the budget is answered 503 like any other |
+| `max_buffered_request_bytes` | 128 MiB | **every** chat body being read and normalised, at once: a body is charged as its bytes arrive and released once it is normalised, and a body that would pass the budget is answered 503 with `Retry-After` before it is read in full. Normalising holds several times the body, so the heap this bounds is a multiple of the setting. It must be at least `filters.MaxBodyBytes`, so an idle gateway can always read one largest body |
 
 The two 10 MiB bounds are not the same bound. A prompt travels as raw bytes in its own field of the protobuf envelope (`transport/envelope.go`, `MarshalWrappedInferenceRequest`), so it costs its own length plus a few bytes of framing, while the catch-up diffs ride the JSON document beside it as `DiffJSON` with every byte field base64 (`transport/request_size.go`, `PromptWireBytes` and `diffWireBytes`). A request inside the ingest cap can therefore be past what the public proxy, the versiond router and a host accept — the shape [issue #1658](https://github.com/gonka-ai/gonka/issues/1658) reported. Step 3 refuses it before a nonce is spent. When the catch-up backlog is what would not fit, it is drained ahead of the request instead of riding it ([`user/session.go`](../../../user/session.go), `drainOversizedBacklog`), and each drained chunk is cut by wire bytes rather than by diff count — a chunk a host refuses whole leaves its sync cursor where it was, so the next attempt rebuilds the same backlog, which is the loop [issue #1660](https://github.com/gonka-ai/gonka/issues/1660) describes. Only a body that still does not fit is refused at the send with `transport.ErrHostRequestTooLarge`.
 

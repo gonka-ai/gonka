@@ -5,7 +5,10 @@ import (
 	"sync"
 )
 
-var ErrResponseBufferFull = errors.New("the gateway is holding as many buffered replies as it can")
+var (
+	ErrResponseBufferFull = errors.New("the gateway is holding as many buffered replies as it can")
+	ErrRequestBodiesFull  = errors.New("the gateway is reading as many request bodies as it can")
+)
 
 type BufferBudget struct {
 	mu    sync.Mutex

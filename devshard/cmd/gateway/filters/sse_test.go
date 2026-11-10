@@ -85,7 +85,7 @@ func TestStreamRewriterFlagsEveryOutputThatMayCarryAnUpstreamError(t *testing.T)
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			rewriter := NewStreamRewriter(LogprobIntent{}, false)
+			rewriter := NewStreamRewriter(LogprobIntent{}, false, 0)
 			for _, write := range testCase.writes {
 				if _, err := rewriter.Write([]byte(write)); err != nil {
 					t.Fatalf("Write(%q) = %v", write, err)
@@ -115,7 +115,7 @@ func FuzzLastOutputMayCarryUpstreamErrorAgreesWithTheDrop(f *testing.F) {
 	f.Add([]byte("data: [DONE]\n\ndata: {\"Error\":\"revoked\"}"))
 	f.Add([]byte(`data: {"\u0065rror":"revoked"}` + "\n\n"))
 	f.Fuzz(func(t *testing.T, chunk []byte) {
-		rewriter := NewStreamRewriter(LogprobIntent{}, false)
+		rewriter := NewStreamRewriter(LogprobIntent{}, false, 0)
 		written, _ := rewriter.Write(chunk)
 		assertClearedOutputCarriesNoError(t, rewriter, written)
 		tail, _ := rewriter.Close()

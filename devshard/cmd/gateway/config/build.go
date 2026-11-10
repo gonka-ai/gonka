@@ -37,6 +37,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Tx.FeeDenom, values.TxFeeDenom)
 	overrideIfSet(&configuration.Tx.PollIntervalMS, values.TxPollIntervalMS)
 	overrideIfSet(&configuration.Tx.PollTimeoutMS, values.TxPollTimeoutMS)
+	overrideIfSet(&configuration.Tx.CallTimeoutMS, values.TxCallTimeoutMS)
 
 	overrideIfSet(&configuration.Limits.Concurrency.PoCRequestsPer10000Weight, pocWeightLimit(values, Defaults().Limits.Concurrency.RequestsPer10000Weight))
 	overrideIfSet(&configuration.Scheduler.DispatchQueueDepth, values.DispatchQueueDepth)
@@ -140,6 +141,7 @@ func applyTunables(configuration *Config, tunables env.Tunables) {
 	overrideIfSet(&configuration.Limits.ForceUpstreamStreaming, tunables.ForceUpstreamStreaming)
 	configuration.Limits.LogprobsOptimization = cmp.Or(tunables.LogprobsOptimization, configuration.Limits.LogprobsOptimization)
 	overrideIfSet(&configuration.Limits.MaxBufferedResponseBytes, tunables.MaxBufferedResponseBytes)
+	overrideIfSet(&configuration.Limits.MaxBufferedRequestBytes, tunables.MaxBufferedRequestBytes)
 	overrideIfSet(&configuration.Scheduler.WarmNewEscrows, tunables.WarmNewEscrows)
 	overrideIfSet(&configuration.Chain.SnapshotMaxAgeSeconds, tunables.ChainSnapshotMaxAgeSeconds)
 	overrideIfSet(&configuration.Engine.ReceiptTimeoutMS, tunables.EngineReceiptTimeoutMS)

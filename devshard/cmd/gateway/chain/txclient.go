@@ -24,6 +24,7 @@ const (
 	DefaultGasLimit     = uint64(700_000)
 	DefaultPollInterval = 2 * time.Second
 	DefaultPollTimeout  = 45 * time.Second
+	DefaultCallTimeout  = 10 * time.Second
 	UnorderedTxTTL      = 9 * time.Minute
 
 	EscrowDenom = "ngonka"
@@ -63,7 +64,7 @@ type TxClient struct {
 	narrator     settlementNarrator
 }
 
-// Config configures a TxClient. Zero-value fee/gas/poll/clock fields take package defaults; Transport is required.
+// Config configures a TxClient. Zero-value fee/gas/poll/call-timeout/clock fields take package defaults; Transport is required, and each of its calls runs under CallTimeout.
 type Config struct {
 	Transport    Transport
 	FeeDenom     string
@@ -71,6 +72,7 @@ type Config struct {
 	GasLimit     uint64
 	PollInterval time.Duration
 	PollTimeout  time.Duration
+	CallTimeout  time.Duration
 	Now          func() time.Time
 	Narrator     settlementNarrator
 }
@@ -118,12 +120,16 @@ func NewTxClient(cfg Config) (*TxClient, error) {
 	if pollTimeout <= 0 {
 		pollTimeout = DefaultPollTimeout
 	}
+	callTimeout := cfg.CallTimeout
+	if callTimeout <= 0 {
+		callTimeout = DefaultCallTimeout
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &TxClient{
-		transport:    cfg.Transport,
+		transport:    deadlineTransport{transport: cfg.Transport, timeout: callTimeout},
 		feeDenom:     feeDenom,
 		feeAmount:    feeAmount,
 		gasLimit:     gasLimit,

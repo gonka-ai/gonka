@@ -137,7 +137,7 @@ func TestStreamRewriterDropsForcedUsage(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := NewStreamRewriter(LogprobIntent{}, testCase.keepUsage).Write([]byte(testCase.stream))
+			got, err := NewStreamRewriter(LogprobIntent{}, testCase.keepUsage, 0).Write([]byte(testCase.stream))
 			if err != nil {
 				t.Fatalf("Write() = %v, want no error", err)
 			}
@@ -156,7 +156,7 @@ func TestStreamRewriterKeepsAnErrorEventThatCarriesUsage(t *testing.T) {
 	t.Parallel()
 	event := []byte("data: {\"error\":{\"message\":\"upstream exploded\"},\"usage\":{\"completion_tokens\":1}}\n\n")
 
-	got, err := NewStreamRewriter(LogprobIntent{}, false).Write(event)
+	got, err := NewStreamRewriter(LogprobIntent{}, false, 0).Write(event)
 	if err != nil {
 		t.Fatalf("Write() = %v, want no error", err)
 	}
@@ -175,7 +175,7 @@ func TestStreamRewriterRemovesANullUsage(t *testing.T) {
 	t.Parallel()
 	event := []byte("data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n\n")
 
-	got, err := NewStreamRewriter(LogprobIntent{}, false).Write(event)
+	got, err := NewStreamRewriter(LogprobIntent{}, false, 0).Write(event)
 	if err != nil {
 		t.Fatalf("Write() = %v, want no error", err)
 	}
@@ -191,7 +191,7 @@ func TestStreamRewriterRemovesANullUsage(t *testing.T) {
 //  4. Assert Close emits nothing.
 func TestStreamRewriterCloseSeparatesADropFromATruncation(t *testing.T) {
 	t.Parallel()
-	rewriter := NewStreamRewriter(LogprobIntent{}, false)
+	rewriter := NewStreamRewriter(LogprobIntent{}, false, 0)
 	if _, err := rewriter.Write([]byte("data: {\"choices\":[],\"usage\":{\"completion_tokens\":2}}")); err != nil {
 		t.Fatalf("Write() = %v, want no error", err)
 	}

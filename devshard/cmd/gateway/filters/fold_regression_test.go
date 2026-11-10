@@ -21,7 +21,7 @@ func TestFoldingKeepsEveryTokenPastTheMeasurementInterval(t *testing.T) {
 	}
 	stream.WriteString("data: [DONE]\n\n")
 
-	folder := NewBodyFolder(LogprobIntent{})
+	folder := NewBodyFolder(LogprobIntent{}, 0)
 	if _, err := folder.Write(stream.Bytes()); err != nil {
 		t.Fatalf("Write(): %v", err)
 	}
@@ -42,7 +42,7 @@ func TestFoldingKeepsEveryTokenPastTheMeasurementInterval(t *testing.T) {
 //  2. Read the folder's Held() count and the actual folded body length.
 //  3. Assert Held() tracks at least half of what the fold actually holds.
 func TestHeldTracksWhatIsActuallyAccumulated(t *testing.T) {
-	folder := NewBodyFolder(LogprobIntent{})
+	folder := NewBodyFolder(LogprobIntent{}, 0)
 	content := strings.Repeat("x", 64<<10)
 	for event := range 20 {
 		chunk := fmt.Appendf(nil, "data: {\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":%d,\"delta\":{\"content\":%q}}]}\n\n", event, content)

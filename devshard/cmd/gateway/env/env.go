@@ -39,6 +39,7 @@ type Values struct {
 	TxGasLimit       *int64
 	TxPollIntervalMS *int64
 	TxPollTimeoutMS  *int64
+	TxCallTimeoutMS  *int64
 
 	PoCMode *string
 
@@ -254,6 +255,7 @@ func Load() (Values, error) {
 	readLenientInt("DEVSHARD_TX_GAS_LIMIT", 1, &values.TxGasLimit)
 	readLenientInt("DEVSHARD_TX_POLL_INTERVAL_MS", 1, &values.TxPollIntervalMS)
 	readLenientInt("DEVSHARD_TX_POLL_TIMEOUT_MS", 1, &values.TxPollTimeoutMS)
+	readLenientInt("DEVSHARD_TX_CALL_TIMEOUT_MS", 1, &values.TxCallTimeoutMS)
 
 	readLenientInt("GATEWAY_DEFAULT_MAX_TOKENS", 1, &values.DefaultMaxTokens)
 	readLenientInt("GATEWAY_MAX_TOKENS_CAP", 1, &values.MaxTokensCap)
@@ -286,6 +288,7 @@ func Load() (Values, error) {
 	readStrictBool("GATEWAY_FORCE_UPSTREAM_STREAMING", &values.ForceUpstreamStreaming)
 	readStrictBool("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", &values.LogprobsOptimization)
 	readStrictInt("GATEWAY_MAX_BUFFERED_RESPONSE_BYTES", &values.MaxBufferedResponseBytes)
+	readStrictInt("GATEWAY_MAX_BUFFERED_REQUEST_BYTES", &values.MaxBufferedRequestBytes)
 	readStrictBool("GATEWAY_WARM_NEW_ESCROWS", &values.WarmNewEscrows)
 	readStrictInt("GATEWAY_ROTATION_SETTLE_MARGIN_BLOCKS", &values.RotationSettleMarginBlocks)
 

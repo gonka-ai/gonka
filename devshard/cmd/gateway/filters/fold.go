@@ -7,6 +7,7 @@ import (
 
 type BodyFolder struct {
 	intent       LogprobIntent
+	promptTokens uint64
 	carry        []byte
 	scanned      int
 	unframed     []byte
@@ -24,8 +25,8 @@ type BodyFolder struct {
 // Re-measure interval, in merged bytes rather than events. See README.md, "Folding a stream into one body".
 const foldMeasureBytes = 256 << 10
 
-func NewBodyFolder(intent LogprobIntent) *BodyFolder {
-	return &BodyFolder{intent: intent}
+func NewBodyFolder(intent LogprobIntent, promptTokens uint64) *BodyFolder {
+	return &BodyFolder{intent: intent, promptTokens: promptTokens}
 }
 
 func (f *BodyFolder) Write(chunk []byte) (int, error) {
@@ -133,13 +134,14 @@ func (f *BodyFolder) Body() []byte {
 	case f.truncated:
 		return TruncatedResponseBody
 	case f.complete != nil:
-		return stripResponseBody(f.complete, f.intent)
+		return stripResponseBody(f.complete, f.intent, f.promptTokens)
 	case f.merged != nil:
+		boundCachedTokens(f.merged, f.promptTokens)
 		return encodeCompletion(f.merged)
 	case f.framed || len(bytes.TrimSpace(f.unframed)) == 0:
 		return NoResponseDataBody
 	}
-	return stripResponseBody(f.unframed, f.intent)
+	return stripResponseBody(f.unframed, f.intent, f.promptTokens)
 }
 
 func (f *BodyFolder) Held() int64 {
