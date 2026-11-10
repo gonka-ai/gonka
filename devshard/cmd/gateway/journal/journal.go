@@ -176,6 +176,11 @@ func (j *Journal) RequestThrottled(line RequestLine) {
 	j.emit(queuedEvent{kind: KindRequestThrottled, request: &line})
 }
 
+// RequestBodyUnread writes that a request's body did not arrive and its connection was closed.
+func (j *Journal) RequestBodyUnread(line RequestLine) {
+	j.emit(queuedEvent{kind: KindRequestBodyUnread, request: &line})
+}
+
 // ReplyNotCached writes that a served reply stopped mid-answer and was not cached.
 func (j *Journal) ReplyNotCached(line RequestLine) {
 	j.emit(queuedEvent{kind: KindReplyNotCached, request: &line})
@@ -342,6 +347,8 @@ func (j *Journal) deliver(entry *queuedEvent) {
 		renderRequestFinished(j.lines, entry.request)
 	case KindRequestThrottled:
 		renderRequestThrottled(j.lines, entry.request)
+	case KindRequestBodyUnread:
+		renderRequestBodyUnread(j.lines, entry.request)
 	case KindReplyNotCached:
 		renderReplyNotCached(j.lines, entry.request)
 	case KindHostTransition, KindExcludedHostServed, KindForcedSend, KindEscrowTransition, KindChainTransition, KindFundingTransition:

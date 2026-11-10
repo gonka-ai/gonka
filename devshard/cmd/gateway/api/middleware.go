@@ -172,7 +172,7 @@ func readBody(w http.ResponseWriter, r *http.Request, limit int64, budget *Buffe
 	r.Body = http.MaxBytesReader(baseWriter(w), r.Body, limit)
 	body, err := readAll(r.Body, budget)
 	_ = deadlines.SetReadDeadline(time.Time{})
-	return body, err
+	return body, bodyReadFailure(w, err)
 }
 
 // readAll is io.ReadAll starting wide enough for an ordinary body. The start is a constant, never the declared Content-Length: a header the client has not backed with bytes must buy no memory. See README.md, "Reading a body".

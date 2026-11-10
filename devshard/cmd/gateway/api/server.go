@@ -196,6 +196,7 @@ type TokenizedPrompt struct {
 type RequestJournal interface {
 	RequestFinished(line journal.RequestLine)
 	RequestThrottled(line journal.RequestLine)
+	RequestBodyUnread(line journal.RequestLine)
 	ReplyNotCached(line journal.RequestLine)
 }
 

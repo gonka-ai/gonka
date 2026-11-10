@@ -204,7 +204,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	body, err := readBody(w, r, chatIngestLimit, s.requestBodies)
 	if err != nil {
-		s.writeErrorFor(w, err)
+		s.refuseBody(w, requestID, err)
 		return
 	}
 	releaseBody := sync.OnceFunc(func() { s.requestBodies.release(int64(len(body))) })
