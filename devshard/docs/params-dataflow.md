@@ -14,6 +14,9 @@ See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implemen
 |------------|------------------------|
 | `creator`, `amount`, `model_id` | `id`, `slots`, `epoch_index`, `app_hash`, `token_price`, **`create_devshard_fee`**, **`fee_per_nonce`**, **`validation_rate`**, **`vote_threshold_factor`**, seal-grace snapshots, `settled`, … |
 
+Escrow slots are assigned in the create transaction from the current block hash. The existing `app_hash` field stores this sampling seed; older escrows retain their original app-hash seed. The escrow and its slots are queryable as soon as the create transaction commits. Settlement is rejected in the creation block, so an atomic create-and-settle transaction cannot selectively roll back unfavorable draws. Settlement from the next block and its gas simulation remain available. Block proposers can still bias the seed through block contents or transaction ordering.
+
+
 Governance defaults for fees, consensus params, and seal grace (`DevshardEscrowParams`) are **copied onto the escrow row** at create. Zero on the row means “use compiled default” when building `SessionConfig` (except `vote_threshold_factor == 0`, which keeps legacy `groupSize/2` at bind).
 
 Tx response: **`escrow_id` only** — not the full record.
