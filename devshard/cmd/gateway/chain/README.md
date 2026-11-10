@@ -55,7 +55,7 @@ A poll that fails only in part still publishes: `LastError` keeps **every** fail
 
 | Rule | When | What it keeps |
 | --- | --- | --- |
-| all | outside PoC and outside confirmation PoC, during the confirmation-PoC grace period, and during the lead window before a PoC while the chain holds no snapshot for it | every node |
+| all | outside a blocking phase (the completed window of a confirmation PoC included), during the confirmation-PoC grace period, and during the lead window before a PoC while the chain holds no snapshot for it | every node |
 | snapshot | the chain holds a preserved-nodes snapshot whose episode anchor matches | the nodes that snapshot lists |
 | legacy | anything else, a failed read included | nodes whose second timeslot allocation is set |
 

@@ -19,7 +19,7 @@ func preservationEpoch(epoch epochInfo, blocked bool, reason BlockReason) (epoch
 
 // resolvePreservation picks the node-preservation rule for this poll. See README.md, "Which nodes count as preserved".
 func (o *PhaseObserver) resolvePreservation(ctx context.Context, epoch epochInfo, blocked bool, reason BlockReason) (preservationMode, preservedSnapshotState, error) {
-	if !blocked && !epoch.IsConfirmationPoCActive {
+	if !blocked {
 		return preservationModeAll, preservedSnapshotState{}, nil
 	}
 	preservedNodes, status, err := o.fetchPreservedSnapshot(ctx, preservedSnapshotAnchor(epoch, reason))
@@ -40,9 +40,6 @@ func preservedSnapshotAnchor(epoch epochInfo, reason BlockReason) int64 {
 		return epoch.ConfirmationPoCTriggerHeight
 	case BlockReasonPoC:
 		return epoch.PoCStartBlockHeight
-	}
-	if epoch.IsConfirmationPoCActive {
-		return epoch.ConfirmationPoCTriggerHeight
 	}
 	return 0
 }
