@@ -4,7 +4,7 @@ go 1.25.9
 
 replace (
 	cosmossdk.io/store => github.com/gonka-ai/cosmos-sdk/store v1.1.2-ps1
-	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability
+	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps20
 	github.com/gin-gonic/gin => github.com/gin-gonic/gin v1.7.0
 	github.com/productscience/inference => ../../inference-chain
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7

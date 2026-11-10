@@ -3,7 +3,7 @@ module common
 go 1.25.9
 
 replace (
-	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability
+	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps20
 	github.com/productscience/inference => ../inference-chain
 )
 
