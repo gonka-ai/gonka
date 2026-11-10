@@ -80,6 +80,7 @@ import (
 	ibctransferkeeper "github.com/cosmos/ibc-go/v8/modules/apps/transfer/keeper"
 	ibckeeper "github.com/cosmos/ibc-go/v8/modules/core/keeper"
 
+	"github.com/productscience/inference/app/beacon"
 	collateralmodulekeeper "github.com/productscience/inference/x/collateral/keeper"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencegenesis "github.com/productscience/inference/x/inference/module"
@@ -165,6 +166,10 @@ type App struct {
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 
 	BlsKeeper             blsmodulekeeper.Keeper
+
+	// BeaconShares serves this validator's BLS slot shares exported by the
+	// dAPI (block beacon Step 2); nil when [bls-beacon] is disabled.
+	BeaconShares beacon.ShareProvider
 	BookkeeperKeeper      bookkeepermodulekeeper.Keeper
 	InferenceKeeper       inferencemodulekeeper.Keeper
 	CollateralKeeper      collateralmodulekeeper.Keeper

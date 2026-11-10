@@ -34,6 +34,8 @@ type BlsManager struct {
 	dealerOpeningsMu sync.RWMutex
 	dealerOpenings   map[dealerOpeningKey]dealerOpeningRecord
 	dealerOpeningsDB *sql.DB
+	// beacon exports final slot shares for the chain node (block beacon Step 2).
+	beacon beaconExporter
 }
 
 // VerificationResult holds the results of DKG verification for an epoch
@@ -176,6 +178,7 @@ func NewBlsManager(cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager 
 		ctx:            context.Background(), // Use background context for chain queries
 		cache:          NewVerificationCache(),
 		dealerOpenings: make(map[dealerOpeningKey]dealerOpeningRecord),
+		beacon:         beaconExporter{lastAttempt: make(map[uint64]time.Time)},
 	}
 }
 
@@ -322,6 +325,7 @@ func (bm *BlsManager) storeVerificationResult(result *VerificationResult) {
 	}
 
 	bm.cache.Store(result)
+	bm.maybeExportBeaconShares(result)
 
 	logging.Debug(verifierLogTag+"Stored verification result", inferenceTypes.BLS,
 		"epochID", result.EpochID,

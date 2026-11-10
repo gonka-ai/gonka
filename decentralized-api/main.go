@@ -245,6 +245,9 @@ func main() {
 			logging.Warn("Failed to initialize dealer openings persistence", types.BLS, "error", err)
 		}
 	}
+	// Block beacon Step 2: export final BLS slot shares for the chain node.
+	blsManager.ConfigureBeaconShareExport(configManager.GetBlsBeaconConfig())
+	blsManager.StartBeaconShareExport(ctx, bls.DefaultBeaconReconcileInterval)
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
 	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)

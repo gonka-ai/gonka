@@ -36,6 +36,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/mempool"
 	"github.com/spf13/cast"
 
+	"github.com/productscience/inference/app/beacon"
 	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
@@ -95,7 +96,13 @@ func (app *App) registerBeaconABCI(appOpts servertypes.AppOptions) {
 	// byte/gas caps over req.Txs), regardless of the configured app mempool.
 	passThrough := baseapp.NewDefaultProposalHandler(mempool.NoOpMempool{}, app.BaseApp).PrepareProposalHandler()
 
-	app.SetExtendVoteHandler(newBeaconExtendVoteHandler(logger, nil))
+	// Step 2: load the dAPI-exported BLS shares. ExtendVote only triggers their
+	// one-time verification; extensions stay empty until Step 3.
+	app.setupBeaconShares(appOpts, logger)
+	app.SetExtendVoteHandler(newBeaconExtendVoteHandler(logger, beaconShareProbe(
+		func() beacon.ShareProvider { return app.BeaconShares },
+		app.BlsKeeper.GetCurrentSigningEpochID,
+	)))
 	sizeCap := func(ctx sdk.Context) int {
 		params, err := app.BlsKeeper.GetParams(ctx)
 		if err != nil {

@@ -145,6 +145,12 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 	return cm.currentConfig.ChainNode
 }
 
+func (cm *ConfigManager) GetBlsBeaconConfig() BlsBeaconConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	return cm.currentConfig.BlsBeacon
+}
+
 func (cm *ConfigManager) GetEarlyShareGuardConfig() EarlyShareGuardConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()

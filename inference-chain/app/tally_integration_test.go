@@ -192,6 +192,12 @@ func TestTallyBugReproduction(t *testing.T) {
 // and maxValidators=100 (standard setting).
 func createTestApp(t *testing.T) *app.App {
 	t.Helper()
+	return createTestAppWithOptions(t, nil)
+}
+
+// createTestAppWithOptions is createTestApp with extra app options (app.toml keys).
+func createTestAppWithOptions(t *testing.T, extraOpts map[string]interface{}) *app.App {
+	t.Helper()
 
 	// Allow multiple createTestApp calls in one `go test` process (global denom registry).
 	inferencemodule.IgnoreDuplicateDenomRegistration = true
@@ -208,6 +214,9 @@ func createTestApp(t *testing.T) *app.App {
 	appOptions := make(simtestutil.AppOptionsMap, 0)
 	appOptions[flags.FlagHome] = t.TempDir()
 	appOptions[server.FlagInvCheckPeriod] = uint(0)
+	for k, v := range extraOpts {
+		appOptions[k] = v
+	}
 
 	var emptyWasmOpts []wasmkeeper.Option
 

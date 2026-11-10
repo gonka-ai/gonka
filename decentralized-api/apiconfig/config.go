@@ -33,6 +33,33 @@ type Config struct {
 	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
 	DevshardVersionsCache    DevshardVersionsCache    `koanf:"-" json:"-"` // not persisted, synced from chain
 	EarlyShareGuard          EarlyShareGuardConfig    `koanf:"early_share_guard" json:"early_share_guard"`
+	BlsBeacon                BlsBeaconConfig          `koanf:"bls_beacon" json:"bls_beacon"`
+}
+
+// BlsBeaconConfig controls the block-beacon share export: after DKG the dAPI
+// writes this participant's BLS slot shares to <ShareDir>/epoch-<N>.json for
+// the chain node to sign vote-extension partials with
+// (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md, Step 2).
+//
+// The zero value is the default (export on, default directory), so configs
+// persisted before this section existed keep exporting.
+// Env: DAPI_BLS_BEACON__EXPORT_DISABLED, DAPI_BLS_BEACON__SHARE_DIR.
+type BlsBeaconConfig struct {
+	ExportDisabled bool   `koanf:"export_disabled" json:"export_disabled"`
+	ShareDir       string `koanf:"share_dir" json:"share_dir"`
+}
+
+// DefaultBlsBeaconShareDir is the node home's bls-beacon directory as mounted
+// into the api container (deploy/join and local-test-net mount the node home
+// at /root/.inference in both containers).
+const DefaultBlsBeaconShareDir = "/root/.inference/bls-beacon"
+
+// EffectiveShareDir returns ShareDir or the default.
+func (c BlsBeaconConfig) EffectiveShareDir() string {
+	if c.ShareDir != "" {
+		return c.ShareDir
+	}
+	return DefaultBlsBeaconShareDir
 }
 
 type NatsServerConfig struct {

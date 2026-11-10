@@ -47,6 +47,10 @@ func initAppConfig() (string, interface{}) {
 	// The following code snippet is just for reference.
 	type CustomAppConfig struct {
 		serverconfig.Config `mapstructure:",squash"`
+
+		// BlsBeacon is [bls-beacon]: the share files the dAPI exports for
+		// block beacon signing.
+		BlsBeacon app.BeaconConfig `mapstructure:"bls-beacon"`
 	}
 
 	// Optionally allow the chain developer to overwrite the SDK's default
@@ -68,10 +72,11 @@ func initAppConfig() (string, interface{}) {
 	// srvCfg.BaseConfig.IAVLDisableFastNode = true // disable fastnode by default
 
 	customAppConfig := CustomAppConfig{
-		Config: *srvCfg,
+		Config:    *srvCfg,
+		BlsBeacon: app.DefaultBeaconConfig(),
 	}
 
-	customAppTemplate := serverconfig.DefaultConfigTemplate
+	customAppTemplate := serverconfig.DefaultConfigTemplate + app.BeaconConfigTemplate
 	// Edit the default template file
 	//
 	// customAppTemplate := serverconfig.DefaultConfigTemplate + `
