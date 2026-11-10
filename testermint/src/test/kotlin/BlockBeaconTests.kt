@@ -259,11 +259,38 @@ class BlockBeaconTests : TestermintTest() {
         }
         assertThat(owners.toSet()).describedAs("one participant per validator").hasSize(cluster.allPairs.size)
 
-        logSection("Nodes verified the shares against committed state")
+        logSection("Shares live in a memory-only volume shared by node and api only (M1)")
+        cluster.allPairs.forEach { pair ->
+            assertShareDirIsTmpfs(nodeContainer(pair))
+            assertShareDirIsTmpfs("${containerBase(pair)}-api")
+        }
+
+        logSection("Nodes verified the shares against committed state and their own validator (M2)")
         cluster.allPairs.forEach { pair ->
             waitForSharesLoaded(pair, epochId, minCount = 1)
             assertThat(shareLogLines(pair, epochId, valid = false)).describedAs("${pair.name} rejected shares").isEmpty()
+            // The identity the provider checks against is the one CometBFT signs with.
+            val own = normalizeValidatorAddress(pair.node.getStatus().validatorInfo.address)
+            val logged = nodeLogLines(pair).firstNotNullOfOrNull { Regex("beacon validator identity.*cons_address=([0-9A-F]{40})").find(it)?.groupValues?.get(1) }
+            assertThat(logged).describedAs("${pair.name} beacon validator identity").isEqualTo(own)
         }
+
+        logSection("A share file copied from another validator is never used (M2)")
+        val donor = cluster.genesis
+        val victim = cluster.joinPairs.last()
+        val loadedBefore = shareLogLines(victim, epochId, valid = true).size
+        // Stop the victim's dAPI so its reconcile loop cannot repair the file before
+        // the node judges it (the tmpfs stays mounted by the node).
+        docker("stop", "${containerBase(victim)}-api")
+        copyShareFile(from = donor, to = victim, epochId = epochId)
+        val foreign = waitForShareRejection(victim, epochId)
+        assertThat(foreign).describedAs("${victim.name} rejection reason").contains("this node signs as")
+
+        logSection("The dAPI replaces the foreign file with its own shares (review L2)")
+        docker("start", "${containerBase(victim)}-api")
+        waitForSharesLoaded(victim, epochId, minCount = loadedBefore + 1)
+        assertThat(apiLogLines(victim).any { it.contains("content differs") && it.contains("epoch=$epochId ") })
+            .describedAs("${victim.name} dAPI logged the rewrite").isTrue()
         assertNoConsensusFailure(cluster.allPairs)
     }
 
@@ -338,6 +365,33 @@ class BlockBeaconTests : TestermintTest() {
         error("no signing epoch with a completed DKG over all ${cluster.allPairs.size} validators")
     }
 
+    /** The share dir is its own tmpfs mount (never on disk, not part of the bind-mounted home). */
+    private fun assertShareDirIsTmpfs(container: String) {
+        val mounts = docker("exec", container, "cat", "/proc/mounts").lines()
+        val entry = mounts.firstOrNull { it.split(" ").getOrNull(1) == "/root/.inference/bls-beacon" }
+        assertThat(entry).describedAs("$container mount of /root/.inference/bls-beacon").isNotNull
+        assertThat(entry!!.split(" ")[2]).describedAs("$container bls-beacon filesystem").isEqualTo("tmpfs")
+    }
+
+    /** Overwrites [to]'s share file with [from]'s, container to container (the secret never reaches the test log). */
+    private fun copyShareFile(from: LocalInferencePair, to: LocalInferencePair, epochId: Long) {
+        val path = sharePath(epochId)
+        val pipeline = "docker exec ${nodeContainer(from)} cat $path | " +
+            "docker exec -i ${nodeContainer(to)} sh -c 'umask 077 && cat > $path.copy && mv $path.copy $path'"
+        val process = ProcessBuilder("sh", "-c", pipeline).redirectErrorStream(true).start()
+        val out = process.inputStream.bufferedReader().readText()
+        check(process.waitFor(60, TimeUnit.SECONDS) && process.exitValue() == 0) { "copying the share file failed: $out" }
+    }
+
+    /** Waits for `beacon shares loaded … valid=false` on [pair] and returns that line. */
+    private fun waitForShareRejection(pair: LocalInferencePair, epochId: Long, maxBlocks: Int = 30): String {
+        repeat(maxBlocks) {
+            shareLogLines(pair, epochId, valid = false).lastOrNull()?.let { return it }
+            pair.node.waitForNextBlock(1)
+        }
+        error("${pair.name}: foreign share file for epoch $epochId was not rejected within $maxBlocks blocks")
+    }
+
     private fun shareFileExists(pair: LocalInferencePair, epochId: Long): Boolean =
         runCatching { docker("exec", nodeContainer(pair), "test", "-f", sharePath(epochId)); true }.getOrDefault(false)
 
@@ -378,6 +432,10 @@ class BlockBeaconTests : TestermintTest() {
         nodeLogLines(pair).filter {
             it.contains("beacon shares loaded") && it.contains("epoch=$epochId ") && it.contains("valid=$valid")
         }
+
+    /** dAPI log without console colors. */
+    private fun apiLogLines(pair: LocalInferencePair): List<String> =
+        pair.readSiblingLogs("api", tail = 0).replace(ansi, "").lines()
 
     private fun waitForSharesLoaded(pair: LocalInferencePair, epochId: Long, minCount: Int, maxBlocks: Int = 200) {
         repeat(maxBlocks) {

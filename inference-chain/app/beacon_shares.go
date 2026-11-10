@@ -17,6 +17,7 @@ import (
 
 	"cosmossdk.io/log"
 	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -25,6 +26,8 @@ import (
 	"github.com/productscience/inference/app/beacon"
 	"github.com/productscience/inference/app/beacon/sharefile"
 	blstypes "github.com/productscience/inference/x/bls/types"
+
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 )
 
 // app.toml keys, section [bls-beacon].
@@ -95,22 +98,50 @@ func (app *App) setupBeaconShares(appOpts servertypes.AppOptions, logger log.Log
 		logger.Warn("beacon share provider disabled: no home or share dir configured")
 		return
 	}
-	p, err := beacon.NewFileShareProvider(dir, blsCommittedKeys{app}, logger)
+	identity, err := newCometSelfIdentity(cast.ToString(appOpts.Get(FlagRPCListenAddr)), logger)
+	if err != nil {
+		logger.Error("beacon share provider disabled: cannot reach own validator identity", "err", err)
+		return
+	}
+	p, err := beacon.NewFileShareProvider(dir, blsCommittedKeys{app}, identity, logger)
 	if err != nil {
 		logger.Error("beacon share provider disabled", "dir", dir, "err", err)
 		return
 	}
+	// Verify files in the background on an immutable committed version, so
+	// ExtendVote never reads committed state for it (review L5).
+	p.SetVerifyContext(app.beaconVerifyContext)
+	identity.start(context.Background())
 	p.Start(context.Background())
+	app.beaconIdentity = identity
 	app.BeaconShares = p
-	logger.Info("beacon share provider started", "dir", dir)
+	logger.Info("beacon share provider started", "dir", dir, "identity_url", identity.statusURL)
 }
 
-// Close stops the beacon share watcher, then closes the BaseApp.
+// Close stops the beacon share watcher and identity lookup, then closes the BaseApp.
 func (app *App) Close() error {
 	if p, ok := app.BeaconShares.(interface{ Close() error }); ok && p != nil {
 		_ = p.Close()
 	}
+	if app.beaconIdentity != nil {
+		app.beaconIdentity.close()
+	}
 	return app.App.Close()
+}
+
+// beaconVerifyContext is a read-only context over the latest committed version
+// recorded by the PreBlocker. It reads an immutable IAVL version (as gRPC
+// queries do), so it is safe to use concurrently with block execution.
+func (app *App) beaconVerifyContext() (sdk.Context, error) {
+	h := app.beaconCommittedHeight.Load()
+	if h <= 0 {
+		return sdk.Context{}, errors.New("no committed block yet")
+	}
+	cms, err := app.CommitMultiStore().CacheMultiStoreWithVersion(h)
+	if err != nil {
+		return sdk.Context{}, fmt.Errorf("committed version %d: %w", h, err)
+	}
+	return sdk.NewContext(cms, cmtproto.Header{ChainID: app.ChainID(), Height: h}, false, app.Logger()), nil
 }
 
 // blsCommittedKeys implements beacon.CommittedKeys on the x/bls keeper.
@@ -126,21 +157,46 @@ func (k blsCommittedKeys) EpochKeys(ctx sdk.Context, epochID uint64, slotStart, 
 	}
 	return epochKeysFromData(&data, slotStart, slotEnd, func(d *blstypes.EpochBLSData) ([][]byte, error) {
 		return k.app.BlsKeeper.PrecomputeSlotPublicKeysBlst(d)
+	}, func(participant string) ([]byte, error) {
+		return k.consAddressOf(ctx, participant)
 	})
+}
+
+// consAddressOf resolves a participant (account) to its validator's consensus
+// address: participant account bytes are the validator operator bytes
+// (epochgroup/epoch_group.go). Returns nil, nil when there is no validator.
+func (k blsCommittedKeys) consAddressOf(ctx sdk.Context, participant string) ([]byte, error) {
+	acc, err := sdk.AccAddressFromBech32(participant)
+	if err != nil {
+		return nil, fmt.Errorf("participant %q: %w", participant, err)
+	}
+	val, err := k.app.StakingKeeper.GetValidator(ctx, sdk.ValAddress(acc))
+	if err != nil {
+		if errors.Is(err, stakingtypes.ErrNoValidatorFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return val.GetConsAddr()
 }
 
 // epochKeysFromData extracts what the share provider checks. precompute is
 // used only for epochs whose slot public keys were not stored at completion.
-func epochKeysFromData(data *blstypes.EpochBLSData, slotStart, slotEnd uint32, precompute func(*blstypes.EpochBLSData) ([][]byte, error)) (beacon.EpochKeys, error) {
+//
+// consAddrOf resolves the owner's validator consensus address (nil if none).
+func epochKeysFromData(data *blstypes.EpochBLSData, slotStart, slotEnd uint32,
+	precompute func(*blstypes.EpochBLSData) ([][]byte, error),
+	consAddrOf func(participant string) ([]byte, error),
+) (beacon.EpochKeys, error) {
 	switch data.DkgPhase {
 	case blstypes.DKGPhase_DKG_PHASE_COMPLETED, blstypes.DKGPhase_DKG_PHASE_SIGNED:
 	case blstypes.DKGPhase_DKG_PHASE_FAILED:
-		return beacon.EpochKeys{}, fmt.Errorf("epoch %d DKG failed", data.EpochId)
+		return beacon.EpochKeys{}, fmt.Errorf("%w: epoch %d DKG failed", beacon.ErrKeysInvalid, data.EpochId)
 	default:
 		return beacon.EpochKeys{Ready: false}, nil
 	}
 	if slotEnd < slotStart || slotEnd >= data.ITotalSlots {
-		return beacon.EpochKeys{}, fmt.Errorf("slot range [%d,%d] outside %d slots", slotStart, slotEnd, data.ITotalSlots)
+		return beacon.EpochKeys{}, fmt.Errorf("%w: slot range [%d,%d] outside %d slots", beacon.ErrKeysInvalid, slotStart, slotEnd, data.ITotalSlots)
 	}
 
 	owner := ""
@@ -152,6 +208,14 @@ func epochKeysFromData(data *blstypes.EpochBLSData, slotStart, slotEnd uint32, p
 		}
 	}
 
+	var ownerCons []byte
+	if owner != "" {
+		var err error
+		if ownerCons, err = consAddrOf(owner); err != nil {
+			return beacon.EpochKeys{}, fmt.Errorf("slot owner validator: %w", err)
+		}
+	}
+
 	slotPKs := data.SlotPublicKeys
 	if len(slotPKs) < int(data.ITotalSlots) {
 		var err error
@@ -159,11 +223,15 @@ func epochKeysFromData(data *blstypes.EpochBLSData, slotStart, slotEnd uint32, p
 			return beacon.EpochKeys{}, fmt.Errorf("precompute slot public keys: %w", err)
 		}
 	}
+	if int(slotEnd) >= len(slotPKs) {
+		return beacon.EpochKeys{}, fmt.Errorf("%d slot public keys, need slot %d", len(slotPKs), slotEnd)
+	}
 	return beacon.EpochKeys{
-		Ready:          true,
-		GroupPublicKey: data.GroupPublicKey,
-		SlotPublicKeys: slotPKs[slotStart : slotEnd+1],
-		OwnerAddress:   owner,
+		Ready:            true,
+		GroupPublicKey:   data.GroupPublicKey,
+		SlotPublicKeys:   slotPKs[slotStart : slotEnd+1],
+		OwnerAddress:     owner,
+		OwnerConsAddress: ownerCons,
 	}, nil
 }
 

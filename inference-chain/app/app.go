@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 
 	_ "cosmossdk.io/api/cosmos/tx/config/v1" // import for side-effects
 	"cosmossdk.io/depinject"
@@ -165,11 +166,17 @@ type App struct {
 	WasmKeeper       wasmkeeper.Keeper
 	ScopedWasmKeeper capabilitykeeper.ScopedKeeper
 
-	BlsKeeper             blsmodulekeeper.Keeper
+	BlsKeeper blsmodulekeeper.Keeper
 
 	// BeaconShares serves this validator's BLS slot shares exported by the
 	// dAPI (block beacon Step 2); nil when [bls-beacon] is disabled.
 	BeaconShares beacon.ShareProvider
+	// beaconIdentity is this node's consensus address for the share provider (M2).
+	beaconIdentity *cometSelfIdentity
+	// beaconCommittedHeight is the latest committed version, recorded by the
+	// beacon PreBlocker for background share verification (review L5).
+	beaconCommittedHeight atomic.Int64
+
 	BookkeeperKeeper      bookkeepermodulekeeper.Keeper
 	InferenceKeeper       inferencemodulekeeper.Keeper
 	CollateralKeeper      collateralmodulekeeper.Keeper

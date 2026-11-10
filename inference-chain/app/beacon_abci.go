@@ -115,7 +115,13 @@ func (app *App) registerBeaconABCI(appOpts servertypes.AppOptions) {
 	app.SetProcessProposal(newBeaconProcessProposalHandler(logger))
 	// app.ModuleManager is resolved at call time; runtime sets the PreBlocker
 	// order during Load, which is fine because the closure runs later.
-	app.SetPreBlocker(newBeaconPreBlocker(moduleManagerPreBlock{app}))
+	preBlock := newBeaconPreBlocker(moduleManagerPreBlock{app})
+	app.SetPreBlocker(func(ctx sdk.Context, req *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
+		// FinalizeBlock(h) runs on top of committed version h-1: the share
+		// verifier reads that immutable version in the background.
+		app.beaconCommittedHeight.Store(ctx.BlockHeight() - 1)
+		return preBlock(ctx, req)
+	})
 }
 
 type moduleManagerPreBlock struct{ app *App }

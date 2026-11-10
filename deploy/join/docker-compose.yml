@@ -78,6 +78,7 @@ services:
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
+      - bls-beacon:/root/.inference/bls-beacon
       - ../../genesis/genesis.json:/root/genesis.json
     environment:
       - SEED_NODE_RPC_URL=${SEED_NODE_RPC_URL}
@@ -116,6 +117,7 @@ services:
     image: ghcr.io/product-science/api:0.2.16
     volumes:
       - .inference:/root/.inference
+      - bls-beacon:/root/.inference/bls-beacon
       - .dapi:/root/.dapi
       - ${NODE_CONFIG:-./node-config.json}:/root/node_config.json
     depends_on:
@@ -357,4 +359,15 @@ networks:
     internal: true
 
 volumes:
+  # BLS beacon slot shares (secret key material), exported by api and read by
+  # node. Memory only (tmpfs): never written to disk, absent from backups of
+  # .inference, and not visible to other containers that mount .inference
+  # (versiond sees an empty mount point). Contents are lost when both
+  # containers stop; the api re-exports them from chain on start.
+  bls-beacon:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,mode=0700,uid=0,gid=0"
   proxy-router-state:

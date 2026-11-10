@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -292,4 +293,83 @@ func TestReadFileTooLarge(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, make([]byte, MaxFileBytes+1), 0o600))
 	_, err := ReadFile(path, "")
 	require.ErrorContains(t, err, "too large")
+}
+
+// L3: only regular files are read. Symlinks (even to a valid file), FIFOs,
+// devices and directories are rejected without blocking or unbounded reads.
+func TestReadRejectsNonRegularFiles(t *testing.T) {
+	dir := t.TempDir()
+	f := newFixture(t)
+	good, _, err := WriteAtomic(dir, f)
+	require.NoError(t, err)
+
+	link := filepath.Join(dir, "epoch-8.json")
+	require.NoError(t, os.Symlink(good, link))
+	_, err = ReadFile(link, "")
+	require.ErrorIs(t, err, ErrNotRegular, "symlink to a valid file")
+
+	zero := filepath.Join(dir, "epoch-9.json")
+	require.NoError(t, os.Symlink("/dev/zero", zero))
+	_, err = ReadFile(zero, "")
+	require.ErrorIs(t, err, ErrNotRegular, "symlink to /dev/zero")
+
+	fifo := filepath.Join(dir, "epoch-10.json")
+	require.NoError(t, syscall.Mkfifo(fifo, 0o600))
+	done := make(chan error, 1)
+	go func() { _, err := ReadFile(fifo, ""); done <- err }()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, ErrNotRegular, "fifo")
+	case <-time.After(5 * time.Second):
+		t.Fatal("reading a FIFO blocked")
+	}
+
+	sub := filepath.Join(dir, "epoch-11.json")
+	require.NoError(t, os.Mkdir(sub, 0o700))
+	_, err = ReadFile(sub, "")
+	require.ErrorIs(t, err, ErrNotRegular, "directory")
+
+	_, err = ReadFile(good, "")
+	require.NoError(t, err, "the regular file itself is fine")
+}
+
+// L3: ReadPrivateFile checks the mode before reading the content.
+func TestReadPrivateFileRejectsOpenModes(t *testing.T) {
+	dir := t.TempDir()
+	path, _, err := WriteAtomic(dir, newFixture(t))
+	require.NoError(t, err)
+	_, err = ReadPrivateFile(path, "")
+	require.NoError(t, err)
+
+	for _, mode := range []os.FileMode{0o640, 0o604, 0o660, 0o644} {
+		require.NoError(t, os.Chmod(path, mode))
+		_, err = ReadPrivateFile(path, "")
+		require.ErrorIs(t, err, ErrMode, "%#o", mode)
+		_, err = ReadFile(path, "")
+		require.NoError(t, err, "ReadFile does not care about the mode (%#o)", mode)
+	}
+
+	// Mode is rejected even when the content is garbage: content is never read.
+	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
+	_, err = ReadPrivateFile(path, "")
+	require.ErrorIs(t, err, ErrMode)
+}
+
+// WriteAtomic replaces a symlink planted at the target path instead of following it.
+func TestWriteAtomicReplacesSymlink(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim")
+	require.NoError(t, os.WriteFile(victim, []byte("keep"), 0o600))
+	f := newFixture(t)
+	require.NoError(t, os.Symlink(victim, filepath.Join(dir, FileName(f.EpochID))))
+
+	path, written, err := WriteAtomic(dir, f)
+	require.NoError(t, err)
+	require.True(t, written)
+	fi, err := os.Lstat(path)
+	require.NoError(t, err)
+	require.True(t, fi.Mode().IsRegular())
+	b, err := os.ReadFile(victim)
+	require.NoError(t, err)
+	require.Equal(t, "keep", string(b), "symlink target untouched")
 }

@@ -10,10 +10,14 @@ package bls
 //
 // Two triggers:
 //   - storeVerificationResult: every completed (COMPLETED/SIGNED) result with a
-//     group key is exported right away (DKG completion event and recovery).
-//   - a background reconcile loop: for the current and next epoch, if the file
-//     is missing it recovers the result from chain (GetOrRecoverVerificationResult)
-//     and exports it. This covers dAPI restarts and deleted files.
+//     group key is snapshotted in the handler (cheap) and written by a worker
+//     goroutine, so the DKG event path never waits on disk or the chain id
+//     query (review L6). Without a running worker the write is synchronous.
+//   - a background reconcile loop: for the current and next epoch it makes the
+//     file's content match this node's final result (from cache, or recovered
+//     from chain once per epoch): a missing, corrupt, stale or foreign file is
+//     rewritten, and a file for an epoch where this node holds no slots is
+//     removed (review L2). This covers dAPI restarts and deleted files.
 
 import (
 	"context"
@@ -42,7 +46,20 @@ const (
 	// beaconRecoverBackoff limits chain recovery attempts per epoch when the
 	// file cannot be produced (not a participant, DKG not final yet).
 	beaconRecoverBackoff = 2 * time.Minute
+	// beaconExportQueue bounds pending async exports; when full, the job is
+	// dropped and the reconcile loop writes the file on its next tick.
+	beaconExportQueue = 8
 )
+
+// beaconExportJob is a self-contained snapshot of what one share file needs,
+// taken in the event handler so the worker never reads a shared result.
+type beaconExportJob struct {
+	epochID        uint64
+	slotStart      uint32
+	slotEnd        uint32
+	groupPublicKey []byte
+	shares         [][sharefile.ScalarLen]byte // big-endian fr
+}
 
 // beaconExportDeps are the chain-facing calls the exporter needs; tests replace them.
 type beaconExportDeps struct {
@@ -60,6 +77,7 @@ type beaconExporter struct {
 	deps        beaconExportDeps
 	chainID     string
 	lastAttempt map[uint64]time.Time
+	jobs        chan *beaconExportJob // nil until StartBeaconShareExport
 }
 
 // ConfigureBeaconShareExport turns on the share export with cfg. Call before
@@ -145,30 +163,44 @@ func beaconExportable(result *VerificationResult) bool {
 	return len(result.GroupPublicKey) == sharefile.GroupPublicKeyLen
 }
 
-// exportBeaconShares writes result's shares if it is a final participant
-// result. It returns whether a file was (re)written. Shares are never logged.
-func (bm *BlsManager) exportBeaconShares(result *VerificationResult) (bool, error) {
-	enabled, dir := bm.beaconExportEnabled()
-	if !enabled || !beaconExportable(result) {
-		return false, nil
+// beaconJobFor snapshots result into an export job. It returns nil, nil when
+// export is disabled or result is not a final participant result. Cheap: no
+// I/O, no chain queries.
+func (bm *BlsManager) beaconJobFor(result *VerificationResult) (*beaconExportJob, error) {
+	if enabled, _ := bm.beaconExportEnabled(); !enabled || !beaconExportable(result) {
+		return nil, nil
 	}
 	if err := bm.ensureConsensusSharesComplete(result); err != nil {
-		return false, fmt.Errorf("shares incomplete: %w", err)
+		return nil, fmt.Errorf("shares incomplete: %w", err)
 	}
 	if result.SlotRange[1] < result.SlotRange[0] {
-		return false, fmt.Errorf("invalid slot range %v", result.SlotRange)
+		return nil, fmt.Errorf("invalid slot range %v", result.SlotRange)
 	}
 	if n := int(result.SlotRange[1]-result.SlotRange[0]) + 1; len(result.AggregatedShares) != n {
-		return false, fmt.Errorf("%d aggregated shares for %d slots", len(result.AggregatedShares), n)
+		return nil, fmt.Errorf("%d aggregated shares for %d slots", len(result.AggregatedShares), n)
 	}
+	job := &beaconExportJob{
+		epochID:        result.EpochID,
+		slotStart:      result.SlotRange[0],
+		slotEnd:        result.SlotRange[1],
+		groupPublicKey: append([]byte(nil), result.GroupPublicKey...),
+		shares:         make([][sharefile.ScalarLen]byte, len(result.AggregatedShares)),
+	}
+	for i := range result.AggregatedShares {
+		job.shares[i] = result.AggregatedShares[i].Bytes()
+	}
+	return job, nil
+}
 
+// beaconFileFor builds the file job would write (chain id and participant
+// filled in). Its SHA256 is the content checksum to compare against.
+func (bm *BlsManager) beaconFileFor(job *beaconExportJob) (*sharefile.File, error) {
 	ctx, cancel := context.WithTimeout(bm.ctx, 10*time.Second)
 	defer cancel()
 	chainID, err := bm.beaconChainID(ctx)
 	if err != nil {
-		return false, fmt.Errorf("chain id: %w", err)
+		return nil, fmt.Errorf("chain id: %w", err)
 	}
-
 	bm.beacon.mu.Lock()
 	deps := bm.beacon.deps
 	bm.beacon.mu.Unlock()
@@ -176,13 +208,17 @@ func (bm *BlsManager) exportBeaconShares(result *VerificationResult) (bool, erro
 	if deps.participant != nil {
 		participant = deps.participant()
 	}
+	return sharefile.New(chainID, job.epochID, participant, job.slotStart, job.slotEnd, job.groupPublicKey, job.shares, deps.now())
+}
 
-	shares := make([][sharefile.ScalarLen]byte, len(result.AggregatedShares))
-	for i := range result.AggregatedShares {
-		shares[i] = result.AggregatedShares[i].Bytes()
+// writeBeaconJob writes job's file (idempotent by checksum) and prunes old
+// epochs. It returns whether a file was (re)written. Shares are never logged.
+func (bm *BlsManager) writeBeaconJob(job *beaconExportJob) (bool, error) {
+	enabled, dir := bm.beaconExportEnabled()
+	if !enabled {
+		return false, nil
 	}
-	file, err := sharefile.New(chainID, result.EpochID, participant, result.SlotRange[0], result.SlotRange[1],
-		result.GroupPublicKey, shares, deps.now())
+	file, err := bm.beaconFileFor(job)
 	if err != nil {
 		return false, err
 	}
@@ -192,14 +228,24 @@ func (bm *BlsManager) exportBeaconShares(result *VerificationResult) (bool, erro
 	}
 	if written {
 		logging.Info(beaconExportLogTag+"beacon shares exported", inferenceTypes.BLS,
-			"epoch", result.EpochID,
-			"slots", fmt.Sprintf("[%d,%d]", result.SlotRange[0], result.SlotRange[1]),
+			"epoch", job.epochID,
+			"slots", fmt.Sprintf("[%d,%d]", job.slotStart, job.slotEnd),
 			"path", path)
 	}
-	if result.EpochID >= 2 {
-		bm.pruneBeaconShares(dir, result.EpochID-2)
+	if job.epochID >= 2 {
+		bm.pruneBeaconShares(dir, job.epochID-2)
 	}
 	return written, nil
+}
+
+// exportBeaconShares synchronously writes result's shares if it is a final
+// participant result. It returns whether a file was (re)written.
+func (bm *BlsManager) exportBeaconShares(result *VerificationResult) (bool, error) {
+	job, err := bm.beaconJobFor(result)
+	if job == nil || err != nil {
+		return false, err
+	}
+	return bm.writeBeaconJob(job)
 }
 
 func (bm *BlsManager) pruneBeaconShares(dir string, keepFrom uint64) {
@@ -220,8 +266,56 @@ func (bm *BlsManager) maybeExportBeaconShares(result *VerificationResult) {
 			logging.Error(beaconExportLogTag+"panic during export", inferenceTypes.BLS, "panic", r)
 		}
 	}()
-	if _, err := bm.exportBeaconShares(result); err != nil {
+	job, err := bm.beaconJobFor(result)
+	if err != nil {
 		logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", result.EpochID, "err", err)
+		return
+	}
+	if job == nil || bm.enqueueBeaconJob(job) {
+		return
+	}
+	// No worker running (tests, early startup): write synchronously.
+	if _, err := bm.writeBeaconJob(job); err != nil {
+		logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", job.epochID, "err", err)
+	}
+}
+
+// enqueueBeaconJob hands job to the export worker without blocking. It returns
+// false when no worker is running; a full queue drops the job (the reconcile
+// loop writes the file on its next tick) and returns true.
+func (bm *BlsManager) enqueueBeaconJob(job *beaconExportJob) bool {
+	bm.beacon.mu.Lock()
+	jobs := bm.beacon.jobs
+	bm.beacon.mu.Unlock()
+	if jobs == nil {
+		return false
+	}
+	select {
+	case jobs <- job:
+	default:
+		logging.Warn(beaconExportLogTag+"export queue full, reconcile will write the file", inferenceTypes.BLS, "epoch", job.epochID)
+	}
+	return true
+}
+
+// runBeaconExportWorker writes queued jobs until ctx is done.
+func (bm *BlsManager) runBeaconExportWorker(ctx context.Context, jobs <-chan *beaconExportJob) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case job := <-jobs:
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						logging.Error(beaconExportLogTag+"panic in export worker", inferenceTypes.BLS, "panic", r)
+					}
+				}()
+				if _, err := bm.writeBeaconJob(job); err != nil {
+					logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", job.epochID, "err", err)
+				}
+			}()
+		}
 	}
 }
 
@@ -233,7 +327,18 @@ func (bm *BlsManager) StartBeaconShareExport(ctx context.Context, interval time.
 	if interval <= 0 {
 		interval = DefaultBeaconReconcileInterval
 	}
+	jobs := make(chan *beaconExportJob, beaconExportQueue)
+	bm.beacon.mu.Lock()
+	bm.beacon.jobs = jobs
+	bm.beacon.mu.Unlock()
+	go bm.runBeaconExportWorker(ctx, jobs)
 	go func() {
+		// Prefetch the chain id so the first export does not wait for it (L6).
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if _, err := bm.beaconChainID(qctx); err != nil {
+			logging.Debug(beaconExportLogTag+"chain id not available yet", inferenceTypes.BLS, "err", err)
+		}
+		cancel()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
@@ -275,16 +380,17 @@ func (bm *BlsManager) reconcileBeaconShares(ctx context.Context) {
 	}
 
 	for _, epochID := range []uint64{current, current + 1} {
-		if epochID == 0 || bm.beaconFileValid(dir, epochID) {
-			continue
-		}
-		if !bm.beaconAttemptDue(epochID, deps.now()) {
+		if epochID == 0 {
 			continue
 		}
 		result := bm.cache.Get(epochID)
-		if !beaconExportable(result) {
-			// Not cached or not final in cache: recover from chain. Recovery
-			// stores the result, and storeVerificationResult exports it.
+		if !beaconFinal(result) {
+			// No final result cached (restart, not final yet): recover from
+			// chain, rate-limited. Done once per epoch per process when it
+			// succeeds, since recovery caches the result.
+			if !bm.beaconAttemptDue(epochID, deps.now()) {
+				continue
+			}
 			result, err = deps.recover(epochID)
 			if err != nil {
 				if status.Code(errors.Unwrap(err)) == codes.NotFound || status.Code(err) == codes.NotFound {
@@ -294,31 +400,67 @@ func (bm *BlsManager) reconcileBeaconShares(ctx context.Context) {
 				}
 				continue
 			}
+			if !beaconFinal(result) {
+				continue // DKG not final yet: retry after the backoff
+			}
 		}
-		if _, err := bm.exportBeaconShares(result); err != nil {
-			logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", epochID, "err", err)
-			continue
-		}
-		if bm.beaconFileValid(dir, epochID) {
-			bm.beaconAttemptDone(epochID)
-		}
+		bm.beaconAttemptDone(epochID)
+		bm.reconcileBeaconFile(dir, epochID, result)
 	}
 	if current >= 1 {
 		bm.pruneBeaconShares(dir, current-1)
 	}
 }
 
-// beaconFileValid reports whether dir holds a valid file for epochID.
-func (bm *BlsManager) beaconFileValid(dir string, epochID uint64) bool {
+// beaconFinal reports whether result is a final (COMPLETED/SIGNED) result.
+func beaconFinal(result *VerificationResult) bool {
+	return result != nil &&
+		(result.DkgPhase == types.DKGPhase_DKG_PHASE_COMPLETED || result.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED)
+}
+
+// reconcileBeaconFile makes dir's file for epochID match the final result:
+// written if missing or different (corrupt, stale, foreign), removed if this
+// node holds no slots in the epoch (review L2).
+func (bm *BlsManager) reconcileBeaconFile(dir string, epochID uint64, result *VerificationResult) {
 	path := filepath.Join(dir, sharefile.FileName(epochID))
-	if _, err := os.Stat(path); err != nil {
-		return false
+	if !result.IsParticipant {
+		if _, err := os.Lstat(path); err == nil {
+			if err := os.Remove(path); err != nil {
+				logging.Warn(beaconExportLogTag+"cannot remove share file of a non-participant epoch", inferenceTypes.BLS, "epoch", epochID, "err", err)
+			} else {
+				logging.Warn(beaconExportLogTag+"removed share file: this node holds no slots in the epoch", inferenceTypes.BLS, "epoch", epochID)
+			}
+		}
+		return
 	}
-	bm.beacon.mu.Lock()
-	chainID := bm.beacon.chainID
-	bm.beacon.mu.Unlock()
-	f, err := sharefile.ReadFile(path, chainID)
-	return err == nil && f.EpochID == epochID
+	job, err := bm.beaconJobFor(result)
+	if err != nil || job == nil {
+		if err != nil {
+			logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", epochID, "err", err)
+		}
+		return
+	}
+	want, err := bm.beaconFileFor(job)
+	if err != nil {
+		logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", epochID, "err", err)
+		return
+	}
+	if have, err := sharefile.ReadFile(path, want.ChainID); err == nil && have.SHA256 == want.SHA256 {
+		return
+	} else if err == nil {
+		logging.Warn(beaconExportLogTag+"share file content differs from this node's shares, rewriting", inferenceTypes.BLS,
+			"epoch", epochID, "file_participant", have.ParticipantAddress,
+			"file_slots", fmt.Sprintf("[%d,%d]", have.SlotStartIndex, have.SlotEndIndex))
+	}
+	_, written, err := sharefile.WriteAtomic(dir, want)
+	if err != nil {
+		logging.Warn(beaconExportLogTag+"export failed", inferenceTypes.BLS, "epoch", epochID, "err", err)
+		return
+	}
+	if written {
+		logging.Info(beaconExportLogTag+"beacon shares exported", inferenceTypes.BLS,
+			"epoch", epochID, "slots", fmt.Sprintf("[%d,%d]", job.slotStart, job.slotEnd), "path", path)
+	}
 }
 
 // beaconAttemptDue rate-limits recovery per epoch and records the attempt.

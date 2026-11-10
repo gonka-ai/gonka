@@ -28,6 +28,21 @@ const (
 	// verifyRetryBlocks: when committed state is not ready to check an epoch's
 	// shares (DKG not final yet), retry after this many heights.
 	verifyRetryBlocks = 20
+	// identityRetryBlocks: retry interval while this node's own consensus
+	// address is not known yet (local CometBFT RPC not up).
+	identityRetryBlocks = 1
+	// notFinalRetryBlocksBackground: in background mode a "DKG not final"
+	// verdict is retried at the next committed height. The dAPI writes the file
+	// right after the DKG-completing block commits, usually before the verifier
+	// sees that version, so waiting verifyRetryBlocks would leave the shares
+	// unused for ~20 blocks. Off the ABCI path the extra read is free.
+	notFinalRetryBlocksBackground = 1
+	// missingWarnBlocks: Get warns once per epoch when no file for the
+	// requested epoch has appeared for this many heights (review L4).
+	missingWarnBlocks = 20
+	// verifyInterval: how often the background verifier looks for files to
+	// check when a verify context is configured (review L5).
+	verifyInterval = time.Second
 	// reloadDebounce coalesces the burst of events one atomic write produces.
 	reloadDebounce = 200 * time.Millisecond
 )
@@ -66,13 +81,40 @@ type EpochKeys struct {
 	// OwnerAddress is the participant that owns [SlotStart, SlotEnd] in this
 	// epoch, or "" if no participant owns exactly that range.
 	OwnerAddress string
+	// OwnerConsAddress is the consensus address of OwnerAddress's validator in
+	// committed state, or nil if it has none (yet).
+	OwnerConsAddress []byte
 }
+
+// SelfIdentity reports the consensus address this node signs votes with. The
+// provider uses only shares whose slot owner is this validator, so a share
+// file copied from another validator (restored home, shared storage) is never
+// used to sign under this node's key.
+type SelfIdentity interface {
+	// ConsensusAddress returns the address, or false while it is not known.
+	ConsensusAddress() ([]byte, bool)
+}
+
+// StaticIdentity is a SelfIdentity with a fixed address (tests, tools).
+type StaticIdentity []byte
+
+// ConsensusAddress implements SelfIdentity.
+func (s StaticIdentity) ConsensusAddress() ([]byte, bool) { return s, len(s) > 0 }
 
 // CommittedKeys reads an epoch's committed key material. It is implemented in
 // package app on top of the x/bls keeper.
 type CommittedKeys interface {
 	EpochKeys(ctx sdk.Context, epochID uint64, slotStart, slotEnd uint32) (EpochKeys, error)
 }
+
+// ErrKeysInvalid marks CommittedKeys errors that are a deterministic verdict on
+// the file (DKG failed, slot range outside the epoch): the file is rejected.
+// Any other error is treated as transient and retried (review L1).
+var ErrKeysInvalid = errors.New("committed keys reject the file")
+
+// VerifyContextFunc returns a read-only context over the latest committed
+// state, safe to use from a background goroutine (an immutable store version).
+type VerifyContextFunc func() (sdk.Context, error)
 
 // CommittedKeysFunc adapts a function to CommittedKeys.
 type CommittedKeysFunc func(ctx sdk.Context, epochID uint64, slotStart, slotEnd uint32) (EpochKeys, error)
@@ -109,6 +151,12 @@ type fileStamp struct {
 	mode    os.FileMode
 }
 
+// missingEpoch tracks an epoch Get asked for that has no file (review L4).
+type missingEpoch struct {
+	since  int64
+	warned bool
+}
+
 type shareEntry struct {
 	shares        *EpochShares
 	checksum      string
@@ -116,6 +164,7 @@ type shareEntry struct {
 	state         verifyState
 	reason        string
 	retryAtHeight int64
+	retryReason   string // last "not verifiable yet" reason logged (log on change only)
 }
 
 // FileShareProvider serves shares exported by the dAPI into a directory (see
@@ -123,18 +172,27 @@ type shareEntry struct {
 // change (fsnotify plus polling); Get never touches the disk.
 //
 // A file is checked against committed state once, on the first Get for its
-// epoch: the group public key, slot ownership and sk_i·G2 == slotPublicKey_i
-// for every slot. A file that fails stays rejected until it changes on disk.
+// epoch: the group public key, slot ownership, that the slot owner's validator
+// is this node (SelfIdentity), and sk_i·G2 == slotPublicKey_i for every slot.
+// A file that fails stays rejected until it changes on disk.
 type FileShareProvider struct {
 	dir          string
 	logger       log.Logger
 	keys         CommittedKeys
+	self         SelfIdentity
 	pollInterval time.Duration
+
+	// verifyCtx, when set, moves verification off the ABCI path: a background
+	// worker checks new files against committed state and Get only reads
+	// memory. Without it Get verifies inline (tests, tools).
+	verifyCtx VerifyContextFunc
+	kick      chan struct{}
 
 	mu       sync.RWMutex
 	entries  map[uint64]*shareEntry
 	rejected map[string]fileStamp // file name -> stamp of the last rejected version (log once)
 	floor    uint64               // epochs below are ignored (older than current-1)
+	missing  map[uint64]*missingEpoch
 
 	verifyMu sync.Mutex // one verification at a time
 
@@ -145,12 +203,15 @@ type FileShareProvider struct {
 
 // NewFileShareProvider creates the directory if needed (mode 0700), loads
 // existing files and returns the provider. Call Start to watch for changes.
-func NewFileShareProvider(dir string, keys CommittedKeys, logger log.Logger) (*FileShareProvider, error) {
+func NewFileShareProvider(dir string, keys CommittedKeys, self SelfIdentity, logger log.Logger) (*FileShareProvider, error) {
 	if dir == "" {
 		return nil, errors.New("beacon: empty share dir")
 	}
 	if keys == nil {
 		return nil, errors.New("beacon: nil CommittedKeys")
+	}
+	if self == nil {
+		return nil, errors.New("beacon: nil SelfIdentity")
 	}
 	if logger == nil {
 		logger = log.NewNopLogger()
@@ -162,9 +223,12 @@ func NewFileShareProvider(dir string, keys CommittedKeys, logger log.Logger) (*F
 		dir:          dir,
 		logger:       logger, // the caller tags it (the app passes module=beacon)
 		keys:         keys,
+		self:         self,
 		pollInterval: DefaultPollInterval,
 		entries:      make(map[uint64]*shareEntry),
 		rejected:     make(map[string]fileStamp),
+		missing:      make(map[uint64]*missingEpoch),
+		kick:         make(chan struct{}, 1),
 	}
 	p.Reload()
 	return p, nil
@@ -179,6 +243,9 @@ func (p *FileShareProvider) SetPollInterval(d time.Duration) {
 		p.pollInterval = d
 	}
 }
+
+// SetVerifyContext enables background verification (call before Start).
+func (p *FileShareProvider) SetVerifyContext(f VerifyContextFunc) { p.verifyCtx = f }
 
 // Start watches the directory until ctx is done or Close is called.
 func (p *FileShareProvider) Start(ctx context.Context) {
@@ -219,11 +286,24 @@ func (p *FileShareProvider) run(ctx context.Context) {
 
 	ticker := time.NewTicker(p.pollInterval)
 	defer ticker.Stop()
+	// Nil channels (no verify context) never fire in the select below.
+	var verifyTick <-chan time.Time
+	var kick <-chan struct{}
+	if p.verifyCtx != nil {
+		vt := time.NewTicker(verifyInterval)
+		defer vt.Stop()
+		verifyTick, kick = vt.C, p.kick
+		p.safeVerifyDue() // files loaded by the constructor
+	}
 	var debounce <-chan time.Time
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-verifyTick:
+			p.safeVerifyDue()
+		case <-kick:
+			p.safeVerifyDue()
 		case ev, ok := <-events:
 			if !ok {
 				events = nil
@@ -271,14 +351,11 @@ func (p *FileShareProvider) Reload() {
 	}
 	seen := make(map[uint64]found)
 	for _, de := range dirEntries {
-		if de.IsDir() {
-			continue
-		}
 		epochID, ok := sharefile.ParseFileName(de.Name())
-		if !ok {
+		if !ok || de.IsDir() {
 			continue
 		}
-		info, err := de.Info()
+		info, err := de.Info() // Lstat: a symlink or FIFO is seen as such
 		if err != nil {
 			continue
 		}
@@ -313,12 +390,10 @@ func (p *FileShareProvider) Reload() {
 	for _, epochID := range toRead {
 		f := seen[epochID]
 		path := filepath.Join(p.dir, f.name)
-		file, err := sharefile.ReadFile(path, "")
+		// Regular files with mode 0600 only, checked before reading (review L3).
+		file, err := sharefile.ReadPrivateFile(path, "")
 		if err == nil && file.EpochID != epochID {
 			err = fmt.Errorf("file name says epoch %d, content says %d", epochID, file.EpochID)
-		}
-		if err == nil {
-			err = checkMode(path)
 		}
 
 		p.mu.Lock()
@@ -341,23 +416,19 @@ func (p *FileShareProvider) Reload() {
 			stamp:    f.stamp,
 			state:    stateUnverified,
 		}
+		delete(p.missing, epochID)
 		p.mu.Unlock()
 		p.logger.Info("beacon share file read", "epoch", epochID,
 			"slots", fmt.Sprintf("[%d,%d]", file.SlotStartIndex, file.SlotEndIndex))
+		p.kickVerify()
 	}
 }
 
-// checkMode rejects share files readable by group or others: they hold secret
-// keys, and a loose mode means something other than the exporter wrote them.
-func checkMode(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
+func (p *FileShareProvider) kickVerify() {
+	select {
+	case p.kick <- struct{}{}:
+	default:
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("mode %#o is too open (want %#o)", info.Mode().Perm(), sharefile.FileMode)
-	}
-	return nil
 }
 
 func toEpochShares(f *sharefile.File) *EpochShares {
@@ -379,8 +450,10 @@ func toEpochShares(f *sharefile.File) *EpochShares {
 	}
 }
 
-// Get returns verified shares for epochID. The first call for a newly loaded
-// file verifies it against committed state in ctx. It never panics.
+// Get returns verified shares for epochID. It never panics. With a verify
+// context (SetVerifyContext) it only reads memory and files are verified in the
+// background; otherwise the first call for a newly loaded file verifies it
+// against committed state in ctx.
 func (p *FileShareProvider) Get(ctx sdk.Context, epochID uint64) (shares *EpochShares, ok bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -402,17 +475,92 @@ func (p *FileShareProvider) Get(ctx sdk.Context, epochID uint64) (shares *EpochS
 	p.mu.RUnlock()
 
 	switch {
-	case !found, state == stateInvalid:
+	case !found:
+		p.noteMissing(epochID, ctx.BlockHeight())
+		return nil, false
+	case state == stateInvalid:
 		return nil, false
 	case state == stateValid:
 		if cid := ctx.ChainID(); cid != "" && cid != shares.ChainID {
 			return nil, false
 		}
 		return shares, true
+	case p.verifyCtx != nil:
+		// Background verification: never on the ABCI path (review L5).
+		p.kickVerify()
+		return nil, false
 	case ctx.BlockHeight() < retryAt:
 		return nil, false
 	}
 	return p.verify(ctx, epochID)
+}
+
+// noteMissing warns once per epoch when Get keeps asking for an epoch that
+// has no file: the dAPI is not exporting, or exports to another directory
+// (review L4). A validator without BLS slots in that epoch also has no file.
+func (p *FileShareProvider) noteMissing(epochID uint64, height int64) {
+	if epochID == 0 {
+		return // signing epoch 0: no BLS epoch exists yet
+	}
+	p.mu.Lock()
+	m, ok := p.missing[epochID]
+	if !ok {
+		p.missing[epochID] = &missingEpoch{since: height}
+		p.mu.Unlock()
+		return
+	}
+	warn := !m.warned && height-m.since >= missingWarnBlocks
+	if warn {
+		m.warned = true
+	}
+	since := m.since
+	p.mu.Unlock()
+	if warn {
+		p.logger.Warn("no beacon share file for the signing epoch; this node signs no beacon partials "+
+			"(expected only if this validator holds no BLS slots in that epoch; otherwise check that the dAPI "+
+			"exports to this directory: bls_beacon.share_dir / [bls-beacon] share-dir)",
+			"epoch", epochID, "dir", p.dir, "missing_since_height", since, "height", height)
+	}
+}
+
+// safeVerifyDue runs verifyDue, containing panics (background worker).
+func (p *FileShareProvider) safeVerifyDue() {
+	defer func() {
+		if r := recover(); r != nil {
+			p.logger.Error("beacon share verification panicked", "panic", r)
+		}
+	}()
+	p.verifyDue()
+}
+
+// verifyDue checks every loaded, unverified file whose retry height has come,
+// on a read-only context over committed state. Background worker only.
+func (p *FileShareProvider) verifyDue() {
+	type due struct {
+		epoch   uint64
+		retryAt int64
+	}
+	p.mu.RLock()
+	var todo []due
+	for id, e := range p.entries {
+		if e.state == stateUnverified && id >= p.floor {
+			todo = append(todo, due{id, e.retryAtHeight})
+		}
+	}
+	p.mu.RUnlock()
+	if len(todo) == 0 {
+		return
+	}
+	ctx, err := p.verifyCtx()
+	if err != nil {
+		p.logger.Debug("beacon share verification waits for committed state", "err", err)
+		return
+	}
+	for _, d := range todo {
+		if ctx.BlockHeight() >= d.retryAt {
+			p.verify(ctx, d.epoch)
+		}
+	}
 }
 
 // advanceFloor drops entries older than epochID-1 (the plan keeps the current
@@ -434,6 +582,11 @@ func (p *FileShareProvider) advanceFloor(epochID uint64) {
 		for id := range p.entries {
 			if id < floor {
 				delete(p.entries, id)
+			}
+		}
+		for id := range p.missing {
+			if id < floor {
+				delete(p.missing, id)
 			}
 		}
 	}
@@ -460,22 +613,27 @@ func (p *FileShareProvider) verify(ctx sdk.Context, epochID uint64) (*EpochShare
 	}
 
 	start := time.Now()
-	newState, reason, retry := p.check(ctx, shares)
+	newState, reason, retryAfter := p.check(ctx, shares)
 
+	logRetry := false
 	p.mu.Lock()
 	cur, still := p.entries[epochID]
 	if still && cur.checksum == checksum {
-		if retry {
-			cur.retryAtHeight = ctx.BlockHeight() + verifyRetryBlocks
+		if retryAfter > 0 {
+			cur.retryAtHeight = ctx.BlockHeight() + retryAfter
+			logRetry = cur.retryReason != reason
+			cur.retryReason = reason
 		} else {
 			cur.state, cur.reason = newState, reason
 		}
 	}
 	p.mu.Unlock()
 
-	if retry {
-		p.logger.Info("beacon shares not verifiable yet", "epoch", epochID, "reason", reason,
-			"retry_at_height", ctx.BlockHeight()+verifyRetryBlocks)
+	if retryAfter > 0 {
+		if logRetry {
+			p.logger.Info("beacon shares not verifiable yet", "epoch", epochID, "reason", reason,
+				"retry_every_blocks", retryAfter)
+		}
 		return nil, false
 	}
 	slots := fmt.Sprintf("[%d,%d]", shares.SlotStart, shares.SlotEnd)
@@ -489,34 +647,54 @@ func (p *FileShareProvider) verify(ctx sdk.Context, epochID uint64) (*EpochShare
 	return shares, true
 }
 
-// check returns the verification verdict. retry=true means committed state is
-// not ready yet and the file must not be judged.
-func (p *FileShareProvider) check(ctx sdk.Context, s *EpochShares) (state verifyState, reason string, retry bool) {
+// check returns the verification verdict. retryAfter > 0 means the file can't
+// be judged yet (committed state or this node's identity not ready); check
+// again after that many heights.
+func (p *FileShareProvider) check(ctx sdk.Context, s *EpochShares) (state verifyState, reason string, retryAfter int64) {
 	if cid := ctx.ChainID(); cid != "" && cid != s.ChainID {
-		return stateInvalid, fmt.Sprintf("chain_id %q, node is on %q", s.ChainID, cid), false
+		return stateInvalid, fmt.Sprintf("chain_id %q, node is on %q", s.ChainID, cid), 0
 	}
 	keys, err := p.keys.EpochKeys(ctx, s.EpochID, s.SlotStart, s.SlotEnd)
 	if err != nil {
-		return stateInvalid, "committed keys: " + err.Error(), false
+		if errors.Is(err, ErrKeysInvalid) {
+			return stateInvalid, "committed keys: " + err.Error(), 0
+		}
+		// Store read errors and similar: not a verdict on the file (review L1).
+		return stateUnverified, "committed keys unavailable: " + err.Error(), verifyRetryBlocks
 	}
 	if !keys.Ready {
-		return stateUnverified, "epoch DKG not final", true
+		if p.verifyCtx != nil {
+			return stateUnverified, "epoch DKG not final", notFinalRetryBlocksBackground
+		}
+		return stateUnverified, "epoch DKG not final", verifyRetryBlocks
 	}
 	if !bytes.Equal(keys.GroupPublicKey, s.GroupPublicKey) {
-		return stateInvalid, "group_public_key does not match committed state", false
+		return stateInvalid, "group_public_key does not match committed state", 0
 	}
 	if keys.OwnerAddress != s.ParticipantAddress {
-		return stateInvalid, fmt.Sprintf("slot range owned by %q, file says %q", keys.OwnerAddress, s.ParticipantAddress), false
+		return stateInvalid, fmt.Sprintf("slot range owned by %q, file says %q", keys.OwnerAddress, s.ParticipantAddress), 0
+	}
+	// The slot owner must be this node's validator (cheap; before the scalar checks).
+	self, known := p.self.ConsensusAddress()
+	if !known {
+		return stateUnverified, "own consensus address not known yet", identityRetryBlocks
+	}
+	if len(keys.OwnerConsAddress) == 0 {
+		return stateUnverified, fmt.Sprintf("slot owner %q has no validator in committed state", s.ParticipantAddress), verifyRetryBlocks
+	}
+	if !bytes.Equal(keys.OwnerConsAddress, self) {
+		return stateInvalid, fmt.Sprintf("slot owner %q is validator %X, this node signs as %X",
+			s.ParticipantAddress, keys.OwnerConsAddress, self), 0
 	}
 	if len(keys.SlotPublicKeys) != s.NumSlots() {
-		return stateInvalid, fmt.Sprintf("%d slot public keys for %d shares", len(keys.SlotPublicKeys), s.NumSlots()), false
+		return stateInvalid, fmt.Sprintf("%d slot public keys for %d shares", len(keys.SlotPublicKeys), s.NumSlots()), 0
 	}
 	for i := range s.Scalars {
 		if err := VerifyShare(s.Scalars[i], keys.SlotPublicKeys[i]); err != nil {
-			return stateInvalid, fmt.Sprintf("slot %d: %v", s.SlotStart+uint32(i), err), false
+			return stateInvalid, fmt.Sprintf("slot %d: %v", s.SlotStart+uint32(i), err), 0
 		}
 	}
-	return stateValid, "", false
+	return stateValid, "", 0
 }
 
 // VerifyShare checks sk·G2 == slotPublicKey (compressed G2) for a little-endian scalar.
@@ -547,7 +725,11 @@ func (p *FileShareProvider) Statuses() []Status {
 	defer p.mu.RUnlock()
 	out := make([]Status, 0, len(p.entries))
 	for id, e := range p.entries {
-		out = append(out, Status{EpochID: id, SlotStart: e.shares.SlotStart, SlotEnd: e.shares.SlotEnd, State: e.state.String(), Reason: e.reason})
+		reason := e.reason
+		if e.state == stateUnverified {
+			reason = e.retryReason // why it is still waiting, if checked before
+		}
+		out = append(out, Status{EpochID: id, SlotStart: e.shares.SlotStart, SlotEnd: e.shares.SlotEnd, State: e.state.String(), Reason: reason})
 	}
 	return out
 }

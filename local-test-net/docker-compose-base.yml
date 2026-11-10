@@ -5,6 +5,7 @@ services:
     image: ghcr.io/product-science/inferenced
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
+      - bls-beacon:/root/.inference/bls-beacon
     environment:
       - KEY_NAME=${KEY_NAME}
       - REST_API_ACTIVE=${REST_API_ACTIVE:-false}
@@ -24,6 +25,7 @@ services:
     image: ghcr.io/product-science/api
     volumes:
       - ./prod-local/${KEY_NAME}:/root/.inference
+      - bls-beacon:/root/.inference/bls-beacon
       - ./prod-local/${KEY_NAME}/.nats:/root/.nats
       - ./${NODE_CONFIG}:/root/node_config.json
     ports:
@@ -156,6 +158,17 @@ services:
       - chain-public
 
 volumes:
+  # BLS beacon slot shares (secret key material), exported by api and read by
+  # node. Memory only (tmpfs): never written to disk, absent from backups of
+  # .inference, and not visible to other containers that mount .inference
+  # (versiond sees an empty mount point). Contents are lost when both
+  # containers stop; the api re-exports them from chain on start.
+  bls-beacon:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=16m,mode=0700,uid=0,gid=0"
   postgres-data:
 
 networks:

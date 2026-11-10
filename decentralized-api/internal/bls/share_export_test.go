@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"cosmossdk.io/log"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/app/beacon"
 	"github.com/productscience/inference/app/beacon/sharefile"
 	"github.com/productscience/inference/x/bls/types"
@@ -25,6 +25,7 @@ import (
 const (
 	exportChainID = "gonka-test"
 	exportAddr    = "gonka1me"
+	exportCons    = "\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11\x11" // 20-byte consensus address
 )
 
 // exportFixture is a degree-t polynomial: slot s's secret is f(s+1), the
@@ -92,6 +93,7 @@ func (f *exportFixture) result(epochID uint64, start, end uint32) *VerificationR
 
 type fakeChain struct {
 	chainErr     error
+	chainBlock   chan struct{} // when set, chain id lookups wait for it to close
 	current      atomic.Uint64
 	currentErr   error
 	recoverFn    func(epochID uint64) (*VerificationResult, error)
@@ -107,7 +109,14 @@ func newTestManager(t *testing.T, chain *fakeChain) (*BlsManager, string) {
 		chain.now = time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
 	}
 	bm.configureBeaconExport(true, dir, beaconExportDeps{
-		chainID: func(context.Context) (string, error) {
+		chainID: func(ctx context.Context) (string, error) {
+			if chain.chainBlock != nil {
+				select {
+				case <-chain.chainBlock:
+				case <-ctx.Done():
+					return "", ctx.Err()
+				}
+			}
 			if chain.chainErr != nil {
 				return "", chain.chainErr
 			}
@@ -175,9 +184,9 @@ func TestExportToNodeProviderRoundTrip(t *testing.T) {
 
 	keys := beacon.CommittedKeysFunc(func(_ sdk.Context, epochID uint64, start, end uint32) (beacon.EpochKeys, error) {
 		require.Equal(t, uint64(5), epochID)
-		return beacon.EpochKeys{Ready: true, GroupPublicKey: fx.groupPK, SlotPublicKeys: fx.slotPKs[start : end+1], OwnerAddress: exportAddr}, nil
+		return beacon.EpochKeys{Ready: true, GroupPublicKey: fx.groupPK, SlotPublicKeys: fx.slotPKs[start : end+1], OwnerAddress: exportAddr, OwnerConsAddress: []byte(exportCons)}, nil
 	})
-	p, err := beacon.NewFileShareProvider(dir, keys, log.NewNopLogger())
+	p, err := beacon.NewFileShareProvider(dir, keys, beacon.StaticIdentity(exportCons), log.NewNopLogger())
 	require.NoError(t, err)
 	defer p.Close()
 
@@ -445,4 +454,165 @@ func TestStartBeaconShareExportLoop(t *testing.T) {
 		_, err := sharefile.ReadFile(path, exportChainID)
 		return err == nil
 	}, 5*time.Second, 10*time.Millisecond, "deleted file is re-exported by the loop")
+}
+
+func readShareFile(t *testing.T, path string) *sharefile.File {
+	t.Helper()
+	f, err := sharefile.ReadFile(path, exportChainID)
+	require.NoError(t, err)
+	return f
+}
+
+// L2: a well-formed file whose content is not this node's shares (stale shares
+// of an older DKG, another validator's file) is rewritten from the cached result.
+func TestReconcileReplacesStaleOrForeignFile(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	old := newExportFixture(t, 8, 2)
+	chain := &fakeChain{}
+	chain.current.Store(4)
+	bm, dir := newTestManager(t, chain)
+	mine := fx.result(4, 0, 3)
+	bm.cache.Store(mine)
+	path := filepath.Join(dir, "epoch-4.json")
+	var recovered4 atomic.Int64
+	chain.recoverFn = func(epochID uint64) (*VerificationResult, error) {
+		if epochID == 4 {
+			recovered4.Add(1)
+		}
+		return nil, status.Error(codes.NotFound, "no epoch")
+	}
+
+	want, err := bm.beaconFileFor(mustJob(t, bm, mine))
+	require.NoError(t, err)
+
+	plant := func(participant string, start, end uint32, f *exportFixture) {
+		shares := make([][sharefile.ScalarLen]byte, 0)
+		for s := start; s <= end; s++ {
+			shares = append(shares, f.secrets[s].Bytes())
+		}
+		planted, err := sharefile.New(exportChainID, 4, participant, start, end, f.groupPK, shares, chain.now)
+		require.NoError(t, err)
+		_, _, err = sharefile.WriteAtomic(dir, planted)
+		require.NoError(t, err)
+	}
+
+	plant(exportAddr, 0, 3, old) // stale: same owner and range, shares of another DKG
+	bm.reconcileBeaconShares(context.Background())
+	require.Equal(t, want.SHA256, readShareFile(t, path).SHA256, "stale file replaced")
+
+	plant("gonka1other", 4, 7, fx) // foreign: another validator's range
+	bm.reconcileBeaconShares(context.Background())
+	got := readShareFile(t, path)
+	require.Equal(t, want.SHA256, got.SHA256, "foreign file replaced")
+	require.Equal(t, exportAddr, got.ParticipantAddress)
+
+	// A matching file is left alone (no rewrite).
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+	chain.now = chain.now.Add(time.Hour) // a rewrite would change created_at
+	bm.reconcileBeaconShares(context.Background())
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after), "matching file untouched")
+	require.Zero(t, recovered4.Load(), "epoch 4 comes from the cache, never recovered")
+}
+
+func mustJob(t *testing.T, bm *BlsManager, r *VerificationResult) *beaconExportJob {
+	t.Helper()
+	job, err := bm.beaconJobFor(r)
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	return job
+}
+
+// L2: when this node's final result says it holds no slots in the epoch, a
+// share file for that epoch is removed (it can never be used by this node).
+func TestReconcileRemovesFileOfNonParticipantEpoch(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	chain := &fakeChain{}
+	chain.current.Store(4)
+	bm, dir := newTestManager(t, chain)
+	_, err := bm.exportBeaconShares(fx.result(4, 0, 3))
+	require.NoError(t, err)
+	path := filepath.Join(dir, "epoch-4.json")
+	require.FileExists(t, path)
+
+	bm.cache.Store(&VerificationResult{EpochID: 4, DkgPhase: types.DKGPhase_DKG_PHASE_COMPLETED, IsParticipant: false})
+	bm.reconcileBeaconShares(context.Background())
+	require.NoFileExists(t, path)
+}
+
+// L2: after a restart (empty cache) a present, well-formed file is compared
+// once against the recovered result; later ticks use the cache.
+func TestReconcileChecksExistingFileOnceAfterRestart(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	chain := &fakeChain{}
+	chain.current.Store(6)
+	bm, dir := newTestManager(t, chain)
+	_, err := bm.exportBeaconShares(fx.result(6, 0, 3)) // written by the previous process
+	require.NoError(t, err)
+	path := filepath.Join(dir, "epoch-6.json")
+	before, err := os.Stat(path)
+	require.NoError(t, err)
+
+	chain.recoverFn = func(epochID uint64) (*VerificationResult, error) {
+		if epochID != 6 {
+			return nil, status.Error(codes.NotFound, "no epoch")
+		}
+		r := fx.result(6, 0, 3)
+		bm.cache.Store(r)
+		return r, nil
+	}
+	bm.reconcileBeaconShares(context.Background())
+	require.Equal(t, int64(2), chain.recoverCalls.Load(), "epochs 6 and 7 recovered once")
+	after, err := os.Stat(path)
+	require.NoError(t, err)
+	require.True(t, os.SameFile(before, after), "identical content is not rewritten")
+
+	for i := 0; i < 3; i++ {
+		bm.reconcileBeaconShares(context.Background())
+	}
+	require.Equal(t, int64(2), chain.recoverCalls.Load(), "epoch 6 now comes from the cache; 7 is in backoff")
+}
+
+// L6: the storeVerificationResult hook never waits on the chain id query or
+// disk; the worker writes the file later from a snapshot of the result.
+func TestStoreHookIsAsyncAndSnapshotsShares(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	chain := &fakeChain{chainBlock: make(chan struct{})}
+	chain.current.Store(0) // reconcile idle
+	bm, dir := newTestManager(t, chain)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	bm.StartBeaconShareExport(ctx, time.Hour)
+
+	r := fx.result(3, 0, 3)
+	want := make([]fr.Element, len(r.AggregatedShares))
+	copy(want, r.AggregatedShares)
+
+	start := time.Now()
+	bm.storeVerificationResult(r)
+	require.Less(t, time.Since(start), 500*time.Millisecond, "hook returns while the chain id query is blocked")
+
+	// The cached result changes after the hook: the export must not see it.
+	for i := range r.AggregatedShares {
+		r.AggregatedShares[i].SetUint64(uint64(i) + 1)
+	}
+	// Many more results while the worker is blocked: a full queue never blocks the hook.
+	start = time.Now()
+	for e := uint64(10); e < 10+3*beaconExportQueue; e++ {
+		bm.storeVerificationResult(fx.result(e, 0, 3))
+	}
+	require.Less(t, time.Since(start), 2*time.Second, "full queue drops instead of blocking")
+
+	close(chain.chainBlock)
+	path := filepath.Join(dir, "epoch-3.json")
+	require.Eventually(t, func() bool {
+		_, err := sharefile.ReadFile(path, exportChainID)
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	f := readShareFile(t, path)
+	for i, sh := range f.SharesBigEndian() {
+		require.Equal(t, want[i].Bytes(), sh, "slot %d exported from the snapshot", i)
+	}
 }

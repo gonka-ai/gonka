@@ -21,11 +21,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
+	"syscall"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -59,6 +61,13 @@ var (
 	ErrChecksum = errors.New("sharefile: checksum mismatch")
 	// ErrChainID is returned when the file belongs to another chain.
 	ErrChainID = errors.New("sharefile: chain_id mismatch")
+	// ErrNotRegular is returned for symlinks, FIFOs, devices and anything else
+	// that is not a plain file. Such entries are never opened for reading.
+	ErrNotRegular = errors.New("sharefile: not a regular file")
+	// ErrMode is returned by ReadPrivateFile for files group/other can access.
+	ErrMode = errors.New("sharefile: file mode too open")
+	// ErrTooLarge is returned for files above MaxFileBytes.
+	ErrTooLarge = errors.New("sharefile: file too large")
 
 	fileNameRE = regexp.MustCompile(`^epoch-([0-9]{1,20})\.json$`)
 	frModulus  = fr.Modulus()
@@ -242,37 +251,96 @@ func Unmarshal(data []byte, chainID string) (*File, error) {
 	return &f, nil
 }
 
-// ReadFile reads and validates a share file.
+// ReadFile reads and validates a share file. Only a regular file is read (a
+// symlink, FIFO or device is rejected without being opened for reading) and
+// at most MaxFileBytes of it.
 func ReadFile(path, chainID string) (*File, error) {
-	fh, err := os.Open(path)
+	data, err := readRegular(path, 0)
 	if err != nil {
 		return nil, err
-	}
-	defer fh.Close()
-	data, err := readLimited(fh, MaxFileBytes)
-	if err != nil {
-		return nil, fmt.Errorf("sharefile: read %s: %w", filepath.Base(path), err)
 	}
 	return Unmarshal(data, chainID)
 }
 
-func readLimited(fh *os.File, limit int64) ([]byte, error) {
+// ReadPrivateFile is ReadFile that also rejects files group or others can
+// access (any of 0o077), checked before the content is read.
+func ReadPrivateFile(path, chainID string) (*File, error) {
+	data, err := readRegular(path, 0o077)
+	if err != nil {
+		return nil, err
+	}
+	return Unmarshal(data, chainID)
+}
+
+// readReplaceRetries bounds retries when the file is atomically replaced
+// (renamed over) between the Lstat and the open, which is a normal writer race.
+const readReplaceRetries = 5
+
+var errReplaced = errors.New("replaced while opening")
+
+// readRegular reads path if it is a regular file whose permission bits have
+// none of forbidPerm. The entry is checked with Lstat, opened with O_NOFOLLOW
+// and O_NONBLOCK (a FIFO swapped in after the check cannot block the open),
+// re-checked on the open handle, and read through a size limit.
+func readRegular(path string, forbidPerm os.FileMode) ([]byte, error) {
+	var err error
+	for i := 0; i < readReplaceRetries; i++ {
+		var data []byte
+		if data, err = readRegularOnce(path, forbidPerm); !errors.Is(err, errReplaced) {
+			return data, err
+		}
+	}
+	return nil, fmt.Errorf("sharefile: %s: %w %d times", filepath.Base(path), err, readReplaceRetries)
+}
+
+func readRegularOnce(path string, forbidPerm os.FileMode) ([]byte, error) {
+	name := filepath.Base(path)
+	li, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkEntry(name, li, forbidPerm); err != nil {
+		return nil, err
+	}
+	fh, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, errReplaced // swapped for a symlink after the check: re-check
+		}
+		return nil, fmt.Errorf("sharefile: open %s: %w", name, err)
+	}
+	defer fh.Close()
 	st, err := fh.Stat()
 	if err != nil {
 		return nil, err
 	}
-	if st.Size() > limit {
-		return nil, fmt.Errorf("file too large: %d bytes", st.Size())
+	if !os.SameFile(li, st) {
+		return nil, errReplaced
 	}
-	buf := make([]byte, 0, st.Size())
-	b := bytes.NewBuffer(buf)
-	if _, err := b.ReadFrom(fh); err != nil {
+	if err := checkEntry(name, st, forbidPerm); err != nil {
 		return nil, err
 	}
-	if int64(b.Len()) > limit {
-		return nil, fmt.Errorf("file too large: %d bytes", b.Len())
+	data, err := io.ReadAll(io.LimitReader(fh, MaxFileBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("sharefile: read %s: %w", name, err)
 	}
-	return b.Bytes(), nil
+	if len(data) > MaxFileBytes {
+		return nil, fmt.Errorf("%w: %s over %d bytes", ErrTooLarge, name, MaxFileBytes)
+	}
+	return data, nil
+}
+
+func checkEntry(name string, fi os.FileInfo, forbidPerm os.FileMode) error {
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("%w: %s (%s)", ErrNotRegular, name, fi.Mode().Type())
+	}
+	if perm := fi.Mode().Perm(); perm&forbidPerm != 0 {
+		return fmt.Errorf("%w: %s has %#o (want %#o)", ErrMode, name, perm, FileMode)
+	}
+	if fi.Size() > MaxFileBytes {
+		return fmt.Errorf("%w: %s is %d bytes", ErrTooLarge, name, fi.Size())
+	}
+	return nil
 }
 
 // EnsureDir creates dir with DirMode, or tightens an existing directory to it.

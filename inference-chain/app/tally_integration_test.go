@@ -214,6 +214,8 @@ func createTestAppWithOptions(t *testing.T, extraOpts map[string]interface{}) *a
 	appOptions := make(simtestutil.AppOptionsMap, 0)
 	appOptions[flags.FlagHome] = t.TempDir()
 	appOptions[server.FlagInvCheckPeriod] = uint(0)
+	// No CometBFT here: keep the beacon identity lookup off any real local node.
+	appOptions[app.FlagRPCListenAddr] = "tcp://127.0.0.1:1"
 	for k, v := range extraOpts {
 		appOptions[k] = v
 	}

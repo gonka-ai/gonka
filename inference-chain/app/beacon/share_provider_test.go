@@ -1,18 +1,23 @@
 package beacon
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"cosmossdk.io/log"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 	blst "github.com/supranational/blst/bindings/go"
 
@@ -101,10 +106,14 @@ type fakeKeys struct {
 	mu       sync.Mutex
 	fixtures map[uint64]*dkgFixture
 	owners   map[uint64]string // epoch -> owner of every range (simplification)
-	ready    bool
-	err      error
-	panicMsg string
-	calls    atomic.Int64
+	// ownerCons is the owner's validator consensus address (default selfAddr);
+	// noOwnerCons simulates an owner without a validator.
+	ownerCons   []byte
+	noOwnerCons bool
+	ready       bool
+	err         error
+	panicMsg    string
+	calls       atomic.Int64
 }
 
 func (k *fakeKeys) EpochKeys(_ sdk.Context, epochID uint64, start, end uint32) (EpochKeys, error) {
@@ -128,11 +137,46 @@ func (k *fakeKeys) EpochKeys(_ sdk.Context, epochID uint64, start, end uint32) (
 	if o, ok := k.owners[epochID]; ok {
 		owner = o
 	}
-	return EpochKeys{Ready: true, GroupPublicKey: f.groupPK, SlotPublicKeys: f.slotPKs[start : end+1], OwnerAddress: owner}, nil
+	cons := selfAddr
+	if k.ownerCons != nil {
+		cons = k.ownerCons
+	}
+	if k.noOwnerCons {
+		cons = nil
+	}
+	return EpochKeys{Ready: true, GroupPublicKey: f.groupPK, SlotPublicKeys: f.slotPKs[start : end+1],
+		OwnerAddress: owner, OwnerConsAddress: cons}, nil
+}
+
+func (k *fakeKeys) set(fn func(k *fakeKeys)) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	fn(k)
 }
 
 func newKeys(fixtures map[uint64]*dkgFixture) *fakeKeys {
 	return &fakeKeys{fixtures: fixtures, owners: map[uint64]string{}, ready: true}
+}
+
+// selfAddr is the consensus address the test node signs with.
+var selfAddr = bytes.Repeat([]byte{0xAA}, 20)
+
+// mutableIdentity is a SelfIdentity whose address appears later.
+type mutableIdentity struct {
+	mu   sync.Mutex
+	addr []byte
+}
+
+func (m *mutableIdentity) ConsensusAddress() ([]byte, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.addr, len(m.addr) > 0
+}
+
+func (m *mutableIdentity) set(a []byte) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.addr = a
 }
 
 func ctxAt(chainID string, height int64) sdk.Context {
@@ -141,7 +185,12 @@ func ctxAt(chainID string, height int64) sdk.Context {
 
 func newProvider(t *testing.T, dir string, keys CommittedKeys) *FileShareProvider {
 	t.Helper()
-	p, err := NewFileShareProvider(dir, keys, log.NewNopLogger())
+	return newProviderAs(t, dir, keys, StaticIdentity(selfAddr))
+}
+
+func newProviderAs(t *testing.T, dir string, keys CommittedKeys, self SelfIdentity) *FileShareProvider {
+	t.Helper()
+	p, err := NewFileShareProvider(dir, keys, self, log.NewNopLogger())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = p.Close() })
 	return p
@@ -219,9 +268,9 @@ func TestProviderRejectsAgainstCommittedState(t *testing.T) {
 			calls: -1,
 		},
 		{
-			name:  "committed keys error",
+			name:  "committed keys reject the file (deterministic)",
 			write: func(t *testing.T, dir string) { fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil) },
-			keys:  func(k *fakeKeys) { k.err = errors.New("epoch 5 DKG failed") },
+			keys:  func(k *fakeKeys) { k.err = fmt.Errorf("%w: epoch 5 DKG failed", ErrKeysInvalid) },
 		},
 	}
 	for _, tc := range cases {
@@ -432,17 +481,339 @@ func TestVerifyShareRejectsGarbageKey(t *testing.T) {
 }
 
 func TestNewFileShareProviderArgs(t *testing.T) {
-	_, err := NewFileShareProvider("", newKeys(nil), nil)
+	self := StaticIdentity(selfAddr)
+	_, err := NewFileShareProvider("", newKeys(nil), self, nil)
 	require.Error(t, err)
-	_, err = NewFileShareProvider(t.TempDir(), nil, nil)
+	_, err = NewFileShareProvider(t.TempDir(), nil, self, nil)
 	require.Error(t, err)
+	_, err = NewFileShareProvider(t.TempDir(), newKeys(nil), nil, nil)
+	require.ErrorContains(t, err, "SelfIdentity")
 
 	dir := filepath.Join(t.TempDir(), "nested", "bls-beacon")
-	p, err := NewFileShareProvider(dir, newKeys(nil), nil)
+	p, err := NewFileShareProvider(dir, newKeys(nil), self, nil)
 	require.NoError(t, err)
 	require.Equal(t, dir, p.Dir())
 	st, err := os.Stat(dir)
 	require.NoError(t, err)
 	require.Equal(t, sharefile.DirMode, st.Mode().Perm())
 	require.NoError(t, p.Close(), "Close without Start is a no-op")
+}
+
+// M2: shares are used only when their slot owner is this node's validator.
+func TestProviderRejectsSharesOfAnotherValidator(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	keys.ownerCons = bytes.Repeat([]byte{0xBB}, 20) // the owner is another validator
+	p := newProvider(t, dir, keys)
+
+	for h := int64(100); h < 105; h++ {
+		_, ok := p.Get(ctxAt(testChain, h), 5)
+		require.False(t, ok)
+	}
+	require.Equal(t, int64(1), keys.calls.Load(), "judged once")
+	st := p.Statuses()
+	require.Len(t, st, 1)
+	require.Equal(t, "invalid", st[0].State)
+	require.Contains(t, st[0].Reason, "this node signs as "+strings.Repeat("AA", 20))
+	require.Contains(t, st[0].Reason, strings.Repeat("BB", 20))
+}
+
+// Until the node knows its own consensus address the shares are neither used
+// nor rejected; they are checked again every block and served once it is known.
+func TestProviderWaitsForOwnIdentity(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	self := &mutableIdentity{}
+	p := newProviderAs(t, dir, keys, self)
+
+	_, ok := p.Get(ctxAt(testChain, 100), 5)
+	require.False(t, ok)
+	_, ok = p.Get(ctxAt(testChain, 100), 5)
+	require.False(t, ok)
+	require.Equal(t, int64(1), keys.calls.Load(), "no recheck within the same height")
+	require.Equal(t, "unverified", p.Statuses()[0].State)
+
+	self.set(selfAddr)
+	got, ok := p.Get(ctxAt(testChain, 101), 5)
+	require.True(t, ok, "rechecked on the next height")
+	require.Len(t, got.Scalars, 6)
+	require.Equal(t, "valid", p.Statuses()[0].State)
+}
+
+// A slot owner without a validator (yet) is retried like a not-final DKG, not rejected.
+func TestProviderRetriesOwnerWithoutValidator(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	keys.noOwnerCons = true
+	p := newProvider(t, dir, keys)
+
+	_, ok := p.Get(ctxAt(testChain, 100), 5)
+	require.False(t, ok)
+	_, ok = p.Get(ctxAt(testChain, 100+verifyRetryBlocks-1), 5)
+	require.False(t, ok)
+	require.Equal(t, int64(1), keys.calls.Load(), "waits verifyRetryBlocks")
+	require.Equal(t, "unverified", p.Statuses()[0].State)
+
+	keys.set(func(k *fakeKeys) { k.noOwnerCons = false })
+	_, ok = p.Get(ctxAt(testChain, 100+verifyRetryBlocks), 5)
+	require.True(t, ok)
+}
+
+// The identity check runs before the per-slot scalar checks: a foreign file
+// with wrong shares is reported as foreign, not as a bad share.
+func TestProviderIdentityCheckedBeforeScalars(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	other := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, other.sharesBE(4, 9), nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	keys.ownerCons = bytes.Repeat([]byte{0xBB}, 20)
+	p := newProvider(t, dir, keys)
+
+	_, ok := p.Get(ctxAt(testChain, 100), 5)
+	require.False(t, ok)
+	require.Contains(t, p.Statuses()[0].Reason, "this node signs as")
+}
+
+func TestStaticIdentity(t *testing.T) {
+	_, ok := StaticIdentity(nil).ConsensusAddress()
+	require.False(t, ok)
+	a, ok := StaticIdentity(selfAddr).ConsensusAddress()
+	require.True(t, ok)
+	require.Equal(t, selfAddr, a)
+}
+
+// L1: a transient committed-state error is not a verdict: the file stays
+// unverified, is retried after verifyRetryBlocks and then accepted.
+func TestProviderRetriesTransientKeysError(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	keys.err = errors.New("iavl: read error")
+	p := newProvider(t, dir, keys)
+
+	_, ok := p.Get(ctxAt(testChain, 100), 5)
+	require.False(t, ok)
+	_, ok = p.Get(ctxAt(testChain, 100+verifyRetryBlocks-1), 5)
+	require.False(t, ok)
+	require.Equal(t, int64(1), keys.calls.Load())
+	st := p.Statuses()
+	require.Equal(t, "unverified", st[0].State)
+
+	keys.set(func(k *fakeKeys) { k.err = nil })
+	_, ok = p.Get(ctxAt(testChain, 100+verifyRetryBlocks), 5)
+	require.True(t, ok, "accepted once the store answers")
+}
+
+// syncBuffer is a goroutine-safe log sink.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) count(substr string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return strings.Count(b.buf.String(), substr)
+}
+
+func newLoggedProvider(t *testing.T, dir string, keys CommittedKeys) (*FileShareProvider, *syncBuffer) {
+	t.Helper()
+	out := &syncBuffer{}
+	p, err := NewFileShareProvider(dir, keys, StaticIdentity(selfAddr), log.NewLogger(out, log.OutputJSONOption()))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = p.Close() })
+	return p, out
+}
+
+// L3: a FIFO, a symlink and a device link named like share files are rejected
+// by the constructor's load without blocking; a real file next to them loads.
+func TestProviderIgnoresSpecialFiles(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	good := fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	require.NoError(t, syscall.Mkfifo(filepath.Join(dir, "epoch-6.json"), 0o600))
+	require.NoError(t, os.Symlink(good, filepath.Join(dir, "epoch-7.json")))
+	require.NoError(t, os.Symlink("/dev/zero", filepath.Join(dir, "epoch-8.json")))
+
+	done := make(chan *FileShareProvider, 1)
+	go func() {
+		p, err := NewFileShareProvider(dir, newKeys(map[uint64]*dkgFixture{5: fx}), StaticIdentity(selfAddr), log.NewNopLogger())
+		require.NoError(t, err)
+		done <- p
+	}()
+	var p *FileShareProvider
+	select {
+	case p = <-done:
+		t.Cleanup(func() { _ = p.Close() })
+	case <-time.After(5 * time.Second):
+		t.Fatal("loading a share dir with a FIFO blocked")
+	}
+	st := p.Statuses()
+	require.Len(t, st, 1)
+	require.Equal(t, uint64(5), st[0].EpochID)
+	_, ok := p.Get(ctxAt(testChain, 100), 5)
+	require.True(t, ok)
+}
+
+// L4: Get warns once per epoch when the requested epoch has no file for
+// missingWarnBlocks heights, and not at all when the file shows up in time.
+func TestProviderWarnsOnceWhenSharesAreMissing(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	p, out := newLoggedProvider(t, dir, newKeys(map[uint64]*dkgFixture{5: fx, 6: fx}))
+	const msg = "no beacon share file for the signing epoch"
+
+	for h := int64(100); h < 100+missingWarnBlocks; h++ {
+		_, ok := p.Get(ctxAt(testChain, h), 5)
+		require.False(t, ok)
+	}
+	require.Zero(t, out.count(msg), "not before missingWarnBlocks")
+	for h := int64(100 + missingWarnBlocks); h < 100+3*missingWarnBlocks; h++ {
+		p.Get(ctxAt(testChain, h), 5)
+	}
+	require.Equal(t, 1, out.count(msg), "once per epoch")
+	require.Equal(t, 1, out.count(dir), "names the directory")
+
+	// Epoch 6: the file arrives before the warning is due.
+	p.Get(ctxAt(testChain, 200), 6)
+	fx.writeFile(t, dir, testChain, 6, 4, 9, nil, nil)
+	p.Reload()
+	for h := int64(201); h < 200+2*missingWarnBlocks; h++ {
+		p.Get(ctxAt(testChain, h), 6)
+	}
+	require.Equal(t, 1, out.count(msg), "no warning for epoch 6")
+}
+
+// asyncCtx is a verify context source over a fixed height.
+type asyncCtx struct {
+	mu     sync.Mutex
+	height int64
+	err    error
+	calls  atomic.Int64
+}
+
+func (a *asyncCtx) get() (sdk.Context, error) {
+	a.calls.Add(1)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.err != nil {
+		return sdk.Context{}, a.err
+	}
+	return ctxAt(testChain, a.height), nil
+}
+
+func (a *asyncCtx) set(h int64, err error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.height, a.err = h, err
+}
+
+// L5: with a verify context, Get never verifies (no committed-state reads on
+// the ABCI path); the background worker does, and Get then serves memory.
+func TestProviderVerifiesInBackground(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	src := &asyncCtx{}
+	src.set(0, errors.New("no committed block yet"))
+	p, err := NewFileShareProvider(dir, keys, StaticIdentity(selfAddr), log.NewNopLogger())
+	require.NoError(t, err)
+	p.SetVerifyContext(src.get)
+	p.SetPollInterval(50 * time.Millisecond)
+	p.Start(context.Background())
+	t.Cleanup(func() { _ = p.Close() })
+
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	require.Eventually(t, func() bool { return len(p.Statuses()) == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	// Committed state not available yet: Get is memory-only and says no.
+	for h := int64(100); h < 103; h++ {
+		_, ok := p.Get(ctxAt(testChain, h), 5)
+		require.False(t, ok)
+	}
+	require.Zero(t, keys.calls.Load(), "Get never reads committed state in background mode")
+	require.Eventually(t, func() bool { return src.calls.Load() > 0 }, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, "unverified", p.Statuses()[0].State)
+
+	// Committed state available: the worker verifies, Get serves.
+	src.set(100, nil)
+	require.Eventually(t, func() bool {
+		_, ok := p.Get(ctxAt(testChain, 101), 5)
+		return ok
+	}, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, int64(1), keys.calls.Load(), "verified once, by the worker")
+	require.Equal(t, "valid", p.Statuses()[0].State)
+}
+
+// L5: retries in background mode follow the committed height of the verify context.
+func TestProviderBackgroundRetryFollowsCommittedHeight(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	keys.ready = false
+	src := &asyncCtx{}
+	src.set(100, nil)
+	p, err := NewFileShareProvider(dir, keys, StaticIdentity(selfAddr), log.NewNopLogger())
+	require.NoError(t, err)
+	p.SetVerifyContext(src.get)
+	p.Start(context.Background())
+	t.Cleanup(func() { _ = p.Close() })
+
+	require.Eventually(t, func() bool { return keys.calls.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	keys.set(func(k *fakeKeys) { k.ready = true })
+	time.Sleep(3 * verifyInterval)
+	require.Equal(t, int64(1), keys.calls.Load(), "not retried within the same committed height")
+
+	// A not-final DKG is retried at the very next committed height (the file
+	// usually lands one block before the verifier sees the completing block).
+	src.set(101, nil)
+	require.Eventually(t, func() bool { return p.Statuses()[0].State == "valid" }, 5*time.Second, 10*time.Millisecond)
+	require.Equal(t, int64(2), keys.calls.Load())
+}
+
+// Other transient errors keep the longer retry in background mode too.
+func TestProviderBackgroundTransientErrorRetriesSlowly(t *testing.T) {
+	dir := t.TempDir()
+	fx := newDKGFixture(t, 16, 4)
+	fx.writeFile(t, dir, testChain, 5, 4, 9, nil, nil)
+	keys := newKeys(map[uint64]*dkgFixture{5: fx})
+	keys.err = errors.New("iavl: read error")
+	src := &asyncCtx{}
+	src.set(100, nil)
+	p, err := NewFileShareProvider(dir, keys, StaticIdentity(selfAddr), log.NewNopLogger())
+	require.NoError(t, err)
+	p.SetVerifyContext(src.get)
+	p.Start(context.Background())
+	t.Cleanup(func() { _ = p.Close() })
+
+	require.Eventually(t, func() bool { return keys.calls.Load() == 1 }, 5*time.Second, 10*time.Millisecond)
+	keys.set(func(k *fakeKeys) { k.err = nil })
+	src.set(101, nil)
+	time.Sleep(3 * verifyInterval)
+	require.Equal(t, int64(1), keys.calls.Load(), "store errors wait verifyRetryBlocks")
+	src.set(100+verifyRetryBlocks, nil)
+	require.Eventually(t, func() bool { return p.Statuses()[0].State == "valid" }, 5*time.Second, 10*time.Millisecond)
+}
+
+func TestProviderNoMissingWarningForEpochZero(t *testing.T) {
+	p, out := newLoggedProvider(t, t.TempDir(), newKeys(nil))
+	for h := int64(1); h < 3*missingWarnBlocks; h++ {
+		p.Get(ctxAt(testChain, h), 0)
+	}
+	require.Zero(t, out.count("no beacon share file"))
 }

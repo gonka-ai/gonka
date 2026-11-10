@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"errors"
 	"path/filepath"
 	"testing"
@@ -78,9 +79,49 @@ func noPrecompute(t *testing.T) func(*blstypes.EpochBLSData) ([][]byte, error) {
 	}
 }
 
+// consOf resolves participants from a map (missing → no validator).
+func consOf(m map[string][]byte) func(string) ([]byte, error) {
+	return func(p string) ([]byte, error) { return m[p], nil }
+}
+
+func TestEpochKeysFromDataOwnerConsAddress(t *testing.T) {
+	data := completedEpochData()
+	cons := bytes.Repeat([]byte{7}, 20)
+	var asked []string
+	resolve := func(p string) ([]byte, error) {
+		asked = append(asked, p)
+		return map[string][]byte{"gonka1b": cons}[p], nil
+	}
+	keys, err := epochKeysFromData(data, 3, 7, noPrecompute(t), resolve)
+	require.NoError(t, err)
+	require.Equal(t, cons, keys.OwnerConsAddress)
+	require.Equal(t, []string{"gonka1b"}, asked)
+
+	// Owner without a validator: nil, not an error.
+	keys, err = epochKeysFromData(data, 0, 2, noPrecompute(t), resolve)
+	require.NoError(t, err)
+	require.Nil(t, keys.OwnerConsAddress)
+
+	// No exact owner: nothing to resolve.
+	asked = nil
+	keys, err = epochKeysFromData(data, 0, 3, noPrecompute(t), resolve)
+	require.NoError(t, err)
+	require.Nil(t, keys.OwnerConsAddress)
+	require.Empty(t, asked)
+
+	// Lookup errors surface.
+	_, err = epochKeysFromData(data, 3, 7, noPrecompute(t), func(string) ([]byte, error) { return nil, errors.New("store") })
+	require.ErrorContains(t, err, "store")
+
+	// Too few stored slot public keys after precompute: error, not a panic.
+	data.SlotPublicKeys = nil
+	_, err = epochKeysFromData(data, 3, 7, func(*blstypes.EpochBLSData) ([][]byte, error) { return [][]byte{{0}}, nil }, consOf(nil))
+	require.ErrorContains(t, err, "slot public keys")
+}
+
 func TestEpochKeysFromData(t *testing.T) {
 	data := completedEpochData()
-	keys, err := epochKeysFromData(data, 3, 7, noPrecompute(t))
+	keys, err := epochKeysFromData(data, 3, 7, noPrecompute(t), consOf(nil))
 	require.NoError(t, err)
 	require.True(t, keys.Ready)
 	require.Equal(t, []byte("gpk"), keys.GroupPublicKey)
@@ -89,19 +130,19 @@ func TestEpochKeysFromData(t *testing.T) {
 
 	// SIGNED is final too.
 	data.DkgPhase = blstypes.DKGPhase_DKG_PHASE_SIGNED
-	keys, err = epochKeysFromData(data, 0, 2, noPrecompute(t))
+	keys, err = epochKeysFromData(data, 0, 2, noPrecompute(t), consOf(nil))
 	require.NoError(t, err)
 	require.Equal(t, "gonka1a", keys.OwnerAddress)
 
 	// A range that is not exactly one participant's has no owner.
-	keys, err = epochKeysFromData(data, 0, 3, noPrecompute(t))
+	keys, err = epochKeysFromData(data, 0, 3, noPrecompute(t), consOf(nil))
 	require.NoError(t, err)
 	require.Empty(t, keys.OwnerAddress)
 
 	// Out of bounds.
-	_, err = epochKeysFromData(data, 6, 8, noPrecompute(t))
+	_, err = epochKeysFromData(data, 6, 8, noPrecompute(t), consOf(nil))
 	require.Error(t, err)
-	_, err = epochKeysFromData(data, 5, 4, noPrecompute(t))
+	_, err = epochKeysFromData(data, 5, 4, noPrecompute(t), consOf(nil))
 	require.Error(t, err)
 }
 
@@ -114,13 +155,13 @@ func TestEpochKeysFromDataPhases(t *testing.T) {
 	} {
 		data := completedEpochData()
 		data.DkgPhase = phase
-		keys, err := epochKeysFromData(data, 0, 2, noPrecompute(t))
+		keys, err := epochKeysFromData(data, 0, 2, noPrecompute(t), consOf(nil))
 		require.NoError(t, err, phase)
 		require.False(t, keys.Ready, phase)
 	}
 	data := completedEpochData()
 	data.DkgPhase = blstypes.DKGPhase_DKG_PHASE_FAILED
-	_, err := epochKeysFromData(data, 0, 2, noPrecompute(t))
+	_, err := epochKeysFromData(data, 0, 2, noPrecompute(t), consOf(nil))
 	require.ErrorContains(t, err, "failed")
 }
 
@@ -132,14 +173,14 @@ func TestEpochKeysFromDataPrecomputesLegacyEpochs(t *testing.T) {
 	keys, err := epochKeysFromData(data, 3, 4, func(*blstypes.EpochBLSData) ([][]byte, error) {
 		called++
 		return all, nil
-	})
+	}, consOf(nil))
 	require.NoError(t, err)
 	require.Equal(t, 1, called)
 	require.Equal(t, [][]byte{{3}, {4}}, keys.SlotPublicKeys)
 
 	_, err = epochKeysFromData(data, 3, 4, func(*blstypes.EpochBLSData) ([][]byte, error) {
 		return nil, errors.New("boom")
-	})
+	}, consOf(nil))
 	require.ErrorContains(t, err, "boom")
 }
 
@@ -184,4 +225,25 @@ func TestBeaconShareProbe(t *testing.T) {
 	resp, err = h(sdk.Context{}, &abci.RequestExtendVote{Height: 13})
 	require.NoError(t, err)
 	require.Empty(t, resp.VoteExtension)
+}
+
+// L1: only deterministic verdicts are ErrKeysInvalid; lookup failures are not.
+func TestEpochKeysFromDataErrorClasses(t *testing.T) {
+	data := completedEpochData()
+	data.DkgPhase = blstypes.DKGPhase_DKG_PHASE_FAILED
+	_, err := epochKeysFromData(data, 0, 2, noPrecompute(t), consOf(nil))
+	require.ErrorIs(t, err, beacon.ErrKeysInvalid, "failed DKG")
+
+	data = completedEpochData()
+	_, err = epochKeysFromData(data, 6, 8, noPrecompute(t), consOf(nil))
+	require.ErrorIs(t, err, beacon.ErrKeysInvalid, "range outside the epoch")
+
+	_, err = epochKeysFromData(data, 3, 7, noPrecompute(t), func(string) ([]byte, error) { return nil, errors.New("store") })
+	require.Error(t, err)
+	require.NotErrorIs(t, err, beacon.ErrKeysInvalid, "validator lookup failure is transient")
+
+	data.SlotPublicKeys = nil
+	_, err = epochKeysFromData(data, 3, 4, func(*blstypes.EpochBLSData) ([][]byte, error) { return nil, errors.New("boom") }, consOf(nil))
+	require.Error(t, err)
+	require.NotErrorIs(t, err, beacon.ErrKeysInvalid, "precompute failure is transient")
 }
