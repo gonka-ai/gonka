@@ -196,7 +196,7 @@ func (o RaceOutcome) Labels(a AttemptOutcome) AttemptLabels {
 
 func (o RaceOutcome) visibility(a AttemptOutcome, served bool) AttemptVisibility {
 	switch {
-	case served && o.IsWinner(a) && o.Lifecycle.ClientGone:
+	case served && o.IsWinner(a) && o.Lifecycle.ReplyUndelivered():
 		return VisibilityWinnerClientGone
 	case served && o.IsWinner(a):
 		return VisibilityWinner
@@ -208,7 +208,7 @@ func (o RaceOutcome) visibility(a AttemptOutcome, served bool) AttemptVisibility
 	return VisibilityFailedNotFinished
 }
 
-// IsWinner is the one test for "this attempt won the race"; whether a client saw it is Lifecycle.ClientGone.
+// IsWinner is the one test for "this attempt won the race"; whether a client saw it is Lifecycle.ReplyUndelivered.
 func (o RaceOutcome) IsWinner(a AttemptOutcome) bool {
 	return o.WinnerNonce != 0 && a.Nonce == o.WinnerNonce
 }

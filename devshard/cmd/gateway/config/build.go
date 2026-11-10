@@ -142,6 +142,7 @@ func applyTunables(configuration *Config, tunables env.Tunables) {
 	configuration.Limits.LogprobsOptimization = cmp.Or(tunables.LogprobsOptimization, configuration.Limits.LogprobsOptimization)
 	overrideIfSet(&configuration.Limits.MaxBufferedResponseBytes, tunables.MaxBufferedResponseBytes)
 	overrideIfSet(&configuration.Limits.MaxBufferedRequestBytes, tunables.MaxBufferedRequestBytes)
+	overrideIfSet(&configuration.Limits.MinClientReadBytesPerSecond, tunables.MinClientReadBytesPerSecond)
 	overrideIfSet(&configuration.Scheduler.WarmNewEscrows, tunables.WarmNewEscrows)
 	overrideIfSet(&configuration.Chain.SnapshotMaxAgeSeconds, tunables.ChainSnapshotMaxAgeSeconds)
 	overrideIfSet(&configuration.Engine.ReceiptTimeoutMS, tunables.EngineReceiptTimeoutMS)

@@ -106,7 +106,7 @@ func (s *Server) buildHandler() http.Handler {
 		}
 		mux.Handle(registered.pattern, wrapped)
 	}
-	return mux
+	return s.boundClientWrites(mux)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {

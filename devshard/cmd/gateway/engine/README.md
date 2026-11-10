@@ -125,10 +125,10 @@ A won attempt whose nonce is still open when it completes is not judged on that 
 
 ### Measurements
 
-- `IsWinner` is the one test for "this attempt won the race". Whether a client was still there to receive it is `Lifecycle.ClientGone`, which visibility reads: the race outlives the client.
+- `IsWinner` is the one test for "this attempt won the race". Whether the client received it is `Lifecycle.ReplyUndelivered`, true when the client left or the gateway refused the reply, which visibility and the nonce terminal read: the race outlives the client.
 - `ClockOffset` compares the executor's stamp against the midpoint of the send-to-receipt window rather than the dispatch, which would charge the host for the outbound leg; half a second is added back because the executor stamps whole seconds downward.
 - `TimePerOutputToken` starts at the first content chunk, so prefill is not charged to decode speed.
-- `MaxChunkGap` keeps the longest silence a host left mid-stream, which a chunk count cannot show. The silence before `[DONE]` is the end of the stream, not a host that went quiet. `MeanChunkGap` is the inverse of the delivered rate.
+- `MaxChunkGap` keeps the longest silence a host left mid-stream, which a chunk count cannot show. It counts from when the previous chunk's write and flush to the client returned, so time blocked on a slow client is not the host's. The silence before `[DONE]` is the end of the stream, not a host that went quiet. `MeanChunkGap` is the inverse of the delivered rate.
 - A served attempt's label reason is blanked, except under `VisibilityNoWinner`: blanking it there renders the panel's headline case as "unknown".
 
 ## Timeout votes
@@ -161,6 +161,7 @@ Facts the race observes about the escrow but must not act on travel in `Lifecycl
 - `ErrWinnerIncomplete` — the crowned attempt's bytes are already on the wire, so no other attempt's payload can be put in their place.
 - `ErrAnswerTruncated` — the crowned attempt streamed content and ended `TerminalStreamTruncated` with neither `[DONE]` nor a finished nonce, whether the stream closed cleanly or broke; a broken transfer whose host sent `[DONE]` or finished its nonce is `ErrWinnerIncomplete`. The api writes it without a `[DONE]` (see `api/README.md`, "Streaming the reply"). Its nonce goes through the timeout plan like any unfinished one.
 - `ErrEmptyStream` — every attempt ended empty.
+- `ErrReplyRefused` — the client writer wrapped its own refusal to carry the reply in it, and the race returns that refusal as its departure cause. A failed client write departs the client either way; a refusal sets `Lifecycle.ReplyRefused` instead of `Lifecycle.ClientGone`, so the race is not recorded as a client that left.
 - `ErrHostsUnavailable` — every attempt ended `TerminalUnavailable` or `TerminalThrottled`, and no host error ruled the answer: the shard had nothing wrong with the request, only nowhere to send it.
 - `ErrPoCTookTheHosts` — every attempt was ended by proof of compute starting on its host (`PhaseTransitionAborted`): it wraps `ErrHostsUnavailable`, so the client gets the same retryable 503 instead of the `ErrEmptyStream` 502 the empty streams would otherwise earn, and the log still names the cause.
 - `ErrAllAttemptsFailed` — nothing above applied.

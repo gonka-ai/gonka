@@ -123,14 +123,24 @@ func TestClientStreamDropsBytesOnceTheClientIsGoneAndKeepsFlushing(t *testing.T)
 // Test flow:
 //  1. Build a `newDrain` gate over a `flushRecorder` configured to fail on write, while the client is still connected.
 //  2. Write through the gate.
-//  3. Assert the recorder's failure propagates unchanged.
-func TestClientStreamPropagatesAConnectedClientsWriteError(t *testing.T) {
+//  3. Assert the write is reported as written, the client is gone, and the drain's client error is the recorder's failure.
+func TestClientStreamDepartsTheClientOnAFailedWrite(t *testing.T) {
 	failure := errors.New("client write failed")
 	recorder := &flushRecorder{writeErr: failure}
-	gated := newDrain(context.Background(), time.Minute).gate(recorder)
+	contexts := newDrain(context.Background(), time.Minute)
+	gated := contexts.gate(recorder)
 
-	if _, err := gated.Write([]byte("chunk")); !errors.Is(err, failure) {
-		t.Fatalf("error = %v, want %v", err, failure)
+	written, err := gated.Write([]byte("chunk"))
+	if err != nil || written != len("chunk") {
+		t.Fatalf("Write() = %d, %v, want %d, nil", written, err, len("chunk"))
+	}
+	select {
+	case <-contexts.clientGone():
+	default:
+		t.Fatal("client not gone after a failed write")
+	}
+	if err := contexts.clientErr(); !errors.Is(err, failure) {
+		t.Fatalf("client error = %v, want %v", err, failure)
 	}
 }
 

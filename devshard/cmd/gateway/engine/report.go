@@ -235,6 +235,8 @@ func (c *raceCoordinator) outcome() RaceOutcome {
 }
 
 func (c *raceCoordinator) raceFacts() RaceOutcome {
+	departed := !c.clientGoneAt.IsZero()
+	refused := departed && c.drain.replyRefused()
 	return RaceOutcome{
 		RequestID:            c.request.RequestID,
 		EscrowID:             c.escrowID,
@@ -246,7 +248,7 @@ func (c *raceCoordinator) raceFacts() RaceOutcome {
 		ClientStream:         c.request.ClientStream,
 		Decision:             c.decision,
 		PoCBypassActive:      c.pocBypass,
-		Lifecycle:            Lifecycle{BalanceExhausted: c.balanceExhausted, ClientGone: !c.clientGoneAt.IsZero()},
+		Lifecycle:            Lifecycle{BalanceExhausted: c.balanceExhausted, ClientGone: departed && !refused, ReplyRefused: refused},
 
 		ModelContextLength: c.deps.ModelContextLength,
 	}
