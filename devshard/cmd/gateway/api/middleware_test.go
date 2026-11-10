@@ -97,7 +97,7 @@ func TestAReadDeadlineBoundsTheBodyAndIsClearedBeforeTheResponse(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatBody))
 	readStarted := time.Now()
 
-	body, err := readBody(writer, request, chatIngestLimit)
+	body, err := readBody(writer, request, chatIngestLimit, nil)
 	if err != nil {
 		t.Fatalf("readBody() = %v", err)
 	}
@@ -135,7 +135,7 @@ func TestABodyIsReadWholeWhateverLengthItDeclares(t *testing.T) {
 			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(chatBody))
 			request.ContentLength = testCase.contentLength
 
-			body, err := readBody(httptest.NewRecorder(), request, chatIngestLimit)
+			body, err := readBody(httptest.NewRecorder(), request, chatIngestLimit, nil)
 			if err != nil {
 				t.Fatalf("readBody() = %v", err)
 			}

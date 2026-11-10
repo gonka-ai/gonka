@@ -42,7 +42,7 @@ type clientStream struct {
 	pendingEvent bool
 }
 
-func newClientStream(w http.ResponseWriter, requestID string, streaming, usage bool, logprobs filters.LogprobIntent, budget *BufferBudget) *clientStream {
+func newClientStream(w http.ResponseWriter, requestID string, streaming, usage bool, logprobs filters.LogprobIntent, promptTokens uint64, budget *BufferBudget) *clientStream {
 	stream := &clientStream{
 		writer:     w,
 		controller: http.NewResponseController(w),
@@ -52,9 +52,9 @@ func newClientStream(w http.ResponseWriter, requestID string, streaming, usage b
 		budget:     budget,
 	}
 	if streaming {
-		stream.rewriter = filters.NewStreamRewriter(logprobs, usage)
+		stream.rewriter = filters.NewStreamRewriter(logprobs, usage, promptTokens)
 	} else {
-		stream.folder = filters.NewBodyFolder(logprobs)
+		stream.folder = filters.NewBodyFolder(logprobs, promptTokens)
 	}
 	return stream
 }

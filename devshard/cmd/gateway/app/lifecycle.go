@@ -77,7 +77,7 @@ type bootStep struct {
 	start func() error
 }
 
-// bootOrder is the nine-step contract every boot follows. See operations.md, "Boot".
+// bootOrder is the ten-step contract every boot follows. See operations.md, "Boot".
 func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config.Config, started *bootState) []bootStep {
 	return []bootStep{
 		{name: "chain observer", start: func() error { g.observer.Start(backgroundCtx); return nil }},
@@ -90,6 +90,7 @@ func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config
 			return err
 		}},
 		{name: "nonce ledger", start: func() error { g.nonces.Start(backgroundCtx, g.escrows, g.events); return nil }},
+		{name: "owed refusal votes", start: func() error { return g.replayOwedVotes(ctx) }},
 		{name: "escrow lifecycle", start: func() error { g.manager.Start(backgroundCtx); return nil }},
 		{name: "devshard write republish", start: func() error {
 			started.republished = g.republishOnDevshardWrites(backgroundCtx, started.unopenedEscrows)
@@ -101,6 +102,15 @@ func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config
 			return nil
 		}},
 	}
+}
+
+func (g *gateway) replayOwedVotes(ctx context.Context) error {
+	votes, err := g.owedVotes.Load(ctx)
+	if err != nil {
+		return err
+	}
+	g.races.ReplayOwedVotes(votes)
+	return nil
 }
 
 // startAll stops at the first step that fails, so nothing behind a half-built one is started. See operations.md, "Boot".

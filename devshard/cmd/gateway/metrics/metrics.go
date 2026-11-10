@@ -12,8 +12,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
-// otherMethodLabel absorbs every method outside knownMethods. See README.md, "Cardinality in practice".
-const otherMethodLabel = "other"
+// otherMethodLabel absorbs every method outside knownMethods (README.md, "Cardinality in practice"); the scrape bounds are in "Scrapes".
+const (
+	otherMethodLabel = "other"
+
+	maxConcurrentScrapes = 4
+	scrapeTimeout        = 10 * time.Second
+)
 
 var knownMethods = map[string]bool{
 	http.MethodGet:     true,
@@ -34,6 +39,7 @@ func methodLabel(method string) string {
 
 type Metrics struct {
 	registry            *prometheus.Registry
+	scrapes             http.Handler
 	httpRequestsTotal   *prometheus.CounterVec
 	httpRequestDuration *prometheus.HistogramVec
 }
@@ -64,6 +70,7 @@ func New() *Metrics {
 
 	return &Metrics{
 		registry:            registry,
+		scrapes:             newScrapeHandler(registry, scrapeTimeout),
 		httpRequestsTotal:   httpRequestsTotal,
 		httpRequestDuration: httpRequestDuration,
 	}
@@ -76,8 +83,11 @@ func (m *Metrics) Register(metricCollectors ...prometheus.Collector) {
 	m.registry.MustRegister(metricCollectors...)
 }
 
-func (m *Metrics) Handler() http.Handler {
-	return promhttp.HandlerFor(m.registry, promhttp.HandlerOpts{})
+// Handler is the one scrape handler every call returns, so its concurrency cap holds across scrapes. See README.md, "Scrapes".
+func (m *Metrics) Handler() http.Handler { return m.scrapes }
+
+func newScrapeHandler(gatherer prometheus.Gatherer, timeout time.Duration) http.Handler {
+	return promhttp.HandlerFor(gatherer, promhttp.HandlerOpts{MaxRequestsInFlight: maxConcurrentScrapes, Timeout: timeout})
 }
 
 // InstrumentRoute takes the route PATTERN ("/devshard/{id}/v1/status"), never the raw request path.

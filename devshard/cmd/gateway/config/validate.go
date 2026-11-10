@@ -19,9 +19,10 @@ func outsideWeightRateRange(requestsPer10000Weight float64) bool {
 	return notFinite(requestsPer10000Weight) || requestsPer10000Weight < 0 || requestsPer10000Weight > maxConcurrentRequests
 }
 
-// MaxContextTokens is the longest context a model may be priced at. See capacity.md, "The participant limiter: IOCW".
+// MaxContextTokens is the longest context a model may be priced at, and MinDrainTimeoutSeconds the shortest drain. See capacity.md, "The participant limiter: IOCW", and race.md, "Client departure and the drain".
 const (
-	MaxContextTokens = 100_000_000
+	MaxContextTokens       = 100_000_000
+	MinDrainTimeoutSeconds = 1_200
 
 	maxWindowRequests        = 1_000_000
 	maxConcurrentRequests    = 10_000_000
@@ -119,6 +120,9 @@ func (c *Config) validateChain(complain func(format string, args ...any)) {
 	if c.Tx.PollTimeoutMS < c.Tx.PollIntervalMS {
 		complain("tx_poll_timeout_ms: %d must be >= tx_poll_interval_ms %d", c.Tx.PollTimeoutMS, c.Tx.PollIntervalMS)
 	}
+	if c.Tx.CallTimeoutMS < 1 || c.Tx.CallTimeoutMS > c.Tx.PollTimeoutMS {
+		complain("tx_call_timeout_ms: %d must be between 1 and tx_poll_timeout_ms %d", c.Tx.CallTimeoutMS, c.Tx.PollTimeoutMS)
+	}
 }
 
 func (c *Config) validateLimits(complain func(format string, args ...any)) {
@@ -145,6 +149,9 @@ func (c *Config) validateLimits(complain func(format string, args ...any)) {
 	}
 	if c.Limits.AdmissionQueueWaitMS < 0 {
 		complain("admission_queue_wait_ms: %d must be >= 0", c.Limits.AdmissionQueueWaitMS)
+	}
+	if c.Limits.MaxBufferedRequestBytes < filters.MaxBodyBytes {
+		complain("max_buffered_request_bytes: %d must be >= %d, the largest body one request may send", c.Limits.MaxBufferedRequestBytes, filters.MaxBodyBytes)
 	}
 	if c.Limits.MinClientReadBytesPerSecond < 1 || c.Limits.MinClientReadBytesPerSecond > maxMinClientReadBytesPerSecond {
 		complain("min_client_read_bytes_per_second: %d must be between 1 and %d", c.Limits.MinClientReadBytesPerSecond, maxMinClientReadBytesPerSecond)
@@ -185,8 +192,13 @@ func (c *Config) validateLimits(complain func(format string, args ...any)) {
 
 func (c *Config) validateAccess(complain func(format string, args ...any)) {
 	// A guessable key is worse than none: "none" disables admin entirely, a weak one authenticates.
-	if c.Server.AdminAPIKey != "" && len(c.Server.AdminAPIKey) < minAdminAPIKeyLength {
-		complain("admin_api_key: must be at least %d characters when set (empty disables admin routes)", minAdminAPIKeyLength)
+	if c.Server.AdminAPIKey != "" && len(c.Server.AdminAPIKey) < minAPIKeyLength {
+		complain("admin_api_key: must be at least %d characters when set (empty disables admin routes)", minAPIKeyLength)
+	}
+	for index, key := range c.Server.APIKeys {
+		if len(key) < minAPIKeyLength {
+			complain("api_keys[%d]: must be at least %d characters", index, minAPIKeyLength)
+		}
 	}
 	requiresAPIKey := false
 	for model, access := range c.Limits.ModelAccess {
@@ -259,8 +271,8 @@ func (c *Config) validateOperations(complain func(format string, args ...any)) {
 	if c.Capture.MaxBytes < 1 {
 		complain("capture_max_bytes: %d must be >= 1", c.Capture.MaxBytes)
 	}
-	if c.Stream.DrainTimeoutSeconds < 1 {
-		complain("drain_timeout_seconds: %d must be >= 1", c.Stream.DrainTimeoutSeconds)
+	if c.Stream.DrainTimeoutSeconds < MinDrainTimeoutSeconds {
+		complain("drain_timeout_seconds: %d must be >= %d", c.Stream.DrainTimeoutSeconds, MinDrainTimeoutSeconds)
 	}
 	if c.Stream.ClassifyMaxAttemptBytes < 1 {
 		complain("classify_max_attempt_bytes: %d must be >= 1", c.Stream.ClassifyMaxAttemptBytes)

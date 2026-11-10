@@ -12,7 +12,7 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
 | `/v1/status` | none, as above | yes — a gateway disabled on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
-| `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which answers 200 without checking anything else ([`deploy/README.md`](../deploy/README.md)) |
+| `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which answers 200 without checking anything else ([`deploy/README.md`](../deploy/README.md)); at most 4 scrapes run at once and each is cut at 10 s, both answered 503 ([`metrics/README.md`](../metrics/README.md), "Scrapes") |
 | `/v1/requests/{id}` | admin | yes |
 | `/devshard/{id}/v1/finalize`, `.../state`, `.../debug/*` | admin | yes |
 | `/v1/admin/*`, `/v1/debug/rotation`, `/v1/debug/memstats`, `/v1/debug/heightsync` | admin | yes |
@@ -179,6 +179,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ADMISSION_QUEUE_WAIT_MS` | 300000 | how long a request waits for a slot before 429 |
 | `GATEWAY_ADMISSION_QUEUE_PER_SLOT` | 4 | how deep the queue is allowed to grow per slot |
 | `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** non-streaming reply being assembled, at once |
+| `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` | 128 MiB | **every** chat body being read and normalised, at once; a body past it is answered 503; at least 10 MiB ([`request.md`](request.md), "Order of operations") |
 | `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` | 64 KiB/s | the slowest average a client may read one reply at, after a 30-second allowance, before its write fails; between 1 B/s and 1 GiB/s ([`api/README.md`](../api/README.md), "Streaming the reply") |
 | `DEVSHARD_CHAT_CACHE_MAX_BYTES` | 256 MiB | the response cache |
 | `GATEWAY_DEFAULT_MAX_TOKENS` / `GATEWAY_MAX_TOKENS_CAP` | from `filters` | the output budget a request gets and may ask for |
@@ -198,7 +199,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_LOSER_GRACE_MS` | 600 000 | how long a loser may keep running after the crown |
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
-| `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091) |
+| `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
 | `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
 | `DEVSHARD_STATS_RETENTION_EPOCHS` | 2 | how many epochs before the current one the nonce ledger keeps retired escrows; `0` keeps every epoch |
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
@@ -231,7 +232,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ("The kill switch" above) |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
-| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; an admin key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ("Who may call what" above) |
+| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; a key shorter than 16 characters is refused, client or admin, and an empty admin key leaves the admin surface unrouted ("Who may call what" above) |
 | `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ("Boot" below) |
 | `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC its queries fall back to; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
@@ -240,11 +241,12 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_RPC_MAX_CONNS_PER_PEER` | 2 561 | the most HTTP connections the gateway keeps open to one host; a value that is not a positive integer falls back to the default without a warning |
 | `DEVSHARD_RPC_ENDPOINTS` | unset | not honoured: every peer method uses Connect, and a set value is logged once as ignored |
 | `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS` | 16 | escrow sessions opened at once while the boot publishes the active escrows ("Boot" below) |
-| `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` | half of `GOMAXPROCS`, at least 1 | prompts tokenized at once after the cache lookup; a request that finds every slot taken is not held but carries the byte estimate instead ([`request.md`](request.md), "The prompt token count") |
+| `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` | half of `GOMAXPROCS`, at least 1 | prompts tokenized at once, after the cache lookup and at the context check; a request that finds every slot taken after the cache lookup is not held but carries the byte estimate instead, while the context check waits for a slot ([`request.md`](request.md), "The prompt token count") |
 | `DEVSHARD_STATS_TOKENIZER` | off | whether every request that admission lets through and the cache does not answer is counted with the model's tokenizer after the cache lookup, through the gate above, with each pre-token's merge capped at 512 bytes; off, only a prompt the context check tokenizes carries a tokenizer count and every other request the byte estimate ([`request.md`](request.md), "The prompt token count") |
 | `DEVSHARD_TX_FEE_DENOM` / `DEVSHARD_TX_FEE_AMOUNT` | `ngonka` / 1 000 000 | the fee every chain transaction of the gateway carries; a fee in `ngonka` is added to what an escrow create must find in the wallet |
 | `DEVSHARD_TX_GAS_LIMIT` | 700 000 | the gas limit of those transactions |
 | `DEVSHARD_TX_POLL_INTERVAL_MS` / `DEVSHARD_TX_POLL_TIMEOUT_MS` | 2 000 / 45 000 | how often a broadcast transaction is looked up, and how long before the gateway stops waiting for it |
+| `DEVSHARD_TX_CALL_TIMEOUT_MS` | 10 000 | the deadline of each chain call behind escrow creates, settlements and the escrow tick's lookups, so a node that never answers fails the call instead of holding the tick; at most `DEVSHARD_TX_POLL_TIMEOUT_MS` ([`chain/README.md`](../chain/README.md), "Transaction encoding") |
 | `GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` | 5 | the requests a host's weight buys it, and with them the fleet's own ceiling ([`capacity.md`](capacity.md)) |
 | `GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` | 10 | the same figure while the chain reports requests blocked for proof-of-compute |
 | `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT` | 0 | the per-model budget of input tokens in flight, scaled by capacity, in tokenizer tokens for a request counted with the model's tokenizer and in byte-estimate tokens otherwise ([`request.md`](request.md), "The prompt token count"); `0` is unlimited |
@@ -274,13 +276,14 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 2. the warmup prober starts;
 3. the host pings start — observability alone, and they read the live set per wave, so starting before anything is published costs nothing ([`hostping/README.md`](../hostping/README.md));
 4. `seedDevshards` applies `escrows_json` to the store — a seeded escrow that names no key variable is **refused**, not silently accepted. It leaves a row it already holds alone, but settlement deletes the row of an escrow it settled, so on every later boot the seed writes that escrow back as active;
-5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 8 does once the chain lists the participant again;
+5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 9 does once the chain lists the participant again;
 6. the nonce ledger starts, so nothing above it files a fact into a sink that is not yet reading;
-7. the escrow lifecycle manager starts its 15 s tick;
-8. the store's write notifications start republishing escrows on change, and on a timer while step 5 left an escrow unopened; the same loop probes the chain for participants absent when an escrow's session opened, and reopens that escrow once one is listed again, all of a model's such escrows in the same probe while another escrow of the model with no dead slot serves it ([routing.md](./routing.md), "A slot the chain did not list at open");
-9. the HTTP listener opens — **last**, so the first request meets a gateway that is fully assembled.
+7. the refusal votes a previous process left owed in the store are owed again, each holding its escrow until it posts, so the lifecycle below does not settle an escrow ahead of the vote; a vote whose escrow did not open in step 5 is dropped ([race.md](./race.md), "Owed refusal votes across a restart");
+8. the escrow lifecycle manager starts its 15 s tick;
+9. the store's write notifications start republishing escrows on change, and on a timer while step 5 left an escrow unopened; the same loop probes the chain for participants absent when an escrow's session opened, and reopens that escrow once one is listed again, all of a model's such escrows in the same probe while another escrow of the model with no dead slot serves it ([routing.md](./routing.md), "A slot the chain did not list at open");
+10. the HTTP listener opens — **last**, so the first request meets a gateway that is fully assembled.
 
-`startAll` stops at the first step that fails and names it, and `serve` shuts down cleanly rather than serving half-built. Steps 4 and 5 are the only two that can fail: the rest start a goroutine or a listener and return. Step 5 fails only when the store cannot be read or a row cannot be retired or marked inactive, not when an escrow's session will not open.
+`startAll` stops at the first step that fails and names it, and `serve` shuts down cleanly rather than serving half-built. Steps 4, 5 and 7 are the only ones that can fail: the rest start a goroutine or a listener and return. Step 7 fails only when the store cannot be read. Step 5 fails only when the store cannot be read or a row cannot be retired or marked inactive, not when an escrow's session will not open.
 
 ## Shutdown
 
@@ -289,7 +292,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | # | Step | Why here |
 | --- | --- | --- |
 | 1 | http server | stop taking new work first; open requests get the grace period less the reserve the steps below keep (`laterStepsReserve`, 5 s) and less the cancelled wait to finish uncancelled (`httpGracefulShare`, 4 s of the 10 s), so a short answer or an operator call still running completes; only if the server is not idle by then is every request still open cancelled, and the step waits at most 1 s more for those handlers (`httpCancelledWait`), so a stream that would never end holds the step for 5 s at most and the steps below keep their reserve; a race whose client is cancelled this way drains in step 2 like any client departure |
-| 2 | races | in-flight requests finish, and the losers post the votes they owe if those fall due inside the grace period (10 s); a refused nonce's vote falls due about 65 s after its refusal, so one refused in the last minute before a restart is not voted and finalize pays it in full |
+| 2 | races | in-flight requests finish, and the losers post the votes they owe if those fall due inside the grace period (10 s); a refused nonce's vote falls due about 65 s after its refusal, so one refused in the last minute before a restart is left in the store and posted by the next boot (step 7 of "Boot"), unless its prompt was over 1 MiB or the store's queue was full, in which case finalize pays it in full |
 | 3 | dispatchers | nothing new reaches a host |
 | 4 | escrow lifecycle | no rotation starts mid-drain |
 | 5 | chain observer | nothing above still needs a snapshot |
@@ -409,7 +412,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 
 ## Metrics
 
-`/metrics`, Prometheus: 96 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
+`/metrics`, Prometheus: 97 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
 
 | Question | Series |
 | --- | --- |
@@ -419,7 +422,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | how are the hosts | `devshard_gateway_participant_*` (receipt, first content, inter-chunk, transport errors, missed deadlines), `devshard_gateway_host_ejected`, `devshard_gateway_participant_breaker_state`; a host's congestion windows are read from `GET /v1/admin/hosts`, not from `/metrics` |
 | is money leaking | `devshard_gateway_ghost_nonces_burned_total`, `devshard_gateway_nonce_holds_total`, `devshard_gateway_timeout_actions_total`, `devshard_gateway_burn_budget_exhausted_total`, and `devshard_gateway_error_miss_verify_rejects_total` for an error the verifiers would not let the gateway claim back ([race.md](./race.md), "Error misses") |
 | are the hosts reachable and on time | `devshard_gateway_host_ping_up`, `devshard_gateway_host_ping_rtt_seconds`, `devshard_gateway_host_ping_warm_rtt_seconds`, `devshard_gateway_host_clock_divergence_seconds`, with `devshard_gateway_host_ping_targets`, `devshard_gateway_host_ping_ticks_total` and `devshard_gateway_host_ping_last_probe_timestamp_seconds` saying the probe itself runs ([`hostping/README.md`](../hostping/README.md)) |
-| is the shard behind on the votes it owes | `devshard_gateway_owed_timeout_votes`, against `engine_max_concurrent_timeout_votes` ([race.md](./race.md), "The timeout-vote queue") |
+| is the shard behind on the votes it owes | `devshard_gateway_owed_timeout_votes`, against `engine_max_concurrent_timeout_votes` ([race.md](./race.md), "The timeout-vote queue"); `devshard_gateway_owed_vote_writes_lost_total` by `cause` (`shed`, `write_failed`), the saves and deletes of owed votes the store lost ([`store/README.md`](../store/README.md), "Owed refusal votes") |
 | is the chain view healthy | `devshard_gateway_chain_snapshot_healthy`, `devshard_gateway_chain_snapshot_age_seconds`, `devshard_gateway_chain_epoch_phase`, `devshard_gateway_chain_requests_blocked` |
 | is the escrow funding planner deciding sensibly | `devshard_gateway_escrow_money{model,class}`, `devshard_gateway_escrow_count{model,state}`, `devshard_gateway_planner_decisions_total{model,action,reason}` `devshard_gateway_funding_guarantee{model}` (below zero the guarantee is short), `devshard_gateway_planner_ignored_marks_total{model,reason}` (depletion marks the planner dropped; a rising `balance_floor` count is routing reporting what the planner already plans for) and `devshard_gateway_escrow_deadline_unsettled_total{model,reason}` (escrows narrated unsettled at or past their settle margin: `settlement_disabled`, `operator_deactivated`, `key_missing`, `deadline_passed`; any `deadline_passed` is money lost); the journal lines `escrow funding planned`, `escrow starved`, `funding guarantee broken` say why. |
 | is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_capture_bytes_held` |

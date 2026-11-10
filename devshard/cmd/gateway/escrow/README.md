@@ -107,7 +107,7 @@ Every create names its reason in the `escrow created` line: the planner's `guard
 | found | the escrow exists | register it, drop the commitment |
 | committed, no escrow event | terminal: no escrow will ever exist | drop the commitment |
 | `ErrTxNotFound`, inside the grace window | the unordered tx may still land | keep the row, retry next tick |
-| `ErrTxNotFound`, past the grace window | it can no longer land | drop the commitment |
+| `ErrTxNotFound`, past the grace window | it can no longer land, or it landed on a height this node never indexed | adopt the escrow it created if the chain holds one (below), otherwise drop the commitment |
 | transport error | nothing is known — the endpoint is unreachable | keep the row, retry next tick |
 
 A create whose broadcast the node refused at `CheckTx` (`chain.ErrTxRejected`) drops its commitment at once, narrated as `transaction rejected at broadcast`, rather than holding it for the grace window: that transaction can never land, and the row would otherwise count against the model's unsettled room until the window ends. Any other broadcast error keeps the row for `reconcileOne`.
@@ -115,6 +115,8 @@ A create whose broadcast the node refused at `CheckTx` (`chain.ErrTxRejected`) d
 The grace window is `commitmentReconcileGrace`: the chain's `UnorderedTxTTL` plus `commitmentIndexLagMargin` (2 min), which allows for a landed transaction staying unqueryable a little past its TTL. A row with a zero `CreatedAt` — malformed, or written before the stamp existed — counts as still pending, because keeping a commitment costs one row while dropping a live one costs an escrow nobody knows about.
 
 `clearCommitment` takes the reason it narrates rather than deriving it: the two callers know it, the row does not.
+
+Before a commitment past the grace window is dropped, `landedEscrow` (`adoption.go`) asks the chain's state, which does not depend on the node's tx index. Escrow ids come from one chain-wide counter and the by-id query names each escrow's creator and model, so it reads the ids above the newest row not gone from chain, one `GetEscrow` each, and stops at the first id the chain does not hold. The first unsettled escrow created by the commitment's signer for its model that no row names is registered as the commitment's and narrated as recovered, exactly as a found tx is. The walk reads at most `adoptionWalkLimit` (128) ids: at most that many queries per reconcile of such a commitment, which happens once, since the walk ends in an adoption or a drop. A failed query keeps the row for the next tick. The commitment is dropped as before when there is no row to start from, when its key is no longer configured, or when more than 128 escrows were created on chain since the newest row; an escrow it created then stays unknown to the gateway. A node behind in its state as well as its index does not hold the escrow yet, and the walk cannot see it either. The walk assumes one gateway per signing key: another process's escrow with the same key and model and no row here would be adopted.
 
 ## Chain epochs and amounts
 

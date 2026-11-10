@@ -7,7 +7,7 @@ import (
 
 func foldChunked(t *testing.T, body []byte, intent LogprobIntent, size int) []byte {
 	t.Helper()
-	folder := NewBodyFolder(intent)
+	folder := NewBodyFolder(intent, 0)
 	for offset := 0; offset < len(body); offset += size {
 		end := min(offset+size, len(body))
 		if _, err := folder.Write(body[offset:end]); err != nil {
@@ -57,7 +57,7 @@ func TestFoldingArrivesAtWhatTheWholeBodyWouldHaveAssembled(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			want := stripResponseBody(assembleSSEBody([]byte(testCase.body)), testCase.intent)
+			want := stripResponseBody(assembleSSEBody([]byte(testCase.body)), testCase.intent, 0)
 
 			for _, size := range []int{1, 7, 64, len(testCase.body)} {
 				got := foldChunked(t, []byte(testCase.body), testCase.intent, size)

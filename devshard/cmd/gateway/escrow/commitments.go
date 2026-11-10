@@ -160,22 +160,36 @@ func (m *Manager) reconcileOne(ctx context.Context, c store.Commitment) error {
 	createdEscrowID, found, err := m.tx.GetTxEscrowID(ctx, c.TxHash)
 	switch {
 	case err == nil && found:
-		escrowID := strconv.FormatUint(createdEscrowID, 10)
-		if persistErr := m.persistEscrow(ctx, escrowID, c); persistErr != nil {
-			return persistErr
-		}
-		m.narrator.EscrowRecovered(escrowID, c.Model, c.Role, c.Epoch, c.TxHash)
-		return nil
+		return m.recoverEscrow(ctx, strconv.FormatUint(createdEscrowID, 10), c)
 	case err == nil && !found:
 		return m.clearCommitment(ctx, c, commitmentClearedNoEscrow) // committed but produced no escrow event: terminal
 	case errors.Is(err, chain.ErrTxNotFound):
 		if m.txMayStillLand(c) {
 			return nil // unordered tx may still land: keep, retry next tick
 		}
-		return m.clearCommitment(ctx, c, commitmentClearedCannotLand) // past its TTL
+		return m.adoptOrClear(ctx, c) // past its TTL
 	default:
 		return fmt.Errorf("querying tx %s: %w", c.TxHash, err) // endpoint unreachable: keep, retry next tick
 	}
+}
+
+func (m *Manager) adoptOrClear(ctx context.Context, c store.Commitment) error {
+	escrowID, landed, err := m.landedEscrow(ctx, c)
+	if err != nil {
+		return err
+	}
+	if !landed {
+		return m.clearCommitment(ctx, c, commitmentClearedCannotLand)
+	}
+	return m.recoverEscrow(ctx, escrowID, c)
+}
+
+func (m *Manager) recoverEscrow(ctx context.Context, escrowID string, c store.Commitment) error {
+	if err := m.persistEscrow(ctx, escrowID, c); err != nil {
+		return err
+	}
+	m.narrator.EscrowRecovered(escrowID, c.Model, c.Role, c.Epoch, c.TxHash)
+	return nil
 }
 
 // clearCommitment takes the reason rather than deriving it: the two callers know it, the row does not.

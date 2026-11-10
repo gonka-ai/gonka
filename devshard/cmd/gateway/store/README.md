@@ -12,6 +12,7 @@ One SQLite database at `<storageDir>/gateway.db`, holding what must survive a re
 | `suspicious.go` | hosts the operator pinned as suspect |
 | `model_filters.go` | the operator's per-model filter settings, one row per model, so a settings write never touches them |
 | `accounting.go` | the asynchronous per-request ledger, with its own retention |
+| `owed_votes.go` | the refusal votes a race owes, with their prompts, until they are posted |
 | `retry.go` | the retry policy for a locked database |
 
 ## Boundaries
@@ -76,6 +77,8 @@ Everything else is a targeted single-column update rather than a whole-record up
 
 A `Commitment` is the durable intent for one escrow create, written before the transaction broadcasts so that a crash before the escrow id is known can be recovered by resolving its `TxHash` on chain. It carries what the create would have to be repeated with — model, role, key env, epoch, block height — and the creation time the reconciler measures its grace window from. Commitments load ordered by `(created_at, tx_hash)`, and deleting one that is already gone is a no-op.
 
+`SaveCommitment` returns only once the row is in the main database file: it runs `PRAGMA wal_checkpoint(FULL)` after the insert, which syncs the log, copies it into the main file and syncs that. Under the connection's `synchronous(NORMAL)` a commit alone leaves the row in a log that is synced only at a checkpoint, so a machine crash could take back a row the create already broadcast behind. The checkpoint costs one copy of the log's pages and two syncs per escrow create, every other write keeps `NORMAL`. It waits up to `busy_timeout` for a reader of another process on an older snapshot, and a checkpoint that still cannot move the whole log fails the save, so the create does not broadcast and the next tick tries again.
+
 `RotationStatus` beside it is the latest observed outcome of one (model, role) rotation stage, kept for admin-debug visibility only.
 
 ## The accounting ledger
@@ -95,3 +98,9 @@ It runs whatever the insert before it did: a persistently failing insert is exac
 `FormatTime` renders every timestamp this package stores, and the accounting API renders with the same function, so the retention cutoff and the rows it is compared against can never drift in precision or zone.
 
 Its layout is fixed-width where `RFC3339Nano` is not. Retention compares and orders timestamps as text, and `RFC3339Nano` trims trailing zeros, so a whole second would sort after the same second plus a tenth and the sweep would prune by the wrong order. `parseTime` is the only reader of what `FormatTime` writes, the empty zero timestamp included.
+
+## Owed refusal votes
+
+`NewOwedVotes` registers a single writer with the store, and `Store.Close` drains it, so a vote still owed when the gateway stops is on disk when the store closes. A row holds what a refusal vote needs and the session cannot rebuild — escrow, nonce, start stamp and the prompt — plus the request, participant and model its events carry; the table is keyed by `(escrow_id, nonce)`.
+
+Like the ledger, the writer sits behind a queue of `owedVoteQueueDepth` (1024) and sheds rather than blocks; saves and deletes share the queue, so a delete never runs ahead of its save. A prompt over `maxOwedVotePromptBytes` (1 MiB; a request body may be 10 MiB) is not kept. A shed or failed save, and a prompt over the bound, leave the vote owed in memory only, as it was before the book existed: a restart loses it and finalize pays the nonce in full. A shed or failed delete leaves a row the next boot replays, which the session skips as closed and the engine then deletes. `Stats` counts every shed write, a write after the drain included, as `Dropped` and every write the database refused as `Failed`; a prompt over the bound is not counted. The table holds roughly the refusals of the last minute and a bit, since a vote is deleted once it posts.

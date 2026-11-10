@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
@@ -362,7 +363,7 @@ func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 						pinned := int64(length)
 						limits := config.Limits{ModelLimits: map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}}
 
-						_, err := live.server.checkContext(limits, normalized)
+						_, err := live.server.checkContext(context.Background(), limits, normalized)
 
 						if fits := minimum+chatTemplateMinimumTokens+maxTokens <= length; fits != (err == nil) {
 							t.Fatalf("%s, %d bytes, max_tokens %d, context %d: minimum %d, check said %v", name, len(text), maxTokens, length, minimum, err)
@@ -513,5 +514,20 @@ func TestAFailedTokenizerLeavesTheRequestOnTheByteEstimateAtEitherCount(t *testi
 				t.Fatalf("race got %d tokens from %q, limiter %d, want the byte estimate %d", raced.InputTokens, raced.InputTokensSource, live.limiter.acquired.Load(), want)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Give a server a prompt-count gate of one slot.
+//  2. Count a prompt under the gate with a counter that panics, and recover the panic.
+//  3. Assert the gate's only slot is free again.
+func TestAPanickingPromptCountReturnsItsSlot(t *testing.T) {
+	server := &Server{promptCounts: newPromptCountGate(1)}
+	func() {
+		defer func() { _ = recover() }()
+		_, _ = server.countHoldingSlot(context.Background(), requestPrompt{}, func() (TokenizedPrompt, bool) { panic("tokenizer failed") })
+	}()
+	if !server.promptCounts.tryAcquire() {
+		t.Fatal("the prompt-count slot stayed taken after the count panicked")
 	}
 }

@@ -13,7 +13,7 @@ func BenchmarkBodyFolderStandStream(b *testing.B) {
 			b.Run(fmt.Sprintf("asked=%s/tokens=%d", name, tokens), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					folder := NewBodyFolder(intent)
+					folder := NewBodyFolder(intent, 0)
 					for _, event := range events {
 						if _, err := folder.Write(event); err != nil {
 							b.Fatal(err)
@@ -37,7 +37,7 @@ func BenchmarkStreamRewriterStandStream(b *testing.B) {
 			b.Run(fmt.Sprintf("asked=%s/tokens=%d", name, tokens), func(b *testing.B) {
 				b.ReportAllocs()
 				for b.Loop() {
-					rewriter := NewStreamRewriter(intent, false)
+					rewriter := NewStreamRewriter(intent, false, 0)
 					for _, event := range events {
 						if _, err := rewriter.Write(event); err != nil {
 							b.Fatal(err)

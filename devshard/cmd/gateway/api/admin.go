@@ -50,7 +50,7 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, overrides)
 		return
 	}
-	body, err := readBody(w, r, adminIngestLimit)
+	body, err := readBody(w, r, adminIngestLimit, nil)
 	if err != nil {
 		s.writeErrorFor(w, err)
 		return

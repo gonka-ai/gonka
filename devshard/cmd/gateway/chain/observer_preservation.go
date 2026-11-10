@@ -13,6 +13,7 @@ func preservationEpoch(epoch epochInfo, blocked bool, reason BlockReason) (epoch
 	}
 	upcoming := epoch
 	upcoming.PoCStartBlockHeight = epoch.NextPoCStartBlockHeight
+	upcoming.InPoCLeadWindow = true
 	return upcoming, true, BlockReasonPoC
 }
 
@@ -46,9 +47,15 @@ func preservedSnapshotAnchor(epoch epochInfo, reason BlockReason) int64 {
 	return 0
 }
 
-// allowAllParticipantsUntilSnapshot reports the grace period, when the matching preserved snapshot intentionally does not exist yet.
+// allowAllParticipantsUntilSnapshot reports the periods when the matching preserved snapshot intentionally does not exist yet: the confirmation-PoC grace period and the lead window before a PoC start.
 func allowAllParticipantsUntilSnapshot(epoch epochInfo, reason BlockReason) bool {
-	return reason == BlockReasonConfirmationPoC && epoch.ConfirmationPoCPhase == ConfirmationPoCGracePeriod
+	switch reason {
+	case BlockReasonConfirmationPoC:
+		return epoch.ConfirmationPoCPhase == ConfirmationPoCGracePeriod
+	case BlockReasonPoC:
+		return epoch.InPoCLeadWindow
+	}
+	return false
 }
 
 // fetchPreservedSnapshot separates "no snapshot for this episode" from "could not be reached"; only the second is an error.

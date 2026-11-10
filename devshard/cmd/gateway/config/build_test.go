@@ -60,13 +60,13 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 //  1. Build a config from an `APIKeys` environment value listing keys separated by commas with extra whitespace and an empty entry.
 //  2. Assert the built server's API keys are the three keys, trimmed and with the blank entry dropped.
 func TestBuildSplitsAPIKeys(t *testing.T) {
-	values := env.Values{APIKeys: stringPointer("key-one, key-two ,,key-three")}
+	values := env.Values{APIKeys: stringPointer("first-client-key, second-client-key ,,third-client-key")}
 	configuration, err := Build(values, Overrides{})
 	if err != nil {
 		t.Fatalf("Build(): %v", err)
 	}
 	keys := configuration.Server.APIKeys
-	if len(keys) != 3 || keys[0] != "key-one" || keys[1] != "key-two" || keys[2] != "key-three" {
+	if len(keys) != 3 || keys[0] != "first-client-key" || keys[1] != "second-client-key" || keys[2] != "third-client-key" {
 		t.Fatalf("Server.APIKeys = %v, want three trimmed keys", keys)
 	}
 }

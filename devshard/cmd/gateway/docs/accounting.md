@@ -68,7 +68,7 @@ Not every nonce carries an inference. The session composes a diff with no `Start
 
 ## The surface
 
-`DEVSHARD_STATS_ENABLED` builds the ledger, and the ledger serves itself only as JSON on its own port, `DEVSHARD_STATS_PORT` (9091 by default, on every interface). Nothing of it reaches Prometheus: a gauge aggregated from the ledger would walk every nonce it holds under the book's lock on every scrape.
+`DEVSHARD_STATS_ENABLED` builds the ledger, and the ledger serves itself only as JSON on its own port, `DEVSHARD_STATS_PORT` (9091 by default, on every interface, because the compose file publishes it from inside the container). Its replies are whole documents, not streams, so the listener sets absolute timeouts: 10 s to read a request, 60 s to build and write a reply, 120 s for an idle kept-alive connection. Nothing of it reaches Prometheus: a gauge aggregated from the ledger would walk every nonce it holds under the book's lock on every scrape.
 
 The `DEVSHARD_STATS_*` variables configure this ledger. A retention of `0` keeps every epoch (see "Storage").
 

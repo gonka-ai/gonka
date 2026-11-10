@@ -343,6 +343,7 @@ func TestTheLimitsAndTransactionVariablesAreReadUnderTheirDeployedNames(t *testi
 	t.Setenv("DEVSHARD_TX_FEE_DENOM", "ngonka")
 	t.Setenv("DEVSHARD_TX_POLL_INTERVAL_MS", "250")
 	t.Setenv("DEVSHARD_TX_POLL_TIMEOUT_MS", "9000")
+	t.Setenv("DEVSHARD_TX_CALL_TIMEOUT_MS", "4000")
 	t.Setenv("GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT", "7.5")
 	t.Setenv("GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT", "12")
 	t.Setenv("GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT", "0")
@@ -362,6 +363,9 @@ func TestTheLimitsAndTransactionVariablesAreReadUnderTheirDeployedNames(t *testi
 	}
 	if values.TxPollTimeoutMS == nil || *values.TxPollTimeoutMS != 9000 {
 		t.Errorf("TxPollTimeoutMS = %v, want 9000", values.TxPollTimeoutMS)
+	}
+	if values.TxCallTimeoutMS == nil || *values.TxCallTimeoutMS != 4000 {
+		t.Errorf("TxCallTimeoutMS = %v, want 4000", values.TxCallTimeoutMS)
 	}
 	if values.MaxConcurrentRequestsPer10000Weight == nil || *values.MaxConcurrentRequestsPer10000Weight != 7.5 {
 		t.Errorf("MaxConcurrentRequestsPer10000Weight = %v, want 7.5", values.MaxConcurrentRequestsPer10000Weight)

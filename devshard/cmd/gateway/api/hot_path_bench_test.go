@@ -197,7 +197,7 @@ func BenchmarkReadChatBody(b *testing.B) {
 	for b.Loop() {
 		request.Body = io.NopCloser(strings.NewReader(body))
 		request.ContentLength = int64(len(body))
-		if _, err := readBody(writer, request, chatIngestLimit); err != nil {
+		if _, err := readBody(writer, request, chatIngestLimit, nil); err != nil {
 			b.Fatalf("readBody: %v", err)
 		}
 	}
@@ -249,7 +249,7 @@ func BenchmarkClientStreamWrite(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		writer.reset()
-		stream := newClientStream(writer, "request-1", true, false, filters.LogprobIntent{}, nil)
+		stream := newClientStream(writer, "request-1", true, false, filters.LogprobIntent{}, 0, nil)
 		for _, chunk := range chunks {
 			if _, err := stream.Write([]byte(chunk)); err != nil {
 				b.Fatalf("Write: %v", err)

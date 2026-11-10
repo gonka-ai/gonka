@@ -18,7 +18,7 @@ import (
 //  4. Assert the late write charges nothing to the budget.
 func TestALateWriteAfterADiscardedReplyChargesNothing(t *testing.T) {
 	budget := NewBufferBudget(1 << 20)
-	stream := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, budget)
+	stream := newClientStream(httptest.NewRecorder(), "req-1", false, false, filters.LogprobIntent{}, 0, budget)
 	if _, err := stream.Write(bytes.Repeat([]byte("x"), 900)); err != nil {
 		t.Fatalf("Write(): %v", err)
 	}
@@ -41,7 +41,7 @@ func TestALateStreamWriteAfterADiscardedReplyReachesNothing(t *testing.T) {
 	budget := NewBufferBudget(1 << 20)
 	live := httptest.NewRecorder()
 	recorder := newCacheRecorder(live, 1<<20, true, budget)
-	stream := newClientStream(recorder, "req-1", true, false, filters.LogprobIntent{}, budget)
+	stream := newClientStream(recorder, "req-1", true, false, filters.LogprobIntent{}, 0, budget)
 	stream.closeUnstarted()
 	stream.discard()
 	recorder.releaseBudget()
@@ -63,7 +63,7 @@ func TestALateStreamWriteAfterADiscardedReplyReachesNothing(t *testing.T) {
 //  4. Assert the stream reported itself unstarted and the chunk never reached the live writer.
 func TestAWriteAfterCloseUnstartedReachesNothingBeforeTheDiscard(t *testing.T) {
 	live := httptest.NewRecorder()
-	stream := newClientStream(live, "req-1", true, false, filters.LogprobIntent{}, NewBufferBudget(1<<20))
+	stream := newClientStream(live, "req-1", true, false, filters.LogprobIntent{}, 0, NewBufferBudget(1<<20))
 
 	unstarted := stream.closeUnstarted()
 	_, _ = stream.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"late\"}}]}\n\n"))
