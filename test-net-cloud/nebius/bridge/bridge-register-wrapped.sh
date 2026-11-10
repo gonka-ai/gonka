@@ -113,6 +113,35 @@ if [ "$LOCAL_MODE" = true ]; then
     export NODE_OPTS=""
 fi
 
+# The join proxy on :8000 returns "Chain RPC Disabled". Use the direct Comet RPC.
+case "${NODE_OPTS:-}" in
+    *"localhost:8000/chain-rpc"*|*"127.0.0.1:8000/chain-rpc"*)
+        NODE_OPTS=""
+        ;;
+esac
+if [ -z "${NODE_OPTS:-}" ] && [ "$LOCAL_MODE" != true ]; then
+    node_rpc_url="${NODE_RPC_URL:-http://127.0.0.1:26657}"
+    case "$node_rpc_url" in
+        */chain-rpc|*/chain-rpc/*)
+            case "$node_rpc_url" in
+                */) ;;
+                *) node_rpc_url="${node_rpc_url}/" ;;
+            esac
+            ;;
+        http://*|https://*)
+            rest="${node_rpc_url#*://}"
+            rest="${rest%/}"
+            case "$rest" in
+                */*) ;;
+                *) node_rpc_url="tcp://${rest}" ;;
+            esac
+            ;;
+    esac
+    NODE_OPTS="--node ${node_rpc_url}"
+fi
+export NODE_OPTS
+echo "Node:    ${NODE_OPTS:-<inferenced default>}"
+
 if [ -n "$KEY_STRING" ]; then
     echo "Importing key from string..."
     printf "%s\n%s\n%s\n" "$KEY_STRING" "$PASSWORD" "$PASSWORD" | $APP_NAME keys add "$KEY_NAME" --recover --keyring-backend "test" --home "$KEY_DIR"

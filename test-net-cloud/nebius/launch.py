@@ -1394,7 +1394,7 @@ def setup_wrapped_token_registration():
         print("  - account sequence mismatch after bounty pool (retry usually fixes it)")
         print("  - wrapped_token.wasm missing/empty (build: inference-chain/contracts/wrapped-token/build.sh)")
         print("  - cold key short on ngonka for gas/gov deposit")
-        print(f"  - API/chain RPC not reachable at http://localhost:{api_port}/chain-rpc/")
+        print(f"  - chain RPC not reachable at {node_rpc_url}")
         if combined_output.strip():
             print("")
             print("Last script output tail:")
