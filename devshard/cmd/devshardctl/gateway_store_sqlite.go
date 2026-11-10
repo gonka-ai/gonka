@@ -103,6 +103,7 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 			rotation_role TEXT NOT NULL DEFAULT '',
 			rotation_epoch INTEGER NOT NULL DEFAULT 0,
 			settlement_pending INTEGER NOT NULL DEFAULT 0,
+			settlement_reason TEXT NOT NULL DEFAULT '',
 			on_hold_since TEXT NOT NULL DEFAULT '',
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
@@ -169,6 +170,10 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 	if err := ensureGatewayDevshardsColumn(db, "settlement_pending", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshard settlement_pending: %w", err)
+	}
+	if err := ensureGatewayDevshardsColumn(db, "settlement_reason", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard settlement_reason: %w", err)
 	}
 	if err := ensureGatewayDevshardsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
@@ -298,7 +303,7 @@ func (s *SQLiteGatewayStore) LoadState(ctx context.Context) (GatewayState, bool,
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, settlement_reason, on_hold_since
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -323,6 +328,7 @@ func (s *SQLiteGatewayStore) LoadState(ctx context.Context) (GatewayState, bool,
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
 			&settlementPending,
+			&devshard.SettlementReason,
 			&devshard.OnHoldSince,
 		); err != nil {
 			return GatewayState{}, false, fmt.Errorf("scan gateway devshard: %w", err)
@@ -652,13 +658,14 @@ func (s *SQLiteGatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevsha
 	// never silently clears a queued settlement; a brand-new row falls back
 	// to the value carried on devshard.
 	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
+	settlementReason := strings.TrimSpace(devshard.SettlementReason)
 	onHoldSince := devshard.OnHoldSince
-	_ = tx.QueryRow(`SELECT settlement_pending, on_hold_since FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending, &onHoldSince)
+	_ = tx.QueryRow(`SELECT settlement_pending, settlement_reason, on_hold_since FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending, &settlementReason, &onHoldSince)
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-			protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			protocol_version, rotation_role, rotation_epoch, settlement_pending, settlement_reason, on_hold_since
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -672,6 +679,7 @@ func (s *SQLiteGatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevsha
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
 		settlementPending,
+		settlementReason,
 		onHoldSince,
 	); err != nil {
 		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
@@ -690,7 +698,7 @@ func (s *SQLiteGatewayStore) GetDevshard(ctx context.Context, id string) (Gatewa
 	var settlementPending int
 	err := s.db.QueryRow(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       protocol_version, rotation_role, rotation_epoch, settlement_pending, on_hold_since
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending, settlement_reason, on_hold_since
 		FROM gateway_devshards
 		WHERE id = ?`, id).Scan(
 		&devshard.ID,
@@ -706,6 +714,7 @@ func (s *SQLiteGatewayStore) GetDevshard(ctx context.Context, id string) (Gatewa
 		&devshard.RotationRole,
 		&devshard.RotationEpoch,
 		&settlementPending,
+		&devshard.SettlementReason,
 		&devshard.OnHoldSince,
 	)
 	if err == sql.ErrNoRows {
@@ -742,11 +751,24 @@ func (s *SQLiteGatewayStore) SetDevshardActive(ctx context.Context, id string, a
 }
 
 func (s *SQLiteGatewayStore) DeactivateDevshardIfActive(ctx context.Context, id string, settlementPending bool) (bool, error) {
+	return s.DeactivateDevshardWithSettlementReason(ctx, id, settlementPending, "")
+}
+
+func (s *SQLiteGatewayStore) DeactivateDevshardWithSettlementReason(ctx context.Context, id string, settlementPending bool, reason string) (bool, error) {
+	reason = strings.TrimSpace(reason)
+	if !settlementPending {
+		reason = ""
+	}
 	result, err := s.db.Exec(`
 		UPDATE gateway_devshards
-		SET active = 0, settlement_pending = MAX(settlement_pending, ?), on_hold_since = '', updated_at = ?
+		SET active = 0,
+		    settlement_pending = MAX(settlement_pending, ?),
+		    settlement_reason = CASE WHEN settlement_reason <> '' THEN settlement_reason ELSE ? END,
+		    on_hold_since = '',
+		    updated_at = ?
 		WHERE id = ? AND active = 1`,
 		gatewayBoolToInt(settlementPending),
+		reason,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		strings.TrimSpace(id),
 	)
@@ -795,11 +817,20 @@ func (s *SQLiteGatewayStore) ReleaseDevshardHold(ctx context.Context, id string)
 }
 
 func (s *SQLiteGatewayStore) SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error {
+	return s.SetDevshardSettlementPendingWithReason(ctx, id, pending, "")
+}
+
+func (s *SQLiteGatewayStore) SetDevshardSettlementPendingWithReason(ctx context.Context, id string, pending bool, reason string) error {
+	reason = strings.TrimSpace(reason)
+	if !pending {
+		reason = ""
+	}
 	res, err := s.db.Exec(`
 		UPDATE gateway_devshards
-		SET settlement_pending = ?, updated_at = ?
+		SET settlement_pending = ?, settlement_reason = ?, updated_at = ?
 		WHERE id = ?`,
 		gatewayBoolToInt(pending),
+		reason,
 		time.Now().UTC().Format(time.RFC3339Nano),
 		strings.TrimSpace(id),
 	)
