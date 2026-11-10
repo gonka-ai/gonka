@@ -197,7 +197,7 @@ func BenchmarkReadChatBody(b *testing.B) {
 	for b.Loop() {
 		request.Body = io.NopCloser(strings.NewReader(body))
 		request.ContentLength = int64(len(body))
-		if _, err := readBody(writer, request, chatIngestLimit); err != nil {
+		if _, err := readBody(writer, request, chatIngestLimit, nil); err != nil {
 			b.Fatalf("readBody: %v", err)
 		}
 	}

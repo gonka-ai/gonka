@@ -233,10 +233,12 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	observer.Subscribe((&phaseNarrator{events: events}).observe)
 	gatewayLimiter := limits.NewGatewayLimiter(limits.GatewayConfigFromLimits(configuration.Limits))
 	buffers := api.NewBufferBudget(configuration.Limits.MaxBufferedResponseBytes)
+	requestBodies := api.NewBufferBudget(configuration.Limits.MaxBufferedRequestBytes)
 	configHolder.Subscribe(func(next *config.Config) {
 		gatewayLimiter.Reconfigure(limits.GatewayConfigFromLimits(next.Limits))
 		participants.Reconfigure(limits.ParticipantConfigFromConfig(next))
 		buffers.Retune(next.Limits.MaxBufferedResponseBytes)
+		requestBodies.Retune(next.Limits.MaxBufferedRequestBytes)
 		warnOpenModels(next.Limits)
 	})
 	hosts := perf.NewTracker(configHolder, clock)
@@ -398,6 +400,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		StopTokenVocabulary:     stopTokenVocabulary(sources.ModelSnapshots, observer),
 		PromptTokens:            promptTokens(sources.ModelSnapshots, observer),
 		StatsTokenizerFallbacks: metrics.NewStatsTokenizerRecorder(telemetry),
+		RequestBodies:           requestBodies,
 	})
 	if err != nil {
 		return nil, err

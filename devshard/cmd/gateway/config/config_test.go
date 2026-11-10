@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"devshard/cmd/gateway/filters"
 	"devshard/user"
 )
 
@@ -159,6 +160,7 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.RequestsPer10000Weight = maxConcurrentRequests + 1 }, "max_concurrent_requests_per_10000_weight"},
 		{"poc_max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.PoCRequestsPer10000Weight = maxConcurrentRequests + 1 }, "poc_max_concurrent_requests_per_10000_weight"},
 		{"max_input_tokens_in_flight negative", func(c *Config) { c.Limits.MaxInputTokensInFlight = -1 }, "max_input_tokens_in_flight"},
+		{"max_buffered_request_bytes below one body", func(c *Config) { c.Limits.MaxBufferedRequestBytes = filters.MaxBodyBytes - 1 }, "max_buffered_request_bytes"},
 		{"admission_queue_wait_ms negative", func(c *Config) { c.Limits.AdmissionQueueWaitMS = -1 }, "admission_queue_wait_ms"},
 		{"host_input_window_min_requests too low", func(c *Config) { c.Limits.HostWindows.Input.MinRequests = 0 }, "host_input_window_min_requests"},
 		{"host_input_window_initial_requests below min", func(c *Config) {

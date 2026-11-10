@@ -38,6 +38,7 @@ func Defaults() Config {
 			DefaultMaxTokens:         int64(filters.DefaultRequestMaxTokens),
 			ForceUpstreamStreaming:   true,
 			MaxBufferedResponseBytes: 512 << 20,
+			MaxBufferedRequestBytes:  128 << 20,
 			MaxTokensCap:             int64(filters.RequestMaxTokensCap),
 			Concurrency: Concurrency{
 				MaxRequests:               2048,

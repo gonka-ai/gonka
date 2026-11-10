@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"go/build"
@@ -811,7 +812,7 @@ func BenchmarkModelPromptStep(b *testing.B) {
 }
 
 func benchContextStep(server *Server, configured config.Limits, normalized filters.Result) error {
-	prompt, err := server.checkContext(configured, normalized)
+	prompt, err := server.checkContext(context.Background(), configured, normalized)
 	if err == nil {
 		server.countPrompt(normalized.Model, prompt)
 	}

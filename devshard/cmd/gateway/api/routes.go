@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/pprof"
+	"sync"
 
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
@@ -196,13 +197,20 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	configuration := s.config.Load()
 	identity := s.resolveCredentials(r)
 	requestID := s.requestIDs()
+	if !reachesAnyModel(configuration.Limits, identity) {
+		s.writeErrorFor(w, &AccessDeniedError{Message: "no model is open to this request's credentials"})
+		return
+	}
 
-	body, err := readBody(w, r, chatIngestLimit)
+	body, err := readBody(w, r, chatIngestLimit, s.requestBodies)
 	if err != nil {
 		s.writeErrorFor(w, err)
 		return
 	}
+	releaseBody := sync.OnceFunc(func() { s.requestBodies.release(int64(len(body))) })
+	defer releaseBody()
 	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))
+	releaseBody()
 	if err != nil {
 		s.capture.filterRejected(r, requestID, body, err)
 		s.writeErrorFor(w, err)
@@ -220,7 +228,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, err)
 		return
 	}
-	prompt, err := s.checkContext(configuration.Limits, normalized)
+	prompt, err := s.checkContext(r.Context(), configuration.Limits, normalized)
 	if err != nil {
 		s.writeErrorFor(w, err)
 		return
@@ -319,6 +327,18 @@ func (s *Server) routableModel(configured config.Limits, model string) error {
 		return &ModelUnavailableError{Model: model}
 	}
 	return &UnsupportedModelError{Model: model, Supported: served}
+}
+
+func reachesAnyModel(configured config.Limits, identity credentials) bool {
+	if identity.admin {
+		return true
+	}
+	for _, access := range configured.ModelAccess {
+		if access == config.ModelAccessOpen || (access == config.ModelAccessAPIKey && identity.apiKey) {
+			return true
+		}
+	}
+	return false
 }
 
 func authorizeModel(configured config.Limits, model string, identity credentials) error {

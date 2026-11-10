@@ -90,6 +90,7 @@ type Limits struct {
 	ForceUpstreamStreaming   bool
 	LogprobsOptimization     *bool
 	MaxBufferedResponseBytes int64
+	MaxBufferedRequestBytes  int64
 	MaxTokensCap             int64
 	FallbackMaxModelLen      int64
 	Concurrency              Concurrency

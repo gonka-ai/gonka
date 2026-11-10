@@ -166,28 +166,33 @@ func (s *Server) disabled(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // readBody bounds ingest with MaxBytesReader, not LimitReader. See README.md, "Reading a body".
-func readBody(w http.ResponseWriter, r *http.Request, limit int64) ([]byte, error) {
+func readBody(w http.ResponseWriter, r *http.Request, limit int64, budget *BufferBudget) ([]byte, error) {
 	deadlines := http.NewResponseController(w)
 	_ = deadlines.SetReadDeadline(time.Now().Add(bodyReadTimeout))
 	r.Body = http.MaxBytesReader(baseWriter(w), r.Body, limit)
-	body, err := readAll(r.Body)
+	body, err := readAll(r.Body, budget)
 	_ = deadlines.SetReadDeadline(time.Time{})
 	return body, err
 }
 
 // readAll is io.ReadAll starting wide enough for an ordinary body. The start is a constant, never the declared Content-Length: a header the client has not backed with bytes must buy no memory. See README.md, "Reading a body".
-func readAll(reader io.Reader) ([]byte, error) {
+func readAll(reader io.Reader, budget *BufferBudget) ([]byte, error) {
 	body := make([]byte, 0, bodyReadStart)
 	for {
 		if len(body) == cap(body) {
 			body = append(body, 0)[:len(body)]
 		}
 		read, err := reader.Read(body[len(body):cap(body)])
+		if !budget.reserve(int64(read)) {
+			budget.release(int64(len(body)))
+			return nil, ErrRequestBodiesFull
+		}
 		body = body[:len(body)+read]
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
+				return body, nil
 			}
+			budget.release(int64(len(body)))
 			return body, err
 		}
 	}
@@ -213,7 +218,7 @@ func decodeAdminBodyStrictly(w http.ResponseWriter, r *http.Request, target any)
 }
 
 func decodeAdminBodyWith(w http.ResponseWriter, r *http.Request, target any, decode func([]byte, any) error) error {
-	body, err := readBody(w, r, adminIngestLimit)
+	body, err := readBody(w, r, adminIngestLimit, nil)
 	if err != nil {
 		return err
 	}

@@ -25,6 +25,9 @@ const (
 
 	nonceAccountingShutdownGrace     = 5 * time.Second
 	nonceAccountingReadHeaderTimeout = 10 * time.Second
+	nonceAccountingReadTimeout       = nonceAccountingReadHeaderTimeout
+	nonceAccountingWriteTimeout      = 60 * time.Second
+	nonceAccountingIdleTimeout       = 120 * time.Second
 
 	nonceAccountingSweepInterval = 10 * time.Second
 )
@@ -148,6 +151,9 @@ func Open(settings config.NonceAccounting, storageDir string, epochs EpochSource
 		Addr:              fmt.Sprintf(":%d", settings.Port),
 		Handler:           accounting.NewHandler(service.Book, ledger.currentEpoch, ledger.hostCapability),
 		ReadHeaderTimeout: nonceAccountingReadHeaderTimeout,
+		ReadTimeout:       nonceAccountingReadTimeout,
+		WriteTimeout:      nonceAccountingWriteTimeout,
+		IdleTimeout:       nonceAccountingIdleTimeout,
 	}
 	return ledger
 }

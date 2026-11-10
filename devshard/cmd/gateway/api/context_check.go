@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 
 	"devshard/cmd/gateway/config"
@@ -77,7 +78,7 @@ type requestPrompt struct {
 	counted   bool
 }
 
-func (s *Server) checkContext(configured config.Limits, normalized filters.Result) (requestPrompt, error) {
+func (s *Server) checkContext(ctx context.Context, configured config.Limits, normalized filters.Result) (requestPrompt, error) {
 	prompt := requestPrompt{bodyBytes: len(normalized.Body)}
 	if s.promptTokens == nil {
 		return prompt, nil
@@ -96,7 +97,11 @@ func (s *Server) checkContext(configured config.Limits, normalized filters.Resul
 	if contextLength == config.NoContextLength || text.MaximumTokens()+chatTemplateMinimumTokens+normalized.MaxTokens <= contextLength {
 		return prompt, nil
 	}
-	prompt.count, prompt.counted = prompt.countWith(text.Count), true
+	count, err := s.countHoldingSlot(ctx, prompt, text.Count)
+	if err != nil {
+		return prompt, err
+	}
+	prompt.count, prompt.counted = count, true
 	if !prompt.count.source.Tokenized() {
 		return prompt, nil
 	}
@@ -122,6 +127,14 @@ func (s *Server) countPrompt(model string, prompt requestPrompt) promptCount {
 	}
 	defer s.promptCounts.release()
 	return prompt.countWith(prompt.text.CountWithPieceCap)
+}
+
+func (s *Server) countHoldingSlot(ctx context.Context, prompt requestPrompt, count func() (TokenizedPrompt, bool)) (promptCount, error) {
+	if err := s.promptCounts.acquire(ctx); err != nil {
+		return promptCount{}, err
+	}
+	defer s.promptCounts.release()
+	return prompt.countWith(count), nil
 }
 
 func (prompt requestPrompt) countSoFar() promptCount {
@@ -159,6 +172,15 @@ func (g promptCountGate) tryAcquire() bool {
 		return true
 	default:
 		return false
+	}
+}
+
+func (g promptCountGate) acquire(ctx context.Context) error {
+	select {
+	case g <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }
 

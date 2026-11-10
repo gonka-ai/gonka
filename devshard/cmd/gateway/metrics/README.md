@@ -50,6 +50,10 @@ The race recorder's own label strings live in `vocabulary.go`, beside the packag
 
 The response writer that records a status also forwards `Flush`, so streaming handlers keep working when wrapped, and exposes `Unwrap` for the standard-library calls that reach the underlying writer by type assertion.
 
+## Scrapes
+
+`Handler` returns one promhttp handler, built in `New`, so its bounds hold across scrapes: at most `maxConcurrentScrapes` (4) run the collectors at once and one past that is answered 503 without collecting; a scrape still collecting after `scrapeTimeout` (10 s) is answered 503, and its collectors keep their slot until they finish. `/metrics` carries no credential and every scrape walks every collector, so the cap is what bounds that cost; one Prometheus scraping one target never meets it.
+
 ## Read next
 
 - [`docs/operations.md`](../docs/operations.md), "Metrics" — the families by the question they answer, and the ones no longer emitted.

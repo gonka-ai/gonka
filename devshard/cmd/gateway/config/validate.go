@@ -144,6 +144,9 @@ func (c *Config) validateLimits(complain func(format string, args ...any)) {
 	if c.Limits.AdmissionQueueWaitMS < 0 {
 		complain("admission_queue_wait_ms: %d must be >= 0", c.Limits.AdmissionQueueWaitMS)
 	}
+	if c.Limits.MaxBufferedRequestBytes < filters.MaxBodyBytes {
+		complain("max_buffered_request_bytes: %d must be >= %d, the largest body one request may send", c.Limits.MaxBufferedRequestBytes, filters.MaxBodyBytes)
+	}
 	validateRequestWindow("host_input_window", c.Limits.HostWindows.Input, complain)
 	validateRequestWindow("host_output_window", c.Limits.HostWindows.Output, complain)
 	if c.Limits.FallbackMaxModelLen < 1 || c.Limits.FallbackMaxModelLen > MaxContextTokens {
