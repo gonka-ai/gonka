@@ -540,6 +540,16 @@ services:
       - DISABLE_CHAIN_API=false
       - DISABLE_CHAIN_RPC=false
       - DISABLE_CHAIN_GRPC=false
+  proxy-policy:
+    environment:
+      - DISABLE_CHAIN_API=false
+      - DISABLE_CHAIN_RPC=false
+      - DISABLE_CHAIN_GRPC=false
+  proxy-policy2:
+    environment:
+      - DISABLE_CHAIN_API=false
+      - DISABLE_CHAIN_RPC=false
+      - DISABLE_CHAIN_GRPC=false
   proxy-ssl:
     environment:
       - IS_TEST_NET={is_test_net}
@@ -683,6 +693,16 @@ def create_docker_compose_override(init_only=True, node_id=None):
       - DISABLE_CHAIN_API=false
       - DISABLE_CHAIN_RPC=false
       - DISABLE_CHAIN_GRPC=false
+  proxy-policy:
+    environment:
+      - DISABLE_CHAIN_API=false
+      - DISABLE_CHAIN_RPC=false
+      - DISABLE_CHAIN_GRPC=false
+  proxy-policy2:
+    environment:
+      - DISABLE_CHAIN_API=false
+      - DISABLE_CHAIN_RPC=false
+      - DISABLE_CHAIN_GRPC=false
 """
     else:
         override_file = working_dir / "docker-compose.runtime-override.yml"
@@ -715,6 +735,16 @@ def create_docker_compose_override(init_only=True, node_id=None):
   proxy:
     environment:
       - DISABLE_GONKA_API=false
+      - DISABLE_CHAIN_API=false
+      - DISABLE_CHAIN_RPC=false
+      - DISABLE_CHAIN_GRPC=false
+  proxy-policy:
+    environment:
+      - DISABLE_CHAIN_API=false
+      - DISABLE_CHAIN_RPC=false
+      - DISABLE_CHAIN_GRPC=false
+  proxy-policy2:
+    environment:
       - DISABLE_CHAIN_API=false
       - DISABLE_CHAIN_RPC=false
       - DISABLE_CHAIN_GRPC=false
