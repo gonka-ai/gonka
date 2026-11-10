@@ -45,7 +45,7 @@ func TestDecryptKeyringShortMACValidReturnsError(t *testing.T) {
 	require.NotPanics(t, func() {
 		_, decErr := decryptKeyring(kr, keyName, poison)
 		require.Error(t, decErr)
-		require.Contains(t, decErr.Error(), "ecies decrypt panic")
+		require.Contains(t, decErr.Error(), "ecies: invalid message")
 	})
 }
 
