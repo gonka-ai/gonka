@@ -56,16 +56,8 @@ ENV GOOS=${GOOS} \
 
 RUN apk add --no-cache make gcc musl-dev git
 
-# wasmvm musl static lib — same version and checksums as decentralized-api/Dockerfile.
-RUN if [ "$GOARCH" = "arm64" ]; then \
-        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.10/libwasmvm_muslc.aarch64.a \
-        && echo "a3c782f5d429e0f36d6b4a66cdf74cfdaa85e7b82ac1919795e2134a2288b3e6 /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
-        && ln -s /lib/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a; \
-    else \
-        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.10/libwasmvm_muslc.x86_64.a \
-        && echo "6d3d8db96889dcba185f7debb23e132fe72ffd170d7043633401a34532dcafe4 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
-        && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a; \
-    fi
+COPY scripts/fetch-libwasmvm.sh /tmp/fetch-libwasmvm.sh
+RUN sh /tmp/fetch-libwasmvm.sh
 
 COPY inference-chain/ /app/inference-chain
 COPY common/ /app/common
