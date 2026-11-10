@@ -148,7 +148,12 @@
                 "p_mismatch": { "value": "1", "exponent": -1 },
                 "p_value_threshold": { "value": "5", "exponent": -2 }
               },
-              "weight_scale_factor": { "value": "25", "exponent": -1 }
+              "dynamic_coefficient": {
+                "coeff_min": { "value": "225", "exponent": -2 },
+                "coeff_max": { "value": "275", "exponent": -2 },
+                "relative_difficulty": { "value": "1", "exponent": 0 },
+                "target_share_bps": 5000
+              }
             },
             {
               "model_id": "Qwen/Qwen2.5-7B-Instruct",
@@ -158,10 +163,22 @@
                 "p_mismatch": { "value": "1", "exponent": -1 },
                 "p_value_threshold": { "value": "5", "exponent": -2 }
               },
-              "weight_scale_factor": { "value": "4475", "exponent": -3 },
+              "dynamic_coefficient": {
+                "coeff_min": { "value": "40275", "exponent": -4 },
+                "coeff_max": { "value": "49225", "exponent": -4 },
+                "relative_difficulty": { "value": "1", "exponent": 0 },
+                "target_share_bps": 5000
+              },
               "penalty_start_epoch": "46"
             }
-          ]
+          ],
+          "dynamic_coefficient_params": {
+            "target_zone_bps": 500,
+            "step_min": { "value": "5", "exponent": -3 },
+            "step_max": { "value": "5", "exponent": -2 },
+            "bootstrap_step_max": { "value": "25", "exponent": -2 },
+            "bootstrap_share_bps": 100
+          }
         },
         "tokenomics_params": {
           "subsidy_reduction_interval": { "value": "5", "exponent": -2 },
@@ -210,6 +227,11 @@
           "alpha_threshold": { "value": "5", "exponent": -1 },
           "upgrade_protection_window": "500"
         },
+        "poc_challenge_params": {
+          "payment_ratio": { "value": "1", "exponent": -1 },
+          "max_active_challenges": 4,
+          "min_punishable_segment_blocks": "300"
+        },
         "genesis_guardian_params": {
           "network_maturity_threshold": "2000000"
         },
@@ -225,22 +247,42 @@
           "max_model_voting_power_percentage": { "value": "3", "exponent": -1 }
         },
         "fee_params": {
+          "min_gas_price_ngonka": "0",
           "base_validation_gas": "500000",
-          "gas_per_poc_count": "100"
+          "gas_per_poc_count": "100",
+          "enabled_fee_groups": ["epoch", "cosmos"],
+          "groups": [
+            {
+              "name": "epoch",
+              "min_gas_price": "1",
+              "base": { "gas": "0", "period_type": "epoch", "period_length": "1" },
+              "msgs": [
+                {
+                  "type_url": "/inference.inference.MsgPoCV2StoreCommit",
+                  "base": { "gas": "500000", "period_type": "poc", "period_length": "1" },
+                  "stored_delta": {
+                    "gas_per_unit": "100",
+                    "items": "entries",
+                    "value_field": "count",
+                    "id_field": "model_id",
+                    "scope_fields": ["poc_stage_start_block_height"]
+                  }
+                },
+                {
+                  "type_url": "/inference.inference.MsgSubmitHardwareDiff",
+                  "stored_bytes": { "gas_per_unit": "100", "unit": "kb" }
+                }
+              ]
+            },
+            { "name": "cosmos", "min_gas_price": "1" }
+          ]
         },
         "devshard_escrow_params": {
           "min_amount": "5000000000",
           "max_amount": "10000000000",
           "max_escrows_per_epoch": 100,
           "group_size": 16,
-          "token_price": "1",
-          "approved_versions": [
-            {
-              "name": "v3",
-              "binary": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13-devshard-v3.0.0/devshardd.zip",
-              "sha256": "ca1294fc8db3f0907a01f362eb4b13665f66d0fd12cfc6f01468b1e27f0bab63"
-            }
-          ]
+          "token_price": "1"
         },
         "developer_access_params": {},
         "participant_access_params": {
@@ -253,6 +295,23 @@
           "allowed_transfer_addresses": []
         }
       },
+      "devshard_approved_versions": [
+        {
+          "name": "v4.1",
+          "binary": "https://github.com/gonka-ai/gonka/releases/download/release%2Fdevshard%2Fv4.1.0/devshardd.zip",
+          "sha256": "69e58e6b6c124fc218d3ed1e38d7853c0a8ce20df660d348fc28ccd249a1ccf1"
+        },
+        {
+          "name": "v4.2",
+          "binary": "https://github.com/gonka-ai/gonka/releases/download/devshard%2Fv4.2.0/devshardd.zip",
+          "sha256": "068599a524d4f456b36c6a208aad05d962b6751752fc0cab5991b24cf5429625"
+        },
+        {
+          "name": "v6",
+          "binary": "https://github.com/gonka-ai/gonka/releases/download/devshard%2Fv6.0.0/devshardd.zip",
+          "sha256": "531eb433392a56d009c14c63a74070cac410110f4c761437614af1a4360722e2"
+        }
+      ],
       "model_list": [
         {
           "proposed_by": "genesis",

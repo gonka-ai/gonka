@@ -32,8 +32,8 @@ COLD_KEY_NAME = "gonka-account-key"
 
 INFERENCED_BINARY = SimpleNamespace(
     zip_file=BASE_DIR / "inferenced-linux-amd64.zip",
-    url="https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.15/inferenced-linux-amd64.zip",
-    checksum="4e506d74491bf2636591d4088f3eebd0ac4c33e739f83bc1cd56785482a9a7ca",
+    url="https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.16-post1/inferenced-linux-amd64.zip",
+    checksum="50b333ea4680a05f18a69f30f284357b173c9d68b193e9028b603c67c1d5697f",
     path=BASE_DIR / "inferenced",
 )
 
@@ -68,8 +68,8 @@ def load_config_from_env(hf_home: str = None):
         "ETHEREUM_NETWORK": "sepolia",
         "BEACON_STATE_URL": "https://sepolia.checkpoint-sync.ethpandaops.io",
         "CHAIN_ID": "gonka-testnet",
-        # Optional tx gas price (empty = zero fee on testnet where min_gas_price=0).
-        "TX_GAS_PRICES": "",
+        # Cosmos and epoch fee groups charge 1 ngonka per gas. Empty string keeps the zero-fee path.
+        "TX_GAS_PRICES": "1ngonka",
         # Only checked when TX_GAS_PRICES is set (paid txs need funded cold key).
         "GRANT_MIN_SPENDABLE_NGONKA": "20000000000",
         "JOIN_FUND_WAIT_SECONDS": "600",
@@ -1649,12 +1649,35 @@ def apply_genesis_overrides(overrides_file_path):
     
     # Apply the overrides
     deep_merge(genesis_data, overrides_data)
+    _drop_param_approved_versions(genesis_data)
     
     # Write back to file with proper formatting
     with open(genesis_file, 'w') as f:
         json.dump(genesis_data, f, indent=2, separators=(',', ': '))
     
     print(f"Genesis overrides applied successfully from {overrides_file_path}!")
+
+
+def _drop_param_approved_versions(genesis_data):
+    """Keep approved binaries in the version store, not the escrow param.
+
+    Deep-merge cannot delete a key the override stops writing. InitGenesis
+    copies whichever list it finds into the store and then clears the param;
+    dropping it here makes the written genesis match that result. If only the
+    old param list is present, move it instead of discarding the binaries.
+    """
+    inference = genesis_data.get("app_state", {}).get("inference")
+    if not isinstance(inference, dict):
+        return
+    params = inference.get("params")
+    if not isinstance(params, dict):
+        return
+    escrow = params.get("devshard_escrow_params")
+    if not isinstance(escrow, dict) or "approved_versions" not in escrow:
+        return
+    legacy = escrow.pop("approved_versions")
+    if legacy and not inference.get("devshard_approved_versions"):
+        inference["devshard_approved_versions"] = legacy
 
 
 def fetch_genesis_from_seed():
@@ -1912,6 +1935,7 @@ def _grant_funding_instructions(cold_address: str, warm_address: str, min_ngonka
     seed_api = (CONFIG_ENV.get("SEED_API_URL") or "<seed-api-url>").rstrip("/")
     seed_rpc = CONFIG_ENV.get("SEED_NODE_RPC_URL") or f"{seed_api}/chain-rpc/"
     amount = f"{min_ngonka}ngonka"
+    gas_prices = (CONFIG_ENV.get("TX_GAS_PRICES") or "1ngonka").strip()
     return f"""
 Join cold account needs GNK to pay grant-ml-ops-permissions gas (~11+ GNK).
 
@@ -1919,7 +1943,7 @@ Join cold account needs GNK to pay grant-ml-ops-permissions gas (~11+ GNK).
 
    inferenced tx bank send <funded-key-name> {cold_address} {amount} \\
      --from <funded-key-name> --chain-id {chain_id} \\
-     --node {seed_rpc} -y --gas auto --gas-prices 10ngonka
+     --node {seed_rpc} -y --gas auto --gas-prices {gas_prices}
 
 2) Verify balance:
 
@@ -1931,7 +1955,7 @@ Join cold account needs GNK to pay grant-ml-ops-permissions gas (~11+ GNK).
      inferenced tx inference grant-ml-ops-permissions {COLD_KEY_NAME} {warm_address} \\
      --from {COLD_KEY_NAME} --keyring-backend file --home {INFERENCED_STATE_DIR} \\
      --chain-id {chain_id} --node tcp://127.0.0.1:26657 -y \\
-     --gas auto --gas-adjustment 1.5
+     --gas auto --gas-adjustment 1.5 --gas-prices {gas_prices}
 """
 
 
@@ -2090,8 +2114,8 @@ def grant_key_permissions(warm_key_address: str):
             if "insufficient funds" in combined.lower():
                 cold_addr = _cold_address_from_keyring()
                 hint = (
-                    "Grant failed: insufficient GNK. If you passed --gas-prices manually, "
-                    "retry without it (testnet min_gas_price=0), or fund the cold key.\n"
+                    "Grant failed: insufficient GNK. Fund the cold key so it can pay "
+                    "1ngonka per gas, then retry the grant.\n"
                 )
                 if grant_tx_requires_funding():
                     min_ngonka = int(CONFIG_ENV.get("GRANT_MIN_SPENDABLE_NGONKA", "20000000000"))
