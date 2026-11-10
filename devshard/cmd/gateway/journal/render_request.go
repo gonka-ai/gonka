@@ -37,6 +37,10 @@ func renderRequestThrottled(lines logSink, line *RequestLine) {
 		logkey.Model, line.Model, logkey.Reason, line.LimiterReason)
 }
 
+func renderRequestBodyUnread(lines logSink, line *RequestLine) {
+	lines.Warn("request body not received: connection closed", logkey.Request, line.RequestID, logkey.Error, loggedError(line.BodyErr))
+}
+
 // renderReplyNotCached names a truncated answer, which nothing else does. See docs/operations.md, "Lines that mean something happened".
 func renderReplyNotCached(lines logSink, line *RequestLine) {
 	lines.Warn("a host stopped mid-answer: reply served, not cached", logkey.Request, line.RequestID,

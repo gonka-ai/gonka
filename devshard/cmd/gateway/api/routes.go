@@ -199,7 +199,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	body, err := readBody(w, r, chatIngestLimit)
 	if err != nil {
-		s.writeErrorFor(w, err)
+		s.refuseBody(w, requestID, err)
 		return
 	}
 	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))

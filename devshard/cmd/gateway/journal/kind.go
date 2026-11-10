@@ -19,6 +19,7 @@ const (
 	KindAttemptFinished
 	KindRequestFinished
 	KindRequestThrottled
+	KindRequestBodyUnread
 	KindHostTransition
 	KindExcludedHostServed
 	KindForcedSend
@@ -46,6 +47,7 @@ var kindNames = [kindCount]string{
 	KindAttemptFinished:     "attempt_finished",
 	KindRequestFinished:     "request_finished",
 	KindRequestThrottled:    "request_throttled",
+	KindRequestBodyUnread:   "request_body_unread",
 	KindHostTransition:      "host_transition",
 	KindExcludedHostServed:  "excluded_host_served",
 	KindForcedSend:          "forced_send",

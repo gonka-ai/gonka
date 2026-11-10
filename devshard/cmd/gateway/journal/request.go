@@ -6,7 +6,7 @@ import (
 	"devshard/cmd/gateway/engine"
 )
 
-// RequestLine is what a finished, throttled or uncached request can no longer be asked, read on the handler goroutine.
+// RequestLine is what a finished, throttled, unread or uncached request can no longer be asked, read on the handler goroutine.
 type RequestLine struct {
 	RequestID     string
 	Model         string
@@ -21,4 +21,5 @@ type RequestLine struct {
 	DeliverErr    error
 	CacheHit      bool
 	LimiterReason string
+	BodyErr       error
 }

@@ -375,6 +375,8 @@ The record carries no request or response body — capture files exist for that,
 
 `gateway limiter turned a request away` sits on the journal's progress lane rather than this line's money lane, so it can be skipped when the progress backlog is full — the exact condition a refusal storm creates. A skipped line is counted in `devshard_gateway_journal_progress_dropped_total`; every refusal, logged or not, is still counted in `devshard_gateway_limit_rejections_total`.
 
+`request body not received: connection closed` is the line for a request whose body did not arrive whole: the read deadline fired, the client left or its stream broke. The gateway answers that request 400, closes the connection, and writes the line once with the request and the `error` that stopped the read, which carries the client's socket address, cut at `maxLoggedErrorBytes`. It sits on the progress lane like the limiter line above, so a backlog may drop it.
+
 ### Lines that mean something happened
 
 | Line | Why it matters |

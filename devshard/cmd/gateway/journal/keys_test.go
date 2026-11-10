@@ -117,6 +117,9 @@ func everyProducer() map[string]func(events *Journal) {
 		"RequestThrottled": func(events *Journal) {
 			events.RequestThrottled(RequestLine{RequestID: "request-4", Model: "qwen", LimiterReason: "queue_depth"})
 		},
+		"RequestBodyUnread": func(events *Journal) {
+			events.RequestBodyUnread(RequestLine{RequestID: "request-6", BodyErr: errors.New("read tcp: i/o timeout")})
+		},
 		"ReplyNotCached": func(events *Journal) {
 			events.ReplyNotCached(RequestLine{RequestID: "request-5", Model: "qwen", EscrowID: "escrow-1"})
 		},
