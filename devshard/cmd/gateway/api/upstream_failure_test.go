@@ -50,7 +50,7 @@ func TestAnAssembledFailureIsNotServedAsASuccess(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
-			stream := newClientStream(recorder, "req-1", false, true, filters.LogprobIntent{}, nil)
+			stream := newClientStream(recorder, "req-1", false, true, filters.LogprobIntent{}, 0, nil)
 			if _, err := stream.Write([]byte(testCase.events)); err != nil {
 				t.Fatalf("Write(): %v", err)
 			}
@@ -73,7 +73,7 @@ func TestAnAssembledFailureIsNotServedAsASuccess(t *testing.T) {
 //  4. Assert the terminator appears exactly once.
 func TestAFailureAfterTheHostFinishedStillReachesTheClient(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	stream := newClientStream(recorder, "req-1", true, true, filters.LogprobIntent{}, nil)
+	stream := newClientStream(recorder, "req-1", true, true, filters.LogprobIntent{}, 0, nil)
 	if _, err := stream.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\ndata: [DONE]\n\n")); err != nil {
 		t.Fatalf("Write(): %v", err)
 	}
@@ -104,7 +104,7 @@ func TestAFailureAfterTheHostFinishedStillReachesTheClient(t *testing.T) {
 //  3. Assert the body ends on that terminator.
 func TestACleanStreamEndsWithOneTerminator(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	stream := newClientStream(recorder, "req-1", true, true, filters.LogprobIntent{}, nil)
+	stream := newClientStream(recorder, "req-1", true, true, filters.LogprobIntent{}, 0, nil)
 	if _, err := stream.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\ndata: [DONE]\n\n")); err != nil {
 		t.Fatalf("Write(): %v", err)
 	}

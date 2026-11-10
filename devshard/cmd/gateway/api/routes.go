@@ -364,7 +364,7 @@ func authorizeModel(configured config.Limits, model string, identity credentials
 // race returns the outcome and the failure the reply's status could not carry. See README.md, "Streaming the reply".
 func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool, slot *limiterSlot) (engine.RaceOutcome, error) {
 	startedAt := s.now()
-	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, s.buffers)
+	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, prompt.tokens, s.buffers)
 	defer client.discard()
 	outputTokens := outputTokenBudget(normalized)
 	outcome, err := s.inference.Run(r.Context(), engine.Request{

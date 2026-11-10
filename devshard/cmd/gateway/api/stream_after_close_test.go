@@ -12,7 +12,7 @@ import (
 // closedStream returns a clientStream that has already been written to once and closed.
 func closedStream(t *testing.T) *clientStream {
 	t.Helper()
-	stream := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, nil)
+	stream := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, 0, nil)
 	if _, err := stream.Write([]byte("data: {\"choices\":[]}\n\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -37,7 +37,7 @@ func (f *flushSpy) Flush() { f.flushes++ }
 //  4. Assert the flush count did not grow, so no flush reaches the writer after close.
 func TestClientStreamStopsFlushingAfterClose(t *testing.T) {
 	spy := &flushSpy{ResponseWriter: httptest.NewRecorder()}
-	stream := newClientStream(spy, "req-1", true, false, filters.LogprobIntent{}, nil)
+	stream := newClientStream(spy, "req-1", true, false, filters.LogprobIntent{}, 0, nil)
 	if _, err := stream.Write([]byte("data: {\"choices\":[]}\n\n")); err != nil {
 		t.Fatalf("Write: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestClientStreamCloseIsIdempotent(t *testing.T) {
 //  3. Close the stream once every goroutine finishes.
 //  4. Assert Close returns no error, so the concurrent writers left the stream's internal state intact.
 func TestClientStreamSurvivesConcurrentWriters(t *testing.T) {
-	stream := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, nil)
+	stream := newClientStream(httptest.NewRecorder(), "req-1", true, false, filters.LogprobIntent{}, 0, nil)
 
 	var waiting sync.WaitGroup
 	for range 8 {

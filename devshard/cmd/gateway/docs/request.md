@@ -135,6 +135,7 @@ Two shapes, decided by what the client asked for, not by what the host sends —
 | --- | --- |
 | `logprob`, `logprobs`, `top_logprobs` | only if the client asked (`logprobs: true`) |
 | `token_ids`, `prompt_token_ids`, `prompt_logprobs` | never |
+| `usage` | when streaming, only if the client asked (`stream_options.include_usage`); always otherwise. As the host reported it, except `prompt_tokens_details.cached_tokens`, which is bounded by the gateway's prompt count ([`filters/README.md`](../filters/README.md), "Cached prompt tokens") |
 
 The "always stripped" list is **derived** from the two above, not written out a second time — a second hand-written list can omit a field the first strips, which leaks `top_logprobs`.
 

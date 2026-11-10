@@ -38,22 +38,24 @@ var (
 	ErrStreamCarryOverflow  = errors.New("sse event exceeds carry limit")
 	ErrStreamTruncatedEvent = errors.New("sse stream ended mid-event")
 
-	usageKey   = []byte("usage")
-	messageKey = []byte("message")
+	usageKey        = []byte("usage")
+	messageKey      = []byte("message")
+	cachedTokensKey = []byte(cachedTokensField)
 )
 
 // StreamRewriter strips the hidden fields from an SSE stream, emitting complete events only.
 type StreamRewriter struct {
-	intent    LogprobIntent
-	keepUsage bool
-	carry     []byte
-	scanned   int
-	failed    bool
+	intent       LogprobIntent
+	keepUsage    bool
+	promptTokens uint64
+	carry        []byte
+	scanned      int
+	failed       bool
 }
 
-// NewStreamRewriter drops the forced usage event unless keepUsage says the client asked for it.
-func NewStreamRewriter(intent LogprobIntent, keepUsage bool) *StreamRewriter {
-	return &StreamRewriter{intent: intent, keepUsage: keepUsage}
+// NewStreamRewriter drops the forced usage event unless keepUsage says the client asked for it, and bounds its cached_tokens by promptTokens, the gateway's own count.
+func NewStreamRewriter(intent LogprobIntent, keepUsage bool, promptTokens uint64) *StreamRewriter {
+	return &StreamRewriter{intent: intent, keepUsage: keepUsage, promptTokens: promptTokens}
 }
 
 // Write returns every event chunk completes, rewritten; past MaxStreamCarryBytes the rewriter fails permanently.
@@ -70,7 +72,7 @@ func (r *StreamRewriter) Write(chunk []byte) ([]byte, error) {
 			break
 		}
 		eventEnd := searchFrom + offset
-		rewritten, _ := rewriteEvent(r.carry[eventStart:eventEnd], r.intent, r.keepUsage)
+		rewritten, _ := rewriteEvent(r.carry[eventStart:eventEnd], r.intent, r.keepUsage, r.promptTokens)
 		out.Write(rewritten)
 		eventStart, searchFrom = eventEnd, eventEnd
 	}
@@ -95,7 +97,7 @@ func (r *StreamRewriter) Close() ([]byte, error) {
 	if len(carry) == 0 {
 		return nil, nil
 	}
-	final, malformed := rewriteEvent(carry, r.intent, r.keepUsage)
+	final, malformed := rewriteEvent(carry, r.intent, r.keepUsage, r.promptTokens)
 	if malformed {
 		return nil, ErrStreamTruncatedEvent
 	}
@@ -103,7 +105,7 @@ func (r *StreamRewriter) Close() ([]byte, error) {
 }
 
 // rewriteEvent returns the event as the client must read it, forwarding only what the decoded payload allows. See README.md, "Rewriting an event".
-func rewriteEvent(event []byte, intent LogprobIntent, keepUsage bool) (rewritten []byte, malformed bool) {
+func rewriteEvent(event []byte, intent LogprobIntent, keepUsage bool, promptTokens uint64) (rewritten []byte, malformed bool) {
 	dataLines, payload, held := eventPayload(event)
 	if !held {
 		return event, false
@@ -119,12 +121,12 @@ func rewriteEvent(event []byte, intent LogprobIntent, keepUsage bool) (rewritten
 			return rebuildEvent(event, stripped), false
 		}
 	}
-	return rewriteDecodedEvent(event, dataLines, payload, intent, keepUsage)
+	return rewriteDecodedEvent(event, dataLines, payload, intent, keepUsage, promptTokens)
 }
 
 func stripWithoutDecoding(payload []byte, intent LogprobIntent, keepUsage bool) (stripped []byte, changed, handled bool) {
 	reshaped := anyKeyMatches(payload, func(name []byte, _ int) bool {
-		return (!keepUsage && bytes.EqualFold(name, usageKey)) || bytes.EqualFold(name, messageKey)
+		return (!keepUsage && bytes.EqualFold(name, usageKey)) || bytes.EqualFold(name, messageKey) || bytes.EqualFold(name, cachedTokensKey)
 	})
 	if reshaped {
 		return nil, false, false
@@ -132,7 +134,7 @@ func stripWithoutDecoding(payload []byte, intent LogprobIntent, keepUsage bool) 
 	return stripMembersWithoutDecoding(payload, intent)
 }
 
-func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent LogprobIntent, keepUsage bool) (rewritten []byte, malformed bool) {
+func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent LogprobIntent, keepUsage bool, promptTokens uint64) (rewritten []byte, malformed bool) {
 	// A payload that opens as an object and does not parse would carry whatever it hides.
 	unreadable := func() ([]byte, bool) {
 		if bytes.HasPrefix(bytes.TrimLeft(payload, " \t"), []byte("{")) {
@@ -152,6 +154,7 @@ func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent Log
 		}
 		changed = dropped || changed
 	}
+	changed = boundCachedTokens(decoded, promptTokens) || changed
 	filtered := payload
 	if changed {
 		encoded, err := encodeCompact(decoded)
@@ -171,7 +174,7 @@ func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent Log
 	return rebuildEvent(event, filtered), false
 }
 
-var rewriteTriggers = append(slices.Clone(clientStrippedFields), "message")
+var rewriteTriggers = slices.Concat(clientStrippedFields, []string{"message", cachedTokensField})
 
 func carriesNothingToRewrite(payload []byte, keepUsage bool) bool {
 	payload = bytes.Trim(payload, jsonWhitespace)

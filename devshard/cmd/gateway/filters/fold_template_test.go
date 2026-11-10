@@ -10,7 +10,7 @@ import (
 
 func foldEvents(t *testing.T, events [][]byte, intent LogprobIntent, withTemplate bool) []byte {
 	t.Helper()
-	folder := NewBodyFolder(intent)
+	folder := NewBodyFolder(intent, 0)
 	for _, event := range events {
 		if !withTemplate {
 			folder.template = nil
@@ -93,7 +93,7 @@ func TestLogprobsTemplateFoldsWhatTheFullMergeWould(t *testing.T) {
 //  1. Fold a stand-shaped stream for a client that asked for logprobs.
 //  2. Assert a template carrying logprobs entries forms, so the equality above is the fast path's and not the full merge's alone.
 func TestStandStreamFormsALogprobsTemplate(t *testing.T) {
-	folder := NewBodyFolder(LogprobIntent{Keep: true})
+	folder := NewBodyFolder(LogprobIntent{Keep: true}, 0)
 	for _, event := range standStream(3) {
 		if _, err := folder.Write(event); err != nil {
 			t.Fatal(err)

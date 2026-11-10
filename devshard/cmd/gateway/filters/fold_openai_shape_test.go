@@ -18,7 +18,7 @@ func foldedChoice(t *testing.T, events ...string) map[string]any {
 
 func foldedBody(t *testing.T, events ...string) map[string]any {
 	t.Helper()
-	folder := NewBodyFolder(LogprobIntent{})
+	folder := NewBodyFolder(LogprobIntent{}, 0)
 	for _, event := range events {
 		if _, err := folder.Write([]byte("data: " + event + "\n\n")); err != nil {
 			t.Fatalf("Write(): %v", err)

@@ -249,7 +249,7 @@ func BenchmarkClientStreamWrite(b *testing.B) {
 	b.ReportAllocs()
 	for b.Loop() {
 		writer.reset()
-		stream := newClientStream(writer, "request-1", true, false, filters.LogprobIntent{}, nil)
+		stream := newClientStream(writer, "request-1", true, false, filters.LogprobIntent{}, 0, nil)
 		for _, chunk := range chunks {
 			if _, err := stream.Write([]byte(chunk)); err != nil {
 				b.Fatalf("Write: %v", err)
