@@ -11,7 +11,14 @@ export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
 export KEY_DIR="$BASE_DIR/.inference"
 export CHAIN_ID="${CHAIN_ID:-gonka-testnet}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
-export NODE_OPTS="${NODE_OPTS:---node http://localhost:8000/chain-rpc/}"
+export NODE_OPTS="${NODE_OPTS:---node tcp://127.0.0.1:26657}"
+
+# Unset keeps the zero-fee path. The launch default is 1ngonka.
+GAS_PRICE_ARGS=()
+gas_prices="${TX_GAS_PRICES-1ngonka}"
+if [ -n "$gas_prices" ]; then
+    GAS_PRICE_ARGS=(--gas-prices "$gas_prices")
+fi
 
 # Local and key-string support
 LOCAL_MODE=false
@@ -242,7 +249,7 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
         
         if ! RAW_STORE_OUT=$(run_tx_json_retry 5 "$APP_NAME" tx wasm store "$WASM_PATH" \
           --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-          --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS); then
+          --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" "${GAS_PRICE_ARGS[@]}" $NODE_OPTS); then
             echo "Error: WASM store transaction failed."
             echo "Raw output from command:"
             echo "$RAW_STORE_OUT"
@@ -318,7 +325,7 @@ if [ -z "$PROPOSAL_ID_ARG" ]; then
     echo "Submitting Proposal..."
     if ! SUBMIT_OUT=$(run_tx_json_retry 5 "$APP_NAME" tx gov submit-proposal "$PROPOSAL_FILE" \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS); then
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" "${GAS_PRICE_ARGS[@]}" $NODE_OPTS); then
         echo "Error: submit-proposal failed."
         echo "$SUBMIT_OUT"
         exit 1
@@ -358,7 +365,7 @@ VOTE_SUCCESS=false
 while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
     if VOTE_OUT=$(run_tx_json_retry 3 "$APP_NAME" tx gov vote "$PROPOSAL_ID" yes \
       --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS); then
+      --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" "${GAS_PRICE_ARGS[@]}" $NODE_OPTS); then
         echo "$VOTE_OUT"
         VOTE_SUCCESS=true
         break

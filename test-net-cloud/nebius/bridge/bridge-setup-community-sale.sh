@@ -8,7 +8,37 @@ export BASE_DIR="${TESTNET_BASE_DIR:-/srv/dai}"
 export KEY_DIR="$BASE_DIR/.inference"
 export CHAIN_ID="${CHAIN_ID:-gonka-testnet}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
-export NODE_OPTS="--node http://localhost:8000/chain-rpc/"
+
+# The public proxy on :8000 answers "Chain RPC Disabled". Genesis setup uses the
+# local Comet RPC, the same endpoint launch.py uses for the warm-key grant.
+if [ -z "${NODE_OPTS:-}" ]; then
+    node_rpc_url="${NODE_RPC_URL:-http://127.0.0.1:26657}"
+    case "$node_rpc_url" in
+        */chain-rpc|*/chain-rpc/*)
+            case "$node_rpc_url" in
+                */) ;;
+                *) node_rpc_url="${node_rpc_url}/" ;;
+            esac
+            ;;
+        http://*|https://*)
+            rest="${node_rpc_url#*://}"
+            rest="${rest%/}"
+            case "$rest" in
+                */*) ;;
+                *) node_rpc_url="tcp://${rest}" ;;
+            esac
+            ;;
+    esac
+    NODE_OPTS="--node ${node_rpc_url}"
+fi
+export NODE_OPTS
+
+# Unset keeps the zero-fee path. The launch default is 1ngonka.
+GAS_PRICE_ARGS=()
+gas_prices="${TX_GAS_PRICES-1ngonka}"
+if [ -n "$gas_prices" ]; then
+    GAS_PRICE_ARGS=(--gas-prices "$gas_prices")
+fi
 
 BOUNTY_POOL_IBC_DENOM="${BOUNTY_POOL_IBC_DENOM:-ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4}"
 BOUNTY_POOL_CHAIN_ID="${BOUNTY_POOL_CHAIN_ID:-kava_2222-10}"
@@ -86,9 +116,17 @@ echo "Amount:  $BOUNTY_POOL_AMOUNT"
 echo "=================================================="
 
 echo "Storing community_sale.wasm..."
+set +e
 RAW_STORE_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | "$APP_NAME" tx wasm store "$WASM_PATH" \
     --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-    --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS 2>&1)
+    --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" "${GAS_PRICE_ARGS[@]}" $NODE_OPTS 2>&1)
+STORE_RC=$?
+set -e
+if [ "$STORE_RC" -ne 0 ]; then
+    echo "Error: WASM store command failed"
+    echo "$RAW_STORE_OUT"
+    exit "$STORE_RC"
+fi
 
 STORE_TX=$(echo "$RAW_STORE_OUT" | sed -n '/{/,$p')
 TX_HASH=$(echo "$STORE_TX" | jq -r '.txhash' 2>/dev/null || echo "null")
@@ -134,11 +172,19 @@ INIT_MSG=$(jq -n \
     }')
 
 echo "Instantiating community_sale..."
+set +e
 RAW_INST_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | "$APP_NAME" tx wasm instantiate "$CODE_ID" "$INIT_MSG" \
     --label "$BOUNTY_POOL_COMMUNITY_SALE_LABEL" \
     --admin "$BOUNTY_POOL_GOV_AUTHORITY" \
     --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-    --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS 2>&1)
+    --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" "${GAS_PRICE_ARGS[@]}" $NODE_OPTS 2>&1)
+INST_RC=$?
+set -e
+if [ "$INST_RC" -ne 0 ]; then
+    echo "Error: Instantiate command failed"
+    echo "$RAW_INST_OUT"
+    exit "$INST_RC"
+fi
 
 INST_TX=$(echo "$RAW_INST_OUT" | sed -n '/{/,$p')
 INST_HASH=$(echo "$INST_TX" | jq -r '.txhash' 2>/dev/null || echo "null")
@@ -187,7 +233,7 @@ set +e
 RAW_SEND_OUT=$(printf "%s\n%s\n" "$PASSWORD" "$PASSWORD" | "$APP_NAME" tx bank send "$MY_ADDR" "$CONTRACT_ADDR" \
     "${BOUNTY_POOL_AMOUNT}${BOUNTY_POOL_IBC_DENOM}" \
     --from "$KEY_NAME" --chain-id "$CHAIN_ID" --gas auto --gas-adjustment 1.5 --yes --output json \
-    --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" $NODE_OPTS 2>&1)
+    --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR" "${GAS_PRICE_ARGS[@]}" $NODE_OPTS 2>&1)
 SEND_RC=$?
 set -e
 

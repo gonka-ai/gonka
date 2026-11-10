@@ -1252,6 +1252,11 @@ def setup_bounty_pool():
     env["CHAIN_ID"] = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
     env["TESTNET_BASE_DIR"] = str(BASE_DIR)
     env["KEY_NAME"] = COLD_KEY_NAME
+    node_rpc_url = _normalize_node_rpc_url(
+        CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
+    )
+    env["NODE_RPC_URL"] = node_rpc_url
+    env["NODE_OPTS"] = f"--node {node_rpc_url}"
 
     result = subprocess.run(
         ["bash", str(script)],
@@ -1346,8 +1351,10 @@ def setup_wrapped_token_registration():
     env["TESTNET_BASE_DIR"] = str(BASE_DIR)
     env["KEY_NAME"] = COLD_KEY_NAME
     env["KEYRING_PASSWORD"] = CONFIG_ENV.get("KEYRING_PASSWORD", "12345678")
-    api_port = CONFIG_ENV.get("API_PORT", "8000")
-    node_rpc_url = f"http://localhost:{api_port}/chain-rpc/"
+    node_rpc_url = _normalize_node_rpc_url(
+        CONFIG_ENV.get("NODE_RPC_URL", "http://127.0.0.1:26657")
+    )
+    env["NODE_RPC_URL"] = node_rpc_url
     env["NODE_OPTS"] = f"--node {node_rpc_url}"
 
     try:
