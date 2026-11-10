@@ -325,6 +325,8 @@ func TestExecuteEchoValidation_UnsupportedRequestsAreNotJudged(t *testing.T) {
 	for _, promptPayload := range []string{
 		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`,
 		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"thinking_token_budget":32}`,
+		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.5}`,
+		`{"model":"Qwen/Qwen2.5-7B-Instruct","messages":[{"role":"user","content":"hi"}]}`,
 	} {
 		_, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
 			func(context.Context, string, []byte) (*http.Response, error) {
@@ -370,8 +372,21 @@ func TestTapeParams_ModelDefaultsFillMissingFields(t *testing.T) {
 		require.NoError(t, json.Unmarshal([]byte(body), &m))
 		return tapeParams(m)
 	}
-	require.Equal(t, TapeParams{Temperature: 1, TopP: 0.95, TopK: 40}, params(`{"model":"MiniMaxAI/MiniMax-M2.7","messages":[]}`))
-	require.Equal(t, TapeParams{Temperature: 1, TopP: 1, TopK: 0, MinTokens: 64, MaxTokens: 256},
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 0.95, TopK: 40, RepetitionPenalty: 1},
+		params(`{"model":"MiniMaxAI/MiniMax-M2.7","messages":[]}`))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 1, TopK: 0, MinTokens: 64, MaxTokens: 256, RepetitionPenalty: 1},
 		params(`{"model":"MiniMaxAI/MiniMax-M2.7","top_p":1,"top_k":0,"min_tokens":64,"max_tokens":256}`))
-	require.Equal(t, TapeParams{Temperature: 1, TopP: 1}, params(`{"model":"other/model"}`))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 1, RepetitionPenalty: 1}, params(`{"model":"other/model"}`))
+}
+
+func TestTapeParams_PenalisedByRequestOrModelDefault(t *testing.T) {
+	params := func(body string) TapeParams {
+		var m map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(body), &m))
+		return tapeParams(m)
+	}
+	require.False(t, params(`{"model":"MiniMaxAI/MiniMax-M2.7"}`).Penalised())
+	require.True(t, params(`{"model":"MiniMaxAI/MiniMax-M2.7","frequency_penalty":0.2}`).Penalised())
+	require.True(t, params(`{"model":"Qwen/Qwen2.5-7B-Instruct"}`).Penalised())
+	require.False(t, params(`{"model":"Qwen/Qwen2.5-7B-Instruct","repetition_penalty":1}`).Penalised())
 }

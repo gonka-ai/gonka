@@ -54,8 +54,8 @@ var modelDefaults = map[string]TapeParams{
 	"MiniMaxAI/MiniMax-M2.7":             {Temperature: 1, TopP: 0.95, TopK: 40},
 	"Qwen/Qwen3-0.6B":                    {Temperature: 0.6, TopP: 0.95, TopK: 20},
 	"Qwen/Qwen3-4B-Instruct-2507":        {Temperature: 0.7, TopP: 0.8, TopK: 20},
-	"Qwen/Qwen2.5-1.5B-Instruct":         {Temperature: 0.7, TopP: 0.8, TopK: 20},
-	"Qwen/Qwen2.5-7B-Instruct":           {Temperature: 0.7, TopP: 0.8, TopK: 20},
+	"Qwen/Qwen2.5-1.5B-Instruct":         {Temperature: 0.7, TopP: 0.8, TopK: 20, RepetitionPenalty: 1.1},
+	"Qwen/Qwen2.5-7B-Instruct":           {Temperature: 0.7, TopP: 0.8, TopK: 20, RepetitionPenalty: 1.05},
 }
 
 // modelEOS are the generation_config eos_token_id(s) of each served model:
@@ -76,7 +76,8 @@ var modelEOS = map[string][]int{
 const ChatPath = "/v1/chat/completions"
 
 // ErrEchoUnsupported marks a request the echo cannot judge: a grammar the
-// validator does not see, or a thinking budget that forces a token.
+// validator does not see, a thinking budget that forces a token, or a
+// sampling penalty the prompt logprobs do not carry.
 var ErrEchoUnsupported = errors.New("echo validation: unsupported request")
 
 // lengthRuleContextCap is the smallest max_model_len a node is expected to
@@ -93,13 +94,27 @@ type TapeParams struct {
 	// end tokens are masked before MinTokens and the answer stops at MaxTokens.
 	MinTokens int
 	MaxTokens int
+	// Penalties rescale the logits of tokens already seen. The validator's
+	// prompt logprobs are taken before them, so a penalised tape has no echo.
+	RepetitionPenalty float64
+	FrequencyPenalty  float64
+	PresencePenalty   float64
+}
+
+// Penalised reports a tape sampled under a repetition, frequency or presence
+// penalty.
+func (p TapeParams) Penalised() bool {
+	return p.RepetitionPenalty != 1 || p.FrequencyPenalty != 0 || p.PresencePenalty != 0
 }
 
 func tapeParams(requestMap map[string]interface{}) TapeParams {
-	p := TapeParams{Temperature: 1, TopP: 1}
+	p := TapeParams{Temperature: 1, TopP: 1, RepetitionPenalty: 1}
 	if model, _ := requestMap["model"].(string); model != "" {
 		if d, ok := modelDefaults[model]; ok {
 			p = d
+			if p.RepetitionPenalty == 0 {
+				p.RepetitionPenalty = 1
+			}
 		}
 	}
 	if v, ok := requestMap["temperature"].(float64); ok {
@@ -116,6 +131,15 @@ func tapeParams(requestMap map[string]interface{}) TapeParams {
 	}
 	if v, ok := requestMap["max_tokens"].(float64); ok {
 		p.MaxTokens = int(v)
+	}
+	if v, ok := requestMap["repetition_penalty"].(float64); ok {
+		p.RepetitionPenalty = v
+	}
+	if v, ok := requestMap["frequency_penalty"].(float64); ok {
+		p.FrequencyPenalty = v
+	}
+	if v, ok := requestMap["presence_penalty"].(float64); ok {
+		p.PresencePenalty = v
 	}
 	return p
 }
@@ -556,11 +580,16 @@ func equalIDs(a, b []int) bool {
 }
 
 // unsupportedReason names what keeps the echo from judging a request: a
-// grammar (the validator does not see the mask the executor sampled under) or
-// a thinking budget (it forces a token the tape never chose).
+// grammar (the validator does not see the mask the executor sampled under),
+// a thinking budget (it forces a token the tape never chose) or a sampling
+// penalty, requested or the model's default (vLLM applies generation_config's
+// repetition_penalty unless the node overrides it).
 func unsupportedReason(requestMap map[string]interface{}) string {
 	if GrammarConstrained(requestMap) {
 		return "grammar-constrained request"
+	}
+	if tapeParams(requestMap).Penalised() {
+		return "sampling penalty the echo cannot replay"
 	}
 	if _, ok := requestMap["thinking_token_budget"]; ok {
 		return "thinking budget forces a token"
