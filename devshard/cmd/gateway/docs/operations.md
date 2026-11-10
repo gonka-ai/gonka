@@ -231,7 +231,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ("The kill switch" above) |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
-| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; an admin key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ("Who may call what" above) |
+| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; a key shorter than 16 characters is refused, client or admin, and an empty admin key leaves the admin surface unrouted ("Who may call what" above) |
 | `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ("Boot" below) |
 | `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC its queries fall back to; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
@@ -245,6 +245,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_TX_FEE_DENOM` / `DEVSHARD_TX_FEE_AMOUNT` | `ngonka` / 1 000 000 | the fee every chain transaction of the gateway carries; a fee in `ngonka` is added to what an escrow create must find in the wallet |
 | `DEVSHARD_TX_GAS_LIMIT` | 700 000 | the gas limit of those transactions |
 | `DEVSHARD_TX_POLL_INTERVAL_MS` / `DEVSHARD_TX_POLL_TIMEOUT_MS` | 2 000 / 45 000 | how often a broadcast transaction is looked up, and how long before the gateway stops waiting for it |
+| `DEVSHARD_TX_CALL_TIMEOUT_MS` | 10 000 | the deadline of each chain call behind escrow creates, settlements and the escrow tick's lookups, so a node that never answers fails the call instead of holding the tick; at most `DEVSHARD_TX_POLL_TIMEOUT_MS` ([`chain/README.md`](../chain/README.md), "Transaction encoding") |
 | `GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` | 5 | the requests a host's weight buys it, and with them the fleet's own ceiling ([`capacity.md`](capacity.md)) |
 | `GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` | 10 | the same figure while the chain reports requests blocked for proof-of-compute |
 | `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT` | 0 | the per-model budget of input tokens in flight, scaled by capacity, in tokenizer tokens for a request counted with the model's tokenizer and in byte-estimate tokens otherwise ([`request.md`](request.md), "The prompt token count"); `0` is unlimited |

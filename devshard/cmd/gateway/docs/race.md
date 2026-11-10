@@ -143,7 +143,7 @@ The departure is read where a nonce is requested, not only where the select take
 
 That check guards the commit, not the send. A nonce the scheduler committed before the client left is still returned, and the race sends it on the race context and discards its output (`scheduler/request_pick.go`, `Scheduler.pickOnce`; `engine/pick.go`, `raceCoordinator.applyPick`), as devshardctl does. The commit put a `MsgStartInference` with the request's own `max_tokens` in the escrow's diff: a record never sent stays `StatusPending`, and settlement charges its whole reserve to the escrow and credits it to the host. A refusal vote is no way out either, since it would count a `Missed` against a host that never received the request. Only a race that ruled every send out — the backstop cancelled it, or the request was refused as too long for any host — strands the nonce instead.
 
-From departure onward the drain deadline is what bounds the race — forty minutes by default, and by construction longer than any deadline a race arms for itself, so the only host it ever ends is one that streams forever without tripping any other bound (`engine/drain.go`, `defaultDrainTimeout`).
+From departure onward the drain deadline is what bounds the race — forty minutes by default, and never shorter than the twenty-minute streaming hard timeout (`config.MinDrainTimeoutSeconds`, which `Validate` enforces), so longer than any deadline a race arms for itself, since no attempt launches after the departure, so the only host it ever ends is one that streams forever without tripping any other bound (`engine/drain.go`, `defaultDrainTimeout`).
 
 Once the winner has finished, the client's request handler is released and any still-pending losers are handed to a second `await` on a background goroutine. Nothing they can do changes what the client received (`engine/race.go`, `runRace` and `raceCoordinator.release`).
 
@@ -329,7 +329,7 @@ Carried in the configuration snapshot (`config.Engine`, `config.Stream`) and bou
 | `engine_hedge_first_token_floor_ms` | 1 500 | Lower bound on the slow-start hedge until the model's fleet has a scale; the hedge then starts a second attempt at the curve times the fleet scale. Either way it fires only before the judged receipt or first-token deadline. Moves no window. 0 turns the hedge off. |
 | `engine_max_concurrent_timeout_votes` | 64 | Timeout votes for unfinished nonces **being posted** at once; nothing to do with settling an escrow. One past it waits for a poster and is never dropped; the votes still waiting out their deadlines cost no goroutine. 0 posts every due vote at once. |
 | `engine_max_attempts_per_request` | 2 | Unfinished attempts one race may hold at once; an attempt that ends gives its place back, and no race starts more attempts than its host group has. 0 means bounded only by the host group. |
-| `drain_timeout_seconds` | 2 400 | Bound on a race after its client leaves. |
+| `drain_timeout_seconds` | 2 400 | Bound on a race after its client leaves; at least 1 200, the streaming hard timeout. |
 | `classify_max_attempt_bytes`, `classify_max_participant_bytes`, `classify_max_global_bytes` | 1 / 10 / 100 MiB | Reassembly budgets: attempt, participant, global. |
 
 Go constants rather than configuration — these bound a request that every value above already failed to bound (`engine/escalation.go`, `engine/outcome.go`, `engine/engine.go`, `engine/race.go`, `engine/prefix_budget.go`, `engine/fleet_first_token.go` and `filters/stream.go`):

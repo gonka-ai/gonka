@@ -46,7 +46,7 @@ Four accessors carry rules of their own. `Server.AdminEnabled` is what callers m
 
 Most checks are ordinary range bounds. These are the ones that exist because a legal-looking pair is unsafe:
 
-- `admin_api_key` must be at least 16 characters when set. A key short enough to guess is worse than none, because "none" disables admin entirely while a weak one authenticates.
+- `admin_api_key` must be at least 16 characters when set. A key short enough to guess is worse than none, because "none" disables admin entirely while a weak one authenticates. Every entry of `api_keys` is held to the same 16, since a short client key spends the operator's escrows for whoever guesses it.
 - `api_keys` must be non-empty once any `model_access` entry is `api_key`, or that model is configured to be unreachable.
 - `host_cutoff_max_ms` must not exceed `perf_ejection_max_seconds`, so [`perf`](../perf/) stays the dominant ejection authority rather than the per-host cutoff.
 - `engine_loser_grace_ms` must be at least `engine_inter_chunk_stall_ms`. A loser is cancelled at the grace, so a grace under the stall window kills attempts that are merely between chunks — before the gateway would even call such a stream stalled.
@@ -54,6 +54,8 @@ Most checks are ordinary range bounds. These are the ones that exist because a l
 - `scheduler_dispatch_queue_depth` is in [1, 65536]: each escrow's dispatcher allocates its queue up front, so the ceiling bounds that allocation; the waiters themselves are bounded by admission, since each holds its admission slot.
 - `scheduler_max_consecutive_burns` is capped at 1000, which is past any real group size: a run longer than the group is a rung that never fires.
 - `rotation_settle_margin_blocks` below 1.
+- `tx_call_timeout_ms` must be at most `tx_poll_timeout_ms`: a single chain call outlasting the whole commit wait it is part of would make the call, not the wait, the bound.
+- `drain_timeout_seconds` must be at least `MinDrainTimeoutSeconds` (1200), the streaming hard timeout, so the drain never ends an attempt still within the deadlines the race armed for it ([`docs/race.md`](../docs/race.md), "Client departure and the drain").
 - `chain_grpc` is checked as `host:port`, not as a URL: a gRPC target carries no scheme, so a URL check would pass anything.
 
 Every problem is collected and reported together, and the field names in the messages use the snake_case admin-API spelling rather than the Go one.

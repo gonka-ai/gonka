@@ -37,6 +37,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Tx.FeeDenom, values.TxFeeDenom)
 	overrideIfSet(&configuration.Tx.PollIntervalMS, values.TxPollIntervalMS)
 	overrideIfSet(&configuration.Tx.PollTimeoutMS, values.TxPollTimeoutMS)
+	overrideIfSet(&configuration.Tx.CallTimeoutMS, values.TxCallTimeoutMS)
 
 	overrideIfSet(&configuration.Limits.Concurrency.PoCRequestsPer10000Weight, pocWeightLimit(values, Defaults().Limits.Concurrency.RequestsPer10000Weight))
 	overrideIfSet(&configuration.Scheduler.DispatchQueueDepth, values.DispatchQueueDepth)

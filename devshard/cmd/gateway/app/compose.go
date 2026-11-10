@@ -213,6 +213,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		GasLimit:     uint64(configuration.Tx.GasLimit),
 		PollInterval: time.Duration(configuration.Tx.PollIntervalMS) * time.Millisecond,
 		PollTimeout:  time.Duration(configuration.Tx.PollTimeoutMS) * time.Millisecond,
+		CallTimeout:  time.Duration(configuration.Tx.CallTimeoutMS) * time.Millisecond,
 		Now:          clock,
 		Narrator:     events,
 	})

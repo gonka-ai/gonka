@@ -40,7 +40,7 @@ func TestNewTxClientRequiresATransport(t *testing.T) {
 
 // Test flow:
 //  1. Call NewTxClient with only a transport set, leaving every other field zero.
-//  2. Assert fee denom, fee amount, gas limit, poll interval, poll timeout and the clock all fall back to their documented defaults.
+//  2. Assert fee denom, fee amount, gas limit, poll interval, poll timeout, call timeout and the clock all fall back to their documented defaults.
 func TestNewTxClientAppliesDefaultsForZeroFields(t *testing.T) {
 	client, err := NewTxClient(Config{Transport: newFakeTransport()})
 	if err != nil {
@@ -60,6 +60,9 @@ func TestNewTxClientAppliesDefaultsForZeroFields(t *testing.T) {
 	}
 	if client.pollTimeout != DefaultPollTimeout {
 		t.Errorf("pollTimeout = %v, want %v", client.pollTimeout, DefaultPollTimeout)
+	}
+	if bounded, isBounded := client.transport.(deadlineTransport); !isBounded || bounded.timeout != DefaultCallTimeout {
+		t.Errorf("transport = %#v, want one bounded by the call timeout %v", client.transport, DefaultCallTimeout)
 	}
 	if client.now == nil {
 		t.Error("now default not applied")

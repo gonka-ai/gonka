@@ -33,6 +33,7 @@ func Defaults() Config {
 			GasLimit:       int64(chain.DefaultGasLimit),
 			PollIntervalMS: chain.DefaultPollInterval.Milliseconds(),
 			PollTimeoutMS:  chain.DefaultPollTimeout.Milliseconds(),
+			CallTimeoutMS:  chain.DefaultCallTimeout.Milliseconds(),
 		},
 		Limits: Limits{
 			DefaultMaxTokens:         int64(filters.DefaultRequestMaxTokens),

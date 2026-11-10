@@ -89,7 +89,7 @@ The epoch switch height is derived rather than read: the current epoch's `set_ne
 
 Transactions are **unordered**: instead of a sequence number they carry a `timeout_timestamp` set `UnorderedTxTTL` (9 min) ahead of now. Inside that window a broadcast transaction can still land, so "not found" is never proof it failed — every reconciliation in [`escrow/`](../escrow/) waits out the window before concluding anything.
 
-The `Default*` constants in `txclient.go` (fee denom and amount, gas limit, poll interval and poll timeout) are what `NewTxClient` applies to zero-value fields, and the single source `config.Defaults` reads. `EscrowDenom` (`ngonka`) is the denom `CreateDevshardEscrow` locks the amount in, and the default fee denom.
+The `Default*` constants in `txclient.go` (fee denom and amount, gas limit, poll interval, poll timeout and call timeout) are what `NewTxClient` applies to zero-value fields, and the single source `config.Defaults` reads. `EscrowDenom` (`ngonka`) is the denom `CreateDevshardEscrow` locks the amount in, and the default fee denom.
 
 The three lookups mean three different things, and callers depend on the distinction:
 
@@ -104,6 +104,8 @@ Reading a transport failure as absence would rebuild and rebroadcast a settlemen
 Both money-moving transactions take an `onPrepared` hook that records the precomputed hash **before** the irreversible broadcast; an error from it aborts the broadcast. They differ afterwards: `CreateEscrow` returns once the transaction is accepted, because its commitment row is reconciled later, while `SettleEscrow` waits for the commit — the caller destroys the means to retry, so the result has to mean "settled" and not "sent". A broadcast that is not confirmed in time returns `errUnconfirmed`, whose message says what the caller must not do: create another.
 
 `awaitTx` is where a `DeliverTx` failure is learned at all: broadcasting in `BROADCAST_MODE_SYNC` reports `CheckTx` alone, so a transaction can be accepted and still never execute. It polls until a committed transaction satisfies the caller's readiness predicate, `pollTimeout` elapses, or the context is done, and returns a non-zero code as an error.
+
+Every transport call `TxClient` makes runs under its own deadline, `callTimeout` (`DefaultCallTimeout`, 10 s, `DEVSHARD_TX_CALL_TIMEOUT_MS`), inside whatever deadline the caller's context carries. The escrow tick runs on the process context, which has none, and the chain connection is dialled without keepalive, so a node that accepts a call and never answers would otherwise hold the tick, a settlement and its slot until restart. With it the call fails as a transport failure, which every caller already reads as "conclude nothing, retry next tick". The deadline is per call, so `awaitTx` still waits up to `pollTimeout` for a commit, one bounded lookup at a time. A call that times out does not move queries to the CometBFT RPC fallback, which switches only when the gRPC endpoint is unreachable.
 
 A non-zero `CheckTx` code from `Broadcast` is `ErrTxRejected`: the node refused the transaction, so it entered no mempool and can never land, and the hash `onPrepared` recorded names nothing on its way. The one exception is `tx already in mempool` (`sdk` code 19), which says the transaction is on its way; it stays a plain error, as does a transport failure, from which nothing about the transaction can be concluded.
 

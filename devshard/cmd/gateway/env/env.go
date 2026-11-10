@@ -39,6 +39,7 @@ type Values struct {
 	TxGasLimit       *int64
 	TxPollIntervalMS *int64
 	TxPollTimeoutMS  *int64
+	TxCallTimeoutMS  *int64
 
 	PoCMode *string
 
@@ -254,6 +255,7 @@ func Load() (Values, error) {
 	readLenientInt("DEVSHARD_TX_GAS_LIMIT", 1, &values.TxGasLimit)
 	readLenientInt("DEVSHARD_TX_POLL_INTERVAL_MS", 1, &values.TxPollIntervalMS)
 	readLenientInt("DEVSHARD_TX_POLL_TIMEOUT_MS", 1, &values.TxPollTimeoutMS)
+	readLenientInt("DEVSHARD_TX_CALL_TIMEOUT_MS", 1, &values.TxCallTimeoutMS)
 
 	readLenientInt("GATEWAY_DEFAULT_MAX_TOKENS", 1, &values.DefaultMaxTokens)
 	readLenientInt("GATEWAY_MAX_TOKENS_CAP", 1, &values.MaxTokensCap)

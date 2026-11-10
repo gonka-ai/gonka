@@ -32,7 +32,7 @@ The container's healthcheck deliberately probes a *different* route, `/healthz`,
 Nothing has a working default for these:
 
 - `DEVSHARD_CHAIN_RPC`, `DEVSHARD_CHAIN_GRPC`, `DEVSHARD_CHAIN_ID`, `DEVSHARD_PUBLIC_API` — the chain the gateway reads and broadcasts to. A wrong `DEVSHARD_CHAIN_ID` invalidates every transaction it signs.
-- `DEVSHARD_API_KEYS` — the keys clients present, for the models the `model_access` admin override marks `api_key`. A model that override does not name answers only the admin key, so a fresh gateway serves no client until the operator sets it ([`docs/operations.md`](../docs/operations.md), "Who may call what").
+- `DEVSHARD_API_KEYS` — the keys clients present, each at least 16 characters, for the models the `model_access` admin override marks `api_key`. A model that override does not name answers only the admin key, so a fresh gateway serves no client until the operator sets it ([`docs/operations.md`](../docs/operations.md), "Who may call what").
 - `DEVSHARD_ADMIN_API_KEY` — empty disables the admin routes entirely, including creating escrows and setting `model_access`, so every model stays admin-only and the gateway serves no client. Set it.
 
 ## Signing keys are named, never pasted
