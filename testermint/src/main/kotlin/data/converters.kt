@@ -3,6 +3,7 @@ package com.productscience.data
 import com.google.gson.JsonDeserializationContext
 import com.google.gson.JsonDeserializer
 import com.google.gson.JsonElement
+import com.google.gson.JsonParseException
 import com.google.gson.JsonPrimitive
 import com.google.gson.JsonSerializationContext
 import com.google.gson.JsonSerializer
@@ -139,6 +140,69 @@ class MessageSerializer(val namingPolicy: com.google.gson.FieldNamingPolicy) : J
 
         return jsonObject
     }
+}
+
+/**
+ * Converts fee-rule oneofs returned by the CLI's Amino JSON encoder back to
+ * protobuf JSON before Testermint writes Params into a governance proposal.
+ *
+ * Amino emits a selected rule as:
+ *   "Func": {"type": "...", "value": {"stored_delta": {...}}}
+ * while the proposal parser expects:
+ *   "stored_delta": {...}
+ */
+class FeeParamsDataSerializer : JsonSerializer<FeeParamsData> {
+    override fun serialize(
+        src: FeeParamsData,
+        typeOfSrc: Type,
+        context: JsonSerializationContext,
+    ): JsonElement {
+        return com.google.gson.JsonObject().apply {
+            add("min_gas_price_ngonka", context.serialize(src.minGasPriceNgonka))
+            add("base_validation_gas", context.serialize(src.baseValidationGas))
+            add("gas_per_poc_count", context.serialize(src.gasPerPocCount))
+            add("enabled_fee_groups", context.serialize(src.enabledFeeGroups))
+            src.groups?.let { add("groups", feeGroupsForProtoJson(it)) }
+        }
+    }
+}
+
+internal fun feeGroupsForProtoJson(groups: com.google.gson.JsonArray): com.google.gson.JsonArray {
+    val normalized = groups.deepCopy()
+
+    normalized.forEach groupLoop@{ groupElement ->
+        if (!groupElement.isJsonObject) return@groupLoop
+        val messages = groupElement.asJsonObject.getAsJsonArray("msgs") ?: return@groupLoop
+
+        messages.forEach messageLoop@{ messageElement ->
+            if (!messageElement.isJsonObject) return@messageLoop
+            val message = messageElement.asJsonObject
+            val upperWrapper = message.remove("Func")
+            val lowerWrapper = message.remove("func")
+            if (upperWrapper != null && lowerWrapper != null) {
+                throw JsonParseException("fee rule contains both Func and func oneof wrappers")
+            }
+
+            val wrapper = upperWrapper ?: lowerWrapper ?: return@messageLoop
+            if (!wrapper.isJsonObject) {
+                throw JsonParseException("fee rule oneof wrapper must be an object")
+            }
+            val value = wrapper.asJsonObject.get("value")
+            if (value == null || !value.isJsonObject || value.asJsonObject.entrySet().isEmpty()) {
+                throw JsonParseException("fee rule oneof wrapper must contain an object value")
+            }
+
+            value.asJsonObject.entrySet().forEach { (fieldName, fieldValue) ->
+                val existing = message.get(fieldName)
+                if (existing != null && existing != fieldValue) {
+                    throw JsonParseException("fee rule contains conflicting $fieldName values")
+                }
+                message.add(fieldName, fieldValue.deepCopy())
+            }
+        }
+    }
+
+    return normalized
 }
 
 class ConfirmationPoCPhaseDeserializer : JsonDeserializer<ConfirmationPoCPhase> {

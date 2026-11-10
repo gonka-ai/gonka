@@ -22,4 +22,7 @@ func TestDiffHasActiveCompletionWork(t *testing.T) {
 	require.True(t, DiffHasActiveCompletionWork(Diff{
 		Txs: []*DevshardTx{{Tx: &DevshardTx_StartInference{StartInference: &MsgStartInference{}}}},
 	}))
+	require.True(t, DiffHasActiveCompletionWork(Diff{
+		Txs: []*DevshardTx{{Tx: &DevshardTx_ErrorMiss{ErrorMiss: &MsgErrorMiss{}}}},
+	}))
 }

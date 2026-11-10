@@ -1,8 +1,9 @@
 package main
 
 import (
-	"strings"
 	"sync/atomic"
+
+	"devshard/internal/boolvalue"
 )
 
 // capacityAwareLimitsState gates the new capacity-aware behavior:
@@ -13,15 +14,10 @@ var capacityAwareLimitsState atomic.Bool
 
 // ConfigureCapacityAwareLimits enables/disables capacity-aware limiter
 // behavior based on a string value (env var, admin setting, etc.).
-// Recognized truthy values: "1", "true", "on", "yes"; everything else
-// (including empty) disables it.
+// Invalid and empty values disable the behavior.
 func ConfigureCapacityAwareLimits(raw string) {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "on", "yes":
-		capacityAwareLimitsState.Store(true)
-	default:
-		capacityAwareLimitsState.Store(false)
-	}
+	enabled, err := boolvalue.Parse(raw)
+	capacityAwareLimitsState.Store(err == nil && enabled)
 }
 
 // capacityAwareLimitsEnabled reports whether the gateway should keep

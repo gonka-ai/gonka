@@ -290,6 +290,29 @@ func TestComputeStatus_Stability(t *testing.T) {
 	}
 }
 
+func TestConfirmationPoCStatus(t *testing.T) {
+	alpha := &types.ConfirmationPoCParams{AlphaThreshold: types.DecimalFromFloat(0.7)}
+	tests := []struct {
+		name   string
+		stats  *types.CurrentEpochStats
+		params *types.ConfirmationPoCParams
+		want   Decision
+	}{
+		{name: "nil params", want: Pass},
+		{name: "zero alpha", params: &types.ConfirmationPoCParams{AlphaThreshold: types.DecimalFromFloat(0)}, stats: &types.CurrentEpochStats{ConfirmationPoCRatio: types.DecimalFromFloat(0)}, want: Pass},
+		{name: "nil stats", params: alpha, want: Pass},
+		{name: "nil ratio", params: alpha, stats: &types.CurrentEpochStats{}, want: Pass},
+		{name: "below alpha", params: alpha, stats: &types.CurrentEpochStats{ConfirmationPoCRatio: types.DecimalFromFloat(0.1)}, want: Fail},
+		{name: "equal alpha", params: alpha, stats: &types.CurrentEpochStats{ConfirmationPoCRatio: types.DecimalFromFloat(0.7)}, want: Pass},
+		{name: "above alpha", params: alpha, stats: &types.CurrentEpochStats{ConfirmationPoCRatio: types.DecimalFromFloat(1)}, want: Pass},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, ConfirmationPoCStatus(tt.stats, tt.params))
+		})
+	}
+}
+
 func BenchmarkComputeStatus(b *testing.B) {
 	params := &types.ValidationParams{
 		FalsePositiveRate:              types.DecimalFromFloat(0.05),

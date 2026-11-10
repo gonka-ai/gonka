@@ -5,21 +5,19 @@ import (
 	"fmt"
 	"log/slog"
 
-	mlnodeclient "common/nodemanager"
 	"common/chain"
+	mlnodeclient "common/nodemanager"
 	devshardpkg "devshard"
 	"devshard/runtimeparams"
-	devshardstorage "devshard/storage"
 )
 
 type epochParamsProvider = runtimeparams.RuntimeProvider
 
 type paramsProviderResult struct {
-	Provider           epochParamsProvider
-	RegisterEpochPrune func(store *devshardstorage.ManagedStorage) (cancel func())
-	Source             string
-	ActiveSource       func() string
-	close              func()
+	Provider     epochParamsProvider
+	Source       string
+	ActiveSource func() string
+	close        func()
 }
 
 func newParamsProvider(
@@ -47,7 +45,7 @@ func newParamsProvider(
 		return nil, err
 	}
 
-	result := &paramsProviderResult{
+	return &paramsProviderResult{
 		Provider: managed.Provider,
 		Source:   managed.Source,
 		ActiveSource: func() string {
@@ -57,18 +55,5 @@ func newParamsProvider(
 			return managed.Source
 		},
 		close: managed.Close,
-	}
-	result.RegisterEpochPrune = func(store *devshardstorage.ManagedStorage) (cancel func()) {
-		return managed.Provider.OnEpochChange(func(_, _ uint64) {
-			store.PruneOnceAsync(ctx)
-		})
-	}
-	return result, nil
-}
-
-func normalizeLogger(logger *slog.Logger) *slog.Logger {
-	if logger != nil {
-		return logger
-	}
-	return slog.Default()
+	}, nil
 }

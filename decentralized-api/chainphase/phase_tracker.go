@@ -2,6 +2,7 @@ package chainphase
 
 import (
 	"sync"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -22,8 +23,10 @@ type ChainPhaseTracker struct {
 }
 
 type BlockInfo struct {
-	Height int64
-	Hash   string
+	Height  int64
+	Hash    string
+	Time    time.Time
+	ChainID string
 }
 
 // Update caches the latest Epoch information from the network.
@@ -49,6 +52,25 @@ type EpochState struct {
 
 func (es *EpochState) IsNilOrNotSynced() bool {
 	return es == nil || !es.IsSynced
+}
+
+// IsPoCVoteWindow is true during regular PoC validation (including wind-down)
+// and confirmation-PoC validation. Challenged nodes still take InitValidate
+// and ValidateAll in this window even while their generate overlay is on.
+func (es *EpochState) IsPoCVoteWindow() bool {
+	if es.IsNilOrNotSynced() {
+		return false
+	}
+	if es.CurrentPhase == types.PoCValidatePhase ||
+		es.CurrentPhase == types.PoCValidateWindDownPhase {
+		return true
+	}
+	if es.CurrentPhase == types.InferencePhase &&
+		es.ActiveConfirmationPoCEvent != nil &&
+		es.ActiveConfirmationPoCEvent.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION {
+		return true
+	}
+	return false
 }
 
 func (t *ChainPhaseTracker) GetCurrentEpochState() *EpochState {
@@ -86,4 +108,3 @@ func (t *ChainPhaseTracker) UpdateEpochParams(params types.EpochParams) {
 
 	t.currentEpochParams = &params
 }
-

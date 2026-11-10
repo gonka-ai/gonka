@@ -39,9 +39,9 @@ func TestNewStateMachine_BindVoteThreshold_GovernanceFactor67(t *testing.T) {
 
 func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	const (
-		groupSize      = 6
-		voteThreshold  = uint32(4) // floor(6 * 67 / 100)
-		acceptsNeeded  = 5         // need > voteThreshold for timeout
+		groupSize     = 6
+		voteThreshold = uint32(4) // floor(6 * 67 / 100)
+		acceptsNeeded = 5         // need > voteThreshold for timeout
 	)
 	hosts := make([]*signing.Secp256k1Signer, groupSize)
 	for i := range hosts {
@@ -61,7 +61,7 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	// Pending inference; executor slot = group[1 % 6].SlotID.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("p"), Model: "m",
-		InputLength: 10, MaxTokens: 5, StartedAt: 1,
+		InputLength: 10, MaxTokens: testutil.TestMaxTokens, StartedAt: 1,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)

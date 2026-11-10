@@ -481,6 +481,7 @@ func TestFetchAndVerifyProofsByNonce_Success(t *testing.T) {
 		ModelId:                  "model-a",
 		RootHash:                 rootHash,
 		Count:                    count,
+		TreeDepth:                store.FlushedDepth(),
 		Nonces:                   []int32{42},
 		ParticipantAddress:       "participant",
 	})

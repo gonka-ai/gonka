@@ -1,0 +1,31 @@
+syntax = "proto3";
+package inference.inference;
+
+import "inference/inference/poc_v2.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+enum PoCChallengeState {
+  POC_CHALLENGE_STATE_OPEN = 0;
+  POC_CHALLENGE_STATE_CHALLENGE_FAILED = 1;
+  POC_CHALLENGE_STATE_ABORTED = 2;
+  POC_CHALLENGE_STATE_PASSED = 3;
+}
+
+message PoCChallenge {
+  uint64 epoch_index = 1;
+  string challenger = 2;
+  string target = 3;
+  uint64 expected_reward = 4;
+  uint64 locked_payment = 5;
+  int64 start_height = 6;
+  bytes seed = 7;
+  PoCChallengeState state = 8;
+}
+
+message OpenPoCChallenge {
+  PoCChallenge challenge = 1;
+  int64 finish = 2;
+  bool generating = 3;
+  repeated PoCV2StoreCommit commits = 4;
+}

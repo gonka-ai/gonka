@@ -83,7 +83,10 @@ jobs:
   integration:
     needs: discover
     runs-on: ubuntu-latest
-    name: testenv ${{ matrix.target }}
+    # matrix.target is empty when discover is skipped (normal PRs). A bare
+    # `testenv ${{ matrix.target }}` then shows up as that unevaluated
+    # expression in the checks list.
+    name: ${{ matrix.target && format('testenv {0}', matrix.target) || 'testenv' }}
     permissions:
       contents: read
       pull-requests: read

@@ -221,7 +221,7 @@ func DoWithLockedNodeHTTPRetry(
 			}
 			outcome = InferenceError{Message: msg}
 		}
-		_ = b.QueueMessage(ReleaseNode{NodeId: node.Id, Outcome: outcome, Response: make(chan bool, 2)})
+		_ = b.QueueMessage(ReleaseNode{NodeId: node.Id, RegistrationSeq: node.RegistrationSeq, Outcome: outcome, Response: make(chan bool, 2)})
 
 		if retry {
 			if triggerRecheck {

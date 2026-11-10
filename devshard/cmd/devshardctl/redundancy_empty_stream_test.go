@@ -19,8 +19,6 @@ import (
 func TestDefaultRedundancySettings_AllowsThirtyMinuteInference(t *testing.T) {
 	settings := DefaultRedundancySettings()
 	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamMaxAttemptWaitMS)
 }
 
 func TestSseChunkHasContent(t *testing.T) {

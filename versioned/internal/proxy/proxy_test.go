@@ -208,6 +208,50 @@ func TestProxy_OptionalDevshardPrefix(t *testing.T) {
 	}
 }
 
+func TestProxy_VersionedPingForwardsToChild(t *testing.T) {
+	var gotPath string
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	routes := newRoutes(map[string]string{"v2": addr})
+	handler := Handler(routes)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	// Decision D4: wire path is versioned; versiond strips the version segment.
+	for _, url := range []string{
+		srv.URL + "/v2/clock",
+		srv.URL + "/devshard/v2/clock",
+	} {
+		gotPath = ""
+		resp, err := http.Get(url)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("%s status=%d, want 204", url, resp.StatusCode)
+		}
+		if gotPath != "/clock" {
+			t.Fatalf("%s forwarded path=%q, want /clock", url, gotPath)
+		}
+	}
+
+	// Bare /clock must NOT be treated as versionless obs (would pin/fan-out).
+	resp, err := http.Get(srv.URL + "/clock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusNoContent {
+		t.Fatal("bare /clock must not falsely succeed via versionless obs")
+	}
+}
+
 func TestProxy_RootPath(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)

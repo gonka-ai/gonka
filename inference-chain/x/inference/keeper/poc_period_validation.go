@@ -1,8 +1,10 @@
 package keeper
 
 import (
+	"errors"
 	"fmt"
 
+	"cosmossdk.io/collections"
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -188,5 +190,115 @@ func (k Keeper) checkRegularPoCMessageTooLate(ctx sdk.Context, startBlockHeight,
 		}
 	}
 
+	return nil
+}
+
+// CheckPoCV2StoreCommitMempool is CheckTx/Recheck hygiene for StoreCommit only.
+// The handler still uses the inclusive window (1108) and per-model 1137.
+//
+//  1. Next-block closed: reject when committed height >= exchange deadline so
+//     leftovers are not packed into deadline+1.
+//  2. Recheck overlap: drop mempool leftovers whose model already committed at
+//     this height with count >= the leftover (cannot succeed on the next block).
+func (k Keeper) CheckPoCV2StoreCommitMempool(ctx sdk.Context, msg *types.MsgPoCV2StoreCommit) error {
+	if msg == nil {
+		return nil
+	}
+	if err := k.checkPoCV2StoreCommitNextBlockClosed(ctx, msg.PocStageStartBlockHeight); err != nil {
+		return err
+	}
+	if ctx.IsReCheckTx() {
+		return k.checkPoCV2StoreCommitRecheckOverlap(ctx, msg)
+	}
+	return nil
+}
+
+func (k Keeper) checkPoCV2StoreCommitNextBlockClosed(ctx sdk.Context, startBlockHeight int64) error {
+	currentBlockHeight := ctx.BlockHeight()
+	deadline, err := k.poCV2StoreCommitDeadline(ctx, startBlockHeight)
+	if err != nil {
+		return err
+	}
+	if deadline <= 0 {
+		return nil
+	}
+	if currentBlockHeight >= deadline {
+		k.Logger().Debug(
+			"[ValidatePocPeriod] StoreCommit mempool: next block is past exchange deadline",
+			"startBlockHeight", startBlockHeight,
+			"currentBlockHeight", currentBlockHeight,
+			"deadline", deadline,
+		)
+		return errorsmod.Wrapf(
+			types.ErrPocTooLate,
+			"PoC exchange window closed for next block at height %d (deadline %d)",
+			currentBlockHeight,
+			deadline,
+		)
+	}
+	return nil
+}
+
+func (k Keeper) poCV2StoreCommitDeadline(ctx sdk.Context, startBlockHeight int64) (int64, error) {
+	activeEvent, isActive, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		k.Logger().Debug("[ValidatePocPeriod] Error checking confirmation PoC event", "error", err)
+	}
+	if isActive && activeEvent != nil && startBlockHeight == activeEvent.TriggerHeight {
+		params, err := k.GetParams(ctx)
+		if err != nil {
+			return 0, err
+		}
+		return activeEvent.GetExchangeEnd(params.EpochParams), nil
+	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return 0, err
+	}
+	upcomingEpoch, found := k.GetUpcomingEpoch(ctx)
+	if !found {
+		return 0, nil
+	}
+	ec := types.NewEpochContext(*upcomingEpoch, *params.EpochParams)
+	if !ec.IsStartOfPocStage(startBlockHeight) {
+		return 0, nil
+	}
+	return ec.PoCExchangeDeadline(), nil
+}
+
+func (k Keeper) checkPoCV2StoreCommitRecheckOverlap(ctx sdk.Context, msg *types.MsgPoCV2StoreCommit) error {
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return err
+	}
+	currentBlockHeight := ctx.BlockHeight()
+	for _, entry := range msg.Entries {
+		if entry == nil || entry.ModelId == "" {
+			continue
+		}
+		pk := pocV2StoreCommitKey(msg.PocStageStartBlockHeight, addr, entry.ModelId)
+		existing, err := k.PoCV2StoreCommits.Get(ctx, pk)
+		if err != nil {
+			if errors.Is(err, collections.ErrNotFound) {
+				continue
+			}
+			return err
+		}
+		if existing.CommitBlockHeight == currentBlockHeight && entry.Count <= existing.Count {
+			k.Logger().Debug(
+				"[ValidatePocPeriod] StoreCommit Recheck: overlapping model already committed this height",
+				"model_id", entry.ModelId,
+				"currentBlockHeight", currentBlockHeight,
+				"existingCount", existing.Count,
+				"entryCount", entry.Count,
+			)
+			return errorsmod.Wrapf(
+				types.ErrIllegalState,
+				"only one commit per block allowed for model %q",
+				entry.ModelId,
+			)
+		}
+	}
 	return nil
 }

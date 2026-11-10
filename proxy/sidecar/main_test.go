@@ -1,9 +1,60 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestPolicyReadinessHandler(t *testing.T) {
+	tests := []struct {
+		name   string
+		host   string
+		lookup func(context.Context, string) ([]string, error)
+		want   int
+	}{
+		{
+			name: "standalone without network gate",
+			lookup: func(context.Context, string) ([]string, error) {
+				return nil, errors.New("must not be called")
+			},
+			want: http.StatusOK,
+		},
+		{
+			name: "application network alias resolves",
+			host: "proxy-policy-app-network",
+			lookup: func(_ context.Context, host string) ([]string, error) {
+				if host != "proxy-policy-app-network" {
+					t.Fatalf("lookup host = %q", host)
+				}
+				return []string{"192.0.2.1"}, nil
+			},
+			want: http.StatusOK,
+		},
+		{
+			name: "application network alias is unavailable",
+			host: "proxy-policy-app-network",
+			lookup: func(context.Context, string) ([]string, error) {
+				return nil, errors.New("dns unavailable")
+			},
+			want: http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+			policyReadinessHandler(tt.host, tt.lookup).ServeHTTP(recorder, request)
+			if recorder.Code != tt.want {
+				t.Fatalf("status = %d, want %d", recorder.Code, tt.want)
+			}
+		})
+	}
+}
 
 func TestExtractChainRPCMethod(t *testing.T) {
 	tests := []struct {

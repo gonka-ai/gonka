@@ -748,6 +748,22 @@ func KVGetJSON(ctx context.Context, db *sql.DB, key string, destPtr any) (ok boo
 	return true, nil
 }
 
+func KVDelete(ctx context.Context, db *sql.DB, key string) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM kv_config WHERE key = ?`, key)
+	return err
+}
+
+func KVDeletePrefix(ctx context.Context, db *sql.DB, prefix string) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	_, err := db.ExecContext(ctx, `DELETE FROM kv_config WHERE substr(key, 1, length(?)) = ?`, prefix, prefix)
+	return err
+}
+
 // KVSetInt64 stores an int64 under key.
 func KVSetInt64(ctx context.Context, db *sql.DB, key string, v int64) error {
 	return KVSetJSON(ctx, db, key, v)

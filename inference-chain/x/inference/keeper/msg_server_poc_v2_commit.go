@@ -6,12 +6,15 @@ import (
 
 	"cosmossdk.io/collections"
 	sdkerrors "cosmossdk.io/errors"
-	storetypes "cosmossdk.io/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 const PocFailureTag = "[PoC Failure]"
+
+// pocV2MaxTreeDepth is the maximum SMST depth a PoC v2 commit may bind.
+// Matches decentralized-api/poc/artifacts.smstMaxDepth.
+const pocV2MaxTreeDepth uint32 = 32
 
 type pocV2CommitUpdate struct {
 	modelID    string
@@ -21,7 +24,7 @@ type pocV2CommitUpdate struct {
 
 // PoCV2StoreCommit handles submission of off-chain artifact store commits.
 func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2StoreCommit) (*types.MsgPoCV2StoreCommitResponse, error) {
-	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
 
@@ -94,7 +97,7 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		return nil, err
 	}
 
-	if err := chargePoCV2StoreCommitGas(ctx, params.FeeParams, len(existingByModel) == 0, totalCountDelta); err != nil {
+	if err := k.ChargeExtraGas(ctx, addr, msg, totalCountDelta, len(existingByModel) == 0); err != nil {
 		return nil, err
 	}
 
@@ -140,9 +143,19 @@ func (k msgServer) buildPoCV2CommitUpdates(
 	existingByModel map[string]types.PoCV2StoreCommit,
 ) ([]pocV2CommitUpdate, uint64, error) {
 	updates := make([]pocV2CommitUpdate, 0, len(entries))
+	seenModelIDs := make(map[string]struct{}, len(entries))
 	var totalCountDelta uint64
 
 	for _, entry := range entries {
+		if entry != nil && entry.ModelId != "" {
+			if _, dup := seenModelIDs[entry.ModelId]; dup {
+				return nil, 0, sdkerrors.Wrap(
+					types.ErrIllegalState,
+					fmt.Sprintf("duplicate model_id %q in one commit", entry.ModelId),
+				)
+			}
+			seenModelIDs[entry.ModelId] = struct{}{}
+		}
 		update, err := k.buildPoCV2CommitUpdate(ctx, currentBlockHeight, existingByModel, entry)
 		if err != nil {
 			return nil, 0, err
@@ -169,6 +182,12 @@ func (k msgServer) buildPoCV2CommitUpdate(
 	if len(entry.RootHash) != 32 {
 		return pocV2CommitUpdate{}, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("root_hash must be 32 bytes, got %d", len(entry.RootHash)))
 	}
+	if entry.TreeDepth < 1 || entry.TreeDepth > pocV2MaxTreeDepth {
+		return pocV2CommitUpdate{}, sdkerrors.Wrap(
+			types.ErrIllegalState,
+			fmt.Sprintf("tree_depth must be in 1..%d, got %d", pocV2MaxTreeDepth, entry.TreeDepth),
+		)
+	}
 
 	modelID := entry.ModelId
 	if modelID == "" {
@@ -189,6 +208,12 @@ func (k msgServer) buildPoCV2CommitUpdate(
 				fmt.Sprintf("count must increase: got %d, last recorded %d", entry.Count, existing.Count),
 			)
 		}
+		if entry.TreeDepth != existing.TreeDepth {
+			return pocV2CommitUpdate{}, sdkerrors.Wrap(
+				types.ErrIllegalState,
+				fmt.Sprintf("tree_depth must stay %d, got %d", existing.TreeDepth, entry.TreeDepth),
+			)
+		}
 		countDelta = uint64(entry.Count - existing.Count)
 	}
 
@@ -197,30 +222,6 @@ func (k msgServer) buildPoCV2CommitUpdate(
 		entry:      entry,
 		countDelta: countDelta,
 	}, nil
-}
-
-func chargePoCV2StoreCommitGas(
-	ctx sdk.Context,
-	feeParams *types.FeeParams,
-	isFirstCommit bool,
-	totalCountDelta uint64,
-) error {
-	if feeParams == nil {
-		return nil
-	}
-
-	// Base validation gas is charged once per participant/stage.
-	if isFirstCommit {
-		ctx.GasMeter().ConsumeGas(storetypes.Gas(feeParams.BaseValidationGas), "poc_validation_base")
-	}
-
-	// Count gas is charged from the sum of per-model Count deltas.
-	countGas, overflow := checkedMul(totalCountDelta, feeParams.GasPerPocCount)
-	if overflow {
-		return sdkerrors.Wrap(types.ErrIllegalState, "total_count_delta * gas_per_poc_count overflow")
-	}
-	ctx.GasMeter().ConsumeGas(storetypes.Gas(countGas), "poc_commit_count_delta")
-	return nil
 }
 
 func (k msgServer) persistPoCV2CommitUpdates(
@@ -240,6 +241,7 @@ func (k msgServer) persistPoCV2CommitUpdates(
 			RootHash:                 update.entry.RootHash,
 			CommitBlockHeight:        currentBlockHeight,
 			ModelId:                  update.modelID,
+			TreeDepth:                update.entry.TreeDepth,
 		}
 
 		if err := k.PoCV2StoreCommits.Set(ctx, pk, commit); err != nil {
@@ -270,7 +272,7 @@ func checkedMul(a, b uint64) (uint64, bool) {
 
 // MLNodeWeightDistribution handles submission of per-node weight distribution.
 func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.MsgMLNodeWeightDistribution) (*types.MsgMLNodeWeightDistributionResponse, error) {
-	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
 

@@ -188,7 +188,6 @@ func captureAllAttemptsFailedRequest(ctx context.Context, escrow string, params 
 		Path:       "/v1/chat/completions",
 		Model:      params.Model,
 		Escrow:     escrow,
-		Stream:     params.Stream,
 	}
 	setCapturedRequestBody(&record, params.Prompt)
 	_ = store.write(record)
@@ -209,7 +208,6 @@ func captureEmptyStreamAttemptRequest(ctx context.Context, escrow string, params
 		Path:         "/v1/chat/completions",
 		Model:        params.Model,
 		Escrow:       escrow,
-		Stream:       params.Stream,
 		RequestFlags: requestFlagsForLog(params),
 		Attempts:     capturedAttempts(attempts, winnerNonce),
 	}
@@ -234,7 +232,6 @@ func captureShortContentAttemptRequest(ctx context.Context, escrow string, param
 		Path:         "/v1/chat/completions",
 		Model:        params.Model,
 		Escrow:       escrow,
-		Stream:       params.Stream,
 		RequestFlags: requestFlagsForLog(params),
 		Attempts:     capturedAttempts(attempts, winnerNonce),
 	}

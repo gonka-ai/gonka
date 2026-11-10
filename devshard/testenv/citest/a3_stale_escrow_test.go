@@ -70,7 +70,6 @@ func TestA3_StaleEscrow(t *testing.T) {
 	}
 	require.NotEqual(t, http.StatusOK, status)
 
-	stillSettled := harness.GetGatewayEscrowID(t, client, gatewayURL)
-	require.Equal(t, escrowID, stillSettled, "gateway should not silently rotate to a new escrow after stale settlement")
+	harness.RequireGatewayEscrowNotRotated(t, client, gatewayURL, escrowID)
 	harness.RequireEscrowSettledOnChain(t, eps, id)
 }

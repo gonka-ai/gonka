@@ -6,21 +6,9 @@ import (
 	"strings"
 )
 
-// GreedySamplingValidator coerces n=1 when temperature==0 (vLLM rejects n>1 under greedy).
-type GreedySamplingValidator struct{}
-
-func (v GreedySamplingValidator) Validate(vctx ValidatorContext) error {
-	n, ok := numericAsUint64(vctx.Document["n"])
-	if !ok || n <= 1 {
-		return nil
-	}
-	temp, ok := numericAsFloat64(vctx.Document["temperature"])
-	if !ok || temp != 0 {
-		return nil
-	}
-	vctx.Document["n"] = uint64(1)
-	return nil
-}
+// numericAsUint64 / numericAsFloat64 coerce JSON-decoded numbers (and a few
+// sibling types) for document validators. They live here because several
+// catalog validators share them.
 
 func numericAsUint64(v any) (uint64, bool) {
 	switch x := v.(type) {

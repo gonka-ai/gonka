@@ -65,6 +65,9 @@ func (node *HardwareNode) ValidateBasic() error {
 	if len(node.Port) > 100 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "node port is too long")
 	}
+	if len(node.Version) > MaxHardwareNodeVersionLen {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "node version is too long")
+	}
 	for _, model := range node.Models {
 		if len(model) > 256 {
 			return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "model name is too long")
@@ -85,3 +88,4 @@ const MaxModelsPerNode = 1000
 const MaxHardwarePerNode = 1000
 const MaxRemoved = 1000
 const MaxNewOrModified = 1000
+const MaxHardwareNodeVersionLen = 128

@@ -40,6 +40,18 @@ func WriteValidationLeaseRaceConfig(t *testing.T, dir string) {
 	})
 }
 
+// WritePayloadWithholdingConfig writes HA pair + two solo participants (3
+// distinct addresses) so a Phase-A false vote can still reach VoteThreshold in
+// Phase B. Seeds validation_rate=10000.
+func WritePayloadWithholdingConfig(t *testing.T, dir string) {
+	t.Helper()
+	WriteMultiConfig(t, dir, MultiConfigOpts{
+		Hosts:          4,
+		EscrowSlots:    3,
+		ValidationRate: 10000,
+	})
+}
+
 // WriteMultiConfig writes a multi-versiond citest skeleton with the given opts.
 func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 	t.Helper()

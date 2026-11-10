@@ -39,6 +39,9 @@ ARG GOARCH=amd64
 ARG BLST_PORTABLE=0
 ARG DEVSHARD_VERSION=dev
 ARG DEVSHARD_BINARY_VERSION=dev-log
+# Extra build tags appended to the release tag set. Testenv builds pass
+# devshard_testenv to compile in fault injection; release builds must not.
+ARG DEVSHARD_BUILD_TAGS=
 
 ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
@@ -88,7 +91,7 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
     if [ "$BLST_PORTABLE" = "1" ]; then export CGO_CFLAGS="$CGO_CFLAGS -D__BLST_PORTABLE__"; fi; \
     CGO_ENABLED=1 CC=gcc \
-    go build -mod=readonly -tags muslc \
+    go build -mod=readonly -tags "muslc ${DEVSHARD_BUILD_TAGS}" \
     -ldflags "-X main.Version=${DEVSHARD_VERSION} -X main.BinaryVersion=${DEVSHARD_BINARY_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
     -o ./build/devshardd ./cmd/devshardd
 

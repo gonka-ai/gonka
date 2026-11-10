@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// MigrateFilePayloadsToPostgres walks {baseDir}/{epoch}/{escrow}/{inference}.json
+// MigrateFilePayloadsToPostgres walks {baseDir}/{epoch}/{escrow}/{inference}.json[.zst]
 // files and stores each into dest (typically Postgres). Idempotent: dest Store
 // uses ON CONFLICT DO NOTHING. After a successful full walk, migrated epoch
 // trees are quarantined (renamed *.migrated.<ts>) so HA Postgres-only boots
@@ -90,16 +90,21 @@ func migrateEpochPayloads(ctx context.Context, dest Storage, epochPath string, e
 			return copied, fmt.Errorf("read escrow %s: %w", escrowID, err)
 		}
 		for _, fileEnt := range files {
-			if fileEnt.IsDir() || !strings.HasSuffix(fileEnt.Name(), ".json") {
+			if fileEnt.IsDir() {
 				continue
 			}
-			name := strings.TrimSuffix(fileEnt.Name(), ".json")
+			name, isPayload := strings.CutSuffix(fileEnt.Name(), compressedSuffix)
+			if !isPayload {
+				if name, isPayload = strings.CutSuffix(fileEnt.Name(), plainSuffix); !isPayload {
+					continue
+				}
+			}
 			inferenceID, err := strconv.ParseUint(name, 10, 64)
 			if err != nil {
 				continue
 			}
 			path := filepath.Join(escrowPath, fileEnt.Name())
-			data, err := os.ReadFile(path)
+			data, err := readPayloadFile(escrowPath, inferenceID)
 			if err != nil {
 				return copied, fmt.Errorf("read %s: %w", path, err)
 			}

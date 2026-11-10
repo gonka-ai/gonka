@@ -11,6 +11,7 @@ import (
 type (
 	Snapshot            = commrc.Snapshot
 	ApprovedVersion     = commrc.ApprovedVersion
+	HeightSyncParams    = commrc.HeightSyncParams
 	EpochChangeListener = rcclient.EpochChangeListener
 	ChainParamsFetcher  = rcclient.ChainParamsFetcher
 	Config              = rcclient.Config
@@ -29,11 +30,11 @@ const (
 )
 
 var (
-	New                 = rcclient.New
-	NewChain            = rcclient.NewChain
-	NewAdaptive         = rcclient.NewAdaptive
-	SnapshotFromProto   = rcclient.SnapshotFromProto
-	ProtoFromSnapshot   = rcclient.ProtoFromSnapshot
+	New                    = rcclient.New
+	NewChain               = rcclient.NewChain
+	NewAdaptive            = rcclient.NewAdaptive
+	SnapshotFromProto      = rcclient.SnapshotFromProto
+	ProtoFromSnapshot      = rcclient.ProtoFromSnapshot
 	TestRuntimeConfigProto = rcclient.TestRuntimeConfigProto
 )
 

@@ -46,6 +46,24 @@ type Snapshot struct {
 	ValidationRate            uint32
 	VoteThresholdFactor       uint32
 	ModelValidationThresholds []ModelValidationThreshold
+	// HeightSync is overlayed onto compiled defaults when non-zero. Zero fields
+	// mean "use HeartbeatConfig / RepairConfig compiled defaults" (D_ack default 1).
+	HeightSync HeightSyncParams
+}
+
+// HeightSyncParams are chain-carried log-plane knobs (spec §20). Zero = default.
+// Scheduling knobs are milliseconds; only the ack deadline is in blocks, because
+// it compares two claims that are already in the log. BlockTimeMs is the rate
+// that converts between the two, so setting the interval alone still yields a
+// coherent ack deadline.
+type HeightSyncParams struct {
+	IntervalMs         uint64
+	TurnTimeoutMs      uint64
+	IdleTimeoutMs      uint64
+	BlockTimeMs        uint64
+	AckDeadlineBlocks  uint64
+	ProbeStaggerMs     uint64
+	MaxProbesPerWindow uint32
 }
 
 // ToProto converts the snapshot to the wire type. Equivalent to the dapi
@@ -72,17 +90,24 @@ func (s Snapshot) ToProto() *gen.RuntimeConfig {
 		servedAtUnix = s.ServedAt.Unix()
 	}
 	return &gen.RuntimeConfig{
-		ParamsBlockHeight:       s.ParamsBlockHeight,
-		CurrentEpochId:          s.CurrentEpochID,
-		LogprobsMode:            s.LogprobsMode,
-		DevshardRequestsEnabled: s.DevshardRequestsEnabled,
-		MaxNonce:                s.MaxNonce,
-		ApprovedVersions:        versions,
-		ServedAtUnix:            servedAtUnix,
-		RefusalTimeout:          s.RefusalTimeout,
-		ExecutionTimeout:        s.ExecutionTimeout,
-		ValidationRate:          s.ValidationRate,
-		VoteThresholdFactor:     s.VoteThresholdFactor,
-		ValidationThresholds:    thresholds,
+		ParamsBlockHeight:            s.ParamsBlockHeight,
+		CurrentEpochId:               s.CurrentEpochID,
+		LogprobsMode:                 s.LogprobsMode,
+		DevshardRequestsEnabled:      s.DevshardRequestsEnabled,
+		MaxNonce:                     s.MaxNonce,
+		ApprovedVersions:             versions,
+		ServedAtUnix:                 servedAtUnix,
+		RefusalTimeout:               s.RefusalTimeout,
+		ExecutionTimeout:             s.ExecutionTimeout,
+		ValidationRate:               s.ValidationRate,
+		VoteThresholdFactor:          s.VoteThresholdFactor,
+		ValidationThresholds:         thresholds,
+		HeightSyncIntervalMs:         s.HeightSync.IntervalMs,
+		HeightSyncTurnTimeoutMs:      s.HeightSync.TurnTimeoutMs,
+		HeightSyncAckDeadlineBlocks:  s.HeightSync.AckDeadlineBlocks,
+		HeightSyncIdleTimeoutMs:      s.HeightSync.IdleTimeoutMs,
+		HeightSyncBlockTimeMs:        s.HeightSync.BlockTimeMs,
+		HeightSyncProbeStaggerMs:     s.HeightSync.ProbeStaggerMs,
+		HeightSyncMaxProbesPerWindow: s.HeightSync.MaxProbesPerWindow,
 	}
 }

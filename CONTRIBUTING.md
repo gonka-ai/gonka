@@ -1,40 +1,49 @@
 # Contributing guidelines
 Welcome! This project is maintained by a distributed community of contributors. Contributions are welcome from everyone, not only Hosts. This guide explains how to participate successfully: how work is proposed, discussed, implemented, reviewed, and (when applicable) recognized through governance.
 
+Bug bounty (HackerOne) and contributor rewards (community pool) are described in the [Bounty program](https://gonka.ai/docs/bounty-program/) docs.
+
 ## Where work happens and the source of truth
 Gonka uses GitHub as the primary platform for public, auditable collaboration.
 
-- **GitHub Issues:** the entry point for bugs, features, refactors, and scoped tasks.
-- **Pull Requests**: code and documentation changes, reviews, and tracking.
-- **GitHub Discussions:** proposals, open problems, and broader ecosystem or architecture iteration.
+- **GitHub Discussions:** start here for ideas, proposals, and anything that still needs alignment. The same idea may already have been discussed, or the current approach may be a trade-off.
+- **GitHub Issues:** scoped bugs, features, refactors, and tasks that are ready to implement (including `up-for-grabs`).
+- **Pull Requests:** code and documentation changes, reviews, and tracking.
+- **HackerOne:** security vulnerabilities. Use the form at [Report a Vulnerability](https://gonka.ai/docs/report-vulnerability/). Do not open a public GitHub issue or PR for a security issue.
 
-Conversation can happen anywhere (Discord, calls, other forums), but key outcomes should be consolidated back into GitHub. Keeping the full history in one place makes it searchable, maintainable, and easier to review over time. GitHub is the main source of truth.
+Conversation can happen anywhere (Discord, calls, other forums), but key outcomes should be consolidated back into GitHub. Keeping the full history in one place makes it searchable, maintainable, and easier to review over time. GitHub is the main source of truth for public protocol work. HackerOne is the source of truth for vulnerability reports.
 
 ## Issues
-This repository uses GitHub Issues as the primary entry point for bugs, features, refactors, documentation tasks, and implementation work derived from proposals.
+This repository uses GitHub Issues for bugs, features, refactors, documentation tasks, and implementation work derived from proposals. For new ideas, start with a Discussion first (see below).
+
+### Security vulnerabilities
+
+Submit every security vulnerability through the [HackerOne form](https://gonka.ai/docs/report-vulnerability/). That is the only intake.
+
+- Do not open a public GitHub issue or PR, and do not post the issue in Discord or other public channels.
+- Reviewers triage the report and assign severity. A valid report is paid after triage. A fix can be paid separately; that amount is discussed individually.
+- If reviewers can confirm the vulnerability is already known — for example there was already a GitHub discussion, or a report already exists on HackerOne — the report may be marked as a **duplicate** and not paid.
+
+Details: [Bounty program](https://gonka.ai/docs/bounty-program/).
 
 ### When to open an issue
 Open an issue when you want to:
 
-- Report a bug or regression
-- Propose a feature or enhancement
+- Report a non-security bug or regression
+- Track a feature or enhancement that already has community support
 - Request documentation changes
 - Propose a refactor or technical debt cleanup
 - Propose a scoped technical change that is ready for implementation
 
 Before opening a new issue:
 
-- Search existing issues and pull requests to avoid duplicates.
-- If a similar issue exists, add information there instead of creating a new one.
-  
-You can also use Issues to report low- or medium-severity vulnerability findings:
-
-- If an issue is not high- or critical-severity (limited impact, no network-wide effect) and the fix is low-effort, opening a PR right away is usually fine.
-- If an issue is high or critical severity, report it privately to trusted long-term Gonka repository contributors first, either as a report or together with a fix in a private fork.
-- If an issue looks like part of a broader class and a systematic review would likely uncover more issues of the same category, leave a note that a review is planned. This helps avoid duplicate reviews running in parallel.
+- Search existing issues, pull requests, and Discussions to avoid duplicates.
+- If a similar thread exists, add information there instead of creating a new one.
 
 ### When to open a Proposal Discussion instead of Issues
-Open a Proposal Discussion (see below) for anything that is not yet an actionable, scoped task or may not directly result in a PR to the Gonka repository. For example:
+Start with a Proposal Discussion (see below) before investing in a large implementation. The same idea may already have been discussed, or the current approach may be a trade-off.
+
+Also open a Discussion for anything that is not yet an actionable, scoped task or may not directly result in a PR to this repository. For example:
 
 - Anything that won’t result in a PR to Gonka repo: ecosystem/integrations/tooling initiatives
 - The scope is too large for a single issue:
@@ -82,7 +91,9 @@ Maintainers typically evaluate Issues using a simple rubric:
 **Contributors may:**
 
 - Open an Issue and assign themselves after maintainers confirm it is actionable, or
-- Pick an existing Issue marked as “up-for-grabs” and comment “I’d like to take this” with a short plan and an ETA
+- Pick an existing Issue marked as `up-for-grabs` and leave a short claim comment such as `Starting work, ETA 3 to 5 days`
+
+Claim before starting so others have visibility and avoid duplicate effort.
 
 ## Milestones (releases, deadlines, and scope)
 
@@ -142,15 +153,15 @@ Keep proposals structured. A strong proposal typically includes:
 - **Open questions:** known unknowns to resolve via community discussion or a community call
 - **Who you are:** context about experience and expertise (prior Gonka work or other reputable projects). If representing a team or company, mention it and link relevant work.
 
-Implementation timeline and a bounty or reward expectation can be proposed as part of the discussion, but all payouts remain subject to governance approval.
+Implementation timeline and a bounty or reward expectation can be proposed as part of the discussion. Grant-style arrangements have already been used and can be put to an on-chain vote. All protocol payouts remain subject to governance approval. The chain is the source of truth for those payouts.
 
 ### Suggested flow
 
 - Publish a Proposal in GitHub Discussions.
-- Promote it in Discord and other channels to gather feedback.
+- Share the link in Discord `#improvement-proposals` and other channels to gather feedback.
 - Gather early validation signals: reactions, upvotes, comments, concrete concerns.
 - If relevant, reach out to Hosts to gather practical input and support.
-- Consolidate key outcomes back into the Discussion thread so the full history stays searchable and maintainable. GitHub is the main source of truth.
+- Consolidate key outcomes back into the Discussion thread so the full history stays searchable and maintainable. GitHub is the main source of truth for public protocol work.
 
 ### From Proposal to Issues
 
@@ -179,6 +190,7 @@ Once a Proposal has enough clarity and support, break it into scoped Issues with
 	- PRs without a meaningful description will not be reviewed. The description is part of the contribution.
 - Review:
 	- Keep all review discussions in the PR to keep it auditable.
+	- Ask other community members to comment and review. Say what to look at (correctness, tests, edge cases, performance). Do not wait for review to happen on its own.
 	- Respond to feedback, push updates, and keep the PR scope focused.
 	- Protocol or architecture changes must link to a Proposal Discussion where the idea was publicly iterated and reviewed.
 - Merge.
@@ -202,10 +214,11 @@ It is also recommended to review the full presentation before using the tool in 
 
 **Disclaimer:** AI output can be wrong or incomplete; maintainers retain final judgment on all merges. Do not paste secrets into prompts or reports.
 
-## From Issue to PR to reward proposal (public lifecycle)
-This project aims for an auditable flow from work request to delivery to governance recognition (when applicable).
+## From Discussion to Issue to PR to reward (public lifecycle)
+This project aims for an auditable flow from idea to delivery to governance recognition (when applicable). Full detail: [Bounty program](https://gonka.ai/docs/bounty-program/).
 
-- A contributor opens a GitHub Issue (or claims an existing one marked as `up for grabs`).
+- Start with a GitHub Discussion when the work still needs alignment. Get community support first.
+- Then open or claim a GitHub Issue (including `up-for-grabs`). Leave a claim comment with an ETA before starting.
 - Maintainers triage publicly:
 	- confirm scope and acceptance criteria
 	- assign labels, priority, and status
@@ -213,12 +226,16 @@ This project aims for an auditable flow from work request to delivery to governa
 	- a PR in this repository, or
 	- an external deliverable with clear evidence (demo, logs, benchmarks, reproducible steps)
 - Review happens publicly in the PR:
+	- ask other community members for comments and review
 	- discussion and revisions remain visible
-	- links back to the original Issue are required
+	- links back to the original Issue and Discussion are required
 - A maintainer merges once requirements are met.
-- If applicable, a bounty program reward proposal is prepared for voting together with the next on-chain vote:
+- If applicable, a contributor-reward proposal is prepared for voting together with the next on-chain vote:
 	- includes links to the Issue, PR(s), and merge commit(s)
-	- reward size should be justified by impact, complexity, and risk.
+	- reward size should be justified by impact, complexity, and risk
+	- the **chain** is the source of truth for protocol payouts; matching records also live in this repository. Discord `#bounty-awards` posts some of this later and can be incomplete.
+
+Security reports follow a separate path on HackerOne (see [Security vulnerabilities](#security-vulnerabilities) above).
 
 ## Governance (on-chain)
 
@@ -227,7 +244,7 @@ Currently, GitHub remains the primary development platform; however, governance 
 **Software Update**
 - Every update must be approved by an on-chain vote.
 - Update proposals include the commit hash or binary hash.
-- Only after on-chain approval is code recognized as the official network version.
+- Only after on-chain approval is code recognized as the network version.
 - A REST API is available for participants to verify which version is approved.
   
 **Code Integrity**

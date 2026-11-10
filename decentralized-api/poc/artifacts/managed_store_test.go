@@ -129,6 +129,87 @@ func TestManagedArtifactStore_ActivateUnloadsOtherStages(t *testing.T) {
 	}
 }
 
+func TestManagedArtifactStore_GetStoreForServingDoesNotUnloadGeneratePin(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagedArtifactStore(dir, 3)
+	defer m.Close()
+
+	m.ActivateStage(100)
+	store100, err := m.GetOrCreateStore(100, "model-a")
+	if err != nil {
+		t.Fatalf("GetOrCreateStore(100): %v", err)
+	}
+	if err := store100.AddWithNode(1, []byte("a"), ""); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store100.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	m.ActivateStage(200)
+	store200, err := m.GetOrCreateStore(200, "model-b")
+	if err != nil {
+		t.Fatalf("GetOrCreateStore(200): %v", err)
+	}
+
+	served, err := m.GetStoreForServing(100, "model-a")
+	if err != nil {
+		t.Fatalf("GetStoreForServing(100): %v", err)
+	}
+	count, _ := served.GetFlushedRoot()
+	if count != 1 {
+		t.Fatalf("expected flushed count 1, got %d", count)
+	}
+	if m.ActiveStage() != 200 {
+		t.Fatalf("serving must not change active stage, got %d", m.ActiveStage())
+	}
+	if _, err := m.GetStore(200, "model-b"); err != nil {
+		t.Fatalf("active generate store must remain: %v", err)
+	}
+	_ = store200
+}
+
+func TestManagedArtifactStore_GetStoreForServingActiveStageReusesLiveHandle(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagedArtifactStore(dir, 3)
+	defer m.Close()
+	m.ActivateStage(100)
+	live, err := m.GetOrCreateStore(100, "model-a")
+	if err != nil {
+		t.Fatalf("GetOrCreateStore: %v", err)
+	}
+	served, err := m.GetStoreForServing(100, "model-a")
+	if err != nil {
+		t.Fatalf("GetStoreForServing: %v", err)
+	}
+	if live != served {
+		t.Fatal("serving the active stage must reuse the live handle")
+	}
+}
+
+func TestManagedArtifactStore_CloseDrainsServing(t *testing.T) {
+	dir := t.TempDir()
+	m := NewManagedArtifactStore(dir, 3)
+	m.ActivateStage(100)
+	store, err := m.GetOrCreateStore(100, "model-a")
+	if err != nil {
+		t.Fatalf("GetOrCreateStore: %v", err)
+	}
+	if err := store.AddWithNode(1, []byte("a"), ""); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	m.ActivateStage(200)
+	if _, err := m.GetStoreForServing(100, "model-a"); err != nil {
+		t.Fatalf("GetStoreForServing: %v", err)
+	}
+	if err := m.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func TestManagedArtifactStore_GetStore_ExistingDir(t *testing.T) {
 	dir := t.TempDir()
 

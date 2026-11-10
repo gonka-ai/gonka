@@ -15,25 +15,30 @@ var (
 	runtimeCollectorsOnce sync.Once
 	registry              *prometheus.Registry
 
-	inflight               *prometheus.GaugeVec
-	requestTerminalTotal   *prometheus.CounterVec
-	interruptionTotal      *prometheus.CounterVec
-	sessionResolutionTotal *prometheus.CounterVec
-	receiptOrphanTotal     *prometheus.CounterVec
-	validationTotal        *prometheus.CounterVec
-	validationOrphanTotal  *prometheus.CounterVec
-	validationQueueDrops   prometheus.Counter
-	payloadRequestTotal    *prometheus.CounterVec
-	mlnodeAttemptsTotal    *prometheus.CounterVec
-	mlnodeCallSeconds      *prometheus.HistogramVec
-	mlnodeTokens           *prometheus.HistogramVec
-	httpConnections        *prometheus.GaugeVec
-	httpConnectionsTotal   *prometheus.CounterVec
-	validationQueueDepth   *prometheus.GaugeVec
-	mempoolSize            *prometheus.GaugeVec
-	buildInfo              *prometheus.GaugeVec
-	lifecycleInflight      prometheus.Gauge
-	fallbackDivisor        *prometheus.GaugeVec
+	inflight                 *prometheus.GaugeVec
+	requestTerminalTotal     *prometheus.CounterVec
+	interruptionTotal        *prometheus.CounterVec
+	sessionResolutionTotal   *prometheus.CounterVec
+	receiptOrphanTotal       *prometheus.CounterVec
+	validationTotal          *prometheus.CounterVec
+	validationOrphanTotal    *prometheus.CounterVec
+	validationFaultTotal     *prometheus.CounterVec
+	validationQueueDrops     prometheus.Counter
+	payloadRequestTotal      *prometheus.CounterVec
+	payloadFetchTTFB         prometheus.Histogram
+	mlnodeAttemptsTotal      *prometheus.CounterVec
+	mlnodeCallSeconds        *prometheus.HistogramVec
+	mlnodeTokens             *prometheus.HistogramVec
+	httpConnections          *prometheus.GaugeVec
+	httpConnectionsTotal     *prometheus.CounterVec
+	validationQueueDepth     *prometheus.GaugeVec
+	mempoolSize              *prometheus.GaugeVec
+	buildInfo                *prometheus.GaugeVec
+	lifecycleInflight        prometheus.Gauge
+	fallbackDivisor          *prometheus.GaugeVec
+	postgresHealthProbeTotal *prometheus.CounterVec
+	postgresPoolSaturated    prometheus.Gauge
+	sessionRecovery          *prometheus.GaugeVec
 
 	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
 	diffPersistRetryTotal     *prometheus.CounterVec
@@ -88,6 +93,10 @@ func initRegistry() {
 		Name: "devshard_validation_orphan_total",
 		Help: "Validation jobs that did not publish expected validation txs.",
 	}, []string{"reason"})
+	validationFaultTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_validation_executor_fault_total",
+		Help: "Validations that voted false because the executor did not serve usable payloads.",
+	}, []string{"reason"})
 	validationQueueDrops = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "devshard_validation_queue_drops_total",
 		Help: "Validation jobs dropped because the queue was full.",
@@ -96,6 +105,11 @@ func initRegistry() {
 		Name: "devshard_payload_request_total",
 		Help: "Executor payload-serving request outcomes.",
 	}, []string{"status", "reason"})
+	payloadFetchTTFB = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "devshard_payload_fetch_ttfb_seconds",
+		Help:    "Validator payload GET time-to-first-byte (headers received, body not yet read).",
+		Buckets: durationBuckets,
+	})
 
 	mlnodeAttemptsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_mlnode_attempts_total",
@@ -140,6 +154,18 @@ func initRegistry() {
 		Name: "devshardd_fallback_divisor",
 		Help: "Fallback capacity divisor (max(active_escrows, 4)); source is load_map or floor4.",
 	}, []string{"source"})
+	postgresHealthProbeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_postgres_health_probe_total",
+		Help: "PostgreSQL storage health probe outcomes.",
+	}, []string{"result"})
+	postgresPoolSaturated = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_postgres_pool_saturated",
+		Help: "Whether all PostgreSQL application-pool connections were in use at the latest health probe.",
+	})
+	sessionRecovery = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshardd_session_recovery",
+		Help: "Devshardd session recovery progress: total, recovered, failed, version_skipped, pending, complete.",
+	}, []string{"kind"})
 
 	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_diff_persist_retry_total",
@@ -162,8 +188,10 @@ func initRegistry() {
 		receiptOrphanTotal,
 		validationTotal,
 		validationOrphanTotal,
+		validationFaultTotal,
 		validationQueueDrops,
 		payloadRequestTotal,
+		payloadFetchTTFB,
 		mlnodeAttemptsTotal,
 		mlnodeCallSeconds,
 		mlnodeTokens,
@@ -174,6 +202,9 @@ func initRegistry() {
 		buildInfo,
 		lifecycleInflight,
 		fallbackDivisor,
+		postgresHealthProbeTotal,
+		postgresPoolSaturated,
+		sessionRecovery,
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
@@ -208,6 +239,20 @@ func SetLifecycleInflight(n int64) {
 	lifecycleInflight.Set(float64(n))
 }
 
+func SetSessionRecovery(total, recovered, failed, versionSkipped, pending int64, complete bool) {
+	ensureMetrics()
+	sessionRecovery.WithLabelValues("total").Set(float64(total))
+	sessionRecovery.WithLabelValues("recovered").Set(float64(recovered))
+	sessionRecovery.WithLabelValues("failed").Set(float64(failed))
+	sessionRecovery.WithLabelValues("version_skipped").Set(float64(versionSkipped))
+	sessionRecovery.WithLabelValues("pending").Set(float64(pending))
+	completeVal := 0.0
+	if complete {
+		completeVal = 1
+	}
+	sessionRecovery.WithLabelValues("complete").Set(completeVal)
+}
+
 func IncTerminal(terminal Terminal, reason Reason) {
 	ensureMetrics()
 	requestTerminalTotal.WithLabelValues(string(terminal), string(reason)).Inc()
@@ -238,6 +283,14 @@ func IncValidationOrphan(reason Reason) {
 	validationOrphanTotal.WithLabelValues(string(reason)).Inc()
 }
 
+// IncValidationExecutorFault counts executor-attributable payload failures that
+// were converted into a Valid:false vote. Kept off validationTotal so the
+// published verdict is not counted as both an error and a success.
+func IncValidationExecutorFault(reason Reason) {
+	ensureMetrics()
+	validationFaultTotal.WithLabelValues(string(reason)).Inc()
+}
+
 func IncValidationQueueDrop() {
 	ensureMetrics()
 	validationQueueDrops.Inc()
@@ -246,6 +299,11 @@ func IncValidationQueueDrop() {
 func IncPayloadRequest(metricStatus MetricStatus, reason Reason) {
 	ensureMetrics()
 	payloadRequestTotal.WithLabelValues(string(metricStatus), string(reason)).Inc()
+}
+
+func ObservePayloadFetchTTFB(d time.Duration) {
+	ensureMetrics()
+	payloadFetchTTFB.Observe(d.Seconds())
 }
 
 func IncMLNodeAttempt(path Path, outcome Reason, nodeID string) {
@@ -324,6 +382,22 @@ func SetFallbackDivisor(source string, divisor int) {
 	fallbackDivisor.WithLabelValues(source).Set(float64(divisor))
 }
 
+// ObservePostgresHealthProbe records database reachability independently from
+// application-pool saturation.
+func ObservePostgresHealthProbe(healthy, saturated bool) {
+	ensureMetrics()
+	result := "database_error"
+	if healthy {
+		result = "success"
+	}
+	postgresHealthProbeTotal.WithLabelValues(result).Inc()
+	saturationValue := 0.0
+	if saturated {
+		saturationValue = 1
+	}
+	postgresPoolSaturated.Set(saturationValue)
+}
+
 // IncDiffPersistRetry records one AppendDiff retry outcome (Phase 3).
 // result is typically "success", "exhausted", or "identical".
 func IncDiffPersistRetry(result string) {
@@ -348,5 +422,3 @@ func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
 }
-
-

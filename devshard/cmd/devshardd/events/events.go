@@ -2,6 +2,7 @@ package events
 
 import (
 	"context"
+	"time"
 
 	abci "github.com/cometbft/cometbft/abci/types"
 )
@@ -54,9 +55,15 @@ func (DevshardEscrowSettledEvent) fromEvent(height int64, ev abci.Event) Devshar
 	}
 }
 
-// NewBlockEvent is emitted for every committed block.
+// NewBlockEvent is emitted for every committed block. Hash and Time come
+// from the Comet header so height-sync can use this feed as its tip oracle
+// (no /block/latest or /block/stream). Empty hash and zero Time mean the
+// event had no header payload (should not happen on a real Comet node).
 type NewBlockEvent struct {
 	BlockHeight int64
+	BlockHash   []byte
+	Time        time.Time
+	ChainID     string
 }
 
 // DevshardEscrowCreatedHandler is called for each devshard_escrow_created event received.

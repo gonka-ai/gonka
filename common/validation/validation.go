@@ -213,7 +213,12 @@ func customDistance(
 	for i := range originalLogprobs {
 		o := originalLogprobs[i]
 		v := validationLogprobs[i]
-		posDistance, err := positionDistance(o.TopLogprobs, v.TopLogprobs)
+		// Ignore executor top_logprobs beyond the validated width so a padded width can neither dilute the divisor nor perturb the fallback (H1 #3853145).
+		originalTopLogprobs := o.TopLogprobs
+		if len(originalTopLogprobs) > len(v.TopLogprobs) {
+			originalTopLogprobs = originalTopLogprobs[:len(v.TopLogprobs)]
+		}
+		posDistance, err := positionDistance(originalTopLogprobs, v.TopLogprobs)
 		if err != nil {
 			logging.Error("Error calculating position distance", types.Validation, "error", err)
 			return math.Inf(1), err
@@ -221,12 +226,13 @@ func customDistance(
 		distance += posDistance
 	}
 	totalLogprobs := max(100, len(originalLogprobs))
-	if len(originalLogprobs[0].TopLogprobs) > 0 {
-		totalLogprobs *= len(originalLogprobs[0].TopLogprobs)
-	}
 
 	return distance / float64(totalLogprobs), nil
 }
+
+// maxPositionTerm is the supremum of a single token's contribution: |a-b|/(1e-6+|a|+|b|)/2 stays
+// below 0.5 for finite a,b, so a non-finite (untrusted) executor logprob is scored at this maximum.
+const maxPositionTerm = 0.5
 
 func positionDistance(
 	originalLogprobs []completionapi.TopLogprobs,
@@ -261,24 +267,22 @@ func positionDistance(
 	nextOriginalLogprob := minOriginalLogprob1 - (minOriginalLogprob2 - minOriginalLogprob1)
 
 	for _, v := range validationLogprobs {
-		var originalLogprob float64
-		if origProb, exists := originalLogprobMap[v.Token]; exists {
-			originalLogprob = origProb
-		} else {
+		originalLogprob, matched := originalLogprobMap[v.Token]
+		if !matched {
 			originalLogprob = nextOriginalLogprob
 		}
 
-		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
-		if math.IsNaN(denom) || denom == 0 {
+		if math.IsInf(originalLogprob, 0) || math.IsNaN(originalLogprob) ||
+			math.IsInf(v.Logprob, 0) || math.IsNaN(v.Logprob) {
+			distance += maxPositionTerm
 			continue
 		}
-		term := math.Abs(v.Logprob-originalLogprob) / denom / 2.0
-		if !math.IsNaN(term) {
-			distance += term
-		}
+
+		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
+		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
 	}
 
-	return distance, nil
+	return distance / float64(len(validationLogprobs)), nil
 }
 
 var zero = inference.Decimal{Value: 0, Exponent: 0}
@@ -432,6 +436,23 @@ func ExecuteValidation(
 			types.Validation,
 			"inferenceId", inferenceID,
 		)
+	}
+
+	// Verify the executor's stored output honored the min_tokens floor. min_tokens masks both EOS
+	// and stop-strings until the floor, and reasoning is disabled below 256 tokens, so a legitimate
+	// non-empty output is always >= min_tokens (confirmed empirically on the deployed vLLM:
+	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
+	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
+	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
+	// above; empty-sentinel errors are exempt.
+	if !isEmptySentinel && len(originalLogits) > 0 {
+		minTokens := completionapi.MinTokensOf(requestMap)
+		if minTokens > 0 && len(originalLogits) < minTokens {
+			logging.Warn("validation failed: output below min_tokens floor",
+				types.Validation, "inferenceId", inferenceID,
+				"outputTokens", len(originalLogits), "minTokens", minTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
+		}
 	}
 
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil

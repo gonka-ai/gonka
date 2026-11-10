@@ -1,0 +1,5 @@
+[
+  { "id": "versiond",   "host": "versiond",   "port": 8080 },
+  { "id": "versiond2",  "host": "versiond2",  "port": 8080 },
+  { "id": "versiond-b", "host": "10.20.0.12", "port": 8080 }
+]

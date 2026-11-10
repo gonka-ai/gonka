@@ -13,6 +13,9 @@ const tracerName = "edge-api.server"
 
 var untracedRoutes = map[string]struct{}{
 	"/healthz": {},
+	// The router health-checks /readyz once a second per replica; tracing it
+	// would mint hundreds of thousands of identical spans a day and say nothing.
+	"/readyz": {},
 }
 
 // EchoMiddleware extracts W3C trace context and opens a server-side span per request.

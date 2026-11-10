@@ -1,0 +1,36 @@
+syntax = "proto3";
+package devshard.v1;
+option go_package = "devshard/types";
+
+enum InferenceHeightSyncProofType {
+  INFERENCE_HEIGHT_SYNC_PROOF_TYPE_UNSPECIFIED = 0;
+  INFERENCE_HEIGHT_SYNC_PROOF_TYPE_HEIGHT_ANCHOR_V1 = 1;
+}
+
+// InferenceHeightSyncSection is the PoC Anchor payload (compact wire; no chain_id).
+message InferenceHeightSyncSection {
+  InferenceHeightSyncProofType proof_type = 1;
+  int64 mainnet_height = 2;
+  string mainnet_block_hash_hex = 3;
+  int64 timestamp_unix_ms = 4;
+  bool response = 5; // false = request, true = response
+  string originator_sender_id = 6;
+  int64 originator_timestamp_unix_ms = 7;
+  // Response leg only (spec §15): signature over canonical bytes of fields 1–7.
+  bytes sender_signature = 8;
+}
+
+// InferenceRequestEnvelope wraps the existing JSON InferenceRequest (transport.InferenceRequest)
+// as bytes plus optional height sync. Omit mode: height_sync unset.
+message InferenceRequestEnvelope {
+  int32 schema_version = 1;
+  InferenceHeightSyncSection height_sync = 2;
+  bytes inference_request_json = 3;
+}
+
+// InferenceResponseEnvelope wraps the existing JSON InferenceResponse.
+message InferenceResponseEnvelope {
+  int32 schema_version = 1;
+  InferenceHeightSyncSection height_sync = 2;
+  bytes inference_response_json = 3;
+}

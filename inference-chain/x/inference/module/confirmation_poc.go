@@ -17,6 +17,12 @@ import (
 
 var pocDeviationCoeff = decimal.New(909, -3)
 
+var loadChallengeSkipTargets = defaultLoadChallengeSkipTargets
+
+func defaultLoadChallengeSkipTargets(k keeper.Keeper, ctx context.Context, epochIndex uint64) (map[string]struct{}, error) {
+	return k.SameEpochChallengeTargets(ctx, epochIndex)
+}
+
 // handleConfirmationPoC manages confirmation PoC trigger decisions and phase transitions
 func (am AppModule) handleConfirmationPoC(ctx context.Context, blockHeight int64) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -260,14 +266,26 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		transitionCount++
 		transitions = append(transitions, "GRACE_PERIOD->GENERATION")
 
+		// Skip-list load failure leaves the sampled snapshot unfiltered and
+		// continues the phase transition. Evaluation loads the skip set again.
+		skipSet, err := loadChallengeSkipTargets(am.keeper, ctx, event.EpochIndex)
+		if err != nil {
+			am.LogError("Confirmation PoC: failed to load challenge skip set", types.PoC,
+				"epochIndex", event.EpochIndex, "error", err)
+			skipSet = nil
+		}
+
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, types.Epoch{Index: event.EpochIndex}, event.TriggerHeight)
 		if err != nil {
 			am.LogError("Confirmation PoC: failed to sample preserved nodes", types.PoC,
 				"triggerHeight", event.TriggerHeight, "error", err)
-		} else if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, preservedSnapshot); err != nil {
-			am.LogError("Confirmation PoC: failed to store generation start snapshots", types.PoC,
-				"triggerHeight", event.TriggerHeight, "error", err)
+		} else {
+			preservedSnapshot = stripChallengeSkipFromPreserved(preservedSnapshot, skipSet)
+			if err := am.captureGenerationStartTimestamp(ctx, sdkCtx.BlockTime().Unix(), event.TriggerHeight, preservedSnapshot); err != nil {
+				am.LogError("Confirmation PoC: failed to store generation start snapshots", types.PoC,
+					"triggerHeight", event.TriggerHeight, "error", err)
+			}
 		}
 
 		am.LogInfo("Confirmation PoC: GRACE_PERIOD -> GENERATION", types.PoC,
@@ -304,6 +322,12 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 		err := am.updateConfirmationWeights(ctx, &event)
 		if err != nil {
 			am.LogError("Confirmation PoC: Failed to update confirmation weights", types.PoC,
+				"epochIndex", event.EpochIndex,
+				"eventSequence", event.EventSequence,
+				"error", err)
+		}
+		if err := am.decideCurrentChallengeSegments(ctx, event.EpochIndex, event.GetExchangeEnd(epochParams)+1, event.TriggerHeight, true); err != nil {
+			am.LogError("Confirmation PoC: Failed to decide challenge segments", types.PoC,
 				"epochIndex", event.EpochIndex,
 				"eventSequence", event.EventSequence,
 				"error", err)
@@ -413,6 +437,13 @@ func (am AppModule) evaluateConfirmation(
 		return nil
 	}
 
+	skip, err := loadChallengeSkipTargets(am.keeper, ctx, event.EpochIndex)
+	if err != nil {
+		am.LogError("evaluateConfirmation: failed to load challenge skip set", types.PoC,
+			"epochIndex", event.EpochIndex, "error", err)
+		return nil
+	}
+
 	confirmationParticipants := am.updateConfirmationWeightsV2(ctx, event, snapshot)
 	measured := weightByParticipant(confirmationParticipants, presentScales)
 
@@ -436,10 +467,17 @@ func (am AppModule) evaluateConfirmation(
 
 	// Maintenance-covered participants are expected to be offline: skip both the
 	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
-	// punished via rewards or INACTIVE status.
-	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+	// punished via rewards or INACTIVE status. Any same-epoch challenge record
+	// is skipped the same way.
+	skipAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+	if skipAddrs == nil {
+		skipAddrs = make(map[string]struct{})
+	}
+	for addr := range skip {
+		skipAddrs[addr] = struct{}{}
+	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, skipAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,

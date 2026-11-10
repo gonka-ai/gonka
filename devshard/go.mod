@@ -16,6 +16,7 @@ require (
 	github.com/cosmos/gogoproto v1.7.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/goccy/go-json v0.10.5
+	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/labstack/echo/v4 v4.15.1
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
@@ -158,7 +159,6 @@ require (
 	github.com/google/gofuzz v1.2.0 // indirect
 	github.com/google/orderedcode v0.0.1 // indirect
 	github.com/google/s2a-go v0.1.8 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/googleapis/enterprise-certificate-proxy v0.3.4 // indirect
 	github.com/googleapis/gax-go/v2 v2.14.1 // indirect
 	github.com/gorilla/handlers v1.5.2 // indirect

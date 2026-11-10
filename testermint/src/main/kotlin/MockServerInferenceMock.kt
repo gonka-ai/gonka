@@ -268,4 +268,19 @@ class MockServerInferenceMock(private val baseUrl: String, val name: String) : I
         // callback automatically via the same weight configuration
         setPocResponse(weight, scenarioName)
     }
+
+    override fun emitPocV2Batch(hostName: String?) {
+        val body = if (hostName != null) {
+            """{"host_name": "$hostName"}"""
+        } else {
+            "{}"
+        }
+        val (_, response, _) = Fuel.post("$baseUrl/api/v1/responses/poc/emit-batch")
+            .jsonBody(body)
+            .responseString()
+        if (response.statusCode != 200) {
+            error("Failed to emit PoC v2 batch: ${response.statusCode} ${response.responseMessage}")
+        }
+        Logger.info("Emitted extra PoC v2 batch host=$hostName")
+    }
 }

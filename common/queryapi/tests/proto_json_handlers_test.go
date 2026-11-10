@@ -21,6 +21,10 @@ func TestProtoJSONHandlersEncodeWithoutPanic(t *testing.T) {
 		var body map[string]any
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 		require.Contains(t, body, "epoch_params")
+		ep, ok := body["epoch_params"].(map[string]any)
+		require.True(t, ok)
+		_, nested := ep["epoch_params"]
+		require.False(t, nested, "epoch_params must be EpochParams, not full Params")
 	})
 
 	t.Run("GET /v1/bls/epoch/1", func(t *testing.T) {

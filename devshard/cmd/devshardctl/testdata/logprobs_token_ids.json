@@ -1,0 +1,82 @@
+{
+ "choices": [
+  {
+   "index": 0,
+   "logprobs": {
+    "content": [
+     {
+      "token": "758",
+      "logprob": 0,
+      "bytes": [
+       84,
+       104,
+       101
+      ],
+      "top_logprobs": [
+       {
+        "token": "758",
+        "logprob": 0,
+        "bytes": [
+         55,
+         53,
+         56
+        ]
+       },
+       {
+        "token": "2",
+        "logprob": -9999,
+        "bytes": [
+         50
+        ]
+       },
+       {
+        "token": "0",
+        "logprob": -9999,
+        "bytes": [
+         48
+        ]
+       }
+      ]
+     },
+     {
+      "token": "3100",
+      "logprob": 0,
+      "bytes": [
+       32,
+       117,
+       115,
+       101,
+       114
+      ],
+      "top_logprobs": [
+       {
+        "token": "3100",
+        "logprob": 0,
+        "bytes": [
+         51,
+         49,
+         48,
+         48
+        ]
+       },
+       {
+        "token": "2",
+        "logprob": -9999,
+        "bytes": [
+         50
+        ]
+       },
+       {
+        "token": "0",
+        "logprob": -9999,
+        "bytes": [
+         48
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  }
+ ]
+}

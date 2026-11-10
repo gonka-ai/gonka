@@ -38,6 +38,36 @@ message EscrowStateProto {
   map<uint32, string> warm_keys = 11;
   uint64 latest_nonce = 12;
   bytes sealed_acc = 13;
+  // Height-sync escrow commit (hashed into the state root). The turn tracker
+  // and floor are rebuilt by replaying diffs 1..latest_nonce; the floor also
+  // rides on StateSnapshotProto (not hashed) as the fallback for when that
+  // replay cannot run.
+  uint64 height_sync_forced_start = 14;
+  uint64 height_sync_forced_end = 15;
+  uint64 height_sync_cadence_swallow_until = 16;
+  uint64 height_sync_swallow_fe = 17;
+  uint64 height_sync_turn_k = 18;
+  uint64 height_sync_turn_slots = 19;
+  string height_sync_turn_reason = 20;
+}
+
+// FloorIndexProto is the derived height-sync floor. It is not hashed into the
+// state root. Entries are ordered by nonce and hold a running maximum height; a
+// reader that cannot confirm that must discard the blob rather than answer F(m)
+// from it.
+message FloorIndexEntryProto {
+  uint64 nonce = 1;
+  uint64 height = 2;
+  bytes hash = 3;
+  uint32 author = 4;
+}
+
+message FloorIndexProto {
+  repeated FloorIndexEntryProto entries = 1;
+  // 2 was per-signer high-water claims. Only the withdrawn W_conf/Q raise rule
+  // read them; the floor is now the high-water of host-signed claims alone.
+  reserved 2;
+  bool truncated = 3;
 }
 
 // StateSnapshotProto matches the shared storage/recovery envelope. Hosts do not
@@ -48,4 +78,5 @@ message StateSnapshotProto {
   map<uint64, bytes> committed_entries = 2;
   map<uint64, uint64> sealed_nonces = 3;
   map<int32, uint64> host_sync_nonce = 4;
+  FloorIndexProto height_sync_floor = 5;
 }

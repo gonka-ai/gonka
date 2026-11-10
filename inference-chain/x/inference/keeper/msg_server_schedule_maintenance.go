@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 
+	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -40,6 +41,10 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 	_, err = k.Participants.Get(goCtx, participantAddr)
 	if err != nil {
 		return nil, types.ErrParticipantNotFound
+	}
+
+	if k.IsUnderChallenge(goCtx, msg.Participant) {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "participant is under PoC challenge")
 	}
 
 	// Validate duration is positive and within limits

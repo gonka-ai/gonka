@@ -23,14 +23,15 @@ func NewEscrowChecker(newBridge func() bridge.MainnetBridge) *EscrowChecker {
 	}
 }
 
-// TriggerCheck queries the chain for the given escrow. If confirmed missing,
-// calls deactivate. If another check for the same escrow is already in flight,
-// this call returns immediately (the in-flight check will handle deactivation).
-func (ec *EscrowChecker) TriggerCheck(escrowID string, deactivate func()) {
+// TriggerCheck queries the chain for the given escrow. If confirmed missing or
+// settled, calls deactivate with the reason. If another check for the same
+// escrow is already in flight, this call returns immediately (the in-flight
+// check will handle deactivation).
+func (ec *EscrowChecker) TriggerCheck(escrowID string, deactivate func(reason string)) {
 	ec.triggerCheck(escrowID, deactivate)
 }
 
-func (ec *EscrowChecker) triggerCheck(escrowID string, deactivate func()) {
+func (ec *EscrowChecker) triggerCheck(escrowID string, deactivate func(reason string)) {
 	ec.mu.Lock()
 	if ec.inflight[escrowID] {
 		ec.mu.Unlock()
@@ -55,14 +56,19 @@ func (ec *EscrowChecker) triggerCheck(escrowID string, deactivate func()) {
 		log.Printf("escrow %s chain check skipped: bridge unavailable", escrowID)
 		return
 	}
-	_, err := br.GetEscrow(escrowID)
+	info, err := br.GetEscrow(escrowID)
 	if err != nil {
 		if errors.Is(err, bridge.ErrEscrowNotFound) {
 			log.Printf("escrow %s confirmed missing on chain, deactivating devshard", escrowID)
-			deactivate()
+			deactivate("escrow confirmed missing on chain")
 		} else {
 			log.Printf("escrow %s chain check failed (keeping active): %v", escrowID, err)
 		}
+		return
+	}
+	if info != nil && info.Settled {
+		log.Printf("escrow %s confirmed settled on chain, deactivating devshard", escrowID)
+		deactivate("escrow confirmed settled on chain")
 		return
 	}
 	log.Printf("escrow %s verified on chain, host reported false escrow-not-found", escrowID)

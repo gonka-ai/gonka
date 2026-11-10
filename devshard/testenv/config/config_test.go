@@ -45,3 +45,23 @@ func TestValidate_VersiondModePostgresRules(t *testing.T) {
 	cfg.Postgres.Enabled = true
 	require.ErrorContains(t, cfg.Validate(), "mode single")
 }
+
+func TestValidate_SlotsCountOnChainIdentitiesNotContainers(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:   config.EscrowMeta{Slots: 3},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha", PrivateKeyHex: "aa"},
+			{ID: "versiond-1", Address: "gonka1replica", PrivateKeyHex: "bb"},
+			{ID: "versiond-2", Address: "gonka1solo-a", PrivateKeyHex: "cc"},
+			{ID: "versiond-3", Address: "gonka1solo-b", PrivateKeyHex: "dd"},
+		},
+		User:     config.UserCfg{Address: "gonka1u", PrivateKeyHex: "ee"},
+		Postgres: config.PostgresCfg{Enabled: true},
+	}
+	cfg.ApplyDefaults()
+	require.NoError(t, cfg.Validate(), "4 containers / 3 identities / 3 slots is valid")
+
+	cfg.Escrow.Slots = 2
+	require.ErrorContains(t, cfg.Validate(), "on-chain host identities")
+}

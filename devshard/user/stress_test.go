@@ -42,7 +42,7 @@ type ConcurrentClient struct {
 	wg    sync.WaitGroup
 }
 
-func (c *ConcurrentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *ConcurrentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	type result struct {
 		resp *host.HostResponse
 		err  error

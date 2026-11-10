@@ -1,0 +1,14 @@
+# Explicit versiond pool membership for one router slot.
+#
+# versiond-router-fleet.sh adds this file to every slot's Compose command when
+# config.env sets VERSIOND_POOL_ENDPOINTS_FILE. The list is handed over as an
+# environment value with its SHA-256, so a generation carries its own
+# membership: an edited file changes nothing until the fleet is rolled, and a
+# restored generation keeps the list it was created with. Membership is part
+# of the placement contract, so a change goes through maintenance-rollout.
+# Do not pass this file by hand.
+services:
+  router:
+    environment:
+      - VERSIOND_POOL_ENDPOINTS=${VERSIOND_POOL_ENDPOINTS:?set by versiond-router-fleet.sh}
+      - VERSIOND_POOL_ENDPOINTS_SHA256=${VERSIOND_POOL_ENDPOINTS_SHA256:?set by versiond-router-fleet.sh}

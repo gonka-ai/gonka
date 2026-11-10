@@ -32,11 +32,8 @@ import (
 const DefaultRPCProbeInterval = 30 * time.Minute
 
 // broadcastTxMethod is the one method on the tx service that is not a query.
-// The fallback rejects it outright because both of its transports would get it
-// wrong: client.Context.Invoke special-cases the request type and broadcasts it
-// over CometBFT instead of querying, and a transport failure here is retried on
-// the other transport, which for a broadcast means submitting the same signed
-// transaction twice. Transactions belong on Client.Conn().
+// QueryConn rejects it because retrying a failed broadcast on another transport
+// can submit twice. UnorderedTxConn permits it through a one-shot wrapper.
 const broadcastTxMethod = "/cosmos.tx.v1beta1.Service/BroadcastTx"
 
 // fallbackConn routes unary query invocations over direct chain gRPC while that
@@ -57,6 +54,13 @@ type fallbackConn struct {
 	usingRPC    bool
 	probing     bool
 	nextProbeAt time.Time
+}
+
+// unorderedTxConn shares fallbackConn's query routing, but permits unordered
+// transaction broadcasts. A broadcast uses the already-selected transport
+// exactly once; it never retries across transports after an ambiguous error.
+type unorderedTxConn struct {
+	fallback *fallbackConn
 }
 
 func newFallbackConn(direct, rpc grpc.ClientConnInterface, probeInterval time.Duration, now func() time.Time) *fallbackConn {
@@ -234,6 +238,23 @@ func classifyProbe(ctx context.Context, err error) probeVerdict {
 // streams, so there is nothing to fall back to.
 func (c *fallbackConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	return c.direct.NewStream(ctx, desc, method, opts...)
+}
+
+func (c *unorderedTxConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
+	if method != broadcastTxMethod {
+		return c.fallback.Invoke(ctx, method, args, reply, opts...)
+	}
+	c.fallback.mu.Lock()
+	useRPC := c.fallback.usingRPC
+	c.fallback.mu.Unlock()
+	if useRPC {
+		return c.fallback.rpc.Invoke(ctx, method, args, reply, opts...)
+	}
+	return c.fallback.direct.Invoke(ctx, method, args, reply, opts...)
+}
+
+func (c *unorderedTxConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
+	return c.fallback.NewStream(ctx, desc, method, opts...)
 }
 
 // isTransportDown reports whether err means the chain gRPC endpoint is

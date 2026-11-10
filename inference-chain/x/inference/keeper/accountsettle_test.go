@@ -24,6 +24,61 @@ func calcExpectedRewards(epochIndex int64, params types.Params) uint64 {
 	return value
 }
 
+func TestCheckAndPunishForDowntimeResult(t *testing.T) {
+	p0 := types.DecimalFromFloat(0.1)
+
+	reward, passed := inference.CheckAndPunishForDowntime(100, 10, 50, p0)
+	require.True(t, passed)
+	require.Equal(t, uint64(50), reward)
+
+	reward, passed = inference.CheckAndPunishForDowntime(100, 50, 50, p0)
+	require.False(t, passed)
+	require.Zero(t, reward)
+
+	reward, passed = inference.CheckAndPunishForDowntime(0, 0, 50, p0)
+	require.True(t, passed)
+	require.Equal(t, uint64(50), reward)
+
+	reward, passed = inference.CheckAndPunishForDowntime(1, 2, 50, p0)
+	require.True(t, passed)
+	require.Equal(t, uint64(50), reward)
+
+	reward, passed = inference.CheckAndPunishForDowntime(100, 10, 0, p0)
+	require.True(t, passed)
+	require.Zero(t, reward)
+}
+
+func TestDowntimeFailuresDoNotUseRewardZero(t *testing.T) {
+	participants := []types.Participant{
+		{
+			Address: "passed",
+			Status:  types.ParticipantStatus_ACTIVE,
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InferenceCount: 90,
+				MissedRequests: 10,
+			},
+		},
+		{
+			Address: "failed",
+			Status:  types.ParticipantStatus_ACTIVE,
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InferenceCount: 50,
+				MissedRequests: 50,
+			},
+		},
+	}
+
+	failed := inference.CheckAndPunishForDowntimeForParticipants(
+		participants,
+		map[string]uint64{"passed": 0, "failed": 0},
+		types.DecimalFromFloat(0.1),
+		createTestLogger(t),
+	)
+
+	require.NotContains(t, failed, "passed")
+	require.Contains(t, failed, "failed")
+}
+
 func TestActualSettle(t *testing.T) {
 	logger := createTestLogger(t)
 	logger.Info("Starting TestActualSettle - testing full settlement integration")
@@ -133,7 +188,7 @@ func TestActualSettle(t *testing.T) {
 		mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", "gov", remainderCoins, gomock.Any()).Return(nil)
 	}
 
-	err = keeper.SettleAccounts(ctx, 10, 0)
+	_, err = keeper.SettleAccounts(ctx, 10, 0)
 	require.NoError(t, err, "SettleAccounts should complete successfully")
 	logger.Info("SettleAccounts completed successfully")
 	updated1, found := keeper.GetParticipant(ctx, participant1.Address)
@@ -250,7 +305,7 @@ func TestActualSettleWithManyParticipants(t *testing.T) {
 
 	// This should work with pagination and process all 150 participants
 	logger.Info("Starting SettleAccounts for 150 participants")
-	err = keeper.SettleAccounts(ctx, 10, 0)
+	_, err = keeper.SettleAccounts(ctx, 10, 0)
 	require.NoError(t, err, "SettleAccounts should complete successfully with 150 participants")
 	logger.Info("SettleAccounts completed successfully")
 
@@ -351,8 +406,9 @@ func TestSettleWithGraceEpoch(t *testing.T) {
 	mocks.BankKeeper.EXPECT().MintCoins(gomock.Any(), types.ModuleName, coins, gomock.Any()).Return(nil)
 	mocks.BankKeeper.EXPECT().LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
 
-	err = keeper.SettleAccounts(ctx, epochIndex, 0)
+	failedMissRate, err := keeper.SettleAccounts(ctx, epochIndex, 0)
 	require.NoError(t, err)
+	require.Empty(t, failedMissRate)
 
 	// Verify participant got rewards (not punished due to grace epoch)
 	settleAmount, found := keeper.GetSettleAmount(ctx, participantHighMiss.Address)
@@ -431,8 +487,9 @@ func TestSettleWithoutGraceEpoch(t *testing.T) {
 	// Expect remainder to go to governance (punished participant's reward)
 	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToModule(gomock.Any(), "inference", "gov", gomock.Any(), gomock.Any()).Return(nil)
 
-	err = keeper.SettleAccounts(ctx, epochIndex, 0)
+	failedMissRate, err := keeper.SettleAccounts(ctx, epochIndex, 0)
 	require.NoError(t, err)
+	require.Contains(t, failedMissRate, participantHighMiss.Address)
 
 	// Verify participant was punished (reward = 0)
 	settleAmount, found := keeper.GetSettleAmount(ctx, participantHighMiss.Address)

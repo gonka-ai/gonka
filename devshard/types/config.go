@@ -3,9 +3,11 @@ package types
 const (
 	defaultInferenceSealGraceMultiplier = 1 // for tests
 	minInferenceSealGraceNonces         = 20
-	// DefaultInferenceSealGraceSeconds is the wall-clock grace before sealing
-	// stale-finished inferences. Must match inference-chain
-	// DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
+	// DefaultInferenceSealGraceSeconds is the extra state-clock grace after
+	// ExecutionTimeout before sealing stale-finished inferences.
+	// The Finished clock gate is
+	// stateClock - ConfirmedAt >= InferenceSealGraceSeconds + ExecutionTimeout.
+	// Must match inference-chain DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
 	DefaultInferenceSealGraceSeconds = 3600
 	// DefaultAutoSealEveryNNonces is how often auto-seal runs during Active phase.
 	// Must match inference-chain DefaultDevshardAutoSealEveryNNonces.
@@ -69,6 +71,8 @@ type EscrowSessionFields struct {
 	AutoSealEveryNNonces        uint32
 	ValidationRate              uint32
 	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
+	RefusalTimeout              int64
+	ExecutionTimeout            int64
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -108,6 +112,12 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	}
 	if fields.ValidationRate > 0 {
 		cfg.ValidationRate = fields.ValidationRate
+	}
+	if fields.RefusalTimeout > 0 {
+		cfg.RefusalTimeout = fields.RefusalTimeout
+	}
+	if fields.ExecutionTimeout > 0 {
+		cfg.ExecutionTimeout = fields.ExecutionTimeout
 	}
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, fields.VoteThresholdFactor)
 	return NormalizeSessionConfig(cfg, groupSize)

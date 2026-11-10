@@ -7,3 +7,4 @@ import "common/runtimeconfig/types"
 type Snapshot = types.Snapshot
 type ApprovedVersion = types.ApprovedVersion
 type ModelValidationThreshold = types.ModelValidationThreshold
+type HeightSyncParams = types.HeightSyncParams

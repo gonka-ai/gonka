@@ -39,6 +39,8 @@ message InferenceRecordProto {
   uint32 votes_valid = 15;
   uint32 votes_invalid = 16;
   bytes  validated_by = 17;
+  uint64 started_at_height = 18;
+  uint64 confirmed_at_height = 19;
 }
 
 message InferencesMapProto {

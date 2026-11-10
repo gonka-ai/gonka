@@ -114,11 +114,15 @@ func TestSessionConfigFromEscrow_ConsensusFieldsFromEscrow(t *testing.T) {
 		InferenceSealGraceSeconds: 99,
 		ValidationRate:            6000,
 		VoteThresholdFactor:       67,
+		RefusalTimeout:            5,
+		ExecutionTimeout:          17,
 	})
 	require.Equal(t, uint32(6000), cfg.ValidationRate)
 	require.Equal(t, uint32(55), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(99), cfg.InferenceSealGraceSeconds)
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
+	require.Equal(t, int64(5), cfg.RefusalTimeout)
+	require.Equal(t, int64(17), cfg.ExecutionTimeout)
 }
 
 func TestSessionConfigFromEscrow_PreservesDefaultValidationRateWhenZero(t *testing.T) {

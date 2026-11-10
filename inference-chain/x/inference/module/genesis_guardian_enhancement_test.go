@@ -68,6 +68,35 @@ func TestApplyGenesisGuardianEnhancement_ImmatureNetwork(t *testing.T) {
 	require.True(t, foundGenesis, "Should find enhanced genesis validator")
 }
 
+func TestApplyGenesisGuardianEnhancement_ZeroPowerGuardian(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{"guardian"},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	result := inference.ApplyGenesisGuardianEnhancement(ctx, k, []stakingkeeper.ComputeResult{
+		{OperatorAddress: "guardian", Power: 0},
+		{OperatorAddress: "validator", Power: 100},
+	})
+
+	require.True(t, result.WasEnhanced)
+	require.Equal(t, int64(52), result.ComputeResults[0].Power)
+	require.Equal(t, int64(100), result.ComputeResults[1].Power)
+}
+
 // Test that mature network skips enhancement
 func TestApplyGenesisGuardianEnhancement_MatureNetwork(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)

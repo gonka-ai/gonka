@@ -25,6 +25,8 @@ x-edge-api: &edge-api
     - chain-node
   networks:
     - chain-public
+  # Outer Docker backstop for the internal request-drain budget.
+  stop_grace_period: 3m
   restart: unless-stopped
 
 services:
