@@ -177,7 +177,8 @@ func echoServer(t *testing.T, lp []map[int]float64, prompt []int) func(context.C
 func TestExecuteEchoValidation_ScoresTheStoredAnswer(t *testing.T) {
 	lp := echoTestLogprobs()
 	prompt := []int{10, 11, 12}
-	promptPayload := []byte(`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300}`)
+	// Explicit sampling fields: without them the model's generation_config would apply.
+	promptPayload := []byte(`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0}`)
 	seed := uint64(int64(validationReplaySeed("42")))
 	for _, tc := range []struct {
 		name  string
@@ -364,11 +365,13 @@ func TestExecuteEchoValidation_AnswerShapeRulesApply(t *testing.T) {
 // A request without sampling fields runs under the model's generation_config,
 // which vLLM applies by default; the validator's kept set must follow it.
 func TestTapeParams_ModelDefaultsFillMissingFields(t *testing.T) {
-	var m map[string]interface{}
-	require.NoError(t, json.Unmarshal([]byte(`{"model":"MiniMaxAI/MiniMax-M2.7","messages":[]}`), &m))
-	require.Equal(t, TapeParams{Temperature: 1, TopP: 0.95, TopK: 40}, tapeParams(m))
-	require.NoError(t, json.Unmarshal([]byte(`{"model":"MiniMaxAI/MiniMax-M2.7","top_p":1,"top_k":0,"min_tokens":64,"max_tokens":256}`), &m))
-	require.Equal(t, TapeParams{Temperature: 1, TopP: 1, TopK: 0, MinTokens: 64, MaxTokens: 256}, tapeParams(m))
-	require.NoError(t, json.Unmarshal([]byte(`{"model":"other/model"}`), &m))
-	require.Equal(t, TapeParams{Temperature: 1, TopP: 1}, tapeParams(m))
+	params := func(body string) TapeParams {
+		var m map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(body), &m))
+		return tapeParams(m)
+	}
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 0.95, TopK: 40}, params(`{"model":"MiniMaxAI/MiniMax-M2.7","messages":[]}`))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 1, TopK: 0, MinTokens: 64, MaxTokens: 256},
+		params(`{"model":"MiniMaxAI/MiniMax-M2.7","top_p":1,"top_k":0,"min_tokens":64,"max_tokens":256}`))
+	require.Equal(t, TapeParams{Temperature: 1, TopP: 1}, params(`{"model":"other/model"}`))
 }
