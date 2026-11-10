@@ -174,14 +174,20 @@ type EchoThresholds struct {
 // MiniMax-M2.7 FP8 the same way (4.1-4.6 % off the winner, long answers 4.6 %),
 // honest GLM-5.3-Flash FP8 on 8xB300 (TP2) and 4xH200 (TP4) and across the two
 // (2.4-2.7 % off the winner, short answers up to 7.8 %, largest gap 5.4) and
-// honest Qwen3-0.6B on one RTX 3090 (2026-11-04, 64 answers). FlipRate is the
-// honest share of positions off the winner with a margin for the length bound,
-// MaxGap the largest honest gap seen with a margin.
+// honest Qwen3-0.6B on one RTX 3090 (2026-11-04, 64 answers) and the testnet
+// Qwen2.5-1.5B / Qwen3-4B-2507 / Qwen2.5-7B on the same 3090 (2026-11-10, 80
+// answers each, executor and validator one instance, the Qwen2.5 repetition
+// penalty overridden: 0.3-1.2 % off the winner, largest gap 2.5). FlipRate is
+// the honest share of positions off the winner with a margin for the length
+// bound, MaxGap the largest honest gap seen with a margin.
 var echoThresholds = map[string]EchoThresholds{
 	"deepseek-ai/DeepSeek-V4-Flash-0731": {ZMin: -3, FlipRate: 0.05, MaxGap: 5},
 	"MiniMaxAI/MiniMax-M2.7":             {ZMin: -3, FlipRate: 0.06, MaxGap: 5},
 	"zai-org/GLM-5.3-Flash":              {ZMin: -3, FlipRate: 0.04, MaxGap: 5.5},
-	"Qwen/Qwen3-0.6B":                    {ZMin: -3, FlipRate: 0.006, MaxGap: 6.4},
+	"Qwen/Qwen3-0.6B":                    {ZMin: -3, FlipRate: 0.02, MaxGap: 6.4},
+	"Qwen/Qwen3-4B-Instruct-2507":        {ZMin: -3, FlipRate: 0.02, MaxGap: 5},
+	"Qwen/Qwen2.5-1.5B-Instruct":         {ZMin: -3, FlipRate: 0.02, MaxGap: 4},
+	"Qwen/Qwen2.5-7B-Instruct":           {ZMin: -3, FlipRate: 0.02, MaxGap: 4},
 }
 
 // EchoThresholdsFor returns the model's thresholds; a model without a
