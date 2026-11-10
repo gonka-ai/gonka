@@ -143,7 +143,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		req.InputTokens, req.OutputTokens,
 	)
 	if errors.Is(err, commonvalidation.ErrEchoUnsupported) {
-		logging.Info("devshard validation skipped: the echo cannot judge this request",
+		logging.Info("devshard validation skipped: the validator cannot judge this answer",
 			types.Validation, "inferenceId", inferenceID, "executor", req.ExecutorAddress, "cause", err.Error())
 		return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationSkipped, err)
 	}
@@ -164,6 +164,9 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		}
 		verdict.Details = []any{"steps", echo.Signals.Steps, "count", echo.Signals.Count,
 			"z", echo.Signals.Z, "max_gap", echo.Signals.MaxGap}
+		if echo.Replay != "" {
+			verdict.Details = append(verdict.Details, "replay", echo.Replay)
+		}
 		if v.pool != nil {
 			answers, steps, count := v.pool.Observe(req.ExecutorAddress, req.Model, echo.Signals.Steps, echo.Signals.Count)
 			pooled := commonvalidation.EchoThresholdsFor(req.Model).CountPasses(steps, count, pooledQuantile)

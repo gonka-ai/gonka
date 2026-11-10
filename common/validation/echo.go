@@ -75,10 +75,18 @@ var modelEOS = map[string][]int{
 // with return_token_ids gives the prompt ids the validator itself derives.
 const ChatPath = "/v1/chat/completions"
 
-// ErrEchoUnsupported marks a request the echo cannot judge: a grammar the
-// validator does not see, a thinking budget that forces a token, or a
-// sampling penalty the prompt logprobs do not carry.
+// ErrEchoUnsupported marks an answer the validator cannot judge: its engine
+// returned the replay without token ids, or not the forced answer.
 var ErrEchoUnsupported = errors.New("echo validation: unsupported request")
+
+// replayLogprobsMode asks the fork's engine for the logprobs its sampler drew
+// from: after penalties, temperature, top_k/top_p and any grammar mask.
+const replayLogprobsMode = "processed_logprobs"
+
+// maskedLogprob is where the engine reports a token its sampler masked out
+// (vLLM clamps -inf to -9999): in a replay the answer's token can sit there
+// when it fell outside the validator's own top_p cut.
+const maskedLogprob = -9000.0
 
 // lengthRuleContextCap is the smallest max_model_len a node is expected to
 // serve; an answer cut by the context can only be longer than that, so the
@@ -156,6 +164,9 @@ type EchoSignals struct {
 	Count  int     `json:"count"`
 	MaxGap float64 `json:"max_gap"`
 	SumGap float64 `json:"sum_gap"`
+	// Masked positions are counted off the winner but not scored: the
+	// replaying engine masked the answer's token (maskedLogprob).
+	Masked int `json:"masked,omitempty"`
 }
 
 // EchoThresholds challenge an answer with Z below ZMin, with more positions
@@ -228,6 +239,9 @@ type EchoValidationResult struct {
 	BaseValidationResult
 	Model   string
 	Signals EchoSignals
+	// Replay names what kept the echo from judging the answer, which the
+	// validator replayed through its engine's sampler instead; empty for an echo.
+	Replay string
 }
 
 func (r EchoValidationResult) IsSuccessful() bool {
@@ -244,6 +258,13 @@ func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p 
 	var s EchoSignals
 	var sumR float64
 	for t, x := range out {
+		if lp, ok := logprobs[t][x]; !ok || lp <= maskedLogprob {
+			// Outside the validator's own cut: a position off the winner whose
+			// score the engine did not report, so it counts and is not scored.
+			s.Count++
+			s.Masked++
+			continue
+		}
 		var masked map[int]bool
 		if t < p.MinTokens && len(eos) > 0 {
 			masked = make(map[int]bool, len(eos))
@@ -276,9 +297,9 @@ func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p 
 		}
 	}
 	s.Steps = len(out)
-	if s.Steps > 0 {
-		s.MeanR = sumR / float64(s.Steps)
-		s.Z = (sumR - eulerGamma*float64(s.Steps)) / (gumbelSigma * math.Sqrt(float64(s.Steps)))
+	if n := s.Steps - s.Masked; n > 0 {
+		s.MeanR = sumR / float64(n)
+		s.Z = (sumR - eulerGamma*float64(n)) / (gumbelSigma * math.Sqrt(float64(n)))
 	}
 	return s
 }
@@ -376,6 +397,97 @@ func EchoRequestBody(model string, prompt, out []int) ([]byte, error) {
 		"model": model, "prompt": ids, "max_tokens": 1, "temperature": 0,
 		"prompt_logprobs": EchoTopLogprobs,
 	})
+}
+
+// ReplayRequestBody replays the stored answer on the validator's engine with
+// the fork's enforced_tokens: one decode step per token, the engine's own
+// sampler applying what the echo cannot (penalties, a grammar, a thinking
+// budget) and its processed logprobs at every step. Stop strings only end an
+// answer and are dropped so that every position is replayed.
+func ReplayRequestBody(requestMap map[string]interface{}, out []int) ([]byte, error) {
+	req := make(map[string]interface{}, len(requestMap)+6)
+	for k, v := range requestMap {
+		req[k] = v
+	}
+	tokens := make([]map[string]interface{}, len(out))
+	for i, tok := range out {
+		tokens[i] = map[string]interface{}{"token": strconv.Itoa(tok), "top_tokens": []string{}}
+	}
+	req["enforced_tokens"] = map[string]interface{}{"tokens": tokens}
+	req["logprobs"] = true
+	req["top_logprobs"] = EchoTopLogprobs
+	req["logprobs_mode"] = replayLogprobsMode
+	req["return_token_ids"] = true
+	req["max_tokens"] = len(out)
+	req["stream"] = false
+	for _, key := range []string{"stream_options", "stop", "stop_token_ids", "enforced_str"} {
+		delete(req, key)
+	}
+	return json.Marshal(req)
+}
+
+// ParseReplay returns the processed logprobs of every replayed position from
+// a chat completion with enforced_tokens. The engine must return the whole
+// answer and its tokens as ids (--return-tokens-as-token-ids); decoded text
+// leaves the answer unsupported.
+func ParseReplay(body []byte, out []int) ([]map[int]float64, error) {
+	var resp struct {
+		Choices []struct {
+			TokenIDs []int `json:"token_ids"`
+			Logprobs struct {
+				Content []struct {
+					Token       string  `json:"token"`
+					Logprob     float64 `json:"logprob"`
+					TopLogprobs []struct {
+						Token   string  `json:"token"`
+						Logprob float64 `json:"logprob"`
+					} `json:"top_logprobs"`
+				} `json:"content"`
+			} `json:"logprobs"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	// The fork's replay can lose its place in the forced answer when the
+	// batch around it changes (seen under load on vLLM 0.30 with async
+	// scheduling); such an answer is left unjudged, not failed.
+	if len(resp.Choices) == 0 || !equalIDs(resp.Choices[0].TokenIDs, out) {
+		return nil, fmt.Errorf("%w: the engine did not return the forced answer", ErrEchoUnsupported)
+	}
+	content := resp.Choices[0].Logprobs.Content
+	if len(content) != len(out) {
+		return nil, fmt.Errorf("%w: the replay has %d positions for %d tokens", ErrEchoUnsupported, len(content), len(out))
+	}
+	logprobs := make([]map[int]float64, len(out))
+	for t, step := range content {
+		entry := make(map[int]float64, len(step.TopLogprobs)+1)
+		for _, c := range step.TopLogprobs {
+			tok, err := replayTokenID(c.Token)
+			if err != nil {
+				return nil, err
+			}
+			entry[tok] = c.Logprob
+		}
+		tok, err := replayTokenID(step.Token)
+		if err != nil {
+			return nil, err
+		}
+		if tok != out[t] {
+			return nil, fmt.Errorf("replay position %d: token %d where %d was forced", t, tok, out[t])
+		}
+		entry[tok] = step.Logprob
+		logprobs[t] = entry
+	}
+	return logprobs, nil
+}
+
+func replayTokenID(s string) (int, error) {
+	tok, err := strconv.Atoi(strings.TrimPrefix(s, "token_id:"))
+	if err != nil {
+		return 0, fmt.Errorf("%w: the engine returned a decoded token %q, not an id", ErrEchoUnsupported, s)
+	}
+	return tok, nil
 }
 
 // ParseEcho returns the logprobs of the positions after promptLen from a
@@ -481,9 +593,7 @@ func ExecuteEchoValidation(
 	if err := json.Unmarshal(modified.NewBody, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
 	}
-	if reason := unsupportedReason(requestMap); reason != "" {
-		return nil, fmt.Errorf("%w: %s", ErrEchoUnsupported, reason)
-	}
+	replay := replayReason(requestMap)
 	model, _ := requestMap["model"].(string)
 	vocab, ok := modelVocab[model]
 	if !ok {
@@ -533,30 +643,59 @@ func ExecuteEchoValidation(
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: reason}, nil
 	}
 
-	body, err := EchoRequestBody(model, prompt, out)
-	if err != nil {
-		return nil, err
+	var signals EchoSignals
+	var respBody []byte
+	if replay != "" {
+		body, err := ReplayRequestBody(requestMap, out)
+		if err != nil {
+			return nil, err
+		}
+		var status int
+		status, respBody, err = post(ctx, execute, ChatPath, body)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot replay the stored answer."}, nil
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("replay validation: status %d: %s", status, bytes.TrimSpace(respBody))
+		}
+		logprobs, err := ParseReplay(respBody, out)
+		if err != nil {
+			return nil, err
+		}
+		// Processed logprobs already carry the temperature, the cut and the
+		// masks the engine sampled under.
+		signals = ScoreEcho(logprobs, out, seed, vocab, TapeParams{Temperature: 1, TopP: 1, RepetitionPenalty: 1}, nil)
+	} else {
+		body, err := EchoRequestBody(model, prompt, out)
+		if err != nil {
+			return nil, err
+		}
+		var status int
+		status, respBody, err = post(ctx, execute, EchoPath, body)
+		if err != nil {
+			return nil, err
+		}
+		if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
+			// The echo holds nothing but the executor's own token ids.
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot embed the stored token ids."}, nil
+		}
+		if status != http.StatusOK {
+			return nil, fmt.Errorf("echo validation: status %d: %s", status, bytes.TrimSpace(respBody))
+		}
+		logprobs, err := ParseEcho(respBody, len(prompt), len(out))
+		if err != nil {
+			return nil, err
+		}
+		signals = ScoreEcho(logprobs, out, seed, vocab, params, modelEOS[model])
 	}
-	status, respBody, err := post(ctx, execute, EchoPath, body)
-	if err != nil {
-		return nil, err
-	}
-	if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
-		// The echo holds nothing but the executor's own token ids.
-		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot embed the stored token ids."}, nil
-	}
-	if status != http.StatusOK {
-		return nil, fmt.Errorf("echo validation: status %d: %s", status, bytes.TrimSpace(respBody))
-	}
-	logprobs, err := ParseEcho(respBody, len(prompt), len(out))
-	if err != nil {
-		return nil, err
-	}
-	signals := ScoreEcho(logprobs, out, seed, vocab, params, modelEOS[model])
 	return &EchoValidationResult{
 		BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBody},
 		Model:                model,
 		Signals:              signals,
+		Replay:               replay,
 	}, nil
 }
 
@@ -585,12 +724,14 @@ func equalIDs(a, b []int) bool {
 	return true
 }
 
-// unsupportedReason names what keeps the echo from judging a request: a
-// grammar (the validator does not see the mask the executor sampled under),
-// a thinking budget (it forces a token the tape never chose) or a sampling
+// replayReason names what keeps the echo from judging a request, so that the
+// answer is replayed through the engine's sampler instead: a grammar (the
+// validator's prefill does not see the mask the executor sampled under), a
+// thinking budget (it forces a token the tape never chose) or a sampling
 // penalty, requested or the model's default (vLLM applies generation_config's
-// repetition_penalty unless the node overrides it).
-func unsupportedReason(requestMap map[string]interface{}) string {
+// repetition_penalty unless the node overrides it); the prompt logprobs of a
+// prefill skip all of them.
+func replayReason(requestMap map[string]interface{}) string {
 	if GrammarConstrained(requestMap) {
 		return "grammar-constrained request"
 	}

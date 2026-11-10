@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -142,16 +143,46 @@ func echoServer(t *testing.T, lp []map[int]float64, prompt []int) func(context.C
 	return func(_ context.Context, path string, body []byte) (*http.Response, error) {
 		if path == ChatPath {
 			var req struct {
-				MaxTokens      int  `json:"max_tokens"`
-				ReturnTokenIDs bool `json:"return_token_ids"`
-				Stream         bool `json:"stream"`
+				MaxTokens      int    `json:"max_tokens"`
+				ReturnTokenIDs bool   `json:"return_token_ids"`
+				Stream         bool   `json:"stream"`
+				Stop           any    `json:"stop"`
+				LogprobsMode   string `json:"logprobs_mode"`
+				TopLogprobs    int    `json:"top_logprobs"`
+				Enforced       *struct {
+					Tokens []struct {
+						Token string `json:"token"`
+					} `json:"tokens"`
+				} `json:"enforced_tokens"`
 			}
 			require.NoError(t, json.Unmarshal(body, &req))
-			require.Equal(t, 1, req.MaxTokens)
 			require.True(t, req.ReturnTokenIDs)
 			require.False(t, req.Stream)
-			resp, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
-				"choices": []interface{}{map[string]interface{}{"token_ids": []int{0}, "finish_reason": "length"}}})
+			if req.Enforced == nil {
+				require.Equal(t, 1, req.MaxTokens)
+				resp, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
+					"choices": []interface{}{map[string]interface{}{"token_ids": []int{0}, "finish_reason": "length"}}})
+				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(resp))}, nil
+			}
+			// A replay: the engine's processed logprobs at T 1 are the raw ones.
+			require.Equal(t, len(req.Enforced.Tokens), req.MaxTokens)
+			require.Equal(t, "processed_logprobs", req.LogprobsMode)
+			require.Equal(t, EchoTopLogprobs, req.TopLogprobs)
+			require.Nil(t, req.Stop)
+			ids := make([]int, len(req.Enforced.Tokens))
+			content := make([]interface{}, len(ids))
+			for i, tok := range req.Enforced.Tokens {
+				id, err := strconv.Atoi(tok.Token)
+				require.NoError(t, err)
+				ids[i] = id
+				var top []map[string]interface{}
+				for cand, l := range lp[i] {
+					top = append(top, map[string]interface{}{"token": fmt.Sprint(cand), "logprob": l})
+				}
+				content[i] = map[string]interface{}{"token": fmt.Sprintf("token_id:%d", id), "logprob": lp[i][id], "top_logprobs": top}
+			}
+			resp, _ := json.Marshal(map[string]interface{}{"choices": []interface{}{map[string]interface{}{
+				"token_ids": ids, "finish_reason": "length", "logprobs": map[string]interface{}{"content": content}}}})
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(resp))}, nil
 		}
 		require.Equal(t, EchoPath, path)
@@ -240,6 +271,26 @@ func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
 
 // Before min_tokens the engine masks the end tokens, so a position whose
 // winner would have been an end token is honest when the next token wins.
+func TestScoreEcho_AMaskedAnswerTokenCountsButIsNotScored(t *testing.T) {
+	lp := echoTestLogprobs()
+	out := tapeAnswer(lp, echoTestSeed)
+	plain := ScoreEcho(lp, out, echoTestSeed, echoTestVocab, plainParams, nil)
+	require.Zero(t, plain.Count)
+	masked := make([]map[int]float64, len(lp))
+	copy(masked, lp)
+	masked[5] = map[int]float64{}
+	for tok, l := range lp[5] {
+		masked[5][tok] = l
+	}
+	masked[5][out[5]] = -9999
+	s := ScoreEcho(masked, out, echoTestSeed, echoTestVocab, plainParams, nil)
+	require.Equal(t, 1, s.Count)
+	require.Equal(t, 1, s.Masked)
+	require.Zero(t, s.MaxGap)
+	require.InDelta(t, plain.MeanR, s.MeanR, 0.01)
+	require.Greater(t, s.Z, -3.0)
+}
+
 func TestScoreEcho_EndTokensAreMaskedBeforeMinTokens(t *testing.T) {
 	lp := echoTestLogprobs()
 	eos := []int{15}
@@ -319,22 +370,92 @@ func TestGrammarConstrained(t *testing.T) {
 	}
 }
 
-func TestExecuteEchoValidation_UnsupportedRequestsAreNotJudged(t *testing.T) {
-	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": []int{10},
-		"choices": []interface{}{map[string]interface{}{"token_ids": []int{1, 2}}}})
+func TestExecuteEchoValidation_GrammarAndPenaltyRequestsAreReplayed(t *testing.T) {
+	lp := echoTestLogprobs()
+	prompt := []int{10, 11, 12}
+	seed := uint64(int64(validationReplaySeed("42")))
 	for _, promptPayload := range []string{
-		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"response_format":{"type":"json_object"}}`,
-		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"thinking_token_budget":32}`,
-		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"presence_penalty":0.5}`,
-		`{"model":"Qwen/Qwen2.5-7B-Instruct","messages":[{"role":"user","content":"hi"}]}`,
+		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0,"response_format":{"type":"json_object"}}`,
+		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0,"thinking_token_budget":32}`,
+		`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0,"presence_penalty":0.5,"stop":["x"]}`,
+		`{"model":"Qwen/Qwen2.5-7B-Instruct","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0}`,
 	} {
-		_, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
-			func(context.Context, string, []byte) (*http.Response, error) {
-				t.Fatal("no engine call expected")
-				return nil, nil
-			}, 1, 2)
-		require.ErrorIs(t, err, ErrEchoUnsupported)
+		for _, tc := range []struct {
+			name  string
+			out   []int
+			valid bool
+		}{
+			{"on the tape", tapeAnswer(lp, seed), true},
+			{"off the tape", greedyAnswer(lp), false},
+		} {
+			stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
+				"choices": []interface{}{map[string]interface{}{"token_ids": tc.out, "finish_reason": "length"}}})
+			result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
+				echoServer(t, lp, prompt), uint64(len(prompt)), uint64(len(tc.out)))
+			require.NoError(t, err, tc.name)
+			echo, ok := result.(*EchoValidationResult)
+			require.True(t, ok, tc.name)
+			require.NotEmpty(t, echo.Replay, promptPayload)
+			require.Equal(t, tc.valid, result.IsSuccessful(), tc.name+" "+promptPayload)
+		}
 	}
+}
+
+func TestExecuteEchoValidation_ReplayWithoutTokenIDsIsUnsupported(t *testing.T) {
+	lp := echoTestLogprobs()
+	prompt := []int{10, 11, 12}
+	out := tapeAnswer(lp, uint64(int64(validationReplaySeed("42"))))
+	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
+		"choices": []interface{}{map[string]interface{}{"token_ids": out, "finish_reason": "length"}}})
+	promptPayload := `{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0,"frequency_penalty":0.2}`
+	inner := echoServer(t, lp, prompt)
+	decoded := func(ctx context.Context, path string, body []byte) (*http.Response, error) {
+		resp, err := inner(ctx, path, body)
+		if err != nil || !bytes.Contains(body, []byte("enforced_tokens")) {
+			return resp, err
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		raw = bytes.ReplaceAll(raw, []byte(`"token":"token_id:`), []byte(`"token":"word`))
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(raw))}, nil
+	}
+	_, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored, decoded,
+		uint64(len(prompt)), uint64(len(out)))
+	require.ErrorIs(t, err, ErrEchoUnsupported)
+}
+
+func TestReplayRequestBody_ForcesTheAnswerUnderTheEnginesSampler(t *testing.T) {
+	body, err := ReplayRequestBody(map[string]interface{}{"model": "m", "messages": []interface{}{}, "stop": []string{"x"},
+		"stream": true, "stream_options": map[string]interface{}{"include_usage": true}, "max_tokens": 500, "seed": 7.0}, []int{5, 6})
+	require.NoError(t, err)
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(body, &m))
+	require.Equal(t, float64(2), m["max_tokens"])
+	require.Equal(t, false, m["stream"])
+	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
+	require.Equal(t, float64(EchoTopLogprobs), m["top_logprobs"])
+	require.Equal(t, float64(7), m["seed"])
+	require.NotContains(t, m, "stop")
+	require.NotContains(t, m, "stream_options")
+	require.JSONEq(t, `{"tokens":[{"token":"5","top_tokens":[]},{"token":"6","top_tokens":[]}]}`, string(mustJSON(m["enforced_tokens"])))
+}
+
+func TestParseReplay_TokenIDsInEitherFormat(t *testing.T) {
+	body := []byte(`{"choices":[{"token_ids":[5,6],"logprobs":{"content":[
+		{"token":"token_id:5","logprob":-0.5,"top_logprobs":[{"token":"5","logprob":-0.5},{"token":"token_id:7","logprob":-1.5}]},
+		{"token":"6","logprob":-9999,"top_logprobs":[{"token":"1","logprob":-0.1}]}]}}]}`)
+	lp, err := ParseReplay(body, []int{5, 6})
+	require.NoError(t, err)
+	require.Equal(t, map[int]float64{5: -0.5, 7: -1.5}, lp[0])
+	require.Equal(t, map[int]float64{1: -0.1, 6: -9999}, lp[1])
+	_, err = ParseReplay(body, []int{5, 9})
+	require.ErrorIs(t, err, ErrEchoUnsupported)
+	_, err = ParseReplay([]byte(`{"choices":[{"token_ids":[5],"logprobs":{"content":[{"token":"the","logprob":-0.5,"top_logprobs":[]}]}}]}`), []int{5})
+	require.ErrorIs(t, err, ErrEchoUnsupported)
+}
+
+func mustJSON(v interface{}) []byte {
+	b, _ := json.Marshal(v)
+	return b
 }
 
 func TestExecuteEchoValidation_PromptIDsMustMatchTheValidatorsOwn(t *testing.T) {
