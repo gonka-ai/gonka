@@ -17,13 +17,15 @@ import (
 	"devshard/cmd/gateway/internal/strictjson"
 )
 
-// The body limits are in README.md, "Reading a body"; hostCatchUpReserveBytes is in request.md; apiKeyIDBytes is in README.md, "Authentication and the kill switch".
+// The body limits are in README.md, "Reading a body"; the client write bound in "Streaming the reply"; hostCatchUpReserveBytes is in request.md; apiKeyIDBytes is in README.md, "Authentication and the kill switch".
 const (
 	chatIngestLimit = filters.MaxBodyBytes
 
 	hostCatchUpReserveBytes = 1 << 20
 	adminIngestLimit        = 64 << 10
 	bodyReadTimeout         = 30 * time.Second
+	clientWriteTimeout      = bodyReadTimeout
+	clientWriteChunkBytes   = 64 << 10
 
 	bodyReadStart = 16 << 10
 
@@ -193,7 +195,7 @@ func readBody(w http.ResponseWriter, r *http.Request, limit int64, budget *Buffe
 	r.Body = http.MaxBytesReader(baseWriter(w), r.Body, limit)
 	body, err := readAll(r.Body, budget)
 	_ = deadlines.SetReadDeadline(time.Time{})
-	return body, err
+	return body, bodyReadFailure(w, err)
 }
 
 // readAll is io.ReadAll starting wide enough for an ordinary body. The start is a constant, never the declared Content-Length: a header the client has not backed with bytes must buy no memory. See README.md, "Reading a body".
@@ -217,6 +219,69 @@ func readAll(reader io.Reader, budget *BufferBudget) ([]byte, error) {
 			return body, err
 		}
 	}
+}
+
+func (s *Server) boundClientWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		bounded := newDeadlineWriter(w, s.config.Load().Limits.MinClientReadBytesPerSecond, time.Now)
+		bounded.extendDeadline()
+		next.ServeHTTP(bounded, r)
+	})
+}
+
+type deadlineWriter struct {
+	http.ResponseWriter
+	controller  *http.ResponseController
+	minReadRate int64
+	now         func() time.Time
+	delivered   int64
+	blocked     time.Duration
+}
+
+func newDeadlineWriter(w http.ResponseWriter, minReadRate int64, now func() time.Time) *deadlineWriter {
+	return &deadlineWriter{ResponseWriter: w, controller: http.NewResponseController(w), minReadRate: minReadRate, now: now}
+}
+
+func (w *deadlineWriter) Write(data []byte) (int, error) {
+	written := 0
+	for {
+		end := min(len(data), clientWriteChunkBytes)
+		started := w.extendDeadline()
+		sent, err := w.ResponseWriter.Write(data[:end])
+		w.charge(started, sent)
+		written += sent
+		data = data[end:]
+		if err != nil || len(data) == 0 {
+			return written, err
+		}
+	}
+}
+
+func (w *deadlineWriter) Flush() { _ = w.FlushError() }
+
+func (w *deadlineWriter) FlushError() error {
+	started := w.extendDeadline()
+	err := w.controller.Flush()
+	w.charge(started, 0)
+	return err
+}
+
+func (w *deadlineWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (w *deadlineWriter) extendDeadline() time.Time {
+	now := w.now()
+	_ = w.controller.SetWriteDeadline(now.Add(min(clientWriteTimeout, w.allowance())))
+	return now
+}
+
+func (w *deadlineWriter) allowance() time.Duration {
+	earned := time.Duration(float64(w.delivered) / float64(w.minReadRate) * float64(time.Second))
+	return clientWriteTimeout + earned - w.blocked
+}
+
+func (w *deadlineWriter) charge(started time.Time, sent int) {
+	w.blocked += w.now().Sub(started)
+	w.delivered += int64(sent)
 }
 
 // baseWriter walks the Unwrap chain: MaxBytesReader marks a connection by type-asserting the writer it is handed.

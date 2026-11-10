@@ -38,7 +38,7 @@ The race recorder's own label strings live in `vocabulary.go`, beside the packag
 
 - **`outcomeFailure`** (`failure`) is a request-level outcome with no engine counterpart: attempts report `failed`, a request reports `failure`.
 - **`statusNoCode`** (`0`) labels an attempt that failed without an upstream status.
-- **The reasons.** `none` is what a successful request, or an event with no reason, carries; `escrow_missing`, `balance_exhausted` and `no_attempts` name a failed request's cause ahead of its first attempt's own failure reason.
+- **The reasons.** `none` is what a successful request, or an event with no reason, carries; `escrow_missing`, `balance_exhausted`, `reply_refused` and `no_attempts` name a failed request's cause ahead of its first attempt's own failure reason.
 
 ## How a collector reaches its source
 

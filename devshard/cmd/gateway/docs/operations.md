@@ -180,6 +180,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ADMISSION_QUEUE_PER_SLOT` | 4 | how deep the queue is allowed to grow per slot |
 | `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** non-streaming reply being assembled, at once |
 | `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` | 128 MiB | **every** chat body being read and normalised, at once; a body past it is answered 503; at least 10 MiB ([`request.md`](request.md), "Order of operations") |
+| `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` | 64 KiB/s | the slowest average a client may read one reply at, after a 30-second allowance, before its write fails; between 1 B/s and 1 GiB/s ([`api/README.md`](../api/README.md), "Streaming the reply") |
 | `DEVSHARD_CHAT_CACHE_MAX_BYTES` | 256 MiB | the response cache |
 | `GATEWAY_DEFAULT_MAX_TOKENS` / `GATEWAY_MAX_TOKENS_CAP` | from `filters` | the output budget a request gets and may ask for |
 | `DEVSHARD_ESCROW_ROTATION_ENABLED` | false | whether the epoch bridge creates and retires escrows |
@@ -372,12 +373,14 @@ One more line belongs to the same family, on the money side rather than the rout
 | `bytes` | how much actually reached the client, counted at the socket — the strip rewrites events on the way out |
 | `terminated` | whether the SSE terminator went with them; without it a client waits out its own timeout on a reply it already has |
 | `outcome` | `served`, `failed_mid_stream`, or `failed_before_first_byte` — the last distinguishes a reply the client can retry from one it cannot; `served` with an `error` field is a host error the gateway answered in its own words |
-| `deliver_error` | the failure that reached the client instead of the last bytes: the case no status code can express, because a stream commits 200 on its first byte |
+| `deliver_error` | the failure that reached the client instead of the last bytes: the case no status code can express, because a stream commits 200 on its first byte; a write-deadline (`i/o timeout`) error here means the client stopped reading for `clientWriteTimeout`, or read the reply slower than `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` allows (`api/README.md`, "Streaming the reply") |
 | `nonce_finished` | whether the crowned attempt's nonce closed on the chain. A served request with `false` here answered the client and left the escrow owing a vote for that nonce. Absent when nobody was crowned |
 
 The record carries no request or response body — capture files exist for that, sampled and bounded. Its `error` field is truncated at 256 bytes, and that is not tidiness: a host error with no message renders its raw upstream payload as the error text, so an untruncated field would write a whole SSE event, generated tokens included, once per failed request. The cap is `maxLoggedErrorBytes`, and the renderer reserves `loggedFieldSlots` keyvals up front, every one a finished request can carry, so the line is never copied to grow (`journal/render_request.go`).
 
 `gateway limiter turned a request away` sits on the journal's progress lane rather than this line's money lane, so it can be skipped when the progress backlog is full — the exact condition a refusal storm creates. A skipped line is counted in `devshard_gateway_journal_progress_dropped_total`; every refusal, logged or not, is still counted in `devshard_gateway_limit_rejections_total`.
+
+`request body not received: connection closed` is the line for a request whose body did not arrive whole: the read deadline fired, the client left or its stream broke. The gateway answers that request 400, closes the connection, and writes the line once with the request and the `error` that stopped the read, which carries the client's socket address, cut at `maxLoggedErrorBytes`. It sits on the progress lane like the limiter line above, so a backlog may drop it.
 
 ### Lines that mean something happened
 
@@ -431,7 +434,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | is the nonce ledger losing facts | `devshard_gateway_nonce_ledger_unknown_escrow_facts_total`: facts about an escrow the ledger does not hold — one its sweep has not opened yet, which a published escrow's wake keeps to the first sweep's latency, or one its retention pruned |
 | where does a request wait inside the gateway | `devshard_gateway_escrow_queue_wait_seconds`, `devshard_gateway_session_step_seconds{step}` (below) |
 
-A race the client left counts as `devshard_gateway_requests_total{reason="client_cancelled"}` unless the escrow itself failed first, which outranks a departure as `reason="escrow_missing"` or `reason="balance_exhausted"`; the faults of its hosts stay on `devshard_gateway_attempt_failures_total{reason}` instead.
+A race the client left counts as `devshard_gateway_requests_total{reason="client_cancelled"}` unless the escrow itself failed first, which outranks a departure as `reason="escrow_missing"` or `reason="balance_exhausted"`; the faults of its hosts stay on `devshard_gateway_attempt_failures_total{reason}` instead. A race whose reply the gateway itself refused to carry (the reply buffer full, the reply or one event past its size bound) counts as `reason="reply_refused"` instead of `client_cancelled`, and the request line's `error` begins `the gateway refused to carry the reply`.
 
 A served winner whose nonce is still open when its race ends is counted on `devshard_gateway_attempts_terminal_total` and `devshard_gateway_attempt_failures_total` only when its perf sample is decided ([race.md](./race.md), "A served winner's sample waits for its finish"): as a winner's success when its Finish lands first, and as `failed_not_finished` with reason `not_finished` when its nonce is still open at its vote. Its request is counted on `devshard_gateway_requests_total` at race end; the request's hidden failure is counted at race end when another attempt failed, and otherwise at that decision, once either way.
 

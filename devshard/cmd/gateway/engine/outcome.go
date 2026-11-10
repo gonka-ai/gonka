@@ -20,7 +20,11 @@ type Lifecycle struct {
 	EscrowMissing    bool
 	BalanceExhausted bool
 	ClientGone       bool
+	ReplyRefused     bool
 }
+
+// ReplyUndelivered reports that the client never received the winner's reply, because it left or the gateway refused to carry it.
+func (l Lifecycle) ReplyUndelivered() bool { return l.ClientGone || l.ReplyRefused }
 
 type RaceOutcome struct {
 	RequestID            string

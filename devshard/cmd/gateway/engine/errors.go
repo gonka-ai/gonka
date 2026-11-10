@@ -19,6 +19,7 @@ var (
 	ErrEmptyStream      = errors.New("empty content stream")
 	ErrWinnerIncomplete = errors.New("winner failed after streaming started")
 	ErrAnswerTruncated  = errors.New("host stopped before the answer finished")
+	ErrReplyRefused     = errors.New("the gateway refused to carry the reply")
 )
 
 // HostApplicationError is an upstream refusal that is the response; the API answers it in its own words under HTTPStatus. See README.md, "Errors the engine returns".

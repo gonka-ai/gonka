@@ -122,6 +122,7 @@ type attemptState struct {
 	outputBytes   int64
 
 	lastChunk      time.Time
+	silentSince    time.Time
 	firstChunkHead string
 	lastChunkHead  string
 	maxChunkGap    time.Duration
@@ -247,13 +248,16 @@ func (w *attemptWriter) Write(chunk []byte) (int, error) {
 		w.state.droppedEvents++
 	}
 
-	return w.spec.Sink.Write(chunk)
+	written, err := w.spec.Sink.Write(chunk)
+	w.state.silentSince = w.spec.Now()
+	return written, err
 }
 
 // Flush is how the transport's per-line flush reaches the client; without it a winner's bytes sit in the server's buffer.
 func (w *attemptWriter) Flush() {
 	if flusher, ok := w.spec.Sink.(http.Flusher); ok {
 		flusher.Flush()
+		w.state.silentSince = w.spec.Now()
 	}
 }
 
@@ -263,8 +267,8 @@ func (w *attemptWriter) progress(kind AttemptEventKind, at time.Time) AttemptEve
 
 // recordChunkGap keeps the longest mid-stream silence; the one before [DONE] is the end, not a quiet host.
 func (s *attemptState) recordChunkGap(now time.Time, chunk []byte) {
-	previous := s.lastChunk
-	s.lastChunk = now
+	previous := s.silentSince
+	s.lastChunk, s.silentSince = now, now
 	if previous.IsZero() {
 		return
 	}

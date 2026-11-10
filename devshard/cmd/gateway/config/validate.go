@@ -28,6 +28,8 @@ const (
 	maxConcurrentRequests    = 10_000_000
 	maxAdmissionQueuePerSlot = 10_000
 
+	maxMinClientReadBytesPerSecond = 1 << 30
+
 	maxConsecutiveBurns   = 1_000
 	maxDispatchQueueDepth = 65_536
 
@@ -150,6 +152,9 @@ func (c *Config) validateLimits(complain func(format string, args ...any)) {
 	}
 	if c.Limits.MaxBufferedRequestBytes < filters.MaxBodyBytes {
 		complain("max_buffered_request_bytes: %d must be >= %d, the largest body one request may send", c.Limits.MaxBufferedRequestBytes, filters.MaxBodyBytes)
+	}
+	if c.Limits.MinClientReadBytesPerSecond < 1 || c.Limits.MinClientReadBytesPerSecond > maxMinClientReadBytesPerSecond {
+		complain("min_client_read_bytes_per_second: %d must be between 1 and %d", c.Limits.MinClientReadBytesPerSecond, maxMinClientReadBytesPerSecond)
 	}
 	validateRequestWindow("host_input_window", c.Limits.HostWindows.Input, complain)
 	validateRequestWindow("host_output_window", c.Limits.HostWindows.Output, complain)

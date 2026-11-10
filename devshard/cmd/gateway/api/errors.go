@@ -161,6 +161,10 @@ func statusForError(err error) int {
 	if errors.As(err, &denied) {
 		return http.StatusUnauthorized
 	}
+	var unread *BodyReadError
+	if errors.As(err, &unread) {
+		return http.StatusBadRequest
+	}
 	var blocked *BlockedError
 	if errors.As(err, &blocked) {
 		return http.StatusServiceUnavailable
