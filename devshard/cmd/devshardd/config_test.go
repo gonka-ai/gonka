@@ -172,3 +172,34 @@ func TestLoadRuntimeConfig_PayloadZstdDefaultAndOverride(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRuntimeConfig_EchoValidationMode(t *testing.T) {
+	for _, tt := range []struct {
+		env, want string
+		wantErr   bool
+	}{
+		{env: "", want: "shadow"},
+		{env: "shadow", want: "shadow"},
+		{env: "enforce", want: "enforce"},
+		{env: "off", want: "off"},
+		{env: "on", wantErr: true},
+	} {
+		t.Run("mode "+tt.env, func(t *testing.T) {
+			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
+			t.Setenv("DEVSHARD_ECHO_VALIDATION", tt.env)
+			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("mode %q accepted", tt.env)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadRuntimeConfig: %v", err)
+			}
+			if cfg.EchoValidation != tt.want {
+				t.Fatalf("EchoValidation got %q, want %q", cfg.EchoValidation, tt.want)
+			}
+		})
+	}
+}

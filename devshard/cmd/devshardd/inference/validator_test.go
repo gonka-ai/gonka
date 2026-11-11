@@ -727,7 +727,7 @@ func TestValidator_Validate_BoundsTokenIDsByResolvedVocabulary(t *testing.T) {
 			fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
 				return validPrompt, storedResponse, nil
 			}
-			executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+			executeML := func(context.Context, string, string, string, []byte) (*http.Response, error) {
 				replayed = true
 				return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
 			}
@@ -893,7 +893,7 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 		{
 			name:  "local ML 503 does not vote",
 			fetch: okFetch,
-			executeML: func(context.Context, string, string, []byte) (*http.Response, error) {
+			executeML: func(context.Context, string, string, string, []byte) (*http.Response, error) {
 				return nil, errors.New("ml node 503")
 			},
 			voteFalse:  true,
@@ -904,7 +904,7 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 		{
 			name:  "threshold resolve does not vote",
 			fetch: okFetch,
-			executeML: func(context.Context, string, string, []byte) (*http.Response, error) {
+			executeML: func(context.Context, string, string, string, []byte) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
 			},
 			thresholds: stubThresholdResolver{err: errors.New("threshold unavailable")},
@@ -1149,7 +1149,7 @@ func TestValidator_Validate_ShortOutputChecksPerModel(t *testing.T) {
 	fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
 		return []byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`), completion(true), nil
 	}
-	executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+	executeML := func(context.Context, string, string, string, []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(completion(false)))}, nil
 	}
 	for model, wantValid := range map[string]bool{
