@@ -151,13 +151,13 @@ func (k Keeper) logTransaction(ctx context.Context, to string, from string, coin
 	}
 	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 	logFunc := k.getLogFunction(k.logConfig.LogLevel)
-	amount := coin.Amount.Int64()
+	amount := coin.Amount
 	if k.logConfig.DoubleEntry {
 		logFunc("TransactionAudit", "type", "debit", "account", to, "counteraccount", from, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount, "height", height)
-		logFunc("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", -amount, "height", height)
+		logFunc("TransactionAudit", "type", "credit", "account", from, "counteraccount", to, "amount", amount, "denom", coin.Denom, "memo", memo, "signedAmount", amount.Neg(), "height", height)
 	}
 	if k.logConfig.SimpleEntry {
-		amountString := fmt.Sprintf("%d", amount)
+		amountString := amount.String()
 		heightString := fmt.Sprintf("%d", height)
 		if subAccount != "" {
 			// Extra space here to ensure alignment in logs
