@@ -9,6 +9,7 @@ import (
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 
 	"github.com/productscience/inference/x/inference/epochgroup"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -147,27 +148,7 @@ func (am AppModule) applyTrustPowerCapping(
 // If capApplied is false, a positive CapWeight still selects the cap path so
 // partially-populated test fixtures keep working; otherwise it falls back to Weight.
 func resolveTrustWeights(participants []*types.ActiveParticipant, capApplied bool) map[string]int64 {
-	useCap := capApplied
-	if !useCap {
-		for _, p := range participants {
-			if p != nil && p.CapWeight > 0 {
-				useCap = true
-				break
-			}
-		}
-	}
-	weights := make(map[string]int64, len(participants))
-	for _, p := range participants {
-		if p == nil {
-			continue
-		}
-		if useCap {
-			weights[p.Index] = p.CapWeight
-		} else {
-			weights[p.Index] = p.Weight
-		}
-	}
-	return weights
+	return keeper.ResolveTrustWeights(participants, capApplied)
 }
 
 // capComputeResultsToPreviousConfirmedWeight lowers each validator's governance

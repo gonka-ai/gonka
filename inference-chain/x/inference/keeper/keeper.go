@@ -107,6 +107,10 @@ type (
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+
+		EpochTrustWeights      collections.Map[collections.Pair[uint64, sdk.AccAddress], int64]
+		EpochTrustWeightTotals collections.Map[uint64, int64]
+
 		// Devshard escrow collections
 		DevshardEscrows           collections.Map[uint64, types.DevshardEscrow]
 		DevshardEscrowCounter     collections.Item[uint64]
@@ -553,6 +557,20 @@ func NewKeeper(
 			types.ActiveParticipantsCachePrefix,
 			"active_participants_cache",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+		),
+		EpochTrustWeights: collections.NewMap(
+			sb,
+			types.EpochTrustWeightsPrefix,
+			"epoch_trust_weights",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+			collections.Int64Value,
+		),
+		EpochTrustWeightTotals: collections.NewMap(
+			sb,
+			types.EpochTrustWeightTotalsPrefix,
+			"epoch_trust_weight_totals",
+			collections.Uint64Key,
+			collections.Int64Value,
 		),
 		// Devshard escrow collections
 		DevshardEscrows: collections.NewMap(

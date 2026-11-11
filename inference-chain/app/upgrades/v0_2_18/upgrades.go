@@ -12,6 +12,7 @@ import (
 	"context"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
 	"github.com/productscience/inference/x/inference/keeper"
@@ -33,6 +34,18 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.18 migration steps land below this line.
+
+		filled, err := k.BackfillEpochTrustWeights(ctx)
+		if err != nil {
+			return fromVM, err
+		}
+		k.LogInfo("epoch trust weights backfilled", types.Upgrades, "epochs", filled)
+
+		migrated, err := k.MigrateBridgeTrustPower(sdk.UnwrapSDKContext(ctx))
+		if err != nil {
+			return fromVM, err
+		}
+		k.LogInfo("bridge trust power migrated", types.Upgrades, "records", migrated.Recomputed, "completed", migrated.Completed)
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {

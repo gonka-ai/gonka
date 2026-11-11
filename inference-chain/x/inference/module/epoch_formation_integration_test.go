@@ -179,6 +179,18 @@ func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.
 		testutil.Validator2: 70,
 		testutil.Executor:   0,
 	}, trustWeights)
+
+	trust, err := k.GetEpochTrust(ctx, upcomingEpoch)
+	require.NoError(t, err)
+	require.Equal(t, int64(140), trust.Total)
+	for address, expected := range trustWeights {
+		weight, err := k.EpochTrustWeight(ctx, trust, sdk.MustAccAddressFromBech32(address))
+		require.NoError(t, err)
+		require.Equal(t, expected, weight)
+	}
+	indexedTotal, err := k.EpochTrustWeightTotals.Get(ctx, upcomingEpoch)
+	require.NoError(t, err)
+	require.Equal(t, int64(140), indexedTotal)
 }
 
 func TestMissRateResetFallbackPolicy(t *testing.T) {

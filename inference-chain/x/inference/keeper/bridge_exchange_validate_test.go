@@ -42,6 +42,24 @@ func setupBridgeValidate(t *testing.T) (keeper.Keeper, sdk.Context, *keepertest.
 	return k, ctx, &mocks, validator, addr
 }
 
+func setBridgeTrust(t *testing.T, k keeper.Keeper, ctx sdk.Context, epochIndex uint64, capWeights map[string]int64) {
+	t.Helper()
+	participants := make([]*types.ActiveParticipant, 0, len(capWeights))
+	for addr, capWeight := range capWeights {
+		participants = append(participants, &types.ActiveParticipant{Index: addr, Weight: capWeight * 10, CapWeight: capWeight, Seed: &types.RandomSeed{}})
+	}
+	aps := types.ActiveParticipants{
+		EpochId:          epochIndex,
+		Participants:     participants,
+		CapWeightApplied: true,
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, aps))
+	require.NoError(t, k.ResetEpochTrustWeights(ctx, epochIndex))
+	for addr, capWeight := range capWeights {
+		require.NoError(t, k.AddEpochTrustWeight(ctx, epochIndex, addr, capWeight))
+	}
+}
+
 func TestValidateBridgeExchange_NotInTxEpochGroup(t *testing.T) {
 	k, ctx, mocks, validator, _ := setupBridgeValidate(t)
 
@@ -194,6 +212,7 @@ func TestValidateBridgeExchange_ContentMismatch(t *testing.T) {
 
 func TestValidateBridgeExchange_CreateSuccess(t *testing.T) {
 	k, ctx, mocks, validator, addr := setupBridgeValidate(t)
+	setBridgeTrust(t, k, ctx, 335, map[string]int64{validator: 7, testutil.Validator2: 93})
 
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
@@ -219,7 +238,7 @@ func TestValidateBridgeExchange_CreateSuccess(t *testing.T) {
 	require.True(t, validated.IsCreate)
 	require.Nil(t, validated.ExistingTx)
 	require.True(t, validated.ValidatorAddress.Equals(addr))
-	require.Equal(t, int64(25), validated.ValidatorPower)
+	require.Equal(t, int64(7), validated.ValidatorPower)
 	require.Equal(t, int64(100), validated.TotalEpochPower)
 	require.Equal(t, uint64(335), validated.EpochIndex)
 	require.Equal(t, "0xabc", validated.ProposedTx.ContractAddress)
@@ -229,6 +248,7 @@ func TestValidateBridgeExchange_CreateSuccess(t *testing.T) {
 
 func TestValidateBridgeExchange_VoteSuccess(t *testing.T) {
 	k, ctx, mocks, validator, addr := setupBridgeValidate(t)
+	setBridgeTrust(t, k, ctx, 335, map[string]int64{validator: 12, testutil.Validator2: 88})
 
 	btx := &types.BridgeTransaction{
 		ChainId:              "ethereum",
@@ -268,7 +288,7 @@ func TestValidateBridgeExchange_VoteSuccess(t *testing.T) {
 	require.False(t, validated.IsCreate)
 	require.NotNil(t, validated.ExistingTx)
 	require.True(t, validated.ValidatorAddress.Equals(addr))
-	require.Equal(t, int64(40), validated.ValidatorPower)
+	require.Equal(t, int64(12), validated.ValidatorPower)
 	require.Equal(t, int64(100), validated.TotalEpochPower)
 	require.Equal(t, uint64(335), validated.EpochIndex)
 }
@@ -365,10 +385,7 @@ func TestValidateBridgeExchange_PreviousEpochActiveCanVoteExisting(t *testing.T)
 		TotalWeight:  80,
 	})
 	// Active only in previous epoch — not current.
-	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
-		EpochId:      prevEpoch,
-		Participants: []*types.ActiveParticipant{{Index: validator}},
-	}))
+	setBridgeTrust(t, k, ctx, prevEpoch, map[string]int64{validator: 30, testutil.Validator2: 50})
 	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
 		EpochId:      currentEpoch,
 		Participants: []*types.ActiveParticipant{},
