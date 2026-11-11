@@ -99,6 +99,7 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 | Governance / CometBFT power | `CapWeight`, then temporary guardian enhancement | **Capped**; zero-power non-guardians are dropped |
 | BLS threshold signing | `CapWeight`, then temporary guardian reservation | **Capped**; zero-power non-guardians get 0 slots |
 | cPoC validation voting power | `CapWeight` | **Capped**, new participants get 0 voting power |
+| Bridge exchange voting (`MsgBridgeExchange`) | `CapWeight`, no guardian enhancement | **Capped**; voter power and the majority denominator both use the epoch's `CapWeight`, so zero-cap participants can vote but add 0 power |
 
 ## Edge cases and upgrade safety
 

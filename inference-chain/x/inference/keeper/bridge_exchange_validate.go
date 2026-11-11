@@ -3,7 +3,6 @@ package keeper
 import (
 	"fmt"
 	"math/big"
-	"strconv"
 	"strings"
 
 	"cosmossdk.io/collections"
@@ -22,6 +21,7 @@ type ValidatedBridgeExchange struct {
 	ValidatorPower   int64
 	TotalEpochPower  int64
 	IsCreate         bool
+	IsRetry          bool
 	EpochIndex       uint64
 }
 
@@ -132,11 +132,15 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 			return nil, fmt.Errorf("unable to get epoch group members: %v", err)
 		}
 
-		validatorPower, isInEpochGroup := memberPowerInGroup(addr, epochGroupMembers)
-		if !isInEpochGroup {
+		if !isGroupMember(addr, epochGroupMembers) {
 			k.LogError("Bridge exchange: Validator not in transaction's epoch group", types.Messages,
 				"validator", msg.Validator, "epochIndex", existingTx.EpochIndex)
 			return nil, types.ErrBridgeValidatorNotInTxEpochGroup
+		}
+
+		trust, validatorPower, err := k.bridgeTrustPower(ctx, existingTx.EpochIndex, addr)
+		if err != nil {
+			return nil, err
 		}
 
 		alreadyValidated, err := k.HasBridgeTransactionValidator(ctx, existingTx, addr.String())
@@ -145,9 +149,14 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 				"validator", msg.Validator, "error", err)
 			return nil, fmt.Errorf("failed to check validator confirmation: %v", err)
 		}
+		isRetry := false
 		if alreadyValidated {
-			k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
-			return nil, types.ErrBridgeAlreadyValidated
+			if !bridgeMajorityPending(existingTx, trust.Total) {
+				k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
+				return nil, types.ErrBridgeAlreadyValidated
+			}
+			isRetry = true
+			validatorPower = 0
 		}
 
 		return &ValidatedBridgeExchange{
@@ -155,8 +164,9 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 			ProposedTx:       proposedTx,
 			ExistingTx:       existingTx,
 			ValidatorPower:   validatorPower,
-			TotalEpochPower:  epochGroup.GroupData.TotalWeight,
+			TotalEpochPower:  trust.Total,
 			IsCreate:         false,
+			IsRetry:          isRetry,
 			EpochIndex:       existingTx.EpochIndex,
 		}, nil
 	}
@@ -174,10 +184,14 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		return nil, fmt.Errorf("unable to get current epoch group members: %v", err)
 	}
 
-	validatorPower, isActive := memberPowerInGroup(addr, currentEpochMembers)
-	if !isActive {
+	if !isGroupMember(addr, currentEpochMembers) {
 		k.LogError("Bridge exchange: Validator not in active participants", types.Messages, "validator", msg.Validator)
 		return nil, types.ErrBridgeValidatorNotInActiveGroup
+	}
+
+	trust, validatorPower, err := k.bridgeTrustPower(ctx, currentEpochGroup.GroupData.EpochIndex, addr)
+	if err != nil {
+		return nil, err
 	}
 
 	return &ValidatedBridgeExchange{
@@ -185,13 +199,39 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		ProposedTx:       proposedTx,
 		ExistingTx:       nil,
 		ValidatorPower:   validatorPower,
-		TotalEpochPower:  currentEpochGroup.GroupData.TotalWeight,
+		TotalEpochPower:  trust.Total,
 		IsCreate:         true,
 		EpochIndex:       currentEpochGroup.GroupData.EpochIndex,
 	}, nil
 }
 
-func memberPowerInGroup(addr sdk.AccAddress, members []*group.GroupMember) (int64, bool) {
+func bridgeMajorityThreshold(totalEpochPower int64) int64 {
+	return totalEpochPower/2 + 1
+}
+
+func bridgeMajorityPending(tx *types.BridgeTransaction, totalEpochPower int64) bool {
+	return tx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING &&
+		totalEpochPower > 0 &&
+		tx.TotalValidationPower >= bridgeMajorityThreshold(totalEpochPower)
+}
+
+func (k Keeper) bridgeTrustPower(ctx sdk.Context, epochIndex uint64, addr sdk.AccAddress) (EpochTrust, int64, error) {
+	trust, err := k.GetEpochTrust(ctx, epochIndex)
+	if err != nil {
+		k.LogError("Bridge exchange: unable to load trust weights", types.Messages,
+			"epochIndex", epochIndex, "error", err)
+		return EpochTrust{}, 0, err
+	}
+	power, err := k.EpochTrustWeight(ctx, trust, addr)
+	if err != nil {
+		k.LogError("Bridge exchange: unable to load validator trust weight", types.Messages,
+			"epochIndex", epochIndex, "validator", addr.String(), "error", err)
+		return EpochTrust{}, 0, err
+	}
+	return trust, power, nil
+}
+
+func isGroupMember(addr sdk.AccAddress, members []*group.GroupMember) bool {
 	for _, member := range members {
 		if member == nil || member.Member == nil {
 			continue
@@ -201,12 +241,8 @@ func memberPowerInGroup(addr sdk.AccAddress, members []*group.GroupMember) (int6
 			continue
 		}
 		if memberAddr.Equals(addr) {
-			weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
-			if err != nil {
-				continue
-			}
-			return weight, true
+			return true
 		}
 	}
-	return 0, false
+	return false
 }

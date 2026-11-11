@@ -1388,6 +1388,11 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 	validationParams := params.ValidationParams
 	scales := upcomingEg.GroupData.ConfirmationWeightScales
 	coefficients := types.ConfirmationWeightCoefficients(scales)
+	epochIndex := upcomingEg.GroupData.EpochIndex
+	trustWeights := resolveTrustWeights(activeParticipants, true)
+	if err := am.keeper.ResetEpochTrustWeights(ctx, epochIndex); err != nil {
+		am.LogError("addEpochMembers: Unable to reset trust weights", types.EpochGroup, "epochIndex", epochIndex, "error", err.Error())
+	}
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)
@@ -1408,6 +1413,9 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 		if err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to add member", types.EpochGroup, "error", err.Error())
 			continue
+		}
+		if err := am.keeper.AddEpochTrustWeight(ctx, epochIndex, p.Index, trustWeights[p.Index]); err != nil {
+			am.LogError("addEpochMembers: Unable to index trust weight", types.EpochGroup, "participantIndex", p.Index, "error", err.Error())
 		}
 	}
 }

@@ -49,12 +49,14 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		// Record this validator's confirmation in its own sub-key. Write
 		// cost is constant regardless of how many prior validators have
 		// already confirmed, which is the whole point of the split.
-		if err := k.AddBridgeTransactionValidator(ctx, existingTx, addr.String()); err != nil {
-			k.LogError("Bridge exchange: Failed to record validator confirmation", types.Messages,
-				"validator", msg.Validator, "error", err)
-			return nil, fmt.Errorf("failed to record validator confirmation: %v", err)
+		if !validated.IsRetry {
+			if err := k.AddBridgeTransactionValidator(ctx, existingTx, addr.String()); err != nil {
+				k.LogError("Bridge exchange: Failed to record validator confirmation", types.Messages,
+					"validator", msg.Validator, "error", err)
+				return nil, fmt.Errorf("failed to record validator confirmation: %v", err)
+			}
+			existingTx.TotalValidationPower += validatorPower
 		}
-		existingTx.TotalValidationPower += validatorPower
 		// Clear the rehydrated Validators slice before SetBridgeTransaction
 		// so the sync loop there doesn't redundantly re-Set every prior
 		// validator's sub-key on each confirmation.
@@ -72,9 +74,9 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 			"status", existingTx.Status)
 
 		// Check if we have majority (50+% of total power)
-		requiredPower := (totalEpochPower / 2) + 1
+		requiredPower := bridgeMajorityThreshold(totalEpochPower)
 
-		if existingTx.TotalValidationPower >= requiredPower {
+		if totalEpochPower > 0 && existingTx.TotalValidationPower >= requiredPower {
 			// Only process completion once to avoid duplicate mints
 			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
 				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
@@ -142,6 +144,19 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	proposedTx.Validators = nil
 
 	k.SetBridgeTransaction(ctx, proposedTx)
+
+	if bridgeMajorityPending(proposedTx, validated.TotalEpochPower) {
+		proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
+		k.SetBridgeTransaction(ctx, proposedTx)
+		if err := k.handleCompletedBridgeTransaction(ctx, proposedTx); err != nil {
+			k.LogError("Bridge exchange: Failed to handle completed bridge transaction", types.Messages,
+				"error", err,
+				"originChain", msg.OriginChain,
+				"blockNumber", msg.BlockNumber,
+				"receiptIndex", msg.ReceiptIndex)
+			return nil, err
+		}
+	}
 
 	k.LogInfo("Bridge exchange: New transaction created",
 		types.Messages,
