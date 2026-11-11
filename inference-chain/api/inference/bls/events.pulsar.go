@@ -7177,6 +7177,1054 @@ func (x *fastReflection_EventThresholdSigningFailed) ProtoMethods() *protoiface.
 	}
 }
 
+var (
+	md_EventBeaconKeySwitched                    protoreflect.MessageDescriptor
+	fd_EventBeaconKeySwitched_key_epoch          protoreflect.FieldDescriptor
+	fd_EventBeaconKeySwitched_previous_key_epoch protoreflect.FieldDescriptor
+	fd_EventBeaconKeySwitched_from_round         protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventBeaconKeySwitched = File_inference_bls_events_proto.Messages().ByName("EventBeaconKeySwitched")
+	fd_EventBeaconKeySwitched_key_epoch = md_EventBeaconKeySwitched.Fields().ByName("key_epoch")
+	fd_EventBeaconKeySwitched_previous_key_epoch = md_EventBeaconKeySwitched.Fields().ByName("previous_key_epoch")
+	fd_EventBeaconKeySwitched_from_round = md_EventBeaconKeySwitched.Fields().ByName("from_round")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventBeaconKeySwitched)(nil)
+
+type fastReflection_EventBeaconKeySwitched EventBeaconKeySwitched
+
+func (x *EventBeaconKeySwitched) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventBeaconKeySwitched)(x)
+}
+
+func (x *EventBeaconKeySwitched) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[13]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventBeaconKeySwitched_messageType fastReflection_EventBeaconKeySwitched_messageType
+var _ protoreflect.MessageType = fastReflection_EventBeaconKeySwitched_messageType{}
+
+type fastReflection_EventBeaconKeySwitched_messageType struct{}
+
+func (x fastReflection_EventBeaconKeySwitched_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventBeaconKeySwitched)(nil)
+}
+func (x fastReflection_EventBeaconKeySwitched_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventBeaconKeySwitched)
+}
+func (x fastReflection_EventBeaconKeySwitched_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventBeaconKeySwitched
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventBeaconKeySwitched) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventBeaconKeySwitched
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventBeaconKeySwitched) Type() protoreflect.MessageType {
+	return _fastReflection_EventBeaconKeySwitched_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventBeaconKeySwitched) New() protoreflect.Message {
+	return new(fastReflection_EventBeaconKeySwitched)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventBeaconKeySwitched) Interface() protoreflect.ProtoMessage {
+	return (*EventBeaconKeySwitched)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventBeaconKeySwitched) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.KeyEpoch != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.KeyEpoch)
+		if !f(fd_EventBeaconKeySwitched_key_epoch, value) {
+			return
+		}
+	}
+	if x.PreviousKeyEpoch != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.PreviousKeyEpoch)
+		if !f(fd_EventBeaconKeySwitched_previous_key_epoch, value) {
+			return
+		}
+	}
+	if x.FromRound != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.FromRound)
+		if !f(fd_EventBeaconKeySwitched_from_round, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventBeaconKeySwitched) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconKeySwitched.key_epoch":
+		return x.KeyEpoch != uint64(0)
+	case "inference.bls.EventBeaconKeySwitched.previous_key_epoch":
+		return x.PreviousKeyEpoch != uint64(0)
+	case "inference.bls.EventBeaconKeySwitched.from_round":
+		return x.FromRound != uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconKeySwitched"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconKeySwitched does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconKeySwitched) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconKeySwitched.key_epoch":
+		x.KeyEpoch = uint64(0)
+	case "inference.bls.EventBeaconKeySwitched.previous_key_epoch":
+		x.PreviousKeyEpoch = uint64(0)
+	case "inference.bls.EventBeaconKeySwitched.from_round":
+		x.FromRound = uint64(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconKeySwitched"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconKeySwitched does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventBeaconKeySwitched) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventBeaconKeySwitched.key_epoch":
+		value := x.KeyEpoch
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventBeaconKeySwitched.previous_key_epoch":
+		value := x.PreviousKeyEpoch
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventBeaconKeySwitched.from_round":
+		value := x.FromRound
+		return protoreflect.ValueOfUint64(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconKeySwitched"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconKeySwitched does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconKeySwitched) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconKeySwitched.key_epoch":
+		x.KeyEpoch = value.Uint()
+	case "inference.bls.EventBeaconKeySwitched.previous_key_epoch":
+		x.PreviousKeyEpoch = value.Uint()
+	case "inference.bls.EventBeaconKeySwitched.from_round":
+		x.FromRound = value.Uint()
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconKeySwitched"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconKeySwitched does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconKeySwitched) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconKeySwitched.key_epoch":
+		panic(fmt.Errorf("field key_epoch of message inference.bls.EventBeaconKeySwitched is not mutable"))
+	case "inference.bls.EventBeaconKeySwitched.previous_key_epoch":
+		panic(fmt.Errorf("field previous_key_epoch of message inference.bls.EventBeaconKeySwitched is not mutable"))
+	case "inference.bls.EventBeaconKeySwitched.from_round":
+		panic(fmt.Errorf("field from_round of message inference.bls.EventBeaconKeySwitched is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconKeySwitched"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconKeySwitched does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventBeaconKeySwitched) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconKeySwitched.key_epoch":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventBeaconKeySwitched.previous_key_epoch":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventBeaconKeySwitched.from_round":
+		return protoreflect.ValueOfUint64(uint64(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconKeySwitched"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconKeySwitched does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventBeaconKeySwitched) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventBeaconKeySwitched", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventBeaconKeySwitched) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconKeySwitched) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventBeaconKeySwitched) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventBeaconKeySwitched) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventBeaconKeySwitched)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.KeyEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.KeyEpoch))
+		}
+		if x.PreviousKeyEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.PreviousKeyEpoch))
+		}
+		if x.FromRound != 0 {
+			n += 1 + runtime.Sov(uint64(x.FromRound))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventBeaconKeySwitched)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.FromRound != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.FromRound))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.PreviousKeyEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.PreviousKeyEpoch))
+			i--
+			dAtA[i] = 0x10
+		}
+		if x.KeyEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.KeyEpoch))
+			i--
+			dAtA[i] = 0x8
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventBeaconKeySwitched)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventBeaconKeySwitched: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventBeaconKeySwitched: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field KeyEpoch", wireType)
+				}
+				x.KeyEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.KeyEpoch |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PreviousKeyEpoch", wireType)
+				}
+				x.PreviousKeyEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.PreviousKeyEpoch |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field FromRound", wireType)
+				}
+				x.FromRound = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.FromRound |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
+var (
+	md_EventBeaconSlotCoverageWarning                         protoreflect.MessageDescriptor
+	fd_EventBeaconSlotCoverageWarning_key_epoch               protoreflect.FieldDescriptor
+	fd_EventBeaconSlotCoverageWarning_worst_case_slots        protoreflect.FieldDescriptor
+	fd_EventBeaconSlotCoverageWarning_threshold_slots         protoreflect.FieldDescriptor
+	fd_EventBeaconSlotCoverageWarning_slots_without_validator protoreflect.FieldDescriptor
+)
+
+func init() {
+	file_inference_bls_events_proto_init()
+	md_EventBeaconSlotCoverageWarning = File_inference_bls_events_proto.Messages().ByName("EventBeaconSlotCoverageWarning")
+	fd_EventBeaconSlotCoverageWarning_key_epoch = md_EventBeaconSlotCoverageWarning.Fields().ByName("key_epoch")
+	fd_EventBeaconSlotCoverageWarning_worst_case_slots = md_EventBeaconSlotCoverageWarning.Fields().ByName("worst_case_slots")
+	fd_EventBeaconSlotCoverageWarning_threshold_slots = md_EventBeaconSlotCoverageWarning.Fields().ByName("threshold_slots")
+	fd_EventBeaconSlotCoverageWarning_slots_without_validator = md_EventBeaconSlotCoverageWarning.Fields().ByName("slots_without_validator")
+}
+
+var _ protoreflect.Message = (*fastReflection_EventBeaconSlotCoverageWarning)(nil)
+
+type fastReflection_EventBeaconSlotCoverageWarning EventBeaconSlotCoverageWarning
+
+func (x *EventBeaconSlotCoverageWarning) ProtoReflect() protoreflect.Message {
+	return (*fastReflection_EventBeaconSlotCoverageWarning)(x)
+}
+
+func (x *EventBeaconSlotCoverageWarning) slowProtoReflect() protoreflect.Message {
+	mi := &file_inference_bls_events_proto_msgTypes[14]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+var _fastReflection_EventBeaconSlotCoverageWarning_messageType fastReflection_EventBeaconSlotCoverageWarning_messageType
+var _ protoreflect.MessageType = fastReflection_EventBeaconSlotCoverageWarning_messageType{}
+
+type fastReflection_EventBeaconSlotCoverageWarning_messageType struct{}
+
+func (x fastReflection_EventBeaconSlotCoverageWarning_messageType) Zero() protoreflect.Message {
+	return (*fastReflection_EventBeaconSlotCoverageWarning)(nil)
+}
+func (x fastReflection_EventBeaconSlotCoverageWarning_messageType) New() protoreflect.Message {
+	return new(fastReflection_EventBeaconSlotCoverageWarning)
+}
+func (x fastReflection_EventBeaconSlotCoverageWarning_messageType) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventBeaconSlotCoverageWarning
+}
+
+// Descriptor returns message descriptor, which contains only the protobuf
+// type information for the message.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Descriptor() protoreflect.MessageDescriptor {
+	return md_EventBeaconSlotCoverageWarning
+}
+
+// Type returns the message type, which encapsulates both Go and protobuf
+// type information. If the Go type information is not needed,
+// it is recommended that the message descriptor be used instead.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Type() protoreflect.MessageType {
+	return _fastReflection_EventBeaconSlotCoverageWarning_messageType
+}
+
+// New returns a newly allocated and mutable empty message.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) New() protoreflect.Message {
+	return new(fastReflection_EventBeaconSlotCoverageWarning)
+}
+
+// Interface unwraps the message reflection interface and
+// returns the underlying ProtoMessage interface.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Interface() protoreflect.ProtoMessage {
+	return (*EventBeaconSlotCoverageWarning)(x)
+}
+
+// Range iterates over every populated field in an undefined order,
+// calling f for each field descriptor and value encountered.
+// Range returns immediately if f returns false.
+// While iterating, mutating operations may only be performed
+// on the current field descriptor.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
+	if x.KeyEpoch != uint64(0) {
+		value := protoreflect.ValueOfUint64(x.KeyEpoch)
+		if !f(fd_EventBeaconSlotCoverageWarning_key_epoch, value) {
+			return
+		}
+	}
+	if x.WorstCaseSlots != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.WorstCaseSlots)
+		if !f(fd_EventBeaconSlotCoverageWarning_worst_case_slots, value) {
+			return
+		}
+	}
+	if x.ThresholdSlots != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.ThresholdSlots)
+		if !f(fd_EventBeaconSlotCoverageWarning_threshold_slots, value) {
+			return
+		}
+	}
+	if x.SlotsWithoutValidator != uint32(0) {
+		value := protoreflect.ValueOfUint32(x.SlotsWithoutValidator)
+		if !f(fd_EventBeaconSlotCoverageWarning_slots_without_validator, value) {
+			return
+		}
+	}
+}
+
+// Has reports whether a field is populated.
+//
+// Some fields have the property of nullability where it is possible to
+// distinguish between the default value of a field and whether the field
+// was explicitly populated with the default value. Singular message fields,
+// member fields of a oneof, and proto2 scalar fields are nullable. Such
+// fields are populated only if explicitly set.
+//
+// In other cases (aside from the nullable cases above),
+// a proto3 scalar field is populated if it contains a non-zero value, and
+// a repeated field is populated if it is non-empty.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Has(fd protoreflect.FieldDescriptor) bool {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconSlotCoverageWarning.key_epoch":
+		return x.KeyEpoch != uint64(0)
+	case "inference.bls.EventBeaconSlotCoverageWarning.worst_case_slots":
+		return x.WorstCaseSlots != uint32(0)
+	case "inference.bls.EventBeaconSlotCoverageWarning.threshold_slots":
+		return x.ThresholdSlots != uint32(0)
+	case "inference.bls.EventBeaconSlotCoverageWarning.slots_without_validator":
+		return x.SlotsWithoutValidator != uint32(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconSlotCoverageWarning"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconSlotCoverageWarning does not contain field %s", fd.FullName()))
+	}
+}
+
+// Clear clears the field such that a subsequent Has call reports false.
+//
+// Clearing an extension field clears both the extension type and value
+// associated with the given field number.
+//
+// Clear is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Clear(fd protoreflect.FieldDescriptor) {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconSlotCoverageWarning.key_epoch":
+		x.KeyEpoch = uint64(0)
+	case "inference.bls.EventBeaconSlotCoverageWarning.worst_case_slots":
+		x.WorstCaseSlots = uint32(0)
+	case "inference.bls.EventBeaconSlotCoverageWarning.threshold_slots":
+		x.ThresholdSlots = uint32(0)
+	case "inference.bls.EventBeaconSlotCoverageWarning.slots_without_validator":
+		x.SlotsWithoutValidator = uint32(0)
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconSlotCoverageWarning"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconSlotCoverageWarning does not contain field %s", fd.FullName()))
+	}
+}
+
+// Get retrieves the value for a field.
+//
+// For unpopulated scalars, it returns the default value, where
+// the default value of a bytes scalar is guaranteed to be a copy.
+// For unpopulated composite types, it returns an empty, read-only view
+// of the value; to obtain a mutable reference, use Mutable.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
+	switch descriptor.FullName() {
+	case "inference.bls.EventBeaconSlotCoverageWarning.key_epoch":
+		value := x.KeyEpoch
+		return protoreflect.ValueOfUint64(value)
+	case "inference.bls.EventBeaconSlotCoverageWarning.worst_case_slots":
+		value := x.WorstCaseSlots
+		return protoreflect.ValueOfUint32(value)
+	case "inference.bls.EventBeaconSlotCoverageWarning.threshold_slots":
+		value := x.ThresholdSlots
+		return protoreflect.ValueOfUint32(value)
+	case "inference.bls.EventBeaconSlotCoverageWarning.slots_without_validator":
+		value := x.SlotsWithoutValidator
+		return protoreflect.ValueOfUint32(value)
+	default:
+		if descriptor.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconSlotCoverageWarning"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconSlotCoverageWarning does not contain field %s", descriptor.FullName()))
+	}
+}
+
+// Set stores the value for a field.
+//
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType.
+// When setting a composite type, it is unspecified whether the stored value
+// aliases the source's memory in any way. If the composite value is an
+// empty, read-only value, then it panics.
+//
+// Set is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconSlotCoverageWarning.key_epoch":
+		x.KeyEpoch = value.Uint()
+	case "inference.bls.EventBeaconSlotCoverageWarning.worst_case_slots":
+		x.WorstCaseSlots = uint32(value.Uint())
+	case "inference.bls.EventBeaconSlotCoverageWarning.threshold_slots":
+		x.ThresholdSlots = uint32(value.Uint())
+	case "inference.bls.EventBeaconSlotCoverageWarning.slots_without_validator":
+		x.SlotsWithoutValidator = uint32(value.Uint())
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconSlotCoverageWarning"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconSlotCoverageWarning does not contain field %s", fd.FullName()))
+	}
+}
+
+// Mutable returns a mutable reference to a composite type.
+//
+// If the field is unpopulated, it may allocate a composite value.
+// For a field belonging to a oneof, it implicitly clears any other field
+// that may be currently set within the same oneof.
+// For extension fields, it implicitly stores the provided ExtensionType
+// if not already stored.
+// It panics if the field does not contain a composite type.
+//
+// Mutable is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconSlotCoverageWarning.key_epoch":
+		panic(fmt.Errorf("field key_epoch of message inference.bls.EventBeaconSlotCoverageWarning is not mutable"))
+	case "inference.bls.EventBeaconSlotCoverageWarning.worst_case_slots":
+		panic(fmt.Errorf("field worst_case_slots of message inference.bls.EventBeaconSlotCoverageWarning is not mutable"))
+	case "inference.bls.EventBeaconSlotCoverageWarning.threshold_slots":
+		panic(fmt.Errorf("field threshold_slots of message inference.bls.EventBeaconSlotCoverageWarning is not mutable"))
+	case "inference.bls.EventBeaconSlotCoverageWarning.slots_without_validator":
+		panic(fmt.Errorf("field slots_without_validator of message inference.bls.EventBeaconSlotCoverageWarning is not mutable"))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconSlotCoverageWarning"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconSlotCoverageWarning does not contain field %s", fd.FullName()))
+	}
+}
+
+// NewField returns a new value that is assignable to the field
+// for the given descriptor. For scalars, this returns the default value.
+// For lists, maps, and messages, this returns a new, empty, mutable value.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
+	switch fd.FullName() {
+	case "inference.bls.EventBeaconSlotCoverageWarning.key_epoch":
+		return protoreflect.ValueOfUint64(uint64(0))
+	case "inference.bls.EventBeaconSlotCoverageWarning.worst_case_slots":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.bls.EventBeaconSlotCoverageWarning.threshold_slots":
+		return protoreflect.ValueOfUint32(uint32(0))
+	case "inference.bls.EventBeaconSlotCoverageWarning.slots_without_validator":
+		return protoreflect.ValueOfUint32(uint32(0))
+	default:
+		if fd.IsExtension() {
+			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.bls.EventBeaconSlotCoverageWarning"))
+		}
+		panic(fmt.Errorf("message inference.bls.EventBeaconSlotCoverageWarning does not contain field %s", fd.FullName()))
+	}
+}
+
+// WhichOneof reports which field within the oneof is populated,
+// returning nil if none are populated.
+// It panics if the oneof descriptor does not belong to this message.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
+	switch d.FullName() {
+	default:
+		panic(fmt.Errorf("%s is not a oneof field in inference.bls.EventBeaconSlotCoverageWarning", d.FullName()))
+	}
+	panic("unreachable")
+}
+
+// GetUnknown retrieves the entire list of unknown fields.
+// The caller may only mutate the contents of the RawFields
+// if the mutated bytes are stored back into the message with SetUnknown.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) GetUnknown() protoreflect.RawFields {
+	return x.unknownFields
+}
+
+// SetUnknown stores an entire list of unknown fields.
+// The raw fields must be syntactically valid according to the wire format.
+// An implementation may panic if this is not the case.
+// Once stored, the caller must not mutate the content of the RawFields.
+// An empty RawFields may be passed to clear the fields.
+//
+// SetUnknown is a mutating operation and unsafe for concurrent use.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) SetUnknown(fields protoreflect.RawFields) {
+	x.unknownFields = fields
+}
+
+// IsValid reports whether the message is valid.
+//
+// An invalid message is an empty, read-only value.
+//
+// An invalid message often corresponds to a nil pointer of the concrete
+// message type, but the details are implementation dependent.
+// Validity is not part of the protobuf data model, and may not
+// be preserved in marshaling or other operations.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) IsValid() bool {
+	return x != nil
+}
+
+// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
+// This method may return nil.
+//
+// The returned methods type is identical to
+// "google.golang.org/protobuf/runtime/protoiface".Methods.
+// Consult the protoiface package documentation for details.
+func (x *fastReflection_EventBeaconSlotCoverageWarning) ProtoMethods() *protoiface.Methods {
+	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
+		x := input.Message.Interface().(*EventBeaconSlotCoverageWarning)
+		if x == nil {
+			return protoiface.SizeOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Size:              0,
+			}
+		}
+		options := runtime.SizeInputToOptions(input)
+		_ = options
+		var n int
+		var l int
+		_ = l
+		if x.KeyEpoch != 0 {
+			n += 1 + runtime.Sov(uint64(x.KeyEpoch))
+		}
+		if x.WorstCaseSlots != 0 {
+			n += 1 + runtime.Sov(uint64(x.WorstCaseSlots))
+		}
+		if x.ThresholdSlots != 0 {
+			n += 1 + runtime.Sov(uint64(x.ThresholdSlots))
+		}
+		if x.SlotsWithoutValidator != 0 {
+			n += 1 + runtime.Sov(uint64(x.SlotsWithoutValidator))
+		}
+		if x.unknownFields != nil {
+			n += len(x.unknownFields)
+		}
+		return protoiface.SizeOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Size:              n,
+		}
+	}
+
+	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
+		x := input.Message.Interface().(*EventBeaconSlotCoverageWarning)
+		if x == nil {
+			return protoiface.MarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Buf:               input.Buf,
+			}, nil
+		}
+		options := runtime.MarshalInputToOptions(input)
+		_ = options
+		size := options.Size(x)
+		dAtA := make([]byte, size)
+		i := len(dAtA)
+		_ = i
+		var l int
+		_ = l
+		if x.unknownFields != nil {
+			i -= len(x.unknownFields)
+			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.SlotsWithoutValidator != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.SlotsWithoutValidator))
+			i--
+			dAtA[i] = 0x20
+		}
+		if x.ThresholdSlots != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.ThresholdSlots))
+			i--
+			dAtA[i] = 0x18
+		}
+		if x.WorstCaseSlots != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.WorstCaseSlots))
+			i--
+			dAtA[i] = 0x10
+		}
+		if x.KeyEpoch != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64(x.KeyEpoch))
+			i--
+			dAtA[i] = 0x8
+		}
+		if input.Buf != nil {
+			input.Buf = append(input.Buf, dAtA...)
+		} else {
+			input.Buf = dAtA
+		}
+		return protoiface.MarshalOutput{
+			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+			Buf:               input.Buf,
+		}, nil
+	}
+	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
+		x := input.Message.Interface().(*EventBeaconSlotCoverageWarning)
+		if x == nil {
+			return protoiface.UnmarshalOutput{
+				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+				Flags:             input.Flags,
+			}, nil
+		}
+		options := runtime.UnmarshalInputToOptions(input)
+		_ = options
+		dAtA := input.Buf
+		l := len(dAtA)
+		iNdEx := 0
+		for iNdEx < l {
+			preIndex := iNdEx
+			var wire uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+				}
+				if iNdEx >= l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				wire |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			fieldNum := int32(wire >> 3)
+			wireType := int(wire & 0x7)
+			if wireType == 4 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventBeaconSlotCoverageWarning: wiretype end group for non-group")
+			}
+			if fieldNum <= 0 {
+				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: EventBeaconSlotCoverageWarning: illegal tag %d (wire type %d)", fieldNum, wire)
+			}
+			switch fieldNum {
+			case 1:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field KeyEpoch", wireType)
+				}
+				x.KeyEpoch = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.KeyEpoch |= uint64(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 2:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field WorstCaseSlots", wireType)
+				}
+				x.WorstCaseSlots = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.WorstCaseSlots |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 3:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ThresholdSlots", wireType)
+				}
+				x.ThresholdSlots = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.ThresholdSlots |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			case 4:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field SlotsWithoutValidator", wireType)
+				}
+				x.SlotsWithoutValidator = 0
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					x.SlotsWithoutValidator |= uint32(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+			default:
+				iNdEx = preIndex
+				skippy, err := runtime.Skip(dAtA[iNdEx:])
+				if err != nil {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
+				}
+				if (skippy < 0) || (iNdEx+skippy) < 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+				}
+				if (iNdEx + skippy) > l {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+				}
+				if !options.DiscardUnknown {
+					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
+				}
+				iNdEx += skippy
+			}
+		}
+
+		if iNdEx > l {
+			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+		}
+		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
+	}
+	return &protoiface.Methods{
+		NoUnkeyedLiterals: struct{}{},
+		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
+		Size:              size,
+		Marshal:           marshal,
+		Unmarshal:         unmarshal,
+		Merge:             nil,
+		CheckInitialized:  nil,
+	}
+}
+
 // Code generated by protoc-gen-go. DO NOT EDIT.
 // versions:
 // 	protoc-gen-go v1.27.0
@@ -7941,6 +8989,125 @@ func (x *EventThresholdSigningFailed) GetReason() string {
 	return ""
 }
 
+// EventBeaconKeySwitched is emitted when a completed DKG becomes the block
+// beacon key (rule R9).
+type EventBeaconKeySwitched struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	KeyEpoch         uint64 `protobuf:"varint,1,opt,name=key_epoch,json=keyEpoch,proto3" json:"key_epoch,omitempty"`
+	PreviousKeyEpoch uint64 `protobuf:"varint,2,opt,name=previous_key_epoch,json=previousKeyEpoch,proto3" json:"previous_key_epoch,omitempty"`
+	// from_round is the first round signed with key_epoch.
+	FromRound uint64 `protobuf:"varint,3,opt,name=from_round,json=fromRound,proto3" json:"from_round,omitempty"`
+}
+
+func (x *EventBeaconKeySwitched) Reset() {
+	*x = EventBeaconKeySwitched{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[13]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventBeaconKeySwitched) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventBeaconKeySwitched) ProtoMessage() {}
+
+// Deprecated: Use EventBeaconKeySwitched.ProtoReflect.Descriptor instead.
+func (*EventBeaconKeySwitched) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *EventBeaconKeySwitched) GetKeyEpoch() uint64 {
+	if x != nil {
+		return x.KeyEpoch
+	}
+	return 0
+}
+
+func (x *EventBeaconKeySwitched) GetPreviousKeyEpoch() uint64 {
+	if x != nil {
+		return x.PreviousKeyEpoch
+	}
+	return 0
+}
+
+func (x *EventBeaconKeySwitched) GetFromRound() uint64 {
+	if x != nil {
+		return x.FromRound
+	}
+	return 0
+}
+
+// EventBeaconSlotCoverageWarning is emitted at a key switch when validators
+// holding just over 2/3 of voting power may hold fewer than the threshold
+// number of slots, so the beacon could miss rounds even with a live chain.
+type EventBeaconSlotCoverageWarning struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	KeyEpoch uint64 `protobuf:"varint,1,opt,name=key_epoch,json=keyEpoch,proto3" json:"key_epoch,omitempty"`
+	// worst_case_slots: slots held by the worst-case >2/3-power validator subset.
+	WorstCaseSlots uint32 `protobuf:"varint,2,opt,name=worst_case_slots,json=worstCaseSlots,proto3" json:"worst_case_slots,omitempty"`
+	// threshold_slots: t_slots_degree + 1.
+	ThresholdSlots uint32 `protobuf:"varint,3,opt,name=threshold_slots,json=thresholdSlots,proto3" json:"threshold_slots,omitempty"`
+	// slots_without_validator: slots of participants with no bonded validator.
+	SlotsWithoutValidator uint32 `protobuf:"varint,4,opt,name=slots_without_validator,json=slotsWithoutValidator,proto3" json:"slots_without_validator,omitempty"`
+}
+
+func (x *EventBeaconSlotCoverageWarning) Reset() {
+	*x = EventBeaconSlotCoverageWarning{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_inference_bls_events_proto_msgTypes[14]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *EventBeaconSlotCoverageWarning) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EventBeaconSlotCoverageWarning) ProtoMessage() {}
+
+// Deprecated: Use EventBeaconSlotCoverageWarning.ProtoReflect.Descriptor instead.
+func (*EventBeaconSlotCoverageWarning) Descriptor() ([]byte, []int) {
+	return file_inference_bls_events_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *EventBeaconSlotCoverageWarning) GetKeyEpoch() uint64 {
+	if x != nil {
+		return x.KeyEpoch
+	}
+	return 0
+}
+
+func (x *EventBeaconSlotCoverageWarning) GetWorstCaseSlots() uint32 {
+	if x != nil {
+		return x.WorstCaseSlots
+	}
+	return 0
+}
+
+func (x *EventBeaconSlotCoverageWarning) GetThresholdSlots() uint32 {
+	if x != nil {
+		return x.ThresholdSlots
+	}
+	return 0
+}
+
+func (x *EventBeaconSlotCoverageWarning) GetSlotsWithoutValidator() uint32 {
+	if x != nil {
+		return x.SlotsWithoutValidator
+	}
+	return 0
+}
+
 var File_inference_bls_events_proto protoreflect.FileDescriptor
 
 var file_inference_bls_events_proto_rawDesc = []byte{
@@ -8091,7 +9258,28 @@ var file_inference_bls_events_proto_rawDesc = []byte{
 	0x68, 0x5f, 0x69, 0x64, 0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0e, 0x63, 0x75, 0x72, 0x72,
 	0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x64, 0x12, 0x16, 0x0a, 0x06, 0x72, 0x65,
 	0x61, 0x73, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x72, 0x65, 0x61, 0x73,
-	0x6f, 0x6e, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x6f, 0x6e, 0x22, 0x82, 0x01, 0x0a, 0x16, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x42, 0x65, 0x61, 0x63,
+	0x6f, 0x6e, 0x4b, 0x65, 0x79, 0x53, 0x77, 0x69, 0x74, 0x63, 0x68, 0x65, 0x64, 0x12, 0x1b, 0x0a,
+	0x09, 0x6b, 0x65, 0x79, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04,
+	0x52, 0x08, 0x6b, 0x65, 0x79, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12, 0x2c, 0x0a, 0x12, 0x70, 0x72,
+	0x65, 0x76, 0x69, 0x6f, 0x75, 0x73, 0x5f, 0x6b, 0x65, 0x79, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68,
+	0x18, 0x02, 0x20, 0x01, 0x28, 0x04, 0x52, 0x10, 0x70, 0x72, 0x65, 0x76, 0x69, 0x6f, 0x75, 0x73,
+	0x4b, 0x65, 0x79, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12, 0x1d, 0x0a, 0x0a, 0x66, 0x72, 0x6f, 0x6d,
+	0x5f, 0x72, 0x6f, 0x75, 0x6e, 0x64, 0x18, 0x03, 0x20, 0x01, 0x28, 0x04, 0x52, 0x09, 0x66, 0x72,
+	0x6f, 0x6d, 0x52, 0x6f, 0x75, 0x6e, 0x64, 0x22, 0xc8, 0x01, 0x0a, 0x1e, 0x45, 0x76, 0x65, 0x6e,
+	0x74, 0x42, 0x65, 0x61, 0x63, 0x6f, 0x6e, 0x53, 0x6c, 0x6f, 0x74, 0x43, 0x6f, 0x76, 0x65, 0x72,
+	0x61, 0x67, 0x65, 0x57, 0x61, 0x72, 0x6e, 0x69, 0x6e, 0x67, 0x12, 0x1b, 0x0a, 0x09, 0x6b, 0x65,
+	0x79, 0x5f, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x08, 0x6b,
+	0x65, 0x79, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x12, 0x28, 0x0a, 0x10, 0x77, 0x6f, 0x72, 0x73, 0x74,
+	0x5f, 0x63, 0x61, 0x73, 0x65, 0x5f, 0x73, 0x6c, 0x6f, 0x74, 0x73, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x0d, 0x52, 0x0e, 0x77, 0x6f, 0x72, 0x73, 0x74, 0x43, 0x61, 0x73, 0x65, 0x53, 0x6c, 0x6f, 0x74,
+	0x73, 0x12, 0x27, 0x0a, 0x0f, 0x74, 0x68, 0x72, 0x65, 0x73, 0x68, 0x6f, 0x6c, 0x64, 0x5f, 0x73,
+	0x6c, 0x6f, 0x74, 0x73, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x0e, 0x74, 0x68, 0x72, 0x65,
+	0x73, 0x68, 0x6f, 0x6c, 0x64, 0x53, 0x6c, 0x6f, 0x74, 0x73, 0x12, 0x36, 0x0a, 0x17, 0x73, 0x6c,
+	0x6f, 0x74, 0x73, 0x5f, 0x77, 0x69, 0x74, 0x68, 0x6f, 0x75, 0x74, 0x5f, 0x76, 0x61, 0x6c, 0x69,
+	0x64, 0x61, 0x74, 0x6f, 0x72, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0d, 0x52, 0x15, 0x73, 0x6c, 0x6f,
+	0x74, 0x73, 0x57, 0x69, 0x74, 0x68, 0x6f, 0x75, 0x74, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74,
+	0x6f, 0x72, 0x42, 0x95, 0x01, 0x0a, 0x11, 0x63, 0x6f, 0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
 	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x62, 0x6c, 0x73, 0x42, 0x0b, 0x45, 0x76, 0x65, 0x6e, 0x74, 0x73,
 	0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x1e, 0x63, 0x6f, 0x73, 0x6d, 0x6f, 0x73, 0x73,
 	0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
@@ -8116,7 +9304,7 @@ func file_inference_bls_events_proto_rawDescGZIP() []byte {
 	return file_inference_bls_events_proto_rawDescData
 }
 
-var file_inference_bls_events_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_inference_bls_events_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_inference_bls_events_proto_goTypes = []interface{}{
 	(*EventKeyGenerationInitiated)(nil),      // 0: inference.bls.EventKeyGenerationInitiated
 	(*EventDealerPartSubmitted)(nil),         // 1: inference.bls.EventDealerPartSubmitted
@@ -8131,15 +9319,17 @@ var file_inference_bls_events_proto_goTypes = []interface{}{
 	(*EventThresholdSigningRequested)(nil),   // 10: inference.bls.EventThresholdSigningRequested
 	(*EventThresholdSigningCompleted)(nil),   // 11: inference.bls.EventThresholdSigningCompleted
 	(*EventThresholdSigningFailed)(nil),      // 12: inference.bls.EventThresholdSigningFailed
-	(*BLSParticipantInfo)(nil),               // 13: inference.bls.BLSParticipantInfo
-	(*EpochBLSData)(nil),                     // 14: inference.bls.EpochBLSData
+	(*EventBeaconKeySwitched)(nil),           // 13: inference.bls.EventBeaconKeySwitched
+	(*EventBeaconSlotCoverageWarning)(nil),   // 14: inference.bls.EventBeaconSlotCoverageWarning
+	(*BLSParticipantInfo)(nil),               // 15: inference.bls.BLSParticipantInfo
+	(*EpochBLSData)(nil),                     // 16: inference.bls.EpochBLSData
 }
 var file_inference_bls_events_proto_depIdxs = []int32{
-	13, // 0: inference.bls.EventKeyGenerationInitiated.participants:type_name -> inference.bls.BLSParticipantInfo
-	14, // 1: inference.bls.EventVerifyingPhaseStarted.epoch_data:type_name -> inference.bls.EpochBLSData
-	14, // 2: inference.bls.EventDKGFailed.epoch_data:type_name -> inference.bls.EpochBLSData
-	14, // 3: inference.bls.EventDisputePhaseStarted.epoch_data:type_name -> inference.bls.EpochBLSData
-	14, // 4: inference.bls.EventGroupPublicKeyGenerated.epoch_data:type_name -> inference.bls.EpochBLSData
+	15, // 0: inference.bls.EventKeyGenerationInitiated.participants:type_name -> inference.bls.BLSParticipantInfo
+	16, // 1: inference.bls.EventVerifyingPhaseStarted.epoch_data:type_name -> inference.bls.EpochBLSData
+	16, // 2: inference.bls.EventDKGFailed.epoch_data:type_name -> inference.bls.EpochBLSData
+	16, // 3: inference.bls.EventDisputePhaseStarted.epoch_data:type_name -> inference.bls.EpochBLSData
+	16, // 4: inference.bls.EventGroupPublicKeyGenerated.epoch_data:type_name -> inference.bls.EpochBLSData
 	5,  // [5:5] is the sub-list for method output_type
 	5,  // [5:5] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
@@ -8310,6 +9500,30 @@ func file_inference_bls_events_proto_init() {
 				return nil
 			}
 		}
+		file_inference_bls_events_proto_msgTypes[13].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventBeaconKeySwitched); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_inference_bls_events_proto_msgTypes[14].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*EventBeaconSlotCoverageWarning); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -8317,7 +9531,7 @@ func file_inference_bls_events_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_bls_events_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

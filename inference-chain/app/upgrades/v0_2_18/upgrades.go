@@ -1,7 +1,8 @@
 // Package v0_2_18 holds the upgrade handler for the v0.2.18 release.
 //
 // v0.2.18 schedules CometBFT vote extensions for the block BLS beacon (Step 1
-// of devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// of devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md) and
+// activates beacon partials in those extensions (Step 3; rules R6 and R9).
 // Release precondition: validators holding well over 2/3 of voting power run
 // tmkms 0.14.0 with sign_extensions = true (not 0.15.0, see tmkms#1174); any
 // validator that does not panics from VoteExtensionsEnableHeight on.
@@ -26,6 +27,7 @@ func CreateUpgradeHandler(
 	configurator module.Configurator,
 	k keeper.Keeper,
 	consensusParams ConsensusParamsStore,
+	bls BeaconKeeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -45,6 +47,13 @@ func CreateUpgradeHandler(
 		} else {
 			k.LogInfo("vote extensions already scheduled; leaving consensus params unchanged", types.Upgrades, "enable_height", enableHeight)
 		}
+
+		// Block beacon Step 3: partials in vote extensions after this height.
+		activated, err := ActivateBlockBeacon(ctx, bls)
+		if err != nil {
+			return fromVM, err
+		}
+		k.LogInfo("block beacon activation", types.Upgrades, "activated", activated)
 
 		// Future v0.2.18 migration steps land below this line.
 

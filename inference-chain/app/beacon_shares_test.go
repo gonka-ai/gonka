@@ -7,10 +7,8 @@ import (
 	"testing"
 
 	"cosmossdk.io/log"
-	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	simtestutil "github.com/cosmos/cosmos-sdk/testutil/sims"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/app/beacon"
@@ -182,49 +180,6 @@ func TestEpochKeysFromDataPrecomputesLegacyEpochs(t *testing.T) {
 		return nil, errors.New("boom")
 	}, consOf(nil))
 	require.ErrorContains(t, err, "boom")
-}
-
-type recordingProvider struct {
-	epochs []uint64
-	panic  bool
-}
-
-func (r *recordingProvider) Get(_ sdk.Context, epochID uint64) (*beacon.EpochShares, bool) {
-	if r.panic {
-		panic("provider exploded")
-	}
-	r.epochs = append(r.epochs, epochID)
-	return &beacon.EpochShares{EpochID: epochID}, true
-}
-
-func TestBeaconShareProbe(t *testing.T) {
-	rec := &recordingProvider{}
-	signing := func(sdk.Context) (uint64, bool) { return 9, true }
-	h := newBeaconExtendVoteHandler(log.NewNopLogger(), beaconShareProbe(func() beacon.ShareProvider { return rec }, signing))
-
-	resp, err := h(sdk.Context{}, &abci.RequestExtendVote{Height: 10})
-	require.NoError(t, err)
-	require.Empty(t, resp.VoteExtension, "Step 2 never puts shares or partials in the extension")
-	require.Equal(t, []uint64{9}, rec.epochs)
-
-	// No signing epoch yet: provider not asked.
-	h = newBeaconExtendVoteHandler(log.NewNopLogger(), beaconShareProbe(func() beacon.ShareProvider { return rec },
-		func(sdk.Context) (uint64, bool) { return 0, false }))
-	_, err = h(sdk.Context{}, &abci.RequestExtendVote{Height: 11})
-	require.NoError(t, err)
-	require.Equal(t, []uint64{9}, rec.epochs)
-
-	// Provider disabled (nil).
-	h = newBeaconExtendVoteHandler(log.NewNopLogger(), beaconShareProbe(func() beacon.ShareProvider { return nil }, signing))
-	resp, err = h(sdk.Context{}, &abci.RequestExtendVote{Height: 12})
-	require.NoError(t, err)
-	require.Empty(t, resp.VoteExtension)
-
-	// A panicking provider still yields an empty extension and no error (R1).
-	h = newBeaconExtendVoteHandler(log.NewNopLogger(), beaconShareProbe(func() beacon.ShareProvider { return &recordingProvider{panic: true} }, signing))
-	resp, err = h(sdk.Context{}, &abci.RequestExtendVote{Height: 13})
-	require.NoError(t, err)
-	require.Empty(t, resp.VoteExtension)
 }
 
 // L1: only deterministic verdicts are ErrKeysInvalid; lookup failures are not.

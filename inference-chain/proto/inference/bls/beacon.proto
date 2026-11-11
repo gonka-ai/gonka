@@ -1,0 +1,57 @@
+syntax = "proto3";
+package inference.bls;
+
+option go_package = "github.com/productscience/inference/x/bls/types";
+
+// Block BLS beacon (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+
+// BeaconVoteExtension is the vote extension a validator attaches to its
+// precommit for height `round`: one partial BLS signature per slot it owns in
+// key_epoch, over PendingBeacon(round).msg.
+message BeaconVoteExtension {
+  // version is 1.
+  uint32 version = 1;
+  // round is the height h being precommitted.
+  uint64 round = 2;
+  // key_epoch is the BLS epoch whose key signs round h (PendingBeacon(h).key_epoch).
+  uint64 key_epoch = 3;
+  // slot_indices are ascending and equal the signer's full owned slot range.
+  repeated uint32 slot_indices = 4;
+  // signatures are 48-byte compressed G1 points, one per slot index, concatenated.
+  bytes signatures = 5;
+}
+
+// PendingBeacon is the message every validator signs for one round, written in
+// EndBlock(round-1) and therefore committed before anyone votes on round.
+message PendingBeacon {
+  uint64 round = 1;
+  uint64 key_epoch = 2;
+  // msg is m_h, 32 bytes (blsutil.BeaconMessage).
+  bytes msg = 3;
+  // i_total_slots of key_epoch; bounds the extension size for this round.
+  uint32 i_total_slots = 4;
+}
+
+// BeaconSlotOwner is a participant's slot range in a beacon key epoch. The
+// stored index is keyed by the participant account; cons_addr is filled in on
+// read from the validator's consensus key at that time (keys can rotate).
+message BeaconSlotOwner {
+  bytes cons_addr = 1;
+  string participant_address = 2;
+  uint32 slot_start = 3;
+  uint32 slot_end = 4;
+}
+
+// BeaconKeyCandidate is a newly completed DKG waiting to become the beacon key
+// at from_round (rule R9).
+message BeaconKeyCandidate {
+  uint64 epoch = 1;
+  uint64 from_round = 2;
+}
+
+// BeaconActivation holds the on-chain activation heights of beacon
+// capabilities (rule R6). Its presence means the beacon logic is live.
+message BeaconActivation {
+  // ext_from: validators put partials in vote extensions for heights > ext_from.
+  uint64 ext_from = 1;
+}

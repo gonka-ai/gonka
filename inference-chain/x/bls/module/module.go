@@ -178,6 +178,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.keeper.Logger().Error("Failed to process threshold signing completion retries", "error", err)
 	}
 
+	// Block beacon (Step 3): after DKG transitions, so a DKG completing in
+	// this block can become the key in the same EndBlock when the delay is 0.
+	am.keeper.ProcessBlockBeacon(sdkCtx)
+
 	return nil
 }
 
@@ -209,6 +213,8 @@ type ModuleInputs struct {
 
 	AccountKeeper types.AccountKeeper
 	BankKeeper    types.BankKeeper
+	// StakingKeeper resolves block beacon slot owners (Step 3).
+	StakingKeeper types.StakingKeeper
 }
 
 type ModuleOutputs struct {
@@ -230,6 +236,7 @@ func ProvideModule(in ModuleInputs) ModuleOutputs {
 		in.Logger,
 		authority.String(),
 	)
+	k.SetStakingKeeper(in.StakingKeeper)
 	m := NewAppModule(
 		in.Cdc,
 		k,

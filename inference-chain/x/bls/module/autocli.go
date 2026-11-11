@@ -35,6 +35,19 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 						{ProtoField: "request_id"},
 					},
 				},
+				{
+					RpcMethod: "BeaconKey",
+					Use:       "beacon-key",
+					Short:     "Query the block beacon key epoch, pending key candidate and activation",
+				},
+				{
+					RpcMethod: "PendingBeacon",
+					Use:       "pending-beacon [round]",
+					Short:     "Query the block beacon message validators sign for a round",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "round"},
+					},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

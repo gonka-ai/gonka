@@ -31,6 +31,221 @@ var _ = math.Inf
 // proto package needs to be updated.
 const _ = proto.GoGoProtoPackageIsVersion3 // please upgrade the proto package
 
+// QueryBeaconKeyRequest is request type for the Query/BeaconKey RPC method.
+type QueryBeaconKeyRequest struct {
+}
+
+func (m *QueryBeaconKeyRequest) Reset()         { *m = QueryBeaconKeyRequest{} }
+func (m *QueryBeaconKeyRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryBeaconKeyRequest) ProtoMessage()    {}
+func (*QueryBeaconKeyRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b19bd0a6a108cf6a, []int{0}
+}
+func (m *QueryBeaconKeyRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryBeaconKeyRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryBeaconKeyRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryBeaconKeyRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryBeaconKeyRequest.Merge(m, src)
+}
+func (m *QueryBeaconKeyRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryBeaconKeyRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryBeaconKeyRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryBeaconKeyRequest proto.InternalMessageInfo
+
+// QueryBeaconKeyResponse is response type for the Query/BeaconKey RPC method.
+type QueryBeaconKeyResponse struct {
+	// key_epoch is the BLS epoch signing beacon rounds; valid only if key_set.
+	KeyEpoch uint64 `protobuf:"varint,1,opt,name=key_epoch,json=keyEpoch,proto3" json:"key_epoch,omitempty"`
+	KeySet   bool   `protobuf:"varint,2,opt,name=key_set,json=keySet,proto3" json:"key_set,omitempty"`
+	// candidate is a completed DKG waiting for its from_round; valid only if has_candidate.
+	Candidate    BeaconKeyCandidate `protobuf:"bytes,3,opt,name=candidate,proto3" json:"candidate"`
+	HasCandidate bool               `protobuf:"varint,4,opt,name=has_candidate,json=hasCandidate,proto3" json:"has_candidate,omitempty"`
+	// activation is set once the beacon is live (upgrade or genesis).
+	Activation BeaconActivation `protobuf:"bytes,5,opt,name=activation,proto3" json:"activation"`
+	Activated  bool             `protobuf:"varint,6,opt,name=activated,proto3" json:"activated,omitempty"`
+}
+
+func (m *QueryBeaconKeyResponse) Reset()         { *m = QueryBeaconKeyResponse{} }
+func (m *QueryBeaconKeyResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryBeaconKeyResponse) ProtoMessage()    {}
+func (*QueryBeaconKeyResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b19bd0a6a108cf6a, []int{1}
+}
+func (m *QueryBeaconKeyResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryBeaconKeyResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryBeaconKeyResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryBeaconKeyResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryBeaconKeyResponse.Merge(m, src)
+}
+func (m *QueryBeaconKeyResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryBeaconKeyResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryBeaconKeyResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryBeaconKeyResponse proto.InternalMessageInfo
+
+func (m *QueryBeaconKeyResponse) GetKeyEpoch() uint64 {
+	if m != nil {
+		return m.KeyEpoch
+	}
+	return 0
+}
+
+func (m *QueryBeaconKeyResponse) GetKeySet() bool {
+	if m != nil {
+		return m.KeySet
+	}
+	return false
+}
+
+func (m *QueryBeaconKeyResponse) GetCandidate() BeaconKeyCandidate {
+	if m != nil {
+		return m.Candidate
+	}
+	return BeaconKeyCandidate{}
+}
+
+func (m *QueryBeaconKeyResponse) GetHasCandidate() bool {
+	if m != nil {
+		return m.HasCandidate
+	}
+	return false
+}
+
+func (m *QueryBeaconKeyResponse) GetActivation() BeaconActivation {
+	if m != nil {
+		return m.Activation
+	}
+	return BeaconActivation{}
+}
+
+func (m *QueryBeaconKeyResponse) GetActivated() bool {
+	if m != nil {
+		return m.Activated
+	}
+	return false
+}
+
+// QueryPendingBeaconRequest is request type for the Query/PendingBeacon RPC method.
+type QueryPendingBeaconRequest struct {
+	Round uint64 `protobuf:"varint,1,opt,name=round,proto3" json:"round,omitempty"`
+}
+
+func (m *QueryPendingBeaconRequest) Reset()         { *m = QueryPendingBeaconRequest{} }
+func (m *QueryPendingBeaconRequest) String() string { return proto.CompactTextString(m) }
+func (*QueryPendingBeaconRequest) ProtoMessage()    {}
+func (*QueryPendingBeaconRequest) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b19bd0a6a108cf6a, []int{2}
+}
+func (m *QueryPendingBeaconRequest) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryPendingBeaconRequest) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryPendingBeaconRequest.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryPendingBeaconRequest) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryPendingBeaconRequest.Merge(m, src)
+}
+func (m *QueryPendingBeaconRequest) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryPendingBeaconRequest) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryPendingBeaconRequest.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryPendingBeaconRequest proto.InternalMessageInfo
+
+func (m *QueryPendingBeaconRequest) GetRound() uint64 {
+	if m != nil {
+		return m.Round
+	}
+	return 0
+}
+
+// QueryPendingBeaconResponse is response type for the Query/PendingBeacon RPC method.
+type QueryPendingBeaconResponse struct {
+	Pending PendingBeacon `protobuf:"bytes,1,opt,name=pending,proto3" json:"pending"`
+}
+
+func (m *QueryPendingBeaconResponse) Reset()         { *m = QueryPendingBeaconResponse{} }
+func (m *QueryPendingBeaconResponse) String() string { return proto.CompactTextString(m) }
+func (*QueryPendingBeaconResponse) ProtoMessage()    {}
+func (*QueryPendingBeaconResponse) Descriptor() ([]byte, []int) {
+	return fileDescriptor_b19bd0a6a108cf6a, []int{3}
+}
+func (m *QueryPendingBeaconResponse) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *QueryPendingBeaconResponse) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_QueryPendingBeaconResponse.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *QueryPendingBeaconResponse) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_QueryPendingBeaconResponse.Merge(m, src)
+}
+func (m *QueryPendingBeaconResponse) XXX_Size() int {
+	return m.Size()
+}
+func (m *QueryPendingBeaconResponse) XXX_DiscardUnknown() {
+	xxx_messageInfo_QueryPendingBeaconResponse.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_QueryPendingBeaconResponse proto.InternalMessageInfo
+
+func (m *QueryPendingBeaconResponse) GetPending() PendingBeacon {
+	if m != nil {
+		return m.Pending
+	}
+	return PendingBeacon{}
+}
+
 // QueryParamsRequest is request type for the Query/Params RPC method.
 type QueryParamsRequest struct {
 }
@@ -39,7 +254,7 @@ func (m *QueryParamsRequest) Reset()         { *m = QueryParamsRequest{} }
 func (m *QueryParamsRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryParamsRequest) ProtoMessage()    {}
 func (*QueryParamsRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{0}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{4}
 }
 func (m *QueryParamsRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -78,7 +293,7 @@ func (m *QueryParamsResponse) Reset()         { *m = QueryParamsResponse{} }
 func (m *QueryParamsResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryParamsResponse) ProtoMessage()    {}
 func (*QueryParamsResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{1}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{5}
 }
 func (m *QueryParamsResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -124,7 +339,7 @@ func (m *QueryEpochBLSDataRequest) Reset()         { *m = QueryEpochBLSDataReque
 func (m *QueryEpochBLSDataRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryEpochBLSDataRequest) ProtoMessage()    {}
 func (*QueryEpochBLSDataRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{2}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{6}
 }
 func (m *QueryEpochBLSDataRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -170,7 +385,7 @@ func (m *QueryEpochBLSDataResponse) Reset()         { *m = QueryEpochBLSDataResp
 func (m *QueryEpochBLSDataResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryEpochBLSDataResponse) ProtoMessage()    {}
 func (*QueryEpochBLSDataResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{3}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{7}
 }
 func (m *QueryEpochBLSDataResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -216,7 +431,7 @@ func (m *QuerySigningStatusRequest) Reset()         { *m = QuerySigningStatusReq
 func (m *QuerySigningStatusRequest) String() string { return proto.CompactTextString(m) }
 func (*QuerySigningStatusRequest) ProtoMessage()    {}
 func (*QuerySigningStatusRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{4}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{8}
 }
 func (m *QuerySigningStatusRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -262,7 +477,7 @@ func (m *QuerySigningStatusResponse) Reset()         { *m = QuerySigningStatusRe
 func (m *QuerySigningStatusResponse) String() string { return proto.CompactTextString(m) }
 func (*QuerySigningStatusResponse) ProtoMessage()    {}
 func (*QuerySigningStatusResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{5}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{9}
 }
 func (m *QuerySigningStatusResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -312,7 +527,7 @@ func (m *QuerySigningHistoryRequest) Reset()         { *m = QuerySigningHistoryR
 func (m *QuerySigningHistoryRequest) String() string { return proto.CompactTextString(m) }
 func (*QuerySigningHistoryRequest) ProtoMessage()    {}
 func (*QuerySigningHistoryRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{6}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{10}
 }
 func (m *QuerySigningHistoryRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -374,7 +589,7 @@ func (m *QuerySigningHistoryResponse) Reset()         { *m = QuerySigningHistory
 func (m *QuerySigningHistoryResponse) String() string { return proto.CompactTextString(m) }
 func (*QuerySigningHistoryResponse) ProtoMessage()    {}
 func (*QuerySigningHistoryResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_b19bd0a6a108cf6a, []int{7}
+	return fileDescriptor_b19bd0a6a108cf6a, []int{11}
 }
 func (m *QuerySigningHistoryResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -418,6 +633,10 @@ func (m *QuerySigningHistoryResponse) GetPagination() *query.PageResponse {
 }
 
 func init() {
+	proto.RegisterType((*QueryBeaconKeyRequest)(nil), "inference.bls.QueryBeaconKeyRequest")
+	proto.RegisterType((*QueryBeaconKeyResponse)(nil), "inference.bls.QueryBeaconKeyResponse")
+	proto.RegisterType((*QueryPendingBeaconRequest)(nil), "inference.bls.QueryPendingBeaconRequest")
+	proto.RegisterType((*QueryPendingBeaconResponse)(nil), "inference.bls.QueryPendingBeaconResponse")
 	proto.RegisterType((*QueryParamsRequest)(nil), "inference.bls.QueryParamsRequest")
 	proto.RegisterType((*QueryParamsResponse)(nil), "inference.bls.QueryParamsResponse")
 	proto.RegisterType((*QueryEpochBLSDataRequest)(nil), "inference.bls.QueryEpochBLSDataRequest")
@@ -431,52 +650,68 @@ func init() {
 func init() { proto.RegisterFile("inference/bls/query.proto", fileDescriptor_b19bd0a6a108cf6a) }
 
 var fileDescriptor_b19bd0a6a108cf6a = []byte{
-	// 709 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x95, 0x4f, 0x4f, 0x13, 0x4f,
-	0x18, 0xc7, 0xbb, 0xc0, 0x8f, 0x9f, 0x8c, 0x50, 0x70, 0xc4, 0xa4, 0x2c, 0x5a, 0x71, 0x23, 0x50,
-	0x89, 0xee, 0x04, 0x08, 0x89, 0xca, 0x45, 0x1b, 0x41, 0x31, 0x26, 0x62, 0xd1, 0x98, 0x98, 0x98,
-	0x66, 0xba, 0x1d, 0xb6, 0x9b, 0xb4, 0x3b, 0xcb, 0xce, 0xd4, 0x48, 0x08, 0x17, 0x5f, 0x81, 0x89,
-	0x77, 0xaf, 0x7a, 0xf4, 0x1d, 0x78, 0xe5, 0x48, 0xe2, 0xc5, 0x78, 0x30, 0x06, 0x4c, 0xbc, 0xfb,
-	0x0a, 0xcc, 0xce, 0x3c, 0x6b, 0xbb, 0xeb, 0x5a, 0xea, 0xa5, 0x99, 0x3e, 0xf3, 0xfc, 0xf9, 0x3c,
-	0x4f, 0xbf, 0x4f, 0x07, 0x4d, 0x79, 0xfe, 0x36, 0x0b, 0x99, 0xef, 0x30, 0x52, 0x6b, 0x0a, 0xb2,
-	0xd3, 0x66, 0xe1, 0xae, 0x1d, 0x84, 0x5c, 0x72, 0x3c, 0xf6, 0xfb, 0xca, 0xae, 0x35, 0x85, 0x79,
-	0x86, 0xb6, 0x3c, 0x9f, 0x13, 0xf5, 0xa9, 0x3d, 0xcc, 0x49, 0x97, 0xbb, 0x5c, 0x1d, 0x49, 0x74,
-	0x02, 0xeb, 0x79, 0x97, 0x73, 0xb7, 0xc9, 0x08, 0x0d, 0x3c, 0x42, 0x7d, 0x9f, 0x4b, 0x2a, 0x3d,
-	0xee, 0x0b, 0xb8, 0x5d, 0x70, 0xb8, 0x68, 0x71, 0x41, 0x6a, 0x54, 0x30, 0x5d, 0x8e, 0xbc, 0x58,
-	0xac, 0x31, 0x49, 0x17, 0x49, 0x40, 0x5d, 0xcf, 0x57, 0xce, 0xe0, 0x6b, 0x26, 0xe1, 0x02, 0x1a,
-	0xd2, 0x56, 0x9c, 0x27, 0x05, 0x2e, 0x77, 0x03, 0x16, 0x5f, 0xcd, 0xa6, 0xae, 0x1a, 0x21, 0x13,
-	0x0d, 0xde, 0xac, 0x57, 0x85, 0xe7, 0xfa, 0x9e, 0xef, 0x6a, 0x37, 0x6b, 0x12, 0xe1, 0x47, 0x51,
-	0xfd, 0x4d, 0x95, 0xb6, 0xc2, 0x76, 0xda, 0x4c, 0x48, 0xeb, 0x21, 0x3a, 0x9b, 0xb0, 0x8a, 0x80,
-	0xfb, 0x82, 0xe1, 0xeb, 0x68, 0x58, 0x97, 0x2f, 0x18, 0x33, 0x46, 0xe9, 0xf4, 0xd2, 0x39, 0x3b,
-	0x31, 0x1d, 0x5b, 0xbb, 0x97, 0x47, 0x0e, 0xbe, 0x5e, 0xcc, 0xbd, 0xff, 0xf1, 0x61, 0xc1, 0xa8,
-	0x80, 0xbf, 0xb5, 0x82, 0x0a, 0x2a, 0xe1, 0x5a, 0xc0, 0x9d, 0x46, 0xf9, 0xc1, 0xd6, 0x1d, 0x2a,
-	0x29, 0x14, 0xc3, 0x53, 0xe8, 0x14, 0x8b, 0xcc, 0x55, 0xaf, 0xae, 0xf2, 0x0e, 0x55, 0xfe, 0x57,
-	0xdf, 0x37, 0xea, 0xd6, 0x73, 0x34, 0x95, 0x11, 0x06, 0x34, 0xb7, 0x10, 0xd2, 0x71, 0x75, 0x2a,
-	0x29, 0x10, 0x4d, 0xa7, 0x88, 0xba, 0x03, 0xcb, 0x43, 0x11, 0x57, 0x65, 0x44, 0x05, 0x45, 0x06,
-	0xeb, 0x26, 0xa4, 0xdf, 0xd2, 0x23, 0xd9, 0x92, 0x54, 0xb6, 0xe3, 0x19, 0xe0, 0x0b, 0x08, 0x85,
-	0xfa, 0x18, 0x83, 0x8d, 0x56, 0x46, 0xc0, 0xb2, 0x51, 0xb7, 0x04, 0x32, 0xb3, 0x62, 0x81, 0xed,
-	0x09, 0x1a, 0x87, 0x39, 0x57, 0x21, 0x04, 0x00, 0xe7, 0x52, 0x80, 0x8f, 0xe3, 0xdf, 0x05, 0xf2,
-	0x40, 0x75, 0x60, 0xcd, 0x8b, 0x84, 0xd5, 0xfa, 0x62, 0x24, 0xab, 0xde, 0xf3, 0x84, 0xe4, 0xe1,
-	0x6e, 0x8c, 0x5c, 0x42, 0x13, 0x4e, 0x3b, 0x0c, 0x99, 0x2f, 0xab, 0xa9, 0x89, 0xe6, 0xc1, 0xbe,
-	0xa6, 0x07, 0x8b, 0xef, 0xa3, 0x31, 0xa1, 0x88, 0xab, 0xdb, 0x5e, 0x53, 0xb2, 0xb0, 0x30, 0x30,
-	0x63, 0x94, 0xf2, 0x4b, 0xb3, 0x27, 0xd0, 0x41, 0x97, 0xa3, 0x3a, 0x76, 0x5d, 0x85, 0xe2, 0x75,
-	0x84, 0x3a, 0xa2, 0x2d, 0x0c, 0x42, 0x9b, 0x5a, 0xe1, 0x76, 0xa4, 0x70, 0x5b, 0x2f, 0x14, 0x28,
-	0xdc, 0xde, 0xa4, 0x2e, 0x03, 0xe2, 0x4a, 0x57, 0xa4, 0xf5, 0xd1, 0x40, 0xd3, 0x99, 0xcd, 0xc1,
-	0x4c, 0x9f, 0xa2, 0x89, 0xd4, 0x4c, 0x23, 0x1d, 0x0e, 0xfe, 0xf3, 0x50, 0xc7, 0x93, 0x43, 0x15,
-	0xf8, 0x6e, 0xa2, 0x81, 0x01, 0xd5, 0xc0, 0xfc, 0x89, 0x0d, 0x68, 0xaa, 0xee, 0x0e, 0x96, 0x7e,
-	0x0e, 0xa1, 0xff, 0x54, 0x07, 0x78, 0x1f, 0x0d, 0xeb, 0x65, 0xc0, 0x97, 0x52, 0x6c, 0x7f, 0x6e,
-	0x9b, 0x69, 0xf5, 0x72, 0xd1, 0x65, 0xac, 0xab, 0xaf, 0x3e, 0x7d, 0x7f, 0x33, 0x30, 0x87, 0x2f,
-	0x93, 0x20, 0xe4, 0xf5, 0xb6, 0x23, 0x85, 0xe3, 0xa9, 0xe5, 0xce, 0xfa, 0x77, 0xc0, 0x6f, 0x0d,
-	0x34, 0xda, 0x2d, 0x7d, 0x3c, 0x9f, 0x55, 0x22, 0x63, 0x19, 0xcd, 0xd2, 0xc9, 0x8e, 0x40, 0xb4,
-	0xaa, 0x88, 0x56, 0xf0, 0x72, 0x6f, 0xa2, 0xce, 0x8a, 0x92, 0xbd, 0x58, 0x94, 0xfb, 0xf8, 0x9d,
-	0x81, 0xc6, 0x12, 0x9a, 0xc2, 0x99, 0x85, 0xb3, 0x16, 0xd3, 0xbc, 0xd2, 0x87, 0x27, 0x30, 0xde,
-	0x56, 0x8c, 0xab, 0xf8, 0x46, 0x6f, 0xc6, 0x58, 0x56, 0x5a, 0xd6, 0x64, 0xaf, 0xb3, 0xf7, 0xfb,
-	0xd1, 0x28, 0xf3, 0x49, 0x41, 0xe2, 0x5e, 0x00, 0xc9, 0x8d, 0x34, 0x17, 0xfa, 0x71, 0x05, 0xd8,
-	0x15, 0x05, 0x4b, 0xf0, 0xb5, 0xfe, 0x60, 0x1b, 0x3a, 0xbc, 0xbc, 0x71, 0x70, 0x54, 0x34, 0x0e,
-	0x8f, 0x8a, 0xc6, 0xb7, 0xa3, 0xa2, 0xf1, 0xfa, 0xb8, 0x98, 0x3b, 0x3c, 0x2e, 0xe6, 0x3e, 0x1f,
-	0x17, 0x73, 0xcf, 0x88, 0xeb, 0xc9, 0x46, 0xbb, 0x66, 0x3b, 0xbc, 0xf5, 0xf7, 0x94, 0x2f, 0x3b,
-	0x2f, 0x47, 0x6d, 0x58, 0xbd, 0x09, 0xcb, 0xbf, 0x02, 0x00, 0x00, 0xff, 0xff, 0xc8, 0x08, 0xd8,
-	0x20, 0x10, 0x07, 0x00, 0x00,
+	// 969 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x94, 0x56, 0xcf, 0x6f, 0x1b, 0x45,
+	0x14, 0xce, 0xa6, 0xf9, 0xe5, 0xd7, 0x38, 0x2d, 0x43, 0x4a, 0x9d, 0x4d, 0x70, 0xc3, 0xd2, 0xa4,
+	0x26, 0x82, 0x5d, 0x92, 0x12, 0x04, 0xb4, 0x07, 0x6a, 0x48, 0x21, 0x80, 0x44, 0x71, 0x40, 0x48,
+	0x95, 0xd0, 0x6a, 0xbc, 0x3b, 0x5d, 0xaf, 0xe2, 0xec, 0x6c, 0x77, 0xc6, 0x15, 0x56, 0x94, 0x0b,
+	0x47, 0x4e, 0x48, 0xdc, 0x41, 0x42, 0x48, 0x70, 0xe4, 0x3f, 0xe0, 0xda, 0x63, 0x25, 0x2e, 0x88,
+	0x03, 0x42, 0x09, 0x12, 0xff, 0x06, 0xda, 0x99, 0xb7, 0xb6, 0x77, 0x59, 0xec, 0xf4, 0x62, 0x79,
+	0xe6, 0xbd, 0xef, 0x7d, 0xdf, 0x7b, 0xf3, 0xde, 0xcc, 0xc2, 0x4a, 0x18, 0x3d, 0x60, 0x09, 0x8b,
+	0x3c, 0xe6, 0xb4, 0xbb, 0xc2, 0x79, 0xd8, 0x63, 0x49, 0xdf, 0x8e, 0x13, 0x2e, 0x39, 0xa9, 0x0e,
+	0x4c, 0x76, 0xbb, 0x2b, 0xcc, 0x67, 0xe8, 0x51, 0x18, 0x71, 0x47, 0xfd, 0x6a, 0x0f, 0x73, 0x39,
+	0xe0, 0x01, 0x57, 0x7f, 0x9d, 0xf4, 0x1f, 0xee, 0xae, 0x05, 0x9c, 0x07, 0x5d, 0xe6, 0xd0, 0x38,
+	0x74, 0x68, 0x14, 0x71, 0x49, 0x65, 0xc8, 0x23, 0x81, 0xd6, 0x2d, 0x8f, 0x8b, 0x23, 0x2e, 0x9c,
+	0x36, 0x15, 0x4c, 0xd3, 0x39, 0x8f, 0xb6, 0xdb, 0x4c, 0xd2, 0x6d, 0x27, 0xa6, 0x41, 0x18, 0x29,
+	0x67, 0xf4, 0x35, 0xf3, 0xe2, 0x62, 0x9a, 0xd0, 0xa3, 0x2c, 0x4e, 0x41, 0xb8, 0xec, 0xc7, 0x2c,
+	0x33, 0x6d, 0x14, 0x4c, 0x9d, 0x84, 0x89, 0x0e, 0xef, 0xfa, 0xae, 0x08, 0x83, 0x28, 0x8c, 0x82,
+	0xf2, 0xe8, 0x6d, 0x46, 0xbd, 0x8c, 0xd9, 0xba, 0x0a, 0x57, 0x3e, 0x49, 0xb5, 0x35, 0xd5, 0xe6,
+	0x87, 0xac, 0xdf, 0x62, 0x0f, 0x7b, 0x4c, 0x48, 0xeb, 0xfb, 0x69, 0x78, 0xae, 0x68, 0x11, 0x31,
+	0x8f, 0x04, 0x23, 0xab, 0x50, 0x39, 0x64, 0x7d, 0x97, 0xc5, 0xdc, 0xeb, 0xd4, 0x8c, 0x75, 0xa3,
+	0x31, 0xd3, 0x5a, 0x38, 0x64, 0xfd, 0xbd, 0x74, 0x4d, 0xae, 0xc2, 0x7c, 0x6a, 0x14, 0x4c, 0xd6,
+	0xa6, 0xd7, 0x8d, 0xc6, 0x42, 0x6b, 0xee, 0x90, 0xf5, 0x0f, 0x98, 0x24, 0x7b, 0x50, 0xf1, 0x68,
+	0xe4, 0x87, 0x3e, 0x95, 0xac, 0x76, 0x61, 0xdd, 0x68, 0x5c, 0xdc, 0x79, 0xc1, 0xce, 0x55, 0xde,
+	0x1e, 0x50, 0xbd, 0x93, 0x39, 0x36, 0x67, 0x1e, 0xff, 0x79, 0x6d, 0xaa, 0x35, 0x44, 0x92, 0x17,
+	0xa1, 0xda, 0xa1, 0xc2, 0x1d, 0x86, 0x9a, 0x51, 0x2c, 0x8b, 0x1d, 0x2a, 0x06, 0x28, 0xb2, 0x07,
+	0x40, 0x3d, 0x19, 0x3e, 0x52, 0x35, 0xae, 0xcd, 0x2a, 0xb2, 0x6b, 0xa5, 0x64, 0x77, 0x06, 0x6e,
+	0x48, 0x35, 0x02, 0x24, 0x6b, 0x50, 0xc1, 0x15, 0xf3, 0x6b, 0x73, 0x8a, 0x67, 0xb8, 0x61, 0x6d,
+	0xc3, 0x8a, 0x2a, 0xd0, 0x3d, 0x16, 0xf9, 0x61, 0x14, 0xe8, 0x78, 0x58, 0x3e, 0xb2, 0x0c, 0xb3,
+	0x09, 0xef, 0x45, 0x3e, 0xd6, 0x47, 0x2f, 0xac, 0xfb, 0x60, 0x96, 0x41, 0xb0, 0xae, 0xb7, 0x61,
+	0x3e, 0xd6, 0x06, 0x85, 0xba, 0xb8, 0xb3, 0x56, 0x90, 0x9c, 0x83, 0xa1, 0xde, 0x0c, 0x62, 0x2d,
+	0x03, 0xd1, 0xb1, 0x55, 0xf3, 0x64, 0xc7, 0xf8, 0x31, 0x3c, 0x9b, 0xdb, 0x45, 0xaa, 0x37, 0x60,
+	0x4e, 0x37, 0x19, 0x32, 0x5d, 0x29, 0x32, 0x29, 0x63, 0xb3, 0x92, 0x52, 0xfc, 0xfc, 0xcf, 0x2f,
+	0x5b, 0x46, 0x0b, 0xfd, 0xad, 0x5d, 0xa8, 0xa9, 0x80, 0xea, 0xb4, 0x9b, 0x1f, 0x1d, 0xbc, 0x4b,
+	0x25, 0xcd, 0x92, 0x5e, 0x81, 0x05, 0xd5, 0x14, 0x6e, 0x98, 0xe5, 0x3d, 0xaf, 0xd6, 0xfb, 0xbe,
+	0xf5, 0x05, 0x16, 0x2b, 0x0f, 0x43, 0x35, 0x6f, 0x03, 0x68, 0x9c, 0x4f, 0x25, 0x45, 0x45, 0xab,
+	0x05, 0x45, 0xa3, 0xc0, 0xac, 0x2b, 0x14, 0x28, 0xdd, 0xb0, 0xde, 0xc2, 0xf0, 0x07, 0xba, 0xf1,
+	0x0f, 0x24, 0x95, 0xbd, 0xac, 0x06, 0xe4, 0x79, 0x80, 0x44, 0xff, 0xcd, 0x84, 0x2d, 0xb6, 0x2a,
+	0xb8, 0xb3, 0xef, 0x5b, 0x02, 0x0f, 0xa5, 0x80, 0x45, 0x6d, 0x9f, 0xc1, 0x25, 0x9c, 0x26, 0x17,
+	0x21, 0x28, 0x70, 0xb3, 0x20, 0xf0, 0xd3, 0x6c, 0xfa, 0x30, 0x0e, 0xb2, 0xa3, 0xd6, 0x25, 0x91,
+	0xdb, 0xb5, 0xfe, 0x30, 0xf2, 0xac, 0xef, 0x87, 0x42, 0xf2, 0x24, 0x9b, 0x3e, 0xd2, 0x80, 0xcb,
+	0x5e, 0x2f, 0x49, 0x58, 0x24, 0xdd, 0x42, 0x45, 0x97, 0x70, 0x7f, 0x4f, 0x17, 0x96, 0x7c, 0x00,
+	0x55, 0xa1, 0x14, 0xbb, 0x0f, 0xc2, 0xae, 0x64, 0x89, 0x9a, 0xba, 0xa5, 0x9d, 0x8d, 0x09, 0xea,
+	0x30, 0xcb, 0x45, 0x8d, 0xbd, 0xab, 0xa0, 0xe4, 0x2e, 0xc0, 0xf0, 0x6a, 0xc2, 0x19, 0xdd, 0xb4,
+	0xf5, 0x3d, 0x66, 0xa7, 0xf7, 0x98, 0xad, 0xaf, 0x4d, 0xbc, 0xc7, 0xec, 0x7b, 0x34, 0x60, 0xa8,
+	0xb8, 0x35, 0x82, 0xb4, 0x7e, 0x35, 0x60, 0xb5, 0x34, 0x39, 0xac, 0xe9, 0xe7, 0x70, 0xb9, 0x50,
+	0xd3, 0xb4, 0x0f, 0x2f, 0x3c, 0x75, 0x51, 0x2f, 0xe5, 0x8b, 0x2a, 0xc8, 0x7b, 0xb9, 0x04, 0xa6,
+	0x55, 0x02, 0x37, 0x26, 0x26, 0xa0, 0x55, 0x8d, 0x66, 0xb0, 0xf3, 0xe3, 0x3c, 0xcc, 0xaa, 0x0c,
+	0xc8, 0x09, 0xcc, 0xe9, 0x61, 0x20, 0xc5, 0xdb, 0xea, 0xbf, 0xd3, 0x66, 0x5a, 0xe3, 0x5c, 0x34,
+	0x8d, 0xf5, 0xf2, 0x57, 0xbf, 0xfd, 0xfd, 0xed, 0xf4, 0x26, 0xb9, 0xee, 0xc4, 0x09, 0xf7, 0x7b,
+	0x9e, 0x14, 0x5e, 0xa8, 0xee, 0xe6, 0xb2, 0x37, 0x80, 0x7c, 0x67, 0xc0, 0xe2, 0x68, 0xeb, 0x93,
+	0x1b, 0x65, 0x14, 0x25, 0xc3, 0x68, 0x36, 0x26, 0x3b, 0xa2, 0xa2, 0x5b, 0x4a, 0xd1, 0x2e, 0xb9,
+	0x39, 0x5e, 0xd1, 0x70, 0x44, 0x9d, 0xe3, 0xac, 0x29, 0x4f, 0xc8, 0x4f, 0x06, 0x54, 0x73, 0x3d,
+	0x45, 0x4a, 0x89, 0xcb, 0x06, 0xd3, 0x7c, 0xe9, 0x1c, 0x9e, 0xa8, 0xf1, 0x8e, 0xd2, 0x78, 0x8b,
+	0xbc, 0x39, 0x5e, 0x63, 0xd6, 0x56, 0xba, 0xad, 0x9d, 0xe3, 0xe1, 0xdc, 0x9f, 0xa4, 0xa5, 0x5c,
+	0xca, 0x37, 0x24, 0x19, 0x27, 0x20, 0x3f, 0x91, 0xe6, 0xd6, 0x79, 0x5c, 0x51, 0xec, 0xae, 0x12,
+	0xeb, 0x90, 0x57, 0xce, 0x27, 0xb6, 0x83, 0x6a, 0xbe, 0x36, 0xa0, 0x32, 0x78, 0x02, 0xc9, 0xf5,
+	0x32, 0xc2, 0xe2, 0x33, 0x6d, 0x6e, 0x4c, 0xf0, 0x42, 0x45, 0xaf, 0x2a, 0x45, 0x5b, 0xa4, 0x31,
+	0x5e, 0x91, 0xfe, 0x34, 0x70, 0x0f, 0x59, 0x9f, 0xfc, 0x60, 0x40, 0x35, 0xf7, 0xde, 0x94, 0x9f,
+	0x6b, 0xd9, 0xe3, 0x57, 0x7e, 0xae, 0xa5, 0x6f, 0x9e, 0x75, 0x5b, 0x09, 0x7b, 0x9d, 0xbc, 0x36,
+	0x61, 0x1a, 0x34, 0xd8, 0xd5, 0x02, 0x9d, 0x63, 0xf5, 0x9c, 0x9e, 0x34, 0xf7, 0x1f, 0x9f, 0xd6,
+	0x8d, 0x27, 0xa7, 0x75, 0xe3, 0xaf, 0xd3, 0xba, 0xf1, 0xcd, 0x59, 0x7d, 0xea, 0xc9, 0x59, 0x7d,
+	0xea, 0xf7, 0xb3, 0xfa, 0xd4, 0x7d, 0x27, 0x08, 0x65, 0xa7, 0xd7, 0xb6, 0x3d, 0x7e, 0xf4, 0xff,
+	0x91, 0xbf, 0x1c, 0x7e, 0x51, 0xb5, 0xe7, 0xd4, 0xf7, 0xd0, 0xcd, 0x7f, 0x03, 0x00, 0x00, 0xff,
+	0xff, 0xb9, 0xca, 0x7e, 0xe3, 0x28, 0x0a, 0x00, 0x00,
 }
 
 // Reference imports to suppress errors if they are not otherwise used.
@@ -499,6 +734,10 @@ type QueryClient interface {
 	SigningStatus(ctx context.Context, in *QuerySigningStatusRequest, opts ...grpc.CallOption) (*QuerySigningStatusResponse, error)
 	// SigningHistory queries threshold signing requests with filtering and pagination
 	SigningHistory(ctx context.Context, in *QuerySigningHistoryRequest, opts ...grpc.CallOption) (*QuerySigningHistoryResponse, error)
+	// BeaconKey queries the block beacon key state (rule R9) and activation.
+	BeaconKey(ctx context.Context, in *QueryBeaconKeyRequest, opts ...grpc.CallOption) (*QueryBeaconKeyResponse, error)
+	// PendingBeacon queries the message validators sign for a round.
+	PendingBeacon(ctx context.Context, in *QueryPendingBeaconRequest, opts ...grpc.CallOption) (*QueryPendingBeaconResponse, error)
 }
 
 type queryClient struct {
@@ -545,6 +784,24 @@ func (c *queryClient) SigningHistory(ctx context.Context, in *QuerySigningHistor
 	return out, nil
 }
 
+func (c *queryClient) BeaconKey(ctx context.Context, in *QueryBeaconKeyRequest, opts ...grpc.CallOption) (*QueryBeaconKeyResponse, error) {
+	out := new(QueryBeaconKeyResponse)
+	err := c.cc.Invoke(ctx, "/inference.bls.Query/BeaconKey", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) PendingBeacon(ctx context.Context, in *QueryPendingBeaconRequest, opts ...grpc.CallOption) (*QueryPendingBeaconResponse, error) {
+	out := new(QueryPendingBeaconResponse)
+	err := c.cc.Invoke(ctx, "/inference.bls.Query/PendingBeacon", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 type QueryServer interface {
 	// Parameters queries the parameters of the module.
@@ -555,6 +812,10 @@ type QueryServer interface {
 	SigningStatus(context.Context, *QuerySigningStatusRequest) (*QuerySigningStatusResponse, error)
 	// SigningHistory queries threshold signing requests with filtering and pagination
 	SigningHistory(context.Context, *QuerySigningHistoryRequest) (*QuerySigningHistoryResponse, error)
+	// BeaconKey queries the block beacon key state (rule R9) and activation.
+	BeaconKey(context.Context, *QueryBeaconKeyRequest) (*QueryBeaconKeyResponse, error)
+	// PendingBeacon queries the message validators sign for a round.
+	PendingBeacon(context.Context, *QueryPendingBeaconRequest) (*QueryPendingBeaconResponse, error)
 }
 
 // UnimplementedQueryServer can be embedded to have forward compatible implementations.
@@ -572,6 +833,12 @@ func (*UnimplementedQueryServer) SigningStatus(ctx context.Context, req *QuerySi
 }
 func (*UnimplementedQueryServer) SigningHistory(ctx context.Context, req *QuerySigningHistoryRequest) (*QuerySigningHistoryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SigningHistory not implemented")
+}
+func (*UnimplementedQueryServer) BeaconKey(ctx context.Context, req *QueryBeaconKeyRequest) (*QueryBeaconKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeaconKey not implemented")
+}
+func (*UnimplementedQueryServer) PendingBeacon(ctx context.Context, req *QueryPendingBeaconRequest) (*QueryPendingBeaconResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PendingBeacon not implemented")
 }
 
 func RegisterQueryServer(s grpc1.Server, srv QueryServer) {
@@ -650,6 +917,42 @@ func _Query_SigningHistory_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_BeaconKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryBeaconKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BeaconKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.bls.Query/BeaconKey",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BeaconKey(ctx, req.(*QueryBeaconKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_PendingBeacon_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPendingBeaconRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PendingBeacon(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inference.bls.Query/PendingBeacon",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PendingBeacon(ctx, req.(*QueryPendingBeaconRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var Query_serviceDesc = _Query_serviceDesc
 var _Query_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inference.bls.Query",
@@ -671,9 +974,179 @@ var _Query_serviceDesc = grpc.ServiceDesc{
 			MethodName: "SigningHistory",
 			Handler:    _Query_SigningHistory_Handler,
 		},
+		{
+			MethodName: "BeaconKey",
+			Handler:    _Query_BeaconKey_Handler,
+		},
+		{
+			MethodName: "PendingBeacon",
+			Handler:    _Query_PendingBeacon_Handler,
+		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "inference/bls/query.proto",
+}
+
+func (m *QueryBeaconKeyRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryBeaconKeyRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryBeaconKeyRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	return len(dAtA) - i, nil
+}
+
+func (m *QueryBeaconKeyResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryBeaconKeyResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryBeaconKeyResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Activated {
+		i--
+		if m.Activated {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x30
+	}
+	{
+		size, err := m.Activation.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintQuery(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x2a
+	if m.HasCandidate {
+		i--
+		if m.HasCandidate {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x20
+	}
+	{
+		size, err := m.Candidate.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintQuery(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0x1a
+	if m.KeySet {
+		i--
+		if m.KeySet {
+			dAtA[i] = 1
+		} else {
+			dAtA[i] = 0
+		}
+		i--
+		dAtA[i] = 0x10
+	}
+	if m.KeyEpoch != 0 {
+		i = encodeVarintQuery(dAtA, i, uint64(m.KeyEpoch))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *QueryPendingBeaconRequest) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryPendingBeaconRequest) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryPendingBeaconRequest) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Round != 0 {
+		i = encodeVarintQuery(dAtA, i, uint64(m.Round))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *QueryPendingBeaconResponse) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *QueryPendingBeaconResponse) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *QueryPendingBeaconResponse) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	{
+		size, err := m.Pending.MarshalToSizedBuffer(dAtA[:i])
+		if err != nil {
+			return 0, err
+		}
+		i -= size
+		i = encodeVarintQuery(dAtA, i, uint64(size))
+	}
+	i--
+	dAtA[i] = 0xa
+	return len(dAtA) - i, nil
 }
 
 func (m *QueryParamsRequest) Marshal() (dAtA []byte, err error) {
@@ -961,6 +1434,63 @@ func encodeVarintQuery(dAtA []byte, offset int, v uint64) int {
 	dAtA[offset] = uint8(v)
 	return base
 }
+func (m *QueryBeaconKeyRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	return n
+}
+
+func (m *QueryBeaconKeyResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.KeyEpoch != 0 {
+		n += 1 + sovQuery(uint64(m.KeyEpoch))
+	}
+	if m.KeySet {
+		n += 2
+	}
+	l = m.Candidate.Size()
+	n += 1 + l + sovQuery(uint64(l))
+	if m.HasCandidate {
+		n += 2
+	}
+	l = m.Activation.Size()
+	n += 1 + l + sovQuery(uint64(l))
+	if m.Activated {
+		n += 2
+	}
+	return n
+}
+
+func (m *QueryPendingBeaconRequest) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.Round != 0 {
+		n += 1 + sovQuery(uint64(m.Round))
+	}
+	return n
+}
+
+func (m *QueryPendingBeaconResponse) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = m.Pending.Size()
+	n += 1 + l + sovQuery(uint64(l))
+	return n
+}
+
 func (m *QueryParamsRequest) Size() (n int) {
 	if m == nil {
 		return 0
@@ -1071,6 +1601,403 @@ func sovQuery(x uint64) (n int) {
 }
 func sozQuery(x uint64) (n int) {
 	return sovQuery(uint64((x << 1) ^ uint64((int64(x) >> 63))))
+}
+func (m *QueryBeaconKeyRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryBeaconKeyRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryBeaconKeyRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryBeaconKeyResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryBeaconKeyResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryBeaconKeyResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeyEpoch", wireType)
+			}
+			m.KeyEpoch = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.KeyEpoch |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field KeySet", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.KeySet = bool(v != 0)
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Candidate", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthQuery
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Candidate.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 4:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field HasCandidate", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.HasCandidate = bool(v != 0)
+		case 5:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Activation", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthQuery
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Activation.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 6:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Activated", wireType)
+			}
+			var v int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				v |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			m.Activated = bool(v != 0)
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryPendingBeaconRequest) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryPendingBeaconRequest: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryPendingBeaconRequest: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Round", wireType)
+			}
+			m.Round = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.Round |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *QueryPendingBeaconResponse) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowQuery
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: QueryPendingBeaconResponse: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: QueryPendingBeaconResponse: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Pending", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowQuery
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthQuery
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if err := m.Pending.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipQuery(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthQuery
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
 }
 func (m *QueryParamsRequest) Unmarshal(dAtA []byte) error {
 	l := len(dAtA)

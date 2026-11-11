@@ -312,21 +312,85 @@ func TestStoreVerificationResultExports(t *testing.T) {
 	require.NotNil(t, bm.GetVerificationResult(5))
 }
 
-func TestExportPrunesOldEpochs(t *testing.T) {
-	fx := newExportFixture(t, 8, 2)
-	bm, dir := newTestManager(t, &fakeChain{})
-	for _, e := range []uint64{2, 3, 4, 5} {
-		_, err := bm.exportBeaconShares(fx.result(e, 0, 3))
-		require.NoError(t, err)
-	}
+func shareFileNames(t *testing.T, dir string) []string {
+	t.Helper()
 	var names []string
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
 	for _, e := range entries {
 		names = append(names, e.Name())
 	}
-	// Exporting epoch 5 keeps 3 and up (current-1 when 5 is the next epoch).
-	require.ElementsMatch(t, []string{"epoch-3.json", "epoch-4.json", "epoch-5.json"}, names)
+	return names
+}
+
+// Export never prunes: after failed DKGs the active beacon key can be older
+// than any fixed window behind the exported epoch (rule R9). Reconcile prunes.
+func TestExportDoesNotPrune(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	bm, dir := newTestManager(t, &fakeChain{})
+	for _, e := range []uint64{2, 3, 4, 5} {
+		_, err := bm.exportBeaconShares(fx.result(e, 0, 3))
+		require.NoError(t, err)
+	}
+	require.ElementsMatch(t, []string{"epoch-2.json", "epoch-3.json", "epoch-4.json", "epoch-5.json"}, shareFileNames(t, dir))
+}
+
+// R9: reconcile keeps and repairs the active beacon key epoch's file even when
+// it is older than current-1 (two DKGs failed after it), and covers the key
+// candidate; pruning keeps everything from the oldest of them.
+func TestReconcileCoversBeaconKeyAndCandidate(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	chain := &fakeChain{}
+	chain.current.Store(8)
+	bm, dir := newTestManager(t, chain)
+	key := beaconKeyState{keyEpoch: 5, keySet: true, candidate: 9, hasCandidate: true}
+	bm.beacon.deps.beaconKey = func(context.Context) (beaconKeyState, error) { return key, nil }
+	// The result cache holds a few epochs only; older ones are recovered from chain.
+	chain.recoverFn = func(e uint64) (*VerificationResult, error) {
+		r := fx.result(e, 0, 3)
+		bm.cache.Store(r)
+		return r, nil
+	}
+	for _, e := range []uint64{3, 4, 5, 6, 7, 8, 9} {
+		bm.cache.Store(fx.result(e, 0, 3))
+		if e <= 7 {
+			_, err := bm.exportBeaconShares(fx.result(e, 0, 3))
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, os.Remove(filepath.Join(dir, "epoch-5.json"))) // the active key's file is gone
+
+	bm.reconcileBeaconShares(context.Background())
+	require.ElementsMatch(t,
+		[]string{"epoch-5.json", "epoch-6.json", "epoch-7.json", "epoch-8.json", "epoch-9.json"},
+		shareFileNames(t, dir),
+		"key 5 rewritten and kept, candidate 9 and current/next written, < 5 pruned")
+
+	// Once the key moves on, older files go.
+	key = beaconKeyState{keyEpoch: 9, keySet: true}
+	chain.current.Store(9)
+	bm.cache.Store(fx.result(10, 0, 3))
+	bm.reconcileBeaconShares(context.Background())
+	require.ElementsMatch(t, []string{"epoch-8.json", "epoch-9.json", "epoch-10.json"}, shareFileNames(t, dir))
+}
+
+// Before the Step 3 upgrade the beacon key query does not exist: reconcile
+// covers the current and next epoch and prunes below current-1, as before.
+func TestReconcileWithoutBeaconKeyQuery(t *testing.T) {
+	fx := newExportFixture(t, 8, 2)
+	chain := &fakeChain{}
+	chain.current.Store(6)
+	bm, dir := newTestManager(t, chain)
+	bm.beacon.deps.beaconKey = func(context.Context) (beaconKeyState, error) {
+		return beaconKeyState{}, status.Error(codes.Unimplemented, "unknown method BeaconKey")
+	}
+	for _, e := range []uint64{3, 4, 5, 6, 7} {
+		bm.cache.Store(fx.result(e, 0, 3))
+		_, err := bm.exportBeaconShares(fx.result(e, 0, 3))
+		require.NoError(t, err)
+	}
+	bm.reconcileBeaconShares(context.Background())
+	require.ElementsMatch(t, []string{"epoch-5.json", "epoch-6.json", "epoch-7.json"}, shareFileNames(t, dir))
 }
 
 func TestReconcileReexportsMissingFileFromCache(t *testing.T) {

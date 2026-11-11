@@ -28,6 +28,15 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 	k.SetAllEpochBLSData(ctx, genState.BlsDataList)
 	k.SetAllThresholdSigningRequests(ctx, genState.SigningRequests)
 	k.SetAllGroupKeyValidationStates(ctx, genState.GroupValidationStates)
+
+	// Block beacon: a chain started from genesis runs the current binary from
+	// its first block, so the beacon is live from the start (ext_from = 0).
+	// The key is seeded from the newest completed DKG among the imported epochs.
+	epochs := make([]uint64, 0, len(genState.BlsDataList))
+	for _, d := range genState.BlsDataList {
+		epochs = append(epochs, d.EpochId)
+	}
+	k.ActivateBeacon(ctx, 0, epochs)
 }
 
 // ExportGenesis returns the module's exported genesis.

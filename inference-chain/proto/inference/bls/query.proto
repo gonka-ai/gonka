@@ -8,6 +8,7 @@ import "cosmos/base/query/v1beta1/pagination.proto";
 import "inference/bls/params.proto";
 import "inference/bls/types.proto";
 import "inference/bls/threshold_signing.proto";
+import "inference/bls/beacon.proto";
 
 option go_package = "github.com/productscience/inference/x/bls/types";
 
@@ -32,6 +33,42 @@ service Query {
   rpc SigningHistory(QuerySigningHistoryRequest) returns (QuerySigningHistoryResponse) {
     option (google.api.http).get = "/productscience/inference/bls/signing_history";
   }
+
+  // BeaconKey queries the block beacon key state (rule R9) and activation.
+  rpc BeaconKey(QueryBeaconKeyRequest) returns (QueryBeaconKeyResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/beacon_key";
+  }
+
+  // PendingBeacon queries the message validators sign for a round.
+  rpc PendingBeacon(QueryPendingBeaconRequest) returns (QueryPendingBeaconResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/pending_beacon/{round}";
+  }
+}
+
+// QueryBeaconKeyRequest is request type for the Query/BeaconKey RPC method.
+message QueryBeaconKeyRequest {}
+
+// QueryBeaconKeyResponse is response type for the Query/BeaconKey RPC method.
+message QueryBeaconKeyResponse {
+  // key_epoch is the BLS epoch signing beacon rounds; valid only if key_set.
+  uint64 key_epoch = 1;
+  bool key_set = 2;
+  // candidate is a completed DKG waiting for its from_round; valid only if has_candidate.
+  BeaconKeyCandidate candidate = 3 [(gogoproto.nullable) = false];
+  bool has_candidate = 4;
+  // activation is set once the beacon is live (upgrade or genesis).
+  BeaconActivation activation = 5 [(gogoproto.nullable) = false];
+  bool activated = 6;
+}
+
+// QueryPendingBeaconRequest is request type for the Query/PendingBeacon RPC method.
+message QueryPendingBeaconRequest {
+  uint64 round = 1;
+}
+
+// QueryPendingBeaconResponse is response type for the Query/PendingBeacon RPC method.
+message QueryPendingBeaconResponse {
+  PendingBeacon pending = 1 [(gogoproto.nullable) = false];
 }
 
 // QueryParamsRequest is request type for the Query/Params RPC method.

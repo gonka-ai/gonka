@@ -80,3 +80,33 @@ func TestGenesis(t *testing.T) {
 
 	// this line is used by starport scaffolding # genesis/test/assert
 }
+
+// A chain started from genesis runs the beacon from its first block and keys
+// it with the newest completed DKG among the imported epochs.
+func TestGenesisActivatesBlockBeacon(t *testing.T) {
+	k, ctx := keepertest.BlsKeeper(t)
+	gs := types.GenesisState{
+		Params: types.DefaultParams(),
+		BlsDataList: []types.EpochBLSData{
+			{EpochId: 3, ITotalSlots: 10, DkgPhase: types.DKGPhase_DKG_PHASE_SIGNED},
+			{EpochId: 4, ITotalSlots: 10, DkgPhase: types.DKGPhase_DKG_PHASE_COMPLETED},
+			{EpochId: 5, ITotalSlots: 10, DkgPhase: types.DKGPhase_DKG_PHASE_DEALING},
+		},
+	}
+	bls.InitGenesis(ctx, k, gs)
+
+	a, ok := k.GetBeaconActivation(ctx)
+	require.True(t, ok)
+	require.Zero(t, a.ExtFrom)
+	key, ok := k.GetBeaconKeyEpoch(ctx)
+	require.True(t, ok)
+	require.Equal(t, uint64(4), key)
+
+	// Empty genesis: live, no key until the first DKG completes.
+	k2, ctx2 := keepertest.BlsKeeper(t)
+	bls.InitGenesis(ctx2, k2, *types.DefaultGenesis())
+	_, ok = k2.GetBeaconActivation(ctx2)
+	require.True(t, ok)
+	_, ok = k2.GetBeaconKeyEpoch(ctx2)
+	require.False(t, ok)
+}

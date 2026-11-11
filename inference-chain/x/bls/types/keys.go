@@ -32,6 +32,14 @@ var (
 	// in mind if renaming either prefix.
 	GroupValidationPartialSigPrefix = []byte("bls_partial_sig/")
 	CompletedPostProcessRetryPrefix = []byte("completed_post_process_retry")
+
+	// Block beacon (Step 3). Raw keys in the module store; none of the
+	// prefixes above starts with "beacon_".
+	BeaconActivationKey   = []byte("beacon_activation")
+	BeaconKeyEpochKey     = []byte("beacon_key_epoch")
+	BeaconKeyCandidateKey = []byte("beacon_key_candidate")
+	BeaconPendingPrefix   = []byte("beacon_pending/")
+	BeaconSlotOwnerPrefix = []byte("beacon_slot_owner/")
 )
 
 func KeyPrefix(p string) []byte {
@@ -276,4 +284,25 @@ func CompletedPostProcessRetryKey(requestID []byte) []byte {
 	copy(key, CompletedPostProcessRetryPrefix)
 	copy(key[len(CompletedPostProcessRetryPrefix):], requestID)
 	return key
+}
+
+// BeaconPendingKey is the key of PendingBeacon(round).
+func BeaconPendingKey(round uint64) []byte {
+	key := make([]byte, len(BeaconPendingPrefix)+8)
+	copy(key, BeaconPendingPrefix)
+	binary.BigEndian.PutUint64(key[len(BeaconPendingPrefix):], round)
+	return key
+}
+
+// BeaconSlotOwnerEpochPrefix prefixes every slot owner of one key epoch.
+func BeaconSlotOwnerEpochPrefix(epoch uint64) []byte {
+	key := make([]byte, len(BeaconSlotOwnerPrefix)+8)
+	copy(key, BeaconSlotOwnerPrefix)
+	binary.BigEndian.PutUint64(key[len(BeaconSlotOwnerPrefix):], epoch)
+	return key
+}
+
+// BeaconSlotOwnerKey is the key of a participant account's slot range in a key epoch.
+func BeaconSlotOwnerKey(epoch uint64, account []byte) []byte {
+	return append(BeaconSlotOwnerEpochPrefix(epoch), account...)
 }

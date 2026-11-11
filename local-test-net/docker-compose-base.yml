@@ -14,6 +14,9 @@ services:
       - SNAPSHOT_KEEP_RECENT=5
       - DEBUG=false
       - IS_TEST_NET=true
+      # CometBFT + app metrics on :26660 inside the container (block beacon
+      # e2e reads beacon_* metrics there); same default as deploy/join.
+      - CONFIG_instrumentation__prometheus=${NODE_INSTRUMENTATION_PROMETHEUS:-true}
     ports:
       - "${RPC_PORT:-26657}:26657"  # RPC
       - "${P2P_PORT:-26656}:26656"  # P2P

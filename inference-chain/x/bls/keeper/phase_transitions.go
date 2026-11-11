@@ -275,6 +275,9 @@ func (k Keeper) finalizeDisputingPhase(ctx sdk.Context, epochBLSData *types.Epoc
 
 	k.ClearActiveEpochID(ctx)
 
+	// Block beacon (rule R9): the new key signs beacon rounds after a delay.
+	k.onDKGCompleted(ctx, epochBLSData.EpochId)
+
 	if err := ctx.EventManager().EmitTypedEvent(&types.EventGroupPublicKeyGenerated{
 		EpochId:        epochBLSData.EpochId,
 		GroupPublicKey: groupPublicKey,

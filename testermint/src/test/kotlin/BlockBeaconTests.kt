@@ -2,6 +2,7 @@ import com.productscience.ApplicationConfig
 import com.productscience.EpochStage
 import com.productscience.LocalCluster
 import com.productscience.LocalInferencePair
+import org.tinylog.kotlin.Logger
 import com.productscience.createSpec
 import com.productscience.inferenceConfig
 import com.productscience.logSection
@@ -19,7 +20,9 @@ import java.util.concurrent.TimeUnit
  *  - Step 1: CometBFT vote extensions enabled with empty extensions.
  *  - Step 2: the share bridge. After DKG the dAPI exports each validator's BLS slot shares to
  *    /root/.inference/bls-beacon/epoch-<N>.json and the node verifies them against committed
- *    state (log `beacon shares loaded ... valid=true`); extensions stay empty.
+ *    state (log `beacon shares loaded ... valid=true`).
+ *  - Step 3: real extensions. Once a DKG completes and becomes the beacon key (rule R9), every
+ *    validator signs PendingBeacon(h) with its slots in ExtendVote (metrics on :26660).
  *
  * Env:
  *  - TESTERMINT_TMKMS_IMAGE: vote-extension-capable tmkms image (tmkms 0.14.0 with
@@ -327,7 +330,122 @@ class BlockBeaconTests : TestermintTest() {
         assertNoConsensusFailure(cluster.allPairs)
     }
 
+    @Test
+    @Tag("block-beacon")
+    @Tag("real-extensions")
+    fun `real extensions after dkg`() {
+        val cluster = setupLocalCluster(2, shareConfig, reboot = true)
+        cluster.allPairs.forEach { it.waitForFirstBlock() }
+
+        logSection("Before a beacon key exists: empty extensions, nothing rejected")
+        cluster.genesis.node.waitForMinimumBlock(enableHeight + 5, "a few blocks with vote extensions on")
+        val early = nodeMetrics(cluster.genesis)
+        assertThat(metric(early, "beacon_extend_vote_empty_total", "reason" to "no_pending") +
+            metric(early, "beacon_extend_vote_empty_total", "reason" to "no_shares"))
+            .describedAs("genesis empty extensions before the key").isGreaterThan(0.0)
+
+        logSection("Wait for a beacon key held by all validators and their shares")
+        val keyEpoch = waitForBeaconKeyOverAllValidators(cluster)
+        val ranges = cluster.allPairs.associateWith { pair ->
+            val f = assertShareFile(pair, keyEpoch)
+            f.slotEnd - f.slotStart + 1
+        }
+        cluster.allPairs.forEach { waitForSharesLoaded(it, keyEpoch, minCount = 1) }
+        val keyedFrom = cluster.genesis.getCurrentBlockHeight()
+        cluster.genesis.node.waitForMinimumBlock(keyedFrom + 20, "20 blocks of partials")
+
+        logSection("Every validator signs its full slot range; nobody rejects")
+        val pending = queryPendingBeacon(cluster.genesis, cluster.genesis.getCurrentBlockHeight())
+        assertThat(pending?.keyEpoch).describedAs("pending beacon key epoch").isEqualTo(keyEpoch)
+        cluster.allPairs.forEach { pair ->
+            val m = nodeMetrics(pair)
+            assertThat(metric(m, "beacon_extend_vote_slots")).describedAs("${pair.name} slots signed")
+                .isEqualTo(ranges.getValue(pair).toDouble())
+            assertThat(metric(m, "beacon_extend_vote_signed_total")).describedAs("${pair.name} extensions signed")
+                .isGreaterThanOrEqualTo(15.0)
+            assertThat(rejects(m)).describedAs("${pair.name} rejected extensions").isEqualTo(0.0)
+            assertThat(metric(m, "beacon_verify_vote_ext_total", "result" to "accept", "reason" to "within_cap"))
+                .describedAs("${pair.name} accepted non-empty extensions from peers").isGreaterThan(0.0)
+            val p99ok = histogramShareBelow(m, "beacon_extend_vote_duration_seconds", "0.05")
+            assertThat(p99ok).describedAs("${pair.name} share of ExtendVote calls under 50 ms").isGreaterThanOrEqualTo(0.99)
+        }
+
+        logSection("Block time with partials vs empty extensions")
+        val before = meanBlockInterval(cluster.genesis, enableHeight + 2, minOf(enableHeight + 22, keyedFrom - 1))
+        val tip = cluster.genesis.getCurrentBlockHeight()
+        val after = meanBlockInterval(cluster.genesis, tip - 20, tip)
+        Logger.info("Mean block interval: empty extensions ${before}s, with partials ${after}s")
+        assertThat(after).describedAs("mean block interval with partials (empty-extension baseline ${before}s)")
+            .isLessThanOrEqualTo(before * 1.25 + 0.5)
+
+        assertNoConsensusFailure(cluster.allPairs)
+    }
+
     // --- helpers ------------------------------------------------------------
+
+    // --- Step 3 helpers ---------------------------------------------------------
+
+    private data class BeaconKeyResponse(val keyEpoch: Long? = null, val keySet: Boolean? = null, val activated: Boolean? = null)
+    private data class PendingBeacon(val round: Long? = null, val keyEpoch: Long? = null, val iTotalSlots: Long? = null)
+    private data class PendingBeaconResponse(val pending: PendingBeacon? = null)
+
+    private fun queryBeaconKey(pair: LocalInferencePair): BeaconKeyResponse =
+        pair.node.execAndParse<BeaconKeyResponse>(listOf("query", "bls", "beacon-key"))
+
+    private fun queryPendingBeacon(pair: LocalInferencePair, round: Long): PendingBeacon? =
+        runCatching { pair.node.execAndParse<PendingBeaconResponse>(listOf("query", "bls", "pending-beacon", round.toString())).pending }.getOrNull()
+
+    /** The first beacon key epoch whose DKG includes every validator as a participant. */
+    private fun waitForBeaconKeyOverAllValidators(cluster: LocalCluster, maxBlocks: Int = 400): Long {
+        val genesis = cluster.genesis
+        repeat(maxBlocks) {
+            val key = runCatching { queryBeaconKey(genesis) }.getOrNull()
+            if (key?.keySet == true && key.keyEpoch != null) {
+                val data = runCatching { genesis.node.queryBLSEpochData(key.keyEpoch).epochData }.getOrNull()
+                if (data != null && data.participants.size >= cluster.allPairs.size) return key.keyEpoch
+            }
+            genesis.node.waitForNextBlock(1)
+        }
+        error("no beacon key over all ${cluster.allPairs.size} validators within $maxBlocks blocks")
+    }
+
+    /** Prometheus text from the node's :26660, as series (name{labels}) -> value. */
+    private fun nodeMetrics(pair: LocalInferencePair): Map<String, Double> {
+        val text = docker("exec", nodeContainer(pair), "wget", "-qO-", "http://127.0.0.1:26660/metrics")
+        return text.lines().filter { it.startsWith("beacon_") }.mapNotNull { line ->
+            val i = line.lastIndexOf(' ')
+            if (i <= 0) null else line.substring(0, i) to (line.substring(i + 1).toDoubleOrNull() ?: return@mapNotNull null)
+        }.toMap()
+    }
+
+    /** A series key as Prometheus prints it: labels sorted by name. */
+    private fun series(name: String, vararg labels: Pair<String, String>): String =
+        if (labels.isEmpty()) name
+        else name + labels.sortedBy { it.first }.joinToString(",", "{", "}") { "${it.first}=\"${it.second}\"" }
+
+    private fun metric(m: Map<String, Double>, name: String, vararg labels: Pair<String, String>): Double =
+        m[series(name, *labels)] ?: 0.0
+
+    private fun rejects(m: Map<String, Double>): Double =
+        m.filterKeys { it.startsWith("beacon_verify_vote_ext_total{") && it.contains("result=\"reject\"") }.values.sum()
+
+    /** Fraction of histogram observations at or below bucket le. */
+    private fun histogramShareBelow(m: Map<String, Double>, name: String, le: String): Double {
+        val count = metric(m, "${name}_count")
+        if (count == 0.0) return 0.0
+        return metric(m, "${name}_bucket", "le" to le) / count
+    }
+
+    /** Mean seconds between consecutive block times over [from, to]. */
+    private fun meanBlockInterval(pair: LocalInferencePair, from: Long, to: Long): Double {
+        require(to > from) { "empty block window [$from, $to]" }
+        fun time(h: Long): java.time.Instant {
+            val json = docker("exec", nodeContainer(pair), "wget", "-qO-", "http://127.0.0.1:26657/block?height=$h")
+            val t = Regex("\"time\"\\s*:\\s*\"([^\"]+)\"").find(json)?.groupValues?.get(1) ?: error("no time in block $h")
+            return java.time.Instant.parse(t)
+        }
+        return java.time.Duration.between(time(from), time(to)).toMillis() / 1000.0 / (to - from)
+    }
 
     // --- share bridge helpers (Step 2) ---------------------------------------
 

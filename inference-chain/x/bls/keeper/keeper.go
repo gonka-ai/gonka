@@ -22,6 +22,8 @@ type (
 		storeService store.KVStoreService
 		logger       log.Logger
 		hooksState   *blsHooksState
+		// stakingKeeper resolves beacon slot owners (optional, see SetStakingKeeper).
+		stakingKeeper types.StakingKeeper
 
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.

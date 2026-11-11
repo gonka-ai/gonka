@@ -58,7 +58,7 @@ func TestBeaconExtendVote_PassesBuilderOutput(t *testing.T) {
 
 func TestBeaconVerifyVoteExtension(t *testing.T) {
 	const capBytes = 100
-	h := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context) int { return capBytes })
+	h := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context, int64) int { return capBytes })
 
 	accept := map[string][]byte{
 		"nil":                nil,
@@ -86,7 +86,7 @@ func TestBeaconVerifyVoteExtension(t *testing.T) {
 	})
 
 	t.Run("panicking size cap rejects without error", func(t *testing.T) {
-		hp := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context) int { panic("params unavailable") })
+		hp := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context, int64) int { panic("params unavailable") })
 		resp, err := hp(beaconTestCtx(), &abci.RequestVerifyVoteExtension{Height: 5, VoteExtension: []byte{1}})
 		require.NoError(t, err)
 		require.Equal(t, abci.ResponseVerifyVoteExtension_REJECT, resp.Status)
@@ -98,7 +98,7 @@ func TestBeaconExtensionMaxBytes(t *testing.T) {
 	require.Equal(t, 1000*64+512, beaconExtensionMaxBytes(1000))
 	require.Greater(t, beaconExtensionMaxBytes(1000), 1000*(48+5)+64)
 	// Floor and zero-slot fallback.
-	require.Equal(t, beaconExtensionMinCapBytes, beaconExtensionMaxBytes(1))
+	require.Equal(t, 4096, beaconExtensionMaxBytes(1))
 	require.Equal(t, beaconExtensionMaxBytes(100), beaconExtensionMaxBytes(0), "0 falls back to the x/bls default slot count")
 }
 

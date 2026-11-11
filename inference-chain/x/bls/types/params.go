@@ -18,6 +18,16 @@ var (
 	KeyDisputePhaseDurationBlocks      = []byte("DisputePhaseDurationBlocks")
 	KeyCompletedFallbackBlocks         = []byte("CompletedFallbackBlocks")
 	KeyMaxSigningAttempts              = []byte("MaxSigningAttempts")
+	KeyBeaconKeySwitchDelay            = []byte("BeaconKeySwitchDelay")
+)
+
+const (
+	// DefaultBeaconKeySwitchDelay: blocks between a DKG's completion and the
+	// first beacon round it signs (rule R9). Covers dAPI export + node reload.
+	DefaultBeaconKeySwitchDelay uint64 = 5
+	// MaxBeaconKeySwitchDelay bounds the delay so a new key cannot be postponed
+	// indefinitely by a parameter change.
+	MaxBeaconKeySwitchDelay uint64 = 1000
 )
 
 // ParamKeyTable the param key table for launch module
@@ -50,7 +60,7 @@ func NewParams(
 
 // DefaultParams returns a default set of parameters for PoC
 func DefaultParams() Params {
-	return NewParams(
+	p := NewParams(
 		100, // i_total_slots: 100 for PoC (smaller than production 1000)
 		50,  // t_slots_degree_offset: floor(100/2) = 50
 		5,   // dealing_phase_duration_blocks: 5 blocks for PoC
@@ -60,6 +70,8 @@ func DefaultParams() Params {
 		0,   // completed_fallback_blocks: disabled by default
 		3,   // max_signing_attempts: initial attempt + 2 retries
 	)
+	p.BeaconKeySwitchDelay = DefaultBeaconKeySwitchDelay
+	return p
 }
 
 // ParamSetPairs get the params.ParamSet
@@ -73,6 +85,7 @@ func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 		paramtypes.NewParamSetPair(KeyDisputePhaseDurationBlocks, &p.DisputePhaseDurationBlocks, validateDisputePhaseDurationBlocks),
 		paramtypes.NewParamSetPair(KeyCompletedFallbackBlocks, &p.CompletedFallbackBlocks, validateCompletedFallbackBlocks),
 		paramtypes.NewParamSetPair(KeyMaxSigningAttempts, &p.MaxSigningAttempts, validateMaxSigningAttempts),
+		paramtypes.NewParamSetPair(KeyBeaconKeySwitchDelay, &p.BeaconKeySwitchDelay, validateBeaconKeySwitchDelay),
 	}
 }
 
@@ -100,6 +113,9 @@ func (p Params) Validate() error {
 		return err
 	}
 	if err := validateMaxSigningAttempts(p.MaxSigningAttempts); err != nil {
+		return err
+	}
+	if err := validateBeaconKeySwitchDelay(p.BeaconKeySwitchDelay); err != nil {
 		return err
 	}
 
@@ -218,5 +234,16 @@ func validateMaxSigningAttempts(i interface{}) error {
 		return fmt.Errorf("max_signing_attempts must be positive")
 	}
 
+	return nil
+}
+
+func validateBeaconKeySwitchDelay(i interface{}) error {
+	v, ok := i.(uint64)
+	if !ok {
+		return fmt.Errorf("invalid parameter type: %T", i)
+	}
+	if v > MaxBeaconKeySwitchDelay {
+		return fmt.Errorf("beacon_key_switch_delay must be at most %d, got %d", MaxBeaconKeySwitchDelay, v)
+	}
 	return nil
 }

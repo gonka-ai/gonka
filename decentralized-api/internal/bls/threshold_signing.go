@@ -9,8 +9,8 @@ import (
 	"strconv"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
+	"github.com/productscience/inference/x/bls/blsutil"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
-	blst "github.com/supranational/blst/bindings/go"
 )
 
 const (
@@ -153,33 +153,16 @@ func (bm *BlsManager) computePartialSignatureBlst(messageHash []byte, result *Ve
 		return nil, fmt.Errorf("cannot sign with incomplete consensus shares: %w", err)
 	}
 
-	// Hash the message to a G1 point for signing (using gnark-crypto for consistency)
-	messageG1Gnark, err := bm.hashToG1(messageHash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to hash message to G1: %w", err)
-	}
-	msgG1Bytes := messageG1Gnark.Bytes()
-	messageG1Blst := new(blst.P1Affine).Uncompress(msgG1Bytes[:])
-	if messageG1Blst == nil {
-		return nil, fmt.Errorf("failed to uncompress message G1 with blst")
-	}
-
-	// For each relative slot offset, compute per-slot signature
-	var concatenated []byte
-	for rel := 0; rel < len(result.AggregatedShares); rel++ {
-		sk := result.AggregatedShares[rel]
-		skBytes := sk.Bytes()
-		// Convert to little-endian for blst
-		for i := 0; i < 16; i++ {
-			skBytes[i], skBytes[31-i] = skBytes[31-i], skBytes[i]
+	// One partial per slot, in slot order: the same primitive the chain's
+	// block beacon uses (x/bls/blsutil).
+	scalars := make([][blsutil.ScalarLen]byte, len(result.AggregatedShares))
+	for rel := range result.AggregatedShares {
+		be := result.AggregatedShares[rel].Bytes()
+		for i := range be {
+			scalars[rel][i] = be[blsutil.ScalarLen-1-i] // little-endian for blst
 		}
-
-		sig := new(blst.P1)
-		sig.FromAffine(messageG1Blst)
-		sig.MultAssign(skBytes[:], 255)
-		concatenated = append(concatenated, sig.ToAffine().Compress()...)
 	}
-	return concatenated, nil
+	return blsutil.SignPartials(messageHash, scalars)
 }
 
 // extractEventData extracts byte data from event (base64, hex, or raw string)

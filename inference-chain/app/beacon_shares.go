@@ -5,9 +5,8 @@ package app
 //
 // The dAPI exports this validator's recovered BLS slot shares to
 // `<home>/bls-beacon/epoch-<N>.json`; the FileShareProvider loads them into
-// memory and checks them against committed state. Extensions stay empty in
-// this step: ExtendVote only asks the provider for the current signing epoch,
-// which runs the one-time verification and logs the result.
+// memory and checks them against committed state in the background. Step 3's
+// ExtendVote (beacon_extend.go) signs with them.
 
 import (
 	"context"
@@ -16,7 +15,6 @@ import (
 	"path/filepath"
 
 	"cosmossdk.io/log"
-	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	servertypes "github.com/cosmos/cosmos-sdk/server/types"
@@ -233,20 +231,4 @@ func epochKeysFromData(data *blstypes.EpochBLSData, slotStart, slotEnd uint32,
 		OwnerAddress:     owner,
 		OwnerConsAddress: ownerCons,
 	}, nil
-}
-
-// beaconShareProbe is the Step 2 extension builder: it asks the provider for
-// the current signing epoch's shares (triggering the one-time verification)
-// and still returns an empty extension. Step 3 replaces it with signing.
-func beaconShareProbe(provider func() beacon.ShareProvider, signingEpoch func(ctx sdk.Context) (uint64, bool)) extensionBuilder {
-	return func(ctx sdk.Context, _ *abci.RequestExtendVote) ([]byte, error) {
-		p := provider()
-		if p == nil {
-			return []byte{}, nil
-		}
-		if epochID, ok := signingEpoch(ctx); ok {
-			p.Get(ctx, epochID)
-		}
-		return []byte{}, nil
-	}
 }

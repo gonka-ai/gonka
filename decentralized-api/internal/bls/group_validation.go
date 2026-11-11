@@ -14,7 +14,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
+	"github.com/productscience/inference/x/bls/blsutil"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 	blst "github.com/supranational/blst/bindings/go"
@@ -298,16 +298,5 @@ func (bm *BlsManager) createPartialSignatureBlst(messageHash []byte, previousEpo
 // hashToG1 converts a 32-byte hash to a G1 point using the same method as the chain:
 // Left-pad to 48-byte fp.Element, SWU map, isogeny, and clear cofactor.
 func (bm *BlsManager) hashToG1(hash []byte) (bls12381.G1Affine, error) {
-	var out bls12381.G1Affine
-	if len(hash) != 32 {
-		return out, fmt.Errorf("message hash must be 32 bytes, got %d", len(hash))
-	}
-	var be [48]byte
-	copy(be[48-32:], hash)
-	var u fp.Element
-	u.SetBytes(be[:])
-	p := bls12381.MapToCurve1(&u)
-	hash_to_curve.G1Isogeny(&p.X, &p.Y)
-	out.ClearCofactor(&p)
-	return out, nil
+	return blsutil.HashToG1(hash) // shared with the chain (block beacon, threshold signing)
 }

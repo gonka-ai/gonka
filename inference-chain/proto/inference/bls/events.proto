@@ -175,3 +175,24 @@ message EventThresholdSigningFailed {
   // reason describes why the signing failed (e.g., "Deadline exceeded", "Insufficient participation")
   string reason = 3;
 } 
+// EventBeaconKeySwitched is emitted when a completed DKG becomes the block
+// beacon key (rule R9).
+message EventBeaconKeySwitched {
+  uint64 key_epoch = 1;
+  uint64 previous_key_epoch = 2;
+  // from_round is the first round signed with key_epoch.
+  uint64 from_round = 3;
+}
+
+// EventBeaconSlotCoverageWarning is emitted at a key switch when validators
+// holding just over 2/3 of voting power may hold fewer than the threshold
+// number of slots, so the beacon could miss rounds even with a live chain.
+message EventBeaconSlotCoverageWarning {
+  uint64 key_epoch = 1;
+  // worst_case_slots: slots held by the worst-case >2/3-power validator subset.
+  uint32 worst_case_slots = 2;
+  // threshold_slots: t_slots_degree + 1.
+  uint32 threshold_slots = 3;
+  // slots_without_validator: slots of participants with no bonded validator.
+  uint32 slots_without_validator = 4;
+}

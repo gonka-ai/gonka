@@ -37,43 +37,26 @@ import (
 	"github.com/spf13/cast"
 
 	"github.com/productscience/inference/app/beacon"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
 const beaconLogModule = "beacon"
 
-const (
-	// beaconExtensionBytesPerSlot bounds one slot's share of a beacon vote
-	// extension: a 48-byte compressed G1 partial, its slot index varint and
-	// protobuf framing.
-	beaconExtensionBytesPerSlot = 64
-	// beaconExtensionOverheadBytes covers the extension's fixed fields
-	// (version, round, key epoch, field tags).
-	beaconExtensionOverheadBytes = 512
-	// beaconExtensionMinCapBytes is a floor so a misconfigured slot count
-	// never makes legitimate extensions oversized.
-	beaconExtensionMinCapBytes = 4096
-)
-
 // beaconExtensionMaxBytes is the largest vote extension accepted: enough for a
 // validator that owns every BLS slot, nothing more. It bounds what a peer can
-// make every node store in the extended commit.
+// make every node store in the extended commit. The formula lives in x/bls
+// (keeper.MaxBeaconExtensionBytes) so FinalizeBeacon applies the same bound.
 func beaconExtensionMaxBytes(totalSlots uint32) int {
-	if totalSlots == 0 {
-		totalSlots = blstypes.DefaultParams().ITotalSlots
-	}
-	n := int(totalSlots)*beaconExtensionBytesPerSlot + beaconExtensionOverheadBytes
-	if n < beaconExtensionMinCapBytes {
-		return beaconExtensionMinCapBytes
-	}
-	return n
+	return blskeeper.MaxBeaconExtensionBytes(totalSlots)
 }
 
-// extensionSizeCap returns the vote-extension size cap for the committed state in ctx.
-type extensionSizeCap func(ctx sdk.Context) int
+// extensionSizeCap returns the vote-extension size cap for a height, from the
+// committed state in ctx.
+type extensionSizeCap func(ctx sdk.Context, height int64) int
 
-// extensionBuilder produces the local vote extension for a height. Step 1 has
-// none (empty extension); Step 3 plugs in BLS partial signing.
+// extensionBuilder produces the local vote extension for a height (Step 3:
+// beaconExtensionBuilder, BLS partials over the pending beacon message).
 type extensionBuilder func(ctx sdk.Context, req *abci.RequestExtendVote) ([]byte, error)
 
 // preBlockRunner is the subset of the module manager the beacon PreBlocker needs.
@@ -96,20 +79,13 @@ func (app *App) registerBeaconABCI(appOpts servertypes.AppOptions) {
 	// byte/gas caps over req.Txs), regardless of the configured app mempool.
 	passThrough := baseapp.NewDefaultProposalHandler(mempool.NoOpMempool{}, app.BaseApp).PrepareProposalHandler()
 
-	// Step 2: load the dAPI-exported BLS shares. ExtendVote only triggers their
-	// one-time verification; extensions stay empty until Step 3.
+	// Step 2: load the dAPI-exported BLS shares (verified in the background).
+	// Step 3: ExtendVote signs the round's pending beacon message with them.
 	app.setupBeaconShares(appOpts, logger)
-	app.SetExtendVoteHandler(newBeaconExtendVoteHandler(logger, beaconShareProbe(
-		func() beacon.ShareProvider { return app.BeaconShares },
-		app.BlsKeeper.GetCurrentSigningEpochID,
+	app.SetExtendVoteHandler(newBeaconExtendVoteHandler(logger, beaconExtensionBuilder(
+		logger, app.BlsKeeper, func() beacon.ShareProvider { return app.BeaconShares },
 	)))
-	sizeCap := func(ctx sdk.Context) int {
-		params, err := app.BlsKeeper.GetParams(ctx)
-		if err != nil {
-			return beaconExtensionMaxBytes(0)
-		}
-		return beaconExtensionMaxBytes(params.ITotalSlots)
-	}
+	sizeCap := beaconSizeCap(func(ctx sdk.Context) (blstypes.Params, error) { return app.BlsKeeper.GetParams(ctx) }, app.BlsKeeper)
 	app.SetVerifyVoteExtensionHandler(newBeaconVerifyVoteExtensionHandler(logger, sizeCap))
 	app.SetPrepareProposal(newBeaconPrepareProposalHandler(logger, passThrough))
 	app.SetProcessProposal(newBeaconProcessProposalHandler(logger))
@@ -165,15 +141,18 @@ func newBeaconVerifyVoteExtensionHandler(logger log.Logger, sizeCap extensionSiz
 		defer func() {
 			if r := recover(); r != nil {
 				logger.Error("panic in beacon VerifyVoteExtension; rejecting", "height", req.Height, "panic", fmt.Sprint(r))
+				beacon.VerifyVoteExt.WithLabelValues("reject", "panic").Inc()
 				resp, err = &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
 			}
 		}()
 
 		n := len(req.VoteExtension)
 		if n == 0 {
+			beacon.VerifyVoteExt.WithLabelValues("accept", "empty").Inc()
 			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
 		}
-		if limit := sizeCap(ctx); n > limit {
+		if limit := sizeCap(ctx, req.Height); n > limit {
+			beacon.VerifyVoteExt.WithLabelValues("reject", "oversized").Inc()
 			logger.Info("rejecting oversized vote extension",
 				"height", req.Height,
 				"validator", fmt.Sprintf("%X", req.ValidatorAddress),
@@ -181,6 +160,7 @@ func newBeaconVerifyVoteExtensionHandler(logger log.Logger, sizeCap extensionSiz
 				"max", limit)
 			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
 		}
+		beacon.VerifyVoteExt.WithLabelValues("accept", "within_cap").Inc()
 		return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
 	}
 }

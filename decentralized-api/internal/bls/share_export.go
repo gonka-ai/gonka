@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -61,13 +62,25 @@ type beaconExportJob struct {
 	shares         [][sharefile.ScalarLen]byte // big-endian fr
 }
 
+// beaconKeyState is x/bls's block beacon key (rule R9): the epoch signing
+// beacon rounds and the completed DKG waiting to take over.
+type beaconKeyState struct {
+	keyEpoch     uint64
+	keySet       bool
+	candidate    uint64
+	hasCandidate bool
+}
+
 // beaconExportDeps are the chain-facing calls the exporter needs; tests replace them.
 type beaconExportDeps struct {
 	chainID      func(ctx context.Context) (string, error)
 	currentEpoch func(ctx context.Context) (uint64, error)
-	participant  func() string
-	recover      func(epochID uint64) (*VerificationResult, error)
-	now          func() time.Time
+	// beaconKey may be nil or fail (chain before the Step 3 upgrade): reconcile
+	// then covers the current and next epoch only.
+	beaconKey   func(ctx context.Context) (beaconKeyState, error)
+	participant func() string
+	recover     func(epochID uint64) (*VerificationResult, error)
+	now         func() time.Time
 }
 
 type beaconExporter struct {
@@ -97,6 +110,13 @@ func (bm *BlsManager) ConfigureBeaconShareExport(cfg apiconfig.BlsBeaconConfig) 
 				return 0, err
 			}
 			return res.Epoch, nil
+		},
+		beaconKey: func(ctx context.Context) (beaconKeyState, error) {
+			res, err := bm.cosmosClient.NewBLSQueryClient().BeaconKey(ctx, &types.QueryBeaconKeyRequest{})
+			if err != nil {
+				return beaconKeyState{}, err
+			}
+			return beaconKeyState{keyEpoch: res.KeyEpoch, keySet: res.KeySet, candidate: res.Candidate.Epoch, hasCandidate: res.HasCandidate}, nil
 		},
 		participant: bm.cosmosClient.GetAccountAddress,
 		recover:     bm.GetOrRecoverVerificationResult,
@@ -211,8 +231,10 @@ func (bm *BlsManager) beaconFileFor(job *beaconExportJob) (*sharefile.File, erro
 	return sharefile.New(chainID, job.epochID, participant, job.slotStart, job.slotEnd, job.groupPublicKey, job.shares, deps.now())
 }
 
-// writeBeaconJob writes job's file (idempotent by checksum) and prunes old
-// epochs. It returns whether a file was (re)written. Shares are never logged.
+// writeBeaconJob writes job's file (idempotent by checksum). It returns
+// whether a file was (re)written. Shares are never logged. Pruning is left to
+// the reconcile loop, which knows the active beacon key epoch (rule R9): after
+// failed DKGs the key can be older than any fixed window behind job.epochID.
 func (bm *BlsManager) writeBeaconJob(job *beaconExportJob) (bool, error) {
 	enabled, dir := bm.beaconExportEnabled()
 	if !enabled {
@@ -231,9 +253,6 @@ func (bm *BlsManager) writeBeaconJob(job *beaconExportJob) (bool, error) {
 			"epoch", job.epochID,
 			"slots", fmt.Sprintf("[%d,%d]", job.slotStart, job.slotEnd),
 			"path", path)
-	}
-	if job.epochID >= 2 {
-		bm.pruneBeaconShares(dir, job.epochID-2)
 	}
 	return written, nil
 }
@@ -379,10 +398,8 @@ func (bm *BlsManager) reconcileBeaconShares(ctx context.Context) {
 		return
 	}
 
-	for _, epochID := range []uint64{current, current + 1} {
-		if epochID == 0 {
-			continue
-		}
+	epochs, keepFrom := beaconReconcileEpochs(ctx, deps, current)
+	for _, epochID := range epochs {
 		result := bm.cache.Get(epochID)
 		if !beaconFinal(result) {
 			// No final result cached (restart, not final yet): recover from
@@ -407,9 +424,53 @@ func (bm *BlsManager) reconcileBeaconShares(ctx context.Context) {
 		bm.beaconAttemptDone(epochID)
 		bm.reconcileBeaconFile(dir, epochID, result)
 	}
-	if current >= 1 {
-		bm.pruneBeaconShares(dir, current-1)
+	if keepFrom > 0 {
+		bm.pruneBeaconShares(dir, keepFrom)
 	}
+}
+
+// beaconReconcileEpochs returns the epochs whose files must exist, ascending,
+// and the lowest epoch to keep: the current and next epoch, the beacon key
+// epoch and the key candidate (rule R9), keeping everything from the oldest
+// of current-1, the key and the candidate.
+func beaconReconcileEpochs(ctx context.Context, deps beaconExportDeps, current uint64) (epochs []uint64, keepFrom uint64) {
+	set := map[uint64]bool{}
+	add := func(e uint64) {
+		if e > 0 {
+			set[e] = true
+		}
+	}
+	add(current)
+	add(current + 1)
+	if current >= 1 {
+		keepFrom = current - 1
+	}
+	if deps.beaconKey != nil {
+		qctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		key, err := deps.beaconKey(qctx)
+		cancel()
+		if err != nil {
+			logging.Debug(beaconExportLogTag+"beacon key unavailable; covering current and next epoch only", inferenceTypes.BLS, "err", err)
+		} else {
+			for _, e := range []struct {
+				id uint64
+				ok bool
+			}{{key.keyEpoch, key.keySet}, {key.candidate, key.hasCandidate}} {
+				if !e.ok || e.id == 0 {
+					continue
+				}
+				add(e.id)
+				if e.id < keepFrom {
+					keepFrom = e.id
+				}
+			}
+		}
+	}
+	for e := range set {
+		epochs = append(epochs, e)
+	}
+	sort.Slice(epochs, func(i, j int) bool { return epochs[i] < epochs[j] })
+	return epochs, keepFrom
 }
 
 // beaconFinal reports whether result is a final (COMPLETED/SIGNED) result.

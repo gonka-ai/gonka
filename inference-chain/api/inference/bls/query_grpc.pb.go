@@ -23,6 +23,8 @@ const (
 	Query_EpochBLSData_FullMethodName   = "/inference.bls.Query/EpochBLSData"
 	Query_SigningStatus_FullMethodName  = "/inference.bls.Query/SigningStatus"
 	Query_SigningHistory_FullMethodName = "/inference.bls.Query/SigningHistory"
+	Query_BeaconKey_FullMethodName      = "/inference.bls.Query/BeaconKey"
+	Query_PendingBeacon_FullMethodName  = "/inference.bls.Query/PendingBeacon"
 )
 
 // QueryClient is the client API for Query service.
@@ -37,6 +39,10 @@ type QueryClient interface {
 	SigningStatus(ctx context.Context, in *QuerySigningStatusRequest, opts ...grpc.CallOption) (*QuerySigningStatusResponse, error)
 	// SigningHistory queries threshold signing requests with filtering and pagination
 	SigningHistory(ctx context.Context, in *QuerySigningHistoryRequest, opts ...grpc.CallOption) (*QuerySigningHistoryResponse, error)
+	// BeaconKey queries the block beacon key state (rule R9) and activation.
+	BeaconKey(ctx context.Context, in *QueryBeaconKeyRequest, opts ...grpc.CallOption) (*QueryBeaconKeyResponse, error)
+	// PendingBeacon queries the message validators sign for a round.
+	PendingBeacon(ctx context.Context, in *QueryPendingBeaconRequest, opts ...grpc.CallOption) (*QueryPendingBeaconResponse, error)
 }
 
 type queryClient struct {
@@ -83,6 +89,24 @@ func (c *queryClient) SigningHistory(ctx context.Context, in *QuerySigningHistor
 	return out, nil
 }
 
+func (c *queryClient) BeaconKey(ctx context.Context, in *QueryBeaconKeyRequest, opts ...grpc.CallOption) (*QueryBeaconKeyResponse, error) {
+	out := new(QueryBeaconKeyResponse)
+	err := c.cc.Invoke(ctx, Query_BeaconKey_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) PendingBeacon(ctx context.Context, in *QueryPendingBeaconRequest, opts ...grpc.CallOption) (*QueryPendingBeaconResponse, error) {
+	out := new(QueryPendingBeaconResponse)
+	err := c.cc.Invoke(ctx, Query_PendingBeacon_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -95,6 +119,10 @@ type QueryServer interface {
 	SigningStatus(context.Context, *QuerySigningStatusRequest) (*QuerySigningStatusResponse, error)
 	// SigningHistory queries threshold signing requests with filtering and pagination
 	SigningHistory(context.Context, *QuerySigningHistoryRequest) (*QuerySigningHistoryResponse, error)
+	// BeaconKey queries the block beacon key state (rule R9) and activation.
+	BeaconKey(context.Context, *QueryBeaconKeyRequest) (*QueryBeaconKeyResponse, error)
+	// PendingBeacon queries the message validators sign for a round.
+	PendingBeacon(context.Context, *QueryPendingBeaconRequest) (*QueryPendingBeaconResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -113,6 +141,12 @@ func (UnimplementedQueryServer) SigningStatus(context.Context, *QuerySigningStat
 }
 func (UnimplementedQueryServer) SigningHistory(context.Context, *QuerySigningHistoryRequest) (*QuerySigningHistoryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SigningHistory not implemented")
+}
+func (UnimplementedQueryServer) BeaconKey(context.Context, *QueryBeaconKeyRequest) (*QueryBeaconKeyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BeaconKey not implemented")
+}
+func (UnimplementedQueryServer) PendingBeacon(context.Context, *QueryPendingBeaconRequest) (*QueryPendingBeaconResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PendingBeacon not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -199,6 +233,42 @@ func _Query_SigningHistory_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_BeaconKey_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryBeaconKeyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BeaconKey(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_BeaconKey_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BeaconKey(ctx, req.(*QueryBeaconKeyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_PendingBeacon_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPendingBeaconRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PendingBeacon(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PendingBeacon_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PendingBeacon(ctx, req.(*QueryPendingBeaconRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -221,6 +291,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SigningHistory",
 			Handler:    _Query_SigningHistory_Handler,
+		},
+		{
+			MethodName: "BeaconKey",
+			Handler:    _Query_BeaconKey_Handler,
+		},
+		{
+			MethodName: "PendingBeacon",
+			Handler:    _Query_PendingBeacon_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

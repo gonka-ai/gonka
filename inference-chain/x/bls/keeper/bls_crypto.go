@@ -8,7 +8,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
+	"github.com/productscience/inference/x/bls/blsutil"
 	"github.com/productscience/inference/x/bls/types"
 	blst "github.com/supranational/blst/bindings/go"
 )
@@ -852,22 +852,9 @@ func (k Keeper) DecompressG1To128Blst(signature []byte) ([]byte, error) {
 
 // hashToG1 maps a 32-byte message hash (interpreted as an Fp element) to a G1 point.
 // This mirrors the EIP-2537 MAP_FP_TO_G1: single-field-element SWU map + isogeny, then cofactor clear.
+// The implementation lives in blsutil so the block beacon and the dAPI share it.
 func (k Keeper) hashToG1(hash []byte) (bls12381.G1Affine, error) {
-	var out bls12381.G1Affine
-	if len(hash) != 32 {
-		return out, fmt.Errorf("message hash must be 32 bytes, got %d", len(hash))
-	}
-	// Build 48-byte big-endian Fp element from 32-byte hash (left-pad with zeros)
-	var be [48]byte
-	copy(be[48-32:], hash)
-	var u fp.Element
-	u.SetBytes(be[:])
-	// Map to curve using single-field SWU, then apply isogeny to the curve
-	p := bls12381.MapToCurve1(&u)
-	hash_to_curve.G1Isogeny(&p.X, &p.Y)
-	// Clear cofactor to ensure point is in G1 subgroup
-	out.ClearCofactor(&p)
-	return out, nil
+	return blsutil.HashToG1(hash)
 }
 
 // trySetFromHash removed; mapping now uses single-field SWU map aligned with EIP-2537.
