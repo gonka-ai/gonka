@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"testing"
 
+	"common/completionapi"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -116,25 +118,91 @@ func TestScoreEcho_TemperatureAndTopPAreTheExecutorsOwn(t *testing.T) {
 	require.Less(t, asPlain.Z, own.Z)
 }
 
-func TestStoredTokenIDs_JSONAndStream(t *testing.T) {
-	prompt, out, err := StoredTokenIDs([]byte(`{"prompt_token_ids":[1,2,3],"choices":[{"token_ids":[4,5],"finish_reason":"stop"}]}`))
+// storedAnswer is an answer the way the executor stores it: the engine's
+// response (token ids, logprobs, usage) through the executor's response
+// processor, as one JSON body or as a stream whose chunks carry up to three
+// tokens each.
+func storedAnswer(t *testing.T, out []int, finish string, stream bool) []byte {
+	t.Helper()
+	position := func(tok int) map[string]interface{} {
+		text := strconv.Itoa(tok)
+		spelled := make([]int, len(text))
+		for i := range text {
+			spelled[i] = int(text[i])
+		}
+		alternative := map[string]interface{}{"token": text, "logprob": -0.5, "bytes": spelled}
+		return map[string]interface{}{"token": text, "logprob": -0.5, "bytes": spelled, "top_logprobs": []interface{}{alternative}}
+	}
+	positions := func(toks []int) []interface{} {
+		content := make([]interface{}, 0, len(toks))
+		for _, tok := range toks {
+			content = append(content, position(tok))
+		}
+		return content
+	}
+	var finishReason interface{}
+	if finish != "" {
+		finishReason = finish
+	}
+	usage := map[string]interface{}{"prompt_tokens": 3, "completion_tokens": len(out), "total_tokens": 3 + len(out)}
+	var body bytes.Buffer
+	header := http.Header{}
+	if stream {
+		header.Set("Content-Type", "text/event-stream")
+		write := func(chunk map[string]interface{}) {
+			chunk["id"], chunk["object"], chunk["model"] = "x", "chat.completion.chunk", "m"
+			encoded, _ := json.Marshal(chunk)
+			body.WriteString("data: " + string(encoded) + "\n\n")
+		}
+		write(map[string]interface{}{"prompt_token_ids": []int{10, 11, 12}, "choices": []interface{}{map[string]interface{}{
+			"index": 0, "delta": map[string]interface{}{"role": "assistant", "content": ""}, "logprobs": nil, "finish_reason": nil}}})
+		for i := 0; i < len(out); i += 3 {
+			end := min(i+3, len(out))
+			var chunkFinish interface{}
+			if end == len(out) {
+				chunkFinish = finishReason
+			}
+			write(map[string]interface{}{"choices": []interface{}{map[string]interface{}{
+				"index": 0, "delta": map[string]interface{}{"content": "a"}, "token_ids": out[i:end],
+				"logprobs": map[string]interface{}{"content": positions(out[i:end])}, "finish_reason": chunkFinish}}})
+		}
+		write(map[string]interface{}{"choices": []interface{}{}, "usage": usage})
+		body.WriteString("data: [DONE]\n\n")
+	} else {
+		header.Set("Content-Type", "application/json")
+		encoded, _ := json.Marshal(map[string]interface{}{"id": "x", "object": "chat.completion", "model": "m",
+			"prompt_token_ids": []int{10, 11, 12}, "usage": usage,
+			"choices": []interface{}{map[string]interface{}{"index": 0, "finish_reason": finishReason, "token_ids": out,
+				"message":  map[string]interface{}{"role": "assistant", "content": "a"},
+				"logprobs": map[string]interface{}{"content": positions(out)}}}})
+		body.Write(encoded)
+	}
+	processor := completionapi.NewExecutorResponseProcessor("devshard-1-42", false)
+	require.NoError(t, completionapi.ProcessHTTPResponse(
+		&http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(&body)}, processor))
+	stored, err := processor.GetResponseBytes()
 	require.NoError(t, err)
-	require.Equal(t, []int{1, 2, 3}, prompt)
-	require.Equal(t, []int{4, 5}, out)
+	// The executor drops the engine's id arrays before it stores a response.
+	require.NotContains(t, string(stored), "token_ids")
+	return stored
+}
 
-	streamed, _ := json.Marshal(map[string][]string{"events": {
-		`data: {"id":"x","prompt_token_ids":[1,2,3],"choices":[{"delta":{"role":"assistant","content":""},"token_ids":[]}]}`,
-		`data: {"id":"x","choices":[{"delta":{"content":"a"},"token_ids":[4]}]}`,
-		`data: {"id":"x","choices":[{"delta":{"content":"b"},"token_ids":[5,6],"finish_reason":"stop"}]}`,
-		`data: {"id":"x","choices":[],"usage":{"completion_tokens":3}}`,
-		`data: [DONE]`,
-	}})
-	prompt, out, err = StoredTokenIDs(streamed)
+func TestStoredAnswerIDs_FromTheStoredLogprobs(t *testing.T) {
+	out := []int{4, 5, 6, 151645}
+	for _, stream := range []bool{false, true} {
+		ids, err := StoredAnswerIDs(storedAnswer(t, out, "stop", stream))
+		require.NoError(t, err)
+		require.Equal(t, out, ids)
+		require.Equal(t, "stop", StoredFinishReason(storedAnswer(t, out, "stop", stream)))
+	}
+
+	ids, err := StoredAnswerIDs([]byte(`{"choices":[{"logprobs":{"content":[{"token":"token_id:7"},{"token":"8"}]}}]}`))
 	require.NoError(t, err)
-	require.Equal(t, []int{1, 2, 3}, prompt)
-	require.Equal(t, []int{4, 5, 6}, out)
+	require.Equal(t, []int{7, 8}, ids)
 
-	_, _, err = StoredTokenIDs([]byte(`{"choices":[{"message":{"content":"no ids"}}]}`))
+	_, err = StoredAnswerIDs([]byte(`{"choices":[{"logprobs":{"content":[{"token":"7"},{"token":" the"}]}}]}`))
+	require.ErrorIs(t, err, errTextTokens)
+	_, err = StoredAnswerIDs([]byte(`{"choices":[{"message":{"content":"no logprobs"},"token_ids":[1,2]}]}`))
 	require.Error(t, err)
 }
 
@@ -192,6 +260,8 @@ func echoServer(t *testing.T, lp []map[int]float64, prompt []int) func(context.C
 		}
 		require.NoError(t, json.Unmarshal(body, &req))
 		require.Equal(t, EchoTopLogprobs, req.PromptLogprobs)
+		// The prefill starts with the validator's own rendering of the request.
+		require.Equal(t, prompt, req.Prompt[:promptLen])
 		positions := make([]interface{}, len(req.Prompt))
 		for i := promptLen; i < len(req.Prompt); i++ {
 			entry := map[string]map[string]float64{}
@@ -219,32 +289,35 @@ func TestExecuteEchoValidation_ScoresTheStoredAnswer(t *testing.T) {
 		{"on the tape", tapeAnswer(lp, seed), true},
 		{"off the tape", greedyAnswer(lp), false},
 	} {
-		stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
-			"choices": []interface{}{map[string]interface{}{"token_ids": tc.out, "finish_reason": "length"}}})
-		result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored,
-			echoServer(t, lp, prompt), uint64(len(prompt)), uint64(len(tc.out)))
-		require.NoError(t, err, tc.name)
-		require.IsType(t, &EchoValidationResult{}, result, tc.name)
-		require.Equal(t, tc.valid, result.IsSuccessful(), tc.name)
+		for _, stream := range []bool{false, true} {
+			result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, storedAnswer(t, tc.out, "length", stream),
+				echoServer(t, lp, prompt), uint64(len(prompt)), uint64(len(tc.out)))
+			require.NoError(t, err, tc.name)
+			require.IsType(t, &EchoValidationResult{}, result, tc.name)
+			require.Equal(t, tc.valid, result.IsSuccessful(), tc.name)
+		}
 	}
 }
 
 func TestExecuteEchoValidation_InflatedCountsAndRejectedIDsFail(t *testing.T) {
 	lp := echoTestLogprobs()
 	out := tapeAnswer(lp, uint64(int64(validationReplaySeed("42"))))
-	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": []int{10, 11, 12},
-		"choices": []interface{}{map[string]interface{}{"token_ids": out}}})
+	stored := storedAnswer(t, out, "", false)
 	promptPayload := []byte(`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}]}`)
 
-	result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored,
-		echoServer(t, lp, []int{10, 11, 12}), 3, uint64(len(out))+40)
-	require.NoError(t, err)
-	require.IsType(t, &InvalidInferenceResult{}, result)
+	// More output tokens than the stored answer holds, more input tokens than the request renders to.
+	for _, claimed := range [][2]uint64{{3, uint64(len(out)) + 40}, {3 + 40, uint64(len(out))}} {
+		result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored,
+			echoServer(t, lp, []int{10, 11, 12}), claimed[0], claimed[1])
+		require.NoError(t, err)
+		require.IsType(t, &InvalidInferenceResult{}, result)
+		require.Equal(t, "Inflated token counts.", result.(*InvalidInferenceResult).Reason)
+	}
 
 	reject := func(context.Context, string, []byte) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"bad ids"}}`)))}, nil
 	}
-	result, err = ExecuteEchoValidation(context.Background(), "42", promptPayload, stored, reject, 3, uint64(len(out)))
+	result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored, reject, 3, uint64(len(out)))
 	require.NoError(t, err)
 	require.IsType(t, &InvalidInferenceResult{}, result)
 }
@@ -430,9 +503,7 @@ func TestExecuteEchoValidation_GrammarAndPenaltyRequestsAreReplayed(t *testing.T
 			{"on the tape", tapeAnswer(lp, seed), true},
 			{"off the tape", greedyAnswer(lp), false},
 		} {
-			stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
-				"choices": []interface{}{map[string]interface{}{"token_ids": tc.out, "finish_reason": "length"}}})
-			result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
+			result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), storedAnswer(t, tc.out, "length", false),
 				echoServer(t, lp, prompt), uint64(len(prompt)), uint64(len(tc.out)))
 			require.NoError(t, err, tc.name)
 			echo, ok := result.(*EchoValidationResult)
@@ -464,8 +535,7 @@ func TestReplayReason_OnlyKnownFieldsAreEchoed(t *testing.T) {
 }
 
 func TestExecuteEchoValidation_RequestsWithoutAKnownTapeAreNotJudged(t *testing.T) {
-	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": []int{10},
-		"choices": []interface{}{map[string]interface{}{"token_ids": []int{1, 2}}}})
+	stored := storedAnswer(t, []int{1, 2}, "length", false)
 	for _, extra := range []string{`"use_beam_search":true`, `"use_beam_search":"true"`, `"enforced_tokens":{"tokens":[]}`,
 		`"enforced_str":"abc"`, `"seed":null`, `"seed":"7"`, `"seed":-1`, `"seed":1.5`,
 		`"temperature":"0.7"`, `"top_k":"5"`, `"repetition_penalty":true`} {
@@ -499,9 +569,7 @@ func TestExecuteEchoValidation_GreedyRequestsAreJudgedByTheArgmax(t *testing.T) 
 			{"the argmax", greedyAnswer(lp), true},
 			{"sampled on the tape", tapeAnswer(lp, seed), false},
 		} {
-			stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
-				"choices": []interface{}{map[string]interface{}{"token_ids": answer.out, "finish_reason": "length"}}})
-			result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
+			result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), storedAnswer(t, answer.out, "length", true),
 				echoServer(t, lp, prompt), uint64(len(prompt)), uint64(len(answer.out)))
 			require.NoError(t, err, answer.name)
 			echo, ok := result.(*EchoValidationResult)
@@ -516,8 +584,7 @@ func TestExecuteEchoValidation_ReplayWithoutTokenIDsIsUnsupported(t *testing.T) 
 	lp := echoTestLogprobs()
 	prompt := []int{10, 11, 12}
 	out := tapeAnswer(lp, uint64(int64(validationReplaySeed("42"))))
-	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
-		"choices": []interface{}{map[string]interface{}{"token_ids": out, "finish_reason": "length"}}})
+	stored := storedAnswer(t, out, "length", false)
 	promptPayload := `{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0,"frequency_penalty":0.2}`
 	inner := echoServer(t, lp, prompt)
 	decoded := func(ctx context.Context, path string, body []byte) (*http.Response, error) {
@@ -570,18 +637,21 @@ func mustJSON(v interface{}) []byte {
 	return b
 }
 
-func TestExecuteEchoValidation_PromptIDsMustMatchTheValidatorsOwn(t *testing.T) {
-	lp := echoTestLogprobs()
-	out := tapeAnswer(lp, uint64(int64(validationReplaySeed("42"))))
-	// The executor stored a shorter prompt than the request renders to.
-	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": []int{10, 11},
-		"choices": []interface{}{map[string]interface{}{"token_ids": out, "finish_reason": "length"}}})
+func TestExecuteEchoValidation_AStoredAnswerWithoutTokenIDsFails(t *testing.T) {
 	promptPayload := []byte(`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}]}`)
-	result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored,
-		echoServer(t, lp, []int{10, 11, 12}), 2, uint64(len(out)))
-	require.NoError(t, err)
-	require.IsType(t, &InvalidInferenceResult{}, result)
-	require.Equal(t, "Prompt token ids differ from the request.", result.(*InvalidInferenceResult).Reason)
+	for stored, reason := range map[string]string{
+		`{"choices":[{"message":{"content":"hello"},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}`: "Stored response carries no answer tokens.",
+		`{"choices":[{"finish_reason":"stop","logprobs":{"content":[{"token":"hel"},{"token":"lo"}]}}]}`:       "Logprobs contain decoded text instead of numeric token IDs.",
+	} {
+		result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, []byte(stored),
+			func(context.Context, string, []byte) (*http.Response, error) {
+				t.Fatal("no engine call expected")
+				return nil, nil
+			}, 3, 2)
+		require.NoError(t, err)
+		require.IsType(t, &InvalidInferenceResult{}, result)
+		require.Equal(t, reason, result.(*InvalidInferenceResult).Reason)
+	}
 }
 
 func TestExecuteEchoValidation_AnswerShapeRulesApply(t *testing.T) {
@@ -589,9 +659,7 @@ func TestExecuteEchoValidation_AnswerShapeRulesApply(t *testing.T) {
 	out := tapeAnswer(lp, uint64(int64(validationReplaySeed("42"))))
 	prompt := []int{10, 11, 12}
 	promptPayload := []byte(`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300}`)
-	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
-		"choices": []interface{}{map[string]interface{}{"token_ids": out[:200], "finish_reason": "length"}}})
-	result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored, echoServer(t, lp, prompt), 3, 200)
+	result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, storedAnswer(t, out[:200], "length", true), echoServer(t, lp, prompt), 3, 200)
 	require.NoError(t, err)
 	require.IsType(t, &InvalidInferenceResult{}, result)
 	require.Equal(t, "Answer cut before max_tokens.", result.(*InvalidInferenceResult).Reason)

@@ -72,7 +72,7 @@ var modelEOS = map[string][]int{
 }
 
 // ChatPath renders the stored request on the validator's engine: one token
-// with return_token_ids gives the prompt ids the validator itself derives.
+// with return_token_ids gives the prompt ids, which no stored response carries.
 const ChatPath = "/v1/chat/completions"
 
 // ErrEchoUnsupported marks an answer the validator cannot judge: a request
@@ -553,8 +553,8 @@ func ParseReplay(body []byte, out []int) ([]map[int]float64, error) {
 }
 
 func replayTokenID(s string) (int, error) {
-	tok, err := strconv.Atoi(strings.TrimPrefix(s, "token_id:"))
-	if err != nil {
+	tok, ok := tokenID(s)
+	if !ok {
 		return 0, fmt.Errorf("%w: the engine returned a decoded token %q, not an id", ErrEchoUnsupported, s)
 	}
 	return tok, nil
@@ -591,10 +591,19 @@ func ParseEcho(body []byte, promptLen, outLen int) ([]map[int]float64, error) {
 	return out, nil
 }
 
-// StoredTokenIDs reads the prompt and answer token ids of a stored executor
-// response, which devshard asks for with return_token_ids, from a JSON body or
-// from the events of a stream.
-func StoredTokenIDs(responsePayload []byte) (prompt, out []int, err error) {
+// errTextTokens marks a stored response whose logprobs carry decoded text
+// where the engine writes token ids.
+var errTextTokens = errors.New("stored logprobs carry text, not token ids")
+
+// StoredAnswerIDs reads the answer's token ids from a stored executor
+// response, a JSON body or the events of a stream. The executor drops
+// token_ids and prompt_token_ids before it stores a response
+// (completionapi.SlimStoredDocument), so the ids are the tokens of the
+// logprobs positions: devshard pins logprobs on every request and the engine
+// writes each position's token as its id. A stream chunk may carry several
+// positions.
+func StoredAnswerIDs(responsePayload []byte) ([]int, error) {
+	var out []int
 	var streamed completionapi.SerializedStreamedResponse
 	if json.Unmarshal(responsePayload, &streamed) == nil && len(streamed.Events) > 0 {
 		for _, line := range streamed.Events {
@@ -602,27 +611,63 @@ func StoredTokenIDs(responsePayload []byte) (prompt, out []int, err error) {
 			if !ok || strings.TrimSpace(data) == "[DONE]" {
 				continue
 			}
-			p, o, chunkErr := tokenIDsOf([]byte(data))
-			if chunkErr != nil {
+			ids, err := answerIDsOf([]byte(data))
+			if errors.Is(err, errTextTokens) {
+				return nil, err
+			}
+			if err != nil {
 				continue
 			}
-			if len(p) > 0 {
-				prompt = p
-			}
-			out = append(out, o...)
+			out = append(out, ids...)
 		}
 	} else {
-		prompt, out, err = tokenIDsOf(responsePayload)
+		ids, err := answerIDsOf(responsePayload)
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
+		out = ids
 	}
-	if len(prompt) == 0 || len(out) == 0 {
-		return nil, nil, errors.New("stored response carries no token ids")
+	if len(out) == 0 {
+		return nil, errors.New("stored response carries no answer tokens")
 	}
-	return prompt, out, nil
+	return out, nil
 }
 
+func answerIDsOf(body []byte) ([]int, error) {
+	var resp struct {
+		Choices []struct {
+			Logprobs *struct {
+				Content []struct {
+					Token string `json:"token"`
+				} `json:"content"`
+			} `json:"logprobs"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(body, &resp); err != nil {
+		return nil, err
+	}
+	if len(resp.Choices) == 0 || resp.Choices[0].Logprobs == nil {
+		return nil, nil
+	}
+	ids := make([]int, 0, len(resp.Choices[0].Logprobs.Content))
+	for _, position := range resp.Choices[0].Logprobs.Content {
+		id, ok := tokenID(position.Token)
+		if !ok {
+			return nil, fmt.Errorf("%w: %q", errTextTokens, position.Token)
+		}
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+// tokenID reads a token the engine wrote as its id, bare or as "token_id:N".
+func tokenID(s string) (int, bool) {
+	id, err := strconv.Atoi(strings.TrimPrefix(s, "token_id:"))
+	return id, err == nil && id >= 0
+}
+
+// tokenIDsOf reads the prompt and answer ids of a response as the engine
+// returns it under return_token_ids, before any executor stores it.
 func tokenIDsOf(body []byte) (prompt, out []int, err error) {
 	var resp struct {
 		PromptTokenIDs []int `json:"prompt_token_ids"`
@@ -643,10 +688,12 @@ func tokenIDsOf(body []byte) (prompt, out []int, err error) {
 // answer's token ids are scored against the validator's own logprobs and the
 // noise the request's seed fixes. execute must POST the body to EchoPath.
 //
-// Before the echo the validator renders the request itself (ChatPath, one
-// token) and requires the executor's prompt ids to equal its own, and checks
-// the answer's end against finish_reason and the pinned token budget. A
-// request the echo cannot judge returns ErrEchoUnsupported.
+// The answer's ids come from the stored logprobs (StoredAnswerIDs). The
+// stored response carries no prompt ids, so the validator renders the request
+// itself (ChatPath, one token) and prefills its own; the claimed token counts
+// are checked against both. The answer's end is checked against finish_reason
+// and the pinned token budget. An answer the validator cannot judge returns
+// ErrEchoUnsupported.
 func ExecuteEchoValidation(
 	ctx context.Context,
 	inferenceID string,
@@ -673,16 +720,12 @@ func ExecuteEchoValidation(
 		return nil, fmt.Errorf("echo validation: unknown vocabulary of model %q", model)
 	}
 	seed, _ := tapeSeed(requestMap)
-	prompt, out, err := StoredTokenIDs(responsePayload)
-	if err != nil {
-		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Stored response carries no token ids.", Error: err}, nil
+	out, err := StoredAnswerIDs(responsePayload)
+	if errors.Is(err, errTextTokens) {
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Logprobs contain decoded text instead of numeric token IDs.", Error: err}, nil
 	}
-	if TokenCountInflated(claimedInputTokens, uint64(len(prompt))) ||
-		TokenCountInflated(claimedOutputTokens, uint64(len(out))) {
-		logging.Warn("validation failed: inflated token counts", types.Validation,
-			"inferenceId", inferenceID, "claimedInput", claimedInputTokens, "prompt", len(prompt),
-			"claimedOutput", claimedOutputTokens, "answer", len(out))
-		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
+	if err != nil {
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Stored response carries no answer tokens.", Error: err}, nil
 	}
 
 	renderBody, err := promptIDsRequestBody(requestMap)
@@ -699,14 +742,16 @@ func ExecuteEchoValidation(
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("echo validation: render status %d: %s", status, bytes.TrimSpace(rendered))
 	}
-	ownPrompt, _, err := tokenIDsOf(rendered)
-	if err != nil || len(ownPrompt) == 0 {
+	prompt, _, err := tokenIDsOf(rendered)
+	if err != nil || len(prompt) == 0 {
 		return nil, fmt.Errorf("echo validation: rendered request carries no prompt ids: %v", err)
 	}
-	if !equalIDs(ownPrompt, prompt) {
-		logging.Warn("validation failed: prompt ids differ from the request", types.Validation,
-			"inferenceId", inferenceID, "executor", len(prompt), "validator", len(ownPrompt))
-		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Prompt token ids differ from the request."}, nil
+	if TokenCountInflated(claimedInputTokens, uint64(len(prompt))) ||
+		TokenCountInflated(claimedOutputTokens, uint64(len(out))) {
+		logging.Warn("validation failed: inflated token counts", types.Validation,
+			"inferenceId", inferenceID, "claimedInput", claimedInputTokens, "prompt", len(prompt),
+			"claimedOutput", claimedOutputTokens, "answer", len(out))
+		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 	}
 
 	params := tapeParams(requestMap)
