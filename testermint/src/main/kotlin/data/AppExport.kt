@@ -396,6 +396,9 @@ data class ConfirmationPoCParams(
     val slashFraction: Decimal = Decimal(10, -2),  // 0.10
     @SerializedName("upgrade_protection_window")
     val upgradeProtectionWindow: Long = 2,  // Default: 500 blocks
+    // Trigger draw from the block BLS beacon σ of round H-1 instead of the block hash.
+    @SerializedName("use_block_beacon")
+    val useBlockBeacon: Boolean = false,
 )
 
 data class TransferAgentAccessParams(

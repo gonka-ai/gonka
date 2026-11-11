@@ -1230,6 +1230,23 @@ func newMinimalInferenceKeeperWithCollateral(
 	collateralKeeper types.CollateralKeeper,
 ) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
 	t.Helper()
+	return newMinimalInferenceKeeperWithOpts(t, collateralKeeper, minimalKeeperOpts{})
+}
+
+// minimalKeeperOpts are optional overrides for newMinimalInferenceKeeperWithOpts.
+type minimalKeeperOpts struct {
+	// wrapBls wraps the real x/bls keeper (nil: unwrapped).
+	wrapBls func(blskeeper.Keeper) types.BlsKeeper
+	// upgrade is the upgrade keeper (nil: none).
+	upgrade types.UpgradeKeeper
+}
+
+func newMinimalInferenceKeeperWithOpts(
+	t *testing.T,
+	collateralKeeper types.CollateralKeeper,
+	opts minimalKeeperOpts,
+) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
+	t.Helper()
 
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
@@ -1255,6 +1272,10 @@ func newMinimalInferenceKeeperWithCollateral(
 		log.NewNopLogger(),
 		authority.String(),
 	)
+	var bls types.BlsKeeper = blsKeeper
+	if opts.wrapBls != nil {
+		bls = opts.wrapBls(blsKeeper)
+	}
 	groupStub := &stubGroupKeeper{}
 	k := keeper.NewKeeper(
 		cdc,
@@ -1268,12 +1289,12 @@ func newMinimalInferenceKeeperWithCollateral(
 		nil,
 		nil,
 		nil,
-		blsKeeper,
+		bls,
 		collateralKeeper,
 		nil,
 		noopAuthzKeeper{},
 		func() wasmkeeper.Keeper { return wasmkeeper.Keeper{} },
-		nil,
+		opts.upgrade,
 	)
 	groupStub.keeper = k
 

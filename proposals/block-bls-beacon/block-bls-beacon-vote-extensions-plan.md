@@ -1,6 +1,6 @@
 # Per-block BLS beacon via CometBFT vote extensions
 
-**Status:** In progress. **Step 1 ✅ done** (2026-11-09, testermint 5/5 green). **Step 2 ✅ done** (2026-11-09, unit/app tests + testermint 2/2 green). **Step 3 ✅ done** (2026-11-11, testermint `real extensions after dkg` green). **Step 4 ✅ done** (2026-11-11, σ or proof of miss required in every block; testermint `sigma in every block` and `withholding proposer is replaced` green). Step 0 tooling and docs ✅, rollout ops open. **Step 5 ✅ done** (2026-11-11, one `BeaconRecord` per round; testermint `beacon record every round` green). **Next:** the VE-on regression gate, then [Step 6](#step-6-wire-xinference-consumer-cpoc), plus Step 0 phase 1 (publish the tmkms 0.14 image). See the [progress board](#progress-board).  
+**Status:** In progress. **Step 1 ✅ done** (2026-11-09, testermint 5/5 green). **Step 2 ✅ done** (2026-11-09, unit/app tests + testermint 2/2 green). **Step 3 ✅ done** (2026-11-11, testermint `real extensions after dkg` green). **Step 4 ✅ done** (2026-11-11, σ or proof of miss required in every block; testermint `sigma in every block` and `withholding proposer is replaced` green). Step 0 tooling and docs ✅, rollout ops open. **Step 5 ✅ done** (2026-11-11, one `BeaconRecord` per round; testermint `beacon record every round` green). **Step 6 ✅ done** (2026-11-11, CPoC trigger draw from σ behind `use_block_beacon`; testermint `cpoc trigger draws from the beacon` green). **Next:** [Step 6b](#step-6b-ungrindable-poc-work-seeds-poc-cpoc-poc-challenges) (security-critical: PoC/CPoC/challenge work seeds are still grindable block hashes), the VE-on regression gate, then Step 7, plus Step 0 phase 1 (publish the tmkms 0.14 image). See the [progress board](#progress-board).  
 **Baseline crypto:** epoch DKG + threshold BLS already exist (`x/bls`, dAPI `BlsManager`)  
 **Related:** [`block-beacon-randomness.md`](block-beacon-randomness.md): what the randomness guarantees, what a proposer can and cannot do, rules for consumers, and the first consumer, Confirmation PoC (Step 6). This plan is the **consensus beacon** those consumers use  
 **Open gaps after Step 1:** [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) (severity-ranked, with gates)  
@@ -322,7 +322,8 @@ Legend: ✅ done · 🟡 partly done (what remains is listed) · ➡️ **next**
 | [3. Pending message, slot map, real ExtendVote / VerifyVoteExtension](#step-3-pending-message-slot-map-real-extendvote--verifyvoteextension) | Valid partials on precommit of `h` | ✅ **Done (2026-11-11)**: code, unit/keeper/app tests (incl. end-to-end across the upgrade), testermint `real extensions after dkg` green ([status](#step-3-implemented-2026-11-11)). Activation rides in v0.2.18 |
 | [4. σ required in the next block, or a proof of miss](#step-4-σ-required-in-the-next-block-or-a-proof-of-miss) | Block `h+1` carries σ_h (one pairing) or a verifiable proof of miss; neither → rejected | ✅ **Done (2026-11-11)**: code, unit + app tests, testermint `sigma in every block` and `withholding proposer is replaced` green ([status](#step-4-implemented-2026-11-11)) |
 | [5. Store σ_h in x/bls: one record per round](#step-5-store-σ_h-in-xbls-one-record-per-round) | `BeaconRecord` for every round in the next block (OK / MISS), queries, events | ✅ **Done (2026-11-11)**: code, keeper/app/cmd tests, testermint `beacon record every round` green plus Step 4 regression ([status](#step-5-implemented-2026-11-11)). Rides v0.2.18 |
-| [6. Wire x/inference consumer (CPoC)](#step-6-wire-xinference-consumer-cpoc) | CPoC uses σ, no hash fallback (flagged) | ➡️ **Next** (after the VE-on regression gate) |
+| [6. Wire x/inference consumer (CPoC)](#step-6-wire-xinference-consumer-cpoc) | CPoC uses σ, no hash fallback (flagged) | ✅ **Done (2026-11-11)**: flag `confirmation_poc_params.use_block_beacon`, draw from σ of `H-1`, no fallback; unit tests and testermint `cpoc trigger draws from the beacon` green ([status](#step-6-implemented-2026-11-11)). Work seed (§8) still open |
+| [6b. Ungrindable PoC work seeds](#step-6b-ungrindable-poc-work-seeds-poc-cpoc-poc-challenges) | PoC, CPoC and challenge seeds from σ, stored on chain; the dAPI reads them from state | ➡️ **Next, security-critical** (today the proposer of the PoC start block can grind the seed and start early) |
 | [7. Unit/keeper + app tests, benchmarks](#step-7-unitkeeper--app-tests-benchmarks) | Crypto + ABCI coverage, CPU bounds | ⬜ Not started |
 | [8. Testermint e2e](#step-8-testermint-e2e) | Multi-node live beacon + CPoC + tmkms + snapshot join | ⬜ Not started (the Step 1 subset already lives in `BlockBeaconTests.kt`) |
 
@@ -333,7 +334,9 @@ Legend: ✅ done · 🟡 partly done (what remains is listed) · ➡️ **next**
 3. ✅ Step 2: share bridge done (unit/app tests + 2 testermint gates).
 4. ✅ Step 3: real extensions done (2026-11-11).
 5. ✅ Step 4: σ or proof of miss required in every block, done (2026-11-11).
-   ✅ Step 5: one `BeaconRecord` per round, done (2026-11-11). ➡️ Run the VE-on regression gate, then Step 6.
+   ✅ Step 5: one `BeaconRecord` per round, done (2026-11-11).
+   ✅ Step 6: CPoC trigger draw from σ (flagged), done (2026-11-11).
+   ➡️ Step 6b: ungrindable work seeds for PoC, CPoC and challenges (security-critical), then the VE-on regression gate and Step 7.
 6. Step 0 phases 2–4 in parallel: testnet rehearsal, announcement, readiness tracker.
 7. ✅ [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) **M1** (reviewed tmkms 0.14.0 lockfile + `cargo audit` CI) and **M2** (multi-stage, digest-pinned, non-root image; per-install KMS identity) are done, so Step 0 phase 1 is unblocked. Before tagging v0.2.18: run the live-params gate and decide **L1** (grace window).
 
@@ -900,6 +903,62 @@ message BeaconRecord {
 - Grind regression: changing the tx set (and therefore `HeaderInfo().Hash`) of block `H` doesn't change the decision when the flag is on.
 - Statistical: over 10k synthetic σ values, the trigger frequency is within tolerance of `p`.
 
+#### Step 6 implemented (2026-11-11)
+
+| Piece | Where | Notes / deviations from the text above |
+|---|---|---|
+| Param | `ConfirmationPoCParams.use_block_beacon` (field 5, default `false`) | **Deviation:** nested in the existing CPoC params, so the name is `confirmation_poc_params.use_block_beacon`, not a top-level `confirmation_poc_use_block_beacon`. No upgrade migration: the zero value is the default. |
+| Draw | `x/inference/module/confirmation_poc.go` (`confirmationPoCDraw`, `cpocBeaconDrawValue`) | Flag on: `BeaconRecord(H-1)` must be `OK` with a 48-byte σ; value = `DeterministicFloat(u64be(sha256("GONKA_CPOC_DRAW_V1" ‖ σ)[:8]), "confirmation_poc_trigger_H")`. Otherwise it logs `beacon miss, no trigger draw` and skips; no error, no hash fallback. Flag off: the legacy value, bit for bit; the misleading "H-1" comment is replaced (it is block `H`'s own hash). All other trigger gates are unchanged and run first. |
+| Event | `ConfirmationPoCEvent.trigger_beacon_round` (10), `trigger_sigma_sha256` (11) | **Deviation:** named `trigger_*`, not `PocSeed*`, and `poc_seed_block_hash` is **not** blanked: it is the CPoC work seed set at generation start that the dAPI uses for nonces. Blanking it would break CPoC; it stays on the block hash until the work-seed decision ([`block-beacon-randomness.md`](block-beacon-randomness.md) §8). |
+| Interface | `x/inference/types/expected_keepers.go` `BlsKeeper.GetBlockBeacon`; mock in `testutil/keeper/expected_keepers_mocks.go` | Mock method added by hand in mockgen's format (`mockgen` not installed). |
+| Testermint | `data/AppExport.kt` `useBlockBeacon`, `data/epoch.kt` `triggerBeaconRound` / `triggerSigmaSha256` | |
+
+**Tests (green):**
+
+- `x/inference/module/confirmation_poc_beacon_test.go`: flag off reproduces the legacy value and never reads the beacon (short hash still errors); flag on matches an independent recomputation, pinned golden value, height-dependent, domain-separated; 10 miss cases (no record, each MISS status, unspecified status, empty or short σ, OK only for `H` or `H-2`, height < 2) → no draw, no error; grind regression (50 block hashes → one beacon draw, 50 distinct legacy draws); 10k random σ at p = 0.01 / 0.05 / 0.3 / 0.5 within 5σ; end to end through `checkConfirmationPoCTrigger` (OK → event with round and σ hash; miss → no event; flag off → no beacon fields). The test keeper helper takes an optional x/bls wrapper and upgrade keeper.
+- Existing x/inference suites (including `confirmation_poc_test.go`), app beacon tests, x/bls, cmd and the upgrade package unchanged and green; dAPI builds.
+- Testermint `cpoc trigger draws from the beacon` (`BlockBeaconTests.kt`, tag `cpoc-beacon`), **green (2026-11-11)** on the rebuilt node image: flag on in genesis, p ≥ 1; the first event triggered at height 86 from beacon round 85; every event so far has `trigger_beacon_round = trigger_height − 1`, that round is `OK` on all 3 nodes, and `trigger_sigma_sha256` matches its σ. The key was ready before the first trigger window, so no miss happened on the cluster; the miss path is covered by the unit tests.
+- Not run: `ConfirmationPoCPassTests` with the flag on (the full CPoC outcome under beacon mode) — part of [Step 8](#step-8-testermint-e2e).
+
+---
+
+### Step 6b. Ungrindable PoC work seeds (PoC, CPoC, PoC challenges)
+
+**Priority: security-critical.** Step 6 removed the grindable input from the CPoC *trigger*; the *work seeds* are still block hashes. The work seed is the input every ML node derives its PoC nonces from, and every validator recomputes them from the same seed. Whoever learns it first, or picks it, gains PoC weight that does not reflect real compute.
+
+**Current seeds (verified 2026-11-11):**
+
+| Seed | Where it is chosen | Value | Lever |
+|---|---|---|---|
+| Regular PoC (every epoch) | dAPI: `chainBridge.GetBlockHash(pocStartBlockHeight)` (`broker.queryCurrentPoCParams`, `new_block_dispatcher.go` `ValidateAll`) → ML node `BlockHash` | hash of block `P` (PoC start) | The proposer of `P` builds the header and can **grind** it (tx set, ordering, time) and **knows it first**, before the block is even proposed, so its nodes start generating ahead of everyone. The proposer of `P` is predictable from the proposer rotation, so the opportunity can be planned. |
+| CPoC | chain: `event.PocSeedBlockHash = HeaderInfo().Hash` at generation start `G` (`confirmation_poc.go`, GRACE_PERIOD → GENERATION) | hash of block `G` | The same, for the proposer of `G`. |
+| PoC challenge | chain: `PoCChallenge.Seed = HeaderInfo().Hash` (`keeper/poc_challenge.go` `StartChallenge`, `RotateChallengeSegment` in `module/poc_challenge.go`) | hash of the block with the challenge tx / the rotation block | The proposer of that block; a challenger colluding with it can also time the tx. |
+
+Related grindable samplers (not work seeds, but the same flaw; included in the inventory, moved in the same step if cheap): the dAPI validator's `samplingBlockHash` (which nonce leaves are checked, `poc/validator.go` `getSamplingBlockHash`) and claim-rewards inference sampling (`msg_server_claim_rewards.go`, `HeaderInfo().Hash`).
+
+**Rule:** a work seed is `seed = sha256(tag ‖ u64be(height) ‖ σ_r)` for a fixed beacon round `r` chosen by the rules below, written to chain state by `EndBlock`, and read by the dAPI **from chain state**, never from a block hash. Tags: `GONKA_POC_SEED_V1`, `GONKA_CPOC_SEED_V1`, `GONKA_POC_CHALLENGE_SEED_V1`. The 32-byte hex seed has the same format as today's block hash, so the ML node API is unchanged.
+
+**Properties:** σ_r is unique (no grinding by anyone) and unpredictable until `t+1` slots sign round `r`. Every validator's collector sees it during the precommit of `r`, about one block before it is on chain: early knowledge moves from one proposer to all validators at once, the same for everyone.
+
+**Seed rounds and misses:**
+
+- **Regular PoC, stage start `P`:** `r = P-1`; at `EndBlock(P)` the chain stores `PocSeed{epoch, round, seed}`. On a miss, the seed is the **first `OK` round after `P-1`**, stored when its record lands; the dAPI starts generation when the seed appears and the stage **end is unchanged**, so a miss shortens generation equally for everyone. A regular PoC can't be cancelled: if no `OK` round lands within `poc_seed_max_wait` blocks (param, default 5), the chain stores the hash-derived seed with `source = BLOCK_HASH_FALLBACK` and emits an event. That fallback is reachable only by a coalition that can make rounds miss (an availability attack, visible in the records); it is logged and monitored, never silent.
+- **CPoC, generation start `G`:** `r = G-1`; a miss cancels the event (no weights, no slashing; the next trigger draw can start a new one). Recommended option of [`block-beacon-randomness.md`](block-beacon-randomness.md) §8.
+- **PoC challenge:** the seed is taken from the round before the challenge's generation start (not the tx's block), with the CPoC miss rule (cancel and refund the lock).
+- **No key yet (epochs 0–1, `MISS_NO_KEY`):** block-hash seed, as today. Bootstrap only.
+
+**Activation (mixed versions):** generators and validators must use the same seed, so the chain decides. New param `poc_params.seed_from_block_beacon` (default `false`). When on, the chain stores the seed for each PoC / CPoC / challenge, and dAPIs use the stored seed. A dAPI that sees the flag on but can't read a stored seed must not fall back to the block hash; it waits. Order: ship the dAPI that reads stored seeds (versiond), confirm adoption, then gov enables the flag. Before the flag, the chain still stores the seeds (so the dAPI path is exercised) but the dAPI keeps using block hashes.
+
+**Touches:** x/inference (`PocSeed` store, query, events, params; `confirmation_poc.go`; `poc_challenge.go`), `x/inference/types/expected_keepers.go` (`GetBlockBeacon`, already added in Step 6), dAPI (`broker.queryCurrentPoCParams`, `prefetchPocParams`, `new_block_dispatcher.go`, `poc/validator.go`), testermint data classes.
+
+**Tests (gate):**
+
+- Keeper: seed stored at `EndBlock(P)` from `OK` round `P-1`; miss → first later `OK` round; no `OK` within `poc_seed_max_wait` → `BLOCK_HASH_FALLBACK` with event; `MISS_NO_KEY` → block hash; flag off → nothing changes for the dAPI.
+- Grind regression: changing block `P`'s (or `G`'s) transactions and header doesn't change the stored seed.
+- CPoC: miss at `G-1` cancels the event, no weight change, no slashing. Challenge: miss cancels and refunds.
+- dAPI: generation and validation use the stored seed when the flag is on; flag on and seed missing → waits, never uses the block hash; flag off → block hash as today. Generator and validator agree on the seed (unit test with a fake chain bridge).
+- Testermint: a full epoch PoC with the flag on (weights match the flag-off run), a CPoC event with the flag on, and a forced miss at `P-1` (withholding proposer or a stopped validator) that delays generation without changing the stage end.
+
 ---
 
 ### Step 7. Unit/keeper + app tests, benchmarks
@@ -943,7 +1002,7 @@ Class `BlockBeaconTests.kt` (uses the Step 1d `consensusOverrides`, `E=2`). Rebu
 | Partials missing | Disable the share export on validators holding > (total − threshold) slots of the commit (they still precommit) | Blocks carry a proof of miss; records `MISS_THRESHOLD` naming the non-contributors; CPoC doesn't trigger; chain keeps producing blocks. |
 | Epoch transition | Run across an epoch boundary with a new DKG | **No `MISS_*` at the boundary** (R9): records keep the old `key_epoch` through `SET_NEW_VALIDATORS` and switch to the new one at `dkg_completed_height + 1 + beacon_key_switch_delay`, all `OK`. |
 | Failed DKG | Force one epoch's DKG to `FAILED` | Records keep the previous `key_epoch`, all `OK` while its holders are up; the dAPI does not prune that epoch's file. |
-| CPoC flag on | Gov proposal sets `confirmation_poc_use_block_beacon=true` | Triggers only on `OK` rounds; the event carries `PocSeedSigmaHash`. Run `ConfirmationPoCPassTests` with the flag on. |
+| CPoC flag on | Gov proposal sets `confirmation_poc_params.use_block_beacon=true` | Triggers only on `OK` rounds; the event carries `trigger_sigma_sha256`. Run `ConfirmationPoCPassTests` with the flag on. |
 | tmkms | All nodes via `docker-compose.tmkms.yml` with the upgraded tmkms | Same as happy path, no missing precommits after `E`. |
 | Snapshot join | A joiner state-syncs past `E` | Catches up, becomes a validator, its partials are counted valid by the other nodes' collectors; records stay `OK`. |
 | Upgrade path | Genesis `E=0`; run the upgrade handler at height U | `E = U+delay`; no panic at `E`; extensions stay empty until the Step 3 activation. |
@@ -977,7 +1036,8 @@ Class `BlockBeaconTests.kt` (uses the Step 1d `consensusOverrides`, `E=2`). Rebu
 3. Testermint Step 8 green (including the tmkms and snapshot cases).
 4. Mainnet upgrade `v0.2.18` at height U with handlers; `E = U + VoteExtensionsEnableDelay` (100). **Precondition: the [Step 0](#step-0-signer-tmkms-rollout-coordination) gate** (≥95% of voting power confirmed on a signer that signs extensions).
 5. Observe the beacon OK rate for at least one epoch.
-6. Gov: `confirmation_poc_use_block_beacon = true`.
+6. Gov: `confirmation_poc_params.use_block_beacon = true`.
+7. dAPI that reads stored seeds (Step 6b) rolled out via versiond; then gov: `poc_params.seed_from_block_beacon = true`.
 
 ---
 
@@ -1000,7 +1060,7 @@ Investigated 2026-11-09:
 Still open:
 
 1. ~~Exact tmkms version in the current production image~~ → 0.12.0, verified from the image build history; the operator runbook is in Step 0. Still open: the readiness tracking channel (form or thread) and the coordinator.
-2. **CPoC**: work seed source and miss handling, and whether to rescale the trigger probability for the miss rate. See [`block-beacon-randomness.md`](block-beacon-randomness.md) §8 and §10.
+2. **CPoC**: whether to rescale the trigger probability for the miss rate. (Work seed source and miss handling: decided in [Step 6b](#step-6b-ungrindable-poc-work-seeds-poc-cpoc-poc-challenges).) See [`block-beacon-randomness.md`](block-beacon-randomness.md) §8 and §10.
 3. Whether to add a TxDecoder shim so explorers don't show a failed tx (the beacon tx) in every block (Step 4). Recommended only if an explorer or indexer breaks.
 4. ~~Accountability for missing or bad partials~~ → decided 2026-11-11: **no slashing or rewards** depend on beacon participation. Collector metrics on each node are enough; no on-chain record of contributors.
 5. ~~Slot assignment by voting power~~ → already the case: x/inference assigns BLS slots from `CapWeight` (`module.go:1786`), the same capped trust weight that sets consensus voting power (`module.go:894`). Residual differences: rounding to integer slots, participants without a BLS key are left out of the DKG, and the genesis-guardian adjustment is applied by two separate functions (staking power vs slot reservation). The Step 3 coverage warning (`EventBeaconSlotCoverageWarning`) stays as the safeguard for those.

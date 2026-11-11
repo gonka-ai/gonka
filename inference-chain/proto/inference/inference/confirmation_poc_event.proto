@@ -19,6 +19,11 @@ message ConfirmationPoCEvent {
   // This hash is only set when transitioning to GENERATION phase to prevent
   // precomputation during the grace period.
   string poc_seed_block_hash = 9;
+
+  // Set when the trigger draw used the block BLS beacon (use_block_beacon):
+  // the beacon round drawn from (trigger_height - 1) and hex(sha256(σ)) of it.
+  uint64 trigger_beacon_round = 10;
+  string trigger_sigma_sha256 = 11;
 }
 
 // ConfirmationPoCPhase defines the phases of a confirmation PoC event.

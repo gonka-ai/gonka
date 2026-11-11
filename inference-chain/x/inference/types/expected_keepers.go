@@ -157,6 +157,9 @@ type BlsKeeper interface {
 	GetSigningStatus(ctx sdk.Context, requestID []byte) (*blstypes.ThresholdSigningRequest, error)
 	ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64) ([]*blstypes.ThresholdSigningRequest, error)
 	CancelThresholdSignature(ctx sdk.Context, requestID []byte) error
+
+	// Block BLS beacon: the stored outcome of one round (found=false if none).
+	GetBlockBeacon(ctx sdk.Context, round uint64) (blstypes.BeaconRecord, bool)
 }
 
 // UpgradeKeeper defines the expected interface for the upgrade module.

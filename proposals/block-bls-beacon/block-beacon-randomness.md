@@ -1,6 +1,6 @@
 # Block beacon randomness: design for consumers
 
-**Status:** design. The beacon that produces the randomness is being built (Steps 1–5 done, see the plan).
+**Status:** design. The beacon that produces the randomness is being built (Steps 1–6 done, see the plan).
 **Beacon design:** [`block-bls-beacon-vote-extensions-plan.md`](block-bls-beacon-vote-extensions-plan.md) (the "plan"). How σ is produced lives there; this document covers what the randomness guarantees, what a proposer can and cannot do, and how modules use it. Confirmation PoC (CPoC) is the first consumer (plan Step 6).
 
 ---
@@ -94,14 +94,14 @@ Any module using the beacon follows these rules:
 
 ## 5. Consumer: CPoC trigger draw
 
-New x/inference parameter `confirmation_poc_use_block_beacon` (bool, default `false`, set by governance).
+New x/inference parameter `confirmation_poc_params.use_block_beacon` (bool, default `false`, set by governance). Implemented in plan Step 6.
 
 At `EndBlock(H)`, inside the existing trigger window (all current gates unchanged):
 
 ```go
-if params.ConfirmationPocUseBlockBeacon {
+if params.ConfirmationPocParams.UseBlockBeacon {
     rec, found := k.BlsKeeper.GetBlockBeacon(ctx, uint64(H-1))
-    if !found || rec.Status != blstypes.OK {
+    if !found || rec.Status != blstypes.BeaconStatus_BEACON_STATUS_OK || len(rec.Sigma) != 48 {
         log("cpoc: beacon miss", H-1, rec.Status)
         return nil // no draw at H; never fall back to the block hash
     }
@@ -114,7 +114,8 @@ if params.ConfirmationPocUseBlockBeacon {
 shouldTrigger := randFloat.LessThan(triggerProbability)
 ```
 
-- The event field `PocSeedBlockHash` stays for compatibility (empty in beacon mode). New fields: `PocSeedBeaconRound` and `PocSeedSigmaHash` (`sha256(σ)` of the round used).
+- New event fields `trigger_beacon_round` (`H-1`) and `trigger_sigma_sha256` (hex `sha256(σ)` of that round) record which beacon round drew the trigger; both are empty on the hash path.
+- `PocSeedBlockHash` is unchanged: it is the **work seed** captured at generation start, which the dAPI uses to generate nonces, not the trigger draw. It still comes from the block hash until §8 is decided.
 - **Rate:** with all validators healthy `P(OK) ≈ 1`, because slots follow voting power. v1 documents the effect and monitors the miss rate; rescaling is open (§10).
 
 ## 6. Who can do what (CPoC view)
@@ -137,9 +138,13 @@ Security assumptions in beacon mode:
 - Validators can therefore know the draw for `H` about one block interval before it settles. Today the proposer of `H` knows its own block hash, and so the draw, while building the block. Beacon mode moves early knowledge from one proposer to the whole validator set, by about one block, and removes the ability to choose.
 - CPoC event timing after a trigger (grace period, generation, validation) is unchanged.
 
-## 8. Consumer: CPoC work seed (open decision)
+## 8. Consumer: PoC work seeds (decided: plan Step 6b)
 
-The work seed captured at the GRACE_PERIOD → GENERATION transition (`G`) still reads `HeaderInfo().Hash`, so the proposer of `G` can grind it. Options using the beacon:
+The work seed is the input ML nodes derive PoC nonces from; validators recompute nonces from the same seed. Every work seed is still a block hash: regular PoC uses the hash of the PoC start block `P` (read by the dAPI), CPoC the hash of generation start `G` (`PocSeedBlockHash`), PoC challenges the hash of the challenge block. The proposer of that block can grind the seed and knows it before anyone else, so its nodes can start generating early. This is a security gap of the same kind as the trigger draw, and larger in effect, since it applies to every epoch's PoC. Plan [Step 6b](block-bls-beacon-vote-extensions-plan.md#step-6b-ungrindable-poc-work-seeds-poc-cpoc-poc-challenges) moves all three to σ, stored on chain and read by the dAPI from state.
+
+Decision for CPoC: option 1 with cancellation (below). Regular PoC can't be cancelled, so on a miss it waits for the first later `OK` round with the stage end unchanged, and falls back to the block hash only after `poc_seed_max_wait` blocks, with an event.
+
+Options considered for CPoC:
 
 1. **σ_{G-1}:** at the transition in `EndBlock(G)`, use the record of round `G-1`, hashed with `GONKA_CPOC_SEED_V1`. On a miss, either:
    - cancel the event (simplest; the next draw can trigger a new one), or
@@ -160,7 +165,7 @@ Option 1 with cancellation keeps the seed secret until generation starts and is 
 
 1. Steps 1–5 live with every consumer still on its current input. Records are queryable (`inferenced query bls block-beacon <round>`).
 2. Observe the OK rate for at least one epoch.
-3. Switch consumers one by one; for CPoC, governance sets `confirmation_poc_use_block_beacon = true`. Turning it off reverts to the hash path.
+3. Switch consumers one by one; for CPoC, governance sets `confirmation_poc_params.use_block_beacon = true`. Turning it off reverts to the hash path.
 
 **Tests:**
 
@@ -169,7 +174,7 @@ Option 1 with cancellation keeps the seed secret until generation starts and is 
 
 **Open questions:**
 
-1. CPoC work seed source and miss handling (§8).
+1. ~~CPoC work seed source and miss handling (§8)~~ → decided, plan Step 6b (covers regular PoC and challenges too).
 2. Rescale trigger probabilities by the observed OK ratio, or only monitor it (§4, §5).
 3. Whether consumers should require a minimum key size (for example 100 slots / threshold 51) before trusting the beacon.
 4. Other consumers (beyond CPoC) that read `HeaderInfo().Hash` as randomness: inventory them and move them to the beacon with their own domain tags.

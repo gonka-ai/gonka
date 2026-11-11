@@ -122,7 +122,12 @@ data class ConfirmationPoCEvent(
     val generationStartHeight: Long,
     val phase: ConfirmationPoCPhase,
     @SerializedName("poc_seed_block_hash")
-    val pocSeedBlockHash: String = ""
+    val pocSeedBlockHash: String = "",
+    // Set when the trigger draw used the block BLS beacon (use_block_beacon).
+    @SerializedName("trigger_beacon_round")
+    val triggerBeaconRound: Long = 0,
+    @SerializedName("trigger_sigma_sha256")
+    val triggerSigmaSha256: String = "",
 )
 
 enum class ConfirmationPoCPhase(val value: Int) {

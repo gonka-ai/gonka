@@ -1359,6 +1359,21 @@ func (mr *MockBlsKeeperMockRecorder) GetEpochBLSData(ctx, epochID any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetEpochBLSData", reflect.TypeOf((*MockBlsKeeper)(nil).GetEpochBLSData), ctx, epochID)
 }
 
+// GetBlockBeacon mocks base method.
+func (m *MockBlsKeeper) GetBlockBeacon(ctx types1.Context, round uint64) (types4.BeaconRecord, bool) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetBlockBeacon", ctx, round)
+	ret0, _ := ret[0].(types4.BeaconRecord)
+	ret1, _ := ret[1].(bool)
+	return ret0, ret1
+}
+
+// GetBlockBeacon indicates an expected call of GetBlockBeacon.
+func (mr *MockBlsKeeperMockRecorder) GetBlockBeacon(ctx, round any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetBlockBeacon", reflect.TypeOf((*MockBlsKeeper)(nil).GetBlockBeacon), ctx, round)
+}
+
 // GetParams mocks base method.
 func (m *MockBlsKeeper) GetParams(ctx context.Context) (types4.Params, error) {
 	m.ctrl.T.Helper()

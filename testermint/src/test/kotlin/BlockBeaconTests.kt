@@ -1,4 +1,10 @@
 import com.productscience.ApplicationConfig
+import com.productscience.data.AppState
+import com.productscience.data.ConfirmationPoCParams
+import com.productscience.data.EpochParams
+import com.productscience.data.InferenceParams
+import com.productscience.data.InferenceState
+import com.productscience.data.spec
 import com.productscience.EpochStage
 import com.productscience.LocalCluster
 import com.productscience.LocalInferencePair
@@ -26,6 +32,8 @@ import java.util.concurrent.TimeUnit
  *  - Step 4: block h+1 carries σ_h (or a proof of miss) as Txs[0]; ProcessProposal rejects a
  *    block with neither.
  *  - Step 5: FinalizeBlock(h+1) stores BeaconRecord(h) (OK with σ, or a miss).
+ *  - Step 6: with confirmation_poc_params.use_block_beacon the CPoC trigger draw at H uses
+ *    σ of round H-1; a miss means no draw.
  *
  * Env:
  *  - TESTERMINT_TMKMS_IMAGE: vote-extension-capable tmkms image (tmkms 0.14.0 with
@@ -526,6 +534,58 @@ class BlockBeaconTests : TestermintTest() {
         }
         val latest = cluster.genesis.node.execAndParse<BlockBeaconResponse>(listOf("query", "bls", "latest-block-beacon")).record
         assertThat(latest?.round).describedAs("latest OK round").isGreaterThanOrEqualTo(from + 29)
+        assertNoConsensusFailure(cluster.allPairs)
+    }
+
+    @Test
+    @Tag("block-beacon")
+    @Tag("cpoc-beacon")
+    fun `cpoc trigger draws from the beacon`() {
+        // p >= 1 (100 expected confirmations over a ~27-block window, no safety window): the
+        // draw always succeeds, so an event triggers at the first eligible height whose round
+        // H-1 is OK, and never from a miss.
+        val cpocSpec = spec<AppState> {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::confirmationPocSafetyWindow] = 0L
+                    }
+                    this[InferenceParams::confirmationPocParams] = spec<ConfirmationPoCParams> {
+                        this[ConfirmationPoCParams::expectedConfirmationsPerEpoch] = 100L
+                        this[ConfirmationPoCParams::upgradeProtectionWindow] = 2L
+                        this[ConfirmationPoCParams::useBlockBeacon] = true
+                    }
+                }
+            }
+        }
+        val config = shareConfig.copy(genesisSpec = shareConfig.genesisSpec?.merge(cpocSpec) ?: cpocSpec)
+        val cluster = setupLocalCluster(2, config, reboot = true)
+        cluster.allPairs.forEach { it.waitForFirstBlock() }
+        val genesis = cluster.genesis
+        assertThat(genesis.node.getInferenceParams().params.confirmationPocParams?.useBlockBeacon)
+            .describedAs("use_block_beacon in genesis").isTrue()
+
+        logSection("Wait for a beacon key held by all validators, then a CPoC event")
+        waitForBeaconKeyOverAllValidators(cluster)
+        val first = waitForConfirmationPoCTrigger(genesis, maxBlocks = 120)
+        assertThat(first).describedAs("a CPoC event within 240 blocks of the beacon key").isNotNull()
+
+        logSection("Every CPoC event was drawn from an OK beacon round with its σ")
+        val currentEpoch = genesis.getEpochData().latestEpoch.index
+        val events = (2L..currentEpoch).flatMap { genesis.node.listConfirmationPoCEvents(it).events }
+        assertThat(events).describedAs("CPoC events so far").isNotEmpty()
+        events.forEach { ev ->
+            val round = ev.triggerHeight - 1
+            assertThat(ev.triggerBeaconRound).describedAs("beacon round of event at ${ev.triggerHeight}").isEqualTo(round)
+            val records = cluster.allPairs.map { queryBlockBeacon(it, round) }
+            records.forEachIndexed { i, rec ->
+                assertThat(rec?.status).describedAs("round $round on ${cluster.allPairs[i].name}").isEqualTo("BEACON_STATUS_OK")
+            }
+            val sigmaHex = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(java.util.Base64.getDecoder().decode(records.first()!!.sigma))
+                .joinToString("") { "%02x".format(it) }
+            assertThat(ev.triggerSigmaSha256).describedAs("σ hash of event at ${ev.triggerHeight}").isEqualTo(sigmaHex)
+        }
         assertNoConsensusFailure(cluster.allPairs)
     }
 

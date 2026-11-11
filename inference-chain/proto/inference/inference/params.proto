@@ -353,6 +353,12 @@ message ConfirmationPoCParams {
 
   // upgrade_protection_window is blocks before/after upgrade to skip confirmation PoC (default: 500)
   int64 upgrade_protection_window = 4;
+
+  // use_block_beacon: the trigger draw at height H uses the block BLS beacon
+  // σ of round H-1 (x/bls BeaconRecord) instead of the current block hash,
+  // which the proposer can grind. A beacon miss means no draw at H; there is
+  // no fallback to the block hash. Default false (set by governance).
+  bool use_block_beacon = 5;
 }
 
 message GenesisGuardianParams {

@@ -2,12 +2,15 @@ package inference
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/x/bls/blsutil"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -160,14 +163,16 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	windowBlocks := decimal.NewFromInt(triggerWindowLength)
 	triggerProbability := expectedConfirmations.Div(windowBlocks)
 
-	// Use block hash at H-1 as randomness source
-	prevBlockHash := sdkCtx.HeaderInfo().Hash
-	if len(prevBlockHash) < 8 {
-		return fmt.Errorf("block hash too short: %d bytes", len(prevBlockHash))
+	draw, ok, err := am.confirmationPoCDraw(sdkCtx, blockHeight, confirmationParams.UseBlockBeacon)
+	if err != nil {
+		return err
 	}
-
-	blockHashSeed := int64(binary.BigEndian.Uint64(prevBlockHash[:8]))
-	randFloat := calculations.DeterministicFloat(blockHashSeed, fmt.Sprintf("confirmation_poc_trigger_%d", blockHeight))
+	if !ok {
+		// Beacon miss: no randomness for this height, so no draw. Never fall
+		// back to the block hash (proposals/block-bls-beacon/block-beacon-randomness.md §4).
+		return nil
+	}
+	randFloat := draw.value
 
 	shouldTrigger := randFloat.LessThan(triggerProbability)
 
@@ -180,7 +185,8 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		"blockHeight", blockHeight,
 		"epochIndex", epochContext.EpochIndex,
 		"triggerProbability", triggerProbability.String(),
-		"randomValue", randFloat.String())
+		"randomValue", randFloat.String(),
+		"beaconRound", draw.beaconRound)
 
 	// Get next event sequence number for this epoch
 	existingEvents, err := am.keeper.GetAllConfirmationPoCEventsForEpoch(ctx, epochContext.EpochIndex)
@@ -204,6 +210,8 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		GenerationStartHeight: generationStartHeight,
 		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD,
 		PocSeedBlockHash:      "", // Will be set when transitioning to GENERATION phase
+		TriggerBeaconRound:    draw.beaconRound,
+		TriggerSigmaSha256:    draw.sigmaSHA256,
 	}
 
 	// Store the event
@@ -226,6 +234,72 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		"validationEndHeight", event.GetValidationEnd(epochParams))
 
 	return nil
+}
+
+// cpocBeaconDrawTag domain-separates the CPoC trigger draw from every other
+// use of the same beacon σ.
+const cpocBeaconDrawTag = "GONKA_CPOC_DRAW_V1"
+
+// cpocDraw is the random input of one CPoC trigger draw.
+type cpocDraw struct {
+	value decimal.Decimal
+	// beaconRound and sigmaSHA256 identify the beacon round used; zero/empty
+	// on the block-hash path.
+	beaconRound uint64
+	sigmaSHA256 string
+}
+
+// confirmationPoCDraw returns the trigger draw for blockHeight. ok=false means
+// there is no randomness for this height (beacon mode and round H-1 is not OK):
+// the caller skips the draw.
+//
+// Beacon mode reads σ of round H-1, which Steps 4–5 of the block BLS beacon
+// always resolve in block H, before this EndBlock. σ is unique for the round,
+// so neither the proposer of H nor its transactions can change the draw.
+//
+// The block-hash path is the legacy one: during FinalizeBlock(H),
+// HeaderInfo().Hash is the hash of block H itself (not H-1), which the
+// proposer of H can grind.
+func (am AppModule) confirmationPoCDraw(sdkCtx sdk.Context, blockHeight int64, useBeacon bool) (cpocDraw, bool, error) {
+	if !useBeacon {
+		hash := sdkCtx.HeaderInfo().Hash
+		if len(hash) < 8 {
+			return cpocDraw{}, false, fmt.Errorf("block hash too short: %d bytes", len(hash))
+		}
+		seed := int64(binary.BigEndian.Uint64(hash[:8]))
+		return cpocDraw{value: calculations.DeterministicFloat(seed, cpocTriggerIdentifier(blockHeight))}, true, nil
+	}
+
+	if blockHeight < 2 {
+		return cpocDraw{}, false, nil
+	}
+	round := uint64(blockHeight - 1)
+	rec, found := am.keeper.BlsKeeper.GetBlockBeacon(sdkCtx, round)
+	if !found || rec.Status != blstypes.BeaconStatus_BEACON_STATUS_OK || len(rec.Sigma) != blsutil.SignatureLen {
+		am.LogInfo("Confirmation PoC: beacon miss, no trigger draw", types.PoC,
+			"blockHeight", blockHeight, "beaconRound", round, "found", found, "status", rec.Status.String())
+		return cpocDraw{}, false, nil
+	}
+	sigmaHash := sha256.Sum256(rec.Sigma)
+	return cpocDraw{
+		value:       cpocBeaconDrawValue(rec.Sigma, blockHeight),
+		beaconRound: round,
+		sigmaSHA256: hex.EncodeToString(sigmaHash[:]),
+	}, true, nil
+}
+
+// cpocBeaconDrawValue maps σ to the trigger draw at blockHeight:
+// DeterministicFloat(first 8 bytes of sha256(tag ‖ σ), "confirmation_poc_trigger_<H>").
+func cpocBeaconDrawValue(sigma []byte, blockHeight int64) decimal.Decimal {
+	h := sha256.New()
+	h.Write([]byte(cpocBeaconDrawTag))
+	h.Write(sigma)
+	seed := int64(binary.BigEndian.Uint64(h.Sum(nil)[:8]))
+	return calculations.DeterministicFloat(seed, cpocTriggerIdentifier(blockHeight))
+}
+
+func cpocTriggerIdentifier(blockHeight int64) string {
+	return fmt.Sprintf("confirmation_poc_trigger_%d", blockHeight)
 }
 
 // handleConfirmationPoCPhaseTransitions manages phase transitions for active confirmation PoC events
