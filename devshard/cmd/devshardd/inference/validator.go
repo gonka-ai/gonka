@@ -157,7 +157,10 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 			fmt.Errorf("evaluate validation result: %w", err))
 	}
 	verdict := &devshardpkg.ValidateResult{Valid: valid}
-	if echo, ok := result.(*commonvalidation.EchoValidationResult); ok {
+	if echo, ok := result.(*commonvalidation.EchoValidationResult); ok && echo.Autopass != "" {
+		verdict.Reason = "autopass_4xx"
+		verdict.Details = []any{"cause", echo.Autopass}
+	} else if ok {
 		verdict.Reason = "echo_fail"
 		if valid {
 			verdict.Reason = "echo_pass"

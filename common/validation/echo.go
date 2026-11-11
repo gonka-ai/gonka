@@ -290,10 +290,32 @@ type EchoValidationResult struct {
 	// Replay names what kept the echo from judging the answer, which the
 	// validator replayed through its engine's sampler instead; empty for an echo.
 	Replay string
+	// Autopass names the call the validator's own engine rejected with a 400
+	// or 422. Mainnet passes such a validation: without a score there is no
+	// proof against the executor.
+	Autopass string
 }
 
 func (r EchoValidationResult) IsSuccessful() bool {
+	if r.Autopass != "" {
+		return true
+	}
 	return EchoThresholdsFor(r.Model).Pass(r.Signals)
+}
+
+// rejected reports the statuses mainnet passes a validation on.
+func rejected(status int) bool {
+	return status == http.StatusBadRequest || status == http.StatusUnprocessableEntity
+}
+
+func autopass(inferenceID, model, call string, status int) *EchoValidationResult {
+	logging.Warn("validator's engine rejected the request; treating validation as passed (mainnet 4xx autopass)",
+		types.Validation, "inferenceId", inferenceID, "call", call, "status", status)
+	return &EchoValidationResult{
+		BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
+		Model:                model,
+		Autopass:             fmt.Sprintf("%s rejected with %d", call, status),
+	}
 }
 
 // ScoreEcho scores an answer from the validator's logprobs of its positions:
@@ -693,7 +715,8 @@ func tokenIDsOf(body []byte) (prompt, out []int, err error) {
 // itself (ChatPath, one token) and prefills its own; the claimed token counts
 // are checked against both. The answer's end is checked against finish_reason
 // and the pinned token budget. An answer the validator cannot judge returns
-// ErrEchoUnsupported.
+// ErrEchoUnsupported; a 400 or 422 from the validator's own engine passes the
+// validation, as on mainnet.
 func ExecuteEchoValidation(
 	ctx context.Context,
 	inferenceID string,
@@ -727,6 +750,12 @@ func ExecuteEchoValidation(
 	if err != nil {
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Stored response carries no answer tokens.", Error: err}, nil
 	}
+	// An id outside the vocabulary is not a token of this model.
+	for _, id := range out {
+		if id >= vocab {
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Answer token outside the vocabulary."}, nil
+		}
+	}
 
 	renderBody, err := promptIDsRequestBody(requestMap)
 	if err != nil {
@@ -736,8 +765,8 @@ func ExecuteEchoValidation(
 	if err != nil {
 		return nil, err
 	}
-	if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
-		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot render the stored request."}, nil
+	if rejected(status) {
+		return autopass(inferenceID, model, "render", status), nil
 	}
 	if status != http.StatusOK {
 		return nil, fmt.Errorf("echo validation: render status %d: %s", status, bytes.TrimSpace(rendered))
@@ -772,8 +801,8 @@ func ExecuteEchoValidation(
 		if err != nil {
 			return nil, err
 		}
-		if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot replay the stored answer."}, nil
+		if rejected(status) {
+			return autopass(inferenceID, model, "replay", status), nil
 		}
 		if status != http.StatusOK {
 			return nil, fmt.Errorf("replay validation: status %d: %s", status, bytes.TrimSpace(respBody))
@@ -799,9 +828,8 @@ func ExecuteEchoValidation(
 		if err != nil {
 			return nil, err
 		}
-		if status == http.StatusBadRequest || status == http.StatusUnprocessableEntity {
-			// The echo holds nothing but the executor's own token ids.
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Validator cannot embed the stored token ids."}, nil
+		if rejected(status) {
+			return autopass(inferenceID, model, "echo", status), nil
 		}
 		if status != http.StatusOK {
 			return nil, fmt.Errorf("echo validation: status %d: %s", status, bytes.TrimSpace(respBody))

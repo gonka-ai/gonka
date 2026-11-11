@@ -299,7 +299,7 @@ func TestExecuteEchoValidation_ScoresTheStoredAnswer(t *testing.T) {
 	}
 }
 
-func TestExecuteEchoValidation_InflatedCountsAndRejectedIDsFail(t *testing.T) {
+func TestExecuteEchoValidation_InflatedCountsFail(t *testing.T) {
 	lp := echoTestLogprobs()
 	out := tapeAnswer(lp, uint64(int64(validationReplaySeed("42"))))
 	stored := storedAnswer(t, out, "", false)
@@ -314,12 +314,57 @@ func TestExecuteEchoValidation_InflatedCountsAndRejectedIDsFail(t *testing.T) {
 		require.Equal(t, "Inflated token counts.", result.(*InvalidInferenceResult).Reason)
 	}
 
-	reject := func(context.Context, string, []byte) (*http.Response, error) {
-		return &http.Response{StatusCode: http.StatusBadRequest, Body: io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"bad ids"}}`)))}, nil
+}
+
+// A 400 or 422 from the validator's own engine passes the validation, as on
+// mainnet: at the render, at the echo and at the replay.
+func TestExecuteEchoValidation_AnEngineRejectionPasses(t *testing.T) {
+	lp := echoTestLogprobs()
+	prompt := []int{10, 11, 12}
+	out := greedyAnswer(lp) // off the tape: it would fail if it were scored
+	stored := storedAnswer(t, out, "length", false)
+	for _, tc := range []struct {
+		extra, call string
+	}{
+		{``, "render"},
+		{``, "echo"},
+		{`,"min_p":0.1`, "replay"},
+	} {
+		promptPayload := `{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,"temperature":1,"top_p":1,"top_k":0` + tc.extra + `}`
+		inner := echoServer(t, lp, prompt)
+		engine := func(ctx context.Context, path string, body []byte) (*http.Response, error) {
+			scored := path == EchoPath || bytes.Contains(body, []byte("enforced_tokens"))
+			if (tc.call == "render") != scored {
+				status := http.StatusBadRequest
+				if tc.call == "replay" {
+					status = http.StatusUnprocessableEntity
+				}
+				return &http.Response{StatusCode: status, Body: io.NopCloser(bytes.NewReader([]byte(`{"error":{"message":"too long"}}`)))}, nil
+			}
+			return inner(ctx, path, body)
+		}
+		result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored, engine, 3, uint64(len(out)))
+		require.NoError(t, err, tc.call)
+		echo, ok := result.(*EchoValidationResult)
+		require.True(t, ok, tc.call)
+		require.Contains(t, echo.Autopass, tc.call+" rejected with")
+		require.True(t, result.IsSuccessful(), tc.call)
 	}
-	result, err := ExecuteEchoValidation(context.Background(), "42", promptPayload, stored, reject, 3, uint64(len(out)))
+}
+
+// An id outside the vocabulary is not a token of this model: such an answer
+// is invalid before any engine call.
+func TestExecuteEchoValidation_AnAnswerTokenOutsideTheVocabularyFails(t *testing.T) {
+	stored := storedAnswer(t, []int{5, 151936, 6}, "length", false)
+	result, err := ExecuteEchoValidation(context.Background(), "42",
+		[]byte(`{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}]}`), stored,
+		func(context.Context, string, []byte) (*http.Response, error) {
+			t.Fatal("no engine call expected")
+			return nil, nil
+		}, 3, 3)
 	require.NoError(t, err)
 	require.IsType(t, &InvalidInferenceResult{}, result)
+	require.Equal(t, "Answer token outside the vocabulary.", result.(*InvalidInferenceResult).Reason)
 }
 
 func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
