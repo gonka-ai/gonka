@@ -204,6 +204,12 @@ func tapeParams(requestMap map[string]interface{}) TapeParams {
 // validator's kept set, MaxGap and SumGap the score gaps of those positions.
 // A greedy answer has no residual: Count is the positions whose token is not
 // the validator's most likely one, the gaps are in logprob, Z stays zero.
+//
+// Z and MeanR are reported, not judged. Honest answers sit below the Gumbel
+// mean by a drift that depends on the model and the hardware (0.008-0.038 in
+// the calibration), which the square root in Z turns into false failures as
+// the answer grows; the positions off the winner catch every substitute the
+// residual caught, in fewer tokens.
 type EchoSignals struct {
 	Steps  int     `json:"steps"`
 	MeanR  float64 `json:"mean_r"`
@@ -216,12 +222,11 @@ type EchoSignals struct {
 	Masked int `json:"masked,omitempty"`
 }
 
-// EchoThresholds challenge an answer with Z below ZMin, with more positions
-// off the winner than the model's honest share allows for its length, or with
-// a gap above the model's honest largest. ZMin is one bound for every model;
-// FlipRate and MaxGap are calibrated per model and zero when they are not.
+// EchoThresholds challenge an answer with more positions off the winner than
+// the model's honest share allows for its length, or with a gap above the
+// model's honest largest. FlipRate and MaxGap are calibrated per model and
+// zero when they are not.
 type EchoThresholds struct {
-	ZMin     float64
 	FlipRate float64
 	MaxGap   float64
 }
@@ -239,27 +244,23 @@ type EchoThresholds struct {
 // the honest share of positions off the winner with a margin for the length
 // bound, MaxGap the largest honest gap seen with a margin.
 var echoThresholds = map[string]EchoThresholds{
-	"deepseek-ai/DeepSeek-V4-Flash-0731": {ZMin: -3, FlipRate: 0.05, MaxGap: 5},
-	"MiniMaxAI/MiniMax-M2.7":             {ZMin: -3, FlipRate: 0.06, MaxGap: 5},
-	"zai-org/GLM-5.3-Flash":              {ZMin: -3, FlipRate: 0.04, MaxGap: 5.5},
-	"Qwen/Qwen3-0.6B":                    {ZMin: -3, FlipRate: 0.02, MaxGap: 6.4},
-	"Qwen/Qwen3-4B-Instruct-2507":        {ZMin: -3, FlipRate: 0.02, MaxGap: 5},
-	"Qwen/Qwen2.5-1.5B-Instruct":         {ZMin: -3, FlipRate: 0.02, MaxGap: 4},
-	"Qwen/Qwen2.5-7B-Instruct":           {ZMin: -3, FlipRate: 0.02, MaxGap: 4},
+	"deepseek-ai/DeepSeek-V4-Flash-0731": {FlipRate: 0.05, MaxGap: 5},
+	"MiniMaxAI/MiniMax-M2.7":             {FlipRate: 0.06, MaxGap: 5},
+	"zai-org/GLM-5.3-Flash":              {FlipRate: 0.04, MaxGap: 5.5},
+	"Qwen/Qwen3-0.6B":                    {FlipRate: 0.02, MaxGap: 6.4},
+	"Qwen/Qwen3-4B-Instruct-2507":        {FlipRate: 0.02, MaxGap: 5},
+	"Qwen/Qwen2.5-1.5B-Instruct":         {FlipRate: 0.02, MaxGap: 4},
+	"Qwen/Qwen2.5-7B-Instruct":           {FlipRate: 0.02, MaxGap: 4},
 }
 
-// EchoThresholdsFor returns the model's thresholds; a model without a
-// calibration is judged by Z alone.
+// EchoThresholdsFor returns the model's thresholds; without a calibration
+// they are zero and judge nothing.
 func EchoThresholdsFor(model string) EchoThresholds {
-	if t, ok := echoThresholds[model]; ok {
-		return t
-	}
-	return EchoThresholds{ZMin: -3}
+	return echoThresholds[model]
 }
 
 func (t EchoThresholds) Pass(s EchoSignals) bool {
-	// Written so that a score that is not a number does not pass.
-	if s.Steps == 0 || !(s.Z >= t.ZMin) {
+	if s.Steps == 0 {
 		return false
 	}
 	if !t.CountPasses(s.Steps, s.Count, 2.576) {

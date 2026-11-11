@@ -94,6 +94,7 @@ func TestScoreEcho_AnotherSeedIsAnotherTape(t *testing.T) {
 	lp := echoTestLogprobs()
 	s := ScoreEcho(lp, tapeAnswer(lp, echoTestSeed+1), echoTestSeed, echoTestVocab, plainParams, nil)
 	require.Less(t, s.Z, -3.0)
+	require.False(t, EchoThresholdsFor("Qwen/Qwen3-0.6B").Pass(s))
 }
 
 func TestScoreEcho_TemperatureAndTopPAreTheExecutorsOwn(t *testing.T) {
@@ -369,7 +370,8 @@ func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
 	// 500 positions at an honest 5 %: 25 expected, the 99.5 % bound at 38.
 	require.True(t, th.Pass(EchoSignals{Steps: 500, Count: 38, Z: 0}))
 	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 39, Z: 0}))
-	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, Z: -3.1}))
+	// The residual is reported, not judged.
+	require.True(t, th.Pass(EchoSignals{Steps: 500, Count: 0, Z: -9}))
 	require.False(t, th.Pass(EchoSignals{Steps: 500, Count: 0, MaxGap: 5.1}))
 	// MiniMax: 500 positions at an honest 6 %: 30 expected, the 99.5 % bound at 44.
 	mm := EchoThresholdsFor("MiniMaxAI/MiniMax-M2.7")
@@ -422,10 +424,6 @@ func TestScoreEcho_GreedyMasksEndTokensBeforeMinTokens(t *testing.T) {
 	s := ScoreEcho(lp, []int{5}, 1, echoTestVocab, greedy, []int{3})
 	require.Equal(t, 1, s.Count)
 	require.InDelta(t, 2.4, s.MaxGap, 1e-9)
-}
-
-func TestEchoThresholds_AScoreThatIsNotANumberDoesNotPass(t *testing.T) {
-	require.False(t, EchoThresholdsFor("other/model").Pass(EchoSignals{Steps: 10, Z: math.NaN()}))
 }
 
 func TestScoreEcho_AMaskedAnswerTokenCountsButIsNotScored(t *testing.T) {
