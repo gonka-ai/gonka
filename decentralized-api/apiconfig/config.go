@@ -39,7 +39,7 @@ type Config struct {
 // BlsBeaconConfig controls the block-beacon share export: after DKG the dAPI
 // writes this participant's BLS slot shares to <ShareDir>/epoch-<N>.json for
 // the chain node to sign vote-extension partials with
-// (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md, Step 2).
+// (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md, Step 2).
 //
 // The zero value is the default (export on, default directory), so configs
 // persisted before this section existed keep exporting.

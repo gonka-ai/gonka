@@ -1,7 +1,7 @@
 package app
 
 // Block BLS beacon, Step 2: the share bridge on the node side
-// (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 //
 // The dAPI exports this validator's recovered BLS slot shares to
 // `<home>/bls-beacon/epoch-<N>.json`; the FileShareProvider loads them into

@@ -1,7 +1,7 @@
 // Package v0_2_18 holds the upgrade handler for the v0.2.18 release.
 //
 // v0.2.18 schedules CometBFT vote extensions for the block BLS beacon (Step 1
-// of devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md) and
+// of proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md) and
 // activates beacon partials in those extensions (Step 3; rules R6 and R9).
 // Release precondition: validators holding well over 2/3 of voting power run
 // tmkms 0.14.0 with sign_extensions = true (not 0.15.0, see tmkms#1174); any

@@ -14,5 +14,5 @@ const UpgradeName = "v0.2.18"
 // (CometBFT types.SignAndCheckVote: non-recoverable). The delay is a short
 // grace window only; the tmkms rollout must be complete BEFORE the upgrade
 // proposal passes (see the coordination step in
-// devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 const VoteExtensionsEnableDelay int64 = 100

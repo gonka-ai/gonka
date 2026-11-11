@@ -3,11 +3,11 @@
 # tmkms signer image (generates a consensus key on first start).
 #
 # - tmkms 0.14.0, NOT 0.15.0: 0.15.0 drops the vote-extension signature on the
-#   wire (iqlusioninc/tmkms#1174); see devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md (F7).
+#   wire (iqlusioninc/tmkms#1174); see proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md (F7).
 # - Built from the checksum-pinned crates.io source with a reviewed lockfile
 #   (tmkms/build/tmkms-0.14.0.Cargo.lock): patch-level security updates over the
 #   upstream lock (bytes, time, tracing-subscriber, anyhow, keccak, futures, spin);
-#   see devshard/docs/block-bls-beacon-step1-gaps.md (M1).
+#   see docs/block-bls-beacon/block-bls-beacon-step1-gaps.md (M1).
 # - Multi-stage: the runtime image carries only the binary, Python for
 #   tmkms-pubkey and the entrypoint scripts; tmkms runs as a non-root user (M2).
 

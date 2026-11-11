@@ -1,7 +1,7 @@
 package app
 
 // Block BLS beacon: ABCI handler skeleton (Step 1 of
-// devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 //
 // Step 1 installs explicit vote-extension, proposal and pre-block handlers that
 // behave exactly like today's chain (empty extensions, pass-through proposals),

@@ -1,6 +1,6 @@
 # Block beacon randomness: design for consumers
 
-**Status:** design. The beacon that produces the randomness is being built (Steps 0–4 done, see the plan).
+**Status:** design. The beacon that produces the randomness is being built (Steps 1–5 done, see the plan).
 **Beacon design:** [`block-bls-beacon-vote-extensions-plan.md`](block-bls-beacon-vote-extensions-plan.md) (the "plan"). How σ is produced lives there; this document covers what the randomness guarantees, what a proposer can and cannot do, and how modules use it. Confirmation PoC (CPoC) is the first consumer (plan Step 6).
 
 ---

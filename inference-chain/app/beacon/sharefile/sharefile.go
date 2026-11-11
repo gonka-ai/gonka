@@ -1,7 +1,7 @@
 // Package sharefile defines the on-disk format the decentralized API (dAPI) uses
 // to hand its recovered BLS slot shares to the chain node, which needs them to
 // sign per-block beacon partials inside ExtendVote (Step 2 of
-// devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 //
 // The dAPI is the only process that can decrypt shares, and ExtendVote must
 // never block on a network call, so the dAPI writes one file per epoch into a

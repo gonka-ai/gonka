@@ -1,6 +1,6 @@
 package app
 
-// Block BLS beacon, Step 4 (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md):
+// Block BLS beacon, Step 4 (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md):
 // block h+1 must carry, as Txs[0], either σ_h (any t+1 valid partials
 // aggregate to the same signature, checked with one pairing) or a proof of
 // miss (the extended commit of h, holding fewer than t+1 valid slots). A

@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
 
 /**
- * Block BLS beacon (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md):
+ * Block BLS beacon (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md):
  *  - Step 1: CometBFT vote extensions enabled with empty extensions.
  *  - Step 2: the share bridge. After DKG the dAPI exports each validator's BLS slot shares to
  *    /root/.inference/bls-beacon/epoch-<N>.json and the node verifies them against committed

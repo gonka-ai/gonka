@@ -1,6 +1,6 @@
 // Package beacon holds node-side pieces of the per-block BLS beacon that do not
 // depend on keepers (Step 2+ of
-// devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 package beacon
 
 import (

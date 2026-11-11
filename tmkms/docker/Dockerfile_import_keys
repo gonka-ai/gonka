@@ -5,7 +5,7 @@
 # Same builder and runtime hardening as Dockerfile_keygen (tmkms 0.14.0 from a
 # checksum-pinned crate + reviewed lockfile, multi-stage, non-root runtime).
 #
-# WARNING (pre-existing, devshard/docs/block-bls-beacon-step1-gaps.md P1): this
+# WARNING (pre-existing, docs/block-bls-beacon/block-bls-beacon-step1-gaps.md P1): this
 # image copies priv_validator_key.json into its layers at build time. Never push
 # it to a registry; prefer mounting the key at runtime.
 

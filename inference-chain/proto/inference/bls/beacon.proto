@@ -3,7 +3,7 @@ package inference.bls;
 
 option go_package = "github.com/productscience/inference/x/bls/types";
 
-// Block BLS beacon (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// Block BLS beacon (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 
 // BeaconVoteExtension is the vote extension a validator attaches to its
 // precommit for height `round`: one partial BLS signature per slot it owns in

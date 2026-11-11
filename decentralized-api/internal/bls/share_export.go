@@ -1,7 +1,7 @@
 package bls
 
 // Block BLS beacon, Step 2: export this participant's recovered slot shares to
-// the chain node (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md).
+// the chain node (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md).
 //
 // The node signs per-block beacon partials inside ExtendVote, which must not
 // call out to the dAPI, so the dAPI writes the shares to a file in the node

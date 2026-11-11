@@ -1,5 +1,5 @@
 // Package blsutil holds the pure BLS primitives of the block beacon
-// (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md): the
+// (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md): the
 // per-round message, the message-to-G1 map, and per-slot partial signing and
 // verification. It has no keeper or app dependencies, so the chain, the dAPI
 // and tools compute exactly the same bytes.

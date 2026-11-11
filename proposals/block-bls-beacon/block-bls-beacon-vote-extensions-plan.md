@@ -3,7 +3,7 @@
 **Status:** In progress. **Step 1 ✅ done** (2026-11-09, testermint 5/5 green). **Step 2 ✅ done** (2026-11-09, unit/app tests + testermint 2/2 green). **Step 3 ✅ done** (2026-11-11, testermint `real extensions after dkg` green). **Step 4 ✅ done** (2026-11-11, σ or proof of miss required in every block; testermint `sigma in every block` and `withholding proposer is replaced` green). Step 0 tooling and docs ✅, rollout ops open. **Step 5 ✅ done** (2026-11-11, one `BeaconRecord` per round; testermint `beacon record every round` green). **Next:** the VE-on regression gate, then [Step 6](#step-6-wire-xinference-consumer-cpoc), plus Step 0 phase 1 (publish the tmkms 0.14 image). See the [progress board](#progress-board).  
 **Baseline crypto:** epoch DKG + threshold BLS already exist (`x/bls`, dAPI `BlsManager`)  
 **Related:** [`block-beacon-randomness.md`](block-beacon-randomness.md): what the randomness guarantees, what a proposer can and cannot do, rules for consumers, and the first consumer, Confirmation PoC (Step 6). This plan is the **consensus beacon** those consumers use  
-**Open gaps after Step 1:** [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) (severity-ranked, with gates)  
+**Open gaps after Step 1:** [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) (severity-ranked, with gates)  
 **Out of scope here:** the consumer side (see `block-beacon-randomness.md`)
 
 **Versions this plan was checked against:** CometBFT `v0.38.21`; Cosmos SDK `github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability`; tmkms `0.12.0` (softsign, `protocol_version = "v0.34"`).
@@ -162,7 +162,7 @@ sequenceDiagram
    - **Invariant to keep (and monitor):** every ≥2/3-voting-power subset of validators must hold ≥ threshold BLS slots. With slots roughly proportional to power and all validators participating, 2/3 of power ≈ 2/3 of slots > the ~51% threshold, so the invariant holds. Add a keeper check at epoch activation that computes the worst case and emits a warning event (Step 3), plus a unit test.
    - BLS slots are assigned from the same `CapWeight` as voting power (x/inference), so the invariant normally holds by construction (~67 slots in any >2/3 set vs a threshold of 51); the coverage warning catches the residual differences (rounding, participants without a BLS key, guardian adjustments, key switch before `SET_NEW_VALIDATORS`).
 3. **Liveness first.** `ExtendVote` and `VerifyVoteExtension` returning an error makes CometBFT **panic** (`state/execution.go:354, 369`). Both handlers must recover everything and return an empty extension / `REJECT`, never an error.
-4. **Never reject on extension content (revised after the Step 1 review, [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) H1/H3).**
+4. **Never reject on extension content (revised after the Step 1 review, [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) H1/H3).**
    - `VerifyVoteExtension` rejects **only oversized** extensions (cap from `i_total_slots`; from Step 3 on, optionally the owner's slot range). Rejecting a precommit for its content turns any share bug, stale share file or binary-version skew into lost precommits, or a halt if widespread.
    - Extensions never go on chain (Step 4 redesign): malformed, wrong-round/epoch, foreign-slot or cryptographically invalid partials are dropped by each node's collector and counted in its metrics.
    - `ProcessProposal` rejects only for the proposer's own choices: a missing beacon tx, a wrong σ, or a proof of miss that doesn't match its `LastCommit` or shows ≥ `t+1` valid slots. Inside a proof of miss, malformed or invalid extensions only count as invalid slots. No other validator can make a proposal invalid.
@@ -173,7 +173,7 @@ sequenceDiagram
 
 ## Implementation rules (normative for Steps 1–8)
 
-Every step must obey these rules; each step's task list and test gate cite them. R1–R8 came out of the Step 1 review ([`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md): H1, H3, M4, M5); R9 came out of the Step 2 review (M3). A change that breaks a rule needs an explicit plan revision.
+Every step must obey these rules; each step's task list and test gate cite them. R1–R8 came out of the Step 1 review ([`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md): H1, H3, M4, M5); R9 came out of the Step 2 review (M3). A change that breaks a rule needs an explicit plan revision.
 
 **R1. Beacon ABCI handlers never return an error.** `ExtendVote` and `VerifyVoteExtension` errors make CometBFT panic (F5). Recover everything inside the handler and degrade: empty extension / `REJECT`. `PrepareProposal`/`ProcessProposal` recover into "pass-through" / `REJECT` respectively.
 
@@ -335,7 +335,7 @@ Legend: ✅ done · 🟡 partly done (what remains is listed) · ➡️ **next**
 5. ✅ Step 4: σ or proof of miss required in every block, done (2026-11-11).
    ✅ Step 5: one `BeaconRecord` per round, done (2026-11-11). ➡️ Run the VE-on regression gate, then Step 6.
 6. Step 0 phases 2–4 in parallel: testnet rehearsal, announcement, readiness tracker.
-7. ✅ [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) **M1** (reviewed tmkms 0.14.0 lockfile + `cargo audit` CI) and **M2** (multi-stage, digest-pinned, non-root image; per-install KMS identity) are done, so Step 0 phase 1 is unblocked. Before tagging v0.2.18: run the live-params gate and decide **L1** (grace window).
+7. ✅ [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) **M1** (reviewed tmkms 0.14.0 lockfile + `cargo audit` CI) and **M2** (multi-stage, digest-pinned, non-root image; per-install KMS identity) are done, so Step 0 phase 1 is unblocked. Before tagging v0.2.18: run the live-params gate and decide **L1** (grace window).
 
 ---
 
@@ -426,7 +426,7 @@ Full image rebuild (`local-test-net/stop-rebuild.sh`), then `BlockBeaconTests` o
 
 **Rerun with the hardened image (M1/M2, 2026-11-09):** `ve enabled with tmkms signing extensions on join nodes` and `tmkms image swap keeps signing and state` ✅ PASS with the final image (tmkms 0.14.0 built from `tmkms/build/tmkms-0.14.0.Cargo.lock`, multi-stage, non-root): both join tmkms run as uid 10001, 23 extension signatures each, chain at h=78, 0 consensus failures; the swap from a root-owned 0.12 volume migrates, re-owns and keeps signing.
 
-**Review after the runs (2026-11-09):** H1 (tolerant `VerifyVoteExtension`), H2 (tmkms rollback script + CI) and M3 (live mainnet params gate) are fixed; everything still open is tracked in [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md).
+**Review after the runs (2026-11-09):** H1 (tolerant `VerifyVoteExtension`), H2 (tmkms rollback script + CI) and M3 (live mainnet params gate) are fixed; everything still open is tracked in [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md).
 
 **Bugs found by the runs and fixed:**
 - **Product (Step 0/1):** tmkms 0.15.0 cannot deliver extension signatures (see F7) → target switched to **0.14.0**.
@@ -439,7 +439,7 @@ Publishing the image and bumping `deploy/join` belong to Step 0.
 
 - `func (app *App) registerBeaconABCI()`, called in `New()` right after `appBuilder.Build(...)` (`app.go:299`) and before `app.Load` (F3).
 - `ExtendVote`: wrapper that `recover()`s and returns `&abci.ResponseExtendVote{VoteExtension: nil}`, always with a nil error (F5).
-- `VerifyVoteExtension`: accepts any extension up to `beaconExtensionMaxBytes(i_total_slots)` (64 B/slot + 512 B, floor 4 KiB), rejects only oversized ones, never errors. (Originally "reject anything non-empty"; changed in the review, [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) H1.)
+- `VerifyVoteExtension`: accepts any extension up to `beaconExtensionMaxBytes(i_total_slots)` (64 B/slot + 512 B, floor 4 KiB), rejects only oversized ones, never errors. (Originally "reject anything non-empty"; changed in the review, [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) H1.)
 - `PrepareProposal`: pass-through equivalent of the current default (F2): take `req.Txs` up to `req.MaxTxBytes`.
 - `ProcessProposal`: accept (matches today's `NoOpProcessProposal`).
 - `PreBlocker`: `return app.ModuleManager.PreBlock(ctx)` (F4). Beacon logic is added in Step 5.
@@ -542,7 +542,7 @@ Publishing the image and bumping `deploy/join` belong to Step 0.
   - `share file re-exported after dapi restart`: after `rm` of join1's file and `docker restart` of its dAPI, the startup reconcile rewrote a byte-identical file (same `sha256`), and the node logged `beacon shares unloaded` then a fresh `loaded … valid=true`.
   - Test notes: the cases wait for the **effective epoch** (`query inference get-current-epoch`, the same epoch `ExtendVote` and the dAPI reconcile use), not `latestEpoch.index`, which advances at PoC start before that epoch's DKG completes (the first run timed out on exactly that). They run with 40-block epochs so the signing epoch cannot rotate during a dAPI restart (the default 15-block epoch rotates in ~80 s). In the first (timed-out) run the feature itself already worked: exports on every DKG completion, 56 `valid=true` loads, 0 rejections.
 
-Gaps found while implementing are listed in [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) (S2-*).
+Gaps found while implementing are listed in [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) (S2-*).
 
 ---
 
@@ -597,7 +597,7 @@ message BeaconSlotOwner { bytes cons_addr = 1; string participant_address = 2; u
   4. For each scalar: `σ_i = msgG1 · sk_i` (blst, the same code as dAPI `computePartialSignatureBlst`), concatenated compressed.
   5. Marshal `BeaconVoteExtension`. `recover()` wrapper; nil error always.
   - Budget: ~0.5 ms per slot. Log a warning if > 50 ms total.
-- `VerifyVoteExtension(ctx, req)`: keep the Step 1 size-cap behaviour (optionally tighten the cap to the sender's owned slot range, [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) L6). **Do not** call `ValidateBeaconExtensionStructure` here: structure failures are dropped in `FinalizeBeacon` (Security note 4). `recover()`; never error.
+- `VerifyVoteExtension(ctx, req)`: keep the Step 1 size-cap behaviour (optionally tighten the cap to the sender's owned slot range, [`block-bls-beacon-step1-gaps.md`](../../docs/block-bls-beacon/block-bls-beacon-step1-gaps.md) L6). **Do not** call `ValidateBeaconExtensionStructure` here: structure failures are dropped in `FinalizeBeacon` (Security note 4). `recover()`; never error.
 - Activation (R6, gap M5): the first extended commit after the Step 3 upgrade has empty extensions (old binary precommitted `U`); treat as `MISS`, never as an error. Store `BeaconActivation.ext_from` in x/bls state in the upgrade handler; never infer it from `E`.
 - Move the shared signing primitive into a package both dAPI and chain can import (`inference-chain/x/bls/blsutil`), so the chain doesn't depend on dAPI code.
 - Share bridge follow-up (R9): add a query `bls beacon-key` (`BeaconKeyEpoch` + candidate). The dAPI reconcile loop covers `{BeaconKeyEpoch, candidate, current, current+1}` and its pruning never removes the active key or candidate's file (today it covers `{current, current+1}` and prunes `< current-1`). The Step 2 probe (`beaconShareProbe` on `GetCurrentSigningEpochID`) is replaced by `Get(pending.KeyEpoch)`.
@@ -929,7 +929,7 @@ Checklist, each item a named test:
 **Touches:** `testermint` (+ local-test-net genesis VE height / tmkms compose).  
 **Does not touch:** cosmos-sdk fork.
 
-Class `BlockBeaconTests.kt` (uses the Step 1d `consensusOverrides`, `E=2`). Rebuild via `local-test-net/stop-rebuild.sh` + gradle per [`testermint-infrastructure.md`](../testermint-infrastructure.md).
+Class `BlockBeaconTests.kt` (uses the Step 1d `consensusOverrides`, `E=2`). Rebuild via `local-test-net/stop-rebuild.sh` + gradle per [`testermint-infrastructure.md`](../../devshard/docs/testermint-infrastructure.md).
 
 | Case | Setup | Expect |
 |---|---|---|

@@ -1,6 +1,6 @@
 package keeper
 
-// Block BLS beacon, Step 3 (devshard/docs/proposals/block-bls-beacon-vote-extensions-plan.md):
+// Block BLS beacon, Step 3 (proposals/block-bls-beacon/block-bls-beacon-vote-extensions-plan.md):
 // the beacon key (rule R9), the per-round pending message, the slot owner
 // index and the structural check of vote extensions. Nothing here verifies
 // pairings or aggregates signatures (Step 5).
