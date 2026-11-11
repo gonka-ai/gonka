@@ -108,3 +108,45 @@ func TestPhaseObserver_LeadWindowWithFailedSnapshotReadKeepsLegacyLookahead(t *t
 		t.Errorf("LastError = %q, want substring %q", snapshot.LastError, "chain unreachable")
 	}
 }
+
+// Test flow:
+//  1. Configure an Inference epoch whose confirmation-PoC event is COMPLETED and two miners, one of them without a preserved node.
+//  2. Run a table over the chain still holding the event's snapshot and the chain holding none; refresh with the stub as chain reader.
+//  3. Assert both miners keep their full weight, LastError is empty and requests are not blocked: the event no longer runs, so every node counts.
+func TestPhaseObserver_CompletedConfirmationPoCServesEveryMiner(t *testing.T) {
+	cases := []struct {
+		name          string
+		snapshot      *PreservedNodes
+		snapshotFound bool
+	}{
+		{name: "snapshot still on chain", snapshot: observerPreservedSnapshot(555), snapshotFound: true},
+		{name: "no snapshot", snapshotFound: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			stub := newPhaseObserverStub()
+			server := httptest.NewServer(stub.handler())
+			defer server.Close()
+			stub.setEpoch(http.StatusOK, observerEpochConfirmationJSON(ConfirmationPoCCompleted, 555))
+			stub.setParticipants(http.StatusOK, observerTwoMinerParticipantsJSON(server.URL))
+			stub.setPreservedNodes(testCase.snapshot, testCase.snapshotFound, nil)
+
+			observer := newPoCPhaseObserver(t, server, stub)
+			observer.refresh(context.Background())
+			snapshot := observer.Snapshot()
+
+			if want := []string{"gonka1abc", "gonka1bcd"}; !reflect.DeepEqual(snapshot.Preserved, want) {
+				t.Errorf("Preserved = %v, want every miner %v", snapshot.Preserved, want)
+			}
+			if want := map[string]float64{"gonka1abc": 100, "gonka1bcd": 40}; !reflect.DeepEqual(snapshot.CurrentWeights, want) {
+				t.Errorf("CurrentWeights = %v, want full %v", snapshot.CurrentWeights, want)
+			}
+			if snapshot.LastError != "" {
+				t.Errorf("LastError = %q, want empty", snapshot.LastError)
+			}
+			if snapshot.RequestsBlocked {
+				t.Error("RequestsBlocked = true, want false")
+			}
+		})
+	}
+}

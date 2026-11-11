@@ -67,7 +67,6 @@ func TestParseEpochInfoStringTypedScalars(t *testing.T) {
 		EpochIndex:                   7,
 		PoCStartBlockHeight:          950,
 		EpochSwitchBlockHeight:       950,
-		IsConfirmationPoCActive:      true,
 		ConfirmationPoCPhase:         ConfirmationPoCValidation,
 		ConfirmationPoCTriggerHeight: 555,
 	}

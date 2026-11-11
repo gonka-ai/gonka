@@ -17,7 +17,6 @@ type epochInfo struct {
 	PoCStartBlockHeight          int64
 	NextPoCStartBlockHeight      int64
 	EpochSwitchBlockHeight       int64
-	IsConfirmationPoCActive      bool
 	ConfirmationPoCPhase         ConfirmationPoCPhase
 	ConfirmationPoCTriggerHeight int64
 	InPoCLeadWindow              bool
@@ -62,7 +61,6 @@ func parseEpochInfo(body []byte) (epochInfo, error) {
 		PoCStartBlockHeight:     int64(payload.LatestEpoch.PocStartBlockHeight),
 		NextPoCStartBlockHeight: int64(payload.EpochStages.NextPoCStart),
 		EpochSwitchBlockHeight:  deriveEpochSwitchBlockHeight(payload),
-		IsConfirmationPoCActive: payload.IsConfirmationPoCActive,
 	}
 	if payload.ActiveConfirmationPoC != nil {
 		info.ConfirmationPoCPhase = ConfirmationPoCPhase(payload.ActiveConfirmationPoC.Phase)
