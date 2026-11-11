@@ -60,7 +60,9 @@ func (o *PhaseObserver) fetchPreservedSnapshot(ctx context.Context, expectedAnch
 	if o.chain == nil {
 		return preservedSnapshotState{}, preservedSnapshotUnavailable, nil
 	}
-	snapshot, found, err := o.chain.PreservedNodes(ctx)
+	readContext, cancel := o.chainReadContext(ctx)
+	defer cancel()
+	snapshot, found, err := o.chain.PreservedNodes(readContext)
 	if err != nil {
 		return preservedSnapshotState{}, preservedSnapshotUnavailable, err
 	}

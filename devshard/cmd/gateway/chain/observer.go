@@ -17,6 +17,7 @@ const (
 	refreshDeadlineMultiple     = 6
 	versionsTTLPollMultiplier   = 3
 	observerHTTPTimeout         = 5 * time.Second
+	chainReadTimeout            = observerHTTPTimeout
 
 	epochInfoPath    = "/v1/epochs/latest"
 	participantsPath = "/v1/epochs/current/participants"
@@ -42,6 +43,8 @@ type healthNarrator interface {
 type PhaseObserver struct {
 	publicAPIBaseURL     string
 	chain                Reader
+	fallback             payloadFallback
+	chainReadTimeout     time.Duration
 	client               *http.Client
 	pollInterval         time.Duration
 	versionsPollInterval time.Duration
@@ -84,9 +87,12 @@ func NewPhaseObserver(cfg ObserverConfig) (*PhaseObserver, error) {
 		now = time.Now
 	}
 
+	fallback, _ := cfg.Chain.(payloadFallback)
 	observer := &PhaseObserver{
 		publicAPIBaseURL:     baseURL,
 		chain:                cfg.Chain,
+		fallback:             fallback,
+		chainReadTimeout:     chainReadTimeout,
 		client:               client,
 		pollInterval:         pollInterval,
 		versionsPollInterval: versionsPollInterval,
@@ -195,7 +201,7 @@ func (o *PhaseObserver) refresh(ctx context.Context) {
 		}
 	}
 
-	participantsBody, err := o.getBody(ctx, participantsPath)
+	participantsPayload, err := o.fetchParticipants(ctx)
 	if err != nil {
 		o.publishWithPreviousParticipants(snapshot, previous, fmt.Sprintf("fetch participants: %v", err))
 		return
@@ -208,11 +214,7 @@ func (o *PhaseObserver) refresh(ctx context.Context) {
 		snapshot.LastError = joinSnapshotError(snapshot.LastError, fmt.Sprintf("fetch preserved snapshot: %v", preservationErr))
 	}
 
-	participants, err := parseParticipants(participantsBody, preservation, preservedNodes)
-	if err != nil {
-		o.publishWithPreviousParticipants(snapshot, previous, fmt.Sprintf("fetch participants: %v", err))
-		return
-	}
+	participants := foldParticipants(participantsPayload, preservation, preservedNodes)
 
 	o.versions.SetCandidates(participants.InferenceURLs)
 
@@ -242,7 +244,9 @@ func (o *PhaseObserver) fetchModels(ctx context.Context) (models map[string]Mode
 	if o.chain == nil {
 		return nil, false, nil
 	}
-	models, err = o.chain.Models(ctx)
+	readContext, cancel := o.chainReadContext(ctx)
+	defer cancel()
+	models, err = o.chain.Models(readContext)
 	return models, err == nil && len(models) > 0, err
 }
 
@@ -251,15 +255,9 @@ func (o *PhaseObserver) fetchEscrowParams(ctx context.Context) (params EscrowPar
 	if o.chain == nil {
 		return EscrowParams{}, false, nil
 	}
-	return o.chain.EscrowParams(ctx)
-}
-
-func (o *PhaseObserver) fetchEpochInfo(ctx context.Context) (epochInfo, error) {
-	body, err := o.getBody(ctx, epochInfoPath)
-	if err != nil {
-		return epochInfo{}, err
-	}
-	return parseEpochInfo(body)
+	readContext, cancel := o.chainReadContext(ctx)
+	defer cancel()
+	return o.chain.EscrowParams(readContext)
 }
 
 func (o *PhaseObserver) getBody(ctx context.Context, path string) ([]byte, error) {

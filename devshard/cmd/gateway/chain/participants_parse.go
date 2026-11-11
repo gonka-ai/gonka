@@ -51,13 +51,16 @@ type chainMLNodeInfo struct {
 // preservationMode selects which ML nodes count as preserved when folding participants.
 type preservationMode int
 
-// parseParticipants folds the current-participants body under the given preservation rule. See README.md, "Folding the participants response".
-func parseParticipants(body []byte, preservation preservationMode, preservedNodes preservedSnapshotState) (participantsState, error) {
+func decodeParticipants(body []byte) (chainCurrentParticipantsResponse, error) {
 	var payload chainCurrentParticipantsResponse
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return participantsState{}, fmt.Errorf("parse participants: %w", err)
+		return chainCurrentParticipantsResponse{}, fmt.Errorf("parse participants: %w", err)
 	}
+	return payload, nil
+}
 
+// foldParticipants folds the current-participants payload under the given preservation rule. See README.md, "Folding the participants response".
+func foldParticipants(payload chainCurrentParticipantsResponse, preservation preservationMode, preservedNodes preservedSnapshotState) participantsState {
 	participants := payload.ActiveParticipants.Participants
 	state := participantsState{
 		Weights:            make(map[string]float64, len(participants)),
@@ -118,7 +121,7 @@ func parseParticipants(body []byte, preservation preservationMode, preservedNode
 	for model := range state.PreservedByModel {
 		sort.Strings(state.PreservedByModel[model])
 	}
-	return state, nil
+	return state
 }
 
 func addModelWeights(dst map[string]map[string]float64, key string, weights map[string]float64) {
