@@ -58,7 +58,7 @@ func TestBeaconExtendVote_PassesBuilderOutput(t *testing.T) {
 
 func TestBeaconVerifyVoteExtension(t *testing.T) {
 	const capBytes = 100
-	h := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context, int64) int { return capBytes })
+	h := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context, int64) int { return capBytes }, nil)
 
 	accept := map[string][]byte{
 		"nil":                nil,
@@ -86,7 +86,7 @@ func TestBeaconVerifyVoteExtension(t *testing.T) {
 	})
 
 	t.Run("panicking size cap rejects without error", func(t *testing.T) {
-		hp := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context, int64) int { panic("params unavailable") })
+		hp := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(), func(sdk.Context, int64) int { panic("params unavailable") }, nil)
 		resp, err := hp(beaconTestCtx(), &abci.RequestVerifyVoteExtension{Height: 5, VoteExtension: []byte{1}})
 		require.NoError(t, err)
 		require.Equal(t, abci.ResponseVerifyVoteExtension_REJECT, resp.Status)
@@ -103,7 +103,7 @@ func TestBeaconExtensionMaxBytes(t *testing.T) {
 }
 
 func TestBeaconProcessProposal_AcceptsAll(t *testing.T) {
-	h := newBeaconProcessProposalHandler(log.NewNopLogger())
+	h := newBeaconProcessProposalHandler(log.NewNopLogger(), nil, nil)
 	resp, err := h(beaconTestCtx(), &abci.RequestProcessProposal{Height: 3, Txs: [][]byte{{0xff}, {0x00, 0x01}}})
 	require.NoError(t, err)
 	require.Equal(t, abci.ResponseProcessProposal_ACCEPT, resp.Status)
@@ -115,7 +115,7 @@ func TestBeaconPrepareProposal_DelegatesToInner(t *testing.T) {
 		called = true
 		return &abci.ResponsePrepareProposal{Txs: req.Txs[:1]}, nil
 	}
-	h := newBeaconPrepareProposalHandler(log.NewNopLogger(), inner)
+	h := newBeaconPrepareProposalHandler(log.NewNopLogger(), nil, nil, inner)
 	resp, err := h(beaconTestCtx(), &abci.RequestPrepareProposal{
 		Height: 4,
 		Txs:    [][]byte{{1}, {2}},
@@ -133,7 +133,7 @@ func TestBeaconPrepareProposal_DelegatesToInner(t *testing.T) {
 // node's configured app mempool.
 func TestBeaconPrepareProposal_PassThroughRespectsMaxTxBytes(t *testing.T) {
 	passThrough := baseapp.NewDefaultProposalHandler(mempool.NoOpMempool{}, fakeTxVerifier{}).PrepareProposalHandler()
-	h := newBeaconPrepareProposalHandler(log.NewNopLogger(), passThrough)
+	h := newBeaconPrepareProposalHandler(log.NewNopLogger(), nil, nil, passThrough)
 
 	tx := make([]byte, 100)
 	txs := [][]byte{tx, tx, tx}

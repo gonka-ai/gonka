@@ -18,13 +18,15 @@ package app
 //     would turn any binary-version skew (patch release, rolling swap, the
 //     first height of the upgrade that turns on real partials) into lost
 //     precommits and possibly a halt. Content validation happens where it is
-//     deterministic and non-fatal: ProcessProposal / FinalizeBlock (Steps 4–5).
+//     deterministic and non-fatal: each node's collector and, for a proof of
+//     miss, ProcessProposal count bad partials as zero (beacon_proposal.go).
 //   - Proposal handling is independent of the local app-side mempool setting
 //     (`mempool.max-txs`): PrepareProposal always selects from req.Txs and
 //     ProcessProposal never delegates to the SDK DefaultProposalHandler, so all
 //     validators evaluate proposals identically regardless of app.toml.
 
 import (
+	"context"
 	"fmt"
 
 	"cosmossdk.io/log"
@@ -82,13 +84,31 @@ func (app *App) registerBeaconABCI(appOpts servertypes.AppOptions) {
 	// Step 2: load the dAPI-exported BLS shares (verified in the background).
 	// Step 3: ExtendVote signs the round's pending beacon message with them.
 	app.setupBeaconShares(appOpts, logger)
-	app.SetExtendVoteHandler(newBeaconExtendVoteHandler(logger, beaconExtensionBuilder(
-		logger, app.BlsKeeper, func() beacon.ShareProvider { return app.BeaconShares },
-	)))
+	// Step 4: the collector verifies partials off the consensus path (own
+	// ExtendVote + peers' VerifyVoteExtension) so proposers have σ ready.
+	app.beaconCollector = newBeaconCollector(logger, app.BlsKeeper, app.beaconContextAt)
+	app.beaconCollector.start(context.Background())
+	build := beaconExtensionBuilder(logger, app.BlsKeeper, func() beacon.ShareProvider { return app.BeaconShares })
+	app.SetExtendVoteHandler(newBeaconExtendVoteHandler(logger, func(ctx sdk.Context, req *abci.RequestExtendVote) ([]byte, error) {
+		ext, err := build(ctx, req)
+		if err == nil && len(ext) > 0 && app.beaconIdentity != nil {
+			if self, ok := app.beaconIdentity.ConsensusAddress(); ok {
+				app.beaconCollector.Add(req.Height, self, ext)
+			}
+		}
+		return ext, err
+	}))
 	sizeCap := beaconSizeCap(func(ctx sdk.Context) (blstypes.Params, error) { return app.BlsKeeper.GetParams(ctx) }, app.BlsKeeper)
-	app.SetVerifyVoteExtensionHandler(newBeaconVerifyVoteExtensionHandler(logger, sizeCap))
-	app.SetPrepareProposal(newBeaconPrepareProposalHandler(logger, passThrough))
-	app.SetProcessProposal(newBeaconProcessProposalHandler(logger))
+	app.SetVerifyVoteExtensionHandler(newBeaconVerifyVoteExtensionHandler(logger, sizeCap, app.beaconCollector.Add))
+	withhold := cast.ToBool(appOpts.Get(FlagBeaconTestWithholdSigma))
+	if withhold {
+		logger.Warn("TEST-ONLY: this node proposes blocks without the beacon tx; its proposals will be rejected",
+			"flag", FlagBeaconTestWithholdSigma)
+	}
+	app.SetPrepareProposal(newBeaconPrepareProposalHandler(logger, app.BlsKeeper, app.beaconCollector, passThrough, withhold))
+	app.SetProcessProposal(newBeaconProcessProposalHandler(logger, app.BlsKeeper, func(ctx sdk.Context, ec abci.ExtendedCommitInfo) error {
+		return baseapp.ValidateVoteExtensions(ctx, app.StakingKeeper, 0, "", ec)
+	}))
 	// app.ModuleManager is resolved at call time; runtime sets the PreBlocker
 	// order during Load, which is fine because the closure runs later.
 	preBlock := newBeaconPreBlocker(moduleManagerPreBlock{app})
@@ -136,7 +156,7 @@ func newBeaconExtendVoteHandler(logger log.Logger, build extensionBuilder) sdk.E
 // newBeaconVerifyVoteExtensionHandler accepts any extension up to sizeCap
 // (empty included) and rejects only oversized ones. Payload content is not
 // interpreted here; see the invariants at the top of this file. Never errors.
-func newBeaconVerifyVoteExtensionHandler(logger log.Logger, sizeCap extensionSizeCap) sdk.VerifyVoteExtensionHandler {
+func newBeaconVerifyVoteExtensionHandler(logger log.Logger, sizeCap extensionSizeCap, onAccept func(height int64, addr, ext []byte)) sdk.VerifyVoteExtensionHandler {
 	return func(ctx sdk.Context, req *abci.RequestVerifyVoteExtension) (resp *abci.ResponseVerifyVoteExtension, err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -161,33 +181,15 @@ func newBeaconVerifyVoteExtensionHandler(logger log.Logger, sizeCap extensionSiz
 			return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_REJECT}, nil
 		}
 		beacon.VerifyVoteExt.WithLabelValues("accept", "within_cap").Inc()
+		if onAccept != nil {
+			onAccept(req.Height, req.ValidatorAddress, req.VoteExtension) // non-blocking (collector queue)
+		}
 		return &abci.ResponseVerifyVoteExtension{Status: abci.ResponseVerifyVoteExtension_ACCEPT}, nil
 	}
 }
 
-// newBeaconPrepareProposalHandler delegates tx selection to inner and logs
-// whether the extended commit carries extensions. Step 4 injects EC_h as Txs[0].
-func newBeaconPrepareProposalHandler(logger log.Logger, inner sdk.PrepareProposalHandler) sdk.PrepareProposalHandler {
-	return func(ctx sdk.Context, req *abci.RequestPrepareProposal) (*abci.ResponsePrepareProposal, error) {
-		withExt, total := countVoteExtensions(req.LocalLastCommit)
-		logger.Debug("prepare proposal",
-			"height", req.Height,
-			"last_commit_votes", total,
-			"last_commit_votes_with_extension", withExt)
-		return inner(ctx, req)
-	}
-}
-
-// newBeaconProcessProposalHandler accepts every proposal, matching the SDK's
-// NoOpProcessProposal used today. Step 4 adds the injected-EC checks.
-func newBeaconProcessProposalHandler(_ log.Logger) sdk.ProcessProposalHandler {
-	return func(_ sdk.Context, _ *abci.RequestProcessProposal) (*abci.ResponseProcessProposal, error) {
-		return &abci.ResponseProcessProposal{Status: abci.ResponseProcessProposal_ACCEPT}, nil
-	}
-}
-
-// newBeaconPreBlocker runs the module PreBlockers. Step 5 appends beacon
-// aggregation from the injected extended commit.
+// newBeaconPreBlocker runs the module PreBlockers. Step 5 stores the beacon
+// record of the previous round from the injected beacon tx (Txs[0]).
 func newBeaconPreBlocker(mm preBlockRunner) sdk.PreBlocker {
 	return func(ctx sdk.Context, _ *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
 		return mm.PreBlock(ctx)

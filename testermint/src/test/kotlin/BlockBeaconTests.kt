@@ -23,6 +23,8 @@ import java.util.concurrent.TimeUnit
  *    state (log `beacon shares loaded ... valid=true`).
  *  - Step 3: real extensions. Once a DKG completes and becomes the beacon key (rule R9), every
  *    validator signs PendingBeacon(h) with its slots in ExtendVote (metrics on :26660).
+ *  - Step 4: block h+1 carries σ_h (or a proof of miss) as Txs[0]; ProcessProposal rejects a
+ *    block with neither.
  *
  * Env:
  *  - TESTERMINT_TMKMS_IMAGE: vote-extension-capable tmkms image (tmkms 0.14.0 with
@@ -381,7 +383,141 @@ class BlockBeaconTests : TestermintTest() {
         assertNoConsensusFailure(cluster.allPairs)
     }
 
+    @Test
+    @Tag("block-beacon")
+    @Tag("sigma-in-block")
+    fun `sigma in every block`() {
+        val cluster = setupLocalCluster(2, shareConfig, reboot = true)
+        cluster.allPairs.forEach { it.waitForFirstBlock() }
+
+        logSection("Wait for a beacon key held by all validators and their shares")
+        val keyEpoch = waitForBeaconKeyOverAllValidators(cluster)
+        cluster.allPairs.forEach { waitForSharesLoaded(it, keyEpoch, minCount = 1) }
+        // The key query shows the switch made in EndBlock(H) (committed height H), but
+        // round H itself was keyed in EndBlock(H-1) with the previous key (rule R9):
+        // the first block carrying a σ of the new key is H+2.
+        val from = cluster.genesis.getCurrentBlockHeight() + 2
+
+        // Classic inference is deprecated on this branch (the API answers 410), so
+        // ordinary txs stand in: they must keep landing behind the beacon tx.
+        logSection("Ordinary txs during the run")
+        val transfers = (1..10).map { cluster.genesis.transferMoneyTo(cluster.joinPairs.first().node, 1000) }
+        // Inclusion is what matters here: the chain's bootstrap transfer restriction
+        // (x/restrictions, code 1108) may reject a user-to-user send while still
+        // executing it in the block, behind the beacon tx.
+        transfers.forEach { tx ->
+            assertThat(tx.height).describedAs("transfer ${tx.txhash} included").isGreaterThan(0L)
+            assertThat(tx.code == 0 || tx.codespace == "restrictions")
+                .describedAs("transfer ${tx.txhash} executed by the app (code ${tx.code}, codespace ${tx.codespace})").isTrue()
+        }
+        cluster.genesis.node.waitForMinimumBlock(maxOf(from + 31, transfers.maxOf { it.height } + 1), "30 blocks to inspect")
+        transfers.forEach { tx ->
+            val txs = blockTxs(cluster.genesis, tx.height)
+            assertThat(txs.size).describedAs("block ${tx.height}: beacon tx plus the transfer").isGreaterThanOrEqualTo(2)
+            assertThat(decodeBeaconTx(cluster.genesis, txs.first()).outcome).describedAs("block ${tx.height} Txs[0]").isEqualTo("sigma")
+        }
+
+        logSection("Every block carries σ of the previous round as Txs[0]")
+        for (h in from until from + 30) {
+            val tx0 = blockTxs(cluster.genesis, h).firstOrNull()
+            assertThat(tx0).describedAs("block $h has a beacon tx").isNotNull
+            val decoded = decodeBeaconTx(cluster.genesis, tx0!!)
+            assertThat(decoded.outcome).describedAs("block $h outcome").isEqualTo("sigma")
+            assertThat(decoded.round).describedAs("block $h round").isEqualTo(h - 1)
+            assertThat(decoded.keyEpoch).describedAs("block $h key epoch").isGreaterThanOrEqualTo(keyEpoch)
+            assertThat(decoded.sigmaLen).describedAs("block $h σ size").isEqualTo(48)
+        }
+
+        logSection("No rejections, no misses, only valid partials")
+        cluster.allPairs.forEach { pair ->
+            val m = nodeMetrics(pair)
+            assertThat(m.filterKeys { it.startsWith("beacon_process_proposal_total{") && it.contains("result=\"reject\"") }.values.sum())
+                .describedAs("${pair.name} ProcessProposal rejections").isEqualTo(0.0)
+            assertThat(metric(m, "beacon_process_proposal_total", "result" to "accept", "reason" to "sigma"))
+                .describedAs("${pair.name} accepted σ proposals").isGreaterThan(0.0)
+            assertThat(metric(m, "beacon_proposal_outcome_total", "outcome" to "miss"))
+                .describedAs("${pair.name} proofs of miss proposed").isEqualTo(0.0)
+            assertThat(metric(m, "beacon_collector_partials_total", "result" to "invalid") +
+                metric(m, "beacon_collector_partials_total", "result" to "not_owner"))
+                .describedAs("${pair.name} invalid partials seen").isEqualTo(0.0)
+            assertThat(metric(m, "beacon_sigma_built_total")).describedAs("${pair.name} σ built by the collector").isGreaterThan(0.0)
+        }
+        assertNoConsensusFailure(cluster.allPairs)
+    }
+
+    @Test
+    @Tag("block-beacon")
+    @Tag("sigma-in-block")
+    fun `withholding proposer is replaced`() {
+        // join2 runs the TEST-ONLY switch: it proposes without the required beacon tx.
+        val config = shareConfig.copy(additionalDockerFilesByKeyName = mapOf("join2" to listOf("docker-compose.beacon-withhold.yml")))
+        val cluster = setupLocalCluster(2, config, reboot = true)
+        cluster.allPairs.forEach { it.waitForFirstBlock() }
+        val withholder = cluster.joinPairs.first { it.name.trimStart('/') == "join2" }
+        val honest = cluster.allPairs - withholder
+        val withholderAddr = normalizeValidatorAddress(withholder.node.getStatus().validatorInfo.address)
+
+        logSection("Wait for a beacon key held by all validators and their shares")
+        val keyEpoch = waitForBeaconKeyOverAllValidators(cluster)
+        cluster.allPairs.forEach { waitForSharesLoaded(it, keyEpoch, minCount = 1) }
+        val from = cluster.genesis.getCurrentBlockHeight() + 1
+        cluster.genesis.node.waitForMinimumBlock(from + 41, "40 blocks with a withholding validator")
+
+        logSection("Its proposals are rejected; another proposer commits each height, with σ")
+        var replaced = 0
+        for (h in from until from + 40) {
+            val proposer = blockProposer(cluster.genesis, h)
+            assertThat(proposer).describedAs("block $h proposer").isNotEqualTo(withholderAddr)
+            if (commitRound(cluster.genesis, h) > 0) replaced++
+            val decoded = decodeBeaconTx(cluster.genesis, blockTxs(cluster.genesis, h).first())
+            assertThat(decoded.outcome).describedAs("block $h outcome").isEqualTo("sigma")
+            assertThat(decoded.round).describedAs("block $h round").isEqualTo(h - 1)
+        }
+        Logger.info("Heights committed after a proposer change (round > 0): $replaced of 40")
+        assertThat(replaced).describedAs("heights where the withholding proposer was replaced").isGreaterThan(0)
+
+        val withheld = metric(nodeMetrics(withholder), "beacon_proposal_outcome_total", "outcome" to "withheld")
+        assertThat(withheld).describedAs("${withholder.name} proposals made without σ").isGreaterThan(0.0)
+        honest.forEach { pair ->
+            assertThat(metric(nodeMetrics(pair), "beacon_process_proposal_total", "result" to "reject", "reason" to "missing"))
+                .describedAs("${pair.name} rejected proposals without σ").isGreaterThan(0.0)
+        }
+        assertNoConsensusFailure(cluster.allPairs)
+    }
+
     // --- helpers ------------------------------------------------------------
+
+    // --- Step 4 helpers ---------------------------------------------------------
+
+    private data class BeaconTxView(val outcome: String? = null, val round: Long? = null, val keyEpoch: Long? = null, val sigmaLen: Int? = null)
+
+    /** Block txs (base64, as CometBFT RPC returns them). */
+    private fun blockTxs(pair: LocalInferencePair, height: Long): List<String> {
+        val json = docker("exec", nodeContainer(pair), "wget", "-qO-", "http://127.0.0.1:26657/block?height=$height")
+        val txs = Regex("\"txs\"\\s*:\\s*\\[([^\\]]*)\\]").find(json)?.groupValues?.get(1) ?: return emptyList()
+        return Regex("\"([A-Za-z0-9+/=]+)\"").findAll(txs).map { it.groupValues[1] }.toList()
+    }
+
+    /** proposer_address of block h (hex, upper case). */
+    private fun blockProposer(pair: LocalInferencePair, height: Long): String {
+        val json = docker("exec", nodeContainer(pair), "wget", "-qO-", "http://127.0.0.1:26657/block?height=$height")
+        return Regex("\"proposer_address\"\\s*:\\s*\"([0-9A-Fa-f]+)\"").find(json)?.groupValues?.get(1)?.uppercase()
+            ?: error("no proposer_address in block $height")
+    }
+
+    /** Consensus round in which height h was committed (0 = first proposer). */
+    private fun commitRound(pair: LocalInferencePair, height: Long): Int {
+        val json = docker("exec", nodeContainer(pair), "wget", "-qO-", "http://127.0.0.1:26657/commit?height=$height")
+        return Regex("\"commit\"\\s*:\\s*\\{\\s*\"height\"\\s*:\\s*\"\\d+\"\\s*,\\s*\"round\"\\s*:\\s*(\\d+)")
+            .find(json)?.groupValues?.get(1)?.toInt() ?: error("no commit round for height $height")
+    }
+
+    private fun decodeBeaconTx(pair: LocalInferencePair, b64: String): BeaconTxView {
+        val out = docker("exec", nodeContainer(pair), "inferenced", "debug", "decode-beacon-tx", b64).trim().lines().last()
+        return com.google.gson.GsonBuilder()
+            .setFieldNamingPolicy(com.google.gson.FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES)
+            .create().fromJson(out, BeaconTxView::class.java)
+    }
 
     // --- Step 3 helpers ---------------------------------------------------------
 

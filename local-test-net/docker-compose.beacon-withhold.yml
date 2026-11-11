@@ -1,0 +1,8 @@
+# TEST-ONLY (testermint BlockBeaconTests "withholding proposer is replaced"):
+# this node proposes blocks without the required block-beacon tx, so the other
+# validators reject its proposals and CometBFT moves to the next proposer.
+# The SDK binds env vars with the executable name as prefix: INFERENCED_.
+services:
+  chain-node:
+    environment:
+      - INFERENCED_BLS_BEACON_TEST_WITHHOLD_SIGMA=true

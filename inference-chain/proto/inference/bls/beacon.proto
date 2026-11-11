@@ -54,4 +54,38 @@ message BeaconKeyCandidate {
 message BeaconActivation {
   // ext_from: validators put partials in vote extensions for heights > ext_from.
   uint64 ext_from = 1;
+  // inj_from: from block inj_from+1, a block whose previous round has a
+  // PendingBeacon must carry the beacon tx (σ or a proof of miss) as Txs[0].
+  uint64 inj_from = 2;
+}
+
+// --- Step 4: the beacon tx, Txs[0] = "GONKA_BEACON_V1" ‖ proto(InjectedBeacon) ---
+
+// BeaconSigma is the group signature σ_h over PendingBeacon(round).msg.
+message BeaconSigma {
+  uint64 round = 1;
+  uint64 key_epoch = 2;
+  // sigma is a 48-byte compressed G1 point.
+  bytes sigma = 3;
+  // contributors_hint is an OPTIONAL slot bitmap for operators. Validators
+  // cannot check it; nothing may depend on it and it is never stored.
+  bytes contributors_hint = 4;
+}
+
+// BeaconMissProof shows that the extended commit of round holds fewer than
+// t+1 valid slots, so no σ could be built from it.
+message BeaconMissProof {
+  uint64 round = 1;
+  uint64 key_epoch = 2;
+  // extended_commit is proto(tendermint.abci.ExtendedCommitInfo): the
+  // proposer's LocalLastCommit, unmodified. It must match the block's LastCommit.
+  bytes extended_commit = 3;
+}
+
+// InjectedBeacon carries exactly one outcome for the previous round.
+message InjectedBeacon {
+  oneof outcome {
+    BeaconSigma sigma = 1;
+    BeaconMissProof miss = 2;
+  }
 }

@@ -149,3 +149,17 @@ func (app *App) SetBeaconSelfForTest(addr []byte) {
 	defer app.beaconIdentity.mu.Unlock()
 	app.beaconIdentity.addr = addr
 }
+
+// WaitBeaconCollectorIdleForTest waits until the beacon collector has no
+// queued or in-process items, so a test can write state directly without the
+// collector reading a committed version at the same time.
+func (app *App) WaitBeaconCollectorIdleForTest(t testing.TB) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for app.beaconCollector != nil && app.beaconCollector.inflight.Load() > 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("beacon collector still busy")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}

@@ -176,6 +176,8 @@ type App struct {
 	// beaconCommittedHeight is the latest committed version, recorded by the
 	// beacon PreBlocker for background share verification (review L5).
 	beaconCommittedHeight atomic.Int64
+	// beaconCollector verifies vote-extension partials and builds σ (Step 4).
+	beaconCollector *beaconCollector
 
 	BookkeeperKeeper      bookkeepermodulekeeper.Keeper
 	InferenceKeeper       inferencemodulekeeper.Keeper

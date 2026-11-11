@@ -142,3 +142,77 @@ func TestSignAndVerifyPartials(t *testing.T) {
 	_, err = SignPartials(msg[:16], scalars)
 	require.Error(t, err)
 }
+
+// polyShares returns degree-t shares for slots 0..n-1 (scalars little-endian),
+// their public keys and the group public key.
+func polyShares(t *testing.T, n, degree int) ([][ScalarLen]byte, [][]byte, []byte) {
+	t.Helper()
+	coeffs := make([]fr.Element, degree+1)
+	for i := range coeffs {
+		_, err := coeffs[i].SetRandom()
+		require.NoError(t, err)
+	}
+	le := func(e fr.Element) [ScalarLen]byte {
+		be := e.Bytes()
+		var out [ScalarLen]byte
+		for i := range be {
+			out[i] = be[ScalarLen-1-i]
+		}
+		return out
+	}
+	pk := func(s [ScalarLen]byte) []byte { return blst.P2Generator().Mult(s[:], 255).ToAffine().Compress() }
+	scalars := make([][ScalarLen]byte, n)
+	pks := make([][]byte, n)
+	for s := 0; s < n; s++ {
+		var x, acc fr.Element
+		x.SetUint64(uint64(s) + 1)
+		for i := degree; i >= 0; i-- {
+			acc.Mul(&acc, &x)
+			acc.Add(&acc, &coeffs[i])
+		}
+		scalars[s] = le(acc)
+		pks[s] = pk(scalars[s])
+	}
+	return scalars, pks, pk(le(coeffs[0]))
+}
+
+func TestAggregatePartials(t *testing.T) {
+	const n, degree = 10, 4 // threshold 5
+	scalars, _, groupPK := polyShares(t, n, degree)
+	msg, err := BeaconMessage("gonka-test", 2, 77, bytes.Repeat([]byte{3}, 32))
+	require.NoError(t, err)
+	all, err := SignPartials(msg[:], scalars)
+	require.NoError(t, err)
+	sig := func(s uint32) []byte { return all[s*SignatureLen : (s+1)*SignatureLen] }
+	agg := func(slots ...uint32) []byte {
+		sigs := make([][]byte, len(slots))
+		for i, s := range slots {
+			sigs[i] = sig(s)
+		}
+		out, err := AggregatePartials(slots, sigs)
+		require.NoError(t, err)
+		return out
+	}
+
+	a := agg(0, 1, 2, 3, 4)
+	require.True(t, VerifySignature(msg[:], a, groupPK))
+	require.Equal(t, a, agg(9, 7, 5, 3, 1), "any threshold subset, any order: the same σ")
+	require.Equal(t, a, agg(0, 1, 2, 3, 4, 5, 6, 7, 8, 9), "more than the threshold: the same σ")
+	require.False(t, VerifySignature(msg[:], agg(0, 1, 2, 3), groupPK), "below the threshold")
+
+	// A wrong partial in the set spoils the aggregate.
+	other, err := SignPartials(bytes.Repeat([]byte{9}, 32), scalars[:1])
+	require.NoError(t, err)
+	bad, err := AggregatePartials([]uint32{0, 1, 2, 3, 4}, [][]byte{other, sig(1), sig(2), sig(3), sig(4)})
+	require.NoError(t, err)
+	require.False(t, VerifySignature(msg[:], bad, groupPK))
+
+	_, err = AggregatePartials([]uint32{1, 1}, [][]byte{sig(1), sig(1)})
+	require.ErrorContains(t, err, "duplicate")
+	_, err = AggregatePartials([]uint32{1}, [][]byte{sig(1)[:47]})
+	require.Error(t, err)
+	_, err = AggregatePartials(nil, nil)
+	require.Error(t, err)
+	_, err = AggregatePartials([]uint32{1, 2}, [][]byte{sig(1)})
+	require.Error(t, err)
+}

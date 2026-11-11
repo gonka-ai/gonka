@@ -13,6 +13,7 @@ import (
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/hash_to_curve"
 	blst "github.com/supranational/blst/bindings/go"
 )
@@ -130,3 +131,60 @@ func VerifyPartial(msg, sig, slotPublicKey []byte) bool {
 	one := blst.Fp12One()
 	return ml.Equals(&one)
 }
+
+// AggregatePartials combines per-slot partial signatures into the group
+// signature with Lagrange coefficients at 0 (slot s is the share at x = s+1).
+// slots must be distinct; sigs[i] is the 48-byte signature of slots[i]. Any
+// t+1 valid partials of the same message give the same result.
+func AggregatePartials(slots []uint32, sigs [][]byte) ([]byte, error) {
+	if len(slots) == 0 || len(slots) != len(sigs) {
+		return nil, fmt.Errorf("blsutil: %d slots for %d signatures", len(slots), len(sigs))
+	}
+	xs := make([]fr.Element, len(slots))
+	seen := make(map[uint32]bool, len(slots))
+	points := make([]*blst.P1Affine, len(slots))
+	for i, s := range slots {
+		if seen[s] {
+			return nil, fmt.Errorf("blsutil: duplicate slot %d", s)
+		}
+		seen[s] = true
+		xs[i].SetUint64(uint64(s) + 1)
+		if len(sigs[i]) != SignatureLen {
+			return nil, fmt.Errorf("blsutil: signature for slot %d is %d bytes", s, len(sigs[i]))
+		}
+		p := new(blst.P1Affine).Uncompress(sigs[i])
+		if p == nil || !p.SigValidate(true) {
+			return nil, fmt.Errorf("blsutil: invalid signature for slot %d", s)
+		}
+		points[i] = p
+	}
+	scalars := make([]byte, 0, ScalarLen*len(slots))
+	for i := range xs {
+		var num, den fr.Element
+		num.SetOne()
+		den.SetOne()
+		for j := range xs {
+			if j == i {
+				continue
+			}
+			var neg, diff fr.Element
+			neg.Neg(&xs[j])
+			num.Mul(&num, &neg)
+			diff.Sub(&xs[i], &xs[j])
+			den.Mul(&den, &diff)
+		}
+		var lam fr.Element
+		den.Inverse(&den)
+		lam.Mul(&num, &den)
+		be := lam.Bytes()
+		for k := 0; k < ScalarLen/2; k++ {
+			be[k], be[ScalarLen-1-k] = be[ScalarLen-1-k], be[k]
+		}
+		scalars = append(scalars, be[:]...)
+	}
+	return blst.P1AffinesMult(points, scalars, 255).ToAffine().Compress(), nil
+}
+
+// VerifySignature checks a group (or slot) signature over msg against a
+// compressed G2 public key: e(sig, G2) == e(H(msg), pk).
+func VerifySignature(msg, sig, publicKey []byte) bool { return VerifyPartial(msg, sig, publicKey) }

@@ -202,7 +202,7 @@ func TestBeaconVerifyVoteExtensionAcceptsAnyContentWithinCap(t *testing.T) {
 	require.NoError(t, err)
 
 	verify := newBeaconVerifyVoteExtensionHandler(log.NewNopLogger(),
-		beaconSizeCap(func(sdk.Context) (blstypes.Params, error) { return blstypes.DefaultParams(), nil }, state))
+		beaconSizeCap(func(sdk.Context) (blstypes.Params, error) { return blstypes.DefaultParams(), nil }, state), nil)
 	accepted := func(reason string) float64 {
 		return promtest.ToFloat64(beacon.VerifyVoteExt.WithLabelValues("accept", reason))
 	}

@@ -40,7 +40,7 @@ func initRootCmd(
 ) {
 	rootCmd.AddCommand(
 		genutilcli.InitCmd(basicManager, app.DefaultNodeHome),
-		debug.Cmd(),
+		debugCmd(),
 		confixcmd.ConfigCommand(),
 		pruning.Cmd(newApp, app.DefaultNodeHome),
 		snapshot.Cmd(newApp),
@@ -222,3 +222,10 @@ func appExport(
 }
 
 // CustomGenTxCmd is now defined in custom_gentx.go
+
+// debugCmd is the SDK debug command plus the block beacon decoder.
+func debugCmd() *cobra.Command {
+	cmd := debug.Cmd()
+	cmd.AddCommand(decodeBeaconTxCmd())
+	return cmd
+}

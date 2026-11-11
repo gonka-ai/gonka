@@ -124,6 +124,7 @@ func (app *App) Close() error {
 	if app.beaconIdentity != nil {
 		app.beaconIdentity.close()
 	}
+	app.beaconCollector.close()
 	return app.App.Close()
 }
 
@@ -135,11 +136,20 @@ func (app *App) beaconVerifyContext() (sdk.Context, error) {
 	if h <= 0 {
 		return sdk.Context{}, errors.New("no committed block yet")
 	}
-	cms, err := app.CommitMultiStore().CacheMultiStoreWithVersion(h)
-	if err != nil {
-		return sdk.Context{}, fmt.Errorf("committed version %d: %w", h, err)
+	return app.beaconContextAt(h)
+}
+
+// beaconContextAt is a read-only context over committed version v (an
+// immutable IAVL version, as gRPC queries use), safe off the ABCI goroutine.
+func (app *App) beaconContextAt(v int64) (sdk.Context, error) {
+	if v <= 0 {
+		return sdk.Context{}, fmt.Errorf("no committed version %d", v)
 	}
-	return sdk.NewContext(cms, cmtproto.Header{ChainID: app.ChainID(), Height: h}, false, app.Logger()), nil
+	cms, err := app.CommitMultiStore().CacheMultiStoreWithVersion(v)
+	if err != nil {
+		return sdk.Context{}, fmt.Errorf("committed version %d: %w", v, err)
+	}
+	return sdk.NewContext(cms, cmtproto.Header{ChainID: app.ChainID(), Height: v}, false, app.Logger()), nil
 }
 
 // blsCommittedKeys implements beacon.CommittedKeys on the x/bls keeper.

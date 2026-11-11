@@ -657,3 +657,67 @@ func TestBeaconKeySwitchDelayParam(t *testing.T) {
 	p.BeaconKeySwitchDelay = types.MaxBeaconKeySwitchDelay + 1
 	require.Error(t, p.Validate())
 }
+
+// Step 4: the beacon tx is required in block H iff the beacon is activated,
+// H > inj_from and round H-1 has a pending message.
+func TestBeaconInjectionRound(t *testing.T) {
+	k, ctx := beaconKeeper(t, nil)
+	d := newBeaconDKG(t, 8, 2)
+	completedEpoch(t, k, ctx, 1, d, [][2]uint32{{0, 7}})
+
+	_, ok := k.BeaconInjectionRound(ctx, 50)
+	require.False(t, ok, "not activated")
+
+	require.True(t, k.ActivateBeacon(ctx, 40, []uint64{1}))
+	a, _ := k.GetBeaconActivation(ctx)
+	require.Equal(t, uint64(40), a.InjFrom)
+	for h := int64(38); h <= 45; h++ {
+		k.ProcessBlockBeacon(atBlock(ctx, h, 2)) // pending for rounds 39..46
+	}
+	_, ok = k.BeaconInjectionRound(ctx, 40)
+	require.False(t, ok, "block inj_from itself (old-binary proposal)")
+	p, ok := k.BeaconInjectionRound(ctx, 41)
+	require.True(t, ok)
+	require.Equal(t, uint64(40), p.Round)
+	_, ok = k.BeaconInjectionRound(ctx, 60)
+	require.False(t, ok, "no pending message for round 59")
+}
+
+func TestGetBeaconKeyMaterial(t *testing.T) {
+	k, ctx := beaconKeeper(t, nil)
+	d := newBeaconDKG(t, 8, 2)
+	completedEpoch(t, k, ctx, 1, d, [][2]uint32{{0, 7}})
+	km, err := k.GetBeaconKeyMaterial(ctx, 1)
+	require.NoError(t, err)
+	require.Equal(t, uint32(3), km.Threshold)
+	require.Equal(t, d.groupPK, km.GroupPublicKey)
+	require.Len(t, km.SlotPublicKeys, 8)
+
+	_, err = k.GetBeaconKeyMaterial(ctx, 2)
+	require.Error(t, err, "no such epoch")
+	dealing := completedEpoch(t, k, ctx, 3, d, [][2]uint32{{0, 7}})
+	dealing.DkgPhase = types.DKGPhase_DKG_PHASE_DEALING
+	require.NoError(t, k.SetEpochBLSDataBaseOnly(ctx, dealing))
+	_, err = k.GetBeaconKeyMaterial(ctx, 3)
+	require.Error(t, err, "DKG not final")
+}
+
+// blsutil.AggregatePartials matches the keeper's threshold-signing aggregation.
+func TestAggregatePartialsMatchesKeeper(t *testing.T) {
+	k, _ := beaconKeeper(t, nil)
+	d := newBeaconDKG(t, 8, 2)
+	msg := bytes.Repeat([]byte{4}, 32)
+	sigs, err := blsutil.SignPartials(msg, d.scalars(2, 6))
+	require.NoError(t, err)
+	slots := []uint32{2, 3, 4, 5, 6}
+	per := make([][]byte, len(slots))
+	for i := range slots {
+		per[i] = sigs[i*48 : (i+1)*48]
+	}
+	got, err := blsutil.AggregatePartials(slots, per)
+	require.NoError(t, err)
+	want, err := k.aggregateBLSPartialSignaturesBlst([]types.PartialSignature{{SlotIndices: slots, Signature: sigs}})
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	require.True(t, k.verifyFinalSignatureBlst(got, msg, d.groupPK))
+}

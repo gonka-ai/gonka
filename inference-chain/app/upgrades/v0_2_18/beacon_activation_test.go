@@ -28,9 +28,11 @@ func (f *fakeBeaconKeeper) ActivateBeacon(_ sdk.Context, extFrom uint64, c []uin
 	f.activated, f.gotExtFrom, f.gotCandidates = true, extFrom, c
 	return true
 }
-func (f *fakeBeaconKeeper) GetCurrentSigningEpochID(sdk.Context) (uint64, bool) { return f.signing, f.hasSigning }
-func (f *fakeBeaconKeeper) GetActiveEpochID(sdk.Context) (uint64, bool)         { return f.active, f.hasActive }
-func (f *fakeBeaconKeeper) GetParams(context.Context) (blstypes.Params, error)  { return f.params, nil }
+func (f *fakeBeaconKeeper) GetCurrentSigningEpochID(sdk.Context) (uint64, bool) {
+	return f.signing, f.hasSigning
+}
+func (f *fakeBeaconKeeper) GetActiveEpochID(sdk.Context) (uint64, bool)        { return f.active, f.hasActive }
+func (f *fakeBeaconKeeper) GetParams(context.Context) (blstypes.Params, error) { return f.params, nil }
 func (f *fakeBeaconKeeper) SetParams(_ context.Context, p blstypes.Params) error {
 	f.params = p
 	return nil

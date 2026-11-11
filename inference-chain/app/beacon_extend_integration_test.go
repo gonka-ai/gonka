@@ -104,17 +104,6 @@ func TestBlockBeacon_ExtensionsAcrossTheStep3Upgrade(t *testing.T) {
 	_, ok := testApp.BlsKeeper.GetPendingBeacon(committed(), 5)
 	require.False(t, ok, "no pending beacon before the Step 3 activation, even with VE on")
 
-	// Share file for the key epoch, as the dAPI writes it.
-	shares := make([][sharefile.ScalarLen]byte, 0, 5)
-	for s := 3; s <= 7; s++ {
-		shares = append(shares, secrets[s].Bytes())
-	}
-	file, err := sharefile.New(testApp.ChainID(), epochID, owner, 3, 7, g2Compressed(coeffs[0]), shares, time.Now())
-	require.NoError(t, err)
-	_, _, err = sharefile.WriteAtomic(provider.Dir(), file)
-	require.NoError(t, err)
-	provider.Reload()
-
 	// --- the upgrade at U = 6 ---
 	const U = 6
 	upgradeCtx := testApp.NewUncachedContext(false, cmtproto.Header{Height: U, ChainID: testApp.ChainID()})
@@ -155,6 +144,18 @@ func TestBlockBeacon_ExtensionsAcrossTheStep3Upgrade(t *testing.T) {
 
 	// The background verifier accepts the shares once it sees a committed version.
 	finalizeWithHash(t, testApp, U+1) // PreBlocker records committed height U
+	// Share file for the key epoch, as the dAPI writes it. Written after the
+	// test's direct state writes, so the background verifier never reads a
+	// committed version while the test mutates the live store.
+	shares := make([][sharefile.ScalarLen]byte, 0, 5)
+	for s := 3; s <= 7; s++ {
+		shares = append(shares, secrets[s].Bytes())
+	}
+	file, err := sharefile.New(testApp.ChainID(), epochID, owner, 3, 7, g2Compressed(coeffs[0]), shares, time.Now())
+	require.NoError(t, err)
+	_, _, err = sharefile.WriteAtomic(provider.Dir(), file)
+	require.NoError(t, err)
+	provider.Reload()
 	require.Eventually(t, func() bool {
 		for _, st := range provider.Statuses() {
 			if st.EpochID == epochID && st.State == "valid" {

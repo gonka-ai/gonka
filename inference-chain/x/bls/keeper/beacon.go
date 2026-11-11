@@ -71,15 +71,16 @@ func (k Keeper) GetBeaconActivation(ctx sdk.Context) (types.BeaconActivation, bo
 	return a, k.getProto(ctx, types.BeaconActivationKey, &a)
 }
 
-// ActivateBeacon makes the beacon live with partials from heights > extFrom.
-// Idempotent: an existing activation is kept unchanged. It also seeds the
-// beacon key from the newest completed DKG among candidateEpochs. Returns
-// whether this call activated.
-func (k Keeper) ActivateBeacon(ctx sdk.Context, extFrom uint64, candidateEpochs []uint64) bool {
+// ActivateBeacon makes the beacon live at height: partials in vote extensions
+// for heights > height (Step 3) and the beacon tx required from block
+// height+1 on (Step 4). Idempotent: an existing activation is kept unchanged.
+// It also seeds the beacon key from the newest completed DKG among
+// candidateEpochs. Returns whether this call activated.
+func (k Keeper) ActivateBeacon(ctx sdk.Context, height uint64, candidateEpochs []uint64) bool {
 	if _, ok := k.GetBeaconActivation(ctx); ok {
 		return false
 	}
-	k.setProto(ctx, types.BeaconActivationKey, &types.BeaconActivation{ExtFrom: extFrom})
+	k.setProto(ctx, types.BeaconActivationKey, &types.BeaconActivation{ExtFrom: height, InjFrom: height})
 	if _, ok := k.GetBeaconKeyEpoch(ctx); !ok {
 		if epoch, ok := k.newestCompletedEpoch(ctx, candidateEpochs); ok {
 			k.setBeaconKeyEpoch(ctx, epoch)
@@ -87,8 +88,48 @@ func (k Keeper) ActivateBeacon(ctx sdk.Context, extFrom uint64, candidateEpochs 
 			k.Logger().Info("beacon key seeded", "key_epoch", epoch)
 		}
 	}
-	k.Logger().Info("block beacon activated", "ext_from", extFrom)
+	k.Logger().Info("block beacon activated", "ext_from", height, "inj_from", height)
 	return true
+}
+
+// BeaconInjectionRound reports whether block proposalHeight must carry the
+// beacon tx (σ or a proof of miss) and returns the pending round it is for:
+// the beacon is activated, proposalHeight > inj_from, and round
+// proposalHeight-1 has a PendingBeacon. Otherwise the block must not carry it.
+func (k Keeper) BeaconInjectionRound(ctx sdk.Context, proposalHeight int64) (types.PendingBeacon, bool) {
+	a, ok := k.GetBeaconActivation(ctx)
+	if !ok || proposalHeight <= 1 || uint64(proposalHeight) <= a.InjFrom {
+		return types.PendingBeacon{}, false
+	}
+	return k.GetPendingBeacon(ctx, uint64(proposalHeight-1))
+}
+
+// BeaconKeyMaterial is what checking a key epoch's signatures needs.
+type BeaconKeyMaterial struct {
+	GroupPublicKey []byte
+	SlotPublicKeys [][]byte
+	// Threshold is the number of valid slots σ needs: t_slots_degree + 1.
+	Threshold uint32
+}
+
+// GetBeaconKeyMaterial returns the group key, slot keys and threshold of a
+// completed key epoch.
+func (k Keeper) GetBeaconKeyMaterial(ctx sdk.Context, epoch uint64) (BeaconKeyMaterial, error) {
+	data, err := k.getEpochBLSDataBase(ctx, epoch)
+	if err != nil {
+		return BeaconKeyMaterial{}, err
+	}
+	if !dkgFinal(data.DkgPhase) {
+		return BeaconKeyMaterial{}, fmt.Errorf("beacon: epoch %d DKG is %s", epoch, data.DkgPhase)
+	}
+	if len(data.GroupPublicKey) == 0 || len(data.SlotPublicKeys) < int(data.ITotalSlots) {
+		return BeaconKeyMaterial{}, fmt.Errorf("beacon: epoch %d key material incomplete", epoch)
+	}
+	return BeaconKeyMaterial{
+		GroupPublicKey: data.GroupPublicKey,
+		SlotPublicKeys: data.SlotPublicKeys,
+		Threshold:      data.TSlotsDegree + 1,
+	}, nil
 }
 
 // BeaconExtensionsActive reports whether validators sign partials at height.

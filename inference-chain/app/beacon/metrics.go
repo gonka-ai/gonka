@@ -32,6 +32,27 @@ var (
 		Help:    "Time to build a beacon vote extension.",
 		Buckets: []float64{0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1},
 	})
+	// CollectorPartials counts extensions seen by the collector, by verdict
+	// (valid, invalid, not_owner, empty, duplicate, stale, no_pending, dropped).
+	CollectorPartials = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "beacon_collector_partials_total",
+		Help: "Vote extensions processed by the beacon collector, by verdict.",
+	}, []string{"result"})
+	// SigmaBuilt counts rounds for which the collector built and verified σ.
+	SigmaBuilt = promauto.NewCounter(prometheus.CounterOpts{
+		Name: "beacon_sigma_built_total",
+		Help: "Rounds whose group signature the collector built and verified.",
+	})
+	// ProposalOutcome counts beacon txs this node proposed, by outcome (sigma, miss).
+	ProposalOutcome = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "beacon_proposal_outcome_total",
+		Help: "Beacon txs proposed by this node, by outcome.",
+	}, []string{"outcome"})
+	// ProcessProposal counts ProcessProposal verdicts by result and reason.
+	ProcessProposal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "beacon_process_proposal_total",
+		Help: "ProcessProposal verdicts on the beacon tx, by result and reason.",
+	}, []string{"result", "reason"})
 	// VerifyVoteExt counts VerifyVoteExtension verdicts by result and reason.
 	VerifyVoteExt = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "beacon_verify_vote_ext_total",

@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"encoding/json"
+	"sync"
 	"testing"
 	"time"
 
@@ -196,6 +197,10 @@ func createTestApp(t *testing.T) *app.App {
 }
 
 // createTestAppWithOptions is createTestApp with extra app options (app.toml keys).
+// testGenesisValKeys holds each test app's genesis validator consensus key
+// (block beacon tests sign vote extensions with it).
+var testGenesisValKeys sync.Map // *app.App -> ed25519.PrivKey
+
 func createTestAppWithOptions(t *testing.T, extraOpts map[string]interface{}) *app.App {
 	t.Helper()
 
@@ -233,6 +238,7 @@ func createTestAppWithOptions(t *testing.T, extraOpts map[string]interface{}) *a
 
 	// Create genesis validator
 	genesisPrivKey := ed25519.GenPrivKey()
+	defer func() { testGenesisValKeys.Store(testApp, genesisPrivKey) }()
 	genesisPubKey := genesisPrivKey.PubKey()
 	genesisOperatorPrivKey := secp256k1.GenPrivKey()
 	genesisOperatorAddr := sdk.AccAddress(genesisOperatorPrivKey.PubKey().Address())
