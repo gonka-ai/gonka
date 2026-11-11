@@ -2,6 +2,7 @@ package limits
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -18,6 +19,9 @@ const (
 	maxQueueHeadPasses       = 64
 	queueHeadPatienceDivisor = 2
 )
+
+// ErrNoLiveWeight is the refusal for a model whose weight-derived concurrency limit is zero: its hosts carry no capacity right now, which is an outage rather than a quota. See capacity.md, "The gateway limiter".
+var ErrNoLiveWeight = errors.New("the model's weight-derived concurrency limit is zero")
 
 type RateLimitError struct {
 	Reason     string
@@ -53,6 +57,10 @@ type ModelCapacity struct {
 	BaselineWeight              float64
 	MaxConcurrentPer10000Weight float64
 	HostWindowRequests          int64
+}
+
+func (c ModelCapacity) weightLimited() bool {
+	return c.MaxConcurrentPer10000Weight > 0 && c.BaselineWeight > 0
 }
 
 type ModelOverride struct {
@@ -178,6 +186,10 @@ func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inpu
 	admitted := l.admissionFor(model, inputTokens, capacity)
 	counter := l.counterLocked(model)
 	counter.enforced = admitted
+	if admitted.noLiveWeight {
+		l.mu.Unlock()
+		return ErrNoLiveWeight
+	}
 	if reason := admitted.impossible(); reason != "" {
 		l.mu.Unlock()
 		return &RateLimitError{Reason: reason, RetryAfter: acquireWait}
@@ -321,6 +333,7 @@ func (l *GatewayLimiter) admissionFor(model string, inputTokens int64, capacity 
 	}
 	admitted := admission{requestedTokens: inputTokens}
 	admitted.concurrencyLimit, admitted.concurrencyLimited = effectiveConcurrencyLimit(maxConcurrent, capacity)
+	admitted.noLiveWeight = capacity.weightLimited() && admitted.concurrencyLimit == 0
 	admitted.inputTokenLimit, admitted.inputTokenLimited = effectiveInputTokenLimit(maxInputTokens, capacity)
 	return admitted
 }
@@ -359,6 +372,7 @@ func (l *GatewayLimiter) counterLocked(model string) *modelCounter {
 type admission struct {
 	concurrencyLimit   int64
 	concurrencyLimited bool
+	noLiveWeight       bool
 	inputTokenLimit    int64
 	inputTokenLimited  bool
 	requestedTokens    int64
@@ -379,7 +393,7 @@ func (a admission) impossible() string {
 }
 
 func effectiveConcurrencyLimit(baseMaxConcurrent int64, capacity ModelCapacity) (limit int64, limited bool) {
-	if capacity.MaxConcurrentPer10000Weight > 0 && capacity.BaselineWeight > 0 {
+	if capacity.weightLimited() {
 		current := weightConcurrencyLimit(capacity.CurrentWeight, capacity.MaxConcurrentPer10000Weight)
 		baseline := weightConcurrencyLimit(capacity.BaselineWeight, capacity.MaxConcurrentPer10000Weight)
 		return backstopped(max(min(current, baseline), capacity.HostWindowRequests), baseMaxConcurrent), true

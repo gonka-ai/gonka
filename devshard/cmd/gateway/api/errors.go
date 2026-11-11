@@ -169,6 +169,9 @@ func statusForError(err error) int {
 	if errors.As(err, &blocked) {
 		return http.StatusServiceUnavailable
 	}
+	if noLiveWeight(err) {
+		return http.StatusServiceUnavailable
+	}
 	if chainUnreadable(err) {
 		return http.StatusServiceUnavailable
 	}
@@ -229,6 +232,17 @@ func writeControlFailure(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+// limiterRefusal names the limiter's refusal for the rejection counter and the journal; refused is false for any other error.
+func limiterRefusal(err error) (label string, refused bool) {
+	if noLiveWeight(err) {
+		return limits.RejectionNoLiveWeight, true
+	}
+	if throttled, ours := rateLimited(err); ours {
+		return throttled.Label(), true
+	}
+	return limits.RejectionUnnamed, false
+}
+
 // rateLimited singles out the gateway limiter's own rejection: the status, Retry-After and the counter all ask for it.
 func rateLimited(err error) (*limits.RateLimitError, bool) {
 	var throttled *limits.RateLimitError
@@ -254,6 +268,10 @@ func outOfFunds(err error) bool {
 	return errors.Is(err, types.ErrInsufficientBalance)
 }
 
+func noLiveWeight(err error) bool {
+	return errors.Is(err, limits.ErrNoLiveWeight)
+}
+
 func hostsUnavailable(err error) bool {
 	return errors.Is(err, engine.ErrHostsUnavailable)
 }
@@ -277,7 +295,7 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(chain.DefaultObserverPollInterval.Seconds()), 10))
 	case modelUnavailable(err), outOfFunds(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(escrow.TickInterval.Seconds()), 10))
-	case hostsUnavailable(err):
+	case hostsUnavailable(err), noLiveWeight(err):
 		baseMS := s.config.Load().Limits.HostCutoff.BaseMS
 		seconds := int64(math.Ceil(float64(baseMS) / float64(time.Second.Milliseconds())))
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))

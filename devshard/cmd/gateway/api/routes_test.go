@@ -624,6 +624,31 @@ func TestALimiterRejectionNamesTheCapItHit(t *testing.T) {
 }
 
 // Test flow:
+//  1. Make the limiter refuse with `limits.ErrNoLiveWeight`.
+//  2. POST a chat completion.
+//  3. Assert the response is 503 with a Retry-After header, and exactly one rejection was recorded with reason `no_live_weight` and the model that was turned away.
+func TestAZeroLiveWeightRefusalIsCountedAndAnswered503(t *testing.T) {
+	live := newHarness(t)
+	live.limiter.err = limits.ErrNoLiveWeight
+
+	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+	if recorder.Header().Get("Retry-After") == "" {
+		t.Error("Retry-After is missing")
+	}
+	reasons := live.rejections.reasons()
+	if len(reasons) != 1 || reasons[0] != "no_live_weight" {
+		t.Fatalf("recorded %v, want the no_live_weight reason", reasons)
+	}
+	if live.rejections.model != "qwen" {
+		t.Errorf("model = %q, want the model that was turned away", live.rejections.model)
+	}
+}
+
+// Test flow:
 //  1. Build a chat completion whose content alone fills the host budget left beside the catch-up reserve, but still under the raw ingest cap.
 //  2. POST it.
 //  3. Assert the response is 413 and no limiter slot was taken, so the refusal precedes admission.

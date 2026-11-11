@@ -598,3 +598,58 @@ func TestEveryRejectionReasonHasALabel(t *testing.T) {
 		}
 	}
 }
+
+// Test flow:
+//  1. Create a limiter with MaxConcurrent 1000 and a five-minute AcquireWait.
+//  2. Build a `ModelCapacity` with CurrentWeight 0, BaselineWeight 2000, MaxConcurrentPer10000Weight 5 and no host window, giving a weight-derived cap of 0.
+//  3. Acquire modelA; assert the call returns at once with `ErrNoLiveWeight` and not a `*RateLimitError`, and that no waiter is queued.
+func TestAcquireForModel_ZeroLiveWeightIsAnOutageNotAQueue(t *testing.T) {
+	t.Parallel()
+	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1000, AcquireWait: 5 * time.Minute})
+	capacity := ModelCapacity{CurrentWeight: 0, BaselineWeight: 2000, MaxConcurrentPer10000Weight: 5}
+
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity)
+
+	if !errors.Is(err, ErrNoLiveWeight) {
+		t.Fatalf("AcquireForModel error = %v, want ErrNoLiveWeight", err)
+	}
+	var rateLimitErr *RateLimitError
+	if errors.As(err, &rateLimitErr) {
+		t.Errorf("error is a *RateLimitError (%v): a model with no live host is not a quota the caller exceeded", rateLimitErr)
+	}
+	if depth := limiter.Snapshot().Total.QueueDepth; depth != 0 {
+		t.Errorf("queue depth = %d, want 0", depth)
+	}
+}
+
+// Test flow:
+//  1. Create a limiter with MaxConcurrent 1000 and a 1ms AcquireWait.
+//  2. Acquire modelA with a `ModelCapacity{ScaleFactor: 0}`, which carries no per-weight rate, so the zero limit comes from the scale and not from weight.
+//  3. Assert the error is a `*RateLimitError` and not `ErrNoLiveWeight`.
+func TestAcquireForModel_ZeroScaleWithoutWeightStaysARateLimit(t *testing.T) {
+	t.Parallel()
+	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1000, AcquireWait: time.Millisecond})
+
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, ModelCapacity{ScaleFactor: 0})
+
+	var rateLimitErr *RateLimitError
+	if !errors.As(err, &rateLimitErr) || errors.Is(err, ErrNoLiveWeight) {
+		t.Fatalf("AcquireForModel error = %v, want *RateLimitError and not ErrNoLiveWeight", err)
+	}
+}
+
+// Test flow:
+//  1. Create a limiter with MaxConcurrent 1000 and a 1ms AcquireWait.
+//  2. Build a `ModelCapacity` with CurrentWeight 0, BaselineWeight 2000, MaxConcurrentPer10000Weight 5 and a host window of 2 requests, so the hosts' own room lifts the cap above the weight-derived zero.
+//  3. Acquire modelA twice; assert both succeed and neither returns `ErrNoLiveWeight`.
+func TestAcquireForModel_HostWindowRoomIsNotZeroLiveWeight(t *testing.T) {
+	t.Parallel()
+	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1000, AcquireWait: time.Millisecond})
+	capacity := ModelCapacity{CurrentWeight: 0, BaselineWeight: 2000, MaxConcurrentPer10000Weight: 5, HostWindowRequests: 2}
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity); err != nil {
+			t.Fatalf("AcquireForModel attempt %d: %v, want admitted by the host window", attempt, err)
+		}
+	}
+}

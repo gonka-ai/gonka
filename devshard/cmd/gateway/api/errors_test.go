@@ -202,3 +202,20 @@ func TestAHostsUnavailableRejectionRoundsUpAConfiguredBase(t *testing.T) {
 		t.Fatalf("Retry-After = %q, want %q (2.5s rounded up)", got, "3")
 	}
 }
+
+// Test flow:
+//  1. Write `limits.ErrNoLiveWeight`, wrapped once, through `writeErrorFor` on a default-configured server.
+//  2. Assert the response status is 503.
+//  3. Assert Retry-After is "5", the default host cutoff base rounded up to seconds, and not the 300 s admission queue wait.
+func TestAZeroLiveWeightRejectionCarriesTheHostCutoffBase(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	newErrorsTestServer().writeErrorFor(recorder, fmt.Errorf("acquire: %w", limits.ErrNoLiveWeight))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After = %q, want %q (the default host cutoff base, rounded up to seconds)", got, "5")
+	}
+}
