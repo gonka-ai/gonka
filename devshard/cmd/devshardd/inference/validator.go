@@ -52,6 +52,7 @@ type Validator struct {
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
 	pool                    *flipPool
+	echoMode                string
 }
 
 type payloadFetchFunc func(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error)
@@ -67,11 +68,26 @@ const (
 	poolMaxAge       = 24 * time.Hour
 )
 
+// How the echo validation takes part in a vote (DEVSHARD_ECHO_VALIDATION).
+const (
+	// EchoShadow: the logprob comparison votes; the echo scores the same
+	// inference beside it and its verdict is only logged.
+	EchoShadow = "shadow"
+	// EchoEnforce: the echo votes.
+	EchoEnforce = "enforce"
+	// EchoOff: the logprob comparison alone.
+	EchoOff = "off"
+)
+
+// shadowTimeout bounds the echo that runs beside a vote it does not cast.
+const shadowTimeout = 2 * time.Minute
+
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
 // similarity pass threshold (long-poll snapshot first, chain fallback).
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
-// Valid:false instead of abandoning the attempt.
+// Valid:false instead of abandoning the attempt. echoMode is EchoShadow,
+// EchoEnforce or EchoOff.
 func NewValidator(
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
@@ -81,6 +97,7 @@ func NewValidator(
 	chainParams ChainParamsProvider,
 	thresholds ValidationThresholdResolver,
 	voteFalseOnFetchFailure bool,
+	echoMode string,
 ) *Validator {
 	return &Validator{
 		bridge:                  br,
@@ -93,6 +110,7 @@ func NewValidator(
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 		payloadHTTPClient:       newPayloadFetchClient(),
 		pool:                    newFlipPool(poolWindow, poolMaxAge),
+		echoMode:                echoMode,
 	}
 }
 
@@ -132,6 +150,74 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
+	if v.echoMode == EchoEnforce {
+		return v.echoVerdict(ctx, req, inferenceID, promptPayload, responsePayload, epochID)
+	}
+	verdict, err := v.logprobVerdict(ctx, req, inferenceID, promptPayload, responsePayload, epochID)
+	if err == nil && v.echoMode == EchoShadow {
+		v.shadowEcho(ctx, req, inferenceID, promptPayload, responsePayload, epochID, verdict)
+	}
+	return verdict, err
+}
+
+// logprobVerdict is the validation mainnet runs: the answer is replayed with
+// its tokens enforced and the logprobs of both runs are compared.
+func (v *Validator) logprobVerdict(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string,
+	promptPayload, responsePayload []byte, epochID uint64) (*devshardpkg.ValidateResult, error) {
+	result, err := commonvalidation.ExecuteValidation(
+		ctx,
+		inferenceID,
+		promptPayload,
+		responsePayload,
+		func(ctx context.Context, body []byte) (*http.Response, error) {
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, commonvalidation.ChatPath, body)
+		},
+		req.InputTokens, req.OutputTokens,
+		v.chainParams.LogprobsMode(),
+	)
+	if err != nil {
+		return nil, classifyExecuteValidationErr(err)
+	}
+	valid, err := evaluateValidationResult(ctx, result, epochID, req.Model, v.thresholds)
+	if err != nil {
+		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate,
+			fmt.Errorf("evaluate validation result: %w", err))
+	}
+	return &devshardpkg.ValidateResult{Valid: valid}, nil
+}
+
+// shadowEcho scores the inference by the echo beside a vote the logprob
+// comparison has cast, and logs what the echo would have voted. Nothing it
+// does reaches the vote: its errors, its timeout and its panics end here.
+func (v *Validator) shadowEcho(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string,
+	promptPayload, responsePayload []byte, epochID uint64, voted *devshardpkg.ValidateResult) {
+	defer func() {
+		if r := recover(); r != nil {
+			logging.Error("echo validation shadow panicked", types.Validation, "inferenceId", inferenceID, "panic", fmt.Sprint(r))
+		}
+	}()
+	started := time.Now()
+	shadowCtx, cancel := context.WithTimeout(ctx, shadowTimeout)
+	defer cancel()
+	echo, err := v.echoVerdict(shadowCtx, req, inferenceID, promptPayload, responsePayload, epochID)
+	fields := []any{"subsystem", "validation", "inferenceId", inferenceID, "executor", req.ExecutorAddress, "model", req.Model,
+		"voted", voted.Valid, "ms", time.Since(started).Milliseconds()}
+	switch {
+	case errors.Is(err, devshardpkg.ErrValidationSkipped):
+		fields = append(fields, "echo", "skipped", "cause", err.Error())
+	case err != nil:
+		fields = append(fields, "echo", "error", "cause", err.Error())
+	default:
+		fields = append(fields, "echo", echo.Reason, "echo_valid", echo.Valid, "agree", echo.Valid == voted.Valid)
+		fields = append(fields, echo.Details...)
+	}
+	logging.Info("echo validation shadow", fields...)
+}
+
+// echoVerdict judges the inference on the executor's tape: the echo or, for
+// what the echo cannot judge, the replay, then the participant's pool.
+func (v *Validator) echoVerdict(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string,
+	promptPayload, responsePayload []byte, epochID uint64) (*devshardpkg.ValidateResult, error) {
 	result, err := commonvalidation.ExecuteEchoValidation(
 		ctx,
 		inferenceID,
