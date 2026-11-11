@@ -3,6 +3,9 @@ package user
 import (
 	"context"
 	"errors"
+	"os"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,7 +21,19 @@ const (
 	heartbeatBackoffMaxIntervals = 8
 	// heartbeatSendTimeout bounds one heartbeat send well under the heartbeat interval.
 	heartbeatSendTimeout = 5 * time.Second
+	// EnvHeightSyncCoalescePerHost toggles transport coalescing of heartbeat
+	// spans across slots owned by the same peer (default: true).
+	EnvHeightSyncCoalescePerHost = "HEIGHT_SYNC_COALESCE_PER_HOST"
 )
+
+func defaultHeartbeatCoalescePerHost() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvHeightSyncCoalescePerHost))) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
 
 type composedDiff struct {
 	diff    types.Diff
@@ -199,14 +214,18 @@ func (s *Session) pokeHeartbeat() {
 }
 
 // dispatchHeartbeatSpan unicasts every composed heartbeat concurrently so one
-// slow or dead host cannot hold the rest of the span. Failures are logged;
-// the caller still runs the ack flush for slots that answered.
+// slow or dead host cannot hold the rest of the span. When multiple slots belong
+// to the same physical peer, their span diffs are coalesced into a single RPC
+// carrying the highest-nonce diff for that peer (with earlier diffs delivered
+// inline via catchUpForSend). Failures are logged; the caller still runs the ack
+// flush for peers that answered.
 func (s *Session) dispatchHeartbeatSpan(ctx context.Context, span []composedDiff) {
-	if len(span) == 0 {
+	targets := s.coalesceHeartbeatSpan(span)
+	if len(targets) == 0 {
 		return
 	}
 	var wg sync.WaitGroup
-	for _, item := range span {
+	for _, item := range targets {
 		wg.Add(1)
 		go func(item composedDiff) {
 			defer wg.Done()
@@ -217,6 +236,110 @@ func (s *Session) dispatchHeartbeatSpan(ctx context.Context, span []composedDiff
 		}(item)
 	}
 	wg.Wait()
+}
+
+// coalesceHeartbeatSpan collapses span entries targeting the same physical peer
+// down to the highest-nonce diff for that peer so one roundtrip delivers all of
+// its slot heartbeats via inline catch-up.
+func (s *Session) coalesceHeartbeatSpan(span []composedDiff) []composedDiff {
+	if s == nil || len(span) <= 1 {
+		return span
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.heartbeatCoalescePerHost {
+		return span
+	}
+	posByPeer := make(map[int]int, len(span))
+	out := make([]composedDiff, 0, len(span))
+	for _, item := range span {
+		peer := s.canonicalHeartbeatPeerLocked(item.hostIdx)
+		if pos, exists := posByPeer[peer]; exists {
+			if item.diff.Nonce >= out[pos].diff.Nonce {
+				out[pos] = item
+			}
+			continue
+		}
+		posByPeer[peer] = len(out)
+		out = append(out, item)
+	}
+	return out
+}
+
+func sameHostTransport(a, b HostClient) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	if ia, ok := a.(*InProcessClient); ok {
+		ib, ok := b.(*InProcessClient)
+		return ok && ia != nil && ib != nil && ia.Host != nil && ia.Host == ib.Host
+	}
+	ta, tb := reflect.TypeOf(a), reflect.TypeOf(b)
+	if ta == tb && ta.Comparable() {
+		return a == b
+	}
+	return false
+}
+
+func (s *Session) sameHeartbeatPeerLocked(i, j int) bool {
+	if i == j {
+		return true
+	}
+	if !s.heartbeatCoalescePerHost {
+		return false
+	}
+	if i < 0 || j < 0 || i >= len(s.group) || j >= len(s.group) || i >= len(s.clients) || j >= len(s.clients) {
+		return false
+	}
+	addr := s.group[i].ValidatorAddress
+	if addr == "" || addr != s.group[j].ValidatorAddress {
+		return false
+	}
+	return sameHostTransport(s.clients[i], s.clients[j])
+}
+
+func (s *Session) canonicalHeartbeatPeerLocked(hostIdx int) int {
+	if !s.heartbeatCoalescePerHost || hostIdx <= 0 || hostIdx >= len(s.group) {
+		return hostIdx
+	}
+	for i := 0; i < hostIdx; i++ {
+		if s.sameHeartbeatPeerLocked(i, hostIdx) {
+			return i
+		}
+	}
+	return hostIdx
+}
+
+func (s *Session) heartbeatPeerSlotsLocked(hostIdx int) []int {
+	if hostIdx < 0 || hostIdx >= len(s.group) {
+		return nil
+	}
+	if !s.heartbeatCoalescePerHost {
+		return []int{hostIdx}
+	}
+	slots := make([]int, 0, 4)
+	for i := range s.group {
+		if s.sameHeartbeatPeerLocked(hostIdx, i) {
+			slots = append(slots, i)
+		}
+	}
+	return slots
+}
+
+func (s *Session) uniqueHeartbeatPeerCount() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.heartbeatCoalescePerHost {
+		return len(s.group)
+	}
+	seen := make(map[int]struct{}, len(s.group))
+	for i := range s.group {
+		seen[s.canonicalHeartbeatPeerLocked(i)] = struct{}{}
+	}
+	return len(seen)
 }
 
 // HeartbeatSkippedNoHeight counts Due() calls that skipped because no
@@ -410,9 +533,9 @@ func (s *Session) drainUnpinnedPendingLocked() ([]composedDiff, error) {
 }
 
 func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
-	// Every slot acks at most once per turn, so the guaranteed round plus one
-	// round per slot bounds the loop without a cadence parameter.
-	maxRounds := len(s.group) + 1
+	// Each unique peer returns acks for all of its slots in a single response,
+	// so the guaranteed round plus one round per unique peer bounds the loop.
+	maxRounds := s.uniqueHeartbeatPeerCount() + 1
 	for i := 0; i < maxRounds; i++ {
 		s.mu.Lock()
 		need := s.heartbeatFlushLeft > 0 || s.hasPendingHeightAckLocked()
@@ -524,7 +647,21 @@ func (s *Session) observedHeightLocked() (uint64, []byte, bool) {
 
 func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error {
 	s.mu.Lock()
+	siblings := s.heartbeatPeerSlotsLocked(item.hostIdx)
 	backedOff := s.nowLocked().Before(s.heartbeatRetryAt[item.hostIdx])
+	if !backedOff && len(siblings) > 1 {
+		var maxSync uint64
+		for _, sib := range siblings {
+			if s.hostSyncNonce[sib] > maxSync {
+				maxSync = s.hostSyncNonce[sib]
+			}
+		}
+		for _, sib := range siblings {
+			if maxSync > s.hostSyncNonce[sib] {
+				s.hostSyncNonce[sib] = maxSync
+			}
+		}
+	}
 	s.mu.Unlock()
 	if backedOff {
 		return nil
@@ -554,18 +691,47 @@ func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error
 	}
 	s.mu.Lock()
 	err = s.processResponse(item.hostIdx, resp, item.diff.Nonce)
+	if err == nil && len(siblings) > 1 {
+		synced := s.hostSyncNonce[item.hostIdx]
+		now := s.nowLocked()
+		advanced := false
+		for _, sib := range siblings {
+			if sib == item.hostIdx {
+				continue
+			}
+			s.noteContactLocked(sib, now)
+			if synced > s.hostSyncNonce[sib] {
+				s.hostSyncNonce[sib] = synced
+				advanced = true
+			}
+		}
+		if advanced {
+			s.dropDiffPrefixLocked()
+		}
+	}
 	s.mu.Unlock()
 	s.publishHeightSyncView()
 	return err
 }
 
-// noteHeartbeatSendFailure counts a failed heartbeat send and returns how long the host is skipped for.
+// noteHeartbeatSendFailure counts a failed heartbeat send and returns how long
+// the peer (and any sibling slots sharing its transport) is skipped for.
 func (s *Session) noteHeartbeatSendFailure(hostIdx int) time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.heartbeatSendFailures[hostIdx]++
-	backoff := heartbeatBackoff(s.heartbeatSendFailures[hostIdx], s.heartbeat.Config().Interval)
-	s.heartbeatRetryAt[hostIdx] = s.nowLocked().Add(backoff)
+	siblings := s.heartbeatPeerSlotsLocked(hostIdx)
+	failures := s.heartbeatSendFailures[hostIdx] + 1
+	backoff := heartbeatBackoff(failures, s.heartbeat.Config().Interval)
+	retryAt := s.nowLocked().Add(backoff)
+	if len(siblings) == 0 {
+		s.heartbeatSendFailures[hostIdx] = failures
+		s.heartbeatRetryAt[hostIdx] = retryAt
+		return backoff
+	}
+	for _, sib := range siblings {
+		s.heartbeatSendFailures[sib] = failures
+		s.heartbeatRetryAt[sib] = retryAt
+	}
 	return backoff
 }
 

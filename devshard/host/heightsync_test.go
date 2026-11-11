@@ -601,3 +601,43 @@ func TestHost_WarmAckAppliesWithoutCachedBinding(t *testing.T) {
 	require.Equal(t, uint64(4), peer.sm.LatestNonce())
 	require.Equal(t, warm.Address(), peer.sm.WarmKeys()[0])
 }
+
+func TestHost_MultiSlotCatchUpBatchEmitsAllOwnAcks(t *testing.T) {
+	hostA := testutil.MustGenerateKey(t)
+	hostB := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+
+	// hostA holds slots 0, 1, 2; hostB holds slot 3.
+	h := newAckTestHost(t, 0, []*signing.Secp256k1Signer{hostA, hostA, hostA, hostB}, user, WithChainOracle(or))
+
+	const slots = uint64(4)
+	batch := []types.Diff{
+		stampedHeartbeatDiff(t, user, 1, 1, 100, slots, []byte{0xaa}),
+		stampedHeartbeatDiff(t, user, 2, 1, 100, slots, []byte{0xaa}),
+		stampedHeartbeatDiff(t, user, 3, 1, 100, slots, []byte{0xaa}),
+		stampedHeartbeatDiff(t, user, 4, 1, 100, slots, []byte{0xaa}),
+	}
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: batch, Nonce: 3})
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), h.LatestNonce())
+
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 3, "coalesced batch must emit one ack for every slot owned by hostA")
+	gotSlots := make(map[uint32]uint64, len(acks))
+	verifier := signing.NewSecp256k1Verifier()
+	for _, ack := range acks {
+		require.NoError(t, heightsync.VerifyAck(verifier, ack, hostA.Address()))
+		require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
+		gotSlots[ack.SlotId] = ack.RefNonce
+	}
+	// SlotForNonce(nonce, 4) == nonce % 4: nonce 1 -> slot 1, nonce 2 -> slot 2, nonce 4 -> slot 0.
+	require.Equal(t, map[uint32]uint64{
+		0: 4,
+		1: 1,
+		2: 2,
+	}, gotSlots)
+}
+
