@@ -1,7 +1,7 @@
 services:
   router:
     image: >-
-      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
+      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/gonka-ai/versiond-router:0.2.16-devshard-v6}
     environment:
       - VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
       - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}

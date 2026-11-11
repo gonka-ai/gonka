@@ -1,6 +1,6 @@
 x-proxy-policy: &proxy-policy
   image: >-
-    ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.16}
+    ${PROXY_POLICY_IMAGE:-ghcr.io/gonka-ai/proxy:0.2.16-devshard-v6}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
     - DEVSHARD_RPC_POLICY_HOST=proxy-policy-ingress
@@ -177,7 +177,7 @@ services:
   versiond:
     container_name: versiond
     image: >-
-      ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
+      ${VERSIOND_IMAGE:-ghcr.io/gonka-ai/versiond:0.2.16-devshard-v6}
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
