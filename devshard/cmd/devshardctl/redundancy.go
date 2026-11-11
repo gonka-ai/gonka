@@ -367,7 +367,7 @@ func marshalRequestFlags(flags any) string {
 var (
 	ReceiptTimeout             = 5 * time.Second
 	ParallelAdvantageThreshold = 0.5 // 50% better estimated time
-	UnresponsiveThreshold      = 1.0 // any non-responsive history → start secondary
+	UnresponsiveThreshold      = 0.8 // below 80% responsive (with MinSamplesForDecision) → start secondary
 	MinSamplesForDecision      = 3
 	LogHeartbeatInterval       = time.Minute
 	FirstTokenTimeoutCap       = time.Second
@@ -389,7 +389,7 @@ func DefaultRedundancySettings() RedundancySettings {
 		PerInputTokenResponseLagMS:    20,
 		SecondaryWaitAfterWinnerMS:    600000,
 		ParallelAdvantageThreshold:    0.5,
-		UnresponsiveThreshold:         1.0,
+		UnresponsiveThreshold:         0.8,
 		SpeedPolicy:                   RedundancySpeedPolicyHybrid,
 		PairwiseBudgetPercentile:      0.90,
 		PairwiseMaxProactiveAttempts:  3,
