@@ -53,7 +53,10 @@ func parseEpochInfo(body []byte) (epochInfo, error) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return epochInfo{}, fmt.Errorf("parse epoch info: %w", err)
 	}
+	return epochInfoFromPayload(payload), nil
+}
 
+func epochInfoFromPayload(payload chainEpochInfoResponse) epochInfo {
 	info := epochInfo{
 		BlockHeight:             int64(payload.BlockHeight),
 		Phase:                   EpochPhase(strings.TrimSpace(payload.Phase)),
@@ -68,7 +71,7 @@ func parseEpochInfo(body []byte) (epochInfo, error) {
 		info.ConfirmationPoCPhase = ConfirmationPoCPhase(payload.ActiveConfirmationPoC.Phase)
 		info.ConfirmationPoCTriggerHeight = int64(payload.ActiveConfirmationPoC.TriggerHeight)
 	}
-	return info, nil
+	return info
 }
 
 func deriveEpochSwitchBlockHeight(payload chainEpochInfoResponse) int64 {
