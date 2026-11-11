@@ -214,7 +214,6 @@ func echoServer(t *testing.T, lp []map[int]float64, prompt []int) func(context.C
 				MaxTokens      int    `json:"max_tokens"`
 				ReturnTokenIDs bool   `json:"return_token_ids"`
 				Stream         bool   `json:"stream"`
-				Stop           any    `json:"stop"`
 				LogprobsMode   string `json:"logprobs_mode"`
 				TopLogprobs    int    `json:"top_logprobs"`
 				Enforced       *struct {
@@ -233,10 +232,8 @@ func echoServer(t *testing.T, lp []map[int]float64, prompt []int) func(context.C
 				return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(resp))}, nil
 			}
 			// A replay: the engine's processed logprobs at T 1 are the raw ones.
-			require.Equal(t, len(req.Enforced.Tokens), req.MaxTokens)
 			require.Equal(t, "processed_logprobs", req.LogprobsMode)
 			require.Equal(t, EchoTopLogprobs, req.TopLogprobs)
-			require.Nil(t, req.Stop)
 			ids := make([]int, len(req.Enforced.Tokens))
 			content := make([]interface{}, len(ids))
 			for i, tok := range req.Enforced.Tokens {
@@ -646,19 +643,24 @@ func TestExecuteEchoValidation_ReplayWithoutTokenIDsIsUnsupported(t *testing.T) 
 	require.ErrorIs(t, err, ErrEchoUnsupported)
 }
 
+// The replay is the executor's request with the answer forced: stop strings
+// and token limits stay, so the engine ends the answer where the executor's did.
 func TestReplayRequestBody_ForcesTheAnswerUnderTheEnginesSampler(t *testing.T) {
-	body, err := ReplayRequestBody(map[string]interface{}{"model": "m", "messages": []interface{}{}, "stop": []string{"x"},
-		"stream": true, "stream_options": map[string]interface{}{"include_usage": true}, "max_tokens": 500, "seed": 7.0}, []int{5, 6})
+	body, err := ReplayRequestBody(map[string]interface{}{"model": "m", "messages": []interface{}{}, "stop": []interface{}{"x"},
+		"stream": true, "stream_options": map[string]interface{}{"include_usage": true},
+		"max_tokens": 500.0, "max_completion_tokens": 500.0, "min_tokens": 64.0, "seed": 7.0}, []int{5, 6})
 	require.NoError(t, err)
 	var m map[string]interface{}
 	require.NoError(t, json.Unmarshal(body, &m))
-	require.Equal(t, float64(2), m["max_tokens"])
+	require.Equal(t, []interface{}{"x"}, m["stop"])
+	require.Equal(t, float64(500), m["max_tokens"])
+	require.Equal(t, float64(500), m["max_completion_tokens"])
+	require.Equal(t, float64(64), m["min_tokens"])
+	require.Equal(t, float64(7), m["seed"])
 	require.Equal(t, false, m["stream"])
 	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
 	require.Equal(t, float64(EchoTopLogprobs), m["top_logprobs"])
-	require.Equal(t, float64(7), m["seed"])
 	require.Equal(t, true, m["return_tokens_as_token_ids"])
-	require.NotContains(t, m, "stop")
 	require.NotContains(t, m, "stream_options")
 	require.JSONEq(t, `{"tokens":[{"token":"5","top_tokens":[]},{"token":"6","top_tokens":[]}]}`, string(mustJSON(m["enforced_tokens"])))
 }

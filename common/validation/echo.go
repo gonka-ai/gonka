@@ -493,8 +493,9 @@ func EchoRequestBody(model string, prompt, out []int) ([]byte, error) {
 // ReplayRequestBody replays the stored answer on the validator's engine with
 // the fork's enforced_tokens: one decode step per token, the engine's own
 // sampler applying what the echo cannot (penalties, a grammar, a thinking
-// budget) and its processed logprobs at every step. Stop strings only end an
-// answer and are dropped so that every position is replayed.
+// budget) and its processed logprobs at every step. The request is otherwise
+// the executor's own, stop strings and token limits included, so the engine
+// ends the answer where the executor's did.
 func ReplayRequestBody(requestMap map[string]interface{}, out []int) ([]byte, error) {
 	req := make(map[string]interface{}, len(requestMap)+6)
 	for k, v := range requestMap {
@@ -510,11 +511,8 @@ func ReplayRequestBody(requestMap map[string]interface{}, out []int) ([]byte, er
 	req["logprobs_mode"] = replayLogprobsMode
 	req["return_token_ids"] = true
 	req["return_tokens_as_token_ids"] = true
-	req["max_tokens"] = len(out)
 	req["stream"] = false
-	for _, key := range []string{"stream_options", "stop", "stop_token_ids", "enforced_str"} {
-		delete(req, key)
-	}
+	delete(req, "stream_options")
 	return json.Marshal(req)
 }
 
