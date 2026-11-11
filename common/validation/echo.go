@@ -75,9 +75,38 @@ var modelEOS = map[string][]int{
 // with return_token_ids gives the prompt ids the validator itself derives.
 const ChatPath = "/v1/chat/completions"
 
-// ErrEchoUnsupported marks an answer the validator cannot judge: its engine
-// returned the replay without token ids, or not the forced answer.
+// ErrEchoUnsupported marks an answer the validator cannot judge: a request
+// whose tape the validator cannot know (unsupportedReason), or a replay its
+// engine returned without token ids or not as the forced answer.
 var ErrEchoUnsupported = errors.New("echo validation: unsupported request")
+
+// samplingEps is vLLM's _SAMPLING_EPS: below it the engine takes the argmax
+// of the logits and draws nothing, so the tape is not used.
+const samplingEps = 1e-5
+
+// echoFields are the request fields the echo judges under: the sampling
+// parameters its kept set models, and fields that shape only the prompt, the
+// end of the answer or the response. A request with any other field is
+// replayed through the validator's engine, whose sampler reads the field the
+// way the executor's did.
+var echoFields = map[string]bool{
+	"model": true, "messages": true, "seed": true,
+	"temperature": true, "top_p": true, "top_k": true,
+	"repetition_penalty": true, "frequency_penalty": true, "presence_penalty": true,
+	"min_tokens": true, "max_tokens": true, "max_completion_tokens": true, "n": true, "stop": true,
+	"stream": true, "stream_options": true, "logprobs": true, "top_logprobs": true, "logprobs_mode": true,
+	"return_token_ids": true, "return_tokens_as_token_ids": true,
+	"skip_special_tokens": true, "spaces_between_special_tokens": true, "include_stop_str_in_output": true,
+	"tools": true, "tool_choice": true, "parallel_tool_calls": true, "response_format": true,
+	"chat_template_kwargs": true, "reasoning_effort": true, "include_reasoning": true, "user": true,
+	// Passed by the gateway, not read by the engine's sampler.
+	"reasoning": true, "enable_thinking": true, "thinking": true, "reasoning_split": true,
+	"metadata": true, "safety_identifier": true, "detokenize": true,
+}
+
+// numberFields are the sampling fields the validator reads itself; null is
+// the engine's "absent".
+var numberFields = []string{"temperature", "top_p", "top_k", "repetition_penalty", "frequency_penalty", "presence_penalty"}
 
 // replayLogprobsMode asks the fork's engine for the logprobs its sampler drew
 // from: after penalties, temperature, top_k/top_p and any grammar mask.
@@ -113,6 +142,22 @@ type TapeParams struct {
 // penalty.
 func (p TapeParams) Penalised() bool {
 	return p.RepetitionPenalty != 1 || p.FrequencyPenalty != 0 || p.PresencePenalty != 0
+}
+
+// Greedy reports a request the engine answers with the argmax at every
+// position, without the tape.
+func (p TapeParams) Greedy() bool {
+	return p.Temperature < samplingEps
+}
+
+// tapeSeed is the seed of the request's tape: a whole non-negative JSON
+// number, the way the executor's engine read it.
+func tapeSeed(requestMap map[string]interface{}) (uint64, bool) {
+	v, ok := requestMap["seed"].(float64)
+	if !ok || v < 0 || v >= 1<<63 || v != math.Trunc(v) {
+		return 0, false
+	}
+	return uint64(v), true
 }
 
 func tapeParams(requestMap map[string]interface{}) TapeParams {
@@ -157,6 +202,8 @@ func tapeParams(requestMap map[string]interface{}) TapeParams {
 // sampled on its tape from the validator's distribution. Count is the number
 // of positions whose token is not the argmax of log p~ + noise within the
 // validator's kept set, MaxGap and SumGap the score gaps of those positions.
+// A greedy answer has no residual: Count is the positions whose token is not
+// the validator's most likely one, the gaps are in logprob, Z stays zero.
 type EchoSignals struct {
 	Steps  int     `json:"steps"`
 	MeanR  float64 `json:"mean_r"`
@@ -211,7 +258,8 @@ func EchoThresholdsFor(model string) EchoThresholds {
 }
 
 func (t EchoThresholds) Pass(s EchoSignals) bool {
-	if s.Steps == 0 || s.Z < t.ZMin {
+	// Written so that a score that is not a number does not pass.
+	if s.Steps == 0 || !(s.Z >= t.ZMin) {
 		return false
 	}
 	if !t.CountPasses(s.Steps, s.Count, 2.576) {
@@ -254,9 +302,13 @@ func (r EchoValidationResult) IsSuccessful() bool {
 //
 // eos are the model's end tokens: before p.MinTokens positions the engine
 // masks them, so they leave the kept set there.
+//
+// A greedy request (p.Greedy) has no tape: its token must be the validator's
+// most likely one, top_k and top_p do not apply.
 func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p TapeParams, eos []int) EchoSignals {
 	var s EchoSignals
 	var sumR float64
+	scored := 0
 	for t, x := range out {
 		if lp, ok := logprobs[t][x]; !ok || lp <= maskedLogprob {
 			// Outside the validator's own cut: a position off the winner whose
@@ -274,7 +326,23 @@ func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p 
 				}
 			}
 		}
+		if p.Greedy() {
+			lx := logprobs[t][x]
+			best := math.Inf(-1)
+			for tok, lp := range logprobs[t] {
+				if tok != x && !masked[tok] && lp > best {
+					best = lp
+				}
+			}
+			if best > lx {
+				s.Count++
+				s.SumGap += best - lx
+				s.MaxGap = math.Max(s.MaxGap, best-lx)
+			}
+			continue
+		}
 		kept, sx, logPTilde := keptSet(logprobs[t], x, p, masked)
+		scored++
 		noise := make(map[int]float64, len(kept)+1)
 		for _, c := range kept {
 			noise[c.token] = TapeNoise(seed, uint32(t), vocab, c.token)
@@ -297,9 +365,10 @@ func ScoreEcho(logprobs []map[int]float64, out []int, seed uint64, vocab int, p 
 		}
 	}
 	s.Steps = len(out)
-	if n := s.Steps - s.Masked; n > 0 {
-		s.MeanR = sumR / float64(n)
-		s.Z = (sumR - eulerGamma*float64(n)) / (gumbelSigma * math.Sqrt(float64(n)))
+	if scored > 0 {
+		n := float64(scored)
+		s.MeanR = sumR / n
+		s.Z = (sumR - eulerGamma*n) / (gumbelSigma * math.Sqrt(n))
 	}
 	return s
 }
@@ -594,14 +663,16 @@ func ExecuteEchoValidation(
 	if err := json.Unmarshal(modified.NewBody, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
 	}
+	if reason := unsupportedReason(requestMap); reason != "" {
+		return nil, fmt.Errorf("%w: %s", ErrEchoUnsupported, reason)
+	}
 	replay := replayReason(requestMap)
 	model, _ := requestMap["model"].(string)
 	vocab, ok := modelVocab[model]
 	if !ok {
 		return nil, fmt.Errorf("echo validation: unknown vocabulary of model %q", model)
 	}
-	seedValue, _ := requestMap["seed"].(float64)
-	seed := uint64(int64(seedValue))
+	seed, _ := tapeSeed(requestMap)
 	prompt, out, err := StoredTokenIDs(responsePayload)
 	if err != nil {
 		return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Stored response carries no token ids.", Error: err}, nil
@@ -667,8 +738,12 @@ func ExecuteEchoValidation(
 			return nil, err
 		}
 		// Processed logprobs already carry the temperature, the cut and the
-		// masks the engine sampled under.
-		signals = ScoreEcho(logprobs, out, seed, vocab, TapeParams{Temperature: 1, TopP: 1, RepetitionPenalty: 1}, nil)
+		// masks the engine sampled under; a greedy request keeps its argmax.
+		processed := TapeParams{Temperature: 1, TopP: 1, RepetitionPenalty: 1}
+		if params.Greedy() {
+			processed.Temperature = 0
+		}
+		signals = ScoreEcho(logprobs, out, seed, vocab, processed, nil)
 	} else {
 		body, err := EchoRequestBody(model, prompt, out)
 		if err != nil {
@@ -725,13 +800,41 @@ func equalIDs(a, b []int) bool {
 	return true
 }
 
+// unsupportedReason names a request neither the echo nor the replay can
+// judge, because the validator cannot know the tape the executor's engine
+// ran: the output was not sampled on one (beam search, tokens the request
+// itself forces), the seed is not a whole non-negative number, or a sampling
+// field the validator reads is of a type the engine may coerce differently.
+func unsupportedReason(requestMap map[string]interface{}) string {
+	if v, ok := requestMap["use_beam_search"]; ok && v != nil && v != false {
+		return "beam search does not sample on the tape"
+	}
+	for _, key := range []string{"enforced_tokens", "enforced_str"} {
+		if v, ok := requestMap[key]; ok && v != nil {
+			return "the request forces its own tokens"
+		}
+	}
+	if _, ok := tapeSeed(requestMap); !ok {
+		return "seed is not a whole non-negative number"
+	}
+	for _, key := range numberFields {
+		if v, ok := requestMap[key]; ok && v != nil {
+			if _, isNumber := v.(float64); !isNumber {
+				return key + " is not a number"
+			}
+		}
+	}
+	return ""
+}
+
 // replayReason names what keeps the echo from judging a request, so that the
 // answer is replayed through the engine's sampler instead: a grammar (the
 // validator's prefill does not see the mask the executor sampled under), a
-// thinking budget (it forces a token the tape never chose) or a sampling
+// thinking budget (it forces a token the tape never chose), a sampling
 // penalty, requested or the model's default (vLLM applies generation_config's
-// repetition_penalty unless the node overrides it); the prompt logprobs of a
-// prefill skip all of them.
+// repetition_penalty unless the node overrides it), or any field outside
+// echoFields (min_p, logit_bias, bad_words, allowed_token_ids, ...): the
+// prompt logprobs of a prefill carry none of them.
 func replayReason(requestMap map[string]interface{}) string {
 	if GrammarConstrained(requestMap) {
 		return "grammar-constrained request"
@@ -746,6 +849,15 @@ func replayReason(requestMap map[string]interface{}) string {
 		if _, ok := kw["thinking_budget"]; ok {
 			return "thinking budget forces a token"
 		}
+	}
+	unknown := ""
+	for key, v := range requestMap {
+		if v != nil && !echoFields[key] && (unknown == "" || key < unknown) {
+			unknown = key
+		}
+	}
+	if unknown != "" {
+		return "field the echo does not model: " + unknown
 	}
 	return ""
 }

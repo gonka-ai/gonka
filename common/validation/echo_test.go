@@ -271,6 +271,48 @@ func TestEchoThresholds_FlipBoundGrowsWithLength(t *testing.T) {
 
 // Before min_tokens the engine masks the end tokens, so a position whose
 // winner would have been an end token is honest when the next token wins.
+func TestScoreEcho_GreedyAnswerIsTheArgmax(t *testing.T) {
+	lp := echoTestLogprobs()
+	greedy := TapeParams{Temperature: 0, TopP: 1, RepetitionPenalty: 1}
+	th := EchoThresholdsFor("Qwen/Qwen3-0.6B")
+
+	s := ScoreEcho(lp, greedyAnswer(lp), echoTestSeed, echoTestVocab, greedy, nil)
+	require.Zero(t, s.Count)
+	require.Zero(t, s.Z)
+	require.True(t, th.Pass(s))
+
+	// Sampled on the tape, or the least likely token everywhere: not the argmax.
+	worst := make([]int, len(lp))
+	for i, m := range lp {
+		low := math.Inf(1)
+		for tok, l := range m {
+			if l < low {
+				low, worst[i] = l, tok
+			}
+		}
+	}
+	for _, out := range [][]int{tapeAnswer(lp, echoTestSeed), worst} {
+		s = ScoreEcho(lp, out, echoTestSeed, echoTestVocab, greedy, nil)
+		require.Greater(t, s.Count, 50)
+		require.False(t, math.IsNaN(s.Z))
+		require.False(t, th.Pass(s))
+	}
+}
+
+func TestScoreEcho_GreedyMasksEndTokensBeforeMinTokens(t *testing.T) {
+	lp := []map[int]float64{{3: -0.1, 5: -2.5, 7: -4}}
+	greedy := TapeParams{Temperature: 0, TopP: 1, RepetitionPenalty: 1, MinTokens: 1}
+	require.Zero(t, ScoreEcho(lp, []int{5}, 1, echoTestVocab, greedy, []int{3}).Count)
+	greedy.MinTokens = 0
+	s := ScoreEcho(lp, []int{5}, 1, echoTestVocab, greedy, []int{3})
+	require.Equal(t, 1, s.Count)
+	require.InDelta(t, 2.4, s.MaxGap, 1e-9)
+}
+
+func TestEchoThresholds_AScoreThatIsNotANumberDoesNotPass(t *testing.T) {
+	require.False(t, EchoThresholdsFor("other/model").Pass(EchoSignals{Steps: 10, Z: math.NaN()}))
+}
+
 func TestScoreEcho_AMaskedAnswerTokenCountsButIsNotScored(t *testing.T) {
 	lp := echoTestLogprobs()
 	out := tapeAnswer(lp, echoTestSeed)
@@ -397,6 +439,75 @@ func TestExecuteEchoValidation_GrammarAndPenaltyRequestsAreReplayed(t *testing.T
 			require.True(t, ok, tc.name)
 			require.NotEmpty(t, echo.Replay, promptPayload)
 			require.Equal(t, tc.valid, result.IsSuccessful(), tc.name+" "+promptPayload)
+		}
+	}
+}
+
+func TestReplayReason_OnlyKnownFieldsAreEchoed(t *testing.T) {
+	reason := func(body string) string {
+		var m map[string]interface{}
+		require.NoError(t, json.Unmarshal([]byte(body), &m))
+		return replayReason(m)
+	}
+	base := `"model":"Qwen/Qwen3-0.6B","messages":[],"seed":7,"temperature":0.7,"top_p":0.9,"top_k":20,` +
+		`"max_tokens":64,"min_tokens":64,"max_completion_tokens":64,"stop":["x"],"stream":true,` +
+		`"stream_options":{"include_usage":true},"logprobs":true,"top_logprobs":5,"return_token_ids":true,` +
+		`"skip_special_tokens":false,"tools":[],"tool_choice":"auto","reasoning_effort":"low",` +
+		`"chat_template_kwargs":{"enable_thinking":false},"user":"u","metadata":{},"thinking":{"type":"enabled"},` +
+		`"frequency_penalty":0,"presence_penalty":0,"repetition_penalty":1`
+	require.Empty(t, reason(`{`+base+`}`))
+	require.Empty(t, reason(`{`+base+`,"min_p":null}`))
+	for _, extra := range []string{`"min_p":0.1`, `"logit_bias":{"5":-100}`, `"bad_words":["a"]`,
+		`"allowed_token_ids":[1,2]`, `"vllm_xargs":{"a":1}`, `"ignore_eos":true`, `"a_field_of_tomorrow":1`} {
+		require.Contains(t, reason(`{`+base+`,`+extra+`}`), "field the echo does not model", extra)
+	}
+}
+
+func TestExecuteEchoValidation_RequestsWithoutAKnownTapeAreNotJudged(t *testing.T) {
+	stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": []int{10},
+		"choices": []interface{}{map[string]interface{}{"token_ids": []int{1, 2}}}})
+	for _, extra := range []string{`"use_beam_search":true`, `"use_beam_search":"true"`, `"enforced_tokens":{"tokens":[]}`,
+		`"enforced_str":"abc"`, `"seed":null`, `"seed":"7"`, `"seed":-1`, `"seed":1.5`,
+		`"temperature":"0.7"`, `"top_k":"5"`, `"repetition_penalty":true`} {
+		promptPayload := `{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],` + extra + `}`
+		_, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
+			func(context.Context, string, []byte) (*http.Response, error) {
+				t.Fatal("no engine call expected")
+				return nil, nil
+			}, 1, 2)
+		require.ErrorIs(t, err, ErrEchoUnsupported, extra)
+	}
+}
+
+func TestExecuteEchoValidation_GreedyRequestsAreJudgedByTheArgmax(t *testing.T) {
+	lp := echoTestLogprobs()
+	prompt := []int{10, 11, 12}
+	seed := uint64(int64(validationReplaySeed("42")))
+	for _, tc := range []struct {
+		extra  string
+		replay bool
+	}{
+		{`"temperature":0`, false},
+		{`"temperature":0,"logit_bias":{"3":-1}`, true},
+	} {
+		promptPayload := `{"model":"Qwen/Qwen3-0.6B","messages":[{"role":"user","content":"hi"}],"max_tokens":300,` + tc.extra + `}`
+		for _, answer := range []struct {
+			name  string
+			out   []int
+			valid bool
+		}{
+			{"the argmax", greedyAnswer(lp), true},
+			{"sampled on the tape", tapeAnswer(lp, seed), false},
+		} {
+			stored, _ := json.Marshal(map[string]interface{}{"prompt_token_ids": prompt,
+				"choices": []interface{}{map[string]interface{}{"token_ids": answer.out, "finish_reason": "length"}}})
+			result, err := ExecuteEchoValidation(context.Background(), "42", []byte(promptPayload), stored,
+				echoServer(t, lp, prompt), uint64(len(prompt)), uint64(len(answer.out)))
+			require.NoError(t, err, answer.name)
+			echo, ok := result.(*EchoValidationResult)
+			require.True(t, ok, answer.name)
+			require.Equal(t, tc.replay, echo.Replay != "", tc.extra)
+			require.Equal(t, answer.valid, result.IsSuccessful(), answer.name+" "+tc.extra)
 		}
 	}
 }
