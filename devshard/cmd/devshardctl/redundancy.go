@@ -2948,8 +2948,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if w != 0 && inf != nil && inf.nonce == w {
 				failed, err := e.winningInflightTerminalFailure(inf)
 				// An unclosed nonce is a protocol fact for the timeout vote and the host's record, not a
-				// reason to take back an answer the caller already has.
-				if failed && errors.Is(err, errWinnerIncomplete) && deliveredWholeAnswer(inf) {
+				// reason to take back an answer the caller already has — including when validator halt or
+				// key rotation makes ProcessResponse reject the host's finish signature after SSE completed.
+				if failed && deliveredWholeAnswer(inf) && !e.session.IsNonceFinished(inf.nonce) && !errors.Is(err, types.ErrStateHashMismatch) {
 					stopTimer(escalationTimer)
 					stopTimer(stallTimer)
 					stopTimer(winnerHardTimeoutTimer)
@@ -2959,7 +2960,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, w,
 							raceFinishOptions{clientGone: clientFlag})
 					})
-					logInferenceStage(settleCtx, inf.escrowID, inf.nonce, "winner_served_without_finish", "host", inf.hostID)
+					fields := []any{"host", inf.hostID}
+					if !errors.Is(err, errWinnerIncomplete) {
+						fields = append(fields, "process_error", err)
+					}
+					logInferenceStage(settleCtx, inf.escrowID, inf.nonce, "winner_served_without_finish", fields...)
 					return nil
 				}
 				if failed {
@@ -4324,6 +4329,9 @@ func deliveredWholeAnswer(inf *inflight) bool {
 func (e *Redundancy) attemptCounts(inf *inflight, winnerNonce uint64) bool {
 	if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
 		return true
+	}
+	if inf != nil && errors.Is(inf.processErr, types.ErrStateHashMismatch) {
+		return false
 	}
 	return inf.nonce == winnerNonce && deliveredWholeAnswer(inf)
 }
