@@ -19,12 +19,14 @@ import (
 const _ = grpc.SupportPackageIsVersion7
 
 const (
-	Query_Params_FullMethodName         = "/inference.bls.Query/Params"
-	Query_EpochBLSData_FullMethodName   = "/inference.bls.Query/EpochBLSData"
-	Query_SigningStatus_FullMethodName  = "/inference.bls.Query/SigningStatus"
-	Query_SigningHistory_FullMethodName = "/inference.bls.Query/SigningHistory"
-	Query_BeaconKey_FullMethodName      = "/inference.bls.Query/BeaconKey"
-	Query_PendingBeacon_FullMethodName  = "/inference.bls.Query/PendingBeacon"
+	Query_Params_FullMethodName            = "/inference.bls.Query/Params"
+	Query_EpochBLSData_FullMethodName      = "/inference.bls.Query/EpochBLSData"
+	Query_SigningStatus_FullMethodName     = "/inference.bls.Query/SigningStatus"
+	Query_SigningHistory_FullMethodName    = "/inference.bls.Query/SigningHistory"
+	Query_BeaconKey_FullMethodName         = "/inference.bls.Query/BeaconKey"
+	Query_PendingBeacon_FullMethodName     = "/inference.bls.Query/PendingBeacon"
+	Query_BlockBeacon_FullMethodName       = "/inference.bls.Query/BlockBeacon"
+	Query_LatestBlockBeacon_FullMethodName = "/inference.bls.Query/LatestBlockBeacon"
 )
 
 // QueryClient is the client API for Query service.
@@ -43,6 +45,10 @@ type QueryClient interface {
 	BeaconKey(ctx context.Context, in *QueryBeaconKeyRequest, opts ...grpc.CallOption) (*QueryBeaconKeyResponse, error)
 	// PendingBeacon queries the message validators sign for a round.
 	PendingBeacon(ctx context.Context, in *QueryPendingBeaconRequest, opts ...grpc.CallOption) (*QueryPendingBeaconResponse, error)
+	// BlockBeacon queries the stored beacon record of a round.
+	BlockBeacon(ctx context.Context, in *QueryBlockBeaconRequest, opts ...grpc.CallOption) (*QueryBlockBeaconResponse, error)
+	// LatestBlockBeacon queries the newest OK beacon record.
+	LatestBlockBeacon(ctx context.Context, in *QueryLatestBlockBeaconRequest, opts ...grpc.CallOption) (*QueryBlockBeaconResponse, error)
 }
 
 type queryClient struct {
@@ -107,6 +113,24 @@ func (c *queryClient) PendingBeacon(ctx context.Context, in *QueryPendingBeaconR
 	return out, nil
 }
 
+func (c *queryClient) BlockBeacon(ctx context.Context, in *QueryBlockBeaconRequest, opts ...grpc.CallOption) (*QueryBlockBeaconResponse, error) {
+	out := new(QueryBlockBeaconResponse)
+	err := c.cc.Invoke(ctx, Query_BlockBeacon_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) LatestBlockBeacon(ctx context.Context, in *QueryLatestBlockBeaconRequest, opts ...grpc.CallOption) (*QueryBlockBeaconResponse, error) {
+	out := new(QueryBlockBeaconResponse)
+	err := c.cc.Invoke(ctx, Query_LatestBlockBeacon_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -123,6 +147,10 @@ type QueryServer interface {
 	BeaconKey(context.Context, *QueryBeaconKeyRequest) (*QueryBeaconKeyResponse, error)
 	// PendingBeacon queries the message validators sign for a round.
 	PendingBeacon(context.Context, *QueryPendingBeaconRequest) (*QueryPendingBeaconResponse, error)
+	// BlockBeacon queries the stored beacon record of a round.
+	BlockBeacon(context.Context, *QueryBlockBeaconRequest) (*QueryBlockBeaconResponse, error)
+	// LatestBlockBeacon queries the newest OK beacon record.
+	LatestBlockBeacon(context.Context, *QueryLatestBlockBeaconRequest) (*QueryBlockBeaconResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -147,6 +175,12 @@ func (UnimplementedQueryServer) BeaconKey(context.Context, *QueryBeaconKeyReques
 }
 func (UnimplementedQueryServer) PendingBeacon(context.Context, *QueryPendingBeaconRequest) (*QueryPendingBeaconResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PendingBeacon not implemented")
+}
+func (UnimplementedQueryServer) BlockBeacon(context.Context, *QueryBlockBeaconRequest) (*QueryBlockBeaconResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BlockBeacon not implemented")
+}
+func (UnimplementedQueryServer) LatestBlockBeacon(context.Context, *QueryLatestBlockBeaconRequest) (*QueryBlockBeaconResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LatestBlockBeacon not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -269,6 +303,42 @@ func _Query_PendingBeacon_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_BlockBeacon_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryBlockBeaconRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BlockBeacon(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_BlockBeacon_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BlockBeacon(ctx, req.(*QueryBlockBeaconRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_LatestBlockBeacon_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryLatestBlockBeaconRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).LatestBlockBeacon(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_LatestBlockBeacon_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).LatestBlockBeacon(ctx, req.(*QueryLatestBlockBeaconRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -299,6 +369,14 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PendingBeacon",
 			Handler:    _Query_PendingBeacon_Handler,
+		},
+		{
+			MethodName: "BlockBeacon",
+			Handler:    _Query_BlockBeacon_Handler,
+		},
+		{
+			MethodName: "LatestBlockBeacon",
+			Handler:    _Query_LatestBlockBeacon_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

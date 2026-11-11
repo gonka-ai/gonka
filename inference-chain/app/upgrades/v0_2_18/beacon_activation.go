@@ -23,7 +23,8 @@ type BeaconKeeper interface {
 // heights > U (U itself is precommitted by the old binary, and nothing is
 // signed before VoteExtensionsEnableHeight anyway). It seeds the beacon key
 // from the newest completed DKG around the signing epoch (rule R9) and sets
-// beacon_key_switch_delay, a parameter added by this release. Idempotent: a
+// beacon_key_switch_delay and beacon_retention_blocks, parameters added by
+// this release. Idempotent: a
 // second run leaves the activation and parameters unchanged.
 func ActivateBlockBeacon(ctx context.Context, k BeaconKeeper) (activated bool, err error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -39,8 +40,9 @@ func ActivateBlockBeacon(ctx context.Context, k BeaconKeeper) (activated bool, e
 		return true, fmt.Errorf("read bls params: %w", err)
 	}
 	params.BeaconKeySwitchDelay = blstypes.DefaultBeaconKeySwitchDelay
+	params.BeaconRetentionBlocks = blstypes.DefaultBeaconRetentionBlocks
 	if err := k.SetParams(ctx, params); err != nil {
-		return true, fmt.Errorf("set beacon_key_switch_delay: %w", err)
+		return true, fmt.Errorf("set beacon params: %w", err)
 	}
 	return true, nil
 }

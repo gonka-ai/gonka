@@ -223,6 +223,18 @@ func TestBlockBeacon_SigmaInEveryBlock(t *testing.T) {
 		resp := n.finalize(append(txs, []byte("other-tx"))) // block h+1 carries σ_h
 		require.Len(t, resp.TxResults, 2)
 		require.NotZero(t, resp.TxResults[0].Code, "the beacon tx is not an SDK tx")
+
+		// Step 5: FinalizeBlock(h+1) recorded round h, verifiable from the record alone.
+		rec, ok := n.app.BlsKeeper.GetBlockBeacon(n.committed(), uint64(h))
+		require.True(t, ok)
+		require.Equal(t, blstypes.BeaconStatus_BEACON_STATUS_OK, rec.Status)
+		require.Equal(t, s.Sigma, rec.Sigma)
+		require.True(t, blsutil.VerifySignature(rec.Msg, rec.Sigma, n.groupPK))
+		_, ok = n.app.BlsKeeper.GetPendingBeacon(n.committed(), uint64(h))
+		require.False(t, ok, "pending message consumed")
+		latest, ok := n.app.BlsKeeper.GetLatestBlockBeacon(n.committed())
+		require.True(t, ok)
+		require.Equal(t, uint64(h), latest.Round)
 	}
 }
 
@@ -248,6 +260,12 @@ func TestBlockBeacon_ProofOfMiss(t *testing.T) {
 
 	n.finalize(txs)
 	require.Equal(t, int64(h+1), n.height)
+
+	rec, ok := n.app.BlsKeeper.GetBlockBeacon(n.committed(), uint64(h))
+	require.True(t, ok)
+	require.Equal(t, blstypes.BeaconStatus_BEACON_STATUS_MISS_THRESHOLD, rec.Status)
+	require.Zero(t, rec.ValidSlots)
+	require.Empty(t, rec.Sigma)
 }
 
 // R7: the beacon handlers ignore the local app-side mempool setting: an app
@@ -277,4 +295,26 @@ func TestBlockBeacon_WithholdSwitchInApp(t *testing.T) {
 	txs := n.prepare(h+1, ec, nil)
 	require.Empty(t, txs, "no beacon tx")
 	require.Equal(t, abci.ResponseProcessProposal_REJECT, n.process(h+1, txs, lc), "rejected: the next proposer takes over")
+}
+
+// Step 5: a block without a beacon tx that reaches FinalizeBlock anyway (block
+// sync or replay of a block this binary never checked) is recorded as
+// MISS_NO_INJECTION; FinalizeBlock never fails because of the beacon.
+func TestBlockBeacon_FinalizeWithoutBeaconTx(t *testing.T) {
+	n := newBeaconNet(t)
+	h := n.height + 1
+	n.finalize(nil)                                  // block h: EndBlock(h) writes PendingBeacon(h+1); PendingBeacon(h) exists since EndBlock(h-1)
+	resp := n.finalize([][]byte{[]byte("plain tx")}) // block h+1 without σ_h
+	require.NotNil(t, resp)
+	rec, ok := n.app.BlsKeeper.GetBlockBeacon(n.committed(), uint64(h))
+	require.True(t, ok)
+	require.Equal(t, blstypes.BeaconStatus_BEACON_STATUS_MISS_NO_INJECTION, rec.Status)
+	require.NotEmpty(t, rec.Msg)
+
+	// Every round from here on keeps getting a record (one per block).
+	for i := 0; i < 3; i++ {
+		n.finalize(nil)
+		_, ok := n.app.BlsKeeper.GetBlockBeacon(n.committed(), uint64(n.height-1))
+		require.True(t, ok, "round %d recorded", n.height-1)
+	}
 }

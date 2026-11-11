@@ -41,6 +41,9 @@ message Params {
   // many blocks after its completion height (0 = the next block). Gives the
   // dAPI time to export and the node time to load the new shares.
   uint64 beacon_key_switch_delay = 9;
+
+  // Block beacon (Step 5): BeaconRecords older than this many rounds are pruned.
+  uint64 beacon_retention_blocks = 10;
 }
 
 // PartialSignature represents a partial signature from a single participant in threshold signing

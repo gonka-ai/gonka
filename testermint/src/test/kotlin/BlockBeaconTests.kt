@@ -25,6 +25,7 @@ import java.util.concurrent.TimeUnit
  *    validator signs PendingBeacon(h) with its slots in ExtendVote (metrics on :26660).
  *  - Step 4: block h+1 carries σ_h (or a proof of miss) as Txs[0]; ProcessProposal rejects a
  *    block with neither.
+ *  - Step 5: FinalizeBlock(h+1) stores BeaconRecord(h) (OK with σ, or a miss).
  *
  * Env:
  *  - TESTERMINT_TMKMS_IMAGE: vote-extension-capable tmkms image (tmkms 0.14.0 with
@@ -485,9 +486,59 @@ class BlockBeaconTests : TestermintTest() {
         assertNoConsensusFailure(cluster.allPairs)
     }
 
+    @Test
+    @Tag("block-beacon")
+    @Tag("beacon-records")
+    fun `beacon record every round`() {
+        val cluster = setupLocalCluster(2, shareConfig, reboot = true)
+        cluster.allPairs.forEach { it.waitForFirstBlock() }
+
+        logSection("Wait for a beacon key held by all validators and their shares")
+        val keyEpoch = waitForBeaconKeyOverAllValidators(cluster)
+        cluster.allPairs.forEach { waitForSharesLoaded(it, keyEpoch, minCount = 1) }
+        val from = cluster.genesis.getCurrentBlockHeight() + 2 // first round keyed with the shared key (see sigma test)
+        cluster.genesis.node.waitForMinimumBlock(from + 32, "30 recorded rounds")
+
+        logSection("Every round has an OK record, identical on all nodes, that verifies")
+        for (r in from until from + 30) {
+            val records = cluster.allPairs.map { queryBlockBeacon(it, r) }
+            records.forEachIndexed { i, rec ->
+                assertThat(rec?.status).describedAs("round $r on ${cluster.allPairs[i].name}").isEqualTo("BEACON_STATUS_OK")
+            }
+            assertThat(records.map { it?.sigma }.toSet()).describedAs("round $r σ on all nodes").hasSize(1)
+            val verify = docker("exec", nodeContainer(cluster.genesis), "inferenced", "debug", "verify-beacon", r.toString())
+            assertThat(verify).describedAs("verify-beacon $r").contains("\"valid\":true")
+
+            val sigmaHex = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(java.util.Base64.getDecoder().decode(records.first()!!.sigma))
+                .joinToString("") { "%02x".format(it) }
+            val results = docker("exec", nodeContainer(cluster.genesis), "wget", "-qO-", "http://127.0.0.1:26657/block_results?height=${r + 1}")
+            assertThat(results).describedAs("EventBlockBeacon for round $r in block ${r + 1}").contains("inference.bls.EventBlockBeacon")
+            assertThat(results).describedAs("event σ hash for round $r").contains(sigmaHex)
+        }
+
+        logSection("Rounds before the first key are MISS_NO_KEY; pending messages don't accumulate")
+        val early = queryBlockBeacon(cluster.genesis, enableHeight + 3)
+        assertThat(early?.status).describedAs("round ${enableHeight + 3}").isEqualTo("BEACON_STATUS_MISS_NO_KEY")
+        val tip = cluster.genesis.getCurrentBlockHeight()
+        for (r in listOf(from, from + 10, tip - 3)) {
+            assertThat(queryPendingBeacon(cluster.genesis, r)).describedAs("pending message of resolved round $r").isNull()
+        }
+        val latest = cluster.genesis.node.execAndParse<BlockBeaconResponse>(listOf("query", "bls", "latest-block-beacon")).record
+        assertThat(latest?.round).describedAs("latest OK round").isGreaterThanOrEqualTo(from + 29)
+        assertNoConsensusFailure(cluster.allPairs)
+    }
+
     // --- helpers ------------------------------------------------------------
 
     // --- Step 4 helpers ---------------------------------------------------------
+
+    private data class BeaconRecordView(val round: Long? = null, val keyEpoch: Long? = null, val status: String? = null,
+                                        val sigma: String? = null, val msg: String? = null, val validSlots: Int? = null)
+    private data class BlockBeaconResponse(val record: BeaconRecordView? = null)
+
+    private fun queryBlockBeacon(pair: LocalInferencePair, round: Long): BeaconRecordView? =
+        runCatching { pair.node.execAndParse<BlockBeaconResponse>(listOf("query", "bls", "block-beacon", round.toString())).record }.getOrNull()
 
     private data class BeaconTxView(val outcome: String? = null, val round: Long? = null, val keyEpoch: Long? = null, val sigmaLen: Int? = null)
 

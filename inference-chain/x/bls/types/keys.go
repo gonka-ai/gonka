@@ -40,6 +40,8 @@ var (
 	BeaconKeyCandidateKey = []byte("beacon_key_candidate")
 	BeaconPendingPrefix   = []byte("beacon_pending/")
 	BeaconSlotOwnerPrefix = []byte("beacon_slot_owner/")
+	BeaconRecordPrefix    = []byte("beacon_record/")
+	BeaconLatestOKKey     = []byte("beacon_latest_ok")
 )
 
 func KeyPrefix(p string) []byte {
@@ -305,4 +307,12 @@ func BeaconSlotOwnerEpochPrefix(epoch uint64) []byte {
 // BeaconSlotOwnerKey is the key of a participant account's slot range in a key epoch.
 func BeaconSlotOwnerKey(epoch uint64, account []byte) []byte {
 	return append(BeaconSlotOwnerEpochPrefix(epoch), account...)
+}
+
+// BeaconRecordKey is the key of BeaconRecord(round).
+func BeaconRecordKey(round uint64) []byte {
+	key := make([]byte, len(BeaconRecordPrefix)+8)
+	copy(key, BeaconRecordPrefix)
+	binary.BigEndian.PutUint64(key[len(BeaconRecordPrefix):], round)
+	return key
 }

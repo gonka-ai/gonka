@@ -52,6 +52,7 @@ func TestActivateBlockBeacon(t *testing.T) {
 	require.Equal(t, uint64(500), k.gotExtFrom, "ext_from = upgrade height")
 	require.ElementsMatch(t, []uint64{11, 10, 9, 8}, k.gotCandidates, "signing epoch ±, and the running DKG")
 	require.Equal(t, blstypes.DefaultBeaconKeySwitchDelay, k.params.BeaconKeySwitchDelay)
+	require.Equal(t, blstypes.DefaultBeaconRetentionBlocks, k.params.BeaconRetentionBlocks)
 
 	// Second run: nothing changes, not even a governance-changed delay.
 	k.params.BeaconKeySwitchDelay = 9

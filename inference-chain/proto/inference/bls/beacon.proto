@@ -57,6 +57,8 @@ message BeaconActivation {
   // inj_from: from block inj_from+1, a block whose previous round has a
   // PendingBeacon must carry the beacon tx (σ or a proof of miss) as Txs[0].
   uint64 inj_from = 2;
+  // rec_from: FinalizeBlock stores a BeaconRecord for every round > rec_from.
+  uint64 rec_from = 3;
 }
 
 // --- Step 4: the beacon tx, Txs[0] = "GONKA_BEACON_V1" ‖ proto(InjectedBeacon) ---
@@ -80,6 +82,34 @@ message BeaconMissProof {
   // extended_commit is proto(tendermint.abci.ExtendedCommitInfo): the
   // proposer's LocalLastCommit, unmodified. It must match the block's LastCommit.
   bytes extended_commit = 3;
+}
+
+// --- Step 5: one record per round ---
+
+enum BeaconStatus {
+  BEACON_STATUS_UNSPECIFIED = 0;
+  // OK: σ was in block round+1 and verifies.
+  BEACON_STATUS_OK = 1;
+  // MISS_THRESHOLD: block round+1 carried a proof of miss (< t+1 valid slots).
+  BEACON_STATUS_MISS_THRESHOLD = 2;
+  // MISS_NO_KEY: no completed DKG yet, nothing to sign with.
+  BEACON_STATUS_MISS_NO_KEY = 3;
+  // MISS_NO_INJECTION: block round+1 carried no valid beacon tx (only possible
+  // for blocks not checked by this binary's ProcessProposal, e.g. at activation).
+  BEACON_STATUS_MISS_NO_INJECTION = 4;
+}
+
+// BeaconRecord is the stored outcome of one beacon round.
+message BeaconRecord {
+  uint64 round = 1;
+  uint64 key_epoch = 2;
+  BeaconStatus status = 3;
+  // sigma is the 48-byte group signature when status is OK.
+  bytes sigma = 4;
+  // msg is m_round (32 bytes): with key_epoch's group key, enough to verify sigma.
+  bytes msg = 5;
+  // valid_slots: for MISS_THRESHOLD, the valid slots the proof of miss showed.
+  uint32 valid_slots = 6;
 }
 
 // InjectedBeacon carries exactly one outcome for the previous round.

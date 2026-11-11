@@ -2,11 +2,18 @@ package cmd
 
 import (
 	"crypto/sha256"
+	"strconv"
+
+	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/client/flags"
+
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/productscience/inference/x/bls/blsutil"
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	"github.com/spf13/cobra"
@@ -99,4 +106,51 @@ func decodeBeaconTxCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+// verifyBeaconRecord checks an OK record's σ against the key epoch's group key.
+func verifyBeaconRecord(rec blstypes.BeaconRecord, groupPublicKey []byte) error {
+	if rec.Status != blstypes.BeaconStatus_BEACON_STATUS_OK {
+		return fmt.Errorf("round %d is %s, there is no σ to verify", rec.Round, rec.Status)
+	}
+	if !blsutil.VerifySignature(rec.Msg, rec.Sigma, groupPublicKey) {
+		return fmt.Errorf("round %d: σ does not verify under the group key of epoch %d", rec.Round, rec.KeyEpoch)
+	}
+	return nil
+}
+
+// verifyBeaconCmd queries a beacon record and checks its σ (one pairing).
+func verifyBeaconCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "verify-beacon [round]",
+		Short: "Check the stored block beacon σ of a round against its key epoch's group public key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			round, err := strconv.ParseUint(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("round: %w", err)
+			}
+			clientCtx, err := client.GetClientQueryContext(cmd)
+			if err != nil {
+				return err
+			}
+			q := blstypes.NewQueryClient(clientCtx)
+			rec, err := q.BlockBeacon(cmd.Context(), &blstypes.QueryBlockBeaconRequest{Round: round})
+			if err != nil {
+				return err
+			}
+			epoch, err := q.EpochBLSData(cmd.Context(), &blstypes.QueryEpochBLSDataRequest{EpochId: rec.Record.KeyEpoch})
+			if err != nil {
+				return err
+			}
+			if err := verifyBeaconRecord(rec.Record, epoch.EpochData.GroupPublicKey); err != nil {
+				return err
+			}
+			sum := sha256.Sum256(rec.Record.Sigma)
+			cmd.Printf("{\"round\":%d,\"key_epoch\":%d,\"valid\":true,\"sigma_sha256\":\"%x\"}\n", round, rec.Record.KeyEpoch, sum)
+			return nil
+		},
+	}
+	flags.AddQueryFlagsToCmd(cmd)
+	return cmd
 }

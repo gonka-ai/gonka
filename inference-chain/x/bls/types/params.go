@@ -19,6 +19,7 @@ var (
 	KeyCompletedFallbackBlocks         = []byte("CompletedFallbackBlocks")
 	KeyMaxSigningAttempts              = []byte("MaxSigningAttempts")
 	KeyBeaconKeySwitchDelay            = []byte("BeaconKeySwitchDelay")
+	KeyBeaconRetentionBlocks           = []byte("BeaconRetentionBlocks")
 )
 
 const (
@@ -28,6 +29,9 @@ const (
 	// MaxBeaconKeySwitchDelay bounds the delay so a new key cannot be postponed
 	// indefinitely by a parameter change.
 	MaxBeaconKeySwitchDelay uint64 = 1000
+	// DefaultBeaconRetentionBlocks keeps beacon records for about two epochs
+	// (mainnet epochs are ~15,400 blocks). 0 keeps them forever.
+	DefaultBeaconRetentionBlocks uint64 = 31000
 )
 
 // ParamKeyTable the param key table for launch module
@@ -71,6 +75,7 @@ func DefaultParams() Params {
 		3,   // max_signing_attempts: initial attempt + 2 retries
 	)
 	p.BeaconKeySwitchDelay = DefaultBeaconKeySwitchDelay
+	p.BeaconRetentionBlocks = DefaultBeaconRetentionBlocks
 	return p
 }
 
@@ -86,6 +91,7 @@ func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
 		paramtypes.NewParamSetPair(KeyCompletedFallbackBlocks, &p.CompletedFallbackBlocks, validateCompletedFallbackBlocks),
 		paramtypes.NewParamSetPair(KeyMaxSigningAttempts, &p.MaxSigningAttempts, validateMaxSigningAttempts),
 		paramtypes.NewParamSetPair(KeyBeaconKeySwitchDelay, &p.BeaconKeySwitchDelay, validateBeaconKeySwitchDelay),
+		paramtypes.NewParamSetPair(KeyBeaconRetentionBlocks, &p.BeaconRetentionBlocks, func(interface{}) error { return nil }),
 	}
 }
 

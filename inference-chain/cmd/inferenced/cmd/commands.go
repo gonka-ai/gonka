@@ -226,6 +226,6 @@ func appExport(
 // debugCmd is the SDK debug command plus the block beacon decoder.
 func debugCmd() *cobra.Command {
 	cmd := debug.Cmd()
-	cmd.AddCommand(decodeBeaconTxCmd())
+	cmd.AddCommand(decodeBeaconTxCmd(), verifyBeaconCmd())
 	return cmd
 }

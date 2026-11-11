@@ -43,6 +43,26 @@ service Query {
   rpc PendingBeacon(QueryPendingBeaconRequest) returns (QueryPendingBeaconResponse) {
     option (google.api.http).get = "/productscience/inference/bls/pending_beacon/{round}";
   }
+
+  // BlockBeacon queries the stored beacon record of a round.
+  rpc BlockBeacon(QueryBlockBeaconRequest) returns (QueryBlockBeaconResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/block_beacon/{round}";
+  }
+
+  // LatestBlockBeacon queries the newest OK beacon record.
+  rpc LatestBlockBeacon(QueryLatestBlockBeaconRequest) returns (QueryBlockBeaconResponse) {
+    option (google.api.http).get = "/productscience/inference/bls/block_beacon_latest";
+  }
+}
+
+message QueryBlockBeaconRequest {
+  uint64 round = 1;
+}
+
+message QueryLatestBlockBeaconRequest {}
+
+message QueryBlockBeaconResponse {
+  BeaconRecord record = 1 [(gogoproto.nullable) = false];
 }
 
 // QueryBeaconKeyRequest is request type for the Query/BeaconKey RPC method.

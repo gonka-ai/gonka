@@ -41,6 +41,19 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:     "Query the block beacon key epoch, pending key candidate and activation",
 				},
 				{
+					RpcMethod: "BlockBeacon",
+					Use:       "block-beacon [round]",
+					Short:     "Query the stored block beacon record of a round (OK with σ, or a miss)",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "round"},
+					},
+				},
+				{
+					RpcMethod: "LatestBlockBeacon",
+					Use:       "latest-block-beacon",
+					Short:     "Query the newest OK block beacon record",
+				},
+				{
 					RpcMethod: "PendingBeacon",
 					Use:       "pending-beacon [round]",
 					Short:     "Query the block beacon message validators sign for a round",

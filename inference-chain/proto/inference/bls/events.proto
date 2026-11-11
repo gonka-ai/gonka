@@ -5,6 +5,7 @@ import "amino/amino.proto";
 import "cosmos_proto/cosmos.proto";
 import "gogoproto/gogo.proto";
 import "inference/bls/types.proto";
+import "inference/bls/beacon.proto";
 
 option go_package = "github.com/productscience/inference/x/bls/types";
 
@@ -195,4 +196,19 @@ message EventBeaconSlotCoverageWarning {
   uint32 threshold_slots = 3;
   // slots_without_validator: slots of participants with no bonded validator.
   uint32 slots_without_validator = 4;
+}
+
+// EventBlockBeacon is emitted when a beacon round is recorded.
+message EventBlockBeacon {
+  uint64 round = 1;
+  uint64 key_epoch = 2;
+  BeaconStatus status = 3;
+  // sigma_sha256 is hex(sha256(sigma)) when OK.
+  string sigma_sha256 = 4;
+  // valid_slots: for MISS_THRESHOLD, the valid slots the proof showed.
+  uint32 valid_slots = 5;
+  // contributors: for MISS_THRESHOLD, validators (hex consensus addresses)
+  // whose partials were valid in the proof (verified). For OK, the slots in
+  // the proposer's contributors hint, as "slot:<n>" (unverified).
+  repeated string contributors = 6;
 }

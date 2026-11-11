@@ -6,6 +6,9 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"github.com/productscience/inference/x/bls/blsutil"
+	blst "github.com/supranational/blst/bindings/go"
+
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/stretchr/testify/require"
@@ -42,4 +45,21 @@ func TestDecodeBeaconTxView(t *testing.T) {
 	require.Error(t, err)
 	_, err = decodeBeaconTxView("%%%")
 	require.Error(t, err)
+}
+
+func TestVerifyBeaconRecord(t *testing.T) {
+	var sk [32]byte
+	sk[0] = 7 // little-endian scalar 7
+	pk := blst.P2Generator().Mult(sk[:], 255).ToAffine().Compress()
+	msg := bytes.Repeat([]byte{3}, 32)
+	sig, err := blsutil.SignPartials(msg, [][32]byte{sk})
+	require.NoError(t, err)
+
+	ok := blstypes.BeaconRecord{Round: 5, KeyEpoch: 1, Status: blstypes.BeaconStatus_BEACON_STATUS_OK, Sigma: sig, Msg: msg}
+	require.NoError(t, verifyBeaconRecord(ok, pk))
+	bad := ok
+	bad.Msg = bytes.Repeat([]byte{4}, 32)
+	require.Error(t, verifyBeaconRecord(bad, pk))
+	miss := blstypes.BeaconRecord{Round: 6, Status: blstypes.BeaconStatus_BEACON_STATUS_MISS_THRESHOLD}
+	require.ErrorContains(t, verifyBeaconRecord(miss, pk), "no σ")
 }

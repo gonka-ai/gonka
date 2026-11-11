@@ -7,15 +7,20 @@ package keeper
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"cosmossdk.io/math"
 	storetypes "cosmossdk.io/store/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/productscience/inference/x/bls/blsutil"
 	"github.com/productscience/inference/x/bls/types"
 )
@@ -80,7 +85,7 @@ func (k Keeper) ActivateBeacon(ctx sdk.Context, height uint64, candidateEpochs [
 	if _, ok := k.GetBeaconActivation(ctx); ok {
 		return false
 	}
-	k.setProto(ctx, types.BeaconActivationKey, &types.BeaconActivation{ExtFrom: height, InjFrom: height})
+	k.setProto(ctx, types.BeaconActivationKey, &types.BeaconActivation{ExtFrom: height, InjFrom: height, RecFrom: height})
 	if _, ok := k.GetBeaconKeyEpoch(ctx); !ok {
 		if epoch, ok := k.newestCompletedEpoch(ctx, candidateEpochs); ok {
 			k.setBeaconKeyEpoch(ctx, epoch)
@@ -88,7 +93,7 @@ func (k Keeper) ActivateBeacon(ctx sdk.Context, height uint64, candidateEpochs [
 			k.Logger().Info("beacon key seeded", "key_epoch", epoch)
 		}
 	}
-	k.Logger().Info("block beacon activated", "ext_from", height, "inj_from", height)
+	k.Logger().Info("block beacon activated", "ext_from", height, "inj_from", height, "rec_from", height)
 	return true
 }
 
@@ -248,6 +253,7 @@ func (k Keeper) ProcessBlockBeacon(ctx sdk.Context) {
 	}
 
 	k.sweepPendingBeacons(ctx, next)
+	k.pruneBeaconRecords(ctx, next)
 
 	var enable int64
 	if cp := ctx.ConsensusParams(); cp.Abci != nil {
@@ -258,7 +264,11 @@ func (k Keeper) ProcessBlockBeacon(ctx sdk.Context) {
 	}
 	keyEpoch, ok := k.GetBeaconKeyEpoch(ctx)
 	if !ok {
-		return // no completed DKG yet: Finalize will record MISS_NO_KEY (Step 5)
+		// No completed DKG yet: the round can never be signed (Step 5).
+		if a, _ := k.GetBeaconActivation(ctx); next > a.RecFrom {
+			k.storeBeaconRecord(ctx, types.BeaconRecord{Round: next, Status: types.BeaconStatus_BEACON_STATUS_MISS_NO_KEY}, nil)
+		}
+		return
 	}
 	data, err := k.getEpochBLSDataBase(ctx, keyEpoch)
 	if err != nil {
@@ -560,4 +570,159 @@ func (k Keeper) getEpochBLSDataBase(ctx sdk.Context, epochID uint64) (types.Epoc
 		return types.EpochBLSData{}, err
 	}
 	return data, nil
+}
+
+// ---------------------------------------------------------------------------
+// Records (Step 5)
+// ---------------------------------------------------------------------------
+
+// beaconPruneBatch bounds record deletions per block (a retention decrease
+// catches up over several blocks).
+const beaconPruneBatch = 100
+
+// GetBlockBeacon returns the stored record of round. From rec_from on, round
+// H-1 always has one at EndBlock(H) once the beacon is keyed and VE is on.
+func (k Keeper) GetBlockBeacon(ctx sdk.Context, round uint64) (types.BeaconRecord, bool) {
+	var r types.BeaconRecord
+	return r, k.getProto(ctx, types.BeaconRecordKey(round), &r)
+}
+
+// GetLatestBlockBeacon returns the newest OK record.
+func (k Keeper) GetLatestBlockBeacon(ctx sdk.Context) (types.BeaconRecord, bool) {
+	v, err := k.storeService.OpenKVStore(ctx).Get(types.BeaconLatestOKKey)
+	if err != nil || len(v) != 8 {
+		return types.BeaconRecord{}, false
+	}
+	return k.GetBlockBeacon(ctx, binary.BigEndian.Uint64(v))
+}
+
+// FinalizeBeacon records round h-1 from block h's beacon tx (Txs[0]); it runs
+// in the PreBlocker of FinalizeBlock(h), after the module PreBlockers. σ is
+// re-verified (FinalizeBlock must not depend on ProcessProposal having run, e.g.
+// under block sync); a proof of miss is recounted to store its valid slots.
+// It never fails the block: anything unusable is recorded as a miss.
+func (k Keeper) FinalizeBeacon(ctx sdk.Context, txs [][]byte) {
+	a, ok := k.GetBeaconActivation(ctx)
+	h := ctx.BlockHeight()
+	if !ok || h <= 1 || uint64(h-1) <= a.RecFrom {
+		return
+	}
+	round := uint64(h - 1)
+	pending, ok := k.GetPendingBeacon(ctx, round)
+	if !ok {
+		return // no round to resolve (not keyed, VE off, or already recorded)
+	}
+	rec := types.BeaconRecord{Round: round, KeyEpoch: pending.KeyEpoch, Msg: pending.Msg,
+		Status: types.BeaconStatus_BEACON_STATUS_MISS_NO_INJECTION}
+	var contributors []string
+	if len(txs) > 0 && types.IsBeaconTx(txs[0]) {
+		if ib, err := types.DecodeBeaconTx(txs[0]); err == nil {
+			switch o := ib.Outcome.(type) {
+			case *types.InjectedBeacon_Sigma:
+				s := o.Sigma
+				if s != nil && s.Round == round && s.KeyEpoch == pending.KeyEpoch {
+					if key, err := k.GetBeaconKeyMaterial(ctx, pending.KeyEpoch); err == nil &&
+						blsutil.VerifySignature(pending.Msg, s.Sigma, key.GroupPublicKey) {
+						rec.Status, rec.Sigma = types.BeaconStatus_BEACON_STATUS_OK, append([]byte(nil), s.Sigma...)
+						contributors = hintSlots(s.ContributorsHint)
+					}
+				}
+			case *types.InjectedBeacon_Miss:
+				m := o.Miss
+				var ec abci.ExtendedCommitInfo
+				if m != nil && m.Round == round && m.KeyEpoch == pending.KeyEpoch && ec.Unmarshal(m.ExtendedCommit) == nil {
+					rec.Status = types.BeaconStatus_BEACON_STATUS_MISS_THRESHOLD
+					rec.ValidSlots, contributors = k.countValidBeaconSlots(ctx, pending, ec)
+				}
+			}
+		}
+	}
+	if rec.Status == types.BeaconStatus_BEACON_STATUS_MISS_NO_INJECTION {
+		k.Logger().Error("beacon round without a valid beacon tx", "round", round)
+	}
+	k.storeBeaconRecord(ctx, rec, contributors)
+	k.deleteKey(ctx, types.BeaconPendingKey(round))
+}
+
+// countValidBeaconSlots counts the valid slots in the commit votes of a proof
+// of miss and returns the validators that contributed them (hex addresses).
+func (k Keeper) countValidBeaconSlots(ctx sdk.Context, pending types.PendingBeacon, ec abci.ExtendedCommitInfo) (uint32, []string) {
+	key, err := k.GetBeaconKeyMaterial(ctx, pending.KeyEpoch)
+	if err != nil {
+		return 0, nil
+	}
+	slots := map[uint32]bool{}
+	var who []string
+	for _, v := range ec.Votes {
+		if v.BlockIdFlag != cmtproto.BlockIDFlagCommit || len(v.VoteExtension) == 0 {
+			continue
+		}
+		ve, err := k.ValidateBeaconExtensionStructure(ctx, v.VoteExtension, pending.Round, v.Validator.Address)
+		if err != nil {
+			continue
+		}
+		added := 0
+		for i, slot := range ve.SlotIndices {
+			if slots[slot] || int(slot) >= len(key.SlotPublicKeys) {
+				continue
+			}
+			if blsutil.VerifyPartial(pending.Msg, ve.Signatures[i*blsutil.SignatureLen:(i+1)*blsutil.SignatureLen], key.SlotPublicKeys[slot]) {
+				slots[slot] = true
+				added++
+			}
+		}
+		if added > 0 {
+			who = append(who, strings.ToUpper(hex.EncodeToString(v.Validator.Address)))
+		}
+	}
+	return uint32(len(slots)), who
+}
+
+func (k Keeper) storeBeaconRecord(ctx sdk.Context, rec types.BeaconRecord, contributors []string) {
+	k.setProto(ctx, types.BeaconRecordKey(rec.Round), &rec)
+	ev := &types.EventBlockBeacon{Round: rec.Round, KeyEpoch: rec.KeyEpoch, Status: rec.Status,
+		ValidSlots: rec.ValidSlots, Contributors: contributors}
+	if rec.Status == types.BeaconStatus_BEACON_STATUS_OK {
+		sum := sha256.Sum256(rec.Sigma)
+		ev.SigmaSha256 = hex.EncodeToString(sum[:])
+		v := make([]byte, 8)
+		binary.BigEndian.PutUint64(v, rec.Round)
+		_ = k.storeService.OpenKVStore(ctx).Set(types.BeaconLatestOKKey, v)
+	}
+	_ = ctx.EventManager().EmitTypedEvent(ev)
+}
+
+// pruneBeaconRecords deletes records older than beacon_retention_blocks rounds
+// before next (at most beaconPruneBatch per block).
+func (k Keeper) pruneBeaconRecords(ctx sdk.Context, next uint64) {
+	params, err := k.GetParams(ctx)
+	if err != nil || params.BeaconRetentionBlocks == 0 || next <= params.BeaconRetentionBlocks {
+		return
+	}
+	store := k.storeService.OpenKVStore(ctx)
+	it, err := store.Iterator(types.BeaconRecordPrefix, types.BeaconRecordKey(next-params.BeaconRetentionBlocks))
+	if err != nil {
+		return
+	}
+	var keys [][]byte
+	for ; it.Valid() && len(keys) < beaconPruneBatch; it.Next() {
+		keys = append(keys, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+	for _, key := range keys {
+		_ = store.Delete(key)
+	}
+}
+
+// hintSlots renders a contributors hint bitmap as "slot:<n>" (unverified).
+func hintSlots(hint []byte) []string {
+	var out []string
+	for i, b := range hint {
+		for bit := 0; bit < 8; bit++ {
+			if b&(1<<bit) != 0 {
+				out = append(out, fmt.Sprintf("slot:%d", i*8+bit))
+			}
+		}
+	}
+	return out
 }

@@ -1,6 +1,6 @@
 # Per-block BLS beacon via CometBFT vote extensions
 
-**Status:** In progress. **Step 1 ✅ done** (2026-11-09, testermint 5/5 green). **Step 2 ✅ done** (2026-11-09, unit/app tests + testermint 2/2 green). **Step 3 ✅ done** (2026-11-11, testermint `real extensions after dkg` green). **Step 4 ✅ done** (2026-11-11, σ or proof of miss required in every block; testermint `sigma in every block` and `withholding proposer is replaced` green). Step 0 tooling and docs ✅, rollout ops open. **Next:** the VE-on regression gate, then [Step 5](#step-5-store-σ_h-in-xbls-one-record-per-round), plus Step 0 phase 1 (publish the tmkms 0.14 image). See the [progress board](#progress-board).  
+**Status:** In progress. **Step 1 ✅ done** (2026-11-09, testermint 5/5 green). **Step 2 ✅ done** (2026-11-09, unit/app tests + testermint 2/2 green). **Step 3 ✅ done** (2026-11-11, testermint `real extensions after dkg` green). **Step 4 ✅ done** (2026-11-11, σ or proof of miss required in every block; testermint `sigma in every block` and `withholding proposer is replaced` green). Step 0 tooling and docs ✅, rollout ops open. **Step 5 ✅ done** (2026-11-11, one `BeaconRecord` per round; testermint `beacon record every round` green). **Next:** the VE-on regression gate, then [Step 6](#step-6-wire-xinference-consumer-cpoc), plus Step 0 phase 1 (publish the tmkms 0.14 image). See the [progress board](#progress-board).  
 **Baseline crypto:** epoch DKG + threshold BLS already exist (`x/bls`, dAPI `BlsManager`)  
 **Related:** [`block-beacon-randomness.md`](block-beacon-randomness.md): what the randomness guarantees, what a proposer can and cannot do, rules for consumers, and the first consumer, Confirmation PoC (Step 6). This plan is the **consensus beacon** those consumers use  
 **Open gaps after Step 1:** [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) (severity-ranked, with gates)  
@@ -320,9 +320,9 @@ Legend: ✅ done · 🟡 partly done (what remains is listed) · ➡️ **next**
 | [1. Enable VE + no-op handlers + signer readiness](#step-1-enable-ve--no-op-handlers--signer-readiness) | VE active with empty extensions; tmkms signs extensions | ✅ **Done 2026-11-09.** Code, unit + app tests, and `BlockBeaconTests` 5/5 on fresh full clusters ([results](#step-1-testermint-results-2026-11-09)). |
 | [2. Share bridge](#step-2-share-bridge) | Node has verified slot shares per epoch | ✅ **Done (2026-11-09)**: code, unit/app tests, testermint `share file exported` / `share file re-exported after dapi restart` green ([status](#step-2-implemented-2026-11-09)) |
 | [3. Pending message, slot map, real ExtendVote / VerifyVoteExtension](#step-3-pending-message-slot-map-real-extendvote--verifyvoteextension) | Valid partials on precommit of `h` | ✅ **Done (2026-11-11)**: code, unit/keeper/app tests (incl. end-to-end across the upgrade), testermint `real extensions after dkg` green ([status](#step-3-implemented-2026-11-11)). Activation rides in v0.2.18 |
-| [4. σ required in the next block, or a proof of miss](#step-4-σ-required-in-the-next-block-or-a-proof-of-miss) | Block `h+1` carries σ_h (one pairing) or a verifiable proof of miss; neither → rejected | ✅ **Done (2026-11-11)**: code, unit + app tests, testermint `sigma in every block` and `withholding proposer is replaced` green ([status](#step-4-implemented-2026-11-11)). **Open:** VE-on regression gate before Step 5 |
-| [5. Store σ_h in x/bls: one record per round](#step-5-store-σ_h-in-xbls-one-record-per-round) | `BeaconRecord` for every round in the next block (OK / MISS), queries, events | ➡️ **Next** (after the VE-on regression gate) |
-| [6. Wire x/inference consumer (CPoC)](#step-6-wire-xinference-consumer-cpoc) | CPoC uses σ, no hash fallback (flagged) | ⬜ Not started |
+| [4. σ required in the next block, or a proof of miss](#step-4-σ-required-in-the-next-block-or-a-proof-of-miss) | Block `h+1` carries σ_h (one pairing) or a verifiable proof of miss; neither → rejected | ✅ **Done (2026-11-11)**: code, unit + app tests, testermint `sigma in every block` and `withholding proposer is replaced` green ([status](#step-4-implemented-2026-11-11)) |
+| [5. Store σ_h in x/bls: one record per round](#step-5-store-σ_h-in-xbls-one-record-per-round) | `BeaconRecord` for every round in the next block (OK / MISS), queries, events | ✅ **Done (2026-11-11)**: code, keeper/app/cmd tests, testermint `beacon record every round` green plus Step 4 regression ([status](#step-5-implemented-2026-11-11)). Rides v0.2.18 |
+| [6. Wire x/inference consumer (CPoC)](#step-6-wire-xinference-consumer-cpoc) | CPoC uses σ, no hash fallback (flagged) | ➡️ **Next** (after the VE-on regression gate) |
 | [7. Unit/keeper + app tests, benchmarks](#step-7-unitkeeper--app-tests-benchmarks) | Crypto + ABCI coverage, CPU bounds | ⬜ Not started |
 | [8. Testermint e2e](#step-8-testermint-e2e) | Multi-node live beacon + CPoC + tmkms + snapshot join | ⬜ Not started (the Step 1 subset already lives in `BlockBeaconTests.kt`) |
 
@@ -332,7 +332,8 @@ Legend: ✅ done · 🟡 partly done (what remains is listed) · ➡️ **next**
 2. ➡️ Step 0 phase 1: push the tmkms **0.14.0** image (`make tmkms-release VERSION=<tag>`) and bump `deploy/join/docker-compose.yml` (needs registry rights).
 3. ✅ Step 2: share bridge done (unit/app tests + 2 testermint gates).
 4. ✅ Step 3: real extensions done (2026-11-11).
-5. ✅ Step 4: σ or proof of miss required in every block, done (2026-11-11). ➡️ Run the VE-on regression gate, then Step 5.
+5. ✅ Step 4: σ or proof of miss required in every block, done (2026-11-11).
+   ✅ Step 5: one `BeaconRecord` per round, done (2026-11-11). ➡️ Run the VE-on regression gate, then Step 6.
 6. Step 0 phases 2–4 in parallel: testnet rehearsal, announcement, readiness tracker.
 7. ✅ [`block-bls-beacon-step1-gaps.md`](../block-bls-beacon-step1-gaps.md) **M1** (reviewed tmkms 0.14.0 lockfile + `cargo audit` CI) and **M2** (multi-stage, digest-pinned, non-root image; per-install KMS identity) are done, so Step 0 phase 1 is unblocked. Before tagging v0.2.18: run the live-params gate and decide **L1** (grace window).
 
@@ -846,6 +847,28 @@ message BeaconRecord {
 - Every round from the first key round to `tip−1` has a record; with everyone up all are `OK`, `verify-beacon` passes, σ is identical on all 3 nodes.
 - Rounds before the first key (plus `beacon_key_switch_delay`) are `MISS_NO_KEY`.
 - `EventBlockBeacon` in `/block_results` with `sigma_sha256 == sha256(sigma)`.
+
+#### Step 5 implemented (2026-11-11)
+
+| Piece | Where | Notes / deviations from the text above |
+|---|---|---|
+| Activation | `BeaconActivation.rec_from`, set with `ext_from` / `inj_from` by `ActivateBeacon` (v0.2.18 handler; genesis = 0) | **Deviation:** Step 5 rides v0.2.18 together with Steps 3–4 rather than a separate upgrade. Records are written for every round `> rec_from`. |
+| Record | `beacon.proto` (`BeaconStatus`, `BeaconRecord`), `x/bls/keeper/beacon.go` (`FinalizeBeacon`) | Written in the PreBlocker of `FinalizeBlock(h+1)` for round `h`, after the module PreBlockers (so an upgrade at that height applies first); panics are recovered and never fail the block. σ is **re-verified** (block sync does not rely on ProcessProposal) → `OK`; a proof of miss → `MISS_THRESHOLD` with the valid slots recounted; anything else (missing, undecodable, bad σ, wrong round/epoch) → `MISS_NO_INJECTION`. **Deviation:** the record also stores `msg` (m_h), because the previous block hash isn't kept anywhere else, so σ can be checked from the record plus the group key alone. The pending message is deleted once recorded. |
+| `MISS_NO_KEY` | `ProcessBlockBeacon` (EndBlock) | Rounds `> rec_from` without a beacon key get a `MISS_NO_KEY` record directly; no pending message is written for them. |
+| Latest pointer | `beacon_latest_ok` | Updated on every `OK` record; served by `LatestBlockBeacon`. |
+| Event | `EventBlockBeacon{round, key_epoch, status, sigma_sha256, valid_slots, contributors}` | `contributors` lists the validators whose slots counted for a proof of miss. |
+| Retention | param `beacon_retention_blocks` (default **31000**, ≈ 2 epochs; `0` keeps everything), set by the v0.2.18 handler | Pruned in EndBlock, at most 100 records per block. |
+| Queries / CLI | `query bls block-beacon <round>`, `query bls latest-block-beacon`; `inferenced debug verify-beacon <round>` | `verify-beacon` checks a stored σ against the key epoch's group public key (one pairing). |
+
+**Tests (green, `-race`):**
+
+- `x/bls/keeper`: `TestFinalizeBeaconRecordsSigma` (including the same σ stored from two different partial subsets), `TestFinalizeBeaconMissNoInjection` (5 cases), `TestFinalizeBeaconProofOfMissRecountsSlots` (recount + contributors), `TestFinalizeBeaconGating`, `TestMissNoKeyRecord`, `TestBeaconRecordRetention` (including `0` = keep), `TestFinalizeBeaconDeterministic` (byte-identical state from two keepers fed different subsets), `TestBlockBeaconQueries`.
+- `app` (real app): `TestBlockBeacon_SigmaInEveryBlock` also checks every round is recorded `OK` and verifies from the record; `TestBlockBeacon_ProofOfMiss` checks `MISS_THRESHOLD`; `TestBlockBeacon_FinalizeWithoutBeaconTx` finalizes a block with no beacon tx (`MISS_NO_INJECTION`), after which every later round is still recorded. 3/3 under `-race`.
+- `cmd` `TestVerifyBeaconRecord`; upgrade `TestActivateBlockBeacon` (sets the retention param); module `TestGenesisActivatesBlockBeacon` (`rec_from = 0`). x/inference suite unaffected.
+- Testermint, **all green (2026-11-11)** on the rebuilt node image:
+  - `beacon record every round`: over 30 rounds every round is `OK` on all 3 nodes with an identical σ; `verify-beacon` passes; `EventBlockBeacon.sigma_sha256` matches; rounds before the first key are `MISS_NO_KEY`; old pending messages are gone.
+  - Step 4 regression on the Step 5 code: `sigma in every block` and `withholding proposer is replaced` green.
+- Still open: the **VE-on regression gate** (`TESTERMINT_VE_ENABLE_HEIGHT=2` over the existing suites).
 
 ---
 

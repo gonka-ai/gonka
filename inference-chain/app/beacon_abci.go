@@ -111,7 +111,7 @@ func (app *App) registerBeaconABCI(appOpts servertypes.AppOptions) {
 	}))
 	// app.ModuleManager is resolved at call time; runtime sets the PreBlocker
 	// order during Load, which is fine because the closure runs later.
-	preBlock := newBeaconPreBlocker(moduleManagerPreBlock{app})
+	preBlock := newBeaconPreBlocker(moduleManagerPreBlock{app}, app.BlsKeeper.FinalizeBeacon)
 	app.SetPreBlocker(func(ctx sdk.Context, req *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
 		// FinalizeBlock(h) runs on top of committed version h-1: the share
 		// verifier reads that immutable version in the background.
@@ -188,11 +188,27 @@ func newBeaconVerifyVoteExtensionHandler(logger log.Logger, sizeCap extensionSiz
 	}
 }
 
-// newBeaconPreBlocker runs the module PreBlockers. Step 5 stores the beacon
-// record of the previous round from the injected beacon tx (Txs[0]).
-func newBeaconPreBlocker(mm preBlockRunner) sdk.PreBlocker {
-	return func(ctx sdk.Context, _ *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
-		return mm.PreBlock(ctx)
+// beaconFinalizer records the previous round from the block's txs (Step 5).
+type beaconFinalizer func(ctx sdk.Context, txs [][]byte)
+
+// newBeaconPreBlocker runs the module PreBlockers (x/upgrade first, so an
+// upgrade at this height is applied), then records the beacon round h-1 from
+// the injected beacon tx (Txs[0]). The beacon step never fails the block.
+func newBeaconPreBlocker(mm preBlockRunner, finalize ...beaconFinalizer) sdk.PreBlocker {
+	return func(ctx sdk.Context, req *abci.RequestFinalizeBlock) (*sdk.ResponsePreBlock, error) {
+		resp, err := mm.PreBlock(ctx)
+		if err != nil || len(finalize) == 0 || finalize[0] == nil {
+			return resp, err
+		}
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					ctx.Logger().Error("panic recording the beacon round; block continues", "height", req.Height, "panic", fmt.Sprint(r))
+				}
+			}()
+			finalize[0](ctx, req.Txs)
+		}()
+		return resp, nil
 	}
 }
 

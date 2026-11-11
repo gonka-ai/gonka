@@ -27,5 +27,5 @@ func TestAppConfigTemplateHasBeaconSection(t *testing.T) {
 	require.True(t, v.GetBool(app.FlagBeaconEnabled))
 	require.Equal(t, "", v.GetString(app.FlagBeaconShareDir))
 	// The SDK sections are still there.
-	require.NotEmpty(t, v.GetString("minimum-gas-prices") + v.GetString("pruning"))
+	require.NotEmpty(t, v.GetString("minimum-gas-prices")+v.GetString("pruning"))
 }

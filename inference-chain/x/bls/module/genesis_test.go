@@ -98,6 +98,8 @@ func TestGenesisActivatesBlockBeacon(t *testing.T) {
 	a, ok := k.GetBeaconActivation(ctx)
 	require.True(t, ok)
 	require.Zero(t, a.ExtFrom)
+	require.Zero(t, a.InjFrom)
+	require.Zero(t, a.RecFrom)
 	key, ok := k.GetBeaconKeyEpoch(ctx)
 	require.True(t, ok)
 	require.Equal(t, uint64(4), key)

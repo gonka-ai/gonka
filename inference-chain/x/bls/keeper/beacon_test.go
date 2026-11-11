@@ -3,7 +3,9 @@ package keeper
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"testing"
 
 	"cosmossdk.io/core/header"
@@ -720,4 +722,235 @@ func TestAggregatePartialsMatchesKeeper(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, want, got)
 	require.True(t, k.verifyFinalSignatureBlst(got, msg, d.groupPK))
+}
+
+// --- Step 5: records ---------------------------------------------------------
+
+// sigmaFor aggregates σ for p from slots [start,end] of d.
+func sigmaFor(t *testing.T, p types.PendingBeacon, d *beaconDKG, start, end uint32) []byte {
+	t.Helper()
+	sigs, err := blsutil.SignPartials(p.Msg, d.scalars(start, end))
+	require.NoError(t, err)
+	var slots []uint32
+	var per [][]byte
+	for s := start; s <= end; s++ {
+		slots = append(slots, s)
+		per = append(per, sigs[(s-start)*48:(s-start+1)*48])
+	}
+	sigma, err := blsutil.AggregatePartials(slots, per)
+	require.NoError(t, err)
+	return sigma
+}
+
+func sigmaTx(t *testing.T, round, epoch uint64, sigma, hint []byte) []byte {
+	t.Helper()
+	tx, err := types.EncodeBeaconTx(&types.InjectedBeacon{Outcome: &types.InjectedBeacon_Sigma{Sigma: &types.BeaconSigma{
+		Round: round, KeyEpoch: epoch, Sigma: sigma, ContributorsHint: hint}}})
+	require.NoError(t, err)
+	return tx
+}
+
+func blockBeaconEvent(t *testing.T, ctx sdk.Context) *types.EventBlockBeacon {
+	t.Helper()
+	for _, e := range ctx.EventManager().Events() {
+		if e.Type == "inference.bls.EventBlockBeacon" {
+			msg, err := sdk.ParseTypedEvent(abciEvent(e))
+			require.NoError(t, err)
+			return msg.(*types.EventBlockBeacon)
+		}
+	}
+	return nil
+}
+
+func TestFinalizeBeaconRecordsSigma(t *testing.T) {
+	k, ctx, d, p := structureFixture(t) // key epoch 6, threshold 5, pending round 100
+	sigma := sigmaFor(t, p, d, 0, 4)
+	require.Equal(t, sigma, sigmaFor(t, p, d, 5, 9), "unique: any threshold subset")
+
+	c := atBlock(ctx, 101, 2)
+	k.FinalizeBeacon(c, [][]byte{sigmaTx(t, 100, 6, sigma, []byte{0x1f}), []byte("other tx")})
+
+	rec, ok := k.GetBlockBeacon(ctx, 100)
+	require.True(t, ok)
+	require.Equal(t, types.BeaconStatus_BEACON_STATUS_OK, rec.Status)
+	require.Equal(t, sigma, rec.Sigma)
+	require.Equal(t, p.Msg, rec.Msg, "the record alone is enough to verify σ")
+	require.Equal(t, uint64(6), rec.KeyEpoch)
+	require.True(t, blsutil.VerifySignature(rec.Msg, rec.Sigma, d.groupPK))
+	_, ok = k.GetPendingBeacon(ctx, 100)
+	require.False(t, ok, "pending message consumed")
+	latest, ok := k.GetLatestBlockBeacon(ctx)
+	require.True(t, ok)
+	require.Equal(t, uint64(100), latest.Round)
+
+	ev := blockBeaconEvent(t, c)
+	require.NotNil(t, ev)
+	require.Equal(t, types.BeaconStatus_BEACON_STATUS_OK, ev.Status)
+	sum := sha256.Sum256(sigma)
+	require.Equal(t, hex.EncodeToString(sum[:]), ev.SigmaSha256)
+	require.Equal(t, []string{"slot:0", "slot:1", "slot:2", "slot:3", "slot:4"}, ev.Contributors, "hint, unverified")
+
+	// The round is resolved: a second finalize at the same height records nothing new.
+	k.FinalizeBeacon(atBlock(ctx, 101, 2), [][]byte{sigmaTx(t, 100, 6, []byte{1}, nil)})
+	rec2, _ := k.GetBlockBeacon(ctx, 100)
+	require.Equal(t, rec, rec2)
+}
+
+func TestFinalizeBeaconMissNoInjection(t *testing.T) {
+	cases := map[string]func(t *testing.T, p types.PendingBeacon, d *beaconDKG) [][]byte{
+		"no beacon tx": func(*testing.T, types.PendingBeacon, *beaconDKG) [][]byte { return [][]byte{[]byte("tx")} },
+		"empty block":  func(*testing.T, types.PendingBeacon, *beaconDKG) [][]byte { return nil },
+		"bad σ": func(t *testing.T, p types.PendingBeacon, d *beaconDKG) [][]byte {
+			s := sigmaFor(t, p, d, 0, 4)
+			s[47] ^= 1
+			return [][]byte{sigmaTx(t, 100, 6, s, nil)}
+		},
+		"σ for another round": func(t *testing.T, p types.PendingBeacon, d *beaconDKG) [][]byte {
+			return [][]byte{sigmaTx(t, 99, 6, sigmaFor(t, p, d, 0, 4), nil)}
+		},
+		"undecodable beacon tx": func(*testing.T, types.PendingBeacon, *beaconDKG) [][]byte {
+			return [][]byte{append(append([]byte(nil), types.BeaconTxPrefix...), 0xff)}
+		},
+	}
+	for name, txs := range cases {
+		t.Run(name, func(t *testing.T) {
+			k, ctx, d, p := structureFixture(t)
+			c := atBlock(ctx, 101, 2)
+			require.NotPanics(t, func() { k.FinalizeBeacon(c, txs(t, p, d)) }, "never fails the block")
+			rec, ok := k.GetBlockBeacon(ctx, 100)
+			require.True(t, ok)
+			require.Equal(t, types.BeaconStatus_BEACON_STATUS_MISS_NO_INJECTION, rec.Status)
+			require.Empty(t, rec.Sigma)
+			_, ok = k.GetLatestBlockBeacon(ctx)
+			require.False(t, ok, "no OK round yet")
+		})
+	}
+}
+
+func TestFinalizeBeaconProofOfMissRecountsSlots(t *testing.T) {
+	k, ctx, d, p := structureFixture(t) // validator 2 owns slots 6-9 (4 < threshold 5)
+	ec := abci.ExtendedCommitInfo{Votes: []abci.ExtendedVoteInfo{
+		{Validator: abci.Validator{Address: testCons(1), Power: 10}, VoteExtension: nil, BlockIdFlag: cmtproto.BlockIDFlagCommit},
+		{Validator: abci.Validator{Address: testCons(2), Power: 10}, VoteExtension: signedExtension(t, p, d, 6, 9), BlockIdFlag: cmtproto.BlockIDFlagCommit},
+		{Validator: abci.Validator{Address: testCons(3), Power: 10}, VoteExtension: []byte{0xba, 0xd0}, BlockIdFlag: cmtproto.BlockIDFlagCommit},
+	}}
+	b, err := ec.Marshal()
+	require.NoError(t, err)
+	tx, err := types.EncodeBeaconTx(&types.InjectedBeacon{Outcome: &types.InjectedBeacon_Miss{Miss: &types.BeaconMissProof{Round: 100, KeyEpoch: 6, ExtendedCommit: b}}})
+	require.NoError(t, err)
+
+	c := atBlock(ctx, 101, 2)
+	k.FinalizeBeacon(c, [][]byte{tx})
+	rec, ok := k.GetBlockBeacon(ctx, 100)
+	require.True(t, ok)
+	require.Equal(t, types.BeaconStatus_BEACON_STATUS_MISS_THRESHOLD, rec.Status)
+	require.Equal(t, uint32(4), rec.ValidSlots)
+	ev := blockBeaconEvent(t, c)
+	require.Equal(t, []string{strings.ToUpper(hex.EncodeToString(testCons(2)))}, ev.Contributors, "verified contributors")
+}
+
+func TestFinalizeBeaconGating(t *testing.T) {
+	// Not activated: nothing recorded.
+	k, ctx := beaconKeeper(t, nil)
+	k.FinalizeBeacon(atBlock(ctx, 50, 2), nil)
+	_, ok := k.GetBlockBeacon(ctx, 49)
+	require.False(t, ok)
+
+	// Activated at 40: round 40 itself (block 41) is not recorded; no pending → nothing.
+	d := newBeaconDKG(t, 8, 2)
+	completedEpoch(t, k, ctx, 1, d, [][2]uint32{{0, 7}})
+	require.True(t, k.ActivateBeacon(ctx, 40, []uint64{1}))
+	a, _ := k.GetBeaconActivation(ctx)
+	require.Equal(t, uint64(40), a.RecFrom)
+	k.ProcessBlockBeacon(atBlock(ctx, 39, 2)) // pending(40)
+	k.FinalizeBeacon(atBlock(ctx, 41, 2), nil)
+	_, ok = k.GetBlockBeacon(ctx, 40)
+	require.False(t, ok, "round rec_from is not recorded")
+	k.FinalizeBeacon(atBlock(ctx, 60, 2), nil)
+	_, ok = k.GetBlockBeacon(ctx, 59)
+	require.False(t, ok, "no pending message for round 59")
+}
+
+func TestMissNoKeyRecord(t *testing.T) {
+	k, ctx := beaconKeeper(t, nil)
+	require.True(t, k.ActivateBeacon(ctx, 0, nil)) // no completed DKG
+	c := atBlock(ctx, 20, 2)
+	k.ProcessBlockBeacon(c)
+	rec, ok := k.GetBlockBeacon(ctx, 21)
+	require.True(t, ok)
+	require.Equal(t, types.BeaconStatus_BEACON_STATUS_MISS_NO_KEY, rec.Status)
+	require.NotNil(t, blockBeaconEvent(t, c))
+	_, ok = k.GetPendingBeacon(ctx, 21)
+	require.False(t, ok)
+
+	// VE not enabled at H+1: no record either.
+	k.ProcessBlockBeacon(atBlock(ctx, 30, 100))
+	_, ok = k.GetBlockBeacon(ctx, 31)
+	require.False(t, ok)
+}
+
+func TestBeaconRecordRetention(t *testing.T) {
+	k, ctx := beaconKeeper(t, nil)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultBeaconRetentionBlocks, params.BeaconRetentionBlocks)
+	params.BeaconRetentionBlocks = 5
+	require.NoError(t, k.SetParams(ctx, params))
+	require.True(t, k.ActivateBeacon(ctx, 0, nil))
+	for h := int64(1); h <= 30; h++ {
+		k.ProcessBlockBeacon(atBlock(ctx, h, 2)) // MISS_NO_KEY for rounds 2..31, pruning as it goes
+	}
+	for r := uint64(2); r <= 31; r++ {
+		_, ok := k.GetBlockBeacon(ctx, r)
+		require.Equal(t, r >= 31-5, ok, "round %d kept iff within retention", r)
+	}
+
+	// 0 keeps everything.
+	params.BeaconRetentionBlocks = 0
+	require.NoError(t, k.SetParams(ctx, params))
+	k.ProcessBlockBeacon(atBlock(ctx, 31, 2))
+	_, ok := k.GetBlockBeacon(ctx, 26)
+	require.True(t, ok)
+}
+
+// The same inputs give byte-identical state on two independent keepers.
+func TestFinalizeBeaconDeterministic(t *testing.T) {
+	k1, ctx1, d, p := structureFixture(t)
+	tx := sigmaTx(t, 100, 6, sigmaFor(t, p, d, 2, 6), []byte{0x7c})
+	k1.FinalizeBeacon(atBlock(ctx1, 101, 2), [][]byte{tx})
+	b1, err := k1.storeService.OpenKVStore(ctx1).Get(types.BeaconRecordKey(100))
+	require.NoError(t, err)
+
+	// A second keeper with the same key epoch, slot owners and pending message.
+	staking := newFakeStaking()
+	staking.add(1, 10, testCons(1))
+	staking.add(2, 10, testCons(2))
+	k2, ctx2 := beaconKeeper(t, staking)
+	completedEpoch(t, k2, ctx2, 6, d, [][2]uint32{{0, 5}, {6, 9}})
+	require.True(t, k2.ActivateBeacon(ctx2, 0, []uint64{6}))
+	k2.ProcessBlockBeacon(atBlock(ctx2, 99, 2))
+	// σ built from a different subset: the stored bytes must not change.
+	tx2 := sigmaTx(t, 100, 6, sigmaFor(t, p, d, 5, 9), []byte{0x7c})
+	k2.FinalizeBeacon(atBlock(ctx2, 101, 2), [][]byte{tx2})
+	b2, err := k2.storeService.OpenKVStore(ctx2).Get(types.BeaconRecordKey(100))
+	require.NoError(t, err)
+	require.Equal(t, b1, b2)
+}
+
+func TestBlockBeaconQueries(t *testing.T) {
+	k, ctx, d, p := structureFixture(t)
+	_, err := k.LatestBlockBeacon(ctx, &types.QueryLatestBlockBeaconRequest{})
+	require.Error(t, err, "no OK round yet")
+	k.FinalizeBeacon(atBlock(ctx, 101, 2), [][]byte{sigmaTx(t, 100, 6, sigmaFor(t, p, d, 0, 4), nil)})
+
+	resp, err := k.BlockBeacon(ctx, &types.QueryBlockBeaconRequest{Round: 100})
+	require.NoError(t, err)
+	require.Equal(t, types.BeaconStatus_BEACON_STATUS_OK, resp.Record.Status)
+	latest, err := k.LatestBlockBeacon(ctx, &types.QueryLatestBlockBeaconRequest{})
+	require.NoError(t, err)
+	require.Equal(t, resp.Record, latest.Record)
+	_, err = k.BlockBeacon(ctx, &types.QueryBlockBeaconRequest{Round: 5})
+	require.Error(t, err)
+	_, err = k.BlockBeacon(ctx, nil)
+	require.Error(t, err)
 }

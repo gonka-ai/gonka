@@ -35,3 +35,27 @@ func (k Keeper) PendingBeacon(goCtx context.Context, req *types.QueryPendingBeac
 	}
 	return &types.QueryPendingBeaconResponse{Pending: p}, nil
 }
+
+// BlockBeacon returns the stored beacon record of a round.
+func (k Keeper) BlockBeacon(goCtx context.Context, req *types.QueryBlockBeaconRequest) (*types.QueryBlockBeaconResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+	r, ok := k.GetBlockBeacon(sdk.UnwrapSDKContext(goCtx), req.Round)
+	if !ok {
+		return nil, status.Errorf(codes.NotFound, "no beacon record for round %d", req.Round)
+	}
+	return &types.QueryBlockBeaconResponse{Record: r}, nil
+}
+
+// LatestBlockBeacon returns the newest OK beacon record.
+func (k Keeper) LatestBlockBeacon(goCtx context.Context, req *types.QueryLatestBlockBeaconRequest) (*types.QueryBlockBeaconResponse, error) {
+	if req == nil {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+	r, ok := k.GetLatestBlockBeacon(sdk.UnwrapSDKContext(goCtx))
+	if !ok {
+		return nil, status.Error(codes.NotFound, "no OK beacon record yet")
+	}
+	return &types.QueryBlockBeaconResponse{Record: r}, nil
+}
