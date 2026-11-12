@@ -581,35 +581,127 @@ func replayTokenID(s string) (int, error) {
 	return tok, nil
 }
 
-// ParseEcho returns the logprobs of the positions after promptLen from a
-// completions response with prompt_logprobs.
-func ParseEcho(body []byte, promptLen, outLen int) ([]map[int]float64, error) {
-	var resp struct {
-		Choices []struct {
-			PromptLogprobs []map[string]struct {
-				Logprob float64 `json:"logprob"`
-			} `json:"prompt_logprobs"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, err
-	}
-	if len(resp.Choices) == 0 || len(resp.Choices[0].PromptLogprobs) < promptLen+outLen {
+// echoResponseLimit bounds the bytes read from an echo response: the engine
+// returns an entry of about 1.4 kB for every position it was sent.
+func echoResponseLimit(positions int) int64 {
+	return 1<<20 + int64(positions)*(8<<10)
+}
+
+// ParseEcho reads the logprobs of the answer's positions from a completions
+// response with prompt_logprobs, as it arrives. The engine returns an entry
+// for every position it was sent, the prompt's included (about 1.4 MB per
+// 1000 tokens); those are skipped without being kept, so what is held is the
+// answer's part whatever the length of the prompt.
+func ParseEcho(body io.Reader, promptLen, outLen int) ([]map[int]float64, error) {
+	limited := &io.LimitedReader{R: body, N: echoResponseLimit(promptLen + outLen)}
+	dec := json.NewDecoder(limited)
+	var out []map[int]float64
+	found := false
+	err := eachKey(dec, func(key string) error {
+		if key != "choices" {
+			return skipValue(dec)
+		}
+		if err := expectDelim(dec, '['); err != nil {
+			return err
+		}
+		for first := true; dec.More(); first = false {
+			if !first {
+				if err := skipValue(dec); err != nil {
+					return err
+				}
+				continue
+			}
+			err := eachKey(dec, func(key string) error {
+				if key != "prompt_logprobs" {
+					return skipValue(dec)
+				}
+				found = true
+				positions, err := answerPositions(dec, promptLen, outLen)
+				out = positions
+				return err
+			})
+			if err != nil {
+				return err
+			}
+		}
+		return expectDelim(dec, ']')
+	})
+	switch {
+	case err != nil && limited.N <= 0:
+		return nil, fmt.Errorf("echo response exceeds %d bytes for %d positions", echoResponseLimit(promptLen+outLen), promptLen+outLen)
+	case err != nil:
+		return nil, fmt.Errorf("echo response: %w", err)
+	case !found || len(out) < outLen:
 		return nil, errors.New("echo response has fewer positions than the answer")
 	}
-	out := make([]map[int]float64, outLen)
-	for i := range out {
-		entry := resp.Choices[0].PromptLogprobs[promptLen+i]
-		out[i] = make(map[int]float64, len(entry))
+	return out, nil
+}
+
+// answerPositions walks the prompt_logprobs array the decoder is at and keeps
+// the outLen entries after promptLen.
+func answerPositions(dec *json.Decoder, promptLen, outLen int) ([]map[int]float64, error) {
+	if err := expectDelim(dec, '['); err != nil {
+		return nil, err
+	}
+	out := make([]map[int]float64, 0, outLen)
+	for i := 0; dec.More(); i++ {
+		if i < promptLen || i >= promptLen+outLen {
+			if err := skipValue(dec); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		var entry map[string]struct {
+			Logprob float64 `json:"logprob"`
+		}
+		if err := dec.Decode(&entry); err != nil {
+			return nil, err
+		}
+		position := make(map[int]float64, len(entry))
 		for key, v := range entry {
 			tok, err := strconv.Atoi(key)
 			if err != nil {
-				return nil, fmt.Errorf("echo position %d: token %q", i, key)
+				return nil, fmt.Errorf("position %d: token %q", i-promptLen, key)
 			}
-			out[i][tok] = v.Logprob
+			position[tok] = v.Logprob
+		}
+		out = append(out, position)
+	}
+	return out, expectDelim(dec, ']')
+}
+
+// eachKey walks the object the decoder is at; visit consumes the key's value.
+func eachKey(dec *json.Decoder, visit func(key string) error) error {
+	if err := expectDelim(dec, '{'); err != nil {
+		return err
+	}
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, _ := tok.(string)
+		if err := visit(key); err != nil {
+			return err
 		}
 	}
-	return out, nil
+	return expectDelim(dec, '}')
+}
+
+func expectDelim(dec *json.Decoder, want json.Delim) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	if d, ok := tok.(json.Delim); !ok || d != want {
+		return fmt.Errorf("%v where %v was expected", tok, want)
+	}
+	return nil
+}
+
+func skipValue(dec *json.Decoder) error {
+	var raw json.RawMessage
+	return dec.Decode(&raw)
 }
 
 // errTextTokens marks a stored response whose logprobs carry decoded text
@@ -823,21 +915,24 @@ func ExecuteEchoValidation(
 		if err != nil {
 			return nil, err
 		}
-		var status int
-		status, respBody, err = post(ctx, execute, EchoPath, body)
+		resp, err := execute(ctx, EchoPath, body)
 		if err != nil {
 			return nil, err
 		}
-		if rejected(status) {
-			return autopass(inferenceID, model, "echo", status), nil
+		defer resp.Body.Close()
+		if rejected(resp.StatusCode) {
+			return autopass(inferenceID, model, "echo", resp.StatusCode), nil
 		}
-		if status != http.StatusOK {
-			return nil, fmt.Errorf("echo validation: status %d: %s", status, bytes.TrimSpace(respBody))
+		if resp.StatusCode != http.StatusOK {
+			cause, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+			return nil, fmt.Errorf("echo validation: status %d: %s", resp.StatusCode, bytes.TrimSpace(cause))
 		}
-		logprobs, err := ParseEcho(respBody, len(prompt), len(out))
+		// Read as it arrives: the response also carries the prompt's logprobs.
+		logprobs, err := ParseEcho(resp.Body, len(prompt), len(out))
 		if err != nil {
 			return nil, err
 		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 		signals = ScoreEcho(logprobs, out, seed, vocab, params, modelEOS[model])
 	}
 	return &EchoValidationResult{

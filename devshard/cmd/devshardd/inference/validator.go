@@ -567,7 +567,8 @@ func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string
 }
 
 // postToNode posts body to path on an ML node and returns the response with
-// its body read (a replay stream normalised to one JSON body).
+// its body read (a replay stream normalised to one JSON body); the echo's
+// response is returned unread.
 func (v *Validator) postToNode(ctx context.Context, endpoint, path string, body []byte) (*http.Response, error) {
 	url := endpoint + path
 	httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -584,6 +585,12 @@ func (v *Validator) postToNode(ctx context.Context, endpoint, path string, body 
 	resp, doErr := v.engine.httpClient.Do(httpReq)
 	if doErr != nil || resp.StatusCode != http.StatusOK {
 		return resp, doErr
+	}
+	// The echo's response also carries logprobs for every position of the
+	// prompt, megabytes of them; the echo reads it as it arrives, keeps the
+	// answer's part and bounds the bytes itself.
+	if path == commonvalidation.EchoPath {
+		return resp, nil
 	}
 	body, readErr := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
 	resp.Body.Close()

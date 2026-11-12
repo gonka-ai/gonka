@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"common/completionapi"
 	mlnodeclient "common/nodemanager"
 	nmgen "common/nodemanager/gen"
 	commonvalidation "common/validation"
@@ -175,4 +176,28 @@ func TestValidator_EchoCallsShareOneNodeAndOneCredit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The echo's response is handed over unread, past the cap a buffered read
+// stops at; every other validation call keeps that cap.
+func TestValidator_EchoResponseIsNotBufferedUnderTheResponseCap(t *testing.T) {
+	const size = completionapi.MaxResponseBytes + 1<<20
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		chunk := bytes.Repeat([]byte("x"), 1<<20)
+		for sent := 0; sent < size; sent += len(chunk) {
+			_, _ = w.Write(chunk)
+		}
+	}))
+	defer srv.Close()
+	v := &Validator{engine: newTestEngine(nil, nil, nil)}
+
+	resp, err := v.postToNode(context.Background(), srv.URL, commonvalidation.EchoPath, []byte(`{}`))
+	require.NoError(t, err)
+	read, err := io.Copy(io.Discard, resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, int64(size), read)
+
+	_, err = v.postToNode(context.Background(), srv.URL, commonvalidation.ChatPath, []byte(`{}`))
+	require.ErrorIs(t, err, completionapi.ErrResponseTooLarge)
 }

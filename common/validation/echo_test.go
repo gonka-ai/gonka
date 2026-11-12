@@ -1,6 +1,7 @@
 package validation
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"common/completionapi"
@@ -186,6 +188,79 @@ func storedAnswer(t *testing.T, out []int, finish string, stream bool) []byte {
 	// The executor drops the engine's id arrays before it stores a response.
 	require.NotContains(t, string(stored), "token_ids")
 	return stored
+}
+
+// echoBody streams a completions response the way the engine writes one: an
+// entry of twenty alternatives for every position of the prompt, then the
+// answer's entries, the answer's token far ahead of the rest.
+func echoBody(promptLen int, answer []int) (io.Reader, *int64) {
+	pr, pw := io.Pipe()
+	written := new(int64)
+	go func() {
+		w := bufio.NewWriterSize(pw, 1<<20)
+		emit := func(s string) {
+			*written += int64(len(s))
+			_, _ = w.WriteString(s)
+		}
+		entry := func(token int) string {
+			var b strings.Builder
+			b.WriteString("{")
+			for k := 0; k < 20; k++ {
+				if k > 0 {
+					b.WriteString(",")
+				}
+				id, lp := 1000+k, -3.0-float64(k)
+				if k == 0 {
+					id, lp = token, -0.25
+				}
+				fmt.Fprintf(&b, `"%d":{"logprob":%g,"rank":%d,"decoded_token":"token-%d-with-some-text"}`, id, lp, k+1, id)
+			}
+			b.WriteString("}")
+			return b.String()
+		}
+		emit(`{"id":"cmpl-1","object":"text_completion","model":"m","usage":{"prompt_tokens":1},"choices":[{"index":0,"text":"x","logprobs":null,"prompt_logprobs":[null`)
+		for i := 1; i < promptLen; i++ {
+			emit("," + entry(7))
+		}
+		for _, token := range answer {
+			emit("," + entry(token))
+		}
+		emit(`],"finish_reason":"length"}]}`)
+		_ = w.Flush()
+		_ = pw.Close()
+	}()
+	return pr, written
+}
+
+// The engine returns logprobs for the prompt too; the parser reads past them
+// and keeps the answer's, however long the prompt was.
+func TestParseEcho_KeepsTheAnswerOfALongPrompt(t *testing.T) {
+	answer := []int{41, 42, 43, 44}
+	body, written := echoBody(60000, answer)
+	logprobs, err := ParseEcho(body, 60000, len(answer))
+	require.NoError(t, err)
+	require.Greater(t, *written, int64(50<<20), "more than the 50 MiB a buffered read stops at")
+	require.Len(t, logprobs, len(answer))
+	for i, token := range answer {
+		require.Len(t, logprobs[i], 20)
+		require.Equal(t, -0.25, logprobs[i][token])
+	}
+}
+
+func TestParseEcho_BoundsWhatItReads(t *testing.T) {
+	// Far more positions than the validator asked about.
+	body, _ := echoBody(40000, []int{41})
+	_, err := ParseEcho(body, 3, 1)
+	require.ErrorContains(t, err, "exceeds")
+
+	body, _ = echoBody(3, []int{41})
+	_, err = ParseEcho(body, 3, 5)
+	require.ErrorContains(t, err, "fewer positions")
+
+	_, err = ParseEcho(strings.NewReader(`{"choices":[{"text":"x"}]}`), 3, 1)
+	require.ErrorContains(t, err, "fewer positions")
+	_, err = ParseEcho(strings.NewReader(`{"choices":[{"prompt_logprobs":[null,{"the":{"logprob":-1}}]}]}`), 1, 1)
+	require.ErrorContains(t, err, "token")
 }
 
 func TestStoredAnswerIDs_FromTheStoredLogprobs(t *testing.T) {
