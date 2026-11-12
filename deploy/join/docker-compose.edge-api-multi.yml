@@ -8,7 +8,15 @@
 #
 # x-edge-api anchor holds everything shared between instances.
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 x-edge-api: &edge-api
+  logging: *default-logging
   image: ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.16}
   environment:
     - EDGE_API_PORT=18080
@@ -57,6 +65,7 @@ services:
     container_name: edge-api3
 
   edge-api-router:
+    logging: *default-logging
     container_name: edge-api-router
     image: ghcr.io/product-science/edge-api-router:0.2.16
     environment:

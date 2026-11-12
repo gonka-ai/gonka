@@ -1,5 +1,13 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 services:
   postgres:
+    logging: *default-logging
     image: postgres:18.1-bookworm
     container_name: postgres
     restart: always
@@ -26,6 +34,7 @@ services:
       retries: 5
 
   postgres-backup:
+    logging: *default-logging
     image: prodrigestivill/postgres-backup-local
     container_name: postgres-backup
     restart: always

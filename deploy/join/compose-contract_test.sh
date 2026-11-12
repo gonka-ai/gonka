@@ -144,4 +144,35 @@ jq -e '.services.proxy.networks["versiond-router-back"].aliases | index("version
 [[ $(jq -r '.networks["versiond-router-front"].name' <<<"$main_ha") == $(jq -r '.networks.front.name' <<<"$slot") ]] || \
     fail "the main model and the router slots disagree on the front network name"
 
+check_logging() {
+    local label=$1 model=$2 unbounded uncompressible
+    unbounded=$(jq -r '.services | to_entries[]
+      | select((.value.logging.options["max-size"] // "") == "" or (.value.logging.options["max-file"] // "") == "")
+      | .key' <<<"$model")
+    [[ -z $unbounded ]] || fail "$label: services without a log size limit: $(tr '\n' ' ' <<<"$unbounded")"
+    uncompressible=$(jq -r '.services | to_entries[]
+      | select(.value.logging.options.compress == "true"
+          and ((.value.logging.options["max-file"] // "0") | tonumber) < 2)
+      | .key' <<<"$model")
+    [[ -z $uncompressible ]] || \
+        fail "$label: compressed logs need max-file of at least 2: $(tr '\n' ' ' <<<"$uncompressible")"
+    echo "compose-contract_test: $label log limits ok"
+}
+
+main_overlays=$(POSTGRES_PASSWORD=test DEVSHARD_ENV_FILE="$script_dir/config.devshard.env.template" render_main \
+    -f "$script_dir/docker-compose.yml" -f "$script_dir/docker-compose.versiond.yml" \
+    -f "$script_dir/docker-compose.versiond3.yml" -f "$script_dir/docker-compose.edge-api-multi.yml" \
+    -f "$script_dir/docker-compose.mlnode.yml" -f "$script_dir/docker-compose.observability.yml" \
+    -f "$script_dir/docker-compose.postgres.yml" -f "$script_dir/docker-compose.devshard-gateway.yml") || \
+    fail "overlay model does not render"
+remote=$(render_main -f "$script_dir/docker-compose.versiond-remote.yml") || fail "remote versiond model does not render"
+
+check_logging "single" "$main_single"
+check_logging "ha" "$main_ha"
+check_logging "three replicas" "$main_ha3"
+check_logging "private endpoints" "$main_private"
+check_logging "overlays" "$main_overlays"
+check_logging "remote versiond" "$remote"
+check_logging "fleet slot" "$slot"
+
 echo "compose-contract_test: ok"

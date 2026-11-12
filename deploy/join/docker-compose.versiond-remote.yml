@@ -21,8 +21,16 @@
 # there. Multi-host requires the shared PostgreSQL contract: see
 # devshard/docs/release-0.2.15-v5.md.
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 services:
   versiond:
+    logging: *default-logging
     container_name: versiond
     image: ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
     environment:

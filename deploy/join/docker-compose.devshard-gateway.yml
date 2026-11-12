@@ -1,5 +1,13 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 services:
   devshard-gateway:
+    logging: *default-logging
     container_name: ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
     image: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.15-v4-latest
     env_file:

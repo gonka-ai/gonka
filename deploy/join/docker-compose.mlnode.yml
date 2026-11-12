@@ -1,5 +1,13 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 services:
   mlnode-308:
+    logging: *default-logging
     # NVIDIA driver older than 580 (CUDA 12.x): ghcr.io/gonka-ai/mlnode:4.0.0-sigma2-cu12@sha256:fd2790dfa384fc455559f9e01c9d21db7fad14a750f3673e7dc82549c6d348d2
     image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:4.0.0-sigma2@sha256:e45bae55f11c9d72291dd075af781d5b7cf0b1bdb030fb611a937c8d7685b496}
     hostname: mlnode-308
@@ -29,6 +37,7 @@ services:
     restart: always
 
   inference:
+    logging: *default-logging
     image: nginx:1.28.0
     hostname: inference
     ports:
