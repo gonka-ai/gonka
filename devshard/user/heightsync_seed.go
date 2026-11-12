@@ -315,6 +315,7 @@ func (s *Session) stopHeightSeedLoop() {
 	if done != nil {
 		<-done
 	}
+	s.heightSeedSweeps.Wait()
 }
 
 func (s *Session) runHeightSeedLoop(ctx context.Context) {
@@ -438,8 +439,16 @@ func (s *Session) runHeightSeedUntil(ctx context.Context, forever bool) {
 
 		if quorum {
 			s.finishHeightSeedOK(escrow, targets, observedHeight)
-			// The full-roster sweep anchors the slots quorum went without; the session does not wait for it.
+			// The full-roster sweep anchors the slots quorum went without; the session does not wait for it, its close does.
+			s.mu.Lock()
+			if s.heightSeedClosed {
+				s.mu.Unlock()
+				return
+			}
+			s.heightSeedSweeps.Add(1)
+			s.mu.Unlock()
 			go func() {
+				defer s.heightSeedSweeps.Done()
 				sweepCtx, sweepCancel := heightSeedAttemptContext(ctx)
 				defer sweepCancel()
 				sweepOut := fanHeightSeed(sweepCtx, targets)
@@ -661,30 +670,21 @@ func heightSeedAttemptContext(ctx context.Context) (context.Context, context.Can
 }
 
 func fanHeightSeed(ctx context.Context, targets []seedTarget) []seedOutcome {
-	out := make([]seedOutcome, len(targets))
-	var wg sync.WaitGroup
-	for i, t := range targets {
-		wg.Add(1)
-		go func(i int, t seedTarget) {
-			defer wg.Done()
-			ok, err := t.seeder.SeedHeightSync(ctx)
-			out[i] = seedOutcome{slot: t.slot, ok: ok, err: err}
-		}(i, t)
-	}
-	wg.Wait()
-	return out
+	return fanHeightSeedUntil(ctx, targets, func(int) bool { return false })
 }
 
 // fanHeightSeedUntil seeds targets concurrently and returns the outcomes in
-// once isEnough holds for the anchored count, or every target answered; the
-// caller cancels ctx to stop the rest.
+// once isEnough holds for the anchored count, or every target answered; it
+// cancels the rest and waits for them before returning.
 func fanHeightSeedUntil(ctx context.Context, targets []seedTarget, isEnough func(seeded int) bool) []seedOutcome {
+	ctx, cancel := context.WithCancel(ctx)
 	results := make(chan seedOutcome, len(targets))
+	var calls sync.WaitGroup
 	for _, target := range targets {
-		go func(target seedTarget) {
+		calls.Go(func() {
 			ok, err := target.seeder.SeedHeightSync(ctx)
 			results <- seedOutcome{slot: target.slot, ok: ok, err: err}
-		}(target)
+		})
 	}
 	out := make([]seedOutcome, 0, len(targets))
 	seeded := 0
@@ -698,6 +698,8 @@ func fanHeightSeedUntil(ctx context.Context, targets []seedTarget, isEnough func
 			break
 		}
 	}
+	cancel()
+	calls.Wait()
 	return out
 }
 

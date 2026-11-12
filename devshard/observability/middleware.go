@@ -12,7 +12,7 @@ import (
 var untracedRoutes = map[string]struct{}{
 	"/metrics": {},
 	"/healthz": {},
-	"/clock":    {},
+	"/clock":   {},
 }
 
 // EchoMiddleware extracts W3C trace context from incoming requests, opens a

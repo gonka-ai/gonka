@@ -663,7 +663,6 @@ func TestAggregateSSEStreamReader_OversizeLineIsReadFailure(t *testing.T) {
 	require.JSONEq(t, string(fromReader), string(fromBytes))
 }
 
-// A host that does not stream sends the whole response, forced logprobs included, as one line; a client that asked for no logprobs must still get its answer.
 func TestAggregateSSEStreamReader_FoldsAWholeResponseLineAboveOneMiB(t *testing.T) {
 	const entry = `{"token":"tok","logprob":-0.1234567890123,"bytes":[116,111,107],"top_logprobs":[{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]}]}`
 	logprobEntries := strings.TrimSuffix(strings.Repeat(entry+",", 4096), ",")

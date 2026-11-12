@@ -139,7 +139,8 @@ func (b *Buffer) spillLocked() error {
 		}
 	}
 	b.file = f
-	b.mem.Reset()
+	// Dropped rather than Reset: nothing reads mem once spilled, and its grown array is the memory the spill exists to give back.
+	b.mem = bytes.Buffer{}
 	b.spilled = true
 	return nil
 }
@@ -171,7 +172,13 @@ func (b *Buffer) Bytes() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	return io.ReadAll(r)
+	// The spilled length is known, so one sized read replaces io.ReadAll's regrowth, and a spill file
+	// holding fewer bytes than were accepted is an error rather than a shorter body.
+	body := make([]byte, b.n)
+	if _, err := io.ReadFull(r, body); err != nil {
+		return nil, err
+	}
+	return body, nil
 }
 
 func (b *Buffer) OpenReader() (io.Reader, error) {

@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "tool_choice: invalid value: must be \"auto\", \"none\", or a function object",
+  "status": "rejected"
+}

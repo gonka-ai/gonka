@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "response_format.json_schema.name: invalid: must be 64 characters or fewer",
+  "status": "rejected"
+}

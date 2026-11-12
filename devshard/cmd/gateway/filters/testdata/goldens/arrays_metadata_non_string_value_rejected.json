@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "metadata: value invalid: value for \"k\" must be a string",
+  "status": "rejected"
+}

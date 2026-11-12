@@ -66,9 +66,15 @@ func (p TrafficProfile) Validate(workloadDuration time.Duration) error {
 		if len(p.Stages) == 0 {
 			return fmt.Errorf("stages must not be empty")
 		}
+		if p.PeakRPS < 0 {
+			return fmt.Errorf("peak_rps must not be negative")
+		}
 		var total time.Duration
 		for i, stage := range p.Stages {
-			if err := validateRPS(fmt.Sprintf("stages[%d].rps", i), stage.RPS); err != nil {
+			if stage.Peak && stage.RPS != 0 {
+				return fmt.Errorf("stages[%d] sets both rps and peak; peak takes peak_rps", i)
+			}
+			if err := validateRPS(fmt.Sprintf("stages[%d].rps", i), p.stageRPS(stage)); err != nil {
 				return err
 			}
 			duration, err := positiveDuration(fmt.Sprintf("stages[%d].duration", i), stage.Duration)
@@ -111,11 +117,11 @@ func (p TrafficProfile) RPSAt(elapsed, workloadDuration time.Duration) float64 {
 		for _, stage := range p.Stages {
 			duration, _ := time.ParseDuration(stage.Duration)
 			if remaining < duration {
-				return stage.RPS
+				return p.stageRPS(stage)
 			}
 			remaining -= duration
 		}
-		return p.Stages[len(p.Stages)-1].RPS
+		return p.stageRPS(p.Stages[len(p.Stages)-1])
 	default:
 		return 0
 	}
@@ -141,4 +147,18 @@ func positiveDuration(name, raw string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s must be positive", name)
 	}
 	return duration, nil
+}
+
+// defaultPeakRPS is the peak stage rate when peak_rps is unset.
+const defaultPeakRPS = 32
+
+// stageRPS resolves a stage's rate: a peak stage takes peak_rps.
+func (p TrafficProfile) stageRPS(stage TrafficStage) float64 {
+	if !stage.Peak {
+		return stage.RPS
+	}
+	if p.PeakRPS > 0 {
+		return p.PeakRPS
+	}
+	return defaultPeakRPS
 }

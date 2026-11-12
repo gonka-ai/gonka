@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "tools[i].function.name: must be a non-empty string (tools[0])",
+  "status": "rejected"
+}

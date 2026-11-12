@@ -13,6 +13,7 @@ import (
 type RawResponse struct {
 	StatusCode  int
 	ContentType string
+	Header      http.Header
 	Body        string
 	JSON        map[string]any
 }
@@ -89,9 +90,40 @@ func PostRawE(client *http.Client, url, contentType string, body []byte, bearerT
 	return RawResponse{
 		StatusCode:  resp.StatusCode,
 		ContentType: resp.Header.Get("Content-Type"),
+		Header:      resp.Header,
 		Body:        string(respBody),
 		JSON:        decoded,
 	}, nil
+}
+
+// GetRaw reads a URL with an optional bearer token and returns the response unparsed.
+func GetRaw(t *testing.T, client *http.Client, url, bearerToken string) RawResponse {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	require.NoError(t, err, "building GET %s", url)
+	if bearerToken != "" {
+		req.Header.Set("Authorization", "Bearer "+bearerToken)
+	}
+
+	resp, err := client.Do(req)
+	require.NoError(t, err, "GET %s", url)
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err, "reading GET %s", url)
+	DebugLogf(t, "GET %s status=%d response=%s", url, resp.StatusCode, string(respBody))
+
+	var decoded map[string]any
+	if len(bytes.TrimSpace(respBody)) > 0 {
+		_ = json.Unmarshal(respBody, &decoded)
+	}
+	return RawResponse{
+		StatusCode:  resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Header:      resp.Header,
+		Body:        string(respBody),
+		JSON:        decoded,
+	}
 }
 
 func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {

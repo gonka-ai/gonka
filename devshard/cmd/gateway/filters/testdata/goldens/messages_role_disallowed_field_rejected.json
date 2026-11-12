@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "messages[0]: tool_call_id is not allowed for this role",
+  "status": "rejected"
+}
