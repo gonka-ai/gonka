@@ -317,3 +317,65 @@ func TestCreateDevshardEscrow_ModelGroupMustExist(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to get epoch group for model")
 }
+
+func excludeFromEpoch(t *testing.T, ctx sdk.Context, k keeper.Keeper, epochIndex uint64, address string) {
+	addr, err := sdk.AccAddressFromBech32(address)
+	require.NoError(t, err)
+	require.NoError(t, k.ExcludedParticipantsMap.Set(ctx, collections.Join(epochIndex, addr), types.ExcludedParticipant{
+		Address:    address,
+		EpochIndex: epochIndex,
+		Reason:     "confirmation_poc_failed",
+	}))
+}
+
+func TestCreateDevshardEscrow_SkipsExcludedParticipants(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+
+	addrs := makeDevshardAddrs(1, 4)
+	setupEpochGroupForDevshard(ctx, k, 5, "", addrs)
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, addrs)
+	excludeFromEpoch(t, ctx, k, 5, addrs[0])
+	excludeFromEpoch(t, ctx, k, 5, addrs[2])
+	// An exclusion from another epoch does not count.
+	excludeFromEpoch(t, ctx, k, 4, addrs[1])
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xFF
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromAccountToModule(gomock.Any(), creator, types.ModuleName, gomock.Any(), gomock.Any()).
+		Return(nil)
+
+	_, err := ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{
+		Creator: creator.String(),
+		Amount:  7_000_000_000,
+		ModelId: testDevshardModelID,
+	})
+	require.NoError(t, err)
+
+	escrow, found := k.GetDevshardEscrow(ctx, 1)
+	require.True(t, found)
+	require.Len(t, escrow.Slots, keeper.DevshardGroupSize)
+	for _, slotAddr := range escrow.Slots {
+		require.Contains(t, []string{addrs[1], addrs[3]}, slotAddr)
+	}
+}
+
+func TestCreateDevshardEscrow_AllParticipantsExcluded(t *testing.T) {
+	k, ms, ctx, _ := setupDevshardEscrowTest(t)
+
+	addrs := makeDevshardAddrs(1, 2)
+	setupEpochGroupForDevshard(ctx, k, 5, "", addrs)
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, addrs)
+	for _, addr := range addrs {
+		excludeFromEpoch(t, ctx, k, 5, addr)
+	}
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xFF
+	_, err := ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{
+		Creator: creator.String(),
+		Amount:  7_000_000_000,
+		ModelId: testDevshardModelID,
+	})
+	require.ErrorContains(t, err, "total weight is zero")
+}
