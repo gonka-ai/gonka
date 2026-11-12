@@ -149,6 +149,8 @@ It exposes effective weights:
 
 `GatewayLimiter` can scale admission by `W_tot / W_ref`, while `Gateway` uses `W(e)` and current runtime load to pick the escrow with the most spare effective capacity.
 
+During PoC generation the per-model concurrency budget is split by weight, but an escrow whose slots are mostly PoC-ghosted can still send its whole stream to the few preserved hosts. The gateway therefore also counts, per participant and across all runtimes, the real requests it has in flight (`pocHostCap`), and caps each host at `max(1, floor(weight * poc_max_concurrent_requests_per_10000_weight / 10000))`. A host at its cap is treated like a throttled one: its turns become ghosts, and a queued request with no other host is answered `ErrNoAvailableHost` without a receipt. The cap is off outside PoC generation and for hosts whose weight is unknown.
+
 ### `devshardRuntime`
 
 `devshardRuntime` is the per-escrow container object.

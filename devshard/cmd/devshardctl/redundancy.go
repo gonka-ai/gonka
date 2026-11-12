@@ -849,6 +849,7 @@ type inflight struct {
 	nonce                      uint64
 	escrowID                   string
 	model                      string
+	hostCapKey                 string // participant whose PoC in-flight slot this attempt holds; released when it ends
 	sendTime                   time.Time
 	escalated                  bool
 	endedByGateway             atomic.Bool
@@ -2360,7 +2361,13 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 	select {
 	case <-ctx.Done():
 		// Abandon the reply channel; the picker will write into its
-		// buffered slot and the result will be GC'd.
+		// buffered slot and the result will be GC'd. A slot the picker
+		// reserved for it must still be given back.
+		go func() {
+			if res := <-req.reply; res.err == nil {
+				e.picker.releaseHostCap(res.hostCapKey)
+			}
+		}()
 		return nil, ctx.Err()
 	case res := <-req.reply:
 		if res.err != nil {
@@ -2381,6 +2388,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			nonce:                    res.prepared.Nonce(),
 			escrowID:                 e.devshardID,
 			model:                    normalizeModelID(params.Model),
+			hostCapKey:               res.hostCapKey,
 			probe:                    res.isProbe,
 			suspicious:               noWinnerOK,
 			noWinnerReason:           noWinner.reason,
@@ -2452,6 +2460,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 
 	go func() {
 		defer close(inf.done)
+		// Runs just before done closes, on every exit path including a panic.
+		defer e.picker.releaseHostCap(inf.hostCapKey)
 		defer cancel()
 		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
 		defer inf.releaseClassifyPartial()
