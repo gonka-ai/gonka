@@ -314,8 +314,6 @@ func TestHeartbeat_StampedBusySessionEmitsNoAcks(t *testing.T) {
 	h := newAckTestHost(t, 1, hosts, user, WithChainOracle(or))
 
 	start := testutil.StartTx(1)
-	start.GetStartInference().ObservedHeight = 100
-	start.GetStartInference().ObservedBlockHash = []byte{0xaa}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{start})
 	resp, err := h.HandleRequest(context.Background(), HostRequest{
 		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),

@@ -88,8 +88,6 @@ func benchFinishedSet(b *testing.B, n int) (map[uint64]*types.InferenceRecord, m
 			OutputTokens:      40,
 			ReservedCost:      164,
 			ActualCost:        120,
-			StartedAt:         1_700_000_000,
-			ConfirmedAt:       1_700_000_001,
 			StartedAtHeight:   1000,
 			ConfirmedAtHeight: 1001,
 		}

@@ -13,11 +13,14 @@ import (
 	"common/chain"
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/nmclient"
+	"common/chainoracle/blocks/observer"
 	"common/nodemanager"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
+	"devshard/state"
 	"devshard/transport"
 	"devshard/user"
 )
@@ -33,8 +36,9 @@ const (
 )
 
 type heightSyncProcessState struct {
-	oracle blocks.BlockOracle
-	closer func()
+	oracle      blocks.BlockOracle
+	headerTimes *headertime.Source
+	closer      func()
 }
 
 var (
@@ -74,22 +78,37 @@ func cometRPCForHeightSync(grpcURL string) string {
 	return chain.RPCURLFromGRPCURL(grpcURL)
 }
 
-// initGatewayHeightSync starts the optional chain follower after the chain
-// client exists. No-op unless DEVSHARD_GATEWAY_CHAIN_ORACLE is on. The
+// initGatewayHeightSync starts the chain follower after the chain client
+// exists. Timeouts and the seal clock read block times through it. The
 // protocol scheduler is always PeerTipOracleSource (extraClientConfigFromEnv).
 func initGatewayHeightSync(chainClient *chain.Client, cometRPC string) error {
-	if !gatewayChainOracleFromEnv() {
-		return nil
-	}
 	_, err := loadHeightSyncProcessState(chainClient, cometRPC)
 	return err
 }
 
+func gatewayHeaderTimeSource(cometRPC string, fallback blocks.BlockOracle) *headertime.Source {
+	if cometRPC != "" {
+		verified, err := observer.NewTendermint(observer.TendermintConfig{RPCURL: cometRPC, VerifyCommits: true})
+		if err == nil {
+			slog.Info("header times verified by commit signatures", "comet_rpc", cometRPC)
+			return headertime.New(verified)
+		}
+		slog.Warn("header times: verifying oracle unavailable", "err", err, "comet_rpc", cometRPC)
+	}
+	slog.Warn("header times are not signature-verified: no Comet RPC for the gateway")
+	return headertime.New(fallback)
+}
+
+func gatewayHeaderTimes() state.HeaderTimeSource {
+	st, err := loadHeightSyncProcessState(nil, effectiveChainRPC())
+	if err != nil || st == nil || st.headerTimes == nil {
+		return nil
+	}
+	return st.headerTimes
+}
+
 func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*heightSyncProcessState, error) {
 	hsOnce.Do(func() {
-		if !gatewayChainOracleFromEnv() {
-			return
-		}
 		if _, err := parseUintEnv(envHeightSyncK); err != nil {
 			hsErr = err
 			return
@@ -140,7 +159,7 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 				nmClose()
 			}
 		}
-		hsSt = &heightSyncProcessState{oracle: fo, closer: closer}
+		hsSt = &heightSyncProcessState{oracle: fo, headerTimes: gatewayHeaderTimeSource(rpc, fo), closer: closer}
 		slog.Info("height sync chain follower enabled",
 			"node_manager", nmOracle != nil, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})

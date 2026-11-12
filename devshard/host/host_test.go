@@ -274,9 +274,7 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 		EscrowId:    "escrow-1",
-		ConfirmedAt: resp.ConfirmedAt,
 	}
 	data, err := proto.Marshal(receiptContent)
 	require.NoError(t, err)
@@ -706,7 +704,6 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 		Model:       "llama",
 		InputLength: 0,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -741,7 +738,6 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 		Model:       "llama",
 		InputLength: uint64(len(prompt)),
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -1045,9 +1041,7 @@ func signTestReceipt(t *testing.T, signer *signing.Secp256k1Signer, inferenceID 
 		Model:       rec.Model,
 		InputLength: rec.InputLength,
 		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
 		EscrowId:    "escrow-1",
-		ConfirmedAt: confirmedAt,
 	})
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
@@ -1074,7 +1068,6 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	queued := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: signTestReceipt(t, hosts[1], 1, rec, earlier),
-		ConfirmedAt: earlier,
 	}}}
 	h.mempool.RemoveIncluded([]*types.DevshardTx{findMempoolConfirm(h.MempoolTxs())})
 	h.mempool.Add(MempoolEntry{Tx: queued, ProposedAt: 1})
@@ -1082,13 +1075,11 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	retry, err := h.HandleRequest(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, queued.GetConfirmStart().ExecutorSig, retry.Receipt, "a retry while pending returns the queued receipt")
-	require.Equal(t, earlier, retry.ConfirmedAt)
 	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1), "a retry must not queue a second ConfirmStart")
 
-	challenge, challengeAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
+	challenge, _, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
 	require.NoError(t, err)
 	require.Equal(t, retry.Receipt, challenge, "the challenge path hands out the same receipt")
-	require.Equal(t, earlier, challengeAt)
 	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1))
 
 	// The gateway composes the receipt it got back. Its bytes match the queued
@@ -1096,7 +1087,6 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	landed := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId:       1,
 		ExecutorSig:       retry.Receipt,
-		ConfirmedAt:       retry.ConfirmedAt,
 		ObservedHeight:    retry.ObservedHeight,
 		ObservedBlockHash: retry.ObservedBlockHash,
 	}}}
@@ -1122,7 +1112,6 @@ func TestHost_ReceiptIgnoresPeerImportedConfirmStart(t *testing.T) {
 	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: forged,
-		ConfirmedAt: 1,
 	}}})
 
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()})
@@ -1340,7 +1329,6 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartToMempool(t *testing.T) {
 	confirm := confirmTx.GetConfirmStart()
 	require.Equal(t, uint64(1), confirm.InferenceId)
 	require.Equal(t, receipt, confirm.ExecutorSig)
-	require.Equal(t, confirmedAt, confirm.ConfirmedAt)
 }
 
 func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *testing.T) {
@@ -1383,7 +1371,6 @@ func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *
 	confirm := confirmTx.GetConfirmStart()
 	require.Equal(t, uint64(1), confirm.InferenceId)
 	require.Equal(t, res.receipt, confirm.ExecutorSig)
-	require.Equal(t, res.confirmedAt, confirm.ConfirmedAt)
 
 	close(engine.release)
 	require.Eventually(t, func() bool {
@@ -1657,7 +1644,7 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.
 	require.NoError(t, err)
 
 	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
-	receipt, confirmedAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{startDiff})
+	receipt, _, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{startDiff})
 	require.NoError(t, err)
 	require.NotNil(t, receipt)
 
@@ -1670,7 +1657,6 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.
 	cs := confirmTx.GetConfirmStart()
 	require.Equal(t, uint64(1), cs.InferenceId)
 	require.Equal(t, receipt, cs.ExecutorSig, "queued ConfirmStart must carry the receipt that was returned")
-	require.Equal(t, confirmedAt, cs.ConfirmedAt)
 
 	// A repeat challenge must not stack a second ConfirmStart differing only by
 	// confirmed_at, which the state machine would reject anyway.
@@ -1720,10 +1706,10 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff)
@@ -1881,9 +1867,9 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	require.Empty(t, valEngine.getCalls(), "should not validate pending inference")
 
 	// Nonce 2: ConfirmStart (to transition from Pending to Started).
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
@@ -1983,13 +1969,11 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 		}))
 		nonce++
 
-		confirmedAt := int64(2000 + i)
 		execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-queue", inferenceID,
-			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 		confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID,
 			ExecutorSig: execSig,
-			ConfirmedAt: confirmedAt,
 		}}}
 		diffs = append(diffs, testutil.SignDiff(t, user, "escrow-queue", nonce, []*types.DevshardTx{confirmTx}))
 		nonce++
@@ -2397,10 +2381,10 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff)

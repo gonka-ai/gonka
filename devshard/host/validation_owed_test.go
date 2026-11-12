@@ -96,19 +96,33 @@ func TestHost_CollectValidationJobs_MatchesFullScan(t *testing.T) {
 	h.validationLifecycleMu.Unlock()
 
 	executorOf := func(id uint64) uint32 { return uint32(id % uint64(len(group))) }
+	floorAt := func(m uint64) (uint64, []byte) {
+		h, hash, _ := sm.HeightSyncFloorAsOf(m)
+		if h == 0 {
+			return 0, nil
+		}
+		return h, hash
+	}
+	startTx := func(n uint64) *types.DevshardTx {
+		tx := testutil.StartTx(n)
+		tx.GetStartInference().ObservedHeight, tx.GetStartInference().ObservedBlockHash = floorAt(n)
+		return tx
+	}
 	confirmTx := func(id uint64) *types.DevshardTx {
-		confirmedAt := int64(2000 + 100*id)
+		h, hash := floorAt(id)
 		sig := testutil.SignExecutorReceipt(t, slotSigners[executorOf(id)], escrowID, id,
-			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
 		return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: id, ExecutorSig: sig, ConfirmedAt: confirmedAt,
+			InferenceId: id, ExecutorSig: sig, ObservedHeight: h, ObservedBlockHash: hash,
 		}}}
 	}
 	finishTx := func(id uint64) *types.DevshardTx {
 		slot := executorOf(id)
+		height := 2000 + 100*id
 		msg := &types.MsgFinishInference{
 			InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot, EscrowId: escrowID,
+			ObservedHeight: height, ObservedBlockHash: []byte{byte(height), byte(height >> 8)},
 		}
 		msg.ProposerSig = testutil.SignProposerTx(t, slotSigners[slot], msg)
 		return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
@@ -129,7 +143,7 @@ func TestHost_CollectValidationJobs_MatchesFullScan(t *testing.T) {
 	var everFinished, everChallenged, everOwnParticipation bool
 	flows := make(map[validationFlow]int)
 	for n := uint64(1); n <= steps; n++ {
-		txs := []*types.DevshardTx{testutil.StartTx(n)}
+		txs := []*types.DevshardTx{startTx(n)}
 		if n > 1 {
 			txs = append(txs, confirmTx(n-1))
 		}

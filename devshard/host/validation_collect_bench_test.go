@@ -174,13 +174,11 @@ func benchConfirmTx(b *testing.B, executor *signing.Secp256k1Signer, escrowID st
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 		EscrowId:    escrowID,
-		ConfirmedAt: confirmedAt,
 	}
 	sig := benchSign(b, executor, content)
 	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: id, ExecutorSig: sig, ConfirmedAt: confirmedAt,
+		InferenceId: id, ExecutorSig: sig,
 	}}}
 }
 

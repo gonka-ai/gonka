@@ -13,6 +13,7 @@ import (
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/storage"
+	"devshard/types"
 )
 
 // InferenceSink is the SSE byte destination. HTTP uses Echo's Response
@@ -105,6 +106,11 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			call.Sink.Header().Set(HeaderDevshardError, DevshardErrorStorageBusy)
 			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 				"HandleInference: storage busy", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
+		}
+		if errors.Is(err, types.ErrHeaderPending) {
+			call.Sink.Header().Set(HeaderDevshardError, DevshardErrorHeaderPending)
+			return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
+				"HandleInference: header pending", echo.NewHTTPError(http.StatusServiceUnavailable, err.Error()).SetInternal(err))
 		}
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 			"HandleInference: handle request", inferenceHTTPError(err))

@@ -61,7 +61,7 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	// Pending inference; executor slot = group[1 % 6].SlotID.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("p"), Model: "m",
-		InputLength: 10, MaxTokens: testutil.TestMaxTokens, StartedAt: 1,
+		InputLength: 10, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -74,6 +74,7 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 		v.VoterSlot = i
 		votes[i] = v
 	}
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 	})})

@@ -36,6 +36,16 @@ type serverTestEnv struct {
 	hostSigner *signing.Secp256k1Signer
 	group      []types.SlotAssignment
 	config     types.SessionConfig
+	sm         *state.StateMachine
+}
+
+func (e *serverTestEnv) flooredStartTx(id uint64) *types.DevshardTx {
+	tx := testutil.StartTx(id)
+	h, hash, _ := e.sm.HeightSyncFloorAsOf(id)
+	if h > 0 {
+		tx.GetStartInference().ObservedHeight, tx.GetStartInference().ObservedBlockHash = h, hash
+	}
+	return tx
 }
 
 // registerServer wires srv's handlers onto g using the same auth + rate-limit
@@ -111,6 +121,7 @@ func setupServerEnvEngine(t *testing.T, engine devshard.InferenceEngine, hostOpt
 		hostSigner: hostSigner,
 		group:      group,
 		config:     config,
+		sm:         sm,
 	}
 }
 
@@ -424,9 +435,9 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	// inference 1 % 1 = 0, executor = slot 0.
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff2)
@@ -664,7 +675,6 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 	env.server.host.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 99,
 		ExecutorSig: []byte("other"),
-		ConfirmedAt: 1,
 	}}})
 
 	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)

@@ -130,7 +130,6 @@ func applyStartInferenceWithBalance(t *testing.T, config types.SessionConfig, co
 			Model:       "m",
 			InputLength: cost.inputLengthBytes,
 			MaxTokens:   cost.maxTokens,
-			StartedAt:   1000,
 		}},
 	}}))
 	return err

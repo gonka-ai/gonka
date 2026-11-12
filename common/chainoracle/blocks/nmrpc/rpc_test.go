@@ -3,6 +3,7 @@ package nmrpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -119,4 +120,33 @@ func TestHeaderProofRoundTrip(t *testing.T) {
 
 	p := &blocks.Proof{Path: "/k", Value: []byte{1}, Ops: [][]byte{{2, 3}}}
 	require.Equal(t, p, ProofFromProto(ProofToProto(p)))
+}
+
+type waitingOracle struct {
+	stubOracle
+	waited time.Duration
+}
+
+func (w *waitingOracle) AtWait(_ context.Context, height int64, wait time.Duration) (*blocks.Header, error) {
+	w.waited = wait
+	return blocks.HashOnlyHeader(height, time.Unix(1_700_000_000, 0), "c", []byte{0x01}), nil
+}
+
+func TestGetBlockHeaderWaitsWhenAsked(t *testing.T) {
+	o := &waitingOracle{}
+	resp, err := GetBlockHeader(context.Background(), o, &gen.GetBlockHeaderRequest{Height: 9, WaitMs: 1500})
+	require.NoError(t, err)
+	require.Equal(t, int64(9), resp.GetHeader().GetHeight())
+	require.Equal(t, 1500*time.Millisecond, o.waited)
+
+	o.waited = 0
+	_, err = GetBlockHeader(context.Background(), o, &gen.GetBlockHeaderRequest{Height: 9})
+	require.Equal(t, codes.NotFound, status.Code(err), "without wait_ms the plain At answers")
+	require.Zero(t, o.waited)
+}
+
+func TestGetBlockHeaderKeepsAVerificationRejectionDistinct(t *testing.T) {
+	o := stubOracle{atErr: fmt.Errorf("%w: height 9", blocks.ErrHeaderUnverified)}
+	_, err := GetBlockHeader(context.Background(), o, &gen.GetBlockHeaderRequest{Height: 9})
+	require.Equal(t, codes.PermissionDenied, status.Code(err))
 }

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"math"
 	"sync"
 	"testing"
 
@@ -10,6 +11,29 @@ import (
 	"devshard/signing"
 	"devshard/types"
 )
+
+func TestVerifyFinishInference_MatchesApplyPreflight(t *testing.T) {
+	hosts := errorTimeoutHosts(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	slot := applyStartConfirm(t, sm, user, hosts, 1)
+	valid := signedFinish(t, hosts, 1, slot, 80, 40, testutil.TestResponseHash)
+	require.NoError(t, sm.VerifyFinishInference(valid))
+
+	for _, tc := range []struct {
+		name string
+		edit func(*types.MsgFinishInference)
+	}{
+		{"malformed hash", func(m *types.MsgFinishInference) { m.ResponseHash = []byte("short") }},
+		{"cost overflow", func(m *types.MsgFinishInference) { m.InputTokens = math.MaxUint64; m.OutputTokens = 1 }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			msg := signedFinish(t, hosts, 1, slot, 80, 40, testutil.TestResponseHash)
+			tc.edit(msg)
+			msg.ProposerSig = testutil.SignProposerTx(t, hosts[slot], msg)
+			require.Error(t, sm.VerifyFinishInference(msg))
+		})
+	}
+}
 
 const errorTimeoutResponseHash = "response-hash-of-thirty-two-byte"
 
@@ -28,15 +52,15 @@ func applyStartConfirm(t *testing.T, sm *StateMachine, user *signing.Secp256k1Si
 
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: inferenceID, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -109,7 +133,7 @@ func TestApplyDiff_Timeout_Error_RequiresFinished(t *testing.T) {
 		sm, user := newTestSM(t, hosts, 10000)
 		diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		})})
 		_, err := sm.ApplyDiff(diff)
 		require.NoError(t, err)
@@ -328,23 +352,23 @@ func TestApplyDiff_Timeout_Error_CrossInferenceVoteRejected(t *testing.T) {
 
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})}))
 	require.NoError(t, err)
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})}))
 	require.NoError(t, err)
 
-	exec1 := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	exec1 := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: exec1, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: exec1,
 	})}))
 	require.NoError(t, err)
-	exec2 := testutil.SignExecutorReceipt(t, hosts[2], "escrow-1", 2, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	exec2 := testutil.SignExecutorReceipt(t, hosts[2], "escrow-1", 2, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 2, ExecutorSig: exec2, ConfirmedAt: 1000,
+		InferenceId: 2, ExecutorSig: exec2,
 	})}))
 	require.NoError(t, err)
 
@@ -418,6 +442,8 @@ func TestVerifyFinishProposerSig_CachedWarmKeyDoesNotCallResolver(t *testing.T) 
 
 	require.NoError(t, sm.VerifyFinishProposerSig(finish))
 	require.Equal(t, 1, calls, "first miss must consult the resolver")
+	require.Empty(t, sm.WarmKeys(), "verification must not commit a binding")
+	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 	require.NoError(t, sm.VerifyFinishProposerSig(finish))
 	require.Equal(t, 1, calls, "cached warm key must take the read-locked path")
 }
@@ -453,7 +479,7 @@ func TestVerifyFinishProposerSig_ConcurrentWithApplyDiff(t *testing.T) {
 			nonce := sm.LatestNonce() + 1
 			diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 				InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",
-				InputLength: 1, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+				InputLength: 1, MaxTokens: testutil.TestMaxTokens,
 			})})
 			_, err := sm.ApplyDiff(diff)
 			require.NoError(t, err)
@@ -480,4 +506,52 @@ func TestInference_ReturnsCopyNotAlias(t *testing.T) {
 
 	_, ok = sm.Inference(99)
 	require.False(t, ok)
+}
+
+func TestApplyDiff_Timeout_Error_UnwindsFinishedAndPasses(t *testing.T) {
+	hosts := errorTimeoutHosts(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	slot := applyStartConfirm(t, sm, user, hosts, 1)
+	hash := []byte(errorTimeoutResponseHash)
+
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinish(signedFinish(t, hosts, 1, slot, 80, 40, hash))})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	var validators []uint32
+	for s := uint32(0); s < uint32(len(hosts)) && len(validators) < 2; s++ {
+		if s != slot {
+			validators = append(validators, s)
+		}
+	}
+	for _, v := range validators {
+		msg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: v, Valid: true, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, hosts[v], msg)
+		nonce = sm.SnapshotState().LatestNonce + 1
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(msg)}))
+		require.NoError(t, err)
+	}
+	mid := sm.SnapshotState()
+	require.Equal(t, uint32(1), mid.HostStats[slot].Finished)
+	require.Equal(t, uint32(2), mid.HostStats[slot].Validated)
+
+	var voters []uint32
+	for s := uint32(0); s < uint32(len(hosts)) && len(voters) < 3; s++ {
+		if s != slot {
+			voters = append(voters, s)
+		}
+	}
+	nonce = sm.SnapshotState().LatestNonce + 1
+	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+		InferenceId: 1, Votes: errorTimeoutVotes(t, hosts, 1, hash, voters),
+	})})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	state := sm.SnapshotState()
+	require.Equal(t, types.StatusTimedOut, state.Inferences[1].Status)
+	require.Equal(t, uint32(1), state.HostStats[slot].Missed)
+	require.Equal(t, uint32(0), state.HostStats[slot].Finished, "an error-miss is not a completion")
+	require.Equal(t, uint32(0), state.HostStats[slot].Validated, "passes on an error-missed inference are withdrawn")
 }
