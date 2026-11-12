@@ -65,6 +65,8 @@ type InferenceRecord struct {
 	VotesValid        uint32          `json:"votes_valid,omitempty"`
 	VotesInvalid      uint32          `json:"votes_invalid,omitempty"`
 	ValidatedBy       Bitmap128       `json:"validated_by,omitempty"`
+	// Challenger is 1 + the slot whose Valid:false opened the challenge; 0 if none.
+	Challenger uint32 `json:"challenger,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
