@@ -13,7 +13,7 @@ import (
 func startInferenceTx(inferenceID uint64, prompt string) *types.DevshardTx {
 	return txStart(&types.MsgStartInference{
 		InferenceId: inferenceID, PromptHash: []byte(prompt), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})
 }
 

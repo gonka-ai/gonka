@@ -9,12 +9,13 @@ import (
 )
 
 // Test flow:
-//  1. Seed an escrow of chain epoch 7 serving its last epoch, and make every participant stall after its receipt.
+//  1. Boot with the warm-up probe armed, seed an escrow of chain epoch 7 serving its last epoch, and make every participant stall after its receipt.
 //  2. Send two requests, so their attempts stay Started, and move inside the settle margin.
 //  3. Advance three minutes: the deadline forces the settle, and finalize pays the open records to their executors.
 //  4. Assert the escrow settled with costs above zero, the ledger's charged total equals the chain's, and `ledger match` compared at least one ledger total (`ledger match` at every step).
 func TestAForcedSettleLeavesTheLedgerChargedAsTheChain(t *testing.T) {
 	spec := lastEpochSpec()
+	spec.armedFloor = true
 	spec.steps = []harnessStep{
 		advance{by: 30 * time.Second},
 		changeParticipants{change: func(behaviour *participantBehaviour) { behaviour.stall = true }},

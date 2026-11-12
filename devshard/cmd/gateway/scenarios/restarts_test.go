@@ -119,12 +119,13 @@ func TestASettleWhoseAnswerARestartLostIsNotSettledTwice(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one, stall every participant after its receipt, send two requests and advance six minutes; assert the report counts them late.
+//  1. Boot with the warm-up probe armed and a guarantee of one, stall every participant after its receipt, send two requests and advance six minutes; assert the report counts them late.
 //  2. Restart the gateway, advance thirty seconds, and assert the report counts them late again: the classes were rebuilt from storage.
 //  3. Advance thirty-five minutes and assert no Started record is left: the deadlines survived the restart (`active escrow routes` at every step).
 func TestARestartRebuildsTheClassesOfStartedRecords(t *testing.T) {
 	spec := plannerSpec()
 	spec.model.fullContextSlots = 1
+	spec.armedFloor = true
 	late := func(label string) expectThat {
 		return expectThat{label: label, verify: func(harness *gatewayHarness) error {
 			report, _ := harness.fundingReport(testModelID)
@@ -364,7 +365,7 @@ func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
 }
 
 // Test flow:
-//  1. Take participant 0, slot 0 of the seeded escrow, offline, send eight requests one after another, and record every Pending nonce on slot 0, whose refusal vote the gateway now owes, with the slot's miss count and cost.
+//  1. Boot with the warm-up probe armed, take participant 0, slot 0 of the seeded escrow, offline, send eight requests one after another, and record every Pending nonce on slot 0, whose refusal vote the gateway now owes, with the slot's miss count and cost.
 //  2. Restart the gateway at once and advance four minutes, the window in which the same votes land without a restart.
 //  3. Assert no recorded nonce is still Pending and slot 0 was charged one miss per recorded nonce since the restart: the restarted gateway posted the votes the old one owed.
 //  4. Settle the seeded escrow as the operator and advance one tick.
@@ -372,6 +373,7 @@ func TestARestartKeepsTheLedgersTokenCounts(t *testing.T) {
 func TestARefusalVoteOwedAtARestartIsPostedByTheNextGateway(t *testing.T) {
 	const refusingSlot uint32 = 0
 	spec := defaultSpec()
+	spec.armedFloor = true
 	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
 	owed := map[uint64]types.InferenceRecord{}
 	var slotAtRestart types.HostStats

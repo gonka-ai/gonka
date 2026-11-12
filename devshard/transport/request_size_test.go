@@ -74,7 +74,7 @@ func TestASingleOversizedDiffIsStillTaken(t *testing.T) {
 func TestTheWireEstimateTracksTheBodyAHostIsSent(t *testing.T) {
 	startTx := func(id uint64) *types.DevshardTx {
 		return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-			InferenceId: id, Model: "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8", PromptHash: make([]byte, 32), InputLength: 1_000, MaxTokens: 4_096, StartedAt: 1_700_000_000,
+			InferenceId: id, Model: "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8", PromptHash: make([]byte, 32), InputLength: 1_000, MaxTokens: 4_096,
 		}}}
 	}
 	cases := []struct {

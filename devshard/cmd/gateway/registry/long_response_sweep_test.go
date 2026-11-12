@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/cmd/gateway/engine"
 	"devshard/host"
@@ -56,6 +55,7 @@ type longResponseEscrow struct {
 	session  *user.Session
 	machine  *state.StateMachine
 	signers  []*signing.Secp256k1Signer
+	rig      *floorRig
 }
 
 func publishLongResponseEscrow(t *testing.T, servedBindings ...servedBindingObserver) longResponseEscrow {
@@ -85,19 +85,28 @@ func newVotingEscrow(t *testing.T, client func(acceptingVoter) user.HostClient, 
 	config := testutil.DefaultConfig(len(group))
 	creator := testutil.MustGenerateKey(t)
 	verifier := signing.NewSecp256k1Verifier()
+	rig := newFloorRig(len(signers), floorStartHeight)
 	clients := make([]user.HostClient, len(signers))
 	for index, signer := range signers {
 		hostMachine := statetest.MustStateMachine(t, longResponseEscrowID, config, group, 1_000_000, creator.Address(), verifier)
-		hostNode, err := host.NewHost(hostMachine, signer, stub.NewInferenceEngine(), longResponseEscrowID, group, nil, append([]host.HostOption{host.WithGrace(100)}, hostOptions...)...)
+		hostNode, err := host.NewHost(hostMachine, signer, stub.NewInferenceEngine(), longResponseEscrowID, group, nil, append([]host.HostOption{host.WithGrace(100), host.WithChainOracle(rig.oracles[index])}, hostOptions...)...)
 		require.NoError(t, err)
 		clients[index] = client(acceptingVoter{HostClient: &user.InProcessClient{Host: hostNode}, signer: signer, slot: group[index].SlotID})
 	}
 	machine := statetest.MustStateMachine(t, longResponseEscrowID, config, group, 1_000_000, creator.Address(), verifier)
-	session, err := user.NewSession(machine, creator, longResponseEscrowID, group, clients, verifier)
+	session, err := user.NewSession(machine, creator, longResponseEscrowID, group, clients, verifier, rig.sessionOptions(len(signers))...)
 	require.NoError(t, err)
+	rig.seedFloor(t, session)
 	t.Cleanup(func() { _ = session.Close() })
 	handle := NewSessionHandle(session, machine).(sessionHandle)
-	return longResponseEscrow{handle: handle, session: session, machine: machine, signers: signers}
+	return longResponseEscrow{handle: handle, session: session, machine: machine, signers: signers, rig: rig}
+}
+
+const floorStartHeight = 100
+
+func raiseFloor(t *testing.T, escrow longResponseEscrow, height uint64) {
+	t.Helper()
+	escrow.rig.raise(t, escrow.session, height)
 }
 
 func startedTwoHoursAgo(t *testing.T, escrow longResponseEscrow) uint64 {
@@ -107,6 +116,7 @@ func startedTwoHoursAgo(t *testing.T, escrow longResponseEscrow) uint64 {
 
 func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int64, delivered bool) uint64 {
 	t.Helper()
+	baseHeight, _, _ := escrow.machine.HeightSyncFloorAsOf(escrow.machine.LatestNonce() + 1)
 	prepared, err := escrow.session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 		return user.InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}, false, nil, nil
 	})
@@ -118,21 +128,13 @@ func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int
 	nonce := prepared.Nonce()
 	record, tracked := escrow.machine.GetInference(nonce)
 	require.True(t, tracked)
-	receipt, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.ExecutorReceiptContent{
-		InferenceId: nonce,
-		PromptHash:  record.PromptHash,
-		Model:       record.Model,
-		InputLength: record.InputLength,
-		MaxTokens:   record.MaxTokens,
-		StartedAt:   record.StartedAt,
-		EscrowId:    longResponseEscrowID,
-		ConfirmedAt: confirmedAt,
-	})
-	require.NoError(t, err)
-	signature, err := escrow.signers[record.ExecutorSlot].Sign(receipt)
-	require.NoError(t, err)
-	require.NoError(t, escrow.session.ProcessResponse(prepared.HostIdx(), &host.HostResponse{Nonce: nonce, Receipt: signature, ConfirmedAt: confirmedAt}, nonce))
+	stamp := testutil.ReceiptStamp{Height: record.StartedAtHeight, Hash: []byte{0xaa}}
+	signature := testutil.SignExecutorReceipt(t, escrow.signers[record.ExecutorSlot], longResponseEscrowID, nonce, record.PromptHash, record.Model, record.InputLength, record.MaxTokens, stamp)
+	require.NoError(t, escrow.session.ProcessResponse(prepared.HostIdx(), &host.HostResponse{Nonce: nonce, Receipt: signature, ConfirmedAt: confirmedAt, ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash}, nonce))
 	require.NoError(t, escrow.session.SendPendingDiff(context.Background()))
+	if age := time.Now().Unix() - confirmedAt; age > 0 {
+		raiseFloor(t, escrow, baseHeight+uint64(age))
+	}
 	started, tracked := escrow.machine.GetInference(nonce)
 	require.True(t, tracked)
 	require.Equal(t, types.StatusStarted, started.Status, "the fixture must leave the nonce started with its reserve held")

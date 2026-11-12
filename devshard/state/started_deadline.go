@@ -7,38 +7,47 @@ import (
 )
 
 // StartedInferencesPastDeadline returns the ids of records the chain still settles and no race has
-// claimed: started and past their own execution deadline by buffer, counted from the executor's stamp, or
-// from the start when the executor stamped none. A record from racesFrom on also waits out raceGrace, the
-// time its own race may still take to vote; one below it has no race left to wait for. At most budget ids
-// come back, the longest overdue first, so a backlog larger than the budget drains oldest first instead of
-// leaving an unlucky record behind; a scan that finds nothing allocates nothing.
-func (sm *StateMachine) StartedInferencesPastDeadline(now time.Time, buffer, raceGrace time.Duration, racesFrom uint64, budget int) []uint64 {
+// claimed: started and past their own execution deadline by buffer, measured in block time from the
+// record's ConfirmedAtTimeMs as TimeoutRemaining does. A record without one, and every record
+// while the block time of the session's floor is unknown, is not due. A record from racesFrom on also
+// waits out raceGrace, the time its own race may still take to vote; one below it has no race left to
+// wait for. At most budget ids come back, the longest overdue first, so a backlog larger than the budget
+// drains oldest first instead of leaving an unlucky record behind; a scan that finds nothing allocates
+// nothing.
+func (sm *StateMachine) StartedInferencesPastDeadline(buffer, raceGrace time.Duration, racesFrom uint64, budget int) []uint64 {
 	if budget <= 0 {
 		return nil
 	}
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	window := time.Duration(sm.state.Config.ExecutionTimeout)*time.Second + buffer
+	floor, err := sm.floorPointLocked(sm.state.LatestNonce + 1)
+	if err != nil {
+		return nil
+	}
+	nowMs, err := sm.floorTimeMsLocked(floor)
+	if err != nil {
+		return nil
+	}
 	var due []overdueRecord
 	for id, record := range sm.state.Inferences {
 		if record.Status != types.StatusStarted {
 			continue
 		}
-		anchor := record.ConfirmedAt
-		if anchor <= 0 {
-			anchor = record.StartedAt
+		anchorMs, windowMs, err := sm.timeoutWindowLocked(record, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+		if err != nil {
+			continue
 		}
-		deadline := time.Unix(anchor, 0).Add(window)
+		deadlineMs := anchorMs + windowMs + buffer.Milliseconds()
 		if id >= racesFrom {
-			deadline = deadline.Add(raceGrace)
+			deadlineMs += raceGrace.Milliseconds()
 		}
-		if now.Before(deadline) {
+		if nowMs < deadlineMs {
 			continue
 		}
 		if due == nil {
 			due = make([]overdueRecord, 0, budget)
 		}
-		due = keepMostOverdue(due, overdueRecord{id: id, deadline: deadline}, budget)
+		due = keepMostOverdue(due, overdueRecord{id: id, deadlineMs: deadlineMs}, budget)
 	}
 	if due == nil {
 		return nil
@@ -51,15 +60,15 @@ func (sm *StateMachine) StartedInferencesPastDeadline(now time.Time, buffer, rac
 }
 
 type overdueRecord struct {
-	id       uint64
-	deadline time.Time
+	id         uint64
+	deadlineMs int64
 }
 
 func (r overdueRecord) before(other overdueRecord) bool {
-	if r.deadline.Equal(other.deadline) {
+	if r.deadlineMs == other.deadlineMs {
 		return r.id < other.id
 	}
-	return r.deadline.Before(other.deadline)
+	return r.deadlineMs < other.deadlineMs
 }
 
 // keepMostOverdue inserts candidate into kept, sorted by deadline, and drops whatever falls past budget.

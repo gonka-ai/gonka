@@ -456,15 +456,18 @@ func TestTokenDenseInputKeepsTheGuarantee(t *testing.T) {
 
 const (
 	contextRefusalMissLabel = "defect: the refusing host is charged a miss for an engine error after the receipt is signed"
-	refusingExecutorSlot    = 1
+	refusingExecutorSlot    = 2
+	warmUpRecords           = 1
+	warmUpProbeCost         = 60
+	refusedRecordID         = warmUpRecords + 1
 	shorterHostContext      = 4_096
 )
 
 // Test flow:
-//  1. Boot with a guarantee of one, every host running the model's whole 8 192-token context and refusing a longer prompt the way devshardd relays vLLM's 400, and send one 40 000-byte prompt.
-//  2. Advance three minutes; assert the client was answered 400 and the race stopped at the first refusal: one attempt on the first executor, Started and holding the escrow's only reservation.
+//  1. Boot with the warm-up probe armed and a guarantee of one, every host running the model's whole 8 192-token context and refusing a longer prompt the way devshardd relays vLLM's 400, and send one 40 000-byte prompt.
+//  2. Advance three minutes; assert the client was answered 400 and the race stopped at the first refusal: one attempt after the probe, on slot 2, Started and holding the escrow's only reservation.
 //  3. Advance forty one-minute steps, past the session's execution timeout of 1 920 seconds and its margins.
-//  4. Assert the execution timeout returned that reservation and the wallet balances against the chain (`money identity` at every step).
+//  4. Assert the execution timeout returned that reservation, the refused record is TimedOut or sealed by the heartbeat's nonces, and the wallet balances against the chain (`money identity` at every step).
 //  5. Pin the host defect: the refusing host alone is charged one miss for its engine error after the signed receipt.
 func TestAnOverContextPromptIsAnsweredAfterTheFirstRefusal(t *testing.T) {
 	behaviours := everyParticipant(4, participantBehaviour{contextLimit: 8_192})
@@ -472,20 +475,20 @@ func TestAnOverContextPromptIsAnsweredAfterTheFirstRefusal(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one, the first executor running a 4 096-token context under the model's 8 192 and the other hosts the whole length, and send one 20 000-byte prompt that fits the model.
-//  2. Advance three minutes; assert the race retried the refusal on a longer host and the client was answered 200: two attempts, the refused one Started and holding the escrow's only reservation.
+//  1. Boot with the warm-up probe armed and a guarantee of one, the probe taking record 1, the executor of the first real attempt (slot 2) running a 4 096-token context under the model's 8 192 and the other hosts the whole length, and send one 20 000-byte prompt that fits the model.
+//  2. Advance three minutes; assert the race retried the refusal on a longer host and the client was answered 200: two attempts, the probe finished and the refused one Started and holding the escrow's only reservation.
 //  3. Advance forty one-minute steps, past the session's execution timeout.
-//  4. Assert the execution timeout returned the refused attempt's reservation and the wallet balances (`money identity` at every step).
+//  4. Assert the execution timeout returned the refused attempt's reservation, its record is TimedOut or sealed by the heartbeat's nonces, and the wallet balances (`money identity` at every step).
 //  5. Pin the host defect: the refusing host alone is charged one miss.
 func TestAShorterHostsContextRefusalIsRetriedOnALongerHost(t *testing.T) {
 	runSteps(t, contextRefusalSpec(withAShorterFirstExecutor(), 20_000, http.StatusOK, 2))
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one, the first executor running a 4 096-token context under the model's 8 192 and the other hosts the whole length, and send one 40 000-byte prompt larger than the model's context.
-//  2. Advance three minutes; assert the client was answered 400 without a retry: one attempt on the shorter host, Started and holding the escrow's only reservation.
+//  1. Boot with the warm-up probe armed and a guarantee of one, the probe taking record 1, the executor of the first real attempt (slot 2) running a 4 096-token context under the model's 8 192 and the other hosts the whole length, and send one 40 000-byte prompt larger than the model's context.
+//  2. Advance three minutes; assert the client was answered 400 without a retry: one attempt after the probe, on the shorter host, Started and holding the escrow's only reservation.
 //  3. Advance forty one-minute steps, past the session's execution timeout.
-//  4. Assert the execution timeout returned that reservation and the wallet balances (`money identity` at every step).
+//  4. Assert the execution timeout returned that reservation, the refused record is TimedOut or sealed by the heartbeat's nonces, and the wallet balances (`money identity` at every step).
 //  5. Pin the host defect: the refusing host alone is charged one miss.
 func TestAPromptOverTheModelIsNotRetriedPastAShorterHost(t *testing.T) {
 	runSteps(t, contextRefusalSpec(withAShorterFirstExecutor(), 40_000, http.StatusBadRequest, 1))
@@ -500,6 +503,7 @@ func withAShorterFirstExecutor() map[int]participantBehaviour {
 // contextRefusalSpec sends one prompt at hosts that refuse past their context, and follows the refused attempt to its execution timeout.
 func contextRefusalSpec(behaviours map[int]participantBehaviour, promptBytes, wantStatus, wantAttempts int) testSpec {
 	spec := plannerSpec()
+	spec.armedFloor = true
 	spec.model.fullContextSlots = 1
 	spec.behaviours = behaviours
 	spec.pins = map[string]string{
@@ -512,12 +516,12 @@ func contextRefusalSpec(behaviours map[int]participantBehaviour, promptBytes, wa
 		expectThat{label: "only the refused attempt holds a reservation", verify: func(harness *gatewayHarness) error {
 			escrowID := harness.seededIDs[0]
 			_, reserved, state, built := machineMoney(harness, escrowID)
-			if started := harness.fleet.inferencesStartedOn(escrowID); !built || started != wantAttempts || len(state.Inferences) != wantAttempts {
-				return fmt.Errorf("escrow %s started %d attempts with %d records, want %d", escrowID, started, len(state.Inferences), wantAttempts)
+			if started := harness.fleet.inferencesStartedOn(escrowID); !built || started != warmUpRecords+wantAttempts || len(state.Inferences) != warmUpRecords+wantAttempts {
+				return fmt.Errorf("escrow %s started %d attempts with %d records, want the warm-up probe and %d attempts", escrowID, started, len(state.Inferences), wantAttempts)
 			}
-			refused, recorded := state.Inferences[1]
+			refused, recorded := state.Inferences[refusedRecordID]
 			if !recorded || refused.ExecutorSlot != refusingExecutorSlot || refused.Status != types.StatusStarted || reserved != refused.ReservedCost {
-				return fmt.Errorf("first record %+v with %d reserved, want it Started on slot %d holding the only reservation", refused, reserved, refusingExecutorSlot)
+				return fmt.Errorf("refused record %+v with %d reserved, want it Started on slot %d holding the only reservation", refused, reserved, refusingExecutorSlot)
 			}
 			return nil
 		}},
@@ -528,8 +532,8 @@ func contextRefusalSpec(behaviours map[int]participantBehaviour, promptBytes, wa
 	spec.steps = append(spec.steps,
 		expectThat{label: "the execution timeout returned the refused attempt's reservation", verify: func(harness *gatewayHarness) error {
 			_, reserved, state, _ := machineMoney(harness, harness.seededIDs[0])
-			if refused, recorded := state.Inferences[1]; !recorded || refused.Status != types.StatusTimedOut || reserved != 0 {
-				return fmt.Errorf("first record %+v with %d reserved, want it timed out and nothing reserved", refused, reserved)
+			if refused, live := state.Inferences[refusedRecordID]; reserved != 0 || (live && refused.Status != types.StatusTimedOut) {
+				return fmt.Errorf("refused record %+v with %d reserved, want it timed out or sealed and nothing reserved", refused, reserved)
 			}
 			return walletBalanced(harness)
 		}},

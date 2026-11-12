@@ -18,6 +18,8 @@ import (
 	"testing/synctest"
 	"time"
 
+	"common/chainoracle/blocks"
+
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/cmd/gateway/filters"
@@ -128,6 +130,30 @@ func (log *diffLog) upTo(latestNonce uint64) []types.Diff {
 	return stored
 }
 
+const bubbleHeightSyncK = 10
+
+func bubbleObservedHeight() (uint64, []byte, bool) {
+	return uint64(time.Now().Unix()), []byte{0xaa}, true
+}
+
+type bubbleOracle struct{}
+
+func (bubbleOracle) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(time.Now().Unix(), time.Now(), "fake-chain", []byte{0xaa}), nil
+}
+
+func (o bubbleOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) { return o.Latest(ctx) }
+
+func (bubbleOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+
+func (bubbleOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	closed := make(chan *blocks.Header)
+	close(closed)
+	return closed, nil
+}
+
 // hostFleet serves every escrow the fake chain holds from real hosts, one per participant slot.
 type hostFleet struct {
 	t              *testing.T
@@ -136,6 +162,7 @@ type hostFleet struct {
 	signers        map[string]*signing.Secp256k1Signer
 	order          []string
 	validationRate uint32
+	armedFloor     bool
 
 	behavioursMu sync.Mutex
 	behaviours   map[string]*participantBehaviour
@@ -227,6 +254,10 @@ func (f *hostFleet) open(escrowID string, withCadence bool) (registry.EscrowSess
 	if err != nil {
 		return nil, fmt.Errorf("opening the fleet session of %s: %w", escrowID, err)
 	}
+	if f.armedFloor {
+		session.SetObservedHeight(bubbleObservedHeight)
+		session.SetHeightSyncCadence(bubbleHeightSyncK, uint64(len(built.group)))
+	}
 	built.machine, built.open, built.exited = machine, true, exited
 	var closeOnce sync.Once
 	closed := func() {
@@ -252,7 +283,7 @@ func (f *hostFleet) open(escrowID string, withCadence bool) (registry.EscrowSess
 	return fleetSessionHandle{indexedEscrowSession: handle, closed: closed, stopCadence: stopCadence}, nil
 }
 
-// startDrainCadence models composeHeartbeatSpan's drain of queued host txs, which production runs only with height sync on and gated on turn state; the harness sends them every 24 s in one diff.
+// startDrainCadence models composeHeartbeatSpan's drain of queued host txs and, on an armedFloor spec, runs the session's heartbeat every 24 s as production does; the harness sends the queued txs every 24 s in one diff.
 func (f *hostFleet) startDrainCadence(escrowID string, session *user.Session, machine *state.StateMachine) func() {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -267,7 +298,15 @@ func (f *hostFleet) startDrainCadence(escrowID string, session *user.Session, ma
 			case <-f.released:
 				return
 			case <-ticker.C:
-				if machine.Phase() != types.PhaseActive || len(session.PendingTxs()) == 0 {
+				if machine.Phase() != types.PhaseActive {
+					continue
+				}
+				if f.armedFloor {
+					if err := session.MaybeHeartbeat(ctx); err != nil {
+						f.t.Logf("heartbeat of %s: %v", escrowID, err)
+					}
+				}
+				if len(session.PendingTxs()) == 0 {
 					continue
 				}
 				if err := session.SendPendingDiff(ctx); err != nil {
@@ -353,6 +392,9 @@ func (f *hostFleet) escrowFor(escrowID string) (*fleetEscrow, error) {
 			validator = invalidVerdicts{}
 		}
 		options := []host.HostOption{host.WithGrace(100), host.WithValidator(validator)}
+		if f.armedFloor {
+			options = append(options, host.WithChainOracle(bubbleOracle{}))
+		}
 		hostNode, err := host.NewHost(hostMachine, signer, participantEngine{fleet: f, address: signer.Address()}, escrowID, group, nil, options...)
 		if err != nil {
 			return nil, fmt.Errorf("building host %s of %s: %w", signer.Address(), escrowID, err)
@@ -559,14 +601,13 @@ func (c *fleetClient) VerifyTimeout(ctx context.Context, inferenceID uint64, rea
 	}
 	mempool := verifier.MempoolTxs()
 	executor := c.executorFor(inferenceID)
-	nowUnix := time.Now().Unix()
 	var accept bool
 	var err error
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
-		accept, err = host.VerifyRefusedTimeout(ctx, snapshot, inferenceID, record, payload, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(ctx, snapshot, inferenceID, record, payload, mempool, executor, verifier, verifier)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, snapshot, inferenceID, record, mempool, executor, verifier, verifier, snapshot.Config, nowUnix)
+		accept, err = host.VerifyExecutionTimeout(ctx, snapshot, inferenceID, record, mempool, executor, verifier, verifier)
 	default:
 		return false, nil, 0, nil, "", errReasonNotModelled
 	}

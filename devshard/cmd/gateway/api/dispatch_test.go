@@ -17,6 +17,7 @@ import (
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/registry"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -27,12 +28,15 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	state.SetFallbackHeaderTimes(testutil.HeightClock{})
 	leakcheck.VerifyTestMain(m)
 }
 
 const (
-	liveEscrowID = "7"
-	liveModel    = "qwen"
+	liveEscrowID   = "7"
+	liveModel      = "qwen"
+	dueFloorHeight = 100
+	dueFloorHash   = 0xaa
 )
 
 var (
@@ -90,6 +94,63 @@ func prepareNonce(t *testing.T, session *user.Session) *user.PreparedInference {
 		t.Fatalf("PrepareInferenceFn = %v, want nil", err)
 	}
 	return prepared
+}
+
+func newDueLiveSession(t *testing.T) (*user.Session, *state.StateMachine, uint64) {
+	t.Helper()
+	signers := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	group := testutil.MakeGroup(signers)
+	config := testutil.DefaultConfig(len(group))
+	creator := testutil.MustGenerateKey(t)
+	verifier := signing.NewSecp256k1Verifier()
+	store := testutil.MustMemoryStore(t, liveEscrowID, creator.Address(), config, group, 1_000_000)
+	composer, err := state.NewStateMachine(liveEscrowID, config, group, 1_000_000, creator.Address(), verifier, store)
+	if err != nil {
+		t.Fatalf("NewStateMachine = %v, want nil", err)
+	}
+	appendDiff := func(txs ...*types.DevshardTx) {
+		nonce := composer.LatestNonce() + 1
+		root, applied, err := composer.ApplyLocalBestEffort(nonce, txs)
+		if err != nil || len(applied) != len(txs) {
+			t.Fatalf("diff %d applied = %d of %d, err = %v, want all and nil", nonce, len(applied), len(txs), err)
+		}
+		diff := testutil.SignDiffWithRoot(t, creator, liveEscrowID, nonce, applied, root)
+		if err := store.AppendDiff(liveEscrowID, types.DiffRecord{Diff: diff, StateHash: root}); err != nil {
+			t.Fatalf("AppendDiff(nonce %d) = %v, want nil", nonce, err)
+		}
+	}
+	raiseFloor := func(height uint64) {
+		reference := composer.LatestNonce() + 1
+		acknowledgement := &types.MsgHeightAck{RefNonce: reference, SlotId: 0, ObservedHeight: height, ObservedBlockHash: []byte{dueFloorHash},
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+		if err := heightsync.SignAck(signers[0], acknowledgement); err != nil {
+			t.Fatalf("SignAck = %v, want nil", err)
+		}
+		appendDiff(
+			&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{SlotsNum: uint64(len(group)), Reason: string(heightsync.ReasonQuietSession)}}},
+			&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: acknowledgement}},
+		)
+	}
+	raiseFloor(dueFloorHeight)
+	params := liveParams()
+	startedNonce := composer.LatestNonce() + 1
+	appendDiff(&types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId:       startedNonce,
+		PromptHash:        testutil.TestPromptHash[:],
+		Model:             params.Model,
+		InputLength:       params.InputLength,
+		MaxTokens:         params.MaxTokens,
+		ObservedHeight:    dueFloorHeight,
+		ObservedBlockHash: []byte{dueFloorHash},
+	}}})
+	raiseFloor(dueFloorHeight + uint64(config.RefusalTimeout) + 1)
+	session, machine, err := user.RecoverSession(store, creator, verifier, liveEscrowID, testutil.RuntimeTestVersion, group, make([]user.HostClient, len(group)))
+	if err != nil {
+		t.Fatalf("RecoverSession = %v, want nil", err)
+	}
+	session.SetQuietSettleDelay(user.TestQuietSettleDelay)
+	t.Cleanup(func() { _ = session.Close() })
+	return session, machine, startedNonce
 }
 
 type appliedReply struct {
@@ -521,9 +582,9 @@ func (h *flushingHost) executorProof(nonce uint64) ([]byte, int64, *types.MsgFin
 		return nil, 0, nil
 	}
 	executor := h.signers[record.ExecutorSlot]
-	confirmedAt := record.StartedAt + 1
+	confirmedAt := liveParams().StartedAt + 1
 	receipt := testutil.SignExecutorReceipt(h.t, executor, liveEscrowID, nonce, record.PromptHash, record.Model,
-		record.InputLength, record.MaxTokens, record.StartedAt, confirmedAt)
+		record.InputLength, record.MaxTokens)
 	finish := &types.MsgFinishInference{
 		InferenceId:  nonce,
 		ResponseHash: bytes.Repeat([]byte{1}, sha256.Size),

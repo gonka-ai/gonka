@@ -125,7 +125,7 @@ func BenchmarkAutoSealEvaluationOfAWindowNotYetDue(b *testing.B) {
 	sm := benchFillSM(b, storage.NewMemory(), "escrow-auto-seal-bench")
 	for id := uint64(1); id <= liveWindow; id++ {
 		sm.state.Inferences[id] = &types.InferenceRecord{
-			Status: types.StatusFinished, Model: "llama", ConfirmedAt: 1_700_000_000 + int64(id/100),
+			Status: types.StatusFinished, Model: "llama", ConfirmedAtTimeMs: (1_700_000_000 + int64(id/100)) * 1000,
 		}
 	}
 	sealNonce := uint64(liveWindow) * 10
@@ -155,7 +155,7 @@ func BenchmarkPreviewOfALongLivedEscrow(b *testing.B) {
 	for id := uint64(sealed + 1); id <= sealed+liveWindow; id++ {
 		sm.state.Inferences[id] = &types.InferenceRecord{
 			Status: types.StatusFinished, Model: "llama", PromptHash: make([]byte, 32), ResponseHash: make([]byte, 32),
-			ConfirmedAt: 1_700_000_000,
+			ConfirmedAtTimeMs: 1_700_000_000_000,
 		}
 	}
 	sm.state.LatestNonce = sealed + liveWindow

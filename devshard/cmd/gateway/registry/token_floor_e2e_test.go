@@ -86,7 +86,7 @@ func TestAGhostBurnReservesTheStateMachineFloor(t *testing.T) {
 		t.Errorf("ghost ReservedCost = %d, want %d", record.ReservedCost, wantCost)
 	}
 	payload := prepared.(*user.PreparedInference).Payload()
-	if err := host.VerifyPayload(payload, record.PromptHash, record.Model, record.InputLength, record.MaxTokens, record.StartedAt); err != nil {
+	if err := host.VerifyPayload(payload, record.PromptHash, record.Model, record.InputLength, record.MaxTokens); err != nil {
 		t.Errorf("VerifyPayload(ghost payload) = %v, want nil", err)
 	}
 }

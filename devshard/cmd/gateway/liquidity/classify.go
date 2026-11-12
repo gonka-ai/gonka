@@ -77,28 +77,15 @@ func Classify(input Input) Escrow {
 	return result
 }
 
-// ExecutionAnchor clamps an executor clock that runs ahead to the latest moment a receipt could land, and falls back to the start without a stamp.
-func ExecutionAnchor(record types.InferenceRecord, refusalWindow time.Duration) time.Time {
-	startedAt := time.Unix(record.StartedAt, 0)
-	if record.ConfirmedAt <= 0 {
-		return startedAt
-	}
-	confirmedAt, latestReceipt := time.Unix(record.ConfirmedAt, 0), startedAt.Add(refusalWindow)
-	if confirmedAt.After(latestReceipt) {
-		return latestReceipt
-	}
-	return confirmedAt
-}
-
 func classOf(record types.InferenceRecord, input Input, refusalWindow, executionWindow time.Duration) (Class, uint64, bool) {
-	startedAt := time.Unix(record.StartedAt, 0)
-	young := input.Now.Before(startedAt.Add(returningSoon))
+	startedAt := time.UnixMilli(record.StartedAtTimeMs)
+	young := record.StartedAtTimeMs > 0 && input.Now.Before(startedAt.Add(returningSoon))
 	switch record.Status {
 	case types.StatusPending:
 		switch {
 		case young:
 			return ClassReturning, surplus(record, input.Price), true
-		case input.Now.Before(startedAt.Add(refusalWindow + refusedVoteLadder)):
+		case record.StartedAtTimeMs <= 0 || input.Now.Before(startedAt.Add(refusalWindow+refusedVoteLadder)):
 			return ClassLate, record.ReservedCost, true
 		}
 		return ClassStuck, record.ReservedCost, true
@@ -106,7 +93,7 @@ func classOf(record types.InferenceRecord, input Input, refusalWindow, execution
 		switch {
 		case young:
 			return ClassReturning, surplus(record, input.Price), true
-		case input.Now.Before(ExecutionAnchor(record, refusalWindow).Add(executionWindow)):
+		case record.ConfirmedAtTimeMs <= 0 || input.Now.Before(time.UnixMilli(record.ConfirmedAtTimeMs).Add(executionWindow)):
 			return ClassLate, record.ReservedCost, true
 		}
 		return ClassStuck, record.ReservedCost, true

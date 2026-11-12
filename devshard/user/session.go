@@ -2626,7 +2626,7 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 // diffs created. Sends catch-up diffs so every host reaches the final
 // nonce and signs the same state.
 //
-// A finalize cut short, by a cancelled context or a restart, sends its remaining rounds first; one already settled only collects signatures.
+// A finalize cut short, by a cancelled context or a restart, resumes from its finalize nonce after refreshing the hosts' pending txs; one already settled only collects signatures.
 func (s *Session) Finalize(ctx context.Context) error {
 	if !s.finalizeInFlight.CompareAndSwap(false, true) {
 		return fmt.Errorf("finalize already in progress")
@@ -2635,13 +2635,6 @@ func (s *Session) Finalize(ctx context.Context) error {
 
 	phase := s.sm.Phase()
 	threshold := s.sm.QuorumThreshold()
-	for phase == types.PhaseFinalizing {
-		nonce := s.Nonce()
-		if err := s.SendFinalizeRound(ctx); err != nil && s.Nonce() == nonce {
-			return fmt.Errorf("resuming the finalize cut short at nonce %d: %w", nonce, err)
-		}
-		phase = s.sm.Phase()
-	}
 	// Guard: if already settled, try to collect missing signatures instead
 	// of running the full finalize protocol again.
 	if phase == types.PhaseSettlement {

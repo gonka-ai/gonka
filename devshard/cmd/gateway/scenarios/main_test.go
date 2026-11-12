@@ -4,10 +4,14 @@ import (
 	"testing"
 
 	"go.uber.org/goleak"
+
+	"devshard/internal/testutil"
+	"devshard/state"
 )
 
 // TestMain ignores the goroutines that live for the process: database/sql's cleaner, the sqlite finalizer and the unclosable chain client.
 func TestMain(m *testing.M) {
+	state.SetFallbackHeaderTimes(testutil.HeightClock{})
 	goleak.VerifyTestMain(m,
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
 		goleak.IgnoreTopFunction("modernc.org/sqlite.(*conn).interruptOnDone.func1"),

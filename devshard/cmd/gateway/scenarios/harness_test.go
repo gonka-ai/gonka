@@ -68,6 +68,7 @@ type testSpec struct {
 	otherModels    []modelSpec
 	slotOwners     []int
 	violationSink  *string
+	armedFloor     bool
 }
 
 // gatewayHarness runs one gateway, its chain and its fleet inside a bubble, and remembers what it saw for the invariants.
@@ -307,7 +308,7 @@ func setGatewayEnvironment(t *testing.T, spec testSpec, creator *signing.Secp256
 		"DEVSHARD_TX_FEE_AMOUNT":                      "1000",
 		"DEVSHARD_TX_POLL_INTERVAL_MS":                "500",
 		"DEVSHARD_GATEWAY_HOST_PING_DISABLED":         "true",
-		"GATEWAY_WARM_NEW_ESCROWS":                    "false",
+		"GATEWAY_WARM_NEW_ESCROWS":                    strconv.FormatBool(spec.armedFloor),
 		"DEVSHARD_STATS_ENABLED":                      "true",
 		"DEVSHARD_STATS_PORT":                         "9091",
 		"GATEWAY_HEIGHT_SYNC_ENABLED":                 "false",
@@ -341,6 +342,7 @@ func newGatewayHarness(t *testing.T, spec testSpec, creator *signing.Secp256k1Si
 		slotOwners:   spec.slotOwners,
 	})
 	fleet := newHostFleet(t, blockchain, creator, participants, spec.validationRate)
+	fleet.armedFloor = spec.armedFloor
 	for index, behaviour := range spec.behaviours {
 		fleet.changeBehaviour([]int{index}, func(current *participantBehaviour) { *current = behaviour })
 	}
@@ -674,7 +676,7 @@ func TestHarnessBootsAndAnswersInsideABubble(t *testing.T) {
 }
 
 // Test flow:
-//  1. Make every participant stall after its receipt, so no answer and no further request composes a diff on the seeded escrow.
+//  1. Boot with the warm-up probe armed and make every participant stall after its receipt, so no answer and no further request composes a diff on the seeded escrow.
 //  2. Send one request and advance one minute.
 //  3. Assert every attempt the session started is Started with its executor's stamp: the heartbeat's drain sequenced the last confirm-start, as production's heartbeat does on a quiet escrow.
 //  4. Advance past the execution timeout, so both attempts' timeout votes post while the gateway still runs.
@@ -683,6 +685,7 @@ func TestAQuietEscrowSequencesItsReceipts(t *testing.T) {
 	startedExecutorSlots := map[uint64]uint32{}
 	missedBefore := map[uint32]uint32{}
 	spec := defaultSpec()
+	spec.armedFloor = true
 	spec.steps = []harnessStep{
 		changeParticipants{change: func(behaviour *participantBehaviour) { behaviour.stall = true }},
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 1},
@@ -697,7 +700,7 @@ func TestAQuietEscrowSequencesItsReceipts(t *testing.T) {
 				switch {
 				case inference.Status == types.StatusPending:
 					pending++
-				case inference.Status == types.StatusStarted && inference.ConfirmedAt > 0:
+				case inference.Status == types.StatusStarted && inference.ConfirmedAtTimeMs > 0:
 					started++
 					startedExecutorSlots[inferenceID] = inference.ExecutorSlot
 				}
@@ -762,12 +765,13 @@ func TestHarnessRestartsTheGatewayOnTheSameStore(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one, take participant 0 offline, send eight requests one after another and assert the seeded escrow holds a Pending record, whose refusal vote the gateway owes at +65 s.
-//  2. Restart the gateway at once and assert the restart severed the session the abandoned shutdown left open.
+//  1. Boot with the warm-up probe armed and a guarantee of one, take participant 0 offline, send eight requests one after another and assert the seeded escrow holds a Pending record, whose refusal vote the gateway owes at +65 s.
+//  2. Restart the gateway at once and assert its Stop returned without posting the vote early (the Pending record is still there) and the gateway closed its escrow sessions (none was left to sever).
 //  3. Send one more request, advance two minutes, and assert every request was answered 200 and no record is still Pending: the restart did not wait for the owed vote, and the restarted gateway posted it.
 func TestHarnessRestartLeavesTheOwedVotesToTheNextGateway(t *testing.T) {
 	spec := plannerSpec()
 	spec.model.fullContextSlots = 1
+	spec.armedFloor = true
 	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
 	pendingOwed := expectThat{label: "a Pending record whose refusal vote is owed", verify: func(harness *gatewayHarness) error {
 		if !hasRecord(harness, harness.seededIDs[0], types.StatusPending) {
@@ -779,9 +783,10 @@ func TestHarnessRestartLeavesTheOwedVotesToTheNextGateway(t *testing.T) {
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 8, sequential: true},
 		pendingOwed,
 		restartGateway{},
-		expectThat{label: "the restart severed the open session", verify: func(harness *gatewayHarness) error {
-			if harness.severedSessions == 0 {
-				return fmt.Errorf("severedSessions = 0, want the session the abandoned shutdown left open")
+		pendingOwed,
+		expectThat{label: "the stopped gateway closed its escrow sessions", verify: func(harness *gatewayHarness) error {
+			if harness.severedSessions != 0 {
+				return fmt.Errorf("severedSessions = %d, want 0: Stop returned, so the escrow-session step ran", harness.severedSessions)
 			}
 			return nil
 		}},

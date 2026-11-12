@@ -11,7 +11,7 @@ Pure: no I/O, no clock of its own, no state between calls. `Classify` reads one 
 | `late` | a `Pending` record past five minutes but before its start plus the refusal timeout, `user.TimeoutBuffer` and the race's refused-vote ladder (`refusedVoteLadder`, 450 s); a `Started` record past five minutes but before its anchor plus the execution timeout, `user.TimeoutBuffer` and the sweep grace — its whole reservation |
 | `stuck` | a `Pending` record past the ladder and a `Started` record past its deadline (their whole reservation), and every `Challenged` record's `ActualCost` |
 
-Every window counts from `StartedAt`, which the gateway sets. A `Started` record's anchor is its `ConfirmedAt` clamped to at most its start plus the refusal window, or its start when the executor stamped nothing (`ExecutionAnchor`, the same function the hold's view in `registry/views.go` uses), so an executor clock running ahead cannot stretch a deadline.
+Every window counts in block time, as the state machine's `TimeoutRemaining` does: a `Pending` record from its `StartedAtTimeMs`, a `Started` record from its `ConfirmedAtTimeMs`. A record whose start time is unknown is not `returning`, and one without the time its window counts from is `late`, never `stuck`, as the state machine never makes such a record due.
 
 `returning` is an estimate, not a bound. The real surplus is the reservation minus `(input tokens + output tokens) × price`, and code, JSON and CJK input run more tokens per byte than one in four. The planner uses it only in its capacity term; its guarantee reads `free` alone, so a surplus that does not come back cannot fool it. The output side's surplus (`max_tokens` not used) is not counted at all.
 

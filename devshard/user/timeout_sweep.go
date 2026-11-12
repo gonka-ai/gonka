@@ -24,7 +24,7 @@ func (s *Session) adoptRecoveredNonces() {
 // nonce settleable and unclaimed until the escrow settles it at full reserve. Work is bounded by budget
 // and votes run one at a time, so the load this adds does not follow the request rate.
 func (s *Session) SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) SweepReport {
-	due := s.sm.StartedInferencesPastDeadline(time.Now(), TimeoutBuffer, grace, s.racesFromNonce, budget)
+	due := s.sm.StartedInferencesPastDeadline(TimeoutBuffer, grace, s.racesFromNonce, budget)
 	report := SweepReport{Due: len(due)}
 	for _, nonce := range due {
 		if ctx.Err() != nil {

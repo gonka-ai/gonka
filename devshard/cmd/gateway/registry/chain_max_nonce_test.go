@@ -65,17 +65,24 @@ func (m *hostsMaxNonce) MaxNonce() uint32 { return m.Load() }
 
 type diffOnlyVoter struct {
 	acceptingVoter
+	active *atomic.Bool
 }
 
 func (v diffOnlyVoter) Send(ctx context.Context, request host.HostRequest, stream io.Writer, receipt func(*host.HostResponse)) (*host.HostResponse, error) {
-	request.Payload = nil
+	if v.active.Load() {
+		request.Payload = nil
+	}
 	return v.acceptingVoter.Send(ctx, request, stream, receipt)
 }
 
 func escrowAtTheHostsActiveCap(t *testing.T) (longResponseEscrow, uint32) {
 	t.Helper()
 	maxNonce := &hostsMaxNonce{}
-	escrow := newVotingEscrow(t, func(voter acceptingVoter) user.HostClient { return diffOnlyVoter{voter} }, host.WithMaxNonceProvider(maxNonce))
+	var diffOnly atomic.Bool
+	escrow := newVotingEscrow(t, func(voter acceptingVoter) user.HostClient {
+		return diffOnlyVoter{acceptingVoter: voter, active: &diffOnly}
+	}, host.WithMaxNonceProvider(maxNonce))
+	diffOnly.Store(true)
 	startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix(), true)
 	maxNonce.Store(uint32(escrow.session.Nonce() + types.FinalizeNonceReserve(len(escrow.signers))))
 	escrow.registry = New(Deps{

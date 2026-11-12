@@ -193,7 +193,7 @@ func finishOnce(finished func()) func() {
 // OwedTimeoutVotes reports the votes taken and not yet posted. See race.md, "The timeout-vote queue".
 func (e *Engine) OwedTimeoutVotes() int64 { return e.settles.Owed() }
 
-// Stop returns once every race it admitted has posted the vote that settles its nonces. See race.md, "Stop".
+// Stop returns once every race it admitted has posted its due votes and handed the rest on. See race.md, "Stop".
 func (e *Engine) Stop() {
 	e.mu.Lock()
 	e.stopped = true
@@ -411,16 +411,40 @@ func (e *Engine) poster(escrowID string, params any) TimeoutPoster {
 }
 
 func (e *Engine) queueVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, afterPost, markSettled func()) {
+	due := func() time.Time { return earliestDue(steps, poster) }
+	unripe := func() bool { return due().After(e.settles.now()) }
 	task := settleTask{
-		deadline: func() time.Time { return earliestDue(steps, poster) },
+		deadline: due,
+		wake:     e.stopping,
 		post: func() {
-			retries := settleSteps(settleContext(outcome.RequestID), poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
+			// A vote not yet due at Stop is left owed in the store or to the next boot's sweep.
+			if e.stopping.Err() != nil && unripe() {
+				markSettled()
+				return
+			}
+			ctx, release := e.cancelUnripeOnStop(settleContext(outcome.RequestID), unripe)
+			defer release()
+			retries := settleSteps(ctx, poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
+			if ctx.Err() != nil {
+				markSettled()
+				return
+			}
 			e.payRefusals(outcome.EscrowID, steps, retries)
 			afterPost()
 			e.retryRefusedVotes(outcome, poster, retries, markSettled, 0)
 		},
 	}
 	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
+}
+
+func (e *Engine) cancelUnripeOnStop(ctx context.Context, unripe func() bool) (context.Context, func()) {
+	ctx, cancel := context.WithCancel(ctx)
+	stop := context.AfterFunc(e.stopping, func() {
+		if unripe() {
+			cancel()
+		}
+	})
+	return ctx, func() { stop(); cancel() }
 }
 
 func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, markSettled func(), round int) {

@@ -44,14 +44,15 @@ func stuckMoneyCounted(label string) expectThat {
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one and take participant 0 offline for everything, so the attempt it is given stays Pending with no receipt while the race hedges and answers.
+//  1. Boot with the warm-up probe armed and a guarantee of one, take participant 0 offline for everything, so the attempt it is given stays Pending with no receipt while the race hedges and answers, and take participants 1 and 2 offline for votes, so a refusal vote reaches 1 of the 2 it needs.
 //  2. Send eight requests one after another, then restart the gateway at once, before any refusal vote at +65 s.
-//  3. Advance ten minutes; assert a Pending record outlived the retry ladder, the report counts stuck money, and the escrow still serves: nothing waited on it.
+//  3. Advance ten minutes; assert a Pending record outlived the retry ladder the restarted gateway ran, the report counts stuck money, and the escrow still serves: nothing waited on it.
 //  4. Cross into epoch 8, move inside the settle margin, advance three minutes, and assert the escrow settled with the stuck reservation paid out at finalize (`settlement match` at every step).
 func TestAPendingRecordWhoseLadderARestartCutIsStuckNotWaitedOn(t *testing.T) {
 	spec := plannerSpec()
+	spec.armedFloor = true
 	spec.model.fullContextSlots = 1
-	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
+	spec.behaviours = map[int]participantBehaviour{0: {offline: true}, 1: {votesOffline: true}, 2: {votesOffline: true}}
 	spec.steps = []harnessStep{
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 8, sequential: true},
 		restartGateway{},
@@ -72,12 +73,13 @@ func TestAPendingRecordWhoseLadderARestartCutIsStuckNotWaitedOn(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one and make every participant stall after its receipt.
+//  1. Boot with the warm-up probe armed and a guarantee of one, and make every participant stall after its receipt.
 //  2. Send one request and advance six minutes; assert the report counts the Started reservations as late and the escrow serves, never held.
-//  3. Advance thirty-five minutes; assert no Started record is left and the escrow was charged nothing for them: swept after the deadline and refunded (`money identity`, `active escrow routes` at every step).
+//  3. Advance thirty-five minutes; assert no Started record is left and the escrow was charged only the finished warm-up probe's cost: swept after the deadline and refunded (`money identity`, `active escrow routes` at every step).
 func TestAStalledExecutorIsLateThenSwept(t *testing.T) {
 	spec := plannerSpec()
 	spec.model.fullContextSlots = 1
+	spec.armedFloor = true
 	spec.steps = []harnessStep{
 		changeParticipants{change: func(behaviour *participantBehaviour) { behaviour.stall = true }},
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 1},
@@ -92,8 +94,8 @@ func TestAStalledExecutorIsLateThenSwept(t *testing.T) {
 		advance{by: 35 * time.Minute},
 		expectThat{label: "swept and refunded", verify: func(harness *gatewayHarness) error {
 			costs, _, _, _ := machineMoney(harness, harness.seededIDs[0])
-			if hasRecord(harness, harness.seededIDs[0], types.StatusStarted) || costs != 0 {
-				return fmt.Errorf("Started left %v, costs %d, want swept and nothing charged", hasRecord(harness, harness.seededIDs[0], types.StatusStarted), costs)
+			if hasRecord(harness, harness.seededIDs[0], types.StatusStarted) || costs != warmUpProbeCost {
+				return fmt.Errorf("Started left %v, costs %d, want swept and only the warm-up probe's %d charged", hasRecord(harness, harness.seededIDs[0], types.StatusStarted), costs, warmUpProbeCost)
 			}
 			return nil
 		}},
@@ -102,13 +104,14 @@ func TestAStalledExecutorIsLateThenSwept(t *testing.T) {
 }
 
 // Test flow:
-//  1. Widen the admission limit to 50 requests per 10 000 weight (the default would answer half the burst with 429), make every participant stall after its receipt, and send two hundred requests at one instant across the seeded escrow and the one the guarantee funds: a request whose escrow's 64-waiter dispatch buffer is full is offered to the other escrow.
+//  1. Boot with the warm-up probe armed, widen the admission limit to 50 requests per 10 000 weight (the default would answer half the burst with 429), make every participant stall after its receipt, and send two hundred requests at one instant across the seeded escrow and the one the guarantee funds: a request whose escrow's 64-waiter dispatch buffer is full is offered to the other escrow.
 //  2. Advance one minute and count the Started records.
 //  3. Restart the gateway: the races and the timeout votes they owed die with the old process, so only the sweep can clear the records; assert the restart severed the open sessions and every counted record is still Started.
 //  4. Advance past the execution timeout, its buffer and the sweep grace, plus one tick per eight records and two more.
 //  5. Assert no Started record is left on any escrow: the 8-vote sweep budget drained the backlog in time (`active escrow routes` at every step).
 func TestTwoHundredOverdueRecordsDrainWithinTheSweepBudget(t *testing.T) {
 	spec := plannerSpec()
+	spec.armedFloor = true
 	spec.environment = map[string]string{"GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT": "50"}
 	started := 0
 	spec.steps = []harnessStep{
@@ -162,11 +165,12 @@ func TestTwoHundredOverdueRecordsDrainWithinTheSweepBudget(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot over sixteen participants and a group of sixteen, take participant 0 offline and seven others' votes offline, so a refusal vote reaches 8 of the 11 it needs.
+//  1. Boot with the warm-up probe armed over sixteen participants and a group of sixteen, take participant 0 offline and seven others' votes offline, so a refusal vote reaches 8 of the 11 it needs.
 //  2. Send sixteen requests one after another and advance ten minutes; assert a Pending record outlived the ladder, the report counts it stuck, and the escrow serves.
 //  3. Cross into epoch 8, move inside the margin, advance three minutes, and assert the escrow settled: the loss is accounted, not waited on (`settlement match` at every step).
 func TestARefusalVoteShortOfQuorumIsAccountedStuck(t *testing.T) {
 	spec := plannerSpec()
+	spec.armedFloor = true
 	spec.participants, spec.groupSize, spec.model.fullContextSlots = 16, 16, 1
 	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
 	for participant := 1; participant <= 7; participant++ {
@@ -256,12 +260,13 @@ func TestAChallengedRecordIsStuckMoney(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot with three escrows of 78 500 under a guarantee of two, full but holding little above it: their money past one full-context request each (about 133 500) covers the two slots the model needs (131 112) with about two thousand to spare, while participant 1 validates everything and votes it invalid.
+//  1. Boot with the warm-up probe armed and three escrows of 79 000 under a guarantee of two, full but holding little above it: their money past one full-context request each (about 134 300: 132 786 measured at 78 500, plus 1 500) covers the two slots the model needs (about 132 900 with the probe armed, 131 112 without) with about 1 400 to spare, less than the challenged money, while participant 1 validates everything and votes it invalid.
 //  2. Send six rounds of four small requests ten seconds apart and advance two minutes.
 //  3. Assert the escrows hold Challenged records, nothing was created although their reservations would push the model's need past its money if they counted as demand, and the report counts the challenged money stuck (`create reason` at every step).
 func TestChallengedMoneyDrivesNoCreate(t *testing.T) {
 	spec := plannerSpec()
-	spec.seeded = repeatSeeded(3, 78_500, regularRole)
+	spec.armedFloor = true
+	spec.seeded = repeatSeeded(3, 79_000, regularRole)
 	spec.validationRate = everyValidatorChecks
 	spec.behaviours = map[int]participantBehaviour{1: {votesInvalid: true}}
 	spec.steps = append(requestRounds(6, 4, 10*time.Second),

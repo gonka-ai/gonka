@@ -39,7 +39,7 @@ func benchmarkHandle(b *testing.B) sessionHandle {
 			status = types.StatusPending
 		}
 		escrowState.Inferences[id] = &types.InferenceRecord{
-			Status: status, ExecutorSlot: uint32(id % 4), InputLength: 2_000, MaxTokens: 512, ReservedCost: 2_512, StartedAt: 946_684_800,
+			Status: status, ExecutorSlot: uint32(id % 4), InputLength: 2_000, MaxTokens: 512, ReservedCost: 2_512, StartedAtTimeMs: 946_684_800_000,
 		}
 	}
 	escrowState.LatestNonce = benchmarkUnsealedRecords

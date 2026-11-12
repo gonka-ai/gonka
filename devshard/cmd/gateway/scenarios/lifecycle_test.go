@@ -36,11 +36,12 @@ func requestRounds(rounds, requestsPerRound int, gap time.Duration) []harnessSte
 }
 
 // Test flow:
-//  1. Take participant 0 offline for everything, so the nonces it executes never get a receipt.
+//  1. Boot with the warm-up probe armed and take participant 0 offline for everything, so the nonces it executes never get a receipt.
 //  2. Send eight requests one after another on the seeded escrow, then advance four minutes.
 //  3. Assert slot 0 was charged a miss: its refusal was voted through and the reservation returned (`money identity` holds every step).
 func TestARefusedNonceIsRefundedByTheVote(t *testing.T) {
 	spec := defaultSpec()
+	spec.armedFloor = true
 	spec.behaviours = map[int]participantBehaviour{0: {offline: true}}
 	spec.steps = []harnessStep{
 		sendRequests{promptBytes: 200, maxTokens: 64, count: 8, sequential: true},

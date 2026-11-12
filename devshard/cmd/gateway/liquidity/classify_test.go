@@ -33,57 +33,62 @@ func TestClassifyPutsEachRecordInItsClass(t *testing.T) {
 	}{
 		{
 			name:   "a pending record under five minutes old returns the surplus of its input",
-			record: types.InferenceRecord{Status: types.StatusPending, StartedAt: 9_900, InputLength: 400, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusPending, StartedAtTimeMs: 9_900_000, InputLength: 400, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Returning: 3_000, Full: true},
 		},
 		{
 			name:   "a pending record past five minutes but inside the retry ladder is late",
-			record: types.InferenceRecord{Status: types.StatusPending, StartedAt: 9_600, InputLength: 400, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusPending, StartedAtTimeMs: 9_600_000, InputLength: 400, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Late: 10_000, Full: true},
 		},
 		{
 			name:   "a pending record past the retry ladder is stuck",
-			record: types.InferenceRecord{Status: types.StatusPending, StartedAt: 9_400, InputLength: 400, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusPending, StartedAtTimeMs: 9_400_000, InputLength: 400, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Stuck: 10_000, Full: true, Idle: true},
 		},
 		{
 			name:   "a started record under five minutes old returns the surplus of its input",
-			record: types.InferenceRecord{Status: types.StatusStarted, StartedAt: 9_900, ConfirmedAt: 9_905, InputLength: 400, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusStarted, StartedAtTimeMs: 9_900_000, ConfirmedAtTimeMs: 9_905_000, InputLength: 400, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Returning: 3_000, Full: true},
 		},
 		{
 			name:   "a started record past five minutes and before its deadline is late",
-			record: types.InferenceRecord{Status: types.StatusStarted, StartedAt: 9_000, ConfirmedAt: 9_010, InputLength: 400, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusStarted, StartedAtTimeMs: 9_000_000, ConfirmedAtTimeMs: 9_010_000, InputLength: 400, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Late: 10_000, Full: true},
 		},
 		{
 			name:   "a started record past its deadline is stuck",
-			record: types.InferenceRecord{Status: types.StatusStarted, StartedAt: 7_000, ConfirmedAt: 7_010, InputLength: 400, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusStarted, StartedAtTimeMs: 7_000_000, ConfirmedAtTimeMs: 7_010_000, InputLength: 400, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Stuck: 10_000, Full: true, Idle: true},
 		},
 		{
-			name:   "an executor stamp later than the refusal window is clamped to it",
-			record: types.InferenceRecord{Status: types.StatusStarted, StartedAt: 8_000, ConfirmedAt: 9_500, InputLength: 400, ReservedCost: 10_000},
-			want:   Escrow{Free: 5_000, Stuck: 10_000, Full: true, Idle: true},
+			name:   "a confirm time later than the start is not clamped",
+			record: types.InferenceRecord{Status: types.StatusStarted, StartedAtTimeMs: 8_000_000, ConfirmedAtTimeMs: 9_500_000, InputLength: 400, ReservedCost: 10_000},
+			want:   Escrow{Free: 5_000, Late: 10_000, Full: true},
 		},
 		{
-			name:   "an unstamped started record is anchored on its start",
-			record: types.InferenceRecord{Status: types.StatusStarted, StartedAt: 8_000, InputLength: 400, ReservedCost: 10_000},
-			want:   Escrow{Free: 5_000, Stuck: 10_000, Full: true, Idle: true},
+			name:   "a started record without a confirm time is late, never stuck",
+			record: types.InferenceRecord{Status: types.StatusStarted, StartedAtTimeMs: 8_000_000, InputLength: 400, ReservedCost: 10_000},
+			want:   Escrow{Free: 5_000, Late: 10_000, Full: true},
+		},
+		{
+			name:   "a pending record without a start time is late, never stuck",
+			record: types.InferenceRecord{Status: types.StatusPending, InputLength: 400, ReservedCost: 10_000},
+			want:   Escrow{Free: 5_000, Late: 10_000, Full: true},
 		},
 		{
 			name:   "a challenged record is stuck by what it was charged and keeps nothing busy",
-			record: types.InferenceRecord{Status: types.StatusChallenged, StartedAt: 9_990, ActualCost: 700, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusChallenged, StartedAtTimeMs: 9_990_000, ActualCost: 700, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Stuck: 700, Full: true, Idle: true},
 		},
 		{
 			name:   "a finished record is no class at all",
-			record: types.InferenceRecord{Status: types.StatusFinished, StartedAt: 9_990, ReservedCost: 10_000},
+			record: types.InferenceRecord{Status: types.StatusFinished, StartedAtTimeMs: 9_990_000, ReservedCost: 10_000},
 			want:   Escrow{Free: 5_000, Full: true, Idle: true},
 		},
 		{
 			name:   "an estimate never exceeds the reservation it comes from",
-			record: types.InferenceRecord{Status: types.StatusPending, StartedAt: 9_990, InputLength: math.MaxUint64, ReservedCost: 5},
+			record: types.InferenceRecord{Status: types.StatusPending, StartedAtTimeMs: 9_990_000, InputLength: math.MaxUint64, ReservedCost: 5},
 			want:   Escrow{Free: 5_000, Returning: 5, Full: true},
 		},
 	}
@@ -129,7 +134,7 @@ func TestClassifyCallsAnEscrowFullOnlyWhenItPaysASlot(t *testing.T) {
 //  2. Assert it returns nothing for the record but still counts it as keeping the escrow busy.
 func TestClassifyEstimatesNoSurplusWithoutABytesPerTokenRatio(t *testing.T) {
 	t.Parallel()
-	input := classifyInput(types.InferenceRecord{Status: types.StatusPending, StartedAt: 9_990, InputLength: 400, ReservedCost: 10_000})
+	input := classifyInput(types.InferenceRecord{Status: types.StatusPending, StartedAtTimeMs: 9_990_000, InputLength: 400, ReservedCost: 10_000})
 	input.Price.BytesPerToken = 0
 
 	got := Classify(input)
