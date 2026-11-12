@@ -1834,6 +1834,94 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 		"a single stalled winner is below the participant failure threshold")
 }
 
+// blockedClientWriter holds its first Write for delay, standing in for a client
+// that stops reading for a while and then resumes.
+type blockedClientWriter struct {
+	syncedBuffer
+	delay   time.Duration
+	blocked atomic.Bool
+}
+
+func (w *blockedClientWriter) Write(p []byte) (int, error) {
+	if w.blocked.CompareAndSwap(false, true) {
+		time.Sleep(w.delay)
+	}
+	return w.syncedBuffer.Write(p)
+}
+
+// TestRunInference_SlowClientWriteIsNotAnExecutorStall covers a winner whose
+// downstream write blocks past both stall thresholds. Forwarding is synchronous,
+// so the transport reads nothing upstream while the client is not reading; that
+// silence is the client's, not the executor's, and must neither cancel the
+// attempt as stalled nor cost the host a performance sample.
+func TestRunInference_SlowClientWriteIsNotAnExecutorStall(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Millisecond, 60*time.Millisecond)
+	release := make(chan struct{})
+	close(release)
+	client := &streamContentThenReleaseClient{releaseCh: release}
+	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	client.respond = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
+
+	w := &blockedClientWriter{delay: 250 * time.Millisecond}
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), w, nil)
+	require.NoError(t, err, "a client that stopped reading must not turn into an executor stall")
+	require.Contains(t, w.String(), `"content":"late"`)
+
+	require.Eventually(t, func() bool {
+		return env.proxy.redundancy.perf.Stats(0).TotalSamples == 1
+	}, time.Second, 10*time.Millisecond)
+	require.Equal(t, 1.0, env.proxy.redundancy.perf.Stats(0).ResponsiveRate,
+		"the executor answered promptly and must keep a responsive sample")
+}
+
+// TestRaceWriterClientWriteSuspendsTheStallClock pins both halves of the
+// downstream-wait rule. While the client holds the write no stall deadline is
+// planned or due; once it returns, the anchor has moved by the blocked time, so
+// the executor still gets the full InterChunkStallTimeout from the end of the
+// write rather than being cancelled the moment the client resumes.
+func TestRaceWriterClientWriteSuspendsTheStallClock(t *testing.T) {
+	setInterChunkStallTimeouts(t, 30*time.Millisecond, 60*time.Millisecond)
+	block := 150 * time.Millisecond
+	client := &blockedClientWriter{delay: block}
+
+	ctx := context.Background()
+	group := newRaceGroup(ctx, ctx, "escrow-client-write", client)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-client-write",
+		nonce:        1,
+		sendTime:     time.Now(),
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	t.Cleanup(inf.releasePendingBuf)
+	writer := &raceWriter{group: group, nonce: 1, inf: inf}
+
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		_, _ = writer.Write([]byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n"))
+	}()
+	require.Eventually(t, inf.clientWriteInProgress, time.Second, time.Millisecond)
+	time.Sleep(100 * time.Millisecond) // past the cancel threshold, still inside the write
+	_, _, planned := interChunkStallDeadline(inf)
+	require.False(t, planned, "no stall deadline while the client holds the write")
+	require.False(t, inf.stallCancelExpired(time.Now()))
+	_, logged := inf.startInterChunkStall(time.Now())
+	require.False(t, logged, "a blocked client write is not an executor stall")
+
+	<-written
+	returned := time.Now()
+	require.False(t, inf.clientWriteInProgress())
+	require.False(t, inf.stallCancelExpired(returned),
+		"the executor must not be cancelled the moment the client resumes")
+	_, cancelDeadline, planned := interChunkStallDeadline(inf)
+	require.True(t, planned)
+	require.WithinDuration(t, returned.Add(60*time.Millisecond), cancelDeadline, 20*time.Millisecond,
+		"the cancel deadline restarts from the end of the client write")
+}
+
 func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
 	// Only the observational threshold is short here: the cancel threshold is left
 	// long so the release still lands first. These tests cover the log-then-resume

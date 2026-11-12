@@ -922,6 +922,12 @@ type inflight struct {
 	// ever answering. A healthy stream sends its role delta once, ahead of the
 	// content.
 	stallAnchorAt atomic.Int64
+	// clientWriteStartedAt is the unix nano a forwarded write to the client
+	// began, or 0 when none is in progress. Forwarding is synchronous, so while
+	// a slow client holds the write the transport reads nothing upstream; that
+	// silence belongs to the client, and the stall deadlines are suspended for
+	// it (see writeClient).
+	clientWriteStartedAt atomic.Int64
 	// streamTerminated is set once a `data: [DONE]` line has been forwarded to
 	// the client. Upstream then tails the body with devshard_meta /
 	// devshard_receipt, which are consumed by the transport and never reach the
@@ -1271,7 +1277,7 @@ func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 	if inf == nil || inf.probe || inflightDone(inf) || InterChunkStallLogThreshold <= 0 {
 		return attemptStall{}, false
 	}
-	if inf.streamTerminated.Load() {
+	if inf.streamTerminated.Load() || inf.clientWriteInProgress() {
 		return attemptStall{}, false
 	}
 	anchorNano := inf.stallAnchorAt.Load()
@@ -1317,7 +1323,11 @@ func (inf *inflight) stallCancelExpired(now time.Time) bool {
 	}
 	// Mirrors interChunkStallDeadline: any forwarded event starts the clock, not
 	// just content. An attempt that emitted a role chunk and then hung is a real
-	// stall with no other failure path.
+	// stall with no other failure path. A blocked client write is the client's
+	// silence, not the executor's.
+	if inf.clientWriteInProgress() {
+		return false
+	}
 	anchorNano := inf.stallAnchorAt.Load()
 	if anchorNano <= 0 {
 		return false
@@ -2094,7 +2104,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// bytes (role chunk, etc.) before the current write so SSE event
 		// ordering is preserved end-to-end.
 		if !hadContentBefore && len(rw.inf.pendingBuf) > 0 && rw.group.w != nil {
-			if _, err := rw.group.w.Write(rw.inf.pendingBuf); err != nil {
+			if _, err := rw.writeClient(rw.inf.pendingBuf); err != nil {
 				rw.inf.releasePendingBuf()
 				return 0, err
 			}
@@ -2110,7 +2120,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		// the write so a stall racing the write cannot be judged retryable
 		// after part of the answer is already on the wire.
 		rw.inf.clientVisible.Store(true)
-		return rw.group.w.Write(p)
+		return rw.writeClient(p)
 
 	case winnerNonce != 0:
 		// Another attempt has already won; suppress this attempt's stream
@@ -2134,6 +2144,33 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		rw.inf.pendingBuf = append(rw.inf.pendingBuf, p...)
 		return len(p), nil
 	}
+}
+
+// writeClient forwards p to the client and keeps the time the write blocks off
+// the executor's inter-chunk stall clock. While the write is in progress the
+// stall deadlines are suspended; once it returns, the anchor moves forward by
+// the blocked time, so the deadlines measure only upstream silence and a slow
+// client is never classified as an executor stall. Only this attempt's Write
+// goroutine moves the anchor, so the Add cannot race another writer.
+func (rw *raceWriter) writeClient(p []byte) (int, error) {
+	started := time.Now().UnixNano()
+	rw.inf.clientWriteStartedAt.Store(started)
+	n, err := rw.group.w.Write(p)
+	if blocked := time.Now().UnixNano() - started; blocked > 0 && rw.inf.stallAnchorAt.Load() > 0 {
+		rw.inf.stallAnchorAt.Add(blocked)
+	}
+	// Clear the marker only after the anchor moved, then wake the loop: a loop
+	// that saw the write in progress armed no stall timer and is waiting for
+	// this wake to re-derive the deadlines.
+	rw.inf.clientWriteStartedAt.Store(0)
+	rw.group.signalChunkForwarded()
+	return n, err
+}
+
+// clientWriteInProgress reports whether the attempt is blocked forwarding to the
+// client, which suspends its inter-chunk stall deadlines.
+func (inf *inflight) clientWriteInProgress() bool {
+	return inf.clientWriteStartedAt.Load() != 0
 }
 
 func (rw *raceWriter) retainPending(p []byte) bool {
@@ -2940,6 +2977,13 @@ func interChunkStallDeadline(inf *inflight) (logDeadline, cancelDeadline time.Ti
 	// record a stall log before content so the two stay consistent. Later empty
 	// deltas leave the anchor alone (advanceStallAnchor), or repeating them would
 	// re-arm this deadline indefinitely.
+	//
+	// A client write in progress suspends the deadlines; writeClient wakes the
+	// loop when it returns. Check it before loading the anchor, so a write
+	// that finishes in between is seen with its blocked time already added.
+	if inf.clientWriteInProgress() {
+		return time.Time{}, time.Time{}, false
+	}
 	anchorNano := inf.stallAnchorAt.Load()
 	if anchorNano <= 0 {
 		return time.Time{}, time.Time{}, false
