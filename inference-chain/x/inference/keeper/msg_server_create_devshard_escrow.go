@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 
+	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -48,7 +49,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 
 	weights := make(map[string]int64)
 	for _, vw := range epochGroup.GroupData.ValidationWeights {
-		if k.IsUnderChallenge(goCtx, vw.MemberAddress) {
+		if k.IsUnderChallenge(goCtx, vw.MemberAddress) || k.isExcludedFromEpoch(goCtx, epochIndex, vw.MemberAddress) {
 			continue
 		}
 		weights[vw.MemberAddress] = vw.Weight
@@ -128,4 +129,15 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	))
 
 	return &types.MsgCreateDevshardEscrowResponse{EscrowId: id}, nil
+}
+
+// isExcludedFromEpoch is true for a participant removed from the epoch (e.g. failed confirmation PoC);
+// its weight stays in the group data.
+func (k msgServer) isExcludedFromEpoch(ctx context.Context, epochIndex uint64, address string) bool {
+	addr, err := sdk.AccAddressFromBech32(address)
+	if err != nil {
+		return false
+	}
+	excluded, err := k.ExcludedParticipantsMap.Has(ctx, collections.Join(epochIndex, addr))
+	return err == nil && excluded
 }
