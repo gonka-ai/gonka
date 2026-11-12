@@ -288,6 +288,7 @@ func buildHostManager(
 		chainParams,
 		thresholds,
 		cfg.VoteFalseOnFetchFailure,
+		cfg.EchoValidation,
 	)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
