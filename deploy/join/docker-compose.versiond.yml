@@ -23,7 +23,7 @@
 
 x-versiond: &versiond
   image: >-
-    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
+    ${VERSIOND_IMAGE:-ghcr.io/gonka-ai/versiond:0.2.16-devshard-v6}
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
