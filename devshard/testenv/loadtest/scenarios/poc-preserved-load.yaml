@@ -1,0 +1,84 @@
+schema_version: v1
+scenario: poc-preserved-load
+seed: 42
+
+# Four identities, five containers: versiond-0/1 are one HA participant.
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 4
+  chain:
+    escrow_amount: 2000000000000000
+    max_nonce: 1000000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - {name: mock-openai-0, profile: prod-like, host: versiond-0}
+      - {name: mock-openai-1, profile: prod-like, host: versiond-1}
+      - {name: mock-openai-2, profile: prod-like, host: versiond-2}
+      - {name: mock-openai-3, profile: prod-like, host: versiond-3}
+      - {name: mock-openai-4, profile: prod-like, host: versiond-4}
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  # Baseline 0-2m, PoC 2-4m, recovery 4-10m, PoC 10-12m, recovery 12-16m.
+  duration: 16m
+  request_timeout: 2m
+  report_interval: 30s
+  max_in_flight: 256
+  traffic:
+    type: constant
+    rps: 32
+  request:
+    model: test-model
+    stream: true
+    max_tokens: 128
+    messages:
+      - {role: user, content: "Explain why a distributed inference network needs redundancy."}
+  events:
+    - id: poc-preserved-p0
+      action: poc_window
+      at: 2m
+      until: 4m
+      params: {kind: poc, preserved: versiond-0, max_error_rate: 0.10}
+    - id: poc-preserved-p1
+      action: poc_window
+      at: 10m
+      until: 12m
+      params: {kind: poc, preserved: versiond-2, max_error_rate: 0.10}
+
+gateway:
+  poc_request_mode: relaxed
+  redundancy:
+    secondary_wait_after_winner: 30s
+  escrow_rotation:
+    enabled: false
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.10
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  invariants:
+    enabled: true
+    baseline: {from: 30s, to: 1m30s}
+    trend_early: {from: 30s, to: 1m30s}
+    trend_late: {from: 8m30s, to: 9m30s}
+
+drain_timeout: 3m
+
+diagnostics:
+  logs: {tail: all}
+  cpu_profiles:
+    - {start_after: 1m, duration: 30s}
+    - {start_after: 3m, duration: 30s}
+    - {start_after: 5m, duration: 30s}
+    - {start_after: 9m, duration: 30s}
+    - {start_after: 11m, duration: 30s}
+    - {start_after: 15m, duration: 30s}

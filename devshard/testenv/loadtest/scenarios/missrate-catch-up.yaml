@@ -46,6 +46,8 @@ workload:
       mode: pause
       start_after: 10s
       duration: 30s
+      # Leave 20s of workload after recovery to expose a host that stays behind.
+      recovery: 30s
 
 gateway:
   redundancy:

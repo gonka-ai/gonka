@@ -40,7 +40,8 @@ type EscrowQueryFaultRequest struct {
 }
 
 // Mount registers POST /testenv/params, POST /testenv/epoch, POST /testenv/escrow,
-// POST /testenv/grantees, and GET /testenv/revision on g.
+// POST /testenv/grantees, POST /testenv/participant, GET /testenv/participants,
+// and GET /testenv/revision on g.
 func Mount(g *echo.Group, st *store.Store, advancer EpochAdvancer, escrowPub EscrowPublisher) {
 	if g == nil || st == nil {
 		panic("adminface: nil group or store")
@@ -49,8 +50,60 @@ func Mount(g *echo.Group, st *store.Store, advancer EpochAdvancer, escrowPub Esc
 	g.POST("/testenv/epoch", handleEpoch(st, advancer))
 	g.POST("/testenv/escrow", handleEscrow(st, escrowPub))
 	g.POST("/testenv/escrow-query-fault", handleEscrowQueryFault(st))
+	g.POST("/testenv/participant", handleParticipant(st))
+	g.GET("/testenv/participants", handleListParticipants(st))
 	g.POST("/testenv/grantees", handleGrantees(st))
 	g.GET("/testenv/revision", handleRevision(st))
+}
+
+// ParticipantRequest sets how the Participant query answers for one address.
+type ParticipantRequest struct {
+	Address string `json:"address"`
+	Mode    string `json:"mode"` // ok | unavailable | absent
+}
+
+func handleParticipant(st *store.Store) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var req ParticipantRequest
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if req.Address == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "address is required")
+		}
+		mode := store.ParticipantMode(req.Mode)
+		switch mode {
+		case store.ParticipantModeOK, store.ParticipantModeUnavailable, store.ParticipantModeAbsent:
+		default:
+			return echo.NewHTTPError(http.StatusBadRequest, "mode must be ok, unavailable or absent")
+		}
+		st.SetParticipantMode(req.Address, mode)
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "address": req.Address, "mode": mode})
+	}
+}
+
+// ParticipantInfo is one entry of GET /testenv/participants.
+type ParticipantInfo struct {
+	Address      string `json:"address"`
+	InferenceURL string `json:"inference_url"`
+	Mode         string `json:"mode"`
+}
+
+// handleListParticipants lists every seeded participant whatever its query
+// mode, like the chain's active set, which only changes at an epoch boundary.
+func handleListParticipants(st *store.Store) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		participants := st.ListParticipants()
+		out := make([]ParticipantInfo, 0, len(participants))
+		for _, p := range participants {
+			out = append(out, ParticipantInfo{
+				Address:      p.Address,
+				InferenceURL: p.InferenceUrl,
+				Mode:         string(st.GetParticipantMode(p.Address)),
+			})
+		}
+		return c.JSON(http.StatusOK, out)
+	}
 }
 
 func handleEscrowQueryFault(st *store.Store) echo.HandlerFunc {
@@ -253,6 +306,31 @@ func (c *Client) PatchGrantees(ctx context.Context, req GranteesRequest) error {
 		return errors.New("adminface: client not configured")
 	}
 	return c.postJSON(ctx, "/testenv/grantees", req)
+}
+
+// ListParticipants reads GET /testenv/participants from mock-chain admin.
+func (c *Client) ListParticipants(ctx context.Context) ([]ParticipantInfo, error) {
+	if c == nil || c.baseURL == "" {
+		return nil, errors.New("adminface: client not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/testenv/participants", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("adminface GET /testenv/participants: %s: %s", resp.Status, string(b))
+	}
+	var out []ParticipantInfo
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 // GetRevision reads block_height and params_block_height from mock-chain admin.

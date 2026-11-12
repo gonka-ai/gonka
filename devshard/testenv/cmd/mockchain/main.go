@@ -12,6 +12,7 @@ import (
 
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/ledgerface"
 	"devshard/testenv/mockchain/rpcface"
 	"devshard/testenv/mockchain/seed"
 	"devshard/testenv/mockchain/txledger"
@@ -47,6 +48,7 @@ func main() {
 
 	adminAddr := envOr("MOCK_CHAIN_TESTENV_ADDR", ":9191")
 	adminSrv := adminface.NewServer(st, rpcSvc, rpcSvc)
+	ledgerface.Mount(adminSrv.Group(), st, ledger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

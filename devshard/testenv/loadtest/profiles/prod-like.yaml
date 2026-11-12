@@ -1,0 +1,12 @@
+schema_version: v1
+profile: prod-like
+
+# Lognormal TTFT and token interval with seeded per-request jitter. The fixed
+# values are medians; the *_p99 values set the tail.
+ttft: 300ms
+ttft_p99: 1500ms
+token_interval: 25ms
+token_interval_p99: 80ms
+workers: 100
+queue: 500
+failures: []

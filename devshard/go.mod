@@ -23,6 +23,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gtank/ristretto255 v0.1.2
 	github.com/jackc/pgx/v5 v5.8.0
+	github.com/klauspost/compress v1.18.1
 	github.com/labstack/echo/v4 v4.15.1
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
 	github.com/prometheus/client_golang v1.23.2
@@ -192,7 +193,6 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/jmhodges/levigo v1.0.0 // indirect
-	github.com/klauspost/compress v1.18.1 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
 	github.com/kr/text v0.2.0 // indirect
