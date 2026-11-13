@@ -25,6 +25,7 @@ var floodLogPrefixes = []string{
 	"Unknown message type",
 	"Received unknown message",
 	"Ignoring message received during sync",
+	"insufficient spendable funds",
 }
 
 type floodLevel int

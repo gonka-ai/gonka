@@ -148,6 +148,29 @@ func TestFloodLoggerCapsSyncTimeMessages(t *testing.T) {
 	require.Equal(t, 2, countLines(&buf, "Ignoring message received during sync"))
 }
 
+func TestFloodLoggerCapsInsufficientSpendableFunds(t *testing.T) {
+	var buf bytes.Buffer
+	clock := &fakeClock{t: time.Unix(0, 0)}
+	logger := newTestFloodLogger(&buf, clock, 2).With(log.ModuleKey, "x/bank")
+
+	for i := 0; i < 100; i++ {
+		logger.Error("insufficient spendable funds",
+			"spendable", "0ngonka",
+			"required", "100000000000ngonka",
+			"account", "gonka1victim",
+			"stack", "goroutine 1 [running]:")
+	}
+
+	require.Equal(t, 2, countLines(&buf, "insufficient spendable funds"))
+
+	clock.t = clock.t.Add(time.Minute)
+	logger.Info("next window")
+
+	require.Equal(t, 1, countLines(&buf, "suppressed repeated log lines"))
+	require.Contains(t, buf.String(), "suppressed=98")
+	require.Contains(t, buf.String(), "module=x/bank")
+}
+
 func TestFloodLoggerSummaryUsesOriginatingLogger(t *testing.T) {
 	var buf bytes.Buffer
 	clock := &fakeClock{t: time.Unix(0, 0)}
