@@ -289,7 +289,11 @@ func (c UpdateNode) Execute(b *Broker) {
 	}
 
 	// Apply update
+	endpointMoved := existing.Node.Host != updated.Host || existing.Node.InferencePort != updated.InferencePort || existing.Node.InferenceSegment != updated.InferenceSegment
 	existing.Node = updated
+	if deploymentChanged || endpointMoved {
+		existing.prefixes = nil
+	}
 	if deploymentChanged {
 		if shouldCancelForDeploymentChange(existing.State) {
 			existing.State.cancelInFlightTask()

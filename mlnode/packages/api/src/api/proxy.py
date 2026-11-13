@@ -1,6 +1,11 @@
 import asyncio
+import base64
+import binascii
+import hashlib
 import os
-from typing import Dict, List, Optional, Set
+import re
+from collections import OrderedDict
+from typing import Dict, List, Optional, Sequence, Set
 
 import uvicorn
 import httpx
@@ -29,6 +34,24 @@ vllm_healthy: Dict[int, bool] = {}
 HEALTH_FAIL_STREAK: int = 3
 vllm_health_fail_streak: Dict[int, int] = {}
 vllm_counts: Dict[int, int] = {}
+# Prefix routing (X-Session-Key / X-Prefix-Hashes): candidates are instances within
+# PREFIX_MAX_LEAD connections of the least loaded; each keeps an LRU of the hashes sent to it.
+PREFIX_MAX_LEAD: int = 4
+PREFIX_MAX_HASHES: int = 512
+
+
+def _prefix_index_capacity(default: int = 31250) -> int:
+    """INFERENCE_PREFIX_INDEX_CAPACITY as a positive int; anything else -> default."""
+    try:
+        return max(1, int(os.getenv("INFERENCE_PREFIX_INDEX_CAPACITY", default)))
+    except ValueError:
+        return default
+
+
+PREFIX_INDEX_CAPACITY: int = _prefix_index_capacity()
+vllm_prefix_index: Dict[int, "OrderedDict[bytes, None]"] = {}
+_SESSION_KEY_RE = re.compile(r"[0-9a-f]{64}")
+
 poc_status_by_port: Dict[int, str] = {}  # PoC status: "IDLE", "GENERATING", "STOPPED", or ""
 pow_generate_rr_index: int = 0
 vllm_pick_lock = asyncio.Lock()
@@ -74,7 +97,10 @@ async def _proxy_request_to_backend(request: Request, backend_path: str) -> Resp
         return Response(status_code=503, content=b"Service is shutting down")
     
     try:
-        port = await _pick_vllm_backend()
+        port = await _pick_vllm_backend(
+            _parse_session_key(request.headers.get("x-session-key")),
+            _parse_prefix_hashes(request.headers.get("x-prefix-hashes")),
+        )
     except RuntimeError:
         return Response(status_code=503, content=b"No vLLM backend available")
     
@@ -147,13 +173,78 @@ async def _proxy_request_to_backend(request: Request, backend_path: str) -> Resp
     )
 
 
-async def _pick_vllm_backend() -> int:
-    """Least-connections picker for vLLM backends."""
+def _parse_session_key(value: Optional[str]) -> Optional[str]:
+    """The 64-lowercase-hex session key, or None when absent or malformed."""
+    if value is None or not _SESSION_KEY_RE.fullmatch(value):
+        return None
+    return value
+
+
+def _parse_prefix_hashes(value: Optional[str]) -> Optional[List[bytes]]:
+    """Opaque 8-byte block hashes from base64, or None when absent or malformed (never raises)."""
+    if not value or len(value) > (PREFIX_MAX_HASHES * 8 + 2) // 3 * 4:
+        return None
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        return None
+    if not raw or len(raw) % 8 or len(raw) > PREFIX_MAX_HASHES * 8:
+        return None
+    return [raw[i:i + 8] for i in range(0, len(raw), 8)]
+
+
+def _rendezvous_score(session_key: str, port: int) -> int:
+    """Same ranking as the broker's rendezvousScore: sha256(key, 0, node id), first 8 bytes."""
+    digest = hashlib.sha256(session_key.encode() + b"\0" + str(port).encode()).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
+def _prefix_match_len(port: int, hashes: Sequence[bytes]) -> int:
+    """Number of leading hashes that instance `port` has already been sent."""
+    index = vllm_prefix_index.get(port)
+    if not index:
+        return 0
+    n = 0
+    for h in hashes:
+        if h not in index:
+            break
+        n += 1
+    return n
+
+
+def _remember_prefix(port: int, hashes: Sequence[bytes]) -> None:
+    index = vllm_prefix_index.setdefault(port, OrderedDict())
+    for h in hashes:
+        index[h] = None
+        index.move_to_end(h)
+    while len(index) > PREFIX_INDEX_CAPACITY:
+        index.popitem(last=False)
+
+
+async def _pick_vllm_backend(
+    session_key: Optional[str] = None,
+    prefix_hashes: Optional[Sequence[bytes]] = None,
+) -> int:
+    """Least-connections picker; with a session key and/or prefix hashes it prefers, among
+    instances within PREFIX_MAX_LEAD of the least loaded, the longest prefix match, then the
+    rendezvous winner for the key."""
     async with vllm_pick_lock:
         live = [p for p, ok in vllm_healthy.items() if ok]
         if not live:
             raise RuntimeError("no vLLM backend")
-        port = min(live, key=lambda p: vllm_counts.get(p, 0))
+        if not session_key and not prefix_hashes:
+            port = min(live, key=lambda p: vllm_counts.get(p, 0))
+        else:
+            bound = min(vllm_counts.get(p, 0) for p in live) + PREFIX_MAX_LEAD
+            candidates = [p for p in live if vllm_counts.get(p, 0) <= bound]
+            port = min(candidates, key=lambda p: (
+                -(_prefix_match_len(p, prefix_hashes) if prefix_hashes else 0),
+                -(_rendezvous_score(session_key, p) if session_key else 0),
+                vllm_counts.get(p, 0),
+                p,
+            ))
+            if prefix_hashes:
+                _remember_prefix(port, prefix_hashes)
         vllm_counts[port] += 1
         return port
 
@@ -266,10 +357,11 @@ async def _health_check_vllm(interval: float = 2.0):
 
 def setup_vllm_proxy(backend_ports: List[int]):
     """Setup vLLM proxy with given backend ports."""
-    global vllm_backend_ports, vllm_counts, vllm_setup_generation
+    global vllm_backend_ports, vllm_counts, vllm_setup_generation, vllm_prefix_index
     vllm_backend_ports = backend_ports
     vllm_setup_generation += 1
     vllm_counts = {p: 0 for p in vllm_backend_ports}
+    vllm_prefix_index = {}  # a vLLM (re)start empties its KV cache
     vllm_healthy.update({p: False for p in vllm_backend_ports})
     poc_status_by_port.update({p: "" for p in vllm_backend_ports})
     logger.info("vLLM proxy setup with %d backends: %s", len(backend_ports), backend_ports)
