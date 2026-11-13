@@ -11,6 +11,44 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+func TestEnsureGroupGasCeilings_AddsWasmAndIbc(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	kept := make([]*types.FeeGroup, 0, 2)
+	for _, group := range params.FeeParams.Groups {
+		if group.Name == types.FeeGroupEpoch || group.Name == types.FeeGroupCosmos {
+			group.MaxGas = 50
+			kept = append(kept, group)
+		}
+	}
+	params.FeeParams.Groups = kept
+	params.FeeParams.EnabledFeeGroups = []string{types.FeeGroupEpoch, types.FeeGroupCosmos}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, ensureGroupGasCeilings(ctx, k))
+	require.NoError(t, ensureGroupGasCeilings(ctx, k))
+	require.NoError(t, enableWasmFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos, types.FeeGroupWasm}, updated.FeeParams.EnabledFeeGroups)
+	require.NotContains(t, updated.FeeParams.EnabledFeeGroups, types.FeeGroupIBC)
+	wasm := updated.FeeParams.GroupByName(types.FeeGroupWasm)
+	ibc := updated.FeeParams.GroupByName(types.FeeGroupIBC)
+	require.Equal(t, types.MaxGroupGas, wasm.MaxGas)
+	require.Equal(t, uint64(wasmMinGasPriceNgonka), wasm.MinGasPrice)
+	require.Equal(t, types.MaxGroupGas, ibc.MaxGas)
+	require.Equal(t, uint64(0), ibc.MinGasPrice)
+	for _, group := range updated.FeeParams.Groups {
+		if types.IsRequiredCappedFeeGroup(group.Name) {
+			continue
+		}
+		require.Zero(t, group.MaxGas, group.Name)
+	}
+	require.NoError(t, updated.FeeParams.Validate())
+}
+
 func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.17", UpgradeName)
 }
@@ -123,7 +161,8 @@ func TestEnableWasmFeeGroup_IdempotentAndKeepsExistingPrice(t *testing.T) {
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	fp := types.DefaultFeeParams()
-	fp.Groups = append(fp.Groups, &types.FeeGroup{Name: types.FeeGroupWasm, MinGasPrice: 4})
+	fp.Groups = append(fp.Groups, &types.FeeGroup{Name: types.FeeGroupWasm, MinGasPrice: 4, MaxGas: types.MaxGroupGas})
+	fp.Groups = append(fp.Groups, &types.FeeGroup{Name: types.FeeGroupIBC, MaxGas: types.MaxGroupGas})
 	fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupWasm)
 	params.FeeParams = fp
 	require.NoError(t, k.SetParams(ctx, params))

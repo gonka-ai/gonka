@@ -220,6 +220,18 @@ func IsKnownFeeGroup(name string) bool {
 	return ok
 }
 
+// IsRequiredCappedFeeGroup reports whether name must carry a non-zero max_gas.
+// Pricing enablement is separate: a required group can be absent from
+// enabled_fee_groups and still reject declared gas above its ceiling.
+func IsRequiredCappedFeeGroup(name string) bool {
+	switch name {
+	case FeeGroupWasm, FeeGroupIBC:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsNetworkDuty reports whether msg is a protocol obligation that ante
 // exempts from fees. This set is compiled, not a gov param: enabling a fee
 // group does not charge these types until a later upgrade removes them here.

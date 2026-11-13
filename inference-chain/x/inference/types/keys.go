@@ -166,4 +166,7 @@ var (
 	TransientSPRTValuesKey            = collections.NewPrefix(3)
 	TransientEpochDataModelMetaKey    = collections.NewPrefix(4)
 	TransientEpochDataModelWeightKey  = collections.NewPrefix(5)
+	// Per-block declared gas already reserved for one capped fee group.
+	// The transient store drops this at commit.
+	TransientFeeGroupGasPrefix = collections.NewPrefix(6)
 )

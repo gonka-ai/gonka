@@ -37,6 +37,11 @@ const (
 	// is a separate parameter. At 1 ngonka per gas this is 0.0005 gonka.
 	// Updating an existing participant does not pay it.
 	NewParticipantGas uint64 = 500_000
+	// MaxGroupGas is the compiled safety maximum for one fee group's
+	// declared-gas ceiling and its per-block declared-gas budget.
+	// WASM and IBC must be from 1 through this value. Every other group
+	// must keep max_gas at 0, which adds no ceiling.
+	MaxGroupGas uint64 = 100_000_000
 
 	StoredBytesUnitB  = "b"
 	StoredBytesUnitKB = "kb"
@@ -45,6 +50,8 @@ const (
 
 // DefaultFeeParams returns the fee tree module migration 14 installs.
 // The StoreCommit new-key price is added later by the v0.2.17 upgrade.
+// WASM and IBC declared-gas ceilings are written by that upgrade too,
+// not by this default tree.
 func DefaultFeeParams() *FeeParams {
 	storeCommitURL := sdk.MsgTypeURL(&MsgPoCV2StoreCommit{})
 	hdURL := sdk.MsgTypeURL(&MsgSubmitHardwareDiff{})
@@ -114,6 +121,9 @@ func (fp *FeeParams) Validate() error {
 		if g.MinGasPrice > maxMinGasPrice {
 			return fmt.Errorf("groups[%q].min_gas_price %d exceeds safety limit of %d", g.Name, g.MinGasPrice, maxMinGasPrice)
 		}
+		if err := validateGroupMaxGas(g); err != nil {
+			return err
+		}
 		if err := validatePeriodBase(g.Base, fmt.Sprintf("groups[%q].base", g.Name)); err != nil {
 			return err
 		}
@@ -170,6 +180,59 @@ func (fp *FeeParams) Validate() error {
 		}
 	}
 	return nil
+}
+
+func validateGroupMaxGas(g *FeeGroup) error {
+	if IsRequiredCappedFeeGroup(g.Name) {
+		if g.MaxGas == 0 || g.MaxGas > MaxGroupGas {
+			return fmt.Errorf("groups[%q].max_gas %d must be between 1 and %d", g.Name, g.MaxGas, MaxGroupGas)
+		}
+		return nil
+	}
+	if g.MaxGas != 0 {
+		return fmt.Errorf("groups[%q].max_gas must be 0", g.Name)
+	}
+	return nil
+}
+
+// GroupGasExceeds reports whether adding gas to used crosses max.
+// The subtraction form avoids a uint64 overflow.
+func GroupGasExceeds(used, gas, max uint64) bool {
+	return used > max || gas > max-used
+}
+
+// CappedGroups returns each stored group with a non-zero max_gas that msgs
+// touch, once. A transaction's whole declared gas is attributed to every
+// capped group it touches. A required WASM or IBC message whose group is
+// missing, or whose max_gas is 0, fails closed.
+func (fp *FeeParams) CappedGroups(msgs []sdk.Msg) ([]*FeeGroup, error) {
+	if fp == nil {
+		return nil, fmt.Errorf("fee params are missing")
+	}
+	seen := make(map[string]struct{}, 2)
+	var out []*FeeGroup
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		name := FeeGroupOf(msg)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		group := fp.GroupByName(name)
+		if IsRequiredCappedFeeGroup(name) && (group == nil || group.MaxGas == 0) {
+			return nil, fmt.Errorf("%s fee group ceiling is missing", name)
+		}
+		if group == nil || group.MaxGas == 0 {
+			continue
+		}
+		out = append(out, group)
+	}
+	return out, nil
 }
 
 func validatePeriodBase(base *PeriodBase, loc string) error {

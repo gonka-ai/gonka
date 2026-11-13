@@ -5,8 +5,9 @@
 // templates, and preserves poc_scheme. Pre-v0.2.16 static weight factors remain
 // on the model. Admission defaults are written when stored params do not have
 // them yet, then retained accounts and weights are repaired. After migrations,
-// the wasm fee group is enabled, the epoch fee group carries the new
-// store-commit key price, and the onboarding fee group is enabled.
+// the wasm fee group is enabled at 1000 ngonka/gas, the epoch fee group carries the new
+// store-commit key price, the onboarding fee group is enabled, and WASM and IBC
+// receive a 100,000,000 declared-gas ceiling. block.max_gas stays unchanged.
 package v0_2_17
 
 import (
@@ -22,8 +23,12 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// wasmMinGasPriceNgonka matches the cosmos group rate installed by v0.2.16.
-const wasmMinGasPriceNgonka uint64 = 1
+// wasmMinGasPriceNgonka is the activation price for the wasm fee group.
+// 1000 ngonka/gas makes the 100 GNK maximum fee equal 100,000,000 gas.
+const wasmMinGasPriceNgonka uint64 = 1000
+
+// onboardingMinGasPriceNgonka stays at the cosmos group rate.
+const onboardingMinGasPriceNgonka uint64 = 1
 
 func CreateUpgradeHandler(
 	mm *module.Manager,
@@ -51,6 +56,12 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
+		// Stored fee params are the v0.2.16 tree. DefaultFeeParams is not
+		// reapplied. Write the ceilings before any params.Validate call.
+		if err := ensureGroupGasCeilings(ctx, k); err != nil {
+			return fromVM, err
+		}
+
 		if err := migratePocSchemeBlocks(ctx, k); err != nil {
 			return fromVM, err
 		}
@@ -74,7 +85,11 @@ func CreateUpgradeHandler(
 			return toVM, err
 		}
 
-		// After migrations, so a fee-params migration cannot drop these groups.
+		// Migration 14 may replace a nil or empty fee tree from DefaultFeeParams.
+		// Re-apply the ceilings so that result still has WASM and IBC.
+		if err := ensureGroupGasCeilings(ctx, k); err != nil {
+			return toVM, err
+		}
 		// The signer/stage validation cap is gone in this binary, so the epoch
 		// fee group must carry the new store-commit key price in the same upgrade.
 		if err := enableWasmFeeGroup(ctx, k); err != nil {
@@ -92,10 +107,11 @@ func CreateUpgradeHandler(
 	}
 }
 
-// enableWasmFeeGroup turns on the compiled wasm fee group at the cosmos rate.
-// Epoch and cosmos groups already on the chain are left in place. A wasm
-// price governance already set above zero is kept. Liquidity-pool execute
-// bypass stays a separate ante decorator and is not changed here.
+// enableWasmFeeGroup turns on the compiled wasm fee group at
+// wasmMinGasPriceNgonka. Epoch and cosmos groups already on the chain are
+// left in place. A wasm price already set above zero is kept.
+// Liquidity-pool execute bypass stays a separate ante decorator and is not
+// changed here.
 func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
@@ -113,6 +129,9 @@ func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
 	} else if group.MinGasPrice == 0 {
 		group.MinGasPrice = wasmMinGasPriceNgonka
 	}
+	if group.MaxGas == 0 {
+		group.MaxGas = types.MaxGroupGas
+	}
 	if !slices.Contains(fp.EnabledFeeGroups, types.FeeGroupWasm) {
 		fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupWasm)
 	}
@@ -122,6 +141,41 @@ func enableWasmFeeGroup(ctx context.Context, k keeper.Keeper) error {
 
 	k.LogInfo("enabled wasm fee group", types.Upgrades,
 		"min_gas_price", group.MinGasPrice,
+		"enabled_fee_groups", fp.EnabledFeeGroups)
+	return k.SetParams(ctx, params)
+}
+
+// ensureGroupGasCeilings writes the WASM and IBC declared-gas ceilings.
+// Either group is created when missing. IBC is not added to
+// enabled_fee_groups. Every other group keeps max_gas at 0.
+func ensureGroupGasCeilings(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.FeeParams == nil {
+		params.FeeParams = types.DefaultFeeParams()
+	}
+	fp := params.FeeParams
+	for _, name := range []string{types.FeeGroupWasm, types.FeeGroupIBC} {
+		group := fp.GroupByName(name)
+		if group == nil {
+			group = &types.FeeGroup{Name: name}
+			fp.Groups = append(fp.Groups, group)
+		}
+		group.MaxGas = types.MaxGroupGas
+	}
+	for _, group := range fp.Groups {
+		if group == nil || types.IsRequiredCappedFeeGroup(group.Name) {
+			continue
+		}
+		group.MaxGas = 0
+	}
+	if err := fp.Validate(); err != nil {
+		return err
+	}
+	k.LogInfo("set wasm and ibc gas ceilings", types.Upgrades,
+		"max_gas", types.MaxGroupGas,
 		"enabled_fee_groups", fp.EnabledFeeGroups)
 	return k.SetParams(ctx, params)
 }
@@ -192,10 +246,10 @@ func enableOnboardingFeeGroup(ctx context.Context, k keeper.Keeper) error {
 	fp := params.FeeParams
 	group := fp.GroupByName(types.FeeGroupOnboarding)
 	if group == nil {
-		group = &types.FeeGroup{Name: types.FeeGroupOnboarding, MinGasPrice: wasmMinGasPriceNgonka}
+		group = &types.FeeGroup{Name: types.FeeGroupOnboarding, MinGasPrice: onboardingMinGasPriceNgonka}
 		fp.Groups = append(fp.Groups, group)
 	} else if group.MinGasPrice == 0 {
-		group.MinGasPrice = wasmMinGasPriceNgonka
+		group.MinGasPrice = onboardingMinGasPriceNgonka
 	}
 	submitURL := sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{})
 	var rule *types.MsgGasRule

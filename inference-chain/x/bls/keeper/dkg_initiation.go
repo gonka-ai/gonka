@@ -604,6 +604,25 @@ func (k Keeper) DeleteDealerComplaintsForEpoch(ctx sdk.Context, epochID uint64) 
 	return nil
 }
 
+// GetEpochBLSDataBase reads the epoch metadata record. Dealer parts,
+// verification submissions, and complaints stay unread.
+func (k Keeper) GetEpochBLSDataBase(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
+	store := k.storeService.OpenKVStore(ctx)
+	value, err := store.Get(types.EpochBLSDataKey(epochID))
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	if value == nil {
+		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
+	}
+
+	var epochBLSData types.EpochBLSData
+	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
+		return types.EpochBLSData{}, err
+	}
+	return epochBLSData, nil
+}
+
 // GetEpochBLSData retrieves EpochBLSData from the state. DealerParts and
 // VerificationSubmissions are rehydrated from per-participant sub-keys so
 // callers see the same shape they always have (slices indexed by

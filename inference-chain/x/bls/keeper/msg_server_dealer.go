@@ -11,19 +11,16 @@ import (
 // SubmitDealerPart handles the submission of dealer parts during the dealing phase of DKG.
 //
 // Persists the submitted dealer part under its own KV sub-key via SetDealerPart
-// rather than rewriting the entire EpochBLSData struct. Previously, each dealer
-// submission rewrote EpochBLSData with the growing DealerParts slice inline,
-// which meant the Nth dealer paid gas roughly N times the first dealer's cost.
-// Between the DAPI's simulation-time gas estimate and block execution, more
-// dealer parts could land, pushing the real write cost above the estimate and
-// failing later dealers with "out of gas" — which in turn dropped them from the
-// signing group and could cause the whole DKG round to fail. Per-sub-key writes
-// make every dealer pay the same constant gas regardless of submission order.
+// rather than rewriting the entire EpochBLSData struct. The read is the base
+// epoch record plus this sender's sub-key. GetEpochBLSData would also scan
+// every other dealer part, so gas would grow with parts that landed earlier
+// in the block and a simulation taken at the start of dealing would be too small.
 func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmitDealerPart) (*types.MsgSubmitDealerPartResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Get the epoch BLS data
-	epochBLSData, err := ms.GetEpochBLSData(ctx, msg.EpochId)
+	// Phase, deadline, and the participant list live on the base record.
+	// Dealer parts, verifications, and complaints stay unread.
+	epochBLSData, err := ms.GetEpochBLSDataBase(ctx, msg.EpochId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get epoch %d BLS data: %w", msg.EpochId, err)
 	}
@@ -51,10 +48,19 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochId)
 	}
 
-	// Check if this participant has already submitted their dealer part.
-	// GetEpochBLSData rehydrated DealerParts from sub-keys, so the check
-	// still works against the latest persisted state.
-	if epochBLSData.DealerParts[participantIndex] != nil && epochBLSData.DealerParts[participantIndex].DealerAddress != "" {
+	// A pre-split base record may still carry this slot inline. Current
+	// submissions are stored only under the sender's sub-key.
+	if participantIndex < len(epochBLSData.DealerParts) {
+		inline := epochBLSData.DealerParts[participantIndex]
+		if inline != nil && inline.DealerAddress != "" {
+			return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
+		}
+	}
+	stored, err := ms.GetDealerPart(ctx, msg.EpochId, uint32(participantIndex))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read dealer part for epoch %d participant %d: %w", msg.EpochId, participantIndex, err)
+	}
+	if stored != nil && stored.DealerAddress != "" {
 		return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
 	}
 

@@ -144,6 +144,34 @@ func TestFeeParamsValidate(t *testing.T) {
 	fp.Groups[0].Msgs[0].Base.PeriodLength = 0
 	require.NoError(t, fp.Validate(), "omitted period_length is valid (resolved as 1)")
 	require.Equal(t, uint64(0), fp.Groups[0].Msgs[0].Base.PeriodLength, "Validate must not rewrite governance message contents")
+
+	fp = types.DefaultFeeParams()
+	fp.Groups = append(fp.Groups,
+		&types.FeeGroup{Name: types.FeeGroupWasm, MaxGas: 0},
+		&types.FeeGroup{Name: types.FeeGroupIBC, MaxGas: types.MaxGroupGas},
+	)
+	require.Error(t, fp.Validate(), "wasm max_gas cannot be zero")
+
+	fp = types.DefaultFeeParams()
+	fp.Groups = append(fp.Groups,
+		&types.FeeGroup{Name: types.FeeGroupWasm, MaxGas: types.MaxGroupGas + 1},
+		&types.FeeGroup{Name: types.FeeGroupIBC, MaxGas: types.MaxGroupGas},
+	)
+	require.Error(t, fp.Validate(), "wasm max_gas cannot exceed the safety maximum")
+
+	fp = types.DefaultFeeParams()
+	fp.Groups = append(fp.Groups,
+		&types.FeeGroup{Name: types.FeeGroupWasm, MaxGas: types.MaxGroupGas},
+		&types.FeeGroup{Name: types.FeeGroupIBC, MaxGas: 0},
+	)
+	require.Error(t, fp.Validate(), "ibc max_gas cannot be zero")
+
+	fp = types.DefaultFeeParams()
+	fp.GroupByName(types.FeeGroupEpoch).MaxGas = 1
+	require.Error(t, fp.Validate(), "epoch max_gas must stay zero")
+	fp.GroupByName(types.FeeGroupEpoch).MaxGas = 0
+	fp.GroupByName(types.FeeGroupCosmos).MaxGas = 1
+	require.Error(t, fp.Validate(), "cosmos max_gas must stay zero")
 }
 
 func TestRepeatedFieldLen(t *testing.T) {
@@ -187,6 +215,8 @@ func TestIsNetworkDuty(t *testing.T) {
 func TestDefaultFeeParamsTree(t *testing.T) {
 	fp := types.DefaultFeeParams()
 	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos}, fp.EnabledFeeGroups)
+	require.Nil(t, fp.GroupByName(types.FeeGroupWasm))
+	require.Nil(t, fp.GroupByName(types.FeeGroupIBC))
 	g, rule := fp.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
 	require.NotNil(t, g)
 	require.Equal(t, types.FeeGroupEpoch, g.Name)

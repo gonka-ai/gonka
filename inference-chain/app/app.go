@@ -336,6 +336,7 @@ func New(
 	app.sm.RegisterStoreDecoders()
 
 	app.setAnteHandler(app.txConfig, nodeConfig, app.GetKey(wasmtypes.StoreKey))
+	app.setGroupGasPrepareProposal()
 
 	app.registerMigrations()
 
