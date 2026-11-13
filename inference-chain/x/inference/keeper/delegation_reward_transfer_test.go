@@ -30,23 +30,15 @@ func TestDelegationRewardTransferSnapshotForEpoch(t *testing.T) {
 			},
 		},
 	}))
-	transfers, err := k.GetDelegationRewardTransfersForEpoch(ctx, 7)
-	require.NoError(t, err)
+	transfers, penalties := k.GetDelegationRewardsForEpoch(ctx, 7)
 	require.Len(t, transfers, 1)
 	require.Equal(t, "alice", transfers[0].From)
 	require.Equal(t, "bob", transfers[0].To)
-
-	penalties, err := k.GetDelegationRewardPenaltiesForEpoch(ctx, 7)
-	require.NoError(t, err)
 	require.Len(t, penalties, 1)
 	require.Equal(t, "carol", penalties[0].Participant)
 
-	transfers, err = k.GetDelegationRewardTransfersForEpoch(ctx, 8)
-	require.NoError(t, err)
+	transfers, penalties = k.GetDelegationRewardsForEpoch(ctx, 8)
 	require.Empty(t, transfers)
-
-	penalties, err = k.GetDelegationRewardPenaltiesForEpoch(ctx, 8)
-	require.NoError(t, err)
 	require.Empty(t, penalties)
 }
 
@@ -62,12 +54,10 @@ func TestDelegationRewardTransferSnapshotOverwritesPreviousEpoch(t *testing.T) {
 		Transfers:  []*types.DelegationRewardTransfer{{ModelId: "m", From: "c", To: "d", Share: types.DecimalFromFloat(0.2)}},
 	}))
 
-	transfers7, err := k.GetDelegationRewardTransfersForEpoch(ctx, 7)
-	require.NoError(t, err)
+	transfers7, _ := k.GetDelegationRewardsForEpoch(ctx, 7)
 	require.Empty(t, transfers7)
 
-	transfers8, err := k.GetDelegationRewardTransfersForEpoch(ctx, 8)
-	require.NoError(t, err)
+	transfers8, _ := k.GetDelegationRewardsForEpoch(ctx, 8)
 	require.Len(t, transfers8, 1)
 	require.Equal(t, "c", transfers8[0].From)
 }
@@ -99,10 +89,7 @@ func BenchmarkDelegationRewardTransferSnapshot1000Participants10Models(b *testin
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		got, err := k.GetDelegationRewardTransfersForEpoch(ctx, epoch)
-		if err != nil {
-			b.Fatal(err)
-		}
+		got, _ := k.GetDelegationRewardsForEpoch(ctx, epoch)
 		if len(got) != participants*models {
 			b.Fatalf("expected %d transfers, got %d", participants*models, len(got))
 		}

@@ -7,6 +7,7 @@ import (
 	sdkerrors "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
+	streamvestingtypes "github.com/productscience/inference/x/streamvesting/types"
 )
 
 func (k *Keeper) PutPaymentInEscrow(ctx context.Context, inference *types.Inference, cost int64) (int64, error) {
@@ -89,6 +90,35 @@ func (k *Keeper) PayParticipantFromModule(ctx context.Context, address string, a
 		return err
 	}
 	return k.BankKeeper.SendCoinsFromModuleToAccount(ctx, moduleName, participantAddress, coins, memo)
+}
+
+type vestedPayment struct {
+	amount         int64
+	memo           string
+	vestingPeriods *uint64
+}
+
+// payParticipantVested pays several vested amounts into one schedule; a failed payment
+// comes back as *streamvestingtypes.VestedRewardError with its index.
+func (k *Keeper) payParticipantVested(ctx context.Context, address string, payments []vestedPayment) error {
+	if _, err := sdk.AccAddressFromBech32(address); err != nil {
+		return err
+	}
+	rewards := make([]streamvestingtypes.VestedReward, len(payments))
+	for i, p := range payments {
+		coins, err := types.GetCoins(p.amount)
+		if err != nil {
+			return &streamvestingtypes.VestedRewardError{Index: i, Err: err}
+		}
+		k.LogInfo("Paying participant", types.Payments, "amount", p.amount, "address", address, "vestingPeriods", p.vestingPeriods)
+		rewards[i] = streamvestingtypes.VestedReward{Amount: coins, VestingEpochs: p.vestingPeriods, Memo: p.memo + "_vested"}
+	}
+	cacheCtx, writeFn := sdk.UnwrapSDKContext(ctx).CacheContext()
+	if err := k.GetStreamVestingKeeper().AddVestedRewardsBatch(cacheCtx, address, types.ModuleName, rewards); err != nil {
+		return err
+	}
+	writeFn()
+	return nil
 }
 
 func (k *Keeper) BurnModuleCoins(ctx context.Context, burnCoins int64, memo string) error {

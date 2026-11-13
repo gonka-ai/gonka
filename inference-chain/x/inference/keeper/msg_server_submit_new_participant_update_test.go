@@ -1,8 +1,13 @@
 package keeper_test
 
 import (
+	"bytes"
 	"encoding/base64"
+	"strings"
 	"testing"
+
+	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/productscience/inference/testutil"
@@ -111,4 +116,28 @@ func TestMsgServer_SubmitNewParticipant_EmptyValuesNoEffect(t *testing.T) {
 	require.Equal(t, p1.ConsecutiveInvalidInferences, p2.ConsecutiveInvalidInferences)
 	require.Equal(t, p1.EpochsCompleted, p2.EpochsCompleted)
 	require.Equal(t, p1.CurrentEpochStats, p2.CurrentEpochStats)
+}
+
+// Registration and re-registration read the participant once: the status check reuses that read.
+func TestMsgServer_SubmitNewParticipant_ReadsParticipantOnce(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	m := k.Participants
+	key, err := collections.EncodeKeyWithPrefix(m.GetPrefix(), m.KeyCodec(), sdk.MustAccAddressFromBech32(testutil.Executor))
+	require.NoError(t, err)
+	readOp := `"operation":"read","key":"` + base64.StdEncoding.EncodeToString(key) + `"`
+
+	for _, url := range []string{"http://old.url", "http://new.url"} {
+		var trace bytes.Buffer
+		sdkCtx.MultiStore().SetTracer(&trace)
+		gasBefore := sdkCtx.GasMeter().GasConsumed()
+		_, err := ms.SubmitNewParticipant(sdkCtx, &types.MsgSubmitNewParticipant{Creator: testutil.Executor, Url: url})
+		t.Logf("%s: gas %d", url, sdkCtx.GasMeter().GasConsumed()-gasBefore)
+		sdkCtx.MultiStore().SetTracer(nil)
+		require.NoError(t, err)
+		require.Equal(t, 1, strings.Count(trace.String(), readOp), url)
+		p, found := k.GetParticipant(sdkCtx, testutil.Executor)
+		require.True(t, found)
+		require.Equal(t, url, p.InferenceUrl)
+	}
 }

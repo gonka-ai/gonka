@@ -46,9 +46,10 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		return nil, fmt.Errorf("no validation weights in epoch group for model %q", msg.ModelId)
 	}
 
+	challenged := k.challengedAddresses(goCtx)
 	weights := make(map[string]int64)
 	for _, vw := range epochGroup.GroupData.ValidationWeights {
-		if k.IsUnderChallenge(goCtx, vw.MemberAddress) {
+		if isChallengedAddress(challenged, vw.MemberAddress) {
 			continue
 		}
 		weights[vw.MemberAddress] = vw.Weight
@@ -113,7 +114,7 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 		ExecutionTimeout:          types.DevshardExecutionTimeoutForCreate(ep),
 	}
 
-	id, err := k.StoreDevshardEscrow(goCtx, escrow, nextID)
+	id, err := k.storeDevshardEscrow(goCtx, escrow, nextID, epochCount)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create escrow: %w", err)
 	}

@@ -17,7 +17,7 @@ func (k msgServer) SetPoCDelegation(ctx context.Context, msg *types.MsgSetPoCDel
 	}
 	senderAddr := sender.String()
 
-	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.ModelId) {
 		return nil, types.ErrInvalidModel
 	}
 
@@ -33,7 +33,7 @@ func (k msgServer) SetPoCDelegation(ctx context.Context, msg *types.MsgSetPoCDel
 			return nil, types.ErrSelfDelegation
 		}
 		delegateAddr := delegate.String()
-		if _, found := k.GetParticipant(ctx, delegateAddr); !found {
+		if !k.HasParticipant(ctx, delegateAddr) {
 			return nil, types.ErrParticipantNotFound
 		}
 		if err := k.Keeper.SetPoCDelegation(ctx, types.PoCDelegation{
@@ -61,7 +61,7 @@ func (k msgServer) RefusePoCDelegation(ctx context.Context, msg *types.MsgRefuse
 	}
 	senderAddr := sender.String()
 
-	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.ModelId) {
 		return nil, types.ErrInvalidModel
 	}
 
@@ -85,7 +85,7 @@ func (k msgServer) DeclarePoCIntent(ctx context.Context, msg *types.MsgDeclarePo
 	}
 	senderAddr := sender.String()
 
-	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.ModelId) {
 		return nil, types.ErrInvalidModel
 	}
 
