@@ -168,9 +168,15 @@ pub fn calculate_multi_tier_purchase(
 
         // How much USD is needed to buy all remaining tokens in this tier?
         // tokens_left_in_tier has 9 decimals, current_price has 6 decimals
-        // We need to divide by 1e9 to get the correct USD amount with 6 decimals
+        // We need to divide by 1e9 to get the correct USD amount with 6 decimals.
+        // Rounded up: when 1e9 is not a multiple of the price (every tier from 1 on
+        // with the default 1.3x), rounding down left a remainder worth less than one
+        // micro-USD that could never be bought, so the loop stopped with USD unspent
+        // and every purchase was rejected from then on.
         let usd_for_remaining_tier = tokens_left_in_tier
             .checked_mul(current_price)
+            .unwrap_or_default()
+            .checked_add(Uint256::from(999_999_999u128))
             .unwrap_or_default()
             .checked_div(Uint256::from(1_000_000_000u128))
             .unwrap_or_default();
@@ -189,7 +195,9 @@ pub fn calculate_multi_tier_purchase(
         }
 
         // Calculate tokens for this tier portion
-        let tokens_in_tier = calculate_tokens_for_usd(usd_to_spend_in_tier, current_price);
+        // Capped: paying the rounded-up price of the tier buys exactly what is left in it.
+        let tokens_in_tier =
+            calculate_tokens_for_usd(usd_to_spend_in_tier, current_price).min(tokens_left_in_tier);
 
         // Update running totals
         total_tokens = total_tokens
