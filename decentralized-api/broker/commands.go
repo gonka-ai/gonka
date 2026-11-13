@@ -4,6 +4,7 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
+	"maps"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -17,6 +18,10 @@ type LockAvailableNode struct {
 	Model       string
 	Response    chan *Node
 	SkipNodeIDs []string
+	// SessionKey, when non-empty, ranks nodes per key and takes the best-ranked one within affinityMaxLead locks of the least busy.
+	SessionKey string
+	// PrefixHashes, when non-empty, ranks nodes within the lead bound by how many leading hashes they already served, ahead of SessionKey.
+	PrefixHashes []uint64
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {
@@ -82,6 +87,9 @@ func (c GetNodesCommand) Execute(b *Broker) {
 
 		// Nil out internal-only fields
 		stateCopy.cancelInFlightTask = nil
+
+		stateCopy.EpochModels = maps.Clone(nodeWithState.State.EpochModels)
+		stateCopy.EpochMLNodes = maps.Clone(nodeWithState.State.EpochMLNodes)
 
 		// Deep copy pointer fields
 		if nodeWithState.State.ReconcileInfo != nil {

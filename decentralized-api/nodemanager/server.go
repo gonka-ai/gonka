@@ -23,7 +23,7 @@ import (
 // brokerAcquirer is the subset of broker.Broker used by this server.
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
-	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
+	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string, sessionKey string, prefixHashes []uint64) (lockID, endpoint, nodeID string, err error)
 	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
 	TriggerStatusQuery(bypassDebounce bool)
 	GetNodes() ([]broker.NodeResponse, error)
@@ -79,8 +79,16 @@ func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTr
 	return s
 }
 
+// maxSessionKeyLen is twice the 64 hex characters of the digest a gateway sends; a longer key
+// is treated as absent so one request cannot make the broker hash megabytes per node.
+const maxSessionKeyLen = 128
+
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
+	sessionKey := req.GetSessionKey()
+	if len(sessionKey) > maxSessionKeyLen {
+		sessionKey = ""
+	}
+	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes, sessionKey, req.GetPrefixBlockHashes())
 	if err == nil {
 		if s.escrowLoad != nil {
 			s.escrowLoad.Record(req.GetEscrowId())

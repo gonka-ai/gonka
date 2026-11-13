@@ -1,5 +1,7 @@
+import base64
 import pytest
 import asyncio
+from collections import OrderedDict
 import httpx
 import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -478,3 +480,166 @@ def test_damping_ports_are_independent(clean_health_state):
         proxy_module.vllm_healthy[5002] = proxy_module._apply_health_damping(5002, True)
     assert proxy_module.vllm_healthy[5001] is False
     assert proxy_module.vllm_healthy[5002] is True
+
+
+# ============================================================================
+# Session / prefix-aware backend pick
+# ============================================================================
+
+KEY_A = "a" * 64
+PORTS = [5001, 5002, 5003]
+
+
+@pytest.fixture
+def prefix_state(monkeypatch):
+    """Three healthy idle instances, empty prefix index, capacity 4."""
+    monkeypatch.setattr(proxy_module, "vllm_healthy", {p: True for p in PORTS})
+    monkeypatch.setattr(proxy_module, "vllm_counts", {p: 0 for p in PORTS})
+    monkeypatch.setattr(proxy_module, "vllm_prefix_index", {})
+    monkeypatch.setattr(proxy_module, "PREFIX_INDEX_CAPACITY", 4)
+    return proxy_module
+
+
+def _hashes(*ids):
+    return [i.to_bytes(8, "little") for i in ids]
+
+
+def _b64(*ids):
+    return base64.b64encode(b"".join(_hashes(*ids))).decode()
+
+
+def _rendezvous_winner(key, ports=PORTS):
+    return max(ports, key=lambda p: (proxy_module._rendezvous_score(key, p), -p))
+
+
+@pytest.mark.asyncio
+async def test_pick_without_headers_is_least_connections(prefix_state):
+    """No key and no hashes: plain least connections, index untouched."""
+    prefix_state.vllm_counts.update({5001: 3, 5002: 1, 5003: 2})
+    assert await prefix_state._pick_vllm_backend() == 5002
+    assert prefix_state.vllm_counts[5002] == 2
+    assert prefix_state.vllm_prefix_index == {}
+
+
+@pytest.mark.asyncio
+async def test_pick_same_key_lands_on_same_instance(prefix_state):
+    """Repeated picks with one key (released in between) hit the rendezvous winner."""
+    for _ in range(3):
+        port = await prefix_state._pick_vllm_backend(KEY_A)
+        assert port == _rendezvous_winner(KEY_A)
+        await prefix_state._release_vllm_backend(port)
+
+
+@pytest.mark.asyncio
+async def test_pick_key_instance_over_lead_falls_back(prefix_state):
+    """The key's instance 5 connections above the least loaded is skipped; 4 above is kept."""
+    winner = _rendezvous_winner(KEY_A)
+    others = [p for p in PORTS if p != winner]
+    prefix_state.vllm_counts.update({winner: 4, others[0]: 0, others[1]: 9})
+    assert await prefix_state._pick_vllm_backend(KEY_A) == winner
+    prefix_state.vllm_counts[winner] = 5  # now 5 over the least loaded (0)
+    assert await prefix_state._pick_vllm_backend(KEY_A) == others[0]
+
+
+@pytest.mark.asyncio
+async def test_pick_longer_prefix_match_beats_rendezvous(prefix_state):
+    """An instance holding the leading hashes wins over the key's rendezvous instance."""
+    winner = _rendezvous_winner(KEY_A)
+    holder = next(p for p in PORTS if p != winner)
+    prefix_state.vllm_prefix_index[holder] = OrderedDict((h, None) for h in _hashes(1, 2))
+    assert await prefix_state._pick_vllm_backend(KEY_A, _hashes(1, 2, 3)) == holder
+    # the pick recorded the whole request for the holder
+    assert list(prefix_state.vllm_prefix_index[holder]) == _hashes(1, 2, 3)
+
+
+@pytest.mark.asyncio
+async def test_pick_prefix_match_counts_only_leading_run(prefix_state):
+    """A hash held without its predecessors does not count; ties fall to least connections then port."""
+    prefix_state.vllm_prefix_index[5003] = OrderedDict((h, None) for h in _hashes(2, 3))
+    prefix_state.vllm_counts.update({5001: 0, 5002: 1, 5003: 0})
+    assert await prefix_state._pick_vllm_backend(None, _hashes(1, 2, 3)) == 5001  # 5003's run is 0
+    prefix_state.vllm_counts[5003] = 2
+    assert await prefix_state._pick_vllm_backend(None, _hashes(7, 8)) == 5001  # lowest port
+
+
+@pytest.mark.asyncio
+async def test_pick_skips_unhealthy_instance(prefix_state):
+    winner = _rendezvous_winner(KEY_A)
+    prefix_state.vllm_healthy[winner] = False
+    assert await prefix_state._pick_vllm_backend(KEY_A) != winner
+
+
+@pytest.mark.asyncio
+async def test_prefix_index_evicts_oldest_at_capacity(prefix_state):
+    """Capacity 4: inserting 6 hashes keeps the newest 4; a re-seen hash is refreshed."""
+    port = await prefix_state._pick_vllm_backend(None, _hashes(1, 2, 3))
+    await prefix_state._release_vllm_backend(port)
+    port = await prefix_state._pick_vllm_backend(None, _hashes(1, 4, 5, 6))
+    index = prefix_state.vllm_prefix_index[port]
+    assert list(index) == _hashes(1, 4, 5, 6)
+    assert len(index) == 4
+
+
+def test_parse_headers_accept_valid_values():
+    assert proxy_module._parse_session_key(KEY_A) == KEY_A
+    assert proxy_module._parse_prefix_hashes(_b64(1, 2, 3)) == _hashes(1, 2, 3)
+    assert proxy_module._parse_prefix_hashes(_b64(*range(512))) == _hashes(*range(512))
+
+
+@pytest.mark.parametrize("value", [
+    None, "", "a" * 63, "a" * 65, "A" * 64, "g" * 64, " " + "a" * 63,
+])
+def test_parse_session_key_ignores_malformed(value):
+    assert proxy_module._parse_session_key(value) is None
+
+
+@pytest.mark.parametrize("value", [
+    None,
+    "",
+    "!!!!",  # not base64
+    base64.b64encode(b"1234567").decode(),  # length not a multiple of 8
+    base64.b64encode(b"123456789").decode(),
+    _b64(*range(513)),  # more than 512 hashes
+    _b64(1, 2)[:-1],  # broken padding
+])
+def test_parse_prefix_hashes_ignores_malformed(value):
+    assert proxy_module._parse_prefix_hashes(value) is None
+
+
+@pytest.mark.asyncio
+async def test_request_with_malformed_headers_still_routes(prefix_state, monkeypatch):
+    """Bad header values route as without them and never fail the request."""
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.query_params = {}
+    request.stream.return_value = []
+    request.headers = {"x-session-key": "zz", "x-prefix-hashes": "!!!!"}
+    prefix_state.vllm_backend_ports = list(PORTS)
+    prefix_state.vllm_counts.update({5001: 2, 5002: 0, 5003: 1})
+    prefix_state.vllm_client = None  # stops after the pick, releasing the instance
+    released = []
+    real_release = prefix_state._release_vllm_backend
+
+    async def spy_release(port):
+        released.append(port)
+        await real_release(port)
+
+    monkeypatch.setattr(prefix_state, "_release_vllm_backend", spy_release)
+    response = await prefix_state._proxy_request_to_backend(request, "/v1/models")
+    assert released == [5002]  # plain least connections
+    assert response.status_code == 503
+    assert response.body == b"vLLM client not initialized"
+    assert prefix_state.vllm_counts == {5001: 2, 5002: 0, 5003: 1}
+    assert prefix_state.vllm_prefix_index == {}
+
+
+@pytest.mark.parametrize("raw,expected", [
+    (None, 31250), ("", 31250), ("abc", 31250), ("0", 1), ("-5", 1), ("100", 100),
+])
+def test_prefix_index_capacity_env(monkeypatch, raw, expected):
+    """Unset or garbage falls back to the default; non-positive is clamped to 1."""
+    if raw is None:
+        monkeypatch.delenv("INFERENCE_PREFIX_INDEX_CAPACITY", raising=False)
+    else:
+        monkeypatch.setenv("INFERENCE_PREFIX_INDEX_CAPACITY", raw)
+    assert proxy_module._prefix_index_capacity() == expected
