@@ -32,6 +32,9 @@ var (
 	// in mind if renaming either prefix.
 	GroupValidationPartialSigPrefix = []byte("bls_partial_sig/")
 	CompletedPostProcessRetryPrefix = []byte("completed_post_process_retry")
+	// Must not start with EpochBLSDataPrefix: WalkEpochBLSData and the
+	// latest-epoch lookup in PruneDKGSubKeys iterate that prefix.
+	DKGSubKeysPrunedEpochKey = []byte("dkg_sub_keys_pruned_epoch")
 )
 
 func KeyPrefix(p string) []byte {
