@@ -146,6 +146,7 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	prefixCapacity       int
 }
 
 type lockEntry struct {
@@ -385,6 +386,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
+		prefixCapacity:       prefixIndexCapacityFromEnv(),
 	}
 
 	// Initialize NodeWorkGroup
@@ -553,7 +555,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 		leastBusyNode.State.LockCount++
 		if len(command.PrefixHashes) > 0 {
 			if leastBusyNode.prefixes == nil {
-				leastBusyNode.prefixes = newPrefixIndex(prefixIndexCapacity)
+				leastBusyNode.prefixes = newPrefixIndex(b.prefixCapacity)
 			}
 			leastBusyNode.prefixes.add(command.PrefixHashes)
 		}
@@ -634,11 +636,8 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 // it a hot key would fill one node up to MaxConcurrent (500 in shipped configs) while others idle.
 const affinityMaxLead = 8
 
-// maxPrefixHashes is the most hashes a request may carry, a longer list is ignored. prefixIndexCapacity is the per-node LRU size in hashes, the contract default when the KV cache size is unknown.
-const (
-	maxPrefixHashes     = 512
-	prefixIndexCapacity = 31250
-)
+// maxPrefixHashes is the most hashes a request may carry, a longer list is ignored.
+const maxPrefixHashes = 512
 
 type rankedNode struct {
 	node    *NodeWithState

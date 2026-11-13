@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"fmt"
+	"os"
 	"testing"
 	"time"
 
@@ -236,3 +237,43 @@ func TestPrefixRouting_RemovedOrMovedNodeLosesItsIndex(t *testing.T) {
 	}
 	require.False(t, hasIndex(b, ranked[1]))
 }
+
+// Test flow:
+// 1. For each of a positive value, unset, empty, zero, negative, non-numeric and fractional INFERENCE_PREFIX_INDEX_CAPACITY, set the variable with t.Setenv (or unset it) before building the broker.
+// 2. Acquire a node with a hash list so the broker creates the node's prefix index.
+// 3. Assert the index capacity is the variable's value when it is a positive integer and prefixIndexCapacity (31250) otherwise.
+func TestPrefixRouting_IndexCapacityComesFromEnv(t *testing.T) {
+	cases := []struct {
+		name  string
+		value *string
+		want  int
+	}{
+		{"positive", strPtr("77"), 77},
+		{"positive with spaces", strPtr(" 12 "), 12},
+		{"unset", nil, 31250},
+		{"empty", strPtr(""), 31250},
+		{"zero", strPtr("0"), 31250},
+		{"negative", strPtr("-5"), 31250},
+		{"non-numeric", strPtr("many"), 31250},
+		{"fractional", strPtr("1.5"), 31250},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.value != nil {
+				t.Setenv("INFERENCE_PREFIX_INDEX_CAPACITY", *tc.value)
+			} else {
+				t.Setenv("INFERENCE_PREFIX_INDEX_CAPACITY", "")
+				require.NoError(t, os.Unsetenv("INFERENCE_PREFIX_INDEX_CAPACITY"))
+			}
+			b := newAffinityTestBroker(t, 1, 500)
+
+			nodeID := acquireWithPrefixAndRelease(t, b, "", hashRange(1, 2))
+
+			b.mu.RLock()
+			defer b.mu.RUnlock()
+			require.Equal(t, tc.want, b.nodes[nodeID].prefixes.capacity)
+		})
+	}
+}
+
+func strPtr(s string) *string { return &s }

@@ -1,6 +1,24 @@
 package broker
 
-import "container/list"
+import (
+	"container/list"
+	"os"
+	"strconv"
+	"strings"
+)
+
+// prefixIndexCapacity is the per-node LRU size in hashes, the contract default when the KV cache size is unknown.
+const prefixIndexCapacity = 31250
+
+// prefixIndexCapacityFromEnv reads INFERENCE_PREFIX_INDEX_CAPACITY, the variable the mlnode proxy reads for its own index.
+// Anything but a positive integer gives prefixIndexCapacity.
+func prefixIndexCapacityFromEnv() int {
+	n, err := strconv.Atoi(strings.TrimSpace(os.Getenv("INFERENCE_PREFIX_INDEX_CAPACITY")))
+	if err != nil || n < 1 {
+		return prefixIndexCapacity
+	}
+	return n
+}
 
 // prefixIndex is a bounded LRU of the prompt block hashes the broker routed to one node. It has no
 // lock of its own: the broker reads it under b.mu.RLock and writes it under b.mu.Lock.
@@ -11,6 +29,9 @@ type prefixIndex struct {
 }
 
 func newPrefixIndex(capacity int) *prefixIndex {
+	if capacity < 1 {
+		capacity = prefixIndexCapacity
+	}
 	return &prefixIndex{capacity: capacity, order: list.New(), entries: make(map[uint64]*list.Element)}
 }
 
