@@ -153,17 +153,25 @@ func (k Keeper) hydrateBridgeTransactionValidators(ctx context.Context, tx *type
 // baseline and duplicate entries are de-duplicated so the returned slice
 // never carries a validator twice after mid-split migration.
 func (k Keeper) GetBridgeTransactionByContent(ctx context.Context, tx *types.BridgeTransaction) (*types.BridgeTransaction, bool) {
+	storedTx, found := k.getBridgeTransactionRecord(ctx, tx)
+	if !found {
+		return nil, false
+	}
+	k.hydrateBridgeTransactionValidators(ctx, storedTx)
+	return storedTx, true
+}
+
+// getBridgeTransactionRecord reads the stored record without iterating its
+// validator sub-keys; the vote path checks the voter with one Has instead.
+func (k Keeper) getBridgeTransactionRecord(ctx context.Context, tx *types.BridgeTransaction) (*types.BridgeTransaction, bool) {
 	key, _, _, err := buildBridgeTransactionKey(tx)
 	if err != nil {
 		return nil, false
 	}
-
 	storedTx, err := k.BridgeTransactionsMap.Get(ctx, key)
 	if err != nil {
 		return nil, false
 	}
-
-	k.hydrateBridgeTransactionValidators(ctx, &storedTx)
 	return &storedTx, true
 }
 

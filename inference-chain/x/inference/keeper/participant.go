@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"encoding/base64"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -15,17 +16,89 @@ func (k Keeper) SetParticipant(ctx context.Context, participant types.Participan
 		k.LogError("Failed to update participant status", types.Validation, "error", err)
 		return err
 	}
+	return k.saveParticipant(ctx, participant)
+}
 
+// SetParticipantFromStored is SetParticipant for a participant read earlier in the same tx
+// or EndBlock and not written since: storedStats is a copy of its CurrentEpochStats as
+// read, so the status check does not read the participant again.
+func (k Keeper) SetParticipantFromStored(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats) error {
+	return k.setParticipantAsRead(ctx, participant, storedStats, true)
+}
+
+// setParticipantAsRead also takes found=false for a participant the caller has just found absent.
+func (k Keeper) setParticipantAsRead(ctx context.Context, participant types.Participant, storedStats *types.CurrentEpochStats, found bool) error {
+	err := k.updateParticipantStatus(ctx, &participant, storedStats, found)
+	if err != nil {
+		k.LogError("Failed to update participant status", types.Validation, "error", err)
+		return err
+	}
+	return k.saveParticipant(ctx, participant)
+}
+
+func (k Keeper) saveParticipant(ctx context.Context, participant types.Participant) error {
 	participantAddress, err := sdk.AccAddressFromBech32(participant.Index)
 	if err != nil {
 		return err
 	}
-	err = k.Participants.Set(ctx, participantAddress, participant)
+	err = k.Participants.Set(ctx, participantAddress, storedParticipant(participant, participantAddress))
 	if err != nil {
 		return err
 	}
 	k.LogDebug("Saved Participant", types.Participants, "address", participant.Address, "index", participant.Index, "balance", participant.CoinBalance)
 	return nil
+}
+
+// storedParticipant drops Index and Address, which repeat the key, stores the default
+// Weight -1 as absent and canonical base64 32-byte keys as raw bytes; restoredParticipant
+// undoes all three. A record that cannot be trimmed unambiguously is stored whole.
+func storedParticipant(p types.Participant, addr sdk.AccAddress) types.Participant {
+	if p.Index != p.Address || p.Index != addr.String() || p.Weight == 0 {
+		return p
+	}
+	trimmed := p
+	trimmed.Index, trimmed.Address = "", ""
+	if trimmed.Weight == -1 {
+		trimmed.Weight = 0
+	}
+	var ok bool
+	if trimmed.ValidatorKey, ok = rawKey32(p.ValidatorKey); !ok {
+		return p
+	}
+	if trimmed.WorkerPublicKey, ok = rawKey32(p.WorkerPublicKey); !ok {
+		return p
+	}
+	if trimmed.Size() == 0 {
+		return p
+	}
+	return trimmed
+}
+
+func restoredParticipant(addr sdk.AccAddress, p types.Participant) types.Participant {
+	if p.Index == "" {
+		p.Index = addr.String()
+		p.Address = p.Index
+		if p.Weight == 0 {
+			p.Weight = -1
+		}
+		if len(p.ValidatorKey) == 32 {
+			p.ValidatorKey = base64.StdEncoding.EncodeToString([]byte(p.ValidatorKey))
+		}
+		if len(p.WorkerPublicKey) == 32 {
+			p.WorkerPublicKey = base64.StdEncoding.EncodeToString([]byte(p.WorkerPublicKey))
+		}
+	}
+	return p
+}
+
+// rawKey32 returns the 32 raw bytes of a canonical base64 key and other values as they are;
+// false for a 32-character value, which would read back as raw bytes.
+func rawKey32(key string) (string, bool) {
+	if raw, err := base64.StdEncoding.DecodeString(key); err == nil && len(raw) == 32 &&
+		base64.StdEncoding.EncodeToString(raw) == key {
+		return string(raw), true
+	}
+	return key, len(key) != 32
 }
 
 func (k Keeper) GetParticipants(
@@ -54,7 +127,17 @@ func (k Keeper) GetParticipant(
 	if err != nil {
 		return val, false
 	}
-	return val, true
+	return restoredParticipant(address, val), true
+}
+
+// HasParticipant reports whether index is a stored participant without decoding the record.
+func (k Keeper) HasParticipant(ctx context.Context, index string) bool {
+	address, err := sdk.AccAddressFromBech32(index)
+	if err != nil {
+		return false
+	}
+	found, err := k.Participants.Has(ctx, address)
+	return err == nil && found
 }
 
 // RemoveParticipant removes a participant from the store
@@ -79,11 +162,15 @@ func (k Keeper) GetAllParticipant(ctx context.Context) (list []types.Participant
 	if err != nil {
 		return nil
 	}
-	participants, err := iter.Values()
+	kvs, err := iter.KeyValues()
 	if err != nil {
 		return nil
 	}
-	return participants
+	list = make([]types.Participant, len(kvs))
+	for i, kv := range kvs {
+		list[i] = restoredParticipant(kv.Key, kv.Value)
+	}
+	return list
 }
 
 func (k Keeper) CountAllParticipants(ctx context.Context) int64 {

@@ -20,8 +20,8 @@ func (k Keeper) EpochPerformanceSummaryAll(ctx context.Context, req *types.Query
 		ctx,
 		k.EpochPerformanceSummaries,
 		req.Pagination,
-		func(_ collections.Pair[sdk.AccAddress, uint64], v types.EpochPerformanceSummary) (types.EpochPerformanceSummary, error) {
-			return v, nil
+		func(key collections.Pair[sdk.AccAddress, uint64], v types.EpochPerformanceSummary) (types.EpochPerformanceSummary, error) {
+			return restoredPerformanceSummary(key, v), nil
 		},
 	)
 	if err != nil {

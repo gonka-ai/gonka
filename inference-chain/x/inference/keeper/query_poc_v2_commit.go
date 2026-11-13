@@ -59,14 +59,11 @@ func (k Keeper) AllPoCV2StoreCommitsForStage(goCtx context.Context, req *types.Q
 	defer iter.Close()
 
 	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
+		kv, err := iter.KeyValue()
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get key: %v", err)
+			return nil, status.Errorf(codes.Internal, "failed to get entry: %v", err)
 		}
-		value, err := iter.Value()
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get value: %v", err)
-		}
+		key, value := kv.Key, restoredPoCV2StoreCommit(kv.Key, kv.Value)
 
 		addr := key.K2()
 		acc := k.AccountKeeper.GetAccount(ctx, addr)
@@ -141,14 +138,11 @@ func (k Keeper) AllMLNodeWeightDistributionsForStage(goCtx context.Context, req 
 	defer iter.Close()
 
 	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
+		kv, err := iter.KeyValue()
 		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get key: %v", err)
+			return nil, status.Errorf(codes.Internal, "failed to get entry: %v", err)
 		}
-		value, err := iter.Value()
-		if err != nil {
-			return nil, status.Errorf(codes.Internal, "failed to get value: %v", err)
-		}
+		key, value := kv.Key, restoredMLNodeWeightDistribution(kv.Key, kv.Value)
 
 		addr := key.K2()
 		distributions = append(distributions, &types.MLNodeWeightDistributionWithAddress{

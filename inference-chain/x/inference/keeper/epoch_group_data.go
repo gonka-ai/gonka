@@ -2,15 +2,132 @@ package keeper
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 
 	"cosmossdk.io/collections"
+	"github.com/cosmos/cosmos-sdk/runtime"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // SetEpochGroupData set a specific epochGroupData in the store from its index
 func (k Keeper) SetEpochGroupData(ctx context.Context, epochGroupData types.EpochGroupData) {
-	k.EpochGroupDataMap.Set(ctx, collections.Join(epochGroupData.EpochIndex, epochGroupData.ModelId), epochGroupData)
+	k.EpochGroupDataMap.Set(ctx, collections.Join(epochGroupData.EpochIndex, epochGroupData.ModelId), storedEpochGroupData(epochGroupData))
+	k.forgetEpochGroupData(ctx, epochGroupData.EpochIndex, epochGroupData.ModelId)
+}
+
+// storedEpochGroupData keeps each seed signature's member address and hex
+// signature, and each validation weight's member address, as raw bytes;
+// restoredEpochGroupData undoes it. A string that does not round-trip stays as
+// it is. When every ML node's timeslot_allocation is [true, false], the
+// allocations are left out behind one flag. The caller's slices are not modified.
+func storedEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
+	if len(egd.ValidationWeights) > 0 {
+		egd.DefaultTimeslotAllocations = onlyDefaultTimeslots(egd.ValidationWeights)
+		weights := make([]*types.ValidationWeight, len(egd.ValidationWeights))
+		for i, w := range egd.ValidationWeights {
+			if w == nil {
+				continue
+			}
+			stored := *w
+			if b, ok := rawAddress(stored.MemberAddress); ok {
+				stored.MemberAddr, stored.MemberAddress = b, ""
+			}
+			if egd.DefaultTimeslotAllocations && len(w.MlNodes) > 0 {
+				stored.MlNodes = make([]*types.MLNodeInfo, len(w.MlNodes))
+				for j, n := range w.MlNodes {
+					if n != nil {
+						node := *n
+						node.TimeslotAllocation = nil
+						stored.MlNodes[j] = &node
+					}
+				}
+			}
+			weights[i] = &stored
+		}
+		egd.ValidationWeights = weights
+	}
+	if len(egd.MemberSeedSignatures) == 0 {
+		return egd
+	}
+	sigs := make([]*types.SeedSignature, len(egd.MemberSeedSignatures))
+	for i, s := range egd.MemberSeedSignatures {
+		if s == nil {
+			continue
+		}
+		stored := *s
+		if b, ok := rawAddress(stored.MemberAddress); ok {
+			stored.MemberAddr, stored.MemberAddress = b, ""
+		}
+		if b, ok := rawHex(stored.Signature); ok {
+			stored.SignatureRaw, stored.Signature = b, ""
+		}
+		sigs[i] = &stored
+	}
+	egd.MemberSeedSignatures = sigs
+	return egd
+}
+
+func restoredEpochGroupData(egd types.EpochGroupData) types.EpochGroupData {
+	for _, w := range egd.ValidationWeights {
+		if w == nil {
+			continue
+		}
+		if len(w.MemberAddr) > 0 {
+			w.MemberAddress, w.MemberAddr = sdk.AccAddress(w.MemberAddr).String(), nil
+		}
+		if egd.DefaultTimeslotAllocations {
+			for _, n := range w.MlNodes {
+				if n != nil {
+					n.TimeslotAllocation = []bool{true, false}
+				}
+			}
+		}
+	}
+	egd.DefaultTimeslotAllocations = false
+	for _, s := range egd.MemberSeedSignatures {
+		if s == nil {
+			continue
+		}
+		if len(s.MemberAddr) > 0 {
+			s.MemberAddress, s.MemberAddr = sdk.AccAddress(s.MemberAddr).String(), nil
+		}
+		if len(s.SignatureRaw) > 0 {
+			s.Signature, s.SignatureRaw = hex.EncodeToString(s.SignatureRaw), nil
+		}
+	}
+	return egd
+}
+
+// onlyDefaultTimeslots reports whether there is at least one ML node and every
+// one has timeslot_allocation [true, false], the value model assignment writes.
+func onlyDefaultTimeslots(weights []*types.ValidationWeight) bool {
+	nodes := 0
+	for _, w := range weights {
+		if w == nil {
+			continue
+		}
+		for _, n := range w.MlNodes {
+			if n == nil {
+				continue
+			}
+			if len(n.TimeslotAllocation) != 2 || !n.TimeslotAllocation[0] || n.TimeslotAllocation[1] {
+				return false
+			}
+			nodes++
+		}
+	}
+	return nodes > 0
+}
+
+// rawHex returns the bytes of a non-empty lower-case hex string that encodes back to the same string.
+func rawHex(s string) ([]byte, bool) {
+	b, err := hex.DecodeString(s)
+	if err != nil || len(b) == 0 || hex.EncodeToString(b) != s {
+		return nil, false
+	}
+	return b, true
 }
 
 // GetEpochGroupData returns a epochGroupData from its index
@@ -29,6 +146,9 @@ func (k Keeper) GetEpochGroupDataWithError(
 	epochIndex uint64,
 	modelId string,
 ) (val types.EpochGroupData, found bool, err error) {
+	if c := egdCacheFrom(ctx); c != nil {
+		return k.getEpochGroupDataTxCached(ctx, c, epochIndex, modelId)
+	}
 	val, err = k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
 	if err != nil {
 		if errors.Is(err, collections.ErrNotFound) {
@@ -36,7 +156,7 @@ func (k Keeper) GetEpochGroupDataWithError(
 		}
 		return val, false, err
 	}
-	return val, true, nil
+	return restoredEpochGroupData(val), true, nil
 }
 
 // RemoveEpochGroupData removes a epochGroupData from the store
@@ -46,6 +166,71 @@ func (k Keeper) RemoveEpochGroupData(
 	modelId string,
 ) {
 	k.EpochGroupDataMap.Remove(ctx, collections.Join(epochIndex, modelId))
+	k.forgetEpochGroupData(ctx, epochIndex, modelId)
+}
+
+// egdTxCache keeps EpochGroupData bytes read in one tx or EndBlock; a written key is
+// not cached again, since the write may sit in a discarded CacheContext.
+type egdTxCache struct {
+	bz      map[string][]byte // by store key: collections.Pair holds pointers
+	written map[string]bool
+}
+
+func egdCacheFrom(ctx context.Context) *egdTxCache {
+	if c, ok := ctx.Value(txParamsCacheKey{}).(*txParamsCache); ok && c != nil {
+		return &c.egd
+	}
+	return nil
+}
+
+func (k Keeper) egdStoreKey(epochIndex uint64, modelId string) ([]byte, error) {
+	return collections.EncodeKeyWithPrefix(k.EpochGroupDataMap.GetPrefix(), k.EpochGroupDataMap.KeyCodec(), collections.Join(epochIndex, modelId))
+}
+
+func (k Keeper) forgetEpochGroupData(ctx context.Context, epochIndex uint64, modelId string) {
+	c := egdCacheFrom(ctx)
+	if c == nil {
+		return
+	}
+	storeKey, err := k.egdStoreKey(epochIndex, modelId)
+	if err != nil {
+		return // the Map write failed on the same encoding
+	}
+	delete(c.bz, string(storeKey))
+	if c.written == nil {
+		c.written = make(map[string]bool)
+	}
+	c.written[string(storeKey)] = true
+}
+
+func (k Keeper) getEpochGroupDataTxCached(
+	ctx context.Context,
+	c *egdTxCache,
+	epochIndex uint64,
+	modelId string,
+) (val types.EpochGroupData, found bool, err error) {
+	storeKey, err := k.egdStoreKey(epochIndex, modelId)
+	if err != nil {
+		return val, false, err
+	}
+	bz, ok := c.bz[string(storeKey)]
+	if !ok {
+		bz = runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx)).Get(storeKey)
+		if bz == nil {
+			return val, false, nil
+		}
+		if !c.written[string(storeKey)] {
+			if c.bz == nil {
+				c.bz = make(map[string][]byte)
+			}
+			c.bz[string(storeKey)] = append([]byte(nil), bz...)
+		}
+	}
+	val, err = k.EpochGroupDataMap.ValueCodec().Decode(bz)
+	if err != nil {
+		return types.EpochGroupData{}, false, err
+	}
+	return restoredEpochGroupData(val), true, nil
 }
 
 // GetAllEpochGroupData returns all epochGroupData
@@ -57,6 +242,9 @@ func (k Keeper) GetAllEpochGroupData(ctx context.Context) (list []types.EpochGro
 	epochGroupDataList, err := iter.Values()
 	if err != nil {
 		return nil
+	}
+	for i := range epochGroupDataList {
+		epochGroupDataList[i] = restoredEpochGroupData(epochGroupDataList[i])
 	}
 	return epochGroupDataList
 }
