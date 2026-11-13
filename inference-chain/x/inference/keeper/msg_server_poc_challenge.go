@@ -56,6 +56,9 @@ func (k msgServer) PoCChallengeStoreCommit(goCtx context.Context, msg *types.Msg
 	if err != nil {
 		return nil, sdkerrors.Wrap(types.ErrInvalidAddress, fmt.Sprintf("invalid creator address: %v", err))
 	}
+	if err := k.CheckEpochModelCommit(goCtx, ch.EpochIndex, addr, msg.Entries); err != nil {
+		return nil, err
+	}
 	existingByModel, err := k.loadExistingChallengeCommits(goCtx, addr)
 	if err != nil {
 		return nil, err
@@ -136,8 +139,12 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 	if !params.PocParams.PocV2Enabled {
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
-	if k.IsPoCParticipantBlocked(goCtx, msg.Creator) {
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	creatorAddr, err := decodePoCCreator(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	if k.IsPoCParticipantBlocked(goCtx, creatorAddr.String()) {
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, creatorAddr.String())
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -153,15 +160,20 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 
 	storedCount := 0
 	for _, validation := range msg.Validations {
-		if validation == nil || validation.ModelId == "" || validation.ParticipantAddress == "" {
+		if validation == nil || validation.ParticipantAddress == "" {
 			continue
 		}
-		if _, err := sdk.AccAddressFromBech32(validation.ParticipantAddress); err != nil {
+		if validation.ModelId == "" || !k.IsValidGovernanceModel(goCtx, validation.ModelId) {
+			continue
+		}
+		target, err := types.CanonicalAccAddress(validation.ParticipantAddress)
+		if err != nil {
 			k.LogWarn("[SubmitPoCChallengeValidations] Invalid participant address, skipping", types.PoC,
 				"validator", msg.Creator, "participant", validation.ParticipantAddress, "error", err)
 			continue
 		}
-		ch, found, err := k.GetPoCChallenge(goCtx, validation.ParticipantAddress)
+		participant := target.String()
+		ch, found, err := k.GetPoCChallenge(goCtx, participant)
 		if err != nil {
 			return nil, err
 		}
@@ -182,32 +194,28 @@ func (k msgServer) SubmitPoCChallengeValidations(goCtx context.Context, msg *typ
 			continue
 		}
 
-		targetAddr, err := sdk.AccAddressFromBech32(validation.ParticipantAddress)
-		if err != nil {
-			continue
-		}
-		validatorAddr, err := sdk.AccAddressFromBech32(msg.Creator)
+		validatorAddr, err := types.CanonicalAccAddress(msg.Creator)
 		if err != nil {
 			return nil, sdkerrors.Wrap(types.ErrInvalidAddress, err.Error())
 		}
-		exists, err := k.PoCChallengeValidations.Has(goCtx, collections.Join3(targetAddr, validation.ModelId, validatorAddr))
+		exists, err := k.PoCChallengeValidations.Has(goCtx, collections.Join3(target, validation.ModelId, validatorAddr))
 		if err != nil {
-			return nil, sdkerrors.Wrapf(err, "failed to check existing challenge validation for participant %s", validation.ParticipantAddress)
+			return nil, sdkerrors.Wrapf(err, "failed to check existing challenge validation for participant %s", participant)
 		}
 		if exists {
 			k.LogWarn("[SubmitPoCChallengeValidations] Validation already exists, skipping duplicate", types.PoC,
-				"validator", msg.Creator, "participant", validation.ParticipantAddress, "model_id", validation.ModelId)
+				"validator", validatorAddr.String(), "participant", participant, "model_id", validation.ModelId)
 			continue
 		}
 		stored := types.PoCValidationV2{
-			ParticipantAddress:          validation.ParticipantAddress,
-			ValidatorParticipantAddress: msg.Creator,
+			ParticipantAddress:          participant,
+			ValidatorParticipantAddress: validatorAddr.String(),
 			PocStageStartBlockHeight:    startBlockHeight,
 			ValidatedWeight:             validation.ValidatedWeight,
 			ModelId:                     validation.ModelId,
 		}
-		if err := k.PoCChallengeValidations.Set(goCtx, collections.Join3(targetAddr, validation.ModelId, validatorAddr), stored); err != nil {
-			return nil, sdkerrors.Wrapf(err, "failed to store challenge validation for participant %s", validation.ParticipantAddress)
+		if err := k.PoCChallengeValidations.Set(goCtx, collections.Join3(target, validation.ModelId, validatorAddr), stored); err != nil {
+			return nil, sdkerrors.Wrapf(err, "failed to store challenge validation for participant %s", participant)
 		}
 		storedCount++
 	}

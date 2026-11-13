@@ -11,11 +11,19 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 	if err := k.CheckPermission(goCtx, msg, OpenRegistrationPermission); err != nil {
 		return nil, err
 	}
+	// ValidateBasic is not consensus admission. Reject a non-canonical creator
+	// here, before any read or write, so a proposer that skipped CheckTx
+	// cannot register or update an uppercase spelling.
+	addr, err := types.CanonicalAccAddress(msg.GetCreator())
+	if err != nil {
+		return nil, err
+	}
 	ctx := sdk.UnwrapSDKContext(goCtx)
+	canonical := addr.String()
 
 	// Check if participant already exists. If it does, restrict updates to only
 	// ValidatorKey, WorkerKey, and Url as per requirements.
-	if existing, found := k.GetParticipant(ctx, msg.GetCreator()); found {
+	if existing, found := k.GetParticipant(ctx, canonical); found {
 		// Preserve all existing fields and update only the allowed ones
 		if msg.Url != "" {
 			existing.InferenceUrl = msg.Url
@@ -33,17 +41,18 @@ func (k msgServer) SubmitNewParticipant(goCtx context.Context, msg *types.MsgSub
 	}
 
 	// If participant does not exist yet, create a new one
-	newParticipant := createNewParticipant(ctx, msg)
+	newParticipant := createNewParticipant(ctx, msg, addr)
 	if err := k.SetParticipant(ctx, newParticipant); err != nil {
 		return nil, err
 	}
 	return &types.MsgSubmitNewParticipantResponse{}, nil
 }
 
-func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant) types.Participant {
+func createNewParticipant(ctx sdk.Context, msg *types.MsgSubmitNewParticipant, addr sdk.AccAddress) types.Participant {
+	canonical := addr.String()
 	newParticipant := types.Participant{
-		Index:             msg.GetCreator(),
-		Address:           msg.GetCreator(),
+		Index:             canonical,
+		Address:           canonical,
 		Weight:            -1,
 		JoinTime:          ctx.BlockTime().UnixMilli(),
 		JoinHeight:        ctx.BlockHeight(),

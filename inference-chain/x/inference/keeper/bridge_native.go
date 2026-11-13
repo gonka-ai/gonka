@@ -49,12 +49,14 @@ func (k Keeper) IsBridgeContractAddress(ctx context.Context, chainId, contractAd
 	return has
 }
 
-// HandleNativeTokenRelease handles the release of native tokens when WGNK is burned on Ethereum
-func (k Keeper) HandleNativeTokenRelease(ctx sdk.Context, bridgeTx *types.BridgeTransaction) error {
-	// Parse the recipient address (should be a valid Cosmos address)
-	recipientAddr, err := sdk.AccAddressFromBech32(bridgeTx.OwnerAddress)
+// HandleNativeTokenRelease releases escrowed native tokens to recipient.
+// The caller resolves a bridge key link once and passes that address. This
+// function does not look the link up again, so a second hop cannot change
+// the recipient.
+func (k Keeper) HandleNativeTokenRelease(ctx sdk.Context, bridgeTx *types.BridgeTransaction, recipient string) error {
+	recipientAddr, err := sdk.AccAddressFromBech32(recipient)
 	if err != nil {
-		return fmt.Errorf("invalid recipient address %s: %v", bridgeTx.OwnerAddress, err)
+		return fmt.Errorf("invalid recipient address %s: %v", recipient, err)
 	}
 
 	// Parse the amount
@@ -81,7 +83,8 @@ func (k Keeper) HandleNativeTokenRelease(ctx sdk.Context, bridgeTx *types.Bridge
 
 	k.LogInfo("Bridge native: Successfully released native tokens from escrow",
 		types.Messages,
-		"recipient", bridgeTx.OwnerAddress,
+		"recipient", recipient,
+		"ownerAddress", bridgeTx.OwnerAddress,
 		"amount", bridgeTx.Amount,
 		"chainId", bridgeTx.ChainId,
 		"contractAddress", bridgeTx.ContractAddress)

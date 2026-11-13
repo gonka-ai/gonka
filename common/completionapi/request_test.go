@@ -587,3 +587,18 @@ func TestModifyRequestBodyReportsWhetherTheCallerAskedForLogprobs(t *testing.T) 
 		})
 	}
 }
+
+// Executors and validators must remove client priority even if a custom gateway accepts it.
+func TestModifyRequestBodyDropsTheClientSchedulingPriority(t *testing.T) {
+	for _, priority := range []string{"-9223372036854775808", "-2", "0", "5"} {
+		body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"priority":` + priority + `}`)
+
+		r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "processed_logprobs")
+		require.NoError(t, err)
+
+		var m map[string]interface{}
+		require.NoError(t, json.Unmarshal(r.NewBody, &m))
+		_, present := m["priority"]
+		require.False(t, present, "priority %s reached the node", priority)
+	}
+}

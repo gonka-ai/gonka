@@ -103,4 +103,5 @@ var (
 	ErrPoCChallengeAlreadyOpen = sdkerrors.Register(ModuleName, 1201, "target already has an open PoC challenge")
 	ErrPoCChallengeCapExceeded = sdkerrors.Register(ModuleName, 1202, "network PoC challenge cap exceeded")
 	ErrPoCChallengeWindow      = sdkerrors.Register(ModuleName, 1204, "PoC challenge cannot be created in this window")
+	ErrInvalidBridgeKeyLink    = sdkerrors.Register(ModuleName, 1205, "invalid bridge key link")
 )

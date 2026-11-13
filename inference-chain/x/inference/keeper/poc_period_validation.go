@@ -207,10 +207,43 @@ func (k Keeper) CheckPoCV2StoreCommitMempool(ctx sdk.Context, msg *types.MsgPoCV
 	if err := k.checkPoCV2StoreCommitNextBlockClosed(ctx, msg.PocStageStartBlockHeight); err != nil {
 		return err
 	}
+	if err := k.checkPoCV2StoreCommitEpochModels(ctx, msg); err != nil {
+		return err
+	}
 	if ctx.IsReCheckTx() {
 		return k.checkPoCV2StoreCommitRecheckOverlap(ctx, msg)
 	}
 	return nil
+}
+
+func (k Keeper) CheckPoCChallengeStoreCommitMempool(ctx sdk.Context, msg *types.MsgPoCChallengeStoreCommit) error {
+	if msg == nil {
+		return nil
+	}
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return errorsmod.Wrapf(types.ErrInvalidAddress, "invalid creator address: %v", err)
+	}
+	ch, found, err := k.GetPoCChallenge(ctx, addr.String())
+	if err != nil {
+		return err
+	}
+	if !found || ch.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
+		return nil
+	}
+	return k.CheckEpochModelCommit(ctx, ch.EpochIndex, addr, msg.Entries)
+}
+
+func (k Keeper) checkPoCV2StoreCommitEpochModels(ctx sdk.Context, msg *types.MsgPoCV2StoreCommit) error {
+	activeEvent, isActive, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil || !isActive || activeEvent == nil || msg.PocStageStartBlockHeight != activeEvent.TriggerHeight {
+		return nil
+	}
+	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	if err != nil {
+		return errorsmod.Wrapf(types.ErrInvalidAddress, "invalid creator address: %v", err)
+	}
+	return k.CheckEpochModelCommit(ctx, activeEvent.EpochIndex, addr, msg.Entries)
 }
 
 func (k Keeper) checkPoCV2StoreCommitNextBlockClosed(ctx sdk.Context, startBlockHeight int64) error {

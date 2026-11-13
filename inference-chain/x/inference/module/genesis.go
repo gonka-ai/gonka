@@ -66,7 +66,33 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 	// this line is used by starport scaffolding # genesis/module/init
 	importDevshardApprovedVersions(ctx, k, &genState)
+	modelIDs := make([]string, 0, len(genState.ModelList)+1)
+	for _, model := range genState.ModelList {
+		modelIDs = append(modelIDs, model.Id)
+	}
+	if genState.Params.PocParams != nil && genState.Params.PocParams.ModelId != "" {
+		modelIDs = append(modelIDs, genState.Params.PocParams.ModelId)
+	}
+	types.PrepareGenesisPocModels(&genState.Params, modelIDs)
+	types.EnableGenesisPocV2(&genState.Params)
+	if genState.Params.PocParams != nil {
+		ids := make([]string, 0, len(genState.Params.PocParams.Models))
+		for _, model := range genState.Params.PocParams.Models {
+			if model != nil {
+				ids = append(ids, model.ModelId)
+			}
+		}
+		k.LogInfo("InitGenesis: PREFILL scheme blocks", types.PoC,
+			"models", ids,
+			"poc_v2_enabled", genState.Params.PocParams.PocV2Enabled,
+			"confirmation_poc_v2_enabled", genState.Params.PocParams.ConfirmationPocV2Enabled,
+		)
+	}
 	if err := k.SetParams(ctx, genState.Params); err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	if _, err := k.FreezePocStageRecipe(ctx, 0); err != nil {
 		//nolint:forbidigo // genesis code
 		panic(err)
 	}
@@ -88,6 +114,13 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge token metadata from genesis
 		for _, elem := range genState.Bridge.TokenMetadata {
+			if isIBCDenom(elem.ContractAddress) {
+				if err := k.SetIBCTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, *elem); err != nil {
+					//nolint:forbidigo // genesis code
+					panic(err)
+				}
+				continue
+			}
 			k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
 				Name:     elem.Name,
 				Symbol:   elem.Symbol,
@@ -97,7 +130,11 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge trade approved tokens from genesis
 		for _, elem := range genState.Bridge.TradeApprovedTokens {
-			if err := k.SetBridgeTradeApprovedToken(ctx, *elem); err != nil {
+			setApproved := k.SetBridgeTradeApprovedToken
+			if isIBCDenom(elem.ContractAddress) {
+				setApproved = k.SetIBCTradeApprovedToken
+			}
+			if err := setApproved(ctx, *elem); err != nil {
 				//nolint:forbidigo // genesis code
 				panic(err)
 			}
@@ -112,6 +149,41 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 				Amount:             elem.Amount,
 				DestinationAddress: elem.DestinationAddress,
 				ChainId:            elem.ChainId,
+			}); err != nil {
+				//nolint:forbidigo // genesis code
+				panic(err)
+			}
+		}
+
+		seenKeyLinks := make(map[string]struct{}, len(genState.Bridge.KeyLinks))
+		for i, elem := range genState.Bridge.KeyLinks {
+			if elem == nil {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d is nil", i))
+			}
+			owner, err := sdk.AccAddressFromBech32(elem.OwnerAddress)
+			if err != nil || elem.OwnerAddress != owner.String() {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d has a non-canonical owner address", i))
+			}
+			recipient, err := sdk.AccAddressFromBech32(elem.RecipientAddress)
+			if err != nil || elem.RecipientAddress != recipient.String() {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d has a non-canonical recipient address", i))
+			}
+			if _, exists := seenKeyLinks[elem.OwnerAddress]; exists {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("duplicate bridge key link for %s", elem.OwnerAddress))
+			}
+			if elem.Nonce == 0 {
+				//nolint:forbidigo // genesis code
+				panic(fmt.Sprintf("bridge key link %d has nonce 0", i))
+			}
+			seenKeyLinks[elem.OwnerAddress] = struct{}{}
+			if err := k.BridgeKeyLinks.Set(ctx, elem.OwnerAddress, types.BridgeKeyLink{
+				OwnerAddress:     owner.String(),
+				RecipientAddress: recipient.String(),
+				Nonce:            elem.Nonce,
 			}); err != nil {
 				//nolint:forbidigo // genesis code
 				panic(err)
@@ -350,12 +422,23 @@ func ExportGenesis(ctx sdk.Context, k keeper.Keeper) *types.GenesisState {
 		pendingWithdrawalRefundPtrs[i] = &pendingWithdrawalRefunds[i]
 	}
 
+	keyLinks, err := k.GetAllBridgeKeyLinks(ctx)
+	if err != nil {
+		//nolint:forbidigo // genesis code
+		panic(err)
+	}
+	keyLinkPtrs := make([]*types.BridgeKeyLink, len(keyLinks))
+	for i := range keyLinks {
+		keyLinkPtrs[i] = &keyLinks[i]
+	}
+
 	genesis.Bridge = &types.Bridge{
 		ContractAddresses:        contractAddressPtrs,
 		TokenMetadata:            tokenMetadataPtrs,
 		TradeApprovedTokens:      tradeApprovedTokenPtrs,
 		PendingMintRefunds:       pendingMintRefundPtrs,
 		PendingWithdrawalRefunds: pendingWithdrawalRefundPtrs,
+		KeyLinks:                 keyLinkPtrs,
 	}
 	// this line is used by starport scaffolding # genesis/module/export
 
@@ -416,4 +499,9 @@ func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {
 		panic(err)
 	}
 	return models2
+}
+
+// isIBCDenom reports entries stored by the IBC setters: bridge addresses never contain '/'.
+func isIBCDenom(addr string) bool {
+	return strings.Contains(addr, "/")
 }

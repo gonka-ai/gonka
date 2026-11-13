@@ -2,6 +2,7 @@ package calculations
 
 import (
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/shopspring/decimal"
@@ -591,6 +592,93 @@ func TestMissedStatTestLookupConsistency(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func tableCriticalMisses(t *testing.T, nTotal, p0Permille int) int {
+	t.Helper()
+	critical := -1
+	for k := 0; k <= nTotal; k++ {
+		passed, err := MissedStatTestLookupWithP0(k, nTotal, p0Permille)
+		if err != nil {
+			t.Fatalf("MissedStatTestLookupWithP0(%d, %d, %d) error: %v", k, nTotal, p0Permille, err)
+		}
+		if !passed {
+			break
+		}
+		critical = k
+	}
+	return critical
+}
+
+type tableDeviation struct {
+	stricterSizes  int
+	maxStricter    int
+	lenientFrom    int
+	lenientTo      int
+	maxLenient     int
+	worstFailRate  float64
+	worstFailRateN int
+}
+
+var acceptedTableDeviation = map[int]tableDeviation{
+	50:  {stricterSizes: 880, maxStricter: 2, lenientFrom: 2, lenientTo: 28, maxLenient: 3, worstFailRate: 0.130639, worstFailRateN: 69},
+	100: {stricterSizes: 923, maxStricter: 2, lenientFrom: 2, lenientTo: 14, maxLenient: 2, worstFailRate: 0.190259, worstFailRateN: 39},
+	200: {stricterSizes: 935, maxStricter: 3, lenientFrom: 2, lenientTo: 7, maxLenient: 2, worstFailRate: 0.357139, worstFailRateN: 29},
+	300: {stricterSizes: 938, maxStricter: 4, lenientFrom: 3, lenientTo: 5, maxLenient: 1, worstFailRate: 0.526137, worstFailRateN: 19},
+	400: {stricterSizes: 935, maxStricter: 5, lenientFrom: 4, lenientTo: 4, maxLenient: 1, worstFailRate: 0.691931, worstFailRateN: 19},
+	500: {stricterSizes: 932, maxStricter: 6, lenientFrom: 0, lenientTo: 0, maxLenient: 0, worstFailRate: 0.820358, worstFailRateN: 19},
+}
+
+func TestCriticalValueTablesAgainstExactBinomial(t *testing.T) {
+	for _, p0Permille := range []int{50, 100, 200, 300, 400, 500} {
+		accepted := acceptedTableDeviation[p0Permille]
+		t.Run(fmt.Sprintf("p0=%d", p0Permille), func(t *testing.T) {
+			var got tableDeviation
+			for n := 1; n <= exactSweepMaxN; n++ {
+				tails, scale := binomialUpperTails(n, p0Permille)
+				exactK := exactCriticalMisses(tails, scale)
+				tableK := tableCriticalMisses(t, n, p0Permille)
+
+				diff := exactK - tableK
+				if diff > 0 {
+					got.stricterSizes++
+					if diff > got.maxStricter {
+						got.maxStricter = diff
+					}
+				}
+
+				inLenientRange := accepted.lenientFrom <= n && n <= accepted.lenientTo
+				if (diff < 0) != inLenientRange {
+					t.Errorf("n=%d: table=%d, exact=%d; more lenient than exact only for n in [%d, %d]",
+						n, tableK, exactK, accepted.lenientFrom, accepted.lenientTo)
+				}
+				if diff < 0 {
+					if got.lenientFrom == 0 {
+						got.lenientFrom = n
+					}
+					got.lenientTo = n
+					if -diff > got.maxLenient {
+						got.maxLenient = -diff
+					}
+				}
+
+				if rate := failProbability(tails, scale, tableK); rate > got.worstFailRate {
+					got.worstFailRate = rate
+					got.worstFailRateN = n
+				}
+			}
+
+			t.Logf("stricter than exact at %d of %d sizes, by up to %d; more lenient for n in [%d, %d], by up to %d; worst P(fail | p=p0) %.6f at n=%d",
+				got.stricterSizes, exactSweepMaxN, got.maxStricter, got.lenientFrom, got.lenientTo, got.maxLenient, got.worstFailRate, got.worstFailRateN)
+
+			gotRate, acceptedRate := got.worstFailRate, accepted.worstFailRate
+			got.worstFailRate, accepted.worstFailRate = 0, 0
+			if got != accepted || math.Abs(gotRate-acceptedRate) > 5e-7 {
+				t.Errorf("deviation from the exact test changed: got %+v (rate %.6f), accepted %+v (rate %.6f); update docs/binom-stattest.md and acceptedTableDeviation together",
+					got, gotRate, accepted, acceptedRate)
+			}
+		})
 	}
 }
 

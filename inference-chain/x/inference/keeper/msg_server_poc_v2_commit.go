@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"cosmossdk.io/collections"
 	sdkerrors "cosmossdk.io/errors"
@@ -47,10 +48,15 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
 
-	// Participant access gating: blocklisted accounts cannot submit PoC artifacts.
-	if k.IsPoCParticipantBlocked(ctx, msg.Creator) {
-		k.LogError(PocFailureTag+"[PoCV2StoreCommit] participant is blocked from PoC", types.PoC, "participant", msg.Creator)
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	// Decode before the blocklist check. Membership is account bytes, and the
+	// stored participant string is the canonical spelling.
+	addr, err := decodePoCCreator(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	if k.IsPoCParticipantBlocked(ctx, addr.String()) {
+		k.LogError(PocFailureTag+"[PoCV2StoreCommit] participant is blocked from PoC", types.PoC, "participant", addr.String())
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, addr.String())
 	}
 
 	if len(msg.Entries) == 0 {
@@ -64,6 +70,9 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		epochParams := params.EpochParams
 		if !activeEvent.IsInBatchSubmissionWindow(currentBlockHeight, epochParams) {
 			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC batch submission window closed")
+		}
+		if err := k.CheckEpochModelCommit(ctx, activeEvent.EpochIndex, addr, msg.Entries); err != nil {
+			return nil, err
 		}
 	} else {
 		epochParams := params.EpochParams
@@ -82,11 +91,6 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		}
 	}
 
-	addr, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err != nil {
-		return nil, sdkerrors.Wrap(types.ErrInvalidAddress, fmt.Sprintf("invalid creator address: %v", err))
-	}
-
 	existingByModel, err := k.loadExistingPoCV2StoreCommits(ctx, startBlockHeight, addr)
 	if err != nil {
 		return nil, err
@@ -101,11 +105,45 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		return nil, err
 	}
 
-	if err := k.persistPoCV2CommitUpdates(ctx, msg.Creator, startBlockHeight, currentBlockHeight, addr, updates); err != nil {
+	if err := k.persistPoCV2CommitUpdates(ctx, addr.String(), startBlockHeight, currentBlockHeight, addr, updates); err != nil {
 		return nil, err
 	}
 
 	return &types.MsgPoCV2StoreCommitResponse{}, nil
+}
+
+func (k Keeper) CheckEpochModelCommit(
+	ctx context.Context,
+	epochIndex uint64,
+	participant sdk.AccAddress,
+	entries []*types.PoCV2CommitEntry,
+) error {
+	participants, found := k.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("active participants not found for epoch %d", epochIndex))
+	}
+	index := participant.String()
+	var epochModels []string
+	member := false
+	for _, p := range participants.Participants {
+		if p != nil && p.Index == index {
+			epochModels = p.Models
+			member = true
+			break
+		}
+	}
+	if !member {
+		return sdkerrors.Wrap(types.ErrParticipantNotFound, fmt.Sprintf("%s is not an active participant of epoch %d", index, epochIndex))
+	}
+	for _, entry := range entries {
+		if entry == nil {
+			continue
+		}
+		if !slices.Contains(epochModels, entry.ModelId) {
+			return sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not one of the participant's epoch models", entry.ModelId))
+		}
+	}
+	return nil
 }
 
 func (k msgServer) loadExistingPoCV2StoreCommits(
@@ -272,6 +310,10 @@ func checkedMul(a, b uint64) (uint64, bool) {
 
 // MLNodeWeightDistribution handles submission of per-node weight distribution.
 func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.MsgMLNodeWeightDistribution) (*types.MsgMLNodeWeightDistributionResponse, error) {
+	// Bound the decoded message before permission, window, or store lookups.
+	if err := msg.ValidateRawBounds(); err != nil {
+		return nil, err
+	}
 	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
@@ -295,10 +337,13 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
 
-	// Participant access gating: blocklisted accounts cannot submit PoC artifacts.
-	if k.IsPoCParticipantBlocked(ctx, msg.Creator) {
-		k.LogError(PocFailureTag+"[MLNodeWeightDistribution] participant is blocked from PoC", types.PoC, "participant", msg.Creator)
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	addr, err := decodePoCCreator(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	if k.IsPoCParticipantBlocked(ctx, addr.String()) {
+		k.LogError(PocFailureTag+"[MLNodeWeightDistribution] participant is blocked from PoC", types.PoC, "participant", addr.String())
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, addr.String())
 	}
 
 	if len(msg.Entries) == 0 {
@@ -343,44 +388,20 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 		}
 	}
 
-	addr, err := sdk.AccAddressFromBech32(msg.Creator)
+	// Canonicalize every entry before any write. A later failure must not
+	// leave an earlier model from this transaction stored.
+	canonical, err := k.CanonicalMLNodeWeightDistribution(ctx, startBlockHeight, addr, msg.Entries)
 	if err != nil {
-		return nil, sdkerrors.Wrap(types.ErrInvalidAddress, fmt.Sprintf("invalid creator address: %v", err))
+		return nil, err
 	}
 
-	for _, entry := range msg.Entries {
-		if len(entry.Weights) == 0 {
-			return nil, sdkerrors.Wrap(types.ErrIllegalState, "entry weights must not be empty")
-		}
-
-		modelID := entry.ModelId
-		if modelID == "" {
-			return nil, sdkerrors.Wrap(types.ErrIllegalState, "model_id must not be empty")
-		}
-		if _, found := k.GetGovernanceModel(ctx, modelID); !found {
-			return nil, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", modelID))
-		}
-
-		pk := pocV2StoreCommitKey(startBlockHeight, addr, modelID)
-		commit, err := k.PoCV2StoreCommits.Get(ctx, pk)
-		if err != nil {
-			return nil, sdkerrors.Wrap(types.ErrIllegalState, "no store commit found for this stage and model")
-		}
-
-		var sum uint64
-		for _, w := range entry.Weights {
-			sum += uint64(w.Weight)
-		}
-		if sum != uint64(commit.Count) {
-			return nil, sdkerrors.Wrap(types.ErrIllegalState,
-				fmt.Sprintf("weight sum %d does not match committed count %d", sum, commit.Count))
-		}
-
+	for _, entry := range canonical {
+		pk := pocV2StoreCommitKey(startBlockHeight, addr, entry.ModelId)
 		distribution := types.MLNodeWeightDistribution{
-			ParticipantAddress:       msg.Creator,
+			ParticipantAddress:       addr.String(),
 			PocStageStartBlockHeight: startBlockHeight,
 			Weights:                  entry.Weights,
-			ModelId:                  modelID,
+			ModelId:                  entry.ModelId,
 		}
 
 		if err := k.MLNodeWeightDistributions.Set(ctx, pk, distribution); err != nil {
@@ -388,11 +409,72 @@ func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.Ms
 		}
 
 		k.LogInfo("[MLNodeWeightDistribution] Stored", types.PoC,
-			"participant", msg.Creator,
-			"model_id", modelID,
+			"participant", addr.String(),
+			"model_id", entry.ModelId,
 			"startBlockHeight", startBlockHeight,
 			"nodeCount", len(entry.Weights))
 	}
 
 	return &types.MsgMLNodeWeightDistributionResponse{}, nil
+}
+
+// CanonicalMLNodeWeightDistribution checks structural shape, governance
+// models, store commits, the positive-row limit, and the commit sum. It
+// returns the positive rows to store and does not read hardware inventory.
+// The decoded message is not modified.
+func (k Keeper) CanonicalMLNodeWeightDistribution(
+	ctx context.Context,
+	startBlockHeight int64,
+	participant sdk.AccAddress,
+	entries []*types.MLNodeDistributionEntry,
+) ([]*types.MLNodeDistributionEntry, error) {
+	canonical, err := types.CanonicalMLNodeWeightEntries(entries)
+	if err != nil {
+		return nil, err
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	limit := params.GetEpochValidationParams().PositiveDistributionRowLimit()
+	for _, entry := range canonical {
+		if _, found := k.GetGovernanceModel(ctx, entry.ModelId); !found {
+			return nil, sdkerrors.Wrap(types.ErrInvalidModel, fmt.Sprintf("model_id %q is not a governance model", entry.ModelId))
+		}
+		if len(entry.Weights) > limit {
+			return nil, sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf(
+				"too many positive weight rows for model %q: %d > %d",
+				entry.ModelId, len(entry.Weights), limit,
+			))
+		}
+		pk := pocV2StoreCommitKey(startBlockHeight, participant, entry.ModelId)
+		commit, err := k.PoCV2StoreCommits.Get(ctx, pk)
+		if err != nil {
+			return nil, sdkerrors.Wrap(types.ErrIllegalState, "no store commit found for this stage and model")
+		}
+		sum, err := sumMLNodeWeights(entry.Weights)
+		if err != nil {
+			return nil, err
+		}
+		if sum != uint64(commit.Count) {
+			return nil, sdkerrors.Wrap(types.ErrIllegalState,
+				fmt.Sprintf("weight sum %d does not match committed count %d", sum, commit.Count))
+		}
+	}
+	return canonical, nil
+}
+
+func sumMLNodeWeights(weights []*types.MLNodeWeight) (uint64, error) {
+	var sum uint64
+	for _, weight := range weights {
+		if weight == nil {
+			return 0, sdkerrors.Wrap(types.ErrIllegalState, "nil weight row")
+		}
+		next := sum + uint64(weight.Weight)
+		if next < sum {
+			return 0, sdkerrors.Wrap(types.ErrIllegalState, "weight sum overflow")
+		}
+		sum = next
+	}
+	return sum, nil
 }
