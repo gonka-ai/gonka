@@ -19,7 +19,8 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 
 BUILD_FLAGS ?= -ldflags '$(ldflags)'
 
-WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a
+WASMVM_STATIC_LINUX_X64_URL := $(shell sh ../scripts/fetch-libwasmvm.sh print LIBWASMVM_X64_URL)
+WASMVM_STATIC_LINUX_X64_SHA256 := $(shell sh ../scripts/fetch-libwasmvm.sh print LIBWASMVM_X64_SHA256)
 
 USE_REGISTRY_CACHE ?= 0
 GHCR_CACHE_NAMESPACE ?= gonka-ai
@@ -138,8 +139,24 @@ build-for-upgrade:
 download-linux-deps:
 	@echo "--> Downloading static wasmvm library for Linux (x86_64)..."
 	@mkdir -p build/deps
-	@if [ ! -f build/deps/libwasmvm_muslc.x86_64.a ]; then \
-		curl -L -o build/deps/libwasmvm_muslc.x86_64.a $(WASMVM_STATIC_LINUX_X64_URL); \
+	@archive=build/deps/libwasmvm_muslc.x86_64.a; \
+	expected='$(WASMVM_STATIC_LINUX_X64_SHA256)'; \
+	sum_file() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$$1"; else shasum -a 256 "$$1"; fi; }; \
+	if [ -f "$$archive" ]; then \
+		actual=$$(sum_file "$$archive" | awk '{print $$1}'); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "Cached $$archive checksum $$actual does not match $$expected; replacing"; \
+			rm -f "$$archive"; \
+		fi; \
+	fi; \
+	if [ ! -f "$$archive" ]; then \
+		curl -fsSL -o "$$archive" '$(WASMVM_STATIC_LINUX_X64_URL)'; \
+		actual=$$(sum_file "$$archive" | awk '{print $$1}'); \
+		if [ "$$actual" != "$$expected" ]; then \
+			rm -f "$$archive"; \
+			echo "Downloaded wasmvm archive checksum $$actual does not match $$expected" >&2; \
+			exit 1; \
+		fi; \
 	fi
 	@ln -sf libwasmvm_muslc.x86_64.a build/deps/libwasmvm_muslc.a
 	@echo "API dependencies downloaded to ./build/deps/"
