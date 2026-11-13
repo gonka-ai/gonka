@@ -1,3 +1,10 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 x-observability-proxy-environment: &observability-proxy-environment
   # Optional Jaeger UI proxying (requires JAEGER_BASIC_AUTH_* when enabled)
   JAEGER_ENABLED: ${JAEGER_ENABLED:-false}
@@ -24,6 +31,7 @@ services:
     environment: *observability-proxy-environment
 
   jaeger:
+    logging: *default-logging
     container_name: jaeger
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
     user: "0:0"
@@ -40,6 +48,7 @@ services:
     restart: unless-stopped
 
   prometheus:
+    logging: *default-logging
     container_name: prometheus
     image: prom/prometheus:v3.11.3
     command:
@@ -55,6 +64,7 @@ services:
     restart: unless-stopped
 
   loki:
+    logging: *default-logging
     container_name: loki
     image: grafana/loki:3.6.10
     command:
@@ -67,6 +77,7 @@ services:
     restart: unless-stopped
 
   promtail:
+    logging: *default-logging
     container_name: promtail
     image: grafana/promtail:3.6.10
     command:
@@ -81,6 +92,7 @@ services:
     restart: unless-stopped
 
   cadvisor:
+    logging: *default-logging
     container_name: cadvisor
     image: gcr.io/cadvisor/cadvisor:v0.54.1
     privileged: true
@@ -95,6 +107,7 @@ services:
     restart: unless-stopped
 
   grafana:
+    logging: *default-logging
     container_name: grafana
     image: grafana/grafana:13.0.1
     entrypoint: ["/bin/sh", "/entrypoint.sh"]

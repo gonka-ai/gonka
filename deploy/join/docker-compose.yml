@@ -1,4 +1,12 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 x-proxy-policy: &proxy-policy
+  logging: *default-logging
   image: >-
     ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.16}
   environment:
@@ -64,6 +72,7 @@ x-proxy-policy: &proxy-policy
 
 services:
   tmkms:
+    logging: *default-logging
     image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.16
     container_name: tmkms
     restart: unless-stopped
@@ -73,6 +82,7 @@ services:
       - .tmkms:/root/.tmkms
 
   node:
+    logging: *default-logging
     container_name: node
     image: ghcr.io/product-science/inferenced:0.2.16
     command: ["sh", "./init-docker.sh"]
@@ -112,6 +122,7 @@ services:
     restart: always
 
   api:
+    logging: *default-logging
     container_name: api
     image: ghcr.io/product-science/api:0.2.16
     volumes:
@@ -155,6 +166,7 @@ services:
     restart: always
 
   edge-api:
+    logging: *default-logging
     container_name: edge-api
     image: ghcr.io/product-science/edge-api:0.2.16
     environment:
@@ -174,6 +186,7 @@ services:
     restart: always
 
   versiond:
+    logging: *default-logging
     container_name: versiond
     image: >-
       ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
@@ -221,6 +234,7 @@ services:
     restart: always
 
   bridge:
+    logging: *default-logging
     container_name: bridge
     image: ghcr.io/product-science/bridge:0.2.16
     restart: unless-stopped
@@ -262,6 +276,7 @@ services:
   # owns the active, route-aware versiond-router pools on private ports consumed
   # by those workers.
   proxy:
+    logging: *default-logging
     container_name: proxy
     image: >-
       ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.16}
@@ -300,6 +315,7 @@ services:
       start_period: 15s
 
   proxy-ssl:
+    logging: *default-logging
     container_name: proxy-ssl
     image: ghcr.io/product-science/proxy-ssl:0.2.16
     profiles:
@@ -345,6 +361,7 @@ services:
       start_period: 10s
 
   explorer:
+    logging: *default-logging
     container_name: explorer
     image: ghcr.io/product-science/explorer:latest
     expose:

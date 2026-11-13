@@ -1,5 +1,13 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 services:
   router:
+    logging: *default-logging
     image: >-
       ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.16}
     environment:
