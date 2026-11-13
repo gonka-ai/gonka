@@ -53,6 +53,8 @@ type Validator struct {
 	thresholds              ValidationThresholdResolver
 	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
+	tapeMode                string
+	pool                    *flipPool
 	payloadHTTPClient       *http.Client
 	payloadSigner           signing.Signer
 	rpcEndpoints            transport.EndpointSet
@@ -60,48 +62,19 @@ type Validator struct {
 	payloadRPCs             map[string]*transport.RPCClient
 	fetchPayloads           payloadFetchFunc
 	executeML               mlExecuteFunc
-	pool                    *flipPool
-	echoMode                string
 }
 
 type payloadFetchFunc func(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error)
 
-type mlExecuteFunc func(ctx context.Context, model, escrowID, path string, body []byte) (*http.Response, error)
-
-// mlCall posts a body to a path of the ML node one validation holds.
-type mlCall func(ctx context.Context, path string, body []byte) (*http.Response, error)
-
-// How the echo validation takes part in a vote (DEVSHARD_ECHO_VALIDATION).
-const (
-	// EchoShadow: the logprob comparison votes; the echo scores the same
-	// inference beside it, on the same ML node and validation credit, and its
-	// verdict is only logged.
-	EchoShadow = "shadow"
-	// EchoEnforce: the echo votes.
-	EchoEnforce = "enforce"
-	// EchoOff: the logprob comparison alone.
-	EchoOff = "off"
-)
-
-// shadowTimeout bounds the echo that runs beside a vote it does not cast.
-const shadowTimeout = 2 * time.Minute
-
-// The pooled bound over a participant's recent answers uses the 99.9 %
-// quantile and needs a few answers before it speaks.
-const (
-	pooledQuantile   = 3.09
-	pooledMinAnswers = 4
-	poolWindow       = 32
-	poolMaxAge       = 24 * time.Hour
-)
+type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error)
 
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
 // similarity pass threshold (long-poll snapshot first, chain fallback).
 // vocabularySizes bounds enforced token ids by the model's vocab before the replay reaches the ML node.
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
-// Valid:false instead of abandoning the attempt. echoMode is EchoShadow,
-// EchoEnforce or EchoOff.
+// Valid:false instead of abandoning the attempt. tapeMode is TapeShadow,
+// TapeEnforce or TapeOff.
 func NewValidator(
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
@@ -112,7 +85,7 @@ func NewValidator(
 	thresholds ValidationThresholdResolver,
 	vocabularySizes VocabularyResolver,
 	voteFalseOnFetchFailure bool,
-	echoMode string,
+	tapeMode string,
 ) *Validator {
 	return &Validator{
 		bridge:                  br,
@@ -124,9 +97,9 @@ func NewValidator(
 		thresholds:              thresholds,
 		vocabularySizes:         vocabularySizes,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
-		payloadHTTPClient:       newPayloadFetchClient(),
+		tapeMode:                tapeMode,
 		pool:                    newFlipPool(poolWindow, poolMaxAge),
-		echoMode:                echoMode,
+		payloadHTTPClient:       newPayloadFetchClient(),
 	}
 }
 
@@ -178,44 +151,13 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
-	if v.echoMode == EchoEnforce {
-		return v.echoVerdict(ctx, req, inferenceID, promptPayload, responsePayload)
-	}
-	var shadow *shadowOutcome
-	var beside func(mlCall)
-	if v.echoMode == EchoShadow {
-		beside = func(call mlCall) {
-			shadow = v.shadowEcho(ctx, req, inferenceID, promptPayload, responsePayload, call)
-		}
-	}
-	verdict, err := v.logprobVerdict(ctx, req, inferenceID, promptPayload, responsePayload, epochID, beside)
-	if shadow != nil {
-		logShadow(req, inferenceID, verdict, err, shadow)
-	}
-	return verdict, err
-}
-
-// logprobVerdict is the validation mainnet runs: the answer is replayed with
-// its tokens enforced and the logprobs of both runs are compared. beside, when
-// set, runs once on the ML node that answered the replay, before the node and
-// the validation credit are released.
-func (v *Validator) logprobVerdict(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string,
-	promptPayload, responsePayload []byte, epochID uint64, beside func(mlCall)) (*devshardpkg.ValidateResult, error) {
 	result, err := commonvalidation.ExecuteValidationWithPolicy(
 		ctx,
 		inferenceID,
 		promptPayload,
 		responsePayload,
 		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return v.withMLNode(ctx, req.Model, req.EscrowID, func(call mlCall) (*http.Response, error) {
-				resp, err := call(ctx, commonvalidation.ChatPath, body)
-				if beside != nil && err == nil && resp != nil && resp.StatusCode == http.StatusOK {
-					run := beside
-					beside = nil
-					run(call)
-				}
-				return resp, err
-			})
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, body)
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
@@ -231,136 +173,9 @@ func (v *Validator) logprobVerdict(ctx context.Context, req devshardpkg.Validate
 		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate,
 			fmt.Errorf("evaluate validation result: %w", err))
 	}
-	return &devshardpkg.ValidateResult{Valid: valid}, nil
-}
-
-// echoVerdict judges the inference on the executor's tape: the echo or, for
-// what the echo cannot judge, the replay, then the participant's pool. All its
-// calls go to one ML node under one validation credit.
-func (v *Validator) echoVerdict(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string,
-	promptPayload, responsePayload []byte) (*devshardpkg.ValidateResult, error) {
-	var result commonvalidation.ValidationResult
-	var echoErr error
-	_, err := v.withMLNode(ctx, req.Model, req.EscrowID, func(call mlCall) (*http.Response, error) {
-		lastStatus, lastErr := 0, error(nil)
-		result, echoErr = commonvalidation.ExecuteEchoValidation(ctx, inferenceID, promptPayload, responsePayload,
-			func(ctx context.Context, path string, body []byte) (*http.Response, error) {
-				resp, err := call(ctx, path, body)
-				lastStatus, lastErr = 0, err
-				if resp != nil {
-					lastStatus = resp.StatusCode
-				}
-				return resp, err
-			}, req.InputTokens, req.OutputTokens)
-		// What the node holder sees decides rotation: a transport error or a
-		// 5xx of the last call sends the validation to another node.
-		if lastErr != nil {
-			return nil, lastErr
-		}
-		if lastStatus >= http.StatusInternalServerError {
-			return &http.Response{StatusCode: lastStatus, Body: http.NoBody}, nil
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}, nil
-	})
-	if err != nil {
-		return nil, classifyExecuteValidationErr(err)
-	}
-	return v.verdictOfEcho(req, inferenceID, result, echoErr)
-}
-
-// verdictOfEcho turns the echo's outcome into a verdict and adds the answer
-// to the participant's pool.
-func (v *Validator) verdictOfEcho(req devshardpkg.ValidateRequest, inferenceID string,
-	result commonvalidation.ValidationResult, err error) (*devshardpkg.ValidateResult, error) {
-	if errors.Is(err, commonvalidation.ErrEchoUnsupported) {
-		return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationSkipped, err)
-	}
-	if err != nil {
-		return nil, classifyExecuteValidationErr(err)
-	}
-	switch echo := result.(type) {
-	case *commonvalidation.InvalidInferenceResult:
-		return &devshardpkg.ValidateResult{Valid: false, Reason: "invalid", Details: []any{"cause", echo.Reason}}, nil
-	case *commonvalidation.EchoValidationResult:
-		if echo.Autopass != "" {
-			return &devshardpkg.ValidateResult{Valid: true, Reason: "autopass_4xx", Details: []any{"cause", echo.Autopass}}, nil
-		}
-		verdict := &devshardpkg.ValidateResult{Valid: echo.IsSuccessful(), Reason: "echo_fail"}
-		if verdict.Valid {
-			verdict.Reason = "echo_pass"
-		}
-		verdict.Details = []any{"steps", echo.Signals.Steps, "count", echo.Signals.Count,
-			"z", echo.Signals.Z, "max_gap", echo.Signals.MaxGap}
-		if echo.Replay != "" {
-			verdict.Details = append(verdict.Details, "replay", echo.Replay)
-		}
-		if v.pool != nil {
-			answers, steps, count := v.pool.Observe(req.ExecutorAddress, req.Model, echo.Signals.Steps, echo.Signals.Count)
-			pooled := commonvalidation.EchoThresholdsFor(req.Model).CountPasses(steps, count, pooledQuantile)
-			verdict.Details = append(verdict.Details, "pooled_answers", answers, "pooled_steps", steps, "pooled_count", count)
-			if verdict.Valid && answers >= pooledMinAnswers && !pooled {
-				verdict.Valid = false
-				verdict.Reason = "pooled_flips"
-			}
-		}
-		return verdict, nil
-	default:
-		return nil, fmt.Errorf("unknown echo validation result type %T", result)
-	}
-}
-
-// shadowOutcome is what the echo would have voted beside a vote it did not cast.
-type shadowOutcome struct {
-	verdict *devshardpkg.ValidateResult
-	err     error
-	took    time.Duration
-}
-
-// shadowEcho scores the inference by the echo through call, the ML node the
-// logprob comparison holds. Nothing it does reaches the vote: its errors, its
-// timeout and its panics end in the outcome.
-func (v *Validator) shadowEcho(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string,
-	promptPayload, responsePayload []byte, call mlCall) (out *shadowOutcome) {
-	started := time.Now()
-	out = &shadowOutcome{}
-	defer func() {
-		if r := recover(); r != nil {
-			out.verdict, out.err = nil, fmt.Errorf("panic: %v", r)
-		}
-		out.took = time.Since(started)
-	}()
-	shadowCtx, cancel := context.WithTimeout(ctx, shadowTimeout)
-	defer cancel()
-	result, err := commonvalidation.ExecuteEchoValidation(shadowCtx, inferenceID, promptPayload, responsePayload,
-		func(ctx context.Context, path string, body []byte) (*http.Response, error) {
-			return call(ctx, path, body)
-		}, req.InputTokens, req.OutputTokens)
-	out.verdict, out.err = v.verdictOfEcho(req, inferenceID, result, err)
-	return out
-}
-
-// logShadow writes what the echo would have voted next to the vote cast.
-func logShadow(req devshardpkg.ValidateRequest, inferenceID string, voted *devshardpkg.ValidateResult, votedErr error, shadow *shadowOutcome) {
-	fields := []any{"subsystem", "validation", "inferenceId", inferenceID, "executor", req.ExecutorAddress, "model", req.Model,
-		"ms", shadow.took.Milliseconds()}
-	if votedErr != nil || voted == nil {
-		fields = append(fields, "voted", "none")
-	} else {
-		fields = append(fields, "voted", voted.Valid)
-	}
-	switch {
-	case errors.Is(shadow.err, devshardpkg.ErrValidationSkipped):
-		fields = append(fields, "echo", "skipped", "cause", shadow.err.Error())
-	case shadow.err != nil:
-		fields = append(fields, "echo", "error", "cause", shadow.err.Error())
-	default:
-		fields = append(fields, "echo", shadow.verdict.Reason, "echo_valid", shadow.verdict.Valid)
-		if votedErr == nil && voted != nil {
-			fields = append(fields, "agree", shadow.verdict.Valid == voted.Valid)
-		}
-		fields = append(fields, shadow.verdict.Details...)
-	}
-	logging.Info("echo validation shadow", fields...)
+	verdict := &devshardpkg.ValidateResult{Valid: valid}
+	v.judgeTape(req, inferenceID, promptPayload, responsePayload, result, verdict)
+	return verdict, nil
 }
 
 func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error) {
@@ -538,72 +353,44 @@ func evaluateValidationResult(
 	}
 }
 
-// withMLNode runs work against one ML node under one validation credit. work
-// gets a call bound to that node; the response it returns is what the node
-// holder classifies: a transport error or a 5xx rotates to another node.
-func (v *Validator) withMLNode(ctx context.Context, model, escrowID string,
-	work func(call mlCall) (*http.Response, error)) (*http.Response, error) {
+func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
 	if v.executeML != nil {
-		return work(func(ctx context.Context, path string, body []byte) (*http.Response, error) {
-			return v.executeML(ctx, model, escrowID, path, body)
-		})
+		return v.executeML(ctx, model, escrowID, body)
 	}
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
-		return work(func(ctx context.Context, path string, body []byte) (*http.Response, error) {
-			return v.postToNode(ctx, endpoint, path, body)
-		})
+		url := endpoint + "/v1/chat/completions"
+		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+		// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
+		if reqErr == nil && (httpReq.URL.Host == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https")) {
+			reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
+		}
+		if reqErr != nil {
+			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		observability.InjectRequestContext(ctx, httpReq.Header)
+		observability.AttachRequestID(httpReq)
+		resp, doErr := v.engine.httpClient.Do(httpReq)
+		if doErr != nil || resp.StatusCode != http.StatusOK {
+			return resp, doErr
+		}
+		body, readErr := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
+		resp.Body.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		statusCode, body, streamErr := commonvalidation.NormalizeReplayStream(resp.StatusCode, body)
+		if streamErr != nil {
+			logging.Warn("validator replay stream failed on ML node", "endpoint", endpoint, "error", streamErr)
+			return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(bytes.NewReader(nil))}, nil
+		}
+		resp.StatusCode = statusCode
+		resp.Body = io.NopCloser(bytes.NewReader(body))
+		return resp, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("validate inference: %w", err)
 	}
-	return resp, nil
-}
-
-// executeMLRequest posts one validation replay to a locked ML node.
-func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
-	return v.withMLNode(ctx, model, escrowID, func(call mlCall) (*http.Response, error) {
-		return call(ctx, commonvalidation.ChatPath, body)
-	})
-}
-
-// postToNode posts body to path on an ML node and returns the response with
-// its body read (a replay stream normalised to one JSON body); the echo's
-// response is returned unread.
-func (v *Validator) postToNode(ctx context.Context, endpoint, path string, body []byte) (*http.Response, error) {
-	url := endpoint + path
-	httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	// NewRequest also accepts URLs that the HTTP transport cannot dispatch.
-	if reqErr == nil && (httpReq.URL.Host == "" || (httpReq.URL.Scheme != "http" && httpReq.URL.Scheme != "https")) {
-		reqErr = fmt.Errorf("invalid ML node HTTP endpoint %q", endpoint)
-	}
-	if reqErr != nil {
-		return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	observability.InjectRequestContext(ctx, httpReq.Header)
-	observability.AttachRequestID(httpReq)
-	resp, doErr := v.engine.httpClient.Do(httpReq)
-	if doErr != nil || resp.StatusCode != http.StatusOK {
-		return resp, doErr
-	}
-	// The echo's response also carries logprobs for every position of the
-	// prompt, megabytes of them; the echo reads it as it arrives, keeps the
-	// answer's part and bounds the bytes itself.
-	if path == commonvalidation.EchoPath {
-		return resp, nil
-	}
-	body, readErr := io.ReadAll(completionapi.NewCappedResponseReader(resp.Body))
-	resp.Body.Close()
-	if readErr != nil {
-		return nil, readErr
-	}
-	statusCode, body, streamErr := commonvalidation.NormalizeReplayStream(resp.StatusCode, body)
-	if streamErr != nil {
-		logging.Warn("validator replay stream failed on ML node", "endpoint", endpoint, "error", streamErr)
-		return &http.Response{StatusCode: http.StatusBadGateway, Body: io.NopCloser(bytes.NewReader(nil))}, nil
-	}
-	resp.StatusCode = statusCode
-	resp.Body = io.NopCloser(bytes.NewReader(body))
 	return resp, nil
 }
 

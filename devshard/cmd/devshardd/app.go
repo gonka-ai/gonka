@@ -316,7 +316,7 @@ func buildHostManager(
 		thresholds,
 		vocabularySizes,
 		cfg.VoteFalseOnFetchFailure,
-		cfg.EchoValidation,
+		cfg.TapeValidation,
 	)
 	validator.SetPayloadRPC(chainRuntime.signer, transport.RPCEndpointsFromEnv())
 	closers.Add(validator.ClosePayloadClients)

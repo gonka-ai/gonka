@@ -173,7 +173,7 @@ func TestLoadRuntimeConfig_PayloadZstdDefaultAndOverride(t *testing.T) {
 	}
 }
 
-func TestLoadRuntimeConfig_EchoValidationMode(t *testing.T) {
+func TestLoadRuntimeConfig_TapeValidationMode(t *testing.T) {
 	for _, tt := range []struct {
 		env, want string
 		wantErr   bool
@@ -186,7 +186,7 @@ func TestLoadRuntimeConfig_EchoValidationMode(t *testing.T) {
 	} {
 		t.Run("mode "+tt.env, func(t *testing.T) {
 			t.Setenv("DEVSHARD_BINARY_LOG_VERSION", "")
-			t.Setenv("DEVSHARD_ECHO_VALIDATION", tt.env)
+			t.Setenv("DEVSHARD_TAPE_VALIDATION", tt.env)
 			cfg, err := loadRuntimeConfig(nil, "v2", "dev-log")
 			if tt.wantErr {
 				if err == nil {
@@ -197,8 +197,8 @@ func TestLoadRuntimeConfig_EchoValidationMode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("loadRuntimeConfig: %v", err)
 			}
-			if cfg.EchoValidation != tt.want {
-				t.Fatalf("EchoValidation got %q, want %q", cfg.EchoValidation, tt.want)
+			if cfg.TapeValidation != tt.want {
+				t.Fatalf("TapeValidation got %q, want %q", cfg.TapeValidation, tt.want)
 			}
 		})
 	}

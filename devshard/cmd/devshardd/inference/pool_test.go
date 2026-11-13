@@ -37,21 +37,21 @@ func TestFlipPool_DropsOldAnswers(t *testing.T) {
 	require.Equal(t, 1, count)
 }
 
-// An int4 substitute of DeepSeek is off the winner at ~7.5 % of positions
-// against an honest 3.5-4 %: each 250-position answer passes the 5 % bound,
-// the sum of eight does not; eight honest answers pass.
+// A substitute off the winner at 12 % of positions against an honest 4-6 %:
+// each 250-position answer passes the 8 % bound, the sum of eight does not;
+// eight honest answers pass.
 func TestFlipPool_CatchesBySumWhatOneAnswerPasses(t *testing.T) {
-	th := commonvalidation.EchoThresholdsFor("deepseek-ai/DeepSeek-V4-Flash-0731")
+	th, _ := commonvalidation.TapeThresholdsFor("deepseek-ai/DeepSeek-V4-Flash-0731")
 	pool := newFlipPool(32, time.Hour)
 	var steps, count int
 	for i := 0; i < 8; i++ {
-		require.True(t, th.CountPasses(250, 19, 2.576), "one answer at 7.6 % passes")
-		_, steps, count = pool.Observe("int4", "m", 250, 19)
+		require.True(t, th.CountPasses(250, 30, 2.576), "one answer at 12 % passes")
+		_, steps, count = pool.Observe("substitute", "m", 250, 30)
 	}
 	require.False(t, th.CountPasses(steps, count, pooledQuantile))
 	honest := newFlipPool(32, time.Hour)
 	for i := 0; i < 8; i++ {
-		_, steps, count = honest.Observe("fp8", "m", 250, 10)
+		_, steps, count = honest.Observe("honest", "m", 250, 15)
 	}
 	require.True(t, th.CountPasses(steps, count, pooledQuantile))
 }

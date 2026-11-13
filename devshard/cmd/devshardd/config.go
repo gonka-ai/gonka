@@ -47,7 +47,7 @@ type runtimeConfig struct {
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
 	VoteFalseOnFetchFailure bool
-	EchoValidation          string
+	TapeValidation          string
 	ShutdownGrace           time.Duration
 	Node                    ChainNodeConfig
 }
@@ -149,11 +149,11 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_SHUTDOWN_GRACE: %w", err)
 	}
 
-	echoMode := envOr("DEVSHARD_ECHO_VALIDATION", inference.EchoShadow)
-	switch echoMode {
-	case inference.EchoShadow, inference.EchoEnforce, inference.EchoOff:
+	tapeMode := envOr("DEVSHARD_TAPE_VALIDATION", inference.TapeShadow)
+	switch tapeMode {
+	case inference.TapeShadow, inference.TapeEnforce, inference.TapeOff:
 	default:
-		return runtimeConfig{}, fmt.Errorf("DEVSHARD_ECHO_VALIDATION: unknown mode %q (shadow, enforce, off)", echoMode)
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_TAPE_VALIDATION: unknown mode %q (shadow, enforce, off)", tapeMode)
 	}
 
 	return runtimeConfig{
@@ -171,7 +171,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ValidationRetryInterval:     retryInterval,
 		ValidationLeaseTTL:          leaseTTL,
 		VoteFalseOnFetchFailure:     envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
-		EchoValidation:              echoMode,
+		TapeValidation:              tapeMode,
 		ShutdownGrace:               shutdownGrace,
 		Node:                        loadNodeConfigFromEnv(),
 	}, nil

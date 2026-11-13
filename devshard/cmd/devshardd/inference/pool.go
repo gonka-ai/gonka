@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// flipPool accumulates the echo signals of one executor and model: the
+// flipPool accumulates the tape signals of one executor and model: the
 // positions off the winner over a participant's recent answers are binomial
 // under the same rate as one answer's, so their sum catches a substitute that
 // passes answer by answer.
