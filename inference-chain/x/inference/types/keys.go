@@ -147,6 +147,9 @@ var (
 	// 114, 115, and 117-119 are taken by v0.2.17.
 	BridgeKeyLinksPrefix = collections.NewPrefix(144)
 	ParamsKey            = []byte("p_inference")
+
+	// Activated maintenance windows by (participant, start height).
+	MaintenanceWindowsByParticipantPrefix = collections.NewPrefix(148)
 )
 
 func KeyPrefix(p string) []byte {
