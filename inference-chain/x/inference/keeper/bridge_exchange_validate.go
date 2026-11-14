@@ -9,6 +9,7 @@ import (
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
+	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -129,14 +130,14 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 			return nil, fmt.Errorf("unable to get epoch group for existing transaction: %v", err)
 		}
 
-		epochGroupMembers, err := epochGroup.GetGroupMembers(ctx)
+		weights, err := k.bridgeGroupWeights(ctx, epochGroup, addr)
 		if err != nil {
 			k.LogError("Bridge exchange: unable to get epoch group members", types.Messages,
 				"epochIndex", existingTx.EpochIndex, "error", err)
 			return nil, fmt.Errorf("unable to get epoch group members: %v", err)
 		}
 
-		validatorPower, isInEpochGroup := memberPowerInGroup(addr, epochGroupMembers)
+		validatorPower, isInEpochGroup := weights.voterPower, weights.voterInGroup
 		if !isInEpochGroup {
 			k.LogError("Bridge exchange: Validator not in transaction's epoch group", types.Messages,
 				"validator", msg.Validator, "epochIndex", existingTx.EpochIndex)
@@ -154,12 +155,12 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 			return nil, types.ErrBridgeAlreadyValidated
 		}
 
-		liveWeight := liveGroupWeight(epochGroupMembers)
+		liveWeight := weights.liveWeight
 		votedPower := validatorPower + existingTx.TotalValidationPower
 		if liveWeight != epochGroup.GroupData.TotalWeight {
 			// A member left the group: list the voters to drop its vote.
 			k.hydrateBridgeTransactionValidators(ctx, existingTx)
-			votedPower = validatorPower + liveVotedPower(existingTx.Validators, epochGroupMembers)
+			votedPower = validatorPower + liveVotedPower(existingTx.Validators, weights.members)
 		}
 		return &ValidatedBridgeExchange{
 			ValidatorAddress: addr,
@@ -180,14 +181,14 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		return nil, fmt.Errorf("unable to get current epoch group: %v", err)
 	}
 
-	currentEpochMembers, err := currentEpochGroup.GetGroupMembers(ctx)
+	currentWeights, err := k.bridgeGroupWeights(ctx, currentEpochGroup, addr)
 	if err != nil {
 		k.LogError("Bridge exchange: unable to get current epoch group members", types.Messages,
 			"epochIndex", currentEpochGroup.GroupData.EpochIndex, "error", err)
 		return nil, fmt.Errorf("unable to get current epoch group members: %v", err)
 	}
 
-	validatorPower, isActive := memberPowerInGroup(addr, currentEpochMembers)
+	validatorPower, isActive := currentWeights.voterPower, currentWeights.voterInGroup
 	if !isActive {
 		k.LogError("Bridge exchange: Validator not in active participants", types.Messages, "validator", msg.Validator)
 		return nil, types.ErrBridgeValidatorNotInActiveGroup
@@ -198,10 +199,67 @@ func (k Keeper) ValidateBridgeExchange(ctx sdk.Context, msg *types.MsgBridgeExch
 		ProposedTx:       proposedTx,
 		ExistingTx:       nil,
 		ValidatorPower:   validatorPower,
-		TotalEpochPower:  liveGroupWeight(currentEpochMembers),
+		TotalEpochPower:  currentWeights.liveWeight,
 		IsCreate:         true,
 		EpochIndex:       currentEpochGroup.GroupData.EpochIndex,
 	}, nil
+}
+
+type bridgeWeights struct {
+	voterPower   int64
+	voterInGroup bool
+	liveWeight   int64
+	members      []*group.GroupMember // set whenever liveWeight differs from the epoch-start weight
+}
+
+// bridgeGroupWeights finds the voter's x/group weight and the live group weight.
+// While nobody has left the group, x/group holds exactly the epoch-start
+// ValidationWeights, so the voter is looked up there instead of listing every
+// member; anything unusual falls back to the member list.
+func (k Keeper) bridgeGroupWeights(ctx sdk.Context, eg *epochgroup.EpochGroup, addr sdk.AccAddress) (bridgeWeights, error) {
+	liveWeight, err := eg.LiveTotalWeight(ctx)
+	if err == nil && liveWeight == eg.GroupData.TotalWeight {
+		if power, ok := k.epochStartWeight(ctx, eg.GroupData, addr); ok {
+			return bridgeWeights{voterPower: power, voterInGroup: true, liveWeight: liveWeight}, nil
+		}
+	}
+	members, err := eg.GetGroupMembers(ctx)
+	if err != nil {
+		return bridgeWeights{}, err
+	}
+	power, inGroup := memberPowerInGroup(addr, members)
+	return bridgeWeights{voterPower: power, voterInGroup: inGroup, liveWeight: liveGroupWeight(members), members: members}, nil
+}
+
+// epochStartWeight returns ok=false unless addr has exactly one positive
+// ValidationWeights entry and was not excluded in that epoch.
+func (k Keeper) epochStartWeight(ctx sdk.Context, data *types.EpochGroupData, addr sdk.AccAddress) (int64, bool) {
+	var power int64
+	found := false
+	for _, vw := range data.ValidationWeights {
+		if vw == nil {
+			return 0, false
+		}
+		vwAddr, err := sdk.AccAddressFromBech32(vw.MemberAddress)
+		if err != nil {
+			return 0, false
+		}
+		if !vwAddr.Equals(addr) {
+			continue
+		}
+		if found || vw.Weight <= 0 {
+			return 0, false
+		}
+		power, found = vw.Weight, true
+	}
+	if !found {
+		return 0, false
+	}
+	excluded, err := k.ExcludedParticipantsMap.Has(ctx, collections.Join(data.EpochIndex, addr))
+	if err != nil || excluded {
+		return 0, false
+	}
+	return power, true
 }
 
 // liveGroupWeight sums the x/group weights of the members still in the group.
