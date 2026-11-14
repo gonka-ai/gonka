@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ import (
 	chaintypes "github.com/productscience/inference/x/inference/types"
 
 	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/transport"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcserver"
@@ -86,4 +88,34 @@ func TestFetchPayloads_GranteesOutOfGasIsExecutorFault(t *testing.T) {
 	v = executorFaultVerdict(context.Background(), nil, req, 1, err, true)
 	require.NotNil(t, v)
 	require.False(t, v.Valid)
+}
+
+type hostInfoErrBridge struct {
+	bridge.MainnetBridge
+	err error
+}
+
+func (b hostInfoErrBridge) GetHostInfo(string) (*bridge.HostInfo, error) { return nil, b.err }
+
+func TestFetchPayloads_ParticipantOutOfGasIsExecutorFault(t *testing.T) {
+	req := devshardpkg.ValidateRequest{EscrowID: "escrow-1", ExecutorAddress: "executor", InferenceID: 42, EpochID: 1}
+	fetch := func(hostErr error) error {
+		_, _, err := fetchPayloadsFromExecutor(context.Background(), hostInfoErrBridge{err: hostErr},
+			oogRecorder{}, req, "42", 1, "path", nil, nil)
+		return err
+	}
+
+	// The executor's own multi-megabyte InferenceUrl exhausts the node's query gas.
+	oog := fmt.Errorf("%w: Participant executor: %w", bridge.ErrChainUnavailable,
+		status.Error(codes.Unknown, "codespace sdk code 11: out of gas: Query gas limit exceeded: 10000000, out of gas in location: ReadPerByte"))
+	err := fetch(oog)
+	require.ErrorIs(t, err, errExecutorPayloadFault)
+	v := executorFaultVerdict(context.Background(), nil, req, 1, err, true)
+	require.NotNil(t, v, "OOG on the executor's record must yield a verdict: %v", err)
+	require.False(t, v.Valid)
+
+	// A node that is merely unavailable says nothing about the executor.
+	err = fetch(fmt.Errorf("%w: %w", bridge.ErrChainUnavailable, status.Error(codes.Unavailable, "connection refused")))
+	require.False(t, errors.Is(err, errExecutorPayloadFault), "transient chain error must not blame the executor: %v", err)
+	require.Nil(t, executorFaultVerdict(context.Background(), nil, req, 1, err, true))
 }

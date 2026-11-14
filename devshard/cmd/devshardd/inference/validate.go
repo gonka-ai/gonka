@@ -102,7 +102,12 @@ func fetchPayloadsFromExecutor(
 ) ([]byte, []byte, error) {
 	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get executor info: %w", err)
+		err = fmt.Errorf("get executor info: %w", err)
+		// Only the executor can set its own InferenceUrl, so a record too large to read is its fault.
+		if queryOutOfGas(err) {
+			return nil, nil, tagExecutorPayloadFault(err)
+		}
+		return nil, nil, err
 	}
 	if executorInfo.URL == "" {
 		return nil, nil, fmt.Errorf("executor has no URL")
