@@ -10,6 +10,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+const bridgeKeyLinkRecoverGas = 40_000
+
 func (k msgServer) RegisterBridgeKeyLink(goCtx context.Context, msg *types.MsgRegisterBridgeKeyLink) (*types.MsgRegisterBridgeKeyLinkResponse, error) {
 	if err := k.CheckPermission(goCtx, msg, AccountPermission); err != nil {
 		return nil, err
@@ -48,6 +50,9 @@ func (k msgServer) RegisterBridgeKeyLink(goCtx context.Context, msg *types.MsgRe
 	if acc != nil && acc.GetPubKey() != nil && !bytes.Equal(acc.GetPubKey().Bytes(), gonkaPub) {
 		return nil, errorsmod.Wrap(types.ErrPubKeyDoesNotMatchAddress, "gonka public key does not match the account public key")
 	}
+
+	// ECDSA recovery is CPU work that store gas does not cover.
+	ctx.GasMeter().ConsumeGas(bridgeKeyLinkRecoverGas, "bridge key link signature recovery")
 
 	canonicalEth := types.CanonicalSecp256k1PubKeyHex(ethPub)
 	payload := []byte(types.BridgeKeyLinkSignText(chainID, creator.String(), canonicalEth, msg.Nonce))
