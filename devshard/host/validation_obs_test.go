@@ -409,7 +409,6 @@ func TestHost_ApplyAndPersist_ValidationObs_NoRecordOnUserLocalCompose(t *testin
 	records, err := r.store.GetDiffs(r.escrowID, 1, next-1)
 	require.NoError(t, err)
 	for _, rec := range records {
-		userSM.InjectWarmKeys(rec.WarmKeyDelta)
 		_, err := userSM.ApplyLocal(rec.Nonce, rec.Txs)
 		require.NoError(t, err)
 	}

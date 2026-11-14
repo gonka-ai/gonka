@@ -1052,15 +1052,9 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return err
 	}
 
+	// warm_keys_json is kept for the schema only: since v7 the warm-key
+	// history is consensus state carried by the diffs themselves.
 	var warmJSON *string
-	if len(rec.WarmKeyDelta) > 0 {
-		b, err := json.Marshal(rec.WarmKeyDelta)
-		if err != nil {
-			return fmt.Errorf("marshal warm keys: %w", err)
-		}
-		str := string(b)
-		warmJSON = &str
-	}
 
 	ctx, cancel := s.opCtx()
 	defer cancel()
@@ -1150,16 +1144,7 @@ func (s *Postgres) AppendDiffs(escrowID string, diffs []types.DiffRecord) error 
 		if err != nil {
 			return err
 		}
-		var warmJSON *string
-		if len(rec.WarmKeyDelta) > 0 {
-			b, err := json.Marshal(rec.WarmKeyDelta)
-			if err != nil {
-				return fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
-			}
-			str := string(b)
-			warmJSON = &str
-		}
-		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto, warmJSON: warmJSON})
+		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto})
 		sigCount += len(rec.Signatures)
 		if rec.Nonce > maxNonce {
 			maxNonce = rec.Nonce
@@ -1381,7 +1366,7 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx,
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, created_at
 		 FROM devshard_diffs
 		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
 		 ORDER BY nonce`,

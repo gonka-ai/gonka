@@ -24,17 +24,17 @@ func makeKeys(t *testing.T, n int) []*signing.Secp256k1Signer {
 	return keys
 }
 
-func acceptResolver(warmKeys, coldKeys []*signing.Secp256k1Signer) state.WarmKeyResolver {
-	allowed := make(map[string]string, len(warmKeys))
+// warmGrants is a grant source where coldKeys[i] granted warmKeys[i].
+func warmGrants(warmKeys, coldKeys []*signing.Secp256k1Signer) *testutil.WarmKeyGrants {
+	grants := testutil.NewWarmKeyGrants()
 	for i, w := range warmKeys {
-		allowed[w.Address()] = coldKeys[i].Address()
+		grants.Grant(coldKeys[i].Address(), w.Address())
 	}
-	return func(warmAddr, coldAddr string) (bool, error) {
-		if expected, ok := allowed[warmAddr]; ok && expected == coldAddr {
-			return true, nil
-		}
-		return false, nil
-	}
+	return grants
+}
+
+func acceptResolver(warmKeys, coldKeys []*signing.Secp256k1Signer) state.WarmKeyResolver {
+	return warmGrants(warmKeys, coldKeys).Resolver
 }
 
 var defaultParams = InferenceParams{
@@ -42,13 +42,14 @@ var defaultParams = InferenceParams{
 	InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 }
 
-// setupWarmKeySession creates a session where hosts sign with warm keys
-// and the resolver accepts the warm->cold mapping.
+// setupWarmKeySession creates a session where hosts sign with warm keys, the
+// grant source knows the warm->cold grants and the sequencer binds them.
 func setupWarmKeySession(t *testing.T, n int) (*Session, []*signing.Secp256k1Signer, []*signing.Secp256k1Signer) {
 	t.Helper()
 	coldKeys := makeKeys(t, n)
 	warmKeys := makeKeys(t, n)
-	resolver := acceptResolver(warmKeys, coldKeys)
+	grants := warmGrants(warmKeys, coldKeys)
+	resolver := grants.Resolver
 
 	userKey := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(coldKeys)
@@ -68,28 +69,31 @@ func setupWarmKeySession(t *testing.T, n int) (*Session, []*signing.Secp256k1Sig
 
 	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
 	require.NoError(t, err)
-	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier, WithWarmKeyGrantSource(grants))
 	require.NoError(t, err)
 	return session, coldKeys, warmKeys
 }
 
 func TestProcessResponse_WarmKey_Accepted(t *testing.T) {
-	session, _, _ := setupWarmKeySession(t, 3)
+	session, _, warmKeys := setupWarmKeySession(t, 3)
 
 	ctx := context.Background()
 	_, err := session.SendInference(ctx, defaultParams)
 	require.NoError(t, err, "warm key should be accepted by resolver")
 	require.NotEmpty(t, session.Signatures())
 
-	// State sig verification uses CheckWarmKey (non-mutating), so the
-	// user's SM won't have warm keys cached yet. They'll be cached when
-	// the next diff applies a tx signed by a warm key (e.g. MsgConfirmStart).
-	// Send a second inference to include the receipt from the first.
+	// The first diff carried the binds the sequencer proposed from the
+	// grant source, one per slot.
+	history := session.StateMachine().WarmKeyHistory()
+	require.Len(t, history, 3, "the sequencer binds every live grant of the group")
+	for i := range warmKeys {
+		require.Equal(t, []string{warmKeys[i].Address()}, history.Live(uint32(i)))
+		require.Equal(t, uint64(1), history[uint32(i)][0].FromNonce)
+	}
+
 	_, err = session.SendInference(ctx, defaultParams)
 	require.NoError(t, err)
-
-	wk := session.StateMachine().WarmKeys()
-	require.NotEmpty(t, wk, "warm key binding should be cached after applying confirm")
+	require.Equal(t, history, session.StateMachine().WarmKeyHistory(), "nothing to propose once every grant is bound")
 }
 
 func TestProcessResponse_WarmKey_Rejected(t *testing.T) {

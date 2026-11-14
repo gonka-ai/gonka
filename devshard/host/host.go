@@ -234,14 +234,16 @@ func NewHost(
 		}
 	}
 
-	// Check state's WarmKeys for existing bindings, then try the warm key
-	// resolver directly (without caching in SM state, which would change
-	// the state root before any diffs are applied).
+	// A warm signer owns the slots the history binds it to, or, before the
+	// gateway has bound it, the slots whose cold key granted it according to
+	// the grant source. Neither read writes state.
 	if len(slotIDs) == 0 {
-		warmKeys := sm.WarmKeys()
-		for slotID, warmAddr := range warmKeys {
-			if warmAddr == addr {
-				slotIDs[slotID] = true
+		history := sm.WarmKeyHistory()
+		for slotID := range history {
+			for _, live := range history.Live(slotID) {
+				if live == addr {
+					slotIDs[slotID] = true
+				}
 			}
 		}
 	}
@@ -584,6 +586,12 @@ func (h *Host) SnapshotState() types.EscrowState {
 	return h.sm.SnapshotState()
 }
 
+// WarmKeyBoundTo reports whether the history binds addr, at the next nonce,
+// to a slot of validator.
+func (h *Host) WarmKeyBoundTo(addr, validator string) bool {
+	return h.sm.HostSignerBoundAddr(validator, addr)
+}
+
 // SnapshotForTimeout copies the escrow summary and one inference record under
 // the same lock. The returned state has a nil inference map.
 func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types.InferenceRecord, bool) {
@@ -592,7 +600,7 @@ func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types
 	return h.sm.SnapshotWithInference(inferenceID)
 }
 
-// IsWarmKeyAddress returns true if addr is a known warm key in the current state.
+// IsWarmKeyAddress returns true if addr has a live binding in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -601,26 +609,50 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 
 func (h *Host) Signer() signing.Signer { return h.signer }
 
-// SlotActors is the host-signature identity set for this escrow (cold keys,
-// bound warm keys, live authz). Same rule as HeightAck L2 and confirm/finish.
+// SlotActors is the host-signature identity set for admission at the next
+// nonce: cold keys, the binding history, the grant source for a key the
+// history does not cover (one the sequencer may bind in its next diff) and
+// the grant source against a bound key whose grant has ended. Same rule as
+// HeightAck L2 and confirm/finish, plus the local-admission fallback.
 //
-// The returned value memoises its authz lookups, so a caller that checks two
-// identities for one request -- the repair handler checks the signer and the
-// HTTP sender -- should reuse one value rather than call this twice. The memo
-// is not synchronised; treat the value as request-scoped.
+// The returned value memoises its grant-source lookups, so a caller that
+// checks two identities for one request -- the repair handler checks the
+// signer and the HTTP sender -- should reuse one value rather than call this
+// twice. The memo is not synchronised; treat the value as request-scoped.
 func (h *Host) SlotActors() signing.SlotActors {
+	actors := h.SlotActorsAt(h.sm.LatestNonce() + 1)
 	authz := make(map[[2]string]bool, 2)
+	actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
+		pair := [2]string{recovered, expected}
+		ok, seen := authz[pair]
+		if !seen {
+			ok = h.sm.CheckWarmKey(recovered, expected)
+			authz[pair] = ok
+		}
+		return ok
+	}
+	return actors
+}
+
+// SlotActorsAt is the identity set for a signature that names its nonce
+// (state-signature gossip): the history at that nonce, with the grant
+// source only as the backstop against a key whose grant has ended. A grant
+// the history has not bound at that nonce does not sign it, whatever the
+// source says now.
+func (h *Host) SlotActorsAt(nonce uint64) signing.SlotActors {
+	ended := make(map[[2]string]bool, 2)
 	return signing.SlotActors{
 		SlotKeys: h.slotToAddr,
-		WarmKeys: h.sm.WarmKeys(),
-		AcceptWarm: func(_ uint32, recovered, expected string) bool {
+		History:  h.sm.WarmKeyHistory(),
+		Nonce:    nonce,
+		RefuseWarm: func(_ uint32, recovered, expected string) bool {
 			pair := [2]string{recovered, expected}
-			ok, seen := authz[pair]
+			over, seen := ended[pair]
 			if !seen {
-				ok = h.sm.CheckWarmKey(recovered, expected)
-				authz[pair] = ok
+				over = h.sm.WarmKeyGrantEnded(recovered, expected)
+				ended[pair] = over
 			}
-			return ok
+			return over
 		},
 	}
 }
@@ -1978,7 +2010,7 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 	if err != nil {
 		return fmt.Errorf("recover address: %w", err)
 	}
-	if !h.SlotActors().Allows(senderSlot, addr) {
+	if !h.SlotActorsAt(nonce).Allows(senderSlot, addr) {
 		return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
 	}
 

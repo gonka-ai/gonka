@@ -151,7 +151,9 @@ type (
 		// See warm_key_log.go.
 		WarmKeyLogEntriesMap collections.Map[collections.Pair[sdk.AccAddress, uint64], types.WarmKeyLogEntry]
 		WarmKeyLogNextID     collections.Map[sdk.AccAddress, uint64]
-		WarmKeyLive          collections.Map[collections.Pair[sdk.AccAddress, sdk.AccAddress], uint64]
+		// Latest unended entry per pair. Expired rows are removed lazily
+		// when a grant or revoke touches the pair; EndBlock never scans it.
+		WarmKeyLive collections.Map[collections.Pair[sdk.AccAddress, sdk.AccAddress], uint64]
 	}
 )
 

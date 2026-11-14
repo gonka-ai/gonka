@@ -22,19 +22,19 @@ type memLog struct {
 	readErr      error
 	headErr      error
 	generation   uint64
+	beforeRead   func()
 	afterOldest  func()
 	afterResolve func()
-	beforeRead   func()
 }
 
 func (m *memLog) Read(_ context.Context, afterSeq uint64, kinds []apiconfig.HostEventKind, limit int) ([]apiconfig.HostEvent, uint64, error) {
-	if m.readErr != nil {
-		return nil, 0, m.readErr
-	}
 	if m.beforeRead != nil {
 		h := m.beforeRead
 		m.beforeRead = nil
 		h()
+	}
+	if m.readErr != nil {
+		return nil, 0, m.readErr
 	}
 	want := map[apiconfig.HostEventKind]struct{}{}
 	for _, k := range kinds {
@@ -183,6 +183,54 @@ func allKinds() []gen.HostEventKind {
 		gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
 		gen.HostEventKind_HOST_EVENT_KIND_MAINTENANCE_SCHEDULED,
 		gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+	}
+}
+
+func TestNodeManager_GetHostEvents_CursorZeroWrapDuringResolution(t *testing.T) {
+	for _, initialBlock := range []bool{false, true} {
+		t.Run(fmt.Sprint(initialBlock), func(t *testing.T) {
+			const generation = 7
+			ring := apiconfig.NewHostEventRing(4, generation)
+			log := &memLog{generation: generation}
+			live := &memLive{emitted: 10, tip: 11}
+			if initialBlock {
+				log.rows = append(log.rows, seqEvent(1, apiconfig.HostEventKindEscrowSettled, 10), seqEvent(2, apiconfig.HostEventKindBlock, 10))
+				ring.AppendBatch(log.rows)
+			}
+			// ResolveBlock runs after Bounds but before the ring read. Publish
+			// a height larger than the ring while that first request is in flight.
+			log.afterResolve = func() {
+				var rows []apiconfig.HostEvent
+				height := int64(11)
+				if !initialBlock {
+					height = 10
+					rows = append(rows, seqEvent(1, apiconfig.HostEventKindEscrowSettled, 10))
+				}
+				for len(log.rows)+len(rows) < 12 {
+					rows = append(rows, seqEvent(uint64(len(log.rows)+len(rows)+1), apiconfig.HostEventKindWarmKeyGranted, height))
+				}
+				rows = append(rows, seqEvent(13, apiconfig.HostEventKindBlock, height))
+				log.rows = append(log.rows, rows...)
+				ring.AppendBatch(rows)
+			}
+			srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring), WithHostEventLog(log), WithHostEventStatus(live))
+			req := &gen.GetHostEventsRequest{Generation: generation, AfterHeight: 9, Subscribe: []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED}}
+			resp, err := srv.GetHostEvents(t.Context(), req)
+			require.NoError(t, err)
+			require.False(t, resp.NeedsReset)
+			if !initialBlock {
+				// The request captured an empty head. It must stay at zero,
+				// allowing the next request to see the whole durable window.
+				require.Zero(t, resp.NextCursor)
+				require.Empty(t, resp.Events)
+				resp, err = srv.GetHostEvents(t.Context(), req)
+				require.NoError(t, err)
+			}
+			require.False(t, resp.NeedsReset)
+			require.Len(t, resp.Events, 1)
+			require.Equal(t, uint64(1), resp.Events[0].Seq)
+			require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, resp.Events[0].Kind)
+		})
 	}
 }
 
@@ -692,40 +740,42 @@ func TestNodeManager_GetHostEvents_StoreGenerationMismatchNeedsReset(t *testing.
 	require.Equal(t, uint64(9), after.Generation)
 }
 
-func TestNodeManager_GetHostEvents_ResetDuringStoreReadNeedsReset(t *testing.T) {
-	rows := make([]apiconfig.HostEvent, 0, 52)
-	for seq := uint64(40); seq <= 91; seq++ {
-		rows = append(rows, seqEvent(seq, apiconfig.HostEventKindBlock, int64(seq)))
+// A reset may advance both the store and ring during a page read. Comparing
+// only against the live ring would accept the new rows with the old cursor.
+func TestNodeManager_GetHostEvents_ResetDuringStoreRead(t *testing.T) {
+	for _, phase := range []string{"oldest", "read", "oldest-recheck"} {
+		t.Run(phase, func(t *testing.T) {
+			rows := make([]apiconfig.HostEvent, 91)
+			for i := range rows {
+				rows[i] = seqEvent(uint64(i+1), apiconfig.HostEventKindBlock, int64(i+1))
+			}
+			ring := apiconfig.NewHostEventRing(16, 6)
+			ring.Restore(6, 92, rows[89:])
+			log := &memLog{rows: rows, generation: 6}
+			reset := func() {
+				log.generation = 9
+				log.rows = []apiconfig.HostEvent{seqEvent(1, apiconfig.HostEventKindBlock, 200)}
+				ring.Restore(9, 2, log.rows)
+			}
+			switch phase {
+			case "oldest":
+				log.afterOldest = reset
+			case "read":
+				log.beforeRead = reset
+			case "oldest-recheck":
+				log.beforeRead = func() { log.afterOldest = reset }
+			}
+			srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring), WithHostEventLog(log))
+			resp, err := srv.GetHostEvents(t.Context(), &gen.GetHostEventsRequest{
+				Cursor: 50, Generation: 6, Subscribe: []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_BLOCK},
+			})
+			require.NoError(t, err)
+			require.True(t, resp.NeedsReset)
+			require.Empty(t, resp.Events)
+			require.Equal(t, uint64(9), resp.Generation)
+			require.Equal(t, uint64(1), resp.NextCursor)
+		})
 	}
-	ring := apiconfig.NewHostEventRing(16, 6)
-	ring.Restore(6, 92, []apiconfig.HostEvent{
-		seqEvent(90, apiconfig.HostEventKindBlock, 90),
-		seqEvent(91, apiconfig.HostEventKindBlock, 91),
-	})
-	log := &memLog{generation: 6, rows: rows}
-	log.beforeRead = func() {
-		ring.ResetGeneration(7)
-		log.generation = 7
-		log.rows = []apiconfig.HostEvent{
-			seqEvent(1, apiconfig.HostEventKindBlock, 200),
-			seqEvent(2, apiconfig.HostEventKindEscrowCreated, 200),
-		}
-	}
-	srv := NewServer(&mockBroker{}, nil, nil,
-		WithHostEventRing(ring),
-		WithHostEventLog(log),
-		WithHostEventStatus(&memLive{emitted: 91, tip: 91}),
-	)
-	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
-		Cursor:     50,
-		Subscribe:  allKinds(),
-		Generation: 6,
-	})
-	require.NoError(t, err)
-	require.True(t, resp.NeedsReset)
-	require.Empty(t, resp.Events)
-	require.Equal(t, uint64(7), resp.Generation)
-	require.Equal(t, uint64(2), resp.NextCursor)
 }
 
 func TestNodeManager_GetHostEvents_PruneBetweenOldestAndReadNeedsReset(t *testing.T) {
@@ -1074,4 +1124,40 @@ func TestNodeManager_GetHostEvents_UnrestoredHeadReadUnavailable(t *testing.T) {
 	})
 	require.Equal(t, codes.Unavailable, status.Code(err))
 	require.NotContains(t, err.Error(), "needs_reset")
+}
+
+func TestNodeManager_GetHostEvents_ResetDuringStoreReadNeedsReset(t *testing.T) {
+	rows := make([]apiconfig.HostEvent, 0, 52)
+	for seq := uint64(40); seq <= 91; seq++ {
+		rows = append(rows, seqEvent(seq, apiconfig.HostEventKindBlock, int64(seq)))
+	}
+	ring := apiconfig.NewHostEventRing(16, 6)
+	ring.Restore(6, 92, []apiconfig.HostEvent{
+		seqEvent(90, apiconfig.HostEventKindBlock, 90),
+		seqEvent(91, apiconfig.HostEventKindBlock, 91),
+	})
+	log := &memLog{generation: 6, rows: rows}
+	log.beforeRead = func() {
+		ring.ResetGeneration(7)
+		log.generation = 7
+		log.rows = []apiconfig.HostEvent{
+			seqEvent(1, apiconfig.HostEventKindBlock, 200),
+			seqEvent(2, apiconfig.HostEventKindEscrowCreated, 200),
+		}
+	}
+	srv := NewServer(&mockBroker{}, nil, nil,
+		WithHostEventRing(ring),
+		WithHostEventLog(log),
+		WithHostEventStatus(&memLive{emitted: 91, tip: 91}),
+	)
+	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
+		Cursor:     50,
+		Subscribe:  allKinds(),
+		Generation: 6,
+	})
+	require.NoError(t, err)
+	require.True(t, resp.NeedsReset)
+	require.Empty(t, resp.Events)
+	require.Equal(t, uint64(7), resp.Generation)
+	require.Equal(t, uint64(2), resp.NextCursor)
 }

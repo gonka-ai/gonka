@@ -94,8 +94,9 @@ func TestAGossipedFinishMarksItsOwnNonceFinished(t *testing.T) {
 	require.Equal(t, types.StatusFinished, finished.Status, "what counted as finished is what landed")
 }
 
-// With a warm-key resolver, a slot that has not bound a warm key cannot reject
-// an unknown signer from state alone. Such a finish must not count as done.
+// With a grant source, a signer the history does not cover cannot be rejected
+// from state alone: the source might know a grant the sequencer is about to
+// bind. Such a finish must not count as done.
 func TestUnboundSlotFinishFromUnknownKeyDoesNotMarkFinished(t *testing.T) {
 	session, coldKeys, _ := setupWarmKeySession(t, 3)
 	_, err := session.PrepareInference(context.Background(), defaultParams)
@@ -103,8 +104,6 @@ func TestUnboundSlotFinishFromUnknownKeyDoesNotMarkFinished(t *testing.T) {
 	nonce := session.Nonce()
 	slot, ok := session.StateMachine().InferenceExecutorSlot(nonce)
 	require.True(t, ok)
-	_, bound := session.StateMachine().WarmKeys()[slot]
-	require.False(t, bound)
 	rec, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
 
@@ -121,9 +120,9 @@ func TestUnboundSlotFinishFromUnknownKeyDoesNotMarkFinished(t *testing.T) {
 	require.True(t, session.IsNonceFinished(nonce), "the executor's cold key decides from state alone")
 }
 
-// The gateway runs the verifier's checks with the resolver off, so a warm key
-// the slot has not bound does not close the nonce and does not query the chain.
-// The timeout vote is what asks the resolver.
+// The gateway runs the verifier's checks with the grant source off, so a warm
+// key the history does not bind does not close the nonce and does not query
+// the chain. The timeout vote is what asks the grant source.
 func TestUnboundWarmKeyFinishDoesNotMarkFinished(t *testing.T) {
 	session, coldKeys, warmKeys := setupWarmKeySession(t, 3)
 	_, err := session.PrepareInference(context.Background(), defaultParams)
@@ -134,9 +133,18 @@ func TestUnboundWarmKeyFinishDoesNotMarkFinished(t *testing.T) {
 	rec, ok := session.StateMachine().Inference(nonce)
 	require.True(t, ok)
 
+	// A key the sequencer has not bound: granted after the first diff.
+	rotated := testutil.MustGenerateKey(t)
+	session.warmKeySource.(*testutil.WarmKeyGrants).Grant(coldKeys[slot].Address(), rotated.Address())
 	require.NoError(t, session.ProcessResponse(int(slot), &host.HostResponse{Mempool: []*types.DevshardTx{
 		confirmTxFor(t, coldKeys[slot], nonce, rec, 2000),
-		finishTxFor(t, warmKeys[slot], nonce, slot, testutil.TestResponseHash),
+		finishTxFor(t, rotated, nonce, slot, testutil.TestResponseHash),
 	}}, nonce))
 	require.False(t, session.IsNonceFinished(nonce))
+
+	// The bound key closes it from state alone.
+	require.NoError(t, session.ProcessResponse(int(slot), &host.HostResponse{Mempool: []*types.DevshardTx{
+		finishTxFor(t, warmKeys[slot], nonce, slot, testutil.TestResponseHash),
+	}}, nonce))
+	require.True(t, session.IsNonceFinished(nonce))
 }

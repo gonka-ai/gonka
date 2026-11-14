@@ -12,8 +12,8 @@ import (
 )
 
 // applyDiffPersist applies a user-signed diff, persists the record (txs +
-// state hash + warm-key delta) the same way gossip recovery / RecoverSession
-// replays from storage — see §1.5 in devshard/docs/inferences-pruning.md.
+// state hash) the same way gossip recovery / RecoverSession replays from
+// storage — see §1.5 in devshard/docs/inferences-pruning.md.
 func applyDiffPersist(
 	t *testing.T,
 	sm *StateMachine,
@@ -23,16 +23,13 @@ func applyDiffPersist(
 	txs []*types.DevshardTx,
 ) {
 	t.Helper()
-	warmBefore := sm.WarmKeys()
 	nonce := sm.LatestNonce() + 1
 	diff := testutil.SignDiff(t, user, escrowID, nonce, txs)
 	root, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
-	delta := types.ComputeWarmKeyDelta(warmBefore, sm.WarmKeys())
 	require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{
-		Diff:         diff,
-		StateHash:    root,
-		WarmKeyDelta: delta,
+		Diff:      diff,
+		StateHash: root,
 	}))
 }
 
@@ -42,9 +39,8 @@ func copyDiffJournal(t *testing.T, src, dst *storage.Memory, escrowID string, fr
 	require.NoError(t, err)
 	for _, rec := range recs {
 		require.NoError(t, dst.AppendDiff(escrowID, types.DiffRecord{
-			Diff:         rec.Diff,
-			StateHash:    append([]byte(nil), rec.StateHash...),
-			WarmKeyDelta: rec.WarmKeyDelta,
+			Diff:      rec.Diff,
+			StateHash: append([]byte(nil), rec.StateHash...),
 		}))
 	}
 }
@@ -143,7 +139,6 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 	records, err := followerStore.GetDiffs(escrowID, 1, meta.LatestNonce)
 	require.NoError(t, err)
 	for _, rec := range records {
-		follower.InjectWarmKeys(rec.WarmKeyDelta)
 		root, applyErr := follower.ApplyLocal(rec.Nonce, rec.Txs)
 		require.NoError(t, applyErr)
 		if len(rec.StateHash) > 0 && len(root) > 0 {

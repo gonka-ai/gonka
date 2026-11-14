@@ -1042,14 +1042,14 @@ func (x *BlockPayload) GetHeader() []byte {
 // (height = revoked_at_height, end = REVOKED / REPLACED). Expiration is
 // expires_at_unix on the grant; the chain does not emit an expiry event.
 type WarmKeyPayload struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Granter       string                 `protobuf:"bytes,1,opt,name=granter,proto3" json:"granter,omitempty"`
-	Grantee       string                 `protobuf:"bytes,2,opt,name=grantee,proto3" json:"grantee,omitempty"`
-	GrantId       uint64                 `protobuf:"varint,3,opt,name=grant_id,json=grantId,proto3" json:"grant_id,omitempty"`
-	Height        int64                  `protobuf:"varint,4,opt,name=height,proto3" json:"height,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Granter string                 `protobuf:"bytes,1,opt,name=granter,proto3" json:"granter,omitempty"`
+	Grantee string                 `protobuf:"bytes,2,opt,name=grantee,proto3" json:"grantee,omitempty"`
+	GrantId uint64                 `protobuf:"varint,3,opt,name=grant_id,json=grantId,proto3" json:"grant_id,omitempty"`
+	Height  int64                  `protobuf:"varint,4,opt,name=height,proto3" json:"height,omitempty"`
 	// Unix nanoseconds; 0 when the grant has no expiration.
-	ExpiresAtUnix int64                  `protobuf:"varint,5,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
-	End           string                 `protobuf:"bytes,6,opt,name=end,proto3" json:"end,omitempty"`
+	ExpiresAtUnix int64  `protobuf:"varint,5,opt,name=expires_at_unix,json=expiresAtUnix,proto3" json:"expires_at_unix,omitempty"`
+	End           string `protobuf:"bytes,6,opt,name=end,proto3" json:"end,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }

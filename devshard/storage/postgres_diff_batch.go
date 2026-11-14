@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -46,15 +45,9 @@ func prepareDiffBatch(recs []types.DiffRecord) (*preparedDiffBatch, error) {
 		if err != nil {
 			return nil, err
 		}
+		// warm_keys_json is kept for the schema only: since v7 the warm-key
+		// history is consensus state carried by the diffs themselves.
 		var warmJSON *string
-		if len(rec.WarmKeyDelta) > 0 {
-			raw, err := json.Marshal(rec.WarmKeyDelta)
-			if err != nil {
-				return nil, fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
-			}
-			str := string(raw)
-			warmJSON = &str
-		}
 		b.nonces = append(b.nonces, int64(rec.Nonce))
 		b.txs = append(b.txs, txsProto)
 		b.userSigs = append(b.userSigs, rec.UserSig)

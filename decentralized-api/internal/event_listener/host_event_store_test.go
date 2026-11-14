@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -406,7 +407,7 @@ func TestHostEventFeed_CommitVisibleDuringPrune(t *testing.T) {
 
 func TestHostEventFeed_PruneOnEpochChange(t *testing.T) {
 	epochs := &liveEpoch{idx: 1, start: 1}
-	f, bo, _ := newTestFeed(t, newFeedRPC(), epochs, nil)
+	f, bo, ring := newTestFeed(t, newFeedRPC(), epochs, nil)
 	s, _ := openFeedSQLite(t, f, "writer-prune-epoch")
 
 	bo.updateStatus(1, true)
@@ -427,12 +428,57 @@ func TestHostEventFeed_PruneOnEpochChange(t *testing.T) {
 	bo.updateStatus(3, true)
 	require.False(t, f.walk(t.Context()))
 	require.Equal(t, 2, s.pruneCalls)
+	require.Equal(t, []int64{3}, heightsOf(ringEvents(t, ring)), "cursor zero must not replay pruned epochs from the ring")
 	_, found, _, err = s.ResolveBlock(t.Context(), 1)
 	require.NoError(t, err)
 	require.False(t, found)
 	_, found, _, err = s.ResolveBlock(t.Context(), 3)
 	require.NoError(t, err)
 	require.True(t, found)
+}
+
+type postPruneReadFailure struct {
+	HostEventStore
+	fail bool
+}
+
+func (s *postPruneReadFailure) Oldest(ctx context.Context) (uint64, bool, uint64, error) {
+	if s.fail {
+		s.fail = false
+		return 0, false, 0, errors.New("temporary post-prune read failure")
+	}
+	return s.HostEventStore.Oldest(ctx)
+}
+
+func TestHostEventFeed_RestoresPrunedWindowAfterReadFailure(t *testing.T) {
+	epochs := &liveEpoch{idx: 1, start: 1}
+	f, bo, ring := newTestFeed(t, newFeedRPC(), epochs, nil)
+	s, _ := openFeedSQLite(t, f, "writer-prune-error")
+	bo.updateStatus(1, true)
+	require.False(t, f.walk(t.Context()))
+	bo.updateStatus(2, true)
+	require.False(t, f.walk(t.Context()))
+	cursor := ringEvents(t, ring)[0].Seq
+	wrapped := &postPruneReadFailure{HostEventStore: s, fail: true}
+	f.store = wrapped
+	epochs.idx = 6
+	bo.updateStatus(3, true)
+	require.True(t, f.walk(t.Context()))
+	require.False(t, f.RingRestored())
+	require.True(t, f.Stalled())
+	require.Equal(t, uint64(1), f.prunedEpoch, "failed ring synchronization must not mark this epoch complete")
+
+	srv := nodemanager.NewServer(nil, nil, nil, nodemanager.WithHostEventRing(ring), nodemanager.WithHostEventLog(s), nodemanager.WithHostEventStatus(f))
+	resp, err := srv.GetHostEvents(t.Context(), &gen.GetHostEventsRequest{Cursor: cursor, Generation: ring.Generation(), Subscribe: []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_BLOCK}})
+	require.NoError(t, err)
+	require.True(t, resp.NeedsReset, "a failed Oldest must not leave the pruned prefix readable from the ring")
+
+	require.False(t, f.walk(t.Context()), "retry boot even when no new block arrives")
+	require.True(t, f.RingRestored())
+	require.Equal(t, []int64{3}, heightsOf(ringEvents(t, ring)))
+	bo.updateStatus(4, true)
+	require.False(t, f.walk(t.Context()))
+	require.Equal(t, uint64(6), f.prunedEpoch)
 }
 
 type liveEpoch struct {
@@ -988,6 +1034,72 @@ func TestHostEventFeed_StoreRetryBackoff(t *testing.T) {
 
 func runHostEventStoreSuite(t *testing.T, open func(t *testing.T, writer string) *dbStore) {
 	t.Helper()
+	t.Run("warm key burst preserves escrow and block events", func(t *testing.T) {
+		s := open(t, "warm-key-burst-writer")
+		first, err := s.AppendHeight(t.Context(), 1, 1, []apiconfig.HostEvent{blockOnly(1, 1)}, at(s, 1, 0))
+		require.NoError(t, err)
+		ring := apiconfig.NewHostEventRing(0, s.generation)
+		ring.AppendBatch(first)
+		const grants = apiconfig.DefaultHostEventRingCapacity + 1000
+		events := []apiconfig.HostEvent{{Kind: apiconfig.HostEventKindEscrowSettled, Escrow: &apiconfig.EscrowPayload{EscrowID: 42}}}
+		for i := 0; i < grants; i++ {
+			events = append(events, apiconfig.HostEvent{Kind: apiconfig.HostEventKindWarmKeyGranted, WarmKey: &apiconfig.WarmKeyPayload{
+				Granter: "cold-" + strconv.Itoa(i), Grantee: "warm", GrantID: 1, Height: 2, ExpiresAtUnix: 1800000000000000456,
+			}})
+		}
+		events = append(events, blockOnly(2, 1))
+		stored, err := s.AppendHeight(t.Context(), 2, 1, events, at(s, 2, 1))
+		require.NoError(t, err)
+		ring.AppendBatch(stored)
+		kinds := []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED, gen.HostEventKind_HOST_EVENT_KIND_BLOCK}
+		require.True(t, ring.Since(1, s.generation, []apiconfig.HostEventKind{apiconfig.HostEventKindWarmKeyGranted}).Reset, "the burst must overflow the ring")
+		srv := nodemanager.NewServer(nil, nil, nil, nodemanager.WithHostEventRing(ring), nodemanager.WithHostEventLog(s))
+		cursor := uint64(1)
+		var received []*gen.HostEvent
+		for cursor < ring.Head() {
+			resp, err := srv.GetHostEvents(t.Context(), &gen.GetHostEventsRequest{Cursor: cursor, Generation: s.generation, Subscribe: kinds})
+			require.NoError(t, err)
+			require.False(t, resp.NeedsReset)
+			require.NotEmpty(t, resp.Events)
+			require.LessOrEqual(t, len(resp.Events), apiconfig.MaxHostEventsPage)
+			require.Greater(t, resp.NextCursor, cursor)
+			for _, ev := range resp.Events {
+				require.Equal(t, uint64(len(received)+2), ev.Seq, "no skipped or duplicated events")
+				received = append(received, ev)
+			}
+			cursor = resp.NextCursor
+		}
+		require.Len(t, received, grants+2)
+		require.Equal(t, uint64(42), received[0].GetEscrow().GetEscrowId())
+		for i, ev := range received[1 : len(received)-1] {
+			require.Equal(t, "cold-"+strconv.Itoa(i), ev.GetWarmKey().GetGranter())
+			require.Equal(t, int64(1800000000000000456), ev.GetWarmKey().GetExpiresAtUnix())
+		}
+		require.Equal(t, int64(2), received[len(received)-1].GetBlock().GetHeight())
+		escrowOnly, err := srv.GetHostEvents(t.Context(), &gen.GetHostEventsRequest{
+			Cursor: 1, Generation: s.generation, Subscribe: []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED},
+		})
+		require.NoError(t, err)
+		require.False(t, escrowOnly.NeedsReset)
+		require.Len(t, escrowOnly.Events, 1)
+		require.Equal(t, uint64(42), escrowOnly.Events[0].GetEscrow().GetEscrowId())
+		require.Equal(t, ring.Head(), escrowOnly.NextCursor)
+	})
+	t.Run("retain current and previous epochs", func(t *testing.T) {
+		s := open(t, "two-epoch-writer")
+		for height, epoch := range []uint64{3, 4, 5} {
+			h := int64(height + 1)
+			_, err := s.AppendHeight(t.Context(), h, epoch, []apiconfig.HostEvent{blockOnly(h, epoch)}, at(s, uint64(h), h-1))
+			require.NoError(t, err)
+		}
+		require.NoError(t, s.Prune(t.Context(), 0))
+		require.NoError(t, s.Prune(t.Context(), 5))
+		for height := int64(1); height <= 3; height++ {
+			_, found, _, err := s.ResolveBlock(t.Context(), height)
+			require.NoError(t, err)
+			require.Equal(t, height > 1, found, "epoch N-2 must not be replayed")
+		}
+	})
 	t.Run("transaction", func(t *testing.T) {
 		s := open(t, "tx-writer")
 		s.failFeedUpdate = true

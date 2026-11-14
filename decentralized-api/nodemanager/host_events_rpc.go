@@ -34,7 +34,15 @@ const hostEventStallBlocks = 3
 //
 // Start is resolved once per request. A wake or timeout re-read uses that sequence and ignores after_height.
 //
-// A page holds at most MaxHostEventsPage events. A full page sets next_cursor to the last returned sequence. A short page sets it to the head captured before the read. A start inside the ring is answered from the ring. A start older than the ring and still inside the store is answered from the store and does not wait. needs_reset carries no events, the current generation, and next_cursor = head. A long-poll that times out still at its cursor reports a stall as Unavailable. A client cancel or deadline on a store read returns that status. Any other store error is Unavailable.
+// A page holds at most MaxHostEventsPage events. A full page sets next_cursor to
+// the last returned sequence. A short page sets it to the head captured before
+// the read. With a durable store, a zero start always reads its retained window;
+// an empty captured head stays at zero. Nonzero starts inside the ring read the
+// ring. Older starts still inside the store read the store and do not wait.
+// needs_reset carries no events, the current generation, and next_cursor = head.
+// A long-poll that times out still at its cursor reports a stall as Unavailable.
+// A client cancel or deadline on a store read returns that status. Any other
+// store error is Unavailable.
 //
 // Until boot has restored the ring, head and generation come from the store. Pages use the store path up to that head. The ring's boot nonce is not returned. A client at that head gets Unavailable while the feed is stalled. A failed store head read returns Unavailable.
 func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
@@ -185,6 +193,14 @@ func (s *Server) collectHostEvents(
 	if start > head {
 		out.Reset = true
 		return out, start, nil
+	}
+	// Zero means the beginning of the durable window. SincePage(0) instead
+	// means the current ring tail, which may wrap after Bounds was captured.
+	if s.hostLog != nil && start == 0 {
+		if head == 0 {
+			return out, start, nil
+		}
+		return s.readHostEventStore(ctx, start, head, generation, subscribe)
 	}
 	if s.hostLog != nil && start < head && !ringHas(start, oldest, empty) {
 		return s.readHostEventStore(ctx, start, head, generation, subscribe)
@@ -366,7 +382,7 @@ func (s *Server) readHostEventStore(
 	if err != nil {
 		return out, start, err
 	}
-	if s.storeGenerationMismatch(oldestGen) {
+	if (oldestGen != 0 && oldestGen != generation) || s.storeGenerationMismatch(oldestGen) {
 		return s.resetFromStore(ctx, oldestGen, head), start, nil
 	}
 	if storeEmpty || (start > 0 && oldest > start+1) {
@@ -377,11 +393,8 @@ func (s *Server) readHostEventStore(
 	if err != nil {
 		return out, start, err
 	}
-	// readGen is the generation this read observed. generation is the one
-	// captured for this response. A reset can move the store and the ring
-	// together, so the ring then matches readGen and the new rows would ship
-	// under the old cursor. A read generation of 0 means the store has no
-	// feed row, which is not a new cursor space.
+	// Check the generation captured for this response as well as the live
+	// ring: both the ring and store can advance while this read is in flight.
 	if (readGen != 0 && readGen != generation) || s.storeGenerationMismatch(readGen) {
 		return s.resetFromStore(ctx, readGen, head), start, nil
 	}
@@ -391,7 +404,7 @@ func (s *Server) readHostEventStore(
 	if err != nil {
 		return out, start, err
 	}
-	if s.storeGenerationMismatch(oldestGen) {
+	if (oldestGen != 0 && oldestGen != generation) || s.storeGenerationMismatch(oldestGen) {
 		return s.resetFromStore(ctx, oldestGen, head), start, nil
 	}
 	if storeEmpty || (start > 0 && oldest > start+1) {

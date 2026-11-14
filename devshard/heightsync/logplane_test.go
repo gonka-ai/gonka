@@ -157,7 +157,7 @@ func TestLogPlane_FabricatedAckRejected(t *testing.T) {
 func TestLogPlane_WarmBoundAckAccepted(t *testing.T) {
 	st, signers := baseState(t, 2)
 	warm := testutil.MustGenerateKey(t)
-	st.WarmKeys = map[uint32]string{0: warm.Address()}
+	st.History = signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 1, GrantID: 1}}}
 	hash := []byte{0xaa}
 	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
 
@@ -192,7 +192,7 @@ func TestLogPlane_SiblingWarmBoundAckAccepted(t *testing.T) {
 	st, signers := baseState(t, 2)
 	warm := testutil.MustGenerateKey(t)
 	st.SlotKeys[1] = signers[0].Address()
-	st.WarmKeys = map[uint32]string{0: warm.Address()}
+	st.History = signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 1, GrantID: 1}}}
 	hash := []byte{0xaa}
 	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
 
@@ -206,7 +206,7 @@ func TestLogPlane_SiblingWarmBoundAckAccepted(t *testing.T) {
 func TestLogPlane_SiblingWarmDifferentValidatorRejected(t *testing.T) {
 	st, _ := baseState(t, 2)
 	warm := testutil.MustGenerateKey(t)
-	st.WarmKeys = map[uint32]string{0: warm.Address()}
+	st.History = signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 1, GrantID: 1}}}
 	hash := []byte{0xaa}
 	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
 

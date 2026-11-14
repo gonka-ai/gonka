@@ -351,6 +351,7 @@ func buildHostManager(
 		payloadStore,
 		chainRuntime.identity,
 	)
+	manager.SetWarmKeyGrantSource(chainBridge)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
@@ -465,7 +466,7 @@ func startHostEventsWarm(
 	if queryBridge == nil {
 		queryBridge = chainBridge
 	}
-	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr)
+	sink := newEscrowWarmSink(queryBridge, store, slog.Default(), onSettled, localAddr).withWarmKeys(chainBridge.WarmKeys())
 	chainBridge.OnEscrowCreatedHandler(func(info shardbridge.EscrowInfo) error {
 		return sink.WarmFromInfo(&info)
 	})

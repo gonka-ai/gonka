@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"devshard/accounting"
+	"devshard/signing"
 	"devshard/state"
 	"devshard/transport"
 	"devshard/types"
@@ -776,7 +777,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
 	pending := p.session.PendingTxs()
-	warmKeys := p.sm.WarmKeys()
+	warmKeys := warmKeyHistoryDebug(p.sm.WarmKeyHistory())
 
 	type txInfo struct {
 		Type string `json:"type"`
@@ -795,6 +796,10 @@ func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
 			txs = append(txs, txInfo{Type: "vote", ID: inner.ValidationVote.InferenceId})
 		case *types.DevshardTx_RevealSeed:
 			txs = append(txs, txInfo{Type: "reveal_seed", ID: uint64(inner.RevealSeed.SlotId)})
+		case *types.DevshardTx_WarmKeyBind:
+			txs = append(txs, txInfo{Type: "warm_key_bind", ID: uint64(inner.WarmKeyBind.SlotId)})
+		case *types.DevshardTx_WarmKeyRevoke:
+			txs = append(txs, txInfo{Type: "warm_key_revoke", ID: uint64(inner.WarmKeyRevoke.SlotId)})
 		default:
 			txs = append(txs, txInfo{Type: fmt.Sprintf("%T", tx.GetTx())})
 		}
@@ -1230,10 +1235,7 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 
 	revealedSeeds := map[string]int64{}
 
-	warmKeys := make(map[string]string, len(st.WarmKeys))
-	for slot, addr := range st.WarmKeys {
-		warmKeys[fmt.Sprintf("%d", slot)] = addr
-	}
+	warmKeys := warmKeyHistoryDebug(st.WarmKeyHistory)
 
 	resp := map[string]any{
 		"session":        session,
@@ -1283,4 +1285,23 @@ func (p *Proxy) handleDebugInferences(w http.ResponseWriter, r *http.Request) {
 		"total_inferences": len(inferences),
 		"inferences":       inferences,
 	})
+}
+
+// warmKeyHistoryDebug renders the binding history for the debug endpoints:
+// slot -> bindings in order, each with its nonce range and grant id.
+func warmKeyHistoryDebug(h signing.WarmKeyHistory) map[string][]map[string]any {
+	out := make(map[string][]map[string]any, len(h))
+	for slot, entries := range h {
+		list := make([]map[string]any, 0, len(entries))
+		for _, b := range entries {
+			list = append(list, map[string]any{
+				"address":          b.Addr,
+				"from_nonce":       b.FromNonce,
+				"grant_id":         b.GrantID,
+				"revoked_at_nonce": b.RevokedAtNonce,
+			})
+		}
+		out[fmt.Sprintf("%d", slot)] = list
+	}
+	return out
 }

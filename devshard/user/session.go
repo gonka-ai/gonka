@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -236,17 +237,6 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
-type warmCheckKey struct {
-	warm string
-	cold string
-}
-
-type warmCheckResult struct {
-	done    chan struct{}
-	valid   bool
-	retryAt time.Time
-}
-
 type cachedSignatureSigner struct {
 	signature []byte
 	address   string
@@ -255,8 +245,6 @@ type cachedSignatureSigner struct {
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
-	warmCheckMu sync.Mutex
-	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -303,6 +291,9 @@ type Session struct {
 	confirmWait      chan struct{}            // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
 	diffObserver     func(types.Diff)
+	// warmKeySource is the sequencer's view of the chain's warm-key log;
+	// nil means no bind or revoke proposals. See warmkeys.go.
+	warmKeySource bridge.WarmKeyGrantSource
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
@@ -582,7 +573,6 @@ func NewSession(
 		sm:               sm,
 		signer:           signer,
 		verifier:         verifier,
-		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
 		escrowID:         escrowID,
 		group:            group,
 		addrToSlots:      addrToSlots,
@@ -1304,13 +1294,17 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
+	// Warm-key entries lead: compose applies them before the other
+	// candidates whatever their position, and a message by a key bound in
+	// this diff is accepted in it.
+	keyEntries := s.warmKeyProposalsLocked(nonce)
+	candidates := make([]*types.DevshardTx, 0, len(keyEntries)+len(pending)+len(extraTxs))
+	candidates = append(candidates, keyEntries...)
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
 
 	var diff types.Diff
 	if s.store != nil {
-		warmBefore := s.sm.WarmKeys()
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -1319,11 +1313,9 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
 		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
+			Diff:      diff,
+			StateHash: vd.Root,
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
@@ -1422,6 +1414,12 @@ func (s *Session) unpinPendingFinish(inferenceID uint64) {
 // SetChainMaxNonce tells the session the chain's devshard max_nonce: past types.MaxActiveNonce an active session composes only the round that opens finalization, which its hosts keep the remaining nonces for.
 func (s *Session) SetChainMaxNonce(maxNonce uint32) {
 	s.chainMaxNonce.Store(maxNonce)
+}
+
+// NonceCapReached reports that the session can compose no more active work,
+// timeout votes included, until finalization.
+func (s *Session) NonceCapReached() bool {
+	return s.nonceCapReached()
 }
 
 func (s *Session) nonceCapReached() bool {
@@ -2999,49 +2997,18 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 	if err != nil {
 		return "", err
 	}
-	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.warmKeyAuthorizedAt(nonce, recovered, expectedAddr) {
 		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return recovered, nil
 }
 
-func (s *Session) warmKeyAuthorized(warm, cold string) bool {
-	if s.sm.HostSignerBoundAddr(cold, warm) {
-		return true
-	}
-	key := warmCheckKey{warm: warm, cold: cold}
-	for {
-		s.warmCheckMu.Lock()
-		check := s.warmChecks[key]
-		if check != nil {
-			if check.done != nil {
-				done := check.done
-				s.warmCheckMu.Unlock()
-				<-done
-				continue
-			}
-			if check.valid || time.Now().Before(check.retryAt) {
-				valid := check.valid
-				s.warmCheckMu.Unlock()
-				return valid
-			}
-		}
-		check = &warmCheckResult{done: make(chan struct{})}
-		s.warmChecks[key] = check
-		s.warmCheckMu.Unlock()
-
-		valid := s.sm.CheckWarmKey(warm, cold)
-		s.warmCheckMu.Lock()
-		check.valid = valid
-		if !check.valid {
-			check.retryAt = time.Now().Add(30 * time.Second)
-		}
-		close(check.done)
-		check.done = nil
-		accepted := check.valid
-		s.warmCheckMu.Unlock()
-		return accepted
-	}
+// warmKeyAuthorizedAt reports whether warm may sign for cold the state at
+// nonce: a binding in the history that covers that nonce, or a live grant in
+// the grant source for a key the gateway has not bound yet, minus a key whose
+// grant the source has seen end.
+func (s *Session) warmKeyAuthorizedAt(nonce uint64, warm, cold string) bool {
+	return s.sm.HostSignerAllowedAddrAt(cold, warm, nonce)
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
@@ -3069,6 +3036,48 @@ func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReas
 	})
 	if err != nil {
 		return fmt.Errorf("marshal timeout vote content: %w", err)
+	}
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+	}
+	if recovered != expectedAddr && !s.sm.HostSignerAllowed(vote.VoterSlot, recovered) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
+	}
+	if owner := s.sm.SlotAddress(vote.VoterSlot); owner != expectedAddr {
+		return fmt.Errorf("%w: slot %d is owned by %s, not by responder %s",
+			types.ErrInvalidVoteSig, vote.VoterSlot, owner, expectedAddr)
+	}
+	return nil
+}
+
+// errorMissResponseHash is the hash applyErrorMiss binds the votes to: the
+// applied Finish if there is one, else the Finish this miss is submitted with.
+func (s *Session) errorMissResponseHash(inferenceID uint64, finishTx []byte) []byte {
+	if rec, ok := s.sm.GetInference(inferenceID); ok && rec.Status == types.StatusFinished {
+		return rec.ResponseHash
+	}
+	tx := &types.DevshardTx{}
+	if err := proto.Unmarshal(finishTx, tx); err != nil {
+		return nil
+	}
+	if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		return fi.ResponseHash
+	}
+	return nil
+}
+
+// verifyErrorMissVote is verifyTimeoutVote for MsgErrorMiss: applyErrorMiss
+// rejects the whole message on the first bad vote.
+func (s *Session) verifyErrorMissVote(inferenceID uint64, responseHash []byte, vote *types.ErrorMissVote, expectedAddr string) error {
+	voteData, err := types.CanonicalSignedBytes(&types.ErrorMissVoteContent{
+		EscrowId:     s.escrowID,
+		InferenceId:  inferenceID,
+		Accept:       vote.Accept,
+		ResponseHash: responseHash,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal error-miss vote content: %w", err)
 	}
 	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
 	if err != nil {
@@ -4748,8 +4757,9 @@ func (s *Session) CollectErrorMissVotes(
 	seenRecovery := make(map[string]struct{})
 	expected := len(deduped)
 	voteThreshold := s.sm.VoteThreshold()
+	responseHash := s.errorMissResponseHash(inferenceID, artifacts.FinishTx)
 	var accWeight uint32
-	var errors, rejects int
+	var errors, rejects, invalid int
 	for i := 0; i < expected; i++ {
 		res := <-results
 		if res.err != nil {
@@ -4776,6 +4786,14 @@ func (s *Session) CollectErrorMissVotes(
 			}
 			continue
 		}
+		if vErr := s.verifyErrorMissVote(inferenceID, responseHash, res.vote, res.verifierAddr); vErr != nil {
+			invalid++
+			logging.Warn("rejected unverified error-miss vote",
+				"subsystem", "session", "escrow_id", s.escrowID,
+				"inference_id", inferenceID, "responder", res.verifierAddr,
+				"voter_slot", res.vote.VoterSlot, "error", vErr)
+			continue
+		}
 		votes = append(votes, res.vote)
 		addr := s.sm.SlotAddress(res.vote.VoterSlot)
 		accWeight += s.sm.AddressSlotCount(addr)
@@ -4786,7 +4804,7 @@ func (s *Session) CollectErrorMissVotes(
 	}
 
 	logging.Stage(ctx, "timeout_votes_collected",
-		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
+		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "invalid", invalid, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
 	)
 	return votes, recovery, rejectCauses, nil
 }

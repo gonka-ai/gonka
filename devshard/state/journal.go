@@ -6,6 +6,7 @@ import (
 	"github.com/gtank/ristretto255"
 
 	"devshard/heightsync"
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -33,7 +34,9 @@ type mutationJournal struct {
 	// leave a stale id behind.
 	owed      journalMap[uint64, struct{}]
 	hostStats journalMap[uint32, *types.HostStats]
-	warmKeys  journalMap[uint32, string]
+	// warmHistory saves a slot's whole binding slice before its first write:
+	// a bind or revoke replaces the slice rather than writing into it.
+	warmHistory journalMap[uint32, []signing.WarmKeyBinding]
 
 	trackerCopied bool
 	floorCopied   bool
@@ -201,7 +204,7 @@ func (sm *StateMachine) undoJournalLocked(j *mutationJournal) {
 	sm.ensureOwedMapLocked(j.owed.pre)
 	j.owed.undo(sm.owed)
 	j.hostStats.undo(sm.state.HostStats)
-	j.warmKeys.undo(sm.state.WarmKeys)
+	j.warmHistory.undo(sm.state.WarmKeyHistory)
 	sm.writeScalarsLocked(j.pre)
 }
 
@@ -214,7 +217,7 @@ func (sm *StateMachine) detachJournalLocked(j *mutationJournal) {
 	j.sealed.capture(sm.sealedNonces)
 	j.owed.capture(sm.owed)
 	j.hostStats.capture(sm.state.HostStats)
-	j.warmKeys.capture(sm.state.WarmKeys)
+	j.warmHistory.capture(sm.state.WarmKeyHistory)
 	sm.undoJournalLocked(j)
 }
 
@@ -237,7 +240,7 @@ func (sm *StateMachine) installJournalLocked(j *mutationJournal) {
 	sm.ensureOwedMapLocked(j.owed.post)
 	j.owed.redo(sm.owed)
 	j.hostStats.redo(sm.state.HostStats)
-	j.warmKeys.redo(sm.state.WarmKeys)
+	j.warmHistory.redo(sm.state.WarmKeyHistory)
 	sm.writeScalarsLocked(j.post)
 }
 
@@ -312,11 +315,16 @@ func (sm *StateMachine) setSealedNonceLocked(id, nonce uint64) {
 	sm.sealedNonces[id] = nonce
 }
 
-func (sm *StateMachine) setWarmKeyLocked(slot uint32, addr string) {
-	if j := sm.journal; j != nil {
-		j.warmKeys.touch(sm.state.WarmKeys, slot)
+// setWarmHistoryLocked replaces slot's binding slice. Callers build the new
+// slice on a copy, so the journaled pre-value is never written through.
+func (sm *StateMachine) setWarmHistoryLocked(slot uint32, entries []signing.WarmKeyBinding) {
+	if sm.state.WarmKeyHistory == nil {
+		sm.state.WarmKeyHistory = make(signing.WarmKeyHistory)
 	}
-	sm.state.WarmKeys[slot] = addr
+	if j := sm.journal; j != nil {
+		j.warmHistory.touch(sm.state.WarmKeyHistory, slot)
+	}
+	sm.state.WarmKeyHistory[slot] = entries
 }
 
 // journalHeightSyncLocked clones the tracker before Observe writes it, and
