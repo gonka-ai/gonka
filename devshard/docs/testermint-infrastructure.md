@@ -82,27 +82,28 @@ See [3b-T vs Step 7 duplication](./params-refactoring-implementation.md#3b-t-vs-
 
 ---
 
-## Apple Silicon: portable BLST (`BLST_PORTABLE=1`)
+## Portable BLST (`BLST_PORTABLE=1`, default)
 
-**Problem:** `genesis-api` crashed at startup with `Caught SIGILL in blst_cgo_init` (exit 132) when running the default **linux/amd64** api image under Docker on M-series Macs.
+**Problem:** `genesis-api` crashed at startup with `Caught SIGILL in blst_cgo_init` (exit 132) when running the default **linux/amd64** api image under Docker on M-series Macs. Binaries and images built without the flag crash the same way on x86-64 hosts without ADX (pre-Broadwell Intel, pre-Zen AMD, VMs with generic CPU models).
 
-**Fix:** Docker builds pass `BLST_PORTABLE=1`, which adds `-D__BLST_PORTABLE__` to CGO flags in `decentralized-api/Dockerfile` and `inference-chain/Dockerfile` (see existing `ARG BLST_PORTABLE`).
+**Fix:** `BLST_PORTABLE` defaults to `1` on every host, in the Makefiles and as the `ARG BLST_PORTABLE` default of the `inference-chain`, `decentralized-api`, `edge-api` and `devshard` Dockerfiles. It adds `-D__BLST_PORTABLE__` to CGO flags: blst checks the CPU at startup and keeps the ADX/MULX code path where it exists.
 
-**Auto-detection (no manual flag on Mac):**
+**Where it is set:**
 
 | File | Role |
 |------|------|
-| [`scripts/blst-portable.mk`](../../scripts/blst-portable.mk) | Included by root, `decentralized-api`, and `inference-chain` Makefiles. Sets `BLST_PORTABLE=1` when `sysctl hw.optional.arm64 == 1` on Darwin (works even if the shell reports `x86_64` under Rosetta). |
+| [`scripts/blst-portable.mk`](../../scripts/blst-portable.mk) | Included by the root Makefile and most component Makefiles. Defaults `BLST_PORTABLE=1`; on Apple Silicon (`sysctl hw.optional.arm64 == 1`, works even if the shell reports `x86_64` under Rosetta) also selects `DOCKER_PLATFORM=linux/arm64`. |
+| `decentralized-api/Makefile` | Does not include the `.mk`; has its own `BLST_PORTABLE ?= 1`. |
 | [`scripts/blst-portable.sh`](../../scripts/blst-portable.sh) | Sourced by `local-test-net/stop-rebuild.sh`, `test_build.sh`, `testermint/setup-base-image.sh`. |
 | Root `Makefile` | `api-build-docker` / `node-build-docker` pass `BLST_PORTABLE=$(BLST_PORTABLE)` to sub-makes; `devshardd-build` uses the same variable. |
 
-**Override:** `make api-build-docker BLST_PORTABLE=0` on Apple Silicon if you intentionally want the non-portable build.
+**Override:** `make api-build-docker BLST_PORTABLE=0` if you intentionally want the non-portable build.
 
 **Verify BLST dry-run:**
 
 ```bash
 make -C decentralized-api -n build-docker SET_LATEST=0 2>&1 | grep BLST_PORTABLE
-# Expect: BLST_PORTABLE: 1 and --build-arg BLST_PORTABLE=1 on Darwin arm64 / Apple Silicon
+# Expect: --build-arg BLST_PORTABLE=1 on any host
 ```
 
 ### Apple Silicon: versiond must be `linux/amd64`

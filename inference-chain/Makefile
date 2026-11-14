@@ -132,6 +132,7 @@ define DOCKER_BUILD_UPGRADE
 		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
+		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
 		$(if $(filter 1,$(TESTS)),--build-arg TAGS='upgraded',) \
 		--target binary-exporter \
 		-f $(DOCKER_FILE) \

@@ -7,7 +7,7 @@ FROM golang:1.24.2-alpine3.21 AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64
-ARG BLST_PORTABLE=0
+ARG BLST_PORTABLE=1
 
 ENV GOOS=${GOOS} \
     GOARCH=${GOARCH} \
