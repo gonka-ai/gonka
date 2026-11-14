@@ -121,6 +121,11 @@ type scriptNMClient struct {
 }
 
 func (c *scriptNMClient) GetRuntimeConfig(ctx context.Context, in *gen.GetRuntimeConfigRequest, opts ...grpc.CallOption) (*gen.GetRuntimeConfigResponse, error) {
+	// A real client fails a call on a cancelled context. Without this the
+	// runner's success path never sees the cancel and spins past the test.
+	if err := ctx.Err(); err != nil {
+		return nil, status.FromContextError(err).Err()
+	}
 	c.mu.Lock()
 	idx := int(c.calls.Add(1) - 1)
 	var fn func() (*gen.GetRuntimeConfigResponse, error)
@@ -248,11 +253,14 @@ func TestAdaptive_FailbackAfterDapiUpgrade(t *testing.T) {
 	cleanupAdaptive(t, cancel, p)
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
+	waitCalls(t, client, 1) // boot probe
 
+	armed := clock.waitTimerArmed(t, cfg.GRPCReprobe, 0)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitCalls(t, client, 2)
+	clock.waitTimerArmed(t, cfg.GRPCReprobe, armed)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitCalls(t, client, 3)
 
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 	waitForHeight(t, p, 50)
@@ -367,6 +375,7 @@ func TestAdaptive_OnlyOneRunnerApplies(t *testing.T) {
 
 func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	clock := newFakeClock(time.Unix(0, 0))
+	var dapiUp atomic.Bool
 	okAt50 := func() (*gen.GetRuntimeConfigResponse, error) {
 		return &gen.GetRuntimeConfigResponse{
 			Config: TestRuntimeConfigProto(50, 3, "raw"),
@@ -382,13 +391,14 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 					Config: TestRuntimeConfigProto(20, 1, "raw"),
 				}, nil
 			},
+			// The failover cancels the runner mid-poll, so how many calls
+			// see "down" is not fixed. Recovery is switched on by the test.
 			func() (*gen.GetRuntimeConfigResponse, error) {
+				if dapiUp.Load() {
+					return okAt50()
+				}
 				return nil, status.Error(codes.Unavailable, "down")
 			},
-			func() (*gen.GetRuntimeConfigResponse, error) {
-				return nil, status.Error(codes.Unavailable, "down")
-			},
-			okAt50, okAt50, okAt50,
 		},
 	}
 	fetcher := &fakeFetcher{
@@ -410,10 +420,11 @@ func TestAdaptive_RoundTrip_GRPCChainGRPC(t *testing.T) {
 	time.Sleep(30 * time.Millisecond)
 	waitActiveSource(t, p, SourceActiveChain, 3*time.Second)
 
+	dapiUp.Store(true)
+	armed := clock.waitTimerArmed(t, cfg.GRPCReprobe, 0)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	clock.waitTimerArmed(t, cfg.GRPCReprobe, armed)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 	waitForHeight(t, p, 50)
 }
