@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync"
 	"testing"
@@ -135,31 +136,131 @@ func TestWarmKeyLogCopy_EntryFallsBackToTheChain(t *testing.T) {
 }
 
 // Test flow:
-//  1. Apply a grant event for a granter the copy never loaded, then ask for its live keys; apply an end event and
-//     a stale grant event for the same id.
-//  2. Assert the first ask still loads the whole log (an event alone leaves holes), the end is applied, and the
-//     stale grant does not revive the ended entry.
+//  1. Apply a grant event before the granter is loaded, ask for its live keys, then apply a new grant, an end,
+//     and a stale grant event.
+//  2. Assert the first ask loads the whole chain log, later events update the copy without another query,
+//     and a stale grant does not revive an ended entry.
 func TestWarmKeyLogCopy_EventsAppendAndEndsAreFinal(t *testing.T) {
 	chain := &fakeWarmKeyFetcher{}
-	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"})
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"},
+		WarmKeyEntry{Granter: "cold", ID: 2, Grantee: "second"})
 	cp := NewWarmKeyLogCopy(chain, time.Hour)
 
 	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 2, Grantee: "second"})
 	live, err := cp.LiveWarmKeys("cold")
 	require.NoError(t, err)
-	require.Len(t, live, 2, "the event and the loaded log together")
+	require.Len(t, live, 2, "first use loads the whole log despite the earlier event")
 	require.Equal(t, 1, chain.count())
 
+	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 3, Grantee: "third"})
 	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm", RevokedAtHeight: 90, End: "WARM_KEY_LOG_END_REVOKED"})
 	live, err = cp.LiveWarmKeys("cold")
 	require.NoError(t, err)
-	require.Len(t, live, 1)
+	require.Len(t, live, 2)
 	require.Equal(t, uint64(2), live[0].ID)
+	require.Equal(t, uint64(3), live[1].ID)
 
 	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "warm"})
 	live, err = cp.LiveWarmKeys("cold")
 	require.NoError(t, err)
-	require.Len(t, live, 1, "a replayed grant event does not revive an ended entry")
+	require.Len(t, live, 2, "a replayed grant event does not revive an ended entry")
+	require.Equal(t, 1, chain.count(), "events update a tracked granter without chain reads")
+}
+
+// Unrelated chain events must not grow every host's copy or trigger queries.
+// A direct entry lookup starts tracking the granter, so later events apply
+// even before its full log is loaded.
+func TestWarmKeyLogCopy_EventsIgnoreUntrackedGranters(t *testing.T) {
+	chain := &fakeWarmKeyFetcher{}
+	chain.set("peer", WarmKeyEntry{Granter: "peer", ID: 1, Grantee: "warm"})
+	cp := NewWarmKeyLogCopy(chain, time.Hour)
+	_, found, err := cp.WarmKeyEntry("peer", 1)
+	require.NoError(t, err)
+	require.True(t, found)
+
+	for i := 0; i < 10000; i++ {
+		e := WarmKeyEntry{Granter: fmt.Sprintf("unrelated-%d", i), ID: 1, Grantee: "warm"}
+		cp.Apply(e)
+		e.RevokedAtHeight = 90
+		e.End = "WARM_KEY_LOG_END_REVOKED"
+		cp.Apply(e)
+	}
+	require.Len(t, cp.granters, 1, "only the queried peer is tracked")
+	require.Equal(t, 1, chain.count(), "unrelated events do not query the chain")
+
+	cp.Apply(WarmKeyEntry{Granter: "peer", ID: 2, Grantee: "second"})
+	cp.Apply(WarmKeyEntry{Granter: "peer", ID: 1, Grantee: "warm", RevokedAtHeight: 90, End: "WARM_KEY_LOG_END_REVOKED"})
+	e, found, err := cp.WarmKeyEntry("peer", 1)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.True(t, e.Ended())
+	e, found, err = cp.WarmKeyEntry("peer", 2)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "second", e.Grantee)
+	require.Equal(t, 1, chain.count(), "tracked events remain available without a full-log load")
+
+	// An ignored event does not prevent that granter being loaded on demand.
+	chain.set("unrelated-0", WarmKeyEntry{Granter: "unrelated-0", ID: 1, Grantee: "warm", RevokedAtHeight: 90},
+		WarmKeyEntry{Granter: "unrelated-0", ID: 2, Grantee: "next"})
+	live, err := cp.LiveWarmKeys("unrelated-0")
+	require.NoError(t, err)
+	require.Len(t, live, 1)
+	require.Equal(t, "next", live[0].Grantee)
+	require.Equal(t, 2, chain.count())
+	require.Len(t, cp.granters, 2)
+}
+
+type waitingWarmKeyFetcher struct {
+	*fakeWarmKeyFetcher
+	started chan struct{}
+	release chan struct{}
+}
+
+func (f *waitingWarmKeyFetcher) FetchWarmKeyLog(ctx context.Context, granter string) ([]WarmKeyEntry, error) {
+	entries, err := f.fakeWarmKeyFetcher.FetchWarmKeyLog(ctx, granter)
+	close(f.started)
+	select {
+	case <-f.release:
+		return entries, err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// An event received during a first load must survive the older query result:
+// tracking starts before the read, not after it completes.
+func TestWarmKeyLogCopy_EventsDuringFirstLoad(t *testing.T) {
+	chain := &waitingWarmKeyFetcher{
+		fakeWarmKeyFetcher: &fakeWarmKeyFetcher{},
+		started:            make(chan struct{}),
+		release:            make(chan struct{}, 1),
+	}
+	defer close(chain.release)
+	chain.set("cold", WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "old"})
+	cp := NewWarmKeyLogCopy(chain, time.Hour)
+	type result struct {
+		live []WarmKeyEntry
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		live, err := cp.LiveWarmKeys("cold")
+		done <- result{live, err}
+	}()
+	<-chain.started
+	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 1, Grantee: "old", RevokedAtHeight: 90, End: "WARM_KEY_LOG_END_REVOKED"})
+	cp.Apply(WarmKeyEntry{Granter: "cold", ID: 2, Grantee: "new"})
+	chain.release <- struct{}{}
+	got := <-done
+	require.NoError(t, got.err)
+	require.Len(t, got.live, 1)
+	require.Equal(t, "new", got.live[0].Grantee)
+	ended, found, err := cp.WarmKeyEntry("cold", 1)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.True(t, ended.Ended(), "the older query cannot undo the revoke event")
+	require.Equal(t, 1, chain.count())
 }
 
 // Test flow:

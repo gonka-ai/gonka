@@ -271,7 +271,10 @@ append-only like the log, kept in memory by the bridge
    height, expires_at_unix, end}`, produced by the dapi event listener from
    the module's grant and explicit-revoke events. Expiration is read from
    the grant's timestamp and needs no event. They are not filtered by
-   participant: a host needs the keys of every peer in its groups.
+   participant: a host needs the keys of every peer in its groups. The
+   bridge copy applies events only for granters it has already queried;
+   unrelated events do not allocate cache entries or trigger chain reads.
+   First use loads that granter from the chain, including earlier events.
    A single writer reads committed block results in height order and stores
    the events durably before appending them to the ring, with `BLOCK(H)` last
    for each height. The bounded ring is only the hot tail: an older cursor

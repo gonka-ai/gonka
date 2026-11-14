@@ -189,8 +189,9 @@ const (
 
 // WarmKeyLogCopy is an in-memory copy of the chain's warm-key log, one
 // append-only list per granter, filled from the chain on first use and kept
-// current by host events (Apply) and periodic reloads. It implements
-// WarmKeyGrantSource for the gateway and the hosts.
+// current by host events (Apply) and periodic reloads. Events only update
+// granters already queried by this copy, so unrelated grants cannot grow it.
+// It implements WarmKeyGrantSource for the gateway and the hosts.
 type WarmKeyLogCopy struct {
 	fetch        WarmKeyLogFetcher
 	refreshAfter time.Duration
@@ -208,7 +209,7 @@ type granterLog struct {
 	// failing chain does not turn misses into a reload per request.
 	attemptedAt time.Time
 	// complete is false until the granter's whole log was read from the
-	// chain; Apply alone (events for a granter never loaded) leaves holes.
+	// chain; a direct entry lookup and later events can leave holes.
 	complete bool
 }
 
@@ -276,11 +277,15 @@ func (c *WarmKeyLogCopy) WarmKeyEntry(granter string, id uint64) (WarmKeyEntry, 
 	}
 }
 
-// Apply records an entry delivered by an event: a new grant, or the end of
-// one the copy has. The copy stays append-only: an entry is only ever added
-// or ended, never removed.
+// Apply records an event only for a granter already queried by this copy.
+// Other granters are loaded from the chain on first use. Tracked entries
+// stay append-only: an entry is only ever added or ended, never removed.
 func (c *WarmKeyLogCopy) Apply(e WarmKeyEntry) {
-	c.apply(e)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if g := c.granters[e.Granter]; g != nil {
+		g.apply(e)
+	}
 }
 
 // NoteMiss records that a key was asked for and not found live under
@@ -319,6 +324,11 @@ func (c *WarmKeyLogCopy) apply(e WarmKeyEntry) {
 		g = &granterLog{entries: make(map[uint64]WarmKeyEntry)}
 		c.granters[e.Granter] = g
 	}
+	g.apply(e)
+}
+
+// apply merges an entry without reviving an ended grant. Caller holds c.mu.
+func (g *granterLog) apply(e WarmKeyEntry) {
 	if have, ok := g.entries[e.ID]; ok && have.Ended() && !e.Ended() {
 		// An end is final; an older "granted" event replayed after it must
 		// not revive the entry.
@@ -436,10 +446,7 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 		c.granters[granter] = g
 	}
 	for _, e := range entries {
-		if have, ok := g.entries[e.ID]; ok && have.Ended() && !e.Ended() {
-			continue
-		}
-		g.entries[e.ID] = e
+		g.apply(e)
 	}
 	g.complete = true
 	g.loadedAt = c.now()
