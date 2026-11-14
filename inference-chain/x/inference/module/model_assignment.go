@@ -627,6 +627,11 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	slices.Sort(sortedModelIds)
 
 	currentEpochData := NewEpochMLNodeData()
+	// availableEpochData holds only the nodes that can actually stay on inference through
+	// the episode (see availableForPreservation). Eligibility is decided on it; the
+	// preservation target is still a fraction of the full model weight in currentEpochData.
+	availableEpochData := NewEpochMLNodeData()
+	hardwareByParticipant := make(map[string]*types.HardwareNodes)
 	previousEpochData := NewEpochMLNodeData()
 	participantVotingPowers := make(map[string]map[string]int64)
 
@@ -656,6 +661,23 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 					"epoch_index", epoch.Index,
 				)
 				currentEpochData.Set(modelId, vw.MemberAddress, dedupedNodes)
+
+				hardwareNodes, seen := hardwareByParticipant[vw.MemberAddress]
+				if !seen {
+					hw, found := ma.keeper.GetHardwareNodes(ctx, vw.MemberAddress)
+					if found {
+						hardwareNodes = hw
+					}
+					hardwareByParticipant[vw.MemberAddress] = hardwareNodes
+				}
+				availableNodes, droppedNodeIds := availableForPreservation(dedupedNodes, modelId, hardwareNodes)
+				if len(droppedNodeIds) > 0 {
+					ma.LogInfo("SamplePreservedForEpisode: nodes not available for preservation", types.Allocation,
+						"flow_context", FlowContext, "sub_flow_context", SubFlowContext,
+						"step", "hardware_availability_filter", "model_id", modelId,
+						"participant", vw.MemberAddress, "node_ids", droppedNodeIds)
+				}
+				availableEpochData.Set(modelId, vw.MemberAddress, availableNodes)
 				if vw.VotingPower > 0 {
 					if participantVotingPowers[modelId] == nil {
 						participantVotingPowers[modelId] = make(map[string]int64)
@@ -684,7 +706,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 		}
 	}
 
-	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, currentEpochData, liveRootTotalWeight, anchorHeight, guardianSet, participantVotingPowers)
+	eligibleNodesData := ma.filterEligibleMLNodes(epoch, previousEpochData, availableEpochData, liveRootTotalWeight, anchorHeight, guardianSet, participantVotingPowers)
 
 	modelPreservedNodes := make([]*types.ModelPreservedNodes, 0, len(sortedModelIds))
 	for _, modelId := range sortedModelIds {
@@ -1286,6 +1308,45 @@ func (ma *ModelAssigner) sampleEligibleParticipantsWithHistory(
 	ma.LogInfo("Selected eligible participants", types.Allocation, "flow_context", FlowContext, "sub_flow_context", SubFlowContext, "step", "select_eligible_participants", "model_id", modelId, "total_participants", len(participantsWithHistory), "eligible_participants", numEligible)
 
 	return eligibleParticipantsPerModel
+}
+
+// availableForPreservation keeps the nodes that can serve modelId through a PoC episode
+// according to the participant's on-chain hardware inventory, and returns the ids of the
+// rest. A preserved node skips PoC and carries its weight into the next epoch, so it must
+// be one that is still there:
+//   - node id absent from the inventory (removed by the host)  -> not available; it would
+//     be dropped by setModelsForParticipants at epoch formation anyway
+//   - inventory no longer lists modelId for the node           -> not available, same rule
+//   - node reported FAILED or STOPPED                          -> not available; it serves
+//     no inference during the episode
+//
+// With no inventory record at all (genesis bootstrap) the filter is skipped, as in
+// setModelsForParticipants.
+func availableForPreservation(nodes []*types.MLNodeInfo, modelId string, hardwareNodes *types.HardwareNodes) ([]*types.MLNodeInfo, []string) {
+	if hardwareNodes == nil {
+		return nodes, nil
+	}
+	inventory := make(map[string]*types.HardwareNode, len(hardwareNodes.HardwareNodes))
+	for _, hw := range hardwareNodes.HardwareNodes {
+		if hw != nil {
+			inventory[hw.LocalId] = hw
+		}
+	}
+	available := make([]*types.MLNodeInfo, 0, len(nodes))
+	var dropped []string
+	for _, node := range nodes {
+		if node == nil {
+			continue
+		}
+		hw := inventory[node.NodeId]
+		if hw == nil || !slices.Contains(hw.Models, modelId) ||
+			hw.Status == types.HardwareNodeStatus_FAILED || hw.Status == types.HardwareNodeStatus_STOPPED {
+			dropped = append(dropped, node.NodeId)
+			continue
+		}
+		available = append(available, node)
+	}
+	return available, dropped
 }
 
 func supportedModelsByNode(hardwareNodes *types.HardwareNodes, governanceModels []*types.Model) map[string][]string {
