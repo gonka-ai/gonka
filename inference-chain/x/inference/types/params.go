@@ -312,7 +312,7 @@ func DefaultEpochParams() *EpochParams {
 		InferenceValidationCutoff:      0,
 		InferencePruningEpochThreshold: 2, // Number of epochs after which inferences can be pruned
 		ConfirmationPocSafetyWindow:    50,
-		PocSlotAllocation: &Decimal{ // Default 0.5 (50%) fraction of nodes allocated to PoC slots
+		PocSlotAllocation: &Decimal{ // Default 0.5: fraction of each model's weight kept serving inference during PoC
 			Value:    5,
 			Exponent: -1,
 		},
@@ -420,8 +420,8 @@ func DefaultPoCModelParams() *PoCModelParams {
 func DefaultConfirmationPoCParams() *ConfirmationPoCParams {
 	return &ConfirmationPoCParams{
 		ExpectedConfirmationsPerEpoch: 0,                     // Feature disabled by default
-		AlphaThreshold:                DecimalFromFloat(0.0), // 70% minimum ratio
-		SlashFraction:                 DecimalFromFloat(0.0), // 10% slash
+		AlphaThreshold:                DecimalFromFloat(0.0), // 0 disables the confirmation ratio check and PoC challenges
+		SlashFraction:                 DecimalFromFloat(0.0), // read only by param validation; see the proto field comment
 		UpgradeProtectionWindow:       500,                   // 500 blocks before/after upgrade
 	}
 }
@@ -463,7 +463,7 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 	return &DynamicPricingParams{
 		StabilityZoneLowerBound:   DecimalFromFloat(0.40), // Lower bound of stability zone (40%)
 		StabilityZoneUpperBound:   DecimalFromFloat(0.60), // Upper bound of stability zone (60%)
-		PriceElasticity:           DecimalFromFloat(0.05), // Price elasticity factor (5% max change)
+		PriceElasticity:           DecimalFromFloat(0.05), // Price elasticity factor (2% max per-block change at defaults, before the price is truncated to an integer)
 		UtilizationWindowDuration: 60,                     // Utilization calculation window (60 seconds)
 		MinPerTokenPrice:          1,                      // Minimum per-token price floor (1 ngonka)
 		BasePerTokenPrice:         100,                    // Initial per-token price after grace period (100 ngonka)

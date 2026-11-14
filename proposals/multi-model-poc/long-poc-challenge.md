@@ -33,7 +33,7 @@ The handler:
 6. Freezes `E = floor(E_full * scale)` and `P = floor(k * E)`. Rejects if `P = 0`.
 7. Sets `start_height` to the next block. Remaining blocks to the safety window must be at least `min_punishable_segment_blocks`.
 8. Moves `P` from the challenger to the inference module account. If the transfer fails, the challenge is not created.
-9. Stores epoch, challenger, target, `E`, `P`, `start_height`, and `seed` = previous-block hash at create (`HeaderInfo().Hash`).
+9. Stores epoch, challenger, target, `E`, `P`, `start_height`, and `seed` = hash of the block being finalized at create (`HeaderInfo().Hash`).
 
 Challenges are final once created. Active challenges remain valid if the sender is removed from the whitelist.
 
@@ -61,7 +61,7 @@ Each segment is a PoC stage with its own `start_height`. That height is `PocStag
 - The next segment's `start_height` is the complete-block height, if that height is still before the safety window. New seed, new commits, new votes.
 - The last segment is evaluated at regular PoC validation (`EndOfPoCValidation`), before `SettleAccounts`.
 
-The seed for a new rotated segment is the hash of the previous block at rotate. DAPI callbacks require the artifact `block_height` to match the active segment's `start_height`.
+The seed for a new rotated segment is the hash of the block being finalized at rotate. DAPI callbacks require the artifact `block_height` to match the active segment's `start_height`.
 
 ## Validate
 
