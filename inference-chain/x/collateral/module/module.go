@@ -160,7 +160,14 @@ func (am AppModule) BeginBlock(_ context.Context) error {
 
 // EndBlock contains the logic that is automatically triggered at the end of each block.
 // The end block implementation is optional.
-func (am AppModule) EndBlock(_ context.Context) error {
+func (am AppModule) EndBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	cacheCtx, write := sdkCtx.CacheContext()
+	if err := am.keeper.ProcessMaturedUnbondings(cacheCtx); err != nil {
+		am.keeper.Logger().Error("failed to process matured unbondings", "error", err)
+		return nil
+	}
+	write()
 	return nil
 }
 

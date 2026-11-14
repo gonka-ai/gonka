@@ -1,7 +1,11 @@
 package keeper_test
 
 import (
+	"context"
+	"errors"
+
 	"github.com/productscience/inference/testutil/sample"
+	"github.com/productscience/inference/x/collateral/keeper"
 	"github.com/productscience/inference/x/collateral/types"
 	inftypes "github.com/productscience/inference/x/inference/types"
 
@@ -113,4 +117,81 @@ func (s *KeeperTestSuite) TestEpochProcessing_SlashBeforeUnbondingRelease() {
 	postSlashActive, found := s.k.GetCollateral(s.ctx, participant)
 	s.Require().True(found)
 	s.Require().Equal(math.NewInt(activeAmount/2), postSlashActive.Amount)
+}
+
+func (s *KeeperTestSuite) TestEpochProcessing_UnbondingQueueBoundedPerCall() {
+	completedEpoch := uint64(42)
+	extra := 5
+	coin := sdk.NewInt64Coin(inftypes.BaseCoin, 1)
+	for i := 0; i < keeper.MaxUnbondingsPerCall+extra; i++ {
+		addr, err := sdk.AccAddressFromBech32(sample.AccAddress())
+		s.Require().NoError(err)
+		s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, addr, completedEpoch, coin))
+	}
+	futureParticipant, err := sdk.AccAddressFromBech32(sample.AccAddress())
+	s.Require().NoError(err)
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, futureParticipant, completedEpoch+1, coin))
+
+	released := 0
+	s.bankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Eq(sdk.NewCoins(coin)), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, senderModule string, recipient sdk.AccAddress, amt sdk.Coins, memo string) error {
+			released++
+			return nil
+		}).
+		AnyTimes()
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), types.ModuleName, types.SubAccountUnbonding, gomock.Any(), gomock.Any()).
+		AnyTimes()
+
+	// The epoch transition releases at most one block's worth of entries.
+	s.Require().NoError(s.k.AdvanceEpoch(s.ctx, completedEpoch))
+	s.Require().Equal(keeper.MaxUnbondingsPerCall, released)
+	left, err := s.k.GetUnbondingByEpoch(s.ctx, completedEpoch)
+	s.Require().NoError(err)
+	s.Require().Len(left, extra)
+
+	// The next block releases the rest and leaves the future epoch alone.
+	s.Require().NoError(s.k.ProcessMaturedUnbondings(s.ctx))
+	s.Require().Equal(keeper.MaxUnbondingsPerCall+extra, released)
+	left, err = s.k.GetUnbondingByEpoch(s.ctx, completedEpoch)
+	s.Require().NoError(err)
+	s.Require().Empty(left)
+	_, found := s.k.GetUnbondingCollateral(s.ctx, futureParticipant, completedEpoch+1)
+	s.Require().True(found, "future-dated unbonding entry should not be processed")
+
+	// Nothing matured is left: another block is a no-op.
+	s.Require().NoError(s.k.ProcessMaturedUnbondings(s.ctx))
+	s.Require().Equal(keeper.MaxUnbondingsPerCall+extra, released)
+}
+
+func (s *KeeperTestSuite) TestEpochProcessing_FailedPayoutKeepsEarlierRemovals() {
+	completedEpoch := uint64(42)
+	coin := sdk.NewInt64Coin(inftypes.BaseCoin, 1)
+	for i := 0; i < 3; i++ {
+		addr, err := sdk.AccAddressFromBech32(sample.AccAddress())
+		s.Require().NoError(err)
+		s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, addr, completedEpoch, coin))
+	}
+
+	calls := 0
+	s.bankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx context.Context, senderModule string, recipient sdk.AccAddress, amt sdk.Coins, memo string) error {
+			calls++
+			if calls == 2 {
+				return errors.New("module account underfunded")
+			}
+			return nil
+		}).
+		AnyTimes()
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), types.ModuleName, types.SubAccountUnbonding, gomock.Any(), gomock.Any()).
+		AnyTimes()
+
+	s.Require().Error(s.k.AdvanceEpoch(s.ctx, completedEpoch))
+	// The entry paid before the failure is gone, so a retry cannot pay it again.
+	left, err := s.k.GetUnbondingByEpoch(s.ctx, completedEpoch)
+	s.Require().NoError(err)
+	s.Require().Len(left, 2)
 }

@@ -311,20 +311,60 @@ func (k Keeper) AdvanceEpoch(ctx context.Context, completedEpoch uint64) error {
 	return k.SetCurrentEpoch(sdkCtx, nextEpoch)
 }
 
-// ProcessUnbondingQueue iterates through all unbonding entries for a given epoch,
-// releases the funds back to the participants, and removes the processed entries.
-func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) error {
-	unbondingEntries, err := k.GetUnbondingByEpoch(ctx, completionEpoch)
-	if err != nil {
-		return err
-	}
+// MaxUnbondingsPerCall bounds how many matured unbonding entries one call releases.
+// EndBlock gas is not metered, so an unbounded queue lets cheap 1-ngonka withdrawals from many
+// addresses turn the epoch-transition block into one arbitrarily long block.
+const MaxUnbondingsPerCall = 1000
 
-	for _, entry := range unbondingEntries {
+// ProcessUnbondingQueue releases matured unbonding entries (completion epoch <= completionEpoch),
+// oldest epoch first, at most MaxUnbondingsPerCall per call. The rest are released by
+// ProcessMaturedUnbondings in the following blocks.
+func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) error {
+	_, err := k.ReleaseMaturedUnbondings(ctx, completionEpoch, MaxUnbondingsPerCall)
+	return err
+}
+
+// ProcessMaturedUnbondings is called every block and releases entries left over from
+// epochs that have already completed.
+func (k Keeper) ProcessMaturedUnbondings(ctx sdk.Context) error {
+	currentEpoch, err := k.GetCurrentEpoch(ctx)
+	if err != nil || currentEpoch == 0 {
+		return nil
+	}
+	_, err = k.ReleaseMaturedUnbondings(ctx, currentEpoch-1, MaxUnbondingsPerCall)
+	return err
+}
+
+// ReleaseMaturedUnbondings returns funds for up to limit entries whose completion epoch is
+// <= upToEpoch, removes them and returns how many were processed.
+func (k Keeper) ReleaseMaturedUnbondings(ctx sdk.Context, upToEpoch uint64, limit int) (int, error) {
+	iter, err := k.UnbondingIM.Iterate(ctx, collections.NewPrefixUntilPairRange[uint64, sdk.AccAddress](upToEpoch))
+	if err != nil {
+		return 0, err
+	}
+	var keys []collections.Pair[uint64, sdk.AccAddress]
+	var entries []types.UnbondingCollateral
+	for ; iter.Valid() && len(keys) < limit; iter.Next() {
+		kv, err := iter.KeyValue()
+		if err != nil {
+			iter.Close()
+			return 0, err
+		}
+		keys = append(keys, kv.Key)
+		entries = append(entries, kv.Value)
+	}
+	iter.Close()
+
+	for i, entry := range entries {
+		completionEpoch := keys[i].K1()
 		participantAddr, err := sdk.AccAddressFromBech32(entry.Participant)
 		if err != nil {
 			// This should ideally not happen if addresses are validated on entry
 			k.Logger().Error("failed to parse participant address during unbonding processing",
 				"participant", entry.Participant, "error", err)
+			if err := k.UnbondingIM.Remove(ctx, keys[i]); err != nil {
+				return 0, err
+			}
 			continue // Skip this entry
 		}
 
@@ -335,7 +375,11 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) e
 			// which should not happen if logic is correct.
 			// even so, a chain halt is not the way to handle it
 			k.Logger().Error("failed to send collateral back to participant during unbonding processing")
-			return err
+			return 0, err
+		}
+		// Remove right after the payout so an error on a later entry cannot pay this one twice
+		if err := k.UnbondingIM.Remove(ctx, keys[i]); err != nil {
+			return 0, err
 		}
 		k.bookkeepingBankKeeper.LogSubAccountTransaction(ctx, entry.Participant, types.ModuleName, types.SubAccountUnbonding, entry.Amount, "collateral unbonded")
 
@@ -356,11 +400,7 @@ func (k Keeper) ProcessUnbondingQueue(ctx sdk.Context, completionEpoch uint64) e
 		)
 	}
 
-	// Remove all processed entries for this epoch
-	if len(unbondingEntries) > 0 {
-		return k.RemoveUnbondingByEpoch(ctx, completionEpoch)
-	}
-	return nil
+	return len(keys), nil
 }
 
 // GetAllUnbondings returns all unbonding entries (for genesis export)
