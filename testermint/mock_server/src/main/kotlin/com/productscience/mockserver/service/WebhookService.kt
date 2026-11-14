@@ -180,6 +180,8 @@ class WebhookService(private val responseService: ResponseService) {
                     blockHash = blockHash,
                     blockHeight = blockHeight,
                     nodeId = nodeId,
+                    decode = jsonNode.path("params").path("decode").asBoolean(false),
+                    maxTokens = jsonNode.path("params").path("max_tokens").asInt(0),
                 )
                 lastGenerateV2[hostName] = ctx
                 sendGenerateV2Artifacts(ctx)
@@ -217,7 +219,7 @@ class WebhookService(private val responseService: ResponseService) {
     }
 
     private fun generateWebhookUrl(url: String): String {
-        return if (url.contains("/v2/poc-batches")) {
+        return if (url.contains("/v2/poc-batches") || url.contains("/v3/poc-batches")) {
             "$url/generated"
         } else {
             "$url/v2/poc-batches/generated"
@@ -225,10 +227,15 @@ class WebhookService(private val responseService: ResponseService) {
     }
 
     private fun sendGenerateV2Artifacts(ctx: LastGenerateV2Context) {
-        val weight = responseService.getPocResponseWeight(ctx.hostName) ?: 10L
+        val weight = (if (ctx.decode) responseService.getPocResponseWeight(ctx.hostName, ScenarioName("DECODE")) else null)
+            ?: responseService.getPocResponseWeight(ctx.hostName) ?: 10L
         val base = latestNonce.getAndAdd(weight)
         val artifacts = (0 until weight.toInt()).map { i ->
             val nonce = base + i
+            if (ctx.decode) {
+                val steps = (0..ctx.maxTokens).joinToString(",") { step -> ((nonce + step) % 16).toString() }
+                return@map """{"nonce": $nonce, "k_points_steps": [$steps]}"""
+            }
             val vectorBytes = ByteArray(24) { j ->
                 val rawByte = ((nonce * 2 + j) % 256).toByte()
                 if (j % 2 == 1) (rawByte.toInt() and 0x7B).toByte() else rawByte
@@ -259,6 +266,8 @@ class WebhookService(private val responseService: ResponseService) {
         val blockHash: String,
         val blockHeight: Int,
         val nodeId: Int,
+        val decode: Boolean,
+        val maxTokens: Int,
     )
 
     /**
@@ -279,10 +288,10 @@ class WebhookService(private val responseService: ResponseService) {
 
             logger.info("Processing PoC v2 validation webhook - PublicKey: $publicKey, BlockHeight: $blockHeight, nTotal: $nTotal")
 
-            // Determine callback URL - normalize to v2 endpoint
+            // Keep the version selected by the frozen work recipe.
             val webhookUrl = if (url != null) {
-                // Normalize URL: if url already contains /v2/poc-batches, append /validated; otherwise treat as host base
-                if (url.contains("/v2/poc-batches")) {
+                // Versioned callback bases already include the model path.
+                if (url.contains("/v2/poc-batches") || url.contains("/v3/poc-batches")) {
                     "$url/validated"
                 } else {
                     "$url/v2/poc-batches/validated"

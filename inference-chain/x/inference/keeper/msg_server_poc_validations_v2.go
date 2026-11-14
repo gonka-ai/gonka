@@ -11,12 +11,17 @@ import (
 
 // SubmitPocValidationsV2 handles batch submission of PoC v2 validations.
 func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgSubmitPocValidationsV2) (*types.MsgSubmitPocValidationsV2Response, error) {
-	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
-		return nil, err
-	}
-
 	params, err := k.GetParams(goCtx)
 	if err != nil {
+		return nil, err
+	}
+	if len(msg.Validations) == 0 {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "validations must not be empty")
+	}
+	if len(msg.Validations) > params.GetEpochValidationParams().ValidationsPerMessageLimit() {
+		return nil, sdkerrors.Wrap(types.ErrIllegalState, "too many validations in one message")
+	}
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
 
@@ -34,10 +39,16 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		return nil, sdkerrors.Wrap(types.ErrNotSupported, "V2 disabled when poc_v2_enabled=false")
 	}
 
-	// Participant access gating: blocklisted accounts cannot validate in PoC.
-	if k.IsPoCParticipantBlocked(ctx, msg.Creator) {
-		k.LogError(PocFailureTag+"[SubmitPocValidationsV2] validator is blocked from PoC", types.PoC, "validator", msg.Creator)
-		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, msg.Creator)
+	creatorAddr, err := decodePoCCreator(msg.Creator)
+	if err != nil {
+		return nil, err
+	}
+	if k.IsPoCParticipantBlocked(ctx, creatorAddr.String()) {
+		k.LogError(PocFailureTag+"[SubmitPocValidationsV2] validator is blocked from PoC", types.PoC, "validator", creatorAddr.String())
+		return nil, sdkerrors.Wrap(types.ErrParticipantBlocked, creatorAddr.String())
+	}
+	if _, err := types.CanonicalAccAddress(msg.Creator); err != nil {
+		return nil, err
 	}
 
 	// Validate PoC window once at message level (all validations share the same height)
@@ -108,39 +119,83 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		}
 	}
 
-	// Process each validation - skip failures, don't fail entire batch
+	validator := creatorAddr.String()
+
+	// Process each validation - skip failures, don't fail entire batch.
+	// A proposer can include a transaction CheckTx would have dropped. Skipping
+	// a bad row is what stops that row from being stored.
 	storedCount := 0
+	skippedIneligibleModelCount := 0
+	var (
+		eligibility       PocStageVoterEligibility
+		eligibilityLoaded bool
+	)
 	for _, validation := range msg.Validations {
+		if validation == nil {
+			continue
+		}
 		modelID := validation.ModelId
-		if modelID == "" {
-			k.LogWarn("[SubmitPocValidationsV2] Missing model_id, skipping", types.PoC,
+		if modelID == "" || !k.IsValidGovernanceModel(ctx, modelID) {
+			k.LogWarn("[SubmitPocValidationsV2] model_id is not a governance model, skipping", types.PoC,
+				"validator", validator)
+			continue
+		}
+
+		targetAddr, err := types.CanonicalAccAddress(validation.ParticipantAddress)
+		if err != nil {
+			k.LogWarn("[SubmitPocValidationsV2] Invalid participant address, skipping", types.PoC,
+				"validator", validator,
+				"error", err)
+			continue
+		}
+		participant := targetAddr.String()
+		if _, found := k.GetParticipant(ctx, participant); !found {
+			k.LogWarn("[SubmitPocValidationsV2] target is not a participant, skipping", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress)
 			continue
 		}
-
-		// Pre-validate participant address to avoid conflating input errors with storage errors
-		if _, err := sdk.AccAddressFromBech32(validation.ParticipantAddress); err != nil {
-			k.LogWarn("[SubmitPocValidationsV2] Invalid participant address, skipping", types.PoC,
+		hasCommit, err := k.HasPoCV2StoreCommit(ctx, startBlockHeight, participant, modelID)
+		if err != nil {
+			return nil, err
+		}
+		if !hasCommit {
+			k.LogWarn("[SubmitPocValidationsV2] no store commit for target and model, skipping", types.PoC,
 				"validator", msg.Creator,
-				"participant", validation.ParticipantAddress,
-				"error", err)
+				"participant", participant,
+				"model_id", modelID)
+			continue
+		}
+
+		if !eligibilityLoaded {
+			var found bool
+			eligibility, found, err = k.BuildPocStageVoterEligibility(ctx, startBlockHeight, validator)
+			if err != nil {
+				return nil, err
+			}
+			if !found {
+				return nil, sdkerrors.Wrap(types.ErrIllegalState, "validation snapshot not found for stage")
+			}
+			eligibilityLoaded = true
+		}
+		if !eligibility.CanValidateModel(modelID) {
+			skippedIneligibleModelCount++
 			continue
 		}
 
 		// Check for duplicate submission (prevents vote flipping)
-		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, validation.ParticipantAddress, modelID, msg.Creator)
+		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, participant, modelID, validator)
 		if err != nil {
 			k.LogError("[SubmitPocValidationsV2] Unexpected storage read error, aborting batch", types.PoC,
-				"validator", msg.Creator,
-				"participant", validation.ParticipantAddress,
+				"validator", validator,
+				"participant", participant,
 				"error", err)
-			return nil, sdkerrors.Wrapf(err, "[SubmitPocValidationsV2] failed to check existing validation for participant %s", validation.ParticipantAddress)
+			return nil, sdkerrors.Wrapf(err, "[SubmitPocValidationsV2] failed to check existing validation for participant %s", participant)
 		}
 		if exists {
 			k.LogWarn("[SubmitPocValidationsV2] Validation already exists, skipping duplicate", types.PoC,
-				"validator", msg.Creator,
-				"participant", validation.ParticipantAddress,
+				"validator", validator,
+				"participant", participant,
 				"model_id", modelID,
 				"stage", startBlockHeight)
 			continue
@@ -148,8 +203,8 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 
 		// Store the v2 validation (combine message-level height with payload)
 		storedValidation := types.PoCValidationV2{
-			ParticipantAddress:          validation.ParticipantAddress,
-			ValidatorParticipantAddress: msg.Creator,
+			ParticipantAddress:          participant,
+			ValidatorParticipantAddress: validator,
 			PocStageStartBlockHeight:    startBlockHeight,
 			ModelId:                     modelID,
 			ValidatedWeight:             validation.ValidatedWeight,
@@ -166,10 +221,16 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 
 		storedCount++
 		k.LogInfo("[SubmitPocValidationsV2] Validation stored", types.PoC,
-			"validator", msg.Creator,
-			"participant", validation.ParticipantAddress,
+			"validator", validator,
+			"participant", participant,
 			"model_id", modelID,
 			"validatedWeight", validation.ValidatedWeight)
+	}
+	if skippedIneligibleModelCount > 0 {
+		k.LogWarn("[SubmitPocValidationsV2] skipped rows where signer has no voting power in stage snapshot", types.PoC,
+			"validator", validator,
+			"stage", startBlockHeight,
+			"skipped", skippedIneligibleModelCount)
 	}
 
 	k.LogInfo("[SubmitPocValidationsV2] Batch complete", types.PoC,

@@ -324,6 +324,16 @@ service Query {
 
   }
 
+  // Queries the bridge key link for a receipt owner address.
+  // owner_address is the Gonka address derived from the compressed external
+  // public key, the same value MsgBridgeExchange stores as ownerAddress.
+  // found is false when no link is stored. Settlement then pays owner_address.
+  // nonce is the last accepted Ethereum authorization for that owner.
+  rpc BridgeKeyLink (QueryBridgeKeyLinkRequest) returns (QueryBridgeKeyLinkResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/bridge_key_link/{owner_address}";
+
+  }
+
   // Queries the singleton liquidity pool
   rpc LiquidityPool (QueryLiquidityPoolRequest) returns (QueryLiquidityPoolResponse) {
     option (google.api.http).get = "/productscience/inference/inference/liquidity_pool";
@@ -442,6 +452,17 @@ service Query {
   // Queries PoC validation snapshot for deterministic sampling synchronization.
   rpc PoCValidationSnapshot (QueryPoCValidationSnapshotRequest) returns (QueryPoCValidationSnapshotResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_validation_snapshot/{poc_stage_start_height}";
+  }
+
+  // Frozen generate/validate/evaluate snapshot for a PoC stage height
+  // (regular PocStartBlockHeight or CPoC trigger height).
+  rpc PocStageRecipe (QueryPocStageRecipeRequest) returns (QueryPocStageRecipeResponse) {
+    option (google.api.http) = {
+      get: "/productscience/inference/inference/poc_stage_recipe/{stage_height}"
+      additional_bindings {
+        get: "/productscience/inference/inference/epoch_poc_recipe/{epoch_index}"
+      }
+    };
   }
 
   rpc DevshardEscrow (QueryGetDevshardEscrowRequest) returns (QueryGetDevshardEscrowResponse) {
@@ -1051,6 +1072,17 @@ message QueryBridgeAddressesByChainResponse {
   repeated BridgeContractAddress addresses = 1 [(gogoproto.nullable) = false];
 }
 
+message QueryBridgeKeyLinkRequest {
+  string owner_address = 1;
+}
+
+message QueryBridgeKeyLinkResponse {
+  bool found = 1;
+  string owner_address = 2;
+  string recipient_address = 3;
+  uint64 nonce = 4;
+}
+
 message QueryValidateWrappedTokenForTradeRequest {
   string contract_address = 1;
 }
@@ -1246,6 +1278,18 @@ message QueryPoCValidationSnapshotRequest {
 
 message QueryPoCValidationSnapshotResponse {
   PoCValidationSnapshot snapshot = 1;
+  bool found = 2;
+}
+
+message QueryPocStageRecipeRequest {
+  oneof lookup {
+    int64 stage_height = 1; // Exact regular or confirmation PoC stage.
+    uint64 epoch_index = 2; // Regular recipe behind this epoch's measured weights.
+  }
+}
+
+message QueryPocStageRecipeResponse {
+  PocStageRecipe recipe = 1;
   bool found = 2;
 }
 

@@ -76,6 +76,9 @@ func (msg *MsgPoCChallengeStoreCommit) GetSignersStrings() []string {
 func (msg *MsgSubmitPoCChallengeValidations) GetSignersStrings() []string {
 	return []string{msg.Creator}
 }
+func (msg *MsgRegisterBridgeKeyLink) GetSignersStrings() []string {
+	return []string{msg.Creator}
+}
 
 // Maintenance messages
 func (msg *MsgScheduleMaintenance) GetSignersStrings() []string { return []string{msg.Creator} }

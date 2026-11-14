@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/stretchr/testify/require"
 )
 
 // TestBLSCryptographicFunctions tests the basic functionality of our BLS functions
@@ -170,6 +171,7 @@ func TestInvalidPublicKeyEncryption(t *testing.T) {
 		{"Too short", []byte{0x02, 0x79}},
 		{"Too long", make([]byte, 65)}, // Uncompressed format
 		{"Invalid prefix", append([]byte{0x05}, make([]byte, 32)...)},
+		{"Off-curve x=5", append(append([]byte{0x02}, make([]byte, 31)...), 0x05)},
 	}
 
 	for _, tc := range invalidKeys {
@@ -273,3 +275,96 @@ func TestPolynomialEvaluationEdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestGenerateDealerPart_ValidatesSnapshotKeysUpfront(t *testing.T) {
+	valid02, err := hex.DecodeString("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+	require.NoError(t, err)
+	valid03, err := hex.DecodeString("031884e5018572688f308999f53092837489aeac31afe1389809281562794c171b")
+	require.NoError(t, err)
+
+	// Report off-curve vector: 02 || 31*00 || 05
+	offCurve := make([]byte, 33)
+	offCurve[0] = 0x02
+	offCurve[32] = 0x05
+
+	t.Run("valid_primary_and_warm_keys", func(t *testing.T) {
+		bm := NewBlsManager(createMockCosmosClient())
+		participants := []ParticipantInfo{
+			{
+				Address:                    "gonka1alice",
+				Secp256K1PublicKey:         valid02,
+				AllowedSecp256K1PublicKeys: [][]byte{valid03},
+				SlotStartIndex:             0,
+				SlotEndIndex:               1,
+			},
+		}
+
+		dealerPart, err := bm.generateDealerPart(7, 2, 1, participants)
+		require.NoError(t, err)
+		require.NotNil(t, dealerPart)
+		require.Len(t, dealerPart.Commitments, 2)
+		require.Len(t, dealerPart.EncryptedSharesForParticipants, 1)
+		// 2 slots * (1 primary + 1 warm key) = 4 ciphertexts
+		require.Len(t, dealerPart.EncryptedSharesForParticipants[0].EncryptedShares, 4)
+
+		// Verify dealer opening records were stored for the valid epoch
+		_, ok := bm.getDealerOpeningRecord(7, 0, 0)
+		require.True(t, ok)
+	})
+
+	t.Run("rejects_off_curve_primary_key_before_work", func(t *testing.T) {
+		bm := NewBlsManager(createMockCosmosClient())
+		participants := []ParticipantInfo{
+			{
+				Address:            "gonka1alice",
+				Secp256K1PublicKey: valid02,
+				SlotStartIndex:     0,
+				SlotEndIndex:       0,
+			},
+			{
+				Address:            "gonka1offcurve",
+				Secp256K1PublicKey: offCurve,
+				SlotStartIndex:     1,
+				SlotEndIndex:       1,
+			},
+		}
+
+		dealerPart, err := bm.generateDealerPart(8, 2, 1, participants)
+		require.Nil(t, dealerPart)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "epoch 8")
+		require.ErrorContains(t, err, "gonka1offcurve")
+		require.ErrorContains(t, err, "not a valid curve point")
+		require.NotContains(t, err.Error(), "0000000000000000000000000000000000000000000000000000000000000005")
+
+		// No opening records should be stored for the first participant either
+		_, ok := bm.getDealerOpeningRecord(8, 0, 0)
+		require.False(t, ok)
+	})
+
+	t.Run("rejects_off_curve_additional_warm_key_before_work", func(t *testing.T) {
+		bm := NewBlsManager(createMockCosmosClient())
+		participants := []ParticipantInfo{
+			{
+				Address:                    "gonka1alice",
+				Secp256K1PublicKey:         valid02,
+				AllowedSecp256K1PublicKeys: [][]byte{valid03, offCurve},
+				SlotStartIndex:             0,
+				SlotEndIndex:               1,
+			},
+		}
+
+		dealerPart, err := bm.generateDealerPart(9, 2, 1, participants)
+		require.Nil(t, dealerPart)
+		require.Error(t, err)
+		require.ErrorContains(t, err, "epoch 9")
+		require.ErrorContains(t, err, "gonka1alice")
+		require.ErrorContains(t, err, "index 1")
+		require.ErrorContains(t, err, "not a valid curve point")
+		require.NotContains(t, err.Error(), "0000000000000000000000000000000000000000000000000000000000000005")
+
+		_, ok := bm.getDealerOpeningRecord(9, 0, 0)
+		require.False(t, ok)
+	})
+}
+

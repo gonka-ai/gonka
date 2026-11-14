@@ -430,6 +430,8 @@ data class DevshardEscrowParams(
 )
 
 data class PocParams(
+    @SerializedName("poc_scheme")
+    val pocScheme: String = "POC_SCHEME_PREFILL",
     val defaultDifficulty: Int,
     val validationSampleSize: Int,
     @SerializedName("poc_data_pruning_epoch_threshold")
@@ -467,7 +469,9 @@ data class PocParams(
         get() = primaryModelConfig()?.modelId
 
     val effectiveSeqLen: Long?
-        get() = primaryModelConfig()?.seqLen
+        get() = primaryModelConfig()?.let { model ->
+            model.schemes?.firstOrNull { it.scheme == "POC_SCHEME_PREFILL" }?.seqLen ?: model.seqLen
+        }
 }
 
 data class PoCModelConfig(
@@ -481,6 +485,19 @@ data class PoCModelConfig(
     val weightScaleFactor: Decimal? = null,
     @SerializedName("penalty_start_epoch")
     val penaltyStartEpoch: Long = 0,
+    @SerializedName("schemes")
+    val schemes: List<PocSchemeParams>? = null,
+)
+
+data class PocSchemeParams(
+    @SerializedName("scheme")
+    val scheme: String = "POC_SCHEME_PREFILL",
+    @SerializedName("seq_len")
+    val seqLen: Long? = null,
+    @SerializedName("decode_steps")
+    val decodeSteps: Long = 0,
+    @SerializedName("stat_test")
+    val statTest: PoCStatTestParams? = null,
     @SerializedName("dynamic_coefficient")
     val dynamicCoefficient: DynamicCoefficientModelConfig? = null,
 )

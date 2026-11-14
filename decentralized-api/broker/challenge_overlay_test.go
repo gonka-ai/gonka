@@ -45,7 +45,7 @@ func testOpenCh(target string, start, finish int64, generating bool, seed ...byt
 
 func withOverlay(t *testing.T, o challengeOverlay) {
 	t.Helper()
-	prev := overlay
+	prev := getChallengeOverlay()
 	SetChallengeOverlay(o)
 	t.Cleanup(func() { SetChallengeOverlay(prev) })
 }
@@ -178,7 +178,10 @@ func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
 	})
 
 	bridge := &MockBrokerChainBridge{}
-	bridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil)
+	bridge.On("GetEpochPocRecipe", uint64(0)).Return(&types.QueryPocStageRecipeResponse{
+		Found: true, Recipe: &types.PocStageRecipe{StageHeight: 100, Scheme: types.PocScheme_POC_SCHEME_DECODE,
+			Models: []*types.PoCModelConfig{{ModelId: "m", Schemes: []*types.PocSchemeParams{types.DefaultDecodeScheme()}}}},
+	}, nil)
 
 	b := &Broker{phaseTracker: tracker, chainBridge: bridge}
 	node := createTestNode("node-1")
@@ -189,6 +192,9 @@ func TestPrefetchPocParams_UsesChallengeSeedOutsideVoteWindow(t *testing.T) {
 	require.NotNil(t, params)
 	require.Equal(t, int64(777), params.startPoCBlockHeight)
 	require.Equal(t, "abcd", params.startPoCBlockHash)
+	require.Equal(t, types.PocScheme_POC_SCHEME_DECODE, params.scheme)
+	require.Equal(t, int64(256), params.models["m"].DecodeSteps)
+	require.True(t, params.epochModelsOnly)
 }
 
 func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
@@ -200,7 +206,10 @@ func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
 
 	bridge := &MockBrokerChainBridge{}
 	bridge.On("GetBlockHash", int64(100)).Return("regular-hash", nil)
-	bridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil)
+	bridge.On("GetPocStageRecipe", int64(100)).Return(&types.QueryPocStageRecipeResponse{
+		Found:  true,
+		Recipe: &types.PocStageRecipe{StageHeight: 100},
+	}, nil)
 
 	b := &Broker{phaseTracker: tracker, chainBridge: bridge}
 	node := createTestNode("node-1")
@@ -211,6 +220,7 @@ func TestPrefetchPocParams_VoteWindowKeepsRegularParams(t *testing.T) {
 	require.NotNil(t, params)
 	require.Equal(t, int64(100), params.startPoCBlockHeight)
 	require.Equal(t, "regular-hash", params.startPoCBlockHash)
+	require.False(t, params.epochModelsOnly)
 }
 
 func TestChallengeGenerateNeedsDispatch(t *testing.T) {

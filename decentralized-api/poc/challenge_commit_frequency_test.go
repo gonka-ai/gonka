@@ -31,7 +31,7 @@ func newChallengeFrequencyWorker(t *testing.T) (*CommitWorker, *challengeFrequen
 	store.ActivateStage(500)
 	ch := openCh("participant_addr", 500, 2000, true, 1)
 	r := &challengeFrequencyRecorder{failures: map[string]error{}}
-	w := &CommitWorker{store: store, recorder: r, tracker: commitWorkerTestTracker(800), participantAddress: ch.Target()}
+	w := &CommitWorker{store: store, recorder: r, tracker: commitWorkerTestTracker(800), participantAddress: ch.Target(), epochModels: map[string]bool{"a": true, "b": true}}
 	r.worker = w
 	return w, r, ch
 }
