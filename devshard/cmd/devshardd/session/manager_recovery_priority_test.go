@@ -293,6 +293,10 @@ func TestRecoveryGate_RequestedSetIsBounded(t *testing.T) {
 	defer gate.mu.Unlock()
 	require.Len(t, gate.requested, maxRequestedRecoveryEscrows,
 		"demand set must not grow without bound")
+	_, oldest := gate.requested["0"]
+	require.False(t, oldest, "oldest demand is evicted so later requests still enter")
+	_, newest := gate.requested[strconv.Itoa(maxRequestedRecoveryEscrows+9)]
+	require.True(t, newest)
 }
 
 // The end-to-end priority contract: demanded sessions are dequeued first and

@@ -18,6 +18,7 @@ image=gonka-proxy-router-test:$$
 state=gonka-proxy-router-state-$$
 capacity_state=gonka-proxy-router-capacity-state-$$
 containers=(
+    gonka-pr-h2-a gonka-pr-h2-b gonka-pr-h2-bad gonka-pr-h2-migration
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
     gonka-pr-proxy-both
     gonka-pr-proxy-admission
@@ -51,6 +52,33 @@ trap cleanup EXIT
 fail() {
     echo "test-routing: $*" >&2
     exit 1
+}
+
+# The router mocks are HTTP/1.1 python servers. The proxy's peer-RPC pools
+# dial a router's :8081 over HTTP/2, so each mock gets an HAProxy front in
+# its own network namespace that takes HTTP/2 on :8081 and passes the
+# request to the mock's :8080, the way a real router's second bind does.
+cat >"$tmpdir/h2-front.cfg" <<'EOF'
+defaults
+    mode http
+    timeout connect 2s
+    timeout client 5s
+    timeout server 5s
+frontend h2
+    bind :8081
+    default_backend data
+backend data
+    server data 127.0.0.1:8080
+EOF
+h2_front() {
+    docker rm -f "gonka-pr-h2-$1" >/dev/null 2>&1 || true
+    docker run -d --name "gonka-pr-h2-$1" --network "container:gonka-pr-router-$1" \
+        -v "$tmpdir/h2-front.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro" \
+        haproxy:3.2-alpine >/dev/null
+}
+router_rm() {
+    docker rm -f "gonka-pr-h2-$1" >/dev/null 2>&1 || true
+    docker rm -f "gonka-pr-router-$1" >/dev/null
 }
 
 cat >"$tmpdir/upstream.py" <<'PY'
@@ -284,6 +312,10 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
     -subj /CN=policy-v2 \
     -keyout "$tmpdir/tls/key.pem" -out "$tmpdir/tls/cert.pem" \
     >/dev/null 2>&1
+# NGINX_MODE=both also opens the peer RPC TLS port. It reads the same
+# SSL_CERT_SOURCE names production mounts at /etc/haproxy/ssl.
+cp "$tmpdir/tls/key.pem" "$tmpdir/tls/private.key"
+chmod a+r "$tmpdir/tls/cert.pem" "$tmpdir/tls/key.pem" "$tmpdir/tls/private.key"
 
 mkdir "$tmpdir/catalog"
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
@@ -380,6 +412,7 @@ for spec in 'a:v4:true:true' 'b:v4 v5 v9 v10:true:true' 'bad:v4:true:true'; do
         -e "MISSING_VERSIONLESS=$([[ $name == a ]] && echo true || echo false)" \
         -v "$tmpdir/upstream.py:/app.py:ro" \
         python:3.12-alpine python /app.py >/dev/null
+    h2_front "$name"
 done
 
 # A valid LKG projection is authoritative across restarts. Reducing the
@@ -404,9 +437,12 @@ for version in v9 v10; do
         "http://127.0.0.1:8404/readyz?version=$version" >/dev/null \
         || fail "reduced capacity dropped cached route $version"
 done
-[[ $(docker exec gonka-pr-proxy-cache-floor grep -c \
-    '^backend versiond_routers_dynamic_' /etc/haproxy/haproxy.cfg) == 2 ]] \
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -Ec \
+    '^backend versiond_routers_dynamic_[0-9]+$' /etc/haproxy/haproxy.cfg) == 2 ]] \
     || fail "LKG routes did not raise the effective dynamic capacity"
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -Ec \
+    '^backend versiond_routers_dynamic_[0-9]+_rpc$' /etc/haproxy/haproxy.cfg) == 2 ]] \
+    || fail "LKG routes did not render a peer RPC backend per dynamic slot"
 docker rm -f gonka-pr-proxy-cache-floor >/dev/null
 
 # The reversible upgrade keeps a healthy singleton for v4 nginx rollback. Its
@@ -418,6 +454,7 @@ docker run -d --name gonka-pr-router-migration --network "$network" \
     -e GENERIC_READY=true -e DATA_ENABLED=true \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
+h2_front migration
 
 # The standard v5 transition starts with the published 0.2.15 nginx router.
 # It has no admin listener, so the outer distributor must use the explicit
@@ -483,6 +520,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
@@ -750,6 +788,7 @@ docker run -d --name gonka-pr-proxy-v2 --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy-v2 \
     -e NGINX_MODE=both \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     "$image" >/dev/null
 for _ in $(seq 80); do
     code=$(docker exec gonka-pr-proxy-v2 curl -sS -o /dev/null \
@@ -789,6 +828,7 @@ docker run -d --name gonka-pr-proxy-both --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy \
     -e NGINX_MODE=both \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -v "$tmpdir/tls:/etc/haproxy/ssl:ro" \
     "$image" >/dev/null
 for _ in $(seq 60); do
     if docker exec gonka-pr-proxy-both sh -c \
@@ -980,13 +1020,14 @@ unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null 
     'http://127.0.0.1:8404/readyz?version=v9' 2>&1 || true)
 [[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
     "top distributor published v9 before its two-router activation reserve"
-docker rm -f gonka-pr-router-a >/dev/null
+router_rm a
 docker run -d --name gonka-pr-router-a --network "$network" \
     --network-alias versiond-router-fleet \
     -e NAME=a -e 'SERVES=v4 v5 v9' -e GENERIC_READY=true \
     -e DATA_ENABLED=true -e MISSING_VERSIONLESS=true \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
+h2_front a
 for _ in $(seq 40); do
     if proxy_admin '/readyz?version=v9' >/dev/null 2>&1; then
         break
@@ -1004,20 +1045,33 @@ router_b_ip=$(docker inspect -f \
 docker exec gonka-pr-proxy /usr/local/lib/proxy-router/route-status \
     v9 "$router_b_ip" >/dev/null \
     || fail "route-status did not report the admitted dynamic v9 slot"
-docker rm -f gonka-pr-router-a >/dev/null
+router_rm a
 docker run -d --name gonka-pr-router-a --network "$network" \
     --network-alias versiond-router-fleet \
     -e NAME=a -e SERVES=v4 -e GENERIC_READY=true \
     -e DATA_ENABLED=true -e MISSING_VERSIONLESS=true \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
+h2_front a
 router_a_ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
     gonka-pr-router-a)
-for _ in $(seq 40); do
-    proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" && break
-    sleep 0.25
+# A new address stays fully-down through the resolver hold (5s), then needs
+# rise 2. A reused address does not: it stays UP until the next check
+# (inter 1s, fall 1) sees the old process is gone. That UP is not admission.
+# Accept the address only when it is still UP after one check interval.
+admitted=0
+for _ in $(seq 120); do
+    if ! proxy_backend_addr_up versiond_routers_v4 "$router_a_ip"; then
+        sleep 0.25
+        continue
+    fi
+    sleep 1.5
+    if proxy_backend_addr_up versiond_routers_v4 "$router_a_ip"; then
+        admitted=1
+        break
+    fi
 done
-proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" \
+[[ $admitted -eq 1 ]] \
     || fail "parent router did not admit replacement router-a for v4"
 [[ $(probe http://proxy-router:18081/v9/sessions/dynamic/healthz) == b ]] \
     || fail "dynamically learned v9 did not reach its route-ready router"
@@ -1040,6 +1094,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
@@ -1179,7 +1234,7 @@ done
 # A short health-view divergence can send a versionless lookup to a router that
 # does not own the local route. GET may retry its 404; the matching POST policy
 # remains protected by disable-l7-retry.
-docker stop gonka-pr-router-bad >/dev/null
+docker stop gonka-pr-h2-bad gonka-pr-router-bad >/dev/null
 sleep 2
 retry_escrow=
 for candidate in $(seq 1 100); do
@@ -1192,6 +1247,7 @@ done
 [[ $(probe "http://proxy-router:18081/sessions/$retry_escrow/diffs") == b ]] \
     || fail "versionless GET did not recover from a route-local 404"
 docker start gonka-pr-router-bad >/dev/null
+docker start gonka-pr-h2-bad >/dev/null
 sleep 2
 
 [[ $(probe http://proxy-router/tier-a/status) == legacy-edge-router ]] \
@@ -1245,7 +1301,7 @@ executed=$((after_a - before_a + after_b - before_b))
 
 # Loss of the complete inner versiond tier must affect only /devshard. The
 # policy tier and public HAProxy continue serving unrelated routes.
-docker stop gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad >/dev/null
+docker stop gonka-pr-h2-a gonka-pr-h2-b gonka-pr-h2-bad gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad >/dev/null
 for _ in $(seq 40); do
     devshard_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
         -w '%{http_code}' --connect-timeout 2 --max-time 5 \

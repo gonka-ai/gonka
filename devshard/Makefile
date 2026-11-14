@@ -1,4 +1,5 @@
-.PHONY: proto test test-junit gateway-mockenv-test gateway-mockenv-test-junit integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images
+.PHONY: proto test test-junit gateway-mockenv-test gateway-mockenv-test-junit integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images snapshot-recovery-stress-test
+.PHONY: print-e2e-version
 
 DEVSHARD_VERSION ?= dev
 DEVSHARD_PROTOCOL_VERSION ?= v3
@@ -43,6 +44,9 @@ devshard-gateway-release:
 
 proto:
 	PATH="$$HOME/go/bin:$$PATH" protoc --proto_path=proto --go_out=. --go_opt=module=devshard proto/devshard/v1/*.proto
+	PATH="$$HOME/go/bin:$$PATH" protoc --proto_path=proto --go_out=. --go_opt=module=devshard \
+		--connect-go_out=. --connect-go_opt=module=devshard \
+		proto/devshard/transport/v1/*.proto
 
 test:
 	go run $(DEVSHARD_GOTESTSUM) --format $(DEVSHARD_TEST_FORMAT) -- $(DEVSHARD_TEST_PACKAGES)
@@ -72,6 +76,10 @@ ci-testenv-integration:
 	$(MAKE) -C testenv citest-grpc-transport
 	$(MAKE) -C testenv citest-adversarial
 
+# CI image builds use the same resolved version as local e2e-images builds.
+print-e2e-version:
+	@printf '%s\n' "$(DEVSHARD_E2E_VERSION)"
+
 e2e-images:
 	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) -f Dockerfile.mock-chain ..
 	$(DOCKER_BUILD) --build-arg DEVSHARD_VERSION=$(DEVSHARD_E2E_VERSION) -t $(DEVSHARD_E2E_HOST_IMAGE) -f Dockerfile.host ..
@@ -87,6 +95,9 @@ integration-test:
 
 stress-test:
 	go test ./user/ ./storage/ -tags stress -run TestStress -v -timeout 30m -count=1
+
+snapshot-recovery-stress-test:
+	go test ./user/ -tags stress -run TestStressSnapshotRecoveryBudget -timeout 30m -count=1
 
 fault-test:
 	go test ./user/ -tags stress -run TestFault -v -timeout 10m -count=1

@@ -52,7 +52,7 @@ func TestAcquireMLNode_Concurrency(t *testing.T) {
 	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil)
 	require.ErrorIs(t, err, ErrNoNodesAvailable)
 
-	err = b.ReleaseMLNode(lockID, InferenceSuccess{})
+	_, err = b.ReleaseMLNode(lockID, InferenceSuccess{})
 	require.NoError(t, err)
 
 	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil)
@@ -72,8 +72,9 @@ func TestReleaseMLNode_NodeBecomesAvailableAgain(t *testing.T) {
 	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil)
 	require.NoError(t, err)
 
-	err = b.ReleaseMLNode(lockID, InferenceSuccess{})
+	nodeID, err := b.ReleaseMLNode(lockID, InferenceSuccess{})
 	require.NoError(t, err)
+	require.Equal(t, "node1", nodeID)
 
 	// Small wait for the ReleaseNode command to be processed by the broker loop
 	time.Sleep(50 * time.Millisecond)
@@ -87,7 +88,7 @@ func TestReleaseMLNode_NodeBecomesAvailableAgain(t *testing.T) {
 func TestReleaseMLNode_UnknownLockID(t *testing.T) {
 	b := NewTestBroker()
 
-	err := b.ReleaseMLNode("does-not-exist", InferenceSuccess{})
+	_, err := b.ReleaseMLNode("does-not-exist", InferenceSuccess{})
 
 	require.ErrorIs(t, err, ErrLockNotFound)
 }
@@ -115,7 +116,7 @@ func TestEvictExpiredLocks(t *testing.T) {
 	b.evictExpiredLocks()
 
 	// Lock should be gone
-	err = b.ReleaseMLNode(lockID, InferenceSuccess{})
+	_, err = b.ReleaseMLNode(lockID, InferenceSuccess{})
 	require.ErrorIs(t, err, ErrLockNotFound)
 
 	// The eviction queues a ReleaseNode command; wait for the broker loop to process it.

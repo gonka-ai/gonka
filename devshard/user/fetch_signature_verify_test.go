@@ -152,17 +152,17 @@ func TestFetchSignature_NoFallbackForNonCurrentNonce(t *testing.T) {
 // processResponse already verifies — keep a parallel assertion so the symmetry
 // stays under test. Same input rejected by both ingestion paths.
 func TestProcessResponse_RejectsUnverifiedGarbage(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, _, nonce, root := sessionWithRootForTest(t, 3)
 
 	const hostIdx = 0
-	const nonce = uint64(42)
 	garbage := []byte("NOT-A-REAL-SIGNATURE-JUST-65-BYTES-OF-NOTHING-AT-ALL-AAAAAAAAAAAA")
 
 	resp := &host.HostResponse{
-		Nonce:    nonce,
-		StateSig: garbage,
+		Nonce:     nonce,
+		StateHash: append([]byte(nil), root...),
+		StateSig:  garbage,
 	}
 
 	err := session.ProcessResponse(hostIdx, resp, nonce)
-	require.Error(t, err, "processResponse must reject garbage signatures")
+	require.ErrorIs(t, err, types.ErrInvalidStateSig)
 }

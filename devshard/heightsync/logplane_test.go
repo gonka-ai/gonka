@@ -126,7 +126,7 @@ func confirmTxAt(id, height uint64, hash []byte) *types.DevshardTx {
 }
 
 func finishTxAt(id, height uint64, hash []byte) *types.DevshardTx {
-	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 		InferenceId: id, ObservedHeight: height, ObservedBlockHash: hash,
 	}}}
 }

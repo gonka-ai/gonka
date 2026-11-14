@@ -92,20 +92,26 @@ func TestToolsValidatorRejects(t *testing.T) {
 	}
 }
 
-func TestToolsValidatorStripsBothWhenToolsEmpty(t *testing.T) {
+func TestToolsValidatorStripsToolControlsWithoutTools(t *testing.T) {
 	v := defaultToolsValidator()
-	doc := parseDocument(t, `{"tools":[],"tool_choice":"auto"}`)
-	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
-	require.NotContains(t, doc, "tools")
-	require.NotContains(t, doc, "tool_choice")
-}
-
-func TestToolsValidatorStripsBothWhenToolsEmptyEvenWithBadToolChoice(t *testing.T) {
-	v := defaultToolsValidator()
-	doc := parseDocument(t, `{"tools":[],"tool_choice":"required"}`)
-	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
-	require.NotContains(t, doc, "tools")
-	require.NotContains(t, doc, "tool_choice")
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "tools absent", body: `{"messages":[],"tool_choice":"auto","parallel_tool_calls":true}`},
+		{name: "tools absent with required", body: `{"messages":[],"tool_choice":"required"}`},
+		{name: "tools empty", body: `{"tools":[],"tool_choice":"auto","parallel_tool_calls":false}`},
+		{name: "tools empty with required", body: `{"tools":[],"tool_choice":"required"}`},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			doc := parseDocument(t, testCase.body)
+			require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+			require.NotContains(t, doc, "tools")
+			require.NotContains(t, doc, "tool_choice")
+			require.NotContains(t, doc, "parallel_tool_calls")
+		})
+	}
 }
 
 func TestToolsValidatorDefaultsToolChoiceToAutoWhenAbsent(t *testing.T) {
@@ -122,13 +128,6 @@ func TestToolsValidatorCoercesRequiredToDefault(t *testing.T) {
 	require.Equal(t, "auto", doc["tool_choice"])
 }
 
-func TestToolsValidatorCoercesRequiredEvenWithoutTools(t *testing.T) {
-	v := defaultToolsValidator()
-	doc := parseDocument(t, `{"tool_choice":"required"}`)
-	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
-	require.Equal(t, "auto", doc["tool_choice"])
-}
-
 func TestToolsValidatorDoesNotOverrideExplicitToolChoice(t *testing.T) {
 	v := defaultToolsValidator()
 	doc := parseDocument(t, `{"tools":[{"type":"function","function":{"name":"x"}}],"tool_choice":"none"}`)
@@ -136,7 +135,7 @@ func TestToolsValidatorDoesNotOverrideExplicitToolChoice(t *testing.T) {
 	require.Equal(t, "none", doc["tool_choice"])
 }
 
-func TestToolsValidatorDoesNotTouchToolChoiceWhenToolsAbsent(t *testing.T) {
+func TestToolsValidatorAddsNoDefaultToolChoiceWhenToolsAbsent(t *testing.T) {
 	v := defaultToolsValidator()
 	doc := parseDocument(t, `{"messages":[]}`)
 	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))

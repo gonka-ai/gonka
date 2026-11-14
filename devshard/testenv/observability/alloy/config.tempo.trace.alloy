@@ -1,0 +1,9 @@
+// Trace exporter for tempo-alloy / tempo-promtail (when Alloy is the hop).
+otelcol.exporter.otlp "trace_backend" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

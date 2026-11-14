@@ -24,6 +24,11 @@ test-logs-*/
 **/.pytest_cache
 **/__pycache__
 
+# Reproducible local load-test artifacts. They can contain one file per failed
+# request and must never be sent to a Docker build context.
+devshard/testenv/loadtest/results/
+devshard/testenv/loadtest-*/
+
 # Environment files
 **/.venv
 **/*.env

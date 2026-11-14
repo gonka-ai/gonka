@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -42,5 +43,43 @@ func TestGeneratedComposeConfigValid(t *testing.T) {
 	out, err = check.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose config: %v\n%s", err, out)
+	}
+	if strings.Contains("\n"+string(out), "\n  proxy:\n") {
+		t.Fatal("default compose config includes proxy; citest-stack must stay no-proxy")
+	}
+
+	svcCtx, svcCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer svcCancel()
+	svc := exec.CommandContext(svcCtx, "docker", "compose", "-f", outPath, "config", "--services")
+	svc.Dir = workDir
+	svcOut, err := svc.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose config --services: %v\n%s", err, svcOut)
+	}
+	for _, name := range strings.Fields(string(svcOut)) {
+		if name == "proxy" {
+			t.Fatal("default compose services include proxy")
+		}
+	}
+
+	overlay := filepath.Join(testenvDir, "docker-compose.proxy.yml")
+	ovCtx, ovCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer ovCancel()
+	ov := exec.CommandContext(ovCtx, "docker", "compose",
+		"-f", outPath, "-f", overlay, "config", "--services")
+	ov.Dir = workDir
+	ovOut, err := ov.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose overlay config --services: %v\n%s", err, ovOut)
+	}
+	found := false
+	for _, name := range strings.Fields(string(ovOut)) {
+		if name == "proxy" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("overlay compose services missing proxy:\n%s", ovOut)
 	}
 }

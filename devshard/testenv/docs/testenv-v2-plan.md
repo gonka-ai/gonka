@@ -907,7 +907,7 @@ starts stack with materialized keyrings (devshardd child healthy when binary + a
 
 ```bash
 cd devshard && go test ./testenv/gatewayphase/... ./testenv/citest/... -count=1
-TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewayPhase7_Smoke -count=1
+TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewaySingleHostSmoke -count=1
 ```
 
 **Exit:** ✅ gateway status + chat completion through router to devshardd; create escrow via

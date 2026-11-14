@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 
-	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -17,7 +16,9 @@ type PayloadAuthClient interface {
 	InferenceQueryClientProvider
 	GetAccountAddress() string
 	GetSignerAddress() string
-	GetKeyring() *keyring.Keyring
+	// SignBytes signs payload-auth bytes. Implementations keep the private
+	// key in memory and re-read the keyring only when its file changes.
+	SignBytes(data []byte) (string, error)
 }
 
 // PayloadStore is the minimal interface for retrieving inference payloads.

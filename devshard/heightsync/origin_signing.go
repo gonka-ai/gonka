@@ -47,7 +47,7 @@ func CanonicalOriginBytes(sec *HeightSyncSection) ([]byte, error) {
 	if sec == nil || !IsAnchorSection(sec) {
 		return nil, ErrOriginSignEmptySection
 	}
-	body, err := proto.Marshal(sectionToProto(sec))
+	body, err := proto.MarshalOptions{Deterministic: true}.Marshal(sectionToProto(sec))
 	if err != nil {
 		return nil, fmt.Errorf("marshal origin section: %w", err)
 	}
