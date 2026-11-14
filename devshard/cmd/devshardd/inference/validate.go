@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
@@ -101,7 +102,12 @@ func fetchPayloadsFromExecutor(
 ) ([]byte, []byte, error) {
 	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
-		return nil, nil, fmt.Errorf("get executor info: %w", err)
+		err = fmt.Errorf("get executor info: %w", err)
+		// Only the executor can set its own InferenceUrl, so a record too large to read is its fault.
+		if queryOutOfGas(err) {
+			return nil, nil, tagExecutorPayloadFault(err)
+		}
+		return nil, nil, err
 	}
 	if executorInfo.URL == "" {
 		return nil, nil, fmt.Errorf("executor has no URL")
@@ -139,7 +145,12 @@ func fetchPayloadsFromExecutor(
 
 	encodedPubKeys, err := resolveExecutorPubKeys(ctx, recorder, req.ExecutorAddress)
 	if err != nil {
-		return nil, nil, fmt.Errorf("resolve executor pubkeys: %w", err)
+		err = fmt.Errorf("resolve executor pubkeys: %w", err)
+		// Only the executor can add grants from its address, so a scan of them that runs out of query gas is its fault.
+		if queryOutOfGas(err) {
+			return nil, nil, tagExecutorPayloadFault(err)
+		}
+		return nil, nil, err
 	}
 
 	if err := commonvalidation.VerifyExecutorPayloadSignature(
@@ -627,4 +638,13 @@ func classifyExecuteValidationErr(err error) error {
 	default:
 		return observability.Classify(observability.ReasonValidateErr, observability.WhereRuntimeValidate, err)
 	}
+}
+
+// abciOutOfGas is how a query out-of-gas panic reaches the client over the
+// CometBFT ABCI fallback: the store's ErrorOutOfGas{Descriptor} wrapped as ErrPanic.
+var abciOutOfGas = regexp.MustCompile(`\{[A-Za-z]+\}: panic`)
+
+func queryOutOfGas(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "Query gas limit exceeded") || abciOutOfGas.MatchString(msg)
 }
