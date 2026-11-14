@@ -474,8 +474,8 @@ class RuntimeConfigTests : TestermintTest() {
     fun `long poll wakes on governance vote_threshold_factor change`() {
         nodeManagerClient(genesis).use { client ->
             val before = chainEscrow(genesis).voteThresholdFactor
-            val after = (before + 1).coerceAtMost(100)
-            require(after in 1..100) { "vote_threshold_factor must stay in (0, 100]" }
+            val after = if (before < 99) before + 1 else 98L
+            require(after in 1..99) { "vote_threshold_factor must stay in (0, 100)" }
             runGovernanceDevshardLongPollWake(
                 client = client,
                 fieldLabel = "bump devshard_escrow_params.vote_threshold_factor $before -> $after",
