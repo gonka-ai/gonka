@@ -508,3 +508,29 @@ func TestFoldEventReadings_NoiseToleranceKeepsHonestFull(t *testing.T) {
 	require.True(t, updated)
 	require.Equal(t, int64(949), egd.ValidationWeights[0].ConfirmationWeight)
 }
+
+// The tolerance applies to the measured part only: preserved weight must not widen the band.
+func TestFoldEventReadings_NoiseToleranceIgnoresPreserved(t *testing.T) {
+	addr := "participant1"
+	newEGD := func() *types.EpochGroupData {
+		return &types.EpochGroupData{
+			EpochIndex: 1,
+			ValidationWeights: []*types.ValidationWeight{
+				{MemberAddress: addr, Weight: 1000, ConfirmationWeight: 1000},
+			},
+		}
+	}
+	expected := map[string]int64{addr: 1000}
+	preserved := map[string]int64{addr: 800}
+
+	egd := newEGD()
+	updated, _ := foldEventReadings(egd, map[string]int64{addr: 190}, preserved, expected, nil, confirmationReadingTolerance)
+	require.False(t, updated, "190 of 200 measured is within 5%")
+	require.Equal(t, int64(1000), egd.ValidationWeights[0].ConfirmationWeight)
+
+	// 960 total is within 5% of 1000, but 160 of 200 measured is a 20% shortfall.
+	egd = newEGD()
+	updated, _ = foldEventReadings(egd, map[string]int64{addr: 160}, preserved, expected, nil, confirmationReadingTolerance)
+	require.True(t, updated)
+	require.Equal(t, int64(960), egd.ValidationWeights[0].ConfirmationWeight)
+}

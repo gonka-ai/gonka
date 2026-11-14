@@ -515,7 +515,7 @@ func (am AppModule) evaluateConfirmation(
 
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
-// A reading within tolerance of the expected weight counts as full before min-take.
+// A measured part within tolerance of its own expectation counts as full before min-take.
 // Participants in skipAddrs (e.g. active maintenance) are left untouched: no
 // ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.
@@ -535,7 +535,7 @@ func foldEventReadings(
 		if totalExpected[addr] == 0 {
 			continue
 		}
-		if credited := creditedReading(reading, totalExpected[addr], tolerance); credited < vw.ConfirmationWeight {
+		if credited := creditedReading(measured[addr], preserved[addr], totalExpected[addr], tolerance); credited < vw.ConfirmationWeight {
 			epochGroupData.ValidationWeights[i].ConfirmationWeight = credited
 			updated = true
 		}
@@ -545,9 +545,12 @@ func foldEventReadings(
 	return updated, ratios
 }
 
-// creditedReading raises a reading within tolerance of totalExpected to totalExpected.
-func creditedReading(reading, totalExpected int64, tolerance decimal.Decimal) int64 {
-	if reading < totalExpected && decimal.NewFromInt(reading).GreaterThanOrEqual(decimal.NewFromInt(totalExpected).Mul(tolerance)) {
+// creditedReading raises the reading to totalExpected when the measured part is within
+// tolerance of its own expectation; preserved weight carries no noise.
+func creditedReading(measured, preserved, totalExpected int64, tolerance decimal.Decimal) int64 {
+	reading := preserved + measured
+	expectedMeasured := totalExpected - preserved
+	if reading < totalExpected && decimal.NewFromInt(measured).GreaterThanOrEqual(decimal.NewFromInt(expectedMeasured).Mul(tolerance)) {
 		return totalExpected
 	}
 	return reading
