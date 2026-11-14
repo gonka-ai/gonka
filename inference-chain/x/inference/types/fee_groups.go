@@ -79,7 +79,6 @@ var MessageFeeGroups = map[reflect.Type]string{
 
 	// bridge (authority-only siblings are in the governance group)
 	reflect.TypeOf((*MsgBridgeExchange)(nil)):               FeeGroupBridge,
-	reflect.TypeOf((*MsgRegisterBridgeKeyLink)(nil)):        FeeGroupBridge,
 	reflect.TypeOf((*MsgRequestBridgeMint)(nil)):            FeeGroupBridge,
 	reflect.TypeOf((*MsgRequestBridgeWithdrawal)(nil)):      FeeGroupBridge,
 	reflect.TypeOf((*MsgCancelBridgeOperation)(nil)):        FeeGroupBridge,
@@ -97,6 +96,7 @@ var MessageFeeGroups = map[reflect.Type]string{
 	reflect.TypeOf((*streamvestingtypes.MsgTransferWithVesting)(nil)):      FeeGroupCosmos,
 	reflect.TypeOf((*streamvestingtypes.MsgBatchTransferWithVesting)(nil)): FeeGroupCosmos,
 	reflect.TypeOf((*restrictionstypes.MsgExecuteEmergencyTransfer)(nil)):  FeeGroupCosmos,
+	reflect.TypeOf((*MsgRegisterBridgeKeyLink)(nil)):                       FeeGroupCosmos,
 	reflect.TypeOf((*MsgScheduleMaintenance)(nil)):                         FeeGroupCosmos,
 	reflect.TypeOf((*MsgCancelMaintenance)(nil)):                           FeeGroupCosmos,
 
