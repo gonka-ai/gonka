@@ -1011,17 +1011,16 @@ func (x *ErrorMissVoteContent) GetResponseHash() []byte {
 }
 
 // ChatFrameSignatureContent is what the executor signs on a peer RPC
-// ChatFrame. stream_hash is the running hash over every uncompressed byte of
+// ChatFrame. content_hash is the running hash over every uncompressed byte of
 // the Chat stream up to and including that frame, so the newest valid
-// signature covers the whole prefix. CanonicalSignedBytes prefixes
-// "devshard.chatframe.v1".
+// signature covers the whole prefix. token_count is the content tokens in
+// that prefix. CanonicalSignedBytes prefixes "devshard.chatframe.v1".
 type ChatFrameSignatureContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	InferenceId   uint64                 `protobuf:"varint,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	Seq           uint64                 `protobuf:"varint,3,opt,name=seq,proto3" json:"seq,omitempty"` // 1 for the first signed frame
-	StreamHash    []byte                 `protobuf:"bytes,4,opt,name=stream_hash,json=streamHash,proto3" json:"stream_hash,omitempty"`
-	StreamBytes   uint64                 `protobuf:"varint,5,opt,name=stream_bytes,json=streamBytes,proto3" json:"stream_bytes,omitempty"` // uncompressed bytes stream_hash covers
+	ContentHash   []byte                 `protobuf:"bytes,3,opt,name=content_hash,json=contentHash,proto3" json:"content_hash,omitempty"` // running hash of the uncompressed prefix
+	TokenCount    uint64                 `protobuf:"varint,4,opt,name=token_count,json=tokenCount,proto3" json:"token_count,omitempty"`   // content tokens in that prefix
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1070,23 +1069,16 @@ func (x *ChatFrameSignatureContent) GetInferenceId() uint64 {
 	return 0
 }
 
-func (x *ChatFrameSignatureContent) GetSeq() uint64 {
+func (x *ChatFrameSignatureContent) GetContentHash() []byte {
 	if x != nil {
-		return x.Seq
-	}
-	return 0
-}
-
-func (x *ChatFrameSignatureContent) GetStreamHash() []byte {
-	if x != nil {
-		return x.StreamHash
+		return x.ContentHash
 	}
 	return nil
 }
 
-func (x *ChatFrameSignatureContent) GetStreamBytes() uint64 {
+func (x *ChatFrameSignatureContent) GetTokenCount() uint64 {
 	if x != nil {
-		return x.StreamBytes
+		return x.TokenCount
 	}
 	return 0
 }
@@ -1232,14 +1224,13 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
 	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x12\x16\n" +
 	"\x06accept\x18\x03 \x01(\bR\x06accept\x12#\n" +
-	"\rresponse_hash\x18\x04 \x01(\fR\fresponseHash\"\xb1\x01\n" +
+	"\rresponse_hash\x18\x04 \x01(\fR\fresponseHash\"\x9f\x01\n" +
 	"\x19ChatFrameSignatureContent\x12\x1b\n" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
-	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x12\x10\n" +
-	"\x03seq\x18\x03 \x01(\x04R\x03seq\x12\x1f\n" +
-	"\vstream_hash\x18\x04 \x01(\fR\n" +
-	"streamHash\x12!\n" +
-	"\fstream_bytes\x18\x05 \x01(\x04R\vstreamBytes\"i\n" +
+	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x12!\n" +
+	"\fcontent_hash\x18\x03 \x01(\fR\vcontentHash\x12\x1f\n" +
+	"\vtoken_count\x18\x04 \x01(\x04R\n" +
+	"tokenCount\"i\n" +
 	"\x15StateSignatureContent\x12\x1d\n" +
 	"\n" +
 	"state_root\x18\x01 \x01(\fR\tstateRoot\x12\x1b\n" +

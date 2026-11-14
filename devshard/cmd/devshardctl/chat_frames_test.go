@@ -11,25 +11,35 @@ import (
 func TestConfigureChatFramesFromEnv(t *testing.T) {
 	t.Cleanup(func() { chatFrameSchedule = nil })
 
-	t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", "")
-	t.Setenv("GATEWAY_CHAT_FRAME_SEPARATE", "")
-	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "unset leaves each executor its default")
+	set := func(join, signEvery, events, separate string) {
+		t.Helper()
+		t.Setenv("GATEWAY_CHAT_FRAME_JOIN", join)
+		t.Setenv("GATEWAY_CHAT_FRAME_SIGN_EVERY", signEvery)
+		t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", events)
+		t.Setenv("GATEWAY_CHAT_FRAME_SEPARATE", separate)
+	}
 
-	t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", "10")
+	set("", "", "10", "true")
 	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{Every: 10}, chatFrameSchedule)
+	require.Nil(t, chatFrameSchedule, "unset leaves each executor its default, and the old variables are ignored")
 
-	t.Setenv("GATEWAY_CHAT_FRAME_SEPARATE", "true")
+	set("5", "13", "99", "true")
 	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{Every: 10, Separate: true}, chatFrameSchedule)
+	require.Equal(t, &host.ChatFrameSchedule{Join: 5, SignEvery: 13}, chatFrameSchedule)
 
-	t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", "")
+	set("100", "13", "", "")
 	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{Separate: true}, chatFrameSchedule, "separate alone keeps the executor's group size")
+	require.Equal(t, &host.ChatFrameSchedule{Join: 64, SignEvery: 13}, chatFrameSchedule)
 
-	t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", "nope")
-	t.Setenv("GATEWAY_CHAT_FRAME_SEPARATE", "")
+	set("5", "5000", "", "")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "an unreadable value falls back to the default")
+	require.Equal(t, &host.ChatFrameSchedule{Join: 5, SignEvery: 4096}, chatFrameSchedule)
+
+	set("nope", "13", "", "")
+	configureChatFramesFromEnv()
+	require.Nil(t, chatFrameSchedule, "a join that is not an integer leaves the default")
+
+	set("5", "nope", "", "")
+	configureChatFramesFromEnv()
+	require.Nil(t, chatFrameSchedule, "a sign interval that is not an integer leaves the default")
 }

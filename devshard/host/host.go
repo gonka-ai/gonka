@@ -69,14 +69,15 @@ type HostRequest struct {
 }
 
 // ChatFrameSchedule is the gateway's request for how Chat frames are cut and
-// signed. The zero value is the executor's default.
+// signed. The zero value, and a nil schedule, is the executor's default:
+// join 5, sign every 13th chunk.
 type ChatFrameSchedule struct {
-	// Every is how many finished events after the first output share one
-	// signature, and in the joined schedule one flush. Zero is the default.
-	Every uint32 `json:"every,omitempty"`
-	// Separate keeps one flush per event, so the gateway sees each token as
-	// it is produced, and signs every Every events.
-	Separate bool `json:"separate,omitempty"`
+	// Join is how many content tokens share one gzip chunk after the first
+	// chunk. Zero is the default.
+	Join uint32 `json:"join,omitempty"`
+	// SignEvery is how many chunks share one signature. Zero is the default.
+	// The tail is signed even when this many chunks have not been sent.
+	SignEvery uint32 `json:"sign_every,omitempty"`
 }
 
 // HostResponse carries the host's reply back to the user.
@@ -117,6 +118,15 @@ type ChatFrameCheck struct {
 	// Invalid is the first failure: a signature that does not verify, or one
 	// from a key that is not the executor's. Empty when every signature held.
 	Invalid string
+	// TokenCounts is the content-token count on each signature that verified,
+	// in order. TokenCount and ContentTokens are the newest pair, or the first
+	// pair that disagreed. TokenCountMismatch is set when a verified count is
+	// not the number of content tokens in the bytes it covers. The gateway logs
+	// that and still delivers the stream.
+	TokenCounts        []uint64
+	TokenCount         uint64
+	ContentTokens      uint64
+	TokenCountMismatch bool
 }
 
 type receiptOutcome struct {

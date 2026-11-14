@@ -250,8 +250,13 @@ type ChatFrame struct {
 	// schedule does not sign and on hosts that predate signed frames.
 	Sig []byte `protobuf:"bytes,2,opt,name=sig,proto3" json:"sig,omitempty"`
 	// stream_bytes is how many uncompressed bytes of the stream sig covers:
-	// everything up to the end of this frame. Set only with sig.
-	StreamBytes   uint64 `protobuf:"varint,3,opt,name=stream_bytes,json=streamBytes,proto3" json:"stream_bytes,omitempty"`
+	// everything up to the end of this frame. It is a cursor, not part of the
+	// signature. Set only with sig.
+	StreamBytes uint64 `protobuf:"varint,3,opt,name=stream_bytes,json=streamBytes,proto3" json:"stream_bytes,omitempty"`
+	// token_count is the content tokens in the prefix sig covers. Set only
+	// with sig. The signature binds it; changing it without re-signing fails
+	// verification.
+	TokenCount    uint64 `protobuf:"varint,4,opt,name=token_count,json=tokenCount,proto3" json:"token_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -303,6 +308,13 @@ func (x *ChatFrame) GetSig() []byte {
 func (x *ChatFrame) GetStreamBytes() uint64 {
 	if x != nil {
 		return x.StreamBytes
+	}
+	return 0
+}
+
+func (x *ChatFrame) GetTokenCount() uint64 {
+	if x != nil {
+		return x.TokenCount
 	}
 	return 0
 }
@@ -1462,11 +1474,13 @@ const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"\x05nonce\x18\x02 \x01(\x04R\x05nonce\x128\n" +
 	"\apayload\x18\x03 \x01(\v2\x1e.devshard.transport.v1.PayloadR\apayload\x12\x16\n" +
 	"\x06stream\x18\x04 \x01(\bR\x06stream\x127\n" +
-	"\x18force_height_sync_anchor\x18\x05 \x01(\bR\x15forceHeightSyncAnchor\"V\n" +
+	"\x18force_height_sync_anchor\x18\x05 \x01(\bR\x15forceHeightSyncAnchor\"w\n" +
 	"\tChatFrame\x12\x14\n" +
 	"\x05chunk\x18\x01 \x01(\fR\x05chunk\x12\x10\n" +
 	"\x03sig\x18\x02 \x01(\fR\x03sig\x12!\n" +
-	"\fstream_bytes\x18\x03 \x01(\x04R\vstreamBytes\"\xbe\x03\n" +
+	"\fstream_bytes\x18\x03 \x01(\x04R\vstreamBytes\x12\x1f\n" +
+	"\vtoken_count\x18\x04 \x01(\x04R\n" +
+	"tokenCount\"\xbe\x03\n" +
 	"\x11HeightSyncSection\x12\x19\n" +
 	"\bchain_id\x18\x01 \x01(\tR\achainId\x12\x1d\n" +
 	"\n" +

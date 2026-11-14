@@ -226,7 +226,7 @@ func (r *chatFrameReader) Read(p []byte) (int, error) {
 		msg := r.stream.Msg()
 		r.buf = append([]byte(nil), msg.GetChunk()...)
 		if r.frames != nil {
-			r.frames.Frame(msg.GetSig(), msg.GetStreamBytes())
+			r.frames.Frame(msg.GetSig(), msg.GetStreamBytes(), msg.GetTokenCount())
 		}
 	}
 	n := copy(p, r.buf)

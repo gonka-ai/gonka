@@ -2498,7 +2498,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			e.maybeRecordVersionRefusal(inf)
 			return
 		}
-		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed",
+		completed := []any{
 			"host", inf.hostID,
 			"output_chunks", inf.outputChunks.Load(),
 			"content_chunks", inf.contentChunks.Load(),
@@ -2509,7 +2509,11 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			"mean_gap_ms", inf.meanChunkGap().Milliseconds(),
 			"chat_frames", frames.Frames,
 			"chat_frames_signed", frames.Signed,
-		)
+		}
+		if len(frames.TokenCounts) > 0 {
+			completed = append(completed, "chat_frame_token_counts", frames.TokenCounts)
+		}
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed", completed...)
 		// A receipt-backed transport-level success that produced zero content
 		// events and did not produce a normal OpenAI error event is true empty
 		// SSE/protocol boilerplate. This includes protocol-only responses where
@@ -2524,7 +2528,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			// attempt is later promoted incorrectly.
 			inf.releasePendingBuf()
 			inf.err = errEmptyStream
-			logInferenceStage(ctx, inf.escrowID, inf.nonce, "empty_stream",
+			logBadArtifact(ctx, inf.escrowID, inf.nonce, "empty_stream",
 				"host", inf.hostID,
 				"output_chunks", inf.outputChunks.Load(),
 				"content_chunks", inf.contentChunks.Load(),

@@ -37,8 +37,13 @@ message ChatFrame {
   // schedule does not sign and on hosts that predate signed frames.
   bytes  sig          = 2;
   // stream_bytes is how many uncompressed bytes of the stream sig covers:
-  // everything up to the end of this frame. Set only with sig.
+  // everything up to the end of this frame. It is a cursor, not part of the
+  // signature. Set only with sig.
   uint64 stream_bytes = 3;
+  // token_count is the content tokens in the prefix sig covers. Set only
+  // with sig. The signature binds it; changing it without re-signing fails
+  // verification.
+  uint64 token_count = 4;
 }
 
 message HeightSyncSection {

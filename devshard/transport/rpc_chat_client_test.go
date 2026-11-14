@@ -214,7 +214,7 @@ func TestRPCClient_SendVerifiesSignedFrames(t *testing.T) {
 		schedule *host.ChatFrameSchedule
 	}{
 		{name: "joined default"},
-		{name: "separate every 2", schedule: &host.ChatFrameSchedule{Every: 2, Separate: true}},
+		{name: "join every 2", schedule: &host.ChatFrameSchedule{Join: 2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rpc, user, pc := startLiveChatRPCWithHost(t, hostSigner, transport.DefaultClientConfig(), nil, transport.PeerConnConfig{}, false)

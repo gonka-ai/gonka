@@ -133,9 +133,15 @@ func (h *SessionHandler) Chat(ctx context.Context, req *connect.Request[rpcpb.Si
 	observability.Request.SetSender(op, peer)
 	observability.Request.SetInferenceBodyBytes(op, len(payload))
 
-	sink := transport.NewSignedChatFrameSink(func(chunk, sig []byte, streamBytes uint64) error {
+	sink := transport.NewSignedChatFrameSink(func(chunk, sig []byte, streamBytes, tokenCount uint64) error {
 		return sendChatFrame(ctx, func() error {
-			return stream.Send(&rpcpb.ChatFrame{Chunk: chunk, Sig: sig, StreamBytes: streamBytes})
+			frame := &rpcpb.ChatFrame{Chunk: chunk}
+			if len(sig) > 0 {
+				frame.Sig = sig
+				frame.StreamBytes = streamBytes
+				frame.TokenCount = tokenCount
+			}
+			return stream.Send(frame)
 		})
 	})
 	err = mapInferenceError(core.ServeInference(ctx, transport.InferenceCall{

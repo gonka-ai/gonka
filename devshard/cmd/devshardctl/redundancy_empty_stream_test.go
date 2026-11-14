@@ -926,6 +926,37 @@ func TestRaceWriter_BuffersRoleUntilContent(t *testing.T) {
 // TestRaceWriter_EmptyAttemptDoesNotWin covers the core empty-stream guard:
 // an attempt that only streams role + DONE (no content) must not become the
 // winner, must not flush bytes to the client, and must drop its buffer.
+func TestRaceWriter_EmptyContentIsEmptyStream(t *testing.T) {
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+
+	inf := &inflight{
+		hostID:       "empty-host",
+		escrowID:     "escrow-x",
+		nonce:        1,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	inf.setReceiptAt(time.Now())
+	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
+
+	// One write, the shape of a signed flush: empty content, an empty
+	// completion message, and [DONE].
+	body := []byte(
+		`data: {"choices":[{"delta":{"role":"assistant","content":""}}]}` + "\n\n" +
+			`data: {"choices":[{"delta":{"content":""}}]}` + "\n\n" +
+			`data: {"choices":[{"message":{"role":"assistant","content":""}}]}` + "\n\n" +
+			"data: [DONE]\n\n")
+	_, err := rw.Write(body)
+	require.NoError(t, err)
+	require.True(t, rw.flushClassifyAndCheckEmpty())
+	require.Equal(t, int64(0), inf.contentChunks.Load())
+	require.True(t, isEmptyStreamAttempt(inf))
+	require.Equal(t, uint64(0), rg.winnerNonce())
+}
+
 func TestRaceWriter_EmptyAttemptDoesNotWin(t *testing.T) {
 	ctx := context.Background()
 	var sink bytes.Buffer
