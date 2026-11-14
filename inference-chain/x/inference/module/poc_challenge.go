@@ -11,6 +11,7 @@ import (
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
+	"github.com/shopspring/decimal"
 )
 
 var errChallengeEvaluation = errors.New("poc challenge evaluation")
@@ -189,7 +190,7 @@ func (am AppModule) evaluatePunishableChallengeSegment(
 	fullExpected := weightByParticipant(participants.Participants, presentScales)
 	totalExpected := map[string]int64{ch.Target: fullExpected[ch.Target]}
 
-	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, totalExpected, nil)
+	updated, ratios := foldEventReadings(&epochGroupData, measured, map[string]int64{}, totalExpected, nil, decimal.NewFromInt(1))
 	if updated {
 		am.keeper.SetEpochGroupData(ctx, epochGroupData)
 	}
