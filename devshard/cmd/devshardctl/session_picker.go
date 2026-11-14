@@ -67,6 +67,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"devshard/user"
@@ -150,6 +151,9 @@ type pickerResult struct {
 	prepared *user.PreparedInference
 	isProbe  bool
 	err      error
+	// hostCapKey is the participant whose in-flight slot the picker reserved
+	// for this dispatch; the attempt releases it when it ends. Empty when none.
+	hostCapKey string
 }
 
 // ghostDispatcher dispatches a synthetic probe inference. Implemented
@@ -192,7 +196,10 @@ type sessionPicker struct {
 	throttleBlocked throttleChecker
 	stateBlocked    stateBlockChecker
 	catchingUp      catchUpChecker
-	logCtx          context.Context
+	// hostCap is set after construction (the gateway owns the shared counter),
+	// so it is read atomically.
+	hostCap atomic.Pointer[hostCapGate]
+	logCtx  context.Context
 
 	mu     sync.Mutex
 	queue  []*pickerRequest
@@ -262,6 +269,29 @@ func (p *sessionPicker) stop() {
 		p.wakeUp()
 		<-p.stopped
 	})
+}
+
+func (p *sessionPicker) setHostCap(g hostCapGate) {
+	p.hostCap.Store(&g)
+}
+
+func (p *sessionPicker) hostCapBlocked(participantKey string) bool {
+	g := p.hostCap.Load()
+	return g != nil && (*g).blocked(p.model, participantKey)
+}
+
+func (p *sessionPicker) reserveHostCap(participantKey string) bool {
+	g := p.hostCap.Load()
+	return g == nil || (*g).reserve(p.model, participantKey)
+}
+
+func (p *sessionPicker) releaseHostCap(participantKey string) {
+	if p == nil || participantKey == "" {
+		return
+	}
+	if g := p.hostCap.Load(); g != nil {
+		(*g).release(participantKey)
+	}
 }
 
 func (p *sessionPicker) isStopped() bool {
@@ -359,6 +389,7 @@ func (p *sessionPicker) run() {
 			ghostReason         string
 			holdUntil           time.Time
 			ghostParticipantKey string
+			reservedHostCapKey  string
 		)
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
 			p.mu.Lock()
@@ -386,7 +417,8 @@ func (p *sessionPicker) run() {
 
 			// Branch 1b: the host just refused, so burning the nonce keeps the queue flowing without
 			// spending a real request's retry budget on a host the admission gate would reject anyway.
-			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
+			// A host at its PoC in-flight cap is treated the same way (no new receipt, so no miss).
+			if (p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey)) || p.hostCapBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
 				ghostParticipantKey = b.ParticipantKey
 				return ghostProbeParams(p.model), true, p.logCtx, nil
@@ -423,6 +455,14 @@ func (p *sessionPicker) run() {
 						continue
 					}
 				}
+				// The check in 1b and this reservation are not atomic across escrows, so
+				// take the slot here; a lost race falls back to the throttled ghost.
+				if !p.reserveHostCap(b.ParticipantKey) {
+					ghost = ghostThrottled
+					ghostParticipantKey = b.ParticipantKey
+					return ghostProbeParams(p.model), true, p.logCtx, nil
+				}
+				reservedHostCapKey = b.ParticipantKey
 				chosen = r
 				p.removeAtLocked(i)
 				return r.params, false, r.ctx, nil
@@ -477,6 +517,7 @@ func (p *sessionPicker) run() {
 
 		case err != nil:
 			if chosen != nil {
+				p.releaseHostCap(reservedHostCapKey)
 				chosen.reply <- pickerResult{err: err}
 				continue
 			}
@@ -542,7 +583,7 @@ func (p *sessionPicker) run() {
 		// Real dispatch. reply is buffered so this never blocks even
 		// if the submitter abandoned (ctx canceled and already returned
 		// to its own caller).
-		chosen.reply <- pickerResult{prepared: prepared, isProbe: false, err: nil}
+		chosen.reply <- pickerResult{prepared: prepared, isProbe: false, err: nil, hostCapKey: reservedHostCapKey}
 	}
 }
 
@@ -589,6 +630,9 @@ func (p *sessionPicker) computeAvailableParticipants() map[string]bool {
 			continue
 		}
 		if p.throttleBlocked != nil && p.throttleBlocked(key) {
+			continue
+		}
+		if p.hostCapBlocked(key) {
 			continue
 		}
 		available[key] = true
