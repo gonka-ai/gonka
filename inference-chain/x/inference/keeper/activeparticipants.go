@@ -68,12 +68,19 @@ func (k Keeper) SetActiveParticipantsCache(ctx context.Context, participants typ
 	if err != nil {
 		return err
 	}
+	if err := k.ActiveParticipantModels.Clear(ctx, r); err != nil {
+		return err
+	}
 	for _, p := range participants.Participants {
 		addr, err := sdk.AccAddressFromBech32(p.Index)
 		if err != nil {
 			return err
 		}
 		err = k.ActiveParticipantsSet.Set(ctx, collections.Join(participants.EpochId, addr))
+		if err != nil {
+			return err
+		}
+		err = k.ActiveParticipantModels.Set(ctx, collections.Join(participants.EpochId, addr), types.ActiveParticipant{Models: p.Models})
 		if err != nil {
 			return err
 		}

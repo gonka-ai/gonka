@@ -117,6 +117,8 @@ type (
 		// Punishment grace epochs for upgrade protection
 		PunishmentGraceEpochs collections.Map[uint64, types.GraceEpochParams]
 		ActiveParticipantsSet collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		// Only Models is set; lets a commit check one participant without the full blob.
+		ActiveParticipantModels collections.Map[collections.Pair[uint64, sdk.AccAddress], types.ActiveParticipant]
 		// Devshard escrow collections
 		DevshardEscrows             collections.Map[uint64, types.DevshardEscrow]
 		DevshardEscrowCounter       collections.Item[uint64]
@@ -607,6 +609,13 @@ func NewKeeper(
 			types.ActiveParticipantsCachePrefix,
 			"active_participants_cache",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+		),
+		ActiveParticipantModels: collections.NewMap(
+			sb,
+			types.ActiveParticipantModelsPrefix,
+			"active_participant_models",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
+			codec.CollValue[types.ActiveParticipant](cdc),
 		),
 		// Devshard escrow collections
 		DevshardEscrows: collections.NewMap(

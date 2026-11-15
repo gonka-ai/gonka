@@ -981,6 +981,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		if err != nil {
 			am.LogWarn("onEndOfPoCValidationStage: Unable to clear old active participants cache", types.EpochGroup, "epochIndex", upcomingEpoch.Index-2, "error", err.Error())
 		}
+		if err := am.keeper.ActiveParticipantModels.Clear(ctx, outOfDateActiveParticipants); err != nil {
+			am.LogWarn("onEndOfPoCValidationStage: Unable to clear old active participant models", types.EpochGroup, "epochIndex", upcomingEpoch.Index-2, "error", err.Error())
+		}
 	}
 
 	upcomingEg, err := am.keeper.GetEpochGroupForEpoch(ctx, *upcomingEpoch)
