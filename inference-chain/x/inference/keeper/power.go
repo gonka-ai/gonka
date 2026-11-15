@@ -3,6 +3,8 @@ package keeper
 import (
 	"context"
 
+	"cosmossdk.io/collections"
+
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -14,6 +16,20 @@ func (k Keeper) GetCurrentEpochGroup(ctx context.Context) (*epochgroup.EpochGrou
 	}
 
 	return k.GetEpochGroup(ctx, effectiveEpochIndex, "")
+}
+
+// GetCurrentEpochGroupIndex is GetCurrentEpochGroup for callers that need only the
+// index: same errors, but a Has on the root record instead of decoding it.
+func (k Keeper) GetCurrentEpochGroupIndex(ctx context.Context) (uint64, error) {
+	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return 0, types.ErrEffectiveEpochNotFound
+	}
+	has, err := k.EpochGroupDataMap.Has(ctx, collections.Join(effectiveEpochIndex, ""))
+	if err != nil || !has {
+		return 0, types.ErrEpochGroupDataNotFound
+	}
+	return effectiveEpochIndex, nil
 }
 
 func (k Keeper) GetUpcomingEpochGroup(ctx context.Context) (*epochgroup.EpochGroup, error) {
