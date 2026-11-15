@@ -67,6 +67,13 @@ func TestSampleLeafIndices_DifferentModel(t *testing.T) {
 	assert.NotEqual(t, r1, r2)
 }
 
+func TestValidationSampleSize_DefaultAndBounds(t *testing.T) {
+	assert.Equal(t, 1, validationSampleSize(-1))
+	assert.Equal(t, 200, validationSampleSize(0))
+	assert.Equal(t, 500, validationSampleSize(500))
+	assert.Equal(t, 500, validationSampleSize(501))
+}
+
 func TestBuildValidationCallbackURL(t *testing.T) {
 	url := buildValidationCallbackURL("http://localhost:8080/callback", "org/model-b", types.PocScheme_POC_SCHEME_PREFILL)
 	assert.Equal(t, "http://localhost:8080/callback/v2/poc-batches/org%252Fmodel-b", url)

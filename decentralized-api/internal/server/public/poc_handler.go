@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -20,7 +21,8 @@ import (
 )
 
 const (
-	maxLeafIndicesPerRequest = 500
+	// The chain bounds poc_params.validation_sample_size by the same limit.
+	maxLeafIndicesPerRequest = int(types.MaxPocValidationSampleSize)
 	pocProofsMsgTypeUrl      = "/inference.inference.MsgSubmitPocValidationsV2"
 	timestampWindowNanos     = 5 * 60 * 1_000_000_000 // 5 minutes in nanoseconds
 )
@@ -167,7 +169,7 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "leaf_indices required")
 	}
 	if len(req.LeafIndices) > maxLeafIndicesPerRequest {
-		return echo.NewHTTPError(http.StatusBadRequest, "too many leaf_indices (max 500)")
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("too many leaf_indices (max %d)", maxLeafIndicesPerRequest))
 	}
 	common := pocProofRequestCommon{
 		PocStageStartBlockHeight: req.PocStageStartBlockHeight,
@@ -259,7 +261,7 @@ func (s *Server) postPocProofsByNonce(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "nonces required")
 	}
 	if len(req.Nonces) > maxLeafIndicesPerRequest {
-		return echo.NewHTTPError(http.StatusBadRequest, "too many nonces (max 500)")
+		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("too many nonces (max %d)", maxLeafIndicesPerRequest))
 	}
 	common := pocProofRequestCommon{
 		PocStageStartBlockHeight: req.PocStageStartBlockHeight,
