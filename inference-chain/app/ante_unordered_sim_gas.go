@@ -17,7 +17,7 @@ type unorderedNonceAdder interface {
 // SigVerificationDecorator.verifyUnorderedNonce returns before
 // TryAddUnorderedNonce in ExecModeSimulate (duplicate timeout must not fail
 // gas estimation). Finalize still does the Has+Set. Same Simulate-versus-
-// Finalize hole as CountTXSimulateGasDecorator;
+// Finalize hole wasmd CountTXDecorator had (see CountTXDecorator);
 //
 // Simulate-only: TryAdd on the discarded cache, ignore "already used timeout".
 // CheckTx/Finalize: SDK still owns the real insert.

@@ -372,6 +372,7 @@ func (k Keeper) auditEpochGroupMLNodes(ctx context.Context, stats *weightAuditSt
 		if err := k.EpochGroupDataMap.Set(ctx, key, group); err != nil {
 			return err
 		}
+		k.forgetEpochGroupData(ctx, key.K1(), key.K2())
 		stats.epochGroupsRewritten++
 	}
 	return nil

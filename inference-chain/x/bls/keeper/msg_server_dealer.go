@@ -22,8 +22,8 @@ import (
 func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmitDealerPart) (*types.MsgSubmitDealerPartResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Get the epoch BLS data
-	epochBLSData, err := ms.GetEpochBLSData(ctx, msg.EpochId)
+	// Base record only: other dealers' parts are not needed here.
+	epochBLSData, err := ms.GetEpochBLSDataBase(ctx, msg.EpochId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get epoch %d BLS data: %w", msg.EpochId, err)
 	}
@@ -51,10 +51,16 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochId)
 	}
 
-	// Check if this participant has already submitted their dealer part.
-	// GetEpochBLSData rehydrated DealerParts from sub-keys, so the check
-	// still works against the latest persisted state.
-	if epochBLSData.DealerParts[participantIndex] != nil && epochBLSData.DealerParts[participantIndex].DealerAddress != "" {
+	// Check if this participant has already submitted their dealer part:
+	// its own sub-key, or a legacy entry inlined in the base record.
+	existing, err := ms.GetDealerPart(ctx, msg.EpochId, uint32(participantIndex))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read dealer part for epoch %d, participant %d: %w", msg.EpochId, participantIndex, err)
+	}
+	if existing == nil && participantIndex < len(epochBLSData.DealerParts) {
+		existing = epochBLSData.DealerParts[participantIndex]
+	}
+	if existing != nil && existing.DealerAddress != "" {
 		return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
 	}
 

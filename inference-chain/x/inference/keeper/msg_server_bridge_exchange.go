@@ -35,7 +35,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"blockNumber", msg.BlockNumber,
 		"receiptIndex", msg.ReceiptIndex)
 
-	validated, err := k.ValidateBridgeExchange(ctx, msg)
+	validated, err := k.validateBridgeExchange(ctx, msg, false)
 	if err != nil {
 		return nil, err
 	}

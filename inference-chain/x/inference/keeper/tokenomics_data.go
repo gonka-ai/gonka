@@ -51,7 +51,6 @@ func (k Keeper) AddTokenomicsData(ctx context.Context, tokenomicsData *types.Tok
 	if err != nil {
 		return err
 	}
-	newData, _ := k.GetTokenomicsData(ctx)
-	k.LogInfo("Tokenomics data added", types.Tokenomics, "tokenomicsData", newData)
+	k.LogInfo("Tokenomics data added", types.Tokenomics, "tokenomicsData", current)
 	return nil
 }

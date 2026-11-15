@@ -108,3 +108,37 @@ func TestPrecomputeSPRTValues(t *testing.T) {
 	require.True(t, precomputed.InactiveLogFail.ToDecimal().Equal(expectedInactiveLogFail))
 	require.True(t, precomputed.InactiveLogPass.ToDecimal().Equal(expectedInactiveLogPass))
 }
+
+func TestPrecomputeSPRTValuesFollowsParamChanges(t *testing.T) {
+	k, ctx, _ := testkeeper.InferenceKeeperReturningMocks(t)
+
+	expectFor := func(vp *types.ValidationParams) {
+		t.Helper()
+		params := types.DefaultParams()
+		params.ValidationParams = vp
+		require.NoError(t, k.SetParams(ctx, params))
+		require.NoError(t, k.PrecomputeSPRTValues(ctx))
+		got := k.GetPrecomputedSPRTValues(ctx)
+		require.True(t, got.InvalidationLogFail.ToDecimal().Equal(keeper.CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), true)))
+		require.True(t, got.InvalidationLogPass.ToDecimal().Equal(keeper.CalculateLogLLR(vp.BadParticipantInvalidationRate.ToDecimal(), vp.FalsePositiveRate.ToDecimal(), false)))
+		require.True(t, got.InactiveLogFail.ToDecimal().Equal(keeper.CalculateLogLLR(vp.DowntimeBadPercentage.ToDecimal(), vp.DowntimeGoodPercentage.ToDecimal(), true)))
+		require.True(t, got.InactiveLogPass.ToDecimal().Equal(keeper.CalculateLogLLR(vp.DowntimeBadPercentage.ToDecimal(), vp.DowntimeGoodPercentage.ToDecimal(), false)))
+	}
+
+	a := &types.ValidationParams{
+		BadParticipantInvalidationRate: types.DecimalFromFloat(0.3),
+		FalsePositiveRate:              types.DecimalFromFloat(0.05),
+		DowntimeBadPercentage:          types.DecimalFromFloat(0.4),
+		DowntimeGoodPercentage:         types.DecimalFromFloat(0.1),
+	}
+	b := &types.ValidationParams{
+		BadParticipantInvalidationRate: types.DecimalFromFloat(0.3),
+		FalsePositiveRate:              types.DecimalFromFloat(0.05),
+		DowntimeBadPercentage:          types.DecimalFromFloat(0.4),
+		DowntimeGoodPercentage:         types.DecimalFromFloat(0.2), // one input differs
+	}
+	expectFor(a)
+	expectFor(a)
+	expectFor(b)
+	expectFor(a)
+}

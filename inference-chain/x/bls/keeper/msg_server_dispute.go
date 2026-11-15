@@ -16,7 +16,8 @@ import (
 func (ms msgServer) RespondDealerComplaints(ctx context.Context, msg *types.MsgRespondDealerComplaints) (*types.MsgRespondDealerComplaintsResponse, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	epochBLSData, err := ms.GetEpochBLSData(sdkCtx, msg.EpochId)
+	// Only the base record and this dealer's complaints are needed, not every dealer part.
+	epochBLSData, err := ms.GetEpochBLSDataBase(sdkCtx, msg.EpochId)
 	if err != nil {
 		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
 			return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", msg.EpochId))
@@ -57,18 +58,25 @@ func (ms msgServer) RespondDealerComplaints(ctx context.Context, msg *types.MsgR
 			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("response_opening_material must be exactly %d bytes", dkgOpeningSeedLen))
 		}
 
-		complaintIndex := -1
-		for i, complaint := range epochBLSData.DealerComplaints {
-			if complaint.DealerIndex == msg.DealerIndex && complaint.ComplainerIndex == response.ComplainerIndex {
-				complaintIndex = i
-				break
+		stored, err := ms.GetDealerComplaint(sdkCtx, msg.EpochId, msg.DealerIndex, response.ComplainerIndex)
+		if err != nil {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to read dealer complaint for dealer %d and complainer %d in epoch %d: %v", msg.DealerIndex, response.ComplainerIndex, msg.EpochId, err))
+		}
+		if stored == nil {
+			// Legacy records may still carry complaints inline in the base struct.
+			for i := range epochBLSData.DealerComplaints {
+				c := epochBLSData.DealerComplaints[i]
+				if c.DealerIndex == msg.DealerIndex && c.ComplainerIndex == response.ComplainerIndex {
+					stored = &c
+					break
+				}
 			}
 		}
-		if complaintIndex == -1 {
+		if stored == nil {
 			return nil, status.Error(codes.NotFound, fmt.Sprintf("complaint not found for dealer %d and complainer %d in epoch %d", msg.DealerIndex, response.ComplainerIndex, msg.EpochId))
 		}
 
-		complaint := epochBLSData.DealerComplaints[complaintIndex]
+		complaint := *stored
 		if complaint.ResponseSubmitted {
 			return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("response already submitted for dealer %d and complainer %d in epoch %d", msg.DealerIndex, response.ComplainerIndex, msg.EpochId))
 		}
@@ -76,7 +84,6 @@ func (ms msgServer) RespondDealerComplaints(ctx context.Context, msg *types.MsgR
 		complaint.ResponseSubmitted = true
 		complaint.ResponseShareBytes = response.ResponseShareBytes
 		complaint.ResponseOpeningMaterial = response.ResponseOpeningMaterial
-		epochBLSData.DealerComplaints[complaintIndex] = complaint
 
 		// Per-complaint sub-key write; base struct has no changes to persist.
 		if err := ms.SetDealerComplaint(sdkCtx, msg.EpochId, &complaint); err != nil {

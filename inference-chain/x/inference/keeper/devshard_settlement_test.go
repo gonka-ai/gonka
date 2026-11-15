@@ -480,6 +480,40 @@ func TestVerifyDevshardSettlement_WarmKeyRejected(t *testing.T) {
 	require.Contains(t, err.Error(), "recovered")
 }
 
+// Mainnet hosts hold several slots and sign every one with the same warm key.
+func TestVerifyDevshardSettlement_WarmKeyGrantCheckedOncePerHost(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	const hosts = 4
+	warm, _ := generateDevshardKeys(t, hosts)
+	_, cold := generateDevshardKeys(t, hosts)
+	slots := make([]string, keeper.DevshardGroupSize)
+	keys := make([]*dcrdsecp.PrivateKey, keeper.DevshardGroupSize)
+	for i := range slots {
+		slots[i], keys[i] = cold[i%hosts], warm[i%hosts]
+	}
+	escrow := types.DevshardEscrow{Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: slots}
+	msg := buildSettlementTestData(t, escrow, keys, makeHostStats(keeper.DevshardGroupSize, 100_000_000), 0)
+
+	granted := map[[2]string]bool{}
+	for i := 0; i < hosts; i++ {
+		granted[[2]string{cold[i], cosmosAddressFromDcrdKey(warm[i]).String()}] = true
+	}
+	calls := 0
+	checker := func(granter, grantee string) bool {
+		calls++
+		return granted[[2]string{granter, grantee}]
+	}
+	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, checker))
+	require.Equal(t, hosts, calls)
+
+	// The grant is per host: host 1 signing with host 0's warm key is still rejected.
+	keys[1] = warm[0]
+	msg = buildSettlementTestData(t, escrow, keys, makeHostStats(keeper.DevshardGroupSize, 100_000_000), 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, checker)
+	require.ErrorContains(t, err, "signature for slot 1 recovered")
+}
+
 func TestVerifyDevshardSettlement_DuplicateSignerMultiSlot(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 

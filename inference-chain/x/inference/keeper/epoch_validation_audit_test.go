@@ -376,3 +376,29 @@ func TestRepairEpochValidationState_ClearsConflictingDelegationSpellings(t *test
 	require.True(t, rewritten.Found)
 	require.Equal(t, []*types.MLNodeWeight{{NodeId: "kept", Weight: 10}}, rewritten.Weights)
 }
+
+func TestRepairEpochValidationState_RewriteInvalidatesTxCache(t *testing.T) {
+	k, ctx := auditKeeper(t)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 3,
+		ModelId:    "eg-clean",
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress: testutil.Executor,
+			Weight:        99,
+			MlNodes: []*types.MLNodeInfo{
+				{NodeId: "z", PocWeight: 0},
+				{NodeId: "a", PocWeight: 4},
+			},
+		}},
+	})
+	ctx = keeper.WithTxParamsCache(ctx)
+	before, found := k.GetEpochGroupData(ctx, 3, "eg-clean")
+	require.True(t, found)
+	require.Len(t, before.ValidationWeights[0].MlNodes, 2)
+
+	require.NoError(t, k.RepairEpochValidationState(ctx))
+
+	after, found := k.GetEpochGroupData(ctx, 3, "eg-clean")
+	require.True(t, found)
+	require.Equal(t, []*types.MLNodeInfo{{NodeId: "a", PocWeight: 4}}, after.ValidationWeights[0].MlNodes)
+}

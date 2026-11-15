@@ -18,8 +18,13 @@ import (
 func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.MsgSubmitVerificationVector) (*types.MsgSubmitVerificationVectorResponse, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
-	// Retrieve EpochBLSData for the requested epoch
-	epochBLSData, err := ms.GetEpochBLSData(sdkCtx, msg.EpochId)
+	// Base record only; the dealer data this verifier needs is loaded below.
+	epochBLSData, err := ms.GetEpochBLSDataBase(sdkCtx, msg.EpochId)
+	// A record that still inlines split fields (written before the split) is read in full.
+	legacy := err == nil && (len(epochBLSData.DealerParts) > 0 || len(epochBLSData.VerificationSubmissions) > 0 || len(epochBLSData.DealerComplaints) > 0)
+	if legacy {
+		epochBLSData, err = ms.GetEpochBLSData(sdkCtx, msg.EpochId)
+	}
 	if err != nil {
 		if errors.Is(err, types.ErrEpochBLSDataNotFound) {
 			return nil, status.Error(codes.NotFound, fmt.Sprintf("no DKG data found for epoch %d", msg.EpochId))
@@ -51,6 +56,18 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		return nil, status.Error(codes.PermissionDenied, fmt.Sprintf("address %s is not a participant in epoch %d", msg.Creator, msg.EpochId))
 	}
 
+	if !legacy {
+		own, err := ms.GetVerificationSubmission(sdkCtx, msg.EpochId, uint32(participantIndex))
+		if err != nil {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to read verification submission for epoch %d: %v", msg.EpochId, err))
+		}
+		epochBLSData.VerificationSubmissions = make([]*types.VerificationVectorSubmission, len(epochBLSData.Participants))
+		if own == nil {
+			own = &types.VerificationVectorSubmission{DealerValidity: []bool{}}
+		}
+		epochBLSData.VerificationSubmissions[participantIndex] = own
+	}
+
 	// Verify participant has not already submitted verification using dealer_validity length
 	if len(epochBLSData.VerificationSubmissions[participantIndex].DealerValidity) > 0 {
 		return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("participant %s has already submitted verification vector for epoch %d", msg.Creator, msg.EpochId))
@@ -59,6 +76,12 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	// Verify dealer_validity array length matches number of participants
 	if len(msg.DealerValidity) != len(epochBLSData.Participants) {
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("dealer_validity length %d does not match participants count %d", len(msg.DealerValidity), len(epochBLSData.Participants)))
+	}
+
+	if !legacy {
+		if err := ms.loadVerifierDealerData(sdkCtx, msg, &epochBLSData, participantIndex); err != nil {
+			return nil, status.Error(codes.Internal, err.Error())
+		}
 	}
 
 	if err := ms.validateDealerValidityProofs(msg, &epochBLSData, participantIndex); err != nil {
@@ -149,11 +172,14 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	// earlier tx). Null them out here so SetEpochBLSData's sync loops
 	// don't redundantly rewrite every sub-key on every verifier's tx,
 	// which would reintroduce O(N) writes per submission.
-	epochBLSData.DealerParts = nil
-	epochBLSData.VerificationSubmissions = nil
-	epochBLSData.DealerComplaints = nil
-	if err := ms.SetEpochBLSData(sdkCtx, epochBLSData); err != nil {
-		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store updated epoch %d BLS data: %v", msg.EpochId, err))
+	// The base record itself is unchanged, so only a legacy record is rewritten.
+	if legacy {
+		epochBLSData.DealerParts = nil
+		epochBLSData.VerificationSubmissions = nil
+		epochBLSData.DealerComplaints = nil
+		if err := ms.SetEpochBLSData(sdkCtx, epochBLSData); err != nil {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to store updated epoch %d BLS data: %v", msg.EpochId, err))
+		}
 	}
 
 	// Emit EventVerificationVectorSubmitted
@@ -174,6 +200,36 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	)
 
 	return &types.MsgSubmitVerificationVectorResponse{}, nil
+}
+
+// loadVerifierDealerData fills epochBLSData.DealerParts with what the
+// verifier reads: commitments of dealers voted valid (for their proofs) and
+// the full part of dealers voted invalid (for complaint evidence).
+func (ms msgServer) loadVerifierDealerData(ctx sdk.Context, msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {
+	parts := make([]*types.DealerPartStorage, len(epochBLSData.Participants))
+	for dealerIndex, valid := range msg.DealerValidity {
+		switch {
+		case valid && dealerIndex == participantIndex:
+			// Self vote carries no proof check.
+		case valid:
+			commitments, err := ms.GetDealerCommitments(ctx, msg.EpochId, uint32(dealerIndex))
+			if err != nil {
+				return fmt.Errorf("failed to read dealer %d commitments for epoch %d: %w", dealerIndex, msg.EpochId, err)
+			}
+			parts[dealerIndex] = &types.DealerPartStorage{Commitments: commitments}
+		default:
+			dp, err := ms.GetDealerPart(ctx, msg.EpochId, uint32(dealerIndex))
+			if err != nil {
+				return fmt.Errorf("failed to read dealer %d part for epoch %d: %w", dealerIndex, msg.EpochId, err)
+			}
+			parts[dealerIndex] = dp
+		}
+		if parts[dealerIndex] == nil {
+			parts[dealerIndex] = &types.DealerPartStorage{}
+		}
+	}
+	epochBLSData.DealerParts = parts
+	return nil
 }
 
 func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {

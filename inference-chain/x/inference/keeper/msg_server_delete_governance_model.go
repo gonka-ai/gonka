@@ -13,7 +13,7 @@ func (k msgServer) DeleteGovernanceModel(goCtx context.Context, msg *types.MsgDe
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	if _, found := k.GetGovernanceModel(ctx, msg.Id); !found {
+	if !k.IsValidGovernanceModel(ctx, msg.Id) {
 		return nil, types.ErrInvalidModel
 	}
 
