@@ -104,7 +104,12 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 
 	k.LogInfo("Updating hardware nodes", types.Nodes,
 		"participant", msg.Creator, "nodeCount", len(updatedNodes.HardwareNodes))
-	if err := k.SetHardwareNodes(ctx, updatedNodes); err != nil {
+	// Most diffs only move node statuses; those leave the inventory blob as is.
+	write := k.SetHardwareNodes
+	if found && hardwareNodesStatusOnlyChange(updatedNodes.HardwareNodes, existingNodes.HardwareNodes) {
+		write = k.SetHardwareNodesStatuses
+	}
+	if err := write(ctx, updatedNodes); err != nil {
 		k.LogError("Error setting hardware nodes", types.Nodes, "err", err)
 		return nil, err
 	}
@@ -125,6 +130,25 @@ func HardwareNodesUnchanged(after, before []*types.HardwareNode) bool {
 	}
 	for i := range after {
 		if !hardwareNodeOperationalEqual(after[i], before[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// hardwareNodesStatusOnlyChange reports whether two sorted lists hold the same
+// nodes with equal fields other than status.
+func hardwareNodesStatusOnlyChange(after, before []*types.HardwareNode) bool {
+	if len(after) != len(before) {
+		return false
+	}
+	for i := range after {
+		if after[i] == nil || before[i] == nil {
+			return false
+		}
+		a, b := *after[i], *before[i]
+		a.Status, b.Status = 0, 0
+		if !hardwareNodeOperationalEqual(&a, &b) {
 			return false
 		}
 	}
