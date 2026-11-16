@@ -193,3 +193,18 @@ retain the legacy post-handler fallback with its stated scope. A dapi without
 warm-key event kinds can still use direct chain queries. V7 additionally
 requires light-block evidence for its checkpoint; hash-only servers cannot
 supply that evidence.
+
+### HA peer RPC tokens
+
+v7 replicas sharing PostgreSQL derive peer RPC token keys from a private,
+cryptographically random 32-byte seed stored once in that database. The derived
+key is scoped to the cold host address, protocol version and token key ID.
+Replicas may use different warm signers without invalidating each other's tokens;
+restarting or rotating a warm signer preserves the token key. Keep PostgreSQL
+persistent across replica restarts. The additive migration also permits old v6
+binaries to keep using the same database. v6 retains its signer-derived token key.
+If the shared key is unavailable, the v7 child refuses startup and can restart
+once PostgreSQL recovers. A configured shared-key backend error fails closed; it must not fall back to a
+replica-local signer key. Standalone stores without PostgreSQL retain their
+existing signer-derived key. The seed is private host infrastructure data and
+must never be exposed through RPC, diagnostic exports or logs.

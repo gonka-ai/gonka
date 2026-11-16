@@ -38,8 +38,9 @@ import (
 // serving; escrow-keyed methods also WaitReady so requests block until rebuild
 // finishes or fails.
 type Postgres struct {
-	pool            *pgxpool.Pool
-	connectionGuard *postgresConnectionGuard
+	pool              *pgxpool.Pool
+	connectionGuard   *postgresConnectionGuard
+	peerSessionSecret []byte // private, immutable after startup; never part of storage proof/diagnostics
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
@@ -261,16 +262,27 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 		pool.Close()
 		return nil, err
 	}
+	secretCtx, cancelSecret := context.WithTimeout(ctx, postgresOpTimeout)
+	peerSecret, err := loadPeerSessionSecret(secretCtx, pool)
+	cancelSecret()
+	if err != nil {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), postgresOpTimeout)
+		connectionGuard.close(cleanupCtx)
+		cancelCleanup()
+		pool.Close()
+		return nil, err
+	}
 
 	s := &Postgres{
-		pool:            pool,
-		connectionGuard: connectionGuard,
-		knownEpochs:     make(map[uint64]struct{}),
-		escrowIdx:       make(map[string]uint64),
-		readyCh:         make(chan struct{}),
-		healthReady:     true,
-		healthDone:      make(chan struct{}),
-		fatalErrors:     make(chan error, 1),
+		pool:              pool,
+		connectionGuard:   connectionGuard,
+		peerSessionSecret: peerSecret,
+		knownEpochs:       make(map[uint64]struct{}),
+		escrowIdx:         make(map[string]uint64),
+		readyCh:           make(chan struct{}),
+		healthReady:       true,
+		healthDone:        make(chan struct{}),
+		fatalErrors:       make(chan error, 1),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()

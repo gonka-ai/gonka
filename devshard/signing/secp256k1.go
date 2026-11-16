@@ -48,8 +48,18 @@ func (s *Secp256k1Signer) DerivePeerSessionKey(host, version string, keyID byte)
 	if s == nil || s.key == nil {
 		return nil, fmt.Errorf("peer session key: signer is required")
 	}
+	return DerivePeerSessionKeyFromSecret(crypto.FromECDSA(s.key), host, version, keyID)
+}
+
+// DerivePeerSessionKeyFromSecret scopes a host-local secret to one identity,
+// protocol and key generation. HA storage supplies a secret independent of
+// rotating warm signers; legacy callers still supply their private key.
+func DerivePeerSessionKeyFromSecret(secret []byte, host, version string, keyID byte) ([]byte, error) {
+	if len(secret) != 32 {
+		return nil, fmt.Errorf("peer session key: a 32-byte secret is required")
+	}
 	info := fmt.Sprintf("devshard/peer-rpc-session/v1|%s|%s|%d", host, version, keyID)
-	r := hkdf.New(sha256.New, crypto.FromECDSA(s.key), nil, []byte(info))
+	r := hkdf.New(sha256.New, secret, nil, []byte(info))
 	out := make([]byte, 32)
 	if _, err := io.ReadFull(r, out); err != nil {
 		return nil, fmt.Errorf("peer session key: %w", err)

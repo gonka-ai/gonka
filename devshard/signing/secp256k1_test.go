@@ -1,6 +1,11 @@
 package signing
 
 import (
+	"crypto/sha256"
+	"fmt"
+	"github.com/ethereum/go-ethereum/crypto"
+	"golang.org/x/crypto/hkdf"
+	"io"
 	"strings"
 	"testing"
 
@@ -83,4 +88,30 @@ func TestAddressFromPubKey_InvalidLength(t *testing.T) {
 	_, err := AddressFromPubKey([]byte{1, 2, 3})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid pubkey length")
+}
+
+func TestPeerSessionSecretKeepsLegacyDerivationAndScopesSharedKeys(t *testing.T) {
+	signer, err := GenerateKey()
+	require.NoError(t, err)
+	host, version := signer.Address(), "v6"
+	old := make([]byte, 32)
+	_, err = io.ReadFull(hkdf.New(sha256.New, crypto.FromECDSA(signer.key), nil, []byte(fmt.Sprintf("devshard/peer-rpc-session/v1|%s|%s|%d", host, version, 1))), old)
+	require.NoError(t, err)
+	got, err := signer.DerivePeerSessionKey(host, version, 1)
+	require.NoError(t, err)
+	require.Equal(t, old, got)
+	seed := make([]byte, 32)
+	seed[0] = 42
+	key, err := DerivePeerSessionKeyFromSecret(seed, host, "v7", 1)
+	require.NoError(t, err)
+	for _, scope := range []struct {
+		host, version string
+		id            byte
+	}{{host, "v6", 1}, {"other", "v7", 1}, {host, "v7", 2}} {
+		other, err := DerivePeerSessionKeyFromSecret(seed, scope.host, scope.version, scope.id)
+		require.NoError(t, err)
+		require.NotEqual(t, key, other)
+	}
+	_, err = DerivePeerSessionKeyFromSecret(nil, host, "v7", 1)
+	require.Error(t, err)
 }

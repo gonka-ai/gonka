@@ -1605,6 +1605,10 @@ func (m *HostManager) Register(g *echo.Group) {
 			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
 			rpcserver.WithPayloadService(payloads),
 		))
+	} else if types.RequiresMainnetHeightProof(m.boundVersion) {
+		// A v7 child must restart after its shared key becomes available rather
+		// than advertise readiness forever without any mounted peer RPC routes.
+		panic("devshard: v7 peer RPC authentication unavailable; refusing startup")
 	}
 	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
 }
@@ -1624,7 +1628,16 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			return
 		}
 		version := strings.TrimSpace(m.boundVersion)
-		sessionKey, err := m.signer.DerivePeerSessionKey(hostAddr, version, rpcserver.SessionKeyID)
+		var sessionKey []byte
+		var err error
+		shared := false
+		if types.RequiresMainnetHeightProof(version) {
+			sessionKey, shared, err = storage.SharedPeerSessionKey(m.store, hostAddr, version, rpcserver.SessionKeyID)
+		}
+		if err == nil && !shared {
+			// Legacy protocols and non-HA stores retain their existing key.
+			sessionKey, err = m.signer.DerivePeerSessionKey(hostAddr, version, rpcserver.SessionKeyID)
+		}
 		if err != nil {
 			slog.Error("devshardd: peer session key", "err", err)
 			return
