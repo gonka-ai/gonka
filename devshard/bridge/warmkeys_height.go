@@ -20,7 +20,7 @@ var ErrWarmKeyViewBehind = errors.New("warm-key chain view has not reached the v
 // LiveAtHeight answers a historical fact, including after replacement/revoke
 // or expiration. A later query must give the same answer for an earlier H.
 func (e WarmKeyEntry) LiveAtHeight(height int64, blockTime time.Time) bool {
-	if height <= 0 || e.GrantedAtHeight < 0 || e.GrantedAtHeight > height || blockTime.IsZero() {
+	if height <= 0 || e.GrantedAtHeight <= 0 || e.GrantedAtHeight > height || blockTime.IsZero() {
 		return false
 	}
 	if e.RevokedAtHeight != 0 && e.RevokedAtHeight <= height {
@@ -63,6 +63,11 @@ func (c *WarmKeyLogCopy) WarmKeyEntryAtHeight(granter string, id uint64, height 
 			return WarmKeyEntry{}, false, false
 		}
 		e, found := g.entries[id]
+		if found && e.GrantedAtHeight <= 0 {
+			// An end event may arrive before its grant. Even a covered log
+			// height does not make this partial tombstone a complete entry.
+			return WarmKeyEntry{}, false, false
+		}
 		return e, found, true
 	}
 	if e, found, complete := read(); complete {

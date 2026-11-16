@@ -347,10 +347,17 @@ func (c *WarmKeyLogCopy) apply(e WarmKeyEntry) {
 
 // apply merges an entry without reviving an ended grant. Caller holds c.mu.
 func (g *granterLog) apply(e WarmKeyEntry) {
-	if have, ok := g.entries[e.ID]; ok && have.Ended() && !e.Ended() {
-		// An end is final; an older "granted" event replayed after it must
-		// not revive the entry.
-		return
+	if have, ok := g.entries[e.ID]; ok {
+		if e.Ended() && e.GrantedAtHeight == 0 {
+			// End events omit the original grant height and expiration. They
+			// update the end only, not the immutable grant identity/metadata.
+			have.RevokedAtHeight, have.End = e.RevokedAtHeight, e.End
+			e = have
+		} else if have.Ended() && !e.Ended() {
+			// An older grant/query may fill a partial end event's metadata,
+			// but must never revive the grant.
+			e.RevokedAtHeight, e.End = have.RevokedAtHeight, have.End
+		}
 	}
 	g.entries[e.ID] = e
 }

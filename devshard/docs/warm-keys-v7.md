@@ -136,6 +136,10 @@ admission refreshes stale copies and throttles miss reloads. Ends are final:
 an older grant event cannot revive an ended entry. The three permanent V6
 allow/deny caches are removed.
 
+End events preserve the cached grant's original height and expiration. If an
+end arrives before its grant, the partial entry cannot authorize a historical
+signature until a full chain read supplies the missing grant metadata.
+
 Dapi forwards grant/end events for all participants. One writer reads block
 results in height order, persists events before publication, and emits the
 block marker last. The bounded ring is a hot tail over durable SQLite or
