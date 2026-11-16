@@ -60,8 +60,8 @@ message DevshardTx {
 
 // MsgWarmKeyBind binds a warm key to a slot from the diff that carries it.
 // The gateway authors it from its grant source; every host confirms grant_id
-// against the chain's warm-key log (the entry of the slot's cold key with
-// that id exists and its grantee is address) before the key counts. The
+// against the chain's warm-key log: identity matches and the grant was live
+// at the diff's authenticated mainnet height and block time before it counts. The
 // entries of a diff apply before its other transactions, so the key signs
 // for the messages of the same nonce. See docs/warm-keys-v7.md.
 message MsgWarmKeyBind {

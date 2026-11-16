@@ -94,7 +94,8 @@ func copyInferences(src map[uint64]*types.InferenceRecord) map[uint64]*types.Inf
 type WarmKeyResolver func(warmAddr, coldAddr string) (bool, error)
 
 // WarmKeyConfirmer checks a MsgWarmKeyBind against the chain's warm-key log:
-// entry grantID of coldAddr exists and its grantee is warmAddr. The answer is
+// Legacy identity check: entry grantID of coldAddr names warmAddr. V7 also
+// requires WarmKeyHeightChecker on every apply and replay. The answer is
 // a fact about an append-only record, so every host that asks, whenever it
 // asks, gets the same one. It may wait for the entry to become available;
 // an error refuses the diff. Nil skips the check (the gateway, which
@@ -2317,7 +2318,8 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 }
 
 // hostSignerAllowedLocked is the apply-path check, decided from consensus
-// state alone: the slot's cold key, a warm key the history binds to the slot
+// state and the grant decisions preloaded at its authenticated checkpoint:
+// the slot's cold key, a warm key the history binds to the slot
 // at this diff's nonce, or, while the slot has no binding, a sibling slot's
 // binding for the same validator. No grant-source call and no mutation, so
 // every replica decides it identically. Caller holds sm.mu.
