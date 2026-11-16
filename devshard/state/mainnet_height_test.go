@@ -202,6 +202,34 @@ func TestMainnetHeightClaimedTimeIsAuthenticated(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInvalidUserSig)
 }
 
+func TestMainnetPreludeDoesNotSpendNonceForRejectedHeightAck(t *testing.T) {
+	sm, _, _, _ := heightFixture(t)
+	sm.state.Config.FeePerNonce = 7
+	tx, err := sm.BuildMainnetHeightTx(context.Background())
+	require.NoError(t, err)
+	before := sm.SnapshotState()
+	root, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	ack := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 0, ObservedHeight: uint64(tx.GetMainnetHeight().Height),
+		ObservedBlockHash: []byte("invalid-ack-hash"), SyncState: types.SyncState_SYNCED,
+		PeerSeen: []byte{0xff}, HostSig: make([]byte, 65),
+	}}}
+	_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{tx, ack})
+	require.Error(t, err)
+	require.Empty(t, applied)
+	require.Equal(t, before.LatestNonce, sm.LatestNonce())
+	require.Equal(t, before.Balance, sm.SnapshotState().Balance)
+	require.Equal(t, before.MainnetCheckpoint, sm.MainnetCheckpoint())
+	after, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, root, after)
+	// An intentional checkpoint-only diff is still useful when no ack was rejected.
+	_, applied, err = sm.ApplyLocalBestEffort(1, []*types.DevshardTx{tx})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+}
+
 func TestMainnetSnapshotCannotBootstrapItsOwnTimeOrValidatorAuthority(t *testing.T) {
 	sm, _, _, fresh := heightFixture(t)
 	tx, err := sm.BuildMainnetHeightTx(context.Background())

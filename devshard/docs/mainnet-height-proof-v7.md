@@ -36,7 +36,9 @@ canonical header lookup. The canonical lookup also keeps an old escrow
 anchor from authorizing a long-range fork after its validator keys have left
 the trusting period. These checks do not invalidate already accepted history.
 A fresh local canonical header is required for new signatures, while replay
-of the authenticated journal remains deterministic.
+of the authenticated journal remains deterministic. Settlement is not an
+exception: replaying a never-signed stale history into its terminal phase must
+not make that history eligible for signatures.
 An unavailable or stale live checkpoint withholds the state signature without
 aborting recovery or the executor receipt/job of an authenticated diff. A
 later fresh diff can resume state signing; a canonical hash mismatch is still
@@ -48,7 +50,10 @@ working with older servers. Requesting evidence from an old or hash-only
 server fails explicitly; v7 cannot downgrade to trusting an unsigned height.
 The producer obtains commits and paginated validator sets from CometBFT.
 Historical bootstrap/transition evidence is not limited to the short tip
-cache window. This does not implement the separate Strong envelope dispute
+cache window. Gateway recovery falls back to full carried-proof journal replay
+if external bootstrap evidence makes a snapshot unavailable; it never trusts
+unverified snapshot metadata. A journal with a missing prefix still fails closed.
+This does not implement the separate Strong envelope dispute
 and escalation machinery described in the height-sync specification.
 
 ## Release order
