@@ -54,6 +54,10 @@ func (sm *StateMachine) BuildMainnetHeightTx(ctx context.Context) (*types.Devsha
 	if source == nil {
 		return nil, fmt.Errorf("%w: no mainnet light-block source", types.ErrHeaderPending)
 	}
+	// The inference chooser may omit its optional persistence context.
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
 	header, err := source.Latest(ctx)
