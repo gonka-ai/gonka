@@ -1330,6 +1330,13 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	candidates = append(candidates, keyEntries...)
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
+	heightTx, err := s.sm.BuildMainnetHeightTx(ctx)
+	if err != nil {
+		return types.Diff{}, 0, err
+	}
+	if heightTx != nil {
+		candidates = append([]*types.DevshardTx{heightTx}, candidates...)
+	}
 
 	hasStart := false
 	for _, tx := range candidates {

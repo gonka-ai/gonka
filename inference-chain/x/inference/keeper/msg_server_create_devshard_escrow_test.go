@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"cosmossdk.io/collections"
+	"cosmossdk.io/core/header"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -58,6 +59,9 @@ func makeDevshardAddrs(start byte, count int) []string {
 
 func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	anchor := make([]byte, 32)
+	anchor[0] = 42
+	ctx = ctx.WithBlockHeight(123).WithHeaderInfo(header.Info{Height: 123, Hash: anchor})
 
 	rootAddrs := makeDevshardAddrs(1, 20)
 	subgroupAddrs := rootAddrs[:3]
@@ -89,6 +93,8 @@ func TestCreateDevshardEscrow_HappyPath(t *testing.T) {
 	require.Equal(t, uint64(5), escrow.EpochIndex)
 	require.Equal(t, testDevshardModelID, escrow.ModelId)
 	require.False(t, escrow.Settled)
+	require.Equal(t, int64(123), escrow.MainnetAnchorHeight)
+	require.Equal(t, anchor, escrow.MainnetAnchorHash)
 	require.Equal(t, types.DefaultDevshardCreateDevshardFee, escrow.CreateDevshardFee)
 	require.Equal(t, types.DefaultDevshardFeePerNonce, escrow.FeePerNonce)
 	require.Equal(t, types.DevshardInferenceSealGraceNoncesForCreate(

@@ -40,6 +40,16 @@ type Source interface {
 	LightBlockAt(context.Context, int64) ([]byte, error)
 }
 
+func validateCheckpoint(cp Checkpoint) error {
+	if cp.Height <= 0 || len(cp.Hash) != 32 {
+		return fmt.Errorf("%w: missing pinned checkpoint", ErrInvalid)
+	}
+	if len(cp.NextValidatorsHash) != 0 && (len(cp.NextValidatorsHash) != 32 || cp.ChainID == "" || cp.Time.IsZero()) {
+		return fmt.Errorf("%w: incomplete verified checkpoint", ErrInvalid)
+	}
+	return nil
+}
+
 func Decode(raw []byte) (*tmtypes.LightBlock, error) {
 	if len(raw) == 0 || len(raw) > MaxBlockBytes {
 		return nil, fmt.Errorf("%w: light block size %d", ErrInvalid, len(raw))
@@ -99,6 +109,9 @@ func advance(from Checkpoint, lb *tmtypes.LightBlock) (Checkpoint, error) {
 // carried signed headers, never a wall clock, a mutable local header map, or a
 // later validator set. An error returns no partially advanced checkpoint.
 func Verify(from Checkpoint, target int64, proof [][]byte) (Checkpoint, error) {
+	if err := validateCheckpoint(from); err != nil {
+		return Checkpoint{}, err
+	}
 	if target < from.Height || target <= 0 || len(proof) > MaxBlocks {
 		return Checkpoint{}, fmt.Errorf("%w: target or proof length", ErrInvalid)
 	}
@@ -130,6 +143,9 @@ func Verify(from Checkpoint, target int64, proof [][]byte) (Checkpoint, error) {
 // downloading every unchanged block. The consumer still verifies the entire
 // returned proof. Both work and output size are bounded.
 func Build(ctx context.Context, from Checkpoint, target int64, source Source) ([][]byte, Checkpoint, error) {
+	if err := validateCheckpoint(from); err != nil {
+		return nil, Checkpoint{}, err
+	}
 	if source == nil || target < from.Height || from.Height <= 0 {
 		return nil, Checkpoint{}, fmt.Errorf("%w: source or target", ErrInvalid)
 	}

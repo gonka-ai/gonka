@@ -37,6 +37,9 @@ type MockValidator struct {
 // the retained power is strictly > 3/4 of the total (stricter than the
 // verifier's > 2/3 rule to leave headroom).
 type MockConfig struct {
+	// LightBlocks fabricates actual CometBFT commits and validator-set proofs.
+	// Kept explicit so legacy adversarial tests retain their original fixtures.
+	LightBlocks   bool
 	ChainID       string
 	Validators    []MockValidator
 	BlockInterval time.Duration
@@ -59,12 +62,13 @@ type Mock struct {
 	// block while still keeping the remainder strictly > 3/4 of total.
 	maxDropPower int64
 
-	mu      sync.RWMutex
-	latest  *blocks.Header
-	history map[int64]*blocks.Header
-	subs    map[int]*subscription
-	nextSub int
-	closed  bool
+	mu          sync.RWMutex
+	latest      *blocks.Header
+	history     map[int64]*blocks.Header
+	lightBlocks map[int64][]byte
+	subs        map[int]*subscription
+	nextSub     int
+	closed      bool
 }
 
 // subBufSize is the per-subscriber channel buffer. A full buffer drops the
@@ -145,6 +149,7 @@ func NewMock(cfg MockConfig) (*Mock, error) {
 		totalPower:   total,
 		maxDropPower: maxDropPower,
 		history:      make(map[int64]*blocks.Header),
+		lightBlocks:  make(map[int64][]byte),
 		subs:         make(map[int]*subscription),
 	}, nil
 }
@@ -199,24 +204,36 @@ func (m *Mock) advanceLocked() (*blocks.Header, error) {
 		t = m.latest.Time.Add(m.intervalForHeight(height))
 	}
 
-	h := &blocks.Header{
-		Height:             height,
-		Time:               t,
-		ChainID:            m.cfg.ChainID,
-		BlockHash:          m.deriveHash("block", height),
-		AppHash:            m.deriveHash("app", height),
-		ValidatorsHash:     m.deriveHash("validators", height),
-		NextValidatorsHash: m.deriveHash("next_validators", height+1),
-	}
-	sigs, err := m.signCommit(h, height, t)
-	if err != nil {
-		return nil, err
-	}
-	h.Commit = blocks.Commit{
-		Height:     height,
-		Round:      0,
-		BlockID:    h.BlockHash,
-		Signatures: sigs,
+	var h *blocks.Header
+	if m.cfg.LightBlocks {
+		var raw []byte
+		var err error
+		h, raw, err = m.fabricateLightBlock(height, t)
+		if err != nil {
+			return nil, err
+		}
+		m.lightBlocks[height] = raw
+	} else {
+		h = &blocks.Header{
+			Height:             height,
+			Time:               t,
+			ChainID:            m.cfg.ChainID,
+			BlockHash:          m.deriveHash("block", height),
+			AppHash:            m.deriveHash("app", height),
+			ValidatorsHash:     m.deriveHash("validators", height),
+			NextValidatorsHash: m.deriveHash("next_validators", height+1),
+		}
+		sigs, err := m.signCommit(h, height, t)
+		if err != nil {
+			return nil, err
+		}
+		h.Commit = blocks.Commit{
+			Height:     height,
+			Round:      0,
+			BlockID:    h.BlockHash,
+			Signatures: sigs,
+		}
+
 	}
 
 	m.latest = h

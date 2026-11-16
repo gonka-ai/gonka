@@ -172,3 +172,26 @@ func TestLookup_VerificationOutcomesAreNotTransportErrors(t *testing.T) {
 	_, err = lookup.At(context.Background(), 1)
 	require.Equal(t, codes.Internal, status.Code(err), "a verifying dapi's own failure is not Unavailable")
 }
+
+type lightBlockOracle struct {
+	stubOracle
+	raw []byte
+}
+
+func (o lightBlockOracle) LightBlockAt(context.Context, int64) ([]byte, error) { return o.raw, nil }
+
+func TestLookupLightBlockWireAndHashOnlyCompatibility(t *testing.T) {
+	hdr := blocks.HashOnlyHeader(3, time.Unix(9, 0).UTC(), "gonka-test", []byte{3})
+	ctx := context.Background()
+	lookup, err := nmclient.New(dialNM(t, &nmServer{oracle: lightBlockOracle{stubOracle: stubOracle{hdr: hdr}, raw: []byte{1, 2, 3}}}))
+	require.NoError(t, err)
+	raw, err := lookup.LightBlockAt(ctx, 3)
+	require.NoError(t, err)
+	require.Equal(t, []byte{1, 2, 3}, raw)
+	hashOnly, err := nmclient.New(dialNM(t, &nmServer{oracle: stubOracle{hdr: hdr}}))
+	require.NoError(t, err)
+	_, err = hashOnly.At(ctx, 3)
+	require.NoError(t, err)
+	_, err = hashOnly.LightBlockAt(ctx, 3)
+	require.ErrorIs(t, err, blocks.ErrHeaderRPCUnimplemented)
+}

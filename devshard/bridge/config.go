@@ -18,5 +18,7 @@ func SessionConfigAtBind(groupSize int, escrow *EscrowInfo) types.SessionConfig 
 		VoteThresholdFactor:       escrow.VoteThresholdFactor,
 		RefusalTimeout:            escrow.RefusalTimeout,
 		ExecutionTimeout:          escrow.ExecutionTimeout,
+		MainnetAnchorHeight:       escrow.MainnetAnchorHeight,
+		MainnetAnchorHash:         append([]byte(nil), escrow.MainnetAnchorHash...),
 	})
 }
