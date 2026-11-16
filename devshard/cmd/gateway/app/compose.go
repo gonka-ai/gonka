@@ -33,6 +33,7 @@ import (
 	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/shadow"
 	"devshard/cmd/gateway/store"
 	"devshard/cmd/gateway/warmup"
 	"devshard/logging"
@@ -250,6 +251,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	devshardWork := make(chan struct{}, 1)
 	depletion := &depletionNotice{}
 	finishes := &finishNotice{}
+	shadowProbes := shadow.New(clock, probeBounds{configuration: configHolder, snapshots: observer})
 	escrows, router, prober, err := newRouting(routingDeps{
 		Sessions:     sources.Serving,
 		ReadOnly:     sources.ReadOnly,
@@ -266,6 +268,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		PeerRPC:      adoption,
 		Ledger:       recorder,
 		Journal:      events,
+		Shadow:       shadowProbes,
 		Now:          clock,
 	})
 	if err != nil {
@@ -325,7 +328,16 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 
 	sessions := api.NewSessions(escrows)
 	raceObserver := nonceAccountedRaces{recorder: raceRecorder, events: events}
-	prober.Settle(sessions.Poster, probeVotes{recorder: raceRecorder, events: events}, events)
+	probeTimeouts := probeVotes{recorder: raceRecorder, events: events}
+	prober.Settle(sessions.Poster, probeTimeouts, events)
+	prompts := promptTokens(sources.ModelSnapshots, observer)
+	shadowProbes.Bind(shadow.Binding{
+		Escrows:  escrows,
+		Lifetime: ctx,
+		Voter:    warmup.Voter{Posters: sessions.Poster, Timeouts: probeTimeouts},
+		Probes:   events,
+		Outcomes: shadowOutcomes{recorder: metrics.NewShadowProbeRecorder(telemetry), events: events},
+	})
 	e2e := env.LoadE2E()
 	races, err := engine.NewEngine(engine.Deps{
 		Picker:     router,
@@ -408,7 +420,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Now:          clock,
 
 		StopTokenVocabulary:     stopTokenVocabulary(sources.ModelSnapshots, observer),
-		PromptTokens:            promptTokens(sources.ModelSnapshots, observer),
+		PromptTokens:            prompts,
 		StatsTokenizerFallbacks: metrics.NewStatsTokenizerRecorder(telemetry),
 		RequestBodies:           requestBodies,
 	})

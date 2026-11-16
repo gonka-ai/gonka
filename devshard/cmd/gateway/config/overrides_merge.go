@@ -8,7 +8,10 @@ import (
 	json "github.com/goccy/go-json"
 )
 
-const jsonTagSeparator = ","
+const (
+	jsonTagSeparator = ","
+	participantsKey  = "participants"
+)
 
 // Merged applies a settings patch: a field it names replaces the stored one, a field it sets to null clears it, and every other field stays. See ../docs/operations.md, "Configuration".
 func (o Overrides) Merged(patch []byte) (Overrides, error) {
@@ -22,7 +25,26 @@ func (o Overrides) Merged(patch []byte) (Overrides, error) {
 	}
 	merged := o
 	replaceNamedFields(reflect.ValueOf(&merged).Elem(), reflect.ValueOf(changes), named)
+	if changes.Participants != nil {
+		merged.Participants, err = o.Participants.merged(*changes.Participants, named[participantsKey])
+		if err != nil {
+			return Overrides{}, err
+		}
+	}
 	return merged, nil
+}
+
+func (p *ParticipantOverrides) merged(changes ParticipantOverrides, patch json.RawMessage) (*ParticipantOverrides, error) {
+	var named map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &named); err != nil {
+		return nil, fmt.Errorf("parsing participants patch: %w", err)
+	}
+	var merged ParticipantOverrides
+	if p != nil {
+		merged = *p
+	}
+	replaceNamedFields(reflect.ValueOf(&merged).Elem(), reflect.ValueOf(changes), named)
+	return &merged, nil
 }
 
 func replaceNamedFields(target, source reflect.Value, named map[string]json.RawMessage) {

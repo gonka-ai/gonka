@@ -83,7 +83,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	ranking := escrowRanking{
 		profile: profile, snapshot: snapshot, queued: queued, avoided: avoided,
 		retirement: retirement, request: request, attempts: s.attemptsToFund(),
-		reachable: reachableByAllowlist(s.participantAllowlist(), s.unthrottledParticipants()),
+		reachable: reachableByTrust(s.participants()),
 		fleet:     s.fleetGates(profile.Model, snapshot),
 		ahead:     s.queuedAhead(candidates),
 	}
@@ -100,7 +100,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	}
 
 	if admitted == 0 && len(candidates) > 0 {
-		return Escrow{}, ErrAllowlistUnreachable
+		return Escrow{}, ErrTrustUnreachable
 	}
 	if picked < 0 {
 		if moneyDeclined {

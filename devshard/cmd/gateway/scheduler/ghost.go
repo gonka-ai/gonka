@@ -8,12 +8,15 @@ const (
 	ghostWindowFull
 	ghostCutOff
 	ghostEjected
-	ghostNotAllowed
+	ghostUntrusted
 	ghostStateDiverged
 	ghostExclude
 	ghostAbandoned
 	ghostPrepareFailed
 	ghostAbsentFromChain
+	ghostProbeNoRequest
+	ghostProbeGrammar
+	ghostProbeNoRoom
 )
 
 func (k GhostKind) reason() string {
@@ -26,8 +29,8 @@ func (k GhostKind) reason() string {
 		return GhostReasonCutOff
 	case ghostEjected:
 		return GhostReasonEjected
-	case ghostNotAllowed:
-		return GhostReasonOutsideAllowlist
+	case ghostUntrusted:
+		return GhostReasonUntrusted
 	case ghostStateDiverged:
 		return GhostReasonStateDiverged
 	case ghostExclude:
@@ -38,6 +41,12 @@ func (k GhostKind) reason() string {
 		return GhostReasonPrepareFailed
 	case ghostAbsentFromChain:
 		return GhostReasonAbsentFromChain
+	case ghostProbeNoRequest:
+		return GhostReasonProbeNoRequest
+	case ghostProbeGrammar:
+		return GhostReasonProbeGrammarConstrained
+	case ghostProbeNoRoom:
+		return GhostReasonProbeNoRoom
 	default:
 		return ""
 	}

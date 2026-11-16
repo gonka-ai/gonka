@@ -123,13 +123,15 @@ The signature is truncated to `r||s`, 64 bytes: the recovery byte the signer pro
 
 ## The gRPC transport
 
-`GRPCChain` answers both `Reader` and `Transport` over one connection: the gateway dials the chain once, for the escrow bridge, and every other chain read rides that same connection and its query fallback. Both are interfaces rather than the client itself, which is what lets tests answer them without a connection and keeps the gateway's own tests off the network.
+`GRPCChain` answers both `Reader` and `Transport` over one connection: the gateway dials the chain once, for the escrow bridge, and every other chain call rides that same connection. Every read — escrow, models, params, chain id, the signer's account and spendable balance and the tx lookup — runs on `QueryConn()`, which moves to CometBFT RPC when the direct gRPC endpoint is observed unreachable and probes it again later. `Broadcast` runs on `UnorderedTxConn()`: it goes once over the transport those reads selected and is never retried over the other one, because a broadcast that failed ambiguously may already have reached a mempool, and sending it again over the other transport could execute it twice. With no reachable gRPC endpoint the gateway therefore reads, creates, rotates and settles escrows over `DEVSHARD_CHAIN_RPC` alone. Both are interfaces rather than the client itself, which is what lets tests answer them without a connection and keeps the gateway's own tests off the network.
 
 `ChainID` asks the node unless a value was configured; a configured value is taken as the operator's decision and wins over what the node reports, because a mismatch invalidates every signature.
 
 `SpendableBalance` reads one denom through `x/bank`'s `SpendableBalanceByDenom`, which leaves out vesting coins still locked; `CreateEscrow` calls it for the signer before it prepares anything and refuses with `WalletUnderfundedError` (`ErrWalletUnderfunded`) when the wallet holds less than the amount plus the fee, the fee counted only when it is paid in `EscrowDenom`. A read that fails stops the create too: an unknown balance is not permission to broadcast.
 
 `Account` reads the number and sequence through the account's own registered type, so a vesting or module account answers correctly instead of by whichever nested field a search happened to reach first.
+
+Over CometBFT RPC the tx lookup and the chain id are ABCI queries against the node's gRPC query router, and the SDK registers the tx and CometBFT services on that router only when `grpc.enable` or `api.enable` is true in the node's `app.toml`. A node with both false cannot answer a tx lookup, so `awaitTx` never sees a commit, and cannot answer the chain id, so `DEVSHARD_CHAIN_ID` has to be configured. The enabled endpoint need not be reachable by the gateway. The first call that finds gRPC down returns an error that carries both transports' failures and is not recognised as `not found`; the calls after it go straight to RPC and are.
 
 Absence and failure are kept apart in every query that can return neither:
 

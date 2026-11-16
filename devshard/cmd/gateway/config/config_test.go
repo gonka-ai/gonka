@@ -455,6 +455,21 @@ func TestContextLengthTakesGovernanceOverTheOperatorsPin(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build limits with a global `max_tokens_cap` and a `model_limits` entry that sets its own cap, one that leaves it 0 and one model with no entry.
+//  2. Ask `Limits.OutputTokenCap` for each model.
+//  3. Assert the entry's own cap wins, and the global cap answers for a 0 and for a missing entry.
+func TestOutputTokenCapTakesTheModelsOwnCapElseTheGlobalOne(t *testing.T) {
+	t.Parallel()
+	limits := Limits{MaxTokensCap: 4096, ModelLimits: map[string]ModelLimits{"capped": {MaxTokensCap: 512}, "inheriting": {}}}
+
+	for model, want := range map[string]uint64{"capped": 512, "inheriting": 4096, "unlisted": 4096} {
+		if got := limits.OutputTokenCap(model); got != want {
+			t.Errorf("OutputTokenCap(%q) = %d, want %d", model, got, want)
+		}
+	}
+}
+
+// Test flow:
 //  1. Build a default config with the dispatch queue depth at each edge of its range, 1 and 65 536.
 //  2. Assert `Validate` accepts both.
 func TestValidateAcceptsTheDispatchQueueDepthEdges(t *testing.T) {

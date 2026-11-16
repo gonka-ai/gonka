@@ -20,6 +20,7 @@ import (
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/shadow"
 	"devshard/types"
 )
 
@@ -125,6 +126,10 @@ func everyProducer() map[string]func(events *Journal) {
 		},
 		"DiffComposed":  func(events *Journal) { events.DiffComposed("escrow-1", &types.Diff{}) },
 		"ProbeRecorded": func(events *Journal) { events.ProbeRecorded("escrow-1", accounting.Attempt{Nonce: 1, Sent: true}) },
+		"ShadowProbed": func(events *Journal) {
+			events.ShadowProbed(shadow.Result{Escrow: "escrow-1", Participant: hostAlpha, Model: "qwen", Nonce: 1, Outcome: shadow.OutcomeServed, Streamed: true, FirstToken: time.Second, Total: 2 * time.Second, OutputTokens: 5})
+			events.ShadowProbed(shadow.Result{Escrow: "escrow-1", Participant: hostAlpha, Model: "qwen", Nonce: 2, Outcome: shadow.OutcomeFailed, Err: errors.New("connection refused")})
+		},
 		"HostWithheld": func(events *Journal) {
 			events.HostWithheld(perf.Withholding{Participant: hostAlpha, Model: "qwen", Reason: "failure_rate", EjectionCount: 1, ConsecutiveFailures: 1, FailureRate: 0.5, FailureVolume: 20, WithheldFor: time.Minute})
 		},

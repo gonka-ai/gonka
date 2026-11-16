@@ -526,6 +526,24 @@ func TestTheWarmupProbeIsNotAnAnswerNobodyUsed(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a record of 40 assigned nonces, 20 finished and used, 20 finished and unused, all 20 tagged terminal `TerminalShadowProbe`.
+//  2. Assert findings carry no `FindingUnusedAnswers` code, as a shadow probe is the gateway's own request too.
+func TestTheShadowProbeIsNotAnAnswerNobodyUsed(t *testing.T) {
+	record := recordWith(40, map[Disposition]uint64{
+		DispositionFinishedUsed:   20,
+		DispositionFinishedUnused: 20,
+	})
+	record.Counters = []CounterRecord{{
+		CounterKey: CounterKey{Disposition: DispositionFinishedUnused, Terminal: TerminalShadowProbe},
+		Count:      20,
+	}}
+
+	if codes := codesOf(findingsFor(record)); slices.Contains(codes, FindingUnusedAnswers) {
+		t.Errorf("findings %v count the gateway's own shadow probes as answers a client threw away", codes)
+	}
+}
+
+// Test flow:
 //  1. Build a record of 40 assigned nonces, 20 finished and used, 20 finished and unused, with no probe tag.
 //  2. Find the `FindingUnusedAnswers` finding.
 //  3. Assert its part and whole are 20 of 40.
@@ -639,5 +657,70 @@ func TestAProbeThatFailedDoesNotEmptyTheDeliveredTotal(t *testing.T) {
 func TestAClientCancelNamedByTheEngineIsExcused(t *testing.T) {
 	if !excused(CounterKey{Terminal: string(engine.ReasonClientCancelled)}) {
 		t.Fatalf("a terminal of %q was not excused", string(engine.ReasonClientCancelled))
+	}
+}
+
+// Test flow:
+//  1. Build a record of 100 assigned nonces, all finished and used: 1 decoded-logprobs answer and 79 plain answers from clients, 10 decoded and 10 plain answers each tagged `TerminalShadowProbe` and `TerminalWarmupProbe` in halves.
+//  2. Find the `FindingDecodedLogprobs` finding.
+//  3. Assert its part and whole are 1 of 80, so the decoded probe answers leave the numerator as the probes leave the denominator.
+func TestDecodedLogprobsOfAProbeAreNotCountedAgainstClientAnswers(t *testing.T) {
+	record := recordWith(100, map[Disposition]uint64{DispositionFinishedUsed: 100})
+	record.Counters = []CounterRecord{
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, LogprobsDecoded: true}, Count: 1},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed}, Count: 79},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, Terminal: TerminalShadowProbe, LogprobsDecoded: true}, Count: 5},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, Terminal: TerminalWarmupProbe, LogprobsDecoded: true}, Count: 5},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, Terminal: TerminalShadowProbe}, Count: 5},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, Terminal: TerminalWarmupProbe}, Count: 5},
+	}
+
+	finding := findingWithCode(t, findingsFor(record), FindingDecodedLogprobs)
+
+	if finding.Part != 1 || finding.Whole != 80 {
+		t.Fatalf("finding = %d of %d, want the one client answer against the 80 client answers", finding.Part, finding.Whole)
+	}
+}
+
+// Test flow:
+//  1. Build a record of 100 assigned nonces: 40 finished and used, 30 unfinished by execution, of which 10 are "empty_stream" failures and 10 each are tagged `TerminalShadowProbe` and `TerminalWarmupProbe`.
+//  2. Find the `FindingFailureTerminals` finding.
+//  3. Assert its part and whole are 10 of 50, so the failed probes leave the numerator as they leave the reached nonces.
+func TestFailedProbesAreNotCountedAsFailureTerminals(t *testing.T) {
+	record := recordWith(100, map[Disposition]uint64{
+		DispositionFinishedUsed:        40,
+		DispositionUnfinishedExecution: 30,
+	})
+	record.Counters = []CounterRecord{
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed}, Count: 40},
+		{CounterKey: CounterKey{Disposition: DispositionUnfinishedExecution, Terminal: "empty_stream"}, Count: 10},
+		{CounterKey: CounterKey{Disposition: DispositionUnfinishedExecution, Terminal: TerminalShadowProbe}, Count: 10},
+		{CounterKey: CounterKey{Disposition: DispositionUnfinishedExecution, Terminal: TerminalWarmupProbe}, Count: 10},
+	}
+
+	finding := findingWithCode(t, findingsFor(record), FindingFailureTerminals)
+
+	if finding.Part != 10 || finding.Whole != 50 {
+		t.Fatalf("finding = %d of %d, want the 10 client failures against the 50 nonces that reached the host", finding.Part, finding.Whole)
+	}
+}
+
+// Test flow:
+//  1. Build a record of 100 assigned nonces, 40 finished and used: 18 plain and 2 drifted from clients, 10 drifted each tagged `TerminalShadowProbe` and `TerminalWarmupProbe`.
+//  2. Find the `FindingClockDrift` finding.
+//  3. Assert its part and whole are 22 of 40, so a drifted probe receipt is counted against the probe receipts in the denominator.
+func TestDriftedProbeReceiptsAreMeasuredAgainstTheProbesToo(t *testing.T) {
+	record := recordWith(100, map[Disposition]uint64{DispositionFinishedUsed: 40})
+	record.Counters = []CounterRecord{
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed}, Count: 18},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, ClockDrifted: true}, Count: 2},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, Terminal: TerminalShadowProbe, ClockDrifted: true}, Count: 10},
+		{CounterKey: CounterKey{Disposition: DispositionFinishedUsed, Terminal: TerminalWarmupProbe, ClockDrifted: true}, Count: 10},
+	}
+
+	finding := findingWithCode(t, findingsFor(record), FindingClockDrift)
+
+	if finding.Part != 22 || finding.Whole != 40 {
+		t.Fatalf("finding = %d of %d, want 22 drifted receipts against all 40 delivered", finding.Part, finding.Whole)
 	}
 }

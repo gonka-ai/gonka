@@ -11,7 +11,7 @@ var (
 
 	ErrHostsBusy = errors.New("all hosts are at capacity")
 
-	ErrAllowlistUnreachable = errors.New("no escrow holds an allowed participant")
+	ErrTrustUnreachable = errors.New("no escrow holds an allowed participant")
 
 	ErrNoEscrowCapacity = errors.New("no escrow capacity")
 

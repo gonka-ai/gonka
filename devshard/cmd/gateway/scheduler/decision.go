@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Decision is match's total outcome for one nonce: exactly one of serve, burn, hold, or decline. See rules.md, "1. A committed nonce is always settled".
+// Decision is match's total outcome for one nonce: exactly one of serve, burn, probe, hold, or decline. See rules.md, "1. A committed nonce is always settled".
 type Decision interface{ isDecision() }
 
 type serve struct {
@@ -14,6 +14,8 @@ type serve struct {
 	despiteExclusion bool
 }
 type burn struct{ kind GhostKind }
+
+type probe struct{ params any }
 
 // hold leaves the bound nonce uncommitted until then, giving a compatible waiter a chance. See README, "The match decision".
 type hold struct{ until time.Time }
@@ -23,6 +25,7 @@ type decline struct{}
 
 func (serve) isDecision()   {}
 func (burn) isDecision()    {}
+func (probe) isDecision()   {}
 func (hold) isDecision()    {}
 func (decline) isDecision() {}
 

@@ -147,7 +147,7 @@ Three layers, later wins:
 
 1. **Defaults** — `config/defaults.go`, `Defaults()`. The only place a default lives.
 2. **Environment** — read once at boot, in `env/` and nowhere else. `env.Load` returns *what is set* (a nil pointer is unset), so an unset variable can never overwrite a default with a zero.
-3. **Admin overrides** — the fields of `config.Overrides`, written through `/v1/admin/settings`, persisted in the store and reloaded at boot. A `POST` is a patch over the stored overrides (`Overrides.Merged`): a field it names replaces the stored one, a field it sets to `null` is cleared back to the layers below, and every other field stays. A `PUT` is the whole document and replaces the stored one. Writes are applied one at a time, so two operators patching at once cannot lose each other's fields. They take effect without a restart: the config is an immutable snapshot swapped whole, and every reader loads it per request. The `settings written` audit line carries the method, the open models, the kill switch and both routing lists as they stand after the call.
+3. **Admin overrides** — the fields of `config.Overrides`, written through `/v1/admin/settings`, persisted in the store and reloaded at boot. A `POST` is a patch over the stored overrides (`Overrides.Merged`): a field it names replaces the stored one, a field it sets to `null` is cleared back to the layers below, and every other field stays. A `PUT` is the whole document and replaces the stored one. Writes are applied one at a time, so two operators patching at once cannot lose each other's fields. They take effect without a restart: the config is an immutable snapshot swapped whole, and every reader loads it per request. The `settings written` audit line carries the method, the open models, the kill switch and the three `participants` lists as they stand after the call.
 
 Parse failures are accumulated, so a boot reports **every** misconfigured variable at once rather than one per restart.
 
@@ -172,7 +172,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | Variable | Default | What it decides |
 | --- | --- | --- |
 | `DEVSHARD_PORT` | 8080 | the listening port |
-| `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC`, and a configured value wins over the node |
+| `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC` or its RPC fallback, and a configured value wins over the node; a node whose `app.toml` has `grpc.enable` and `api.enable` both false cannot answer it, so set it there ([`chain/README.md`](../chain/README.md), "The gRPC transport") |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |
 | `DEVSHARD_SESSION_RETENTION_EPOCHS` | 2 | how many epochs before the effective one an escrow's session directory stays on disk; `0` keeps every one, and `1` is raised to 2, the hosts' own horizon ("Session storage" below) |
 | `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; `0` sets no static cap and lets the weight model decide alone |
@@ -234,7 +234,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
 | `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; a key shorter than 16 characters is refused, client or admin, and an empty admin key leaves the admin surface unrouted ("Who may call what" above) |
 | `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ("Boot" below) |
-| `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC its queries fall back to; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
+| `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC every chain call falls back to when gRPC is unreachable, queries and transactions alike; the gateway runs with gRPC unreachable as long as `DEVSHARD_CHAIN_RPC` points at a live CometBFT RPC, and a transaction broadcast runs once on the transport the reads selected; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
 | `DEVSHARD_RPC_H2_UPGRADE` | on | whether a session's connection to a host first tries HTTP/2 on the origin of the host's inference URL (h2c on `http`, TLS offering ALPN `gonka-rpc/1` on `https`) and drops to Connect over HTTP/1.1 on the same origin when the host does not speak it; `0`, `false`, `no` or `off` stays on HTTP/1.1 |
 | `DEVSHARD_RPC_GRPC` | off | whether that HTTP/2 connection speaks native gRPC instead of Connect; on only for `1`, `true`, `yes` or `on`, and never used over HTTP/1.1 |
@@ -389,6 +389,7 @@ The record carries no request or response body — capture files exist for that,
 | `escrow created` / `escrow settled` | the moments funds were committed and left; the settle line is the audit record |
 | `settled escrow record dropped` | that row named the only key able to settle the escrow — removal is irreversible |
 | `session storage removed past the host horizon` / `session storage left in place` / `session retention pass failed` / `session retention raised to the host horizon` | `removed` escrow session directories left the disk for good; one directory could not be read or removed and is tried again next epoch; a pass that failed runs again on the next snapshot; a configured `DEVSHARD_SESSION_RETENTION_EPOCHS` below the hosts' horizon was raised to it ("Session storage" above) |
+| `shadow probe served` / `shadow probe failed` | how a probe sent to a shadow participant ended: its outcome, duration, output tokens, the first-token time when a byte streamed, and the error when it failed |
 | `escrow recovered from commitment` | a create landed while the gateway was down, so `escrow created` never ran; the escrow exists in no other line |
 | `commitment cleared` | a creation intent was abandoned, with the reason — one of which (`transaction created no escrow`) means the transaction *did* commit |
 | `escrow gone from chain, taken out of service` | `escrow retired` also fires for settlement parking, so this is the only line carrying the cause; it also fires for a row already out of service whose escrow the chain pruned past its settle deadline, which leaves the unsettled count with it |
@@ -423,6 +424,7 @@ Admin lines carry the action and its subject, **never the request body** — an 
 | is it hiding failures | `devshard_gateway_requests_total{outcome="failure"}`, `devshard_gateway_user_requests_with_hidden_failure_total`, `devshard_gateway_attempt_failures_total{visibility="no_winner"}` |
 | is it admitting or refusing | `devshard_gateway_limit_rejections_total`, `devshard_gateway_prompt_count_gate_full_total` for a request `DEVSHARD_STATS_TOKENIZER` left on the byte estimate because every prompt count slot was taken, `devshard_gateway_limiter_queue_depth`, and `devshard_gateway_inflight_requests_by_model` against `devshard_gateway_enforced_max_concurrent_requests_by_model`, the cap after overrides and capacity scaling (`devshard_gateway_effective_max_concurrent_requests` is the configured cap before either) |
 | how are the hosts | `devshard_gateway_participant_*` (receipt, first content, inter-chunk, transport errors, missed deadlines), `devshard_gateway_host_ejected`, `devshard_gateway_participant_breaker_state`; a host's congestion windows are read from `GET /v1/admin/hosts`, not from `/metrics` |
+| are the shadow hosts fit to be trusted | `devshard_gateway_shadow_probes_total`, `devshard_gateway_shadow_probe_first_token_seconds`, `devshard_gateway_shadow_probe_duration_seconds`, `devshard_gateway_shadow_probe_output_tokens_total`, and the `shadow probe served` / `shadow probe failed` lines ("The participants setting") |
 | is money leaking | `devshard_gateway_ghost_nonces_burned_total`, `devshard_gateway_nonce_holds_total`, `devshard_gateway_timeout_actions_total`, `devshard_gateway_burn_budget_exhausted_total`, and `devshard_gateway_error_miss_verify_rejects_total` for an error the verifiers would not let the gateway claim back ([race.md](./race.md), "Error misses") |
 | are the hosts reachable and on time | `devshard_gateway_host_ping_up`, `devshard_gateway_host_ping_rtt_seconds`, `devshard_gateway_host_ping_warm_rtt_seconds`, `devshard_gateway_host_clock_divergence_seconds`, with `devshard_gateway_host_ping_targets`, `devshard_gateway_host_ping_ticks_total` and `devshard_gateway_host_ping_last_probe_timestamp_seconds` saying the probe itself runs ([`hostping/README.md`](../hostping/README.md)) |
 | is the shard behind on the votes it owes | `devshard_gateway_owed_timeout_votes`, against `engine_max_concurrent_timeout_votes` ([race.md](./race.md), "The timeout-vote queue"); `devshard_gateway_owed_vote_writes_lost_total` by `cause` (`shed`, `write_failed`), the saves and deletes of owed votes the store lost ([`store/README.md`](../store/README.md), "Owed refusal votes") |
@@ -604,7 +606,7 @@ How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_ses
 | what is routable, and the config in force | `GET /v1/admin/state` |
 | the stored admin overrides, as a `PUT` would write them back | `GET /v1/admin/settings` |
 | every escrow row the process owns | `GET /v1/admin/devshards` |
-| the full participant keys to paste into either routing list | `GET /v1/admin/hosts` — never a log line's short host label, which is the last eight characters and matches nobody |
+| the full participant keys to paste into a `participants` list | `GET /v1/admin/hosts` — never a log line's short host label, which is the last eight characters and matches nobody |
 | rotation's last outcome per model | `GET /v1/debug/rotation` |
 | which slot answered which height-sync turn | `GET /v1/debug/heightsync` |
 | one escrow's protocol state | `GET /devshard/{id}/v1/state` |
@@ -734,15 +736,33 @@ The gateway reads none of devshardctl's state: its own store starts empty ([`rul
 
 An escrow the chain already reports settled is never published: a seeded one has its session refused at open and its row deleted ("Boot", step 5), and importing one fails with `bridge.ErrEscrowSettled`, its row left for the next publication to delete. An escrow that settles on chain while it serves is parked by the escrow check that finds it settled, and the settle path then drops it without a second broadcast.
 
-## The two routing lists
+## The participants setting
 
-`participant_allowlist` narrows **which participants this gateway routes to**. `unthrottled_participants` names participants whose congestion window and ejection it declines to apply, and admits them whether or not the allowlist names them. Both are set through `/v1/admin/settings`, by `PUT` or `POST`, and nowhere else: there is no env value and no default behind them.
+`participants` is one admin setting holding three lists of participant addresses. It is set through `/v1/admin/settings`, by `PUT` or `POST`, and nowhere else: there is no env value and no default behind it.
 
-**That makes them one `PUT` away from being cleared.** A `PUT` replaces the stored overrides document whole, so a `PUT` that does not resend a list drops it, and a dropped narrowing fails open: the gateway routes to everybody again without refusing anything. The same is true of a fresh or lost store. A `POST` leaves a list it does not name in place. Read the lists back either way: the `settings written` audit line carries `participant_allowlist` and `unthrottled_participants` as they stand after the call.
+```json
+{"participants": {"trust": ["gonka1..."], "shadow": ["gonka1..."], "unthrottled": ["gonka1..."]}}
+```
 
-An entry must look like an address. The shape is checked when the settings document is built, so a short host label pasted from a log or a Grafana `host=` tag is refused at the settings call rather than narrowing dispatch to nobody.
+```bash
+curl -X POST "$GATEWAY/v1/admin/settings" -H "Authorization: Bearer $ADMIN_KEY" -H "Content-Type: application/json" -d '{"participants": {"shadow": ["gonka1..."]}}'
+```
 
-Neither list restrains anything but routing. Host pings, catch-up, finalize, the retirement flush, the timeout sweep and the warmup prober all address the group the chain gave the escrow. See routing.md, "Paths that ignore the routing lists, by design".
+- **`trust`** narrows **which participants this gateway routes client traffic to**. When it is non-empty only its members, and the `unthrottled` ones, are routed to; when it is empty everybody is, except the `shadow` members.
+- **`unthrottled`** names participants whose congestion window and ejection the gateway declines to apply, and admits them whether or not `trust` names them. See routing.md, "Unthrottled participants".
+- **`shadow`** names participants that receive inference probes and never client traffic. A probe repeats a client request the gateway has queued, with `max_tokens` and `min_tokens` both set to one value drawn per probe from 256 to the least of 1024, the model's output cap and the context room the prompt leaves, so the shadow host receives that client's prompt; it is sent to the host in place of the ghost burn its nonce would otherwise be, so the probe rate follows the shadow host's share of an escrow's slots, and a probe is the operator's cost: billed like the burn it replaces plus the tokens it reserves, never charged to the client it repeats. A grammar-constrained request, or one that carries tools, is not repeated, and the nonce is burned as `shadow_probe_grammar_constrained`; a request with under 256 tokens of room is burned as `shadow_probe_no_room`; with no live request queued it is burned as `shadow_probe_no_request`. Nothing throttles or limits a shadow host: its congestion window, cut-off and ejection do not apply to a probe. A shadow host absent from the escrow's session, owing proof-of-compute or with diverged escrow state is burned as before, because a probe cannot be served there. See routing.md, "Shadow participants".
+
+**An empty `trust` with a non-empty `shadow` routes clients to everybody except the shadow members.** That is also how an operator keeps one participant out of routing without naming everybody else.
+
+A `POST` merges inside `participants`, one sub-key at a time: a sub-key it names replaces the stored one, a sub-key it sets to `null` is cleared, and an omitted sub-key stays. `{"participants": null}` clears all three. A `PUT` replaces the stored overrides document whole, so a `PUT` that does not resend `participants` drops it.
+
+**That makes the lists one `PUT` away from being cleared.** A dropped `trust` fails open: the gateway routes to everybody again without refusing anything, and a dropped `shadow` makes the shadow hosts routable. The same is true of a fresh or lost store. Read the lists back either way: the `settings written` audit line carries `participants_trust`, `participants_shadow` and `participants_unthrottled` as they stand after the call.
+
+An entry must look like an address. The shape is checked when the settings document is built, so a short host label pasted from a log or a Grafana `host=` tag is refused at the settings call rather than narrowing dispatch to nobody. A participant named in both `shadow` and `trust`, or in both `shadow` and `unthrottled`, is refused with an error naming it; `trust` and `unthrottled` may name the same participant.
+
+The lists restrain nothing but routing. Host pings, catch-up, finalize, the retirement flush, the timeout sweep and the warmup prober all address the group the chain gave the escrow. See routing.md, "Paths that ignore the routing lists, by design".
+
+**Deciding whether to promote a shadow host.** Each probe ends in one `shadow probe served` or `shadow probe failed` line and in `devshard_gateway_shadow_probes_total{participant,outcome}`. A served probe also records `devshard_gateway_shadow_probe_first_token_seconds{participant}` (only when a byte streamed), `devshard_gateway_shadow_probe_duration_seconds{participant}` and `devshard_gateway_shadow_probe_output_tokens_total{participant}`. Compare them with the same participant's `devshard_gateway_participant_*` families before moving the participant from `shadow` to `trust`. A failed probe is voted as a timeout like any nonce no reply finished. The nonce is recorded in the ledger under the terminal `shadow_probe`, so it lands on neither side of a serving ratio (accounting.md, "Four rules that keep a finding honest").
 
 ## Settling an escrow that is still busy
 

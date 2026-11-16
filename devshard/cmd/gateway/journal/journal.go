@@ -195,7 +195,7 @@ func (j *Journal) DiffComposed(escrowID string, diff *types.Diff) {
 	j.emit(queuedEvent{kind: KindDiffComposed, escrowID: escrowID, facts: facts})
 }
 
-// ProbeRecorded hands the warmup's own nonce to the ledger, after the escrow it was spent on was opened there.
+// ProbeRecorded hands a gateway-owned probe's nonce, a warmup's or a shadow participant's, to the ledger, after the escrow it was spent on was opened there.
 func (j *Journal) ProbeRecorded(escrowID string, attempt accounting.Attempt) {
 	j.emit(queuedEvent{kind: KindWarmupProbe, escrowID: escrowID, attempt: &attempt})
 }
@@ -351,7 +351,7 @@ func (j *Journal) deliver(entry *queuedEvent) {
 		renderRequestBodyUnread(j.lines, entry.request)
 	case KindReplyNotCached:
 		renderReplyNotCached(j.lines, entry.request)
-	case KindHostTransition, KindExcludedHostServed, KindForcedSend, KindEscrowTransition, KindChainTransition, KindFundingTransition:
+	case KindHostTransition, KindExcludedHostServed, KindForcedSend, KindEscrowTransition, KindChainTransition, KindFundingTransition, KindShadowProbe:
 		entry.render(j.lines)
 	}
 }

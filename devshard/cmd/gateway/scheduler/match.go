@@ -9,11 +9,12 @@ type availability struct {
 	pocRequired  func(participant string) bool
 	congested    func(participant string) blockReason
 	ejected      func(participant string) bool
-	notAllowed   func(participant string) bool
+	untrusted    func(participant string) bool
 	stateBlocked func(participant string) bool
 	absent       func(participant string) bool
 	budgetSpent  func(participant string) bool
 	unthrottled  func(participant string) bool
+	shadowed     func(participant string) bool
 
 	frozen          map[string]blockReason
 	overFullWindows bool
@@ -27,19 +28,20 @@ const (
 	blockWindowFull
 	blockCutOff
 	blockEjected
-	blockNotAllowed
+	blockUntrusted
 	blockExcluded
 	blockStateDiverged
 	blockAbsentFromChain
+	blockShadow
 )
 
-// ghostFor names the burn each participant-only block earns, as one mapping rather than two switches.
+// ghostFor names the burn each participant-only block earns, as one mapping rather than two switches; blockShadow earns a probe instead, so it has no entry.
 var ghostFor = map[blockReason]GhostKind{
 	blockPoCRequired:     ghostPoC,
 	blockWindowFull:      ghostWindowFull,
 	blockCutOff:          ghostCutOff,
 	blockEjected:         ghostEjected,
-	blockNotAllowed:      ghostNotAllowed,
+	blockUntrusted:       ghostUntrusted,
 	blockStateDiverged:   ghostStateDiverged,
 	blockAbsentFromChain: ghostAbsentFromChain,
 }
@@ -53,8 +55,12 @@ func (a availability) absentFromSession(participant string) bool {
 	return a.absent != nil && a.absent(participant)
 }
 
-func (a availability) outsideAllowlist(participant string) bool {
-	return a.notAllowed != nil && a.notAllowed(participant)
+func (a availability) outsideTrust(participant string) bool {
+	return a.untrusted != nil && a.untrusted(participant)
+}
+
+func (a availability) shadowMember(participant string) bool {
+	return a.shadowed != nil && a.shadowed(participant)
 }
 
 // throttlingWaived waives the rungs protecting a host from this gateway, never those protecting the nonce. See routing.md, "Unthrottled participants".
@@ -84,8 +90,9 @@ func (a availability) memoisedBlock(participant string) blockReason {
 
 // firstBlock stops at the first rung that holds, so no rung below it is asked.
 func (a availability) firstBlock(participant string) blockReason {
-	if a.outsideAllowlist(participant) {
-		return blockNotAllowed
+	shadow := a.shadowMember(participant)
+	if !shadow && a.outsideTrust(participant) {
+		return blockUntrusted
 	}
 	if a.absentFromSession(participant) {
 		return blockAbsentFromChain
@@ -93,6 +100,9 @@ func (a availability) firstBlock(participant string) blockReason {
 	waived := a.throttlingWaived(participant)
 	if a.pocRequired(participant) {
 		return blockPoCRequired
+	}
+	if shadow {
+		return a.shadowBlock(participant)
 	}
 	if limited := a.congestionBlock(participant); limited == blockCutOff || (limited != blockNone && !waived) {
 		return limited
@@ -104,6 +114,13 @@ func (a availability) firstBlock(participant string) blockReason {
 		return blockStateDiverged
 	}
 	return blockNone
+}
+
+func (a availability) shadowBlock(participant string) blockReason {
+	if a.divergedFromEscrowState(participant) {
+		return blockStateDiverged
+	}
+	return blockShadow
 }
 
 func (a availability) congestionBlock(participant string) blockReason {
@@ -164,7 +181,11 @@ func (a availability) onlyThisHostIsLeft(participant string, participants []stri
 // match is pure and total, and filters by participant rather than slot. See README, "The match decision".
 func match(binding HostBinding, waiting []*waiter, participants []string, avail availability, now time.Time, matchWait time.Duration) Decision {
 	participant := binding.Participant
-	if reason := avail.participantBlocked(participant); reason != blockNone {
+	switch reason := avail.participantBlocked(participant); reason {
+	case blockNone:
+	case blockShadow:
+		return probe{}
+	default:
 		return burn{kind: ghostFor[reason]}
 	}
 

@@ -64,6 +64,8 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			}
 			offered.taken.hostSlot = release
 		case burn:
+		case probe:
+			offered.decision = d.shadowDecision()
 		default:
 			return intentFor(offered.decision)
 		}
@@ -131,6 +133,12 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			}
 			d.recordGhost(burned)
 			offered.taken.releaseHold()
+			d.burnsInARow++
+			if d.spendBurnBudget(&burnBudget) {
+				return time.Time{}, false
+			}
+		case probe:
+			d.sendProbe(outcome, offered.taken, prepared)
 			d.burnsInARow++
 			if d.spendBurnBudget(&burnBudget) {
 				return time.Time{}, false

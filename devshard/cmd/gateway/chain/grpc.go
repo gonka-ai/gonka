@@ -109,7 +109,9 @@ func NewGRPCChain(client *commonchain.Client, chainID string) *GRPCChain {
 	return &GRPCChain{client: client, registry: registry, chainID: strings.TrimSpace(chainID)}
 }
 
-func (g *GRPCChain) conn() grpc.ClientConnInterface { return g.client.Conn() }
+func (g *GRPCChain) queryConn() grpc.ClientConnInterface { return g.client.QueryConn() }
+
+func (g *GRPCChain) transactionConn() grpc.ClientConnInterface { return g.client.UnorderedTxConn() }
 
 // ChainID asks the node unless a value was configured; a mismatch invalidates every signature, so the configured value wins.
 func (g *GRPCChain) ChainID(ctx context.Context) (string, error) {
@@ -133,7 +135,7 @@ func (g *GRPCChain) Account(ctx context.Context, address string) (Account, error
 	if address == "" {
 		return Account{}, fmt.Errorf("address is required")
 	}
-	response, err := authtypes.NewQueryClient(g.conn()).Account(ctx, &authtypes.QueryAccountRequest{Address: address})
+	response, err := authtypes.NewQueryClient(g.queryConn()).Account(ctx, &authtypes.QueryAccountRequest{Address: address})
 	if err != nil {
 		return Account{}, fmt.Errorf("fetch account %s: %w", address, err)
 	}
@@ -146,7 +148,7 @@ func (g *GRPCChain) Account(ctx context.Context, address string) (Account, error
 
 // SpendableBalance leaves out vesting coins still locked, which a create cannot spend.
 func (g *GRPCChain) SpendableBalance(ctx context.Context, address, denom string) (uint64, error) {
-	response, err := banktypes.NewQueryClient(g.conn()).SpendableBalanceByDenom(ctx, &banktypes.QuerySpendableBalanceByDenomRequest{Address: address, Denom: denom})
+	response, err := banktypes.NewQueryClient(g.queryConn()).SpendableBalanceByDenom(ctx, &banktypes.QuerySpendableBalanceByDenomRequest{Address: address, Denom: denom})
 	if err != nil {
 		return 0, fmt.Errorf("fetch spendable %s of %s: %w", denom, address, err)
 	}
@@ -161,7 +163,7 @@ func (g *GRPCChain) SpendableBalance(ctx context.Context, address, denom string)
 }
 
 func (g *GRPCChain) Broadcast(ctx context.Context, txBytes []byte) (string, error) {
-	response, err := txtypes.NewServiceClient(g.conn()).BroadcastTx(ctx, &txtypes.BroadcastTxRequest{
+	response, err := txtypes.NewServiceClient(g.transactionConn()).BroadcastTx(ctx, &txtypes.BroadcastTxRequest{
 		TxBytes: txBytes,
 		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
 	})
@@ -196,7 +198,7 @@ func alreadyInMempool(result *sdk.TxResponse) bool {
 
 // Tx reports found=false for a transaction the node has not indexed yet, which a poller must tell apart from a failure.
 func (g *GRPCChain) Tx(ctx context.Context, txHash string) (TxResult, bool, error) {
-	response, err := txtypes.NewServiceClient(g.conn()).GetTx(ctx, &txtypes.GetTxRequest{Hash: txHash})
+	response, err := txtypes.NewServiceClient(g.queryConn()).GetTx(ctx, &txtypes.GetTxRequest{Hash: txHash})
 	if err != nil {
 		if isNotFoundStatus(err) {
 			return TxResult{}, false, nil
