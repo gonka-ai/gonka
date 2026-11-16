@@ -2,8 +2,6 @@ package user
 
 import (
 	"bytes"
-	"context"
-	"devshard/types"
 	"errors"
 	"testing"
 	"time"
@@ -14,6 +12,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
+	"devshard/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +38,7 @@ func TestRecoverMainnetSnapshotWithoutOracleReplaysCarriedProofs(t *testing.T) {
 	session, err := NewSession(sm, user, "recover-height", group, make([]HostClient, len(group)), verifier, WithStorage(store))
 	require.NoError(t, err)
 	session.mu.Lock()
-	_, _, err = session.composeDiffLocked(context.Background(), nil)
+	_, _, err = session.composeDiffLocked(nil, nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
 	root, err := sm.ComputeStateRoot()

@@ -250,3 +250,13 @@ func TestMainnetSnapshotCannotBootstrapItsOwnTimeOrValidatorAuthority(t *testing
 		require.Zero(t, restored.LatestNonce(), "bad snapshot must not replace live state")
 	}
 }
+
+// ParamsForHost permits a nil persistence context, which reaches prelude construction.
+func TestMainnetHeightBuildAcceptsNilPersistenceContext(t *testing.T) {
+	sm, _, _, _ := heightFixture(t)
+	var tx *types.DevshardTx
+	var err error
+	require.NotPanics(t, func() { tx, err = sm.BuildMainnetHeightTx(nil) })
+	require.NoError(t, err)
+	require.NotNil(t, tx)
+}
