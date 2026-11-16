@@ -154,3 +154,24 @@ func TestMainnetHeightClaimedTimeIsAuthenticated(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInvalidUserSig)
 }
+
+func TestMainnetSnapshotCannotBootstrapItsOwnTimeOrValidatorAuthority(t *testing.T) {
+	sm, _, _, fresh := heightFixture(t)
+	tx, err := sm.BuildMainnetHeightTx(context.Background())
+	require.NoError(t, err)
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{tx})
+	require.NoError(t, err)
+	for _, mutate := range []func(*types.EscrowState){
+		func(s *types.EscrowState) { s.MainnetCheckpoint.Time = s.MainnetCheckpoint.Time.Add(-time.Second) },
+		func(s *types.EscrowState) { s.MainnetCheckpoint.NextValidatorsHash = make([]byte, 32) },
+		func(s *types.EscrowState) { s.Config.MainnetAnchorHash = make([]byte, 32) },
+		func(s *types.EscrowState) { s.MainnetCheckpoint.Height++ },
+	} {
+		snapshot := sm.SnapshotState()
+		mutate(&snapshot)
+		restored := fresh()
+		err := restored.RestoreState(&snapshot)
+		require.Error(t, err)
+		require.Zero(t, restored.LatestNonce(), "bad snapshot must not replace live state")
+	}
+}
