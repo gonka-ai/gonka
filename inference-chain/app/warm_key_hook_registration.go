@@ -20,6 +20,7 @@ func installWarmKeyGrantHooks(keeper, hooks any) bool {
 	typ := setter.Type()
 	value := reflect.ValueOf(hooks)
 	if typ.NumIn() != 1 || typ.NumOut() != 0 || typ.In(0).Kind() != reflect.Interface || !value.IsValid() || !value.Type().Implements(typ.In(0)) {
+		//nolint:forbidigo // Startup-only SDK API check, before InitChain or consensus execution.
 		panic("authz: incompatible SetGrantHooks API; update warm-key hook registration")
 	}
 	setter.Call([]reflect.Value{value})
