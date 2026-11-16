@@ -681,7 +681,13 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 		}
 		applied = append(applied, tx)
 	}
-	if len(applied) == 0 && logPlaneReject != nil {
+	appliedWork := len(applied)
+	if appliedWork > 0 && applied[0].GetMainnetHeight() != nil {
+		// The mandatory prelude authenticates the checkpoint; it does not
+		// make an otherwise rejected height-sync batch useful work.
+		appliedWork--
+	}
+	if appliedWork == 0 && logPlaneReject != nil {
 		return nil, nil, nil, logPlaneReject
 	}
 	sm.observeHeightSyncLocked(nonce, applied)

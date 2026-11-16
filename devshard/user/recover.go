@@ -209,9 +209,6 @@ func RecoverSession(
 					escrowID, snapNonce, floorErr)
 				floor = nil
 			}
-			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
-				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
-			}
 			// A rejected blob has already advanced the machine, so replay from 1
 			// needs a fresh one. The snapshot root is not compared to the diff
 			// hash: a seal can fold into that nonce after the diff was stored,
@@ -234,9 +231,16 @@ func RecoverSession(
 				sess = freshSess
 				return nil
 			}
-			if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
-				log.Printf("recover_session escrow=%s snapshot_nonce=%d committed_entries_rejected=%v (replaying from 1)",
-					escrowID, snapNonce, commitErr)
+			restoreErr := sm.RestoreStateWithFloor(snapState, floor)
+			if restoreErr == nil {
+				restoreErr = sm.RestoreCommittedEntries(committedEntries)
+			}
+			if restoreErr != nil {
+				// Snapshot bootstrap can need an unavailable historical oracle.
+				// A complete journal authenticates its carried proofs offline;
+				// replay from a fresh machine rather than trusting the snapshot.
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d snapshot_rejected=%v (replaying from 1)",
+					escrowID, snapNonce, restoreErr)
 				if recErr := recreate(); recErr != nil {
 					return nil, nil, recErr
 				}

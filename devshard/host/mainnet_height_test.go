@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
+	"devshard"
+	"devshard/chainoracle/blocks/headertime"
 	mockoracle "devshard/chainoracle/blocks/observer"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -76,4 +79,47 @@ func TestMainnetFreshnessWithholdsSignatureWithoutAbortingReceiptOrRecovery(t *t
 	resp, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.StateSig)
+}
+
+func TestMainnetNeverSignedTerminalHistoryCannotBypassFreshness(t *testing.T) {
+	validator := testutil.MustGenerateKey(t)
+	addr, err := blocks.AddressBytes(validator.CompressedPublicKeyBytes())
+	require.NoError(t, err)
+	source, err := mockoracle.NewMock(mockoracle.MockConfig{LightBlocks: true, ChainID: "terminal-height", Validators: []mockoracle.MockValidator{{Signer: validator, Address: addr, Power: 10}}, InitialHeight: 100, Start: time.Now().Add(-10 * time.Minute), BlockInterval: time.Second})
+	require.NoError(t, err)
+	anchor, err := source.AdvanceOne()
+	require.NoError(t, err)
+	proof, cp, err := lightproof.Build(context.Background(), lightproof.Checkpoint{Height: anchor.Height, Hash: anchor.BlockHash}, anchor.Height, source)
+	require.NoError(t, err)
+	cfg := testutil.DefaultConfig(1)
+	cfg.MainnetAnchorHeight, cfg.MainnetAnchorHash = anchor.Height, bytes.Clone(anchor.BlockHash)
+	hostSigner, user := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	times := headertime.New(source)
+	times.Observe(anchor)
+	newSM := func() *state.StateMachine {
+		sm, err := state.NewStateMachine("terminal-height", cfg, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(), testutil.MustMemoryStore(t, "terminal-height", user.Address(), cfg, group, 1_000_000), state.WithVersion("v7"), state.WithMainnetHeights(source), state.WithHeaderTimes(times))
+		require.NoError(t, err)
+		return sm
+	}
+	producer := newSM()
+	prelude := &types.DevshardTx{Tx: &types.DevshardTx_MainnetHeight{MainnetHeight: &types.MsgMainnetHeight{Height: cp.Height, TimeUnixNano: cp.Time.UnixNano(), LightBlocks: proof}}}
+	finalize := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}}
+	root, err := producer.ApplyLocal(1, []*types.DevshardTx{prelude, finalize})
+	require.NoError(t, err)
+	first := testutil.SignDiffWithRoot(t, user, "terminal-height", 1, []*types.DevshardTx{prelude, finalize}, root)
+	repeated := proto.Clone(prelude).(*types.DevshardTx)
+	repeated.GetMainnetHeight().LightBlocks = nil
+	root, err = producer.ApplyLocal(2, []*types.DevshardTx{repeated})
+	require.NoError(t, err)
+	require.Equal(t, types.PhaseSettlement, producer.Phase())
+	last := testutil.SignDiffWithRoot(t, user, "terminal-height", 2, []*types.DevshardTx{repeated}, root)
+	hostStore := testutil.MustMemoryStore(t, "terminal-height", user.Address(), cfg, group, 1_000_000)
+	h, err := NewHost(newSM(), hostSigner, stub.NewInferenceEngine(), "terminal-height", group, nil, WithStorage(hostStore), WithChainOracle(source), WithMaxNonceProvider(devshard.StaticMaxNonce(2)))
+	require.NoError(t, err)
+	sigs, err := h.ApplyRecoveredDiffs(context.Background(), []types.Diff{first, last})
+	require.NoError(t, err)
+	require.Empty(t, sigs, "reaching settlement must never make stale, never-signed history signable")
+	_, err = h.signState(2, root)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
 }
