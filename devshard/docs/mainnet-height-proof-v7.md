@@ -20,7 +20,11 @@ The verified checkpoint (height, block hash, next validator hash, block time
 and chain ID) is part of the state root, mutation journal and snapshot. Failed
 apply and previews roll it back with the other state. Carried proof bytes use
 the ordinary signed transaction journal and transport, so replay needs no
-current oracle, wall clock or later validator set. Consumers of a past diff
+current oracle, wall clock or later validator set. Snapshot restore independently
+rebuilds an anchor-to-checkpoint proof before trusting its header time or
+validator set; the snapshot cannot replace the original chain-derived anchor.
+This recovery check needs retained bootstrap/transition evidence from the
+mainnet oracle. Consumers of a past diff
 can read its authenticated height and time directly from its prelude.
 
 Freshness is separate live signing policy. A host withholds new state

@@ -159,3 +159,44 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	}
 	return nil
 }
+
+// validateSnapshotCheckpoint authenticates snapshot trust metadata independently
+// of the snapshot's own state signatures. Otherwise an expired warm key could
+// vouch for a fabricated header time or validator set and bootstrap its own
+// authority. The anchor is the original chain-derived session config, never a
+// replacement anchor claimed by the snapshot.
+func (sm *StateMachine) validateSnapshotCheckpoint(snapshot *types.EscrowState) error {
+	sm.mu.RLock()
+	expectedVersion := sm.state.StateRootAndProtocolVersion
+	anchor := lightproof.Checkpoint{Height: sm.state.Config.MainnetAnchorHeight, Hash: bytes.Clone(sm.state.Config.MainnetAnchorHash)}
+	source := sm.mainnetHeights
+	escrowID := sm.state.EscrowID
+	sm.mu.RUnlock()
+	required := types.RequiresMainnetHeightProof(expectedVersion)
+	if !required && !types.RequiresMainnetHeightProof(snapshot.StateRootAndProtocolVersion) {
+		return nil
+	}
+	if !required || snapshot.StateRootAndProtocolVersion != expectedVersion || snapshot.EscrowID != escrowID {
+		return fmt.Errorf("%w: snapshot session identity/version", types.ErrProtocolVersionMismatch)
+	}
+	if snapshot.Config.MainnetAnchorHeight != anchor.Height || !bytes.Equal(snapshot.Config.MainnetAnchorHash, anchor.Hash) {
+		return fmt.Errorf("%w: snapshot replaced the chain-pinned anchor", lightproof.ErrInvalid)
+	}
+	got := snapshot.MainnetCheckpoint
+	if snapshot.LatestNonce == 0 && got.Height == anchor.Height && bytes.Equal(got.Hash, anchor.Hash) && len(got.NextValidatorsHash) == 0 && got.Time.IsZero() && got.ChainID == "" {
+		return nil
+	}
+	if source == nil {
+		return fmt.Errorf("%w: snapshot checkpoint evidence unavailable", types.ErrHeaderPending)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	_, expected, err := lightproof.Build(ctx, anchor, got.Height, source)
+	if err != nil {
+		return fmt.Errorf("snapshot mainnet checkpoint: %w", err)
+	}
+	if expected.Height != got.Height || !bytes.Equal(expected.Hash, got.Hash) || !bytes.Equal(expected.NextValidatorsHash, got.NextValidatorsHash) || !expected.Time.Equal(got.Time) || expected.ChainID != got.ChainID {
+		return fmt.Errorf("%w: snapshot checkpoint differs from authenticated headers", lightproof.ErrInvalid)
+	}
+	return nil
+}

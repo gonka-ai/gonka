@@ -1151,6 +1151,9 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 	if state == nil {
 		return nil
 	}
+	if err := sm.validateSnapshotCheckpoint(state); err != nil {
+		return err
+	}
 	restored := cloneEscrowState(state)
 	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
