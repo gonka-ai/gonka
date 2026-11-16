@@ -126,12 +126,22 @@ polling. A timeout challenge can also rebuild a lost Finish after restart from
 the persisted payload, with `RecoveryStoredOnly`; it never reruns the model.
 Concurrent challenges share and await that recovery. Cancelling one caller
 does not cancel it for the others; recovery has its own ten-second deadline
-and is cancelled on host shutdown. Unresolved recovery returns the pending
-error recognized by bounded timeout deferrals, rather than an empty success.
+and is cancelled on host shutdown. A storage read still in progress after
+25 ms returns pending before ordinary peer RPC deadlines. Unresolved recovery
+returns the pending error recognized by bounded timeout deferrals, rather than
+an empty success.
+Challenge recovery and its final response filter inspect only the requested
+inference, so foreign proposals cannot consume its authority budget. If the
+final read withholds queued completed work for missing evidence, it also
+returns pending. A pending record needs its ConfirmStart before a Finish
+can serve as evidence; a partial response cannot hide an unresolved receipt.
+Finish publication uses cancellation-aware, lazy checks of its own slot;
+a cold signer does not query unrelated grants.
 Pending-result batches share lazy authorization decisions, start no more RPCs
 after a 100 ms budget, and keep unresolved results. An in-flight query retains
 its own source timeout. At most 32 results are retried per pass, rotating the
-cursor so an unavailable old result cannot starve later results.
+starting entry, including when a pass visits the full queue, so an unavailable
+old result cannot starve later results.
 Once a receipt, Finish or participant validation is committed, other queued
 HA signature variants of that logical operation are removed from committed
 state, independently of their signature bytes. Unknown future operations and

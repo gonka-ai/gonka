@@ -28,30 +28,39 @@ func (h *Host) retryPendingFinishesLocked(actors signing.SlotActors) {
 	if found {
 		start++
 	}
+	// Advance the starting entry even when a pass visits the entire queue.
+	// Otherwise a slow first identity can exhaust every pass's budget forever.
+	h.pendingFinishCursor = ids[start%len(ids)]
 	for step := 0; step < min(32, len(ids)); step++ {
 		id := ids[(start+step)%len(ids)]
-		h.pendingFinishCursor = id
-		msg := h.pendingFinishes[id]
-		tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
-		if h.queuedHostTxSettled(tx) {
-			delete(h.pendingFinishes, id)
-			continue
-		}
-		if !h.signingCandidates[msg.ExecutorSlot] || !actors.Allows(msg.ExecutorSlot, h.signer.Address()) {
-			continue
-		}
-		data, err := types.CanonicalSignedBytes(msg)
-		if err != nil {
-			continue
-		}
-		sig, err := h.signer.Sign(data)
-		if err != nil {
-			continue
-		}
-		msg.ProposerSig = sig
-		h.mempool.Add(MempoolEntry{Tx: tx, ProposedAt: h.sm.LatestNonce()})
-		delete(h.pendingFinishes, id)
+		h.retryPendingFinishLocked(id, actors)
 	}
+}
+
+func (h *Host) retryPendingFinishLocked(id uint64, actors signing.SlotActors) {
+	if h.pendingFinishes[id] == nil {
+		return
+	}
+	msg := h.pendingFinishes[id]
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}
+	if h.queuedHostTxSettled(tx) {
+		delete(h.pendingFinishes, id)
+		return
+	}
+	if !h.signingCandidates[msg.ExecutorSlot] || !actors.Allows(msg.ExecutorSlot, h.signer.Address()) {
+		return
+	}
+	data, err := types.CanonicalSignedBytes(msg)
+	if err != nil {
+		return
+	}
+	sig, err := h.signer.Sign(data)
+	if err != nil {
+		return
+	}
+	msg.ProposerSig = sig
+	h.mempool.Add(MempoolEntry{Tx: tx, ProposedAt: h.sm.LatestNonce()})
+	delete(h.pendingFinishes, id)
 }
 
 type finishRecovery struct {
@@ -78,7 +87,7 @@ func (h *Host) recoverStartedFinish(ctx context.Context, id uint64) error {
 		return nil
 	}
 	actors := h.sm.HostSlotActorsWithBudget(100 * time.Millisecond)
-	live := h.authorizedMempoolTxsWithActors(actors)
+	live, pending := h.recoveryMempoolLocked(id, actors)
 	for _, tx := range live {
 		if finish := tx.GetFinishInference(); finish != nil && finish.InferenceId == id {
 			h.mu.Unlock()
@@ -87,7 +96,7 @@ func (h *Host) recoverStartedFinish(ctx context.Context, id uint64) error {
 	}
 	// The remaining raw Finish or completed unsigned result has unavailable
 	// authority evidence. It is owed work, not an empty successful challenge.
-	if h.mempool.HasFinish(id) || h.pendingFinishes[id] != nil {
+	if pending {
 		h.mu.Unlock()
 		return fmt.Errorf("%w: completed finish authorization pending", types.ErrHeaderPending)
 	}
@@ -136,10 +145,16 @@ func (h *Host) recoverStartedFinish(ctx context.Context, id uint64) error {
 }
 
 func waitFinishRecovery(ctx context.Context, recovery *finishRecovery) error {
+	// Reply pending before ordinary peer RPC deadlines, rather than allowing
+	// a slow storage read to appear as an unreachable executor to the verifier.
+	timer := time.NewTimer(25 * time.Millisecond)
+	defer timer.Stop()
 	select {
 	case <-recovery.done:
 		return recovery.err
 	case <-ctx.Done():
 		return fmt.Errorf("%w: waiting for stored finish: %v", types.ErrHeaderPending, ctx.Err())
+	case <-timer.C:
+		return fmt.Errorf("%w: stored finish recovery in progress", types.ErrHeaderPending)
 	}
 }

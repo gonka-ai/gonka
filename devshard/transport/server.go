@@ -876,7 +876,11 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	// and reads this mempool, so that call still builds it.
 	var mempoolBytes [][]byte
 	if payload != nil || len(wires) == 0 {
-		mempoolBytes, err = DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		recoveryTxs, readErr := s.host.RecoveryMempoolFor(req.InferenceID)
+		if readErr != nil {
+			return nil, readErr
+		}
+		mempoolBytes, err = DevshardTxsToBytes(recoveryTxs)
 		if err != nil {
 			return nil, err
 		}

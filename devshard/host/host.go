@@ -1413,7 +1413,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
 	}
-	proposerSig, err := h.signProposer(finishMsg)
+	proposerSig, err := h.signProposerContext(ctx, finishMsg)
 	if err != nil {
 		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
 			h.mu.Lock()
@@ -2290,7 +2290,14 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
 
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
+	return h.signProposerContext(context.Background(), msg)
+}
+
+func (h *Host) signProposerContext(ctx context.Context, msg proto.Message) ([]byte, error) {
 	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var slot uint32
 		switch m := msg.(type) {
 		case *types.MsgFinishInference:
@@ -2302,8 +2309,11 @@ func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 		default:
 			return nil, types.ErrWarmKeyUnconfirmed
 		}
-		if !h.CanSignSlot(slot) {
+		if !h.signingCandidates[slot] || !h.sm.HostSlotActorsWithContext(ctx, 100*time.Millisecond).Allows(slot, h.signer.Address()) {
 			return nil, types.ErrWarmKeyUnconfirmed
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 	}
 	data, err := types.CanonicalSignedBytes(msg)

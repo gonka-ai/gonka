@@ -274,11 +274,6 @@ func TestConcurrentChallengesShareStoredFinishDespiteCallerCancellation(t *testi
 	for range 3 {
 		go func() { _, _, err := h.ChallengeReceipt(context.Background(), 1, nil, nil); followers <- err }()
 	}
-	select {
-	case err := <-followers:
-		t.Fatalf("concurrent challenge returned before stored work: %v", err)
-	case <-time.After(30 * time.Millisecond):
-	}
 	cancel()
 	select {
 	case err := <-first:
@@ -286,16 +281,17 @@ func TestConcurrentChallengesShareStoredFinishDespiteCallerCancellation(t *testi
 	case <-time.After(time.Second):
 		t.Fatal("cancelled caller did not leave")
 	}
-	close(engine.release)
 	for range 3 {
 		select {
 		case err := <-followers:
-			require.NoError(t, err)
+			require.ErrorIs(t, err, types.ErrHeaderPending, "in-progress storage is an explicit deferral, never empty success")
 		case <-time.After(time.Second):
 			t.Fatal("follower did not receive stored recovery")
 		}
 	}
-	finish := findMempoolFinish(h.MempoolTxs())
+	close(engine.release)
+	var finish *types.DevshardTx
+	require.Eventually(t, func() bool { finish = findMempoolFinish(h.MempoolTxs()); return finish != nil }, time.Second, time.Millisecond)
 	require.NotNil(t, finish)
 	rec, _ := f.sm.GetInference(1)
 	require.NoError(t, f.sm.CheckEvidence(&rec, finish))
@@ -340,9 +336,13 @@ func TestPendingFinishRetryRotatesPastUnavailableOlderResults(t *testing.T) {
 		}
 		return true, nil
 	})
-	require.Empty(t, h.MempoolTxs())
-	require.Empty(t, h.MempoolTxs())
-	published := h.MempoolTxs()
+	var published []*types.DevshardTx
+	for range 65 {
+		published = h.MempoolTxs()
+		if len(published) > 0 {
+			break
+		}
+	}
 	require.Len(t, published, 1)
 	require.Equal(t, uint64(1000), published[0].GetFinishInference().InferenceId)
 	require.Len(t, h.pendingFinishes, 64)
@@ -368,4 +368,129 @@ func TestHostCloseCancelsStoredFinishRecovery(t *testing.T) {
 		t.Fatal("host close left a recovery behind")
 	}
 	require.Zero(t, engine.calls.Load())
+}
+
+func TestFullPendingPassRotatesFirstAuthorizationIdentity(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.WarmKeyBindTx(2, f.warm[0].Address(), 1))
+	h := f.host(f.warm[0], stub.NewInferenceEngine())
+	h.pendingFinishes = map[uint64]*types.MsgFinishInference{
+		100: {InferenceId: 100, ExecutorSlot: 1, EscrowId: "warm-recovery", ResponseHash: []byte("old")},
+		101: {InferenceId: 101, ExecutorSlot: 2, EscrowId: "warm-recovery", ResponseHash: []byte("healthy")},
+	}
+	f.sm.SetWarmKeyHeightChecker(func(c, w string, id uint64, h int64, at time.Time) (bool, error) {
+		if c == f.cold[1].Address() {
+			time.Sleep(150 * time.Millisecond)
+			return false, fmt.Errorf("slow old source")
+		}
+		return true, nil
+	})
+	require.Empty(t, h.MempoolTxs())
+	ready := h.MempoolTxs()
+	require.Len(t, ready, 1)
+	require.Equal(t, uint64(101), ready[0].GetFinishInference().InferenceId)
+}
+func TestChallengeRecoveryIgnoresUnrelatedQueueAndReportsMissingTargetEvidence(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.WarmKeyBindTx(2, f.warm[1].Address(), 2), testutil.StartTx(1))
+	engine := &storedFinishEngine{result: &devshard.ExecuteResult{ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40}}
+	h := f.host(f.warm[0], engine, WithStoredResponse(func(context.Context, string, uint64, uint64) ([]byte, error) { return []byte("stored"), nil }))
+	f.apply(f.confirm(h))
+	unrelated := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, EscrowId: "warm-recovery", Valid: true}
+	unrelated.ProposerSig = testutil.SignProposerTx(t, f.warm[1], unrelated)
+	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: unrelated}})
+	var unrelatedCalls atomic.Int32
+	down := false
+	f.sm.SetWarmKeyHeightChecker(func(c, w string, id uint64, h int64, at time.Time) (bool, error) {
+		if c == f.cold[2].Address() {
+			unrelatedCalls.Add(1)
+			time.Sleep(150 * time.Millisecond)
+			return false, fmt.Errorf("unrelated outage")
+		}
+		if down {
+			return false, fmt.Errorf("target evidence reset")
+		}
+		return true, nil
+	})
+	_, _, err := h.ChallengeReceipt(context.Background(), 1, nil, nil)
+	require.NoError(t, err)
+	pool, err := h.RecoveryMempoolFor(1)
+	require.NoError(t, err)
+	require.NotNil(t, findMempoolFinish(pool))
+	require.Zero(t, unrelatedCalls.Load(), "foreign proposals cannot consume the challenged inference's budget")
+	require.Equal(t, int32(1), engine.recoveries.Load())
+	down = true
+	pool, err = h.RecoveryMempoolFor(1)
+	require.ErrorIs(t, err, types.ErrHeaderPending, "final response cannot turn unknown completed work into empty success")
+	require.Empty(t, pool)
+	require.True(t, h.HostMempool().HasFinish(1), "unresolved completed work stays queued")
+}
+func TestStoredRecoveryReturnsPendingBeforePeerDeadline(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.StartTx(1))
+	engine := &heldStoredFinishEngine{ready: make(chan struct{}), release: make(chan struct{})}
+	h := f.host(f.warm[0], engine, WithStoredResponse(func(context.Context, string, uint64, uint64) ([]byte, error) { return []byte("stored"), nil }))
+	f.apply(f.confirm(h))
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	_, _, err := h.ChallengeReceipt(ctx, 1, nil, nil)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.NoError(t, ctx.Err(), "pending must reach the peer before its network deadline")
+	h.Close()
+}
+
+type cancelResultEngine struct {
+	cancel context.CancelFunc
+	result *devshard.ExecuteResult
+}
+
+func (e cancelResultEngine) Execute(context.Context, devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	e.cancel()
+	return e.result, nil
+}
+func TestFinishPublicationStopsAuthorizationAfterCancellationAndSkipsForeignColdGrants(t *testing.T) {
+	for _, cancelled := range []bool{true, false} {
+		t.Run(fmt.Sprint(cancelled), func(t *testing.T) {
+			f := newWarmRecoveryFixture(t)
+			f.apply(testutil.WarmKeyBindTx(2, f.warm[0].Address(), 1), testutil.StartTx(1))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			engine := devshard.InferenceEngine(stub.NewInferenceEngine())
+			if cancelled {
+				engine = cancelResultEngine{cancel: cancel, result: &devshard.ExecuteResult{ResponseHash: testutil.TestResponseHash}}
+			}
+			h := f.host(f.cold[1], engine)
+			f.apply(f.confirm(h))
+			var calls atomic.Int32
+			f.sm.SetWarmKeyHeightChecker(func(string, string, uint64, int64, time.Time) (bool, error) {
+				calls.Add(1)
+				time.Sleep(150 * time.Millisecond)
+				return false, fmt.Errorf("foreign source stalled")
+			})
+			_, err := h.RunExecution(ctx, &devshard.ExecuteRequest{InferenceID: 1})
+			if cancelled {
+				require.ErrorIs(t, err, context.Canceled)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Zero(t, calls.Load(), "cancelled publication and unconditional cold authority must start no foreign grant RPCs")
+		})
+	}
+}
+
+func TestFinalRecoveryReadReportsUnknownTargetFinish(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.StartTx(1))
+	h := f.host(f.warm[0], stub.NewInferenceEngine())
+	f.apply(f.confirm(h))
+	_, err := h.RunExecution(context.Background(), &devshard.ExecuteRequest{InferenceID: 1})
+	require.NoError(t, err)
+	require.NotNil(t, findMempoolFinish(h.MempoolTxs()))
+	f.sm.SetWarmKeyHeightChecker(func(string, string, uint64, int64, time.Time) (bool, error) {
+		return false, fmt.Errorf("grant RPC unavailable after recovery")
+	})
+	pool, err := h.RecoveryMempoolFor(1)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.Empty(t, pool)
+	require.True(t, h.HostMempool().HasFinish(1))
 }

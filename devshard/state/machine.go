@@ -2,6 +2,7 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
@@ -2298,7 +2299,12 @@ func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors
 // the key for in its next diff; a signature that names its nonce gets no
 // such fallback, since a grant the history has not bound at that nonce does
 // not sign it. The source is asked with sm.mu released.
-func (sm *StateMachine) localActorsAt(nonce uint64, admit bool, deadlines ...time.Time) signing.SlotActors {
+type localActorBudget struct {
+	ctx      context.Context
+	deadline time.Time
+}
+
+func (sm *StateMachine) localActorsAt(nonce uint64, admit bool, budgets ...localActorBudget) signing.SlotActors {
 	sm.mu.RLock()
 	actors := sm.consensusActorsAtLocked(nonce)
 	required := types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion)
@@ -2311,13 +2317,22 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool, deadlines ...tim
 		actors.History = cloneWarmKeyHistory(sm.state.WarmKeyHistory)
 	}
 	sm.mu.RUnlock()
-	bounded := len(deadlines) > 0
+	bounded := len(budgets) > 0
 	if bounded {
-		deadline := deadlines[0]
+		budget := budgets[0]
+		checkBudget := func() error {
+			if err := budget.ctx.Err(); err != nil {
+				return fmt.Errorf("%w: local authorization cancelled: %v", types.ErrHeaderPending, err)
+			}
+			if time.Now().After(budget.deadline) {
+				return fmt.Errorf("%w: local authorization budget exhausted", types.ErrHeaderPending)
+			}
+			return nil
+		}
 		original := checker
 		checker = func(cold, warm string, id uint64, height int64, at time.Time) (bool, error) {
-			if time.Now().After(deadline) {
-				return false, fmt.Errorf("%w: local authorization budget exhausted", types.ErrHeaderPending)
+			if err := checkBudget(); err != nil {
+				return false, err
 			}
 			if original == nil {
 				return false, types.ErrHeaderPending
@@ -2326,8 +2341,8 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool, deadlines ...tim
 		}
 		originalResolver := resolver
 		resolver = func(warm, cold string) (bool, error) {
-			if time.Now().After(deadline) {
-				return false, fmt.Errorf("%w: local authorization budget exhausted", types.ErrHeaderPending)
+			if err := checkBudget(); err != nil {
+				return false, err
 			}
 			if originalResolver == nil {
 				return false, types.ErrHeaderPending
@@ -2423,7 +2438,16 @@ func (sm *StateMachine) HostSlotActors() signing.SlotActors {
 // Once the budget expires it starts no further RPCs; an already running source
 // lookup retains the source's own deadline. This never changes consensus apply.
 func (sm *StateMachine) HostSlotActorsWithBudget(budget time.Duration) signing.SlotActors {
-	return sm.localActorsAt(sm.LatestNonce()+1, true, time.Now().Add(budget))
+	return sm.HostSlotActorsWithContext(context.Background(), budget)
+}
+
+// HostSlotActorsWithContext starts no further authorization lookups after
+// cancellation, including publication after stored-payload retrieval.
+func (sm *StateMachine) HostSlotActorsWithContext(ctx context.Context, budget time.Duration) signing.SlotActors {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return sm.localActorsAt(sm.LatestNonce()+1, true, localActorBudget{ctx: ctx, deadline: time.Now().Add(budget)})
 }
 
 // HostSlotActorsAt returns the policy for an already signed nonce. V7 checks
