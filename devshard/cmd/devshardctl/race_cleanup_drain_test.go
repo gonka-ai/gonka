@@ -135,7 +135,7 @@ func TestGoTrackedRaceCleanupSchedulesFutureExecutionTimeoutOffBarrier(t *testin
 	user.TimeoutBuffer = 150 * time.Millisecond
 	t.Cleanup(func() { user.TimeoutBuffer = prevBuffer })
 
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupManualFloorProxy(t, 3, nil, true)
 	nonce := startedInferenceConfirmedAt(t, env, time.Now())
 	due, reason, deadline := timeoutDeadlineDue(env.session, nonce, time.Now())
 	require.False(t, due, "fixture must leave an execution deadline ahead")
@@ -172,12 +172,13 @@ func TestGoTrackedRaceCleanupSchedulesFutureExecutionTimeoutOffBarrier(t *testin
 		"scheduling the deadline wait must not hold the outer barrier")
 	require.Equal(t, types.StatusStarted, env.sm.SnapshotState().Inferences[nonce].Status,
 		"vote must not run before the protocol deadline")
+	rec, _ := env.sm.GetInference(nonce)
+	env.raiseFloor(t, rec.ConfirmedAtHeight+100)
 
 	require.Eventually(t, func() bool {
 		return env.sm.SnapshotState().Inferences[nonce].Status == types.StatusTimedOut
 	}, waitBudget+2*time.Second, 20*time.Millisecond,
 		"scheduled VoteTimeout must apply at the protocol deadline")
-	require.GreaterOrEqual(t, time.Since(start), waitBudget-50*time.Millisecond)
 	require.Eventually(t, func() bool { return finished.Load() >= 2 }, time.Second, 10*time.Millisecond,
 		"the deadline vote must take a brief second barrier hold")
 }

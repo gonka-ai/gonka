@@ -59,6 +59,12 @@ func NewPostgresGatewayStore(ctx context.Context) (*PostgresGatewayStore, error)
 
 func (s *PostgresGatewayStore) ensureSchema(ctx context.Context) error {
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS gateway_inference_completions (
+			escrow_id TEXT NOT NULL,
+			nonce BIGINT NOT NULL,
+			entry_json BYTEA NOT NULL,
+			PRIMARY KEY (escrow_id, nonce)
+		)`,
 		`CREATE TABLE IF NOT EXISTS gateway_settings (
 			id SMALLINT PRIMARY KEY CHECK (id = 1),
 			chain_rest TEXT NOT NULL,
@@ -837,14 +843,23 @@ func (s *PostgresGatewayStore) SetDevshardSettlementPending(ctx context.Context,
 func (s *PostgresGatewayStore) DeleteDevshard(ctx context.Context, id string) error {
 	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
-	cmdTag, err := s.pool.Exec(ctx, `DELETE FROM gateway_devshards WHERE id = $1`, strings.TrimSpace(id))
+	id = strings.TrimSpace(id)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin delete devshard %s: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	cmdTag, err := tx.Exec(ctx, `DELETE FROM gateway_devshards WHERE id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("delete devshard %s: %w", id, err)
 	}
 	if cmdTag.RowsAffected() == 0 {
 		return fmt.Errorf("devshard %s not found", id)
 	}
-	return nil
+	if _, err := tx.Exec(ctx, `DELETE FROM gateway_inference_completions WHERE escrow_id = $1`, id); err != nil {
+		return fmt.Errorf("delete devshard %s completion payloads: %w", id, err)
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresGatewayStore) SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {

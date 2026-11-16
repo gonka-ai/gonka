@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 
 	"devshard/transport/rpcpb/rpcpbconnect"
+	"devshard/types"
 )
 
 // Non-inference 429/503 (and transient dial failures) retry with exponential
@@ -87,14 +89,29 @@ func IsEscrowLookupLimited(statusCode int, devshardError string) bool {
 // the request's diffs in time and applied none of them, so the same request
 // may be resent.
 func IsStorageBusy(err error) bool {
+	return isUnavailableWithCode(err, DevshardErrorStorageBusy)
+}
+
+func IsHeaderPending(err error) bool {
+	return isUnavailableWithCode(err, DevshardErrorHeaderPending)
+}
+
+func TagHeaderPending(err error) error {
+	if err == nil || errors.Is(err, types.ErrHeaderPending) || !IsHeaderPending(err) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", types.ErrHeaderPending, err)
+}
+
+func isUnavailableWithCode(err error, code string) bool {
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {
 		return status.StatusCode == http.StatusServiceUnavailable &&
-			strings.EqualFold(strings.TrimSpace(status.DevshardError), DevshardErrorStorageBusy)
+			strings.EqualFold(strings.TrimSpace(status.DevshardError), code)
 	}
 	var ce *connect.Error
 	if errors.As(err, &ce) && ce.Code() == connect.CodeUnavailable {
-		return strings.EqualFold(strings.TrimSpace(ce.Meta().Get(HeaderDevshardError)), DevshardErrorStorageBusy)
+		return strings.EqualFold(strings.TrimSpace(ce.Meta().Get(HeaderDevshardError)), code)
 	}
 	return false
 }

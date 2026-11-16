@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"devshard/host"
+	"devshard/internal/testutil"
+	"devshard/user"
 	"path/filepath"
 	"testing"
 	"time"
@@ -344,4 +347,22 @@ func TestMigrateGatewaySQLiteToPostgres_CommitmentsPreserved(t *testing.T) {
 	require.ElementsMatch(t, want, got)
 	require.Len(t, got, 2)
 	require.ElementsMatch(t, []string{"TX-AAA", "TX-BBB"}, []string{got[0].TxHash, got[1].TxHash})
+}
+
+func TestMigrateGatewaySQLiteToPostgres_CompletionJournal(t *testing.T) {
+	ctx := context.Background()
+
+	sqlite, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, sqlite.Close()) })
+	seedGatewayStoreForMigration(t, sqlite)
+	entry := user.InferenceCompletion{Nonce: 7, PreparedAt: time.Now().UnixNano(), Payload: host.InferencePayload{Prompt: testutil.TestPrompt, Model: "llama"}}
+	require.NoError(t, sqlite.SaveInferenceCompletion("escrow-migrate", entry))
+
+	pg := newTestPostgresGatewayStore(t)
+
+	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
+	got, err := pg.ListInferenceCompletions("escrow-migrate")
+	require.NoError(t, err)
+	require.Equal(t, []user.InferenceCompletion{entry}, got)
 }

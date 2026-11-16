@@ -813,7 +813,7 @@ func (c *RPCClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint6
 	defer cancel()
 	resp, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page)
 	if err != nil {
-		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+		return nil, nil, TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 	}
 	mempool, err := DevshardTxsFromBytes(resp.GetMempool())
 	if err != nil {
@@ -849,7 +849,7 @@ func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+		return nil, nil, TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 	}
 	return receipt, mempool, nil
 }
@@ -883,7 +883,7 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 		defer cancel()
 		if _, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page); err != nil {
-			return fmt.Errorf("challenge-receipt: %w", err)
+			return TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 		}
 		return nil
 	}, nil

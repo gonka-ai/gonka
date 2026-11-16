@@ -135,7 +135,7 @@ type ReceiptStamp struct {
 	Hash   []byte
 }
 
-func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64, stamp ...ReceiptStamp) []byte {
+func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, stamp ...ReceiptStamp) []byte {
 	t.Helper()
 	content := &types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
@@ -143,9 +143,7 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 		Model:       model,
 		InputLength: inputLength,
 		MaxTokens:   maxTokens,
-		StartedAt:   startedAt,
 		EscrowId:    escrowID,
-		ConfirmedAt: confirmedAt,
 	}
 	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
 		content.ObservedHeight = stamp[0].Height
@@ -242,7 +240,6 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   TestMaxTokens,
-		StartedAt:   1000,
 	}}}
 }
 

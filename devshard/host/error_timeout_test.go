@@ -132,7 +132,6 @@ func TestVerifyErrorMiss_NoWaitGuard(t *testing.T) {
 	e.st = stateWithStartedAt(1, 1, now)
 	require.Greater(t, e.st.Config.RefusalTimeout, int64(0))
 	require.Greater(t, e.st.Config.ExecutionTimeout, int64(0))
-	require.Equal(t, now, e.st.Inferences[1].ConfirmedAt)
 
 	accept, err := e.verify(e.finishTx, e.payload, nil)
 	require.NoError(t, err)

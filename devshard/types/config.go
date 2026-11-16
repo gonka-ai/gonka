@@ -12,7 +12,8 @@ const (
 	// DefaultAutoSealEveryNNonces is how often auto-seal runs during Active phase.
 	// Must match inference-chain DefaultDevshardAutoSealEveryNNonces.
 	DefaultAutoSealEveryNNonces uint32 = 150
-	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
+	// DefaultValidationRate is used when the escrow carries no rate. It is not
+	// the chain default: inference-chain DefaultDevshardValidationRate is 1000.
 	DefaultValidationRate uint32 = 5000
 )
 

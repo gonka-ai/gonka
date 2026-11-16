@@ -5,7 +5,6 @@ package transport
 import (
 	"os"
 	"path/filepath"
-	"time"
 
 	"devshard/host"
 	"devshard/logging"
@@ -62,7 +61,6 @@ func forgedChallengeReceipt(h *host.Host, inferenceID uint64) (*ChallengeReceipt
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID,
 			ExecutorSig: ForgedChallengeSig,
-			ConfirmedAt: time.Now().Unix(),
 		}}},
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
 			InferenceId:  inferenceID,

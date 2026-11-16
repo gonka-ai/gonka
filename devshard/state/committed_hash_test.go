@@ -45,7 +45,7 @@ func TestCommittedEntriesHashMatchesMarshalPath(t *testing.T) {
 
 	apply := func(nonce uint64, txs ...*types.DevshardTx) {
 		t.Helper()
-		root, err := sm.ApplyLocal(nonce, txs)
+		root, err := sm.ApplyLocal(nonce, restamp(t, sm, hosts, escrowID, nonce, txs))
 		require.NoError(t, err)
 		assertCommittedMatchesMarshalPath(t, sm)
 		got, err := sm.ComputeStateRoot()
@@ -98,6 +98,7 @@ func TestCommittedEntriesHashMatchesMarshalPath(t *testing.T) {
 	require.NotContains(t, liveIDs(sm), uint64(14))
 	require.Contains(t, sm.ExportSealedNonces(), uint64(14))
 
+	makeTimeoutDue(t, sm, 19)
 	apply(21, timeoutTx(t, hosts, escrowID, 19, types.TimeoutReason_TIMEOUT_REASON_EXECUTION))
 	require.Equal(t, types.StatusTimedOut, sm.SnapshotState().Inferences[19].Status)
 
@@ -125,7 +126,7 @@ func TestCommittedEntriesHashMatchesMarshalPath(t *testing.T) {
 	sm.mu.Lock()
 	delete(sm.committedEntries, 1)
 	sm.mu.Unlock()
-	_, err = sm.ApplyLocal(29, []*types.DevshardTx{startTx(29)})
+	_, err = sm.ApplyLocal(29, restamp(t, sm, hosts, escrowID, 29, []*types.DevshardTx{startTx(29)}))
 	require.ErrorContains(t, err, "committed inference entries")
 	require.Equal(t, uint64(28), sm.LatestNonce())
 	require.Equal(t, []uint64{1, 4}, liveIDs(sm))
@@ -194,18 +195,16 @@ func startTx(id uint64) *types.DevshardTx {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})
 }
 
 func confirmTx(t *testing.T, hosts []*signing.Secp256k1Signer, escrowID string, id uint64) *types.DevshardTx {
 	t.Helper()
 	slot := uint32(id % uint64(len(hosts)))
-	sig := testutil.SignExecutorReceipt(t, hosts[slot], escrowID, id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	sig := testutil.SignExecutorReceipt(t, hosts[slot], escrowID, id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	return txConfirm(&types.MsgConfirmStart{
 		InferenceId: id,
 		ExecutorSig: sig,
-		ConfirmedAt: 1000,
 	})
 }
 
@@ -421,7 +420,6 @@ func TestLiveHashRejectsJournaledMembershipMismatch(t *testing.T) {
 		InputLength:  100,
 		MaxTokens:    testutil.TestMaxTokens,
 		ReservedCost: 100 + testutil.TestMaxTokens,
-		StartedAt:    1000,
 	})
 	require.Equal(t, len(sm.state.Inferences), len(sm.committedEntries))
 	_, err = sm.liveInferencesHashLocked()

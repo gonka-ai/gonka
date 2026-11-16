@@ -1,8 +1,12 @@
 package public
 
 import (
+	"context"
+	"database/sql"
+	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/observer"
@@ -12,10 +16,10 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// NewChainOracle builds the hash-only production oracle, or (nil, nil) when
-// the mount is disabled or chain_node.url is empty. Tip is Observe from the
-// dapi NewBlock listener; At() is tipcache then Comet Header RPC.
-func NewChainOracle(rpcURL string) (*observer.Oracle, error) {
+// NewChainOracle builds the production oracle, or (nil, nil) when the mount
+// is disabled or chain_node.url is empty. Tip is Observe from the dapi
+// NewBlock listener; At() serves light-verified headers, stored in db.
+func NewChainOracle(rpcURL string, db *sql.DB) (*observer.Oracle, error) {
 	if chainOracleDisabled() {
 		logging.Info("chainoracle skipped (DAPI_CHAINORACLE_DISABLED)", types.Server)
 		return nil, nil
@@ -25,7 +29,56 @@ func NewChainOracle(rpcURL string) (*observer.Oracle, error) {
 		logging.Warn("chainoracle skipped: empty chain_node.url", types.Server)
 		return nil, nil
 	}
-	return observer.NewTendermint(observer.TendermintConfig{RPCURL: rpcURL})
+	cfg := observer.TendermintConfig{
+		RPCURL:         rpcURL,
+		VerifyCommits:  chainOracleVerifyCommits(),
+		TrustingPeriod: chainOracleTrustingPeriod(),
+		ResetTrust:     chainOracleResetTrust(),
+	}
+	if db != nil {
+		store, err := observer.NewSQLiteHeaderStore(context.Background(), db)
+		if err != nil {
+			return nil, fmt.Errorf("chainoracle header store unavailable: %w", err)
+		}
+		cfg.Store = store
+	}
+	o, err := observer.NewTendermint(cfg)
+	if err != nil {
+		return nil, err
+	}
+	logging.Info("chainoracle created", types.Server, "verify_commits", cfg.VerifyCommits, "persisted", cfg.Store != nil)
+	return o, nil
+}
+
+func chainOracleVerifyCommits() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DAPI_CHAINORACLE_VERIFY_COMMITS"))) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func chainOracleResetTrust() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DAPI_CHAINORACLE_RESET_TRUST"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func chainOracleTrustingPeriod() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("DAPI_CHAINORACLE_TRUSTING_PERIOD"))
+	if raw == "" {
+		return 0
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		logging.Warn("chainoracle: ignoring DAPI_CHAINORACLE_TRUSTING_PERIOD", types.Server, "value", raw)
+		return 0
+	}
+	return d
 }
 
 // WithChainOracle mounts GET /block/:height from the shared oracle (same
@@ -57,7 +110,7 @@ func (s *Server) mountChainOracle() {
 		if s.configManager != nil {
 			rpcURL = strings.TrimSpace(s.configManager.GetChainNodeConfig().Url)
 		}
-		created, err := NewChainOracle(rpcURL)
+		created, err := NewChainOracle(rpcURL, nil)
 		if err != nil {
 			logging.Error("chainoracle observer", types.Server, "error", err)
 			return

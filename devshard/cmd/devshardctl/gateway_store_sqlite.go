@@ -24,7 +24,7 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 	db.SetMaxOpenConns(1)
 	for _, pragma := range []string{
 		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
+		"PRAGMA synchronous=FULL",
 		"PRAGMA busy_timeout=5000",
 	} {
 		if _, err := db.Exec(pragma); err != nil {
@@ -33,6 +33,12 @@ func NewSQLiteGatewayStore(path string) (*SQLiteGatewayStore, error) {
 		}
 	}
 	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS gateway_inference_completions (
+			escrow_id TEXT NOT NULL,
+			nonce INTEGER NOT NULL,
+			entry_json BLOB NOT NULL,
+			PRIMARY KEY (escrow_id, nonce)
+		)`,
 		`CREATE TABLE IF NOT EXISTS gateway_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
 			chain_rest TEXT NOT NULL,
@@ -811,7 +817,13 @@ func (s *SQLiteGatewayStore) SetDevshardSettlementPending(ctx context.Context, i
 }
 
 func (s *SQLiteGatewayStore) DeleteDevshard(ctx context.Context, id string) error {
-	res, err := s.db.Exec(`DELETE FROM gateway_devshards WHERE id = ?`, strings.TrimSpace(id))
+	id = strings.TrimSpace(id)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin delete devshard %s: %w", id, err)
+	}
+	defer tx.Rollback()
+	res, err := tx.Exec(`DELETE FROM gateway_devshards WHERE id = ?`, id)
 	if err != nil {
 		return fmt.Errorf("delete devshard %s: %w", id, err)
 	}
@@ -822,7 +834,10 @@ func (s *SQLiteGatewayStore) DeleteDevshard(ctx context.Context, id string) erro
 	if n == 0 {
 		return fmt.Errorf("devshard %s not found", id)
 	}
-	return nil
+	if _, err := tx.Exec(`DELETE FROM gateway_inference_completions WHERE escrow_id = ?`, id); err != nil {
+		return fmt.Errorf("delete devshard %s completion payloads: %w", id, err)
+	}
+	return tx.Commit()
 }
 
 func normalizeParticipantKeys(keys []string) []string {

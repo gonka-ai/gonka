@@ -62,11 +62,10 @@ func TestFullSession_HappyPath(t *testing.T) {
 		// Include accumulated ConfirmStart txs.
 		for _, pc := range pendingConfirms {
 			execSig := testutil.SignExecutorReceipt(t, hosts[pc.executorIdx], escrowID,
-				pc.inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, int64(pc.inferenceID)*1000, int64(pc.inferenceID)*1000)
+				pc.inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 			txs = append(txs, txConfirm(&types.MsgConfirmStart{
 				InferenceId: pc.inferenceID,
 				ExecutorSig: execSig,
-				ConfirmedAt: int64(pc.inferenceID) * 1000,
 			}))
 		}
 		pendingConfirms = nil
@@ -94,7 +93,6 @@ func TestFullSession_HappyPath(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   testutil.TestMaxTokens,
-			StartedAt:   int64(infID) * 1000,
 		}))
 
 		nonce++
@@ -134,11 +132,10 @@ func TestFullSession_HappyPath(t *testing.T) {
 	var finalTxs []*types.DevshardTx
 	for _, pc := range pendingConfirms {
 		execSig := testutil.SignExecutorReceipt(t, hosts[pc.executorIdx], escrowID,
-			pc.inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, int64(pc.inferenceID)*1000, int64(pc.inferenceID)*1000)
+			pc.inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 		finalTxs = append(finalTxs, txConfirm(&types.MsgConfirmStart{
 			InferenceId: pc.inferenceID,
 			ExecutorSig: execSig,
-			ConfirmedAt: int64(pc.inferenceID) * 1000,
 		}))
 	}
 	for _, pf := range pendingFinishes {

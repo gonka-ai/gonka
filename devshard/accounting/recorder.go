@@ -106,7 +106,12 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		// touches the tallies.
 		var inferenceID uint64
 		verdict := false
-		switch timeout, validation, vote := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(); {
+		statsOnly := false
+		switch timeout, validation, vote, finish, errorMiss := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(), tx.GetFinishInference(), tx.GetErrorMiss(); {
+		case finish != nil:
+			inferenceID, statsOnly = finish.InferenceId, true
+		case errorMiss != nil:
+			inferenceID, statsOnly = errorMiss.InferenceId, true
 		case timeout != nil:
 			inferenceID = timeout.InferenceId
 		case validation != nil:
@@ -115,6 +120,10 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
 		default:
+			continue
+		}
+		if statsOnly {
+			hostStats = r.appendHostStatsFor(escrowID, inferenceID, state, hostStats)
 			continue
 		}
 		if _, ok := seen[inferenceID]; ok {
@@ -126,6 +135,7 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		seen[inferenceID] = struct{}{}
 		record, ok := state.GetInference(inferenceID)
 		if !ok {
+			hostStats = r.appendHostStatsFor(escrowID, inferenceID, state, hostStats)
 			continue
 		}
 		hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
@@ -155,6 +165,22 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, phase, hostStats); err != nil {
 		log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
 	}
+}
+
+func (r *Recorder) appendHostStatsFor(
+	escrowID string,
+	nonce uint64,
+	state ProtocolView,
+	into map[uint32]*types.HostStats,
+) map[uint32]*types.HostStats {
+	if record, ok := state.GetInference(nonce); ok {
+		return r.appendHostStats(record.ExecutorSlot, state, into)
+	}
+	slots := r.tracker.slotCount(escrowID)
+	if slots == 0 {
+		return into
+	}
+	return r.appendHostStats(AssignedNonceSlot(nonce, uint64(slots)), state, into)
 }
 
 func (r *Recorder) appendHostStats(

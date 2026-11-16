@@ -6,55 +6,40 @@ import (
 	"time"
 
 	"devshard/types"
-	"devshard/user"
 )
 
 const (
 	executionTimeoutSweepBudget  = 8
-	executionTimeoutSweepGrace   = 2 * time.Minute
 	executionTimeoutSweepTimeout = 5 * time.Minute
 )
 
-func executionTimeoutSweepWindow(config types.SessionConfig) time.Duration {
-	return time.Duration(config.ExecutionTimeout)*time.Second + user.TimeoutBuffer + executionTimeoutSweepGrace
+type timeoutClock interface {
+	TimeoutRemaining(inferenceID uint64, reason types.TimeoutReason) (time.Duration, error)
 }
 
-func refusalTimeoutSweepWindow(config types.SessionConfig) time.Duration {
-	return time.Duration(config.RefusalTimeout)*time.Second + user.TimeoutBuffer + executionTimeoutSweepGrace
-}
-
-func deadlineFromStamp(stampedAt int64, now time.Time, window time.Duration) time.Time {
-	return time.Unix(min(stampedAt, now.Unix()), 0).Add(window)
-}
-
-// overdueTimeoutInferences returns nonces whose protocol timeout deadline (plus
-// sweep grace) has passed. Started inferences use the execution window from
-// ConfirmedAt; Pending inferences use the refusal window from StartedAt, and
-// only those whose race kept the payload a refusal vote must carry.
-func overdueTimeoutInferences(state types.EscrowState, now time.Time, budget int, hasRefusalPayload func(nonce uint64) bool) []uint64 {
-	executionWindow := executionTimeoutSweepWindow(state.Config)
-	refusalWindow := refusalTimeoutSweepWindow(state.Config)
+// overdueTimeoutInferences returns nonces whose timeout would pass the state
+// machine's height gate on the next diff: Started inferences against the
+// confirm anchor, Pending ones against the start anchor, and only those whose
+// race kept the payload a refusal vote must carry.
+func overdueTimeoutInferences(state types.EscrowState, clock timeoutClock, budget int, hasRefusalPayload func(nonce uint64) bool) []uint64 {
 	var due []uint64
 	for nonce, inference := range state.Inferences {
 		if len(due) == budget {
 			break
 		}
+		var reason types.TimeoutReason
 		switch inference.Status {
 		case types.StatusStarted:
-			if inference.ConfirmedAt <= 0 {
-				continue
-			}
-			if now.Before(deadlineFromStamp(inference.ConfirmedAt, now, executionWindow)) {
-				continue
-			}
+			reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 		case types.StatusPending:
-			if inference.StartedAt <= 0 || !hasRefusalPayload(nonce) {
+			if !hasRefusalPayload(nonce) {
 				continue
 			}
-			if now.Before(deadlineFromStamp(inference.StartedAt, now, refusalWindow)) {
-				continue
-			}
+			reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 		default:
+			continue
+		}
+		if remaining, err := clock.TimeoutRemaining(nonce, reason); err != nil || remaining > 0 {
 			continue
 		}
 		due = append(due, nonce)
@@ -112,7 +97,7 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 		inference, live := snapshot.Inferences[nonce]
 		return live && inference.Status == types.StatusPending
 	})
-	if len(overdueTimeoutInferences(snapshot, time.Now(), budget, redundancy.hasRefusalPayload)) == 0 {
+	if len(overdueTimeoutInferences(snapshot, runtime.proxy.sm, budget, redundancy.hasRefusalPayload)) == 0 {
 		return 0, 0, 0
 	}
 	g.mu.Lock()
@@ -130,7 +115,7 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 	if runtime.proxy.sm.Phase() != types.PhaseActive {
 		return 0, 0, 0
 	}
-	for _, nonce := range overdueTimeoutInferences(runtime.proxy.sm.SnapshotState(), time.Now(), budget, redundancy.hasRefusalPayload) {
+	for _, nonce := range overdueTimeoutInferences(runtime.proxy.sm.SnapshotState(), runtime.proxy.sm, budget, redundancy.hasRefusalPayload) {
 		if ctx.Err() != nil {
 			break
 		}
@@ -140,7 +125,7 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 		}
 		due++
 		// sendTime zero makes a Pending refusal deadline already past once the
-		// sweep selected the nonce by StartedAt; Started uses ConfirmedAt.
+		// sweep found the height gate open.
 		payload, _ := redundancy.refusalPayload(nonce)
 		result, err := runtime.session.HandleTimeout(ctx, nonce, time.Time{}, payload)
 		releasePost()

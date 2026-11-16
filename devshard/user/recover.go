@@ -2,6 +2,7 @@ package user
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -334,7 +335,12 @@ func RecoverSession(
 	var replayed int
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
-			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+			var root []byte
+			applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
+				var err error
+				root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+				return err
+			})
 			if applyErr != nil {
 				if errors.Is(applyErr, types.ErrInvalidNonce) {
 					return fmt.Errorf("%w: replay nonce %d: %w",

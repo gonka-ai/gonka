@@ -14,6 +14,7 @@ import (
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -100,6 +101,7 @@ func newPeerTestServer(t *testing.T) *Server {
 	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{start}})
 	require.NoError(t, err)
 	require.Equal(t, types.StatusPending, h.SnapshotState().Inferences[1].Status)
+	statetest.ArmRefusalDue(t, sm, 1)
 
 	srv, err := NewServer(h, store, verifier, user.Address())
 	require.NoError(t, err)

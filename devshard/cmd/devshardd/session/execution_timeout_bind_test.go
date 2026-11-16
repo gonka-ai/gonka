@@ -13,6 +13,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -27,7 +28,7 @@ import (
 // still stands when that host has no finish to return.
 func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	const escrowID = "9730"
-	const inferenceID uint64 = 1
+	const inferenceID uint64 = 4
 
 	httpguard.SetAllowPrivate(true)
 	t.Cleanup(func() { httpguard.SetAllowPrivate(false) })
@@ -79,22 +80,45 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 
-	start := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{
-		testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion),
-	})
-	confirmedAt := time.Now().Unix() - 30
+	hash := []byte{0xaa}
+	heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum: uint64(len(hosts)),
+		Reason:   string(heightsync.ReasonQuietSession),
+	}}}
+	ack := func(ref, height uint64) *types.DevshardTx {
+		msg := &types.MsgHeightAck{
+			RefNonce:          ref,
+			SlotId:            0,
+			ObservedHeight:    height,
+			ObservedBlockHash: hash,
+			SyncState:         types.SyncState_SYNCED,
+			PeerSeen:          []byte{0xff},
+		}
+		require.NoError(t, heightsync.SignAck(hosts[0], msg))
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
+	}
+	startTx := testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)
+	startTx.GetStartInference().ObservedHeight = 500
+	startTx.GetStartInference().ObservedBlockHash = hash
 	receipt := testutil.SignExecutorReceipt(
 		t, hosts[1], escrowID, inferenceID, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, confirmedAt,
+		"llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: 500, Hash: hash},
 	)
-	confirm := testutil.SignDiff(t, user, escrowID, 2, []*types.DevshardTx{
-		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: inferenceID,
-			ExecutorSig: receipt,
-			ConfirmedAt: confirmedAt,
-		}}},
-	})
-	_, err = srv.Host().HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{start, confirm}})
+	diffs := []types.Diff{
+		testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{heartbeat}),
+		testutil.SignDiff(t, user, escrowID, 2, []*types.DevshardTx{ack(1, 500)}),
+		testutil.SignDiff(t, user, escrowID, 3, []*types.DevshardTx{heartbeat}),
+		testutil.SignDiff(t, user, escrowID, 4, []*types.DevshardTx{startTx}),
+		testutil.SignDiff(t, user, escrowID, 5, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId:       inferenceID,
+			ExecutorSig:       receipt,
+			ObservedHeight:    500,
+			ObservedBlockHash: hash,
+		}}}}),
+		testutil.SignDiff(t, user, escrowID, 6, []*types.DevshardTx{heartbeat}),
+		testutil.SignDiff(t, user, escrowID, 7, []*types.DevshardTx{ack(6, 600)}),
+	}
+	_, err = srv.Host().HandleRequest(context.Background(), host.HostRequest{Diffs: diffs})
 	require.NoError(t, err)
 	require.Equal(t, types.StatusStarted, srv.Host().SnapshotState().Inferences[inferenceID].Status)
 

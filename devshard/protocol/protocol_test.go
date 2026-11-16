@@ -327,13 +327,12 @@ func TestProtocol_SignatureResumesAfterInclusion(t *testing.T) {
 	// Nonce 2: confirm start.
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId: 1, PromptHash: testutil.TestPromptHash[:], Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000, EscrowId: "escrow-1",
-		ConfirmedAt: resp.ConfirmedAt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, EscrowId: "escrow-1",
 	}
 	receiptData, _ := proto.Marshal(receiptContent)
 	receiptSig, _ := hostSigners[1].Sign(receiptData)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: receiptSig, ConfirmedAt: resp.ConfirmedAt,
+		InferenceId: 1, ExecutorSig: receiptSig,
 	}}}
 	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
@@ -473,11 +472,15 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 
 	ctx := context.Background()
 
-	// Nonce 1: start inference 1. Executor = slot 1%5 = 1.
-	diff1 := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
-	// Send to host 1 (round-robin: nonce 1 % 5 = 1).
+	diffs := floorDiffs(t, userSigner, hostSigners[0], 1, 5, 100)
+	for n := uint64(3); n <= 5; n++ {
+		diffs = append(diffs, testutil.SignDiff(t, userSigner, "escrow-1", n, nil))
+	}
+	start := testutil.StartTx(6)
+	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = 100, []byte{0xaa}
+	diffs = append(diffs, testutil.SignDiff(t, userSigner, "escrow-1", 6, []*types.DevshardTx{start}))
 	resp, err := hosts[1].HandleRequest(ctx, host.HostRequest{
-		Diffs: []types.Diff{diff1}, Nonce: 1,
+		Diffs: diffs, Nonce: 6,
 		Payload: &host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
@@ -485,37 +488,38 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, resp.Receipt)
+	diffs = append(diffs, floorDiffs(t, userSigner, hostSigners[0], 7, 5, 100_000)...)
 
 	// Compose timeout: collect votes from non-executor hosts (slots 0, 2, 3).
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hostSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
+		v := testutil.SignTimeoutVote(t, hostSigners[slot], "escrow-1", 6, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
 
-	diff2 := testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{
+	diffs = append(diffs, testutil.SignDiff(t, userSigner, "escrow-1", 9, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
-			InferenceId: 1,
+			InferenceId: 6,
 			Reason:      types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 			Votes:       votes,
 		}}},
-	})
+	}))
 
 	// Apply timeout to host 2.
-	resp, err = hosts[2].HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff1, diff2}, Nonce: 2})
+	_, err = hosts[2].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: 9})
 	require.NoError(t, err)
 
 	// Verify via a fresh state machine.
 	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
-	_, err = sm.ApplyDiff(diff1)
-	require.NoError(t, err)
-	_, err = sm.ApplyDiff(diff2)
-	require.NoError(t, err)
+	for _, d := range diffs {
+		_, err = sm.ApplyDiff(d)
+		require.NoError(t, err)
+	}
 
 	st := sm.SnapshotState()
-	require.Equal(t, types.StatusTimedOut, st.Inferences[1].Status)
+	require.Equal(t, types.StatusTimedOut, st.Inferences[6].Status)
 	require.Equal(t, uint32(1), st.HostStats[1].Missed)
 	require.Equal(t, uint64(100000), st.Balance, "balance should be fully restored")
 }

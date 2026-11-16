@@ -117,8 +117,6 @@ func startedInferenceState() types.EscrowState {
 				Status:       types.StatusStarted,
 				ExecutorSlot: errorMissExecutor,
 				ReservedCost: 150,
-				StartedAt:    1000,
-				ConfirmedAt:  1000,
 			},
 		},
 		HostStats: map[uint32]*types.HostStats{0: {}, 1: {}},

@@ -122,7 +122,7 @@ func viewOf(t *testing.T, sm *StateMachine) machineView {
 
 func TestJournalPathsMatchDirectApply(t *testing.T) {
 	f := newJournalFixture(t)
-	direct := runJournalPaths(t, f.machine, f.signDiff, f.script(t))
+	direct := runJournalPaths(t, f.machine, f.signDiff, f.script(t), f.hosts, journalEscrowID)
 	require.Equal(t, types.PhaseSettlement, direct.Phase())
 	require.Empty(t, direct.ExportCommittedEntries())
 }
@@ -157,7 +157,7 @@ func TestJournalHeightSyncPathsMatchDirectApply(t *testing.T) {
 		{snapAck(t, hosts[0], 1, 1, 0, 50, hash)},
 		{snapAck(t, hosts[1], 1, 1, 1, 50, hash)},
 		{},
-	})
+	}, hosts, journalEscrowID)
 	h, _, known := direct.HeightSyncFloorAsOf(4)
 	require.True(t, known)
 	require.Equal(t, uint64(50), h)
@@ -173,11 +173,21 @@ func runJournalPaths(
 	newSM func(*testing.T) *StateMachine,
 	sign func(*testing.T, uint64, []*types.DevshardTx, []byte) types.Diff,
 	steps [][]*types.DevshardTx,
+	hosts []*signing.Secp256k1Signer,
+	escrowID string,
 ) *StateMachine {
 	t.Helper()
 	direct, preview, host := newSM(t), newSM(t), newSM(t)
 	for i, txs := range steps {
 		nonce := uint64(i + 1)
+		for _, tx := range txs {
+			if to := tx.GetTimeoutInference(); to != nil {
+				for _, sm := range []*StateMachine{direct, preview, host} {
+					makeTimeoutDue(t, sm, to.InferenceId)
+				}
+			}
+		}
+		txs = restamp(t, direct, hosts, escrowID, nonce, txs)
 		root, err := direct.ApplyLocal(nonce, txs)
 		require.NoError(t, err, "nonce %d", nonce)
 		want := viewOf(t, direct)
@@ -287,6 +297,7 @@ func TestJournalStaleCommitKeepsOtherWriter(t *testing.T) {
 	require.NoError(t, err)
 
 	timeout := timeoutTx(t, f.hosts, journalEscrowID, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
+	makeTimeoutDue(t, sm, 1)
 	_, err = sm.ApplyLocal(3, []*types.DevshardTx{timeout})
 	require.NoError(t, err)
 	want := viewOf(t, sm)

@@ -15,6 +15,7 @@ import (
 
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -347,7 +348,6 @@ func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
 			Status:       types.StatusPending,
 			ExecutorSlot: 1,
 			ReservedCost: 150,
-			StartedAt:    1000,
 			PromptHash:   hash[:],
 			Model:        "llama",
 			InputLength:  100,
@@ -357,6 +357,7 @@ func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
 	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
 	require.NoError(t, err)
 	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
+	statetest.ArmRefusalDue(t, sm, 1)
 
 	h, err := host.NewHost(sm, hosts[0], stub.NewInferenceEngine(), refusalJournalEscrow, group, nil, host.WithStorage(store))
 	require.NoError(t, err)

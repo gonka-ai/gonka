@@ -41,12 +41,11 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 				InputLength:  10,
 				MaxTokens:    100,
 				ReservedCost: 50,
-				StartedAt:    123,
 				ValidatedBy:  Bitmap128{1, 0},
 			},
 		},
 		HostStats: map[uint32]*HostStats{
-			0: {Missed: 1, Invalid: 2, Cost: 3},
+			0: {Missed: 1, Invalid: 2, Cost: 3, RequiredValidations: 4, CompletedValidations: 5, Validated: 6, Finished: 7},
 		},
 		WarmKeyHistory: signing.WarmKeyHistory{
 			0: {{Addr: "warm-0", FromNonce: 3, GrantID: 7}},

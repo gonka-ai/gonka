@@ -117,7 +117,7 @@ func TestTheSameReceiptSeenAgainIsNotVerifiedAgain(t *testing.T) {
 
 	final := *receipt
 	final.Mempool = []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: nonce, ExecutorSig: receipt.Receipt, ConfirmedAt: confirmedAt,
+		InferenceId: nonce, ExecutorSig: receipt.Receipt,
 	}}}}
 	rec, ok := session.sm.GetInference(nonce)
 	require.True(t, ok)
@@ -165,21 +165,29 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 	<-sent
 }
 
-func TestAResponseWithoutAConfirmedAtLeavesTheReasonAlone(t *testing.T) {
-	session, hosts, _ := setupSession(t, 3, 100000, 10)
+func TestAReceiptWithoutAConfirmedAtIsStillTheConfirmation(t *testing.T) {
+	session, hosts, _, _ := setupArmedSession(t, 3, 100000, 10)
 	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 
-	session.confirmStartOnReceipt(prepared.Nonce(), &host.HostResponse{
-		Receipt: signedExecutorReceipt(t, session, hosts, prepared.Nonce(), 0),
-	})
-	require.Empty(t, pendingConfirmStarts(session), "a receipt with no confirmation time must not be queued")
+	resp := receiptResponseFor(t, session, hosts, prepared.Nonce())
+	resp.ConfirmedAt = 0
+	session.confirmStartOnReceipt(prepared.Nonce(), resp)
+	require.Equal(t, []uint64{prepared.Nonce()}, pendingConfirmStarts(session), "the receipt carries no time; its floor stamp is what the chain checks")
 
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())
-	require.Equal(t, "refused", reason, "no confirmation stamp means the chain was told nothing to match")
+	require.Equal(t, "execution", reason)
+}
+
+func receiptResponseFor(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) *host.HostResponse {
+	t.Helper()
+	rec, ok := session.StateMachine().GetInference(nonce)
+	require.True(t, ok)
+	resp, _ := stampedReceiptResponse(t, session, hosts[rec.ExecutorSlot], nonce)
+	return resp
 }
 
 func TestALaterResponseWithoutAStampDoesNotEraseTheConfirmation(t *testing.T) {
@@ -290,21 +298,15 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 	}{
 		{"stream receipt", func(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) {
 			t.Helper()
-			confirmedAt := time.Now().Unix()
-			session.confirmStartOnReceipt(nonce, &host.HostResponse{
-				Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
-			})
+			session.confirmStartOnReceipt(nonce, receiptResponseFor(t, session, hosts, nonce))
 		}},
 		{"finished response", func(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) {
 			t.Helper()
-			confirmedAt := time.Now().Unix()
-			require.NoError(t, session.ProcessResponse(0, &host.HostResponse{
-				Receipt: signedExecutorReceipt(t, session, hosts, nonce, confirmedAt), ConfirmedAt: confirmedAt,
-			}, nonce))
+			require.NoError(t, session.ProcessResponse(0, receiptResponseFor(t, session, hosts, nonce), nonce))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			session, hosts, _ := setupSession(t, 3, 100000, 10)
+			session, hosts, _, _ := setupArmedSession(t, 3, 100000, 10)
 			prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 				Model: "llama", Prompt: testutil.TestPrompt,
 				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Add(-time.Hour).Unix(),
@@ -342,13 +344,14 @@ func TestHandleTimeoutDoesNotChallengeARefusalAfterTheReceipt(t *testing.T) {
 }
 
 func TestHandleTimeoutStillChallengesAPendingInference(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, _, _, rig := setupArmedSession(t, 3, 100000, 10)
 	startedAt := time.Now().Add(-time.Hour)
 	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: startedAt.Unix(),
 	})
 	require.NoError(t, err)
+	rig.raise(t, session, 100_000)
 	counter := &voteCounter{}
 	for i := range session.clients {
 		session.clients[i] = counter
@@ -425,7 +428,7 @@ func TestAReceiptForAnotherNonceLeavesTheRefusalWait(t *testing.T) {
 }
 
 func TestHandleTimeoutCancelDuringTheRefusalWaitDoesNotChallenge(t *testing.T) {
-	session, _, _ := setupSession(t, 3, 100000, 10)
+	session, _, _, _ := setupArmedSession(t, 3, 100000, 10)
 	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: time.Now().Unix(),

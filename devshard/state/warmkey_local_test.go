@@ -45,10 +45,9 @@ func TestHostSignerAllowed_RefusesBoundKeyWhoseGrantEnded(t *testing.T) {
 	require.NoError(t, err)
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{testutil.StartTx(4)}))
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 4, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 4, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 5, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 4, ExecutorSig: execSig, ConfirmedAt: 1000,
-	})}))
+		InferenceId: 4, ExecutorSig: execSig})}))
 	require.NoError(t, err, "consensus reads the history alone")
 }
 

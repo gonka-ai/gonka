@@ -60,7 +60,7 @@ func (f *forgingExecutor) serve(t *testing.T, env *httpTestEnv, executorIdx int)
 		finish.ProposerSig = testutil.SignProposerTx(t, env.signers[signerIdx], finish)
 		mempool, err := transport.DevshardTxsToBytes([]*types.DevshardTx{
 			{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: req.InferenceID, ExecutorSig: forged, ConfirmedAt: time.Now().Unix(),
+				InferenceId: req.InferenceID, ExecutorSig: forged,
 			}}},
 			{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}},
 		})
@@ -124,13 +124,14 @@ func requireFinishInVerifierMempools(t *testing.T, env *httpTestEnv, executorIdx
 func TestHTTP_RefusedTimeout_HonestReceiptRecovers(t *testing.T) {
 	for _, wiring := range httpEvidenceWirings {
 		t.Run(wiring.name, func(t *testing.T) {
-			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier)
+			env, rig := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier)
 			ctx := context.Background()
 
 			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
-			diffs := env.session.Diffs()
+			rig.raise(t, env.session, 100_000)
+			diffs := rig.journal()
 			_, err = env.hosts[executorIdx].HandleRequest(ctx, host.HostRequest{Diffs: diffs, Nonce: diffs[len(diffs)-1].Nonce})
 			require.NoError(t, err)
 
@@ -147,26 +148,23 @@ func TestHTTP_ExecutionTimeout_HonestFinishRejects(t *testing.T) {
 		t.Run(wiring.name, func(t *testing.T) {
 			config := testutil.DefaultConfig(3)
 			config.ExecutionTimeout = 0
-			env := setupHTTPEnvWiring(t, 3, 1000000, 100, wiring.hostVerifier, config)
+			env, rig := setupArmedHTTPEnvWiring(t, 3, 1000000, 100, wiring.hostVerifier, config)
 			ctx := context.Background()
 
 			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
-			receipt, _, err := env.clients[executorIdx].ChallengeReceipt(ctx, prepared.Nonce(), refusedPayload(), env.session.Diffs())
+			receipt, _, err := env.clients[executorIdx].ChallengeReceipt(ctx, prepared.Nonce(), refusedPayload(), rig.journal())
 			require.NoError(t, err)
 			confirmTx := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce())
 			require.NotNil(t, confirmTx)
-			require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{
-				Receipt:     receipt,
-				ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
-			}, prepared.Nonce()))
+			require.NoError(t, env.session.ProcessResponse(executorIdx, stampedReceiptResponse(receipt, confirmTx), prepared.Nonce()))
 			require.NoError(t, env.session.SendPendingDiff(ctx))
 			require.Eventually(t, func() bool {
 				return findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()) != nil
 			}, 5*time.Second, 20*time.Millisecond)
 
-			votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
+			votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), rig.journal())
 			require.NoError(t, err)
 			require.Empty(t, votes, "a finish signed by the executor rejects the execution timeout")
 
@@ -185,12 +183,13 @@ func TestHTTP_ExecutionTimeout_HonestFinishRejects(t *testing.T) {
 func TestHTTP_RefusedTimeout_ForgedReceiptTimesOut(t *testing.T) {
 	for _, wiring := range httpEvidenceWirings {
 		t.Run(wiring.name, func(t *testing.T) {
-			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier)
+			env, rig := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier)
 			ctx := context.Background()
 
 			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
+			rig.raise(t, env.session, 100_000)
 			forger := &forgingExecutor{}
 			routeExecutorTo(env, executorIdx, forger.serve(t, env, executorIdx))
 
@@ -214,17 +213,14 @@ func TestHTTP_ExecutionTimeout_ForgedFinishTimesOut(t *testing.T) {
 			withHTTPTimeoutBuffer(t, 0)
 			config := testutil.DefaultConfig(5)
 			config.ExecutionTimeout = 0
-			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
+			env, _ := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
 			ctx := context.Background()
 
 			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
-			confirmedAt := time.Now().Unix()
-			receipt := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", prepared.Nonce(),
-				rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt)
-			require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{Receipt: receipt, ConfirmedAt: confirmedAt}, prepared.Nonce()))
+			require.NoError(t, env.session.ProcessResponse(executorIdx, signedReceiptResponse(t, env, executorIdx, prepared.Nonce()), prepared.Nonce()))
 			require.NoError(t, env.session.SendPendingDiff(ctx))
 			require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 
@@ -251,17 +247,14 @@ func TestHTTP_ExecutionTimeout_ExecutorFinishIsSequenced(t *testing.T) {
 			withHTTPTimeoutBuffer(t, 0)
 			config := testutil.DefaultConfig(5)
 			config.ExecutionTimeout = 0
-			env := setupHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
+			env, rig := setupArmedHTTPEnvWiring(t, 5, 1000000, 100, wiring.hostVerifier, config)
 			ctx := context.Background()
 
 			prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 			require.NoError(t, err)
 			executorIdx := prepared.HostIdx()
 			rec := env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
-			confirmedAt := time.Now().Unix()
-			receipt := testutil.SignExecutorReceipt(t, env.signers[executorIdx], "escrow-1", prepared.Nonce(),
-				rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt)
-			require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{Receipt: receipt, ConfirmedAt: confirmedAt}, prepared.Nonce()))
+			require.NoError(t, env.session.ProcessResponse(executorIdx, signedReceiptResponse(t, env, executorIdx, prepared.Nonce()), prepared.Nonce()))
 			require.NoError(t, env.session.SendPendingDiff(ctx))
 			require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 
@@ -270,7 +263,7 @@ func TestHTTP_ExecutionTimeout_ExecutorFinishIsSequenced(t *testing.T) {
 			require.Nil(t, findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
 				"the finish exists only in the challenge response")
 
-			votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
+			votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), rig.journal())
 			require.NoError(t, err)
 			require.Empty(t, votes)
 			copied := requireFinishInVerifierMempools(t, env, executorIdx, prepared.Nonce())
@@ -289,7 +282,7 @@ func TestHTTP_ExecutionTimeout_ExecutorFinishIsSequenced(t *testing.T) {
 			st := env.session.StateMachine().SnapshotState()
 			require.Equal(t, types.StatusFinished, st.Inferences[prepared.Nonce()].Status)
 			require.Zero(t, st.HostStats[rec.ExecutorSlot].Missed)
-			diffs := env.session.Diffs()
+			diffs := rig.journal()
 			require.NotEmpty(t, diffs)
 			require.NotNil(t, findFinish(diffs[len(diffs)-1].Txs, prepared.Nonce()),
 				"the finish from the challenge response is in the diff the user sent")
