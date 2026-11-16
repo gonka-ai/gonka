@@ -147,9 +147,8 @@ func TestTapeThresholds_TheBoundGrowsWithLength(t *testing.T) {
 	// 50 positions: 4 expected, the bound at 9.
 	require.True(t, th.Pass(TapeSignals{Steps: 50, Count: 9}))
 	require.False(t, th.Pass(TapeSignals{Steps: 50, Count: 10}))
-	require.False(t, th.Pass(TapeSignals{Steps: 500, Count: 0, MaxGap: 7.1}))
-	// The residual is reported, not judged.
-	require.True(t, th.Pass(TapeSignals{Steps: 500, Count: 0, Z: -9}))
+	// The residual and the gap are reported, not judged.
+	require.True(t, th.Pass(TapeSignals{Steps: 500, Count: 0, Z: -9, MaxGap: 48}))
 	_, ok = TapeThresholdsFor("other/model")
 	require.False(t, ok)
 }
@@ -265,6 +264,46 @@ func TestTapeOfReplay_ScoresTheStoredAnswerOnTheReplay(t *testing.T) {
 	tape, err := TapeOfReplay("42", []byte(seeded), storedTapeAnswer(t, out, false), replayStream(lp, out), tapeLogprobsMode)
 	require.NoError(t, err)
 	require.True(t, tape.Pass())
+}
+
+// The request's own sampling settings come back with the signals: the share
+// of an answer is read against them.
+func TestTapeOfReplay_ReportsWhatTheRequestAskedOfTheSampler(t *testing.T) {
+	lp := tapeTestLogprobs()
+	out := tapeAnswer(lp, 42)
+	plain, err := TapeOfReplay("42", []byte(tapeTestPrompt), storedTapeAnswer(t, out, false), replayStream(lp, out), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Nil(t, plain.Temperature)
+	require.Nil(t, plain.TopP)
+	require.False(t, plain.Grammar)
+
+	asked := strings.Replace(tapeTestPrompt, `"max_tokens"`, `"temperature":0.3,"top_p":0.9,"top_k":20,"response_format":{"type":"json_object"},"max_tokens"`, 1)
+	tape, err := TapeOfReplay("42", []byte(asked), storedTapeAnswer(t, out, false), replayStream(lp, out), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Equal(t, 0.3, *tape.Temperature)
+	require.Equal(t, 0.9, *tape.TopP)
+	require.Equal(t, 20.0, *tape.TopK)
+	require.True(t, tape.Grammar)
+}
+
+// An answer that carries no end token is replayed with the engine's own after
+// it: the answer's positions are judged, the one past it is not.
+func TestTapeOfReplay_AReplayPastTheAnswerIsJudgedOnTheAnswer(t *testing.T) {
+	lp := tapeTestLogprobs()
+	out := tapeAnswer(lp, 42)
+	stored := storedTapeAnswer(t, out[:200], true)
+	replay := replayStream(lp[:201], append(append([]int{}, out[:200]...), 1))
+	tape, err := TapeOfReplay("42", []byte(tapeTestPrompt), stored, replay, tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Equal(t, 200, tape.Signals.Steps)
+	require.Zero(t, tape.Signals.Count)
+	require.Equal(t, 1, tape.ReplayPast)
+	require.True(t, tape.Pass())
+
+	whole, err := TapeOfReplay("42", []byte(tapeTestPrompt), storedTapeAnswer(t, out, false), replayStream(lp, out), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Zero(t, whole.ReplayPast)
+	require.Equal(t, "length", whole.Finish)
 }
 
 func TestTapeOfReplay_WhatItCannotJudge(t *testing.T) {

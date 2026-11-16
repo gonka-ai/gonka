@@ -61,10 +61,11 @@ var modelVocab = map[string]int{
 // likely one and the gaps are in logprob.
 //
 // Z sums the Gumbel residual noise(x) + logprob(x), which is standard Gumbel
-// for an answer sampled on its tape. Z and MeanR are reported, not judged:
-// honest answers sit below the Gumbel mean by a drift that depends on the
-// model and the hardware (0.01-0.05), which the square root in Z turns into
-// false failures as the answer grows.
+// for an answer sampled on its tape. Z, MeanR and the gaps are reported, not
+// judged: honest answers sit below the Gumbel mean by a drift that depends on
+// the model, the hardware and the temperature, which the square root in Z
+// turns into false failures as the answer grows; for the gaps see
+// TapeThresholds.
 type TapeSignals struct {
 	Steps  int     `json:"steps"`
 	MeanR  float64 `json:"mean_r"`
@@ -78,35 +79,43 @@ type TapeSignals struct {
 }
 
 // TapeThresholds challenge an answer with more positions off the winner than
-// the model's honest share allows for its length, or with a gap above the
-// model's honest largest.
+// the model's honest share allows for its length. The share is what holds
+// across requests and nodes: honest answers are 3-6 % off the winner at any
+// temperature, under a grammar and between MLNode versions.
+//
+// The gap is reported, not judged. It is in the units of the processed
+// logprobs, so it grows as 1/T: an honest answer at temperature 0.1 has a
+// median largest gap of 12.7 and up to 48 against 1.3 and 4.5 at temperature
+// 1. And between nodes that render a prompt or apply a grammar differently a
+// few positions sit tens of units off while the share stays where it is. On a
+// mainnet validator in shadow (1010 DeepSeek answers the logprob comparison
+// passed, 13-16.11.2026) a bound of 7 on the gap failed 34 % of them; the
+// share alone fails 2.9 %, a third of which is one participant at 13.6 % of
+// positions.
 type TapeThresholds struct {
 	FlipRate float64
-	MaxGap   float64
 }
 
 // tapeThresholds. Honest answers, executor and validator the same checkpoint:
 // DeepSeek-V4-Flash-0731 FP8 on B300 and 2xH200 3.4-4.1 % of positions off the
-// winner, largest gap 4.9 (512 answers); its NVFP4 checkpoint of the B300 and
-// B200 node configs 5.4-5.9 %, largest gap 6.8 (690 answers on one B300, top 5
-// and top 20 candidates alike); MiniMax-M2.7 FP8 4.1-4.6 %; GLM-5.3-Flash FP8
-// 2.4-2.7 %, largest gap 5.4; the testnet Qwen models on one RTX 3090
-// 0.3-1.2 %, largest gap 2.5. FlipRate is the honest share with two points for
-// nodes that were not measured, MaxGap the largest honest gap with a margin.
+// winner (512 answers); its NVFP4 checkpoint of the B300 and B200 node configs
+// 4.3-6.0 % at temperatures 0 to 1 (1074 answers on one B300); MiniMax-M2.7
+// FP8 1.7-4.6 %; GLM-5.3-Flash FP8 2.4-2.7 %; the testnet Qwen models on one
+// RTX 3090 0.3-1.2 %. FlipRate is the honest share with two points for nodes
+// that were not measured.
 //
-// At DeepSeek's 0.08 / 7 on the logprob comparison's replay: 5 of 306 honest
-// NVFP4 answers are flagged; an answer under another seed is 20 % off the
-// winner and is flagged 73 % of the time alone, 99 % by the sum of four; an
-// answer of a checkpoint with half the experts pruned 86 % alone at 256 tokens
-// and 97 % at 1024.
+// At DeepSeek's 0.08 on the logprob comparison's replay an answer under
+// another seed is 20 % off the winner: two answers in three are flagged alone,
+// 98 % by the sum of four. An answer of a checkpoint with half the experts
+// pruned is 18 % off the winner.
 var tapeThresholds = map[string]TapeThresholds{
-	"deepseek-ai/DeepSeek-V4-Flash-0731": {FlipRate: 0.08, MaxGap: 7},
-	"MiniMaxAI/MiniMax-M2.7":             {FlipRate: 0.08, MaxGap: 5},
-	"zai-org/GLM-5.3-Flash":              {FlipRate: 0.06, MaxGap: 5.5},
-	"Qwen/Qwen3-0.6B":                    {FlipRate: 0.02, MaxGap: 6.4},
-	"Qwen/Qwen3-4B-Instruct-2507":        {FlipRate: 0.02, MaxGap: 5},
-	"Qwen/Qwen2.5-1.5B-Instruct":         {FlipRate: 0.02, MaxGap: 4},
-	"Qwen/Qwen2.5-7B-Instruct":           {FlipRate: 0.02, MaxGap: 4},
+	"deepseek-ai/DeepSeek-V4-Flash-0731": {FlipRate: 0.08},
+	"MiniMaxAI/MiniMax-M2.7":             {FlipRate: 0.08},
+	"zai-org/GLM-5.3-Flash":              {FlipRate: 0.06},
+	"Qwen/Qwen3-0.6B":                    {FlipRate: 0.02},
+	"Qwen/Qwen3-4B-Instruct-2507":        {FlipRate: 0.02},
+	"Qwen/Qwen2.5-1.5B-Instruct":         {FlipRate: 0.02},
+	"Qwen/Qwen2.5-7B-Instruct":           {FlipRate: 0.02},
 }
 
 // TapeThresholdsFor returns the model's thresholds and whether it has any.
@@ -116,7 +125,7 @@ func TapeThresholdsFor(model string) (TapeThresholds, bool) {
 }
 
 func (t TapeThresholds) Pass(s TapeSignals) bool {
-	return s.Steps > 0 && t.CountPasses(s.Steps, s.Count, 2.576) && s.MaxGap <= t.MaxGap
+	return s.Steps > 0 && t.CountPasses(s.Steps, s.Count, 2.576)
 }
 
 // CountPasses is the binomial bound on the positions off the winner: the
@@ -175,10 +184,22 @@ func ScoreTape(logprobs []map[int]float64, out []int, seed uint64, vocab int, gr
 	return s
 }
 
-// TapeResult holds the signals of an answer scored on its tape.
+// TapeResult holds the signals of an answer scored on its tape and what the
+// request asked of the sampler: a share that drifts with one of these is seen
+// in the log without the ML node's own.
 type TapeResult struct {
 	Model   string
 	Signals TapeSignals
+	// Temperature, TopP and TopK are the request's own, nil when it leaves
+	// them to the model's defaults.
+	Temperature, TopP, TopK *float64
+	// Grammar is set when the request decodes under a structured-output grammar.
+	Grammar bool
+	// Finish is the finish_reason the executor stored, ReplayPast the number
+	// of positions the replay ran past the answer: one when the answer carries
+	// no end token and the engine added its own.
+	Finish     string
+	ReplayPast int
 }
 
 // Pass reports whether the answer stays within the model's thresholds.
@@ -204,11 +225,17 @@ func TapeOfReplay(inferenceID string, promptPayload, responsePayload, replayResp
 		Model          string   `json:"model"`
 		Seed           *float64 `json:"seed"`
 		Temperature    *float64 `json:"temperature"`
+		TopP           *float64 `json:"top_p"`
+		TopK           *float64 `json:"top_k"`
 		UseBeamSearch  bool     `json:"use_beam_search"`
 		EnforcedTokens any      `json:"enforced_tokens"`
 		EnforcedStr    any      `json:"enforced_str"`
 	}
+	var requestMap map[string]interface{}
 	if err := json.Unmarshal(modified.NewBody, &request); err != nil {
+		return nil, unjudged("request: %v", err)
+	}
+	if err := json.Unmarshal(modified.NewBody, &requestMap); err != nil {
 		return nil, unjudged("request: %v", err)
 	}
 	// The output of these was not sampled on the tape.
@@ -238,10 +265,16 @@ func TapeOfReplay(inferenceID string, promptPayload, responsePayload, replayResp
 	if err != nil {
 		return nil, unjudged("replay response: %v", err)
 	}
+	// The engine ends a forced answer that carries no end token with one of
+	// its own, so a replay may run past the answer; the answer's positions are
+	// all there, as the logprob comparison reads them. A shorter replay lost
+	// positions of the answer.
 	positions := replay.ExtractLogits()
-	if len(positions) != len(enforced.Tokens) {
+	if len(positions) < len(enforced.Tokens) {
 		return nil, unjudged("the replay returned %d of %d positions", len(positions), len(enforced.Tokens))
 	}
+	past := len(positions) - len(enforced.Tokens)
+	positions = positions[:len(enforced.Tokens)]
 	out := make([]int, len(positions))
 	logprobs := make([]map[int]float64, len(positions))
 	for i, position := range positions {
@@ -259,9 +292,46 @@ func TapeOfReplay(inferenceID string, promptPayload, responsePayload, replayResp
 	}
 	greedy := request.Temperature != nil && *request.Temperature < samplingEps
 	return &TapeResult{
-		Model:   request.Model,
-		Signals: ScoreTape(logprobs, out, uint64(*request.Seed), vocab, greedy),
+		Model:       request.Model,
+		Signals:     ScoreTape(logprobs, out, uint64(*request.Seed), vocab, greedy),
+		Temperature: request.Temperature,
+		TopP:        request.TopP,
+		TopK:        request.TopK,
+		Grammar:     completionapi.GrammarConstrained(requestMap),
+		Finish:      storedFinishReason(responsePayload),
+		ReplayPast:  past,
 	}, nil
+}
+
+// storedFinishReason is the finish_reason of the stored answer: the choice's
+// in a JSON body, the last non-empty one in the events of a stream.
+func storedFinishReason(responsePayload []byte) string {
+	finishOf := func(body []byte) string {
+		var resp struct {
+			Choices []struct {
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		if json.Unmarshal(body, &resp) != nil || len(resp.Choices) == 0 {
+			return ""
+		}
+		return resp.Choices[0].FinishReason
+	}
+	var streamed completionapi.SerializedStreamedResponse
+	if json.Unmarshal(responsePayload, &streamed) != nil || len(streamed.Events) == 0 {
+		return finishOf(responsePayload)
+	}
+	finish := ""
+	for _, line := range streamed.Events {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok || strings.TrimSpace(data) == "[DONE]" {
+			continue
+		}
+		if f := finishOf([]byte(data)); f != "" {
+			finish = f
+		}
+	}
+	return finish
 }
 
 func unjudged(format string, args ...any) error {

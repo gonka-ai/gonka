@@ -68,6 +68,26 @@ func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID strin
 	if signals.Masked > 0 {
 		details = append(details, "masked", signals.Masked)
 	}
+	// What the request asked of the sampler, to read the signals against.
+	for _, setting := range []struct {
+		name  string
+		value *float64
+	}{{"temperature", tape.Temperature}, {"top_p", tape.TopP}, {"top_k", tape.TopK}} {
+		if setting.value != nil {
+			details = append(details, setting.name, *setting.value)
+		}
+	}
+	if tape.Grammar {
+		details = append(details, "grammar", true)
+	}
+	// How the answer ended: an answer cut short carries no end token, and the
+	// replay runs one position past it.
+	if tape.Finish != "" {
+		details = append(details, "finish", tape.Finish)
+	}
+	if tape.ReplayPast > 0 {
+		details = append(details, "replay_past", tape.ReplayPast)
+	}
 	if v.pool != nil {
 		answers, steps, count := v.pool.Observe(req.ExecutorAddress, req.Model, signals.Steps, signals.Count)
 		details = append(details, "pooled_answers", answers, "pooled_steps", steps, "pooled_count", count)
