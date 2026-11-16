@@ -17,6 +17,7 @@ import (
 // must be listed here; TestAllDevshardProtoMessagesClassified will fail until
 // it is classified as signed or unsigned.
 var signedProtoFullNames = map[string]struct{}{
+	"devshard.v1.WarmKeyRevokeAuthorization": {},
 	"devshard.v1.DiffContent":                {},
 	"devshard.v1.ExecutorReceiptContent":     {},
 	"devshard.v1.TimeoutVoteContent":         {},

@@ -73,11 +73,19 @@ WarmKeyBinding { Addr, FromNonce, GrantID, RevokedAtNonce }
 WarmKeyHistory  map[slot][]WarmKeyBinding
 
 MsgWarmKeyBind   { slot_id, address, grant_id }
-MsgWarmKeyRevoke { slot_id, address, grant_id }
+MsgWarmKeyRevoke { slot_id, address, grant_id, participant_sig }
 ```
 
 Only signed diff transactions modify this history. A bind must advance the
 grant ID for that key on that slot; a revoke must name its live binding's ID.
+While its chain grant is still live, a revoke additionally needs consent from
+the cold participant or that bound warm key. `participant_sig` signs the
+domain-tagged `WarmKeyRevokeAuthorization` containing the escrow ID, slot,
+warm address and grant ID. The creator cannot disable an executor on its own
+and turn completed work into an unpaid timeout. If the authenticated chain
+checkpoint shows the grant has ended or expired, the gateway can synchronize
+the revoke without a participant signature. Unknown grant evidence pauses
+apply, including persisted replay; it never counts as an ended grant.
 Several keys can cover the same nonce range, allowing HA replicas to use
 different live warm keys during rotation. The cold slot key remains valid.
 A sibling slot of the same participant may supply a binding while this slot
@@ -111,6 +119,15 @@ pause apply instead of guessing that no revoke exists. A completed view is
 shared across that granter's slots/keys and reused for covered heights.
 Derived grant decisions are journaled with the checkpoint for preview and
 rollback, and rebuilt on snapshot recovery; they are not hashed separately.
+
+If authority evidence disappears while an inference completes, the host keeps
+the completed result unsigned and retries publication during ordinary mempool
+polling. A timeout challenge can also rebuild a lost Finish after restart from
+the persisted payload, with `RecoveryStoredOnly`; it never reruns the model.
+Once a receipt, Finish or participant validation is committed, other queued
+HA signature variants of that logical operation are removed from committed
+state, independently of their signature bytes. Unknown future operations and
+work still owed by other participants remain queued.
 
 ## Which nonce is authorized
 

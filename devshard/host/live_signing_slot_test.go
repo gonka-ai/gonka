@@ -50,7 +50,7 @@ func TestLiveSigningSlotTracksPartialRevoke(t *testing.T) {
 	queued.ProposerSig, err = h.signProposer(queued)
 	require.NoError(t, err)
 	h.HostMempool().Add(MempoolEntry{Tx: &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: queued}}, ProposedAt: 1})
-	apply(testutil.WarmKeyRevokeTx(0, warm.Address(), 1))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 0, warm, 1, "live-slots"))
 	h.mu.Lock()
 	blocked := h.hasMempoolValidationOrVote(99)
 	queuedIDs := h.ownMempoolValidationIDs()
@@ -123,7 +123,7 @@ func TestLiveSigningSlotTracksPartialRevoke(t *testing.T) {
 	}
 	require.True(t, reboundAck, "rebound slot must also resume HeightAck production")
 
-	apply(testutil.WarmKeyRevokeTx(0, warm.Address(), 2), testutil.WarmKeyRevokeTx(1, warm.Address(), 1))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 0, warm, 2, "live-slots"), testutil.SignedWarmKeyRevokeTx(t, 1, warm, 1, "live-slots"))
 	_, err = h.SigningSlot()
 	require.ErrorIs(t, err, types.ErrWarmKeyUnconfirmed)
 	_, err = h.StateSigningSlot(sm.LatestNonce())

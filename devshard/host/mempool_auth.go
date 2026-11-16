@@ -12,6 +12,7 @@ import (
 // yet block replacement validation or trip the stale-mempool signing policy.
 // Caller holds h.mu. This is live admission, not historical replay validity.
 func (h *Host) authorizedMempoolTxs() []*types.DevshardTx {
+	h.retryPendingFinishesLocked()
 	txs := h.mempool.Txs()
 	if len(txs) == 0 || !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
 		return txs
@@ -24,6 +25,10 @@ func (h *Host) authorizedMempoolTxs() []*types.DevshardTx {
 	out := make([]*types.DevshardTx, 0, len(txs))
 	var invalid []*types.DevshardTx
 	for _, tx := range txs {
+		if h.queuedHostTxSettled(tx) {
+			invalid = append(invalid, tx)
+			continue
+		}
 		allowed, known := h.queuedHostTxAuthorized(tx, actors, verifier)
 		if allowed {
 			out = append(out, tx)
@@ -34,6 +39,49 @@ func (h *Host) authorizedMempoolTxs() []*types.DevshardTx {
 
 	h.mempool.RemoveIncluded(invalid)
 	return out
+}
+
+// Inclusion is a logical operation, not a signature byte string: overlapping
+// HA keys can sign different bytes for the same receipt, finish or validation.
+// Consult committed state so an invalid/skipped message in a diff cannot erase
+// owed work. Missing future records remain unresolved until their start arrives.
+func (h *Host) queuedHostTxSettled(tx *types.DevshardTx) bool {
+	var id uint64
+	var slot uint32
+	validation := false
+	switch {
+	case tx.GetConfirmStart() != nil:
+		id = tx.GetConfirmStart().InferenceId
+	case tx.GetFinishInference() != nil:
+		id = tx.GetFinishInference().InferenceId
+	case tx.GetValidation() != nil:
+		id, slot, validation = tx.GetValidation().InferenceId, tx.GetValidation().ValidatorSlot, true
+	case tx.GetValidationVote() != nil:
+		id, slot, validation = tx.GetValidationVote().InferenceId, tx.GetValidationVote().VoterSlot, true
+	default:
+		return false
+	}
+	rec, ok := h.sm.GetInference(id)
+	if !ok {
+		return id <= h.sm.LatestNonce()
+	}
+	if tx.GetConfirmStart() != nil {
+		return rec.Status != types.StatusPending
+	}
+	if tx.GetFinishInference() != nil {
+		return rec.Status != types.StatusPending && rec.Status != types.StatusStarted
+	}
+	if validation {
+		if rec.Status == types.StatusTimedOut || h.sm.Phase() == types.PhaseSettlement {
+			return true
+		}
+		for _, sibling := range h.addrToSlots[h.slotToAddr[slot]] {
+			if rec.ValidatedBy.IsSet(sibling) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // queuedHostTxAuthorized reports both live usability and whether a rejection

@@ -71,7 +71,7 @@ func TestEventsResetRetainsUnresolvedQueuedWarmProposals(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
-	finish := &types.MsgFinishInference{InferenceId: 1, ExecutorSlot: 1, EscrowId: "live-slots", ResponseHash: []byte("completed result"), InputTokens: 1, OutputTokens: 1}
+	finish := &types.MsgFinishInference{InferenceId: 99, ExecutorSlot: 1, EscrowId: "live-slots", ResponseHash: []byte("completed result"), InputTokens: 1, OutputTokens: 1}
 	finish.ProposerSig, err = h.signProposer(finish)
 	require.NoError(t, err)
 	validation := &types.MsgValidation{InferenceId: 99, ValidatorSlot: 0, Valid: true, EscrowId: "live-slots"}
@@ -106,7 +106,7 @@ func TestEventsResetRetainsUnresolvedQueuedWarmProposals(t *testing.T) {
 	apply()
 	apply(testutil.StartTx(futureID))
 	require.Len(t, h.MempoolTxs(), 3, "the same receipt becomes usable after its start is applied")
-	apply(testutil.WarmKeyRevokeTx(0, warm.Address(), 1))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 0, warm, 1, "live-slots"))
 	fetch.down.Store(true)
 	grants.Reset()
 	require.Empty(t, h.MempoolTxs())
@@ -115,7 +115,7 @@ func TestEventsResetRetainsUnresolvedQueuedWarmProposals(t *testing.T) {
 	require.NotNil(t, remaining[0].GetFinishInference(), "the unresolved slot-1 Finish is retained")
 	fetch.down.Store(false)
 	require.Len(t, h.MempoolTxs(), 1)
-	apply(testutil.WarmKeyRevokeTx(1, warm.Address(), 1))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 1, warm, 1, "live-slots"))
 	require.Empty(t, h.MempoolTxs(), "definitive nonce revocation still discards invalid proposals")
 	require.Empty(t, h.HostMempool().Txs())
 }

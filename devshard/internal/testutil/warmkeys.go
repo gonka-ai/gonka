@@ -3,9 +3,11 @@ package testutil
 import (
 	"sort"
 	"sync"
+	"testing"
 	"time"
 
 	"devshard/bridge"
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -14,6 +16,22 @@ func WarmKeyBindTx(slot uint32, addr string, grantID uint64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_WarmKeyBind{WarmKeyBind: &types.MsgWarmKeyBind{
 		SlotId: slot, Address: addr, GrantId: grantID,
 	}}}
+}
+
+// SignedWarmKeyRevokeTx records the participant's consent to a nonce-only
+// revoke while its chain grant is still live.
+func SignedWarmKeyRevokeTx(t testing.TB, slot uint32, warm signing.Signer, grantID uint64, escrowID string) *types.DevshardTx {
+	t.Helper()
+	tx := WarmKeyRevokeTx(slot, warm.Address(), grantID)
+	data, err := types.WarmKeyRevokeSignBytes(escrowID, tx.GetWarmKeyRevoke())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx.GetWarmKeyRevoke().ParticipantSig, err = warm.Sign(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tx
 }
 
 // WarmKeyRevokeTx is a MsgWarmKeyRevoke for tests.

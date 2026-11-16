@@ -77,6 +77,19 @@ message MsgWarmKeyRevoke {
   uint32 slot_id = 1;
   string address = 2;
   uint64 grant_id = 3;
+  // Required while the named chain grant is still live. The cold participant
+  // or this bound warm key signs WarmKeyRevokeAuthorization. An ended grant
+  // needs no signature, so the gateway can synchronize on-chain revocations.
+  bytes participant_sig = 4;
+}
+
+// Separate, domain-tagged preimage: consent is scoped to this escrow and exact
+// binding, and cannot be replayed against a later grant or another slot.
+message WarmKeyRevokeAuthorization {
+  string escrow_id = 1;
+  uint32 slot_id = 2;
+  string address = 3;
+  uint64 grant_id = 4;
 }
 
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.

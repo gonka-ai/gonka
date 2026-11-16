@@ -167,7 +167,10 @@ type Host struct {
 	signingCandidates  map[uint32]bool
 	sortedSigningSlots []uint32
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
-	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
+	// Completed work awaiting live authority to publish its Finish. It is
+	// retried by ordinary mempool reads; persisted payloads cover process loss.
+	pendingFinishes map[uint64]*types.MsgFinishInference
+	validating      map[uint64]struct{} // inference IDs with queued or in-flight validation
 	// validationCooldown is inference ID -> not-before. The zero time holds the
 	// inference until it leaves the validatable set; any other time expires.
 	validationCooldown map[uint64]time.Time
@@ -1400,6 +1403,14 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {
+		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+			h.mu.Lock()
+			if h.pendingFinishes == nil {
+				h.pendingFinishes = make(map[uint64]*types.MsgFinishInference)
+			}
+			h.pendingFinishes[inferenceID] = finishMsg
+			h.mu.Unlock()
+		}
 		return result, observability.FailReceiptOrphan(ctx, h.escrowID,
 			observability.ReasonSignFinishErr, observability.WhereHostPublishFinish,
 			observability.StageFinished, "sign finish msg failed", err, "inference_id", inferenceID)

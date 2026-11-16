@@ -38,8 +38,11 @@ type nonceClaim struct {
 // decode; a nil entry falls back to DecodeDiffWire.
 func (h *Host) ChallengeReceiptWire(ctx context.Context, inferenceID uint64, payload *InferencePayload, wires []types.DiffWire, predecoded []types.Diff) ([]byte, int64, error) {
 	receipt, confirmedAt, job, err := h.challengeReceiptLocked(ctx, inferenceID, payload, wires, predecoded)
-	if err != nil || job == nil {
+	if err != nil {
 		return receipt, confirmedAt, err
+	}
+	if job == nil {
+		return receipt, confirmedAt, h.recoverStartedFinish(ctx, inferenceID)
 	}
 	h.executeAsync(ctx, job)
 	return receipt, confirmedAt, nil

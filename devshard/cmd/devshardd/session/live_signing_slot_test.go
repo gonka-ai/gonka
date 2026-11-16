@@ -48,7 +48,7 @@ func TestValidationRetrySelectsRemainingWarmSlot(t *testing.T) {
 
 	require.NoError(t, submitValidationToMempool(h, 99, true))
 	require.True(t, validationAlreadyInMempool(h, 99))
-	apply(testutil.WarmKeyRevokeTx(0, warm.Address(), 1))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 0, warm, 1, "live-slots"))
 	require.False(t, validationAlreadyInMempool(h, 99), "revoked queued validation must not suppress a replacement")
 
 	require.NoError(t, submitValidationToMempool(h, 99, true))
@@ -64,7 +64,7 @@ func TestValidationRetrySelectsRemainingWarmSlot(t *testing.T) {
 	recovered, err := signing.NewSecp256k1Verifier().RecoverAddress(data, msg.ProposerSig)
 	require.NoError(t, err)
 	require.True(t, h.SlotActors().Allows(msg.ValidatorSlot, recovered))
-	apply(testutil.WarmKeyRevokeTx(1, warm.Address(), 1))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 1, warm, 1, "live-slots"))
 	require.ErrorIs(t, submitValidationToMempool(h, 100, true), types.ErrWarmKeyUnconfirmed)
 	require.Empty(t, h.MempoolTxs(), "no unauthorized retry or stale validation is queued")
 }

@@ -706,12 +706,16 @@ func (x *MsgWarmKeyBind) GetGrantId() uint64 {
 // grant_id, from the diff that carries it. Signatures in earlier diffs keep
 // verifying on replay.
 type MsgWarmKeyRevoke struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SlotId        uint32                 `protobuf:"varint,1,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
-	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
-	GrantId       uint64                 `protobuf:"varint,3,opt,name=grant_id,json=grantId,proto3" json:"grant_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	SlotId  uint32                 `protobuf:"varint,1,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	Address string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	GrantId uint64                 `protobuf:"varint,3,opt,name=grant_id,json=grantId,proto3" json:"grant_id,omitempty"`
+	// Required while the named chain grant is still live. The cold participant
+	// or this bound warm key signs WarmKeyRevokeAuthorization. An ended grant
+	// needs no signature, so the gateway can synchronize on-chain revocations.
+	ParticipantSig []byte `protobuf:"bytes,4,opt,name=participant_sig,json=participantSig,proto3" json:"participant_sig,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *MsgWarmKeyRevoke) Reset() {
@@ -765,6 +769,83 @@ func (x *MsgWarmKeyRevoke) GetGrantId() uint64 {
 	return 0
 }
 
+func (x *MsgWarmKeyRevoke) GetParticipantSig() []byte {
+	if x != nil {
+		return x.ParticipantSig
+	}
+	return nil
+}
+
+// Separate, domain-tagged preimage: consent is scoped to this escrow and exact
+// binding, and cannot be replayed against a later grant or another slot.
+type WarmKeyRevokeAuthorization struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	SlotId        uint32                 `protobuf:"varint,2,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	Address       string                 `protobuf:"bytes,3,opt,name=address,proto3" json:"address,omitempty"`
+	GrantId       uint64                 `protobuf:"varint,4,opt,name=grant_id,json=grantId,proto3" json:"grant_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WarmKeyRevokeAuthorization) Reset() {
+	*x = WarmKeyRevokeAuthorization{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WarmKeyRevokeAuthorization) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WarmKeyRevokeAuthorization) ProtoMessage() {}
+
+func (x *WarmKeyRevokeAuthorization) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WarmKeyRevokeAuthorization.ProtoReflect.Descriptor instead.
+func (*WarmKeyRevokeAuthorization) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *WarmKeyRevokeAuthorization) GetEscrowId() string {
+	if x != nil {
+		return x.EscrowId
+	}
+	return ""
+}
+
+func (x *WarmKeyRevokeAuthorization) GetSlotId() uint32 {
+	if x != nil {
+		return x.SlotId
+	}
+	return 0
+}
+
+func (x *WarmKeyRevokeAuthorization) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *WarmKeyRevokeAuthorization) GetGrantId() uint64 {
+	if x != nil {
+		return x.GrantId
+	}
+	return 0
+}
+
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
 //
 // A turn is identified by its span-start nonce, not by a wire field: the diff
@@ -784,7 +865,7 @@ type MsgHeartbeat struct {
 
 func (x *MsgHeartbeat) Reset() {
 	*x = MsgHeartbeat{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[6]
+	mi := &file_devshard_v1_diff_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -796,7 +877,7 @@ func (x *MsgHeartbeat) String() string {
 func (*MsgHeartbeat) ProtoMessage() {}
 
 func (x *MsgHeartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[6]
+	mi := &file_devshard_v1_diff_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -809,7 +890,7 @@ func (x *MsgHeartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgHeartbeat.ProtoReflect.Descriptor instead.
 func (*MsgHeartbeat) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{6}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MsgHeartbeat) GetObservedHeight() uint64 {
@@ -866,7 +947,7 @@ type MsgHeightAck struct {
 
 func (x *MsgHeightAck) Reset() {
 	*x = MsgHeightAck{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[7]
+	mi := &file_devshard_v1_diff_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -878,7 +959,7 @@ func (x *MsgHeightAck) String() string {
 func (*MsgHeightAck) ProtoMessage() {}
 
 func (x *MsgHeightAck) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[7]
+	mi := &file_devshard_v1_diff_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -891,7 +972,7 @@ func (x *MsgHeightAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgHeightAck.ProtoReflect.Descriptor instead.
 func (*MsgHeightAck) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{7}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *MsgHeightAck) GetRefNonce() uint64 {
@@ -955,7 +1036,7 @@ type SyncVectorEntry struct {
 
 func (x *SyncVectorEntry) Reset() {
 	*x = SyncVectorEntry{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[8]
+	mi := &file_devshard_v1_diff_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -967,7 +1048,7 @@ func (x *SyncVectorEntry) String() string {
 func (*SyncVectorEntry) ProtoMessage() {}
 
 func (x *SyncVectorEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[8]
+	mi := &file_devshard_v1_diff_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -980,7 +1061,7 @@ func (x *SyncVectorEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SyncVectorEntry.ProtoReflect.Descriptor instead.
 func (*SyncVectorEntry) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{8}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SyncVectorEntry) GetSlotId() uint32 {
@@ -1028,7 +1109,7 @@ type ExecutorReceiptContent struct {
 
 func (x *ExecutorReceiptContent) Reset() {
 	*x = ExecutorReceiptContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	mi := &file_devshard_v1_diff_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1040,7 +1121,7 @@ func (x *ExecutorReceiptContent) String() string {
 func (*ExecutorReceiptContent) ProtoMessage() {}
 
 func (x *ExecutorReceiptContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[9]
+	mi := &file_devshard_v1_diff_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1053,7 +1134,7 @@ func (x *ExecutorReceiptContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutorReceiptContent.ProtoReflect.Descriptor instead.
 func (*ExecutorReceiptContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{9}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ExecutorReceiptContent) GetInferenceId() uint64 {
@@ -1127,7 +1208,7 @@ type TimeoutVoteContent struct {
 
 func (x *TimeoutVoteContent) Reset() {
 	*x = TimeoutVoteContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[10]
+	mi := &file_devshard_v1_diff_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1139,7 +1220,7 @@ func (x *TimeoutVoteContent) String() string {
 func (*TimeoutVoteContent) ProtoMessage() {}
 
 func (x *TimeoutVoteContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[10]
+	mi := &file_devshard_v1_diff_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1152,7 +1233,7 @@ func (x *TimeoutVoteContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeoutVoteContent.ProtoReflect.Descriptor instead.
 func (*TimeoutVoteContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{10}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *TimeoutVoteContent) GetEscrowId() string {
@@ -1197,7 +1278,7 @@ type ErrorMissVoteContent struct {
 
 func (x *ErrorMissVoteContent) Reset() {
 	*x = ErrorMissVoteContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[11]
+	mi := &file_devshard_v1_diff_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1209,7 +1290,7 @@ func (x *ErrorMissVoteContent) String() string {
 func (*ErrorMissVoteContent) ProtoMessage() {}
 
 func (x *ErrorMissVoteContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[11]
+	mi := &file_devshard_v1_diff_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1222,7 +1303,7 @@ func (x *ErrorMissVoteContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorMissVoteContent.ProtoReflect.Descriptor instead.
 func (*ErrorMissVoteContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{11}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ErrorMissVoteContent) GetEscrowId() string {
@@ -1265,7 +1346,7 @@ type StateSignatureContent struct {
 
 func (x *StateSignatureContent) Reset() {
 	*x = StateSignatureContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[12]
+	mi := &file_devshard_v1_diff_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1277,7 +1358,7 @@ func (x *StateSignatureContent) String() string {
 func (*StateSignatureContent) ProtoMessage() {}
 
 func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[12]
+	mi := &file_devshard_v1_diff_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1290,7 +1371,7 @@ func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateSignatureContent.ProtoReflect.Descriptor instead.
 func (*StateSignatureContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{12}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *StateSignatureContent) GetStateRoot() []byte {
@@ -1361,11 +1442,17 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\x0eMsgWarmKeyBind\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x19\n" +
-	"\bgrant_id\x18\x03 \x01(\x04R\agrantId\"`\n" +
+	"\bgrant_id\x18\x03 \x01(\x04R\agrantId\"\x89\x01\n" +
 	"\x10MsgWarmKeyRevoke\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12\x18\n" +
 	"\aaddress\x18\x02 \x01(\tR\aaddress\x12\x19\n" +
-	"\bgrant_id\x18\x03 \x01(\x04R\agrantId\"\xe1\x01\n" +
+	"\bgrant_id\x18\x03 \x01(\x04R\agrantId\x12'\n" +
+	"\x0fparticipant_sig\x18\x04 \x01(\fR\x0eparticipantSig\"\x87\x01\n" +
+	"\x1aWarmKeyRevokeAuthorization\x12\x1b\n" +
+	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12\x17\n" +
+	"\aslot_id\x18\x02 \x01(\rR\x06slotId\x12\x18\n" +
+	"\aaddress\x18\x03 \x01(\tR\aaddress\x12\x19\n" +
+	"\bgrant_id\x18\x04 \x01(\x04R\agrantId\"\xe1\x01\n" +
 	"\fMsgHeartbeat\x12'\n" +
 	"\x0fobserved_height\x18\x02 \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\x03 \x01(\fR\x11observedBlockHash\x12\x1b\n" +
@@ -1442,55 +1529,56 @@ func file_devshard_v1_diff_proto_rawDescGZIP() []byte {
 }
 
 var file_devshard_v1_diff_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_devshard_v1_diff_proto_goTypes = []any{
-	(AckStatus)(0),                 // 0: devshard.v1.AckStatus
-	(SyncState)(0),                 // 1: devshard.v1.SyncState
-	(*DiffContent)(nil),            // 2: devshard.v1.DiffContent
-	(*MsgForceHeightSyncTurn)(nil), // 3: devshard.v1.MsgForceHeightSyncTurn
-	(*MsgMainnetHeight)(nil),       // 4: devshard.v1.MsgMainnetHeight
-	(*DevshardTx)(nil),             // 5: devshard.v1.DevshardTx
-	(*MsgWarmKeyBind)(nil),         // 6: devshard.v1.MsgWarmKeyBind
-	(*MsgWarmKeyRevoke)(nil),       // 7: devshard.v1.MsgWarmKeyRevoke
-	(*MsgHeartbeat)(nil),           // 8: devshard.v1.MsgHeartbeat
-	(*MsgHeightAck)(nil),           // 9: devshard.v1.MsgHeightAck
-	(*SyncVectorEntry)(nil),        // 10: devshard.v1.SyncVectorEntry
-	(*ExecutorReceiptContent)(nil), // 11: devshard.v1.ExecutorReceiptContent
-	(*TimeoutVoteContent)(nil),     // 12: devshard.v1.TimeoutVoteContent
-	(*ErrorMissVoteContent)(nil),   // 13: devshard.v1.ErrorMissVoteContent
-	(*StateSignatureContent)(nil),  // 14: devshard.v1.StateSignatureContent
-	(*MsgStartInference)(nil),      // 15: devshard.v1.MsgStartInference
-	(*MsgConfirmStart)(nil),        // 16: devshard.v1.MsgConfirmStart
-	(*MsgFinishInference)(nil),     // 17: devshard.v1.MsgFinishInference
-	(*MsgTimeoutInference)(nil),    // 18: devshard.v1.MsgTimeoutInference
-	(*MsgValidation)(nil),          // 19: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),      // 20: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),          // 21: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),       // 22: devshard.v1.MsgFinalizeRound
-	(*MsgErrorMiss)(nil),           // 23: devshard.v1.MsgErrorMiss
-	(TimeoutReason)(0),             // 24: devshard.v1.TimeoutReason
+	(AckStatus)(0),                     // 0: devshard.v1.AckStatus
+	(SyncState)(0),                     // 1: devshard.v1.SyncState
+	(*DiffContent)(nil),                // 2: devshard.v1.DiffContent
+	(*MsgForceHeightSyncTurn)(nil),     // 3: devshard.v1.MsgForceHeightSyncTurn
+	(*MsgMainnetHeight)(nil),           // 4: devshard.v1.MsgMainnetHeight
+	(*DevshardTx)(nil),                 // 5: devshard.v1.DevshardTx
+	(*MsgWarmKeyBind)(nil),             // 6: devshard.v1.MsgWarmKeyBind
+	(*MsgWarmKeyRevoke)(nil),           // 7: devshard.v1.MsgWarmKeyRevoke
+	(*WarmKeyRevokeAuthorization)(nil), // 8: devshard.v1.WarmKeyRevokeAuthorization
+	(*MsgHeartbeat)(nil),               // 9: devshard.v1.MsgHeartbeat
+	(*MsgHeightAck)(nil),               // 10: devshard.v1.MsgHeightAck
+	(*SyncVectorEntry)(nil),            // 11: devshard.v1.SyncVectorEntry
+	(*ExecutorReceiptContent)(nil),     // 12: devshard.v1.ExecutorReceiptContent
+	(*TimeoutVoteContent)(nil),         // 13: devshard.v1.TimeoutVoteContent
+	(*ErrorMissVoteContent)(nil),       // 14: devshard.v1.ErrorMissVoteContent
+	(*StateSignatureContent)(nil),      // 15: devshard.v1.StateSignatureContent
+	(*MsgStartInference)(nil),          // 16: devshard.v1.MsgStartInference
+	(*MsgConfirmStart)(nil),            // 17: devshard.v1.MsgConfirmStart
+	(*MsgFinishInference)(nil),         // 18: devshard.v1.MsgFinishInference
+	(*MsgTimeoutInference)(nil),        // 19: devshard.v1.MsgTimeoutInference
+	(*MsgValidation)(nil),              // 20: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),          // 21: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),              // 22: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),           // 23: devshard.v1.MsgFinalizeRound
+	(*MsgErrorMiss)(nil),               // 24: devshard.v1.MsgErrorMiss
+	(TimeoutReason)(0),                 // 25: devshard.v1.TimeoutReason
 }
 var file_devshard_v1_diff_proto_depIdxs = []int32{
 	5,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
-	15, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
-	16, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
-	17, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
-	18, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
-	19, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
-	20, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
-	21, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
-	22, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
+	16, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
+	17, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
+	18, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
+	19, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
+	20, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
+	21, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
+	22, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
+	23, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
 	3,  // 9: devshard.v1.DevshardTx.force_height_sync_turn:type_name -> devshard.v1.MsgForceHeightSyncTurn
-	8,  // 10: devshard.v1.DevshardTx.heartbeat:type_name -> devshard.v1.MsgHeartbeat
-	9,  // 11: devshard.v1.DevshardTx.height_ack:type_name -> devshard.v1.MsgHeightAck
-	23, // 12: devshard.v1.DevshardTx.error_miss:type_name -> devshard.v1.MsgErrorMiss
+	9,  // 10: devshard.v1.DevshardTx.heartbeat:type_name -> devshard.v1.MsgHeartbeat
+	10, // 11: devshard.v1.DevshardTx.height_ack:type_name -> devshard.v1.MsgHeightAck
+	24, // 12: devshard.v1.DevshardTx.error_miss:type_name -> devshard.v1.MsgErrorMiss
 	6,  // 13: devshard.v1.DevshardTx.warm_key_bind:type_name -> devshard.v1.MsgWarmKeyBind
 	7,  // 14: devshard.v1.DevshardTx.warm_key_revoke:type_name -> devshard.v1.MsgWarmKeyRevoke
 	4,  // 15: devshard.v1.DevshardTx.mainnet_height:type_name -> devshard.v1.MsgMainnetHeight
-	10, // 16: devshard.v1.MsgHeartbeat.sync_vector:type_name -> devshard.v1.SyncVectorEntry
+	11, // 16: devshard.v1.MsgHeartbeat.sync_vector:type_name -> devshard.v1.SyncVectorEntry
 	1,  // 17: devshard.v1.MsgHeightAck.sync_state:type_name -> devshard.v1.SyncState
 	0,  // 18: devshard.v1.SyncVectorEntry.status:type_name -> devshard.v1.AckStatus
-	24, // 19: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
+	25, // 19: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
 	20, // [20:20] is the sub-list for method output_type
 	20, // [20:20] is the sub-list for method input_type
 	20, // [20:20] is the sub-list for extension type_name
@@ -1527,7 +1615,7 @@ func file_devshard_v1_diff_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_diff_proto_rawDesc), len(file_devshard_v1_diff_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   13,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

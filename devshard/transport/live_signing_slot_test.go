@@ -47,7 +47,7 @@ func TestTimeoutVoteSelectsRemainingWarmSlot(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(h.Close)
 
-	apply(testutil.WarmKeyRevokeTx(0, warm.Address(), 1), testutil.StartTx(2))
+	apply(testutil.SignedWarmKeyRevokeTx(t, 0, warm, 1, "live-slots"), testutil.StartTx(2))
 	statetest.ArmRefusalDue(t, sm, 2)
 	srv, err := NewServer(h, shared, signing.NewSecp256k1Verifier(), user.Address())
 	require.NoError(t, err)

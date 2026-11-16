@@ -1381,19 +1381,33 @@ func (sm *StateMachine) applyWarmKeyBind(msg *types.MsgWarmKeyBind, diffNonce ui
 }
 
 // applyWarmKeyRevoke ends the live binding of msg.Address on msg.SlotId at
-// diffNonce. The entry must name the live binding's grant; nothing is asked
-// of the chain, the binding was confirmed when it was made.
+// diffNonce. The entry must name the live binding's grant. While that chain
+// grant is live, participant consent is required: creator-only revocation could
+// otherwise hide an executor's completed work and manufacture an unpaid timeout.
 func (sm *StateMachine) applyWarmKeyRevoke(msg *types.MsgWarmKeyRevoke, diffNonce uint64) error {
 	if msg == nil {
 		return types.ErrEmptyTx
 	}
-	_, addr, err := sm.warmKeyEntryPartiesLocked(msg.SlotId, msg.Address, msg.GrantId)
+	cold, addr, err := sm.warmKeyEntryPartiesLocked(msg.SlotId, msg.Address, msg.GrantId)
 	if err != nil {
 		return err
 	}
 	scratch := signing.WarmKeyHistory{msg.SlotId: slices.Clone(sm.state.WarmKeyHistory[msg.SlotId])}
 	if err := scratch.Revoke(msg.SlotId, addr, diffNonce, msg.GrantId); err != nil {
 		return fmt.Errorf("%w: %v", types.ErrInvalidWarmKeyEntry, err)
+	}
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) && sm.warmHeightValidity[warmGrantKey{cold, msg.GrantId, addr}] {
+		if sm.verifier == nil {
+			return fmt.Errorf("%w: no verifier for live grant revoke consent", types.ErrInvalidWarmKeyEntry)
+		}
+		data, err := types.WarmKeyRevokeSignBytes(sm.state.EscrowID, msg)
+		if err != nil {
+			return err
+		}
+		recovered, err := sm.verifier.RecoverAddress(data, msg.ParticipantSig)
+		if err != nil || (recovered != cold && recovered != addr) {
+			return fmt.Errorf("%w: live grant revoke requires consent of slot %d participant", types.ErrInvalidWarmKeyEntry, msg.SlotId)
+		}
 	}
 	sm.setWarmHistoryLocked(msg.SlotId, scratch[msg.SlotId])
 	logging.Debug("warm key revoked", "subsystem", "state",

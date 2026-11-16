@@ -88,7 +88,7 @@ func TestFutureGossipCannotUsePreRevokeHAState(t *testing.T) {
 	require.NoError(t, err)
 	height, err = b.BuildMainnetHeightTx(context.Background())
 	require.NoError(t, err)
-	second := []*types.DevshardTx{height, testutil.WarmKeyRevokeTx(0, warm.Address(), 1)}
+	second := []*types.DevshardTx{height, testutil.SignedWarmKeyRevokeTx(t, 0, warm, 1, "future-warm")}
 	root, err = b.ApplyLocal(2, second)
 	require.NoError(t, err)
 	require.NoError(t, shared.AppendDiff("future-warm", types.DiffRecord{Diff: types.Diff{Nonce: 2, Txs: second}, StateHash: root}))
@@ -149,7 +149,7 @@ func TestRevokedOwnWarmSignerCannotOverwriteHAStateSignature(t *testing.T) {
 			require.NoError(t, err)
 			second := []*types.DevshardTx{height}
 			if nonceRevoke {
-				second = append(second, testutil.WarmKeyRevokeTx(0, warm.Address(), 1))
+				second = append(second, testutil.SignedWarmKeyRevokeTx(t, 0, warm, 1, "own-warm"))
 			}
 			root, err = sm.ApplyLocal(2, second)
 			require.NoError(t, err)
