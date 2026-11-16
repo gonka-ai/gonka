@@ -116,6 +116,8 @@ func TestWarmKeyRotationAcrossHAReplayAndSnapshot(t *testing.T) {
 	require.True(t, rotationKeyLive(overlap, oldKey.Address))
 	require.True(t, rotationKeyLive(overlap, newKey.Address))
 
+	// Drain messages signed by the old key before revoking its chain grant.
+	harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey)
 	harness.Step(t, "leave the old-key replica offline across revocation")
 	stack.StopService(t, cfg.Hosts[0].ID)
 	harness.PatchTestenvGrantees(t, client, eps.MockDapiHTTP, adminface.GranteesRequest{GranterAddress: granter, Grantees: []string{newKey.Address}})

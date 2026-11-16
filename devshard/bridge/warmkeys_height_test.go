@@ -65,3 +65,12 @@ func TestWarmKeyExpirationUsesAuthenticatedNanoseconds(t *testing.T) {
 	require.False(t, grant.LiveAtHeight(100, at))
 	require.True(t, grant.LiveAtHeight(99, at))
 }
+
+func TestGRPCBridgeExposesHeightAwareGrantSource(t *testing.T) {
+	entry := WarmKeyEntry{Granter: "cold", Grantee: "warm", ID: 1, GrantedAtHeight: 90}
+	fetch := &heightWarmFetcher{fakeWarmKeyFetcher: fakeWarmKeyFetcher{logs: map[string][]WarmKeyEntry{"cold": {entry}}}, height: 100}
+	bridge := &GRPCBridge{warmKeys: NewWarmKeyLogCopy(fetch, time.Hour)}
+	live, err := CheckWarmKeyAtHeight(bridge, "cold", "warm", 1, 100, time.Unix(1000, 0))
+	require.NoError(t, err)
+	require.True(t, live)
+}

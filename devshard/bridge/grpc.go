@@ -173,3 +173,14 @@ func (b *GRPCBridge) OnSettlementFinalized(_ string) error {
 func (b *GRPCBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint32][]byte) error {
 	return ErrNotImplemented
 }
+
+// WarmKeyEntryAtHeight preserves the log copy's completeness guarantee through
+// the public bridge used by gateway sessions.
+func (b *GRPCBridge) WarmKeyEntryAtHeight(granter string, id uint64, height int64) (WarmKeyEntry, bool, error) {
+	if b == nil || b.warmKeys == nil {
+		return WarmKeyEntry{}, false, ErrChainUnavailable
+	}
+	return b.warmKeys.WarmKeyEntryAtHeight(granter, id, height)
+}
+
+var _ WarmKeyHeightSource = (*GRPCBridge)(nil)

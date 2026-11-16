@@ -238,3 +238,9 @@ func (b *ChainBridge) SubmitDisputeState(escrowID string, stateRoot []byte, nonc
 	}
 	return b.submitter.SubmitDisputeState(id, stateRoot, nonce, sigs)
 }
+
+func (b *ChainBridge) WarmKeyEntryAtHeight(granter string, id uint64, height int64) (bridge.WarmKeyEntry, bool, error) {
+	return b.warmKeys.WarmKeyEntryAtHeight(granter, id, height)
+}
+
+var _ bridge.WarmKeyHeightSource = (*ChainBridge)(nil)
