@@ -184,18 +184,20 @@ func (sm *StateMachine) recordMarksLocked(ms []heightsync.AttributableMark) {
 }
 
 func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
+	actors := sm.consensusActorsAtLocked(sm.state.LatestNonce + 1)
 	return heightsync.LogPlaneState{
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
 		// L2 reads the consensus history only: the diff's bind and revoke
 		// entries apply before the log-plane check, so a first ack by a
 		// freshly bound key verifies on every replica alike.
-		History:  sm.consensusWarmHistoryLocked(sm.state.LatestNonce + 1),
-		Verifier: sm.verifier,
-		Tracker:  sm.turnTracker,
-		Floor:    sm.heightSyncFloor,
-		Cfg:      sm.heartbeatCfg,
-		EscrowID: sm.state.EscrowID,
+		History:        actors.History,
+		BindingAllowed: actors.BindingAllowed,
+		Verifier:       sm.verifier,
+		Tracker:        sm.turnTracker,
+		Floor:          sm.heightSyncFloor,
+		Cfg:            sm.heartbeatCfg,
+		EscrowID:       sm.state.EscrowID,
 	}
 }
 

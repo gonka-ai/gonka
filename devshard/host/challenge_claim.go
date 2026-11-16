@@ -62,7 +62,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	if !ok || rec.Status != types.StatusPending {
 		return nil, 0, nil, nil
 	}
-	if !h.slotIDs[rec.ExecutorSlot] {
+	if !h.CanSignSlot(rec.ExecutorSlot) {
 		return nil, 0, nil, nil
 	}
 	if payload == nil {

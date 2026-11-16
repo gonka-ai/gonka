@@ -208,3 +208,43 @@ once PostgreSQL recovers. A configured shared-key backend error fails closed; it
 replica-local signer key. Standalone stores without PostgreSQL retain their
 existing signer-derived key. The seed is private host infrastructure data and
 must never be exposed through RPC, diagnostic exports or logs.
+
+### Historical signature and slot boundaries
+
+A future gossip notification may trigger catch-up, but a v7 replica does not
+accumulate or overwrite state signatures until it has applied that nonce locally.
+A root already present in shared HA storage does not establish which bindings
+were authorized there. After catch-up, signatures use that nonce's verified
+checkpoint and binding history.
+
+An expired or chain-revoked grant disables its key without deleting the nonce
+binding from slot policy. The occupied slot cannot silently inherit a sibling
+slot's warm key. Sibling fallback requires an explicit nonce revoke; an explicit
+bind can instead authorize that key directly. Cold slot keys
+remain authorized, and live admission can still propose an explicit new binding.
+
+Before issuing its own v7 state signature, a running replica rechecks its signer
+against the signed nonce rather than trusting slot ownership cached at startup.
+A revoked/expired signer withholds the signature while catch-up still succeeds.
+Only authorized slot labels may be persisted or emitted during recovery; a stale
+replica cannot overwrite a valid signature produced by another HA signer.
+
+Outgoing timeout/error-miss votes, validations and repair probes select a live
+signing slot rather than the startup primary slot. After a per-slot nonce revoke,
+the same warm signer may continue through another authorized slot of its cold
+participant. Async validations recheck this choice before publishing. A role
+fixed to one slot (executor receipt, finish or HeightAck) is withheld when that
+slot no longer authorizes the signer. Gossip labels a state signature using its
+exact signed nonce. A fully revoked signer emits no replacement slot signature.
+
+Queued host-signed proposals are checked again against live slot authorization
+before they can block a validation retry or trigger stale-mempool withholding.
+Invalid signatures from a revoked slot are removed, so a replacement signed
+through a live slot can be queued. The same check covers receipts, finishes and
+height acks; historical journal replay continues to use its authenticated nonce.
+
+An unavailable grant lookup withholds an unresolved proposal from the live
+mempool view but retains its original signed bytes. An events reset followed by
+a temporary RPC failure must not erase a completed inference's queued Finish.
+After evidence becomes available, the proposal is checked again. Definitively
+revoked proposals can still be discarded and replaced through an authorized slot.

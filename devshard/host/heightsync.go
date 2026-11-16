@@ -44,7 +44,7 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 			}
 			if hb := tx.GetHeartbeat(); hb != nil {
 				slot := heightsync.SlotForNonce(diff.Nonce, slotsNum)
-				if h.slotIDs[slot] {
+				if h.SlotIDs()[slot] {
 					mine = append(mine, heartbeatTarget{nonce: diff.Nonce, slot: slot, hb: hb})
 				}
 			}
@@ -60,6 +60,9 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 	}
 
 	for _, item := range mine {
+		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && !h.CanSignSlot(item.slot) {
+			continue
+		}
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, now)
 		if err := heightsync.SignAck(h.signer, ack); err != nil {
 			logging.Warn("height ack sign failed", "subsystem", "heightsync",
@@ -123,7 +126,7 @@ func (h *Host) hasOwnHeartbeatLocked(diffs []types.Diff) bool {
 			}
 			if hb := tx.GetHeartbeat(); hb != nil {
 				slot := heightsync.SlotForNonce(diff.Nonce, slotsNum)
-				if h.slotIDs[slot] {
+				if h.SlotIDs()[slot] {
 					return true
 				}
 			}
@@ -137,7 +140,7 @@ func (h *Host) receiptWantsOracleLocked(req HostRequest) bool {
 		return false
 	}
 	executorSlot := h.group[req.Nonce%uint64(len(h.group))].SlotID
-	return h.slotIDs[executorSlot]
+	return h.SlotIDs()[executorSlot]
 }
 
 // buildHeightAckLocked produces the ack for one heartbeat addressed to this host.

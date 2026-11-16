@@ -1177,3 +1177,20 @@ func TestLogPlane_OversizedFieldsRejected(t *testing.T) {
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrBadFraming)
 }
+
+func TestLogPlane_ExpiredOwnBindingStillBlocksSiblingAck(t *testing.T) {
+	st, signers := baseState(t, 2)
+	st.SlotKeys[1] = st.SlotKeys[0]
+	a, b := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	st.History = signing.WarmKeyHistory{0: {{Addr: a.Address(), FromNonce: 1, GrantID: 1}}, 1: {{Addr: b.Address(), FromNonce: 1, GrantID: 2}}}
+	st.BindingAllowed = func(_ uint32, binding signing.WarmKeyBinding) bool { return binding.GrantID == 2 }
+	hash := []byte{0xaa}
+	st.Tracker.Observe(1, []*types.DevshardTx{hbTx(50, 2, hash, nil)}, 50)
+	input := func(key *signing.Secp256k1Signer, slot uint32) heightsync.LogPlaneInput {
+		return heightsync.LogPlaneInput{Nonce: 2, Txs: []*types.DevshardTx{signedAckTx(signedAck(t, key, 1, slot, 50, hash, types.SyncState_SYNCED))}}
+	}
+	require.ErrorIs(t, heightsync.CheckDiffLogPlane(context.Background(), input(a, 0), st).Err, heightsync.ErrAckSigInvalid)
+	require.ErrorIs(t, heightsync.CheckDiffLogPlane(context.Background(), input(b, 0), st).Err, heightsync.ErrAckSigInvalid)
+	require.NoError(t, heightsync.CheckDiffLogPlane(context.Background(), input(b, 1), st).Err)
+	require.NoError(t, heightsync.CheckDiffLogPlane(context.Background(), input(signers[0], 0), st).Err)
+}

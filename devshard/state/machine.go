@@ -2267,11 +2267,13 @@ func (sm *StateMachine) consensusActorsLocked() signing.SlotActors {
 // consensusActorsAtLocked is consensusActorsLocked at an explicit
 // authorization nonce: the nonce a state signature or settlement signs.
 func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors {
-	return signing.SlotActors{
-		SlotKeys: sm.slotToAddress,
-		History:  sm.consensusWarmHistoryLocked(nonce),
-		Nonce:    nonce,
+	actors := signing.SlotActors{SlotKeys: sm.slotToAddress, History: cloneWarmKeyHistory(sm.state.WarmKeyHistory), Nonce: nonce}
+	if !types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		return actors
 	}
+	return restrictWarmActors(actors, func(slot uint32, b signing.WarmKeyBinding) bool {
+		return sm.warmHeightValidity[warmGrantKey{sm.slotToAddress[slot], b.GrantID, b.Addr}]
+	})
 }
 
 // localActorsAt is the local-admission identity set at nonce: the consensus
@@ -2293,6 +2295,16 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 		actors.History = cloneWarmKeyHistory(sm.state.WarmKeyHistory)
 	}
 	sm.mu.RUnlock()
+	if required && !admit && nonce > latest {
+		// A named future state has not supplied its bindings or authenticated
+		// checkpoint yet. Only the live-admission path may trigger catch-up.
+		actors.History = nil
+		actors.BindingAllowed = nil
+		actors.AuthorizationError = func(uint32, string) error {
+			return fmt.Errorf("%w: future state authorization unavailable", types.ErrHeaderPending)
+		}
+		return actors
+	}
 	if required {
 		actors = sm.historicalWarmActors(actors, cp, latest, checker, escrowID)
 		if !admit {
@@ -2301,6 +2313,18 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 	}
 	// One source lookup per (key, validator) pair however many slots the
 	// validator owns; the value is request-scoped, so the memo is too.
+	priorError := actors.AuthorizationError
+	liveErrors := make(map[[2]string]error)
+	keys := actors.SlotKeys
+	actors.AuthorizationError = func(slot uint32, recovered string) error {
+		if err := liveErrors[[2]string{recovered, keys[slot]}]; err != nil {
+			return err
+		}
+		if priorError != nil {
+			return priorError(slot, recovered)
+		}
+		return nil
+	}
 	live := make(map[[2]string]bool, 1)
 	ended := make(map[[2]string]bool, 1)
 	if admit {
@@ -2308,7 +2332,14 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 			pair := [2]string{recovered, expected}
 			ok, seen := live[pair]
 			if !seen {
-				ok = sm.CheckWarmKey(recovered, expected)
+				if sm.warmResolver != nil {
+					var err error
+					ok, err = sm.warmResolver(recovered, expected)
+					if err != nil {
+						ok = false
+						liveErrors[pair] = err
+					}
+				}
 				live[pair] = ok
 			}
 			return ok
@@ -2318,7 +2349,13 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 		pair := [2]string{recovered, expected}
 		over, seen := ended[pair]
 		if !seen {
-			over = sm.WarmKeyGrantEnded(recovered, expected)
+			if sm.warmResolver != nil {
+				allowed, err := sm.warmResolver(recovered, expected)
+				over = err == nil && !allowed
+				if err != nil {
+					liveErrors[pair] = err
+				}
+			}
 			ended[pair] = over
 		}
 		return over

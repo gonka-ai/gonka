@@ -15,6 +15,14 @@ type SlotActors struct {
 	// signed state nonce, or the next diff for a local admission decision.
 	History WarmKeyHistory
 	Nonce   uint64
+	// BindingAllowed checks a bound key's chain grant without removing the
+	// binding from slot policy. An expired own grant still occupies its slot.
+	// Nil preserves the nonce-only policy used by legacy protocols.
+	BindingAllowed func(slotID uint32, binding WarmKeyBinding) bool
+	// AuthorizationError reports unavailable evidence in this request-scoped
+	// view. A false Allows with an error is uncertainty, not proof that a queued
+	// proposal is invalid. This observer never grants signing authority.
+	AuthorizationError func(slotID uint32, recovered string) error
 	// AcceptWarm is the local-admission fallback for a key the history does
 	// not cover: the grant source (the chain's warm-key log). It is never
 	// consulted on a consensus path, which leaves it nil, and never for a key
@@ -60,7 +68,7 @@ func (a SlotActors) Allows(slotID uint32, recovered string) bool {
 	if recovered == key {
 		return true
 	}
-	if a.History.Allows(a.SlotKeys, slotID, recovered, a.Nonce) {
+	if a.History.allows(a.SlotKeys, slotID, recovered, a.Nonce, a.BindingAllowed) {
 		return a.RefuseWarm == nil || !a.RefuseWarm(slotID, recovered, key)
 	}
 	if a.AcceptWarm == nil || a.History.RevokedOn(slotID, recovered, a.Nonce) {

@@ -682,7 +682,11 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 
 	resp := &VerifyTimeoutResponse{Accept: accept}
 	if accept {
-		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), s.host.PrimarySlot())
+		slot, slotErr := s.host.SigningSlot()
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), slot)
 		if sErr != nil {
 			return nil, sErr
 		}
@@ -793,7 +797,11 @@ func (s *Server) ServeVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRe
 
 	resp := &VerifyErrorMissResponse{Accept: accept, RejectCause: rejectCause}
 	if accept {
-		sig, voterSlot, sErr := signErrorMissVote(s.host.EscrowID(), req.InferenceID, s.host.Signer(), s.host.PrimarySlot(), responseHash)
+		slot, slotErr := s.host.SigningSlot()
+		if slotErr != nil {
+			return nil, slotErr
+		}
+		sig, voterSlot, sErr := signErrorMissVote(s.host.EscrowID(), req.InferenceID, s.host.Signer(), slot, responseHash)
 		if sErr != nil {
 			return nil, sErr
 		}

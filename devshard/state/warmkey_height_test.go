@@ -7,6 +7,7 @@ import (
 
 	"devshard/bridge"
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/types"
 	"github.com/stretchr/testify/require"
 )
@@ -79,4 +80,39 @@ func TestWarmKeyHeightRejectsBehindViewsAndSameIDForAnotherAddress(t *testing.T)
 	require.ErrorIs(t, err, types.ErrWarmKeyUnconfirmed, "authorization cache key must include the grantee")
 	require.Equal(t, uint64(1), sm.LatestNonce())
 	require.True(t, sm.HostSignerAllowedAt(0, warm, 1), "failed diff must restore the prior grant decisions")
+}
+
+func TestExpiredOwnGrantDoesNotOpenSiblingSlot(t *testing.T) {
+	base, user, source, _ := heightFixture(t)
+	cfg := base.SnapshotState().Config
+	cold, a, b := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{cold, cold})
+	checker := func(c, w string, id uint64, h int64, _ time.Time) (bool, error) {
+		return c == cold.Address() && ((w == a.Address() && id == 1 && h < 102) || (w == b.Address() && id == 2)), nil
+	}
+	sm, err := NewStateMachine("height-test", cfg, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(), testutil.MustMemoryStore(t, "height-test", user.Address(), cfg, group, 1_000_000), WithVersion("v7"), WithMainnetHeights(source), WithWarmKeyHeightChecker(checker))
+	require.NoError(t, err)
+	height, err := sm.BuildMainnetHeightTx(context.Background())
+	require.NoError(t, err)
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{height, testutil.WarmKeyBindTx(0, a.Address(), 1), testutil.WarmKeyBindTx(1, b.Address(), 2)})
+	require.NoError(t, err)
+	_, err = source.AdvanceOne()
+	require.NoError(t, err)
+	height, err = sm.BuildMainnetHeightTx(context.Background())
+	require.NoError(t, err)
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{height})
+	require.NoError(t, err)
+	require.False(t, sm.HostSignerAllowedAt(0, a.Address(), 2), "expired own key is refused")
+	require.False(t, sm.HostSignerAllowedAt(0, b.Address(), 2), "a still-occupied slot must not inherit its sibling's key")
+	require.True(t, sm.HostSignerAllowedAt(1, b.Address(), 2))
+	sm.mu.RLock()
+	actors := sm.consensusActorsAtLocked(3)
+	sm.mu.RUnlock()
+	require.False(t, actors.Allows(0, b.Address()), "apply uses the same exclusive own-binding rule")
+	require.True(t, actors.Allows(0, cold.Address()))
+	height, err = sm.BuildMainnetHeightTx(context.Background())
+	require.NoError(t, err)
+	_, err = sm.ApplyLocal(3, []*types.DevshardTx{height, testutil.WarmKeyRevokeTx(0, a.Address(), 1)})
+	require.NoError(t, err)
+	require.True(t, sm.HostSignerAllowedAt(0, b.Address(), 3), "explicit nonce-revoke releases the slot for sibling fallback")
 }

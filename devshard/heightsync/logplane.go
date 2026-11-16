@@ -61,6 +61,8 @@ type LogPlaneState struct {
 	// slot key, a warm key bound to the slot at the diff nonce, or a sibling
 	// slot's binding for the same validator. Nil is fine.
 	History signing.WarmKeyHistory
+	// BindingAllowed preserves occupied-slot policy while checking chain grants.
+	BindingAllowed func(uint32, signing.WarmKeyBinding) bool
 	// AcceptWarm is a local-admission fallback for a key the history does
 	// not cover. Consensus paths (apply, compose) leave it nil: a key is
 	// bound by a diff entry, never by a lookup.
@@ -282,10 +284,11 @@ func checkL2(nonce uint64, acks []ackRef, st LogPlaneState) error {
 
 func (st LogPlaneState) actorsAt(nonce uint64) signing.SlotActors {
 	return signing.SlotActors{
-		SlotKeys:   st.SlotKeys,
-		History:    st.History,
-		Nonce:      nonce,
-		AcceptWarm: st.AcceptWarm,
+		SlotKeys:       st.SlotKeys,
+		History:        st.History,
+		BindingAllowed: st.BindingAllowed,
+		Nonce:          nonce,
+		AcceptWarm:     st.AcceptWarm,
 	}
 }
 

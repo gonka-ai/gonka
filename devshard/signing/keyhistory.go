@@ -143,6 +143,10 @@ func (h WarmKeyHistory) Live(slot uint32) []string {
 // is final for the slot it names. There is no chain fallback here: a key the
 // history does not cover is refused until a MsgWarmKeyBind for it is applied.
 func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovered string, nonce uint64) bool {
+	return h.allows(slotKeys, slot, recovered, nonce, nil)
+}
+
+func (h WarmKeyHistory) allows(slotKeys map[uint32]string, slot uint32, recovered string, nonce uint64, allowed func(uint32, WarmKeyBinding) bool) bool {
 	if recovered == "" {
 		return false
 	}
@@ -153,13 +157,17 @@ func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovere
 	if recovered == cold {
 		return true
 	}
-	active := h.ActiveAt(slot, nonce)
-	if len(active) > 0 {
-		for _, key := range active {
-			if key == recovered {
-				return true
-			}
+	occupied := false
+	for _, b := range h[slot] {
+		if !b.Covers(nonce) {
+			continue
 		}
+		occupied = true
+		if b.Addr == recovered && (allowed == nil || allowed(slot, b)) {
+			return true
+		}
+	}
+	if occupied {
 		return false
 	}
 	if h.RevokedOn(slot, recovered, nonce) {
@@ -173,8 +181,8 @@ func (h WarmKeyHistory) Allows(slotKeys map[uint32]string, slot uint32, recovere
 	}
 	sort.Slice(siblings, func(i, j int) bool { return siblings[i] < siblings[j] })
 	for _, other := range siblings {
-		for _, key := range h.ActiveAt(other, nonce) {
-			if key == recovered {
+		for _, b := range h[other] {
+			if b.Covers(nonce) && b.Addr == recovered && (allowed == nil || allowed(other, b)) {
 				return true
 			}
 		}

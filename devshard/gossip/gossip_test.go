@@ -747,3 +747,15 @@ func TestRecovery_AttemptIsBoundedBySpan(t *testing.T) {
 	g.tryRecovery(context.Background())
 	require.Len(t, fetcher.calls, done, "the next attempt waits out RecoveryDelay")
 }
+
+func TestAfterRequestFromUsesAuthorizedSlotLabel(t *testing.T) {
+	peer := &mockPeer{}
+	g := NewGossip("live-slot", 0, []PeerClient{peer}, nil)
+	g.AfterRequestFrom(context.Background(), 2, []byte("root"), []byte("sig"), 1)
+	calls := peer.getNonceCalls()
+	require.Len(t, calls, 1)
+	require.Equal(t, uint32(1), calls[0].slotID)
+	record, ok := g.NonceStatus(2)
+	require.True(t, ok)
+	require.Equal(t, uint32(1), record.SlotID)
+}
