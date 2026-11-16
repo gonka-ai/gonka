@@ -24,6 +24,22 @@ func (e *gasRecordingEngine) Execute(_ wasmvm.Checksum, _ wasmvmtypes.Env, _ was
 	return &wasmvmtypes.ContractResult{}, gasLimit, nil
 }
 
+type txMeter struct{ consumed uint64 }
+
+func (m *txMeter) GasConsumed() uint64 { return m.consumed }
+
+// hostCallEngine charges storage gas to the tx meter and reports only a little VM gas, like wasmvm.
+type hostCallEngine struct {
+	wasmtypes.WasmEngine
+	gasLimits []uint64
+}
+
+func (e *hostCallEngine) Execute(_ wasmvm.Checksum, _ wasmvmtypes.Env, _ wasmvmtypes.MessageInfo, _ []byte, _ wasmvm.KVStore, _ wasmvm.GoAPI, _ wasmvm.Querier, gasMeter wasmvm.GasMeter, gasLimit uint64, _ wasmvmtypes.UFraction) (*wasmvmtypes.ContractResult, uint64, error) {
+	e.gasLimits = append(e.gasLimits, gasLimit)
+	gasMeter.(*txMeter).consumed += gasLimit - gasLimit/100
+	return &wasmvmtypes.ContractResult{}, gasLimit / 100, nil
+}
+
 func (e *gasRecordingEngine) MigrateWithInfo(_ wasmvm.Checksum, _ wasmvmtypes.Env, _ []byte, _ wasmvmtypes.MigrateInfo, _ wasmvm.KVStore, _ wasmvm.GoAPI, _ wasmvm.Querier, _ wasmvm.GasMeter, gasLimit uint64, _ wasmvmtypes.UFraction) (*wasmvmtypes.ContractResult, uint64, error) {
 	e.gasLimits = append(e.gasLimits, gasLimit)
 	return &wasmvmtypes.ContractResult{}, gasLimit, nil
@@ -52,6 +68,18 @@ func TestSimulationGasCappedEngine(t *testing.T) {
 		execute(engine, wasmkeeper.QueryHandler{Ctx: ctx}, ^uint64(0))
 		execute(engine, wasmkeeper.QueryHandler{Ctx: ctx}, ^uint64(0))
 		require.Equal(t, []uint64{budget / 4, budget - budget/4, 0}, rec.gasLimits)
+	})
+
+	t.Run("host call gas is charged", func(t *testing.T) {
+		rec := &hostCallEngine{}
+		engine := newSimulationGasCappedEngine(rec)
+		querier := wasmkeeper.QueryHandler{Ctx: anteCtx(t, sdk.ExecModeSimulate)}
+		meter := &txMeter{}
+		for i := 0; i < 2; i++ {
+			_, _, err := engine.Execute(nil, wasmvmtypes.Env{}, wasmvmtypes.MessageInfo{}, nil, nil, wasmvm.GoAPI{}, querier, meter, ^uint64(0), wasmvmtypes.UFraction{})
+			require.NoError(t, err)
+		}
+		require.Equal(t, []uint64{budget, 0}, rec.gasLimits)
 	})
 
 	t.Run("migrate passes a pointer querier", func(t *testing.T) {
