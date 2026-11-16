@@ -1,6 +1,7 @@
 package types
 
 import (
+	"common/chainoracle/blocks/lightproof"
 	"fmt"
 	"strings"
 )
@@ -140,11 +141,13 @@ func numericProtocolSlot(s string) string {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout    int64  // seconds before reason=refused timeout
-	ExecutionTimeout  int64  // seconds before reason=execution timeout
-	TokenPrice        uint64 // price per input / output token (flat per session)
-	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce       uint64 // fee charged per applied nonce (diff)
+	MainnetAnchorHeight int64
+	MainnetAnchorHash   []byte
+	RefusalTimeout      int64  // seconds before reason=refused timeout
+	ExecutionTimeout    int64  // seconds before reason=execution timeout
+	TokenPrice          uint64 // price per input / output token (flat per session)
+	CreateDevshardFee   uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce         uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
@@ -159,7 +162,9 @@ type SessionConfig struct {
 
 // EscrowState is the full state of a devshard session.
 type EscrowState struct {
-	EscrowID string
+	// MainnetCheckpoint is advanced only by an authenticated height transaction.
+	MainnetCheckpoint lightproof.Checkpoint
+	EscrowID          string
 	// StateRootAndProtocolVersion is the protocol tag stamped at session creation
 	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
 	// matches CreateSessionParams.Version / host boundVersion (approved_versions.name).
@@ -195,6 +200,7 @@ type EscrowState struct {
 
 // HeightSyncEscrowCommit is the subset of EscrowState hashed into the state root.
 type HeightSyncEscrowCommit struct {
+	MainnetCheckpoint              lightproof.Checkpoint
 	ForcedStart, ForcedEnd         uint64
 	CadenceSwallowUntil, SwallowFe uint64
 	TurnK, TurnSlots               uint64
@@ -207,6 +213,7 @@ func HeightSyncEscrowCommitFromState(s *EscrowState) HeightSyncEscrowCommit {
 		return HeightSyncEscrowCommit{}
 	}
 	return HeightSyncEscrowCommit{
+		MainnetCheckpoint:   s.MainnetCheckpoint,
 		ForcedStart:         s.HeightSyncForcedStart,
 		ForcedEnd:           s.HeightSyncForcedEnd,
 		CadenceSwallowUntil: s.HeightSyncCadenceSwallowUntil,

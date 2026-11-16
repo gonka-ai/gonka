@@ -2097,6 +2097,12 @@ func (h *Host) GetSignatures(nonce uint64) (map[uint32][]byte, error) {
 
 // signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
 func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); err != nil {
+		return nil, err
+	}
+
 	sigContent := &types.StateSignatureContent{
 		StateRoot: root,
 		EscrowId:  h.escrowID,

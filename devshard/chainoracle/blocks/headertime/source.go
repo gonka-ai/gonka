@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"devshard/types"
 )
 
@@ -192,4 +193,23 @@ func (s *Source) putLocked(height uint64, hash []byte, ms int64) {
 		}
 		s.order = append([]uint64(nil), s.order[drop:]...)
 	}
+}
+
+// Latest and LightBlockAt expose evidence for the carried per-diff proof.
+// HeaderTimeMs remains available for historical inference timestamps.
+func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
+	if s == nil || s.oracle == nil {
+		return nil, blocks.ErrHeaderNotFound
+	}
+	return s.oracle.Latest(ctx)
+}
+func (s *Source) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {
+	if s == nil {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	source, ok := s.oracle.(lightproof.Source)
+	if !ok {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	return source.LightBlockAt(ctx, height)
 }
