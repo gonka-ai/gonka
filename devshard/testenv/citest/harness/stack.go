@@ -269,7 +269,10 @@ func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
 	t.Helper()
 	s.UpInfra(t, build)
 	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
-	s.UpGateway(t)
+	// Carry the requested build policy through the delayed gateway startup.
+	// UpGateway intentionally reuses images, but UpBuild must not silently run
+	// a stale gateway from a different protocol/source checkout.
+	s.composeUp(t, build, []string{gatewayComposeService})
 }
 
 func (s *Stack) composeServiceNames(t *testing.T) []string {
