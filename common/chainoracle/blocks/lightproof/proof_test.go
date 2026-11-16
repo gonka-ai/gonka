@@ -173,3 +173,29 @@ func TestProofRejectsMissingTargetAndReordering(t *testing.T) {
 	_, _, err = Build(ctx, cp, 11, src)
 	require.ErrorIs(t, err, context.Canceled)
 }
+
+func TestDecodeRejectsMissingLightBlockComponentsWithoutPanicking(t *testing.T) {
+	src, _ := proofFixture(t)
+	for name, mutate := range map[string]func(*tmproto.LightBlock){
+		"signed header": func(pb *tmproto.LightBlock) { pb.SignedHeader = nil },
+		"header":        func(pb *tmproto.LightBlock) { pb.SignedHeader.Header = nil },
+		"commit":        func(pb *tmproto.LightBlock) { pb.SignedHeader.Commit = nil },
+		"validators":    func(pb *tmproto.LightBlock) { pb.ValidatorSet = nil },
+	} {
+		t.Run(name, func(t *testing.T) {
+			var pb tmproto.LightBlock
+			require.NoError(t, pb.Unmarshal(src.blocks[1]))
+			mutate(&pb)
+			raw, err := pb.Marshal()
+			require.NoError(t, err)
+			require.NotPanics(t, func() {
+				_, err := Decode(raw)
+				require.ErrorIs(t, err, ErrInvalid)
+			})
+		})
+	}
+	require.NotPanics(t, func() {
+		_, err := Decode([]byte{0x0a, 0x00})
+		require.ErrorIs(t, err, ErrInvalid)
+	})
+}

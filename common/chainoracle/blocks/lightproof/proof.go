@@ -58,6 +58,11 @@ func Decode(raw []byte) (*tmtypes.LightBlock, error) {
 	if err := pb.Unmarshal(raw); err != nil {
 		return nil, fmt.Errorf("%w: decode: %v", ErrInvalid, err)
 	}
+	// CometBFT conversion permits missing nested messages. Check these before
+	// accessing the embedded header's ChainID or validating the commit.
+	if pb.SignedHeader == nil || pb.SignedHeader.Header == nil || pb.SignedHeader.Commit == nil || pb.ValidatorSet == nil {
+		return nil, fmt.Errorf("%w: incomplete light block", ErrInvalid)
+	}
 	lb, err := tmtypes.LightBlockFromProto(&pb)
 	if err != nil {
 		return nil, fmt.Errorf("%w: light block: %v", ErrInvalid, err)

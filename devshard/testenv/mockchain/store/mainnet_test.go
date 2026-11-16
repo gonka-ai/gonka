@@ -22,6 +22,11 @@ func TestMainnetStandUsesOnePinnedSignedChain(t *testing.T) {
 	require.Len(t, anchor.MainnetAnchorHash, 32)
 	s.AdvanceBlock()
 	s.AdvanceBlock()
+	again := s.GetEscrow(1)
+	require.Equal(t, anchor.MainnetAnchorHeight, again.MainnetAnchorHeight, "a later reader must see the creation anchor")
+	require.Equal(t, anchor.MainnetAnchorHash, again.MainnetAnchorHash)
+	again.MainnetAnchorHash[0] ^= 1
+	require.Equal(t, anchor.MainnetAnchorHash, s.GetEscrow(1).MainnetAnchorHash, "query responses must not alias stored anchors")
 	source := s.MainnetOracle()
 	evidence, ok := source.(lightproof.Source)
 	require.True(t, ok)

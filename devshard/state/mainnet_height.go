@@ -19,6 +19,10 @@ type MainnetHeightSource interface {
 	Latest(context.Context) (*blocks.Header, error)
 }
 
+// Prelude construction can run while the sequencer holds its session lock.
+// Bound each checkpoint RPC sequence even for callers without a deadline.
+const mainnetCheckpointRPCTimeout = 10 * time.Second
+
 func WithMainnetHeights(source MainnetHeightSource) SMOption {
 	return func(sm *StateMachine) { sm.mainnetHeights = source }
 }
@@ -50,6 +54,8 @@ func (sm *StateMachine) BuildMainnetHeightTx(ctx context.Context) (*types.Devsha
 	if source == nil {
 		return nil, fmt.Errorf("%w: no mainnet light-block source", types.ErrHeaderPending)
 	}
+	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
+	defer cancel()
 	header, err := source.Latest(ctx)
 	if err != nil || header == nil || blocks.IsDummyHeader(header) {
 		return nil, fmt.Errorf("%w: mainnet tip unavailable: %v", types.ErrHeaderPending, err)
@@ -131,6 +137,8 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if source == nil {
 		return fmt.Errorf("%w: no mainnet height source", types.ErrHeaderPending)
 	}
+	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
+	defer cancel()
 	latest, err := source.Latest(ctx)
 	if err != nil || latest == nil || blocks.IsDummyHeader(latest) {
 		return fmt.Errorf("%w: live mainnet tip unavailable: %v", types.ErrHeaderPending, err)

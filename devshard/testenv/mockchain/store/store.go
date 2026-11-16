@@ -231,14 +231,7 @@ func (s *Store) GetEscrow(id uint64) *inferencetypes.DevshardEscrow {
 		return nil
 	}
 	c := *e
-	if s.mainnet != nil {
-		anchor, err := s.mainnetAtLocked(context.Background(), s.BlockHeight)
-		if err != nil {
-			panic(err)
-		}
-		c.MainnetAnchorHeight = anchor.Height
-		c.MainnetAnchorHash = append([]byte(nil), anchor.BlockHash...)
-	}
+	c.MainnetAnchorHash = append([]byte(nil), e.MainnetAnchorHash...)
 	if e.Slots != nil {
 		c.Slots = append([]string(nil), e.Slots...)
 	}

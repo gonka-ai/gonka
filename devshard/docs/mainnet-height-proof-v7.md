@@ -14,7 +14,9 @@ than two thirds of the exact validator set authenticated by the preceding
 checkpoint's `NextValidatorsHash`. Unchanged sets can be skipped; transitions
 need intermediate authenticated headers. Adjacent headers must link by parent
 hash. The builder bisects transitions, with bounded fetches, proof bytes and
-block count. A self-signed replacement set establishes no authority.
+block count. Prelude construction also shares one ten-second RPC deadline,
+including callers such as heartbeats that have no request deadline. A
+self-signed replacement set establishes no authority.
 
 The verified checkpoint (height, block hash, next validator hash, block time
 and chain ID) is part of the state root, mutation journal and snapshot. Failed
