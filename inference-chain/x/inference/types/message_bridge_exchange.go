@@ -82,8 +82,12 @@ func (msg *MsgBridgeExchange) ValidateBasic() error {
 	if !reDigits.MatchString(msg.Amount) {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be a base-10 unsigned integer string")
 	}
-	if bi, ok := new(big.Int).SetString(msg.Amount, 10); !ok || bi.Sign() <= 0 {
+	bi, ok := new(big.Int).SetString(msg.Amount, 10)
+	if !ok || bi.Sign() <= 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount must be > 0")
+	}
+	if bi.BitLen() > 256 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount exceeds uint256")
 	}
 	return nil
 }
