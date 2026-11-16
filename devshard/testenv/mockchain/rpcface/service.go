@@ -158,7 +158,7 @@ func (s *Service) runBlockTicker(ctx context.Context) {
 
 func (s *Service) routes() map[string]*rpcserver.RPCFunc {
 	st := s.store
-	return map[string]*rpcserver.RPCFunc{
+	routes := map[string]*rpcserver.RPCFunc{
 		"subscribe":       rpcserver.NewWSRPCFunc(s.env.Subscribe, "query"),
 		"unsubscribe":     rpcserver.NewWSRPCFunc(s.env.Unsubscribe, "query"),
 		"unsubscribe_all": rpcserver.NewWSRPCFunc(s.env.UnsubscribeAll, ""),
@@ -172,6 +172,10 @@ func (s *Service) routes() map[string]*rpcserver.RPCFunc {
 			"height",
 		),
 	}
+	for name, handler := range mainnetRoutes(st) {
+		routes[name] = handler
+	}
+	return routes
 }
 
 // Serve listens on addr until ctx is cancelled.
