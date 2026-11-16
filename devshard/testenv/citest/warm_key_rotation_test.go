@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -52,8 +53,15 @@ func TestWarmKeyRotationAcrossHAReplayAndSnapshot(t *testing.T) {
 	stack := harness.NewStack(t, "citest-warm-key-rotation-*")
 	harness.RequireLinuxDevshardd(t, stack.TestenvDir)
 	harness.WriteMultiConfig(t, stack.WorkDir, harness.MultiConfigOpts{Hosts: 3, EscrowSlots: 2, MaxNonce: 2000, EscrowAmount: 10_000_000, RefusalTimeout: 3, ExecutionTimeout: 15})
+	body, err := os.ReadFile(stack.ConfigPath)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(stack.ConfigPath, []byte(strings.Replace(string(body), "version_name: v2", "version_name: v7", 1)), 0o644))
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
+	harness.PatchComposeInsertEnvAfter(t, stack.ComposePath, "MOCK_DAPI_BINARY_DIR",
+		`MOCK_DAPI_VERSION_NAME: "v7"`,
+		`MOCK_DAPI_VERSION_BINARY: "file:///opt/devshard/devshardd"`,
+		`MOCK_DAPI_VERSION_SHA256: "`+strings.Repeat("0", 64)+`"`)
 	stack.UpBuild(t)
 	eps := stack.Endpoints(t, cfg)
 	client := harness.HTTPClient()
