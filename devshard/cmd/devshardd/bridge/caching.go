@@ -108,6 +108,8 @@ func (b *CachingEscrowBridge) clock() time.Time {
 // EscrowCacheFromInfo maps a chain-fetched EscrowInfo to the storable cache row.
 func EscrowCacheFromInfo(e *bridge.EscrowInfo) storage.EscrowCacheInfo {
 	return storage.EscrowCacheInfo{
+		MainnetAnchorHeight:       e.MainnetAnchorHeight,
+		MainnetAnchorHash:         append([]byte(nil), e.MainnetAnchorHash...),
 		EscrowID:                  e.EscrowID,
 		Amount:                    e.Amount,
 		CreatorAddress:            e.CreatorAddress,
@@ -130,6 +132,8 @@ func EscrowCacheFromInfo(e *bridge.EscrowInfo) storage.EscrowCacheInfo {
 // EscrowInfoFromCache maps a stored cache row back to a bridge EscrowInfo.
 func EscrowInfoFromCache(c *storage.EscrowCacheInfo) *bridge.EscrowInfo {
 	return &bridge.EscrowInfo{
+		MainnetAnchorHeight:       c.MainnetAnchorHeight,
+		MainnetAnchorHash:         append([]byte(nil), c.MainnetAnchorHash...),
 		EscrowID:                  c.EscrowID,
 		Amount:                    c.Amount,
 		CreatorAddress:            c.CreatorAddress,

@@ -150,6 +150,8 @@ type Storage interface {
 // EscrowCacheInfo is chain escrow metadata cached ahead of session bind.
 // No runtime/versiond tag — version is stamped only at CreateSession.
 type EscrowCacheInfo struct {
+	MainnetAnchorHeight       int64    `json:"mainnet_anchor_height,omitempty"`
+	MainnetAnchorHash         []byte   `json:"mainnet_anchor_hash,omitempty"`
 	EscrowID                  string   `json:"escrow_id"`
 	Amount                    uint64   `json:"amount"`
 	CreatorAddress            string   `json:"creator_address"`

@@ -10,14 +10,16 @@ import (
 func TestMemory_EscrowCache_RoundTrip(t *testing.T) {
 	store := NewMemory()
 	info := EscrowCacheInfo{
-		EscrowID:       "escrow-1",
-		Amount:         42,
-		CreatorAddress: "creator",
-		Slots:          []string{"a", "b", "c"},
-		SlotURLs:       map[string]string{"a": "http://a", "b": "http://b"},
-		TokenPrice:     7,
-		EpochID:        9,
-		AppHash:        []byte{1, 2, 3},
+		EscrowID:            "escrow-1",
+		Amount:              42,
+		CreatorAddress:      "creator",
+		Slots:               []string{"a", "b", "c"},
+		SlotURLs:            map[string]string{"a": "http://a", "b": "http://b"},
+		TokenPrice:          7,
+		EpochID:             9,
+		AppHash:             []byte{1, 2, 3},
+		MainnetAnchorHeight: 42,
+		MainnetAnchorHash:   []byte{4, 5, 6},
 	}
 	require.NoError(t, store.PutEscrowCache(info))
 
@@ -29,6 +31,8 @@ func TestMemory_EscrowCache_RoundTrip(t *testing.T) {
 	require.Equal(t, info.SlotURLs, got.SlotURLs)
 	require.Equal(t, info.EpochID, got.EpochID)
 	require.Equal(t, info.AppHash, got.AppHash)
+	require.Equal(t, info.MainnetAnchorHeight, got.MainnetAnchorHeight)
+	require.Equal(t, info.MainnetAnchorHash, got.MainnetAnchorHash)
 	require.NotZero(t, got.CachedAt, "the store stamps the write time so readers can age the row")
 
 	active, err := store.ListActiveSessions()

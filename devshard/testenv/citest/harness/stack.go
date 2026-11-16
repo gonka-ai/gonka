@@ -387,6 +387,12 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 
 	args := append([]string{"compose"}, s.composeFileArgs()...)
 	args = append(args, "up", "-d", "--wait", "--pull", "missing")
+	if len(services) == 1 && services[0] == gatewayComposeService {
+		// Infra was already started and catalog-admitted. Rebuilding/recreating
+		// its dependencies here can reset the mock chain and change pinned escrow
+		// anchors after hosts have bound their sessions.
+		args = append(args, "--no-deps")
+	}
 	if build {
 		args = append(args, "--build")
 	}
