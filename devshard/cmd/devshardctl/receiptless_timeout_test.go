@@ -213,7 +213,7 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	require.Empty(t, entries)
 	payload, err := state.BuildSettlement(escrowID, after, recovered.Signatures()[recovered.Nonce()], recovered.Nonce())
 	require.NoError(t, err)
-	_, err = state.VerifySettlement(*payload, group, verifier, after.WarmKeys)
+	_, err = state.VerifySettlement(*payload, group, verifier, after.WarmKeyHistory)
 	require.NoError(t, err)
 	return payload, group, creator.Address(), uint32(p.HostIdx())
 }

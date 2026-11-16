@@ -104,10 +104,14 @@ func TestWarmKeyRotationAcrossHAReplayAndSnapshot(t *testing.T) {
 	harness.Step(t, "grant the second key and run HA replicas with overlapping signers")
 	harness.PatchTestenvGrantees(t, client, eps.MockDapiHTTP, adminface.GranteesRequest{GranterAddress: granter, Grantees: []string{oldKey.Address, newKey.Address}})
 	waitRotationKeys(t, client, eps.GatewayHTTP, chat, oldKey.Address, newKey.Address, true)
+	harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey)
 	harness.PatchComposeServiceEnv(t, stack.ComposePath, cfg.Hosts[0].ID, "KEY_NAME", "rotation-old")
 	harness.PatchComposeServiceEnv(t, stack.ComposePath, cfg.Hosts[1].ID, "KEY_NAME", cfg.Hosts[1].ID)
 	stack.RecreateServices(t, cfg.Hosts[0].ID, cfg.Hosts[1].ID)
 	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, initial.Session.ID)
+	for _, replica := range cfg.Hosts[:2] {
+		waitVersiondHostSessionMempool(t, stack, replica.ID, initial.Session.ID, 3*time.Minute)
+	}
 	chat()
 	harness.RequireWarmKeyTransportAccepted(t, stack, cfg, eps, oldKey.PrivateKeyHex)
 	harness.RequireWarmKeyTransportAccepted(t, stack, cfg, eps, newKey.PrivateKeyHex)
