@@ -101,7 +101,7 @@ func restrictWarmActors(actors signing.SlotActors, valid func(uint32, signing.Wa
 // historicalWarmActors runs after releasing sm.mu. The current checkpoint
 // covers latest and the next admission nonce. Earlier state signatures use
 // their own already verified journal prelude, never today's grant status.
-func (sm *StateMachine) historicalWarmActors(actors signing.SlotActors, cp lightproof.Checkpoint, latest uint64, checker WarmKeyHeightChecker, escrowID string) signing.SlotActors {
+func (sm *StateMachine) historicalWarmActors(actors signing.SlotActors, cp lightproof.Checkpoint, latest uint64, checker WarmKeyHeightChecker, escrowID string, lazy bool) signing.SlotActors {
 	if actors.Nonce < latest {
 		records, err := sm.inferenceStore.GetDiffs(escrowID, actors.Nonce, actors.Nonce)
 		if err != nil || len(records) != 1 {
@@ -127,7 +127,7 @@ func (sm *StateMachine) historicalWarmActors(actors signing.SlotActors, cp light
 	}
 	lookupErrors := make(map[[2]string]error)
 	valid := make(map[warmGrantKey]bool)
-	actors = restrictWarmActors(actors, func(slot uint32, b signing.WarmKeyBinding) bool {
+	checkBinding := func(slot uint32, b signing.WarmKeyBinding) bool {
 		key := warmGrantKey{actors.SlotKeys[slot], b.GrantID, b.Addr}
 		if ok, seen := valid[key]; seen {
 			return ok
@@ -145,7 +145,14 @@ func (sm *StateMachine) historicalWarmActors(actors signing.SlotActors, cp light
 		}
 		valid[key] = ok
 		return ok
-	})
+	}
+	if lazy {
+		// A bounded local batch only resolves identities it actually uses.
+		// The maps remain request-scoped, like AcceptWarm/RefuseWarm below.
+		actors.BindingAllowed = checkBinding
+	} else {
+		actors = restrictWarmActors(actors, checkBinding)
+	}
 	keys := actors.SlotKeys
 	actors.AuthorizationError = func(slot uint32, recovered string) error { return lookupErrors[[2]string{keys[slot], recovered}] }
 	return actors

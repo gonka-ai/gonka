@@ -2,6 +2,8 @@ package host
 
 import (
 	"context"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -210,4 +212,160 @@ func TestHAInclusionClearsOtherWarmSignatureVariants(t *testing.T) {
 	f.apply(va)
 	require.Empty(t, a.MempoolTxs())
 	require.Equal(t, []*types.DevshardTx{other}, b.MempoolTxs(), "another participant's unperformed validation is retained")
+}
+
+func TestRetiredQueuedFinishDoesNotBlockStoredRecovery(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.WarmKeyBindTx(1, f.warm[1].Address(), 2), testutil.StartTx(1))
+	engine := &storedFinishEngine{result: &devshard.ExecuteResult{ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40}}
+	old := f.host(f.warm[0], engine)
+	f.apply(f.confirm(old))
+	_, err := old.RunExecution(context.Background(), &devshard.ExecuteRequest{InferenceID: 1})
+	require.NoError(t, err)
+	retired := findMempoolFinish(old.MempoolTxs())
+	require.NotNil(t, retired)
+	f.apply(testutil.SignedWarmKeyRevokeTx(t, 1, f.warm[0], 1, "warm-recovery"))
+	replacement := f.host(f.warm[1], engine, WithStoredResponse(func(context.Context, string, uint64, uint64) ([]byte, error) { return []byte("stored"), nil }))
+	replacement.HostMempool().Add(MempoolEntry{Tx: retired, ProposedAt: 2})
+	_, _, err = replacement.ChallengeReceipt(context.Background(), 1, nil, nil)
+	require.NoError(t, err)
+	finish := findMempoolFinish(replacement.MempoolTxs())
+	require.NotNil(t, finish, "one timeout challenge must recover through the live signer even when a retired signature was queued")
+	require.Equal(t, int32(1), engine.calls.Load())
+	require.Equal(t, int32(1), engine.recoveries.Load())
+}
+
+type heldStoredFinishEngine struct {
+	storedFinishEngine
+	ready, release chan struct{}
+	once           sync.Once
+}
+
+func (e *heldStoredFinishEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	if req.Recovery != devshard.RecoveryStoredOnly {
+		e.calls.Add(1)
+		return nil, fmt.Errorf("unexpected model execution")
+	}
+	e.recoveries.Add(1)
+	e.once.Do(func() { close(e.ready) })
+	select {
+	case <-e.release:
+		return e.result, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+func TestConcurrentChallengesShareStoredFinishDespiteCallerCancellation(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.StartTx(1))
+	engine := &heldStoredFinishEngine{storedFinishEngine: storedFinishEngine{result: &devshard.ExecuteResult{ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40}}, ready: make(chan struct{}), release: make(chan struct{})}
+	h := f.host(f.warm[0], engine, WithStoredResponse(func(context.Context, string, uint64, uint64) ([]byte, error) { return []byte("stored"), nil }))
+	f.apply(f.confirm(h))
+	firstCtx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	first := make(chan error, 1)
+	go func() { _, _, err := h.ChallengeReceipt(firstCtx, 1, nil, nil); first <- err }()
+	select {
+	case <-engine.ready:
+	case <-time.After(time.Second):
+		t.Fatal("stored recovery did not start")
+	}
+	followers := make(chan error, 3)
+	for range 3 {
+		go func() { _, _, err := h.ChallengeReceipt(context.Background(), 1, nil, nil); followers <- err }()
+	}
+	select {
+	case err := <-followers:
+		t.Fatalf("concurrent challenge returned before stored work: %v", err)
+	case <-time.After(30 * time.Millisecond):
+	}
+	cancel()
+	select {
+	case err := <-first:
+		require.ErrorIs(t, err, types.ErrHeaderPending)
+	case <-time.After(time.Second):
+		t.Fatal("cancelled caller did not leave")
+	}
+	close(engine.release)
+	for range 3 {
+		select {
+		case err := <-followers:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("follower did not receive stored recovery")
+		}
+	}
+	finish := findMempoolFinish(h.MempoolTxs())
+	require.NotNil(t, finish)
+	rec, _ := f.sm.GetInference(1)
+	require.NoError(t, f.sm.CheckEvidence(&rec, finish))
+	require.Equal(t, int32(1), engine.recoveries.Load())
+	require.Zero(t, engine.calls.Load())
+}
+func TestPendingFinishRetrySharesBoundedAuthorizationBatch(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.WarmKeyBindTx(2, f.warm[0].Address(), 1))
+	h := f.host(f.warm[0], stub.NewInferenceEngine())
+	h.pendingFinishes = make(map[uint64]*types.MsgFinishInference)
+	for id := uint64(100); id < 120; id++ {
+		h.pendingFinishes[id] = &types.MsgFinishInference{InferenceId: id, ExecutorSlot: 1 + uint32(id%2), EscrowId: "warm-recovery", ResponseHash: []byte("stored")}
+	}
+	var calls atomic.Int32
+	f.sm.SetWarmKeyHeightChecker(func(string, string, uint64, int64, time.Time) (bool, error) {
+		calls.Add(1)
+		time.Sleep(150 * time.Millisecond)
+		return false, fmt.Errorf("stalled grant RPC")
+	})
+	started := time.Now()
+	require.Empty(t, h.MempoolTxs())
+	require.Less(t, time.Since(started), 500*time.Millisecond, "one failed lookup must not multiply by queued results or other cold keys")
+	require.Equal(t, int32(1), calls.Load())
+	require.Len(t, h.pendingFinishes, 20)
+	f.sm.SetWarmKeyHeightChecker(func(string, string, uint64, int64, time.Time) (bool, error) { return true, nil })
+	require.Len(t, h.MempoolTxs(), 20, "all unsigned results remain publishable after evidence recovers")
+}
+
+func TestPendingFinishRetryRotatesPastUnavailableOlderResults(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.WarmKeyBindTx(2, f.warm[0].Address(), 1))
+	h := f.host(f.warm[0], stub.NewInferenceEngine())
+	h.pendingFinishes = make(map[uint64]*types.MsgFinishInference)
+	for id := uint64(100); id < 164; id++ {
+		h.pendingFinishes[id] = &types.MsgFinishInference{InferenceId: id, ExecutorSlot: 1, EscrowId: "warm-recovery", ResponseHash: []byte("stored")}
+	}
+	h.pendingFinishes[1000] = &types.MsgFinishInference{InferenceId: 1000, ExecutorSlot: 2, EscrowId: "warm-recovery", ResponseHash: []byte("later result")}
+	f.sm.SetWarmKeyHeightChecker(func(c, w string, id uint64, h int64, at time.Time) (bool, error) {
+		if c == f.cold[1].Address() {
+			return false, fmt.Errorf("unavailable old source")
+		}
+		return true, nil
+	})
+	require.Empty(t, h.MempoolTxs())
+	require.Empty(t, h.MempoolTxs())
+	published := h.MempoolTxs()
+	require.Len(t, published, 1)
+	require.Equal(t, uint64(1000), published[0].GetFinishInference().InferenceId)
+	require.Len(t, h.pendingFinishes, 64)
+}
+func TestHostCloseCancelsStoredFinishRecovery(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.StartTx(1))
+	engine := &heldStoredFinishEngine{ready: make(chan struct{}), release: make(chan struct{})}
+	h := f.host(f.warm[0], engine, WithStoredResponse(func(context.Context, string, uint64, uint64) ([]byte, error) { return []byte("stored"), nil }))
+	f.apply(f.confirm(h))
+	done := make(chan error, 1)
+	go func() { _, _, err := h.ChallengeReceipt(context.Background(), 1, nil, nil); done <- err }()
+	select {
+	case <-engine.ready:
+	case <-time.After(time.Second):
+		t.Fatal("stored recovery did not start")
+	}
+	h.Close()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, types.ErrHeaderPending)
+	case <-time.After(time.Second):
+		t.Fatal("host close left a recovery behind")
+	}
+	require.Zero(t, engine.calls.Load())
 }

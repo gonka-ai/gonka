@@ -169,8 +169,12 @@ type Host struct {
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
 	// Completed work awaiting live authority to publish its Finish. It is
 	// retried by ordinary mempool reads; persisted payloads cover process loss.
-	pendingFinishes map[uint64]*types.MsgFinishInference
-	validating      map[uint64]struct{} // inference IDs with queued or in-flight validation
+	pendingFinishes       map[uint64]*types.MsgFinishInference
+	pendingFinishCursor   uint64
+	finishRecoveries      map[uint64]*finishRecovery
+	finishRecoveryClosed  bool
+	finishRecoveryWorkers sync.WaitGroup
+	validating            map[uint64]struct{} // inference IDs with queued or in-flight validation
 	// validationCooldown is inference ID -> not-before. The zero time holds the
 	// inference until it leaves the validatable set; any other time expires.
 	validationCooldown map[uint64]time.Time
@@ -358,7 +362,8 @@ func (h *Host) Start() {
 	})
 }
 
-// Close cancels in-flight Validate and waits for workers to unwind. Cancel
+// Close cancels in-flight validation and stored-Finish recovery and waits for
+// workers to unwind. Cancel
 // aborts ML immediately; the wait is only so Release can DELETE the pending
 // lease while storage is still open. It is safe to call multiple times and
 // safe to call on hosts that were never started.
@@ -376,6 +381,13 @@ func (h *Host) Close() {
 		}
 		h.validationLifecycleMu.Unlock()
 		h.validationWorkers.Wait()
+		h.mu.Lock()
+		h.finishRecoveryClosed = true
+		for _, recovery := range h.finishRecoveries {
+			recovery.cancel()
+		}
+		h.mu.Unlock()
+		h.finishRecoveryWorkers.Wait()
 	})
 }
 

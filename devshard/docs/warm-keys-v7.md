@@ -124,6 +124,14 @@ If authority evidence disappears while an inference completes, the host keeps
 the completed result unsigned and retries publication during ordinary mempool
 polling. A timeout challenge can also rebuild a lost Finish after restart from
 the persisted payload, with `RecoveryStoredOnly`; it never reruns the model.
+Concurrent challenges share and await that recovery. Cancelling one caller
+does not cancel it for the others; recovery has its own ten-second deadline
+and is cancelled on host shutdown. Unresolved recovery returns the pending
+error recognized by bounded timeout deferrals, rather than an empty success.
+Pending-result batches share lazy authorization decisions, start no more RPCs
+after a 100 ms budget, and keep unresolved results. An in-flight query retains
+its own source timeout. At most 32 results are retried per pass, rotating the
+cursor so an unavailable old result cannot starve later results.
 Once a receipt, Finish or participant validation is committed, other queued
 HA signature variants of that logical operation are removed from committed
 state, independently of their signature bytes. Unknown future operations and

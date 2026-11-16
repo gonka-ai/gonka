@@ -5,6 +5,7 @@ import (
 	"devshard/signing"
 	"devshard/types"
 	"google.golang.org/protobuf/proto"
+	"time"
 )
 
 // authorizedMempoolTxs discards host-signed proposals whose slot or key no
@@ -12,12 +13,16 @@ import (
 // yet block replacement validation or trip the stale-mempool signing policy.
 // Caller holds h.mu. This is live admission, not historical replay validity.
 func (h *Host) authorizedMempoolTxs() []*types.DevshardTx {
-	h.retryPendingFinishesLocked()
 	txs := h.mempool.Txs()
-	if len(txs) == 0 || !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+	if !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) || (len(txs) == 0 && len(h.pendingFinishes) == 0) {
 		return txs
 	}
-	actors := h.SlotActors()
+	return h.authorizedMempoolTxsWithActors(h.sm.HostSlotActorsWithBudget(100 * time.Millisecond))
+}
+
+func (h *Host) authorizedMempoolTxsWithActors(actors signing.SlotActors) []*types.DevshardTx {
+	h.retryPendingFinishesLocked(actors)
+	txs := h.mempool.Txs()
 	verifier := h.verifier
 	if verifier == nil {
 		verifier = signing.NewSecp256k1Verifier()

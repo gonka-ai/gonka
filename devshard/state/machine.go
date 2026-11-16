@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
@@ -2297,7 +2298,7 @@ func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors
 // the key for in its next diff; a signature that names its nonce gets no
 // such fallback, since a grant the history has not bound at that nonce does
 // not sign it. The source is asked with sm.mu released.
-func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActors {
+func (sm *StateMachine) localActorsAt(nonce uint64, admit bool, deadlines ...time.Time) signing.SlotActors {
 	sm.mu.RLock()
 	actors := sm.consensusActorsAtLocked(nonce)
 	required := types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion)
@@ -2305,10 +2306,35 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 	latest := sm.state.LatestNonce
 	checker := sm.warmHeightCheck
 	escrowID := sm.state.EscrowID
+	resolver := sm.warmResolver
 	if required {
 		actors.History = cloneWarmKeyHistory(sm.state.WarmKeyHistory)
 	}
 	sm.mu.RUnlock()
+	bounded := len(deadlines) > 0
+	if bounded {
+		deadline := deadlines[0]
+		original := checker
+		checker = func(cold, warm string, id uint64, height int64, at time.Time) (bool, error) {
+			if time.Now().After(deadline) {
+				return false, fmt.Errorf("%w: local authorization budget exhausted", types.ErrHeaderPending)
+			}
+			if original == nil {
+				return false, types.ErrHeaderPending
+			}
+			return original(cold, warm, id, height, at)
+		}
+		originalResolver := resolver
+		resolver = func(warm, cold string) (bool, error) {
+			if time.Now().After(deadline) {
+				return false, fmt.Errorf("%w: local authorization budget exhausted", types.ErrHeaderPending)
+			}
+			if originalResolver == nil {
+				return false, types.ErrHeaderPending
+			}
+			return originalResolver(warm, cold)
+		}
+	}
 	if required && !admit && nonce > latest {
 		// A named future state has not supplied its bindings or authenticated
 		// checkpoint yet. Only the live-admission path may trigger catch-up.
@@ -2320,7 +2346,7 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 		return actors
 	}
 	if required {
-		actors = sm.historicalWarmActors(actors, cp, latest, checker, escrowID)
+		actors = sm.historicalWarmActors(actors, cp, latest, checker, escrowID, bounded)
 		if !admit {
 			return actors
 		}
@@ -2346,9 +2372,9 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 			pair := [2]string{recovered, expected}
 			ok, seen := live[pair]
 			if !seen {
-				if sm.warmResolver != nil {
+				if resolver != nil {
 					var err error
-					ok, err = sm.warmResolver(recovered, expected)
+					ok, err = resolver(recovered, expected)
 					if err != nil {
 						ok = false
 						liveErrors[pair] = err
@@ -2363,8 +2389,8 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 		pair := [2]string{recovered, expected}
 		over, seen := ended[pair]
 		if !seen {
-			if sm.warmResolver != nil {
-				allowed, err := sm.warmResolver(recovered, expected)
+			if resolver != nil {
+				allowed, err := resolver(recovered, expected)
 				over = err == nil && !allowed
 				if err != nil {
 					liveErrors[pair] = err
@@ -2391,6 +2417,13 @@ func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string)
 // including current chain authorization for keys not yet bound in a diff.
 func (sm *StateMachine) HostSlotActors() signing.SlotActors {
 	return sm.localActorsAt(sm.LatestNonce()+1, true)
+}
+
+// HostSlotActorsWithBudget shares lazy grant decisions across one local batch.
+// Once the budget expires it starts no further RPCs; an already running source
+// lookup retains the source's own deadline. This never changes consensus apply.
+func (sm *StateMachine) HostSlotActorsWithBudget(budget time.Duration) signing.SlotActors {
+	return sm.localActorsAt(sm.LatestNonce()+1, true, time.Now().Add(budget))
 }
 
 // HostSlotActorsAt returns the policy for an already signed nonce. V7 checks
