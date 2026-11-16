@@ -187,10 +187,8 @@ func (d FeeGroupRepeatedLenDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, sim
 	if err != nil {
 		return ctx, err
 	}
-	for _, msg := range inners {
-		if err := d.InferenceKeeper.ChargeMessageRuleGas(ctx, msg); err != nil {
-			return ctx, err
-		}
+	if err := d.InferenceKeeper.ChargeMessageRulesGas(ctx, inners); err != nil {
+		return ctx, err
 	}
 	return next(ctx, tx, simulate)
 }

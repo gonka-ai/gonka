@@ -71,6 +71,7 @@ func TestBridgeExchangeEarlyReject_NotInTxEpochGroup_CheckTx(t *testing.T) {
 	k.SetBridgeTransaction(ctx, btx)
 
 	// WithIsCheckTx clones ctx; match on any context.
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -118,6 +119,7 @@ func TestBridgeExchangeEarlyReject_AlreadyValidated_CheckTx(t *testing.T) {
 	k.SetBridgeTransaction(ctx, btx)
 	require.NoError(t, k.AddBridgeTransactionValidator(ctx, btx, addr.String()))
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -147,6 +149,7 @@ func TestBridgeExchangeEarlyReject_AlreadyValidated_CheckTx(t *testing.T) {
 func TestBridgeExchangeEarlyReject_CreateNotInSDKGroup_CheckTx(t *testing.T) {
 	k, ctx, mocks, validator, _ := setupBridgeAnte(t)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -176,6 +179,7 @@ func TestBridgeExchangeEarlyReject_CreateNotInSDKGroup_CheckTx(t *testing.T) {
 func TestBridgeExchangeEarlyReject_BypassesDeliverTx(t *testing.T) {
 	k, ctx, mocks, validator, _ := setupBridgeAnte(t)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{Members: nil}, nil,
 	).AnyTimes()
@@ -234,6 +238,7 @@ func TestBridgeExchangeEarlyReject_EligibleVote_CheckTxPasses(t *testing.T) {
 	}
 	k.SetBridgeTransaction(ctx, btx)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -267,6 +272,7 @@ func TestBridgeExchangeEarlyReject_EligibleVote_CheckTxPasses(t *testing.T) {
 func TestBridgeExchangeEarlyReject_EligibleCreate_CheckTxPasses(t *testing.T) {
 	k, ctx, mocks, validator, _ := setupBridgeAnte(t)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{

@@ -58,6 +58,7 @@ func TestValidateBridgeExchange_NotInTxEpochGroup(t *testing.T) {
 	}
 	k.SetBridgeTransaction(ctx, btx)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -98,6 +99,7 @@ func TestValidateBridgeExchange_AlreadyValidated(t *testing.T) {
 	k.SetBridgeTransaction(ctx, btx)
 	require.NoError(t, k.AddBridgeTransactionValidator(ctx, btx, addr.String()))
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -124,6 +126,7 @@ func TestValidateBridgeExchange_AlreadyValidated(t *testing.T) {
 func TestValidateBridgeExchange_CreateNotInActiveGroup(t *testing.T) {
 	k, ctx, mocks, validator, _ := setupBridgeValidate(t)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -195,6 +198,7 @@ func TestValidateBridgeExchange_ContentMismatch(t *testing.T) {
 func TestValidateBridgeExchange_CreateSuccess(t *testing.T) {
 	k, ctx, mocks, validator, addr := setupBridgeValidate(t)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -247,6 +251,7 @@ func TestValidateBridgeExchange_VoteSuccess(t *testing.T) {
 	}
 	k.SetBridgeTransaction(ctx, btx)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -305,6 +310,7 @@ func TestValidateBridgeExchange_DoesNotMutate(t *testing.T) {
 	beforeStatus := before.Status
 	beforePower := before.TotalValidationPower
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{
@@ -395,6 +401,7 @@ func TestValidateBridgeExchange_PreviousEpochActiveCanVoteExisting(t *testing.T)
 	}
 	k.SetBridgeTransaction(ctx, btx)
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{{

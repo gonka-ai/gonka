@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"strconv"
 	"testing"
 
@@ -25,6 +26,7 @@ func TestBridgeRecheck_BackfillAndBoundedPasses(t *testing.T) {
 		EpochIndex: epochIndex, EpochGroupId: 7, TotalWeight: 100,
 		ValidationWeights: []*types.ValidationWeight{{MemberAddress: member, Weight: 100}},
 	})
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
 			return &group.QueryGroupMembersResponse{Members: []*group.GroupMember{
@@ -105,6 +107,7 @@ func TestBridgeRecheck_MarkDuringPassKeepsCursorAndRestarts(t *testing.T) {
 	a, b, c, d := addr("bridge_member_a_____"), addr("bridge_member_b_____"), addr("bridge_member_c_____"), addr("bridge_member_d_____")
 	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: epochIndex, EpochGroupId: 8, TotalWeight: 100})
 	live := map[string]string{a: "40", b: "20", c: "20", d: "20"}
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
 			var members []*group.GroupMember
@@ -195,6 +198,7 @@ func TestBridgeRecheck_RemovalEveryBlockReachesRecordsPastStuckOnes(t *testing.T
 	const epochIndex = uint64(7)
 	a := sdk.AccAddress([]byte("bridge_member_a_____")).String()
 	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: epochIndex, EpochGroupId: 9, TotalWeight: 100})
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(&group.QueryGroupMembersResponse{
 		Members: []*group.GroupMember{{GroupId: 9, Member: &group.Member{Address: a, Weight: "60"}}},
 	}, nil).AnyTimes()

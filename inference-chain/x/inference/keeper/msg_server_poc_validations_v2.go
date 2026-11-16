@@ -130,12 +130,18 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		eligibility       PocStageVoterEligibility
 		eligibilityLoaded bool
 	)
+	governanceModels := make(map[string]bool)
 	for _, validation := range msg.Validations {
 		if validation == nil {
 			continue
 		}
 		modelID := validation.ModelId
-		if modelID == "" || !k.IsValidGovernanceModel(ctx, modelID) {
+		if modelID != "" {
+			if _, seen := governanceModels[modelID]; !seen {
+				governanceModels[modelID] = k.IsValidGovernanceModel(ctx, modelID)
+			}
+		}
+		if modelID == "" || !governanceModels[modelID] {
 			k.LogWarn("[SubmitPocValidationsV2] model_id is not a governance model, skipping", types.PoC,
 				"validator", validator)
 			continue
@@ -149,7 +155,7 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			continue
 		}
 		participant := targetAddr.String()
-		if _, found := k.GetParticipant(ctx, participant); !found {
+		if found, err := k.Participants.Has(ctx, targetAddr); err != nil || !found {
 			k.LogWarn("[SubmitPocValidationsV2] target is not a participant, skipping", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress)

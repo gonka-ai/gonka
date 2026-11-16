@@ -7,6 +7,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/productscience/inference/testutil"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -56,6 +57,7 @@ func TestBridgeExchange_DoubleVoteCaseBypass(t *testing.T) {
 		},
 	}
 
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(ctx, gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{member},
@@ -149,6 +151,7 @@ func TestBridgeExchange_EligibleVoteRecords(t *testing.T) {
 	}))
 	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
 	mocks.AccountKeeper.EXPECT().HasAccount(ctx, other).Return(true).AnyTimes()
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{
@@ -210,6 +213,7 @@ func TestBridgeExchange_EligibleCreateStores(t *testing.T) {
 		Participants: []*types.ActiveParticipant{{Index: validator}},
 	}))
 	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{
 			Members: []*group.GroupMember{
@@ -264,6 +268,7 @@ func TestBridgeExchange_NotInTxEpochGroup(t *testing.T) {
 		Participants: []*types.ActiveParticipant{{Index: validator}},
 	}))
 	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{Members: nil}, nil,
 	).AnyTimes()
@@ -312,6 +317,7 @@ func TestBridgeExchange_CreateNotInActiveGroup(t *testing.T) {
 		Participants: []*types.ActiveParticipant{{Index: validator}},
 	}))
 	mocks.AccountKeeper.EXPECT().HasAccount(ctx, addr).Return(true).AnyTimes()
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{Members: nil}, nil,
 	).AnyTimes()

@@ -343,3 +343,30 @@ func TestChargeMessageRuleGas_StoreCommitStoredDeltaNoops(t *testing.T) {
 	require.NoError(t, k.ChargeMessageRuleGas(ctx.WithGasMeter(rec), msg))
 	require.Equal(t, storetypes.Gas(0), rec.extra, "stored_delta still needs handler Count delta")
 }
+
+// Batch charging keeps every message's rule gas and reads params once per tx.
+func TestChargeMessageRulesGas_SameRuleGasOneParamsRead(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	setValidationsRepeatedLen(fp, 7)
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	msg := &types.MsgSubmitPocValidationsV2{Validations: []*types.PoCValidationEntryV2{{}, {}}}
+	msgs := []sdk.Msg{msg, nil, msg, msg}
+
+	perMsg := newExtraGasRecorder()
+	for _, m := range msgs {
+		require.NoError(t, k.ChargeMessageRuleGas(ctx.WithGasMeter(perMsg), m))
+	}
+	batch := newExtraGasRecorder()
+	require.NoError(t, k.ChargeMessageRulesGas(ctx.WithGasMeter(batch), msgs))
+	require.Equal(t, storetypes.Gas(3*14), batch.extra)
+	require.Equal(t, perMsg.extra, batch.extra)
+
+	one := newExtraGasRecorder()
+	require.NoError(t, k.ChargeMessageRulesGas(ctx.WithGasMeter(one), msgs[:1]))
+	require.Equal(t, batch.GasConsumed()-batch.extra, one.GasConsumed()-one.extra, "params are read once whatever the message count")
+}

@@ -312,6 +312,18 @@ func (eg *EpochGroup) GetValidationWeights() (VotingData, error) {
 	}, nil
 }
 
+// LiveTotalWeight is the x/group total weight: the sum over members still in
+// the group (GroupData.TotalWeight stays at its epoch-start value).
+func (eg *EpochGroup) LiveTotalWeight(ctx context.Context) (int64, error) {
+	info, err := eg.GroupKeeper.GroupInfo(ctx, &group.QueryGroupInfoRequest{
+		GroupId: eg.GroupData.EpochGroupId,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return strconv.ParseInt(info.Info.TotalWeight, 10, 64)
+}
+
 func (eg *EpochGroup) MarkChanged(ctx context.Context) error {
 	if eg.GroupData.ModelId != "" {
 		// Skip for subgroups, changed only applies to the parent group

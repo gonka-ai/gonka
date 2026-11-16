@@ -2,6 +2,7 @@ package keeper_test
 
 import (
 	"context"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"strconv"
 	"testing"
 
@@ -98,6 +99,7 @@ func TestBridgeRecheck_Epoch418_RemovalAfterVotesCompletesInEndBlock(t *testing.
 	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{EpochId: epochIndex, Participants: parts}))
 
 	removed := map[string]bool{}
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(context.Context, *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
 			var out []*group.GroupMember

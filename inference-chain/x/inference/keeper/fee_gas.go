@@ -26,7 +26,10 @@ func (k Keeper) ChargeExtraGas(ctx sdk.Context, signer sdk.AccAddress, msg sdk.M
 	if err != nil {
 		return err
 	}
-	fp := params.FeeParams
+	return k.chargeExtraGas(ctx, params.FeeParams, signer, msg, qty, firstOfPeriod)
+}
+
+func (k Keeper) chargeExtraGas(ctx sdk.Context, fp *types.FeeParams, signer sdk.AccAddress, msg sdk.Msg, qty uint64, firstOfPeriod bool) error {
 	if fp == nil {
 		return nil
 	}
@@ -108,6 +111,26 @@ func extraGasQty(rule *types.MsgGasRule, msg sdk.Msg, handlerQty uint64) (uint64
 // need handler-provided canonical-state quantities.
 func (k Keeper) ChargeMessageRuleGas(ctx sdk.Context, msg sdk.Msg) error {
 	return k.ChargeExtraGas(ctx, nil, msg, 0, false)
+}
+
+// ChargeMessageRulesGas is ChargeMessageRuleGas over msgs with one params read.
+func (k Keeper) ChargeMessageRulesGas(ctx sdk.Context, msgs []sdk.Msg) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	for _, msg := range msgs {
+		if msg == nil {
+			continue
+		}
+		if err := k.chargeExtraGas(ctx, params.FeeParams, nil, msg, 0, false); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (k Keeper) chargePeriodBase(ctx sdk.Context, _ sdk.AccAddress, msg sdk.Msg, group *types.FeeGroup, rule *types.MsgGasRule) error {

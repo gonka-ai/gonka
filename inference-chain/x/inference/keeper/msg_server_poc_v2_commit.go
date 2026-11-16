@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -122,22 +123,31 @@ func (k Keeper) CheckEpochModelCommit(
 	participant sdk.AccAddress,
 	entries []*types.PoCV2CommitEntry,
 ) error {
-	participants, found := k.GetActiveParticipants(ctx, epochIndex)
-	if !found {
-		return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("active participants not found for epoch %d", epochIndex))
-	}
 	index := participant.String()
 	var epochModels []string
-	member := false
-	for _, p := range participants.Participants {
-		if p != nil && p.Index == index {
-			epochModels = p.Models
-			member = true
-			break
+	stored, err := k.ActiveParticipantModels.Get(ctx, collections.Join(epochIndex, participant))
+	switch {
+	case err == nil:
+		epochModels = stored.Models
+	case errors.Is(err, collections.ErrNotFound):
+		// Epochs written before ActiveParticipantModels, and non-members.
+		participants, found := k.GetActiveParticipants(ctx, epochIndex)
+		if !found {
+			return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("active participants not found for epoch %d", epochIndex))
 		}
-	}
-	if !member {
-		return sdkerrors.Wrap(types.ErrParticipantNotFound, fmt.Sprintf("%s is not an active participant of epoch %d", index, epochIndex))
+		member := false
+		for _, p := range participants.Participants {
+			if p != nil && p.Index == index {
+				epochModels = p.Models
+				member = true
+				break
+			}
+		}
+		if !member {
+			return sdkerrors.Wrap(types.ErrParticipantNotFound, fmt.Sprintf("%s is not an active participant of epoch %d", index, epochIndex))
+		}
+	default:
+		return sdkerrors.Wrap(types.ErrIllegalState, fmt.Sprintf("failed to read epoch models: %v", err))
 	}
 	for _, entry := range entries {
 		if entry == nil {

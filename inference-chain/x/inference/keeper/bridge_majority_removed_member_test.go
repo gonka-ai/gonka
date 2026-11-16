@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -47,6 +48,7 @@ func TestBridgeExchange_CompletesAfterMajorityMemberRemoval(t *testing.T) {
 	require.Equal(t, int64(100), after.TotalWeight, "RemoveMember leaves TotalWeight unchanged")
 
 	// x/group now lists only the two remaining members (weight-0 members are deleted).
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).Return(
 		&group.QueryGroupMembersResponse{Members: []*group.GroupMember{
 			{GroupId: 1, Member: &group.Member{Address: a, Weight: "20"}},
@@ -117,6 +119,7 @@ func TestBridgeExchange_DropsVoteOfMemberRemovedAfterVoting(t *testing.T) {
 		{GroupId: 1, Member: &group.Member{Address: b, Weight: "20"}},
 		{GroupId: 1, Member: &group.Member{Address: removed, Weight: "60"}},
 	}
+	keepertest.ExpectLiveGroupInfo(mocks.GroupKeeper)
 	mocks.GroupKeeper.EXPECT().GroupMembers(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ any, _ any) (*group.QueryGroupMembersResponse, error) {
 			return &group.QueryGroupMembersResponse{Members: members}, nil
