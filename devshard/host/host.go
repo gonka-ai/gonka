@@ -1006,6 +1006,15 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 
 	sig, err := h.signState(nonce, root)
 	if err != nil {
+		if errors.Is(err, types.ErrHeaderPending) {
+			// Freshness gates state signatures, not execution of an already
+			// authenticated diff. Aborting here would strand a receipt that
+			// signReceipt has already queued, without running its execution job.
+			// Recovery must also be able to pass old checkpoints on its way
+			// to a fresh diff; never sign those intermediate roots.
+			logging.Debug("state signature withheld: checkpoint not fresh", "subsystem", "host", "nonce", nonce, "error", err)
+			return nil, root, nonce, nil
+		}
 		return nil, nil, 0, fmt.Errorf("sign state root: %w", err)
 	}
 	stateSig = sig
