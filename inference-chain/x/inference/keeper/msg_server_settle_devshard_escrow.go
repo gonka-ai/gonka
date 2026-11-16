@@ -72,28 +72,36 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	participantByAddr := make(map[string]*types.Participant, len(uniqueAddrs))
 	treatAsCurrentEpochSettle := make(map[string]bool, len(uniqueAddrs))
 	for _, addr := range uniqueAddrs {
+		participantAddr, err := sdk.AccAddressFromBech32(addr)
+		if err != nil {
+			return nil, fmt.Errorf("participant %s not found", addr)
+		}
+		current := false
+		if escrow.EpochIndex == currentEpochIndex {
+			if _, accountsSettled := k.GetEpochPerformanceSummary(goCtx, currentEpochIndex, addr); !accountsSettled {
+				current, err = k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
+				if err != nil {
+					return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
+				}
+			}
+		}
+		treatAsCurrentEpochSettle[addr] = current
+		if !current {
+			// Paid directly, never written: only the participant's existence is checked.
+			exists, err := k.Participants.Has(ctx, participantAddr)
+			if err != nil {
+				return nil, fmt.Errorf("failed to check participant %s: %w", addr, err)
+			}
+			if !exists {
+				return nil, fmt.Errorf("participant %s not found", addr)
+			}
+			continue
+		}
 		participant, found := k.GetParticipant(goCtx, addr)
 		if !found {
 			return nil, fmt.Errorf("participant %s not found", addr)
 		}
 		participantByAddr[addr] = &participant
-		if escrow.EpochIndex != currentEpochIndex {
-			treatAsCurrentEpochSettle[addr] = false
-			continue
-		}
-		if _, accountsSettled := k.GetEpochPerformanceSummary(goCtx, currentEpochIndex, addr); accountsSettled {
-			treatAsCurrentEpochSettle[addr] = false
-			continue
-		}
-		participantAddr, err := sdk.AccAddressFromBech32(addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid participant address %s: %w", addr, err)
-		}
-		active, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpochIndex, participantAddr))
-		if err != nil {
-			return nil, fmt.Errorf("failed to check active participant set for %s: %w", addr, err)
-		}
-		treatAsCurrentEpochSettle[addr] = active
 	}
 	touchedParticipants := make(map[string]bool)
 
