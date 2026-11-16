@@ -35,6 +35,10 @@ anchor from authorizing a long-range fork after its validator keys have left
 the trusting period. These checks do not invalidate already accepted history.
 A fresh local canonical header is required for new signatures, while replay
 of the authenticated journal remains deterministic.
+An unavailable or stale live checkpoint withholds the state signature without
+aborting recovery or the executor receipt/job of an authenticated diff. A
+later fresh diff can resume state signing; a canonical hash mismatch is still
+an error.
 
 The NodeManager `GetBlockHeader` RPC has an optional `include_light_block`
 request and a light-block response field. Ordinary hash-only lookups keep
