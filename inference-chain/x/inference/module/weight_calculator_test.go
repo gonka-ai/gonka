@@ -88,6 +88,56 @@ func TestPoCWeightCalculator_PocValidated_RejectsWhenVotingPowersMissing(t *test
 	require.False(t, ok)
 }
 
+func TestValidatedParticipant_EpochAcceptanceWeightFloor(t *testing.T) {
+	const (
+		participant = testutil.Executor
+		voter       = testutil.Validator
+		modelID     = "model-a"
+	)
+	key := types.PoCParticipantModelKey{ParticipantAddress: participant, ModelID: modelID}
+	newCalc := func(count uint32, floor int64, norm mathsdk.LegacyDec) *PoCWeightCalculator {
+		return &PoCWeightCalculator{
+			MinEpochAcceptanceWeight: floor,
+			TimeNormalizationFactor:  norm,
+			Participants: map[string]types.Participant{
+				participant: {Address: participant, ValidatorKey: "val-key"},
+			},
+			StoreCommits: map[types.PoCParticipantModelKey]types.PoCV2StoreCommit{
+				key: {Count: count},
+			},
+			NodeWeightDistributions: map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution{
+				key: {Weights: []*types.MLNodeWeight{{NodeId: "node-1", Weight: count}}},
+			},
+			Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+				key: {{ValidatorParticipantAddress: voter, ValidatedWeight: 1}},
+			},
+			ModelVotingPowers: map[string]map[string]int64{
+				modelID: {voter: 100},
+			},
+			TotalNetworkWeight: 100,
+			Seeds: map[string]types.RandomSeed{
+				participant: {Participant: participant},
+			},
+			PocParams: &types.PocParams{},
+			Logger:    noopLogger{},
+		}
+	}
+
+	require.Nil(t, newCalc(9, 10, mathsdk.LegacyOneDec()).validatedParticipant(key))
+	accepted := newCalc(10, 10, mathsdk.LegacyOneDec()).validatedParticipant(key)
+	require.NotNil(t, accepted)
+	require.Equal(t, int64(10), accepted.Weight)
+
+	// An unset floor keeps the historical gate of 1.
+	require.NotNil(t, newCalc(1, 0, mathsdk.LegacyOneDec()).validatedParticipant(key))
+
+	half := mathsdk.LegacyMustNewDecFromStr("0.5")
+	require.Nil(t, newCalc(10, 10, half).validatedParticipant(key))
+	normalized := newCalc(20, 10, half).validatedParticipant(key)
+	require.NotNil(t, normalized)
+	require.Equal(t, int64(10), normalized.Weight)
+}
+
 func TestPoCWeightCalculator_PocValidated_SlotSamplingTreatsMissingWeightAsAbstention(t *testing.T) {
 	key := types.PoCParticipantModelKey{
 		ParticipantAddress: testutil.Executor,

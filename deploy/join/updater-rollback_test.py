@@ -5,6 +5,7 @@ Only the failure trigger is injected. Container replacement, healthchecks,
 configuration hashes, saved specifications and restoration use real Docker.
 """
 import copy
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -226,6 +227,74 @@ fi
         self.assertIn("Recovering the previous service specifications", retry.stdout)
         self.assert_restored("proxy")
         self.assertFalse((self.root / "state/pending").exists())
+
+
+# A client that closes stdin before the reply half-closes the connection.
+# Docker 29 with the containerd image store answers that canceled create with
+# an empty 499.
+FAKE_DIAL_STDIO = r"""#!/usr/bin/env python3
+import os, select, sys
+fd = sys.stdin.fileno()
+data = b""
+while b"\r\n\r\n" not in data:
+    data += os.read(fd, 65536)
+head, body = data.split(b"\r\n\r\n", 1)
+length = int(next(line.split(b":")[1] for line in head.split(b"\r\n")
+                  if line.lower().startswith(b"content-length:")))
+while len(body) < length:
+    body += os.read(fd, 65536)
+if os.environ.get("DIAL_MODE") == "empty" or (select.select([fd], [], [], 0.5)[0] and not os.read(fd, 1)):
+    reply = b"HTTP/1.1 499 status code 499\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+else:
+    payload = b'{"Id":"restored","Warnings":[]}'
+    reply = (b"HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: %d\r\n"
+             b"Connection: close\r\n\r\n%s") % (len(payload), payload)
+sys.stdout.buffer.write(reply)
+"""
+
+
+def load_container_state():
+    spec = importlib.util.spec_from_file_location("container_state", SOURCE / "updater-container-state.py")
+    state = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(state)
+    return state
+
+
+class DialStdioTest(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(prefix="gonka-dial-stdio-")
+        self.fake = Path(self.temp.name) / "docker"
+        self.fake.write_text(FAKE_DIAL_STDIO)
+        self.fake.chmod(0o755)
+        self.state = load_container_state()
+        self.state.DOCKER = str(self.fake)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def test_create_keeps_the_connection_open_until_docker_replies(self):
+        self.assertEqual(self.state.create({"Image": "busybox"}, "proxy"), "restored")
+
+    def test_empty_cancel_names_the_http_status(self):
+        os.environ["DIAL_MODE"] = "empty"
+        try:
+            with self.assertRaises(RuntimeError) as caught:
+                self.state.create({"Image": "busybox"}, "proxy")
+        finally:
+            os.environ.pop("DIAL_MODE", None)
+        self.assertIn("HTTP 499 with an empty body", str(caught.exception))
+
+    def test_real_daemon_reports_a_json_error(self):
+        if DOCKER is None:
+            self.skipTest("docker is not installed")
+        try:
+            command(DOCKER, "info", timeout=15)
+        except (OSError, subprocess.SubprocessError):
+            self.skipTest("docker daemon is not available")
+        self.state.DOCKER = DOCKER
+        with self.assertRaises(RuntimeError) as caught:
+            self.state.create({"Image": "gonka-no-such-image:missing"}, "gonka-dialstdio-probe")
+        self.assertIn("No such image", str(caught.exception))
 
 
 if __name__ == "__main__":

@@ -189,6 +189,49 @@ func TestReplaceSkipsTerminalRecords(t *testing.T) {
 	require.NotNil(t, OpenChallenges.Own("other"))
 }
 
+func TestTargetsForEpochKeepsTerminalRecordsOutOfOpenList(t *testing.T) {
+	t.Cleanup(OpenChallenges.Reset)
+	passed := openCh("gonka1passed", 10, 400, false)
+	passed.Challenge.EpochIndex = 7
+	passed.Challenge.State = types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
+	failed := openCh("gonka1failed", 10, 400, false)
+	failed.Challenge.EpochIndex = 7
+	failed.Challenge.State = types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED
+	aborted := openCh("gonka1aborted", 10, 400, false)
+	aborted.Challenge.EpochIndex = 7
+	aborted.Challenge.State = types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED
+	open := openCh("gonka1open", 20, 400, true)
+	open.Challenge.EpochIndex = 7
+	prior := openCh("gonka1prior", 10, 400, false)
+	prior.Challenge.EpochIndex = 6
+	prior.Challenge.State = types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED
+
+	OpenChallenges.Replace("", []*types.OpenPoCChallenge{passed, failed, aborted, open, prior}, 0)
+
+	require.Nil(t, OpenChallenges.Own("gonka1passed"))
+	require.Nil(t, OpenChallenges.Own("gonka1failed"))
+	require.Nil(t, OpenChallenges.Own("gonka1aborted"))
+	require.Nil(t, OpenChallenges.Own("gonka1prior"))
+	require.NotNil(t, OpenChallenges.Own("gonka1open"))
+	require.Equal(t, []string{"gonka1open"}, listedTargets(OpenChallenges.List()))
+
+	require.Equal(t, map[string]struct{}{
+		"gonka1passed":  {},
+		"gonka1failed":  {},
+		"gonka1aborted": {},
+		"gonka1open":    {},
+	}, OpenChallenges.TargetsForEpoch(7))
+	require.Equal(t, map[string]struct{}{"gonka1prior": {}}, OpenChallenges.TargetsForEpoch(6))
+}
+
+func listedTargets(list []*types.OpenPoCChallenge) []string {
+	out := make([]string, 0, len(list))
+	for _, ch := range list {
+		out = append(out, ch.Target())
+	}
+	return out
+}
+
 func TestSeedHex(t *testing.T) {
 	require.Equal(t, "0102", SeedHex([]byte{1, 2}))
 	require.Equal(t, "", SeedHex(nil))

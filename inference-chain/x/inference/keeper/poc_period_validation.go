@@ -243,6 +243,9 @@ func (k Keeper) checkPoCV2StoreCommitEpochModels(ctx sdk.Context, msg *types.Msg
 	if err != nil {
 		return errorsmod.Wrapf(types.ErrInvalidAddress, "invalid creator address: %v", err)
 	}
+	if err := k.CheckConfirmationPoCCommitEligibility(ctx, activeEvent.EpochIndex, addr); err != nil {
+		return err
+	}
 	return k.CheckEpochModelCommit(ctx, activeEvent.EpochIndex, addr, msg.Entries)
 }
 

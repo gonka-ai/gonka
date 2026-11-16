@@ -172,6 +172,34 @@ func TestMigrateEpochValidationParams(t *testing.T) {
 	again, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint32(64), again.EpochValidationParams.MaxValidationsPerMessage)
+	require.Equal(t, types.DefaultMinEpochAcceptanceWeight, again.EpochValidationParams.MinEpochAcceptanceWeight)
+}
+
+func TestMigrateEpochValidationParams_FillsMissingAcceptanceFloor(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochValidationParams = &types.EpochValidationParams{
+		MaxPositiveDistributionRows: 32,
+		MaxValidationsPerMessage:    16,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateEpochValidationParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint32(32), got.EpochValidationParams.MaxPositiveDistributionRows)
+	require.Equal(t, uint32(16), got.EpochValidationParams.MaxValidationsPerMessage)
+	require.Equal(t, types.DefaultMinEpochAcceptanceWeight, got.EpochValidationParams.MinEpochAcceptanceWeight)
+
+	got.EpochValidationParams.MinEpochAcceptanceWeight = 25
+	require.NoError(t, k.SetParams(ctx, got))
+	require.NoError(t, migrateEpochValidationParams(ctx, k))
+	again, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(25), again.EpochValidationParams.MinEpochAcceptanceWeight)
+	require.Equal(t, uint32(32), again.EpochValidationParams.MaxPositiveDistributionRows)
 }
 
 // A post-v0.2.16 model keeps seq_len and stat_test, stores the controller on

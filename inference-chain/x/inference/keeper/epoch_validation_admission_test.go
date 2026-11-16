@@ -549,6 +549,71 @@ func TestSubmitPocValidationsV2_MixedModelStoresEligibleRowOnly(t *testing.T) {
 	require.False(t, storedB)
 }
 
+// A same-epoch challenge record bars the target from submitting an ordinary
+// confirmation commit. It does not bar that participant from voting.
+func TestSubmitPocValidationsV2_SameEpochChallengeTargetRemainsEligibleVoter(t *testing.T) {
+	for _, state := range []types.PoCChallengeState{
+		types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+		types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
+		types.PoCChallengeState_POC_CHALLENGE_STATE_ABORTED,
+		types.PoCChallengeState_POC_CHALLENGE_STATE_PASSED,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			k, ctx, ms := setupEpochModelsCommitTest(t, testPoCModelID)
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			event := types.ConfirmationPoCEvent{
+				EpochIndex:            1,
+				TriggerHeight:         epochModelsTrigger,
+				GenerationStartHeight: epochModelsGeneration,
+				Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+			}
+			require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, event))
+			ctx = ctx.WithBlockHeight(event.GetValidationStart(params.EpochParams))
+
+			registerPoCParticipant(t, k, ctx, testutil.Validator)
+			require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+				EpochIndex: event.EpochIndex,
+				Target:     testutil.Validator,
+				State:      state,
+			}))
+			require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+				ParticipantAddress:       testutil.Executor,
+				PocStageStartBlockHeight: epochModelsTrigger,
+				Count:                    10,
+				RootHash:                 make([]byte, 32),
+				ModelId:                  testPoCModelID,
+			}))
+			require.NoError(t, k.SetPoCValidationSnapshot(ctx, types.PoCValidationSnapshot{
+				PocStageStartHeight: epochModelsTrigger,
+				SnapshotHeight:      event.GetValidationStart(params.EpochParams),
+				TotalNetworkWeight:  100,
+				ModelVotingPowers: []*types.ModelVotingPowers{{
+					ModelId: testPoCModelID,
+					VotingPowers: []*types.VotingPowerEntry{
+						{Address: testutil.Validator, VotingPower: 100},
+					},
+				}},
+			}))
+
+			_, err = ms.SubmitPocValidationsV2(ctx, &types.MsgSubmitPocValidationsV2{
+				Creator:                  testutil.Validator,
+				PocStageStartBlockHeight: epochModelsTrigger,
+				Validations: []*types.PoCValidationEntryV2{{
+					ParticipantAddress: testutil.Executor,
+					ModelId:            testPoCModelID,
+					ValidatedWeight:    10,
+				}},
+			})
+			require.NoError(t, err)
+
+			stored, err := k.HasPocValidationV2(ctx, epochModelsTrigger, testutil.Executor, testPoCModelID, testutil.Validator)
+			require.NoError(t, err)
+			require.True(t, stored)
+		})
+	}
+}
+
 func TestMLNodeWeightDistribution_RawRowOverflowBeforePermission(t *testing.T) {
 	_, sdkCtx, ms := setupWeightDistribution(t)
 	msg := &types.MsgMLNodeWeightDistribution{

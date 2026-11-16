@@ -28,14 +28,28 @@ func TestEpochValidationDefaultsStayDistinct(t *testing.T) {
 	got := DefaultEpochValidationParams()
 	require.Equal(t, uint32(256), got.MaxPositiveDistributionRows)
 	require.Equal(t, uint32(128), got.MaxValidationsPerMessage)
+	require.Equal(t, int64(1), got.MinEpochAcceptanceWeight)
 	require.Equal(t, 256, got.PositiveDistributionRowLimit())
 	require.Equal(t, 128, got.ValidationsPerMessageLimit())
+	require.Equal(t, int64(1), got.EpochAcceptanceWeightFloor())
 	require.NotEqual(t, got.ValidationsPerMessageLimit(), got.PositiveDistributionRowLimit())
 	require.Equal(t, 65536, MaxMLNodeWeightRawRowsPerEntry)
 
 	var missing *EpochValidationParams
 	require.Equal(t, DefaultMaxPositiveDistributionRows, missing.PositiveDistributionRowLimit())
 	require.Equal(t, MaxValidationsPerMessage, missing.ValidationsPerMessageLimit())
+	require.Equal(t, DefaultMinEpochAcceptanceWeight, missing.EpochAcceptanceWeightFloor())
+
+	missingFloor := &EpochValidationParams{
+		MaxPositiveDistributionRows: 1,
+		MaxValidationsPerMessage:    1,
+	}
+	require.Equal(t, DefaultMinEpochAcceptanceWeight, missingFloor.EpochAcceptanceWeightFloor())
+	require.Error(t, missingFloor.Validate())
+	missingFloor.MinEpochAcceptanceWeight = -5
+	require.Error(t, missingFloor.Validate())
+	missingFloor.MinEpochAcceptanceWeight = 1
+	require.NoError(t, missingFloor.Validate())
 }
 
 func TestCanonicalMLNodeWeightEntries_DropsZerosAndRejectsEmptyShape(t *testing.T) {

@@ -93,8 +93,48 @@ func TestPoCV2StoreCommit_ConfirmationRejectsCreatorOutsideEpoch(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrParticipantNotFound)
 }
 
+func TestPoCV2StoreCommit_ConfirmationRejectsSameEpochChallengeTarget(t *testing.T) {
+	for _, state := range []types.PoCChallengeState{
+		types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+		types.PoCChallengeState_POC_CHALLENGE_STATE_CHALLENGE_FAILED,
+	} {
+		t.Run(state.String(), func(t *testing.T) {
+			k, ctx, ms := setupEpochModelsCommitTest(t, testPoCModelID)
+			require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+				EpochIndex: 1,
+				Target:     testutil.Executor,
+				State:      state,
+			}))
+
+			_, err := ms.PoCV2StoreCommit(ctx, confirmationCommit(makePoCV2CommitEntry(testPoCModelID, 10, 1)))
+			require.ErrorIs(t, err, types.ErrPoCChallengeCPoCCommit)
+
+			commits, getErr := k.GetAllPoCV2StoreCommitsForStage(ctx, epochModelsTrigger)
+			require.NoError(t, getErr)
+			require.Empty(t, commits)
+		})
+	}
+}
+
+func TestPoCV2StoreCommit_ConfirmationAcceptsPriorEpochChallengeTarget(t *testing.T) {
+	k, ctx, ms := setupEpochModelsCommitTest(t, testPoCModelID)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 0,
+		Target:     testutil.Executor,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+
+	_, err := ms.PoCV2StoreCommit(ctx, confirmationCommit(makePoCV2CommitEntry(testPoCModelID, 10, 1)))
+	require.NoError(t, err)
+}
+
 func TestPoCV2StoreCommit_RegularPoCAcceptsModelOutsideCurrentEpoch(t *testing.T) {
 	k, ctx, ms := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID, testPoCModelID2)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 0,
+		Target:     testutil.Executor,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
 	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
 		EpochId: 0,
 		Participants: []*types.ActiveParticipant{{
@@ -137,6 +177,21 @@ func TestCheckPoCV2StoreCommitMempool_ConfirmationRejectsModelOutsideEpoch(t *te
 		k.CheckPoCV2StoreCommitMempool(checkCtx, confirmationCommit(makePoCV2CommitEntry(testPoCModelID2, 10, 1))),
 		types.ErrInvalidModel,
 	)
+}
+
+func TestCheckPoCV2StoreCommitMempool_ConfirmationRejectsSameEpochChallengeTarget(t *testing.T) {
+	k, ctx, _ := setupEpochModelsCommitTest(t, testPoCModelID)
+	require.NoError(t, k.SetPoCChallenge(ctx, types.PoCChallenge{
+		EpochIndex: 1,
+		Target:     testutil.Executor,
+		State:      types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN,
+	}))
+
+	err := k.CheckPoCV2StoreCommitMempool(
+		ctx.WithIsCheckTx(true),
+		confirmationCommit(makePoCV2CommitEntry(testPoCModelID, 10, 1)),
+	)
+	require.ErrorIs(t, err, types.ErrPoCChallengeCPoCCommit)
 }
 
 func TestPoCChallengeStoreCommit_RejectsModelOutsideEpoch(t *testing.T) {
