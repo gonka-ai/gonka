@@ -1,59 +1,76 @@
 # Running the devshard gateway
 
-This is the self-hosted stack for the gateway in `devshard/cmd/gateway`.
+This directory holds the self-hosted Docker Compose stack for the gateway in `devshard/cmd/gateway`. Follow the steps below to bring up one gateway next to a node; the settings behind them are described in [`docs/configuration.md`](../docs/configuration.md).
 
 | File | What it is |
 | --- | --- |
 | `docker-compose.devshard-gateway.yml` | one service, joined to the node's network |
 | `config.devshard-gateway.env.template` | the variables this stack sets, with the defaults it ships; the full list the gateway reads is [`env/env.go`](../env/env.go) |
 
-## Before you start
-
-The compose file joins the external network `join_default`, which the node's own stack creates. Bring the node up first, or the gateway will refuse to start with `network join_default declared as external, but could not be found`.
-
 ## Run it
 
-```
-cp config.devshard-gateway.env.template config.devshard-gateway.env
-$EDITOR config.devshard-gateway.env
-docker compose -f docker-compose.devshard-gateway.yml up -d
-```
+1. Bring the node's own stack up first. The compose file joins the external network `join_default`, which the node's stack creates; without it the gateway refuses to start with `network join_default declared as external, but could not be found`.
 
-The gateway answers on `127.0.0.1:18080` (`GATEWAY_HOST_PORT`), bound to loopback by design: the chat API is reachable from the host but not from the network. Check it with
+2. Copy the template and fill it in ("What you must fill in"):
 
-```
-curl -s localhost:18080/v1/status
-```
+   ```bash
+   cp config.devshard-gateway.env.template config.devshard-gateway.env
+   $EDITOR config.devshard-gateway.env
+   ```
 
-The container's healthcheck deliberately probes a *different* route, `/healthz`, which the kill switch leaves up and which answers 200 without checking anything else. `/v1/status` stays up through the kill switch too, so a gateway an operator had disabled on purpose is not restarted either way, but every probe of it would build the status of every escrow. Pointed at `/metrics`, every probe would be a full scrape. So `docker compose ps` reporting `healthy` means the process is up and answering, not that it is serving chat. `/v1/status` does not answer that alone either: its `requests_blocked` reports the chain's admission gate, while a disabled gateway answers 503 (or 308, with a redirect set) on the chat routes.
+3. Choose the image and start the container. `GATEWAY_IMAGE` is a full image reference with its tag; building one is in [`docs/runbook.md`](../docs/runbook.md), "Release and rollback":
+
+   ```bash
+   export GATEWAY_IMAGE=<registry>/<image>:<tag>
+   docker compose -f docker-compose.devshard-gateway.yml up -d
+   ```
+
+4. Check that it answers. The gateway listens on `127.0.0.1:18080` (`GATEWAY_HOST_PORT`), bound to loopback so the chat API is reachable from the host but not from the network:
+
+   ```bash
+   curl -s localhost:18080/v1/status
+   ```
 
 ## What you must fill in
 
-Nothing has a working default for these:
+These variables have no working default:
 
-- `DEVSHARD_CHAIN_RPC`, `DEVSHARD_CHAIN_GRPC`, `DEVSHARD_CHAIN_ID`, `DEVSHARD_PUBLIC_API` — the chain the gateway reads and broadcasts to. A wrong `DEVSHARD_CHAIN_ID` invalidates every transaction it signs.
-- `DEVSHARD_API_KEYS` — the keys clients present, each at least 16 characters, for the models the `model_access` admin override marks `api_key`. A model that override does not name answers only the admin key, so a fresh gateway serves no client until the operator sets it ([`docs/operations.md`](../docs/operations.md), "Who may call what").
-- `DEVSHARD_ADMIN_API_KEY` — empty disables the admin routes entirely, including creating escrows and setting `model_access`, so every model stays admin-only and the gateway serves no client. Set it.
+| Variable | What it is |
+| --- | --- |
+| `DEVSHARD_CHAIN_RPC`, `DEVSHARD_CHAIN_GRPC`, `DEVSHARD_CHAIN_ID`, `DEVSHARD_PUBLIC_API` | the chain the gateway reads and broadcasts to. A wrong `DEVSHARD_CHAIN_ID` invalidates every transaction it signs |
+| `DEVSHARD_API_KEYS` | the keys clients present, each at least 16 characters, for the models the `model_access` admin override marks `api_key` |
+| `DEVSHARD_ADMIN_API_KEY` | the admin key. Empty disables the admin routes entirely, including creating escrows and setting `model_access` |
+
+A fresh gateway serves no client until the operator names a model in the `model_access` override: a model the override does not name answers only the admin key ([`docs/operations.md`](../docs/operations.md), "Who may call what").
 
 ## Signing keys are named, never pasted
 
-`DEVSHARDS_JSON` seeds the escrows to serve at startup, and each entry names the **variable** that holds the key rather than the key:
+`DEVSHARDS_JSON` seeds the escrows to serve at startup, and each entry names the variable that holds the key rather than the key:
 
 ```json
 [{"id": "63362", "private_key_env": "DEVSHARD_PRIVATE_KEY", "model": "deepseek-ai/DeepSeek-V4-Flash-0731"}]
 ```
 
-The gateway then reads `DEVSHARD_PRIVATE_KEY` from its environment. This is why the admin API takes a variable name too: a key pasted into a request body would reach the logs, the shell history and the audit trail. Leave `DEVSHARDS_JSON` empty to start with no escrows and add them through the admin API.
+The gateway then reads `DEVSHARD_PRIVATE_KEY` from its environment. The admin API takes a variable name for the same reason: a key pasted into a request body would reach the logs, the shell history and the audit trail. Leave `DEVSHARDS_JSON` empty to start with no escrows and add them through the admin API.
 
 ## Storage
 
-`DEVSHARD_STORAGE_HOST_DIR` (default `.devshard-gateway`, next to the compose file) is mounted at `DEVSHARD_STORAGE_DIR` in the container. It holds the escrow database, the per-escrow session state and the nonce ledger. Losing it loses the gateway's memory of the escrows it serves, so back it up or point it somewhere durable before running anything that matters. How to take a backup and restore one is in [`docs/operations.md`](../docs/operations.md), "Backup and restore"; how to roll back a release, in "Release and rollback".
+`DEVSHARD_STORAGE_HOST_DIR` (default `.devshard-gateway`, next to the compose file) is mounted at `DEVSHARD_STORAGE_DIR` in the container. It holds the escrow database, the per-escrow session state and the nonce ledger. Losing it loses the gateway's memory of the escrows it serves, so point it somewhere durable and back it up ([`docs/runbook.md`](../docs/runbook.md), "Backup and restore").
 
-## Tuning without a redeploy
+## What the healthcheck means
 
-Most limits are also runtime overrides through the admin API, so the values here are the boot defaults rather than the last word. Which keys are live and what each one means is in [operations.md](../docs/operations.md), under "Configuration".
+The container's healthcheck probes `/healthz`, which answers 200 without checking anything else and stays up through the kill switch. `docker compose ps` reporting `healthy` therefore means the process is up and answering, not that it is serving chat.
 
-Two settings decide behaviour before the first run:
+| Route | Why the healthcheck does not use it |
+| --- | --- |
+| `/v1/status` | every probe would build the status of every escrow. It also does not say whether chat is served: its `requests_blocked` reports the chain's admission gate, while a disabled gateway answers 503, or 308 with a redirect set, on the chat routes |
+| `/metrics` | every probe would be a full scrape |
 
-- `DEVSHARD_STATS_ENABLED` ships as `false` and the built-in default is also off: a config that never sets it gets no counters, no findings and no `accounting.db`, without an error.
-- `DEVSHARD_POC_REQUEST_MODE` ships as `relaxed` and the built-in default is also relaxed: the gateway serves through the chain phase that otherwise blocks new inferences. It is the right setting for a gateway that must keep answering across an epoch boundary; set `off` where the chain's own admission must hold.
+## Settings to decide before the first run
+
+Most limits in the template are boot defaults that the admin API can override at runtime without a redeploy ([`docs/configuration.md`](../docs/configuration.md), "The three layers"). Two settings decide behaviour from the first request:
+
+| Variable | Shipped value | Effect |
+| --- | --- | --- |
+| `DEVSHARD_STATS_ENABLED` | `false`, which is also the built-in default | with it off there are no counters, no findings and no `accounting.db`, and no error says so |
+| `DEVSHARD_POC_REQUEST_MODE` | `relaxed`, which is also the built-in default | the gateway serves through the chain phase that otherwise blocks new inferences. Set `off` where the chain's own admission must hold |

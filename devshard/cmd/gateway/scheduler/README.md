@@ -1,5 +1,7 @@
 # `scheduler` — which escrow, which host, which nonce
 
+The `scheduler` package decides which escrow, host and nonce serve a request, and burns the nonces nobody can serve. Read this before you change a pick, a burn reason or the dispatcher.
+
 A chat request needs a nonce, and a nonce is bound to a host by `nonce % groupSize`. This package decides which escrow to spend from, and what to do when the nonce it is handed belongs to a host that cannot serve.
 
 ## What it owns

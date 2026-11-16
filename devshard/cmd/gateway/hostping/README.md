@@ -1,5 +1,7 @@
 # `hostping` — reaching the hosts, to watch rather than to route
 
+The `hostping` package pings the hosts of the live escrows for reachability and clock drift. Read this before you change what the gateway learns about a host between requests.
+
 A host answers requests, but only when there are requests. Between them the gateway learns nothing: a host that has gone unreachable, or whose clock has drifted far enough to make its own receipt stamps meaningless, looks exactly like a host nobody happened to pick.
 
 ## What it owns
@@ -22,7 +24,7 @@ A host answers requests, but only when there are requests. Between them the gate
 
 ## Knobs
 
-`DEVSHARD_GATEWAY_HOST_PING_DISABLED`, `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` (`15s`), `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` (`2s`), `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` (8). See [`docs/operations.md`](../docs/operations.md), "The knobs that decide behaviour".
+`DEVSHARD_GATEWAY_HOST_PING_DISABLED`, `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` (`15s`), `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` (`2s`), `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` (8). See [`docs/configuration.md`](../docs/configuration.md), "The knobs that decide behaviour".
 
 ## Read next
 

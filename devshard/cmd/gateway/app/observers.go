@@ -12,7 +12,7 @@ import (
 	"devshard/cmd/gateway/scheduler"
 )
 
-// tracedDispatches counts dispatch events and hands the ones worth a line or a ledger fact to the journal. See ../README.md, "Two readers of one fact".
+// tracedDispatches counts dispatch events and hands the ones worth a line or a ledger fact to the journal. See README.md, "Two readers of one fact".
 type tracedDispatches struct {
 	recorder *metrics.DispatchRecorder
 	steps    *metrics.StepRecorder
@@ -106,7 +106,7 @@ func (n *phaseNarrator) observe(snapshot chain.PhaseSnapshot) {
 	}
 }
 
-// nonceAccountedRaces hands one race outcome to both readers of it. See ../README.md, "Two readers of one fact".
+// nonceAccountedRaces hands one race outcome to both readers of it. See README.md, "Two readers of one fact".
 type nonceAccountedRaces struct {
 	recorder *metrics.RaceRecorder
 	events   *journal.Journal
@@ -132,7 +132,7 @@ func (r nonceAccountedRaces) RecordClassifyOverflow(participant, model string) {
 	r.recorder.RecordClassifyOverflow(participant, model)
 }
 
-// probeVotes counts a warmup vote like a race vote and hands it to the ledger without a race vote's line. See ../README.md, "Two readers of one fact".
+// probeVotes counts a warmup vote like a race vote and hands it to the ledger without a race vote's line. See README.md, "Two readers of one fact".
 type probeVotes struct {
 	recorder *metrics.RaceRecorder
 	events   *journal.Journal

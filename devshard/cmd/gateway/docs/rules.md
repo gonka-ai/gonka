@@ -55,7 +55,7 @@ Precedence is therefore explicit, never inherited from arm order: `nextDeadline`
 
 ### 4. Routing and settlement read the escrow set asymmetrically
 
-```
+```text
 Routing      → published entries only
 Dispatch     → published, then draining, for a nonce the pick already committed
 Settlement   → published, then draining
@@ -82,7 +82,11 @@ Three resources move together: the nonce, the participant's concurrency slot, an
 
 ### 6. Boot and shutdown order is a contract
 
-Ten steps up (`app/lifecycle.go`, `bootOrder` and `startAll`) and thirteen down (`shutdownOrder` and `stopAll`), both listed in [operations.md](./operations.md) and both read back by a test, because an order nothing pins is a comment. Going up, the chain observer starts before anything that scores a host, the nonce ledger before the emitters that file facts into it, the replay of owed refusal votes before the escrow lifecycle that would settle their escrows, and the HTTP listener last, so the first request meets a gateway that is fully assembled; a step that fails stops the boot where it failed. The order encodes five dependencies: races drain to the vote that settles their nonces, and that vote needs the escrow sessions, the observer and the chain client alive — so races stop second and everything they depend on stops below them. The store is second to last because closing it drains the accounting ledger. Chain connections close last because every step above can still reach the chain. The journal closes after every producer that owns a step above it, the escrow sessions' diff observer last, and before nonce accounting, the ledger it drains into. The nonce ledger's sweep stops, and the sweep in progress is waited for, before the escrow sessions close, so no sweep reads a closing session or retires the escrows `Registry.Close` takes out of the live set. Work that outlives its step or has none — a timeout vote still posting after the races drain ran out of budget, a handler still running after the listener's shutdown, the warmup, the republish after a devshard write — can still narrate after the journal closes, and such a line is counted as a late event.
+Ten steps up (`app/lifecycle.go`, `bootOrder` and `startAll`) and thirteen down (`shutdownOrder` and `stopAll`), both listed in [operations.md](./operations.md) and both read back by a test, because an order nothing pins is a comment. Going up, the chain observer starts before anything that scores a host, the nonce ledger before the emitters that file facts into it, the replay of owed refusal votes before the escrow lifecycle that would settle their escrows, and the HTTP listener last, so the first request meets a gateway that is fully assembled; a step that fails stops the boot where it failed.
+
+The order encodes five dependencies: races drain to the vote that settles their nonces, and that vote needs the escrow sessions, the observer and the chain client alive — so races stop second and everything they depend on stops below them. The store is second to last because closing it drains the accounting ledger. Chain connections close last because every step above can still reach the chain.
+
+The journal closes after every producer that owns a step above it, the escrow sessions' diff observer last, and before nonce accounting, the ledger it drains into. The nonce ledger's sweep stops, and the sweep in progress is waited for, before the escrow sessions close, so no sweep reads a closing session or retires the escrows `Registry.Close` takes out of the live set. Work that outlives its step or has none — a timeout vote still posting after the races drain ran out of budget, a handler still running after the listener's shutdown, the warmup, the republish after a devshard write — can still narrate after the journal closes, and such a line is counted as a late event.
 
 Three runner properties are as load-bearing as the order:
 
@@ -127,7 +131,7 @@ Neither default is right everywhere. What matters is that each is decided rather
 - A failed chain poll republishes the previous snapshot with `LastError` set rather than an empty one.
 - `MaxNonce == 0` means "not fetched", not "no limit": the scheduler falls back to `fallbackNonceCeiling` (19 800) rather than disabling the cap, and reports no escrow exhausted against it, because the fallback is not the hosts' cap and a reported escrow is parked.
 - A nil preserved set means "not loaded yet", so everyone counts as preserved. Reading absent data as "nobody is preserved" would ghost every nonce the escrow owns.
-- A model without a tokenizer the gateway reads, or whose tokenizer is still loading, is not checked against its context length: the prompt goes to a host, which is how every prompt went before the check ([request.md](./request.md), "Step 6 in detail").
+- A model without a tokenizer the gateway reads, or whose tokenizer is still loading, is not checked against its context length: the prompt goes to a host, which is how every prompt went before the check ([request.md](./request.md), "Step 6 in detail: the context check").
 - With no weights reported at all, escrow scoring falls back to availability-filtered membership share instead of zero, which would reject every request during the boot window. Because that fallback serves requests correctly and *silently*, it publishes a gauge derived from the same two predicates the branch reads, so the signal cannot drift from the behaviour it reports.
 
 ### 9. Bounded by construction
@@ -190,12 +194,9 @@ The rule does not reach values. A struct the caller fills with already-checked n
 | **A quarantine state machine** (timed sentences of 30–60 minutes) | per-host congestion windows plus a cut-off whose worst case is minutes: adaptation instead of punishment. The operator escape hatch is `POST /v1/admin/participants/unquarantine` |
 | **A pairwise speed comparator and a winner hold** | the gateway has no pairwise routing, so there is no preference signal to hold for — and inline in the writer a hold stalls the eventual winner's own socket while buying nothing |
 | **Host-index-keyed performance metrics** | `host_idx` is not an identity; performance families are keyed by participant |
-| **`devshard_runtime_reserved_tokens`** | token reservation lives in the limiter |
-| **Probe attempts inside the race engine** | unreachable: a nonce that cannot be served is burned inside the scheduler and never becomes an attempt. There is no probe field and no guard for one; the concept survives as ghost burns |
+| **Probe attempts inside the race engine** | unreachable: a nonce that cannot be served is burned inside the scheduler and never becomes an attempt. There is no probe field and no guard for one |
 | **Escalation to a measurably faster secondary** | it needs a latency model this gateway does not keep, and a faster host is not a reason to abandon an answer already streaming |
 | **Persisted participant health** | congestion windows, cut-off state and decayed counts all start empty. Minute-scale backoff self-heals faster than replaying stale penalties is worth. The cost is honest and small: a genuinely bad host gets one free window after every deploy |
-| **Migrated state** | state starts fresh, bootstrapped from `DEVSHARDS_JSON` and the admin import endpoint |
-| **A `capacity_aware_limits` toggle** | the weight model is always on |
 
 ### Refused mechanisms
 
@@ -203,11 +204,9 @@ The rule does not reach values. A struct the caller fills with already-checked n
 
 **No per-request cost accounting.** The request ledger records tokens and topology, not money. A breakdown computed as a read-time join against live session state would print zeros once an escrow settles. Money lives in chain settlement; the ledger answers "what did this request do", not "what did it cost".
 
-**No KV-cache affinity routing.** Closed as unreachable, not deferred: the protocol addresses a participant, never a node behind it, so which of a participant's nodes serves a request is decided by that participant's own router ([proposal.md](./proposal.md), "Open items").
-
 **No data-driven escalation beyond the first-token budget.** The escalation curve itself is a hardcoded quadratic in prompt size. One measured value stretches it: a host's own p75 to first content, which can only *extend* the budget, never shorten it (`engine/escalation.go`, `firstTokenBudget`). Nothing else in the ladder reads a percentile.
 
-**No cached reply behind any refusal but proof-of-compute.** A hit needs no host, no nonce and no limiter slot, so while proof-of-compute blocks requests the gateway still answers the requests it has already answered, and refuses every miss as before. Proof-of-compute outranks a stale snapshot in `admission`, so a snapshot that went stale while it was blocked still serves hits — a cached reply does not depend on the chain. A stale snapshot outside proof-of-compute serves none, and the kill switch refuses before `chat` runs (`api/admission.go`, `blockedOnlyByPoC`).
+**No cached reply behind any refusal but proof-of-compute.** A hit needs no host, no nonce and no limiter slot, so while proof-of-compute blocks requests the gateway still answers the requests it has already answered, and refuses every miss. Proof-of-compute outranks a stale snapshot in `admission`, so a snapshot that went stale while it was blocked still serves hits — a cached reply does not depend on the chain. A stale snapshot outside proof-of-compute serves none, and the kill switch refuses before `chat` runs (`api/admission.go`, `blockedOnlyByPoC`).
 
 ### Boundaries it declines to cross
 
@@ -215,7 +214,7 @@ The rule does not reach values. A struct the caller fills with already-checked n
 - **An exhausted deposit is reported by the scheduler, not the engine.** A request whose pick failed may never have been assigned an escrow to name; the dispatcher is the one seam holding the failure and the escrow id at the same moment.
 - **The gateway does not enforce the economics.** It caps `max_tokens`, so the reservation is bounded by what was asked for, and the chain clamps actual cost to that reservation. Within it a host can still over-claim; the defences are on-chain response-hash validation and the permanent state-root-divergence block.
 - **The gateway does not restate chain policy locally.** The maximum active nonce count is a governance parameter. A failed read falls back to a conservative constant; it never invents a policy of its own.
-- **No changes to the shared `devshard/` packages, except where money is lost there.** The rule holds for anything the gateway can normalise at its own boundary. It has four exceptions, all defects that lose money and which no boundary can normalise away: three whose cost is a nonce settled at full reserve — the execution-timeout sweep, the confirm stamp read from the record rather than the session's cache, and the sentinel that names an unposted vote — and the transport's SSE event cap, which, set below what a host may send, refuses an honest host's whole answer after its nonce is committed (see [`findings.md`](./findings.md)). Each fixes the shared packages for every binary that uses them, which is the test for whether the exception applies. The standing example of the rule itself: the shared timeout handler returns a non-nil error on its own success path, so a posted vote is recognised by the handler's `Applied` flag rather than by the error (`api/timeouts.go`, `engine/session.go`).
+- **No changes to the shared `devshard/` packages, except where money is lost there.** The rule holds for anything the gateway can normalise at its own boundary. It has four exceptions, all defects that lose money and which no boundary can normalise away: three whose cost is a nonce settled at full reserve — the execution-timeout sweep, the confirm stamp read from the record rather than the session's cache, and the sentinel that names an unposted vote — and the transport's SSE event cap, which, set below what a host may send, refuses an honest host's whole answer after its nonce is committed. Each fixes the shared packages for every binary that uses them, which is the test for whether the exception applies. The standing example of the rule itself: the shared timeout handler returns a non-nil error on its own success path, so a posted vote is recognised by the handler's `Applied` flag rather than by the error (`api/timeouts.go`, `engine/session.go`).
 
 ### Known gaps
 
@@ -225,6 +224,11 @@ Each entry below is a capability this gateway does not have, and the reason it d
 - **`/v1/debug/perf` is not served.** The request ledger at `/v1/requests/{id}` answers the same question per request, and the accounting findings carry the thresholds a host's numbers are judged against.
 - **Dashboards are checked by name only.** `metrics/deploy_queries_test.go` fails when a query in a dashboard under [`deploy/join/observability`](../../../../deploy/join/observability/) names a `devshard_gateway_*` family the metrics package does not declare. It does not check label values or whether an expression means what its panel says, so a change to a label is still checked against [`gonka-gateway-escrows.json`](../../../../deploy/join/observability/grafana/dashboards/gonka-gateway-escrows.json) by hand, with `jq -r '.. | .expr? // empty'`. `gonka-gateway-observability.json` is devshardctl's dashboard, titled so, and the test skips it: it queries nine families this gateway does not emit — capacity scale, participant limit rejections, quarantine state, picker choice, slot decisions, the skipped-escrow gauge, critical user failures, no-winner attempts and user-visible wins.
 - **A per-participant decay half-life is captured when a host is first seen**, so changing it at run time reaches only hosts seen afterwards.
+- **Abandoned `Pending` reservations are paid to the host at finalize.** `Finalize` pays every open record in full, so an attempt the gateway gave up on is charged when the escrow settles; the timeout sweep cannot recover it, because hosts reject a refused vote that carries no payload (`devshard/host/timeout.go`).
+- **An over-context prompt that reaches a host costs that host's attempt a reservation for the whole execution timeout and gives the host a miss.** The host relays the engine's 400 to the gateway as a stream event, and the race stops at a trusted refusal unless the host runs shorter than the model ([race.md](./race.md), "Escalation"), so one attempt is held, not one per host. The engine error comes after the receipt is signed and ends in `FailReceiptOrphan` with no Finish over the refusal (`devshard/host/host.go`, `RunExecution`), so only an execution-timeout vote settles the record. The scenarios pin the miss.
+- **A node that answers a frozen height with a fresh reply is not detected.** Only a chain API that stops answering is projected (`escrow deadlines read past a stale chain height`, `escrow/staleness.go`), and the projection moves the height, not the epoch.
+- **An escrow whose stored `amount` never resolved is left out of the full count.** A row recovered from a commitment, or any row with no live session, counts as full only when its stored `amount` covers the model's slot, so the guard in `escrow/planner.go` can create one escrow too many.
+- **A host that ends a challenge without testing the vote threshold decides whether an escrow with a challenged record stays stuck or is invalidated.** The gateway handles either outcome and the scenario records which one ran.
 
 ### What a test stand may reach
 

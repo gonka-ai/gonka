@@ -272,7 +272,7 @@ func (m *Manager) sweepBeforeFinalize(ctx context.Context, escrowID string, forc
 	return nil
 }
 
-// endedOnChain fails open: only the chain answering that the escrow is already settled, or absent once its epoch can have been pruned, counts. See escrows.md, "An escrow the chain has pruned".
+// endedOnChain fails open: only the chain answering that the escrow is already settled, or absent once its epoch can have been pruned, counts. See escrows.md, "Settlement and retirement".
 func (m *Manager) endedOnChain(ctx context.Context, record store.DevshardRecord) error {
 	onChain, found, err := m.tx.GetEscrow(ctx, record.EscrowID)
 	answered := err == nil

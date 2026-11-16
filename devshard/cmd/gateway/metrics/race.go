@@ -27,7 +27,7 @@ var (
 	chunkGapBuckets = prometheus.ExponentialBuckets(chunkGapBucketStartSeconds, bucketGrowthFactor, chunkGapBucketCount)
 )
 
-// RaceRecorder satisfies the engine's metrics hook. See operations.md, "Metrics".
+// RaceRecorder satisfies the engine's metrics hook. See observability.md, "Metrics".
 type RaceRecorder struct {
 	attemptsStarted  *prometheus.CounterVec
 	attemptsTerminal *prometheus.CounterVec
@@ -265,7 +265,7 @@ func raceFailureReason(outcome engine.RaceOutcome, firstFailure string) string {
 	return metricLabel(firstFailure, labelUnknown)
 }
 
-// transportStatus maps an attempt back to the host's upstream status. See operations.md, "Cardinality rules".
+// transportStatus maps an attempt back to the host's upstream status. See observability.md, "Cardinality rules".
 func transportStatus(attempt engine.AttemptOutcome) (string, bool) {
 	if status, recovered := engine.StatusFor(attempt.Terminal); recovered {
 		return strconv.Itoa(status), true

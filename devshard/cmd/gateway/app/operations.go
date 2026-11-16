@@ -20,7 +20,7 @@ import (
 	"devshard/cmd/gateway/store"
 )
 
-// suspiciousHosts is the operator's pin list, written to the store first. See ../README.md, "Admin operations".
+// suspiciousHosts is the operator's pin list, written to the store first. See README.md, "Admin operations".
 type suspiciousHosts struct {
 	pins suspiciousHostStore
 
@@ -267,7 +267,7 @@ func (o *operations) Activate(ctx context.Context, id string) error {
 	return addServing(ctx, listing, record)
 }
 
-// Deactivate retires the escrow before and after writing its row inactive, as an inactive registration does. See ../README.md, "Admin operations".
+// Deactivate retires the escrow before and after writing its row inactive, as an inactive registration does. See README.md, "Admin operations".
 func (o *operations) Deactivate(ctx context.Context, id string) error {
 	defer o.lockWrites(id)()
 	if err := o.escrows.Retire(id); err != nil {

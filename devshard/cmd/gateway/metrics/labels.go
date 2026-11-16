@@ -9,7 +9,7 @@ import (
 
 const labelUnknown = "unknown"
 
-// metricLabel keeps a label value non-empty. See operations.md, "Cardinality rules".
+// metricLabel keeps a label value non-empty. See observability.md, "Cardinality rules".
 func metricLabel(value, fallback string) string {
 	if trimmed := strings.TrimSpace(value); trimmed != "" {
 		return trimmed

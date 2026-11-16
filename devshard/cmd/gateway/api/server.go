@@ -99,14 +99,14 @@ type ImportDevshardRequest struct {
 	Activate      bool   `json:"active"`
 }
 
-// SettleDevshardsRequest is the batch settle body. See docs/operations.md, "Settling a list of escrows".
+// SettleDevshardsRequest is the batch settle body. See docs/runbook.md, "Settling a list of escrows".
 type SettleDevshardsRequest struct {
 	EscrowIDs []string `json:"escrow_ids"`
 	BatchSize int      `json:"batch_size"`
 	Force     bool     `json:"force"`
 }
 
-// DeactivateDevshardsRequest is the batch deactivate body. See docs/operations.md, "Deactivating a list of escrows".
+// DeactivateDevshardsRequest is the batch deactivate body. See docs/runbook.md, "Deactivating a list of escrows".
 type DeactivateDevshardsRequest struct {
 	EscrowIDs []string `json:"escrow_ids"`
 	BatchSize int      `json:"batch_size"`

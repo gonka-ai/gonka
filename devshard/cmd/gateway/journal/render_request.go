@@ -8,7 +8,7 @@ import (
 	"devshard/cmd/gateway/internal/logkey"
 )
 
-// See ../docs/operations.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
+// See ../docs/observability.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
 const (
 	loggedFieldSlots    = 34
 	MaxLoggedErrorBytes = 256
@@ -41,7 +41,7 @@ func renderRequestBodyUnread(lines logSink, line *RequestLine) {
 	lines.Warn("request body not received: connection closed", logkey.Request, line.RequestID, logkey.Error, loggedError(line.BodyErr))
 }
 
-// renderReplyNotCached names a truncated answer, which nothing else does. See docs/operations.md, "Lines that mean something happened".
+// renderReplyNotCached names a truncated answer, which nothing else does. See docs/observability.md, "Lines that mean something happened".
 func renderReplyNotCached(lines logSink, line *RequestLine) {
 	lines.Warn("a host stopped mid-answer: reply served, not cached", logkey.Request, line.RequestID,
 		logkey.Model, line.Model, logkey.Escrow, line.EscrowID)
@@ -118,7 +118,7 @@ func winnerOutputTokens(outcome engine.RaceOutcome) int64 {
 	return 0
 }
 
-// loggedError cuts host-controlled text on a rune boundary. See docs/operations.md, "The request record".
+// loggedError cuts host-controlled text on a rune boundary. See docs/observability.md, "The request record".
 func loggedError(err error) string {
 	text := err.Error()
 	if len(text) <= MaxLoggedErrorBytes {

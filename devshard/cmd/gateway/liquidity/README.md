@@ -1,5 +1,7 @@
 # `liquidity` — one escrow's money, by what it is waiting for
 
+The `liquidity` package classifies one escrow's money as free, returning, late or stuck, and says whether the escrow is full, starved or idle. Read this before you change what the funding planner or routing reads about an escrow's balance.
+
 Pure: no I/O, no clock of its own, no state between calls. `Classify` reads one escrow's balance, its open records (`Pending`, `Started`, `Challenged`) and the prices it is measured against, and returns its money split four ways with three flags. The escrow manager's funding planner calls it once per live escrow per tick; nothing else does.
 
 ## Classes

@@ -10,7 +10,7 @@ import (
 
 const jsonTagSeparator = ","
 
-// Merged applies a settings patch: a field it names replaces the stored one, a field it sets to null clears it, and every other field stays. See ../docs/operations.md, "Configuration".
+// Merged applies a settings patch: a field it names replaces the stored one, a field it sets to null clears it, and every other field stays. See ../docs/configuration.md.
 func (o Overrides) Merged(patch []byte) (Overrides, error) {
 	changes, err := ParseOverrides(patch)
 	if err != nil {

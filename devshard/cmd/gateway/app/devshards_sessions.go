@@ -30,7 +30,7 @@ import (
 // chainBackedSessions owns the chain connection because it is the only provider that needs one.
 func chainBackedSessions(records devshardLookup, storageDir string) sessionSources {
 	return func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) (chainSources, error) {
-		// This client carries the CometBFT RPC query fallback. See ../README.md, "Escrow sessions and the chain connection".
+		// This client carries the CometBFT RPC query fallback. See README.md, "Escrow sessions and the chain connection".
 		chainClient, err := commonchain.NewWithQueryFallback(endpoints.GRPCEndpoint, endpoints.RPCEndpoint)
 		if err != nil {
 			return chainSources{}, fmt.Errorf("dialing chain grpc %s: %w", endpoints.GRPCEndpoint, err)
@@ -108,7 +108,7 @@ func sessionInputs(ctx context.Context, records devshardLookup, storageDir, escr
 	return record, keyHex, storagePath, nil
 }
 
-// The bridge is one object for the process. See ../README.md, "Escrow sessions and the chain connection".
+// The bridge is one object for the process. See README.md, "Escrow sessions and the chain connection".
 func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, governance *runtimeParams, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) registry.SessionFactory {
 	return func(ctx context.Context, escrowID string) (registry.EscrowSession, error) {
 		record, keyHex, storagePath, err := sessionInputs(ctx, records, storageDir, escrowID)

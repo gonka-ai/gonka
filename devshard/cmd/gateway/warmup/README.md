@@ -1,5 +1,7 @@
 # `warmup` — teaching a new escrow to its own group
 
+The `warmup` package teaches a newly published escrow to its own group of hosts before real requests reach it. Read this before you change what happens between publishing an escrow and routing to it.
+
 An escrow is published to the chain before its hosts know it exists. Without a probe, the first real request pays that discovery one host at a time.
 
 ## What it owns

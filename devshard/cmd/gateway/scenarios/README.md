@@ -1,5 +1,7 @@
 # scenarios
 
+The `scenarios` package holds the scenario tests: the composed gateway against a fake chain and in-process hosts on fake time. Read this before you add a scenario; every test needs exactly one row in the tables below.
+
 The scenario tests run the real gateway — composed by [`app.Compose`](../app/composed.go), as `run` composes it — inside a `testing/synctest` bubble against a fake chain (`chain_test.go`) and real in-process hosts (`fleet_test.go`). An escrow's whole life (create, drain, timeout votes, settle, prune) runs on fake time, in seconds of wall time. Each test is a list of steps; after every step the harness checks every invariant below and stops at the first violation.
 
 They exist because the escrow lifecycle fails in the seams between the planner, the scheduler, the hosts and the chain, where a unit test of one package cannot see. [`docs/escrows.md`](../docs/escrows.md) describes the escrow lifecycle as built.

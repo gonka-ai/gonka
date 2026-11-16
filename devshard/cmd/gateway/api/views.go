@@ -202,7 +202,7 @@ type limiterStatus struct {
 	MaxTokensCap           int64 `json:"max_tokens_cap"`
 }
 
-// capacityStatus carries each weight under both spellings. See operations.md, "Reading the gateway's state".
+// capacityStatus carries each weight under both spellings. See observability.md, "Reading the gateway's state".
 type capacityStatus struct {
 	Model                       string  `json:"model"`
 	CurrentWeight               float64 `json:"current_weight"`

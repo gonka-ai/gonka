@@ -80,7 +80,7 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, overrides)
 }
 
-// settingsToApply reads a PUT as the whole document and a POST as a patch over the stored one. See ../docs/operations.md, "Configuration".
+// settingsToApply reads a PUT as the whole document and a POST as a patch over the stored one. See ../docs/configuration.md.
 func (s *Server) settingsToApply(r *http.Request, body []byte) (overrides config.Overrides, parseErr, loadErr error) {
 	if r.Method == http.MethodPut {
 		overrides, parseErr = config.ParseOverrides(body)

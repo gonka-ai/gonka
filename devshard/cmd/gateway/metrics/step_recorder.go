@@ -13,7 +13,7 @@ const (
 
 var stepBuckets = prometheus.ExponentialBuckets(stepBucketStartSeconds, bucketGrowthFactor, stepBucketCount)
 
-// StepRecorder times where a request waits inside the gateway itself. See operations.md, "Where the gateway spends a request's time".
+// StepRecorder times where a request waits inside the gateway itself. See observability.md, "Where the gateway spends a request's time".
 type StepRecorder struct {
 	sessionSteps *prometheus.HistogramVec
 	queueWait    prometheus.Histogram

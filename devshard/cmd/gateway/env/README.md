@@ -1,5 +1,7 @@
 # `env` — the only place environment variables are read
 
+The `env` package owns every environment variable the gateway reads. Read this before you add or rename a variable; operators look variables up in [`docs/configuration.md`](../docs/configuration.md).
+
 One typed table: name, type, and nothing else.
 
 ## What it owns
@@ -30,4 +32,4 @@ One typed table: name, type, and nothing else.
 
 ## Which names are read
 
-Each variable is read under one name only: `DEVSHARD_*`, `DEVSHARDS_JSON` or `GATEWAY_*`. `PrivateKey` reads exactly the variable an escrow record names. See [`docs/operations.md`](../docs/operations.md), "Variable names", for which variables are lenient, the defaults that shape a first deployment, and the variables that are not read.
+Each variable is read under one name only: `DEVSHARD_*`, `DEVSHARDS_JSON` or `GATEWAY_*`. `PrivateKey` reads exactly the variable an escrow record names. See [`docs/configuration.md`](../docs/configuration.md), "Variable names", for which variables are lenient, the defaults that shape a first deployment, and the variables that are not read.

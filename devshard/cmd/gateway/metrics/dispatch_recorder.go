@@ -2,7 +2,7 @@ package metrics
 
 import "github.com/prometheus/client_golang/prometheus"
 
-// DispatchRecorder satisfies the scheduler's nonce-accounting hook. See operations.md, "Metrics".
+// DispatchRecorder satisfies the scheduler's nonce-accounting hook. See observability.md, "Metrics".
 type DispatchRecorder struct {
 	ghostBurns          *prometheus.CounterVec
 	nonceHolds          *prometheus.CounterVec

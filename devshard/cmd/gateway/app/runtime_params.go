@@ -15,7 +15,7 @@ import (
 	"devshard/runtimeparams"
 )
 
-// runtimeParams is the chain's operational governance as the gateway reads it. See ../README.md, "Escrow sessions and the chain connection".
+// runtimeParams is the chain's operational governance as the gateway reads it. See README.md, "Escrow sessions and the chain connection".
 type runtimeParams struct {
 	feed             *runtimeparams.Managed
 	closeNodeManager func()

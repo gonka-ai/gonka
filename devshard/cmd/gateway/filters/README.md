@@ -1,5 +1,7 @@
 # `filters` — the request and response boundary
 
+The `filters` package owns the request and response boundary: parameter rules, model profiles, response folding and stripping. Read this before you change what a client may send or what it gets back.
+
 Everything a client sends is normalised here before it reaches a host, and everything a host returns is folded and stripped here before it reaches a client. This is the only package in the gateway with no dependency on any other: it is pure, and its behaviour is pinned byte-for-byte against the goldens in `testdata/`.
 
 ## What it owns
@@ -106,7 +108,7 @@ Collection rules:
 - `requireStringElements` rejects the first non-string element, reported as `<param>[<index>]`.
 - `dropBlankStringListElements` removes whitespace-only strings from `bad_words` and drops the field when nothing survives.
 - `validFloatMap` rejects `logit_bias` outright past 1024 raw entries, then drops individual entries outside `[-100, 100]` or non-finite, and drops the field once none survive.
-- `requireTokenIDKeys` rejects a `logit_bias` key that is not a non-negative 32-bit integer (vLLM #16529). The lexicographically first offender is reported, so the message is stable across map iteration order.
+- `requireTokenIDKeys` rejects a `logit_bias` key that is not a non-negative 32-bit integer. The lexicographically first offender is reported, so the message is stable across map iteration order.
 - `validMetadata` enforces the OpenAI-compatible contract: an object, at most 16 keys, keys up to 64 bytes, string values up to 512 bytes.
 - `validStreamOptions` strips the field entirely unless `stream` is exactly `true`, then keeps only `include_usage` and drops the field when nothing survives.
 
@@ -132,7 +134,9 @@ What the gateway forces, and what it strips:
 
 ## The prompt text
 
-`PromptText` reads a normalized body back into the text a host's chat template renders: each message's content, each tool call's name and arguments, and the `tools` array as its JSON, in order, without the template's own tokens. A content that was text parts is one string by then (`flattenMessageTextParts`). A field that is not a string is written as compact JSON without the HTML escapes (`\u003c`, `\u0026`) the body's own encoding adds, since the templates render `<` and `&` as themselves, and with its numbers as the client wrote them. Reasoning fields are left out: templates differ on whether they render a past turn's reasoning, and the check that reads this text ([`docs/request.md`](../docs/request.md), "Step 6 in detail") must not count what a host may drop, since an over-count refuses a request a host would serve while an under-count only leaves it unchecked. It decodes the body a second time, and only for a model with a loaded tokenizer; a string value is decoded straight into a string, and only a value that is not one goes through the generic decode and re-encoding.
+`PromptText` reads a normalized body back into the text a host's chat template renders: each message's content, each tool call's name and arguments, and the `tools` array as its JSON, in order, without the template's own tokens. A content that was text parts is one string by then (`flattenMessageTextParts`). A field that is not a string is written as compact JSON without the HTML escapes (`\u003c`, `\u0026`) the body's own encoding adds, since the templates render `<` and `&` as themselves, and with its numbers as the client wrote them.
+
+Reasoning fields are left out: templates differ on whether they render a past turn's reasoning, and the check that reads this text ([`docs/request.md`](../docs/request.md), "Step 6 in detail: the context check") must not count what a host may drop, since an over-count refuses a request a host would serve while an under-count only leaves it unchecked. It decodes the body a second time, and only for a model with a loaded tokenizer; a string value is decoded straight into a string, and only a value that is not one goes through the generic decode and re-encoding.
 
 ## Stop token ids
 
@@ -146,7 +150,11 @@ A request's profile is resolved once, by `Options.Profiles.For(model)`: an opera
 
 ### Presets live in `presets/`
 
-Every built-in preset is a JSON file in [`presets/`](./presets), embedded into the binary. `default.json` spells out every choice a profile must make (thinking, its template key, the reasoning_effort mode, tools, parallel_tool_calls); every other preset is composed over it, so an unset choice can only come from a broken file, and the loader refuses it. A file is `{"models": [...], "filters": {...}}`. The `filters` object is the same one a `PUT /v1/admin/filters/{model}` carries, so a built-in preset and an operator setting are written the same way; `models` binds models to the preset when no operator setting names them. The preset's name is the file name. `loadPresets` decodes every file through `strictjson.DecodeKnownFields`, one value and no unknown keys, and composes it like an operator setting, and refuses the whole folder on any bad file or on a model two files bind, so a typo fails `TestEveryEmbeddedPresetComposes` rather than booting as half a profile. Adding a preset is adding a file; no Go code names a model.
+Every built-in preset is a JSON file in [`presets/`](./presets), embedded into the binary. `default.json` spells out every choice a profile must make (thinking, its template key, the reasoning_effort mode, tools, parallel_tool_calls); every other preset is composed over it, so an unset choice can only come from a broken file, and the loader refuses it.
+
+A file is `{"models": [...], "filters": {...}}`. The `filters` object is the same one a `PUT /v1/admin/filters/{model}` carries, so a built-in preset and an operator setting are written the same way; `models` binds models to the preset when no operator setting names them. The preset's name is the file name.
+
+`loadPresets` decodes every file through `strictjson.DecodeKnownFields`, one value and no unknown keys, and composes it like an operator setting, and refuses the whole folder on any bad file or on a model two files bind, so a typo fails `TestEveryEmbeddedPresetComposes` rather than booting as half a profile. Adding a preset is adding a file; no Go code names a model.
 
 | Preset | Built-in binding | Deltas |
 | --- | --- | --- |
@@ -187,7 +195,7 @@ Denied kwargs keys are removed, not refused: the thinking rules write keys such 
 
 `thinking_token_budget` and `empty_answer_counts_tokens` are the two knobs a mistake turns against the hosts: the budget field crashes vLLM `EngineCore` on models that lack it (Qwen3-Instruct-2507), and the exemption lets a host's own usage report win the race with an empty answer (`docs/race.md`, "Crown denial"). `Profile.RequiresRegisteredModel` reports them, and the admin API accepts them only for a model the chain registers, never through `allow_off_chain`.
 
-How filters rank against `model_limits`, the environment and the host, and what a release that changes a preset does to stored settings: [`docs/operations.md`](../docs/operations.md), "Which setting wins" and "When a release changes the presets". The profile's `output_tokens_floor` also raises the default output budget a request leaves unnamed.
+How filters rank against `model_limits`, the environment and the host, and what a release that changes a preset does to stored settings: [`docs/configuration.md`](../docs/configuration.md), "Which setting wins" and "When a release changes the presets". The profile's `output_tokens_floor` also raises the default output budget a request leaves unnamed.
 
 `ThinkingDisposition` is the closed set of ways a profile handles `thinking`/`enable_thinking`: normalise in place (the default), mirror into `chat_template_kwargs`, strip entirely, or force thinking on.
 
@@ -285,7 +293,7 @@ Content is accepted as a non-blank string, or as a non-empty array of `{type: "t
 
 ## Response stripping
 
-`LogprobIntent` is what the client's own request asked for, read before the cap can narrow it. Without it the strip cannot tell a client who asked for logprobs from one who did not, and would answer both by removing them. `logprobs: true` without alternatives keeps `top_logprobs` as a present-but-empty array, which is OpenAI's shape for that ask. The served hosts never send that shape, though: a host forwards logprobs only when both `logprobs` and a positive `top_logprobs` were asked (`completionapi.LogprobsAsked`, read by the host's response processor), so a client asking `logprobs: true` alone gets no logprobs at all, as from devshardctl, and the empty-array path serves only a host that sends logprobs it was not asked to.
+`LogprobIntent` is what the client's own request asked for, read before the cap can narrow it. Without it the strip cannot tell a client who asked for logprobs from one who did not, and would answer both by removing them. `logprobs: true` without alternatives keeps `top_logprobs` as a present-but-empty array, which is OpenAI's shape for that ask. The served hosts never send that shape, though: a host forwards logprobs only when both `logprobs` and a positive `top_logprobs` were asked (`completionapi.LogprobsAsked`, read by the host's response processor), so a client asking `logprobs: true` alone gets no logprobs at all, and the empty-array path serves only a host that sends logprobs it was not asked to.
 
 - A client that asked for nothing loses `clientStrippedFields`, at any depth: the whole logprob family plus `token_ids`, `prompt_token_ids`, `prompt_logprobs`.
 - A client that asked for logprobs loses only `alwaysStrippedFields`, which is *derived* by subtracting `requestableFields` from the full list. A hand-written second list can omit a field the full list gained, which exposes `top_logprobs`.
@@ -386,7 +394,11 @@ A lower bound is enough for the race: it only asks whether the request could fit
 
 `rewriteEvent` forwards only what the decoded payload says the client may see. A host controls the event's raw bytes: it can spell a key with a `\u` escape, repeat a key, or split one object across two data lines, and each defeats a naive byte-wise check while the client's own decoder reads the object whole. The two byte-level paths below are held to the decoded answer and decline every one of those spellings.
 
-Most events need no decision at all: a host strips the logprob family before sending when the client asked for none, so a plain content chunk carries nothing to remove. `carriesNothingToRewrite` proves that without decoding, for a client that asked for no logprobs and an event on one data line. It walks the payload's keys at every depth, unescapes a key that carries a `\` escape before comparing it, compares without regard to case, and only then checks that the whole payload is one valid object. Any key in `clientStrippedFields`, `message`, `cached_tokens`, or `usage` when the client did not ask for it sends the event through the full decode. So does anything that fails the check. A spelling the check might misread costs a decode, never a leak, and `FuzzFastPathAgreesWithTheFullRewrite` holds it to forwarding only what the full rewrite would forward byte for byte. The same walk declines a key that names an upstream error (`namesUpstreamError`, the test `DecodeUpstreamError` gates on), so an event the fast path forwards carries none, and `StreamRewriter.LastOutputMayCarryUpstreamError` reports whether the last output holds any event other than one the fast path forwarded or one with no data lines; the API runs `DropUpstreamErrorEvents` only then, and `FuzzLastOutputMayCarryUpstreamErrorAgreesWithTheDrop` holds the flag to the drop.
+Most events need no decision at all: a host strips the logprob family before sending when the client asked for none, so a plain content chunk carries nothing to remove. `carriesNothingToRewrite` proves that without decoding, for a client that asked for no logprobs and an event on one data line.
+
+It walks the payload's keys at every depth, unescapes a key that carries a `\` escape before comparing it, compares without regard to case, and only then checks that the whole payload is one valid object. Any key in `clientStrippedFields`, `message`, `cached_tokens`, or `usage` when the client did not ask for it sends the event through the full decode. So does anything that fails the check.
+
+A spelling the check might misread costs a decode, never a leak, and `FuzzFastPathAgreesWithTheFullRewrite` holds it to forwarding only what the full rewrite would forward byte for byte. The same walk declines a key that names an upstream error (`namesUpstreamError`, the test `DecodeUpstreamError` gates on), so an event the fast path forwards carries none, and `StreamRewriter.LastOutputMayCarryUpstreamError` reports whether the last output holds any event other than one the fast path forwarded or one with no data lines; the API runs `DropUpstreamErrorEvents` only then, and `FuzzLastOutputMayCarryUpstreamErrorAgreesWithTheDrop` holds the flag to the drop.
 
 ### Stripping without decoding
 
@@ -424,7 +436,11 @@ The template is kept only when that holds: one choice with a numeric index, no a
 
 On a plain 512-chunk stream the fold drops from about 1.7 ms and 1.36 MB to about 83 µs and 42 KB (`BenchmarkBodyFolderPlainContentStream`). A host strips the logprob family before sending unless the client asked for it or its logprobs optimization is off (`common/completionapi/responseprocessor.go`, `prepareBody`).
 
-A client that asked for logprobs receives them on every chunk, so the template also covers a chunk whose choice carries `logprobs` holding nothing but a `content` array: the payload then has exactly two `content` keys, the delta's string and, after it, that array, and the template keeps the bytes before the string, between the two, and after the array. It forms only once the merged entries are non-empty and do not lead with an `index`: the full merge appends entries after such a first one, and merges indexed entries into one another, which raw entries cannot join. A matching event appends its text as above and its entries to the merged `logprobs.content` as raw JSON, after `stripMembersWithoutDecoding` applies the client's intent to each, without decoding them (`canonicalEntries` in `fold_logprobs_entries.go`). An entry is kept raw only when it is spelled as `encodeCompact` would spell its decoded value — no whitespace, keys in ascending order, strings without escapes, control bytes or the two line separators it always escapes — so the folded body stays byte for byte what the full merge encodes; any other entry sends the event through the full decode. `TestLogprobsTemplateFoldsWhatTheFullMergeWould` and `FuzzContentTemplateAgreesWithTheFullMerge` pin that for every logprob intent. `BenchmarkBodyFolderStandStream` measures it on a stand-shaped stream for every intent: a chunk's decode becomes a scan and a copy of its entries, while the periodic `measure` re-encode, which still encodes every raw entry, makes a long answer cost more per chunk.
+A client that asked for logprobs receives them on every chunk, so the template also covers a chunk whose choice carries `logprobs` holding nothing but a `content` array: the payload then has exactly two `content` keys, the delta's string and, after it, that array, and the template keeps the bytes before the string, between the two, and after the array. It forms only once the merged entries are non-empty and do not lead with an `index`: the full merge appends entries after such a first one, and merges indexed entries into one another, which raw entries cannot join. A matching event appends its text as above and its entries to the merged `logprobs.content` as raw JSON, after `stripMembersWithoutDecoding` applies the client's intent to each, without decoding them (`canonicalEntries` in `fold_logprobs_entries.go`).
+
+An entry is kept raw only when it is spelled as `encodeCompact` would spell its decoded value — no whitespace, keys in ascending order, strings without escapes, control bytes or the two line separators it always escapes — so the folded body stays byte for byte what the full merge encodes; any other entry sends the event through the full decode.
+
+`TestLogprobsTemplateFoldsWhatTheFullMergeWould` and `FuzzContentTemplateAgreesWithTheFullMerge` pin that for every logprob intent. `BenchmarkBodyFolderStandStream` measures it on a stand-shaped stream for every intent: a chunk's decode becomes a scan and a copy of its entries, while the periodic `measure` re-encode, which still encodes every raw entry, makes a long answer cost more per chunk.
 
 ### What the fold returns
 

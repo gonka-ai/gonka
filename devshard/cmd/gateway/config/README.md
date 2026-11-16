@@ -1,5 +1,7 @@
 # `config` — the immutable snapshot
 
+The `config` package owns the immutable configuration snapshot and the holder that swaps it atomically. Read this before you add a setting, a default or an admin override.
+
 Everything the gateway's behaviour depends on, in one value that is never mutated.
 
 ## What it owns

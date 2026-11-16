@@ -171,7 +171,7 @@ func shutdownOrder(parts shutdownParts) []shutdownStep {
 		// After the sessions that carried its readings, before the store they persisted into.
 		{name: "height follower", stop: closeOf(parts.heightFollower)},
 		{name: "store", stop: closeOf(parts.storage)},
-		// Last: every step above can still reach the public API. See ../README.md, "Shutdown".
+		// Last: every step above can still reach the public API. See README.md, "Shutdown".
 		{name: "public api connections", stop: closeIdle(parts.publicAPI)},
 	}
 }
@@ -194,7 +194,7 @@ func stopListener(listener httpListener, endRequests context.CancelFunc) func(co
 	}
 }
 
-// waitFor bounds a drain by the shutdown budget without cancelling it. See ../README.md, "Shutdown".
+// waitFor bounds a drain by the shutdown budget without cancelling it. See README.md, "Shutdown".
 func waitFor(component stopper) func(context.Context) error {
 	return func(ctx context.Context) error {
 		stopped := make(chan struct{})
@@ -212,7 +212,7 @@ func closeOf(component io.Closer) func(context.Context) error {
 	return func(context.Context) error { return component.Close() }
 }
 
-// closeWithin bounds a close by the shutdown budget, and by at least floor, as waitFor bounds a drain. See ../README.md, "Shutdown".
+// closeWithin bounds a close by the shutdown budget, and by at least floor, as waitFor bounds a drain. See README.md, "Shutdown".
 func closeWithin(component io.Closer, floor time.Duration) func(context.Context) error {
 	return func(ctx context.Context) error {
 		closed := make(chan error, 1)
@@ -245,7 +245,7 @@ func closeIdle(component idleConnections) func(context.Context) error {
 	}
 }
 
-// stopAll runs every step even after a failure, skipping and reporting a needsQuiesced one. See ../README.md, "Shutdown".
+// stopAll runs every step even after a failure, skipping and reporting a needsQuiesced one. See README.md, "Shutdown".
 func stopAll(ctx context.Context, steps []shutdownStep) error {
 	var problems []error
 	quiesced := true
@@ -287,7 +287,7 @@ func (g *gateway) partsToStop() shutdownParts {
 	}
 }
 
-// bootBudget sizes the build limit and the idle pool those builds reuse together. See ../README.md, "Wiring order, and the knots in it".
+// bootBudget sizes the build limit and the idle pool those builds reuse together. See README.md, "Wiring order, and the knots in it".
 type bootBudget struct {
 	builders int
 	client   *http.Client

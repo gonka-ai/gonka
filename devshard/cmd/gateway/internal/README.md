@@ -1,5 +1,7 @@
 # `internal` — helpers with no domain of their own
 
+The `internal` directory holds small helper packages shared by the gateway packages. Read this to find a helper before you write one.
+
 Six small packages that exist so the rest of the gateway does not have to repeat itself. Nothing here knows what a nonce or an escrow is.
 
 | Package | What it is for |

@@ -9,7 +9,7 @@ import (
 	"devshard/cmd/gateway/tokenizer"
 )
 
-// See docs/request.md, "Step 6 in detail".
+// See docs/request.md, "Step 6 in detail: the context check".
 const (
 	chatTemplateMinimumTokens = 4
 )

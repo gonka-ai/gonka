@@ -1,5 +1,7 @@
 # `funding` — one model's creates and retires
 
+The `funding` package owns the plan for one model: which escrows to create and which to retire, from its money, demand, budget and rate. Read this before you change when the gateway funds or retires an escrow.
+
 Pure: `Plan` reads one `ModelState` and returns one `Decision`; `Bucket` and `DemandWindow` are values the escrow manager keeps between ticks and hands in. Nothing here reads a clock, a store or the chain. The manager executes the decision; see [`escrow/README.md`](../escrow/README.md), "The funding planner".
 
 ## Inputs
@@ -10,7 +12,7 @@ An escrow is **routable** when it is not standby and not at its nonce cap. An un
 
 ## The algorithm
 
-```
+```text
 fullCount    = #{escrows not nonce-capped with Full}
 guardShort   = priced && !misconfigured ? max(0, K − fullCount) : 0
 L            = Σ_routable atModelPrice(max(0, free − FullCost_e) + returning)
@@ -35,7 +37,11 @@ A model is **misconfigured** when `Amount − CreateFee < Slot`: a fresh escrow 
 
 ## Money at one price
 
-An escrow's session keeps the token price it was opened with for its whole life, so its money buys requests at that price, while `need` prices the guarantee's slots at the chain's current price. `L` therefore counts each escrow's money at the current price: `atModelPrice(amount) = amount × FullCost / FullCost_e`, where `FullCost_e` is the escrow's own full-context price and `FullCost` the model's at the chain's current price (`plan.go`, `atModelPrice`; the product saturates). After a price rise, money on an escrow opened at the old price buys more than its face value and no capacity create is bought for a fleet that can still pay; after a fall it buys less. An escrow with no price yet, or a model unpriced, counts at face value. An unread escrow and every new create are priced at the current price, so their ratio is one. Each escrow's `full` is read at its own price (`liquidity.Classify` against its own `Slot`), the price it actually serves at, so the guard and `L` agree on what an escrow can pay. The demand peak is reserved money as the chain charged it, at each escrow's own price, and is not converted.
+An escrow's session keeps the token price it was opened with for its whole life, so its money buys requests at that price, while `need` prices the guarantee's slots at the chain's current price. `L` therefore counts each escrow's money at the current price: `atModelPrice(amount) = amount × FullCost / FullCost_e`, where `FullCost_e` is the escrow's own full-context price and `FullCost` the model's at the chain's current price (`plan.go`, `atModelPrice`; the product saturates). After a price rise, money on an escrow opened at the old price buys more than its face value and no capacity create is bought for a fleet that can still pay; after a fall it buys less.
+
+An escrow with no price yet, or a model unpriced, counts at face value. An unread escrow and every new create are priced at the current price, so their ratio is one.
+
+Each escrow's `full` is read at its own price (`liquidity.Classify` against its own `Slot`), the price it actually serves at, so the guard and `L` agree on what an escrow can pay. The demand peak is reserved money as the chain charged it, at each escrow's own price, and is not converted.
 
 ## Retires
 

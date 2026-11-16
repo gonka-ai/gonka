@@ -17,7 +17,7 @@ import (
 	"devshard/user"
 )
 
-// otherRouteLabel is the single label every unmatched path folds into. See operations.md, "Cardinality rules".
+// otherRouteLabel is the single label every unmatched path folds into. See observability.md, "Cardinality rules".
 const otherRouteLabel = "other"
 
 // route is one registered pattern; an empty label leaves it uninstrumented. See README.md, "The route table".

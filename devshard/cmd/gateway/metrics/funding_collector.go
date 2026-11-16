@@ -31,7 +31,7 @@ type DeadlineUnsettledCount struct {
 	Total  uint64
 }
 
-// FundingCollector reports the funding planner's per-model money, counts, decisions and guarantee. See operations.md, "Metrics".
+// FundingCollector reports the funding planner's per-model money, counts, decisions and guarantee. See observability.md, "Metrics".
 type FundingCollector struct {
 	models    func() []FundingModel
 	deadlines func() []DeadlineUnsettledCount

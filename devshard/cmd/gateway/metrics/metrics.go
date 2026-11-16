@@ -1,5 +1,5 @@
 // Package metrics owns the gateway's Prometheus registry; family names are frozen as devshard_*.
-// See operations.md, "Metrics".
+// See observability.md, "Metrics".
 package metrics
 
 import (

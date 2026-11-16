@@ -47,7 +47,7 @@ type hostKey struct {
 	model       string
 }
 
-// handleAdminHosts answers why a host is or is not taking work. See operations.md, "What a host answer carries".
+// handleAdminHosts answers why a host is or is not taking work. See observability.md, "What a host answer carries".
 func (s *Server) handleAdminHosts(w http.ResponseWriter, r *http.Request) {
 	if !allowMethods(w, r, http.MethodGet) {
 		return

@@ -1,5 +1,7 @@
 # `metrics` — the Prometheus surface
 
+The `metrics` package owns the Prometheus registry and every collector. Read this before you add a metric family or a label; operators look metrics up in [`docs/observability.md`](../docs/observability.md).
+
 The only package that knows Prometheus exists.
 
 ## What it owns
@@ -56,4 +58,4 @@ The response writer that records a status also forwards `Flush`, so streaming ha
 
 ## Read next
 
-- [`docs/operations.md`](../docs/operations.md), "Metrics" — the families by the question they answer, and the ones no longer emitted.
+- [`docs/observability.md`](../docs/observability.md), "Metrics" — the families by the question they answer.

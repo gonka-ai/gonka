@@ -1,5 +1,7 @@
 # `heights` — carrying mainnet height into the escrow's log
 
+The `heights` package carries mainnet height into each escrow's log, through the courier and the optional follower. Read this before you change how sessions learn the chain height.
+
 Mainnet height is the escrow's logical clock. Every host and the sequencer keep a signed `(height, hash)` inside the log itself, so a verifier replaying the diffs recomputes the same time — which is what later releases need to fold timeouts and seal windows onto heights instead of wall clocks.
 
 The protocol lives in the session (`user/heartbeat.go`, `user/heightsync_seed.go`) and the transport envelope. This package is the gateway's two decisions about it: what the clients carry, and when the cadence opens.

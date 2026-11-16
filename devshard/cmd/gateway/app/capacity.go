@@ -30,7 +30,7 @@ func (m modelCapacity) ForModel(model string) limits.ModelCapacity {
 	}
 }
 
-// ModelWeights folds in relaxed mode first, or PoC zeroes every cap. See ../README.md, "Relaxed mode, in one place".
+// ModelWeights folds in relaxed mode first, or PoC zeroes every cap. See README.md, "Relaxed mode, in one place".
 func (m modelCapacity) ModelWeights(model string) limits.ModelWeights {
 	return m.capacity.ModelWeights(model, m.config.Load().Modes.BlocksRequests(m.snapshots.Snapshot()))
 }
