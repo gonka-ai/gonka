@@ -196,7 +196,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 			Grpc:     wasmkeeper.AcceptListGrpcQuerier(acceptedGrpc, app.GRPCQueryRouter(), app.AppCodec()),
 			Stargate: wasmkeeper.AcceptListStargateQuerier(acceptedStargate, app.GRPCQueryRouter(), app.AppCodec()),
 		})
-	wasmOpts = append(wasmOpts, querierOpts)
+	wasmOpts = append(wasmOpts, querierOpts, wasmkeeper.WithWasmEngineDecorator(newSimulationGasCappedEngine))
 
 	availableCapabilities := strings.Join(AllCapabilities(), ",")
 	app.WasmKeeper = wasmkeeper.NewKeeper(
