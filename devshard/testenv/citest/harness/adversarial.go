@@ -130,6 +130,23 @@ func RequireWarmKeyRevoked(t *testing.T, eps Endpoints, granter, warmAddress str
 	}
 }
 
+// RequireWarmKeyTransportAccepted exercises the real signed Connect handshake.
+// This complements the negative probe: a permission error is meaningful only
+// after the same path accepted a granted key.
+func RequireWarmKeyTransportAccepted(t *testing.T, stack *Stack, cfg *config.File, eps Endpoints, warmPrivateKeyHex string) {
+	t.Helper()
+	escrowID := GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
+	signer, err := signing.SignerFromHex(warmPrivateKeyHex)
+	require.NoError(t, err)
+	base := strings.TrimRight(stack.RouterH2HTTP(t), "/") + "/devshard/" + cfg.Versiond.VersionName + "/sessions/" + escrowID + "/rpc"
+	auth := rpcpbconnect.NewPeerAuthServiceClient(routerH2Client(t), base, connect.WithGRPC())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resp, err := auth.Attach(ctx, connect.NewRequest(signedWarmKeyAttach(t, signer, cfg.Hosts[0].Address)))
+	require.NoError(t, err)
+	require.NotEmpty(t, resp.Msg.GetSessionToken())
+}
+
 // RequireWarmKeyTransportRejected asserts Connect gossip denies a revoked warm key.
 // Echo POST /sessions/:id/gossip/nonce is retired (410 before auth). Peers call
 // GossipService.Nonce. Membership is VerifyWarmKey: Attach runs it before a

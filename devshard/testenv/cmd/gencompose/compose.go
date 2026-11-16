@@ -182,6 +182,8 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
+      # May be set independently of KEY_NAME to exercise warm-key rotation.
+      ACCOUNT_PUBKEY: ""
       DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-32m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}

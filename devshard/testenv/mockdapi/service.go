@@ -37,6 +37,7 @@ type Service struct {
 	cfg            Config
 	paramsSrc      *params.CachedSource
 	paramsSrv      *params.Server
+	chainClient    *chain.Client
 	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
 	blockMock      *observer.Mock
@@ -117,6 +118,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 
 	s := &Service{
 		cfg:            cfg,
+		chainClient:    chainClient,
 		paramsSrc:      src,
 		paramsSrv:      paramsSrv,
 		nodeManager:    nodeManager,
@@ -251,7 +253,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		BlockHeight: s.cfg.GatewayBlockHeight,
 		EpochIndex:  s.cfg.GatewayEpochIndex,
 	})
-	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents)
+	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents, s.publishWarmKeyLog)
 	s.httpEcho = e
 	e.Server.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {
