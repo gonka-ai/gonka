@@ -1,13 +1,8 @@
-//go:build authz_grant_hooks
-
-// This test needs authz Keeper.SetGrantHooks. That method is not in
-// github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability, and the call in
-// app.go is commented out. Build with -tags authz_grant_hooks once the chain
-// depends on a tag that provides it.
 package app_test
 
 import (
 	"math/rand"
+	"reflect"
 	"testing"
 	"time"
 
@@ -30,6 +25,7 @@ import (
 
 func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 	testApp := createTestApp(t)
+	_, hasHooks := reflect.TypeOf(&testApp.AuthzKeeper).MethodByName("SetGrantHooks")
 	adminKey := secp256k1.GenPrivKey()
 	admin := sdk.AccAddress(adminKey.PubKey().Address())
 	granterKey := secp256k1.GenPrivKey()
@@ -81,6 +77,9 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 	})
 
 	t.Run("group exec try", func(t *testing.T) {
+		if !hasHooks {
+			t.Skip("legacy SDK: post-handler cannot observe group execution")
+		}
 		grantee := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address())
 		grant, err := authz.NewMsgGrant(policy, grantee, authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL), nil)
 		require.NoError(t, err)
@@ -94,6 +93,9 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 	})
 
 	t.Run("group exec in its own transaction", func(t *testing.T) {
+		if !hasHooks {
+			t.Skip("legacy SDK: post-handler cannot observe group execution")
+		}
 		entries := warmKeyEntries(t, testApp, policy)
 		require.Len(t, entries, 1)
 		grantee, err := sdk.AccAddressFromBech32(entries[0].Grantee)
@@ -148,6 +150,9 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 	})
 
 	t.Run("gov module account through the message router", func(t *testing.T) {
+		if !hasHooks {
+			t.Skip("legacy SDK: post-handler cannot observe governance execution")
+		}
 		grantee := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address())
 		govAddr := authtypes.NewModuleAddress(govtypes.ModuleName)
 		grant, err := authz.NewMsgGrant(govAddr, grantee, authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL), nil)
@@ -165,10 +170,9 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 	t.Run("expiry deletes the authz grant and does not end the log", func(t *testing.T) {
 		grantee := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address())
 		expires := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
-		require.NoError(t, testApp.AuthzKeeper.SaveGrant(
-			warmKeyCtx(testApp), grantee, granter,
-			authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL), &expires,
-		))
+		grant, err := authz.NewMsgGrant(granter, grantee, authz.NewGenericAuthorization(inferencetypes.WarmKeyGrantMarkerTypeURL), &expires)
+		require.NoError(t, err)
+		deliverWarmKeyTx(t, testApp, granter, granterKey, time.Now().UTC(), grant)
 		require.NotNil(t, warmKeyAuth(t, testApp, grantee, granter))
 		resp := commitWarmKeyBlock(t, testApp, expires.Add(time.Second))
 		require.False(t, hasABCIEvent(resp.Events, "warm_key_revoked"))
@@ -184,6 +188,9 @@ func TestWarmKeyLogFollowsAuthzWrites(t *testing.T) {
 	})
 
 	t.Run("direct save grant", func(t *testing.T) {
+		if !hasHooks {
+			t.Skip("legacy SDK: post-handler cannot observe direct keeper writes")
+		}
 		holderKey := secp256k1.GenPrivKey()
 		holder := sdk.AccAddress(holderKey.PubKey().Address())
 		grantee := sdk.AccAddress(secp256k1.GenPrivKey().PubKey().Address())

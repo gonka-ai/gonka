@@ -8,10 +8,8 @@ import (
 )
 
 // WarmKeyAuthzHooks mirrors one authz write of the warm-key marker into the
-// log. It is not installed: app.go's SetGrantHooks call is commented out
-// because that method is not in github.com/gonka-ai/cosmos-sdk
-// v0.53.3-ps19-observability. The post handler records transaction grants
-// until the chain depends on a tag that has SetGrantHooks.
+// log. App initialization installs it when the pinned SDK provides
+// SetGrantHooks; an older SDK uses the transaction post-handler fallback.
 //
 // When installed, it runs from SaveGrant and DeleteGrant, so it sees the
 // grant being written and no other. It does not read the grant queue and
