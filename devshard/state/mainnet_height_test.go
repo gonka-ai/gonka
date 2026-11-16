@@ -41,6 +41,53 @@ func heightFixture(t *testing.T) (*StateMachine, *signing.Secp256k1Signer, *mock
 	return fresh(), user, source, fresh
 }
 
+type deadlineHeightSource struct {
+	MainnetHeightSource
+	blocks.BlockOracle
+	check func(context.Context)
+}
+
+func (s deadlineHeightSource) Latest(ctx context.Context) (*blocks.Header, error) {
+	s.check(ctx)
+	return s.MainnetHeightSource.Latest(ctx)
+}
+
+func (s deadlineHeightSource) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {
+	s.check(ctx)
+	return s.MainnetHeightSource.LightBlockAt(ctx, height)
+}
+
+func (s deadlineHeightSource) At(ctx context.Context, height int64) (*blocks.Header, error) {
+	s.check(ctx)
+	return s.BlockOracle.At(ctx, height)
+}
+
+func TestMainnetHeightBuildBoundsEveryRPCFromBackgroundContext(t *testing.T) {
+	sm, _, source, _ := heightFixture(t)
+	var deadline time.Time
+	calls := 0
+	sm.mainnetHeights = deadlineHeightSource{MainnetHeightSource: source, BlockOracle: source, check: func(ctx context.Context) {
+		got, ok := ctx.Deadline()
+		require.True(t, ok, "a stalled RPC must not hold the session mutex indefinitely")
+		require.LessOrEqual(t, time.Until(got), 10*time.Second)
+		if calls == 0 {
+			deadline = got
+		} else {
+			require.Equal(t, deadline, got, "all RPCs share one budget rather than extending it per block")
+		}
+		calls++
+	}}
+	tx, err := sm.BuildMainnetHeightTx(context.Background())
+	require.NoError(t, err)
+	require.Greater(t, calls, 1, "exercise both Latest and carried light-block reads")
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{tx})
+	require.NoError(t, err)
+	calls = 0
+	sm.headerTimes = nil // Exercise the direct canonical-oracle fallback rather than TestMain's fixture.
+	require.NoError(t, sm.CheckMainnetHeightFreshness(context.Background(), time.Now()))
+	require.Greater(t, calls, 1, "live signing must bound Latest and canonical lookup too")
+}
+
 func TestMainnetHeightApplyReplaySnapshotAndPreview(t *testing.T) {
 	sm, user, _, fresh := heightFixture(t)
 	before, err := sm.ComputeStateRoot()
