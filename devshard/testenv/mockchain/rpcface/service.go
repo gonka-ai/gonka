@@ -12,8 +12,8 @@ import (
 	"github.com/cometbft/cometbft/libs/log"
 	"github.com/cometbft/cometbft/rpc/core"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
-	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	rpcserver "github.com/cometbft/cometbft/rpc/jsonrpc/server"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	cmttypes "github.com/cometbft/cometbft/types"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -55,6 +55,9 @@ func NewService(st *store.Store, config Config) (*Service, error) {
 		interval = defaultBlockInterval
 	}
 
+	if err := st.EnableMainnetProofs(interval); err != nil {
+		return nil, err
+	}
 	bus := cmttypes.NewEventBus()
 	if err := bus.Start(); err != nil {
 		return nil, fmt.Errorf("mockchain rpc event bus: %w", err)
@@ -123,6 +126,11 @@ func (s *Service) PublishEscrowSettled(id uint64, settler string, totalPayout, f
 }
 
 func (s *Service) publishNewBlock(height int64) error {
+	if lb, err := s.store.MainnetLightBlock(context.Background(), height); err == nil {
+		block := cmttypes.MakeBlock(height, nil, nil, nil)
+		block.Header = *lb.Header
+		return s.bus.PublishEventNewBlock(cmttypes.EventDataNewBlock{Block: block, BlockID: lb.Commit.BlockID})
+	}
 	return s.bus.PublishEventNewBlock(newBlockEvent(s.store.GetChainID(), height))
 }
 

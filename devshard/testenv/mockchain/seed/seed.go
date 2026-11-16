@@ -8,6 +8,7 @@ import (
 	"devshard/signing"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/store"
+	devshardtypes "devshard/types"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"gopkg.in/yaml.v3"
@@ -258,6 +259,7 @@ func FromFile(f *config.File) (*store.Store, error) {
 	} else {
 		s.InitNextPocStart()
 	}
+	s.MainnetProofs = devshardtypes.RequiresMainnetHeightProof(f.Versiond.VersionName)
 	s.InitAfterLoad()
 	return s, nil
 }
