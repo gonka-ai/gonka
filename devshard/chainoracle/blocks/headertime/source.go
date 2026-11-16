@@ -34,6 +34,7 @@ type entry struct {
 
 type Source struct {
 	oracle       blocks.BlockOracle
+	latestOracle blocks.BlockOracle
 	fetchTimeout time.Duration
 	missWait     time.Duration
 	capacity     int
@@ -45,6 +46,14 @@ type Source struct {
 }
 
 type Option func(*Source)
+
+// WithLatestOracle separates the live tip feed from historical verification.
+// A history-only observer may cache its first Latest forever when it does not
+// receive Observe calls; use the process's existing Comet/failover feed instead.
+// Latest remains only a hint: the carried light proof authenticates that tip.
+func WithLatestOracle(oracle blocks.BlockOracle) Option {
+	return func(s *Source) { s.latestOracle = oracle }
+}
 
 func WithFetchTimeout(d time.Duration) Option {
 	return func(s *Source) { s.fetchTimeout = d }
@@ -200,6 +209,9 @@ func (s *Source) putLocked(height uint64, hash []byte, ms int64) {
 func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
 	if s == nil || s.oracle == nil {
 		return nil, blocks.ErrHeaderNotFound
+	}
+	if s.latestOracle != nil {
+		return s.latestOracle.Latest(ctx)
 	}
 	return s.oracle.Latest(ctx)
 }
