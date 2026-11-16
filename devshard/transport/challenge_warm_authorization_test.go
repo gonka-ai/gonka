@@ -57,12 +57,20 @@ func TestChallengeResponseDoesNotHideUnresolvedCompletedWarmWork(t *testing.T) {
 	require.NoError(t, err)
 	// A cold Finish alone cannot replace its missing warm ConfirmStart while
 	// the record is still pending. Partial evidence must also report pending.
+	var coldFinish *types.DevshardTx
+	var warmConfirm *types.DevshardTx
+	for _, tx := range h.MempoolTxs() {
+		if tx.GetConfirmStart() != nil {
+			warmConfirm = proto.Clone(tx).(*types.DevshardTx)
+		}
+	}
 	for _, tx := range h.MempoolTxs() {
 		if tx.GetFinishInference() != nil {
 			copy := proto.Clone(tx).(*types.DevshardTx)
 			copy.GetFinishInference().ProposerSig = nil
 			copy.GetFinishInference().ProposerSig = testutil.SignProposerTx(t, cold, copy.GetFinishInference())
 			h.AddTx(copy)
+			coldFinish = copy
 			break
 		}
 	}
@@ -70,8 +78,28 @@ func TestChallengeResponseDoesNotHideUnresolvedCompletedWarmWork(t *testing.T) {
 	require.NoError(t, err)
 	down.Store(true)
 	reply, err := srv.ServeChallengeReceipt(context.Background(), ChallengeReceiptRequest{InferenceID: 1})
-	require.ErrorIs(t, err, types.ErrHeaderPending, "withheld completed work must not become empty success on the actual handler")
-	require.Nil(t, reply)
+	require.NoError(t, err)
+	require.True(t, reply.EvidencePending)
+	require.Empty(t, reply.Receipt)
+	require.NotEmpty(t, reply.Mempool, "known cold Finish is retained alongside unresolved receipt evidence")
+	// Reverse the phases: a cold receipt is ready while the warm Finish is
+	// unresolved. The response must carry both that receipt and pending status.
+	require.NotNil(t, coldFinish)
+	require.NotNil(t, warmConfirm)
+	h.HostMempool().RemoveIncluded([]*types.DevshardTx{coldFinish})
+	rec, ok := sm.GetInference(1)
+	require.True(t, ok)
+	msg := warmConfirm.GetConfirmStart()
+	msg.ExecutorSig = testutil.SignExecutorReceipt(t, cold, "warm-response", 1, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, testutil.ReceiptStamp{Height: msg.ObservedHeight, Hash: msg.ObservedBlockHash})
+	h.AddTx(warmConfirm)
+	reply, err = srv.ServeChallengeReceipt(context.Background(), ChallengeReceiptRequest{InferenceID: 1})
+	require.NoError(t, err)
+	require.True(t, reply.EvidencePending, "executor-local pending phase cannot hide an unresolved Finish from a started verifier")
+	require.Equal(t, msg.ExecutorSig, reply.Receipt, "Receipt must match a surviving authorized ConfirmStart")
+	decoded, err := DevshardTxsFromBytes(reply.Mempool)
+	require.NoError(t, err)
+	require.Len(t, decoded, 1)
+	require.Equal(t, msg.ExecutorSig, decoded[0].GetConfirmStart().ExecutorSig)
 	down.Store(false)
 	reply, err = srv.ServeChallengeReceipt(context.Background(), ChallengeReceiptRequest{InferenceID: 1})
 	require.NoError(t, err)

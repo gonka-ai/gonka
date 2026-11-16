@@ -866,8 +866,11 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	}
 
 	payload := PayloadFromJSON(req.Payload)
+	wantEvidence := payload != nil || len(wires) == 0
+	v7 := types.RequiresMainnetHeightProof(s.host.ProtocolVersion())
 	receipt, _, err := s.host.ChallengeReceiptWire(ctx, req.InferenceID, payload, wires, PredecodedDiffs(ctx))
-	if err != nil {
+	pending := v7 && wantEvidence && errors.Is(err, types.ErrHeaderPending)
+	if err != nil && !pending {
 		return nil, err
 	}
 
@@ -875,17 +878,29 @@ func (s *Server) ServeChallengeReceipt(ctx context.Context, req ChallengeReceipt
 	// and building it takes the host lock. An execution vote sends no diffs
 	// and reads this mempool, so that call still builds it.
 	var mempoolBytes [][]byte
-	if payload != nil || len(wires) == 0 {
+	if wantEvidence {
 		recoveryTxs, readErr := s.host.RecoveryMempoolFor(req.InferenceID)
-		if readErr != nil {
+		if readErr != nil && !(v7 && errors.Is(readErr, types.ErrHeaderPending)) {
 			return nil, readErr
+		}
+		pending = pending || errors.Is(readErr, types.ErrHeaderPending)
+		if v7 {
+			// Receipt and ConfirmStart are one proof. Use an existing surviving
+			// authorized signature, including one imported from another HA key.
+			receipt = nil
+			for _, tx := range recoveryTxs {
+				if msg := tx.GetConfirmStart(); msg != nil {
+					receipt = msg.ExecutorSig
+					break
+				}
+			}
 		}
 		mempoolBytes, err = DevshardTxsToBytes(recoveryTxs)
 		if err != nil {
 			return nil, err
 		}
 	}
-	return &ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes}, nil
+	return &ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes, EvidencePending: pending}, nil
 }
 
 func mapVerifyHTTP(c echo.Context, err error) error {

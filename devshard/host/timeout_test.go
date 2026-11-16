@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -609,4 +610,35 @@ func TestVerifyRefused_ShortReservationAccepted(t *testing.T) {
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, rec, payload, nil, nil, nil, due(newEvidenceGroup(t).sm))
 	require.NoError(t, err)
 	require.True(t, accept)
+}
+
+// A peer may have a different local phase and return usable proofs together
+// with ErrHeaderPending for other work. Always verify those proofs first.
+func TestTimeoutVerifiersUseAvailableProofBeforePendingOtherEvidence(t *testing.T) {
+	g := newEvidenceGroup(t)
+	judge := windowedJudge{EvidenceVerifier: due(g.sm), deferrals: &evidenceDeferrals{clock: time.Now}}
+	pending := stateWithPendingFull(1, 1)
+	confirm, receipt := signedConfirm(t, g.signers[1], pending.EscrowID, pending, 1, 1000)
+	finish := signedFinish(t, g.signers[1], pending.EscrowID, 1, 1)
+	peer := &mockExecutorClient{challengeReceipt: receipt, challengeMempool: []*types.DevshardTx{confirm}, challengeReceiptErr: types.ErrHeaderPending}
+	pool := NewMempool()
+	accept, err := VerifyRefusedTimeout(context.Background(), pending, 1, pending.Inferences[1], testPayload(), nil, peer, pool, judge)
+	require.NoError(t, err)
+	require.False(t, accept, "valid receipt rejects refusal even when a Finish remains unresolved")
+	require.Len(t, pool.Txs(), 1)
+	started := stateWithStarted(1, 1)
+	accept, err = VerifyExecutionTimeout(context.Background(), started, 1, started.Inferences[1], nil, peer, nil, judge)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.False(t, accept, "the same partial response must defer a started verifier needing a Finish")
+	peer.challengeReceipt = nil
+	peer.challengeMempool = []*types.DevshardTx{finish}
+	pool = NewMempool()
+	accept, err = VerifyExecutionTimeout(context.Background(), started, 1, started.Inferences[1], nil, peer, pool, judge)
+	require.NoError(t, err)
+	require.False(t, accept, "valid Finish rejects execution timeout despite unrelated missing receipt evidence")
+	require.Len(t, pool.Txs(), 1)
+	peer.challengeMempool = []*types.DevshardTx{signedFinish(t, g.signers[1], "wrong-escrow", 1, 1)}
+	accept, err = VerifyExecutionTimeout(context.Background(), started, 1, started.Inferences[1], nil, peer, nil, judge)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.False(t, accept, "unverified returned bytes are not a proof")
 }

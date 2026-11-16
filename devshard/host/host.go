@@ -167,6 +167,7 @@ type Host struct {
 	signingCandidates  map[uint32]bool
 	sortedSigningSlots []uint32
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
+	finishing          map[uint64]struct{} // payload complete, Finish publication pending
 	// Completed work awaiting live authority to publish its Finish. It is
 	// retried by ordinary mempool reads; persisted payloads cover process loss.
 	pendingFinishes       map[uint64]*types.MsgFinishInference
@@ -558,6 +559,8 @@ func (h *Host) settledRecoveryTxLocked(tx *types.DevshardTx) (uint64, bool) {
 }
 
 func (h *Host) EscrowID() string { return h.escrowID }
+
+func (h *Host) ProtocolVersion() string { return h.sm.ProtocolVersion() }
 
 // MemoryCounts is the size of the maps that retain an escrow in this process.
 // Lengths only: nothing is copied and no record is visited.
@@ -1395,6 +1398,15 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
+	}
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		h.mu.Lock()
+		if h.finishing == nil {
+			h.finishing = make(map[uint64]struct{})
+		}
+		h.finishing[inferenceID] = struct{}{}
+		h.mu.Unlock()
+		defer func() { h.mu.Lock(); delete(h.finishing, inferenceID); h.mu.Unlock() }()
 	}
 
 	obsH, obsHash := h.observedTip(ctx)

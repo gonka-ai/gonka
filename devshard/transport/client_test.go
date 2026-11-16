@@ -1101,3 +1101,29 @@ func TestClassifiersReadConnectApplicationStatus(t *testing.T) {
 func newInfiniteDataLineReader(filler io.Reader) io.Reader {
 	return io.MultiReader(strings.NewReader("data: "), filler)
 }
+
+func TestHTTPChallengeClientsPreserveEvidenceAlongsidePending(t *testing.T) {
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 7, ExecutorSig: []byte("receipt")}}}
+	encoded, err := proto.Marshal(tx)
+	require.NoError(t, err)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(ChallengeReceiptResponse{Receipt: []byte("receipt"), Mempool: [][]byte{encoded}, EvidencePending: true}))
+	}))
+	defer ts.Close()
+	client := NewHTTPClient(ts.URL, "escrow-1", testutil.MustGenerateKey(t), allowRetiredHTTP(DefaultClientConfig()))
+	for _, wires := range []bool{false, true} {
+		var receipt []byte
+		var pool []*types.DevshardTx
+		var err error
+		if wires {
+			receipt, pool, err = client.ChallengeReceiptWires(context.Background(), 7, nil, nil, nil)
+		} else {
+			receipt, pool, err = client.ChallengeReceipt(context.Background(), 7, nil, nil)
+		}
+		require.ErrorIs(t, err, types.ErrHeaderPending)
+		require.Equal(t, []byte("receipt"), receipt)
+		require.Len(t, pool, 1)
+		require.True(t, proto.Equal(tx, pool[0]))
+	}
+}

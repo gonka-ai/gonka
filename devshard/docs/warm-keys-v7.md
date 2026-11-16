@@ -122,30 +122,34 @@ rollback, and rebuilt on snapshot recovery; they are not hashed separately.
 
 If authority evidence disappears while an inference completes, the host keeps
 the completed result unsigned and retries publication during ordinary mempool
-polling. A timeout challenge can also rebuild a lost Finish after restart from
-the persisted payload, with `RecoveryStoredOnly`; it never reruns the model.
-Concurrent challenges share and await that recovery. Cancelling one caller
-does not cancel it for the others; recovery has its own ten-second deadline
-and is cancelled on host shutdown. A storage read still in progress after
-25 ms returns pending before ordinary peer RPC deadlines. Unresolved recovery
-returns the pending error recognized by bounded timeout deferrals, rather than
-an empty success.
-Challenge recovery and its final response filter inspect only the requested
-inference, so foreign proposals cannot consume its authority budget. If the
-final read withholds queued completed work for missing evidence, it also
-returns pending. A pending record needs its ConfirmStart before a Finish
-can serve as evidence; a partial response cannot hide an unresolved receipt.
+polling. Completed payloads are marked before publication starts, so a grant
+lookup cannot make completed work appear absent to a timeout challenger.
+A timeout challenge can rebuild a lost Finish after restart from the persisted
+payload with `RecoveryStoredOnly`. Concurrent callers share that recovery;
+individual cancellation leaves the task available to the other callers. It has
+a ten-second deadline and is cancelled and awaited on host shutdown. Storage
+still loading after 25 ms reports pending before ordinary peer RPC deadlines.
+
+V7 challenge replies carry available receipt/Finish evidence together with an
+independent `evidence_pending` flag. The separate receipt is selected from a
+surviving authorized ConfirmStart. HTTP and Connect clients preserve those
+proofs when reporting pending. The verifier checks available proofs first,
+using its own inference phase, and applies bounded deferrals when the proof
+it needs is missing. The executor may still be pending while a verifier has
+already applied ConfirmStart. An unresolved Finish therefore stays pending
+even when a valid receipt is available; a valid Finish can independently
+reject an execution timeout. Legacy v6 response behavior is preserved.
+
+Challenge recovery and its final response inspect only the requested inference.
 Finish publication uses cancellation-aware, lazy checks of its own slot;
-a cold signer does not query unrelated grants.
-Pending-result batches share lazy authorization decisions, start no more RPCs
-after a 100 ms budget, and keep unresolved results. An in-flight query retains
-its own source timeout. At most 32 results are retried per pass, rotating the
-starting entry, including when a pass visits the full queue, so an unavailable
-old result cannot starve later results.
+a cold signer does not query unrelated grants. Pending-result batches share
+lazy authorization decisions, start no more RPCs after a 100 ms budget, and
+retain unresolved results. An in-flight query retains its source timeout.
+At most 32 results are retried per pass. Their starting entry rotates even
+when a pass visits the full queue, giving later results a chance to publish.
 Once a receipt, Finish or participant validation is committed, other queued
 HA signature variants of that logical operation are removed from committed
-state, independently of their signature bytes. Unknown future operations and
-work still owed by other participants remain queued.
+state. Future operations and work still owed by other participants remain.
 
 ## Which nonce is authorized
 

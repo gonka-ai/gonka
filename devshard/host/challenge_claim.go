@@ -42,6 +42,9 @@ func (h *Host) ChallengeReceiptWire(ctx context.Context, inferenceID uint64, pay
 		return receipt, confirmedAt, err
 	}
 	if job == nil {
+		if payload == nil && len(wires) > 0 {
+			return receipt, confirmedAt, nil
+		}
 		return receipt, confirmedAt, h.recoverStartedFinish(ctx, inferenceID)
 	}
 	h.executeAsync(ctx, job)
@@ -62,6 +65,9 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	}
 
 	rec, ok := h.sm.GetInference(inferenceID)
+	if _, finished := h.finishing[inferenceID]; finished && ok && (payload != nil || len(wires) == 0) && (rec.Status == types.StatusPending || rec.Status == types.StatusStarted) {
+		return nil, 0, nil, fmt.Errorf("%w: completed execution is publishing its Finish", types.ErrHeaderPending)
+	}
 	if !ok || rec.Status != types.StatusPending {
 		return nil, 0, nil, nil
 	}

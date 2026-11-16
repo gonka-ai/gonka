@@ -17,18 +17,17 @@ func (h *Host) RecoveryMempoolFor(id uint64) ([]*types.DevshardTx, error) {
 	if !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
 		return RecoveryTxsFor(h.mempool.Txs(), id), nil
 	}
-	out, pending := h.recoveryMempoolLocked(id, h.sm.HostSlotActorsWithBudget(100*time.Millisecond))
-	usable := len(out) > 0
-	if rec, ok := h.sm.GetInference(id); ok && (rec.Status == types.StatusPending || rec.Status == types.StatusStarted) {
-		usable = false
-		for _, tx := range out {
-			if (rec.Status == types.StatusPending && tx.GetConfirmStart() != nil) || (rec.Status == types.StatusStarted && tx.GetFinishInference() != nil) {
-				usable = true
-			}
-		}
+	actors := h.sm.HostSlotActorsWithBudget(100 * time.Millisecond)
+	if _, finished := h.finishing[id]; finished {
+		// Publication may already be waiting on a grant RPC. Return cold
+		// evidence without starting another lookup; retain uncertain warm rows.
+		actors = signing.SlotActors{SlotKeys: h.slotToAddr, AuthorizationError: func(uint32, string) error { return types.ErrHeaderPending }}
 	}
-	if !usable && pending {
-		return nil, fmt.Errorf("%w: recovery evidence authorization pending", types.ErrHeaderPending)
+	out, pending := h.recoveryMempoolLocked(id, actors)
+	if pending {
+		// Preserve usable evidence alongside uncertainty. The challenger may
+		// have a different local phase and must decide which proof it needs.
+		return out, fmt.Errorf("%w: recovery evidence authorization pending", types.ErrHeaderPending)
 	}
 	return out, nil
 }
@@ -37,6 +36,9 @@ func (h *Host) RecoveryMempoolFor(id uint64) ([]*types.DevshardTx, error) {
 func (h *Host) recoveryMempoolLocked(id uint64, actors signing.SlotActors) ([]*types.DevshardTx, bool) {
 	h.retryPendingFinishLocked(id, actors)
 	pending := h.pendingFinishes[id] != nil || h.finishRecoveries[id] != nil
+	if _, finished := h.finishing[id]; finished {
+		pending = true
+	}
 	var out, invalid []*types.DevshardTx
 	verifier := h.verifier
 	if verifier == nil {

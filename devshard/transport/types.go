@@ -93,8 +93,19 @@ type ChallengeReceiptRequest struct {
 
 // ChallengeReceiptResponse is returned by the challenge-receipt endpoint.
 type ChallengeReceiptResponse struct {
-	Receipt []byte   `json:"receipt,omitempty"`
-	Mempool [][]byte `json:"mempool,omitempty"` // each: proto bytes of DevshardTx
+	Receipt         []byte   `json:"receipt,omitempty"`
+	Mempool         [][]byte `json:"mempool,omitempty"`          // each: proto bytes of DevshardTx
+	EvidencePending bool     `json:"evidence_pending,omitempty"` // usable evidence may accompany unresolved work
+}
+
+// A pending response may contain a complete proof for the caller's phase.
+// Keep those bytes: timeout verification checks them before using its bounded
+// deferral policy for missing evidence.
+func challengeEvidenceError(pending bool) error {
+	if pending {
+		return fmt.Errorf("%w: challenge evidence pending", types.ErrHeaderPending)
+	}
+	return nil
 }
 
 // GossipNonceRequest is the JSON body for POST /sessions/:id/gossip/nonce.

@@ -76,7 +76,7 @@ func TestChallengeReceipt_ProtoRoundTrip(t *testing.T) {
 		Diffs:       []DiffJSON{{Nonce: 1, Txs: []byte{1}, UserSig: []byte{1}}},
 	}
 	require.Equal(t, in, ChallengeReceiptRequestFromProto(ChallengeReceiptRequestToProto(in)))
-	resp := &ChallengeReceiptResponse{Receipt: []byte{1, 2}, Mempool: [][]byte{{3}}}
+	resp := &ChallengeReceiptResponse{Receipt: []byte{1, 2}, Mempool: [][]byte{{3}}, EvidencePending: true}
 	require.Equal(t, resp, ChallengeReceiptResponseFromProto(ChallengeReceiptResponseToProto(resp)))
 }
 

@@ -494,3 +494,49 @@ func TestFinalRecoveryReadReportsUnknownTargetFinish(t *testing.T) {
 	require.Empty(t, pool)
 	require.True(t, h.HostMempool().HasFinish(1))
 }
+
+func TestCompletedExecutionReportsPendingWhilePublicationAuthorizationBlocks(t *testing.T) {
+	f := newWarmRecoveryFixture(t)
+	f.apply(testutil.WarmKeyBindTx(1, f.warm[0].Address(), 1), testutil.StartTx(1))
+	h := f.host(f.warm[0], stub.NewInferenceEngine(), WithStoredResponse(func(context.Context, string, uint64, uint64) ([]byte, error) { return []byte("stored"), nil }))
+	f.apply(f.confirm(h))
+	h.mu.Lock()
+	h.executing[1] = struct{}{}
+	h.mu.Unlock()
+	entered, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	f.sm.SetWarmKeyHeightChecker(func(string, string, uint64, int64, time.Time) (bool, error) {
+		once.Do(func() { close(entered) })
+		<-release
+		return false, fmt.Errorf("slow grant RPC")
+	})
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.RunExecution(context.Background(), &devshard.ExecuteRequest{InferenceID: 1})
+		done <- err
+	}()
+	defer func() {
+		close(release)
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Error("publication did not exit")
+		}
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("finished execution did not reach authorization")
+	}
+	_, _, err := h.ChallengeReceipt(context.Background(), 1, nil, nil)
+	require.ErrorIs(t, err, types.ErrHeaderPending, "completed work waiting on publication must not look like no result to timeout verifiers")
+	read := make(chan error, 1)
+	go func() { _, err := h.RecoveryMempoolFor(1); read <- err }()
+	select {
+	case err := <-read:
+		require.ErrorIs(t, err, types.ErrHeaderPending)
+	case <-time.After(time.Second):
+		t.Fatal("known completion must not start another blocked grant lookup")
+	}
+
+}
