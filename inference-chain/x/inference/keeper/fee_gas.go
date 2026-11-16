@@ -124,3 +124,106 @@ func (k Keeper) chargePeriodBase(ctx sdk.Context, _ sdk.AccAddress, msg sdk.Msg,
 	ctx.GasMeter().ConsumeGas(storetypes.Gas(base.Gas), "fee_group_period_base")
 	return nil
 }
+
+// ChargeStoreCommitGas consumes the StoreCommit period base, the positive
+// Count delta, and one static gas for each new model this transaction
+// inserts. The quantities come from chain state after semantic checks. A
+// model that already has a row for this stage is not new. The gas meter is
+// what the ante fee decorator bills; this function does not debit a
+// participant account. A feegrant, including a third-party grant, therefore
+// sponsors the charge.
+func (k Keeper) ChargeStoreCommitGas(
+	ctx sdk.Context,
+	signer sdk.AccAddress,
+	msg *types.MsgPoCV2StoreCommit,
+	totalCountDelta uint64,
+	newCommitKeyCount uint64,
+	firstOfPeriod bool,
+) error {
+	if msg == nil {
+		return nil
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	fp := params.FeeParams
+	if fp == nil {
+		return nil
+	}
+	group, rules := fp.RulesForTypeURL(sdk.MsgTypeURL(msg))
+	if len(rules) == 0 {
+		return nil
+	}
+	var deltaRule, staticRule, baseRule *types.MsgGasRule
+	for _, rule := range rules {
+		if rule.GetStoredDelta() != nil {
+			deltaRule = rule
+		}
+		if rule.GetStatic() != nil {
+			staticRule = rule
+		}
+		if rule.Base != nil {
+			baseRule = rule
+		}
+	}
+	if baseRule == nil {
+		baseRule = deltaRule
+	}
+	if firstOfPeriod && baseRule != nil {
+		if err := k.chargePeriodBase(ctx, signer, msg, group, baseRule); err != nil {
+			return err
+		}
+	}
+	var countGas uint64
+	if deltaRule != nil {
+		var overflow bool
+		countGas, overflow = checkedMul(totalCountDelta, deltaRule.GetStoredDelta().GasPerUnit)
+		if overflow {
+			return sdkerrors.Wrap(types.ErrIllegalState, "store commit count gas overflow")
+		}
+	}
+	var newKeyGas uint64
+	if staticRule != nil {
+		var overflow bool
+		newKeyGas, overflow = checkedMul(newCommitKeyCount, staticRule.GetStatic().Gas)
+		if overflow {
+			return sdkerrors.Wrap(types.ErrIllegalState, "store commit new-key gas overflow")
+		}
+	}
+	extra, overflow := checkedAdd(countGas, newKeyGas)
+	if overflow {
+		return sdkerrors.Wrap(types.ErrIllegalState, "store commit extra gas overflow")
+	}
+	if extra == 0 {
+		return nil
+	}
+	ctx.GasMeter().ConsumeGas(storetypes.Gas(extra), "fee_group_extra")
+	return nil
+}
+
+// ChargeStaticGas consumes the static fee-rule gas once. The caller decides
+// whether this message occurrence is charged. SubmitNewParticipant calls it
+// only when the participant does not already exist.
+func (k Keeper) ChargeStaticGas(ctx sdk.Context, msg sdk.Msg) error {
+	if msg == nil {
+		return nil
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.FeeParams == nil {
+		return nil
+	}
+	_, rule := params.FeeParams.RuleForTypeURL(sdk.MsgTypeURL(msg))
+	static := (*types.StaticParams)(nil)
+	if rule != nil {
+		static = rule.GetStatic()
+	}
+	if static == nil || static.Gas == 0 {
+		return nil
+	}
+	ctx.GasMeter().ConsumeGas(storetypes.Gas(static.Gas), "fee_group_extra")
+	return nil
+}

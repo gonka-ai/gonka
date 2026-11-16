@@ -314,20 +314,24 @@ jobs:
         run: |
           echo "Running test group: ${{ matrix.test_group }}"
           echo "devshard version stamp: $(cat build/devshard-version 2>/dev/null || echo missing)"
-          sudo make run-tests TESTS="${{ matrix.test_group }}"
+          # sudo resets PATH to the image default. On ubuntu-26.04 that is Java 25, which Gradle 8.8 cannot run.
+          sudo env PATH="$PATH" JAVA_HOME="$JAVA_HOME" GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}" \
+            make run-tests TESTS="${{ matrix.test_group }}"
 
       - name: Run Tests (Matrix - Sanity)
         if: ${{ inputs.use_matrix && inputs.test_command == 'run-sanity' }}
         run: |
           echo "Running sanity test group: ${{ matrix.test_group }}"
           echo "devshard version stamp: $(cat build/devshard-version 2>/dev/null || echo missing)"
-          sudo make run-sanity TESTS="${{ matrix.test_group }}"
+          sudo env PATH="$PATH" JAVA_HOME="$JAVA_HOME" GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}" \
+            make run-sanity TESTS="${{ matrix.test_group }}"
 
       - name: Run Tests (Non-Matrix)
         if: ${{ !inputs.use_matrix }}
         run: |
           echo "devshard version stamp: $(cat build/devshard-version 2>/dev/null || echo missing)"
-          sudo make ${{ inputs.test_command }}
+          sudo env PATH="$PATH" JAVA_HOME="$JAVA_HOME" GRADLE_USER_HOME="${GRADLE_USER_HOME:-$HOME/.gradle}" \
+            make ${{ inputs.test_command }}
       - name: Archive Test Results XML
         if: always()
         uses: actions/upload-artifact@v4

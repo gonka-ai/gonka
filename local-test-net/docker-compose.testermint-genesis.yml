@@ -1,0 +1,5 @@
+services:
+  chain-node:
+    command: ["sh", "/testermint-genesis-init.sh"]
+    volumes:
+      - ./local-test-net/testermint-genesis-init.sh:/testermint-genesis-init.sh:ro

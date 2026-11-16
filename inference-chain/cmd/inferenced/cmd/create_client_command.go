@@ -17,7 +17,8 @@ import (
 func CreateClientCommand() *cobra.Command {
 	command := keys.AddKeyCommand()
 	command.Use = "create-client <name>"
-	command.Short = "Add a key to the keychain and then add a participant"
+	command.Short = "Add a key to the keychain and then add a participant (deprecated)"
+	command.Deprecated = "POST /v1/participants and MsgSubmitNewUnfundedParticipant are suspended; use 'inferenced keys add', fund the account, and run 'inferenced publish-pubkey' instead"
 	command.Flags().String(NodeAddress, "", "Node address to send the request to. Example: http://<ip>:<port>")
 	addKeyAction := command.RunE
 

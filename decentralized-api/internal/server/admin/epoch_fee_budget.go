@@ -2,6 +2,7 @@ package admin
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
@@ -31,6 +32,8 @@ type epochFeeBudgetResponse struct {
 	BudgetBalance         string `json:"budget_balance"`
 	Count                 uint64 `json:"count"`
 	CountSource           string `json:"count_source"`
+	ServingModels         uint64 `json:"serving_models"`
+	ServingModelsSource   string `json:"serving_models_source"`
 	BudgetKnown           bool   `json:"budget_known"`
 	SpendableCoversBudget bool   `json:"spendable_covers_budget"`
 }
@@ -39,7 +42,9 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 	ctx := c.Request().Context()
 
 	count := uint64(0)
+	var servingModels uint64
 	countSource := countSourceNone
+	modelsSource := countSourceNone
 	if raw := c.QueryParam("count"); raw != "" {
 		parsed, err := strconv.ParseUint(raw, 10, 32)
 		if err != nil {
@@ -47,6 +52,14 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 		}
 		count = parsed
 		countSource = countSourceParam
+	}
+	if raw := c.QueryParam("serving_models"); raw != "" {
+		parsed, err := strconv.ParseUint(raw, 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "serving_models must be a non-negative integer")
+		}
+		servingModels = parsed
+		modelsSource = countSourceParam
 	}
 
 	queryClient := s.recorder.NewInferenceQueryClient()
@@ -60,7 +73,7 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 	ep := params.EpochParams
 	cp := params.ConfirmationPocParams
 
-	if countSource != countSourceParam {
+	if countSource == countSourceNone && modelsSource == countSourceNone {
 		stage := epochInfo.GetLatestEpoch().PocStartBlockHeight
 		if stage > 0 {
 			commits, err := queryClient.AllPoCV2StoreCommitsForStage(ctx, &types.QueryAllPoCV2StoreCommitsForStageRequest{
@@ -69,14 +82,17 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 			if err != nil {
 				return echo.NewHTTPError(http.StatusBadGateway, "query StoreCommits: "+err.Error())
 			}
-			if top := topParticipantCount(commits.GetCommits()); top > 0 {
-				count = uint64(top)
+			base, rate, perNew := storeCommitRates(fp)
+			if topCount, models, ok := topParticipantStats(commits.GetCommits(), base, rate, perNew); ok {
+				count = topCount
+				servingModels = models
 				countSource = countSourceTopParticipant
+				modelsSource = countSourceTopParticipant
 			}
 		}
 	}
 
-	budget := epochFeeBudgetNgonka(fp, ep, cp, count)
+	budget := epochFeeBudgetNgonka(fp, ep, cp, count, servingModels)
 
 	payer := s.recorder.GetAccountAddress()
 	signer := s.recorder.GetSignerAddress()
@@ -92,37 +108,69 @@ func (s *Server) getEpochFeeBudget(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadGateway, "query spendable: "+err.Error())
 	}
 
-	budgetKnown := epochBudgetKnown(fp, countSource)
+	budgetKnown := epochBudgetKnown(fp, countSource, modelsSource)
 	return c.JSON(http.StatusOK, epochFeeBudgetResponse{
 		Denom:                 types.BaseCoin,
 		SpendableBalance:      spendable.String(),
 		BudgetBalance:         budget.String(),
 		Count:                 count,
 		CountSource:           countSource,
+		ServingModels:         servingModels,
+		ServingModelsSource:   modelsSource,
 		BudgetKnown:           budgetKnown,
 		SpendableCoversBudget: budgetKnown && spendable.GTE(budget),
 	})
 }
 
-func topParticipantCount(commits []*types.PoCV2StoreCommitWithAddress) uint32 {
-	if len(commits) == 0 {
-		return 0
-	}
-	sums := make(map[string]uint64, len(commits))
-	var max uint64
+// topParticipantStats picks the participant whose repeat of this stage costs
+// the most: period base + rate×count + static gas×distinct models. Equal
+// fees keep the lexicographically first address. One row is one model;
+// repeated model ids keep the larger count.
+func topParticipantStats(commits []*types.PoCV2StoreCommitWithAddress, base, rate, perNew uint64) (count uint64, models uint64, ok bool) {
+	rows := make([]*types.PoCV2StoreCommitWithAddress, 0, len(commits))
 	for _, c := range commits {
-		if c == nil {
-			continue
-		}
-		sums[c.ParticipantAddress] += uint64(c.Count)
-		if sums[c.ParticipantAddress] > max {
-			max = sums[c.ParticipantAddress]
+		if c != nil && c.ParticipantAddress != "" {
+			rows = append(rows, c)
 		}
 	}
-	if max > uint64(^uint32(0)) {
-		return ^uint32(0)
+	if len(rows) == 0 {
+		return 0, 0, false
 	}
-	return uint32(max)
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ParticipantAddress != rows[j].ParticipantAddress {
+			return rows[i].ParticipantAddress < rows[j].ParticipantAddress
+		}
+		return rows[i].ModelId < rows[j].ModelId
+	})
+	var bestFee uint64
+	chosen := false
+	for i := 0; i < len(rows); {
+		addr := rows[i].ParticipantAddress
+		var sum uint64
+		var nModels uint64
+		for i < len(rows) && rows[i].ParticipantAddress == addr {
+			model := rows[i].ModelId
+			var maxCount uint32
+			for i < len(rows) && rows[i].ParticipantAddress == addr && rows[i].ModelId == model {
+				if rows[i].Count > maxCount {
+					maxCount = rows[i].Count
+				}
+				i++
+			}
+			sum = saturatingAdd(sum, uint64(maxCount))
+			if model != "" {
+				nModels++
+			}
+		}
+		fee := saturatingAdd(base, saturatingAdd(saturatingMul(rate, sum), saturatingMul(perNew, nModels)))
+		if !chosen || fee > bestFee {
+			chosen = true
+			bestFee = fee
+			count = sum
+			models = nModels
+		}
+	}
+	return count, models, chosen && (count > 0 || models > 0)
 }
 
 func epochPrice(fp *types.FeeParams) int64 {
@@ -136,30 +184,44 @@ func epochPrice(fp *types.FeeParams) int64 {
 	return int64(g.MinGasPrice)
 }
 
-// epochBudgetKnown is true when count cannot change the budget: fees off,
-// StoreCommit extra-rate is 0, or count was supplied / observed.
-func epochBudgetKnown(fp *types.FeeParams, countSource string) bool {
+// epochBudgetKnown is true when every priced input is present. A nonzero
+// count rate needs count. A nonzero static new-key rate needs serving_models.
+func epochBudgetKnown(fp *types.FeeParams, countSource, modelsSource string) bool {
 	if epochPrice(fp) == 0 {
 		return true
 	}
-	_, rate := storeCommitRates(fp)
-	return rate == 0 || countSource != countSourceNone
+	_, rate, perNew := storeCommitRates(fp)
+	if rate != 0 && countSource == countSourceNone {
+		return false
+	}
+	if perNew != 0 && modelsSource == countSourceNone {
+		return false
+	}
+	return true
 }
 
-func storeCommitRates(fp *types.FeeParams) (base, rate uint64) {
+func storeCommitRates(fp *types.FeeParams) (base, rate, gasPerNew uint64) {
 	if fp == nil {
-		return 0, 0
+		return 0, 0, 0
 	}
-	group, rule := fp.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
-	if pb := types.ResolvedPeriodBase(group, rule); pb != nil {
-		base = pb.Gas
-	}
-	if rule != nil {
+	group, rules := fp.RulesForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	var baseRule *types.MsgGasRule
+	for _, rule := range rules {
 		if d := rule.GetStoredDelta(); d != nil {
 			rate = d.GasPerUnit
+			baseRule = rule
+		}
+		if s := rule.GetStatic(); s != nil {
+			gasPerNew = s.Gas
+		}
+		if rule.Base != nil {
+			baseRule = rule
 		}
 	}
-	return base, rate
+	if pb := types.ResolvedPeriodBase(group, baseRule); pb != nil {
+		base = pb.Gas
+	}
+	return base, rate, gasPerNew
 }
 
 // maxConfirmationPocs is how many sequential CPoCs can start in one epoch's
@@ -242,20 +304,38 @@ func budgetHeadroom(v uint64) uint64 {
 	return v + v/2
 }
 
-func epochFeeBudgetNgonka(fp *types.FeeParams, ep *types.EpochParams, cp *types.ConfirmationPoCParams, count uint64) math.Int {
+func saturatingAdd(a, b uint64) uint64 {
+	if a > ^uint64(0)-b {
+		return ^uint64(0)
+	}
+	return a + b
+}
+
+func saturatingMul(a, b uint64) uint64 {
+	if a == 0 || b == 0 {
+		return 0
+	}
+	if a > ^uint64(0)/b {
+		return ^uint64(0)
+	}
+	return a * b
+}
+
+func epochFeeBudgetNgonka(fp *types.FeeParams, ep *types.EpochParams, cp *types.ConfirmationPoCParams, count, servingModels uint64) math.Int {
 	price := epochPrice(fp)
 	if price <= 0 {
 		return math.ZeroInt()
 	}
-	base, rate := storeCommitRates(fp)
-	stages := 1 + maxConfirmationPocs(ep, cp)
+	base, rate, gasPerNew := storeCommitRates(fp)
+	stages := saturatingAdd(1, maxConfirmationPocs(ep, cp))
 	nCommits := commitHeightsPerStage(ep)
 	// DAPI default is (intrinsic + extra)×1.5 per StoreCommit. Hosts who set
-	// 1.2 over-reserve slightly. Deltas sum to count; period base once per stage.
-	perStageExtra := base + rate*count
+	// 1.2 over-reserve slightly. Deltas sum to count; period base once per
+	// stage; static gas once per serving model.
+	perStageExtra := saturatingAdd(base, saturatingAdd(saturatingMul(rate, count), saturatingMul(gasPerNew, servingModels)))
 	intrinsicPad := budgetHeadroom(budgetStoreCommitIntrinsic)
-	commitGas := stages * (budgetHeadroom(perStageExtra) + nCommits*intrinsicPad)
-	hdGas := hardwareDiffCount(ep) * budgetHeadroom(typicalHardwareDiffGas)
-	totalGas := commitGas + hdGas
+	commitGas := saturatingMul(stages, saturatingAdd(budgetHeadroom(perStageExtra), saturatingMul(nCommits, intrinsicPad)))
+	hdGas := saturatingMul(hardwareDiffCount(ep), budgetHeadroom(typicalHardwareDiffGas))
+	totalGas := saturatingAdd(commitGas, hdGas)
 	return math.NewIntFromUint64(totalGas).MulRaw(price)
 }

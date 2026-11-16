@@ -170,7 +170,7 @@ func (app *App) registerLegacyModules(appOpts servertypes.AppOptions, wasmOpts [
 	homePath := cast.ToString(appOpts.Get(flags.FlagHome))
 	wasmDir := filepath.Join(homePath, "wasm")
 
-	// Create default node config and VM config for wasmd v0.54.2
+	// Create default node config and VM config for wasmd v0.54.11
 	nodeConfig, err := wasm.ReadNodeConfig(appOpts)
 	if err != nil {
 		//nolint:forbidigo

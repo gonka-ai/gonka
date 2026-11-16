@@ -3,13 +3,175 @@ package v0_2_17
 import (
 	"testing"
 
-	keepertest "github.com/productscience/inference/testutil/keeper"
-	inferencetypes "github.com/productscience/inference/x/inference/types"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
+
+	keepertest "github.com/productscience/inference/testutil/keeper"
+	"github.com/productscience/inference/x/inference/types"
 )
 
 func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.17", UpgradeName)
+}
+
+func TestUpdateEpochFeeGroup_WritesActivationPrice(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	storeURL := sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{})
+	kept := make([]*types.MsgGasRule, 0, len(fp.Groups[0].Msgs))
+	for _, rule := range fp.Groups[0].Msgs {
+		if rule.TypeUrl == storeURL && rule.GetStatic() != nil {
+			continue
+		}
+		kept = append(kept, rule)
+	}
+	fp.Groups[0].Msgs = kept
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, updateEpochFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	_, rules := updated.FeeParams.RulesForTypeURL(storeURL)
+	var delta *types.MsgGasRule
+	var static *types.StaticParams
+	for _, rule := range rules {
+		if rule.GetStoredDelta() != nil {
+			delta = rule
+		}
+		if s := rule.GetStatic(); s != nil {
+			static = s
+			require.Nil(t, rule.Base)
+		}
+	}
+	require.NotNil(t, delta)
+	require.NotNil(t, static)
+	require.Equal(t, types.StoreCommitGasPerNewKey, static.Gas)
+	require.Equal(t, uint64(100), delta.GetStoredDelta().GasPerUnit)
+	require.Equal(t, uint64(500_000), delta.Base.Gas)
+	require.NoError(t, updated.FeeParams.Validate())
+}
+
+func TestEnableOnboardingFeeGroup_TurnsOnGroupAndCreationGas(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = types.DefaultFeeParams()
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, enableOnboardingFeeGroup(ctx, k))
+	require.NoError(t, enableOnboardingFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Contains(t, updated.FeeParams.EnabledFeeGroups, types.FeeGroupOnboarding)
+	group := updated.FeeParams.GroupByName(types.FeeGroupOnboarding)
+	require.NotNil(t, group)
+	require.Equal(t, uint64(1), group.MinGasPrice)
+	_, rule := updated.FeeParams.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{}))
+	require.NotNil(t, rule)
+	require.Equal(t, types.NewParticipantGas, rule.GetStatic().GetGas())
+	require.Equal(t, uint64(1), updated.FeeParams.EnabledPayingPrice([]sdk.Msg{&types.MsgSubmitNewParticipant{}}, types.IsNetworkDuty))
+	_, rules := updated.FeeParams.RulesForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	var staticGas, base uint64
+	for _, rule := range rules {
+		if s := rule.GetStatic(); s != nil {
+			staticGas = s.Gas
+		}
+		if rule.GetStoredDelta() != nil && rule.Base != nil {
+			base = rule.Base.Gas
+		}
+	}
+	require.Equal(t, uint64(500_000), base)
+	require.Equal(t, uint64(0), staticGas)
+}
+
+func TestEnableWasmFeeGroup_AddsWasmBesideExistingGroups(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = types.DefaultFeeParams()
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, enableWasmFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos, types.FeeGroupWasm}, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, uint64(1), updated.FeeParams.GroupByName(types.FeeGroupEpoch).MinGasPrice)
+	require.Equal(t, uint64(1), updated.FeeParams.GroupByName(types.FeeGroupCosmos).MinGasPrice)
+	require.Equal(t, uint64(wasmMinGasPriceNgonka), updated.FeeParams.GroupByName(types.FeeGroupWasm).MinGasPrice)
+	require.NoError(t, updated.FeeParams.Validate())
+
+	for _, msg := range []sdk.Msg{
+		&wasmtypes.MsgStoreCode{},
+		&wasmtypes.MsgInstantiateContract{},
+		&wasmtypes.MsgExecuteContract{},
+		&wasmtypes.MsgMigrateContract{},
+	} {
+		require.Equal(t, uint64(wasmMinGasPriceNgonka), updated.FeeParams.EnabledPayingPrice([]sdk.Msg{msg}, types.IsNetworkDuty))
+	}
+	require.Equal(t, uint64(1), updated.FeeParams.EnabledPayingPrice([]sdk.Msg{&types.MsgPoCV2StoreCommit{}}, types.IsNetworkDuty))
+}
+
+func TestEnableWasmFeeGroup_IdempotentAndKeepsExistingPrice(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	fp := types.DefaultFeeParams()
+	fp.Groups = append(fp.Groups, &types.FeeGroup{Name: types.FeeGroupWasm, MinGasPrice: 4})
+	fp.EnabledFeeGroups = append(fp.EnabledFeeGroups, types.FeeGroupWasm)
+	params.FeeParams = fp
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, enableWasmFeeGroup(ctx, k))
+	require.NoError(t, enableWasmFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos, types.FeeGroupWasm}, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, uint64(4), updated.FeeParams.GroupByName(types.FeeGroupWasm).MinGasPrice)
+}
+
+func TestEnableWasmFeeGroup_NilParamsGetsDefaultsPlusWasm(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, enableWasmFeeGroup(ctx, k))
+
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{types.FeeGroupEpoch, types.FeeGroupCosmos, types.FeeGroupWasm}, updated.FeeParams.EnabledFeeGroups)
+	require.Equal(t, uint64(wasmMinGasPriceNgonka), updated.FeeParams.GroupByName(types.FeeGroupWasm).MinGasPrice)
+	require.NoError(t, updated.FeeParams.Validate())
+}
+
+func TestMigrateEpochValidationParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochValidationParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateEpochValidationParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultEpochValidationParams(), got.EpochValidationParams)
+
+	got.EpochValidationParams.MaxValidationsPerMessage = 64
+	require.NoError(t, k.SetParams(ctx, got))
+	require.NoError(t, migrateEpochValidationParams(ctx, k))
+	again, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, uint32(64), again.EpochValidationParams.MaxValidationsPerMessage)
 }
 
 // A post-v0.2.16 model keeps seq_len and stat_test, stores the controller on
@@ -19,22 +181,22 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	stat := &inferencetypes.PoCStatTestParams{DistThreshold: inferencetypes.DecimalFromFloat(0.41)}
-	coefficient := &inferencetypes.DynamicCoefficientModelConfig{
-		CoeffMin:           &inferencetypes.Decimal{Value: 15, Exponent: -1},
-		CoeffMax:           &inferencetypes.Decimal{Value: 15, Exponent: -1},
-		RelativeDifficulty: &inferencetypes.Decimal{Value: 1, Exponent: 0},
+	stat := &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.41)}
+	coefficient := &types.DynamicCoefficientModelConfig{
+		CoeffMin:           &types.Decimal{Value: 15, Exponent: -1},
+		CoeffMax:           &types.Decimal{Value: 15, Exponent: -1},
+		RelativeDifficulty: &types.Decimal{Value: 1, Exponent: 0},
 		TargetShareBps:     10000,
 	}
-	params.PocParams.PocScheme = inferencetypes.PocScheme_POC_SCHEME_PREFILL
-	params.PocParams.DynamicCoefficientParams = &inferencetypes.DynamicCoefficientParams{
+	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
+	params.PocParams.DynamicCoefficientParams = &types.DynamicCoefficientParams{
 		TargetZoneBps:     500,
-		StepMin:           inferencetypes.DecimalFromFloat(0.005),
-		StepMax:           inferencetypes.DecimalFromFloat(0.05),
-		BootstrapStepMax:  inferencetypes.DecimalFromFloat(0.25),
+		StepMin:           types.DecimalFromFloat(0.005),
+		StepMax:           types.DecimalFromFloat(0.05),
+		BootstrapStepMax:  types.DecimalFromFloat(0.25),
 		BootstrapShareBps: 100,
 	}
-	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
+	params.PocParams.Models = []*types.PoCModelConfig{{
 		ModelId:            "model-a",
 		SeqLen:             128,
 		StatTest:           stat,
@@ -47,7 +209,7 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, got.PocParams.PocScheme)
+	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, got.PocParams.PocScheme)
 	model := got.PocParams.Models[0]
 	require.Equal(t, int64(0), model.SeqLen)
 	require.Nil(t, model.StatTest)
@@ -56,10 +218,11 @@ func TestMigratePocSchemeBlocksFromDynamicCoefficient(t *testing.T) {
 	require.Equal(t, uint64(4), model.PenaltyStartEpoch)
 	require.Len(t, model.Schemes, 2)
 	block := model.Schemes[0]
-	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, block.Scheme)
+	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, block.Scheme)
 	require.Equal(t, int64(128), block.SeqLen)
 	require.Equal(t, int64(0), block.DecodeSteps)
-	require.Equal(t, stat, block.StatTest)
+	require.Equal(t, stat.DistThreshold, block.StatTest.DistThreshold)
+	require.Equal(t, "0.010000000000000000", decimalString(t, block.StatTest.PValueThreshold))
 	require.Equal(t, coefficient, block.DynamicCoefficient)
 	require.NoError(t, got.Validate())
 }
@@ -70,9 +233,9 @@ func TestMigratePocSchemeBlocksFromFlatWeight(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	weight := inferencetypes.DecimalFromFloat(1.5)
+	weight := types.DecimalFromFloat(1.5)
 	params.PocParams.DynamicCoefficientParams = nil
-	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
+	params.PocParams.Models = []*types.PoCModelConfig{{
 		ModelId:           "model-a",
 		SeqLen:            128,
 		WeightScaleFactor: weight,
@@ -98,9 +261,9 @@ func TestMigratePocSchemeBlocksRejectsMissingRecipe(t *testing.T) {
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	params.PocParams.DynamicCoefficientParams = nil
-	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
+	params.PocParams.Models = []*types.PoCModelConfig{{
 		ModelId:           "model-a",
-		WeightScaleFactor: inferencetypes.DecimalFromFloat(1),
+		WeightScaleFactor: types.DecimalFromFloat(1),
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
 
@@ -114,32 +277,32 @@ func TestMigratePocSchemeBlocksRejectsMissingRecipe(t *testing.T) {
 }
 
 func TestPostV016ParamsRoundTripModelCoefficient(t *testing.T) {
-	stat := &inferencetypes.PoCStatTestParams{DistThreshold: inferencetypes.DecimalFromFloat(0.41)}
-	coefficient := &inferencetypes.DynamicCoefficientModelConfig{
-		CoeffMin:           &inferencetypes.Decimal{Value: 15, Exponent: -1},
-		CoeffMax:           &inferencetypes.Decimal{Value: 15, Exponent: -1},
-		RelativeDifficulty: &inferencetypes.Decimal{Value: 1, Exponent: 0},
+	stat := &types.PoCStatTestParams{DistThreshold: types.DecimalFromFloat(0.41)}
+	coefficient := &types.DynamicCoefficientModelConfig{
+		CoeffMin:           &types.Decimal{Value: 15, Exponent: -1},
+		CoeffMax:           &types.Decimal{Value: 15, Exponent: -1},
+		RelativeDifficulty: &types.Decimal{Value: 1, Exponent: 0},
 		TargetShareBps:     10000,
 	}
-	src := &inferencetypes.PocParams{
-		Models: []*inferencetypes.PoCModelConfig{{
+	src := &types.PocParams{
+		Models: []*types.PoCModelConfig{{
 			ModelId:            "model-a",
 			SeqLen:             128,
 			StatTest:           stat,
 			DynamicCoefficient: coefficient,
 		}},
-		DynamicCoefficientParams: &inferencetypes.DynamicCoefficientParams{
+		DynamicCoefficientParams: &types.DynamicCoefficientParams{
 			TargetZoneBps:     500,
-			StepMin:           inferencetypes.DecimalFromFloat(0.005),
-			StepMax:           inferencetypes.DecimalFromFloat(0.05),
-			BootstrapStepMax:  inferencetypes.DecimalFromFloat(0.25),
+			StepMin:           types.DecimalFromFloat(0.005),
+			StepMax:           types.DecimalFromFloat(0.05),
+			BootstrapStepMax:  types.DecimalFromFloat(0.25),
 			BootstrapShareBps: 100,
 		},
 	}
 	bz, err := src.Marshal()
 	require.NoError(t, err)
 
-	var decoded inferencetypes.PocParams
+	var decoded types.PocParams
 	require.NoError(t, decoded.Unmarshal(bz))
 	require.Equal(t, int64(128), decoded.Models[0].SeqLen)
 	require.Equal(t, coefficient, decoded.Models[0].DynamicCoefficient)
@@ -160,13 +323,13 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		{"zai-org/GLM-5.3-Flash", "0.810962376237000000", "1.911804631578600000", "5.473684210526000000", "0.017000000000000000", 3333},
 	}
 	params.PocParams.Models = nil
-	params.PocParams.PocScheme = inferencetypes.PocScheme_POC_SCHEME_PREFILL
+	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
 	for _, tc := range cases {
-		params.PocParams.Models = append(params.PocParams.Models, &inferencetypes.PoCModelConfig{
-			ModelId: tc.id, SeqLen: 1024, StatTest: inferencetypes.DefaultPoCStatTestParams(),
-			DynamicCoefficient: &inferencetypes.DynamicCoefficientModelConfig{
-				CoeffMin: inferencetypes.DecimalFromFloat(1), CoeffMax: inferencetypes.DecimalFromFloat(2),
-				RelativeDifficulty: inferencetypes.DecimalFromFloat(1), TargetShareBps: tc.share,
+		params.PocParams.Models = append(params.PocParams.Models, &types.PoCModelConfig{
+			ModelId: tc.id, SeqLen: 1024, StatTest: types.DefaultPoCStatTestParams(),
+			DynamicCoefficient: &types.DynamicCoefficientModelConfig{
+				CoeffMin: types.DecimalFromFloat(1), CoeffMax: types.DecimalFromFloat(2),
+				RelativeDifficulty: types.DecimalFromFloat(1), TargetShareBps: tc.share,
 			},
 		})
 	}
@@ -175,24 +338,26 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
 	require.NoError(t, got.Validate())
-	require.Equal(t, inferencetypes.PocScheme_POC_SCHEME_PREFILL, got.PocParams.PocScheme)
+	require.Equal(t, types.PocScheme_POC_SCHEME_PREFILL, got.PocParams.PocScheme)
 	for i, tc := range cases {
 		model := got.PocParams.Models[i]
-		prefill, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_PREFILL)
+		prefill, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_PREFILL)
 		require.True(t, ok)
 		require.Equal(t, params.PocParams.Models[i].DynamicCoefficient, prefill.DynamicCoefficient)
-		require.Equal(t, params.PocParams.Models[i].StatTest, prefill.StatTest)
-		decode, ok := model.SchemeParams(inferencetypes.PocScheme_POC_SCHEME_DECODE)
+		require.Equal(t, params.PocParams.Models[i].StatTest.DistThreshold, prefill.StatTest.DistThreshold)
+		require.Equal(t, params.PocParams.Models[i].StatTest.PMismatch, prefill.StatTest.PMismatch)
+		require.Equal(t, "0.010000000000000000", decimalString(t, prefill.StatTest.PValueThreshold))
+		decode, ok := model.SchemeParams(types.PocScheme_POC_SCHEME_DECODE)
 		require.True(t, ok)
 		require.Equal(t, int64(256), decode.SeqLen)
 		require.Equal(t, int64(256), decode.DecodeSteps)
 		for _, value := range []struct {
-			got  *inferencetypes.Decimal
+			got  *types.Decimal
 			want string
 		}{
 			{decode.StatTest.DistThreshold, tc.tau},
 			{decode.StatTest.PMismatch, "0.100000000000000000"},
-			{decode.StatTest.PValueThreshold, "0.050000000000000000"},
+			{decode.StatTest.PValueThreshold, "0.010000000000000000"},
 			{decode.DynamicCoefficient.CoeffMin, tc.minimum},
 			{decode.DynamicCoefficient.CoeffMax, tc.maximum},
 			{decode.DynamicCoefficient.RelativeDifficulty, tc.difficulty},
@@ -203,4 +368,11 @@ func TestMigratePocSchemeBlocksInstallsDecodeConfig(t *testing.T) {
 		}
 		require.Equal(t, tc.share, decode.DynamicCoefficient.TargetShareBps)
 	}
+}
+
+func decimalString(t *testing.T, value *types.Decimal) string {
+	t.Helper()
+	actual, err := value.ToLegacyDec()
+	require.NoError(t, err)
+	return actual.String()
 }

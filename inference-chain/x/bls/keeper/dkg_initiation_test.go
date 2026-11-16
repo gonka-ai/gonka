@@ -1,10 +1,13 @@
 package keeper_test
 
 import (
-	"fmt"
+	"bytes"
+	"encoding/hex"
+	"slices"
 	"testing"
 
 	"cosmossdk.io/math"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/stretchr/testify/require"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -416,17 +419,20 @@ func TestInitiateKeyGenerationForEpoch_RejectsOversizeShape(t *testing.T) {
 	params.ITotalSlots = 200
 	k.SetParams(ctx, params)
 
+	primaryKey := secp256k1.GenPrivKey().PubKey().Bytes()
+	warmKeys := make([][]byte, 100)
+	for i := range warmKeys {
+		warmKeys[i] = secp256k1.GenPrivKey().PubKey().Bytes()
+	}
+	slices.SortFunc(warmKeys, bytes.Compare)
+
 	participants := []types.ParticipantWithWeightAndKey{
 		{
-			Address:            "cosmos1val",
-			PercentageWeight:   math.LegacyNewDec(100),
-			Secp256k1PublicKey: []byte("val_key"),
-			AllowedSecp256k1PublicKeys: make([][]byte, 100),
+			Address:                    "cosmos1val",
+			PercentageWeight:           math.LegacyNewDec(100),
+			Secp256k1PublicKey:         primaryKey,
+			AllowedSecp256k1PublicKeys: warmKeys,
 		},
-	}
-	
-	for i := range participants[0].AllowedSecp256k1PublicKeys {
-		participants[0].AllowedSecp256k1PublicKeys[i] = []byte(fmt.Sprintf("warm_key_%d", i))
 	}
 
 	err := k.InitiateKeyGenerationForEpoch(ctx, 1, participants)
@@ -446,7 +452,7 @@ func TestInitiateKeyGenerationForEpoch_RejectsOversizeParticipantsOrCommitments(
 		{
 			Address:            "cosmos1val",
 			PercentageWeight:   math.LegacyNewDec(100),
-			Secp256k1PublicKey: []byte("val_key"),
+			Secp256k1PublicKey: secp256k1.GenPrivKey().PubKey().Bytes(),
 		},
 	}
 
@@ -454,3 +460,103 @@ func TestInitiateKeyGenerationForEpoch_RejectsOversizeParticipantsOrCommitments(
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "exceeds maximum commitments count")
 }
+
+func TestInitiateKeyGenerationForEpoch_EnforcesSecp256k1KeyInvariants(t *testing.T) {
+	validKey02, err := hex.DecodeString("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798")
+	require.NoError(t, err)
+	validKey02Higher, err := hex.DecodeString("02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")
+	require.NoError(t, err)
+	validKey03, err := hex.DecodeString("031884e5018572688f308999f53092837489aeac31afe1389809281562794c171b")
+	require.NoError(t, err)
+
+	// Report off-curve vector: 02 || 31*00 || 05
+	offCurveKey := make([]byte, 33)
+	offCurveKey[0] = 0x02
+	offCurveKey[32] = 0x05
+
+	cases := []struct {
+		name         string
+		participants []types.ParticipantWithWeightAndKey
+		errContains  string
+	}{
+		{
+			name: "rejects_off_curve_primary_key",
+			participants: []types.ParticipantWithWeightAndKey{
+				{
+					Address:            "cosmos1alice",
+					PercentageWeight:   math.LegacyNewDec(100),
+					Secp256k1PublicKey: offCurveKey,
+				},
+			},
+			errContains: "invalid primary secp256k1 public key",
+		},
+		{
+			name: "rejects_off_curve_additional_key",
+			participants: []types.ParticipantWithWeightAndKey{
+				{
+					Address:                    "cosmos1alice",
+					PercentageWeight:           math.LegacyNewDec(100),
+					Secp256k1PublicKey:         validKey02,
+					AllowedSecp256k1PublicKeys: [][]byte{offCurveKey},
+				},
+			},
+			errContains: "invalid additional secp256k1 public key",
+		},
+		{
+			name: "rejects_additional_key_equal_to_primary",
+			participants: []types.ParticipantWithWeightAndKey{
+				{
+					Address:                    "cosmos1alice",
+					PercentageWeight:           math.LegacyNewDec(100),
+					Secp256k1PublicKey:         validKey02,
+					AllowedSecp256k1PublicKeys: [][]byte{validKey02},
+				},
+			},
+			errContains: "matches primary key",
+		},
+		{
+			name: "rejects_duplicate_additional_keys",
+			participants: []types.ParticipantWithWeightAndKey{
+				{
+					Address:                    "cosmos1alice",
+					PercentageWeight:           math.LegacyNewDec(100),
+					Secp256k1PublicKey:         validKey02,
+					AllowedSecp256k1PublicKeys: [][]byte{validKey02Higher, validKey02Higher},
+				},
+			},
+			errContains: "duplicate additional secp256k1 public key",
+		},
+		{
+			name: "rejects_unsorted_additional_keys",
+			participants: []types.ParticipantWithWeightAndKey{
+				{
+					Address:                    "cosmos1alice",
+					PercentageWeight:           math.LegacyNewDec(100),
+					Secp256k1PublicKey:         validKey02,
+					AllowedSecp256k1PublicKeys: [][]byte{validKey03, validKey02Higher},
+				},
+			},
+			errContains: "unsorted additional secp256k1 public keys",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ctx := keepertest.BlsKeeper(t)
+			beforeEvents := len(ctx.EventManager().Events())
+
+			err := k.InitiateKeyGenerationForEpoch(ctx, 77, tc.participants)
+			require.Error(t, err)
+			require.ErrorContains(t, err, tc.errContains)
+
+			_, getErr := k.GetEpochBLSData(ctx, 77)
+			require.ErrorIs(t, getErr, types.ErrEpochBLSDataNotFound, "EpochBLSData must not be stored on key validation failure")
+
+			_, foundActive := k.GetActiveEpochID(ctx)
+			require.False(t, foundActive, "ActiveEpochID must not be set on key validation failure")
+
+			require.Len(t, ctx.EventManager().Events(), beforeEvents, "no event must be emitted on key validation failure")
+		})
+	}
+}
+

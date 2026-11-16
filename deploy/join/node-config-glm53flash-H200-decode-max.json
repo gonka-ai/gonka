@@ -15,13 +15,14 @@
           "--max-num-batched-tokens", "16384",
           "--kv-cache-dtype", "fp8",
           "--block-size", "2304",
-          "--max-num-seqs", "256",
+          "--max-num-seqs", "768",
           "--no-enable-flashinfer-autotune",
           "--enable-auto-tool-choice",
           "--tool-call-parser", "glm47",
           "--reasoning-parser", "glm45",
           "--language-model-only",
-          "--trust-remote-code"
+          "--trust-remote-code",
+          "--compilation-config", "{\"max_cudagraph_capture_size\": 768}"
         ]
       }
     }

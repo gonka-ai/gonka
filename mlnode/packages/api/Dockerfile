@@ -30,6 +30,11 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
 ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/openssl-1.1/lib:$LD_LIBRARY_PATH"
 
+# gonka-poc over the one in VLLM_BASE_IMAGE (e6988c0): v0.2.1 adds #32, as in 4.0.0-sigma2.
+ARG GONKA_POC_REF=v0.2.1
+RUN pip install --no-cache-dir --no-deps --force-reinstall \
+    "gonka-poc @ https://github.com/gonka-ai/gonka-vllm-plugins/archive/refs/tags/${GONKA_POC_REF}.tar.gz"
+
 RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
         /usr/local/cuda/lib64/libnvrtc.so \
     && ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \

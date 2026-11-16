@@ -61,16 +61,18 @@ func overlayStoreCommitRates(fp *types.FeeParams, baseGas, gasPerUnit uint64) {
 			continue
 		}
 		for _, rule := range g.Msgs {
-			if rule == nil || rule.TypeUrl != storeCommitURL {
+			delta := (*types.StoredDeltaParams)(nil)
+			if rule != nil {
+				delta = rule.GetStoredDelta()
+			}
+			if rule == nil || rule.TypeUrl != storeCommitURL || delta == nil {
 				continue
 			}
 			if rule.Base == nil {
 				rule.Base = &types.PeriodBase{PeriodType: types.PeriodTypePoc, PeriodLength: 1}
 			}
 			rule.Base.Gas = baseGas
-			if delta := rule.GetStoredDelta(); delta != nil {
-				delta.GasPerUnit = gasPerUnit
-			}
+			delta.GasPerUnit = gasPerUnit
 		}
 	}
 }

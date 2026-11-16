@@ -103,6 +103,40 @@ func TestFeeParamsValidate(t *testing.T) {
 	require.Error(t, fp.Validate(), "stored_bytes gas_per_unit must be capped")
 
 	fp = types.DefaultFeeParams()
+	appendStoreCommitStatic(fp, 0)
+	require.NoError(t, fp.Validate(), "zero static gas stays valid")
+
+	fp = types.DefaultFeeParams()
+	appendStoreCommitStatic(fp, 1)
+	appendStoreCommitStatic(fp, 1)
+	require.Error(t, fp.Validate(), "a second static rule for StoreCommit is rejected")
+
+	fp = types.DefaultFeeParams()
+	appendStoreCommitStatic(fp, 1)
+	for _, rule := range fp.Groups[0].Msgs {
+		if rule.GetStatic() != nil && rule.TypeUrl == sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}) {
+			rule.Base = &types.PeriodBase{Gas: 1, PeriodType: types.PeriodTypePoc, PeriodLength: 1}
+		}
+	}
+	require.Error(t, fp.Validate(), "StoreCommit static rule must not add a second period base")
+
+	fp = types.DefaultFeeParams()
+	fp.Groups = append(fp.Groups, &types.FeeGroup{
+		Name: types.FeeGroupOnboarding,
+		Msgs: []*types.MsgGasRule{{
+			TypeUrl: sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{}),
+			Func: &types.MsgGasRule_Static{
+				Static: &types.StaticParams{Gas: types.NewParticipantGas},
+			},
+		}},
+	})
+	require.NoError(t, fp.Validate())
+
+	fp = types.DefaultFeeParams()
+	appendStoreCommitStatic(fp, types.MaxPeriodBaseGas+1)
+	require.Error(t, fp.Validate(), "static.gas must be capped")
+
+	fp = types.DefaultFeeParams()
 	fp.Groups[0].Msgs[1].GetStoredBytes().Unit = "gb"
 	require.Error(t, fp.Validate(), "stored_bytes.unit must be b|kb|mb")
 
@@ -158,7 +192,11 @@ func TestDefaultFeeParamsTree(t *testing.T) {
 	require.Equal(t, types.FeeGroupEpoch, g.Name)
 	require.NotNil(t, rule.GetStoredDelta())
 	require.Equal(t, uint64(100), rule.GetStoredDelta().GasPerUnit)
+	require.Equal(t, uint64(100_000), types.StoreCommitGasPerNewKey)
 	require.Equal(t, uint64(500_000), rule.Base.Gas)
+	_, rules := fp.RulesForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	require.Len(t, rules, 1)
+	require.Nil(t, rules[0].GetStatic())
 	_, hdRule := fp.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgSubmitHardwareDiff{}))
 	require.NotNil(t, hdRule.GetStoredBytes())
 	require.Equal(t, uint64(100), hdRule.GetStoredBytes().GasPerUnit)
@@ -182,6 +220,32 @@ func TestStoredBytesUnitSize(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestStoredDeltaParamsRoundtrip(t *testing.T) {
+	orig := &types.StoredDeltaParams{
+		GasPerUnit:  100,
+		Items:       "entries",
+		ValueField:  "count",
+		IdField:     "model_id",
+		ScopeFields: []string{"poc_stage_start_block_height"},
+	}
+	bz, err := orig.Marshal()
+	require.NoError(t, err)
+	var got types.StoredDeltaParams
+	require.NoError(t, got.Unmarshal(bz))
+	require.True(t, orig.Equal(&got))
+}
+
+func appendStoreCommitStatic(fp *types.FeeParams, gas uint64) *types.StaticParams {
+	rule := &types.MsgGasRule{
+		TypeUrl: sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}),
+		Func: &types.MsgGasRule_Static{
+			Static: &types.StaticParams{Gas: gas},
+		},
+	}
+	fp.Groups[0].Msgs = append(fp.Groups[0].Msgs, rule)
+	return rule.GetStatic()
+}
+
 func TestStoredBytesParamsRoundtripUnit(t *testing.T) {
 	orig := &types.StoredBytesParams{GasPerUnit: 100, Unit: types.StoredBytesUnitKB}
 	bz, err := orig.Marshal()
@@ -199,12 +263,14 @@ func TestClampFeeTreeSafetyLimits(t *testing.T) {
 	fp.GasPerPocCount = types.MaxGasPerUnit + 8
 	fp.Groups[0].Msgs[0].Base.Gas = types.MaxPeriodBaseGas + 7
 	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = types.MaxGasPerUnit + 6
+	staticGas := appendStoreCommitStatic(fp, types.MaxPeriodBaseGas+4)
 	fp.Groups[0].Msgs[1].GetStoredBytes().GasPerUnit = types.MaxGasPerUnit + 5
 	require.True(t, types.ClampFeeTreeSafetyLimits(fp))
 	require.Equal(t, types.MaxPeriodBaseGas, fp.BaseValidationGas)
 	require.Equal(t, types.MaxGasPerUnit, fp.GasPerPocCount)
 	require.Equal(t, types.MaxPeriodBaseGas, fp.Groups[0].Msgs[0].Base.Gas)
 	require.Equal(t, types.MaxGasPerUnit, fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit)
+	require.Equal(t, types.MaxPeriodBaseGas, staticGas.Gas)
 	require.Equal(t, types.MaxGasPerUnit, fp.Groups[0].Msgs[1].GetStoredBytes().GasPerUnit)
 	require.NoError(t, fp.Validate())
 }

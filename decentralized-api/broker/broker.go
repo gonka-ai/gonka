@@ -139,6 +139,8 @@ type Broker struct {
 	nodes                map[string]*NodeWithState
 	mu                   sync.RWMutex
 	curMaxNodesNum       atomic.Uint64
+	pocNodeNumbersMu     sync.Mutex
+	pocNodeNumbers       *pocNodeNumbers
 	nextRegistrationSeq  atomic.Uint64
 	chainBridge          BrokerChainBridge
 	nodeWorkGroup        *NodeWorkGroup
@@ -155,6 +157,7 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	ownEpochModels       map[string]bool
 }
 
 type lockEntry struct {
@@ -955,6 +958,7 @@ type pocParams struct {
 	models              map[string]apiconfig.PoCModelConfigCache
 	pocStrongerRng      bool
 	scheme              types.PocScheme
+	epochModelsOnly     bool
 }
 
 const reconciliationInterval = 30 * time.Second
@@ -1109,6 +1113,9 @@ func (b *Broker) reconcileIfSynced(triggerMsg string) {
 
 func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	blockHeight := epochState.CurrentBlock.Height
+	if err := b.preparePoCNodeNumberingRollout(context.Background(), &epochState); err != nil {
+		logging.Error("Cannot prepare PoC node numbering rollout", types.PoC, "error", err, "blockHeight", blockHeight)
+	}
 
 	// Phase 1: Cancel outdated tasks
 	type capturedCancel struct {
@@ -1203,7 +1210,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			continue
 		}
 
-		// TODO: we should make reindexing as some indexes might be skipped
+		// Retain global numbering for the first stage after installing the hotfix.
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
 		// Create and dispatch the command from the node that passed the seq check,
 		// not the pre-recheck snapshot (that snapshot can be a deleted registration).
@@ -1216,6 +1223,22 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			int(totalNumNodes),
 			epochState.ActiveConfirmationPoCEvent,
 		)
+		if start, ok := cmd.(StartPoCNodeCommandV2); ok && !start.WindDown {
+			if err := b.assignPoCNodeNumber(ctx, id, currentPoCParams, &start); err != nil {
+				if errors.Is(err, errPoCNodeNumberRolloutStage) {
+					logging.Info("Deferring PoC start during node-numbering rollout stage", types.PoC,
+						"node_id", id, "height", currentPoCParams.startPoCBlockHeight)
+					cancel()
+					b.clearReconcileIfSeq(id, capturedSeq)
+					continue
+				}
+				logging.Error("Cannot allocate PoC node number", types.PoC, "node_id", id, "error", err)
+				cancel()
+				b.clearReconcileIfSeq(id, capturedSeq)
+				continue
+			}
+			cmd = start
+		}
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", stateForCmd.IntendedStatus, "target_poc_status", stateForCmd.PocIntendedStatus, "blockHeight", blockHeight)
@@ -1266,6 +1289,7 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 			params := &pocParams{
 				startPoCBlockHeight: ch.StartHeight(),
 				startPoCBlockHash:   hexEncodeSeed(ch.Seed()),
+				epochModelsOnly:     true,
 			}
 			recipe, err := b.EpochRecipe(ch.Challenge.EpochIndex)
 			if err != nil {
@@ -1281,6 +1305,7 @@ func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDisp
 			params := &pocParams{
 				startPoCBlockHeight: event.TriggerHeight,
 				startPoCBlockHash:   event.PocSeedBlockHash,
+				epochModelsOnly:     true,
 			}
 			if err := b.applyFrozenRecipe(params); err != nil {
 				logging.Error("Failed to load frozen confirmation PoC recipe", types.PoC, "error", err, "height", event.TriggerHeight)
@@ -1305,12 +1330,24 @@ func (b *Broker) resolvePoCModelForNode(
 	nodeModels map[string]ModelArgs,
 	params *pocParams,
 ) (apiconfig.PoCModelConfigCache, bool) {
+	return resolvePoCModelForNodeWithFilter(nodeState, nodeModels, params, b.pocModelFilter(params))
+}
+
+func resolvePoCModelForNodeWithFilter(
+	nodeState *NodeState,
+	nodeModels map[string]ModelArgs,
+	params *pocParams,
+	allowed map[string]bool,
+) (apiconfig.PoCModelConfigCache, bool) {
 	if nodeState == nil || params == nil || len(params.models) == 0 {
 		return apiconfig.PoCModelConfigCache{}, false
 	}
 
 	if len(nodeState.EpochMLNodes) == 1 {
 		for modelID := range nodeState.EpochMLNodes {
+			if allowed != nil && !allowed[modelID] {
+				return apiconfig.PoCModelConfigCache{}, false
+			}
 			modelConfig, ok := params.models[modelID]
 			if ok {
 				return modelConfig, true
@@ -1322,6 +1359,9 @@ func (b *Broker) resolvePoCModelForNode(
 	if len(nodeState.EpochMLNodes) > 1 {
 		return apiconfig.PoCModelConfigCache{}, false
 	}
+	if params.epochModelsOnly && allowed == nil {
+		return apiconfig.PoCModelConfigCache{}, false
+	}
 
 	modelIDs := make([]string, 0, len(nodeModels))
 	for modelID := range nodeModels {
@@ -1329,12 +1369,24 @@ func (b *Broker) resolvePoCModelForNode(
 	}
 	slices.Sort(modelIDs)
 	for _, modelID := range modelIDs {
+		if allowed != nil && !allowed[modelID] {
+			continue
+		}
 		modelConfig, ok := params.models[modelID]
 		if ok {
 			return modelConfig, true
 		}
 	}
 	return apiconfig.PoCModelConfigCache{}, false
+}
+
+func (b *Broker) pocModelFilter(params *pocParams) map[string]bool {
+	if !params.epochModelsOnly {
+		return nil
+	}
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.ownEpochModels
 }
 
 func filterNodeModelsByPoCParams(nodeModels map[string]ModelArgs, pocParams apiconfig.PoCParamsCache) map[string]ModelArgs {
@@ -1731,29 +1783,35 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	// 2. Track which nodes are found in epoch data
 	nodesInEpoch := make(map[string]bool)
+	ownModels := make(map[string]bool)
+	ownModelsComplete := true
 
 	// 3. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
 		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
 		if err != nil {
 			logging.Error("Failed to get subgroup epoch data", types.Nodes, "model_id", modelId, "error", err)
+			ownModelsComplete = false
 			continue
 		}
 		if subgroupResp == nil {
 			logging.Warn("Subgroup epoch data response is nil", types.Nodes, "model_id", modelId)
+			ownModelsComplete = false
 			continue
 		}
 
 		subgroup := subgroupResp.EpochGroupData
 		if subgroup.ModelSnapshot == nil {
 			logging.Error("ModelSnapshot is nil in subgroup", types.Nodes, "model_id", modelId)
+			ownModelsComplete = false
 			continue
 		}
 
 		// 4. Iterate through participants in the subgroup
 		for _, weightInfo := range subgroup.ValidationWeights {
 			// Check if the participant is the one this broker is managing
-			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
+			if strings.EqualFold(weightInfo.MemberAddress, b.participantInfo.GetAddress()) {
+				ownModels[modelId] = true
 				// 5. Iterate through the ML nodes for this participant in the epoch data
 				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
 				// Mark these nodes as found in epoch
@@ -1762,6 +1820,12 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 				}
 			}
 		}
+	}
+
+	if ownModelsComplete {
+		b.mu.Lock()
+		b.ownEpochModels = ownModels
+		b.mu.Unlock()
 	}
 
 	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
@@ -1780,8 +1844,10 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		}
 	}
 
-	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
-	b.lastEpochPhase = epochState.CurrentPhase
+	if ownModelsComplete {
+		b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
+		b.lastEpochPhase = epochState.CurrentPhase
+	}
 	b.mu.RLock()
 	allNodeIDs := make([]string, 0, len(b.nodes))
 	for nodeID := range b.nodes {
@@ -1800,6 +1866,7 @@ func (b *Broker) clearNodeEpochData() {
 	defer b.mu.Unlock()
 
 	logging.Info("Clearing node epoch data", types.Nodes)
+	b.ownEpochModels = nil
 	for _, node := range b.nodes {
 		node.State.EpochModels = make(map[string]types.Model)
 		node.State.EpochMLNodes = make(map[string]types.MLNodeInfo)

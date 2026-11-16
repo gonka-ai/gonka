@@ -11,28 +11,42 @@ func (k msgServer) SetPoCDelegation(ctx context.Context, msg *types.MsgSetPoCDel
 		return nil, err
 	}
 
+	sender, err := types.CanonicalAccAddress(msg.Sender)
+	if err != nil {
+		return nil, err
+	}
+	senderAddr := sender.String()
+
 	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
 		return nil, types.ErrInvalidModel
 	}
 
 	if msg.DelegateTo == "" {
 		// Clear delegation
-		_ = k.Keeper.DeletePoCDelegation(ctx, msg.ModelId, msg.Sender)
+		_ = k.Keeper.DeletePoCDelegation(ctx, msg.ModelId, senderAddr)
 	} else {
-		if _, found := k.GetParticipant(ctx, msg.DelegateTo); !found {
+		delegate, err := types.CanonicalAccAddress(msg.DelegateTo)
+		if err != nil {
+			return nil, err
+		}
+		if sender.Equals(delegate) {
+			return nil, types.ErrSelfDelegation
+		}
+		delegateAddr := delegate.String()
+		if _, found := k.GetParticipant(ctx, delegateAddr); !found {
 			return nil, types.ErrParticipantNotFound
 		}
 		if err := k.Keeper.SetPoCDelegation(ctx, types.PoCDelegation{
 			ModelId:    msg.ModelId,
-			Delegator:  msg.Sender,
-			DelegateTo: msg.DelegateTo,
+			Delegator:  senderAddr,
+			DelegateTo: delegateAddr,
 		}); err != nil {
 			return nil, err
 		}
 	}
 
 	// Last-write-wins: clear refusal and intent
-	k.Keeper.ClearOtherDelegationState(ctx, msg.ModelId, msg.Sender, "delegation")
+	k.Keeper.ClearOtherDelegationState(ctx, msg.ModelId, senderAddr, "delegation")
 
 	return &types.MsgSetPoCDelegationResponse{}, nil
 }
@@ -41,17 +55,22 @@ func (k msgServer) RefusePoCDelegation(ctx context.Context, msg *types.MsgRefuse
 	if err := k.CheckPermission(ctx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
+	sender, err := types.CanonicalAccAddress(msg.Sender)
+	if err != nil {
+		return nil, err
+	}
+	senderAddr := sender.String()
 
 	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
 		return nil, types.ErrInvalidModel
 	}
 
-	if err := k.Keeper.SetPoCRefusal(ctx, msg.ModelId, msg.Sender); err != nil {
+	if err := k.Keeper.SetPoCRefusal(ctx, msg.ModelId, senderAddr); err != nil {
 		return nil, err
 	}
 
 	// Last-write-wins: clear delegation and intent
-	k.Keeper.ClearOtherDelegationState(ctx, msg.ModelId, msg.Sender, "refusal")
+	k.Keeper.ClearOtherDelegationState(ctx, msg.ModelId, senderAddr, "refusal")
 
 	return &types.MsgRefusePoCDelegationResponse{}, nil
 }
@@ -60,17 +79,22 @@ func (k msgServer) DeclarePoCIntent(ctx context.Context, msg *types.MsgDeclarePo
 	if err := k.CheckPermission(ctx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
+	sender, err := types.CanonicalAccAddress(msg.Sender)
+	if err != nil {
+		return nil, err
+	}
+	senderAddr := sender.String()
 
 	if _, found := k.GetGovernanceModel(ctx, msg.ModelId); !found {
 		return nil, types.ErrInvalidModel
 	}
 
-	if err := k.Keeper.SetPoCDirectIntent(ctx, msg.ModelId, msg.Sender); err != nil {
+	if err := k.Keeper.SetPoCDirectIntent(ctx, msg.ModelId, senderAddr); err != nil {
 		return nil, err
 	}
 
 	// Last-write-wins: clear delegation and refusal
-	k.Keeper.ClearOtherDelegationState(ctx, msg.ModelId, msg.Sender, "intent")
+	k.Keeper.ClearOtherDelegationState(ctx, msg.ModelId, senderAddr, "intent")
 
 	return &types.MsgDeclarePoCIntentResponse{}, nil
 }

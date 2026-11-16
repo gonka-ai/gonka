@@ -154,6 +154,7 @@ func TestBridgeExchange_EligibleVoteRecords(t *testing.T) {
 			Members: []*group.GroupMember{
 				{GroupId: 1, Member: &group.Member{Address: validator, Weight: "10"}},
 				{GroupId: 1, Member: &group.Member{Address: other.String(), Weight: "10"}},
+				{GroupId: 1, Member: &group.Member{Address: sdk.AccAddress([]byte("non_voting_member___")).String(), Weight: "80"}},
 			},
 		}, nil,
 	).AnyTimes()

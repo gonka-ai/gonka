@@ -200,6 +200,9 @@ func TestValidateBridgeExchange_CreateSuccess(t *testing.T) {
 			Members: []*group.GroupMember{{
 				GroupId: 1,
 				Member:  &group.Member{Address: validator, Weight: "25"},
+			}, {
+				GroupId: 1,
+				Member:  &group.Member{Address: testutil.Validator2, Weight: "75"},
 			}},
 		}, nil,
 	).AnyTimes()
@@ -249,6 +252,9 @@ func TestValidateBridgeExchange_VoteSuccess(t *testing.T) {
 			Members: []*group.GroupMember{{
 				GroupId: 1,
 				Member:  &group.Member{Address: validator, Weight: "40"},
+			}, {
+				GroupId: 1,
+				Member:  &group.Member{Address: testutil.Validator2, Weight: "60"},
 			}},
 		}, nil,
 	).AnyTimes()
@@ -394,6 +400,9 @@ func TestValidateBridgeExchange_PreviousEpochActiveCanVoteExisting(t *testing.T)
 			Members: []*group.GroupMember{{
 				GroupId: 1,
 				Member:  &group.Member{Address: validator, Weight: "30"},
+			}, {
+				GroupId: 1,
+				Member:  &group.Member{Address: testutil.Validator2, Weight: "50"},
 			}},
 		}, nil,
 	).AnyTimes()

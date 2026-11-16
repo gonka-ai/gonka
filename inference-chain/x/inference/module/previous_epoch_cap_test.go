@@ -2,6 +2,7 @@ package inference
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/epochgroup"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -696,6 +698,154 @@ func TestGetEffectiveValidationBaseState_OmitsEmptyVoterConfirmationModels(t *te
 	}
 	require.True(t, snapshotByModel["model-a"])
 	require.True(t, snapshotByModel["model-b"], "confirmation snapshots still keep the empty-voter accounting model")
+}
+
+func TestCapComputeResults_LegacyUppercaseIndexClampsToZero(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	legacy := strings.ToUpper(testutil.Validator)
+	require.NotEqual(t, legacy, testutil.Validator)
+	decoded, err := sdk.AccAddressFromBech32(legacy)
+	require.NoError(t, err)
+	require.Equal(t, testutil.Validator, decoded.String(), "uppercase spelling is the same account")
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: legacy, Weight: 400, CapWeight: 0},
+			{Index: testutil.Validator2, Weight: 500, CapWeight: 80},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 400, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 500, OperatorAddress: valOperOf(t, testutil.Validator2)},
+	})
+	powerByOp := map[string]int64{}
+	for _, result := range capped {
+		powerByOp[result.OperatorAddress] = result.Power
+	}
+	require.Equal(t, int64(0), powerByOp[valOperOf(t, testutil.Validator)])
+	require.Equal(t, int64(80), powerByOp[valOperOf(t, testutil.Validator2)])
+	require.True(t, hasPositiveComputePower(capped))
+}
+
+func TestCapComputeResults_AppliedMissingParticipantIsZeroed(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 40},
+		},
+	}))
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 100, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 250, OperatorAddress: valOperOf(t, testutil.Executor)},
+	})
+	powerByOp := map[string]int64{}
+	for _, result := range capped {
+		powerByOp[result.OperatorAddress] = result.Power
+	}
+	require.Equal(t, int64(40), powerByOp[valOperOf(t, testutil.Validator)])
+	require.Equal(t, int64(0), powerByOp[valOperOf(t, testutil.Executor)])
+}
+
+func TestCapComputeResults_DuplicateIdentityKeepsLowerCap(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 30},
+			{Index: strings.ToUpper(testutil.Validator), Weight: 100, CapWeight: 10},
+		},
+	}))
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+	capped := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 100, OperatorAddress: valOperOf(t, testutil.Validator)},
+	})
+	require.Equal(t, int64(10), capped[0].Power)
+}
+
+func TestCanonicalRegistrationLifecycleUsesCapWeight(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	ms := keeper.NewMsgServerImpl(k)
+	_, err := ms.SubmitNewParticipant(ctx, &types.MsgSubmitNewParticipant{
+		Creator: testutil.Validator,
+		Url:     "https://example.com",
+	})
+	require.NoError(t, err)
+	saved, found := k.GetParticipant(ctx, testutil.Validator)
+	require.True(t, found)
+	require.Equal(t, testutil.Validator, saved.Index)
+	require.Equal(t, testutil.Validator, saved.Address)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     prevEpoch,
+		ModelId:        "",
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 50},
+			{MemberAddress: testutil.Validator2, Weight: 200, ConfirmationWeight: 200},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 50}}},
+			{MemberAddress: testutil.Validator2, MlNodes: []*types.MLNodeInfo{{PocWeight: 200}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	formed := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 400, ValidatorKey: "validator-key"},
+		{Index: testutil.Validator2, Weight: 200, ValidatorKey: "validator-2-key"},
+	})
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          prevEpoch + 1,
+		EpochGroupId:     prevEpoch + 1,
+		CapWeightApplied: true,
+		Participants:     formed,
+	}))
+
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: prevEpoch + 1}}
+	claimed := []stakingkeeper.ComputeResult{
+		{Power: formed[0].Weight, OperatorAddress: valOperOf(t, formed[0].Index)},
+		{Power: formed[1].Weight, OperatorAddress: valOperOf(t, formed[1].Index)},
+	}
+	updated := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, claimed)
+	capByIndex := map[string]int64{}
+	for _, participant := range formed {
+		capByIndex[participant.Index] = participant.CapWeight
+	}
+	for _, result := range updated {
+		acc := sdk.AccAddress(sdk.MustValAddressFromBech32(result.OperatorAddress))
+		require.LessOrEqual(t, result.Power, capByIndex[acc.String()])
+	}
+	trust := resolveTrustWeights(formed, true)
+	for index, capWeight := range capByIndex {
+		require.Equal(t, capWeight, trust[index])
+	}
+	require.NotEqual(t, formed[0].Weight, formed[0].CapWeight)
 }
 
 func TestModelHasActiveVotingPower(t *testing.T) {

@@ -199,14 +199,37 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 
 	capByAccount := make(map[string]int64, len(aps.Participants))
 	anyCapSet := false
+	duplicateAccounts := 0
+	invalidActive := 0
 	for _, p := range aps.Participants {
 		if p == nil {
 			continue
 		}
-		capByAccount[p.Index] = p.CapWeight
+		// Key both sides by decoded account identity. A retained uppercase
+		// Index matches the re-encoded validator operator.
+		addr, err := sdk.AccAddressFromBech32(p.Index)
+		if err != nil {
+			invalidActive++
+			continue
+		}
+		canonical := addr.String()
+		if prev, exists := capByAccount[canonical]; exists {
+			duplicateAccounts++
+			if p.CapWeight < prev {
+				capByAccount[canonical] = p.CapWeight
+			}
+			continue
+		}
+		capByAccount[canonical] = p.CapWeight
 		if p.CapWeight > 0 {
 			anyCapSet = true
 		}
+	}
+	if duplicateAccounts > 0 || invalidActive > 0 {
+		am.LogError("Previous-epoch weight cap: non-canonical active participant identities", types.EpochGroup,
+			"epochIndex", epochIndex,
+			"duplicateAccounts", duplicateAccounts,
+			"invalidAddresses", invalidActive)
 	}
 	if !aps.CapWeightApplied && !anyCapSet {
 		// Epoch predates CapWeight (e.g. formed before the upgrade); do not cap.
@@ -215,16 +238,25 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 
 	capped := make([]stakingkeeper.ComputeResult, 0, len(results))
 	clamped := 0
+	inconsistent := 0
 	for _, r := range results {
 		valAddr, err := sdk.ValAddressFromBech32(r.OperatorAddress)
 		if err != nil {
+			if aps.CapWeightApplied {
+				r.Power = 0
+				inconsistent++
+			}
 			capped = append(capped, r)
 			continue
 		}
 		accAddr := sdk.AccAddress(valAddr).String()
 		capValue, ok := capByAccount[accAddr]
 		if !ok {
-			// Not in this epoch's ActiveParticipants; leave untouched.
+			if aps.CapWeightApplied {
+				// Post-upgrade state with no active-participant cap is inconsistent.
+				r.Power = 0
+				inconsistent++
+			}
 			capped = append(capped, r)
 			continue
 		}
@@ -239,7 +271,8 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 		"epochIndex", epochIndex,
 		"validatorsIn", len(results),
 		"validatorsOut", len(capped),
-		"clamped", clamped)
+		"clamped", clamped,
+		"inconsistent", inconsistent)
 
 	return capped
 }

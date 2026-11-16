@@ -17,12 +17,15 @@ type FeeTreeCache struct {
 	groupPrice         map[string]uint64
 	storeCommitRate    uint64
 	storeCommitBase    uint64
+	storeCommitNew     uint64
 	storeCommitRateRaw uint64
 	storeCommitBaseRaw uint64
+	storeCommitNewRaw  uint64
 	hdGasPerByte       uint64
 	hdUnitSize         uint64
 	hasStoreCommitRate bool
 	hasStoreCommitBase bool
+	hasStoreCommitNew  bool
 	hasHDGasPerByte    bool
 	loaded             bool // true after Load; distinguishes "never fetched" from "tree has no StoreCommit row"
 	// Measured StoreCommit ante+handler gas from the once-per-stage dummy
@@ -53,12 +56,15 @@ func (c *FeeTreeCache) Load(fp *types.FeeParams) {
 	c.groupPrice = map[string]uint64{}
 	c.storeCommitRate = 0
 	c.storeCommitBase = 0
+	c.storeCommitNew = 0
 	c.storeCommitRateRaw = 0
 	c.storeCommitBaseRaw = 0
+	c.storeCommitNewRaw = 0
 	c.hdGasPerByte = 0
 	c.hdUnitSize = 0
 	c.hasStoreCommitRate = false
 	c.hasStoreCommitBase = false
+	c.hasStoreCommitNew = false
 	c.hasHDGasPerByte = false
 	c.loaded = true
 	if fp == nil {
@@ -84,6 +90,11 @@ func (c *FeeTreeCache) Load(fp *types.FeeParams) {
 					c.hasStoreCommitRate = true
 					c.storeCommitRateRaw = d.GasPerUnit
 					c.storeCommitRate = withHeadroom(d.GasPerUnit, 1, 2) // 50% if nonzero; 0 stays 0
+				}
+				if s := rule.GetStatic(); s != nil {
+					c.hasStoreCommitNew = true
+					c.storeCommitNewRaw = s.Gas
+					c.storeCommitNew = withHeadroom(s.Gas, 1, 2)
 				}
 				if rule.Base != nil {
 					c.hasStoreCommitBase = true
@@ -144,13 +155,13 @@ func (c *FeeTreeCache) ClearStoreCommitIntrinsic() {
 	c.storeCommitCalibratedEntries = 0
 }
 
-func (c *FeeTreeCache) RawStoreCommitLeaf() (rate, base uint64, loaded bool) {
+func (c *FeeTreeCache) RawStoreCommitLeaf() (rate, base, gasPerNew uint64, loaded bool) {
 	if c == nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.storeCommitRateRaw, c.storeCommitBaseRaw, c.loaded
+	return c.storeCommitRateRaw, c.storeCommitBaseRaw, c.storeCommitNewRaw, c.loaded
 }
 
 func (c *FeeTreeCache) SetHardwarePrev(nodes []*types.HardwareNode) {
@@ -185,13 +196,16 @@ func (c *FeeTreeCache) hints() GasHints {
 			Prev:              prev,
 			HasRate:           c.hasStoreCommitRate,
 			HasBase:           c.hasStoreCommitBase,
+			HasNewKey:         c.hasStoreCommitNew,
 			PaddedRate:        c.storeCommitRate,
 			PaddedBase:        c.storeCommitBase,
+			PaddedNewKey:      c.storeCommitNew,
 			HasMeasured:       c.hasMeasuredIntrinsic,
 			MeasuredIntrinsic: c.storeCommitIntrinsic,
 			MeasuredEntries:   c.storeCommitCalibratedEntries,
 			ChainRate:         c.storeCommitRateRaw,
 			ChainBase:         c.storeCommitBaseRaw,
+			ChainNewKey:       c.storeCommitNewRaw,
 		},
 		HardwareDiff: HardwareDiffGas{
 			Prev:          hw,

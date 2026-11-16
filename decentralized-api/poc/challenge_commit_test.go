@@ -54,6 +54,7 @@ func TestCommitWorker_ChallengeStoreCommitWhileUnfrozen(t *testing.T) {
 		recorder:               recorder,
 		tracker:                tracker,
 		participantAddress:     addr,
+		epochModels:            map[string]bool{"model-a": true},
 		challengeLastCommitted: make(map[commitKey]commitState),
 		challengePending:       make(map[commitKey]pendingCommit),
 		lastCommitted:          make(map[commitKey]commitState),
@@ -96,6 +97,7 @@ func TestCommitWorker_ChallengeStoreCommitStopsAfterFinish(t *testing.T) {
 		recorder:               recorder,
 		tracker:                tracker,
 		participantAddress:     addr,
+		epochModels:            map[string]bool{"model-a": true},
 		challengeLastCommitted: make(map[commitKey]commitState),
 	}
 	worker.tick()
@@ -136,6 +138,7 @@ func TestCommitWorker_ChallengeCommitPendingUntilConfirmed(t *testing.T) {
 		recorder:               recorder,
 		tracker:                tracker,
 		participantAddress:     addr,
+		epochModels:            map[string]bool{"model-a": true},
 		challengeLastCommitted: make(map[commitKey]commitState),
 		challengePending:       make(map[commitKey]pendingCommit),
 		lastCommitted:          make(map[commitKey]commitState),

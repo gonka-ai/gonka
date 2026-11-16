@@ -23,6 +23,55 @@ func registerPoCParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr
 	}))
 }
 
+func seedPocValidationSnapshot(t *testing.T, k keeper.Keeper, ctx sdk.Context, stage int64, validator string, modelIDs ...string) {
+	t.Helper()
+	snapshot, found, err := k.GetPoCValidationSnapshot(ctx, stage)
+	require.NoError(t, err)
+	if !found {
+		snapshot = types.PoCValidationSnapshot{
+			PocStageStartHeight: stage,
+			SnapshotHeight:      stage + 55,
+			TotalNetworkWeight:  100,
+		}
+	}
+	for _, modelID := range modelIDs {
+		updated := false
+		for _, mvw := range snapshot.ModelVotingPowers {
+			if mvw.ModelId == modelID {
+				mvw.VotingPowers = append(mvw.VotingPowers, &types.VotingPowerEntry{
+					Address:     validator,
+					VotingPower: 100,
+				})
+				updated = true
+				break
+			}
+		}
+		if !updated {
+			snapshot.ModelVotingPowers = append(snapshot.ModelVotingPowers, &types.ModelVotingPowers{
+				ModelId: modelID,
+				VotingPowers: []*types.VotingPowerEntry{
+					{Address: validator, VotingPower: 100},
+				},
+			})
+		}
+	}
+	require.NoError(t, k.SetPoCValidationSnapshot(ctx, snapshot))
+}
+
+func seedPocValidationAdmission(t *testing.T, k keeper.Keeper, ctx sdk.Context, participant, modelID string, stage int64) {
+	t.Helper()
+	k.SetModel(ctx, &types.Model{Id: modelID})
+	registerPoCParticipant(t, k, ctx, participant)
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+		ParticipantAddress:       participant,
+		PocStageStartBlockHeight: stage,
+		Count:                    1,
+		RootHash:                 make([]byte, 32),
+		ModelId:                  modelID,
+	}))
+	seedPocValidationSnapshot(t, k, ctx, stage, testutil.Validator, modelID)
+}
+
 // Test SetPocValidationV2 error handling (no panic)
 func TestSetPocValidationV2_InvalidAddress(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
@@ -113,6 +162,7 @@ func TestSubmitPocValidationsV2_DuplicateSkipped(t *testing.T) {
 	k.SetEpoch(sdkCtx, upcomingEpoch)
 
 	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	seedPocValidationAdmission(t, k, sdkCtx, testutil.Executor, testPoCModelID, 100)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 
@@ -166,6 +216,8 @@ func TestSubmitPocValidationsV2_PartialSuccess(t *testing.T) {
 	k.SetEpoch(sdkCtx, upcomingEpoch)
 
 	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+	seedPocValidationAdmission(t, k, sdkCtx, testutil.Executor, testPoCModelID, 100)
+	seedPocValidationAdmission(t, k, sdkCtx, testutil.Executor2, testPoCModelID, 100)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 
@@ -317,6 +369,11 @@ func setupPoCV2StoreCommitTest(
 				if d := rule.GetStoredDelta(); d != nil && rule.Base != nil {
 					rule.Base.Gas = feeParams.BaseValidationGas
 					d.GasPerUnit = feeParams.GasPerPocCount
+				}
+				if s := rule.GetStatic(); s != nil {
+					// Existing assertions cover period base and count delta.
+					// Tests that want the key charge set it afterwards.
+					s.Gas = 0
 				}
 			}
 		}
@@ -657,4 +714,105 @@ func TestPoCV2StoreCommit_SeparateRetriesIsolateStaleModel(t *testing.T) {
 			require.Equal(t, uint32(20), commits[commitKey(testutil.Executor, testPoCModelID2)].Count)
 		})
 	}
+}
+
+func setStoreCommitNewKeyGas(t *testing.T, k keeper.Keeper, ctx sdk.Context, gas uint64) sdk.Context {
+	t.Helper()
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	_, rules := params.FeeParams.RulesForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	var staticRule *types.MsgGasRule
+	for _, rule := range rules {
+		if rule.GetStatic() != nil {
+			staticRule = rule
+		}
+	}
+	if staticRule == nil {
+		staticRule = &types.MsgGasRule{
+			TypeUrl: sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}),
+			Func:    &types.MsgGasRule_Static{Static: &types.StaticParams{}},
+		}
+		params.FeeParams.GroupByName(types.FeeGroupEpoch).Msgs = append(
+			params.FeeParams.GroupByName(types.FeeGroupEpoch).Msgs, staticRule)
+	}
+	require.NotNil(t, staticRule.GetStatic())
+	staticRule.GetStatic().Gas = gas
+	require.NoError(t, params.FeeParams.Validate())
+	require.NoError(t, k.SetParams(ctx, params))
+	return ctx
+}
+
+func TestPoCV2StoreCommit_NewKeysAndCountUpdates(t *testing.T) {
+	const (
+		base   = uint64(1_000)
+		per    = uint64(10)
+		perNew = uint64(7)
+	)
+	feeParams := &types.FeeParams{BaseValidationGas: base, GasPerPocCount: per}
+	model3 := "test-poc-model-3"
+
+	k, ctx, server := setupPoCV2StoreCommitTest(t, 110, feeParams, testPoCModelID, testPoCModelID2, model3)
+	ctx = setStoreCommitNewKeyGas(t, k, ctx, perNew)
+	rec := newExtraGasRecorder()
+	ctx = ctx.WithGasMeter(rec)
+
+	_, err := server.PoCV2StoreCommit(ctx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries: []*types.PoCV2CommitEntry{
+			makePoCV2CommitEntry(testPoCModelID, 3, 1),
+			makePoCV2CommitEntry(testPoCModelID2, 5, 2),
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, storetypes.Gas(base+(3+5)*per+2*perNew), rec.extra)
+
+	next := ctx.WithBlockHeight(111)
+	rec2 := newExtraGasRecorder()
+	next = next.WithGasMeter(rec2)
+	_, err = server.PoCV2StoreCommit(next, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries: []*types.PoCV2CommitEntry{
+			makePoCV2CommitEntry(testPoCModelID, 8, 3),
+			makePoCV2CommitEntry(model3, 4, 4),
+		},
+	})
+	require.NoError(t, err)
+	// Existing stage skips the period base. m1 pays the count delta only.
+	// model3 pays its full count and one new-key charge.
+	require.Equal(t, storetypes.Gas((5+4)*per+perNew), rec2.extra)
+}
+
+func TestPoCV2StoreCommit_RejectedEntriesDoNotCharge(t *testing.T) {
+	feeParams := &types.FeeParams{BaseValidationGas: 1_000, GasPerPocCount: 10}
+	k, ctx, server := setupPoCV2StoreCommitTest(t, 110, feeParams, testPoCModelID)
+	ctx = setStoreCommitNewKeyGas(t, k, ctx, 7)
+	rec := newExtraGasRecorder()
+	ctx = ctx.WithGasMeter(rec)
+
+	_, err := server.PoCV2StoreCommit(ctx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries: []*types.PoCV2CommitEntry{
+			makePoCV2CommitEntry(testPoCModelID, 10, 1),
+			makePoCV2CommitEntry(testPoCModelID, 12, 2),
+		},
+	})
+	require.ErrorContains(t, err, "duplicate model_id")
+	require.Equal(t, storetypes.Gas(0), rec.extra)
+
+	_, err = server.PoCV2StoreCommit(ctx, &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries: []*types.PoCV2CommitEntry{
+			makePoCV2CommitEntry(testPoCModelID, 0, 1),
+		},
+	})
+	require.ErrorContains(t, err, "count must be greater than 0")
+	require.Equal(t, storetypes.Gas(0), rec.extra)
+
+	commits, err := k.GetAllPoCV2StoreCommitsForStage(ctx, 100)
+	require.NoError(t, err)
+	require.Empty(t, commits)
 }

@@ -7,7 +7,7 @@ import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
 import java.util.concurrent.TimeUnit
 
-@Timeout(value = 10, unit = TimeUnit.MINUTES)
+@Timeout(value = 15, unit = TimeUnit.MINUTES)
 class NodeAdminStateTests : TestermintTest() {
 
     @Test

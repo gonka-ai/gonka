@@ -20,6 +20,7 @@ import (
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/poc/earlyshare"
 	"decentralized-api/statsstorage"
+	"decentralized-api/upgrade"
 	"net"
 
 	nmgen "common/nodemanager/gen"
@@ -383,11 +384,13 @@ func main() {
 	logging.Info("Flushing config to the DB on app exit", types.Config)
 	_ = configManager.FlushNow(ctxFlush)
 
-	// Close DB gracefully
+	// Close DB gracefully. When an upgrade file was just published, stay alive
+	// afterwards so cosmovisor's poller is the only CheckUpdate caller.
 	if db := configManager.SqlDb().GetDb(); db != nil {
 		_ = db.Close()
 	}
 
+	upgrade.FinishUpgradeForCosmovisor()
 	os.Exit(1) // Exit with an error for cosmovisor to restart the process
 }
 

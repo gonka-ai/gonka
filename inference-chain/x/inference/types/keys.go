@@ -134,7 +134,19 @@ var (
 	PoCChallengePrefix             = collections.NewPrefix(111)
 	PoCChallengeCommitPrefix       = collections.NewPrefix(112)
 	PoCChallengeValidationPrefix   = collections.NewPrefix(113)
-	ParamsKey                      = []byte("p_inference")
+	// ConfirmationPoCCleanupCursorPrefix is the durable position of the
+	// bounded confirmation-prefix cleanup. It is not one of the regular
+	// pruner epoch fields.
+	ConfirmationPoCCleanupCursorPrefix = collections.NewPrefix(115)
+	// Pending inbound bridge records by (epoch, id), and the epochs to re-check
+	// after a member is removed. 114 is reserved and 115 is the cleanup cursor.
+	// Not 115: 's' is the first byte of the "stats/" keys in this store.
+	BridgePendingByEpochPrefix = collections.NewPrefix(117)
+	BridgeRecheckEpochsPrefix  = collections.NewPrefix(118)
+	BridgeRecheckRestartPrefix = collections.NewPrefix(119)
+	// 114, 115, and 117-119 are taken by v0.2.17.
+	BridgeKeyLinksPrefix = collections.NewPrefix(144)
+	ParamsKey            = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

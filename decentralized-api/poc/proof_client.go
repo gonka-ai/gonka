@@ -38,6 +38,15 @@ var (
 
 const DefaultKDim = 12
 
+// maxProofResponseBytes bounds the validatee's /v1/poc/proofs response. A
+// legitimate response holds ValidationSampleSize (default 200) proof items, a
+// few MiB at most; 64 MiB is a last-resort memory bound. The validatee controls
+// this URL, so without a cap the unbounded decoder lets a host OOM the validator.
+const maxProofResponseBytes = 64 << 20
+
+// maxProofErrorBodyBytes caps how much of a non-200 body is quoted into an error.
+const maxProofErrorBodyBytes = 512
+
 // ProofClient fetches and verifies SMST proofs from participant APIs.
 type ProofClient struct {
 	httpClient *http.Client
@@ -181,12 +190,12 @@ func (c *ProofClient) FetchAndVerifyProofs(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProofErrorBodyBytes))
 		return nil, fmt.Errorf("proof request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var proofResp ProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxProofResponseBytes)).Decode(&proofResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -275,12 +284,12 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProofErrorBodyBytes))
 		return nil, fmt.Errorf("proof by nonce request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var proofResp ProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxProofResponseBytes)).Decode(&proofResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 	if err := validateNonceCoverage(req.Nonces, proofResp.Proofs); err != nil {

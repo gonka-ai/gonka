@@ -41,15 +41,26 @@ To avoid floating-point comparison issues, p0 is represented as integer permille
 ### Lookup Algorithm
 
 1. Convert decimal p0 to permille
-2. If supported: O(log n) binary search in table
+2. If supported: O(log n) binary search for the largest table row with `Total <= n`
 3. For n > 990: simple threshold (nMissed * denominator <= nTotal * numerator)
 4. If unsupported p0: fall back to exact O(n) computation
 
-### Small n Behavior (n < 5)
+### Small n Behavior (hand-set rows)
 
-For p0 >= 0.20 (tables P020, P030, P040, P050), samples with n < 5 are not penalized. The critical value equals n, meaning all requests pass regardless of miss count.
+The rows for the smallest n are set by hand instead of by the formula below:
 
-Rationale: statistical power at very small sample sizes is insufficient for meaningful hypothesis testing. This only applies to higher p0 thresholds; p0=0.05 and p0=0.10 retain their computed critical values.
+| p0 | hand-set rows (n) |
+|----|-------------------|
+| 0.05 | 2-10, 20, 30 |
+| 0.10 | 2-10 |
+| 0.20 | 2-9 |
+| 0.30 | 2-6 |
+| 0.40 | 2-5 |
+| 0.50 | 3, 4 |
+
+In every table, samples with n < 5 are not penalized: the critical value equals n, so all requests pass regardless of miss count. From n = 5 the hand-set rows allow 4 misses.
+
+Rationale: statistical power at very small sample sizes is insufficient for meaningful hypothesis testing. These rows are more lenient than the normal approximation. Compared with the exact binomial test, the lookup is more lenient only for the sizes listed in "Accuracy and scope"; some hand-set rows (for example p0 = 0.50 at n = 3 and 4, p0 = 0.05 at n = 30) equal the exact test.
 
 ### Large n Behavior (n > 990)
 
@@ -71,6 +82,32 @@ criticalK = floor(n * p0 + z_alpha * sqrt(n * p0 * (1 - p0)))
 
 where z_alpha = 1.6448536269514722 for alpha = 0.05 one-sided.
 
+The formula is evaluated only at the table rows (n = 2..10, then every 10 up to 990), and the hand-set rows above replace it for small n. `TestGenerateCriticalValueTables` prints the formula values. `TestShippedTablesMatchGenerator` checks the row grid, the hand-set values and that every other row matches the formula, and `TestLookupThresholdsMatchSpecification` checks the accepted miss count for every n up to 1000. For every n up to 990 the formula is never more lenient than the exact test and is at most one miss stricter (`TestValidateNormalApproxAgainstExact`).
+
+## Accuracy and scope
+
+The lookup tables are an approximation of the one-sided binomial test for low inference counts per epoch. They are not an exact implementation of the miss tolerance `binom_test_p0`:
+
+- n between two rows is judged by the lower row. For example, at p0 = 0.40, n = 19 uses the row for n = 10 and accepts 6 misses, while the exact test accepts 11.
+- Because of this, the lookup is stricter than the exact test for most n, and a host whose true miss rate equals p0 fails more often than alpha = 0.05.
+- The hand-set small-n rows make the lookup more lenient than the exact test for the smallest n (including sizes such as p0 = 0.05, n = 11, which use a hand-set row).
+- alpha is fixed at 0.05 (`alpha` in `stats.go`). It is not read from `ValidationParams.FalsePositiveRate`.
+
+Deviation from the exact test for n = 1..990:
+
+| p0 | stricter than exact at | by at most | more lenient than exact at | worst P(fail) for a host at exactly p0 |
+|----|------------------------|------------|-------------------------|----------------------------------------|
+| 0.05 | 880 of 990 sizes | 2 misses | n = 2-28, by up to 3 misses | 0.130639 at n = 69 |
+| 0.10 | 923 of 990 sizes | 2 misses | n = 2-14, by up to 2 misses | 0.190259 at n = 39 |
+| 0.20 | 935 of 990 sizes | 3 misses | n = 2-7, by up to 2 misses | 0.357139 at n = 29 |
+| 0.30 | 938 of 990 sizes | 4 misses | n = 3-5, by 1 miss | 0.526137 at n = 19 |
+| 0.40 | 935 of 990 sizes | 5 misses | n = 4, by 1 miss | 0.691931 at n = 19 |
+| 0.50 | 932 of 990 sizes | 6 misses | never | 0.820358 at n = 19 |
+
+For hosts with miss rates well below p0 the difference is small: at p0 = 0.10, the largest failure probability for a host with a true miss rate of 2% at any n up to 990 is about 0.000254 (at n = 29).
+
+`TestCriticalValueTablesAgainstExactBinomial` compares the lookup with an independent exact integer computation of the binomial test at every n up to 990 and pins these numbers. Changing a table requires updating this section and `acceptedTableDeviation` together.
+
 ## Usage
 
 ```go
@@ -86,6 +123,6 @@ passed, err := MissedStatTestLookupWithP0(nMissed, nTotal, 400) // p0=0.40
 - `x/inference/calculations/stats.go` - Public interface, exact computation
 - `x/inference/calculations/stats_table.go` - Pre-computed tables, lookup functions
 - `x/inference/calculations/stats_test.go` - Basic tests
-- `x/inference/calculations/stats_table_test.go` - Table validation tests
-- `x/inference/calculations/generate_tables_test.go` - Table generation and validation
+- `x/inference/calculations/stats_table_test.go` - Table validation tests, including the comparison with the exact binomial test
+- `x/inference/calculations/generate_tables_test.go` - Table generation, the exact integer binomial reference, and generator checks
 

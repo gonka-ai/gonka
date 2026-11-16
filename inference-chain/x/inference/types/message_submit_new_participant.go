@@ -19,8 +19,9 @@ func NewMsgSubmitNewParticipant(creator string, url string, models []string) *Ms
 }
 
 func (msg *MsgSubmitNewParticipant) ValidateBasic() error {
-	// creator address (required)
-	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
+	// creator address (required). Uppercase bech32 decodes to the same account
+	// and is rejected so registration cannot store a second spelling.
+	if _, err := CanonicalAccAddress(msg.Creator); err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid creator address (%s)", err)
 	}
 	// url optional; if provided, must be a valid http/https URL with SSRF protection
