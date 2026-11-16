@@ -413,6 +413,12 @@ func hostClientsFromCache(cache map[string]HostClient) []HostClient {
 }
 
 func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.SMOption {
+	if src := cfg.warmKeySource(); src != nil {
+		extra = append(extra, state.WithWarmKeyHeightChecker(func(cold, warm string, id uint64, height int64, t time.Time) (bool, error) {
+			return bridge.CheckWarmKeyAtHeight(src, cold, warm, id, height, t)
+		}))
+	}
+
 	if cfg.Heartbeat != nil {
 		extra = append(extra, state.WithHeartbeatConfig(*cfg.Heartbeat))
 	}

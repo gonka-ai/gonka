@@ -415,6 +415,9 @@ func (m *HostManager) warmKeySMOpts() []state.SMOption {
 	opts := []state.SMOption{state.WithWarmKeyResolver(m.bridge.VerifyWarmKey)}
 	if m.warmKeys != nil {
 		src := m.warmKeys
+		opts = append(opts, state.WithWarmKeyHeightChecker(func(cold, warm string, id uint64, height int64, t time.Time) (bool, error) {
+			return bridge.CheckWarmKeyAtHeight(src, cold, warm, id, height, t)
+		}))
 		opts = append(opts, state.WithWarmKeyConfirmer(func(cold, warm string, id uint64) error {
 			return bridge.ConfirmWarmKeyBind(src, cold, warm, id)
 		}))

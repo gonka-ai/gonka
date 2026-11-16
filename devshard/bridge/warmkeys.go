@@ -5,13 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
 	"common/chain"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 )
 
@@ -118,12 +121,20 @@ func NewChainWarmKeyFetcher(client chain.InferenceClient) *ChainWarmKeyFetcher {
 }
 
 func (f *ChainWarmKeyFetcher) FetchWarmKeyLog(ctx context.Context, granter string) ([]WarmKeyEntry, error) {
+	entries, _, err := f.FetchWarmKeyLogWithHeight(ctx, granter)
+	return entries, err
+}
+
+// FetchWarmKeyLogWithHeight preserves the SDK's response height. Event delivery
+// and wall-clock cache age cannot prove that a node has applied height H.
+func (f *ChainWarmKeyFetcher) FetchWarmKeyLogWithHeight(ctx context.Context, granter string) ([]WarmKeyEntry, int64, error) {
 	if f == nil || f.client == nil {
-		return nil, fmt.Errorf("warm-key log: chain client is nil")
+		return nil, 0, fmt.Errorf("warm-key log: chain client is nil")
 	}
-	resp, err := f.client.WarmKeyLog(ctx, &inferencetypes.QueryWarmKeyLogRequest{Granter: granter})
+	var headers metadata.MD
+	resp, err := f.client.WarmKeyLog(ctx, &inferencetypes.QueryWarmKeyLogRequest{Granter: granter}, grpc.Header(&headers))
 	if err != nil {
-		return nil, ClassifyQueryError(fmt.Errorf("WarmKeyLog %s: %w", granter, err))
+		return nil, 0, ClassifyQueryError(fmt.Errorf("WarmKeyLog %s: %w", granter, err))
 	}
 	out := make([]WarmKeyEntry, 0, len(resp.GetEntries()))
 	for _, e := range resp.GetEntries() {
@@ -131,7 +142,11 @@ func (f *ChainWarmKeyFetcher) FetchWarmKeyLog(ctx context.Context, granter strin
 			out = append(out, warmKeyEntryFromQuery(e))
 		}
 	}
-	return out, nil
+	var height int64
+	if values := headers.Get("x-cosmos-block-height"); len(values) == 1 {
+		height, _ = strconv.ParseInt(values[0], 10, 64)
+	}
+	return out, height, nil
 }
 
 func (f *ChainWarmKeyFetcher) FetchWarmKeyEntry(ctx context.Context, granter string, id uint64) (WarmKeyEntry, bool, error) {
@@ -205,6 +220,9 @@ type WarmKeyLogCopy struct {
 type granterLog struct {
 	entries  map[uint64]WarmKeyEntry
 	loadedAt time.Time
+	// confirmedHeight comes only from a full chain query's response header.
+	// Events and individual entry fetches never raise this completeness bound.
+	confirmedHeight int64
 	// attemptedAt is the start of the last reload, successful or not, so a
 	// failing chain does not turn misses into a reload per request.
 	attemptedAt time.Time
@@ -433,7 +451,14 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), warmKeyFetchTimeout)
-	entries, err := c.fetch.FetchWarmKeyLog(ctx, granter)
+	var entries []WarmKeyEntry
+	var height int64
+	var err error
+	if fetch, ok := c.fetch.(WarmKeyHeightFetcher); ok {
+		entries, height, err = fetch.FetchWarmKeyLogWithHeight(ctx, granter)
+	} else {
+		entries, err = c.fetch.FetchWarmKeyLog(ctx, granter)
+	}
 	cancel()
 	if err != nil {
 		return err
@@ -449,6 +474,7 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 		g.apply(e)
 	}
 	g.complete = true
+	g.confirmedHeight = max(g.confirmedHeight, height)
 	g.loadedAt = c.now()
 	return nil
 }

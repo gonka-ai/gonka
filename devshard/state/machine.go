@@ -134,11 +134,13 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver   WarmKeyResolver  // optional grant source for local admission
-	warmConfirm    WarmKeyConfirmer // optional chain-log confirmation of binds
-	mainnetHeights MainnetHeightSource
-	headerTimes    HeaderTimeSource
-	deferred       []*types.DevshardTx
+	warmResolver       WarmKeyResolver  // optional grant source for local admission
+	warmConfirm        WarmKeyConfirmer // optional chain-log confirmation of binds
+	warmHeightCheck    WarmKeyHeightChecker
+	warmHeightValidity map[warmGrantKey]bool
+	mainnetHeights     MainnetHeightSource
+	headerTimes        HeaderTimeSource
+	deferred           []*types.DevshardTx
 
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
@@ -652,6 +654,10 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 	if err := sm.stageMainnetHeightLocked(txs); err != nil {
 		return nil, nil, nil, err
 	}
+	_, err = sm.prepareWarmHeightLocked(nonce, txs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Height-sync txs also have to survive CheckDiffLogPlane: applyTx for
 	// heartbeat/ack is admission-only, and skipping L0–L3 here would persist
@@ -668,6 +674,10 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 	// log-plane identity check reads the history they leave behind.
 	keyTxs, rest := splitWarmKeyTxs(txs)
 	var applied []*types.DevshardTx
+	if len(rest) > 0 && rest[0].GetMainnetHeight() != nil {
+		applied = append(applied, rest[0])
+		rest = rest[1:]
+	}
 	var logPlaneReject error
 	for _, tx := range keyTxs {
 		if err := sm.applyTx(tx, nonce); err != nil {
@@ -899,6 +909,10 @@ func (sm *StateMachine) applyCoreJournaled(nonce uint64, txs []*types.DevshardTx
 	}
 	defer sm.closeJournalLocked(j)
 	if err := sm.stageMainnetHeightLocked(txs); err != nil {
+		return nil, nil, err
+	}
+	_, err = sm.prepareWarmHeightLocked(nonce, txs)
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -1142,6 +1156,9 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 	defer sm.mu.Unlock()
 	sm.state = restored
 	sm.rebuildCommittedEntriesLocked()
+	if _, err := sm.prepareWarmHeightLocked(restored.LatestNonce, nil); err != nil {
+		return err
+	}
 	return hs.installLocked(sm)
 }
 
@@ -1334,6 +1351,9 @@ func (sm *StateMachine) applyWarmKeyBind(msg *types.MsgWarmKeyBind, diffNonce ui
 	cold, addr, err := sm.warmKeyEntryPartiesLocked(msg.SlotId, msg.Address, msg.GrantId)
 	if err != nil {
 		return err
+	}
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) && !sm.warmHeightValidity[warmGrantKey{cold, msg.GrantId, addr}] {
+		return fmt.Errorf("%w: grant %s/%d is not valid at authenticated height %d", types.ErrWarmKeyUnconfirmed, cold, msg.GrantId, sm.state.MainnetCheckpoint.Height)
 	}
 	if sm.warmConfirm != nil && !sm.replayingPersisted {
 		if err := sm.warmConfirm(cold, addr, msg.GrantId); err != nil {
@@ -2239,7 +2259,7 @@ func (sm *StateMachine) consensusActorsLocked() signing.SlotActors {
 func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors {
 	return signing.SlotActors{
 		SlotKeys: sm.slotToAddress,
-		History:  cloneWarmKeyHistory(sm.state.WarmKeyHistory),
+		History:  sm.consensusWarmHistoryLocked(nonce),
 		Nonce:    nonce,
 	}
 }
@@ -2254,7 +2274,21 @@ func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors
 func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActors {
 	sm.mu.RLock()
 	actors := sm.consensusActorsAtLocked(nonce)
+	required := types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion)
+	cp := cloneCheckpoint(sm.state.MainnetCheckpoint)
+	latest := sm.state.LatestNonce
+	checker := sm.warmHeightCheck
+	escrowID := sm.state.EscrowID
+	if required {
+		actors.History = cloneWarmKeyHistory(sm.state.WarmKeyHistory)
+	}
 	sm.mu.RUnlock()
+	if required {
+		actors = sm.historicalWarmActors(actors, cp, latest, checker, escrowID)
+		if !admit {
+			return actors
+		}
+	}
 	// One source lookup per (key, validator) pair however many slots the
 	// validator owns; the value is request-scoped, so the memo is too.
 	live := make(map[[2]string]bool, 1)
@@ -2288,11 +2322,7 @@ func (sm *StateMachine) localActorsAt(nonce uint64, admit bool) signing.SlotActo
 // binding for the same validator. No grant-source call and no mutation, so
 // every replica decides it identically. Caller holds sm.mu.
 func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string) bool {
-	return signing.SlotActors{
-		SlotKeys: sm.slotToAddress,
-		History:  sm.state.WarmKeyHistory,
-		Nonce:    sm.state.LatestNonce + 1,
-	}.Allows(slotID, recovered)
+	return sm.consensusActorsLocked().Allows(slotID, recovered)
 }
 
 // HostSignerAllowed reports whether recovered may act for slotID in the

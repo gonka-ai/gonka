@@ -2,6 +2,9 @@ package grpcface
 
 import (
 	"context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"strconv"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -87,9 +90,14 @@ func (s *InferenceServer) GranteesByMessageType(_ context.Context, req *inferenc
 	return &inferencetypes.QueryGranteesByMessageTypeResponse{Grantees: out}, nil
 }
 
-func (s *InferenceServer) WarmKeyLog(_ context.Context, req *inferencetypes.QueryWarmKeyLogRequest) (*inferencetypes.QueryWarmKeyLogResponse, error) {
+func (s *InferenceServer) WarmKeyLog(ctx context.Context, req *inferencetypes.QueryWarmKeyLogRequest) (*inferencetypes.QueryWarmKeyLogResponse, error) {
 	if req.GetGranter() == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid granter address")
+	}
+	// Capture the lower bound before reading the body; a concurrent block
+	// advance can only make the returned append-only log newer than this bound.
+	if err := grpc.SetHeader(ctx, metadata.Pairs("x-cosmos-block-height", strconv.FormatInt(s.store.GetBlockHeight(), 10))); err != nil {
+		return nil, err
 	}
 	return &inferencetypes.QueryWarmKeyLogResponse{Entries: s.store.GetWarmKeyLog(req.GetGranter())}, nil
 }

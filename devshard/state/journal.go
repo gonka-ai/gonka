@@ -50,14 +50,15 @@ type mutationJournal struct {
 // floor are pointers: observeHeightSyncLocked replaces them with a clone
 // before the first write, so the saved pointer is the pre-state.
 type journalScalars struct {
-	balance           uint64
-	fees              uint64
-	phase             types.SessionPhase
-	finalizeNonce     uint64
-	latestNonce       uint64
-	liveEntrySum      ristretto255.Element
-	sealedAcc         []byte
-	mainnetCheckpoint lightproof.Checkpoint
+	balance            uint64
+	fees               uint64
+	phase              types.SessionPhase
+	finalizeNonce      uint64
+	latestNonce        uint64
+	liveEntrySum       ristretto255.Element
+	sealedAcc          []byte
+	mainnetCheckpoint  lightproof.Checkpoint
+	warmHeightValidity map[warmGrantKey]bool
 
 	hsForcedStart         uint64
 	hsForcedEnd           uint64
@@ -79,6 +80,7 @@ func (sm *StateMachine) readScalarsLocked() journalScalars {
 	st := sm.state
 	return journalScalars{
 		mainnetCheckpoint:     st.MainnetCheckpoint,
+		warmHeightValidity:    sm.warmHeightValidity,
 		balance:               st.Balance,
 		fees:                  st.Fees,
 		phase:                 st.Phase,
@@ -103,6 +105,7 @@ func (sm *StateMachine) readScalarsLocked() journalScalars {
 func (sm *StateMachine) writeScalarsLocked(s journalScalars) {
 	st := sm.state
 	st.MainnetCheckpoint = s.mainnetCheckpoint
+	sm.warmHeightValidity = s.warmHeightValidity
 	st.Balance = s.balance
 	st.Fees = s.fees
 	st.Phase = s.phase

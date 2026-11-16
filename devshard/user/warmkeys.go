@@ -6,6 +6,7 @@ import (
 
 	"devshard/bridge"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/types"
 )
 
@@ -16,7 +17,7 @@ import (
 // whose grant has ended or expired. Nil means the session never proposes
 // key entries (tests, cold-key-only groups). See docs/warm-keys-v7.md.
 func WithWarmKeyGrantSource(src bridge.WarmKeyGrantSource) SessionOption {
-	return func(sess *Session) { sess.warmKeySource = src }
+	return func(sess *Session) { sess.warmKeySource = src; installWarmHeightChecker(sess.sm, src) }
 }
 
 // SetWarmKeyGrantSource installs the grant source on a session built without
@@ -25,6 +26,7 @@ func (s *Session) SetWarmKeyGrantSource(src bridge.WarmKeyGrantSource) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.warmKeySource = src
+	installWarmHeightChecker(s.sm, src)
 }
 
 // warmKeyProposalsLocked returns the bind and revoke entries the next diff
@@ -117,4 +119,13 @@ func (s *Session) warmKeyRevokesForSlotLocked(history signing.WarmKeyHistory, sl
 		}}})
 	}
 	return out
+}
+
+func installWarmHeightChecker(sm *state.StateMachine, src bridge.WarmKeyGrantSource) {
+	if sm == nil || src == nil {
+		return
+	}
+	sm.SetWarmKeyHeightChecker(func(cold, warm string, id uint64, height int64, t time.Time) (bool, error) {
+		return bridge.CheckWarmKeyAtHeight(src, cold, warm, id, height, t)
+	})
 }

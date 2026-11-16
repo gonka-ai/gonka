@@ -190,7 +190,7 @@ func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 		// L2 reads the consensus history only: the diff's bind and revoke
 		// entries apply before the log-plane check, so a first ack by a
 		// freshly bound key verifies on every replica alike.
-		History:  sm.state.WarmKeyHistory,
+		History:  sm.consensusWarmHistoryLocked(sm.state.LatestNonce + 1),
 		Verifier: sm.verifier,
 		Tracker:  sm.turnTracker,
 		Floor:    sm.heightSyncFloor,
