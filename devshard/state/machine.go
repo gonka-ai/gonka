@@ -2330,6 +2330,18 @@ func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string)
 	return sm.consensusActorsLocked().Allows(slotID, recovered)
 }
 
+// HostSlotActors returns the local admission policy for the next nonce,
+// including current chain authorization for keys not yet bound in a diff.
+func (sm *StateMachine) HostSlotActors() signing.SlotActors {
+	return sm.localActorsAt(sm.LatestNonce()+1, true)
+}
+
+// HostSlotActorsAt returns the policy for an already signed nonce. V7 checks
+// its verified checkpoint; legacy versions retain their existing policy.
+func (sm *StateMachine) HostSlotActorsAt(nonce uint64) signing.SlotActors {
+	return sm.localActorsAt(nonce, false)
+}
+
 // HostSignerAllowed reports whether recovered may act for slotID in the
 // next diff: the apply rule, then the grant source, asked with sm.mu
 // released, for a key the history does not cover and against a key whose

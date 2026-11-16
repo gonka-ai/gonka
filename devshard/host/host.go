@@ -621,41 +621,13 @@ func (h *Host) Signer() signing.Signer { return h.signer }
 // signer and the HTTP sender -- should reuse one value rather than call this
 // twice. The memo is not synchronised; treat the value as request-scoped.
 func (h *Host) SlotActors() signing.SlotActors {
-	actors := h.SlotActorsAt(h.sm.LatestNonce() + 1)
-	authz := make(map[[2]string]bool, 2)
-	actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
-		pair := [2]string{recovered, expected}
-		ok, seen := authz[pair]
-		if !seen {
-			ok = h.sm.CheckWarmKey(recovered, expected)
-			authz[pair] = ok
-		}
-		return ok
-	}
-	return actors
+	return h.sm.HostSlotActors()
 }
 
-// SlotActorsAt is the identity set for a signature that names its nonce
-// (state-signature gossip): the history at that nonce, with the grant
-// source only as the backstop against a key whose grant has ended. A grant
-// the history has not bound at that nonce does not sign it, whatever the
-// source says now.
+// SlotActorsAt checks a signature at its signed nonce. V7 uses that diff's
+// authenticated checkpoint, including for late signatures after a revoke.
 func (h *Host) SlotActorsAt(nonce uint64) signing.SlotActors {
-	ended := make(map[[2]string]bool, 2)
-	return signing.SlotActors{
-		SlotKeys: h.slotToAddr,
-		History:  h.sm.WarmKeyHistory(),
-		Nonce:    nonce,
-		RefuseWarm: func(_ uint32, recovered, expected string) bool {
-			pair := [2]string{recovered, expected}
-			over, seen := ended[pair]
-			if !seen {
-				over = h.sm.WarmKeyGrantEnded(recovered, expected)
-				ended[pair] = over
-			}
-			return over
-		},
-	}
+	return h.sm.HostSlotActorsAt(nonce)
 }
 
 // HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
