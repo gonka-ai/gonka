@@ -1019,6 +1019,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	ctx := context.Background()
 	firstTurn := session.Nonce() + 1
 
@@ -1031,7 +1032,9 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
+	session.mu.Lock()
 	session.clients[targetHostIdx] = targetClient
+	session.mu.Unlock()
 
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.True(t, targetClient.Dropped(),
@@ -1074,8 +1077,8 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
-	session.clients[targetHostIdx] = restartedTarget
 	session.mu.Lock()
+	session.clients[targetHostIdx] = restartedTarget
 	session.hostSyncNonce[targetHostIdx] = floor
 	session.mu.Unlock()
 
