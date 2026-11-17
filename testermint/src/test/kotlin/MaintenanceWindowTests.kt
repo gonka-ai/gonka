@@ -1,5 +1,6 @@
 import com.github.dockerjava.api.DockerClient
 import com.github.dockerjava.core.DockerClientBuilder
+import com.google.gson.annotations.SerializedName
 import com.productscience.LocalInferencePair
 import com.productscience.data.*
 import com.productscience.getRawContainers
@@ -10,6 +11,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
+import java.time.Duration
 
 /**
  * End-to-end tests for the Maintenance Windows feature.
@@ -124,6 +126,23 @@ class MaintenanceWindowTests : TestermintTest() {
         Logger.info("Stopped node container for ${pair.name}")
     }
 
+    private data class SigningInfoResponse(
+        @SerializedName("val_signing_info") val signingInfo: SigningInfo,
+    )
+
+    private data class SigningInfo(
+        @SerializedName("index_offset") val indexOffset: Long,
+        @SerializedName("missed_blocks_counter") val missedBlocksCounter: Long,
+    )
+
+    private fun signingInfoAt(
+        observer: LocalInferencePair,
+        consensusAddress: String,
+        height: Long,
+    ): SigningInfo = observer.node.execAndParse<SigningInfoResponse>(
+        listOf("query", "slashing", "signing-info", consensusAddress, "--height", height.toString())
+    ).signingInfo
+
     /**
      * Find a future maintenance window that is safely inside inference and far
      * enough from the next PoC transition to avoid phase-overlap rejections.
@@ -135,12 +154,17 @@ class MaintenanceWindowTests : TestermintTest() {
         extraLeadBuffer: Long = 1,
         maxBlockAttempts: Int = 80,
         maxExtraOffset: Long = extraLeadBuffer,
+        trailingRecoveryBlocks: Long = 0,
     ): Long {
         val params = getMaintenanceParams(genesis)
         repeat(maxBlockAttempts) {
             val epochData = genesis.getEpochData()
+            val nextPocStart = genesis.getNextStage(EpochStage.START_OF_POC)
             for (offset in extraLeadBuffer..maxExtraOffset) {
                 val startHeight = epochData.blockHeight + params.maintenanceMinScheduleLeadBlocks + offset
+                if (startHeight + durationBlocks + trailingRecoveryBlocks >= nextPocStart) {
+                    break
+                }
 
                 Logger.info(
                     "Evaluating maintenance window candidate: start=$startHeight duration=$durationBlocks " +
@@ -361,14 +385,27 @@ class MaintenanceWindowTests : TestermintTest() {
     @Test
     @Tag("maintenance")
     fun `maintenance lifecycle survives offline validator during maintenance`() {
-        val (cluster, genesis) = initCluster(joinCount = 3, reboot = true)
+        // Leave enough inference blocks for two historical samples while the
+        // validator is absent, followed by completion and restart. CPoC timing
+        // and collateral protection are covered by the module integration tests.
+        val lifecycleSpec = spec<AppState> {
+            this[AppState::inference] = spec<InferenceState> {
+                this[InferenceState::params] = spec<InferenceParams> {
+                    this[InferenceParams::epochParams] = spec<EpochParams> {
+                        this[EpochParams::epochLength] = 60L
+                    }
+                    this[InferenceParams::confirmationPocParams] = spec<ConfirmationPoCParams> {
+                        this[ConfirmationPoCParams::expectedConfirmationsPerEpoch] = 0L
+                    }
+                }
+            }
+        }
+        val (cluster, genesis) = initCluster(joinCount = 3, reboot = true, mergeSpec = lifecycleSpec)
 
         val params = getMaintenanceParams(genesis)
         assertThat(params.maintenanceEnabled).isTrue()
 
         logSection("Earning maintenance credit")
-        genesis.waitForNextEpoch()
-        genesis.waitForNextEpoch()
 
         val join1 = cluster.joinPairs[0]
         val join2 = cluster.joinPairs[1]
@@ -379,9 +416,11 @@ class MaintenanceWindowTests : TestermintTest() {
         }.node
         val genesisValidatorPubKey = genesis.node.getValidatorInfo().key
         val validatorPubKey = join1.node.getValidatorInfo().key
+        val validatorConsensusAddress = join1.node.getValidatorAddress().trim()
         val join2ValidatorPubKey = join2.node.getValidatorInfo().key
         val join3ValidatorPubKey = join3.node.getValidatorInfo().key
-        val requiredCredit = 10L
+        val durationBlocks = 20L
+        val requiredCredit = durationBlocks
         val creditBlocks = awaitMinimumCredit(genesis, join1Address, requiredCredit)
         assertThat(creditBlocks).isGreaterThanOrEqualTo(requiredCredit)
 
@@ -413,7 +452,6 @@ class MaintenanceWindowTests : TestermintTest() {
             )
         )
 
-        val durationBlocks = 6L
         logSection("Scheduling a future maintenance window")
         val startHeight = findSchedulableWindowStart(
             genesis,
@@ -422,6 +460,7 @@ class MaintenanceWindowTests : TestermintTest() {
             extraLeadBuffer = 5,
             maxBlockAttempts = 200,
             maxExtraOffset = 80,
+            trailingRecoveryBlocks = 15,
         )
         val scheduleTx = join1.submitTransaction(
             listOf(
@@ -466,20 +505,77 @@ class MaintenanceWindowTests : TestermintTest() {
         val currentHeightBeforeStop = genesis.getCurrentBlockHeight()
         assertThat(currentHeightBeforeStop)
             .describedAs("Maintenance window should still have runway left before taking join1 offline")
-            .isLessThan(endHeight - 1)
+            .isLessThan(endHeight - 8)
         assertRemainingValidatorsCanMaintainQuorum(genesis, validatorPubKey)
 
         logSection("Stopping join1 chain node during active maintenance")
+        val nodeContainerId = nodeContainerFor(join1).id
         stopNodeContainer(join1)
+        try {
+            // LastCommit describes the preceding height, and the stopped node
+            // may have already signed a proposal. Start sampling three blocks
+            // later so both snapshots describe sustained absence.
+            val frozenStartHeight = genesis.node.waitForMinimumBlock(currentHeightBeforeStop + 3)
+            val frozenEndHeight = genesis.node.waitForMinimumBlock(frozenStartHeight + 3)
+            assertThat(frozenEndHeight)
+                .describedAs("Both signing-info samples must be inside the active window")
+                .isLessThan(endHeight)
+            val frozenStart = signingInfoAt(genesis, validatorConsensusAddress, frozenStartHeight)
+            val frozenEnd = signingInfoAt(genesis, validatorConsensusAddress, frozenEndHeight)
+            assertThat(frozenEnd.indexOffset)
+                .describedAs("Absent maintenance blocks must not advance the signing bitmap")
+                .isEqualTo(frozenStart.indexOffset)
+            assertThat(frozenEnd.missedBlocksCounter)
+                .describedAs("Absent maintenance blocks must not accumulate missed signatures")
+                .isEqualTo(frozenStart.missedBlocksCounter)
 
-        logSection("Waiting for the maintenance window to complete")
-        genesis.node.waitForMinimumBlock(endHeight + 2, "maintenance completion")
+            logSection("Verifying missed-signature accounting resumes after maintenance")
+            val resumedHeight = genesis.node.waitForMinimumBlock(endHeight + 3, "maintenance completion")
+            val resumed = signingInfoAt(genesis, validatorConsensusAddress, resumedHeight)
+            assertThat(resumed.indexOffset)
+                .describedAs("Continued absence after completion must advance signing accounting")
+                .isGreaterThan(frozenEnd.indexOffset)
+            assertThat(resumed.missedBlocksCounter)
+                .describedAs("Continued absence after completion must count as missed signatures")
+                .isGreaterThan(frozenEnd.missedBlocksCounter)
 
-        assertValidatorBonded(
-            genesis,
-            validatorPubKey,
-            "Validator should remain bonded after being offline during maintenance"
+            assertValidatorBonded(
+                genesis,
+                validatorPubKey,
+                "Validator should remain bonded after maintenance and a short unprotected absence"
+            )
+        } finally {
+            // Restore the test node even if an assertion fails, so another test
+            // cannot inherit a stopped validator from this scenario.
+            dockerClient.startContainerCmd(nodeContainerId).exec()
+            genesis.markNeedsReboot()
+        }
+
+        logSection("Waiting for the restarted validator to catch up and resume signing")
+        val restartHeight = genesis.getCurrentBlockHeight()
+        join1.node.waitFor(
+            check = { node ->
+                runCatching {
+                    val status = node.getStatus().syncInfo
+                    !status.catchingUp && status.latestBlockHeight >= restartHeight
+                }.getOrDefault(false)
+            },
+            description = "restarted validator synced",
+            timeout = Duration.ofMinutes(2),
         )
+        // Allow the restarted validator to enter a fresh LastCommit, then use
+        // fixed heights to avoid comparing queries made at different tips.
+        val signedStartHeight = genesis.node.waitForMinimumBlock(genesis.getCurrentBlockHeight() + 3)
+        val signedEndHeight = genesis.node.waitForMinimumBlock(signedStartHeight + 3)
+        val signedStart = signingInfoAt(genesis, validatorConsensusAddress, signedStartHeight)
+        val signedEnd = signingInfoAt(genesis, validatorConsensusAddress, signedEndHeight)
+        assertThat(signedEnd.indexOffset - signedStart.indexOffset)
+            .describedAs("Signing accounting must advance once per block after restart")
+            .isEqualTo(signedEndHeight - signedStartHeight)
+        assertThat(signedEnd.missedBlocksCounter)
+            .describedAs("A caught-up validator must resume signing without new missed blocks")
+            .isLessThanOrEqualTo(signedStart.missedBlocksCounter)
+        assertValidatorBonded(genesis, validatorPubKey, "Restarted validator should remain bonded")
 
         val statusAfterMaintenance: MaintenanceStatusResponse = genesis.node.execAndParse(
             listOf("query", "inference", "maintenance-status", join1Address)
