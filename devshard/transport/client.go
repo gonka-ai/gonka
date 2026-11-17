@@ -865,6 +865,7 @@ func (c *HTTPClient) handleSSELine(
 			result.ConfirmedAt = receipt.ConfirmedAt
 			result.ObservedHeight = receipt.ObservedHeight
 			result.ObservedBlockHash = receipt.ObservedBlockHash
+			result.ObservedTimeMs = receipt.ObservedTimeMs
 		}
 		if rawHS, ok := envelope["height_sync"]; ok && string(rawHS) != "null" {
 			var hs heightsync.HeightSyncSection

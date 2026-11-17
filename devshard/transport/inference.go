@@ -140,6 +140,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		ConfirmedAt:       resp.ConfirmedAt,
 		ObservedHeight:    resp.ObservedHeight,
 		ObservedBlockHash: resp.ObservedBlockHash,
+		ObservedTimeMs:    resp.ObservedTimeMs,
 	}
 	if s.receiptDelay > 0 {
 		timer := time.NewTimer(s.receiptDelay)

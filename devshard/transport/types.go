@@ -379,6 +379,7 @@ type DevshardReceiptEvent struct {
 	ConfirmedAt       int64  `json:"confirmed_at,omitempty"`
 	ObservedHeight    uint64 `json:"observed_height,omitempty"`
 	ObservedBlockHash []byte `json:"observed_block_hash,omitempty"`
+	ObservedTimeMs    int64  `json:"observed_time_ms,omitempty"`
 }
 
 // DevshardMetaEvent is the final SSE event, sent after execution completes.
