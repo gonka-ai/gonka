@@ -1054,6 +1054,9 @@ func (s *Postgres) ListActiveSessions() ([]ActiveSession, error) {
 }
 
 func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
+	if rec.HostAdmitted {
+		return s.AppendDiffBatch(context.Background(), escrowID, []types.DiffRecord{rec})
+	}
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {
 		return err
@@ -1323,7 +1326,7 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	defer cancel()
 	row := s.pool.QueryRow(ctx,
 		`SELECT escrow_id, version, creator_addr, config_json, group_json,
-		        initial_balance, latest_nonce, last_finalized, status
+		        initial_balance, latest_nonce, last_finalized, status, host_admission_nonce
 		 FROM devshard_sessions
 		 WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
@@ -1333,7 +1336,7 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	var configJSON, groupJSON string
 	scanErr := row.Scan(
 		&meta.EscrowID, &version, &meta.CreatorAddr, &configJSON, &groupJSON,
-		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status,
+		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status, &meta.HostAdmissionNonce,
 	)
 	if scanErr != nil {
 		if errors.Is(scanErr, pgx.ErrNoRows) {

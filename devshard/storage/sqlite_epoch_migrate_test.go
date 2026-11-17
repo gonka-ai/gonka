@@ -63,3 +63,15 @@ func TestOpenEpochPool_MigrationsRunOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, n1, n2)
 }
+
+func TestMigrateEpochPoolDoesNotInventHostAdmission(t *testing.T) {
+	ctx := context.Background()
+	db := openEpochTestDB(t)
+	require.NoError(t, migrate.ApplySQLite(ctx, db, sqliteEpochMigrationSteps[:8]))
+	_, err := db.Exec(`INSERT INTO sessions (escrow_id,version,creator_addr,config_json,group_json,initial_balance,latest_nonce) VALUES ('old-v7','v7','creator','{}','[]',1000,10)`)
+	require.NoError(t, err)
+	require.NoError(t, MigrateEpochPool(ctx, db))
+	var nonce uint64
+	require.NoError(t, db.QueryRow(`SELECT host_admission_nonce FROM sessions WHERE escrow_id='old-v7'`).Scan(&nonce))
+	require.Zero(t, nonce, "old journal length cannot establish host admission")
+}

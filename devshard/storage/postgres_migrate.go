@@ -306,6 +306,11 @@ CREATE TABLE IF NOT EXISTS devshard_peer_rpc_secret (
 			`COMMENT ON COLUMN devshard_peer_rpc_secret.singleton IS 'Single shared seed row for this database'`,
 			`COMMENT ON COLUMN devshard_peer_rpc_secret.secret IS '32 cryptographically random bytes; never log or expose through an API'`},
 	},
+	{
+		ID:         22,
+		Name:       "devshard_sessions_host_admission_nonce",
+		Statements: []string{`ALTER TABLE devshard_sessions ADD COLUMN IF NOT EXISTS host_admission_nonce BIGINT NOT NULL DEFAULT 0`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

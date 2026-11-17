@@ -21,5 +21,8 @@ func finalizeSessionMeta(meta *SessionMeta) error {
 	if strings.TrimSpace(meta.Version) == "" {
 		return fmt.Errorf("%w: escrow %s", ErrSessionVersionRequired, meta.EscrowID)
 	}
+	if meta.HostAdmissionNonce > meta.LatestNonce {
+		return fmt.Errorf("%w: watermark exceeds durable history", ErrHostAdmissionGap)
+	}
 	return nil
 }

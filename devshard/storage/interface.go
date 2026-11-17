@@ -209,6 +209,10 @@ type CreateSessionParams struct {
 
 // SessionMeta holds session metadata without live state.
 type SessionMeta struct {
+	// HostAdmissionNonce is the contiguous prefix accepted under the live
+	// warm-key admission policy. A journal/snapshot alone is not this proof.
+	HostAdmissionNonce uint64
+
 	EscrowID       string
 	EpochID        uint64
 	Version        string // versiond runtime bind tag; must match peer hosts' boundVersion

@@ -242,6 +242,10 @@ type Diff struct {
 
 // DiffRecord is the storage representation: Diff + computed metadata.
 type DiffRecord struct {
+	// HostAdmitted is local write intent, never wire data or consensus state.
+	// Set only after host live-admission validation. Stores advance the
+	// contiguous session watermark atomically with the diff batch.
+	HostAdmitted bool `json:"-"`
 	Diff
 	StateHash  []byte
 	Signatures map[uint32][]byte

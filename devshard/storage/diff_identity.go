@@ -32,7 +32,7 @@ var ErrDiffFork = errors.New("diff fork: conflicting payload at same nonce")
 //
 // Compared: UserSig, PostStateRoot, StateHash, Txs.
 // Not compared: CreatedAt (may differ across writers), Signatures (upserted
-// separately with ON CONFLICT DO UPDATE).
+// separately with ON CONFLICT DO UPDATE), HostAdmitted (local write intent).
 func checkDiffReplayIdentity(escrowID string, want, have types.DiffRecord) error {
 	if want.Nonce != have.Nonce ||
 		!bytes.Equal(want.UserSig, have.UserSig) ||

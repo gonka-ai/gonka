@@ -102,6 +102,19 @@ func (s *Postgres) AppendDiffBatch(ctx context.Context, escrowID string, recs []
 	if err := writeDiffBatchTx(txCtx, tx, epochID, escrowID, b); err != nil {
 		return err
 	}
+	first, last, err := hostAdmissionRange(recs)
+	if err != nil {
+		return err
+	}
+	if first > 0 {
+		result, err := tx.Exec(txCtx, `UPDATE devshard_sessions SET host_admission_nonce = GREATEST(host_admission_nonce, $1) WHERE epoch_id = $2 AND escrow_id = $3 AND host_admission_nonce >= $4`, last, epochID, escrowID, first-1)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() != 1 {
+			return ErrHostAdmissionGap
+		}
+	}
 	if hook := pgDiffBatchBeforeCommit; hook != nil {
 		if err := hook(txCtx, tx); err != nil {
 			return err

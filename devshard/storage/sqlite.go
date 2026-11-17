@@ -643,6 +643,22 @@ func (s *SQLite) AppendDiffBatch(ctx context.Context, escrowID string, recs []ty
 		return fmt.Errorf("update latest_nonce: %w", err)
 	}
 
+	first, last, err := hostAdmissionRange(recs)
+	if err != nil {
+		return err
+	}
+	if first > 0 {
+		result, err := tx.Exec(`UPDATE sessions SET host_admission_nonce = MAX(host_admission_nonce, ?) WHERE escrow_id = ? AND host_admission_nonce >= ?`, last, escrowID, first-1)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return ErrHostAdmissionGap
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -742,7 +758,7 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	}
 
 	row := p.readDB.QueryRow(
-		`SELECT escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce, last_finalized, status
+		`SELECT escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce, last_finalized, status, host_admission_nonce
 		 FROM sessions WHERE escrow_id = ?`,
 		escrowID,
 	)
@@ -752,7 +768,7 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	var configJSON, groupJSON string
 	scanErr := row.Scan(
 		&meta.EscrowID, &version, &meta.CreatorAddr, &configJSON, &groupJSON,
-		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status,
+		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status, &meta.HostAdmissionNonce,
 	)
 	if scanErr != nil {
 		if scanErr == sql.ErrNoRows {
