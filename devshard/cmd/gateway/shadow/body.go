@@ -50,11 +50,12 @@ func repeatedBody(body []byte, tokens uint64) ([]byte, scheduler.ProbeSkip) {
 	if err != nil {
 		return nil, scheduler.ProbeSkipNoRequest
 	}
-	if completionapi.GrammarConstrained(document.Raw()) || carriesTools(document) {
-		return nil, scheduler.ProbeSkipGrammarConstrained
-	}
 	document.Set(fieldMaxTokens, tokens)
-	document.Set(fieldMinTokens, tokens)
+	if completionapi.GrammarConstrained(document.Raw()) || carriesTools(document) {
+		document.Delete(fieldMinTokens)
+	} else {
+		document.Set(fieldMinTokens, tokens)
+	}
 	if document.Has(fieldMaxCompletionTokens) {
 		document.Set(fieldMaxCompletionTokens, tokens)
 	}

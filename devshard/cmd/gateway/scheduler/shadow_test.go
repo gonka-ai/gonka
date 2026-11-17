@@ -359,9 +359,8 @@ func TestSkippedProbeIsBurnedUnderItsOwnReason(t *testing.T) {
 		skip   ProbeSkip
 		reason string
 	}{
-		"grammar constrained": {ProbeSkipGrammarConstrained, GhostReasonProbeGrammarConstrained},
-		"no request":          {ProbeSkipNoRequest, GhostReasonProbeNoRequest},
-		"no room":             {ProbeSkipNoRoom, GhostReasonProbeNoRoom},
+		"no request": {ProbeSkipNoRequest, GhostReasonProbeNoRequest},
+		"no room":    {ProbeSkipNoRoom, GhostReasonProbeNoRoom},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

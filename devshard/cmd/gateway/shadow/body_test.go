@@ -171,27 +171,61 @@ func TestProbeStreamsWithUsageWhateverTheClientSent(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each grammar-constrained client body (json_object, json_schema, a required tool choice, a named tool choice, structured outputs) and for a body carrying tools, whose forced call the filtered body no longer shows, ask for probe params.
-//  2. Assert each is skipped as grammar constrained and builds no params.
-func TestGrammarConstrainedRequestIsNotRepeated(t *testing.T) {
+//  1. For each grammar-constrained client body (json_object, json_schema, a required tool choice, a named tool choice, structured outputs), each sending `min_tokens` and `max_completion_tokens`, build probe params.
+//  2. Assert each is repeated: no skip, `stream` on with `include_usage`, `max_tokens` and `max_completion_tokens` the drawn value that `MaxTokens` carries, and no `min_tokens`.
+func TestGrammarConstrainedRequestIsRepeatedWithoutMinTokens(t *testing.T) {
 	t.Parallel()
-	bodies := map[string]string{
-		"json_object":        `{"messages":[{"content":"hi","role":"user"}],"model":"model-a","response_format":{"type":"json_object"}}`,
-		"json_schema":        `{"messages":[{"content":"hi","role":"user"}],"model":"model-a","response_format":{"type":"json_schema"}}`,
-		"required tool":      `{"messages":[{"content":"hi","role":"user"}],"model":"model-a","tool_choice":"required"}`,
-		"named tool":         `{"messages":[{"content":"hi","role":"user"}],"model":"model-a","tool_choice":{"function":{"name":"lookup"},"type":"function"}}`,
-		"tools":              `{"messages":[{"content":"hi","role":"user"}],"model":"model-a","tool_choice":"auto","tools":[{"function":{"name":"lookup"},"type":"function"}]}`,
-		"structured outputs": `{"messages":[{"content":"hi","role":"user"}],"model":"model-a","structured_outputs":{"regex":"[a-z]+"}}`,
+	constraints := map[string]string{
+		"json_object":        `"response_format":{"type":"json_object"}`,
+		"json_schema":        `"response_format":{"type":"json_schema"}`,
+		"required tool":      `"tool_choice":"required"`,
+		"named tool":         `"tool_choice":{"function":{"name":"lookup"},"type":"function"}`,
+		"structured outputs": `"structured_outputs":{"regex":"[a-z]+"}`,
 	}
-	for name, body := range bodies {
+	for name, constraint := range constraints {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			params, skip := New(steppedClock(), roomyBounds).Params(queuedProfile(clientRequest(body)), probeStartedAt)
+			body := `{"max_completion_tokens":4096,"max_tokens":4096,"messages":[{"content":"hi","role":"user"}],"min_tokens":30,"model":"model-a",` + constraint + `}`
 
-			if skip != scheduler.ProbeSkipGrammarConstrained || params != nil {
-				t.Errorf("params = %v, skip = %v, want no params and ProbeSkipGrammarConstrained", params, skip)
+			probe := probeParams(t, clientRequest(body))
+
+			members := decoded(t, probe.Prompt)
+			options, _ := members["stream_options"].(map[string]any)
+			if _, present := members["min_tokens"]; present {
+				t.Errorf("probe = %s, want no min_tokens on a grammar-constrained request", probe.Prompt)
+			}
+			if members["max_tokens"] != float64(probe.MaxTokens) || members["max_completion_tokens"] != float64(probe.MaxTokens) {
+				t.Errorf("probe = %s, want max_tokens and max_completion_tokens both the drawn %d", probe.Prompt, probe.MaxTokens)
+			}
+			if members["stream"] != true || options["include_usage"] != true {
+				t.Errorf("probe = %s, want stream on with include_usage", probe.Prompt)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Build probe params from a client body that carries tools with `tool_choice` auto and a `min_tokens`, the shape of a body whose `required` choice the filters relaxed.
+//  2. Assert it is repeated: no skip, the tools kept, `stream` on with `include_usage`, `max_tokens` the drawn value that `MaxTokens` carries, and no `min_tokens`.
+func TestToolsRequestIsRepeatedWithoutMinTokens(t *testing.T) {
+	t.Parallel()
+	body := `{"messages":[{"content":"hi","role":"user"}],"min_tokens":30,"model":"model-a","tool_choice":"auto","tools":[{"function":{"name":"lookup"},"type":"function"}]}`
+
+	probe := probeParams(t, clientRequest(body))
+
+	members := decoded(t, probe.Prompt)
+	options, _ := members["stream_options"].(map[string]any)
+	if _, kept := members["tools"]; !kept {
+		t.Errorf("probe = %s, want the tools kept", probe.Prompt)
+	}
+	if _, present := members["min_tokens"]; present {
+		t.Errorf("probe = %s, want no min_tokens on a request that carries tools", probe.Prompt)
+	}
+	if members["max_tokens"] != float64(probe.MaxTokens) {
+		t.Errorf("probe = %s, want max_tokens the drawn %d", probe.Prompt, probe.MaxTokens)
+	}
+	if members["stream"] != true || options["include_usage"] != true {
+		t.Errorf("probe = %s, want stream on with include_usage", probe.Prompt)
 	}
 }
 

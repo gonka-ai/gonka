@@ -4,19 +4,18 @@ package scheduler
 
 // Why a nonce was burned instead of served.
 const (
-	GhostReasonPoCUnavailable          = "poc_unavailable_host"
-	GhostReasonWindowFull              = "participant_window_full_no_send"
-	GhostReasonCutOff                  = "participant_cut_off_no_send"
-	GhostReasonEjected                 = "participant_ejected_no_send"
-	GhostReasonUntrusted               = "participant_untrusted"
-	GhostReasonStateDiverged           = "participant_state_diverged_no_send"
-	GhostReasonNoCompatibleRequest     = "no_compatible_request_after_stale"
-	GhostReasonAbandoned               = "request_abandoned_before_dispatch"
-	GhostReasonPrepareFailed           = "nonce_spent_on_failed_prepare"
-	GhostReasonAbsentFromChain         = "participant_absent_from_chain_no_send"
-	GhostReasonProbeNoRequest          = "shadow_probe_no_request"
-	GhostReasonProbeGrammarConstrained = "shadow_probe_grammar_constrained"
-	GhostReasonProbeNoRoom             = "shadow_probe_no_room"
+	GhostReasonPoCUnavailable      = "poc_unavailable_host"
+	GhostReasonWindowFull          = "participant_window_full_no_send"
+	GhostReasonCutOff              = "participant_cut_off_no_send"
+	GhostReasonEjected             = "participant_ejected_no_send"
+	GhostReasonUntrusted           = "participant_untrusted"
+	GhostReasonStateDiverged       = "participant_state_diverged_no_send"
+	GhostReasonNoCompatibleRequest = "no_compatible_request_after_stale"
+	GhostReasonAbandoned           = "request_abandoned_before_dispatch"
+	GhostReasonPrepareFailed       = "nonce_spent_on_failed_prepare"
+	GhostReasonAbsentFromChain     = "participant_absent_from_chain_no_send"
+	GhostReasonProbeNoRequest      = "shadow_probe_no_request"
+	GhostReasonProbeNoRoom         = "shadow_probe_no_room"
 )
 
 // ProbeSkip is why a shadow participant's nonce is burned instead of probed; ProbeSkipNone is a probe that can be built. See routing.md, "Shadow participants".
@@ -25,7 +24,6 @@ type ProbeSkip int
 const (
 	ProbeSkipNone ProbeSkip = iota
 	ProbeSkipNoRequest
-	ProbeSkipGrammarConstrained
 	ProbeSkipNoRoom
 )
 

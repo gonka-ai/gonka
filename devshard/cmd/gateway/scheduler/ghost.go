@@ -15,7 +15,6 @@ const (
 	ghostPrepareFailed
 	ghostAbsentFromChain
 	ghostProbeNoRequest
-	ghostProbeGrammar
 	ghostProbeNoRoom
 )
 
@@ -43,8 +42,6 @@ func (k GhostKind) reason() string {
 		return GhostReasonAbsentFromChain
 	case ghostProbeNoRequest:
 		return GhostReasonProbeNoRequest
-	case ghostProbeGrammar:
-		return GhostReasonProbeGrammarConstrained
 	case ghostProbeNoRoom:
 		return GhostReasonProbeNoRoom
 	default:

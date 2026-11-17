@@ -23,8 +23,6 @@ func (d *dispatcher) shadowDecision() Decision {
 	switch skip {
 	case ProbeSkipNone:
 		return probe{params: params}
-	case ProbeSkipGrammarConstrained:
-		return burn{kind: ghostProbeGrammar}
 	case ProbeSkipNoRoom:
 		return burn{kind: ghostProbeNoRoom}
 	default:
