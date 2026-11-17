@@ -250,6 +250,37 @@ func (bo *BlockObserver) processBlock(ctx context.Context, height int64) bool {
 			return false
 		}
 	}
+	// Automatic signing retries are requested in EndBlock, so CometBFT
+	// returns them in FinalizeBlockEvents rather than TxsResults. Route only
+	// these requests through the existing Tx handler, preserving its sync and
+	// height gates. Other block events retain their existing NewBlock routes.
+	// Repeated requests become parallel attribute arrays, just like tx events.
+	finalizeEvents := map[string][]string{"tx.height": {strconv.FormatInt(height, 10)}}
+	for _, ev := range res.FinalizeBlockEvents {
+		if ev.Type != blsThresholdSigningRequestedEvent {
+			continue
+		}
+		for _, attr := range ev.Attributes {
+			key := ev.Type + "." + attr.Key
+			finalizeEvents[key] = append(finalizeEvents[key], attr.Value)
+		}
+	}
+	if len(finalizeEvents) > 1 {
+		msg := &chainevents.JSONRPCResponse{
+			JSONRPC: "2.0",
+			ID:      "block-" + strconv.FormatInt(height, 10) + "-finalize-bls",
+			Result: chainevents.Result{
+				Query:  "block_monitor/Tx",
+				Data:   chainevents.Data{Type: txEventType, Value: map[string]interface{}{}},
+				Events: finalizeEvents,
+			},
+		}
+		if bo.relevanceFilter == nil || bo.relevanceFilter(msg) {
+			if !bo.enqueue(ctx, msg) {
+				return false
+			}
+		}
+	}
 	// Always enqueue a barrier event to signal block completion when consumed,
 	// even if every tx event in this block was filtered out. The barrier is how
 	// lastProcessedBlockHeight advances, so it must flow for every observed block.
