@@ -132,7 +132,7 @@ Slot sampling seed: `SHA256(validatorPubKey:blockHash:blockHeight:modelId)`. Dif
 
 Proof requests include `model_id` to route to the correct artifact store. Validation callback routing uses the model-scoped path `/v2/poc-batches/:model_id/validated`.
 
-Vote power is per-model, delegation-resolved, read from `ValidationWeight.voting_power` on the subgroup. The acceptance rule is `sum(votingPower of approvers) / totalNetworkWeight > 2/3`. If neither valid nor invalid reaches 2/3, the guardian tiebreak rule applies: the decision passes only if every voting guardian agrees unanimously.
+Vote power is per-model, delegation-resolved, read from `ValidationWeight.voting_power` on the subgroup. The acceptance rule is `sum(votingPower of approvers) / totalNetworkWeight > validation_vote_threshold_bps / 10000` (default 5000). If neither valid nor invalid exceeds that threshold, the guardian tiebreak rule applies: the decision passes only if every voting guardian agrees unanimously.
 
 Confirmation PoC follows the same model-aware paths: per-model stores, per-model proofs, per-model validation records.
 
