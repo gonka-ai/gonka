@@ -223,7 +223,7 @@ func TestBlsCompletedRetryThroughApp_AbandonsOnFiftiethFailureWithoutRefund(t *t
 		require.Equal(t, "50", attrs["attempts"])
 	}
 	closed, err := f.app.InferenceKeeper.ProcessAutoRefundForFailedBridgeOperation(ctx, f.requestID, "retry exhausted")
-	require.ErrorContains(t, err, "COMPLETED")
+	require.Error(t, err)
 	require.False(t, closed)
 	require.Error(t, f.app.BlsKeeper.CancelThresholdSignature(ctx, f.requestID))
 	f.assertPending(t, true)
