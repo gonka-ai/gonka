@@ -25,11 +25,19 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
+	oldParams, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := k.validateEpochTimingChange(ctx, oldParams, req.Params); err != nil {
+		return nil, errorsmod.Wrap(err, "invalid params")
+	}
+
 	if err := k.SetParams(ctx, req.Params); err != nil {
 		return nil, err
 	}
 
-	err := k.PrecomputeSPRTValues(ctx)
+	err = k.PrecomputeSPRTValues(ctx)
 	if err != nil {
 		k.LogError("Failed to precompute SPRT values", types.Validation, "error", err)
 		return nil, err
