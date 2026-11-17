@@ -800,6 +800,11 @@ func TestFilterOutMaintenanceParticipants(t *testing.T) {
 	filtered := k.FilterOutMaintenanceParticipants(activateCtx, members)
 	require.Len(t, filtered, 1)
 	require.Equal(t, participant2, filtered[0].Member.Address)
+
+	// Completion restores eligibility for new inference assignments.
+	completeCtx := ctx.WithBlockHeight(550)
+	require.NoError(t, k.ProcessMaintenanceTransitions(completeCtx))
+	require.Equal(t, members, k.FilterOutMaintenanceParticipants(completeCtx, members))
 }
 
 // TestCreditAccrual_SuppressedByActiveReservation exercises the in-progress
