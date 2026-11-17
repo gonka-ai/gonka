@@ -4,6 +4,7 @@ import (
 	"common/logging"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/utils"
+	"errors"
 	"fmt"
 	"math/big"
 	"strconv"
@@ -17,8 +18,43 @@ const (
 	thresholdSigningLogTag = "Threshold Signing: "
 )
 
-// ProcessThresholdSigningRequested handles EventThresholdSigningRequested events
+// ProcessThresholdSigningRequested handles every signing request in a transaction.
+// BlockObserver flattens repeated typed events into parallel attribute arrays;
+// taking only their first values silently drops subsequent bridge reissues.
 func (bm *BlsManager) ProcessThresholdSigningRequested(event *chainevents.JSONRPCResponse) error {
+	if event == nil {
+		return fmt.Errorf("threshold signing event is nil")
+	}
+	const prefix = "inference.bls.EventThresholdSigningRequested."
+	fields := [...]string{"request_id", "current_epoch_id", "message_hash", "deadline_block_height"}
+	count := len(event.Result.Events[prefix+fields[0]])
+	if count == 0 {
+		return fmt.Errorf("key %srequest_id not found in event", prefix)
+	}
+	// Validate the entire shape before signing anything: mismatched arrays
+	// cannot safely associate a request with its epoch, hash and deadline.
+	for _, field := range fields[1:] {
+		if got := len(event.Result.Events[prefix+field]); got != count {
+			return fmt.Errorf("threshold signing attribute %s has %d values, expected %d", field, got, count)
+		}
+	}
+	var failures []error
+	for index := 0; index < count; index++ {
+		attributes := make(map[string][]string, len(fields))
+		for _, field := range fields {
+			key := prefix + field
+			attributes[key] = []string{event.Result.Events[key][index]}
+		}
+		// Keep only signing attributes, rather than copying other tx payloads.
+		single := &chainevents.JSONRPCResponse{Result: chainevents.Result{Events: attributes}}
+		if err := bm.processThresholdSigningRequested(single); err != nil {
+			failures = append(failures, fmt.Errorf("threshold signing event %d: %w", index, err))
+		}
+	}
+	return errors.Join(failures...)
+}
+
+func (bm *BlsManager) processThresholdSigningRequested(event *chainevents.JSONRPCResponse) error {
 	logging.Debug(thresholdSigningLogTag+"Processing threshold signing requested event", inferenceTypes.BLS)
 
 	// Extract event data
