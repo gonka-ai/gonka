@@ -357,7 +357,13 @@ func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper) ante.TxFeeCh
 
 		price := uint64(0)
 		if fp != nil {
-			price = fp.EnabledPayingPrice(inners, inferencetypes.IsNetworkDuty)
+			// A duty type alone does not earn an exemption. The transaction-wide
+			// bypass can be withheld for an unauthorized actor, or for a mixed
+			// transaction. In either case, exempt only its authorized duties;
+			// otherwise this would undo the bypass decorator's authorization check.
+			price = fp.EnabledPayingPrice(inners, func(msg sdk.Msg) bool {
+				return isAuthorizedNetworkDuty(ctx, msg, inferenceKeeper)
+			})
 		}
 
 		if price == 0 {

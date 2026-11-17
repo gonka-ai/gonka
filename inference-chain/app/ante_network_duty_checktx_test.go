@@ -59,6 +59,16 @@ func setupDutyCheckTx(t *testing.T) dutyCheckTxFixture {
 		ChainID: TallyTestChainID,
 		Time:    time.Now().UTC(),
 	})
+	// Isolate the authorization gate: it must reject ineligible duties even
+	// when governance sets every minimum to zero. With a positive minimum the
+	// fee checker now rejects them earlier, before the signer decorator runs.
+	params, err := testApp.InferenceKeeper.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = inferencetypes.DefaultFeeParams()
+	for _, group := range params.FeeParams.Groups {
+		group.MinGasPrice = 0
+	}
+	require.NoError(t, testApp.InferenceKeeper.SetParams(ctx, params))
 
 	partPriv := secp256k1.GenPrivKey()
 	participant := sdk.AccAddress(partPriv.PubKey().Address())
@@ -107,7 +117,7 @@ func setupDutyCheckTx(t *testing.T) dutyCheckTxFixture {
 		&expiry,
 	))
 
-	_, err := testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+	_, err = testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
 		Height: testApp.LastBlockHeight() + 1,
 		Time:   time.Now().UTC(),
 	})
