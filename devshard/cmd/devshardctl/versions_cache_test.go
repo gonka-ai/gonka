@@ -114,3 +114,33 @@ func TestVersionsCache_OversizedErrorResponseNotDrained(t *testing.T) {
 		t.Fatalf("error body was drained without limit: %d bytes consumed", got)
 	}
 }
+
+func TestVersionsCache_SlowHostsDoNotStretchPass(t *testing.T) {
+	const slow = 300 * time.Millisecond
+	cands := map[string]string{}
+	for i := 0; i < 22; i++ {
+		lat := time.Duration(0)
+		if i < 4 {
+			lat = slow
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(lat)
+			w.Write([]byte(`{"mlnodes":[{"node_id":"n1","poc_validation_inference":true}]}`))
+		}))
+		defer srv.Close()
+		cands[string(rune('a'+i))] = srv.URL
+	}
+	c := NewVersionsCache(&http.Client{Timeout: time.Second}, time.Minute)
+	c.SetCandidates(cands)
+	start := time.Now()
+	c.Poll(context.Background())
+	// Sequential polling would take 4*slow; one slow host must not delay the others.
+	if elapsed := time.Since(start); elapsed >= 3*slow {
+		t.Fatalf("poll pass took %v with 4 slow hosts, want < %v", elapsed, 3*slow)
+	}
+	for m := range cands {
+		if !c.IsNodeValidationCapable(m, "n1") {
+			t.Fatalf("miner %s should be capable after the pass", m)
+		}
+	}
+}

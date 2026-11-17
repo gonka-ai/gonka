@@ -23,6 +23,8 @@ type versionsResponse struct {
 
 const maxVersionsResponseBytes = 1 << 20
 
+const versionsPollConcurrency = 8
+
 type versionsEntry struct {
 	capableNodes map[string]bool // node_id -> validation-inference capable
 	fetchedAt    time.Time
@@ -84,12 +86,23 @@ func (c *VersionsCache) Poll(ctx context.Context) {
 	maps.Copy(candidates, c.candidates)
 	c.mu.RUnlock()
 
+	// Concurrent: a sequential pass grows by up to the client timeout per slow
+	// host and outlives the TTL, so fresh honest entries read as stale.
+	sem := make(chan struct{}, versionsPollConcurrency)
+	var wg sync.WaitGroup
 	for miner, base := range candidates {
-		nodes := c.fetchOne(ctx, base)
-		c.mu.Lock()
-		c.entries[miner] = versionsEntry{capableNodes: nodes, fetchedAt: c.now()}
-		c.mu.Unlock()
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(miner, base string) {
+			defer wg.Done()
+			defer func() { <-sem }()
+			nodes := c.fetchOne(ctx, base)
+			c.mu.Lock()
+			c.entries[miner] = versionsEntry{capableNodes: nodes, fetchedAt: c.now()}
+			c.mu.Unlock()
+		}(miner, base)
 	}
+	wg.Wait()
 }
 
 // fetchOne returns the per-node capability map, or nil on any error (fail-closed).
