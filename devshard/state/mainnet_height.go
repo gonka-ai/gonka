@@ -51,31 +51,51 @@ func (sm *StateMachine) BuildMainnetHeightTx(ctx context.Context) (*types.Devsha
 	if !required {
 		return nil, nil
 	}
-	if source == nil {
-		return nil, fmt.Errorf("%w: no mainnet light-block source", types.ErrHeaderPending)
-	}
 	// The inference chooser may omit its optional persistence context.
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
+	header, err := latestMainnetHeader(ctx, source)
+	if err != nil {
+		return nil, err
+	}
+	next, proof, err := authenticateMainnetTip(ctx, cp, header, source)
+	if err != nil {
+		return nil, err
+	}
+	return &types.DevshardTx{Tx: &types.DevshardTx_MainnetHeight{MainnetHeight: &types.MsgMainnetHeight{Height: next.Height, LightBlocks: proof, TimeUnixNano: next.Time.UnixNano()}}}, nil
+}
+
+func latestMainnetHeader(ctx context.Context, source MainnetHeightSource) (*blocks.Header, error) {
+	if source == nil {
+		return nil, fmt.Errorf("%w: no mainnet height source", types.ErrHeaderPending)
+	}
 	header, err := source.Latest(ctx)
 	if err != nil || header == nil || blocks.IsDummyHeader(header) {
 		return nil, fmt.Errorf("%w: mainnet tip unavailable: %v", types.ErrHeaderPending, err)
 	}
-	target := max(header.Height, cp.Height)
-	proof, next, err := lightproof.Build(ctx, cp, target, source)
+	return header, nil
+}
+
+// authenticateMainnetTip returns fresh evidence without applying it or creating
+// a transaction. The sequencer serializes the proof into its next diff; final
+// attestation uses only the checkpoint to authorize the existing final state.
+// Callers share a bounded context across the tip lookup and proof reads.
+func authenticateMainnetTip(ctx context.Context, from lightproof.Checkpoint, tip *blocks.Header, source lightproof.Source) (lightproof.Checkpoint, [][]byte, error) {
+	target := max(tip.Height, from.Height)
+	proof, next, err := lightproof.Build(ctx, from, target, source)
 	if err != nil {
-		return nil, fmt.Errorf("mainnet height proof: %w", err)
+		return lightproof.Checkpoint{}, nil, fmt.Errorf("mainnet height proof: %w", err)
 	}
-	if target == header.Height && !bytes.Equal(next.Hash, header.BlockHash) {
-		return nil, fmt.Errorf("%w: light block differs from advertised mainnet tip", lightproof.ErrInvalid)
+	if target == tip.Height && !bytes.Equal(next.Hash, tip.BlockHash) {
+		return lightproof.Checkpoint{}, nil, fmt.Errorf("%w: light block differs from advertised mainnet tip", lightproof.ErrInvalid)
 	}
 	if err := checkCheckpointAge(next, time.Now()); err != nil {
-		return nil, err
+		return lightproof.Checkpoint{}, nil, err
 	}
-	return &types.DevshardTx{Tx: &types.DevshardTx_MainnetHeight{MainnetHeight: &types.MsgMainnetHeight{Height: target, LightBlocks: proof, TimeUnixNano: next.Time.UnixNano()}}}, nil
+	return next, proof, nil
 }
 
 // stageMainnetHeightLocked runs inside the outer mutation journal, before any
@@ -113,7 +133,7 @@ func (sm *StateMachine) stageMainnetHeightLocked(txs []*types.DevshardTx) error 
 
 // Freshness is ordinary live signing policy, not replay validity. New work
 // cannot keep collecting signatures against a frozen old height. Recovery of
-// an admitted final root uses TerminalSigningSlots with separate fresh evidence.
+// an admitted final root uses separate fresh authority evidence.
 const MainnetCheckpointMaxAge = 2 * time.Minute
 const MainnetCheckpointMaxFuture = 10 * time.Second
 const MainnetCheckpointMaxLag = int64(2)
@@ -121,6 +141,13 @@ const MainnetCheckpointMaxLag = int64(2)
 func checkCheckpointAge(cp lightproof.Checkpoint, now time.Time) error {
 	if cp.Time.IsZero() || now.Sub(cp.Time) > MainnetCheckpointMaxAge || cp.Time.Sub(now) > MainnetCheckpointMaxFuture {
 		return fmt.Errorf("%w: mainnet checkpoint is outside the live signing time window", types.ErrHeaderPending)
+	}
+	return nil
+}
+
+func checkCheckpointLag(cp lightproof.Checkpoint, tip *blocks.Header) error {
+	if tip.Height > cp.Height+MainnetCheckpointMaxLag {
+		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, tip.Height)
 	}
 	return nil
 }
@@ -138,14 +165,11 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if err := checkCheckpointAge(cp, now); err != nil {
 		return err
 	}
-	if source == nil {
-		return fmt.Errorf("%w: no mainnet height source", types.ErrHeaderPending)
-	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
-	latest, err := source.Latest(ctx)
-	if err != nil || latest == nil || blocks.IsDummyHeader(latest) {
-		return fmt.Errorf("%w: live mainnet tip unavailable: %v", types.ErrHeaderPending, err)
+	latest, err := latestMainnetHeader(ctx, source)
+	if err != nil {
+		return err
 	}
 	// Live signers also reconcile the carried proof with their own canonical
 	// oracle. This prevents an old escrow anchor being used for a long-range
@@ -154,10 +178,7 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
 		return err
 	}
-	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
-		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
-	}
-	return nil
+	return checkCheckpointLag(cp, latest)
 }
 
 func checkCanonicalCheckpoint(ctx context.Context, cp lightproof.Checkpoint, source MainnetHeightSource, headerTimes HeaderTimeSource) error {
