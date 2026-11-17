@@ -22,6 +22,12 @@ func newCapture(now func() time.Time) *capture {
 	return &capture{now: now, started: now()}
 }
 
+func (c *capture) Sent() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.started = c.now()
+}
+
 func (c *capture) Write(chunk []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

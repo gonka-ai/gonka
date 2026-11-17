@@ -331,14 +331,17 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	probeTimeouts := probeVotes{recorder: raceRecorder, events: events}
 	prober.Settle(sessions.Poster, probeTimeouts, events)
 	prompts := promptTokens(sources.ModelSnapshots, observer)
+	e2e := env.LoadE2E()
 	shadowProbes.Bind(shadow.Binding{
 		Escrows:  escrows,
 		Lifetime: ctx,
 		Voter:    warmup.Voter{Posters: sessions.Poster, Timeouts: probeTimeouts},
 		Probes:   events,
 		Outcomes: shadowOutcomes{recorder: metrics.NewShadowProbeRecorder(telemetry), events: events},
+		HardTimeout: func() time.Duration {
+			return engine.PolicyFor(configHolder.Load().Engine, engine.E2EOverrides{HardTimeout: e2e.StreamingHardTimeout}).HardTimeoutOrDefault()
+		},
 	})
-	e2e := env.LoadE2E()
 	races, err := engine.NewEngine(engine.Deps{
 		Picker:     router,
 		Targets:    sessions,

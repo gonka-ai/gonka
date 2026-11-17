@@ -1,7 +1,5 @@
 package shadow
 
-import "time"
-
 // How a probe ended; the wire strings of the metric and the journal line.
 const (
 	OutcomeServed = "served"
@@ -12,7 +10,6 @@ const (
 const (
 	ProbeMinOutputTokens = 256
 	ProbeMaxOutputTokens = 1024
-	probeTimeout         = 2 * time.Minute
 	maxCaptureBytes      = 64 << 10
 	dataPrefix           = "data:"
 	doneMarker           = "[DONE]"

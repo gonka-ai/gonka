@@ -25,12 +25,26 @@ const (
 	probeParticipant = "gonka1shadowhost"
 	probeModel       = "model-a"
 	awaitBudget      = 5 * time.Second
+	probeHardTimeout = time.Hour
 )
 
 type stubEscrows struct {
 	session  registry.EscrowSession
 	held     bool
 	released atomic.Int64
+	settling atomic.Int64
+	settled  atomic.Int64
+
+	voteReleased     chan struct{}
+	closeVoteRelease sync.Once
+}
+
+func (s *stubEscrows) HoldForVote(string) (registry.EscrowSession, func(), bool) {
+	s.settling.Add(1)
+	return s.session, func() {
+		s.settled.Add(1)
+		s.closeVoteRelease.Do(func() { close(s.voteReleased) })
+	}, s.held
 }
 
 func (s *stubEscrows) AcquireCommitted(string) (registry.EscrowSession, func(), bool) {
@@ -88,6 +102,7 @@ type probeFixture struct {
 	poster   *stubPoster
 	timeouts *spyTimeouts
 	held     atomic.Int64
+	hardTime time.Duration
 }
 
 func steppedClock() func() time.Time {
@@ -111,12 +126,13 @@ func newFixtureWithin(t *testing.T, lifetime context.Context, send sendFunc) *pr
 	session := &stubSession{}
 	fixture := &probeFixture{
 		runner:   New(steppedClock(), roomyBounds),
-		escrows:  &stubEscrows{session: session, held: true},
+		escrows:  &stubEscrows{session: session, held: true, voteReleased: make(chan struct{})},
 		session:  session,
 		outcomes: spyOutcomes{results: make(chan Result, 1)},
 		probes:   &spyProbes{},
 		poster:   &stubPoster{},
 		timeouts: &spyTimeouts{},
+		hardTime: probeHardTimeout,
 	}
 	fixture.runner.send = send
 	fixture.runner.Bind(Binding{
@@ -126,8 +142,9 @@ func newFixtureWithin(t *testing.T, lifetime context.Context, send sendFunc) *pr
 			Posters:  func(string, any) (engine.TimeoutPoster, bool) { return fixture.poster, true },
 			Timeouts: fixture.timeouts,
 		},
-		Probes:   fixture.probes,
-		Outcomes: fixture.outcomes,
+		Probes:      fixture.probes,
+		Outcomes:    fixture.outcomes,
+		HardTimeout: func() time.Duration { return fixture.hardTime },
 	})
 	return fixture
 }
@@ -151,12 +168,30 @@ func (f *probeFixture) request() scheduler.ProbeRequest {
 
 func (f *probeFixture) await(t *testing.T) Result {
 	t.Helper()
+	result := f.awaitReported(t)
+	if result.Outcome == OutcomeFailed {
+		f.awaitVote(t)
+	}
+	return result
+}
+
+func (f *probeFixture) awaitReported(t *testing.T) Result {
+	t.Helper()
 	select {
 	case result := <-f.outcomes.results:
 		return result
 	case <-time.After(awaitBudget):
 		t.Fatal("timed out waiting for the shadow probe's result to be reported")
 		return Result{}
+	}
+}
+
+func (f *probeFixture) awaitVote(t *testing.T) {
+	t.Helper()
+	select {
+	case <-f.escrows.voteReleased:
+	case <-time.After(awaitBudget):
+		t.Fatal("timed out waiting for the failed probe's vote hold to be released")
 	}
 }
 
@@ -219,7 +254,7 @@ func TestServedProbeIsReportedRecordedAndSettledWithoutAVote(t *testing.T) {
 //  2. Probe a committed nonce and await the reported result.
 //  3. Assert the result is failed and carries the send error.
 //  4. Assert one refused timeout vote was posted and recorded as started then completed, so no pending nonce is left behind.
-//  5. Assert the ledger attempt is not acknowledged, the quiet settle was still armed and the runner's hold was released.
+//  5. Assert the ledger attempt is not acknowledged, the quiet settle was armed before and again after the vote and the runner's hold was released.
 func TestFailedProbeVotesItsNonceRefused(t *testing.T) {
 	defer leakcheck.VerifyNoneStarted(t)()
 	failure := errors.New("connection refused")
@@ -242,8 +277,8 @@ func TestFailedProbeVotesItsNonceRefused(t *testing.T) {
 	if len(fixture.probes.attempts) != 1 || fixture.probes.attempts[0].Acknowledged {
 		t.Errorf("ledger attempts = %+v, want one unacknowledged attempt", fixture.probes.attempts)
 	}
-	if fixture.session.armed.Load() != 1 || fixture.escrows.released.Load() != 1 {
-		t.Errorf("quiet settle armed %d times, holds released %d, want 1 and 1", fixture.session.armed.Load(), fixture.escrows.released.Load())
+	if fixture.session.armed.Load() != 2 || fixture.escrows.released.Load() != 1 {
+		t.Errorf("quiet settle armed %d times, holds released %d, want 2 and 1", fixture.session.armed.Load(), fixture.escrows.released.Load())
 	}
 }
 
@@ -345,5 +380,140 @@ func TestProbeIsTheOnlyLedgerLineAndLeavesTheClientRequestAlone(t *testing.T) {
 	}
 	if probe := params.(user.InferenceParams); bytes.Equal(probe.Prompt, client.Prompt) || &probe.Prompt[0] == &client.Prompt[0] {
 		t.Errorf("probe body = %s, want a body of its own", probe.Prompt)
+	}
+}
+
+type manualClock struct {
+	mu      sync.Mutex
+	current time.Time
+}
+
+func newManualClock() *manualClock {
+	return &manualClock{current: time.Unix(1_700_000_000, 0)}
+}
+
+func (c *manualClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.current
+}
+
+func (c *manualClock) advance(step time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.current = c.current.Add(step)
+}
+
+const (
+	contentEvent = "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+	usageEvent10 = "data: {\"choices\":[],\"usage\":{\"completion_tokens\":10}}\n\n"
+	doneEvent    = "data: [DONE]\n\n"
+)
+
+func timedAnswer(clock *manualClock, receiptAfter, gap time.Duration, confirmedAfter time.Duration) sendFunc {
+	return func(_ context.Context, _ registry.EscrowSession, _ *user.PreparedInference, answer io.Writer, onReceipt func()) (*host.HostResponse, error) {
+		sent := clock.now()
+		clock.advance(receiptAfter)
+		onReceipt()
+		_, _ = answer.Write([]byte(contentEvent))
+		clock.advance(gap)
+		_, _ = answer.Write([]byte(usageEvent10))
+		_, _ = answer.Write([]byte(doneEvent))
+		return &host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: sent.Add(confirmedAfter).Unix()}, nil
+	}
+}
+
+// Test flow:
+//  1. Bind a runner on a clock the send controls, whose send receipts after 3s, streams one content event, stalls 6s, then streams a usage of 10 tokens, with a host stamp a minute ahead.
+//  2. Probe a committed nonce and await the result.
+//  3. Assert the ledger attempt carries the slow receipt, slow chunk, slow decode and clock drift flags a client line would carry for the same stream.
+func TestProbeLineCarriesTheTimingFlagsAClientLineCarries(t *testing.T) {
+	defer leakcheck.VerifyNoneStarted(t)()
+	clock := newManualClock()
+	fixture := newFixture(t, timedAnswer(clock, 3*time.Second, 6*time.Second, time.Minute))
+	fixture.runner.now = clock.now
+
+	fixture.runner.Probe(fixture.request())
+	fixture.await(t)
+
+	attempt := fixture.probes.attempts[0]
+	if !attempt.SlowReceipt || !attempt.SlowChunk || !attempt.SlowDecode || !attempt.ClockDrifted {
+		t.Errorf("attempt = %+v, want slow receipt, slow chunk, slow decode and clock drift set", attempt)
+	}
+}
+
+// Test flow:
+//  1. Bind a runner on a clock the send controls, whose send receipts at once, streams without a stall, with a host stamp inside the round trip.
+//  2. Probe a committed nonce and await the result.
+//  3. Assert the ledger attempt carries none of the timing flags.
+func TestProbeLineOfAPromptAnswerCarriesNoTimingFlags(t *testing.T) {
+	defer leakcheck.VerifyNoneStarted(t)()
+	clock := newManualClock()
+	fixture := newFixture(t, timedAnswer(clock, 0, 0, 0))
+	fixture.runner.now = clock.now
+
+	fixture.runner.Probe(fixture.request())
+	fixture.await(t)
+
+	attempt := fixture.probes.attempts[0]
+	if attempt.SlowReceipt || attempt.SlowChunk || attempt.SlowDecode || attempt.ClockDrifted {
+		t.Errorf("attempt = %+v, want no timing flag set", attempt)
+	}
+}
+
+type blockingPoster struct {
+	entered chan struct{}
+	proceed chan struct{}
+}
+
+func (p *blockingPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
+
+func (p *blockingPoster) SettleTimeout(context.Context, engine.TimeoutStep) (engine.TimeoutVote, error) {
+	close(p.entered)
+	<-p.proceed
+	return engine.TimeoutVote{Kind: engine.TimeoutKindRefused}, nil
+}
+
+// Test flow:
+//  1. Bind a runner whose send fails and whose vote poster blocks until released.
+//  2. Probe a committed nonce and assert the failed result is reported while the vote is still waiting.
+//  3. Assert by then the quiet settle is armed, the request hold is given back and a vote hold keeps the escrow open.
+//  4. Let the vote return and assert the vote hold is released and the quiet settle is armed again, for what the vote queued.
+func TestFailedProbeIsReportedBeforeItsVoteReturns(t *testing.T) {
+	defer leakcheck.VerifyNoneStarted(t)()
+	fixture := newFixture(t, func(context.Context, registry.EscrowSession, *user.PreparedInference, io.Writer, func()) (*host.HostResponse, error) {
+		return nil, errors.New("connection refused")
+	})
+	poster := &blockingPoster{entered: make(chan struct{}), proceed: make(chan struct{})}
+	proceed := sync.OnceFunc(func() { close(poster.proceed) })
+	defer proceed()
+	fixture.runner.Bind(Binding{
+		Escrows:     fixture.escrows,
+		Lifetime:    t.Context(),
+		Voter:       warmup.Voter{Posters: func(string, any) (engine.TimeoutPoster, bool) { return poster, true }},
+		Probes:      fixture.probes,
+		Outcomes:    fixture.outcomes,
+		HardTimeout: func() time.Duration { return probeHardTimeout },
+	})
+
+	fixture.runner.Probe(fixture.request())
+	result := fixture.awaitReported(t)
+	select {
+	case <-poster.entered:
+	case <-time.After(awaitBudget):
+		t.Fatal("timed out waiting for the failed probe's vote to start")
+	}
+
+	if result.Outcome != OutcomeFailed {
+		t.Fatalf("result = %+v, want a failed probe", result)
+	}
+	if fixture.session.armed.Load() != 1 || fixture.escrows.released.Load() != 1 || fixture.escrows.settling.Load() != 1 || fixture.escrows.settled.Load() != 0 {
+		t.Errorf("quiet settle armed %d, request holds released %d, vote holds taken %d and released %d, want 1, 1, 1 and 0 while the vote waits",
+			fixture.session.armed.Load(), fixture.escrows.released.Load(), fixture.escrows.settling.Load(), fixture.escrows.settled.Load())
+	}
+	proceed()
+	fixture.awaitVote(t)
+	if fixture.session.armed.Load() != 2 {
+		t.Errorf("quiet settle armed %d times after the vote, want 2", fixture.session.armed.Load())
 	}
 }
