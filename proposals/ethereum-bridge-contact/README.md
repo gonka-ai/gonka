@@ -26,9 +26,15 @@ The `BridgeContract` is both:
 
 - BLS signature verification using Ethereum's native precompiles
 - Dual chain ID replay protection (Gonka + Ethereum chain IDs)
-- Per-epoch request ID tracking
+- Global request ID tracking across epochs and operations
 - Sequential epoch validation with cryptographic chain of trust
 - Admin failsafe with automatic timeout detection
+
+The two-epoch signature window in this version requires the chain's restricted
+signature-reissue flow before a new deployment accepts requests. It is not an
+upgrade to the already deployed, immutable bridge. See
+[signature reissue and activation](SIGNATURE_REISSUE.md) for the deployment
+dependency and the limits on old-contract requests.
 
 
 ### Constructor
@@ -77,6 +83,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         WITHDRAW_OPERATION,  // keccak256("WITHDRAW_OPERATION")
         recipient,
+        address(this),       // Destination bridge contract
         tokenContract,
         amount
     )
@@ -112,6 +119,7 @@ bytes32 messageHash = keccak256(
         ETHEREUM_CHAIN_ID,
         MINT_OPERATION,  // keccak256("MINT_OPERATION")
         recipient,
+        address(this),    // Destination bridge contract
         amount
     )
 );

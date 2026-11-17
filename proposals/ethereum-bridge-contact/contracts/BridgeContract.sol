@@ -716,10 +716,13 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         }
         // Compute y' = p - y (big-endian, byte-by-byte with borrow)
         uint8 borrow = 0;
+        uint8 yBits = 0;
+        uint8 negatedYBits = 0;
         for (uint256 i = 0; i < 64; i++) {
             uint256 idx = 63 - i;
             uint8 pi = uint8(FP_MODULUS[idx]);
             uint8 yi = uint8(g1[64 + idx]);
+            yBits |= yi;
             uint16 subtrahend = uint16(yi) + uint16(borrow);
             if (pi >= subtrahend) {
                 out[64 + idx] = bytes1(uint8(pi - subtrahend));
@@ -728,10 +731,15 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
                 out[64 + idx] = bytes1(uint8(uint16(pi) + 256 - subtrahend));
                 borrow = 1;
             }
+            negatedYBits |= uint8(out[64 + idx]);
         }
-        // borrow == 1 means y >= p (out-of-range field element); reject rather than
-        // silently producing an incorrect result that would pass the pairing check.
-        require(borrow == 0, "G1 y coordinate out of field range");
+        // Borrow detects y > p; y == p instead produces zero without borrowing.
+        // MAP_FP_TO_G1 returns canonical coordinates, but keep this helper's
+        // field-range check complete if it is used by another caller later.
+        require(borrow == 0 && negatedYBits != 0, "G1 y coordinate out of field range");
+        // Negation is modulo p, so zero (including the point at infinity) stays
+        // zero instead of returning the non-canonical coordinate p.
+        if (yBits == 0) return g1;
         return out;
     }
 
