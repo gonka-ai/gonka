@@ -18,7 +18,7 @@ import (
 const maxEpochPhaseOverlapChecks int64 = 10_000
 
 // checkEpochPhaseOverlap verifies the proposed maintenance window does not overlap
-// epoch-critical PoC commit/exchange or DKG (SetNewValidators) phases.
+// epoch-critical PoC commit/exchange, validation, or DKG phases.
 //
 // Iteration shape: walk forward in epochs starting from the epoch that
 // contains startHeight, stopping the first time the next epoch's PoC start is
@@ -86,9 +86,12 @@ func (k Keeper) checkEpochPhaseOverlap(ctx context.Context, startHeight int64, d
 				return types.ErrMaintenanceOverlapsPoCPhase
 			}
 
-			// SetNewValidators (DKG) overlap
+			// DKG starts when PoC validation ends, not at SetNewValidators.
+			// Reserve the whole interval through the validator switch so maintenance
+			// cannot interrupt dealing, verification, or disputes for the new epoch.
+			dkgStart := ec.EndOfPoCValidation()
 			setNewVal := ec.SetNewValidators()
-			if startHeight <= setNewVal && endHeight >= setNewVal {
+			if startHeight <= setNewVal && endHeight >= dkgStart {
 				return types.ErrMaintenanceOverlapsDKGPhase
 			}
 		}
