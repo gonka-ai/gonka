@@ -81,6 +81,7 @@ var MessageFeeGroups = map[reflect.Type]string{
 	reflect.TypeOf((*MsgBridgeExchange)(nil)):               FeeGroupBridge,
 	reflect.TypeOf((*MsgRequestBridgeMint)(nil)):            FeeGroupBridge,
 	reflect.TypeOf((*MsgRequestBridgeWithdrawal)(nil)):      FeeGroupBridge,
+	reflect.TypeOf((*MsgReissueBridgeSignature)(nil)):       FeeGroupBridge,
 	reflect.TypeOf((*MsgCancelBridgeOperation)(nil)):        FeeGroupBridge,
 	reflect.TypeOf((*MsgRegisterTokenMetadata)(nil)):        FeeGroupBridge,
 	reflect.TypeOf((*MsgApproveBridgeTokenForTrading)(nil)): FeeGroupBridge,

@@ -1314,6 +1314,20 @@ func (m *MockBlsKeeper) EXPECT() *MockBlsKeeperMockRecorder {
 	return m.recorder
 }
 
+// CancelThresholdSignature mocks base method.
+func (m *MockBlsKeeper) CancelThresholdSignature(ctx types1.Context, requestID []byte) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelThresholdSignature", ctx, requestID)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CancelThresholdSignature indicates an expected call of CancelThresholdSignature.
+func (mr *MockBlsKeeperMockRecorder) CancelThresholdSignature(ctx, requestID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelThresholdSignature", reflect.TypeOf((*MockBlsKeeper)(nil).CancelThresholdSignature), ctx, requestID)
+}
+
 // GetActiveEpochID mocks base method.
 func (m *MockBlsKeeper) GetActiveEpochID(ctx types1.Context) (uint64, bool) {
 	m.ctrl.T.Helper()
@@ -1418,18 +1432,18 @@ func (mr *MockBlsKeeperMockRecorder) ListActiveSigningRequests(ctx, currentEpoch
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ListActiveSigningRequests", reflect.TypeOf((*MockBlsKeeper)(nil).ListActiveSigningRequests), ctx, currentEpochID)
 }
 
-// CancelThresholdSignature mocks base method.
-func (m *MockBlsKeeper) CancelThresholdSignature(ctx types1.Context, requestID []byte) error {
+// ReissueThresholdSignature mocks base method.
+func (m *MockBlsKeeper) ReissueThresholdSignature(ctx types1.Context, requestID []byte, newEpoch uint64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CancelThresholdSignature", ctx, requestID)
+	ret := m.ctrl.Call(m, "ReissueThresholdSignature", ctx, requestID, newEpoch)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// CancelThresholdSignature indicates an expected call of CancelThresholdSignature.
-func (mr *MockBlsKeeperMockRecorder) CancelThresholdSignature(ctx, requestID any) *gomock.Call {
+// ReissueThresholdSignature indicates an expected call of ReissueThresholdSignature.
+func (mr *MockBlsKeeperMockRecorder) ReissueThresholdSignature(ctx, requestID, newEpoch any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelThresholdSignature", reflect.TypeOf((*MockBlsKeeper)(nil).CancelThresholdSignature), ctx, requestID)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ReissueThresholdSignature", reflect.TypeOf((*MockBlsKeeper)(nil).ReissueThresholdSignature), ctx, requestID, newEpoch)
 }
 
 // RequestThresholdSignature mocks base method.

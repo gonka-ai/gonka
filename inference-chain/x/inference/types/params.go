@@ -792,6 +792,9 @@ func (p *EpochParams) Validate() error {
 
 // Validate validates the set of params
 func (p Params) Validate() error {
+	if err := p.BridgeReissueParams.Validate(); err != nil {
+		return err
+	}
 	// Check for nil nested structs before calling their Validate() methods
 	if p.ValidationParams == nil {
 		return fmt.Errorf("validation params cannot be nil")

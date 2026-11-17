@@ -49,6 +49,7 @@ service Msg {
   rpc ApproveBridgeTokenForTrading     (MsgApproveBridgeTokenForTrading) returns (MsgApproveBridgeTokenForTradingResponse);
   rpc RequestBridgeWithdrawal          (MsgRequestBridgeWithdrawal) returns (MsgRequestBridgeWithdrawalResponse);
   rpc RequestBridgeMint                (MsgRequestBridgeMint) returns (MsgRequestBridgeMintResponse);
+  rpc ReissueBridgeSignature (MsgReissueBridgeSignature) returns (MsgReissueBridgeSignatureResponse);
   rpc CancelBridgeOperation            (MsgCancelBridgeOperation) returns (MsgCancelBridgeOperationResponse);
   rpc GovernanceCancelBridgeOperation  (MsgGovernanceCancelBridgeOperation) returns (MsgGovernanceCancelBridgeOperationResponse);
   rpc RegisterWrappedTokenContract     (MsgRegisterWrappedTokenContract) returns (MsgRegisterWrappedTokenContractResponse);
@@ -516,3 +517,15 @@ message MsgSubmitPoCChallengeValidations {
 }
 
 message MsgSubmitPoCChallengeValidationsResponse {}
+
+// MsgReissueBridgeSignature renews an authorized bridge signature without moving funds.
+// The original request fixes its destination, recipient, amount and request id.
+message MsgReissueBridgeSignature {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  string request_id = 2;
+}
+
+message MsgReissueBridgeSignatureResponse {
+  uint64 epoch_index = 1;
+}

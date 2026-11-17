@@ -45,6 +45,9 @@ message SigningData {
   
   // data is the array of 32-byte data chunks to be signed (Ethereum-compatible format)
   repeated bytes data = 4;
+  // Set only by the originating module for destinations with global request-id deduplication.
+  // Empty keeps all legacy requests ineligible for reissue.
+  repeated string reissue_signers = 5;
 }
 
 // ThresholdSigningRequest represents a complete threshold signing request stored on-chain
@@ -85,4 +88,13 @@ message ThresholdSigningRequest {
 
   // attempt is the current signing attempt number (starts from 1).
   uint32 attempt = 12;
+
+  // Immutable authorization supplied when the original request was created.
+  repeated string reissue_signers = 13;
+  // Last usable signature while a newer epoch signature is being collected.
+  uint64 last_completed_epoch_id = 14;
+  bytes last_completed_signature = 15;
+  // Prevents repeated reissues of the same request within one epoch, including failures.
+  uint64 last_reissue_epoch_id = 16;
+  uint64 reissue_count = 17;
 }

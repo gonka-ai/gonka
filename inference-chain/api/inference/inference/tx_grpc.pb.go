@@ -41,6 +41,7 @@ const (
 	Msg_ApproveBridgeTokenForTrading_FullMethodName     = "/inference.inference.Msg/ApproveBridgeTokenForTrading"
 	Msg_RequestBridgeWithdrawal_FullMethodName          = "/inference.inference.Msg/RequestBridgeWithdrawal"
 	Msg_RequestBridgeMint_FullMethodName                = "/inference.inference.Msg/RequestBridgeMint"
+	Msg_ReissueBridgeSignature_FullMethodName           = "/inference.inference.Msg/ReissueBridgeSignature"
 	Msg_CancelBridgeOperation_FullMethodName            = "/inference.inference.Msg/CancelBridgeOperation"
 	Msg_GovernanceCancelBridgeOperation_FullMethodName  = "/inference.inference.Msg/GovernanceCancelBridgeOperation"
 	Msg_RegisterWrappedTokenContract_FullMethodName     = "/inference.inference.Msg/RegisterWrappedTokenContract"
@@ -94,6 +95,7 @@ type MsgClient interface {
 	ApproveBridgeTokenForTrading(ctx context.Context, in *MsgApproveBridgeTokenForTrading, opts ...grpc.CallOption) (*MsgApproveBridgeTokenForTradingResponse, error)
 	RequestBridgeWithdrawal(ctx context.Context, in *MsgRequestBridgeWithdrawal, opts ...grpc.CallOption) (*MsgRequestBridgeWithdrawalResponse, error)
 	RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeMint, opts ...grpc.CallOption) (*MsgRequestBridgeMintResponse, error)
+	ReissueBridgeSignature(ctx context.Context, in *MsgReissueBridgeSignature, opts ...grpc.CallOption) (*MsgReissueBridgeSignatureResponse, error)
 	CancelBridgeOperation(ctx context.Context, in *MsgCancelBridgeOperation, opts ...grpc.CallOption) (*MsgCancelBridgeOperationResponse, error)
 	GovernanceCancelBridgeOperation(ctx context.Context, in *MsgGovernanceCancelBridgeOperation, opts ...grpc.CallOption) (*MsgGovernanceCancelBridgeOperationResponse, error)
 	RegisterWrappedTokenContract(ctx context.Context, in *MsgRegisterWrappedTokenContract, opts ...grpc.CallOption) (*MsgRegisterWrappedTokenContractResponse, error)
@@ -323,6 +325,15 @@ func (c *msgClient) RequestBridgeMint(ctx context.Context, in *MsgRequestBridgeM
 	return out, nil
 }
 
+func (c *msgClient) ReissueBridgeSignature(ctx context.Context, in *MsgReissueBridgeSignature, opts ...grpc.CallOption) (*MsgReissueBridgeSignatureResponse, error) {
+	out := new(MsgReissueBridgeSignatureResponse)
+	err := c.cc.Invoke(ctx, Msg_ReissueBridgeSignature_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) CancelBridgeOperation(ctx context.Context, in *MsgCancelBridgeOperation, opts ...grpc.CallOption) (*MsgCancelBridgeOperationResponse, error) {
 	out := new(MsgCancelBridgeOperationResponse)
 	err := c.cc.Invoke(ctx, Msg_CancelBridgeOperation_FullMethodName, in, out, opts...)
@@ -542,6 +553,7 @@ type MsgServer interface {
 	ApproveBridgeTokenForTrading(context.Context, *MsgApproveBridgeTokenForTrading) (*MsgApproveBridgeTokenForTradingResponse, error)
 	RequestBridgeWithdrawal(context.Context, *MsgRequestBridgeWithdrawal) (*MsgRequestBridgeWithdrawalResponse, error)
 	RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error)
+	ReissueBridgeSignature(context.Context, *MsgReissueBridgeSignature) (*MsgReissueBridgeSignatureResponse, error)
 	CancelBridgeOperation(context.Context, *MsgCancelBridgeOperation) (*MsgCancelBridgeOperationResponse, error)
 	GovernanceCancelBridgeOperation(context.Context, *MsgGovernanceCancelBridgeOperation) (*MsgGovernanceCancelBridgeOperationResponse, error)
 	RegisterWrappedTokenContract(context.Context, *MsgRegisterWrappedTokenContract) (*MsgRegisterWrappedTokenContractResponse, error)
@@ -635,6 +647,9 @@ func (UnimplementedMsgServer) RequestBridgeWithdrawal(context.Context, *MsgReque
 }
 func (UnimplementedMsgServer) RequestBridgeMint(context.Context, *MsgRequestBridgeMint) (*MsgRequestBridgeMintResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RequestBridgeMint not implemented")
+}
+func (UnimplementedMsgServer) ReissueBridgeSignature(context.Context, *MsgReissueBridgeSignature) (*MsgReissueBridgeSignatureResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ReissueBridgeSignature not implemented")
 }
 func (UnimplementedMsgServer) CancelBridgeOperation(context.Context, *MsgCancelBridgeOperation) (*MsgCancelBridgeOperationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CancelBridgeOperation not implemented")
@@ -1104,6 +1119,24 @@ func _Msg_RequestBridgeMint_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).RequestBridgeMint(ctx, req.(*MsgRequestBridgeMint))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_ReissueBridgeSignature_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgReissueBridgeSignature)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ReissueBridgeSignature(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ReissueBridgeSignature_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ReissueBridgeSignature(ctx, req.(*MsgReissueBridgeSignature))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1580,6 +1613,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RequestBridgeMint",
 			Handler:    _Msg_RequestBridgeMint_Handler,
+		},
+		{
+			MethodName: "ReissueBridgeSignature",
+			Handler:    _Msg_ReissueBridgeSignature_Handler,
 		},
 		{
 			MethodName: "CancelBridgeOperation",

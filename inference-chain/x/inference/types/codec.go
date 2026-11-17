@@ -67,6 +67,7 @@ func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgCancelBridgeOperation{},
+		&MsgReissueBridgeSignature{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgGovernanceCancelBridgeOperation{},

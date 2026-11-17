@@ -88,7 +88,8 @@ func (k Keeper) cancelThresholdSigningRequest(ctx sdk.Context, requestID []byte)
 	if err != nil {
 		return err
 	}
-	if request.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
+	if len(request.LastCompletedSignature) != 0 || len(request.FinalSignature) != 0 ||
+		request.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
 		return fmt.Errorf("threshold signing already completed")
 	}
 	return k.BlsKeeper.CancelThresholdSignature(ctx, requestID)
@@ -191,6 +192,24 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	requestKey := hex.EncodeToString(blsRequestID)
+	request, err := k.BlsKeeper.GetSigningStatus(sdkCtx, blsRequestID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get threshold signing status for request %s: %w", requestKey, err)
+	}
+	if request == nil {
+		return false, fmt.Errorf("threshold signing request %s is nil", requestKey)
+	}
+	if len(request.LastCompletedSignature) != 0 || len(request.FinalSignature) != 0 {
+		return false, fmt.Errorf("threshold signing request %s has a completed signature; cannot refund", requestKey)
+	}
+	if request.Status != blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED &&
+		request.Status != blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED {
+		return false, fmt.Errorf(
+			"threshold signing request %s has status %s; auto-refund requires FAILED or EXPIRED",
+			requestKey,
+			request.Status.String(),
+		)
+	}
 
 	pendingMint, err := k.BridgeMintRefundsMap.Get(ctx, requestKey)
 	switch {

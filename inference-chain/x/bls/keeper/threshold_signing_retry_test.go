@@ -24,6 +24,54 @@ import (
 	"github.com/productscience/inference/x/bls/types"
 )
 
+func TestProcessThresholdSigningDeadlines_AutoRetryEmitsRequestedEventOnce(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	const epochID = uint64(401)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 2)
+
+	signingData := makeSigningDataForRetryTests(epochID, 21)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+	request, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+
+	retryCtx := ctx.WithBlockHeight(request.DeadlineBlockHeight).WithEventManager(sdk.NewEventManager())
+	require.NoError(t, k.ProcessThresholdSigningDeadlines(retryCtx))
+	retried, err := k.GetSigningStatus(retryCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, retried.Attempt)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retried.Status)
+
+	expected, err := sdk.TypedEventToEvent(&types.EventThresholdSigningRequested{
+		RequestId:           retried.RequestId,
+		CurrentEpochId:      retried.CurrentEpochId,
+		EncodedData:         retried.EncodedData,
+		MessageHash:         retried.MessageHash,
+		DeadlineBlockHeight: retried.DeadlineBlockHeight,
+	})
+	require.NoError(t, err)
+	require.Equal(t, sdk.Events{expected}, retryCtx.EventManager().Events())
+}
+
+func TestRunThresholdSigningCompletedPostProcess_CommitsEventOnce(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	sideEffectKey := []byte("completed_hook_commit_key")
+	sideEffectEvent := "completed_hook_commit_event"
+	hook := &retryTestBlsHook{
+		storeService: k.storeService,
+		hookKey:      sideEffectKey,
+		hookEvent:    sideEffectEvent,
+	}
+	require.NoError(t, k.SetHooks(hook))
+
+	require.NoError(t, k.runThresholdSigningCompletedPostProcess(ctx, bytes.Repeat([]byte{9}, 32), 1))
+	require.True(t, hook.called)
+	value, err := k.storeService.OpenKVStore(ctx).Get(sideEffectKey)
+	require.NoError(t, err)
+	require.Equal(t, []byte{1}, value)
+	require.Equal(t, sdk.Events{sdk.NewEvent(sideEffectEvent)}, ctx.EventManager().Events())
+}
+
 func TestRequestThresholdSignature_RetryRejectedAfterExpiredWhenMaxAttemptsReached(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(301)
