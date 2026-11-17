@@ -172,6 +172,25 @@ func TestWarmKeyRotationAcrossHAReplayAndSnapshot(t *testing.T) {
 	logs, err := stack.ComposeLogsTail(5000, cfg.Hosts[0].ID)
 	require.NoError(t, err)
 	require.Contains(t, logs, "restored devshard snapshot")
+
+	harness.Step(t, "retire the gateway runtime and hydrate its read-only warm-key state")
+	harness.PostAdminDeactivateDevshard(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, initial.Session.ID)
+	var readOnly rotationView
+	require.Eventually(t, func() bool {
+		req, err := http.NewRequest(http.MethodGet, eps.GatewayHTTP+"/devshard/"+initial.Session.ID+"/v1/state", nil)
+		if err != nil {
+			return false
+		}
+		req.Header.Set("Authorization", "Bearer "+harness.TestenvAdminAPIKey)
+		resp, err := client.Do(req)
+		if err != nil {
+			return false
+		}
+		defer resp.Body.Close()
+		return resp.StatusCode == http.StatusOK && resp.Header.Get("X-Devshard-Readonly") == "1" && json.NewDecoder(resp.Body).Decode(&readOnly) == nil
+	}, 30*time.Second, 200*time.Millisecond, "inactive warm-key escrow must hydrate through the admin read-only path")
+	require.Equal(t, final.Session.ID, readOnly.Session.ID)
+	require.Equal(t, final.Keys, readOnly.Keys)
 }
 
 func importRotationKey(t *testing.T, dir string, cfg *config.File, name, privateKey string) {

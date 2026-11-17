@@ -221,6 +221,13 @@ The Docker rotation test exercises overlapping HA signers, grant/end events,
 revoked-key transport admission, an offline replica across revocation, an
 actual nonce-500 Postgres snapshot, replica recovery and gateway restart.
 
+Read-only state/debug views for inactive gateway escrows use the same historical
+grant checks during journal replay and snapshot restore. They do not contact
+hosts or route inferences, but v7 warm-key history still requires a complete
+grant source, which may query the chain. A missing or unavailable grant view
+refuses recovery rather than skipping these checks. Cold-only local views do
+not acquire this grant-source requirement.
+
 ## Release coordination
 
 Ship the v0.2.18 chain binary (module version 16, log seeding and escrow trust
