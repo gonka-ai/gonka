@@ -297,6 +297,9 @@ func New(
 	app.SlashingKeeper.SetMaintenanceChecker(maintenanceAdapter)
 
 	app.App = appBuilder.Build(db, traceStore, baseAppOptions...)
+	if err := app.configureMaintenanceSlashingModule(); err != nil {
+		return nil, err
+	}
 
 	// SendRestriction configuration is handled automatically through dependency injection
 	// The restrictions module provides its SendRestrictionFn with the "bank-send-restrictions" group tag
