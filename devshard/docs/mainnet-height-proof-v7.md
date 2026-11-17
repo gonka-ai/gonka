@@ -47,8 +47,9 @@ before persisting newly received warm-signed work.
 
 ### Retrying a frozen final state
 
-At `max_nonce`, a gateway cannot append a checkpoint-refresh diff. V7 hosts can
-instead retry their ordinary state signature over the unchanged latest terminal
+At `max_nonce`, a gateway cannot append a checkpoint-refresh diff. Fresh final
+checkpoints retain their ordinary signing path, without an additional light-block
+proof request. For a stale checkpoint, V7 hosts can instead retry their ordinary state signature over the unchanged latest terminal
 root and nonce when all of these conditions hold:
 
 - The host's durable `host_admission_nonce` covers the whole prefix, and the

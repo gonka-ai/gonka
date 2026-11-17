@@ -25,9 +25,10 @@ import (
 
 type terminalOracle struct {
 	*mockoracle.Mock
-	down     atomic.Bool
-	conflict atomic.Bool
-	anchor   int64
+	down      atomic.Bool
+	proofDown atomic.Bool
+	conflict  atomic.Bool
+	anchor    int64
 }
 
 func (o *terminalOracle) Latest(ctx context.Context) (*blocks.Header, error) {
@@ -45,6 +46,13 @@ func (o *terminalOracle) At(ctx context.Context, height int64) (*blocks.Header, 
 		h = &clone
 	}
 	return h, err
+}
+
+func (o *terminalOracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {
+	if o.proofDown.Load() {
+		return nil, errors.New("light-block endpoint unavailable")
+	}
+	return o.Mock.LightBlockAt(ctx, height)
 }
 
 func (o *terminalOracle) AtWait(ctx context.Context, height int64, _ time.Duration) (*blocks.Header, error) {
@@ -250,4 +258,14 @@ func TestTerminalRecoveryGossipKeepsOnlyCurrentlyAuthorizedSlots(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, stored, uint32(1))
 	require.NotContains(t, stored, uint32(2))
+}
+
+func TestFreshTerminalSigningNeedsNoAdditionalLightBlockProof(t *testing.T) {
+	f := newTerminalFixture(t, 10*time.Second, true, true)
+	f.advance(t, 1) // Still inside the ordinary two-block freshness window.
+	f.source.proofDown.Store(true)
+	h := f.host(t, f.warm)
+	response, err := h.HandleRequest(context.Background(), HostRequest{Nonce: 2})
+	require.NoError(t, err)
+	require.NotEmpty(t, response.StateSig, "a fresh carried checkpoint needs no recovery proof RPC")
 }

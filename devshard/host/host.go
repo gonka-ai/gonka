@@ -2297,7 +2297,12 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && h.sm.Phase() == types.PhaseSettlement {
+	if freshnessErr := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); freshnessErr != nil {
+		// Fresh final states retain the ordinary path, including hash-only
+		// canonical lookups. Only stale/pending checkpoints need recovery proof.
+		if h.store == nil || !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) || h.sm.Phase() != types.PhaseSettlement || !errors.Is(freshnessErr, types.ErrHeaderPending) {
+			return nil, nil, freshnessErr
+		}
 		// The admission watermark above proves the entire prefix was checked.
 		// Pin the exact durable final root before using a fresh live authority
 		// check without changing the signed checkpoint, nonce or accounting.
@@ -2309,8 +2314,6 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-	} else if err := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); err != nil {
-		return nil, nil, err
 	}
 	sigContent := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}
 	sigData, err := proto.Marshal(sigContent)
