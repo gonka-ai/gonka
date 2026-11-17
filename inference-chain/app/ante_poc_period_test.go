@@ -8,12 +8,15 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+
+	testkeeper "github.com/productscience/inference/testutil/keeper"
 )
 
 func TestPocPeriodValidationDecorator_NonPocMessage(t *testing.T) {
@@ -38,6 +41,50 @@ func TestPocPeriodValidationDecorator_SimulationMode(t *testing.T) {
 	t.Log("Simulation mode bypasses PoC period validation")
 	require.NotNil(t, decorator)
 	require.NotNil(t, ctx)
+}
+
+// nestedExec wraps msg in `levels` MsgExec layers. The grantee is irrelevant
+// here: this decorator runs before signature verification and does not check
+// grants, so any address serves.
+func nestedExec(levels int, msg sdk.Msg) sdk.Msg {
+	grantee := sdk.AccAddress([]byte("poc-nesting-grantee-"))
+	for i := 0; i < levels; i++ {
+		wrapped := authztypes.NewMsgExec(grantee, []sdk.Msg{msg})
+		msg = &wrapped
+	}
+	return msg
+}
+
+func pocNestingDecorator(t *testing.T) (PocPeriodValidationDecorator, sdk.Context) {
+	t.Helper()
+	k, ctx := testkeeper.InferenceKeeper(t)
+	return PocPeriodValidationDecorator{inferenceKeeper: &k, cdc: testMsgCodec(t)}, ctx
+}
+
+// TestPocPeriodValidation_OneLevelMsgExec_Admitted guards the production
+// warm-key path: a single MsgExec layer wrapping a non-PoC message is unwrapped
+// and passed through. Production wrapping is exactly one level.
+func TestPocPeriodValidation_OneLevelMsgExec_Admitted(t *testing.T) {
+	ppd, ctx := pocNestingDecorator(t)
+
+	msg := nestedExec(1, &banktypes.MsgSend{})
+
+	require.NoError(t, ppd.checkMessage(ctx, msg),
+		"one MsgExec level wrapping a non-PoC message must be unwrapped and admitted")
+}
+
+// TestPocPeriodValidation_NestedMsgExec_Rejected pins the flat-reject contract:
+// nested MsgExec is not a production shape and is rejected outright, matching
+// NetworkDutySignerDecorator and MsgExecAuthorizationDecorator on the same
+// CheckTx-only chain.
+func TestPocPeriodValidation_NestedMsgExec_Rejected(t *testing.T) {
+	ppd, ctx := pocNestingDecorator(t)
+
+	msg := nestedExec(2, &banktypes.MsgSend{})
+
+	err := ppd.checkMessage(ctx, msg)
+	require.Error(t, err, "nested MsgExec must be rejected")
+	require.ErrorIs(t, err, errNestedMsgExec)
 }
 
 // setupPocPeriodAnte returns a CheckTx context positioned inside the PoC
