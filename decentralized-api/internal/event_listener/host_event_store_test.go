@@ -1027,7 +1027,9 @@ func TestHostEventFeed_StoreRetryBackoff(t *testing.T) {
 	defer cancel()
 	go f.Run(ctx)
 	bo.updateStatus(9, true)
-	require.Eventually(t, func() bool { return ring.Head() > 0 }, 2*time.Second, 10*time.Millisecond)
+	// Publication and the retry-health update are separate atomic writes.
+	// Wait for the completed retry, not merely its first visible event.
+	require.Eventually(t, func() bool { return ring.Head() > 0 && !f.Stalled() }, 2*time.Second, 10*time.Millisecond)
 	require.Equal(t, []int64{9}, heightsOf(ringEvents(t, ring)))
 	require.False(t, f.Stalled())
 }
