@@ -38,6 +38,7 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		maxSigningAttempts = types.DefaultParams().MaxSigningAttempts
 	}
 	attempt := uint32(1)
+	reissueSigners := append([]string(nil), signingData.ReissueSigners...)
 
 	// Validate uniqueness - ensure request_id doesn't already exist
 	key := types.ThresholdSigningRequestKey(signingData.RequestId)
@@ -50,6 +51,9 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		var existing types.ThresholdSigningRequest
 		if err := k.cdc.Unmarshal(existingValue, &existing); err != nil {
 			return fmt.Errorf("failed to unmarshal existing threshold signing request: %w", err)
+		}
+		if len(existing.LastCompletedSignature) != 0 {
+			return fmt.Errorf("request %x already has a completed signature; use the dedicated reissue path", signingData.RequestId)
 		}
 
 		// Allow retry only after terminal no-signature outcomes
@@ -64,6 +68,10 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 			return fmt.Errorf("max signing attempts reached for request_id: %x (attempts: %d)", signingData.RequestId, existing.Attempt)
 		}
 		attempt = existing.Attempt + 1
+		// A retry cannot turn a legacy destination into a reissuable one or
+		// change who may request a reissue. Only initial bridge admission sets
+		// this authority; later input is deliberately ignored.
+		reissueSigners = append([]string(nil), existing.ReissueSigners...)
 
 		k.Logger().Info("Retrying threshold signing request after failed attempt",
 			"request_id", fmt.Sprintf("%x", signingData.RequestId),
@@ -110,6 +118,7 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		CreatedBlockHeight:  ctx.BlockHeight(),
 		DeadlineBlockHeight: deadlineBlockHeight,
 		Attempt:             attempt,
+		ReissueSigners:      reissueSigners,
 	}
 
 	// Store the request
@@ -247,6 +256,9 @@ func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) erro
 	if err != nil {
 		return err
 	}
+	if len(request.LastCompletedSignature) != 0 {
+		return fmt.Errorf("cannot cancel a request that has a completed signature")
+	}
 
 	if request.Status == types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_CANCELLED {
 		return nil
@@ -327,6 +339,12 @@ func equalSigningDataFields(existing, incoming [][]byte) bool {
 }
 
 func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *types.ThresholdSigningRequest, triggerReason string) (bool, error) {
+	if hasReissueBackup(request) {
+		// A failed reissue restores the last usable signature. Retrying it via
+		// the ordinary failure path could eventually invoke a refund hook even
+		// though an earlier signature remains redeemable.
+		return false, nil
+	}
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return false, fmt.Errorf("failed to get parameters: %w", err)
@@ -590,6 +608,10 @@ func (k Keeper) checkThresholdAndAggregate(ctx sdk.Context, request *types.Thres
 	// Success - update request with final signature
 	request.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED
 	request.FinalSignature = finalSignature
+	if len(request.ReissueSigners) != 0 {
+		request.LastCompletedEpochId = request.CurrentEpochId
+		request.LastCompletedSignature = append([]byte(nil), finalSignature...)
+	}
 
 	// Remove from expiration index since it's no longer collecting signatures
 	k.removeFromExpirationIndex(ctx, request.DeadlineBlockHeight, request.RequestId)
@@ -838,6 +860,9 @@ func (k Keeper) finalizeFailedThresholdSigningRequest(
 	status types.ThresholdSigningStatus,
 	reason string,
 ) error {
+	if hasReissueBackup(request) {
+		return k.restoreCompletedAfterReissueFailure(ctx, request, reason)
+	}
 	request.Status = status
 	request.FinalSignature = []byte{}
 	// Single failure funnel; both storeThresholdSigningRequest calls
