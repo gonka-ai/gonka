@@ -88,7 +88,8 @@ func (k Keeper) cancelThresholdSigningRequest(ctx sdk.Context, requestID []byte)
 	if err != nil {
 		return err
 	}
-	if request.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
+	if len(request.LastCompletedSignature) != 0 || len(request.FinalSignature) != 0 ||
+		request.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
 		return fmt.Errorf("threshold signing already completed")
 	}
 	return k.BlsKeeper.CancelThresholdSignature(ctx, requestID)
@@ -197,6 +198,9 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 	}
 	if request == nil {
 		return false, fmt.Errorf("threshold signing request %s is nil", requestKey)
+	}
+	if len(request.LastCompletedSignature) != 0 || len(request.FinalSignature) != 0 {
+		return false, fmt.Errorf("threshold signing request %s has a completed signature; cannot refund", requestKey)
 	}
 	if request.Status != blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_FAILED &&
 		request.Status != blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED {

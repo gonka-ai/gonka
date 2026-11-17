@@ -59,6 +59,11 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		return nil, err
 	}
 
+	reissueSigners, err := k.bridgeReissueSigners(ctx, msg.ChainId, msg.DestinationBridgeAddress, msg.Creator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check bridge reissue policy: %w", err)
+	}
+
 	// 3. Parse amount and create coins
 	amountInt, ok := math.NewIntFromString(msg.Amount)
 	if !ok {
@@ -102,10 +107,10 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	// Prepare BLS signature data for WGNK mint command
 	// Only prepare the data portion - BLS system will prepend epochId, gonkaChainId, requestId
 	blsData, err := k.prepareBridgeMintSignatureData(
-		destinationChainId,     // Numeric chain ID (e.g., "1", "137")
-		msg.DestinationAddress, // Ethereum address to receive WGNK
+		destinationChainId,           // Numeric chain ID (e.g., "1", "137")
+		msg.DestinationAddress,       // Ethereum address to receive WGNK
 		msg.DestinationBridgeAddress, // Specific bridge contract
-		msg.Amount,             // Amount as string
+		msg.Amount,                   // Amount as string
 	)
 	if err != nil {
 		// Rollback the escrow transfer
@@ -126,7 +131,8 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 		CurrentEpochId: currentEpochGroup.GroupData.EpochIndex,
 		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
 		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
-		Data:           blsData,             // The remaining data fields
+		ReissueSigners: reissueSigners,
+		Data:           blsData, // The remaining data fields
 	}
 
 	err = k.BlsKeeper.RequestThresholdSignature(ctx, signingData)

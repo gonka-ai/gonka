@@ -92,11 +92,17 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	gonkaChainID := ctx.ChainID()
 	gonkaChainIdHash := sha256.Sum256([]byte(gonkaChainID)) // Convert to bytes32
 
+	reissueSigners, err := k.bridgeReissueSigners(ctx, bridgeWrappedTokenContract.ChainId, msg.DestinationBridgeAddress, msg.UserAddress, msg.Creator)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check bridge reissue policy: %w", err)
+	}
+
 	signingData := blstypes.SigningData{
 		CurrentEpochId: currentEpochGroup.GroupData.EpochIndex,
 		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
 		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
-		Data:           blsData,             // The remaining data fields
+		ReissueSigners: reissueSigners,
+		Data:           blsData, // The remaining data fields
 	}
 
 	err = k.BlsKeeper.RequestThresholdSignature(ctx, signingData)

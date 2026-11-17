@@ -34,6 +34,8 @@ message Params {
   DelegationParams delegation_params = 16;
   MaintenanceParams maintenance_params = 17;
   PoCChallengeParams poc_challenge_params = 18;
+  // Empty by default. Enable only audited bridges with global request-id deduplication.
+  BridgeReissueParams bridge_reissue_params = 19;
 }
 
 // PoCChallengeParams defines governance-controlled parameters for PoCChallenge.
@@ -534,4 +536,17 @@ message RepeatedLenParams {
   option (gogoproto.equal) = true;
   uint64 gas_per_unit = 1;
   string field = 2;
+}
+
+// BridgeReissueParams enables signature renewal for new requests to explicit destinations.
+// Governance must verify the deployed bytecode implements epoch-independent deduplication.
+message BridgeReissueParams {
+  option (gogoproto.equal) = true;
+  repeated BridgeReissueTarget allowed_targets = 1 [(gogoproto.nullable) = false];
+}
+
+message BridgeReissueTarget {
+  option (gogoproto.equal) = true;
+  string chain_id = 1;
+  string contract_address = 2;
 }

@@ -462,6 +462,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "amount"}, {ProtoField: "destination_address"}, {ProtoField: "chain_id"}},
 				},
 				{
+					RpcMethod:      "ReissueBridgeSignature",
+					Use:            "reissue-bridge-signature [request-id]",
+					Short:          "Renew a bridge signature for an enabled destination without moving funds",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "request_id"}},
+				},
+				{
 					RpcMethod:      "CreateDevshardEscrow",
 					Use:            "create-devshard-escrow [amount] [model-id]",
 					Short:          "Create a devshard escrow",
