@@ -250,6 +250,10 @@ func (k Keeper) MaintenanceSchedulability(ctx context.Context, req *types.QueryM
 		return reject(err.Error())
 	}
 
+	if err := k.checkConfirmationPoCOverlap(ctx, req.StartHeight); err != nil {
+		return reject(err.Error())
+	}
+
 	if err := k.checkConcurrencyLimits(ctx, req.StartHeight, req.DurationBlocks, participantAddr, mp); err != nil {
 		return reject(err.Error())
 	}

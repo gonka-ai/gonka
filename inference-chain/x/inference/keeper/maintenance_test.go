@@ -1044,6 +1044,44 @@ func TestScheduleMaintenance_RejectsWindowOverInProgressConfirmationPoC(t *testi
 	require.NoError(t, err)
 }
 
+func TestMaintenanceSchedulability_AgreesWithTxOnInProgressConfirmationPoC(t *testing.T) {
+	t.Parallel()
+	k, ms, ctx := setupMaintenanceTest(t)
+	participant := sample.AccAddress()
+	registerParticipant(t, k, ctx, participant)
+	grantCredit(t, k, ctx, participant, 100)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+
+	offset := (&types.ConfirmationPoCEvent{}).GetValidationEnd(params.EpochParams) + 1
+	require.NoError(t, k.SetActiveConfirmationPoCEvent(ctx, types.ConfirmationPoCEvent{
+		EpochIndex:            1,
+		TriggerHeight:         ctx.BlockHeight() - 2,
+		GenerationStartHeight: 500 - offset,
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+	}))
+
+	for _, start := range []int64{500, 501} {
+		resp, err := k.MaintenanceSchedulability(ctx, &types.QueryMaintenanceSchedulabilityRequest{
+			Participant:    participant,
+			StartHeight:    start,
+			DurationBlocks: 1,
+		})
+		require.NoError(t, err)
+		_, txErr := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+			Creator:        participant,
+			Participant:    participant,
+			StartHeight:    start,
+			DurationBlocks: 1,
+		})
+		require.Equal(t, txErr == nil, resp.Schedulable, "start %d: query %+v, tx %v", start, resp, txErr)
+		if start == 500 {
+			require.ErrorIs(t, txErr, types.ErrMaintenanceOverlapsConfirmationPoC)
+			require.Contains(t, resp.RejectionReason, "confirmation PoC")
+		}
+	}
+}
+
 func TestScheduleMaintenance_CompletedConfirmationPoCDoesNotBlock(t *testing.T) {
 	t.Parallel()
 	k, ms, ctx := setupMaintenanceTest(t)
