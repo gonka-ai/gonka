@@ -88,6 +88,12 @@ are removed before collection, and the replacement's hash binds the new epoch.
 The normal `EventThresholdSigningRequested` event triggers existing DAPI BLS
 signers for the new epoch; `bridge_signature_reissued` records admission and
 `threshold_signing_reissue_restored` records restoration after failure.
+The DAPI processes every signing request in a transaction, checking that the
+parallel event attributes align before attempting any signature. A failure in
+one request does not suppress subsequent requests. It also forwards requested
+events from `FinalizeBlockEvents` through the same signing handler, so ordinary
+initial-signature retries emitted in EndBlock are not lost. Reissue failures
+still restore the completed proof instead of entering that ordinary retry path.
 
 ## Activation requirements
 
