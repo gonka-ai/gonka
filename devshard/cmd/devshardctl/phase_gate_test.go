@@ -2,16 +2,22 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/golang/protobuf/proto"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 )
 
 func TestChainPhaseGateFetchEpochInfoParsesConfirmationPoC(t *testing.T) {
@@ -349,6 +355,7 @@ func TestChainPhaseGateFetchParticipantsFallsBackToChain(t *testing.T) {
 	defer server.Close()
 
 	active := &inferencetypes.ActiveParticipants{
+		EpochId: 12,
 		Participants: []*inferencetypes.ActiveParticipant{{
 			Index:        "gonka1participant",
 			InferenceUrl: "http://participant.example:8080",
@@ -377,6 +384,10 @@ func TestChainPhaseGateFetchParticipantsFallsBackToChain(t *testing.T) {
 	require.Equal(t, float64(7), state.weights["gonka1participant"])
 	require.Equal(t, "http://participant.example:8080", state.inferenceURLs["gonka1participant"])
 	require.Equal(t, inferencetypes.ActiveParticipantsFullKey(12), storeQuery.req.Data)
+
+	payload, err := gate.fetchParticipants()
+	require.NoError(t, err)
+	require.Equal(t, jsonUint64(12), payload.ActiveParticipants.EpochID)
 }
 
 func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {
@@ -1072,4 +1083,148 @@ func contains(ss []string, s string) bool {
 		}
 	}
 	return false
+}
+
+type activeParticipantsRecordStub struct {
+	mu      sync.Mutex
+	records map[string][]byte
+	reads   int
+}
+
+func (s *activeParticipantsRecordStub) set(t *testing.T, epoch uint64, url string, weight int64) {
+	t.Helper()
+	value, err := proto.Marshal(&inferencetypes.ActiveParticipants{
+		EpochId: epoch,
+		Participants: []*inferencetypes.ActiveParticipant{{
+			Index:        "gonka1a",
+			InferenceUrl: url,
+			MlNodes: []*inferencetypes.ModelMLNodes{{
+				MlNodes: []*inferencetypes.MLNodeInfo{{NodeId: "n1", PocWeight: weight}},
+			}},
+		}},
+	})
+	require.NoError(t, err)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.records[string(inferencetypes.ActiveParticipantsFullKey(epoch))] = value
+}
+
+func (s *activeParticipantsRecordStub) ABCIQuery(_ context.Context, req *cmtservice.ABCIQueryRequest, _ ...grpc.CallOption) (*cmtservice.ABCIQueryResponse, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reads++
+	return &cmtservice.ABCIQueryResponse{Value: s.records[string(req.Data)]}, nil
+}
+
+func newParticipantsCacheServer(t *testing.T, height, participantsEpoch, participantsHits *atomic.Int64) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/v1/epochs/latest":
+			_, _ = fmt.Fprintf(w, `{
+				"block_height":"%d",
+				"phase":"Inference",
+				"latest_epoch":{"index":"12","poc_start_block_height":"100"},
+				"epoch_stages":{"epoch_index":"12","set_new_validators":"160"}
+			}`, height.Load())
+		case "/v1/epochs/current/participants":
+			participantsHits.Add(1)
+			_, _ = fmt.Fprintf(w, `{"active_participants":{"epoch_id":%d,"participants":[
+				{"index":"gonka1a","inference_url":"http://a.example","ml_nodes":[{"ml_nodes":[{"node_id":"n1","poc_weight":"%d"}]}]}
+			]}}`, participantsEpoch.Load(), participantsEpoch.Load())
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+func TestChainPhaseGateBuildsParticipantsFromRecord(t *testing.T) {
+	var height, participantsEpoch, participantsHits atomic.Int64
+	height.Store(150)
+	participantsEpoch.Store(11)
+	server := newParticipantsCacheServer(t, &height, &participantsEpoch, &participantsHits)
+	records := &activeParticipantsRecordStub{records: map[string][]byte{}}
+	records.set(t, 11, "http://a11.example", 7)
+	records.set(t, 12, "http://a12.example", 9)
+
+	gate := NewChainPhaseGate(server.URL, 0)
+	gate.SetStoreQueryClient(records)
+	gate.SetCapacityState(NewCapacityState(), nil)
+
+	// Epoch 11 is current until set_new_validators of epoch 12 (height 160).
+	// The payload comes from the record; dapi is not asked, so a dapi node
+	// lagging behind the record cannot pin an older payload.
+	gate.refresh()
+	first := gate.participants.payload
+	gate.refresh()
+	require.Same(t, first, gate.participants.payload)
+	require.Equal(t, "http://a11.example", gate.InferenceURLs()["gonka1a"])
+
+	// A rewrite of the current record (an upgrade handler) shows on the next poll.
+	records.set(t, 11, "http://a11-rewritten.example", 7)
+	gate.refresh()
+	require.Equal(t, "http://a11-rewritten.example", gate.InferenceURLs()["gonka1a"])
+
+	// From the switch height on, epoch 12's record is current.
+	height.Store(160)
+	gate.refresh()
+	require.Equal(t, "http://a12.example", gate.InferenceURLs()["gonka1a"])
+	require.Equal(t, jsonUint64(12), gate.participants.payload.ActiveParticipants.EpochID)
+	require.Equal(t, int64(0), participantsHits.Load())
+	require.Equal(t, 4, records.reads)
+}
+
+func TestChainPhaseGateFetchesParticipantsWithoutRecord(t *testing.T) {
+	var height, participantsEpoch, participantsHits atomic.Int64
+	height.Store(150)
+	participantsEpoch.Store(11)
+	server := newParticipantsCacheServer(t, &height, &participantsEpoch, &participantsHits)
+
+	// No store query client: every poll fetches, as before.
+	gate := NewChainPhaseGate(server.URL, 0)
+	gate.SetCapacityState(NewCapacityState(), nil)
+	gate.refresh()
+	gate.refresh()
+	require.Equal(t, int64(2), participantsHits.Load())
+
+	// Record missing, unreadable or epoch unknown: every poll fetches too.
+	gate.SetStoreQueryClient(&activeParticipantsRecordStub{records: map[string][]byte{}})
+	gate.refresh()
+	gate.refresh()
+	require.Equal(t, int64(4), participantsHits.Load())
+	gate.SetStoreQueryClient(&phaseGateStoreQueryStub{err: errors.New("unavailable")})
+	gate.refresh()
+	require.Equal(t, int64(5), participantsHits.Load())
+}
+
+func TestCurrentEpochIndex(t *testing.T) {
+	resp := func(height, latest, stagesEpoch, snv int64) *chainEpochInfoResponse {
+		return &chainEpochInfoResponse{
+			BlockHeight: jsonInt64(height),
+			LatestEpoch: chainLatestEpoch{Index: jsonUint64(latest)},
+			EpochStages: chainEpochStages{EpochIndex: jsonUint64(stagesEpoch), SetNewValidators: jsonInt64(snv)},
+		}
+	}
+	cases := []struct {
+		name  string
+		resp  *chainEpochInfoResponse
+		epoch uint64
+		known bool
+	}{
+		{"before switch", resp(159, 12, 12, 160), 11, true},
+		{"at switch", resp(160, 12, 12, 160), 12, true},
+		{"after switch", resp(161, 12, 12, 160), 12, true},
+		{"stages of another epoch", resp(161, 12, 11, 160), 0, false},
+		{"no switch height", resp(161, 12, 12, 0), 0, false},
+		{"first epoch before switch", resp(10, 1, 1, 20), 0, false},
+		{"nil", nil, 0, false},
+	}
+	for _, tc := range cases {
+		epoch, known := currentEpochIndex(tc.resp)
+		require.Equal(t, tc.epoch, epoch, tc.name)
+		require.Equal(t, tc.known, known, tc.name)
+	}
 }
