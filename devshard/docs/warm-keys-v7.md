@@ -214,6 +214,13 @@ old key, drain its in-flight work and ensure replicas that need independent
 catch-up have received the prefix. A replica sharing an admitted HA database can
 still replay that prefix after revocation.
 
+An admitted latest terminal state also supports [signature retry without a new
+diff](mainnet-height-proof-v7.md#retrying-a-frozen-final-state), including at
+`max_nonce`. The host authenticates a fresh tip and rechecks the existing signer
+there while keeping the final root unchanged. A replacement warm signer must
+already have a binding at the frozen nonce. A key granted only after finalization
+cannot acquire that past binding through recovery.
+
 ## Grant source and event delivery
 
 The bridge keeps a log copy only for granters it has queried. Unrelated

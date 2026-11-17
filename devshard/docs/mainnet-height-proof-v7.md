@@ -36,31 +36,47 @@ canonical header lookup. The canonical lookup also keeps an old escrow
 anchor from authorizing a long-range fork after its validator keys have left
 the trusting period. These checks do not invalidate already accepted history.
 A fresh local canonical header is required for new signatures, while replay
-of the authenticated journal remains deterministic. Settlement is not an
-exception: replaying a never-signed stale history into its terminal phase must
-not make that history eligible for signatures.
-An unavailable or stale live checkpoint withholds the state signature without
-aborting recovery or the executor receipt/job of an authenticated diff. A
-later fresh diff can resume state signing only over a prefix already accepted
-under the applicable host admission policy; it cannot authorize unchecked older
-work. A canonical hash mismatch is still an error. The dependent warm-key code
-adds [live admission and durable prefix provenance](warm-keys-v7.md#first-seen-work-and-accepted-local-history)
-before persisting newly received warm-signed work. Historical block authenticity
-alone does not establish that the work was created or accepted before revocation.
-When only a temporary oracle failure withheld a signature, signature collection
-also asks an already caught-up v7 host to retry signing its current state without
-appending a diff. The ordinary freshness and acceptance checks still run; an
-outdated checkpoint cannot be repaired by repeating this request.
+of the authenticated journal remains deterministic. Reaching settlement alone
+does not authorize signing unchecked history. An unavailable or stale checkpoint
+withholds ordinary state signatures without aborting recovery or execution of
+an authenticated diff. A later fresh diff can resume ordinary signing only over
+a prefix accepted under the host admission policy; it cannot authorize unchecked
+ancestors. A canonical hash mismatch remains an error. The dependent warm-key
+code adds [live admission and durable prefix provenance](warm-keys-v7.md#first-seen-work-and-accepted-local-history)
+before persisting newly received warm-signed work.
 
-There is a known recovery limit at the escrow's absolute `max_nonce`. If the
-gateway persists that last diff and crashes before collecting a quorum, the
-checkpoint can become stale before restart. No further nonce is available for
-the usual fresh-checkpoint diff, so this path cannot currently recover
-settlement. Already collected settlement evidence is a separate case; the
-limitation concerns missing signatures, not the deletion of existing ones.
-The user-approved scope split tracks a finalization recovery protocol in
-[proposal PR #2274](https://github.com/gonka-ai/gonka/pull/2274). This PR retains
-the limitation and does not exempt terminal states from freshness checks.
+### Retrying a frozen final state
+
+At `max_nonce`, a gateway cannot append a checkpoint-refresh diff. V7 hosts can
+instead retry their ordinary state signature over the unchanged latest terminal
+root and nonce when all of these conditions hold:
+
+- The host's durable `host_admission_nonce` covers the whole prefix, and the
+  stored root at the requested nonce equals the root being signed.
+- The frozen checkpoint still matches the host's canonical chain source.
+- A fresh authenticated tip is available from the existing light-block source.
+- The signer is authorized at the final nonce and remains authorized at the
+  fresh tip. Warm-key checks require the complete grant view through that tip
+  and its exact block time. Cold slot keys need no warm-grant lookup.
+
+The fresh tip is verification evidence only: it is not applied to state, written
+as a diff, or added to the signature format. Root, accounting and nonce stay
+unchanged. Existing signature collection already sends the empty-diff retry;
+it first tries reading durable signatures, so a retained quorum needs no new
+signature. The same checks run after restart and HA takeover.
+
+An active/finalizing state or a host without durable admission provenance keeps
+the ordinary checkpoint freshness rule. Unchecked remote history cannot acquire
+provenance through this retry. A replacement warm key must already be bound at
+the frozen final nonce; a key first granted/bound afterwards is outside this
+recovery path. Rotate with overlapping bindings before finalization, or use an
+otherwise eligible signer. Missing evidence or an ended/expired signer grant
+withholds the new signature.
+
+Recovery still needs an eligible reachable quorum. Mainnet applies its existing
+current-grant checks and current/previous-escrow-epoch settlement window when the
+transaction is submitted. This change adds no chain upgrade, protobuf fields,
+signature domain or operator configuration beyond the v7 admission dependency.
 
 The NodeManager `GetBlockHeader` RPC has an optional `include_light_block`
 request and a light-block response field. Ordinary hash-only lookups keep
