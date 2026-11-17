@@ -44,6 +44,16 @@ aborting recovery or the executor receipt/job of an authenticated diff. A
 later fresh diff can resume state signing; a canonical hash mismatch is still
 an error.
 
+There is a known recovery limit at the escrow's absolute `max_nonce`. If the
+gateway persists that last diff and crashes before collecting a quorum, the
+checkpoint can become stale before restart. No further nonce is available for
+the usual fresh-checkpoint diff, so this path cannot currently recover
+settlement. Already collected settlement evidence is a separate case; the
+limitation concerns missing signatures, not the deletion of existing ones.
+The user-approved scope split tracks a finalization recovery protocol in
+[proposal PR #2274](https://github.com/gonka-ai/gonka/pull/2274). This PR retains
+the limitation and does not exempt terminal states from freshness checks.
+
 The NodeManager `GetBlockHeader` RPC has an optional `include_light_block`
 request and a light-block response field. Ordinary hash-only lookups keep
 working with older servers. Requesting evidence from an old or hash-only
