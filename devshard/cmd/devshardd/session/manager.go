@@ -1380,7 +1380,8 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	replayFrom := uint64(1)
 	if meta.LatestNonce > 0 {
 		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
-		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce &&
+			(!types.RequiresMainnetHeightProof(sm.ProtocolVersion()) || snapNonce <= meta.HostAdmissionNonce) {
 			snapState, committedEntries, sealedNonces, floorProto, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
 			if decodeErr != nil {
 				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
@@ -1440,7 +1441,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					var root []byte
 					applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
 						var err error
-						root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+						root, err = host.ReplayStoredDiff(context.Background(), sm, m.store, escrowID, rec)
 						return err
 					})
 					if applyErr != nil {

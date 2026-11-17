@@ -11,6 +11,7 @@ import (
 	"devshard/stub"
 	"devshard/types"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 	"testing"
 	"time"
 )
@@ -57,9 +58,9 @@ func TestValidationRetrySelectsRemainingWarmSlot(t *testing.T) {
 	msg := txs[0].GetValidation()
 	require.NotNil(t, msg)
 	require.Equal(t, uint32(1), msg.ValidatorSlot)
-	copy := *msg
+	copy := proto.Clone(msg).(*types.MsgValidation)
 	copy.ProposerSig = nil
-	data, err := types.CanonicalSignedBytes(&copy)
+	data, err := types.CanonicalSignedBytes(copy)
 	require.NoError(t, err)
 	recovered, err := signing.NewSecp256k1Verifier().RecoverAddress(data, msg.ProposerSig)
 	require.NoError(t, err)

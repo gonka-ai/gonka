@@ -65,7 +65,7 @@ func (f *warmRecoveryFixture) apply(extra ...*types.DevshardTx) {
 	n := f.sm.LatestNonce() + 1
 	root, err := f.sm.ApplyLocal(n, txs)
 	require.NoError(f.t, err)
-	require.NoError(f.t, f.store.AppendDiff("warm-recovery", types.DiffRecord{Diff: testutil.SignDiffWithRoot(f.t, f.user, "warm-recovery", n, txs, root), StateHash: root}))
+	require.NoError(f.t, f.store.AppendDiff("warm-recovery", types.DiffRecord{Diff: testutil.SignDiffWithRoot(f.t, f.user, "warm-recovery", n, txs, root), StateHash: root, HostAdmitted: true}))
 }
 
 func (f *warmRecoveryFixture) host(key signing.Signer, engine devshard.InferenceEngine, opts ...HostOption) *Host {

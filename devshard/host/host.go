@@ -2282,6 +2282,15 @@ func (h *Host) stateSigningSlots(nonce uint64) []uint32 {
 // signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
 // It returns the slots authorized for this signer, never just startup ownership.
 func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
+	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		meta, err := h.store.GetSessionMeta(h.escrowID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: host admission prefix: %v", types.ErrHeaderPending, err)
+		}
+		if meta.HostAdmissionNonce < nonce {
+			return nil, nil, fmt.Errorf("%w: unchecked host history through nonce %d", types.ErrHeaderPending, nonce)
+		}
+	}
 	slots := h.stateSigningSlots(nonce)
 	if len(slots) == 0 {
 		return nil, nil, types.ErrWarmKeyUnconfirmed

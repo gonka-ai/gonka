@@ -139,6 +139,7 @@ type StateMachine struct {
 
 	warmResolver       WarmKeyResolver  // optional grant source for local admission
 	warmConfirm        WarmKeyConfirmer // optional chain-log confirmation of binds
+	warmAdmission      *warmAdmission
 	warmHeightCheck    WarmKeyHeightChecker
 	warmHeightValidity map[warmGrantKey]bool
 	mainnetHeights     MainnetHeightSource
@@ -420,6 +421,22 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 // for every diff of the valid prefix, in order, and the error that ended it.
 // The handles must be committed in order with CommitValidated.
 func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, error) {
+	return sm.validateDiffs(diffs, nil)
+}
+
+// ValidateDiffsForAdmission adds live authority checks for first-seen network
+// history. It must run before persistence. Historical replay uses ValidateDiffs
+// or ApplyLocalPersisted instead; it never reinterprets old work at today's tip.
+func (sm *StateMachine) ValidateDiffsForAdmission(ctx context.Context, diffs []types.Diff) ([]*ValidatedDiff, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
+	defer cancel()
+	return sm.validateDiffs(diffs, &warmAdmission{ctx: ctx, decisions: make(map[warmGrantKey]warmAdmissionDecision)})
+}
+
+func (sm *StateMachine) validateDiffs(diffs []types.Diff, admission *warmAdmission) ([]*ValidatedDiff, error) {
 	var sigErr error
 	for i, diff := range diffs {
 		if err := sm.verifyDiffUserSig(diff); err != nil {
@@ -431,6 +448,11 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		sm.warmAdmission = admission
+		defer func() { sm.warmAdmission = nil }()
+	}
+
 	out := make([]*ValidatedDiff, 0, len(diffs))
 	defer func() {
 		for i := len(out) - 1; i >= 0; i-- {
@@ -438,6 +460,9 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 		}
 	}()
 	for _, diff := range diffs {
+		if admission != nil {
+			admission.err = nil
+		}
 		var obs []deferredObsWrite
 		var marks []heightsync.AttributableMark
 		sm.obsDeferred = &obs
@@ -446,6 +471,9 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 		sm.obsDeferred = nil
 		sm.marksDeferred = nil
 		if err != nil {
+			if admission != nil && admission.err != nil {
+				return out, admission.err
+			}
 			return out, err
 		}
 		sm.detachJournalLocked(j)
@@ -1410,6 +1438,9 @@ func (sm *StateMachine) applyWarmKeyRevoke(msg *types.MsgWarmKeyRevoke, diffNonc
 		if err != nil || (recovered != cold && recovered != addr) {
 			return fmt.Errorf("%w: live grant revoke requires consent of slot %d participant", types.ErrInvalidWarmKeyEntry, msg.SlotId)
 		}
+		if recovered == addr && !sm.allowWarmAdmissionLocked(warmGrantKey{cold, msg.GrantId, addr}) {
+			return sm.warmAdmission.err
+		}
 	}
 	sm.setWarmHistoryLocked(msg.SlotId, scratch[msg.SlotId])
 	logging.Debug("warm key revoked", "subsystem", "state",
@@ -2287,9 +2318,16 @@ func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors
 	if !types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
 		return actors
 	}
-	return restrictWarmActors(actors, func(slot uint32, b signing.WarmKeyBinding) bool {
+	actors = restrictWarmActors(actors, func(slot uint32, b signing.WarmKeyBinding) bool {
 		return sm.warmHeightValidity[warmGrantKey{sm.slotToAddress[slot], b.GrantID, b.Addr}]
 	})
+	if sm.warmAdmission != nil {
+		historical := actors.BindingAllowed
+		actors.BindingAllowed = func(slot uint32, b signing.WarmKeyBinding) bool {
+			return historical(slot, b) && sm.allowWarmAdmissionLocked(warmGrantKey{sm.slotToAddress[slot], b.GrantID, b.Addr})
+		}
+	}
+	return actors
 }
 
 // localActorsAt is the local-admission identity set at nonce: the consensus
