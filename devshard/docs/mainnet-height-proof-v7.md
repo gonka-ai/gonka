@@ -43,6 +43,10 @@ An unavailable or stale live checkpoint withholds the state signature without
 aborting recovery or the executor receipt/job of an authenticated diff. A
 later fresh diff can resume state signing; a canonical hash mismatch is still
 an error.
+When only a temporary oracle failure withheld a signature, signature collection
+also asks an already caught-up v7 host to retry signing its current state without
+appending a diff. The ordinary freshness and acceptance checks still run; an
+outdated checkpoint cannot be repaired by repeating this request.
 
 There is a known recovery limit at the escrow's absolute `max_nonce`. If the
 gateway persists that last diff and crashes before collecting a quorum, the

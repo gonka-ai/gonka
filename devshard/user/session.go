@@ -3373,9 +3373,42 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	return false
 }
 
+// retryCurrentSignature asks an already caught-up v7 host to rerun its normal
+// signing policy. A transient oracle failure may have withheld its signature
+// on the original Send; reading stored signatures cannot retry that decision.
+// No diff is created, and historical nonces are never re-signed this way.
+func (s *Session) retryCurrentSignature(ctx context.Context, hostIdx int, client HostClient, nonce uint64) error {
+	s.mu.Lock()
+	current := nonce == s.nonce && s.hostSyncNonce[hostIdx] >= nonce &&
+		types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	s.mu.Unlock()
+	if !current {
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, s.signatureCollectHostTimeout)
+	defer cancel()
+	resp, err := client.Send(requestCtx, host.HostRequest{Nonce: nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
+	if err != nil {
+		s.forgetHostState(hostIdx, err)
+		return err
+	}
+	if resp == nil {
+		return ErrNilHostResponse
+	}
+	if resp.Nonce != nonce {
+		return nil
+	}
+	s.mu.Lock()
+	err = s.processResponse(hostIdx, resp, nonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
+}
+
 // CollectSignatures actively polls all hosts to collect signatures for the
 // given nonce. For each host: tries the cheap GET /signatures first, then
-// falls back to sending catch-up diffs. Retries failed hosts with backoff.
+// falls back to catch-up diffs and a current-state signing retry for v7.
+// Retries failed hosts with backoff.
 // Uses per-host timeouts independent of the parent context.
 // Returns the signature status at that nonce after collection. Thread-safe.
 func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, threshold, total uint32) {
@@ -3467,6 +3500,12 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				if err := s.sendCatchUpWith(collectCtx, h.idx, finClients[h.idx]); err != nil {
 					logging.Warn("collect signatures: send catch-up error", "subsystem", "finalize", "escrow", s.escrowID,
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+				}
+				if !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
+					if err := s.retryCurrentSignature(collectCtx, h.idx, finClients[h.idx], nonce); err != nil {
+						logging.Warn("collect signatures: retry signing error", "subsystem", "finalize", "escrow", s.escrowID,
+							"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+					}
 				}
 
 				if s.hasQuorum(nonce, threshold) {
