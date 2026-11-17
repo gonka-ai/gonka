@@ -111,9 +111,9 @@ func (sm *StateMachine) stageMainnetHeightLocked(txs []*types.DevshardTx) error 
 	return nil
 }
 
-// Freshness is live signing policy, not replay validity. Historical valid
-// proofs remain valid forever; a sequencer freezing an old height cannot keep
-// collecting fresh host signatures. Check again for every signing attempt.
+// Freshness is ordinary live signing policy, not replay validity. New work
+// cannot keep collecting signatures against a frozen old height. Recovery of
+// an admitted final root uses TerminalSigningSlots with separate fresh evidence.
 const MainnetCheckpointMaxAge = 2 * time.Minute
 const MainnetCheckpointMaxFuture = 10 * time.Second
 const MainnetCheckpointMaxLag = int64(2)
@@ -151,6 +151,16 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	// oracle. This prevents an old escrow anchor being used for a long-range
 	// fork after its old validator keys have left the trusting period. Replay
 	// remains independent of that mutable source.
+	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
+		return err
+	}
+	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
+		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
+	}
+	return nil
+}
+
+func checkCanonicalCheckpoint(ctx context.Context, cp lightproof.Checkpoint, source MainnetHeightSource, headerTimes HeaderTimeSource) error {
 	if headerTimes != nil {
 		if _, err := headerTimes.HeaderTimeMs(uint64(cp.Height), cp.Hash); err != nil {
 			return err
@@ -165,9 +175,6 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 		}
 	} else {
 		return fmt.Errorf("%w: no canonical checkpoint lookup", types.ErrHeaderPending)
-	}
-	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
-		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
 	}
 	return nil
 }

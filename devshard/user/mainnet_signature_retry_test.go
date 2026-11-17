@@ -10,6 +10,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/lightproof"
+	"devshard"
 	mockoracle "devshard/chainoracle/blocks/observer"
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -68,31 +69,25 @@ func TestCollectSignaturesRetriesCurrentCheckpointAfterOracleRecovers(t *testing
 			oracle := &signingRetryOracle{BlockOracle: source, Source: source}
 			hostSM := newSM(oracle)
 			hostStore := testutil.MustMemoryStore(t, escrow, owner.Address(), cfg, group, 1_000_000)
-			h, err := host.NewHost(hostSM, signer, stub.NewInferenceEngine(), escrow, group, nil, host.WithStorage(hostStore), host.WithChainOracle(oracle))
+			h, err := host.NewHost(hostSM, signer, stub.NewInferenceEngine(), escrow, group, nil, host.WithStorage(hostStore), host.WithChainOracle(oracle), host.WithMaxNonceProvider(devshard.StaticMaxNonce(2)))
 			require.NoError(t, err)
 			defer h.Close()
 			client := &InProcessClient{Host: h}
 			session, err := NewSession(newSM(source), owner, escrow, group, []HostClient{client}, verifier, WithCollectRetry(0, time.Millisecond, time.Second))
 			require.NoError(t, err)
-			// Reach settlement without delivering any state signatures. The oracle
-			// outage affects signing, not verification of the carried light blocks.
+			session.SetChainMaxNonce(2)
+			// The public finalizer persists the last allowed diff, but the host
+			// cannot sign during the oracle outage. A later retry has no nonce
+			// left for changing the frozen checkpoint.
 			oracle.unavailable.Store(true)
-			session.mu.Lock()
-			first, _, err := session.composeDiffLocked(context.Background(), []*types.DevshardTx{{Tx: &types.DevshardTx_FinalizeRound{FinalizeRound: &types.MsgFinalizeRound{}}}})
-			session.mu.Unlock()
-			require.NoError(t, err)
-			session.mu.Lock()
-			last, _, err := session.composeDiffLocked(context.Background(), nil)
-			session.mu.Unlock()
-			require.NoError(t, err)
+			require.ErrorContains(t, session.Finalize(context.Background()), "insufficient signatures")
 			require.Equal(t, types.PhaseSettlement, session.sm.Phase())
-			resp, err := client.Send(context.Background(), host.HostRequest{Diffs: []types.Diff{first, last}, Nonce: last.Nonce}, nil, nil)
+			lastNonce := session.Nonce()
+			require.Equal(t, uint64(2), lastNonce)
+			meta, err := hostStore.GetSessionMeta(escrow)
 			require.NoError(t, err)
-			require.Empty(t, resp.StateSig)
-			session.mu.Lock()
-			require.NoError(t, session.processResponse(0, resp, last.Nonce))
-			session.mu.Unlock()
-			require.Equal(t, last.Nonce, session.hostSyncNonce[0])
+			require.Equal(t, lastNonce, meta.HostAdmissionNonce)
+			require.Equal(t, lastNonce, session.hostSyncNonce[0])
 			oracle.unavailable.Store(false)
 			if !remainsFresh {
 				for range 4 {
@@ -102,15 +97,11 @@ func TestCollectSignaturesRetriesCurrentCheckpointAfterOracleRecovers(t *testing
 			}
 			rootBefore, err := hostSM.ComputeStateRoot()
 			require.NoError(t, err)
-			weight, threshold, _ := session.CollectSignatures(context.Background(), last.Nonce)
-			if remainsFresh {
-				require.GreaterOrEqual(t, weight, threshold, "a caught-up host must retry its withheld signature")
-				require.NoError(t, session.Finalize(context.Background()))
-			} else {
-				require.Zero(t, weight, "retry still applies the normal freshness policy")
-			}
-			require.Equal(t, last.Nonce, session.Nonce(), "retry must not consume another nonce")
-			require.Equal(t, last.Nonce, h.LatestNonce())
+			weight, threshold, _ := session.CollectSignatures(context.Background(), lastNonce)
+			require.GreaterOrEqual(t, weight, threshold, "the admitted terminal root can be signed using a fresh live tip")
+			require.NoError(t, session.Finalize(context.Background()))
+			require.Equal(t, lastNonce, session.Nonce(), "retry must not consume another nonce")
+			require.Equal(t, lastNonce, h.LatestNonce())
 			rootAfter, err := hostSM.ComputeStateRoot()
 			require.NoError(t, err)
 			require.Equal(t, rootBefore, rootAfter)

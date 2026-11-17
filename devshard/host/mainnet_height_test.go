@@ -81,7 +81,7 @@ func TestMainnetFreshnessWithholdsSignatureWithoutAbortingReceiptOrRecovery(t *t
 	require.NotEmpty(t, resp.StateSig)
 }
 
-func TestMainnetNeverSignedTerminalHistoryCannotBypassFreshness(t *testing.T) {
+func TestMainnetTerminalHistoryWithoutFreshEvidenceCannotSign(t *testing.T) {
 	validator := testutil.MustGenerateKey(t)
 	addr, err := blocks.AddressBytes(validator.CompressedPublicKeyBytes())
 	require.NoError(t, err)
@@ -119,7 +119,7 @@ func TestMainnetNeverSignedTerminalHistoryCannotBypassFreshness(t *testing.T) {
 	require.NoError(t, err)
 	sigs, err := h.ApplyRecoveredDiffs(context.Background(), []types.Diff{first, last})
 	require.NoError(t, err)
-	require.Empty(t, sigs, "reaching settlement must never make stale, never-signed history signable")
+	require.Empty(t, sigs, "a terminal phase and admitted journal still require fresh authenticated evidence")
 	_, _, err = h.signState(2, root)
 	require.ErrorIs(t, err, types.ErrHeaderPending)
 }

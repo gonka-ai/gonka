@@ -781,7 +781,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	// (c) Sign state (with acceptance check + mempool staleness).
-	stateSig, root, nonce, err := h.signIfAccepted(lastAppliedTxs)
+	stateSig, root, nonce, _, err := h.signIfAccepted(lastAppliedTxs)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, observability.Classify(observability.ReasonStateSignErr, observability.WhereHostSignState, err)
@@ -1035,17 +1035,17 @@ func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
 
 // signIfAccepted computes state root, checks acceptance, signs if allowed,
 // stores sig and checks finalization. Caller must hold h.mu.
-func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byte, nonce uint64, err error) {
+func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byte, nonce uint64, signingSlots []uint32, err error) {
 	h.authorizedMempoolTxs() // stale revoked proposals must not withhold an otherwise valid state signature
 	nonce = h.sm.LatestNonce()
 	root, err = h.sm.ComputeStateRoot()
 	if err != nil {
-		return nil, nil, 0, fmt.Errorf("compute state root: %w", err)
+		return nil, nil, 0, nil, fmt.Errorf("compute state root: %w", err)
 	}
 
 	if h.checker != nil {
 		if err := h.checker.Check(h.sm.SnapshotState(), applied); err != nil {
-			return nil, root, nonce, nil // withhold
+			return nil, root, nonce, nil, nil // withhold
 		}
 	}
 
@@ -1058,9 +1058,9 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 			// Recovery must also be able to pass old checkpoints on its way
 			// to a fresh diff; never sign those intermediate roots.
 			logging.Debug("state signature withheld: checkpoint or signer unavailable", "subsystem", "host", "nonce", nonce, "error", err)
-			return nil, root, nonce, nil
+			return nil, root, nonce, nil, nil
 		}
-		return nil, nil, 0, fmt.Errorf("sign state root: %w", err)
+		return nil, nil, 0, nil, fmt.Errorf("sign state root: %w", err)
 	}
 	stateSig = sig
 
@@ -1073,7 +1073,7 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 		h.checkFinalization(nonce)
 	}
 
-	return stateSig, root, nonce, nil
+	return stateSig, root, nonce, signingSlots, nil
 }
 
 // confirmStartLocked returns the executor receipt for a pending inference as a
@@ -2148,13 +2148,13 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]t
 		}
 
 		// Sign state with acceptance check (same path as HandleRequest).
-		stateSig, root, nonce, err := h.signIfAccepted(nil)
+		stateSig, root, nonce, signingSlots, err := h.signIfAccepted(nil)
 		if err != nil {
 			return sigs, fmt.Errorf("sign recovered state: %w", err)
 		}
 
 		if stateSig != nil && h.store != nil {
-			for _, slotID := range h.stateSigningSlots(nonce) {
+			for _, slotID := range signingSlots {
 				sigs = append(sigs, types.GossipSig{
 					Nonce:     nonce,
 					StateHash: root,
@@ -2297,7 +2297,19 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); err != nil {
+	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && h.sm.Phase() == types.PhaseSettlement {
+		// The admission watermark above proves the entire prefix was checked.
+		// Pin the exact durable final root before using a fresh live authority
+		// check without changing the signed checkpoint, nonce or accounting.
+		stored, ok, err := h.store.DiffStateHash(h.escrowID, nonce)
+		if err != nil || !ok || !bytes.Equal(stored, root) {
+			return nil, nil, fmt.Errorf("%w: terminal root is not the admitted durable root", types.ErrHeaderPending)
+		}
+		slots, err = h.sm.TerminalSigningSlots(ctx, nonce, h.signer.Address(), slots)
+		if err != nil {
+			return nil, nil, err
+		}
+	} else if err := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); err != nil {
 		return nil, nil, err
 	}
 	sigContent := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}
