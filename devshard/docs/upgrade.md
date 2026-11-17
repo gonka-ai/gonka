@@ -303,3 +303,29 @@ Current join deployment keeps that temporary path in one compose file:
 mounts the existing `.inference` keyring read-only for signing, and persists
 its runtime state under `./devshards`. This is deployment wiring for the first
 release, not a change to the target architecture.
+
+## V7 warm-key admission rollout
+
+V7 hosts record the contiguous prefix checked under live warm-key admission in
+`host_admission_nonce`. SQLite and Postgres add this session column automatically;
+there is no new environment variable, compose setting or chain migration for
+this local provenance. Keep it with the host database in backups and HA restore.
+Trusted local SQLite-to-Postgres migration carries the recorded prefix.
+
+Deploy the admission-capable v7 binary to all participants before production v7
+activation. For a host database previously written by prototype v7 binaries,
+stop all old v7 writers before starting the updated child. Use an exclusive
+stop/start for this transition instead of overlapping v7 children. Old protocol
+versions can continue using the same additive database schema.
+
+Existing unmarked v7 journals are revalidated against current authority before
+being marked. Snapshots beyond the recorded prefix do not bypass that step.
+Retired-key rows can stop recovery; do not manually advance the watermark or
+import one from a peer. Retain backups and use new test escrows for prototype
+history that cannot pass revalidation.
+
+During key rotation, drain old-key work and synchronize independently stored
+replicas before revoking the old grant. A replica restoring an already admitted
+prefix from its trusted shared database can replay it after revocation. A host
+first receiving that prefix remotely after revocation cannot accept it using
+historical signatures alone. See [warm-key admission and recovery](warm-keys-v7.md#first-seen-work-and-accepted-local-history).

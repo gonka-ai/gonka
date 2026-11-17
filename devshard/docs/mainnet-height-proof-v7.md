@@ -41,8 +41,12 @@ exception: replaying a never-signed stale history into its terminal phase must
 not make that history eligible for signatures.
 An unavailable or stale live checkpoint withholds the state signature without
 aborting recovery or the executor receipt/job of an authenticated diff. A
-later fresh diff can resume state signing; a canonical hash mismatch is still
-an error.
+later fresh diff can resume state signing only over a prefix already accepted
+under the applicable host admission policy; it cannot authorize unchecked older
+work. A canonical hash mismatch is still an error. The dependent warm-key code
+adds [live admission and durable prefix provenance](warm-keys-v7.md#first-seen-work-and-accepted-local-history)
+before persisting newly received warm-signed work. Historical block authenticity
+alone does not establish that the work was created or accepted before revocation.
 When only a temporary oracle failure withheld a signature, signature collection
 also asks an already caught-up v7 host to retry signing its current state without
 appending a diff. The ordinary freshness and acceptance checks still run; an

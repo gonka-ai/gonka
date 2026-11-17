@@ -169,6 +169,51 @@ admission decisions. They consult the current grant source and refuse a key
 whose end they have observed. They do not bind an unknown key into consensus;
 the gateway must sequence its binding first.
 
+## First-seen work and accepted local history
+
+A canonical historical checkpoint proves the block, not when a warm signature
+was created. Before persisting a first-seen diff, hosts additionally check each
+warm signer used by its messages against a complete grant view at the host's
+current authenticated mainnet tip and exact block time. This includes requests,
+gossip recovery and remote catch-up, with or without a host store. The same
+signer must still pass the deterministic binding and grant checks at the diff's
+own checkpoint. Cold signatures do not acquire a warm-grant lookup requirement.
+The live checkpoint is sampled once per validation batch; this is authority at
+the observer's confirmed tip, not a wall-clock guarantee of observing every
+revocation immediately.
+
+A revoked, replaced or expired grant rejects the new work before persistence.
+An unavailable tip, proof or complete grant view reports pending, leaving that
+diff unapplied and unwritten. Already validated earlier diffs in a batch may
+commit. Appending a fresh metadata-only diff cannot promote rejected ancestors.
+The current signing freshness window (including the two-block lag allowance)
+does not bypass this separate admission check.
+
+Hosts persist a private contiguous `host_admission_nonce` with the admitted diff
+batch, in the same SQLite/Postgres transaction. It is not wire data, a state-root
+field, or a certificate peers may import. HA replicas sharing the same trusted
+host database share this provenance. State signing refuses any stored prefix
+that extends beyond this watermark. Restart and local reconciliation replay
+marked history at each diff's original checkpoint, so a later key revocation
+does not erase work the host already accepted. Snapshots may skip only a marked
+prefix; snapshot bytes and existing state signatures cannot create a mark.
+
+Old v7 databases start with a zero watermark. Recovery ignores snapshots beyond
+it and revalidates unmarked journal rows under the live admission rule, advancing
+the watermark only after successful validation. A formerly unchecked row using
+a now-retired key can therefore stop recovery. Never set the watermark manually
+to bypass this check. Trusted local SQLite-to-Postgres migration preserves the
+source database's recorded prefix and leaves its unmarked suffix unmarked.
+
+This is deliberately strict for an offline participant: remote history first
+seen after its signer loses authority is refused even if other hosts accepted
+it earlier. Such history needs a separately designed accepted-prefix attestation
+or another recovery protocol; old warm signatures alone do not establish when
+it was accepted. This change does not provide that protocol. Before revoking an
+old key, drain its in-flight work and ensure replicas that need independent
+catch-up have received the prefix. A replica sharing an admitted HA database can
+still replay that prefix after revocation.
+
 ## Grant source and event delivery
 
 The bridge keeps a log copy only for granters it has queried. Unrelated
@@ -206,7 +251,10 @@ event dispatch retries the unprocessed suffix of its page.
 3. Submit any pending settlements signed by the old key before revoking it:
    the chain still checks settlement grants at submission, not at a
    submitter-chosen historical height.
-4. Revoke the old key on chain. Diffs whose authenticated checkpoint reaches
+4. Drain in-flight old-key messages and bring independently stored replicas up
+   to date before revocation. New live admission requires the signer to remain
+   authorized at the receiving host's current authenticated tip.
+5. Revoke the old key on chain. Diffs whose authenticated checkpoint reaches
    that end reject it; the gateway also emits a nonce revoke. Earlier valid
    diffs continue to replay.
 
@@ -229,6 +277,16 @@ refuses recovery rather than skipping these checks. Cold-only local views do
 not acquire this grant-source requirement.
 
 ## Release coordination
+
+Deploy this admission policy to all v7 hosts before approving v7 for production.
+The additive storage migration requires no new operator flag. Do not overlap old
+and new v7 writers for the same host database: an old writer does not record live
+admission, and its suffix requires revalidation before a new host can sign it.
+Keep the database and its admission watermark together when restoring backups.
+Prototype journals containing retired-key work may fail revalidation; use new
+test escrows rather than certifying unchecked history. Earlier protocol versions
+retain their existing behavior and can use the additive schema.
+
 
 Ship the v0.2.18 chain binary (module version 16, log seeding and escrow trust
 anchors), then light-block-capable dapi, then approve the v7 catalog entry
