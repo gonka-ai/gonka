@@ -406,8 +406,6 @@ class MaintenanceWindowTests : TestermintTest() {
         assertThat(params.maintenanceEnabled).isTrue()
 
         logSection("Earning maintenance credit")
-        genesis.waitForNextEpoch()
-        genesis.waitForNextEpoch()
 
         val join1 = cluster.joinPairs[0]
         val join2 = cluster.joinPairs[1]
