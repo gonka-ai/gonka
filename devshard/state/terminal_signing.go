@@ -1,6 +1,7 @@
 package state
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"time"
@@ -8,38 +9,55 @@ import (
 	"devshard/types"
 )
 
-// TerminalSigningSlots rechecks the existing signer's nonce bindings against a
-// fresh authenticated tip without applying that tip to the frozen final state.
+// FinalStateSigningSlots authorizes an attestation of the exact final identity
+// (escrow, nonce, root), independently of advancing the diff checkpoint.
 // The host must separately verify its durable admission watermark and root.
 // New unbound signers and past nonces are deliberately outside this operation.
-func (sm *StateMachine) TerminalSigningSlots(ctx context.Context, nonce uint64, signer string, candidates []uint32) ([]uint32, error) {
+func (sm *StateMachine) FinalStateSigningSlots(ctx context.Context, final *types.StateSignatureContent, signer string, candidates []uint32) ([]uint32, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
 	sm.mu.RLock()
-	if !types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) || sm.state.Phase != types.PhaseSettlement || nonce != sm.state.LatestNonce {
+	if final == nil || !types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) || sm.state.Phase != types.PhaseSettlement || final.EscrowId != sm.state.EscrowID || final.Nonce != sm.state.LatestNonce {
 		sm.mu.RUnlock()
 		return nil, types.ErrInvalidTransition
 	}
-	historical := sm.consensusActorsAtLocked(nonce)
+	root, err := sm.computeStateRootLocked()
+	if err != nil {
+		sm.mu.RUnlock()
+		return nil, err
+	}
+	if !bytes.Equal(final.StateRoot, root) {
+		sm.mu.RUnlock()
+		return nil, fmt.Errorf("%w: final attestation root differs from local state", types.ErrHeaderPending)
+	}
+	historical := sm.consensusActorsAtLocked(final.Nonce)
 	cp := cloneCheckpoint(sm.state.MainnetCheckpoint)
 	source, times, checker, escrow := sm.mainnetHeights, sm.headerTimes, sm.warmHeightCheck, sm.state.EscrowID
 	sm.mu.RUnlock()
 
-	// Retain the ordinary canonical check even though the old block may now be
-	// outside the age/lag window. A fresh proof alone is not an age exemption
-	// for a conflicting frozen checkpoint.
+	// The final checkpoint remains canonical even when its age/lag window has
+	// ended. Live evidence authorizes the signer, never a different final root.
 	if err := checkCanonicalCheckpoint(ctx, cp, source, times); err != nil {
 		return nil, err
 	}
-	fresh, err := sm.BuildMainnetHeightTx(ctx)
+	tip, err := latestMainnetHeader(ctx, source)
 	if err != nil {
-		return nil, fmt.Errorf("%w: terminal signing tip: %v", types.ErrHeaderPending, err)
+		return nil, err
 	}
-	cp.Height, cp.Time = fresh.GetMainnetHeight().Height, time.Unix(0, fresh.GetMainnetHeight().TimeUnixNano).UTC()
-	current := sm.historicalWarmActors(historical, cp, nonce, checker, escrow, true)
+	// A recent carried checkpoint already supplies authenticated evidence under
+	// the ordinary freshness policy. Preserve this path when the separate light-
+	// block endpoint is down. Otherwise authenticate fresh evidence directly,
+	// without constructing a MsgMainnetHeight or changing consensus state.
+	if checkCheckpointAge(cp, time.Now()) != nil || checkCheckpointLag(cp, tip) != nil {
+		cp, _, err = authenticateMainnetTip(ctx, cp, tip, source)
+		if err != nil {
+			return nil, fmt.Errorf("%w: final attestation tip: %v", types.ErrHeaderPending, err)
+		}
+	}
+	current := sm.historicalWarmActors(historical, cp, final.Nonce, checker, escrow, true)
 	var allowed []uint32
 	var pending error
 	for _, slot := range candidates {

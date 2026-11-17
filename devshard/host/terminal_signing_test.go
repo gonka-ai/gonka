@@ -269,3 +269,88 @@ func TestFreshTerminalSigningNeedsNoAdditionalLightBlockProof(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, response.StateSig, "a fresh carried checkpoint needs no recovery proof RPC")
 }
+
+func TestFinalAttestationRequiresExactFinalIdentity(t *testing.T) {
+	for _, scenario := range []string{"nil", "other-escrow", "past-nonce", "future-nonce", "other-root", "other-local-root", "active"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newTerminalFixture(t, 10*time.Second, true, scenario != "active")
+			root, err := f.sm.ComputeStateRoot()
+			require.NoError(t, err)
+			final := &types.StateSignatureContent{EscrowId: "123", Nonce: 2, StateRoot: root}
+			var opts []HostOption
+			switch scenario {
+			case "nil":
+				final = nil
+			case "other-escrow":
+				final.EscrowId = "456"
+			case "past-nonce":
+				records, err := f.store.GetDiffs("123", 1, 1)
+				require.NoError(t, err)
+				final.Nonce, final.StateRoot = 1, records[0].StateHash
+			case "future-nonce":
+				final.Nonce++
+			case "other-root", "other-local-root":
+				final.StateRoot = []byte("different root")
+				if scenario == "other-local-root" {
+					// A matching storage answer cannot replace the SM's actual
+					// final identity, even on the recent-checkpoint fast path.
+					opts = append(opts, WithStorage(conflictingTerminalRoot{f.store}))
+				}
+			}
+			h := f.host(t, f.warm, opts...)
+			before := f.sm.SnapshotState()
+			sig, slots, err := h.signFinalState(context.Background(), final)
+			require.Error(t, err)
+			require.Empty(t, sig)
+			require.Empty(t, slots)
+			require.Equal(t, before, f.sm.SnapshotState())
+		})
+	}
+}
+
+func TestFinalAttestationChecksDurableAdmissionWithFreshCheckpoint(t *testing.T) {
+	for _, scenario := range []string{"unmarked", "wrong-root"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newTerminalFixture(t, 10*time.Second, scenario != "unmarked", true)
+			var opts []HostOption
+			if scenario == "wrong-root" {
+				opts = append(opts, WithStorage(conflictingTerminalRoot{f.store}))
+			}
+			h := f.host(t, f.warm, opts...)
+			response, err := h.HandleRequest(context.Background(), HostRequest{Nonce: 2})
+			require.NoError(t, err)
+			require.Empty(t, response.StateSig, "a fresh checkpoint cannot bypass the final identity checks")
+		})
+	}
+}
+
+func TestFinalAttestationDoesNotAdoptGrantsIssuedAfterFinalNonce(t *testing.T) {
+	for _, scenario := range []string{"new-key", "renewed-grant"} {
+		t.Run(scenario, func(t *testing.T) {
+			f := newTerminalFixture(t, 10*time.Second, true, true)
+			frozen := f.sm.MainnetCheckpoint()
+			f.advance(t, 4)
+			key := f.warm
+			if scenario == "new-key" {
+				key = testutil.MustGenerateKey(t)
+			}
+			f.sm.SetWarmKeyHeightChecker(func(c, w string, id uint64, h int64, _ time.Time) (bool, error) {
+				if c != f.cold.Address() {
+					return false, nil
+				}
+				if h <= frozen.Height {
+					return w == f.warm.Address() && id == 1, nil
+				}
+				// A currently valid marker grant does not bind its new ID or
+				// address into the already frozen final state.
+				return w == key.Address() && id == 2, nil
+			})
+			h := f.host(t, key)
+			before := f.sm.SnapshotState()
+			response, err := h.HandleRequest(context.Background(), HostRequest{Nonce: 2})
+			require.NoError(t, err)
+			require.Empty(t, response.StateSig)
+			require.Equal(t, before, f.sm.SnapshotState())
+		})
+	}
+}

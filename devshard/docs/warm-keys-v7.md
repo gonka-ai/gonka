@@ -214,10 +214,11 @@ old key, drain its in-flight work and ensure replicas that need independent
 catch-up have received the prefix. A replica sharing an admitted HA database can
 still replay that prefix after revocation.
 
-An admitted latest terminal state also supports [signature retry without a new
-diff](mainnet-height-proof-v7.md#retrying-a-frozen-final-state), including at
-`max_nonce`. The host authenticates a fresh tip and rechecks the existing signer
-there while keeping the final root unchanged. A replacement warm signer must
+An admitted latest terminal state also supports [final-state attestation without
+a new diff](mainnet-height-proof-v7.md#retrying-a-frozen-final-state), including at
+`max_nonce`. The host rechecks the existing signer using a recent authenticated
+checkpoint, obtaining a fresh proof when needed, while keeping the final root
+unchanged. A replacement warm signer must
 already have a binding at the frozen nonce. A key granted only after finalization
 cannot acquire that past binding through recovery.
 

@@ -2262,68 +2262,6 @@ func (h *Host) GetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return h.store.GetSignatures(h.escrowID, nonce)
 }
 
-// stateSigningSlots rechecks startup slot ownership against the exact state
-// nonce. A replica can outlive its warm grant or a sequenced nonce revoke.
-// Host membership is immutable; the state machine synchronizes its own reads.
-func (h *Host) stateSigningSlots(nonce uint64) []uint32 {
-	if !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
-		return h.sortedSlots
-	}
-	actors := h.SlotActorsAt(nonce)
-	var slots []uint32
-	for _, slot := range h.sortedSigningSlots {
-		if actors.Allows(slot, h.signer.Address()) {
-			slots = append(slots, slot)
-		}
-	}
-	return slots
-}
-
-// signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
-// It returns the slots authorized for this signer, never just startup ownership.
-func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
-	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
-		meta, err := h.store.GetSessionMeta(h.escrowID)
-		if err != nil {
-			return nil, nil, fmt.Errorf("%w: host admission prefix: %v", types.ErrHeaderPending, err)
-		}
-		if meta.HostAdmissionNonce < nonce {
-			return nil, nil, fmt.Errorf("%w: unchecked host history through nonce %d", types.ErrHeaderPending, nonce)
-		}
-	}
-	slots := h.stateSigningSlots(nonce)
-	if len(slots) == 0 {
-		return nil, nil, types.ErrWarmKeyUnconfirmed
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	if freshnessErr := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); freshnessErr != nil {
-		// Fresh final states retain the ordinary path, including hash-only
-		// canonical lookups. Only stale/pending checkpoints need recovery proof.
-		if h.store == nil || !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) || h.sm.Phase() != types.PhaseSettlement || !errors.Is(freshnessErr, types.ErrHeaderPending) {
-			return nil, nil, freshnessErr
-		}
-		// The admission watermark above proves the entire prefix was checked.
-		// Pin the exact durable final root before using a fresh live authority
-		// check without changing the signed checkpoint, nonce or accounting.
-		stored, ok, err := h.store.DiffStateHash(h.escrowID, nonce)
-		if err != nil || !ok || !bytes.Equal(stored, root) {
-			return nil, nil, fmt.Errorf("%w: terminal root is not the admitted durable root", types.ErrHeaderPending)
-		}
-		slots, err = h.sm.TerminalSigningSlots(ctx, nonce, h.signer.Address(), slots)
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	sigContent := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}
-	sigData, err := proto.Marshal(sigContent)
-	if err != nil {
-		return nil, nil, fmt.Errorf("marshal state sig content: %w", err)
-	}
-	sig, err := h.signer.Sign(sigData)
-	return sig, slots, err
-}
-
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 	return h.signProposerContext(context.Background(), msg)

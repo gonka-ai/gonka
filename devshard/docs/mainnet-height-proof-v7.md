@@ -47,24 +47,33 @@ before persisting newly received warm-signed work.
 
 ### Retrying a frozen final state
 
-At `max_nonce`, a gateway cannot append a checkpoint-refresh diff. Fresh final
-checkpoints retain their ordinary signing path, without an additional light-block
-proof request. For a stale checkpoint, V7 hosts can instead retry their ordinary state signature over the unchanged latest terminal
-root and nonce when all of these conditions hold:
+At `max_nonce`, a gateway cannot append a checkpoint-refresh diff. V7 hosts
+instead attest the fixed final identity `(escrow_id, nonce, state_root)` through
+an explicit final-state signing operation, separate from ordinary live diff
+signing. This operation runs for both fresh and stale final checkpoints:
 
 - The host's durable `host_admission_nonce` covers the whole prefix, and the
-  stored root at the requested nonce equals the root being signed.
+  stored root at the requested nonce equals the root being signed. The identity
+  must also match the state machine's actual latest settlement state.
 - The frozen checkpoint still matches the host's canonical chain source.
-- A fresh authenticated tip is available from the existing light-block source.
+- A recent carried checkpoint within the ordinary age/lag window supplies the
+  authority evidence without an additional light-block proof request. Otherwise
+  the host authenticates a fresh tip from the existing light-block source.
 - The signer is authorized at the final nonce and remains authorized at the
-  fresh tip. Warm-key checks require the complete grant view through that tip
-  and its exact block time. Cold slot keys need no warm-grant lookup.
+  checkpoint used for the attestation. Warm-key checks require the complete
+  grant view through that height and its exact block time. Cold slot keys need
+  no warm-grant lookup.
 
-The fresh tip is verification evidence only: it is not applied to state, written
-as a diff, or added to the signature format. Root, accounting and nonce stay
-unchanged. Existing signature collection already sends the empty-diff retry;
-it first tries reading durable signatures, so a retained quorum needs no new
-signature. The same checks run after restart and HA takeover.
+The shared checkpoint authenticator returns a checkpoint and its proof without
+creating a transaction or changing state. The sequencer serializes this evidence
+into `MsgMainnetHeight` when advancing a diff. Final attestation uses the evidence
+only to check signer authority; it never constructs a refresh transaction.
+
+Root, accounting and nonce stay unchanged. Final attestation keeps the existing
+`StateSignatureContent` format. Signature collection invokes it through the
+existing empty-diff retry and first tries reading durable signatures, so a
+retained quorum needs no new signature. The same checks run after restart and
+HA takeover.
 
 An active/finalizing state or a host without durable admission provenance keeps
 the ordinary checkpoint freshness rule. Unchecked remote history cannot acquire
