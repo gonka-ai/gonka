@@ -1,0 +1,14 @@
+data: {"choices":[{"delta":{"content":"","role":"assistant"},"finish_reason":null,"index":0}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{},"finish_reason":null,"index":0}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":" I'll","tool_calls":[]},"finish_reason":null,"index":0}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":" </think>","tool_calls":[]},"finish_reason":null,"index":0}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":" examining","tool_calls":[]},"finish_reason":"length","index":0,"stop_reason":null}],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk"}
+
+data: {"choices":[],"created":1786114584,"id":"devshard-46055-1453","model":"moonshotai/Kimi-K2.6","object":"chat.completion.chunk","usage":{"completion_tokens":16,"prompt_tokens":46,"total_tokens":62}}
+
+data: [DONE]
+

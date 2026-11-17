@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "structured_outputs: cannot be combined with response_format",
+  "status": "rejected"
+}

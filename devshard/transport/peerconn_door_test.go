@@ -185,6 +185,7 @@ func TestRPCClient_WaitReadyFailsWhenDoorsExhausted(t *testing.T) {
 	require.Less(t, time.Since(start), 300*time.Millisecond)
 
 	rpc99 := NewRPCClient(NewHTTPClient("http://127.0.0.1:1", "99", signer), pc, ParseRPCEndpoints(EndpointChat))
+	start = time.Now()
 	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
 	defer cancel()
 	err = rpc99.WaitReady(ctx)

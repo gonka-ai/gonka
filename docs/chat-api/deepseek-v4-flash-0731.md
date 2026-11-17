@@ -10,6 +10,7 @@ Mirrors the structure of [Kimi-K2.6](kimi-k2.6.md), [Qwen3-235B](qwen3-235b-a22b
 |----------|-------|--------|
 | Provider | DeepSeek | [[DeepSeek-1]](references.md#deepseek) |
 | vLLM route id | `deepseek-ai/DeepSeek-V4-Flash-0731` | — |
+| Context window | the chain registers `--max-model-len 400000` | chain model registry |
 | Native thinking | yes — on by default when neither `thinking` nor `enable_thinking` is passed | [[vLLM-33]](references.md#vllm) |
 | Reasoning effort levels | three: `low`, `high`, `max` | [[DeepSeek-1]](references.md#deepseek), [[vLLM-33]](references.md#vllm) |
 | Chat rendering | dedicated vLLM tokenizer (`vllm/tokenizers/deepseek_v4.py`), not a Jinja `chat_template` | [[vLLM-33]](references.md#vllm) |

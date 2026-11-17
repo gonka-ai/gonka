@@ -100,8 +100,18 @@ func setupRecoverableSession(
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
+	flushSignatureWriter(session)
 
 	return group, hosts, user
+}
+
+func flushSignatureWriter(s *Session) {
+	s.mu.Lock()
+	writer := s.signatureWriter
+	s.mu.Unlock()
+	if writer != nil {
+		writer.flush()
+	}
 }
 
 func TestRecoverSession_HappyPath(t *testing.T) {
@@ -127,8 +137,10 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	// Recover.
 	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
+	t.Cleanup(func() { flushSignatureWriter(session) })
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
+	require.Equal(t, uint64(numInferences+1), session.racesFromNonce, "every recovered nonce belongs to a previous process, so none has a race to wait for")
 
 	// Verify can send nonce 6.
 	ctx := context.Background()

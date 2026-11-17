@@ -1,0 +1,12 @@
+data: {"choices":[{"delta":{"content":"m"},"finish_reason":null,"index":0,"logprobs":null}],"created":1791856345,"id":"chatcmpl-mockopenai","model":"test-model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":"o"},"finish_reason":null,"index":0,"logprobs":null}],"created":1791856345,"id":"chatcmpl-mockopenai","model":"test-model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":"c"},"finish_reason":null,"index":0,"logprobs":null}],"created":1791856345,"id":"chatcmpl-mockopenai","model":"test-model","object":"chat.completion.chunk"}
+
+data: {"choices":[{"delta":{"content":"k"},"finish_reason":null,"index":0,"logprobs":null}],"created":1791856345,"id":"chatcmpl-mockopenai","model":"test-model","object":"chat.completion.chunk"}
+
+data: {"error":{"code":500,"message":"upstream overloaded","param":null,"type":"InternalServerError"}}
+
+data: [DONE]
+

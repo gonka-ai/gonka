@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "request body contains a field with an empty name",
+  "status": "rejected"
+}

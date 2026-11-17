@@ -1,0 +1,27 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "x",
+          "strict": true,
+          "parameters": {
+            "type": "object",
+            "properties": {}
+          }
+        }
+      }
+    ]
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+}

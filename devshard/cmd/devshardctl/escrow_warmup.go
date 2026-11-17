@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"devshard/accounting"
+	"devshard/gatewayproto"
 	"devshard/host"
 	"devshard/user"
 )
@@ -89,9 +90,9 @@ func (s *sessionProbeSender) sendProbe(ctx context.Context, params user.Inferenc
 		nonceCommitted()
 	}
 	resp, sendErr := s.session.SendOnly(ctx, prepared, nil, nil)
-	if sendErr == nil {
-		sendErr = s.session.ProcessResponse(hostIdx, resp, nonce)
-	}
+	_, sendErr = gatewayproto.ApplyProbeResponse(resp, sendErr, false, func() error {
+		return s.session.ProcessResponse(hostIdx, resp, nonce)
+	})
 	if sendErr != nil {
 		s.mu.Lock()
 		if s.unserved == nil {

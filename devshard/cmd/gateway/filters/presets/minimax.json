@@ -1,0 +1,7 @@
+{
+  "models": ["MiniMaxAI/MiniMax-M2.7"],
+  "filters": {
+    "thinking": "strip",
+    "keep_reasoning_split": true
+  }
+}

@@ -2,6 +2,7 @@ package txledger
 
 import (
 	"encoding/hex"
+	"sort"
 	"strings"
 	"sync"
 
@@ -15,12 +16,16 @@ type StoredTx struct {
 	Code   uint32
 	Hash   string
 	Events []txexec.Event
+	// Raw is the signed TxRaw as broadcast; Seq is the commit order.
+	Raw []byte
+	Seq uint64
 }
 
 // Ledger records broadcast transactions for GetTx queries.
 type Ledger struct {
 	mu  sync.RWMutex
 	txs map[string]*StoredTx
+	seq uint64
 }
 
 // New returns an empty ledger.
@@ -32,7 +37,8 @@ func New() *Ledger {
 func (l *Ledger) Put(txBytes []byte, events []txexec.Event) string {
 	hash := Hash(txBytes)
 	l.mu.Lock()
-	l.txs[hash] = &StoredTx{Code: 0, Hash: hash, Events: events}
+	l.seq++
+	l.txs[hash] = &StoredTx{Code: 0, Hash: hash, Events: events, Raw: append([]byte(nil), txBytes...), Seq: l.seq}
 	l.mu.Unlock()
 	return hash
 }
@@ -44,6 +50,19 @@ func (l *Ledger) Get(hash string) (*StoredTx, bool) {
 	tx, ok := l.txs[hash]
 	l.mu.RUnlock()
 	return tx, ok
+}
+
+// List returns every stored tx in commit order. Identical bytes broadcast
+// twice share one hash, so they appear once, at the latest position.
+func (l *Ledger) List() []StoredTx {
+	l.mu.RLock()
+	out := make([]StoredTx, 0, len(l.txs))
+	for _, tx := range l.txs {
+		out = append(out, *tx)
+	}
+	l.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Seq < out[j].Seq })
+	return out
 }
 
 // Hash returns the uppercase hex tx hash for raw signed bytes.

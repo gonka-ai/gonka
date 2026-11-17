@@ -201,20 +201,6 @@ func accountingAssertions(assertions AccountingAssertions, report AccountingRepo
 	return checks
 }
 
-func appendAssertionFailure(existing error, check AssertionResult) error {
-	if check.Passed {
-		return existing
-	}
-	if existing == nil {
-		return &assertionFailures{Checks: []AssertionResult{check}}
-	}
-	if failures, ok := existing.(*assertionFailures); ok {
-		failures.Checks = append(failures.Checks, check)
-		return failures
-	}
-	return existing
-}
-
 func writeAccountingReport(outputDir string, report AccountingReport) error {
 	body, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {

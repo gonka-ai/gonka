@@ -14,6 +14,11 @@ const (
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
 	DefaultValidationRate uint32 = 5000
+	// DefaultRefusalTimeoutSeconds is how long a host may hold an inference before verifiers vote to refuse it.
+	DefaultRefusalTimeoutSeconds = 60
+	// DefaultExecutionTimeoutSeconds is how long the chain still settles an inference. Work held past it
+	// can no longer be paid for, so callers bound their own waits by it.
+	DefaultExecutionTimeoutSeconds = 32 * 60
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -49,8 +54,8 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 // by config mismatches (e.g. different ValidationRate values).
 func DefaultSessionConfig(groupSize int) SessionConfig {
 	return NormalizeSessionConfig(SessionConfig{
-		RefusalTimeout:    60,
-		ExecutionTimeout:  32 * 60,
+		RefusalTimeout:    DefaultRefusalTimeoutSeconds,
+		ExecutionTimeout:  DefaultExecutionTimeoutSeconds,
 		TokenPrice:        1,
 		CreateDevshardFee: 10_000,
 		FeePerNonce:       1_000,
@@ -63,16 +68,16 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 // at create. Every field is "zero means use the compiled default" so callers can
 // populate only what the chain returned.
 type EscrowSessionFields struct {
-	TokenPrice                  uint64
-	CreateDevshardFee           uint64
-	FeePerNonce                 uint64
-	InferenceSealGraceNonces    uint32
-	InferenceSealGraceSeconds   uint32
-	AutoSealEveryNNonces        uint32
-	ValidationRate              uint32
-	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
-	RefusalTimeout              int64
-	ExecutionTimeout            int64
+	TokenPrice                uint64
+	CreateDevshardFee         uint64
+	FeePerNonce               uint64
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
+	ValidationRate            uint32
+	VoteThresholdFactor       uint32 // percent; 0 == legacy groupSize/2
+	RefusalTimeout            int64
+	ExecutionTimeout          int64
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group

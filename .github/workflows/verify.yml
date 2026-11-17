@@ -647,6 +647,20 @@ jobs:
           cache-from: type=gha,version=2,scope=devshard-e2e-devshardctl
           cache-to: type=gha,version=2,scope=devshard-e2e-devshardctl,mode=max
 
+      - name: Build E2E Gateway Image
+        uses: docker/build-push-action@v6
+        timeout-minutes: 30
+        with:
+          builder: ${{ steps.e2e-buildx.outputs.name }}
+          context: .
+          file: devshard/Dockerfile
+          target: gateway-runtime
+          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
+          tags: devshard-gateway:local
+          load: true
+          cache-from: type=gha,version=2,scope=devshard-e2e-gateway
+          cache-to: type=gha,version=2,scope=devshard-e2e-gateway,mode=max
+
       - name: Cache E2E Go modules and build outputs
         uses: actions/cache@v4
         with:

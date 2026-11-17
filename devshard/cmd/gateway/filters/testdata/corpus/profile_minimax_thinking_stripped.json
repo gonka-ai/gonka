@@ -1,0 +1,17 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "thinking": {
+      "type": "enabled"
+    }
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "MiniMaxAI/MiniMax-M2.7"
+}

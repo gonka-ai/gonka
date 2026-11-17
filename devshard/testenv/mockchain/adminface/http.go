@@ -23,11 +23,20 @@ func NewServer(st *store.Store, advancer EpochAdvancer, escrowPub EscrowPublishe
 	e := echo.New()
 	e.HideBanner = true
 	Mount(e.Group(""), st, advancer, escrowPub)
-	epoch := st.GetEpoch()
+	phase := &phaseOverride{}
+	MountPhase(e.Group(""), phase)
+	// Read per request: /testenv/epoch and /testenv/phase move the store after this runs.
 	gatewayphase.Mount(e.Group(""), gatewayphase.Config{
-		BlockHeight:         st.GetBlockHeight(),
-		EpochIndex:          epoch.Index,
-		PoCStartBlockHeight: epoch.PocStartBlockHeight,
+		Live: func() gatewayphase.Config {
+			epoch := st.GetEpoch()
+			current := gatewayphase.Config{
+				BlockHeight:         st.GetBlockHeight(),
+				EpochIndex:          epoch.Index,
+				PoCStartBlockHeight: epoch.PocStartBlockHeight,
+			}
+			current.Phase, current.ConfirmationPoCActive, current.Participants = phase.read(st)
+			return current
+		},
 	})
 	return &Server{echo: e}
 }
@@ -48,6 +57,12 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		return err
 	}
 	return ctx.Err()
+}
+
+// Group returns the root route group so packages that adminface cannot
+// import, such as ledgerface, can add routes.
+func (s *Server) Group() *echo.Group {
+	return s.echo.Group("")
 }
 
 // Handler returns the root http.Handler (tests).

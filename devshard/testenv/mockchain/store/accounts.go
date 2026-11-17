@@ -1,6 +1,27 @@
 package store
 
-import inferencetypes "github.com/productscience/inference/x/inference/types"
+import (
+	"sort"
+
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+)
+
+// ListEscrows returns copies of all escrows ordered by id.
+func (s *Store) ListEscrows() []inferencetypes.DevshardEscrow {
+	s.mu.RLock()
+	out := make([]inferencetypes.DevshardEscrow, 0, len(s.Escrows))
+	for _, e := range s.Escrows {
+		if e == nil {
+			continue
+		}
+		c := *e
+		c.Slots = append([]string(nil), e.Slots...)
+		out = append(out, c)
+	}
+	s.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool { return out[i].Id < out[j].Id })
+	return out
+}
 
 // GetOrCreateAccount returns auth metadata for address, allocating defaults when missing.
 func (s *Store) GetOrCreateAccount(address string) Account {

@@ -1,0 +1,8 @@
+data: {"devshard_receipt":{"nonce":1}}
+
+data: {"error":{"message":"boom"}}
+
+data: {"devshard_meta":{"nonce":1}}
+
+data: [DONE]
+

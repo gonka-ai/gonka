@@ -86,3 +86,22 @@ func TestFromFile_OmittedTimeoutsUseDefaults(t *testing.T) {
 	require.Equal(t, params.RefusalTimeout, escrow.RefusalTimeout)
 	require.Equal(t, params.ExecutionTimeout, escrow.ExecutionTimeout)
 }
+
+// Test flow:
+//  1. Seed a store from a file whose epoch group pins a Hugging Face repo and commit.
+//  2. Assert the epoch's model snapshot carries that pin.
+func TestFromFile_EpochGroupCarriesTheHfPin(t *testing.T) {
+	st, err := seed.FromFile(&config.File{
+		Participants: []config.Participant{{Address: "gonka1abc"}},
+		Escrows:      []config.Escrow{{ID: 42}},
+		EpochGroups: []config.EpochGroupBinding{{
+			EpochIndex: 1, ModelID: "m1", HfRepo: "org/model", HfCommit: "abc123",
+		}},
+	})
+	require.NoError(t, err)
+
+	group := st.GetEpochGroupData(1, "m1")
+	require.NotNil(t, group)
+	require.Equal(t, "org/model", group.ModelSnapshot.HfRepo)
+	require.Equal(t, "abc123", group.ModelSnapshot.HfCommit)
+}

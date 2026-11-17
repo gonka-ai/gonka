@@ -1,0 +1,73 @@
+[
+  {
+    "name": "text",
+    "wire": ": heartbeat\r\ndata: {\"devshard_receipt\":{\"nonce\":1}}\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\" hello \"}}]}\r\n\r\ndata: [DONE]\r\n\r\ndata: {\"devshard_meta\":{\"nonce\":1}}\r\n\r\n",
+    "payload": {
+      "events": [
+        "data: {\"choices\":[{\"delta\":{\"content\":\" hello \"}}]}",
+        "data: [DONE]"
+      ]
+    },
+    "complete": true,
+    "error_proof": false
+  },
+  {
+    "name": "reasoning",
+    "wire": ": heartbeat\r\ndata: {\"devshard_receipt\":{\"nonce\":1}}\r\n\r\ndata: {\"choices\":[{\"delta\":{\"reasoning_content\":\" think \",\"content\":\"\"}}]}\r\n\r\ndata: [DONE]\r\n\r\ndata: {\"devshard_meta\":{\"nonce\":1}}\r\n\r\n",
+    "payload": {
+      "events": [
+        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\" think \",\"content\":\"\"}}]}",
+        "data: [DONE]"
+      ]
+    },
+    "complete": true,
+    "error_proof": false
+  },
+  {
+    "name": "tool_calls",
+    "wire": ": heartbeat\r\ndata: {\"devshard_receipt\":{\"nonce\":1}}\r\n\r\ndata: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{ \",\"name\":\"lookup\"}}]}}]}\r\n\r\ndata: [DONE]\r\n\r\ndata: {\"devshard_meta\":{\"nonce\":1}}\r\n\r\n",
+    "payload": {
+      "events": [
+        "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{ \",\"name\":\"lookup\"}}]}}]}",
+        "data: [DONE]"
+      ]
+    },
+    "complete": true,
+    "error_proof": false
+  },
+  {
+    "name": "empty",
+    "wire": ": heartbeat\r\ndata: {\"devshard_receipt\":{\"nonce\":1}}\r\n\r\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\r\ndata: [DONE]\r\n\r\ndata: {\"devshard_meta\":{\"nonce\":1}}\r\n\r\n",
+    "payload": {
+      "events": [
+        "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}",
+        "data: [DONE]"
+      ]
+    },
+    "complete": true,
+    "error_proof": false
+  },
+  {
+    "name": "error",
+    "wire": ": heartbeat\r\ndata: {\"devshard_receipt\":{\"nonce\":1}}\r\n\r\ndata: {\"error\":{\"message\":\"boom\"}}\r\n\r\ndata: [DONE]\r\n\r\ndata: {\"devshard_meta\":{\"nonce\":1}}\r\n\r\n",
+    "payload": {
+      "events": [
+        "data: {\"error\":{\"message\":\"boom\"}}",
+        "data: [DONE]"
+      ]
+    },
+    "complete": true,
+    "error_proof": true
+  },
+  {
+    "name": "aborted",
+    "wire": ": heartbeat\r\ndata: {\"devshard_receipt\":{\"nonce\":1}}\r\n\r\ndata: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\r\n\r\ndata: {\"devshard_meta\":{\"nonce\":1}}\r\n\r\n",
+    "payload": {
+      "events": [
+        "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}"
+      ]
+    },
+    "complete": false,
+    "error_proof": false
+  }
+]

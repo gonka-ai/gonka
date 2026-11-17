@@ -207,6 +207,18 @@ func LatestSessionNonce(t *testing.T, client *http.Client, clientURL string) uin
 	return NumericField(t, session, "latest_nonce")
 }
 
+// EscrowSessionState reads an escrow's balance and latest nonce by id from either driver: devshardctl nests them under session, the gateway does not.
+func EscrowSessionState(t *testing.T, client *http.Client, clientURL, escrowID string, isGateway bool) (balance, latestNonce uint64) {
+	t.Helper()
+	state := GetJSON(t, client, clientURL+"/devshard/"+escrowID+"/v1/state")
+	if isGateway {
+		return NumericField(t, state, "balance"), NumericField(t, state, "latest_nonce")
+	}
+	session, ok := state["session"].(map[string]any)
+	require.True(t, ok, "state session should be an object")
+	return NumericField(t, session, "balance"), NumericField(t, session, "latest_nonce")
+}
+
 func GetSignatureStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
 	t.Helper()
 	return GetJSON(t, client, clientURL+"/v1/debug/signatures")
@@ -332,6 +344,77 @@ func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[st
 	require.NoError(t, err)
 	t.Logf("SettlementContract:\n%s", settlementJSON)
 	return settlement
+}
+
+// LeakyHostAnswer carries every field the response side hides, at the depths vLLM writes them.
+const LeakyHostAnswer = `{"choices":[{"message":{"content":"stub"},"logprobs":{"content":[{"logprob":-0.5,"top_logprobs":[]}]},"token_ids":[1,2,3]}],"prompt_token_ids":[4,5],"prompt_logprobs":[null],"usage":{"prompt_tokens":80,"completion_tokens":40}}`
+
+// EchoedRequest reads the request body back out of an echoing host's answer.
+func EchoedRequest(t *testing.T, resp RawResponse) map[string]any {
+	t.Helper()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "completion should be served: %s", resp.Body)
+	choices, ok := resp.JSON["choices"].([]any)
+	require.True(t, ok, "echoed answer should carry choices: %s", resp.Body)
+	require.NotEmpty(t, choices, "echoed answer should carry a choice: %s", resp.Body)
+	choice, ok := choices[0].(map[string]any)
+	require.True(t, ok, "echoed choice should be an object: %s", resp.Body)
+	message, ok := choice["message"].(map[string]any)
+	require.True(t, ok, "echoed choice should carry a message: %s", resp.Body)
+	content, ok := message["content"].(string)
+	require.True(t, ok, "echoed message should carry string content: %s", resp.Body)
+
+	var received map[string]any
+	require.NoError(t, json.Unmarshal([]byte(content), &received), "echoed content should be the request body: %s", content)
+	return received
+}
+
+// EscrowBalance reads what the live escrow session has left; the stored record carries no balance.
+func EscrowBalance(t *testing.T, client *http.Client, clientURL, escrowID, bearerToken string) uint64 {
+	t.Helper()
+	resp := GetRaw(t, client, clientURL+"/v1/admin/state", bearerToken)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "reading gateway state: %s", resp.Body)
+	var state struct {
+		Status struct {
+			Devshards []struct {
+				EscrowID string `json:"id"`
+				Balance  uint64 `json:"balance"`
+			} `json:"devshards"`
+		} `json:"status"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &state), "parsing gateway state: %s", resp.Body)
+	for _, escrow := range state.Status.Devshards {
+		if escrow.EscrowID == escrowID {
+			return escrow.Balance
+		}
+	}
+	t.Fatalf("gateway state carries no escrow %s: %s", escrowID, resp.Body)
+	return 0
+}
+
+// DevshardRow is one escrow as the gateway's admin listing stores it.
+type DevshardRow struct {
+	EscrowID          string `json:"id"`
+	Active            bool   `json:"active"`
+	SettlementPending bool   `json:"settlement_pending"`
+	GoneFromChain     bool   `json:"gone_from_chain"`
+}
+
+// ListedDevshard reads one escrow's row from GET /v1/admin/devshards.
+func ListedDevshard(t *testing.T, client *http.Client, clientURL, escrowID, bearerToken string) DevshardRow {
+	t.Helper()
+	resp := GetRaw(t, client, clientURL+"/v1/admin/devshards", bearerToken)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "listing escrows: %s", resp.Body)
+	var listing struct {
+		Devshards []DevshardRow `json:"devshards"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(resp.Body), &listing), "parsing the escrow listing: %s", resp.Body)
+	for _, row := range listing.Devshards {
+		if row.EscrowID == escrowID {
+			return row
+		}
+	}
+	t.Fatalf("the escrow listing carries no escrow %s: %s", escrowID, resp.Body)
+	return DevshardRow{}
 }
 
 func postFinalizeRetryingConflict(t *testing.T, client *http.Client, url string) map[string]any {

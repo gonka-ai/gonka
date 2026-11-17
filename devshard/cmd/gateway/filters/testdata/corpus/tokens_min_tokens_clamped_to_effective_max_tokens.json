@@ -1,0 +1,16 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "max_tokens": 9999,
+    "min_tokens": 9994
+  },
+  "default_max_tokens": 1000,
+  "max_tokens_cap": 2000,
+  "routed_model": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+}

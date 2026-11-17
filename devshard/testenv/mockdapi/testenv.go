@@ -139,3 +139,26 @@ func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(cont
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
 }
+
+// ChallengeRequest is the body for POST /testenv/challenge.
+type ChallengeRequest struct {
+	Host string `json:"host"`
+	On   bool   `json:"on"`
+}
+
+func mountHostPools(g *echo.Group, hosts *hostPools) {
+	g.POST("/testenv/challenge", func(c echo.Context) error {
+		var req ChallengeRequest
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		if req.Host == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "host is required")
+		}
+		hosts.setChallenged(req.Host, req.On)
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "host": req.Host, "challenged": req.On})
+	})
+	g.GET("/testenv/host-stats", func(c echo.Context) error {
+		return c.JSON(http.StatusOK, hosts.snapshot())
+	})
+}

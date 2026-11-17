@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "parse request: json: cannot unmarshal string into Go value of type map[string]interface {}",
+  "status": "rejected"
+}

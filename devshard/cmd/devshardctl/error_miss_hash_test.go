@@ -43,7 +43,7 @@ func TestErrorMissProofRehashesOnlyWhenTheExecutorForwardsWhatItStored(t *testin
 		t.Run(testCase.name, func(t *testing.T) {
 			wire, committedHash := executorAnswer(t, testCase.forwardStoredResponse)
 
-			_, responsePayload := errorMissArtifacts(&inflight{errorStreamLines: ssePayloadDataLines(wire)}, nil)
+			_, responsePayload := errorMissArtifacts(&inflight{errorStream: retainedErrorStream(ssePayloadDataLines(wire), false, false)}, nil)
 			require.NotEmpty(t, responsePayload, "the gateway rebuilt no payload from the wire")
 
 			stateMachine, hosts := errorMissStateMachine(t)

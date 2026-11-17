@@ -1,0 +1,33 @@
+{
+  "admin": false,
+  "body": {
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "metadata": {
+      "k0": "v",
+      "k1": "v",
+      "k2": "v",
+      "k3": "v",
+      "k4": "v",
+      "k5": "v",
+      "k6": "v",
+      "k7": "v",
+      "k8": "v",
+      "k9": "v",
+      "k10": "v",
+      "k11": "v",
+      "k12": "v",
+      "k13": "v",
+      "k14": "v",
+      "k15": "v",
+      "k16": "v"
+    }
+  },
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "routed_model": "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+}

@@ -102,20 +102,20 @@ func TestRaceWriter_RetainsErrorStreamLines(t *testing.T) {
 
 	_, err = rw.Write(errEvt)
 	require.NoError(t, err)
-	require.NotEmpty(t, inf.errorStreamLines)
+	require.NotEmpty(t, inf.errorStream.Lines())
 	_, err = rw.Write(done)
 	require.NoError(t, err)
-	require.True(t, inf.errorStreamComplete)
+	require.True(t, inf.errorStream.Complete())
 	require.Equal(t, []string{
 		`data: {"choices":[{"delta":{"role":"assistant"}}]}`,
 		auditErrLine,
 		`data: [DONE]`,
-	}, inf.errorStreamLines)
+	}, inf.errorStream.Lines())
 
 	_, payload := errorMissArtifacts(inf, nil)
 	var decoded completionapi.SerializedStreamedResponse
 	require.NoError(t, json.Unmarshal(payload, &decoded))
-	require.Equal(t, inf.errorStreamLines, decoded.Events)
+	require.Equal(t, inf.errorStream.Lines(), decoded.Events)
 }
 
 func TestRaceWriter_HappyPathContentClearsRetention(t *testing.T) {
@@ -130,8 +130,8 @@ func TestRaceWriter_HappyPathContentClearsRetention(t *testing.T) {
 	_, err = rw.Write([]byte("data: [DONE]\n\n"))
 	require.NoError(t, err)
 	rw.flushClassify()
-	require.Empty(t, inf.errorStreamLines, "a stream that never errored must drop retention at flush")
-	require.False(t, inf.errorStreamTruncated)
+	require.Empty(t, inf.errorStream.Lines(), "a stream that never errored must drop retention at flush")
+	require.False(t, inf.errorStream.Truncated())
 }
 
 func TestRaceWriter_FragmentedDeliveryAfterRetention(t *testing.T) {
@@ -148,13 +148,13 @@ func TestRaceWriter_FragmentedDeliveryAfterRetention(t *testing.T) {
 	require.NoError(t, err)
 	rw.flushClassify()
 
-	require.True(t, inf.errorStreamComplete)
+	require.True(t, inf.errorStream.Complete())
 	require.Equal(t, "drift", errorMissRejectLabel(inf), "fully-read fragmented stream must not look cancelled")
 	require.Equal(t, []string{
 		`data: {"choices":[{"delta":{"role":"assistant"}}]}`,
 		auditErrLine,
 		`data: [DONE]`,
-	}, inf.errorStreamLines)
+	}, inf.errorStream.Lines())
 }
 
 func TestRaceWriter_NewlineLessTailNotDuplicated(t *testing.T) {
@@ -168,8 +168,8 @@ func TestRaceWriter_NewlineLessTailNotDuplicated(t *testing.T) {
 	require.NoError(t, err)
 	rw.flushClassify()
 
-	require.Equal(t, []string{auditErrLine, `data: [DONE]`}, inf.errorStreamLines)
-	require.True(t, inf.errorStreamComplete)
+	require.Equal(t, []string{auditErrLine, `data: [DONE]`}, inf.errorStream.Lines())
+	require.True(t, inf.errorStream.Complete())
 }
 
 func TestRaceWriter_LoserPendingBufDiscardedKeepsPrefix(t *testing.T) {
@@ -189,9 +189,9 @@ func TestRaceWriter_LoserPendingBufDiscardedKeepsPrefix(t *testing.T) {
 	require.NoError(t, err)
 	rwLoser.flushClassify()
 
-	require.Contains(t, loser.errorStreamLines, `data: {"choices":[{"delta":{"role":"assistant"}}]}`)
-	require.Contains(t, loser.errorStreamLines, auditErrLine)
-	require.True(t, loser.errorStreamComplete)
+	require.Contains(t, loser.errorStream.Lines(), `data: {"choices":[{"delta":{"role":"assistant"}}]}`)
+	require.Contains(t, loser.errorStream.Lines(), auditErrLine)
+	require.True(t, loser.errorStream.Complete())
 }
 
 func TestRaceWriter_ErrorStreamCappedAndTruncated(t *testing.T) {
@@ -209,9 +209,9 @@ func TestRaceWriter_ErrorStreamCappedAndTruncated(t *testing.T) {
 		_, err = rw.Write([]byte(`data: {"choices":[{"delta":{}}]}` + "\n\n"))
 		require.NoError(t, err)
 	}
-	require.True(t, inf.errorStreamTruncated)
+	require.True(t, inf.errorStream.Truncated())
 	require.Equal(t, "truncated", errorMissRejectLabel(inf))
-	require.Less(t, inf.errorStreamBytes, 150+len(auditErrLine))
+	require.Less(t, inf.errorStream.BytesHeld(), 150+len(auditErrLine))
 }
 
 func TestRaceWriter_CancelledErrorAttemptIsPrefixNotDrift(t *testing.T) {
@@ -225,17 +225,17 @@ func TestRaceWriter_CancelledErrorAttemptIsPrefixNotDrift(t *testing.T) {
 	errEvt := []byte(`data: {"error":{"code":500,"message":"boom","type":"InternalServerError"}}` + "\n\n")
 	_, err := rwLoser.Write(errEvt)
 	require.NoError(t, err)
-	require.False(t, loser.errorStreamComplete)
+	require.False(t, loser.errorStream.Complete())
 
 	_, err = rwWinner.Write([]byte(`data: {"choices":[{"delta":{"content":"ok"}}]}` + "\n\n"))
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), rg.winnerNonce())
 
-	require.False(t, loser.errorStreamComplete)
+	require.False(t, loser.errorStream.Complete())
 	require.Equal(t, "cancelled", errorMissRejectLabel(loser))
 	require.Equal(t, []string{
 		`data: {"error":{"code":500,"message":"boom","type":"InternalServerError"}}`,
-	}, loser.errorStreamLines)
+	}, loser.errorStream.Lines())
 
 	full := []string{
 		`data: {"error":{"code":500,"message":"boom","type":"InternalServerError"}}`,
@@ -250,8 +250,8 @@ func TestRaceWriter_CancelledErrorAttemptIsPrefixNotDrift(t *testing.T) {
 
 func TestErrorMissRejectLabel_CompleteIsDrift(t *testing.T) {
 	require.Equal(t, "cancelled", errorMissRejectLabel(&inflight{}))
-	require.Equal(t, "drift", errorMissRejectLabel(&inflight{errorStreamComplete: true}))
-	require.Equal(t, "truncated", errorMissRejectLabel(&inflight{errorStreamTruncated: true, errorStreamComplete: true}))
+	require.Equal(t, "drift", errorMissRejectLabel(&inflight{errorStream: retainedErrorStream(nil, true, false)}))
+	require.Equal(t, "truncated", errorMissRejectLabel(&inflight{errorStream: retainedErrorStream(nil, true, true)}))
 }
 
 func TestSsePayloadDataLines_SkipsProtocolEnvelopes(t *testing.T) {
@@ -297,8 +297,8 @@ func TestSkipEmptyStreamTimeout_ErrorMissNotSkipped(t *testing.T) {
 
 func TestErrorMissArtifacts_FinishFromMempool(t *testing.T) {
 	inf := &inflight{
-		nonce:            3,
-		errorStreamLines: []string{`data: {"error":{"code":500,"message":"x","type":"InternalServerError"}}`, `data: [DONE]`},
+		nonce:       3,
+		errorStream: retainedErrorStream([]string{`data: {"error":{"code":500,"message":"x","type":"InternalServerError"}}`, `data: [DONE]`}, false, false),
 		resp: &host.HostResponse{
 			Mempool: []*types.DevshardTx{
 				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 3}}},
@@ -357,7 +357,7 @@ func TestErrorMissEnabledFor_RetriableCapabilityErrorDoesNotEmit(t *testing.T) {
 		require.Equal(t, []string{
 			`data: {"id":"devshard-1-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
 			auditErrLine,
-		}, inf.errorStreamLines, "content prefix must be kept so the reconstructed payload matches Finish")
+		}, inf.errorStream.Lines(), "content prefix must be kept so the reconstructed payload matches Finish")
 	})
 }
 
@@ -368,15 +368,15 @@ func TestRaceWriter_EmptyStreamClearsRetentionOnFlush(t *testing.T) {
 
 	_, err := rw.Write([]byte(`data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n"))
 	require.NoError(t, err)
-	require.NotEmpty(t, inf.errorStreamLines, "prefix is kept until the stream ends or content arrives")
+	require.NotEmpty(t, inf.errorStream.Lines(), "prefix is kept until the stream ends or content arrives")
 	_, err = rw.Write([]byte("data: [DONE]\n\n"))
 	require.NoError(t, err)
 	rw.flushClassify()
-	require.Empty(t, inf.errorStreamLines, "a stream that never errored must drop retention at flush")
+	require.Empty(t, inf.errorStream.Lines(), "a stream that never errored must drop retention at flush")
 }
 
 func TestTimeoutActionForHandleResult(t *testing.T) {
-	complete := &inflight{errorStreamComplete: true}
+	complete := &inflight{errorStream: retainedErrorStream(nil, true, false)}
 	require.Equal(t, "completed", mustTimeoutAction(t, user.ErrInferenceMissed, true, complete))
 	action, reason := timeoutActionForHandleResult(user.ErrInferenceMissed, true, complete)
 	require.Equal(t, "completed", action)
@@ -386,7 +386,7 @@ func TestTimeoutActionForHandleResult(t *testing.T) {
 	require.Equal(t, "failed", action)
 	require.Equal(t, "timeout_collection_error", reason, "vote/network failure must not look like reconstruction drift")
 
-	truncated := &inflight{errorStreamTruncated: true}
+	truncated := &inflight{errorStream: retainedErrorStream(nil, false, true)}
 	action, reason = timeoutActionForHandleResult(errors.New("insufficient votes"), true, truncated)
 	require.Equal(t, "timeout_collection_error", reason)
 

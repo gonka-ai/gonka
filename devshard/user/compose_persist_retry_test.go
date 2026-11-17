@@ -33,7 +33,12 @@ func (s *flakyUserAppendStore) AppendDiff(escrowID string, rec types.DiffRecord)
 	return s.Storage.AppendDiff(escrowID, rec)
 }
 
-func setupStoredSession(t *testing.T, store storage.Storage) *Session {
+func setupStoredSession(t testing.TB, store storage.Storage) *Session {
+	t.Helper()
+	return setupStoredSessionFunded(t, store, 100000)
+}
+
+func setupStoredSessionFunded(t testing.TB, store storage.Storage, balance uint64) *Session {
 	t.Helper()
 	numHosts := 3
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
@@ -51,20 +56,20 @@ func setupStoredSession(t *testing.T, store storage.Storage) *Session {
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
-		InitialBalance: 100000,
+		InitialBalance: balance,
 	}))
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		hostStore := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000)
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, hostStore)
+		hostStore := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance)
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, hostStore)
 		require.NoError(t, err)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, store)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, store)
 	require.NoError(t, err)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, WithStorage(store))
 	require.NoError(t, err)

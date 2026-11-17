@@ -97,6 +97,17 @@ func TestHostConnectionTrackerTracksActiveIdleAndClosedHold(t *testing.T) {
 	}, 250*time.Millisecond, 5*time.Millisecond)
 }
 
+func TestSnapshotsReturnsEveryTrackedAddressRegardlessOfOrder(t *testing.T) {
+	tracker := NewHostConnectionTracker(10 * time.Millisecond)
+	tracker.trackConn(&stubConn{remote: stubAddr("10.0.0.9:443")}, "fallback")
+	tracker.trackConn(&stubConn{remote: stubAddr("10.0.0.8:443")}, "fallback")
+
+	require.ElementsMatch(t, []HostConnectionSnapshot{
+		{Address: "10.0.0.9", Active: 1, OpenTotal: 1},
+		{Address: "10.0.0.8", Active: 1, OpenTotal: 1},
+	}, tracker.Snapshots())
+}
+
 func TestNormalizeConnectionAddressFallsBackToParsedHost(t *testing.T) {
 	require.Equal(t, "1.2.3.4", normalizeConnectionAddress(nil, "1.2.3.4:8443"))
 	require.Equal(t, "host.internal", normalizeConnectionAddress(nil, "host.internal"))

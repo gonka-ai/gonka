@@ -15,16 +15,16 @@ import (
 type File struct {
 	mu sync.Mutex
 
-	file      *os.File
-	fileBuf   *bufio.Writer
-	path      string // non-empty only when KeepNamed
-	maxBytes  int64
-	n         int64 // bytes accepted
-	readable  int64 // bytes readers may see
-	closed    bool
-	slots     *Slots
-	bytesOut  *atomic.Uint64
-	bufSize   int
+	file     *os.File
+	fileBuf  *bufio.Writer
+	path     string // non-empty only when KeepNamed
+	maxBytes int64
+	n        int64 // bytes accepted
+	readable int64 // bytes readers may see
+	closed   bool
+	slots    *Slots
+	bytesOut *atomic.Uint64
+	bufSize  int
 }
 
 func newFile(f *os.File, path string, maxBytes int64, writeBuf int, slots *Slots, bytesOut *atomic.Uint64) *File {

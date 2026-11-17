@@ -67,6 +67,18 @@ func TestTrafficProfile_RPSAt(t *testing.T) {
 			elapsed: 6 * time.Second,
 			want:    8,
 		},
+		{
+			name:    "peak stage takes peak_rps",
+			profile: TrafficProfile{Type: "stages", PeakRPS: 20, Stages: []TrafficStage{{Duration: "4s", RPS: 2}, {Duration: "6s", Peak: true}}},
+			elapsed: 6 * time.Second,
+			want:    20,
+		},
+		{
+			name:    "peak stage defaults to 32",
+			profile: TrafficProfile{Type: "stages", Stages: []TrafficStage{{Duration: "4s", RPS: 2}, {Duration: "6s", Peak: true}}},
+			elapsed: 6 * time.Second,
+			want:    32,
+		},
 	}
 
 	for _, test := range tests {
@@ -92,6 +104,9 @@ func TestTrafficProfile_Validate(t *testing.T) {
 		{name: "unknown type", profile: TrafficProfile{Type: "random"}, wantErr: "unsupported type"},
 		{name: "zero constant rate", profile: TrafficProfile{Type: "constant"}, wantErr: "rps must be a positive"},
 		{name: "invalid spike duration", profile: TrafficProfile{Type: "spikes", BaseRPS: 2, SpikeRPS: 10, SpikeDuration: "5s", Interval: "4s"}, wantErr: "must not exceed"},
+		{name: "peak stage", profile: TrafficProfile{Type: "stages", PeakRPS: 16, Stages: []TrafficStage{{Duration: "4s", RPS: 2}, {Duration: "6s", Peak: true}}}},
+		{name: "peak stage with rps", profile: TrafficProfile{Type: "stages", Stages: []TrafficStage{{Duration: "10s", RPS: 2, Peak: true}}}, wantErr: "sets both rps and peak"},
+		{name: "negative peak", profile: TrafficProfile{Type: "stages", PeakRPS: -1, Stages: []TrafficStage{{Duration: "10s", Peak: true}}}, wantErr: "peak_rps must not be negative"},
 		{name: "partial stages", profile: TrafficProfile{Type: "stages", Stages: []TrafficStage{{Duration: "4s", RPS: 2}}}, wantErr: "must equal workload duration"},
 	}
 

@@ -19,6 +19,7 @@ import (
 	"common/httpguard"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/gatewayproto"
 	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/profiling"
@@ -68,19 +69,11 @@ type HostStatsJSON struct {
 }
 
 func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
-	entry := HostStatsJSON{
-		SlotID:  slot,
-		Missed:  hs.Missed,
-		Invalid: hs.Invalid,
-		Cost:    hs.Cost,
+	stat := gatewayproto.HostStatForSlot(slot, hs)
+	return HostStatsJSON{
+		SlotID: uint32(stat.SlotID), Missed: uint32(stat.Missed), Invalid: uint32(stat.Invalid), Cost: stat.Cost,
+		RequiredValidations: uint32(stat.RequiredValidations), CompletedValidations: uint32(stat.CompletedValidations),
 	}
-	if hs.RequiredValidations != 0 {
-		entry.RequiredValidations = hs.RequiredValidations
-	}
-	if hs.CompletedValidations != 0 {
-		entry.CompletedValidations = hs.CompletedValidations
-	}
-	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -885,11 +878,10 @@ func readBoolEnv(name string, fallback bool) bool {
 }
 
 func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
-	hsHash, err := state.ComputeHostStatsHash(p.HostStats)
+	root, err := gatewayproto.SettlementRoot(*p, p.HostStats)
 	if err != nil {
 		return SettlementJSON{}, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.StateRootAndProtocolVersion)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {

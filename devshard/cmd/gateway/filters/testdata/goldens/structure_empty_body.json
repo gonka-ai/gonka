@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "parse request: EOF",
+  "status": "rejected"
+}

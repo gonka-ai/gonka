@@ -19,6 +19,7 @@ decentralized-api/responses/
 devshard/build/
 inference-chain/build/
 inference-chain/dist/
+devshard/bin/
 /decentralized-api/decentralized-api
 /decentralized-api/devshardd
 /edge-api/build/edge-api

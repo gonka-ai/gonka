@@ -73,10 +73,10 @@ func TestGatewayMockEnvMultiRuntimeStatusIsAggregate(t *testing.T) {
 }
 
 // Steps:
-// - Build a gateway with no resident runtimes (post-retire / pre-create).
-// - Request pooled /v1/status.
-// - Assert HTTP 200 with phase=not_found and no escrow_id (absence is named,
-//   not an empty object that looks like a parse miss).
+//   - Build a gateway with no resident runtimes (post-retire / pre-create).
+//   - Request pooled /v1/status.
+//   - Assert HTTP 200 with phase=not_found and no escrow_id (absence is named,
+//     not an empty object that looks like a parse miss).
 func TestGatewayMockEnvZeroRuntimeStatusIsNotFound(t *testing.T) {
 	env := newGatewayMockEnv(t, nil)
 

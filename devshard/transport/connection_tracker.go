@@ -11,7 +11,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptrace"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -120,6 +119,7 @@ func (t *HostConnectionTracker) TrackDialContext(
 	}
 }
 
+// Snapshots returns one entry per address with any open, idle or held connection, order unspecified.
 func (t *HostConnectionTracker) Snapshots() []HostConnectionSnapshot {
 	if t == nil {
 		return nil
@@ -128,18 +128,11 @@ func (t *HostConnectionTracker) Snapshots() []HostConnectionSnapshot {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	addresses := make([]string, 0, len(t.counts))
+	snapshots := make([]HostConnectionSnapshot, 0, len(t.counts))
 	for address, counts := range t.counts {
 		if counts.active == 0 && counts.idle == 0 && counts.holdAfterClose == 0 && counts.openTotal == 0 {
 			continue
 		}
-		addresses = append(addresses, address)
-	}
-	sort.Strings(addresses)
-
-	snapshots := make([]HostConnectionSnapshot, 0, len(addresses))
-	for _, address := range addresses {
-		counts := t.counts[address]
 		snapshots = append(snapshots, HostConnectionSnapshot{
 			Address:        address,
 			Active:         counts.active,
