@@ -98,12 +98,13 @@ func (k msgServer) ScheduleMaintenance(goCtx context.Context, msg *types.MsgSche
 	}
 
 	reservation := types.MaintenanceReservation{
-		ReservationId:  reservationID,
-		Participant:    msg.Participant,
-		StartHeight:    msg.StartHeight,
-		DurationBlocks: msg.DurationBlocks,
-		CreatedBy:      msg.Creator,
-		Status:         types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_SCHEDULED,
+		ReservationId:        reservationID,
+		Participant:          msg.Participant,
+		StartHeight:          msg.StartHeight,
+		DurationBlocks:       msg.DurationBlocks,
+		CreatedBy:            msg.Creator,
+		Status:               types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_SCHEDULED,
+		CreatedAtBlockHeight: blockHeight,
 	}
 
 	if err := k.SetMaintenanceReservation(goCtx, reservation); err != nil {

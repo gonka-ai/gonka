@@ -218,6 +218,10 @@ func (am AppModule) checkConfirmationPoCTrigger(
 		return fmt.Errorf("failed to freeze confirmation PoC recipe: %w", err)
 	}
 	event.Recipe = recipe
+	event.MaintenanceReservationIds, err = am.keeper.SnapshotMaintenanceForConfirmation(ctx, &event)
+	if err != nil {
+		return fmt.Errorf("failed to snapshot confirmation maintenance reservations: %w", err)
+	}
 
 	// Store the event
 	err = am.keeper.SetConfirmationPoCEvent(ctx, event)
@@ -490,13 +494,12 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
-	// Maintenance-covered participants are expected to be offline: skip both the
-	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
-	// punished via rewards or INACTIVE status. Any same-epoch challenge record
-	// is skipped the same way.
-	skipAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
-	if skipAddrs == nil {
-		skipAddrs = make(map[string]struct{})
+	// Honor pre-trigger maintenance that covered this event, even if the
+	// window completed before evaluation. A window on the evaluation block
+	// alone, or one booked after the trigger became knowable, is not exempt.
+	skipAddrs, err := am.keeper.MaintenanceAddressesForConfirmation(ctx, event)
+	if err != nil {
+		return fmt.Errorf("evaluateConfirmation: failed to read maintenance snapshot: %w", err)
 	}
 	for addr := range skip {
 		skipAddrs[addr] = struct{}{}

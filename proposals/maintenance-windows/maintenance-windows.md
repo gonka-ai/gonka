@@ -250,6 +250,28 @@ During an active maintenance window:
 2. Expiry-related penalties caused by participant unavailability are waived.
 3. Participant-status degradation caused solely by maintenance-covered unavailability is suppressed.
 
+### Confirmation PoC Coverage
+
+A confirmation PoC event preserves a participant's prior confirmation weight and
+ratio when a maintenance window actually activated and overlaps any block from
+the event's generation start through its validation end, inclusive. The window
+may already be completed when the event is evaluated. A window covering only
+the evaluation block does not excuse that event.
+
+The reservation must have been scheduled in a block strictly before the trigger
+block. The trigger is decided in EndBlock using randomness already available
+during that block, so reservations booked in the trigger block or later do not
+earn an exemption for that event. Candidate reservation IDs are snapshotted at
+the trigger from the active and scheduled indexes; canceled or never-activated
+reservations do not qualify. Evaluation checks the interval against the same
+current epoch parameters used by the event's phase transitions.
+
+This change must be deployed before enabling maintenance. Legacy reservations
+without a recorded scheduling height and events without a candidate snapshot
+do not establish an exemption. Networks that previously enabled maintenance
+must finish existing windows and confirmation events before upgrading, or use
+an explicit migration; the scheduling height must not be guessed.
+
 ### Epoch Group Membership
 
 Participants in maintenance are not removed from epoch groups and are not removed from the epoch’s structural state. The proposal intentionally keeps epoch structure stable and only changes active service expectations.
