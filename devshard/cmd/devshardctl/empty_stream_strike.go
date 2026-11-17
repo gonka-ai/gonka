@@ -8,31 +8,77 @@ import (
 	"devshard/user"
 )
 
-// emptyStreamVerdictWait bounds how long a held empty-stream strike waits for
-// its challenge, and how long a challenge outcome that came first waits for
-// its strike. The Finish applies with the next diff, at the latest at the
-// quiet settle (5 minutes), and the hosts then fetch the stored body for up to
-// the challenge window (30 minutes) plus the vote slack (2 minutes). A strike
-// still held after that is applied.
-var emptyStreamVerdictWait = time.Hour
+// emptyStreamVerdictWait is the fallback grace after vote collection can
+// finish. It covers composing/sending the challenge diff and its result
+// callback. Collection itself is anchored to the receipt's block time plus
+// the configured execution budget, fetch window and vote slack; it can exceed
+// one hour. Early verdicts instead live only until their attempt is sampled
+// or its race finishes.
+const emptyStreamVerdictWait = time.Hour
 
-// emptyStreamStrike pairs the strike of an empty stream with the outcome of
-// the challenge that judges it. Whichever arrives first waits for the other.
+// emptyStreamStrikeDelay must not expire a penalty while voters can still
+// return an honest verdict. The session supplies the protocol's collection
+// deadline, including any applicable queued confirmation. An expired deadline
+// keeps the original fallback grace. Subtract only after adding grace as a
+// Time, so a far-future clock value saturates instead of overflowing a Duration
+// into an immediate timeout.
+func emptyStreamStrikeDelay(now, collectionDeadline time.Time) time.Duration {
+	base := now
+	if collectionDeadline.After(base) {
+		base = collectionDeadline
+	}
+	return base.Add(emptyStreamVerdictWait).Sub(now)
+}
+
+// emptyStreamStrike holds a sampled empty stream until its challenge ends.
 type emptyStreamStrike struct {
-	// held is set by the strike, with the attempt's log context, the
-	// participant that takes it and its payload stats.
-	held           bool
 	ctx            context.Context
 	participantKey string
 	stats          QuarantinePayloadStats
 	// received holds the stream's hashes, judged against the Finish the
 	// challenge reports (emptyStreamVerdict).
 	received [][32]byte
-	// result and outcome are set by a challenge that ended before the strike
-	// was held.
+	timer    *time.Timer
+}
+
+// An early verdict retains only the Finish hashes and outcome, never the
+// signed votes or response payload. Its owner is an active local attempt.
+type earlyEmptyStreamVerdict struct {
 	result  user.ChallengeResult
 	outcome string
-	timer   *time.Timer
+}
+
+func (e *Redundancy) trackEmptyStreamAttempt(inf *inflight) {
+	if inf == nil || inf.probe || e.session == nil || !types.ProtocolKnowsChallenge(e.session.StateMachine().ProtocolVersion()) {
+		return
+	}
+	e.emptyStrikesMu.Lock()
+	defer e.emptyStrikesMu.Unlock()
+	if e.stopped.Load() {
+		return
+	}
+	if e.emptyStrikeAttempts == nil {
+		e.emptyStrikeAttempts = make(map[uint64]*earlyEmptyStreamVerdict)
+	}
+	if _, known := e.emptyStrikeAttempts[inf.nonce]; !known {
+		e.emptyStrikeAttempts[inf.nonce] = nil
+	}
+}
+
+func (e *Redundancy) forgetEmptyStreamAttempt(nonce uint64) {
+	e.emptyStrikesMu.Lock()
+	delete(e.emptyStrikeAttempts, nonce)
+	e.emptyStrikesMu.Unlock()
+}
+
+func (e *Redundancy) forgetEmptyStreamAttempts(attempts []*inflight) {
+	e.emptyStrikesMu.Lock()
+	defer e.emptyStrikesMu.Unlock()
+	for _, inf := range attempts {
+		if inf != nil {
+			delete(e.emptyStrikeAttempts, inf.nonce)
+		}
+	}
 }
 
 // holdEmptyStreamStrike leaves the strike of an empty stream to its
@@ -56,32 +102,37 @@ type emptyStreamStrike struct {
 // replaced before it applies, so the verdict clears the strike only when the
 // stream also hashes to the Finish the voters judged.
 func (e *Redundancy) holdEmptyStreamStrike(inf *inflight, participantKey string, stats QuarantinePayloadStats) bool {
-	if e.session == nil || inf.resp == nil || !types.ProtocolKnowsChallenge(e.session.StateMachine().ProtocolVersion()) ||
-		!e.session.ReceivedStreamBindsFinish(inf.nonce, inf.resp.ReceivedResponseHashes) {
+	if e.session == nil || inf.resp == nil || !types.ProtocolKnowsChallenge(e.session.StateMachine().ProtocolVersion()) {
 		return false
 	}
 	received := inf.resp.ReceivedResponseHashes
 	nonce, ctx := inf.nonce, inf.attemptCtx()
+	now := time.Now()
+	collectionDeadline, bound := e.session.ReceivedStreamChallengeDeadline(nonce, received, now)
+	if !bound {
+		return false
+	}
+	wait := emptyStreamStrikeDelay(now, collectionDeadline)
 	e.emptyStrikesMu.Lock()
+	if _, held := e.emptyStrikes[nonce]; held {
+		e.emptyStrikesMu.Unlock()
+		return true
+	}
+	early := e.emptyStrikeAttempts[nonce]
+	delete(e.emptyStrikeAttempts, nonce)
+	if early != nil {
+		e.emptyStrikesMu.Unlock()
+		e.applyEmptyStreamStrike(ctx, nonce, participantKey, stats, emptyStreamVerdict(early.result, early.outcome, received))
+		return true
+	}
 	if e.stopped.Load() {
-		// Stop has settled the strikes, and no challenge runs any more.
+		// Stop joins the finalizers after marking the gateway stopped. Honor
+		// verdicts they already own above, but do not start another wait.
 		e.emptyStrikesMu.Unlock()
 		return false
 	}
-	if strike, known := e.emptyStrikes[nonce]; known {
-		if strike.held {
-			e.emptyStrikesMu.Unlock()
-			return true
-		}
-		// The challenge ended first.
-		delete(e.emptyStrikes, nonce)
-		e.emptyStrikesMu.Unlock()
-		strike.timer.Stop()
-		e.applyEmptyStreamStrike(ctx, nonce, participantKey, stats, emptyStreamVerdict(strike.result, strike.outcome, received))
-		return true
-	}
-	strike := &emptyStreamStrike{held: true, ctx: ctx, participantKey: participantKey, stats: stats, received: received}
-	strike.timer = time.AfterFunc(emptyStreamVerdictWait, func() { e.expireEmptyStreamStrike(nonce, strike) })
+	strike := &emptyStreamStrike{ctx: ctx, participantKey: participantKey, stats: stats, received: received}
+	strike.timer = time.AfterFunc(wait, func() { e.expireEmptyStreamStrike(nonce, strike) })
 	if e.emptyStrikes == nil {
 		e.emptyStrikes = make(map[uint64]*emptyStreamStrike)
 	}
@@ -103,26 +154,28 @@ func emptyStreamVerdict(result user.ChallengeResult, outcome string, received []
 }
 
 // settleEmptyStreamStrike takes the outcome of a finished challenge
-// (challengeOutcome) to the strike of the stream it judged. An EMPTY_STREAM
-// challenge can end before its strike is held; the outcome then waits for it.
+// (challengeOutcome) to the strike of the stream it judged. Any challenge can
+// end before sampling: in particular STREAM_UNBOUND can judge an honest empty
+// stream while it is still open. Keep that outcome only for a tracked attempt,
+// rather than retaining every unbound stream (including completed race losers)
+// for an hour. Sampling or race cleanup removes this entry deterministically.
 func (e *Redundancy) settleEmptyStreamStrike(result user.ChallengeResult, outcome string) {
 	nonce := result.Nonce
 	e.emptyStrikesMu.Lock()
 	strike, known := e.emptyStrikes[nonce]
 	if !known {
-		if result.Reason == types.ChallengeReason_CHALLENGE_REASON_EMPTY_STREAM && !e.stopped.Load() {
-			early := &emptyStreamStrike{result: result, outcome: outcome}
-			early.timer = time.AfterFunc(emptyStreamVerdictWait, func() { e.expireEmptyStreamStrike(nonce, early) })
-			if e.emptyStrikes == nil {
-				e.emptyStrikes = make(map[uint64]*emptyStreamStrike)
+		// A registered finalizer may still be joining after Stop starts. Its
+		// result remains useful until sampling or Stop's final map cleanup;
+		// stopped forbids new registrations, not these existing callbacks.
+		if early, tracked := e.emptyStrikeAttempts[nonce]; tracked && early == nil {
+			e.emptyStrikeAttempts[nonce] = &earlyEmptyStreamVerdict{
+				result: user.ChallengeResult{
+					ResponseHash: copyFinishHash(result.ResponseHash),
+					ServedHash:   copyFinishHash(result.ServedHash),
+				},
+				outcome: outcome,
 			}
-			e.emptyStrikes[nonce] = early
 		}
-		e.emptyStrikesMu.Unlock()
-		return
-	}
-	if !strike.held {
-		// The first outcome stands.
 		e.emptyStrikesMu.Unlock()
 		return
 	}
@@ -132,8 +185,14 @@ func (e *Redundancy) settleEmptyStreamStrike(result user.ChallengeResult, outcom
 	e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, emptyStreamVerdict(result, outcome, strike.received))
 }
 
-// expireEmptyStreamStrike ends the wait of strike: a strike still held is
-// applied, an outcome no strike claimed is dropped.
+func copyFinishHash(hash []byte) []byte {
+	if len(hash) != 32 {
+		return nil
+	}
+	return append([]byte(nil), hash...)
+}
+
+// expireEmptyStreamStrike applies a strike still waiting for its verdict.
 func (e *Redundancy) expireEmptyStreamStrike(nonce uint64, strike *emptyStreamStrike) {
 	e.emptyStrikesMu.Lock()
 	if e.emptyStrikes[nonce] != strike {
@@ -142,9 +201,7 @@ func (e *Redundancy) expireEmptyStreamStrike(nonce uint64, strike *emptyStreamSt
 	}
 	delete(e.emptyStrikes, nonce)
 	e.emptyStrikesMu.Unlock()
-	if strike.held {
-		e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, "expired")
-	}
+	e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, "expired")
 }
 
 // settleEmptyStreamStrikes applies every strike still held. Stop calls it
@@ -153,12 +210,11 @@ func (e *Redundancy) settleEmptyStreamStrikes() {
 	e.emptyStrikesMu.Lock()
 	strikes := e.emptyStrikes
 	e.emptyStrikes = nil
+	e.emptyStrikeAttempts = nil
 	e.emptyStrikesMu.Unlock()
 	for nonce, strike := range strikes {
 		strike.timer.Stop()
-		if strike.held {
-			e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, "stopped")
-		}
+		e.applyEmptyStreamStrike(strike.ctx, nonce, strike.participantKey, strike.stats, "stopped")
 	}
 }
 

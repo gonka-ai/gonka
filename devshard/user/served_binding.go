@@ -68,19 +68,39 @@ func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
 func (s *Session) ReceivedStreamBindsFinish(nonce uint64, received [][32]byte) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	_, bound := s.receivedStreamFinishLocked(nonce, received)
+	return bound
+}
+
+// ReceivedStreamChallengeDeadline returns the vote-collection deadline for
+// the Finish this stream binds to. A queued Finish may depend on a queued,
+// verified ConfirmStart that has not yet populated the live record's clock.
+// Read both under the same lock and apply the same deadline as RunChallenge;
+// never take a timestamp from an unverified response envelope.
+func (s *Session) ReceivedStreamChallengeDeadline(nonce uint64, received [][32]byte, now time.Time) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, bound := s.receivedStreamFinishLocked(nonce, received)
+	if !bound {
+		return time.Time{}, false
+	}
+	return s.challengeAskDeadline(rec, now), true
+}
+
+func (s *Session) receivedStreamFinishLocked(nonce uint64, received [][32]byte) (*types.InferenceRecord, bool) {
 	if s.sm == nil || len(received) == 0 {
-		return false
+		return nil, false
 	}
 	rec, ok := s.sm.Inference(nonce)
 	if !ok {
-		return false
+		return nil, false
 	}
 	if finishAppliedStatus(rec.Status) {
 		finish := servedFinishHashes{responseHash: rec.ResponseHash, servedHash: rec.ServedHash}
-		return judgeServedBinding(received, finish) == ServedBindingBound
+		return rec, judgeServedBinding(received, finish) == ServedBindingBound
 	}
 	if rec.Status != types.StatusStarted && rec.Status != types.StatusPending {
-		return false
+		return nil, false
 	}
 	confirm := s.pendingConfirmLocked(nonce)
 	for _, tx := range s.pendingTxs {
@@ -90,10 +110,16 @@ func (s *Session) ReceivedStreamBindsFinish(nonce uint64, received [][32]byte) b
 		}
 		finish := servedFinishHashes{responseHash: fi.ResponseHash, servedHash: fi.ServedHash}
 		if judgeServedBinding(received, finish) == ServedBindingBound {
-			return true
+			// evidenceApplies verified this queued ConfirmStart and Finish in
+			// sequence. Inference returns a copy; mirror the timestamp that
+			// applyConfirmStart will store, without mutating live state.
+			if rec.Status == types.StatusPending && confirm != nil && confirm.GetConfirmStart().ObservedTimeMs > 0 {
+				rec.ConfirmedAtTimeMs = confirm.GetConfirmStart().ObservedTimeMs
+			}
+			return rec, true
 		}
 	}
-	return false
+	return nil, false
 }
 
 func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {

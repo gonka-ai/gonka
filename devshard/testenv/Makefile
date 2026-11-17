@@ -296,6 +296,13 @@ citest-mixed-fleet: ## §8.2 mixed fleet, RPC on, Connect over HTTP/1.1, no prox
 		DEVSHARD_RPC_ENDPOINTS=$(PEER_RPC_ENDPOINTS) \
 		TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestMixedFleetNoProxy$$' -count=1 -v -timeout 30m
 
+# The gateway's deterministic timing tests also cover verdict-before-sample,
+# shutdown and expiry; the Docker rows verify honest-empty and inflating hosts.
+.PHONY: citest-empty-stream-strike
+citest-empty-stream-strike: citest-images ## Empty-stream verdict timing and real host challenge penalties.
+	go test -race ../cmd/devshardctl -run '^(TestEmptyStreamStrike.*|TestStopAppliesTheWaitingEmptyStreamStrikes)$$' -count=1 -timeout 5m
+	$(CITEST_RPC_RUN) -run '^TestEmptyStreamStrikeFollowsTheChallenge$$' -count=1 -v -timeout 15m
+
 # Rollout gate for the usage challenge: this tree's gateway while every host
 # still runs the previous release line's devshardd, which has no
 # VerifyChallenge. The child is built from USAGE_CHALLENGE_BASELINE_REF, the

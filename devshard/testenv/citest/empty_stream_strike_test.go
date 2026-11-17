@@ -28,7 +28,8 @@ type emptyStrikeLine struct {
 // TestEmptyStreamStrikeFollowsTheChallenge drives two rows of
 // TestUsageOverclaimScenarios whose stream reaches the gateway whole, bound
 // to its Finish, and with no text. The gateway holds the empty-stream strike
-// of each attempt until its challenge ends. The honest row (E2: logit_bias on
+// of each attempt until its challenge ends, or consumes the verdict that
+// already arrived before sampling. The honest row (E2: logit_bias on
 // a lone byte, 256 tokens that decode to nothing) must not strike any host it
 // tried: the voters count the positions of the stored body and the challenge
 // ends none. The inflating row (E3: the ML node drops every token and keeps
@@ -112,6 +113,11 @@ func TestEmptyStreamStrikeFollowsTheChallenge(t *testing.T) {
 	var held, settled map[uint64]emptyStrikeLine
 	harness.AssertEventually(t, usageChallengeWindow+time.Minute, 2*time.Second, func() bool {
 		held, settled = lines("empty_stream_strike_held"), lines("empty_stream_strike_settled")
+		for _, c := range cases {
+			if _, ok := settled[c.run.obs.nonce]; !ok {
+				return false
+			}
+		}
 		for nonce := range held {
 			if _, ok := settled[nonce]; !ok && nonce > cases[0].from && nonce <= cases[len(cases)-1].to {
 				return false
@@ -120,9 +126,16 @@ func TestEmptyStreamStrikeFollowsTheChallenge(t *testing.T) {
 		return true
 	})
 	for _, c := range cases {
-		require.Contains(t, held, c.run.obs.nonce, "%s: the strike of inference %d was applied at once, not left to its challenge", c.run.name, c.run.obs.nonce)
+		require.Contains(t, settled, c.run.obs.nonce, "%s: the strike of inference %d was not settled by its challenge", c.run.name, c.run.obs.nonce)
 		hosts := map[string]bool{}
+		attempts := map[uint64]emptyStrikeLine{}
 		for nonce, line := range held {
+			attempts[nonce] = line
+		}
+		for nonce, line := range settled {
+			attempts[nonce] = line
+		}
+		for nonce, line := range attempts {
 			if nonce <= c.from || nonce > c.to {
 				continue
 			}
@@ -132,6 +145,6 @@ func TestEmptyStreamStrikeFollowsTheChallenge(t *testing.T) {
 			require.Equal(t, c.strike, got.Strike, "%s: strike on %s for inference %d", c.run.name, got.Participant, nonce)
 			hosts[line.Participant] = true
 		}
-		t.Logf("%s: %d host(s) held a strike, every one settled %s with strike=%v", c.run.name, len(hosts), c.outcome, c.strike)
+		t.Logf("%s: %d host(s) had an empty stream, every one settled %s with strike=%v", c.run.name, len(hosts), c.outcome, c.strike)
 	}
 }

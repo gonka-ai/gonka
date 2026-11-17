@@ -558,10 +558,12 @@ type Redundancy struct {
 
 	servedBindingStrikes sync.WaitGroup
 
-	// emptyStrikes are the empty-stream strikes left to a challenge, and the
-	// outcomes that came before their strike, by nonce (holdEmptyStreamStrike).
-	emptyStrikesMu sync.Mutex
-	emptyStrikes   map[uint64]*emptyStreamStrike
+	// emptyStrikes wait for a challenge after sampling. emptyStrikeAttempts
+	// holds early verdicts only for started attempts that can still be sampled;
+	// a nil value means the attempt has no verdict yet.
+	emptyStrikesMu      sync.Mutex
+	emptyStrikes        map[uint64]*emptyStreamStrike
+	emptyStrikeAttempts map[uint64]*earlyEmptyStreamVerdict
 
 	// Detached race cleanups outlive the request that spawned them, so they get
 	// their own cancellation root and are joined by Stop. Built lazily because
@@ -2446,6 +2448,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 }
 
 func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams, clientFlag *cancelFlag) {
+	e.trackEmptyStreamAttempt(inf)
 	// Per-attempt context derived from the settle context so the background
 	// finalizer can cut off stragglers after the winner's grace window expires
 	// without disturbing the settle context itself (which is shared across all
@@ -2988,6 +2991,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
 					if err := race.promoteFallbackWinner(fallback); err != nil {
 						releasePendingBufs(attempts)
+						e.forgetEmptyStreamAttempts(attempts)
 						return err
 					}
 					winner = fallback.nonce
@@ -4637,6 +4641,9 @@ func inflightByNonce(attempts []*inflight, nonce uint64) *inflight {
 }
 
 func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams, requestSucceeded bool) {
+	if inf != nil {
+		defer e.forgetEmptyStreamAttempt(inf.nonce)
+	}
 	if isErrorStreamAttempt(inf) {
 		e.maybeRecordCapabilityError(inf)
 		return
@@ -4943,6 +4950,7 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 // attempt later completes successfully on the protocol layer.
 func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
 	defer releasePendingBufs(attempts)
+	defer e.forgetEmptyStreamAttempts(attempts)
 	// Process all responses first so Session has complete protocol state.
 	// Pin error-stream Finishes immediately: ProcessResponse queues them in
 	// pending, and the quiet settle (or a height-sync heartbeat) can compose
@@ -5328,6 +5336,7 @@ func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params 
 }
 
 func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, requestSucceeded bool) {
+	defer e.forgetEmptyStreamAttempt(inf.nonce)
 	if inf.probe {
 		return
 	}
