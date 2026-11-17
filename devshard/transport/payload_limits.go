@@ -3,6 +3,7 @@ package transport
 import (
 	"errors"
 	"fmt"
+	"slices"
 
 	"google.golang.org/protobuf/encoding/protowire"
 
@@ -18,10 +19,15 @@ const MaxDecodedDiffs = host.ChallengePageMaxNonces
 var diffTxsField = (&rpcpb.Diff{}).ProtoReflect().Descriptor().Fields().ByName("txs").Number()
 
 // CheckDiffsPayload counts the Diff messages in field diffsField of an encoded
-// request, and the txs inside them, before proto.Unmarshal allocates them.
-func CheckDiffsPayload(b []byte, diffsField protowire.Number) error {
-	diffs, txs := 0, 0
+// request, and the txs and tx entries inside them, before proto.Unmarshal
+// allocates them. Txs in txFields draw on the same budget.
+func CheckDiffsPayload(b []byte, diffsField protowire.Number, txFields ...protowire.Number) error {
+	diffs := 0
+	var count types.TxCount
 	err := walkFields(b, func(num protowire.Number, v []byte) error {
+		if slices.Contains(txFields, num) {
+			return limitOnly(count.AddTx(v))
+		}
 		if num != diffsField {
 			return nil
 		}
@@ -32,9 +38,7 @@ func CheckDiffsPayload(b []byte, diffsField protowire.Number) error {
 			if num != diffTxsField {
 				return nil
 			}
-			n, err := types.CountDiffTxs(v, types.MaxDecodedTxs-txs)
-			txs += n
-			return limitOnly(err)
+			return limitOnly(count.AddDiffContent(v))
 		})
 	})
 	if err = limitOnly(err); err != nil {
@@ -52,16 +56,15 @@ func limitOnly(err error) error {
 	return nil
 }
 
-// CheckTxsPayload counts the entries of repeated field txsField.
+// CheckTxsPayload counts the txs in repeated field txsField and the entries
+// inside them.
 func CheckTxsPayload(b []byte, txsField protowire.Number) error {
-	n := 0
-	return limitOnly(walkFields(b, func(num protowire.Number, _ []byte) error {
-		if num == txsField {
-			if n++; n > types.MaxDecodedTxs {
-				return fmt.Errorf("%w: more than %d", types.ErrDecodeLimit, types.MaxDecodedTxs)
-			}
+	var count types.TxCount
+	return limitOnly(walkFields(b, func(num protowire.Number, v []byte) error {
+		if num != txsField {
+			return nil
 		}
-		return nil
+		return limitOnly(count.AddTx(v))
 	}))
 }
 

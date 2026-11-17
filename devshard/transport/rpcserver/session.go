@@ -354,7 +354,7 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, err
 	}
-	if err := checkDiffsPayload(payload, verifyErrorMissDiffs); err != nil {
+	if err := checkDiffsPayload(payload, verifyErrorMissDiffs, verifyErrorMissFinish); err != nil {
 		return nil, err
 	}
 	var inner rpcpb.VerifyErrorMissRequest

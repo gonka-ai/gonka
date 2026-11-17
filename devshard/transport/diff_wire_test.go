@@ -8,7 +8,9 @@ import (
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -377,4 +379,82 @@ func TestCheckPayloadLeavesParseErrorsToDecoder(t *testing.T) {
 	require.NoError(t, CheckDiffsPayload(b, 4))
 	require.NoError(t, CheckDiffsPayload([]byte{0x22, 0x05}, 4))
 	require.NoError(t, CheckTxsPayload([]byte{0x0a, 0x05}, 1))
+}
+
+func TestCheckPayloadCountsVotesInsideTxs(t *testing.T) {
+	votes := func(n int) *types.DevshardTx {
+		return &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
+			Votes: make([]*types.TimeoutVote, n),
+		}}}
+	}
+	for i := range 2 {
+		n := types.MaxDecodedTxEntries + 1 - i
+		content, err := proto.Marshal(&types.DiffContent{Txs: []*types.DevshardTx{votes(n)}})
+		require.NoError(t, err)
+		b, err := proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: []*rpcpb.Diff{{Nonce: 1, Txs: content}}})
+		require.NoError(t, err)
+		tx, err := proto.Marshal(votes(n))
+		require.NoError(t, err)
+		gossip, err := proto.Marshal(&rpcpb.GossipTxsRequest{Txs: [][]byte{tx}})
+		require.NoError(t, err)
+		if i == 0 {
+			require.ErrorIs(t, CheckDiffsPayload(b, 4), types.ErrDecodeLimit)
+			require.ErrorIs(t, CheckTxsPayload(gossip, 1), types.ErrDecodeLimit)
+			_, err = DevshardTxsFromBytes([][]byte{tx})
+			require.ErrorIs(t, err, types.ErrDecodeLimit)
+		} else {
+			require.NoError(t, CheckDiffsPayload(b, 4))
+			require.NoError(t, CheckTxsPayload(gossip, 1))
+		}
+	}
+}
+
+func TestCheckPayloadPassesHonestHeartbeatPage(t *testing.T) {
+	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum:   types.MaxGroupSize,
+		SyncVector: make([]*types.SyncVectorEntry, types.MaxGroupSize),
+	}}}
+	content, err := proto.Marshal(&types.DiffContent{Txs: []*types.DevshardTx{hb}})
+	require.NoError(t, err)
+	diffs := make([]*rpcpb.Diff, MaxDecodedDiffs)
+	for i := range diffs {
+		diffs[i] = &rpcpb.Diff{Nonce: uint64(i + 1), Txs: content}
+	}
+	b, err := proto.Marshal(&rpcpb.ChallengeReceiptRequest{Diffs: diffs})
+	require.NoError(t, err)
+	require.NoError(t, CheckDiffsPayload(b, fieldNumber(t, &rpcpb.ChallengeReceiptRequest{}, "diffs")))
+}
+
+func TestCheckPayloadCountsErrorMissFinishTx(t *testing.T) {
+	tx, err := proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_ErrorMiss{ErrorMiss: &types.MsgErrorMiss{
+		Votes: make([]*types.ErrorMissVote, types.MaxDecodedTxEntries+1),
+	}}})
+	require.NoError(t, err)
+	b, err := proto.Marshal(&rpcpb.VerifyErrorMissRequest{FinishTx: tx})
+	require.NoError(t, err)
+	field := (&rpcpb.VerifyErrorMissRequest{}).ProtoReflect().Descriptor().Fields().ByName("finish_tx").Number()
+	diffs := fieldNumber(t, &rpcpb.VerifyErrorMissRequest{}, "diffs")
+	require.ErrorIs(t, CheckDiffsPayload(b, diffs, field), types.ErrDecodeLimit)
+
+	// finish_tx shares the budget with the votes inside the diffs.
+	half := func(n int) []byte {
+		b, err := proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_ErrorMiss{ErrorMiss: &types.MsgErrorMiss{
+			Votes: make([]*types.ErrorMissVote, n),
+		}}})
+		require.NoError(t, err)
+		return b
+	}
+	content := protowire.AppendBytes(protowire.AppendTag(nil, 2, protowire.BytesType), half(types.MaxDecodedTxEntries/2))
+	b, err = proto.Marshal(&rpcpb.VerifyErrorMissRequest{
+		Diffs:    []*rpcpb.Diff{{Nonce: 1, Txs: content}},
+		FinishTx: half(types.MaxDecodedTxEntries/2 + 1),
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, diffs, field), types.ErrDecodeLimit)
+	require.NoError(t, CheckDiffsPayload(b, diffs))
+}
+
+func fieldNumber(t *testing.T, m proto.Message, name string) protowire.Number {
+	t.Helper()
+	return m.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name)).Number()
 }

@@ -170,16 +170,15 @@ func DiffsFromJSON(djs []DiffJSON) ([]types.Diff, error) {
 	if len(djs) > MaxDecodedDiffs {
 		return nil, fmt.Errorf("%w: more than %d diffs", types.ErrDecodeLimit, MaxDecodedDiffs)
 	}
-	left := types.MaxDecodedTxs
+	var count types.TxCount
 	for i, dj := range djs {
-		n, err := types.CountDiffTxs(dj.Txs, left)
+		err := count.AddDiffContent(dj.Txs)
 		if errors.Is(err, types.ErrDecodeLimit) {
-			return nil, fmt.Errorf("%w: more than %d across diffs", types.ErrDecodeLimit, types.MaxDecodedTxs)
+			return nil, fmt.Errorf("%w across diffs", err)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("decode diff %d: %w", i, err)
 		}
-		left -= n
 	}
 	diffs := make([]types.Diff, 0, len(djs))
 	for i, dj := range djs {
@@ -291,6 +290,12 @@ func DevshardTxsToBytes(txs []*types.DevshardTx) ([][]byte, error) {
 func DevshardTxsFromBytes(data [][]byte) ([]*types.DevshardTx, error) {
 	if len(data) > types.MaxDecodedTxs {
 		return nil, fmt.Errorf("%w: %d, at most %d", types.ErrDecodeLimit, len(data), types.MaxDecodedTxs)
+	}
+	var count types.TxCount
+	for _, b := range data {
+		if err := count.AddTx(b); errors.Is(err, types.ErrDecodeLimit) {
+			return nil, err
+		}
 	}
 	result := make([]*types.DevshardTx, len(data))
 	for i, b := range data {
