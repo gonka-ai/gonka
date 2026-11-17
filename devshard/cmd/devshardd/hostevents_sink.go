@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -34,16 +35,17 @@ type escrowWarmSink struct {
 	store     devshardstorage.Storage
 	log       *slog.Logger
 	onSettled func(escrowID string) error
+	localAddr string
 
 	mu            sync.Mutex
 	lastRehydrate time.Time
 }
 
-func newEscrowWarmSink(b bridge.MainnetBridge, store devshardstorage.Storage, log *slog.Logger, onSettled func(string) error) *escrowWarmSink {
+func newEscrowWarmSink(b bridge.MainnetBridge, store devshardstorage.Storage, log *slog.Logger, onSettled func(string) error, localAddr string) *escrowWarmSink {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &escrowWarmSink{bridge: b, store: store, log: log, onSettled: onSettled}
+	return &escrowWarmSink{bridge: b, store: store, log: log, onSettled: onSettled, localAddr: localAddr}
 }
 
 // WarmEscrow fetches escrow metadata from chain and caches it for lazy bind.
@@ -52,15 +54,68 @@ func (s *escrowWarmSink) WarmEscrow(escrowID string) error {
 	if err != nil {
 		return fmt.Errorf("warm escrow %s: %w", escrowID, err)
 	}
+	return s.WarmFromInfo(info)
+}
+
+// WarmFromInfo writes the already-fetched escrow into escrow_cache. Chain
+// websocket Subscribe calls this with the GetEscrow it already paid for so
+// the create event is not thrown away. Does not start a host or stamp a
+// runtime version.
+func (s *escrowWarmSink) WarmFromInfo(info *bridge.EscrowInfo) error {
+	if info == nil {
+		return fmt.Errorf("warm escrow: nil info")
+	}
 	if info.Settled {
-		s.log.Debug("hostevents: skipping warm of settled escrow", "escrow_id", escrowID)
-		return s.OnEscrowSettled(escrowID)
+		s.log.Debug("hostevents: skipping warm of settled escrow", "escrow_id", info.EscrowID)
+		return s.OnEscrowSettled(info.EscrowID)
 	}
-	if err := s.store.PutEscrowCache(devshardbridge.EscrowCacheFromInfo(info)); err != nil {
-		return fmt.Errorf("cache escrow %s: %w", escrowID, err)
+	row := devshardbridge.EscrowCacheFromInfo(info)
+	if slotContains(info.Slots, s.localAddr) {
+		row.SlotURLs = s.slotURLs(info.Slots)
 	}
-	s.log.Debug("hostevents: warmed escrow into cache", "escrow_id", escrowID, "epoch_id", info.EpochID)
+	if err := s.store.PutEscrowCache(row); err != nil {
+		return fmt.Errorf("cache escrow %s: %w", info.EscrowID, err)
+	}
+	s.log.Debug("hostevents: warmed escrow into cache", "escrow_id", info.EscrowID, "epoch_id", info.EpochID, "slot_urls", len(row.SlotURLs))
 	return nil
+}
+
+func (s *escrowWarmSink) slotURLs(slots []string) map[string]string {
+	if s.bridge == nil || len(slots) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(slots))
+	for _, addr := range slots {
+		info, err := s.bridge.GetHostInfo(addr)
+		if err != nil {
+			s.log.Debug("hostevents: GetHostInfo during warm", "address", addr, "error", err)
+			continue
+		}
+		if info == nil {
+			continue
+		}
+		url := strings.TrimSpace(info.URL)
+		if url == "" {
+			continue
+		}
+		out[addr] = url
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func slotContains(slots []string, addr string) bool {
+	if addr == "" {
+		return false
+	}
+	for _, slot := range slots {
+		if slot == addr {
+			return true
+		}
+	}
+	return false
 }
 
 // OnEscrowSettled drops the warm cache row and finalizes any live session so a

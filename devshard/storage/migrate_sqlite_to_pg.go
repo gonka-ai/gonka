@@ -279,6 +279,18 @@ func migrateSealedAndObs(src *SQLite, dest Storage, escrowID string) error {
 		}
 	}
 
+	// Copied before the empty-rows return: a rebuild that died after its clear
+	// leaves exactly that state, and the mark is what repairs it.
+	pending, err := src.ValidationObsRebuildPending(escrowID)
+	if err != nil {
+		return fmt.Errorf("read obs rebuild pending: %w", err)
+	}
+	if pending {
+		if err := dest.SetValidationObsRebuildPending(escrowID, true); err != nil {
+			return fmt.Errorf("copy obs rebuild pending: %w", err)
+		}
+	}
+
 	live, err := src.listValidationObs(escrowID, "inference_validation_obs")
 	if err != nil {
 		return fmt.Errorf("list live validation obs: %w", err)

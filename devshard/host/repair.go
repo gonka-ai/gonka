@@ -191,12 +191,11 @@ func (h *Host) ingestRepairHeight(slot uint32, resp *heightsync.RepairResponse) 
 	if resp.Ack == nil {
 		return
 	}
-	key := h.slotToAddr[slot]
 	v := h.verifier
 	if v == nil {
 		v = signing.NewSecp256k1Verifier()
 	}
-	if err := heightsync.VerifyAck(v, resp.Ack, key); err != nil {
+	if err := heightsync.VerifyAckAllowed(v, resp.Ack, h.SlotActors()); err != nil {
 		logging.Debug("repair courtesy ack dropped", "subsystem", "heightsync",
 			"escrow", h.escrowID, "slot", slot, "error", err)
 		return
@@ -209,13 +208,19 @@ func (h *Host) ingestRepairHeight(slot uint32, resp *heightsync.RepairResponse) 
 
 // BuildRepairHeightResponse is the responder half: signed HEIGHT + optional ack.
 // Unknown turns and exhausted responder budget reject before the oracle read
-// and never assign blame.
+// and never assign blame. A pair that already has a signed body is replayed
+// as those bytes: no second oracle read and no second signature.
 func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
 	if req == nil || h.sm.HeightSyncTurnRecord(req.TurnStart) == nil {
 		return nil, heightsync.ErrRepairUnknownTurn
 	}
-	if h.repairResponder != nil && !h.repairResponder.Allow(req.TurnStart, req.RequesterSlot) {
-		return nil, heightsync.ErrRepairResponderBudget
+	if h.repairResponder != nil {
+		if cached := h.repairResponder.Replay(req.TurnStart, req.RequesterSlot); cached != nil {
+			return cached, nil
+		}
+		if !h.repairResponder.Allow(req.TurnStart, req.RequesterSlot) {
+			return nil, heightsync.ErrRepairResponderBudget
+		}
 	}
 
 	hdr, hdrErr := h.latestHeader(ctx)
@@ -258,6 +263,9 @@ func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.Re
 
 	if err := heightsync.SignRepairResponse(h.signer, resp); err != nil {
 		return nil, err
+	}
+	if h.repairResponder != nil {
+		h.repairResponder.Remember(req.TurnStart, req.RequesterSlot, resp)
 	}
 	return resp, nil
 }

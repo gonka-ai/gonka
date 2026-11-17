@@ -32,9 +32,9 @@ inference-chain.
 
 | Service | HA today |
 |---------|----------|
-| `proxy` | Immutable; run N behind a VIP/L4 LB |
+| `proxy` | Immutable; run N behind a VIP/L4 LB. Phase 6 recognises HTTP/2 `/rpc/` on the same `:80/:443` (preface / ALPN `gonka-rpc/1`) and carries it past nginx. |
 | `edge-api` | Stateless; N instances + `edge-api-router` (round-robin) |
-| `versiond` + `devshardd` | N instances on separate machines + `versiond-router` (sticky hash) **on shared Postgres** |
+| `versiond` + `devshardd` | N instances on separate machines + `versiond-router` (sticky hash) **on shared Postgres**. Same hash for JSON and `/rpc/`. |
 
 ### What blocks HA today
 
@@ -56,12 +56,12 @@ dapi so it can be made highly available.
         ┌──────────────────────┬──────────┴───────────┬───────────────────────┐
         ▼                      ▼                      ▼                        ▼
  ┌─────────────┐      ┌────────────────┐     ┌────────────────┐      ┌────────────────┐
- │  edge-api    │      │ dapi: edge-srv │     │ dapi: node-mgr │      │ versiond[-router]│
- │  (N, HA)     │      │ (N, PoC/admin) │     │ (broker/PoC)   │      │  → devshardd    │
- │  HA chain    │      │  REST callbacks│     │  + leader      │      │  (shared PG)    │
- │  proxy+cache │      └───────┬────────┘     └───────┬────────┘      └────────────────┘
- │  + event hub │              │                      │
- └──────┬───────┘              │ publish chain msgs   │ publish chain msgs
+ │  edge-api    │      │ dapi: edge-srv │     │ dapi: node-mgr │      │ versiond-router │
+ │  (N, HA)     │      │ (N, PoC/admin) │     │ (broker/PoC)   │      │  sticky hash    │
+ │  HA chain    │      │  REST callbacks│     │  + leader      │      │  → versiond     │
+ │  proxy+cache │      └───────┬────────┘     └───────┬────────┘      │  → devshardd    │
+ │  + event hub │              │                      │                 │  (shared PG)    │
+ └──────┬───────┘              │ publish chain msgs   │ publish chain msgs └────────────────┘
         │ events (pub/sub)     ▼                      ▼
         │              ┌──────────────────────────────────────┐
         ├─────────────▶│        NATS (standalone, HA)          │  ◀── one queue for
@@ -77,6 +77,12 @@ dapi so it can be made highly available.
    Redis (shared edge-api state:        (gRPC + RPC)
    leader lock, event cursor, cache)
 ```
+
+`proxy` keeps its two public listens after phase 6: `:80/:443` carry JSON and
+`/v1` (TCP to nginx) and, recognised by their first bytes, HTTP/2 `/rpc/`
+(past nginx). Both paths still hash version + escrow onto the same
+`versiond-router` ring. See
+[../grpc-transport-connection.md](../grpc-transport-connection.md).
 
 Two pillars:
 
@@ -254,7 +260,7 @@ clustered NATS (JetStream)** shared by all instances.
 | One phase-engine driver | node-manager **leader election** (Redis lease) |
 | Chain writes load-shared but once | NATS **queue group** → single signer per message + idempotency keys |
 | Duplicate validation across devshardd | Postgres **validation leases** (existing; [../high-availability-architecture.md](../high-availability-architecture.md) §4) |
-| Sticky devshard sessions | `versiond-router` consistent hash (existing) |
+| Sticky devshard sessions | `versiond-router` consistent hash (existing). JSON and `/rpc/` share the escrow path key. |
 | Shared mutable state | **Postgres** (+ Redis for locks/cursors/cache) |
 
 ---
@@ -295,7 +301,8 @@ single-writer and cannot support concurrent children (Part 1 §1.2).
 | **versiond host** removal, replace, or supervisor upgrade | **`versiond-router`** host evacuation | **Yes** — mark upstream `down`, drain pinned escrows, then stop the host |
 
 During a devshardd binary swap, sticky routing is unchanged: the router still
-points at `versiond-N:8080`; only the child port inside versiond swaps. Router
+points at `versiond-N:8080`; only the child port inside versiond swaps. JSON
+(InferenceUrl) and `/rpc/` (`proxy` h2 listen) share that upstream. Router
 drain is for when the **versiond process itself** must leave the pool (scale-down,
 host maintenance, versiond binary upgrade).
 
@@ -321,8 +328,10 @@ maps to Part 1 §1.8 (router drain), not the in-versiond binary swap.
   versiond, with the **shared Postgres** making old+new overlap correct — see
   [../rolling-update.md](../rolling-update.md) §1.
 - **versiond host** replace, scale-down, or maintenance: drain at
-  **`versiond-router`** (mark upstream down, wait for pinned escrows idle, then
-  stop the host) — see [../rolling-update.md](../rolling-update.md) §1.8.
+  **`versiond-router`** (fail `/readyz`, wait for pinned escrows idle, then
+  stop the host) — see [../versiond-host-evacuation.md](../versiond-host-evacuation.md).
+  JSON and `/rpc/` share placement; do not add a second evacuation for the h2
+  listen.
 - **NATS / Redis / Postgres**: run in their own HA/cluster modes; updated with
   their native rolling procedures, independent of app rollouts.
 
@@ -374,11 +383,11 @@ A Helm chart alone does not make a monolith HA. The chart assumes:
 |------------------|-----------|
 | `edge-api` | `Deployment` + `Service`; `readinessProbe` → `/healthz`; HPA-friendly |
 | `edge-api` event hub | Same image/chart; leader via Redis; subscribers use cluster DNS or NATS |
-| `versiond` | `Deployment` + sticky `Service` or Ingress consistent-hash on escrow id |
+| `versiond` | `Deployment` + sticky `Service` or Ingress consistent-hash on escrow id (JSON and `/rpc/`) |
 | `devshardd` | Child of versiond in-process today; chart may deploy versiond only |
 | `signer` | `Deployment`; NATS queue-group consumer; **one message consumed once** |
 | `dapi` services | Split Deployments: echo workers (scale out), node-manager (leader) |
-| `proxy` | Optional Ingress / Gateway in front of edge-api, dapi, versiond paths |
+| `proxy` | Optional Ingress / Gateway in front of edge-api, dapi, versiond JSON. Phase 6 needs the public listener to pass the HTTP/2 preface and ALPN `gonka-rpc/1` through to an HTTP/2-capable hop (an L4 Service, or a Gateway listener that forwards those connections), on the same `:80/:443`. |
 | **Dependencies** | Postgres, NATS, Redis as subcharts or external endpoints in `values.yaml` |
 
 ### Helm deliverable
@@ -408,6 +417,11 @@ for production Kubernetes** once Pillars A–B and phasing steps 1–5 are in pl
 - **Redis vs NATS JetStream KV** for the cursor/lock — avoid adding Redis if
   JetStream KV suffices. (Proposal assumes Redis per the stated direction.)
 - **Cache invalidation** for edge-api chain cache around epoch/phase boundaries.
+- **K8s public listener:** InferenceUrl (`:80/:443`) carries both JSON and
+  HTTP/2 `/rpc/`. An HTTP-terminating Ingress drops the preface and the
+  ALPN token, and peers then fall back to HTTP/1.1 through it. The chart
+  needs an L4 Service (or a Gateway TLS passthrough listener) in front of a
+  hop that recognises peer RPC and speaks HTTP/2 to versiond-router.
 
 ---
 
@@ -415,6 +429,8 @@ for production Kubernetes** once Pillars A–B and phasing steps 1–5 are in pl
 
 - Current architecture: [../high-availability-architecture.md](../high-availability-architecture.md)
 - Rolling updates: [../rolling-update.md](../rolling-update.md) (K8s rolling-update semantics, Part 2)
+- Host evacuation: [../versiond-host-evacuation.md](../versiond-host-evacuation.md)
+- Peer RPC hops: [../grpc-transport-connection.md](../grpc-transport-connection.md)
 - edge-api extraction: [../pixelplex-changes.md](../pixelplex-changes.md)
 - Storage modes: [../storage-design.md](../storage-design.md)
 - Runtime topology / merge: [../merge-plan.md](../merge-plan.md)

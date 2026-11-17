@@ -1,6 +1,13 @@
 #!/bin/sh
 # Renders /etc/haproxy/haproxy.cfg and /etc/haproxy/non_ha.map from the
-# environment, then execs HAProxy.
+# environment, then runs HAProxy and passes it every stop signal at once.
+# SIGUSR1 is HAProxy's soft stop: the listeners close, every HTTP/2
+# connection gets GOAWAY, streams in flight finish on their own, and the
+# process exits after the last stream ends or at hard-stop-after
+# (VERSIOND_ROUTER_HARD_STOP_SECONDS). A peer reopens Watch on its next token
+# refresh, on a new connection through the parent proxy, so an idle Watch
+# moves to another slot by itself. When HAProxy has exited, the catalog
+# reconciler loop is stopped and its exit status is returned.
 #
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
@@ -20,6 +27,10 @@
 #                             host:port). Recognised only when no endpoint file
 #                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
+#   VERSIOND_ROUTER_BACKEND_H2 proto h2 on every versiond server line (default
+#                             on), with check-proto h1 so the existing health
+#                             check stays HTTP/1.1. Set false for HTTP/1.1
+#                             mock upstreams.
 #   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs. With an
 #                             endpoint file this may also be an endpoint id.
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
@@ -33,11 +44,66 @@
 #   GONKA_HA                  set by the HA compose overlay; keeps the
 #                             Devshard-Ha request header on the HA backend even
 #                             while all but one pool member are unavailable
+#   VERSIOND_ROUTER_HARD_STOP_SECONDS
+#                             hard-stop-after: a stream still open this long
+#                             after SIGUSR1 is reset and the process exits.
+#                             Default 1800, the fleet drain budget.
 #   VERSIOND_ROUTER_*         proxy policy, see README
 #
 # Pool membership is discovered from DNS, protocol names from governance, and
 # health from active /readyz checks. Host and version additions need no reload.
 set -eu
+
+# Stop signals are trapped from the first line: a signal with no handler
+# ends this shell before HAProxy runs, and HAProxy itself drops a soft stop
+# that reaches it while it is still loading. USR1 (soft stop) that comes
+# before HAProxy answers on its Runtime socket is kept and passed on then.
+# TERM and INT mean "stop now" to HAProxy and are passed on as soon as the
+# process exists; before that they end this shell. See the end of this file.
+haproxy_ready=0
+haproxy_pid=
+pending_signal=
+reconciler_pid=
+# The catalog reconciler loop ends with the stop, not after it. A soft stop
+# closes the Runtime socket with the other listeners, so from the moment
+# USR1 reaches HAProxy the reconciler can neither read nor change anything;
+# left alone, its program would fail and be restarted every second for the
+# whole drain. The loop forwards the signal to its program (see
+# run_catalog_reconciler), so this takes both down.
+stop_reconciler() {
+    if [ -n "$reconciler_pid" ]; then
+        kill "$reconciler_pid" 2>/dev/null || true
+        wait "$reconciler_pid" 2>/dev/null || true
+        reconciler_pid=
+    fi
+}
+forward_signal() {
+    case $1 in
+        USR1)
+            if [ "$haproxy_ready" -eq 1 ]; then
+                # HAProxy first: the socket closes with its listeners, so
+                # nothing the reconciler could still send gets through.
+                # Collecting the reconciler may take one of its polls.
+                kill -s USR1 "$haproxy_pid" 2>/dev/null || true
+                stop_reconciler
+            else
+                pending_signal=USR1
+            fi
+            ;;
+        *)
+            if [ -n "$haproxy_pid" ]; then
+                kill -s "$1" "$haproxy_pid" 2>/dev/null || true
+                stop_reconciler
+            else
+                echo "versiond-router: $1 before HAProxy started; exiting" >&2
+                exit 1
+            fi
+            ;;
+    esac
+}
+trap 'forward_signal USR1' USR1
+trap 'forward_signal TERM' TERM
+trap 'forward_signal INT' INT
 
 entrypoint_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
 runtime_contract=${ROUTER_RUNTIME_VERSION_CONTRACT:-}
@@ -63,6 +129,9 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
+RPC_FALLBACK_MAXCONN="${VERSIOND_ROUTER_RPC_FALLBACK_MAXCONN:-512}"
+RPC_FALLBACK_MAXQUEUE="${VERSIOND_ROUTER_RPC_FALLBACK_MAXQUEUE:-64}"
+RPC_FALLBACK_QUEUE_MS="${VERSIOND_ROUTER_RPC_FALLBACK_QUEUE_MS:-200}"
 ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
@@ -74,6 +143,10 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 # Used only after HTTP Upgrade/CONNECT. SSE uses STREAM_IDLE because it remains
 # an ordinary HTX response.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
+# Soft stop waits for streams in flight; this caps that wait. Keep it below
+# the stop budget the caller gives Docker (the fleet passes
+# VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS plus a headroom to `docker stop --time`).
+HARD_STOP="${VERSIOND_ROUTER_HARD_STOP_SECONDS:-1800}"
 VERSION_CAPACITY="${VERSIOND_ROUTER_VERSION_CAPACITY:-32}"
 CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
 CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
@@ -193,7 +266,7 @@ explicit_server_options() {
         *) eso_options=$(printf '%s' "$eso_options" | \
             sed 's/ resolvers docker init-addr none//') ;;
     esac
-    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/"
+    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/; s/\${BACKEND_PROTO}/$BACKEND_PROTO/"
 }
 
 # Explicit server lines for one backend, replacing the template's
@@ -291,13 +364,30 @@ ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
 TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
+# Default on for the peer-RPC twin only. JSON backends stay HTTP/1.1 so a
+# v4 or v5 child stays UP while this router is already serving, and the
+# public proxy can be admitted before versiond is replaced. The twin dials
+# h2c and keeps its health check on HTTP/1.1: a check that speaks h2 marks
+# every server DOWN, and dropping the check reports "no check", which drain
+# does not treat as UP. The twin also requires the peer-rpc-ok body, so a
+# v5.0.2 /readyz 200 does not join the HTTP/2 pool. HTTP/1.1 mock upstreams
+# (test-version-routing) set VERSIOND_ROUTER_BACKEND_H2=false and the twin
+# stays on HTTP/1.1 with them.
+: "${VERSIOND_ROUTER_BACKEND_H2:=true}"
+BACKEND_H2=$(bool_env VERSIOND_ROUTER_BACKEND_H2)
+BACKEND_PROTO=
+if [ -n "$BACKEND_H2" ]; then
+    PEER_BACKEND_PROTO=' proto h2 check-proto h1'
+else
+    PEER_BACKEND_PROTO=
+fi
 
 if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
     FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
     REAL_IP_RULE='# Preserve X-Real-IP from the isolated trusted ingress.'
 else
-    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]'
-    REAL_IP_RULE='http-request set-header X-Real-IP %[src]'
+    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)] unless rpc_legacy_hop'
+    REAL_IP_RULE='http-request set-header X-Real-IP %[src] unless rpc_legacy_hop'
 fi
 
 # Hostnames are substituted into the config by sed, and sed is not inert to
@@ -314,7 +404,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
+for value in "$RPC_FALLBACK_MAXCONN" "$RPC_FALLBACK_MAXQUEUE" "$RPC_FALLBACK_QUEUE_MS" "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$HARD_STOP" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -322,6 +412,18 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$ADMIN_PORT" -eq 8080 ] || [ "$ADMIN_PORT" -eq 8081 ]; then
+ echo "versiond-router: admin port conflicts with data port 8080/8081" >&2
+ exit 1
+fi
+if [ "$RPC_FALLBACK_MAXCONN" -eq 0 ] || [ "$RPC_FALLBACK_MAXQUEUE" -eq 0 ] || [ "$RPC_FALLBACK_QUEUE_MS" -eq 0 ]; then
+ echo "versiond-router: RPC fallback budgets must be positive" >&2
+ exit 1
+fi
+if [ "$HARD_STOP" -eq 0 ]; then
+    echo "versiond-router: VERSIOND_ROUTER_HARD_STOP_SECONDS must be at least 1" >&2
+    exit 1
+fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
     [ "$CATALOG_MAX_BYTES" -eq 0 ] || \
@@ -411,7 +513,29 @@ VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
 # With an explicit endpoint list the template's server-template line is
 # replaced by explicit servers, except for a legacy owner that is not an
 # endpoint id: that keeps the single-host DNS template.
+# peer_rpc_check turns a JSON /readyz probe into the peer-RPC probe. The
+# dynamic form looks the slot up under the JSON backend name: the _rpc twin
+# is not a slot-map key, so be_name drops that suffix first.
+peer_rpc_check() {
+    printf '%s\n' "$1" | awk '
+        {
+            gsub(/be_name,map/, "be_name,regsub(_rpc$,),map")
+            amp = "\\&"
+            if (sub(/uri-lf \/readyz\?/, "uri-lf /readyz?peer-rpc=1" amp)) { print; next }
+            if (sub(/uri \/readyz\?/, "uri /readyz?peer-rpc=1" amp)) { print; next }
+            sub(/uri \/readyz$/, "uri /readyz?peer-rpc=1")
+            print
+        }
+    '
+}
+
+# sed treats &, \, and the | delimiter as replacement syntax.
+sed_repl() {
+    printf '%s' "$1" | sed -e 's/[\\&|]/\\&/g'
+}
+
 render_backend() {
+    expect=${READY_EXPECT:-200,404}
     : > "$POOL_SERVERS_FILE"
     if [ "$POOL_MODE" = endpoints ]; then
         explicit_server_lines "${10}" "$4" "$8" > "$POOL_SERVERS_FILE"
@@ -424,18 +548,80 @@ render_backend() {
     else
         rb_servers="s|\\\${BACKEND_HOST}|$4|g"
     fi
+    # Empty on JSON pools. The peer-RPC twin requires a body v5.0.2 never
+    # sends, so its plain /readyz 200 does not join the HTTP/2 pool.
+    body_expect=${PEER_RPC_BODY_EXPECT-}
+    PEER_RPC_BODY_EXPECT=
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
-        -e "s|\${READY_CHECK_SEND}|$2|g" \
-        -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
+        -e "s|\${READY_CHECK_SEND}|$(sed_repl "$2")|g" \
+        -e "s|\${ROUTE_CHECK_SEND}|$(sed_repl "$3")|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
         -e "s|\${RETRY_ON}|$9|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
+        -e "s|\${BACKEND_PROTO}|$BACKEND_PROTO|g" \
+        -e "s|\${READY_EXPECT}|$expect|g" \
+        -e "s|\${PEER_RPC_BODY_EXPECT}|$(sed_repl "$body_expect")|g" \
         -e "$rb_servers" \
         "$POOL_TEMPLATE"
+}
+
+# The JSON backend and this twin share servers. Only the readiness check
+# differs, so a child without h2c stays UP for JSON and DOWN for Connect.
+# Args match render_backend except the response label, which is the twin name:
+# $1 name, $2 readiness check, $3 route check, $4 host, $5 slots, $6 HA header,
+# $7 server state, $8 retry policy, $9 kind.
+peer_route_check() {
+    printf '%s\n' "$1" | sed 's|be_name,map|be_name,regsub(_rpc$,),map|'
+}
+
+# Every versiond this router dials, asked the HTTP/2 client preface. A process
+# without h2c answers with an HTTP/1.x status line and is UP here; an h2c
+# listen answers with a SETTINGS frame and fails. rpc_legacy_admission is
+# open only while some server here is UP.
+render_h1_only_backend() {
+    cat <<'EOF'
+backend versiond_h1_only
+    timeout check 1s
+    option tcp-check
+    tcp-check connect
+    tcp-check send-binary 505249202a20485454502f322e300d0a0d0a534d0d0a0d0a
+    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]
+EOF
+    h1_options='check inter 1s fall 1 rise 1 init-state fully-down'
+    if [ "$POOL_MODE" = endpoints ]; then
+        h1_index=0
+        while IFS="$US" read -r _ h1_host h1_port; do
+            h1_index=$((h1_index + 1))
+            case "$h1_host" in
+                *[!0-9.]*) h1_resolve=' resolvers docker init-addr none' ;;
+                *) h1_resolve= ;;
+            esac
+            printf '    server h1probe%s %s:%s %s%s\n' "$h1_index" "$h1_host" "$h1_port" "$h1_options" "$h1_resolve"
+        done < "$POOL_ENDPOINTS"
+    else
+        printf '    server-template h1probe %s %s:%s %s resolvers docker init-addr none\n' "$SLOTS" "$POOL_HOST" "$PORT" "$h1_options"
+    fi
+    if [ -s "$MAP" ] && ! endpoint_by_id "$LEGACY_HOST" >/dev/null 2>&1; then
+        printf '    server h1probe_legacy %s:%s %s resolvers docker init-addr none\n' "$LEGACY_HOST" "$PORT" "$h1_options"
+    fi
+}
+
+render_peer_backend() {
+    saved_expect=${READY_EXPECT-}
+    saved_proto=$BACKEND_PROTO
+    READY_EXPECT=200
+    BACKEND_PROTO=$PEER_BACKEND_PROTO
+    # v5.0.2 answers /readyz?peer-rpc=1 with 200 and "ready". Only a current
+    # versiond sends this body, so the twin stays down until that process is up.
+    PEER_RPC_BODY_EXPECT='http-check expect string peer-rpc-ok'
+    render_backend "${1}_rpc" "$(peer_rpc_check "$2")" "$(peer_route_check "$3")" \
+        "$4" "$5" "$6" "${1}_rpc" "$7" "$8" "$9"
+    READY_EXPECT=$saved_expect
+    BACKEND_PROTO=$saved_proto
 }
 
 : > "$MAP"
@@ -473,6 +659,11 @@ render_backend versiond_ha_pool \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
     versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" pool > "$POOL_BACKENDS_FILE"
+render_peer_backend versiond_ha_pool \
+    'http-check send meth GET uri /readyz' \
+    'http-check send meth GET uri /healthz' \
+    "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool_rpc)" \
+    '' "$VERSIONLESS_RETRY_ON" pool >> "$POOL_BACKENDS_FILE"
 declare_ha_version() {
     version=$1
     [ -n "$version" ] || return 0
@@ -504,6 +695,12 @@ declare_ha_version() {
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
+        "$DEFAULT_RETRY_ON" pool \
+        >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "${backend}_rpc")" '' \
         "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
 }
@@ -556,6 +753,12 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
         "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
+        "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "${backend}_rpc")" "$server_state" \
+        "$DEFAULT_RETRY_ON" pool \
+        >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
 
@@ -583,6 +786,12 @@ while IFS= read -r version; do
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
         versiond_legacy '' "$DEFAULT_RETRY_ON" legacy \
         >> "$POOL_BACKENDS_FILE"
+    render_peer_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
+        '' "$DEFAULT_RETRY_ON" legacy \
+        >> "$POOL_BACKENDS_FILE"
 done < "$LEGACY_VERSIONS_FILE"
 
 # Versions pinned to the legacy host exist because exactly one host owns their
@@ -595,6 +804,7 @@ if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
     echo "  is one specific host and must be named explicitly." >&2
     exit 1
 fi
+render_h1_only_backend >> "$POOL_BACKENDS_FILE"
 
 # Render one static readiness rule per immutable startup route. HAProxy's
 # nbsrv() argument is a configuration-time backend name, so bootstrap and
@@ -711,6 +921,9 @@ sed \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
+    -e "s|\${RPC_FALLBACK_MAXCONN}|$RPC_FALLBACK_MAXCONN|g" \
+    -e "s|\${RPC_FALLBACK_MAXQUEUE}|$RPC_FALLBACK_MAXQUEUE|g" \
+    -e "s|\${RPC_FALLBACK_QUEUE_MS}|$RPC_FALLBACK_QUEUE_MS|g" \
     -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
@@ -720,6 +933,7 @@ sed \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
+    -e "s|\${HARD_STOP_SECONDS}|$HARD_STOP|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "s|\${FORWARDED_PROTO_RULE}|$FORWARDED_PROTO_RULE|g" \
     -e "s|\${REAL_IP_RULE}|$REAL_IP_RULE|g" \
@@ -736,7 +950,33 @@ if [ -n "$RENDER_ONLY" ]; then
 fi
 
 run_catalog_reconciler() {
+    # The program runs as a child that this loop waits for, so a TERM to the
+    # loop ends the program as well and the loop only exits once the program
+    # has been collected; a child reparented to the entrypoint would
+    # otherwise outlive the loop until the container is torn down. A TERM
+    # that lands between the launch and the pid being recorded is kept as a
+    # flag and acted on right after. The program handles TERM only between
+    # polls, so the collection is bounded well inside the 10 s the fleet
+    # adds to Docker's stop budget: after 5 s the program is killed.
+    reconciler_child=
+    reconciler_stopping=0
+    end_reconciler_child() {
+        reconciler_stopping=1
+        if [ -n "$reconciler_child" ]; then
+            kill "$reconciler_child" 2>/dev/null || true
+            waited=0
+            while kill -0 "$reconciler_child" 2>/dev/null && [ "$waited" -lt 50 ]; do
+                sleep 0.1
+                waited=$((waited + 1))
+            done
+            kill -s KILL "$reconciler_child" 2>/dev/null || true
+            wait "$reconciler_child" 2>/dev/null || true
+            exit 0
+        fi
+    }
+    trap end_reconciler_child TERM INT
     while :; do
+        [ "$reconciler_stopping" -eq 0 ] || exit 0
         status=0
         ROUTING_CATALOG_COMPONENT=versiond-router \
         ROUTING_CATALOG_URL="$CATALOG_URL" \
@@ -762,7 +1002,11 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_STATUS_SERVER=catalog \
         ROUTING_CATALOG_SERVING_STATUS_BACKEND=router_catalog_serving_status \
         ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
-            /usr/local/lib/router-runtime/catalog-reconciler || status=$?
+            /usr/local/lib/router-runtime/catalog-reconciler &
+        reconciler_child=$!
+        [ "$reconciler_stopping" -eq 0 ] || end_reconciler_child
+        wait "$reconciler_child" || status=$?
+        reconciler_child=
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
         sleep 1
     done
@@ -770,6 +1014,74 @@ run_catalog_reconciler() {
 
 if [ -n "$CATALOG_URL" ]; then
     run_catalog_reconciler &
+    reconciler_pid=$!
 fi
 
-exec "$HAPROXY_BIN" -W -db -f "$OUT"
+# HAProxy runs as a child of this shell, not through exec: the master-worker
+# process waits for every child before it exits, and the reconciler loop above
+# restarts its program for as long as it lives, so an exec would leave the
+# master waiting after the worker has drained, until Docker's SIGKILL. Stop
+# signals are passed to HAProxy at once; nothing is held or decided here.
+"$HAPROXY_BIN" -W -db -f "$OUT" &
+haproxy_pid=$!
+# Ready means the worker answers on the Runtime socket. A soft stop
+# forwarded before that is dropped by HAProxy; one that arrived earlier waits
+# here. Each probe is bounded on its own, and the wait as a whole by wall
+# clock: a worker that does not answer within it is a failed start, not a
+# ready one.
+ready_deadline=$(( $(date +%s) + 60 ))
+ready_timeout=0
+while kill -0 "$haproxy_pid" 2>/dev/null; do
+    if printf 'show info\n' | timeout 2 socat -t 1 - UNIX-CONNECT:/var/run/haproxy/reconciler.sock 2>/dev/null | grep -q '^Name:'; then
+        haproxy_ready=1
+        break
+    fi
+    if [ "$(date +%s)" -ge "$ready_deadline" ]; then
+        echo "versiond-router: HAProxy did not answer on its Runtime socket within 60s; stopping it" >&2
+        ready_timeout=1
+        kill -s TERM "$haproxy_pid" 2>/dev/null || true
+        break
+    fi
+    sleep 0.1
+done
+if [ "$haproxy_ready" -eq 1 ] && [ -n "$pending_signal" ]; then
+    forward_signal "$pending_signal"
+fi
+status=0
+while :; do
+    # A trapped signal interrupts wait with a status above 128. The if
+    # keeps set -e from ending the script on that interruption.
+    if wait "$haproxy_pid"; then
+        status=0
+    else
+        status=$?
+    fi
+    if [ "$status" -gt 128 ]; then
+        # Still running: the signal was only forwarded; wait again.
+        if kill -0 "$haproxy_pid" 2>/dev/null; then
+            continue
+        fi
+        # Gone. Either that signal ended HAProxy, or a trapped signal
+        # interrupted the wait just as HAProxy exited and the shell reported
+        # the interruption, not the exit. A second wait returns the real
+        # status in the second case; in the first the job is already
+        # collected and the shell answers 127, so the status stands.
+        if wait "$haproxy_pid"; then
+            again=0
+        else
+            again=$?
+        fi
+        [ "$again" -eq 127 ] || status=$again
+    fi
+    break
+done
+# HAProxy exited on its own (or on a stop that came before it was ready):
+# the loop may still be running; without it the master would wait on it.
+stop_reconciler
+if [ "$ready_timeout" -eq 1 ] && [ "$status" -eq 0 ]; then
+    # Stopped by the readiness deadline above: a failed start must not look
+    # like a clean exit to the restart policy. (A HAPROXY_BIN that exits on
+    # its own, as the render-only tests use, keeps its status.)
+    status=1
+fi
+exit "$status"

@@ -415,8 +415,13 @@ func (s *Session) runHeightSeedUntil(ctx context.Context, forever bool) {
 			return
 		}
 
+		s.heightSeedMu.Lock()
+		alreadySeeded := len(s.heightSeedOK)
+		s.heightSeedMu.Unlock()
 		attemptCtx, cancel := heightSeedAttemptContext(ctx)
-		out := fanHeightSeed(attemptCtx, pending)
+		out := fanHeightSeedUntil(attemptCtx, pending, func(seededThisRound int) bool {
+			return heightSeedQuorum(alreadySeeded+seededThisRound, len(targets))
+		})
 		cancel()
 
 		s.heightSeedMu.Lock()
@@ -432,14 +437,17 @@ func (s *Session) runHeightSeedUntil(ctx context.Context, forever bool) {
 		logMutation()
 
 		if quorum {
-			sweepCtx, sweepCancel := heightSeedAttemptContext(ctx)
-			sweepOut := fanHeightSeed(sweepCtx, targets)
-			sweepCancel()
-			s.heightSeedMu.Lock()
-			applySeedOutcomes(escrow, s.heightSeedOK, s.heightSeedLast, sweepOut)
-			s.heightSeedMu.Unlock()
-			logMutation()
 			s.finishHeightSeedOK(escrow, targets, observedHeight)
+			// The full-roster sweep anchors the slots quorum went without; the session does not wait for it.
+			go func() {
+				sweepCtx, sweepCancel := heightSeedAttemptContext(ctx)
+				defer sweepCancel()
+				sweepOut := fanHeightSeed(sweepCtx, targets)
+				s.heightSeedMu.Lock()
+				applySeedOutcomes(escrow, s.heightSeedOK, s.heightSeedLast, sweepOut)
+				s.heightSeedMu.Unlock()
+				logMutation()
+			}()
 			return
 		}
 
@@ -667,6 +675,32 @@ func fanHeightSeed(ctx context.Context, targets []seedTarget) []seedOutcome {
 	return out
 }
 
+// fanHeightSeedUntil seeds targets concurrently and returns the outcomes in
+// once isEnough holds for the anchored count, or every target answered; the
+// caller cancels ctx to stop the rest.
+func fanHeightSeedUntil(ctx context.Context, targets []seedTarget, isEnough func(seeded int) bool) []seedOutcome {
+	results := make(chan seedOutcome, len(targets))
+	for _, target := range targets {
+		go func(target seedTarget) {
+			ok, err := target.seeder.SeedHeightSync(ctx)
+			results <- seedOutcome{slot: target.slot, ok: ok, err: err}
+		}(target)
+	}
+	out := make([]seedOutcome, 0, len(targets))
+	seeded := 0
+	for range targets {
+		outcome := <-results
+		out = append(out, outcome)
+		if outcome.ok {
+			seeded++
+		}
+		if isEnough(seeded) {
+			break
+		}
+	}
+	return out
+}
+
 func classifySeedVerdict(ok bool, err error) (seedVerdict, string) {
 	if ok {
 		return seedAnchored, "ok"
@@ -674,15 +708,29 @@ func classifySeedVerdict(ok bool, err error) (seedVerdict, string) {
 	if err == nil {
 		return seedRetryLater, "omit"
 	}
+	if errors.Is(err, transport.ErrHTTPSessionRetired) {
+		return seedDeclined, err.Error()
+	}
+	if status, code, _, ok := transport.ConnectApplicationStatus(err); ok {
+		if seedHostDeclined(status, code) {
+			return seedDeclined, err.Error()
+		}
+	}
 	var status *transport.UpstreamStatusError
 	if errors.As(err, &status) {
-		if status.StatusCode == http.StatusNotFound ||
-			status.StatusCode == http.StatusNotImplemented ||
-			strings.EqualFold(strings.TrimSpace(status.DevshardError), transport.DevshardErrorNotImplemented) {
+		if seedHostDeclined(status.StatusCode, status.DevshardError) {
 			return seedDeclined, status.Error()
 		}
 	}
 	return seedRetryLater, err.Error()
+}
+
+func seedHostDeclined(status int, devshardError string) bool {
+	return status == http.StatusNotFound ||
+		status == http.StatusNotImplemented ||
+		status == http.StatusGone ||
+		strings.EqualFold(strings.TrimSpace(devshardError), transport.DevshardErrorNotImplemented) ||
+		strings.EqualFold(strings.TrimSpace(devshardError), transport.DevshardErrorHTTPSessionRetired)
 }
 
 func applySeedOutcomes(escrow string, okSlots map[int]struct{}, last map[int]seedSlotRecord, out []seedOutcome) {
@@ -754,4 +802,13 @@ func (s *Session) SetRequireHeightSeed(on bool) {
 		return
 	}
 	s.requireHeightSeed = on
+}
+
+// SetDisableHeightSyncHeartbeat is the recover-path equivalent of
+// WithDisableHeightSyncHeartbeat.
+func (s *Session) SetDisableHeightSyncHeartbeat(on bool) {
+	if s == nil {
+		return
+	}
+	s.disableHeightSyncHeartbeat = on
 }

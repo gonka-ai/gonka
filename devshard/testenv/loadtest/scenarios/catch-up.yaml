@@ -1,0 +1,97 @@
+schema_version: v1
+scenario: catch-up
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    # Keep the active escrow funded and below its nonce limit throughout the run.
+    escrow_amount: 2000000000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: fast
+
+workload:
+  max_in_flight: 128
+  duration: 5m
+  traffic:
+    type: constant
+    rps: 16
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "catch-up request"
+  host_faults:
+    - host: versiond-2
+      mode: pause
+      start_after: 90s
+      duration: 60s
+
+gateway:
+  participant_throttle:
+    transport_failure_quarantine: 70s
+    http_quarantine: 70s
+  redundancy:
+    secondary_wait_after_winner: 30s
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0.05
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+
+drain_timeout: 2m
+
+# Capture gateway and all devshardd replicas concurrently in every window.
+diagnostics:
+  logs:
+    tail: all
+  cpu_profiles:
+    # Baseline under load, before the host pause at 90s.
+    - start_after: 45s
+      duration: 30s
+    # Start while the host is running, so its profiler spans pause/unpause.
+    # Frozen processes produce no CPU samples; resumed work is captured.
+    - start_after: 85s
+      duration: 120s
+    # Compare steady-state CPU after the host has resumed at roughly 150s.
+    - start_after: 240s
+      duration: 30s
+  # Heap snapshots use the default pprof sampling rate, without forced GC.
+  heap_profiles:
+    - start_after: 75s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 152s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 160s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 180s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 225s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 270s
+      targets: [gateway, versiond-2, versiond-1]
+  goroutine_profiles:
+    - start_after: 152s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 160s
+      targets: [gateway, versiond-2, versiond-1]

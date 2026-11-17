@@ -248,14 +248,15 @@ func PeerSeenByteLenValid(bits []byte, slotsNum uint32) bool {
 	return 8*n >= int(slotsNum) && n <= peerSeenMaxBytes(uint64(slotsNum))
 }
 
-// checkL2 verifies host_sig against the cold slot key, then the bound warm
-// key. Hosts sign acks with the acting (warm) key after cutover; finishes
-// and votes already accept that binding. An unbound or mismatched signer is
-// still INVALID so a user cannot fabricate an ack.
+// checkL2 verifies host_sig with signing.SlotActors — the same identity set
+// confirm/finish/vote/repair/settlement use. Hosts sign acks with the acting
+// (warm) key after cutover; an unbound or mismatched signer is still INVALID
+// so a user cannot fabricate an ack.
 //
-// WarmKeys is per-slot and filled lazily on the first confirm/finish/vote for
-// that slot. A heartbeat ack can name any slot the host owns, including one
-// that has never executed, so L2 also accepts:
+// WarmKeys is per-slot and filled lazily on the first applied host-signed
+// message for that slot (confirm/finish/vote/ack). A heartbeat ack can name
+// any slot the host owns, including one that has never executed, so L2 also
+// accepts:
 //   - a warm key already bound on a sibling slot of the same validator
 //   - AcceptWarm, the same authz check finishes use, so applyCore (which
 //     L2-checks the signed set before applyTx) agrees with compose (which
@@ -267,6 +268,7 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 		}
 		return fmt.Errorf("%w: verifier required", ErrAckSigInvalid)
 	}
+	actors := st.actors()
 	for _, ref := range acks {
 		key, ok := st.SlotKeys[ref.ack.SlotId]
 		if !ok || key == "" {
@@ -276,32 +278,19 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrAckSigInvalid, err)
 		}
-		if !ackSignerAllowed(recovered, key, ref.ack.SlotId, st) {
+		if !actors.Allows(ref.ack.SlotId, recovered) {
 			return fmt.Errorf("%w: signer %q != slot key %q", ErrAckSigInvalid, recovered, key)
 		}
 	}
 	return nil
 }
 
-func ackSignerAllowed(recovered, slotKey string, slotID uint32, st LogPlaneState) bool {
-	if recovered == slotKey {
-		return true
+func (st LogPlaneState) actors() signing.SlotActors {
+	return signing.SlotActors{
+		SlotKeys:   st.SlotKeys,
+		WarmKeys:   st.WarmKeys,
+		AcceptWarm: st.AcceptWarm,
 	}
-	if warm := st.WarmKeys[slotID]; warm != "" && recovered == warm {
-		return true
-	}
-	for other, warm := range st.WarmKeys {
-		if other == slotID || warm == "" || recovered != warm {
-			continue
-		}
-		if st.SlotKeys[other] == slotKey {
-			return true
-		}
-	}
-	if st.AcceptWarm != nil && st.AcceptWarm(slotID, recovered, slotKey) {
-		return true
-	}
-	return false
 }
 
 // checkL3 is ack causality: ref_nonce must name a heartbeat, in this diff or

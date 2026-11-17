@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v5"
+const DevshardStateRootAndProtocolVersion = "v6"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -51,6 +51,7 @@ type InferenceRecord struct {
 	Model             string          `json:"model"`
 	PromptHash        []byte          `json:"prompt_hash"`
 	ResponseHash      []byte          `json:"response_hash,omitempty"`
+	ServedHash        []byte          `json:"served_hash,omitempty"`
 	InputLength       uint64          `json:"input_length"`
 	MaxTokens         uint64          `json:"max_tokens"`
 	InputTokens       uint64          `json:"input_tokens,omitempty"`
@@ -86,7 +87,8 @@ const (
 	ProtocolV4             ProtocolVersion = "4"
 	ProtocolV41            ProtocolVersion = "4.1"
 	ProtocolV5             ProtocolVersion = "5"
-	DefaultProtocolVersion                 = ProtocolV5
+	ProtocolV6             ProtocolVersion = "6"
+	DefaultProtocolVersion                 = ProtocolV6
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.

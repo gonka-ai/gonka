@@ -1,0 +1,96 @@
+schema_version: v1
+scenario: missrate-catch-up
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 2000000000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: fast
+
+# Short timeouts make a paused executor reach the protocol timeout-voting path
+# during the local run instead of waiting for production-scale deadlines.
+protocol:
+  refusal_timeout: 10s
+  execution_timeout: 30s
+
+workload:
+  max_in_flight: 16
+  duration: 90s
+  report_interval: 10s
+  traffic:
+    type: constant
+    rps: 4
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "miss-rate catch-up request"
+  host_faults:
+    - host: versiond-2
+      mode: pause
+      start_after: 10s
+      duration: 30s
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 1s
+  participant_throttle:
+    transport_failure_quarantine: 5s
+    http_quarantine: 5s
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    # A paused executor may lose a small number of requests while the
+    # secondary path and timeout voting are converging.
+    error_rate: 0.25
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+  accounting:
+    target_host: versiond-2
+    min_protocol_misses: 1
+    min_timeouts_applied: 1
+    require_cross_checks: true
+
+drain_timeout: 3m
+
+diagnostics:
+  logs:
+    tail: all
+  cpu_profiles:
+    - start_after: 5s
+      duration: 30s
+    - start_after: 35s
+      duration: 30s
+    - start_after: 75s
+      duration: 10s
+  heap_profiles:
+    - start_after: 8s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 42s
+      targets: [gateway, versiond-2, versiond-1]
+    - start_after: 80s
+      targets: [gateway, versiond-2, versiond-1]
+  goroutine_profiles:
+    - start_after: 42s
+      targets: [gateway, versiond-2, versiond-1]

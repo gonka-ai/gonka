@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGeneratedCompose_GatewayPhase7Wiring(t *testing.T) {
+func TestGeneratedComposeGatewayWiring(t *testing.T) {
 	harness.RequireDocker(t)
 
 	stack := harness.NewStack(t, "citest-gateway-wiring-*")

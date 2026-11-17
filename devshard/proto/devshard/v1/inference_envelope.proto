@@ -22,10 +22,13 @@ message InferenceHeightSyncSection {
 
 // InferenceRequestEnvelope wraps the existing JSON InferenceRequest (transport.InferenceRequest)
 // as bytes plus optional height sync. Omit mode: height_sync unset.
+// prompt is the chat body as raw bytes. It is not inside inference_request_json,
+// so the JSON encoder does not base64 it.
 message InferenceRequestEnvelope {
   int32 schema_version = 1;
   InferenceHeightSyncSection height_sync = 2;
   bytes inference_request_json = 3;
+  bytes prompt = 4;
 }
 
 // InferenceResponseEnvelope wraps the existing JSON InferenceResponse.

@@ -294,12 +294,12 @@ func TestDevOverlay_ComposeDevMockChain(t *testing.T) {
 		t.Errorf("mock-dapi ports = %v, want 2346:2346", svcDapi.Ports)
 	}
 
-	svcOpenAI, ok := overlay.Services["mock-openai"]
+	svcOpenAI, ok := overlay.Services["mock-openai-0"]
 	if !ok {
-		t.Fatal("mock-openai service missing from dev overlay")
+		t.Fatal("mock-openai-0 service missing from dev overlay")
 	}
 	if !strings.HasSuffix(svcOpenAI.Command[1], ".air.mock-openai.debug.toml") {
-		t.Errorf("mock-openai command = %v", svcOpenAI.Command)
+		t.Errorf("mock-openai-0 command = %v", svcOpenAI.Command)
 	}
 	found2347 := false
 	for _, p := range svcOpenAI.Ports {

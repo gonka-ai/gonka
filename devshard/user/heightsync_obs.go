@@ -299,6 +299,7 @@ func (s *Session) noteContactLocked(hostIdx int, at time.Time) {
 		return
 	}
 	s.lastContact[hostIdx] = at
+	s.clearHeartbeatBackoffLocked(hostIdx)
 }
 
 func (s *Session) noteAckObsLocked(ack *types.MsgHeightAck) {

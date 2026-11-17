@@ -10,3 +10,7 @@ data/
 # t.Cleanup, but left behind when a run is interrupted. Never commit them.
 # Does not match the citest/ source package (no trailing dash).
 citest-*/
+
+# Load-test runner scratch stacks and result artifacts are reproducible local output.
+loadtest-*/
+loadtest/results/

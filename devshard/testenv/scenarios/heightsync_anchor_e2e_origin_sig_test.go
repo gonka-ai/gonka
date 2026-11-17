@@ -152,6 +152,12 @@ func TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped(t *testing.T
 	})
 
 	seedHTTPSession(t, st.Session)
+	// SeedHeightSync returns at half quorum and finishes the other hosts in the
+	// background. Wait until this host's tip is cached, or the drop check races the sweep.
+	require.Eventually(t, func() bool {
+		_, _, _, seeded := peerTips.VerifiedAnchorFor(origin, h)
+		return seeded
+	}, 5*time.Second, 10*time.Millisecond, "session-open seed stores this host's verified tip")
 	beforeInvalid := heightsync.OriginSigInvalidTotal()
 	_, err := st.Session.SendInference(ctx, params)
 	require.NoError(t, err)

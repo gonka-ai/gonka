@@ -1,0 +1,143 @@
+schema_version: v1
+scenario: load-ladder
+seed: 1515
+
+# Where does degradation start? No faults; 2 minutes each at 8, 16, 24 and
+# 32 client rps, then 2 minutes back at 16, so no-restarts-or-resource-growth compares two windows at the
+# same rate and the report shows whether the gateway comes back. The legacy
+# ladder (32-64 rps, Chat weight 10) degraded from 32 rps on with hosts at
+# about 8 of their 10 Chats a second; 48 and 64 rps only measured the wreck.
+# The report's load-step table marks the first step whose p95 is above 2x
+# step 1's, or whose errors or generator drops exceed the bounds below. Hosts
+# keep the real peer budget (6000 weight a minute, Chat weight 1: about 100
+# Chats a second per sender); the table's per-host chat rate shows whether a
+# step sits at that ceiling.
+
+cases:
+  - {id: escrow-rotation-per-model-settlement, title: escrow rotation with per-model settlement}
+  - {id: deactivated-escrow-runtime-retired, title: no resident runtime for a deactivated escrow}
+  - {id: logprobs-responses-compress, title: responses with logprobs compress}
+  - {id: sqlite-payloads-in-zstd-files, title: payload files are zstd on the sqlite host}
+  # session-nonce-within-max-nonce: run 3 escrow 15 reached session nonce 1766 against max_nonce 1700 and
+  # never settled. No issue is filed yet; "nonce-overrun" stands in for it.
+  - {id: session-nonce-within-max-nonce, title: session nonce never passes chain max_nonce, known_bug: "nonce-overrun"}
+  - {id: honest-hosts-get-no-http-5xx, title: honest hosts get no http_5xx attempt failures}
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 5
+  chain:
+    # The gateway keeps a 200-nonce margin, so escrows deactivate at about
+    # 1500 nonces: model-a rotates about every 2.3 min, model-b about every 5.
+    # max_nonce is one global mock-chain param (POST /testenv/params), so session-nonce-within-max-nonce
+    # cannot get a lower cap on one escrow; it is judged on this run's rotations.
+    escrow_amount: 5000000000
+    max_nonce: 1700
+  hosts:
+    # P3 keeps payloads in zstd files only (sqlite-payloads-in-zstd-files, payload-files-are-zstd). sqlite keeps no
+    # validation leases, so no-skipped-validation-leases excludes it by name.
+    - id: versiond-4
+      env: {DEVSHARD_STORAGE_MODE: sqlite}
+  mock_ml:
+    allocator: round_robin
+    # One node per versiond container, bound to it, so an ML fault lands on
+    # one participant only.
+    nodes:
+      - {name: mock-openai-0, profile: prod-like, host: versiond-0}
+      - {name: mock-openai-1, profile: prod-like, host: versiond-1}
+      - {name: mock-openai-2, profile: prod-like, host: versiond-2}
+      - {name: mock-openai-3, profile: prod-like, host: versiond-3}
+      - {name: mock-openai-4, profile: prod-like, host: versiond-4}
+      - {name: mock-openai-5, profile: prod-like, host: versiond-5}
+
+protocol:
+  refusal_timeout: 5s
+  execution_timeout: 90s
+
+workload:
+  # About 8 s per request makes 260 in flight at 32 rps (Little's law); 1024
+  # leaves about 4x headroom, so the generator never hides a slow gateway as
+  # drops until its latency has about quadrupled.
+  max_in_flight: 1024
+  duration: 10m
+  report_interval: 30s
+  traffic:
+    type: stages
+    stages:
+      - {duration: 2m, rps: 8}
+      - {duration: 2m, rps: 16}
+      - {duration: 2m, rps: 24}
+      - {duration: 2m, rps: 32}
+      - {duration: 2m, rps: 16}
+  request:
+    model: model-a
+    stream: false
+    max_tokens: 128
+    timeout: 2m
+    messages:
+      - {role: user, content: "Summarise the main idea of this sentence briefly."}
+    mix:
+      stream_ratio: 0.5
+      logprobs_ratio: 0.5
+      top_logprobs: 5
+      # 22/3 instead of 20/5 keeps p95 inside the 512-token class at every step;
+      # with 20/5 the legacy ladder's seeded draws put it in the 2048 class at 32 and 64 rps.
+      max_tokens: [{value: 32, weight: 40}, {value: 128, weight: 35}, {value: 512, weight: 22}, {value: 2048, weight: 3}]
+      temperature: [{value: 0, weight: 50}, {value: 0.7, weight: 50}]
+      prompts:
+        - {value: [{role: user, content: "Summarise the main idea of this sentence briefly."}], weight: 1}
+        - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across ho Why?"}], weight: 1}
+        - {value: [{role: user, content: "A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a group of hosts for inference. Each request is signed, raced across hosts, validated by peers and settled on chain at the end. A devshard escrow pays a gr Explain it."}], weight: 1}
+      models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
+
+gateway:
+  redundancy:
+    secondary_wait_after_winner: 30s
+  participant_throttle:
+    transport_failure_quarantine: 45s
+    http_quarantine: 45s
+    empty_stream_quarantine: 45s
+    stalled_winner_quarantine: 45s
+  escrow_rotation:
+    enabled: true
+    settlement_enabled: true
+    pre_poc_blocks: 1
+    temp_count: 1
+    target_count: 1
+    amount: 5000000000
+    private_key_env: DEVSHARD_PRIVATE_KEY
+    models:
+      - {model: model-b, settlement_enabled: false}
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    # No fault: 2 % is the racing bound every single-fault window meets.
+    error_rate: 0.02
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.05
+  mock_ml:
+    require_each_node_used: true
+  escrow_rotation:
+    require_new_escrow: true
+  invariants:
+    enabled: true
+    baseline: {from: 1m, to: 2m}
+    trend_early: {from: 2m30s, to: 4m}
+    trend_late: {from: 8m30s, to: 10m}
+    cases: {escrow-accounting-reconciles.final_nonce_le_max: session-nonce-within-max-nonce, no-runtime-for-deactivated-escrow: deactivated-escrow-runtime-retired, responses-compress: logprobs-responses-compress, payload-files-are-zstd: sqlite-payloads-in-zstd-files, no-http-5xx-on-honest-hosts: honest-hosts-get-no-http-5xx}
+
+drain_timeout: 3m
+
+diagnostics:
+  logs:
+    tail: all
+  heap_profiles:
+    - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 7m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+  goroutine_profiles:
+    - {start_after: 1m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}
+    - {start_after: 7m50s, targets: [gateway, versiond-0, versiond-1, versiond-2, versiond-3, versiond-4, versiond-5]}

@@ -14,9 +14,6 @@ import java.util.TreeMap
 private const val DEFAULT_MAX_TOKENS = 5000
 private const val DEFAULT_LOGPROBS_MODE = "processed_logprobs"
 
-// Keep in sync with completionapi.MinTokensFloor.
-private const val MIN_TOKENS_FLOOR = 64
-
 data class PromptPayloadHash(
     val canonicalPayload: String,
     val promptHash: String
@@ -59,7 +56,7 @@ object PromptHashing {
             requestMap["top_logprobs"] = 5
         }
 
-        enforceTokenBudgetFloor(requestMap)
+        enforceTokenBudget(requestMap)
         requestMap["skip_special_tokens"] = false
         requestMap["return_token_ids"] = true
 
@@ -181,17 +178,43 @@ object PromptHashing {
         }
     }
 
-    // Mirrors completionapi.EnforceTokenBudgetFloor; both sides must emit the same body or the
+    // Mirrors completionapi.EnforceTokenBudget; both sides must emit the same body or the
     // cross-language prompt hash diverges.
-    private fun enforceTokenBudgetFloor(requestMap: MutableMap<String, Any?>) {
-        val maxTokens = maxOf(getMaxTokens(requestMap), MIN_TOKENS_FLOOR)
-        val minTokens = minOf(maxOf(getMinTokens(requestMap), MIN_TOKENS_FLOOR), maxTokens)
-
-        requestMap["min_tokens"] = minTokens
+    private fun enforceTokenBudget(requestMap: MutableMap<String, Any?>) {
+        val maxTokens = getMaxTokens(requestMap)
         requestMap["max_tokens"] = maxTokens
         requestMap["max_completion_tokens"] = maxTokens
 
-        requestMap.remove("stop_token_ids")
+        val minTokens = getMinTokens(requestMap)
+        if (minTokens > 0 && !grammarConstrained(requestMap)) {
+            requestMap["min_tokens"] = minOf(minTokens, maxTokens)
+        } else {
+            requestMap.remove("min_tokens")
+        }
+    }
+
+    // Mirrors completionapi.GrammarConstrained.
+    private fun grammarConstrained(requestMap: Map<String, Any?>): Boolean {
+        val responseFormat = requestMap["response_format"]
+        if (responseFormat is Map<*, *>) {
+            when (responseFormat["type"]) {
+                "json_object", "json_schema", "structural_tag" -> return true
+            }
+        }
+        val structuredOutputs = requestMap["structured_outputs"]
+        if (structuredOutputs is Map<*, *>) {
+            if (structuredOutputs["json_object"] == true) {
+                return true
+            }
+            if (listOf("json", "regex", "choice", "grammar", "structural_tag").any { structuredOutputs[it] != null }) {
+                return true
+            }
+        }
+        return when (val toolChoice = requestMap["tool_choice"]) {
+            is String -> toolChoice == "required"
+            is Map<*, *> -> ((toolChoice["function"] as? Map<*, *>)?.get("name") as? String)?.isNotEmpty() == true
+            else -> false
+        }
     }
 
     private fun getMinTokens(requestMap: Map<String, Any?>): Int = parseTokenLimit(requestMap["min_tokens"]) ?: 0

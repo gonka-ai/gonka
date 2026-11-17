@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"devshard/logging"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -32,7 +33,14 @@ type Gossip struct {
 	K        int           // fanout, default 10
 	StaleTTL time.Duration // how long unapplied nonces stay before re-gossip
 
-	highestSeen uint64 // tracked O(1)
+	highestSeen uint64 // tracked O(1); the recovery target, capped by acceptWindow
+
+	// recoveryFrom is the next nonce a recovery attempt will fetch.
+	// recoveryLimit is the inclusive end of that attempt. Both are zero
+	// when no attempt is in progress. An announced nonce past recoveryLimit
+	// does not extend the attempt.
+	recoveryFrom  uint64
+	recoveryLimit uint64
 
 	mempool           MempoolSink    // receives forwarded txs
 	sigAccumulator    SigAccumulator // receives sigs for applied nonces
@@ -78,6 +86,13 @@ func NewGossip(escrowID string, slotID uint32, peers []PeerClient, mempool Mempo
 		o(g)
 	}
 	return g
+}
+
+// PeerCount is the number of outbound gossip peers (not including this host).
+func (g *Gossip) PeerCount() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.peers)
 }
 
 // GossipOption configures optional Gossip behavior.
@@ -152,6 +167,16 @@ func (g *Gossip) OnNonceReceived(nonce uint64, stateHash, stateSig []byte, sende
 		return nil
 	}
 
+	// A signed nonce needs no stored diff. One past the window is dropped:
+	// it is not stored, does not move the recovery target, and is not
+	// forwarded. A host that far behind catches up through its own requests.
+	if limit := acceptWindow(g.lastAfterReqNonce); nonce > limit {
+		g.mu.Unlock()
+		logging.Debug("gossip nonce past the accept window dropped", "subsystem", "gossip",
+			"nonce", nonce, "limit", limit, "slot", senderSlot)
+		return nil
+	}
+
 	g.seen[nonce] = &nonceRecord{
 		stateHash: stateHash,
 		stateSig:  stateSig,
@@ -168,6 +193,15 @@ func (g *Gossip) OnNonceReceived(nonce uint64, stateHash, stateSig []byte, sende
 	go g.sendNonceToPeers(context.Background(), peers, nonce, stateHash, stateSig, senderSlot)
 
 	return nil
+}
+
+// acceptWindow is the highest gossiped nonce accepted while this host is at
+// lastApplied.
+func acceptWindow(lastApplied uint64) uint64 {
+	if lastApplied > ^uint64(0)-maxRecoverySpan {
+		return ^uint64(0)
+	}
+	return lastApplied + maxRecoverySpan
 }
 
 // NonceStatus returns the local record for a gossiped nonce.
@@ -325,51 +359,142 @@ func (g *Gossip) rebroadcastStale(ctx context.Context) {
 	}
 }
 
+// maxRecoverySpan is how far one recovery attempt chases an announced nonce
+// past the last applied nonce. maxRecoveryPagesPerTick is how many windows
+// one tick fetches before returning.
+const (
+	maxRecoverySpan         = 4096
+	maxRecoveryPagesPerTick = 8
+)
+
+// recoveryTarget is the inclusive end of a new attempt. highestSeen can sit
+// past the span when lastApplied moved back, so the attempt stops at the span.
+func recoveryTarget(lastApplied, highestSeen uint64) uint64 {
+	if highestSeen <= lastApplied {
+		return lastApplied
+	}
+	return min(highestSeen, acceptWindow(lastApplied))
+}
+
 func (g *Gossip) tryRecovery(ctx context.Context) {
 	g.mu.Lock()
 	fetcher := g.diffFetcher
 	updater := g.stateUpdater
+	if fetcher == nil || updater == nil {
+		g.mu.Unlock()
+		return
+	}
 	lastReq := g.lastAfterReq
 	recoveryDelay := g.RecoveryDelay
 	highestSeen := g.highestSeen
-	lastAppliedNonce := g.lastAfterReqNonce
+	lastApplied := g.lastAfterReqNonce
+	from := g.recoveryFrom
+	limit := g.recoveryLimit
+	if from <= lastApplied {
+		from = lastApplied + 1
+	}
+	newAttempt := limit == 0 || limit < from
+	if newAttempt {
+		if !lastReq.IsZero() && time.Since(lastReq) < recoveryDelay {
+			g.mu.Unlock()
+			return
+		}
+		limit = recoveryTarget(lastApplied, highestSeen)
+	}
+	if limit > highestSeen {
+		limit = highestSeen
+	}
+	if from > limit {
+		g.recoveryLimit = 0
+		g.mu.Unlock()
+		return
+	}
+	g.recoveryLimit = limit
+	g.recoveryFrom = from
 	g.mu.Unlock()
-
-	if fetcher == nil || updater == nil {
-		return
-	}
-
-	if highestSeen <= lastAppliedNonce {
-		return
-	}
-
-	// Only trigger recovery if we haven't received a user request recently.
-	if !lastReq.IsZero() && time.Since(lastReq) < recoveryDelay {
-		return
-	}
 
 	logging.Debug("gossip recovery triggered",
 		"subsystem", "gossip",
 		"highest_seen", highestSeen,
-		"last_after_req_nonce", lastAppliedNonce,
+		"last_after_req_nonce", lastApplied,
+		"from", from,
+		"limit", limit,
 	)
 
-	diffs, err := fetcher.GetDiffs(ctx, lastAppliedNonce+1, highestSeen)
-	if err != nil {
-		logging.Debug("recovery fetch diffs failed", "subsystem", "gossip", "error", err)
-		return
+	// One nonce window per fetch, and at most maxRecoveryPagesPerTick windows
+	// per tick. The resume nonce is saved, so the next tick continues. An
+	// empty window advances the resume nonce. A failed page keeps the resume
+	// nonce on the first nonce that was not applied.
+	//
+	// The attempt ends at limit, which is at most lastApplied+maxRecoverySpan
+	// when the attempt started. Reaching it sets lastAfterReq, and the same
+	// gap is retried only after RecoveryDelay. Applied pages are published
+	// before the next page is fetched.
+	var applyErr error
+	apply := func(diffs []types.Diff) error {
+		sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
+		g.publishRecovered(ctx, sigs)
+		if err != nil {
+			applyErr = err
+			return err
+		}
+		return nil
 	}
-	if len(diffs) == 0 {
-		return
+	for pages := 0; pages < maxRecoveryPagesPerTick && from <= limit; pages++ {
+		pageTo := limit
+		if limit-from >= uint64(storage.DiffPageMaxNonces) {
+			pageTo = from + uint64(storage.DiffPageMaxNonces) - 1
+		}
+		applied := false
+		err := fetcher.GetDiffPages(ctx, from, pageTo, func(diffs []types.Diff) error {
+			applied = true
+			return apply(diffs)
+		})
+		if err != nil {
+			g.mu.Lock()
+			resume := g.lastAfterReqNonce + 1
+			if resume < from {
+				resume = from
+			}
+			g.recoveryFrom = resume
+			g.mu.Unlock()
+			if applyErr != nil {
+				logging.Debug("recovery apply diffs failed", "subsystem", "gossip", "error", err)
+			} else {
+				logging.Debug("recovery fetch diffs failed", "subsystem", "gossip", "error", err)
+			}
+			return
+		}
+		if applied {
+			g.mu.Lock()
+			from = g.lastAfterReqNonce + 1
+			g.mu.Unlock()
+			if from <= pageTo {
+				from = pageTo + 1
+			}
+		} else {
+			from = pageTo + 1
+		}
+		g.mu.Lock()
+		g.recoveryFrom = from
+		g.mu.Unlock()
 	}
+	if from > limit {
+		g.mu.Lock()
+		g.lastAfterReq = time.Now()
+		g.recoveryFrom = 0
+		g.recoveryLimit = 0
+		g.mu.Unlock()
+	}
+}
 
-	sigs, err := updater.ApplyRecoveredDiffs(ctx, diffs)
-	if err != nil {
-		logging.Debug("recovery apply diffs failed", "subsystem", "gossip", "error", err)
+// publishRecovered records recovered signatures, advances lastAfterReqNonce
+// to the highest recovered nonce, and rebroadcasts them. Already-applied
+// pages are published before the next page is fetched.
+func (g *Gossip) publishRecovered(ctx context.Context, sigs []GossipSig) {
+	if len(sigs) == 0 {
 		return
 	}
-
-	// Update watermark to highest recovered nonce.
 	var maxRecovered uint64
 	for _, sig := range sigs {
 		if sig.Nonce > maxRecovered {
@@ -377,7 +502,6 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 		}
 	}
 
-	// Ensure recovered nonces are in the seen map and gossip own sigs.
 	g.mu.Lock()
 	for _, sig := range sigs {
 		if _, ok := g.seen[sig.Nonce]; !ok {
@@ -394,7 +518,6 @@ func (g *Gossip) tryRecovery(ctx context.Context) {
 	}
 	if maxRecovered > g.lastAfterReqNonce {
 		g.lastAfterReqNonce = maxRecovered
-		g.lastAfterReq = time.Now()
 	}
 	peers := g.pickPeers()
 	g.mu.Unlock()

@@ -96,6 +96,51 @@ func (m *Mempool) StaleFinishes(currentNonce, grace uint64) []*types.DevshardTx 
 	return out
 }
 
+// HasFinish reports whether a MsgFinishInference for inferenceID is waiting
+// in the mempool.
+func (m *Mempool) HasFinish(inferenceID uint64) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, e := range m.entries {
+		if e.Tx == nil {
+			continue
+		}
+		if fi := e.Tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
+// QueuedConfirmStart returns the MsgConfirmStart this host proposed for
+// inferenceID, or nil. Peer-imported entries (ProposedAt == 0) are skipped:
+// AddTx does not verify signatures, so a gossiped copy must not stand in for
+// this host's own receipt. With several queued, the earliest confirmed_at wins.
+func (m *Mempool) QueuedConfirmStart(inferenceID uint64) *types.MsgConfirmStart {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out *types.MsgConfirmStart
+	for _, e := range m.entries {
+		if e.ProposedAt == 0 || e.Tx == nil {
+			continue
+		}
+		cs := e.Tx.GetConfirmStart()
+		if cs == nil || cs.InferenceId != inferenceID {
+			continue
+		}
+		if out == nil || cs.ConfirmedAt < out.ConfirmedAt {
+			out = cs
+		}
+	}
+	return out
+}
+
 func (m *Mempool) Txs() []*types.DevshardTx {
 	m.mu.Lock()
 	defer m.mu.Unlock()

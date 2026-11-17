@@ -3,8 +3,26 @@ package heightsync
 import (
 	"testing"
 
+	"devshard/internal/testutil"
 	"devshard/types"
 )
+
+func TestFinishObserved_EnvelopeWinsOverLaterTip(t *testing.T) {
+	env := []byte{0x11}
+	tip := []byte{0x22}
+	h, hash := FinishObserved(170, env, 171, tip)
+	if h != 170 || string(hash) != string(env) {
+		t.Fatalf("envelope stamp = %d %x", h, hash)
+	}
+	h, hash = FinishObserved(0, nil, 171, tip)
+	if h != 171 || string(hash) != string(tip) {
+		t.Fatalf("tip stamp = %d %x", h, hash)
+	}
+	secH, secHash, ok := SectionObserved(&HeightSyncSection{MainnetHeight: 170, MainnetBlockHashHex: "11"})
+	if !ok || secH != 170 || string(secHash) != string(env) {
+		t.Fatalf("section stamp = %d %x ok=%v", secH, secHash, ok)
+	}
+}
 
 func TestStampPresent_EmptyHashIsAbsent(t *testing.T) {
 	if StampPresent(nil) {
@@ -91,7 +109,7 @@ func TestExecutorStamp_OnlyHostSignedInferenceLegs(t *testing.T) {
 		t.Fatalf("stamped confirm: got (%d, %d, %v)", id, h, ok)
 	}
 
-	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash,
 		InferenceId: 8, ObservedHeight: 101, ObservedBlockHash: hash,
 	}}}
 	id, h, ok = ExecutorStamp(finish)

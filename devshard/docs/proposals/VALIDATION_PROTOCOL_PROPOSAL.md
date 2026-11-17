@@ -9,11 +9,11 @@ We should **replace** the current pattern of **per-host seeds + a finalization-t
 - **one protocol path** covers both **automatic / sampled** validation and **user-paid** validation (e.g. “validate every inference” for critical workloads);
 - **randomness** for “who must validate” is **transparent** (everyone can recompute eligibility) and **hard to cheat** (user + executor + multi-identity hosts cannot pick favorable outcomes);
 - **Very important:** the design must align with **private inference** — avoid **executor-wide** storage of plaintext prompts/responses for verifiers; prefer **user-held** data and **TEE-targeted** ciphertext for **executor** and **validator** ML nodes (see **Motivation §6**).
-- **Transport (constraint):** **minimize** extra **interactions** and **message flooding**; **gossip**-style fan-out **only** in the **finalization** phase — see **Constraints** and [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md).
+- **Transport (constraint):** **minimize** extra **interactions** and **message flooding**; **gossip**-style fan-out **only** in the **finalization** phase — see **Constraints** and [`finalization.md`](./finalization.md).
 
 The **hard part** is defining **`R`** — the public seed or beacon — so that it is **binding after work is committed**, **not grindable** by the sequencer, and **efficient enough** for low-latency validation.
 
-**Related:** [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (mainnet height and **`rand_seed`** sketch), [`../issues/validation-protocol-remove-seed-reveal.md`](../issues/validation-protocol-remove-seed-reveal.md), [`../attacks.md`](../attacks.md).
+**Related:** [`finalization.md`](./finalization.md), [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (mainnet height and **`rand_seed`** sketch), [`../issues/validation-protocol-remove-seed-reveal.md`](../issues/validation-protocol-remove-seed-reveal.md), [`../attacks.md`](../attacks.md).
 
 ---
 
@@ -27,7 +27,7 @@ Today, each host derives **`ownSeed`** from signing **`escrow_id`** and uses **`
 
 ### 1. Seed reveal makes finalization heavier
 
-Tying **honest accounting** to a **dedicated reveal round** grows **phase logic**, **gossip**, and **edge cases** (who revealed, duplicates, unrevealed penalties). Finalization should focus on **settlement** ([`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md)), not on reproducing subnet validation dice **after the fact**.
+Tying **honest accounting** to a **dedicated reveal round** grows **phase logic**, **gossip**, and **edge cases** (who revealed, duplicates, unrevealed penalties). Finalization should focus on **settlement** ([`finalization.md`](./finalization.md)), not on reproducing subnet validation dice **after the fact**.
 
 ### 2. No good pre-finalization check for “should have validated but didn’t”
 
@@ -73,7 +73,7 @@ These are **requirements** on any acceptable design, not reasons *why* we change
 
 The protocol must **limit** cross-host **traffic** and **fan-out**: prefer **direct** user–host rounds, **targeted** notifies to the selected validator, and **deterministic** recomputation over **broadcast storms**.
 
-**Gossip** could solve many **state-sync** and **fan-out** problems cheaply in the abstract, but we **do not** rely on **gossip** as the **primary** synchronization mechanism during **active** inference and validation — it scales poorly, complicates **privacy** and **ordering** assumptions, and overlaps with abuse surfaces (see [`../issues/secure-gossip-propagation.md`](../issues/secure-gossip-propagation.md)). **Subnet-wide gossip–style fan-out** is **reserved** for the **finalization** phase (settlement, vote/commit, collector broadcasts) per [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md); ordinary validation uses **direct** messages and **deterministic** rules. **Validation** traffic stays **bounded** and **eligible-sender-only** where possible.
+**Gossip** could solve many **state-sync** and **fan-out** problems cheaply in the abstract, but we **do not** rely on **gossip** as the **primary** synchronization mechanism during **active** inference and validation — it scales poorly, complicates **privacy** and **ordering** assumptions, and overlaps with abuse surfaces (see [`../issues/secure-gossip-propagation.md`](../issues/secure-gossip-propagation.md)). **Subnet-wide gossip–style fan-out** is **reserved** for the **finalization** phase (settlement, vote/commit, collector broadcasts) per [`finalization.md`](./finalization.md); ordinary validation uses **direct** messages and **deterministic** rules. **Validation** traffic stays **bounded** and **eligible-sender-only** where possible.
 
 ---
 
@@ -188,7 +188,7 @@ and derive **eligible validator(s)** from **`R_inf`** with a **public** formula 
 
 #### Step 7 — Finalization without waiting on the user
 
-If the **user stops sending** messages but **finalization** starts, **validators** (and other hosts) **publish** whatever **proofs** and **partial results** they hold so the rest of the group can **verify** scheduled validations. **Finalization checks** should include: **all validations scheduled** under this protocol for **finished** inferences have **corresponding results** (or explicit timeout / slash per policy). This aligns with the **TODO** in [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) on **unfinished** inferences and validations.
+If the **user stops sending** messages but **finalization** starts, **validators** (and other hosts) **publish** whatever **proofs** and **partial results** they hold so the rest of the group can **verify** scheduled validations. **Finalization checks** should include: **all validations scheduled** under this protocol for **finished** inferences have **corresponding results** (or explicit timeout / slash per policy). Reconcile this with **Unfinished work at finalization** in [`finalization.md`](./finalization.md), which currently auto-finishes unfinished inferences and skips unfinished validations rather than blocking settlement.
 
 ---
 
@@ -212,14 +212,14 @@ For workloads that require **every** inference to be checked (user-paid or polic
 | **Omitting `MsgFinishInferenceCommit`** | If optional, **user+executor** could **never** trigger **`validationSeedHeight`** sampling — must be **mandatory** for sampled validation to count, or **treated as slash / no payout** for that inference. |
 | **Steering host C (theoretical grind)** | **C** is not fully **user-independent** in every wiring: the user **chooses when** to send **`MsgFinishInferenceCommit`** and thus **which** host is **B** (round-robin by nonce), which can influence **which** host is drawn as **C** under the deterministic rule. So a motivated party could in principle **expend effort** to **nudge** **C**. The **upside** of doing so is **weak and expensive:** the only clear win is **inflating executor reputation** while avoiding real checks, and that scenario effectively requires **one operator** to control **the user**, **the executor**, **B**, and **C** — **four roles** spanning **the user plus three hosts**, i.e. a **large fraction** of a typical subnet. Even then, the attacker still pays **fees** and **inference cost**, **`MsgStartInference`** remains tied to the **monotonic nonce** and **round-robin** routing, and **all** committed **heights** and the **commit bundle** stay **on the record** for **later analysis**. So grinding **C** is **possible in theory** but usually **economically and operationally meaningless** compared to running the protocol honestly. |
 | **Validator griefing / spam** | Proof packages must be **cheap to verify**; rate-limit **notify** traffic; **eligibility** checked before work. |
-| **Finalization race** | If **finalization** runs before **`block_hash(validationSeedHeight)`** exists, define **wait**, **timeout**, or **penalty**; align with **unfinished validation** TODO on the finalization doc. |
+| **Finalization race** | If **finalization** runs before **`block_hash(validationSeedHeight)`** exists, define **wait**, **timeout**, or **penalty**; align with **Unfinished work at finalization** in [`finalization.md`](./finalization.md). |
 | **Privacy (Motivation §6)** | This sketch does not by itself **encrypt** payloads; **TEE-bound** delivery of prompts/responses to the **selected validator** is a **separate** layer (user encrypts to validator attestation). |
 
 ---
 
-## Relation to finalization collector protocol
+## Relation to finalization protocol
 
-[`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md) addresses **settlement** (vote/commit, collectors). **Validation** eligibility and **`R_inf`** from **Design directions** are **orthogonal**: finalization should not depend on reproducing **`MsgRevealSeed`** semantics. **Finalization** must still **reconcile** scheduled validations (see **Design directions — Step 7** and the **TODO** in that doc on unfinished work).
+[`finalization.md`](./finalization.md) addresses **settlement** (vote/commit, collectors). **Validation** eligibility and **`R_inf`** from **Design directions** are **orthogonal**: finalization should not depend on reproducing **`MsgRevealSeed`** semantics. **Finalization** applies **Unfinished work at finalization** (skip incomplete validations, auto-finish inferences) rather than a seed-reveal reconciliation. See **Design directions — Step 7** for the validation-side preference to publish partial results.
 
 ---
 

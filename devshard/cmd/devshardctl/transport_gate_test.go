@@ -12,7 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Production gateway paths must not call REST chain clients (Track C/D/E).
+// Forbidden REST chain symbols. This file is excluded from the scan so the
+// lists below can name them without failing the gate.
 var restChainForbiddenCalls = []string{
 	"NewRESTBridge",
 	"NewRESTChainTxClient",
@@ -28,7 +29,7 @@ var restChainExcludedFiles = map[string]bool{
 	"transport_gate_test.go": true,
 }
 
-func TestG4_NoRESTChainClientsInGatewayProduction(t *testing.T) {
+func TestNoRESTChainClientsInGatewayProduction(t *testing.T) {
 	dir := "."
 	fset := token.NewFileSet()
 	var violations []string

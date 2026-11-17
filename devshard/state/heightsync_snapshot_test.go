@@ -3,6 +3,7 @@ package state
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -228,6 +229,195 @@ func TestHeightSync_RestoreFloorBlobSkipsJournal(t *testing.T) {
 	require.ErrorIs(t, err, heightsync.ErrHeightRegression)
 	_, err = restored.ApplyDiff(bad)
 	require.ErrorIs(t, err, heightsync.ErrHeightRegression)
+}
+
+// recordingDiffStore records every GetDiffs window. A window wider than one
+// page fails the call: the height-sync fold must not load 1..snapshot at once.
+// onGetDiffs, when set, runs before the read.
+type recordingDiffStore struct {
+	*storage.Memory
+	calls      [][2]uint64
+	onGetDiffs func()
+}
+
+func (s *recordingDiffStore) GetDiffs(escrowID string, from, to uint64) ([]types.DiffRecord, error) {
+	s.calls = append(s.calls, [2]uint64{from, to})
+	if to < from || to-from >= storage.DiffPageMaxNonces {
+		return nil, errors.New("GetDiffs spans more than one page")
+	}
+	if s.onGetDiffs != nil {
+		s.onGetDiffs()
+	}
+	return s.Memory.GetDiffs(escrowID, from, to)
+}
+
+func TestHeightSync_PagedFoldMatchesAppliedJournal(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	inner := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+	store := &recordingDiffStore{Memory: inner}
+
+	live, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	hash := []byte{0xaa}
+	apply := func(nonce uint64, txs ...*types.DevshardTx) {
+		t.Helper()
+		d := testutil.SignDiff(t, user, "escrow-1", nonce, txs)
+		root, err := live.ApplyDiff(d)
+		require.NoError(t, err)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: d, StateHash: root}))
+	}
+	apply(1,
+		&types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{
+			TriggerNonce: 1, EndNonce: 3, SlotsNum: 3, AnchorK: 10, Reason: "heartbeat",
+		}}},
+		snapHeartbeat(1, 50, 3, hash),
+	)
+	apply(2, snapAck(t, hosts[0], 1, 1, 0, 50, hash))
+	apply(3, snapAck(t, hosts[1], 1, 1, 1, 50, hash))
+
+	st := live.ExportState()
+	store.calls = nil
+	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	require.NoError(t, restored.RestoreState(st))
+	require.True(t, restored.HeightSyncFloorReady())
+
+	require.Equal(t, [][2]uint64{{1, 3}}, store.calls, "a three-nonce journal is one page read")
+	require.NotNil(t, restored.HeightSyncTurnRecord(1))
+	require.Equal(t, live.HeightSyncTurnRecord(1), restored.HeightSyncTurnRecord(1))
+	require.Equal(t, heightsync.TurnComplete, restored.HeightSyncTurnRecord(1).State)
+	for _, m := range []uint64{2, 3, 4} {
+		wantH, wantHash, wantKnown := live.HeightSyncFloorAsOf(m)
+		gotH, gotHash, gotKnown := restored.HeightSyncFloorAsOf(m)
+		require.Equal(t, wantKnown, gotKnown, "AsOf(%d)", m)
+		require.Equal(t, wantH, gotH, "AsOf(%d)", m)
+		require.Equal(t, wantHash, gotHash, "AsOf(%d)", m)
+	}
+	got := restored.ExportState()
+	require.Equal(t, st.HeightSyncForcedStart, got.HeightSyncForcedStart)
+	require.Equal(t, st.HeightSyncForcedEnd, got.HeightSyncForcedEnd)
+	require.Equal(t, st.HeightSyncTurnReason, got.HeightSyncTurnReason)
+}
+
+func TestHeightSync_FailedPagedReadInstallsSnapshotFloor(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+
+	live, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	hash := []byte{0xaa}
+	apply := func(nonce uint64, txs ...*types.DevshardTx) {
+		t.Helper()
+		d := testutil.SignDiff(t, user, "escrow-1", nonce, txs)
+		root, err := live.ApplyDiff(d)
+		require.NoError(t, err)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: d, StateHash: root}))
+	}
+	apply(1, snapHeartbeat(1, 50, 3, hash))
+	apply(2, snapAck(t, hosts[0], 1, 1, 0, 50, hash))
+	apply(3, snapAck(t, hosts[1], 1, 1, 1, 50, hash))
+
+	st := live.ExportState()
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, live.ExportHeightSyncFloor())
+	require.NoError(t, err)
+
+	failStore := &recordingFailStore{Memory: store}
+	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), failStore)
+	require.NoError(t, err)
+	require.NoError(t, restored.RestoreStateWithFloor(st, floor))
+	require.True(t, restored.HeightSyncFloorReady())
+	require.Equal(t, [][2]uint64{{1, 3}}, failStore.calls, "the failed read is one page, then the snapshot floor is installed")
+
+	for _, m := range []uint64{2, 3, 4} {
+		wantH, wantHash, wantKnown := live.HeightSyncFloorAsOf(m)
+		gotH, gotHash, gotKnown := restored.HeightSyncFloorAsOf(m)
+		require.Equal(t, wantKnown, gotKnown, "AsOf(%d)", m)
+		require.Equal(t, wantH, gotH, "AsOf(%d)", m)
+		require.Equal(t, wantHash, gotHash, "AsOf(%d)", m)
+	}
+}
+
+// TestHeightSync_RestoreFoldsWithoutTheLock reads the machine from inside the
+// fold's store read. A restore that held sm.mu across the read would block
+// that reader. The reader still sees the state from before the restore.
+func TestHeightSync_RestoreFoldsWithoutTheLock(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	inner := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+	store := &recordingDiffStore{Memory: inner}
+
+	live, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	hash := []byte{0xaa}
+	for nonce, tx := range []*types.DevshardTx{
+		snapHeartbeat(1, 50, 3, hash),
+		snapAck(t, hosts[0], 1, 1, 0, 50, hash),
+		snapAck(t, hosts[1], 1, 1, 1, 50, hash),
+	} {
+		d := testutil.SignDiff(t, user, "escrow-1", uint64(nonce+1), []*types.DevshardTx{tx})
+		root, err := live.ApplyDiff(d)
+		require.NoError(t, err)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: d, StateHash: root}))
+	}
+	st := live.ExportState()
+
+	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	var seenDuringFold []uint64
+	store.onGetDiffs = func() {
+		done := make(chan uint64, 1)
+		go func() { done <- restored.LatestNonce() }()
+		select {
+		case n := <-done:
+			seenDuringFold = append(seenDuringFold, n)
+		case <-time.After(5 * time.Second):
+			t.Error("a reader blocked while the restore read the journal")
+		}
+	}
+	require.NoError(t, restored.RestoreState(st))
+	require.Equal(t, []uint64{0}, seenDuringFold, "readers see the previous state until the restore installs")
+	require.Equal(t, uint64(3), restored.LatestNonce())
+	require.True(t, restored.HeightSyncFloorReady())
+	require.Equal(t, live.HeightSyncTurnRecord(1), restored.HeightSyncTurnRecord(1))
+}
+
+type recordingFailStore struct {
+	*storage.Memory
+	calls [][2]uint64
+}
+
+func (s *recordingFailStore) GetDiffs(_ string, from, to uint64) ([]types.DiffRecord, error) {
+	s.calls = append(s.calls, [2]uint64{from, to})
+	if to < from || to-from >= storage.DiffPageMaxNonces {
+		return nil, errors.New("GetDiffs spans more than one page")
+	}
+	return nil, errors.New("getdiffs failed")
 }
 
 func snapHeartbeat(turn, height, slots uint64, hash []byte) *types.DevshardTx {

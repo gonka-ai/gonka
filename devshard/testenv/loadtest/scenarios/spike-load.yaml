@@ -1,0 +1,52 @@
+schema_version: v1
+scenario: spike-load
+seed: 42
+
+topology:
+  versiond_mode: multi
+  storage: per_participant
+  participants: 3
+  chain:
+    escrow_amount: 1000000000
+    max_nonce: 100000
+  mock_ml:
+    allocator: round_robin
+    nodes:
+      - name: mock-openai-0
+        profile: fast
+      - name: mock-openai-1
+        profile: fast
+      - name: mock-openai-2
+        profile: fast
+      - name: mock-openai-3
+        profile: slow
+
+workload:
+  max_in_flight: 32
+  duration: 60s
+  traffic:
+    type: spikes
+    base_rps: 4
+    spike_rps: 20
+    spike_duration: 5s
+    interval: 20s
+  request:
+    model: test-model
+    stream: false
+    max_tokens: 64
+    messages:
+      - role: user
+        content: "spike-load request"
+
+assertions:
+  requests:
+    http_status: 200
+    terminal_outcome: completed
+    error_rate: 0
+  devshard:
+    no_orphaned_work: true
+    max_ghost_rate: 0.02
+  mock_ml:
+    require_each_node_used: true
+
+drain_timeout: 60s

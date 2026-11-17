@@ -32,6 +32,7 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
 | **`validation_rate`** | Consensus-sensitive; snapshotted at escrow create (default **5000** bps when unset) |
 | **`vote_threshold_factor`** → `VoteThreshold` | Snapshotted at escrow create; derived at bind: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
+| **`refusal_timeout`**, **`execution_timeout`** | Snapshotted at escrow create; `0` → compiled default (60 / 1920). `execution_timeout` is folded into the auto-seal Finished clock gate and both gate host timeout votes, so host and gateway must map them identically |
 | `settled`, `model_id`, `amount` | Operational / display; gateway wires `model_id` into runtime routing at bind |
 
 The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach governance defaults to `EscrowInfo`. `bridge.SessionConfigAtBind` maps the escrow row into `SessionConfig`.
@@ -42,14 +43,14 @@ The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does 
 
 | Field | Consumer | Notes |
 |-------|----------|--------|
-| `refusal_timeout`, `execution_timeout` | devshardctl proxy (`InferenceTimeouts` when wired) | Per inference attempt; not in state root |
+| `refusal_timeout`, `execution_timeout` (governance params) | devshardctl proxy (`InferenceTimeouts` when wired) | Per inference attempt for the live proxy deadline; the consensus copies are the per-escrow lane A fields above |
 | `max_nonce` | `MaxNonceProvider` | Host accept/reject gate |
 | `devshard_requests_enabled` | `AvailabilityTracker` | 503 when disabled |
 | `logprobs_mode` | Validation path | |
 | `approved_versions` | versiond / routing | Child process policy; **only updated while long-poll is active** (see adaptive section) |
 | `current_epoch_id` | Prune, availability | Epoch transitions wake long-poll or chain refresh |
 
-`SessionConfig` still carries default `RefusalTimeout` / `ExecutionTimeout` for host timeout verification and `/status` display; live proxy inference uses the lane C provider when configured.
+`SessionConfig` carries the lane A `RefusalTimeout` / `ExecutionTimeout` (compiled defaults only when the escrow row has zeros) for host timeout verification and `/status` display; live proxy inference uses the lane C provider when configured.
 
 **Protocol version** (`StateRootAndProtocolVersion`) equals the session bind tag:
 `approved_versions.name` for versiond routes, or `v1` for `/v1/devshard`. See [upgrade.md](./upgrade.md).

@@ -124,6 +124,45 @@ func TestRepairResponderBudget_OnePerTurnSlotAndWindow(t *testing.T) {
 	require.False(t, b.Allow(1, 0), "already-served (turn, slot) is not retried")
 }
 
+func TestRepairResponderBudget_ReplaysSignedResponse(t *testing.T) {
+	b := NewRepairResponderBudget(RepairConfig{MaxProbesPerWindow: 2}, 3, time.Hour)
+	require.Nil(t, b.Replay(1, 0), "an unadmitted pair has no body")
+
+	signed := &RepairResponse{
+		Outcome:           RepairOutcomeHeight,
+		ObservedHeight:    100,
+		ObservedBlockHash: []byte{0xaa, 0xbb},
+		ResponderSig:      []byte{0x01, 0x02},
+		Ack: &types.MsgHeightAck{
+			RefNonce:       7,
+			SlotId:         1,
+			ObservedHeight: 100,
+			HostSig:        []byte{0x11},
+			PeerSeen:       []byte{0xff},
+		},
+	}
+	b.Remember(1, 0, signed)
+	require.Nil(t, b.Replay(1, 0), "Remember does not admit a key Allow never saw")
+	require.Zero(t, b.ServedCount())
+
+	require.True(t, b.Allow(1, 0))
+	require.Nil(t, b.Replay(1, 0), "admission alone is not a signed body")
+	b.Remember(1, 0, signed)
+
+	got := b.Replay(1, 0)
+	require.Equal(t, signed, got)
+	got.ObservedBlockHash[0] ^= 0xff
+	got.Ack.HostSig[0] ^= 0xff
+	again := b.Replay(1, 0)
+	require.Equal(t, signed.ObservedBlockHash, again.ObservedBlockHash)
+	require.Equal(t, signed.Ack.HostSig, again.Ack.HostSig)
+
+	require.False(t, b.Allow(1, 0), "replay does not open a second admission")
+	require.Equal(t, 1, b.Count(string(RepairSkipProbed)))
+	require.Equal(t, 1, b.Count(RepairOutcomeHeight))
+	require.True(t, b.Allow(1, 1), "the window still has its remaining slot")
+}
+
 func TestMissingAcksDue_RequiresWindowClosed(t *testing.T) {
 	cfg := DefaultHeartbeatConfig()
 	tr := NewTurnTracker(4, 3, cfg)
@@ -162,8 +201,12 @@ func TestRepairBudget_PruneBoundsMap(t *testing.T) {
 	rb.SetClock(func() time.Time { return time.Unix(1, 0) })
 	for turn := uint64(1); turn <= maxTurn; turn++ {
 		require.True(t, rb.Allow(turn, 1))
+		if turn == 1 {
+			rb.Remember(1, 1, &RepairResponse{Outcome: RepairOutcomeHeight, ObservedHeight: 1, ResponderSig: []byte{0x01}})
+		}
 	}
 	require.LessOrEqual(t, rb.ServedCount(), int(DefaultTurnRetain)+1)
+	require.Nil(t, rb.Replay(1, 1), "a pruned turn drops its signed body with the admission")
 }
 
 func TestRepairDueAll_IncludesDegradedOlderTurn(t *testing.T) {

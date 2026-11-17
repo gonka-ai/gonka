@@ -12,6 +12,7 @@ import (
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/stub"
+	"devshard/transport/rpcpb/rpcpbconnect"
 )
 
 func TestLeadingZeroEscrowAliasRejectedAtBind(t *testing.T) {
@@ -19,17 +20,18 @@ func TestLeadingZeroEscrowAliasRejectedAtBind(t *testing.T) {
 	const alias = "09901"
 
 	mgr, store, user, _ := setupBindTestManager(t, escrowID)
-	e := echo.New()
-	mgr.Register(e.Group(""))
+	rpc := newBindRPC(t, mgr)
 
 	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
 
-	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	chatErr := rpc.chat(escrowID, user, body)
 	_, err := store.GetSessionMeta(escrowID)
-	require.NoError(t, err, "canonical bind must create the session; http=%d body=%s", rec.Code, rec.Body.String())
+	require.NoError(t, err, "canonical bind must create the session; rpc=%v", chatErr)
 
-	aliasRec := signedPOST(t, e, user, "/sessions/"+alias+"/chat/completions", alias, body)
-	require.Equal(t, http.StatusBadRequest, aliasRec.Code, "body: %s", aliasRec.Body.String())
+	req := httptest.NewRequest(http.MethodPost, rpc.base(alias)+rpcpbconnect.SessionServiceChatProcedure, nil)
+	rec := httptest.NewRecorder()
+	rpc.http.Config.Handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
 
 	_, err = store.GetSessionMeta(alias)
 	require.ErrorIs(t, err, storage.ErrSessionNotFound, "alias must not create a second durable session")

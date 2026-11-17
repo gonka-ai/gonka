@@ -1,9 +1,24 @@
-// Package mode selects how devshard session and payload storage is backed.
+// Package mode selects how shared Postgres-capable storage is backed.
 //
-// DEVSHARD_STORAGE_MODE is the single mode knob:
+// DEVSHARD_STORAGE_MODE is the single mode knob for every Postgres-capable
+// persistence plane:
 //
-//	sqlite   — local only (SQLite sessions / file payloads)
-//	hybrid   — Postgres primary with local fallback (requires PGHOST)
+//   - session storage (devshard/storage.NewStorage)
+//   - payload storage (common/storage/payloads)
+//   - gateway epoch accounting (devshard/accounting)
+//   - gateway management state (devshardctl gateway.db)
+//
+// Each plane resolves the mode the same way: sqlite never opens Postgres, and
+// hybrid / postgres require PGHOST. Whenever Postgres is selected, local SQLite
+// state is migrated into it before serving.
+//
+// Runtime SQLite fallback when Postgres is down is session-storage-only
+// (owner-only degraded mode while reconnecting). Gateway management state and
+// epoch accounting are fail-closed once PGHOST selects Postgres — there is no
+// SQLite write fallback for those planes. See devshard/docs/storage-design.md.
+//
+//	sqlite   — local only (SQLite / files)
+//	hybrid   — Postgres primary; session storage may degrade to local SQLite
 //	postgres — Postgres-only, fail-closed (requires PGHOST; HA / multi-instance)
 //	auto     — default; derive from PGHOST (see Resolve)
 //
@@ -28,7 +43,8 @@ const (
 	Auto Mode = "auto"
 	// SQLite is local-only storage (sessions SQLite / payloads files).
 	SQLite Mode = "sqlite"
-	// Hybrid is Postgres primary with local fallback when Postgres is down.
+	// Hybrid is Postgres primary. Session storage may degrade to local SQLite
+	// while reconnecting; gateway store and epoch accounting do not.
 	Hybrid Mode = "hybrid"
 	// Postgres is Postgres-only: boot fails if Postgres is unreachable, and
 	// local artifacts are migrated then quarantined (multi-instance / HA).

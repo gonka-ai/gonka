@@ -277,7 +277,7 @@ func (b *RepairBudget) rollWindowLocked() {
 // subtracting from the newest id. Nonces advance by a whole span (and by any
 // interleaved traffic) per turn, so "newest - 64" would have kept a handful of
 // turns rather than 64.
-func retainedTurnCutoff(turns map[turnSlot]struct{}) uint64 {
+func retainedTurnCutoff[V any](turns map[turnSlot]V) uint64 {
 	seen := make(map[uint64]struct{}, len(turns))
 	for k := range turns {
 		seen[k.turn] = struct{}{}
@@ -326,12 +326,16 @@ func (b *RepairBudget) ProbedCount() int {
 // build per (turn, requester slot), R_max per Interval window. It does not
 // assign blame and does not consult close-ready — answering a probe is not
 // probing.
+//
+// served records an admission. A nil value means the oracle read was spent
+// but no signed body exists yet (or signing failed). A non-nil value is the
+// signed response to replay. pruneLocked drops both with the turn.
 type RepairResponderBudget struct {
 	mu sync.Mutex
 
 	cfg               RepairConfig
 	window            time.Duration
-	served            map[turnSlot]struct{}
+	served            map[turnSlot]*RepairResponse
 	windowStart       time.Time
 	responsesInWindow int
 	counts            map[string]int
@@ -354,7 +358,7 @@ func NewRepairResponderBudget(cfg RepairConfig, slotsNum uint32, window time.Dur
 	return &RepairResponderBudget{
 		cfg:    cfg,
 		window: window,
-		served: make(map[turnSlot]struct{}),
+		served: make(map[turnSlot]*RepairResponse),
 		counts: make(map[string]int),
 		now:    time.Now,
 	}
@@ -385,6 +389,10 @@ func (b *RepairResponderBudget) Count(outcome string) int {
 // Allow reports whether this (turn, requester) may spend an oracle read.
 // Unknown-turn rejection is the caller's job and must happen first so a
 // flood of invented turn_seqs never reaches here.
+//
+// A pair that was already admitted returns false whether or not a signed
+// body was stored. Call Replay first: a stored body is the answer, not a
+// second admission.
 func (b *RepairResponderBudget) Allow(turnStart uint64, requesterSlot uint32) bool {
 	if b == nil {
 		return true
@@ -401,11 +409,41 @@ func (b *RepairResponderBudget) Allow(turnStart uint64, requesterSlot uint32) bo
 		b.counts[string(RepairSkipBudget)]++
 		return false
 	}
-	b.served[key] = struct{}{}
+	b.served[key] = nil
 	b.responsesInWindow++
 	b.counts[RepairOutcomeHeight]++
 	b.pruneLocked()
 	return true
+}
+
+// Replay returns the signed HEIGHT already stored for this (turn, requester).
+// Nil means there is nothing to replay: the pair was never admitted, or it
+// was admitted and signing did not finish. The caller still has to ask Allow
+// in that case.
+func (b *RepairResponderBudget) Replay(turnStart uint64, requesterSlot uint32) *RepairResponse {
+	if b == nil {
+		return nil
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	resp := b.served[turnSlot{turn: turnStart, slot: requesterSlot}]
+	return cloneRepairResponse(resp)
+}
+
+// Remember stores a successfully signed response for a pair Allow already
+// admitted. A key that was never admitted is ignored, so an invalid request
+// cannot occupy the map. The window counter is not touched.
+func (b *RepairResponderBudget) Remember(turnStart uint64, requesterSlot uint32, resp *RepairResponse) {
+	if b == nil || resp == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key := turnSlot{turn: turnStart, slot: requesterSlot}
+	if _, ok := b.served[key]; !ok {
+		return
+	}
+	b.served[key] = cloneRepairResponse(resp)
 }
 
 func (b *RepairResponderBudget) rollWindowLocked() {

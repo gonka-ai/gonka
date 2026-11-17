@@ -2,6 +2,7 @@ package accounting
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -204,8 +205,15 @@ func stripKeyFromStore(path, key string) error {
 	if err != nil {
 		return err
 	}
-	defer store.Close()
-	rows, err := store.db.Query(`SELECT escrow_id, payload FROM accounting_escrows`)
+	if err := store.Close(); err != nil {
+		return err
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT escrow_id, payload FROM accounting_escrows`)
 	if err != nil {
 		return err
 	}
@@ -231,11 +239,11 @@ func stripKeyFromStore(path, key string) error {
 	}
 	rows.Close()
 	for escrowID, payload := range rewritten {
-		if _, err := store.db.Exec(`UPDATE accounting_escrows SET payload = ? WHERE escrow_id = ?`, payload, escrowID); err != nil {
+		if _, err := db.Exec(`UPDATE accounting_escrows SET payload = ? WHERE escrow_id = ?`, payload, escrowID); err != nil {
 			return err
 		}
 	}
-	_, err = store.db.Exec(`UPDATE accounting_meta SET value = ? WHERE key = 'schema_version'`, SchemaVersion-1)
+	_, err = db.Exec(`UPDATE accounting_meta SET value = ? WHERE key = 'schema_version'`, SchemaVersion-1)
 	return err
 }
 

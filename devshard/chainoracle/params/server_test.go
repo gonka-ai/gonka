@@ -48,7 +48,10 @@ func TestParamsServer_GetRuntimeConfigLongPoll(t *testing.T) {
 	}, commonruntimeconfig.Snapshot{})
 	require.NoError(t, err)
 
-	srv, err := params.NewServer(params.Config{Source: src})
+	srv, err := params.NewServer(params.Config{
+		Source:     src,
+		MLEndpoint: "http://mock-openai-0:8088",
+	})
 	require.NoError(t, err)
 
 	conn, cleanup := startGRPC(t, srv)
@@ -97,7 +100,7 @@ func TestParamsServer_AcquireMLNode(t *testing.T) {
 
 	srv, err := params.NewServer(params.Config{
 		Source:     src,
-		MLEndpoint: "http://mock-openai:8088",
+		MLEndpoint: "http://mock-openai-0:8088",
 	})
 	require.NoError(t, err)
 
@@ -107,6 +110,7 @@ func TestParamsServer_AcquireMLNode(t *testing.T) {
 
 	resp, err := client.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{Model: "gpt-test"})
 	require.NoError(t, err)
-	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
+	require.Equal(t, "http://mock-openai-0:8088", resp.Endpoint)
+	require.Equal(t, "mock-openai-0", resp.NodeId)
 	require.NotEmpty(t, resp.LockId)
 }

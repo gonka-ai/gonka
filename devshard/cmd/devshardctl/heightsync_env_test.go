@@ -12,6 +12,7 @@ import (
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/transport"
+	"devshard/user"
 )
 
 func resetHeightSyncForTest() {
@@ -113,6 +114,39 @@ func TestParseUintEnv(t *testing.T) {
 	v, err = parseUintEnv("DEVSHARD_HEIGHTSYNC_K")
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), v)
+}
+
+func TestHeightSyncHeartbeatFromEnv(t *testing.T) {
+	t.Setenv(envHeightSyncHeartbeat, "")
+	require.False(t, heightSyncHeartbeatFromEnv())
+	require.True(t, !heightSyncHeartbeatFromEnv(), "unset is the bit gateway.go stores in DisableHeightSyncHeartbeat")
+
+	for _, v := range []string{"true", "1", "on", "TRUE", " On "} {
+		t.Setenv(envHeightSyncHeartbeat, v)
+		require.True(t, heightSyncHeartbeatFromEnv(), v)
+		require.False(t, !heightSyncHeartbeatFromEnv(), v)
+	}
+	for _, v := range []string{"false", "0", "off", "no", "yes", "maybe", "TRUEISH"} {
+		t.Setenv(envHeightSyncHeartbeat, v)
+		require.False(t, heightSyncHeartbeatFromEnv(), v)
+	}
+}
+
+func TestQuietSettleDelayFromEnv(t *testing.T) {
+	t.Setenv(envQuietSettleDelay, "")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "5s")
+	require.Equal(t, user.TestQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "2m")
+	require.Equal(t, 2*time.Minute, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "0s")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
+
+	t.Setenv(envQuietSettleDelay, "not-a-duration")
+	require.Equal(t, user.DefaultQuietSettleDelay, quietSettleDelayFromEnv())
 }
 
 func TestGatewayChainOracle_FlagValues(t *testing.T) {

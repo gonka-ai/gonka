@@ -76,3 +76,51 @@ func TestNewPayloadStorage_RetryInterval(t *testing.T) {
 	}
 }
 
+func TestNewPayloadStorage_ConnectTimeout(t *testing.T) {
+	os.Setenv("PGHOST", "localhost")
+	defer os.Unsetenv("PGHOST")
+
+	tests := []struct {
+		name     string
+		envValue string
+		expected time.Duration
+	}{
+		{
+			name:     "Default (unset)",
+			envValue: "",
+			expected: defaultPGConnectTimeout,
+		},
+		{
+			name:     "Custom valid duration",
+			envValue: "500ms",
+			expected: 500 * time.Millisecond,
+		},
+		{
+			name:     "Invalid duration (fallback to default)",
+			envValue: "invalid",
+			expected: defaultPGConnectTimeout,
+		},
+		{
+			name:     "Zero duration (fallback to default)",
+			envValue: "0s",
+			expected: defaultPGConnectTimeout,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.envValue != "" {
+				os.Setenv("PG_CONNECT_TIMEOUT", tt.envValue)
+				defer os.Unsetenv("PG_CONNECT_TIMEOUT")
+			} else {
+				os.Unsetenv("PG_CONNECT_TIMEOUT")
+			}
+
+			s := NewPayloadStorage(context.Background(), t.TempDir())
+			hs, ok := s.(*HybridStorage)
+			require.True(t, ok, "Expected *HybridStorage")
+			assert.Equal(t, tt.expected, hs.connectTimeout)
+		})
+	}
+}
+

@@ -57,6 +57,7 @@ func TestHostFailureLogFields_NamesTheWayTheStreamDied(t *testing.T) {
 		{"stream ended without a terminator", transport.ErrSSEStreamTruncated, "sse_truncated"},
 		{"host grew a single SSE event past the cap", transport.ErrSSEEventTooLarge, "sse_event_too_large"},
 		{"host grew a non-stream body past the cap", transport.ErrResponseBodyTooLarge, "response_body_too_large"},
+		{"host grew the whole stream past the cap", transport.ErrSSEStreamTooLarge, "sse_stream_too_large"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

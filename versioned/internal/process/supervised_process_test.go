@@ -47,7 +47,11 @@ func TestSupervisedProcessHelper(t *testing.T) {
 		<-term
 		return
 	}
-	select {}
+	// signal.Ignore starts no goroutine, so select {} would trip the runtime
+	// deadlock detector; a pending timer keeps the helper alive.
+	for {
+		time.Sleep(time.Hour)
+	}
 }
 
 func TestProcessTransitionTable(t *testing.T) {

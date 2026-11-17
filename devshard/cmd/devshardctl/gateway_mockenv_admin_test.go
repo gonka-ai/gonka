@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
@@ -191,7 +192,7 @@ func TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive(t *testing.T) {
 	require.NotNil(t, resident)
 	require.False(t, resident.active.Load())
 
-	record, ok, err := env.gateway.store.GetDevshard("12")
+	record, ok, err := env.gateway.store.GetDevshard(context.Background(), "12")
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, record.Active)

@@ -2,10 +2,10 @@ package main
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"os"
-	"strings"
+
+	commonobs "common/observability"
 )
 
 type prefixedTextHandler struct {
@@ -13,25 +13,10 @@ type prefixedTextHandler struct {
 	inner  slog.Handler
 }
 
-// slogLevelFromEnv reads optional DEVSHARD_LOG_LEVEL.
-// Unset or unknown values keep the historical default (Info), so existing
-// deployments do not start emitting Debug lines.
-func slogLevelFromEnv() slog.Level {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEVSHARD_LOG_LEVEL"))) {
-	case "debug":
-		return slog.LevelDebug
-	case "warn", "warning":
-		return slog.LevelWarn
-	case "error":
-		return slog.LevelError
-	default:
-		return slog.LevelInfo
-	}
-}
-
-func newPrefixedTextHandler(prefix string, w io.Writer, level slog.Level) slog.Handler {
-	inner := slog.NewTextHandler(w, &slog.HandlerOptions{Level: level})
-	if prefix == "" {
+// prefixTextHandler stamps [version] on text log lines so binaries running
+// under versiond can be told apart. An empty prefix leaves the handler as-is.
+func prefixTextHandler(prefix string, inner slog.Handler) slog.Handler {
+	if prefix == "" || inner == nil {
 		return inner
 	}
 	return &prefixedTextHandler{prefix: prefix, inner: inner}
@@ -52,4 +37,22 @@ func (h *prefixedTextHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 
 func (h *prefixedTextHandler) WithGroup(name string) slog.Handler {
 	return &prefixedTextHandler{prefix: h.prefix, inner: h.inner.WithGroup(name)}
+}
+
+func hostLoggerOptions(format, binaryVersion, levelRaw string) commonobs.LoggerOptions {
+	return commonobs.LoggerOptions{
+		Format: format,
+		Level:  commonobs.ParseLogLevel(levelRaw),
+		WrapText: func(inner slog.Handler) slog.Handler {
+			return prefixTextHandler(binaryVersion, inner)
+		},
+		Attrs: []slog.Attr{slog.String("binary_version", binaryVersion)},
+	}
+}
+
+// installHostLogger installs the process logger: text lines keep the
+// [binary-version] prefix, JSON lines carry binary_version, and
+// DEVSHARD_LOG_LEVEL selects the minimum level.
+func installHostLogger(format, binaryVersion string) {
+	commonobs.InstallLoggerWithOptions(hostLoggerOptions(format, binaryVersion, os.Getenv("DEVSHARD_LOG_LEVEL")))
 }

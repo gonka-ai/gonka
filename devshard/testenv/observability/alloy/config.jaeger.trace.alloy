@@ -1,0 +1,9 @@
+// Trace exporter for jaeger-alloy.
+otelcol.exporter.otlp "trace_backend" {
+  client {
+    endpoint = "jaeger:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

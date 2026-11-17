@@ -2,6 +2,7 @@ package storage
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -83,4 +84,24 @@ func insertMetaEscrowRow(storeDir, escrowID string, epochID uint64) error {
 	defer db.Close()
 	_, err = db.Exec(`INSERT INTO escrow_epoch (escrow_id, epoch_id) VALUES (?, ?)`, escrowID, epochID)
 	return err
+}
+
+// Test flow:
+//  1. Fill a store directory with epoch files, their sidecars, a malformed name and a directory named like an epoch file.
+//  2. Require the newest real epoch file to win, and an empty directory to report none.
+func TestNewestSQLiteEpoch_ignoresSidecarsAndDirectories(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"_meta.db", "epoch_7.db", "epoch_12.db", "epoch_40.db-wal", "epoch_x.db"} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), nil, 0o600))
+	}
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "epoch_90.db"), 0o755))
+
+	newest, found, err := NewestSQLiteEpoch(dir)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, uint64(12), newest)
+
+	_, found, err = NewestSQLiteEpoch(t.TempDir())
+	require.NoError(t, err)
+	require.False(t, found)
 }

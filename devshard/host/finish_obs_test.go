@@ -70,7 +70,8 @@ func kvInt64(t *testing.T, kv []any, key string) int64 {
 }
 
 func TestHost_ValidateInferenceDisappearedLogsFinishObs(t *testing.T) {
-	h, hosts, user := newLeaseReleaseHost(t, &scriptedValidationEngine{}, nil)
+	validator := &scriptedValidationEngine{}
+	h, hosts, user := newLeaseReleaseHost(t, validator, nil)
 	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
 
 	h.mu.Lock()
@@ -80,9 +81,12 @@ func TestHost_ValidateInferenceDisappearedLogsFinishObs(t *testing.T) {
 	require.Equal(t, uint64(3), obs.nonce)
 	require.False(t, obs.at.IsZero())
 
-	require.NoError(t, h.sm.SealInference(1))
-	_, stillLive := h.sm.GetInference(1)
-	require.False(t, stillLive)
+	validator.beforeReturn = func() {
+		// Seal after validation starts, so the post-validation diagnostic is exercised.
+		require.NoError(t, h.sm.SealInference(1))
+		_, stillLive := h.sm.GetInference(1)
+		require.False(t, stillLive)
+	}
 
 	capLog := &capturingLogger{}
 	logging.SetLogger(capLog)

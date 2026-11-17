@@ -225,8 +225,24 @@ func (m *ManagedStorage) AppendDiff(escrowID string, rec types.DiffRecord) error
 	return m.inner.AppendDiff(escrowID, rec)
 }
 
+func (m *ManagedStorage) AppendDiffBatch(ctx context.Context, escrowID string, recs []types.DiffRecord) error {
+	return appendDiffBatchVia(ctx, m.inner, escrowID, recs)
+}
+
 func (m *ManagedStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	return m.inner.GetDiffs(escrowID, fromNonce, toNonce)
+}
+
+func (m *ManagedStorage) GetDiffWires(escrowID string, fromNonce, toNonce uint64) ([]types.DiffWire, error) {
+	return m.inner.GetDiffWires(escrowID, fromNonce, toNonce)
+}
+
+func (m *ManagedStorage) DiffSizes(escrowID string, fromNonce, toNonce uint64, limit int) ([]DiffSize, error) {
+	return m.inner.DiffSizes(escrowID, fromNonce, toNonce, limit)
+}
+
+func (m *ManagedStorage) DiffStateHash(escrowID string, nonce uint64) ([]byte, bool, error) {
+	return m.inner.DiffStateHash(escrowID, nonce)
 }
 
 func (m *ManagedStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
@@ -283,6 +299,18 @@ func (m *ManagedStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64,
 
 func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
 	return m.inner.ClearValidationObs(escrowID)
+}
+
+func (m *ManagedStorage) SetValidationObsRebuildPending(escrowID string, pending bool) error {
+	return m.inner.SetValidationObsRebuildPending(escrowID, pending)
+}
+
+func (m *ManagedStorage) ValidationObsRebuildPending(escrowID string) (bool, error) {
+	return m.inner.ValidationObsRebuildPending(escrowID)
+}
+
+func (m *ManagedStorage) LockValidationObsRebuild(escrowID string) (func(), bool, error) {
+	return m.inner.LockValidationObsRebuild(escrowID)
 }
 
 func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
@@ -364,6 +392,14 @@ func (m *ManagedStorage) AcquireOneStale(ctx context.Context, escrowID string, o
 		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
 	}
 	return ls.AcquireOneStale(ctx, escrowID, owner, ttl)
+}
+
+func (m *ManagedStorage) AcquireOneStaleAmong(ctx context.Context, escrowID string, epochID uint64, inferenceIDs []uint64, owner LeaseOwner, ttl time.Duration) (uint64, uint64, error) {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.AcquireOneStaleAmong(ctx, escrowID, epochID, inferenceIDs, owner, ttl)
 }
 
 func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, owner LeaseOwner) error {

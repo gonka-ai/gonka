@@ -1,0 +1,29 @@
+# Optional public-proxy overlay: a one-port stand-in for join's proxy-router.
+# Usage (from devshard/testenv/, after gen-compose with TESTENV_PROXY_OVERLAY=1):
+#   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up -d
+#
+# Do not merge this file into COMPOSE_BASE. citest-images / citest-stack stay
+# no-proxy: peers dial versiond-router:8080 directly.
+#
+# In-network hop, one port for everything, as join's :80:
+#   proxy:8080  HTTP/2 preface  → rpc_h2 (path zones, X-Real-IP) → versiond-router:8081 proto h2
+#   proxy:8080  anything else   → versiond-router:8080 (TCP passthrough, JSON)
+# gencompose points pooled hosts' InferenceUrl at http://proxy:8080 when
+# TESTENV_PROXY_OVERLAY is set, so the gateway and the hosts dial this hop.
+
+services:
+  proxy:
+    image: haproxy:3.2-alpine
+    volumes:
+      - ./proxy/haproxy-rpc.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+      - ../../proxy-router/grpc-exhausted.http:/etc/haproxy/grpc-exhausted.http:ro
+    ports:
+      - "127.0.0.1:18443:8080"
+    depends_on:
+      - versiond-router
+    networks:
+      testenv:
+        # High address: gencompose pins .2–.11. A dynamic address collides
+        # with devshardctl (.6) and compose up fails with "address already in use".
+        ipv4_address: 172.30.0.70
+    restart: unless-stopped

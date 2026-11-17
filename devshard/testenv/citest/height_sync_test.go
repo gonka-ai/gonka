@@ -66,7 +66,8 @@ func TestHeightSync_CadenceEmitsAnchor(t *testing.T) {
 	postHeightSyncChat(t, cfg, eps, "citest height-sync cadence")
 	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heightsync: emit",
 		"devshardctl", "versiond-0", "versiond-1")
-	require.Contains(t, logs, "mode=anchor", "first inference is a sync-turn / session-start Anchor")
+	require.True(t, harness.LogsContainFields(logs, harness.LogStringField("mode", "anchor")),
+		"first inference is a sync-turn / session-start Anchor")
 }
 
 func TestHeightSync_LostFirstChunk(t *testing.T) {
@@ -136,7 +137,7 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 			return false
 		}
 		stopped = out
-		return strings.Contains(out, "mode=omit") || strings.Contains(out, "tip_stale_after_ms")
+		return harness.LogsContainFields(out, harness.LogStringField("mode", "omit")) || strings.Contains(out, "tip_stale_after_ms")
 	})
 	require.True(t, ok, "paused oracle should Omit or emit a degraded Anchor; logs:\n%s", stopped)
 
@@ -148,8 +149,16 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 	time.Sleep(3 * time.Second)
 
 	postHeightSyncChat(t, cfg, eps, "citest height-sync after feed recover")
-	recovered := stack.WaitComposeLogsContain(t, 2*time.Minute, "mode=anchor",
-		"devshardctl", "versiond-0", "versiond-1")
+	var recovered string
+	ok = harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
+		out, err := stack.ComposeLogsTail(400, "devshardctl", "versiond-0", "versiond-1")
+		if err != nil {
+			return false
+		}
+		recovered = out
+		return harness.LogsContainFields(out, harness.LogStringField("mode", "anchor"))
+	})
+	require.True(t, ok, "compose logs missing mode=anchor within 2m\n%s", recovered)
 	require.Contains(t, recovered, "heightsync: emit")
 }
 

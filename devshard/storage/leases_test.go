@@ -26,6 +26,30 @@ func TestMemoryLease_Acquire_FirstWins(t *testing.T) {
 	require.False(t, won)
 }
 
+func TestMemoryLease_Acquire_ReclaimsSubmittedFromOtherAddress(t *testing.T) {
+	store := NewMemory()
+	ctx := context.Background()
+	won, err := store.Acquire(ctx, "escrow-phase-b", 1, 10, testOwner("challenger"))
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-phase-b", 1, 10, LeaseStatusSubmitted, testOwner("challenger")))
+
+	won, err = store.Acquire(ctx, "escrow-phase-b", 1, 10, testOwner("phase-b-voter"))
+	require.NoError(t, err)
+	require.True(t, won, "different participant must reclaim submitted lease for Phase B")
+
+	// Same participant address must not reclaim its own submitted row via a
+	// sibling instance (HA duplicate suppression).
+	same := LeaseOwner{Address: "challenger", InstanceID: "sibling", Hostname: "ha"}
+	won, err = store.Acquire(ctx, "escrow-phase-b", 2, 10, testOwner("challenger"))
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-phase-b", 2, 10, LeaseStatusSubmitted, testOwner("challenger")))
+	won, err = store.Acquire(ctx, "escrow-phase-b", 2, 10, same)
+	require.NoError(t, err)
+	require.False(t, won)
+}
+
 func TestMemoryLease_Acquire_ConcurrentSingleWinner(t *testing.T) {
 	store := NewMemory()
 	ctx := context.Background()
@@ -100,6 +124,85 @@ func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), inferenceID)
 	require.Equal(t, uint64(10), epochID)
+}
+
+func TestMemoryLease_AcquireOneStaleAmong_FiltersEpochAndID(t *testing.T) {
+	store := NewMemory()
+	runAcquireOneStaleAmongTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
+		ageMemoryLease(t, store, escrowID, inferenceID, epochID, time.Hour)
+	})
+}
+
+func TestPostgresLease_AcquireOneStaleAmong_FiltersEpochAndID(t *testing.T) {
+	store := newTestPostgres(t)
+	runAcquireOneStaleAmongTests(t, store, func(escrowID string, inferenceID, epochID uint64) {
+		_, err := store.pool.Exec(context.Background(),
+			`UPDATE devshard_validation_leases
+			 SET claimed_at = now() - interval '1 hour'
+			 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
+			epochID, escrowID, inferenceID,
+		)
+		require.NoError(t, err)
+	})
+}
+
+func runAcquireOneStaleAmongTests(t *testing.T, store LeaseStore, age func(escrowID string, inferenceID, epochID uint64)) {
+	t.Helper()
+	ctx := context.Background()
+	const escrowID = "escrow-among"
+	ttl := 30 * time.Minute
+	acquire := func(inferenceID, epochID uint64) {
+		won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, testOwner("holder"))
+		require.NoError(t, err)
+		require.True(t, won)
+	}
+
+	acquire(1, 10)
+	acquire(2, 10)
+	acquire(3, 10)
+	acquire(4, 10)
+	acquire(1, 11)
+	require.NoError(t, store.SetResult(ctx, escrowID, 2, 10, LeaseStatusSkipped, testOwner("holder")))
+	require.NoError(t, store.SetResult(ctx, escrowID, 4, 10, LeaseStatusSubmitted, testOwner("holder")))
+	age(escrowID, 1, 10)
+	age(escrowID, 2, 10)
+	age(escrowID, 4, 10)
+	age(escrowID, 1, 11)
+
+	claim := func(ids []uint64) uint64 {
+		t.Helper()
+		inferenceID, epochID, err := store.AcquireOneStaleAmong(ctx, escrowID, 10, ids, testOwner("retry"), ttl)
+		require.NoError(t, err)
+		if inferenceID != 0 {
+			require.Equal(t, uint64(10), epochID)
+		}
+		return inferenceID
+	}
+
+	require.Zero(t, claim(nil), "no inference ids claims nothing")
+	require.Zero(t, claim([]uint64{0}), "id 0 is ignored")
+	require.Zero(t, claim([]uint64{2}), "a skipped lease is not claimed")
+	require.Zero(t, claim([]uint64{3}), "a fresh lease is not claimed")
+	require.Zero(t, claim([]uint64{99}), "an id without a lease row claims nothing")
+	require.Equal(t, uint64(4), claim([]uint64{4}), "a stale submitted lease is claimed")
+	require.Equal(t, uint64(1), claim([]uint64{1, 2, 3, 4}), "only the remaining stale owed row is claimed")
+	require.Zero(t, claim([]uint64{1, 2, 3, 4}), "a claimed row is no longer stale")
+
+	for _, inferenceID := range []uint64{1, 4} {
+		owned, err := store.OwnsPendingLease(ctx, escrowID, inferenceID, 10, testOwner("retry"))
+		require.NoError(t, err)
+		require.True(t, owned, "inference %d is held by the claimer", inferenceID)
+	}
+	owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 11, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, owned, "the same inference in another epoch is not claimed")
+	owned, err = store.OwnsPendingLease(ctx, escrowID, 3, 10, testOwner("holder"))
+	require.NoError(t, err)
+	require.True(t, owned, "the fresh lease keeps its owner")
+	info, found, err := store.DescribeLease(ctx, escrowID, 2, 10)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, LeaseStatusSkipped, info.Status, "the skipped row is untouched")
 }
 
 func TestMemoryLease_AcquireOneStale_PicksStaleSubmitted(t *testing.T) {
@@ -201,6 +304,11 @@ func TestSQLiteLease_AcquireOneStale_NoOp(t *testing.T) {
 	require.NoError(t, err)
 
 	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-1", testOwner("instance-2"), 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0), inferenceID)
+	require.Equal(t, uint64(0), epochID)
+
+	inferenceID, epochID, err = store.AcquireOneStaleAmong(ctx, "escrow-1", 10, []uint64{1}, testOwner("instance-2"), 30*time.Minute)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), inferenceID)
 	require.Equal(t, uint64(0), epochID)
@@ -356,7 +464,7 @@ func runLeaseReleaseTests(t *testing.T, store LeaseStore) {
 		require.False(t, won)
 	})
 
-	t.Run("submitted is no-op", func(t *testing.T) {
+	t.Run("submitted release is no-op but other address can reclaim", func(t *testing.T) {
 		won, err := store.Acquire(ctx, "escrow-sub", 1, 10, testOwner("instance-1"))
 		require.NoError(t, err)
 		require.True(t, won)
@@ -364,9 +472,11 @@ func runLeaseReleaseTests(t *testing.T, store LeaseStore) {
 
 		require.NoError(t, store.Release(ctx, "escrow-sub", 1, 10, testOwner("instance-1")))
 
+		// Release does not delete submitted rows; Phase B still needs a
+		// different participant to reclaim that submitted lease.
 		won, err = store.Acquire(ctx, "escrow-sub", 1, 10, testOwner("instance-2"))
 		require.NoError(t, err)
-		require.False(t, won)
+		require.True(t, won, "Phase B voter must reclaim submitted lease from another address")
 	})
 
 	t.Run("wrong epoch is no-op", func(t *testing.T) {

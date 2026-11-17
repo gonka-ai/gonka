@@ -40,6 +40,7 @@ make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
 make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-ml-nodes              # multi mock-openai pool + per-node fault
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
 make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
 make citest-height-sync           # height-sync cadence + host-claim overlays (rebuilds devshardd)
@@ -58,6 +59,10 @@ TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestParamsLongPoll -v -t
 | `make citest-stack` | Builds mock images and runs all core stack behavior tests |
 
 Wrapper script: [`scripts/run-stack-citest.sh`](../scripts/run-stack-citest.sh).
+
+No-proxy grid, pinned baseline versiond versus this tree, JSON and Connect HTTP/1.1:
+[`scripts/run-noproxy-baseline-current-citest-grid.sh`](../scripts/run-noproxy-baseline-current-citest-grid.sh).
+See [No-proxy baseline versus current](#no-proxy-baseline-versus-current).
 
 CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv`
 (OWNER/MEMBER). The `devshard testenv` workflow discovers the runnable suites via
@@ -86,9 +91,14 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **ML node pool** | N mock-openai instances behind mock-dapi `AcquireMLNode`; a fault on one node leaves the others healthy | `TestMLNodePool_PerNodeFault` |
 | **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
 | **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
 | **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
+| **Baseline smoke** | Pinned 0.2.15-v5 versiond/router, this child, RPC off, no proxy | `TestBaselineSmoke` |
+| **Peer RPC chat** | Gateway chat over Connect HTTP/1.1; child counts Attach and Chat | `TestPeerRPCChat` |
+| **Peer RPC HA session** | Two escrows hashed to different children both seed and chat; one stateless token admits on both | `TestPeerRPCHASessionSpread` |
+| **Mixed fleet** | versiond-0 on 0.2.15-v5, versiond-1 and router on this tree, RPC on, both `:8080` HTTP/1.1 | `TestMixedFleetNoProxy` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
@@ -122,6 +132,112 @@ Full plan: [`chain-transport-consolidation.md`](./chain-transport-consolidation.
 | **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
 
 Run: `make citest-grpc-transport` from `devshard/testenv/`.
+
+### No-proxy baseline versus current
+
+Peer RPC on the default compose. No `proxy` overlay; `DEVSHARD_RPC_H2_UPGRADE=false`
+keeps every cell on Connect over HTTP/1.1. HTTP/2 and native gRPC are not in
+this grid. Checklist:
+[`grpc-transport-phase6-plan.md`](../../docs/grpc-transport-phase6-plan.md) §8.2.
+
+| Column | versiond + router | Client |
+|--------|-------------------|--------|
+| **B1 JSON** | `devshard-versiond:0.2.15-v5` and `devshard-versiond-router:0.2.15-v5` | JSON ops GETs (Connect stays mounted) |
+| **B1+RPC** | same pin | Connect HTTP/1.1 on `versiond-router:8080` |
+| **N0 JSON** | this tree (`:latest`) | JSON |
+
+Peer RPC on this tree’s versiond and router is HTTP/2 by default, on
+`versiond-router:8080` directly or through the proxy overlay (plan §8.4).
+This grid forces HTTP/1.1 and so does not run that dial.
+
+RPC-on cells set:
+
+```text
+DEVSHARD_RPC_ENDPOINTS=signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat
+```
+
+| Scenario | What we validate | Test | Run |
+|----------|------------------|------|-----|
+| **Baseline smoke** | Old hop + this child boots; router `/healthz`; gateway chat; record `GET /devshard/stats/rpc` | `TestBaselineSmoke` | `make citest-baseline-smoke` |
+| **Peer RPC chat** | Non-stream and SSE chat; child `Attach` and `Chat` counters | `TestPeerRPCChat` | `make citest-peerrpc-chat` |
+| **Peer RPC HA session** | Height seed and chat on two escrows that hash to different children. Every child checks the same HMAC token with its derived key | `TestPeerRPCHASessionSpread` | `make citest-peerrpc-ha-session` |
+| **HAProxy idle h2** | On `haproxy-rpc.cfg`, PING alone does not hold an idle h2 connection past `timeout http-keep-alive`; the client redials. An open Watch-style stream holds the one TCP | `TestProxyHAProxy_H2IdleConnection` | `make citest-proxy-h2-idle` |
+| **Mixed fleet** | versiond-0 pinned to 0.2.15-v5, versiond-1 and the router this tree; Chat+Attach; both images' `/{version}/healthz` | `TestMixedFleetNoProxy` | `make citest-mixed-fleet` |
+
+Height-sync and payload withholding use `citest-height-sync` and
+`citest-payload-withholding`. B1+RPC turns peer RPC on for those targets.
+
+The three columns over the existing `citest-*` suites, plus chat and the HA
+session on B1+RPC, are one sequential run:
+
+```bash
+cd devshard/testenv
+./scripts/run-noproxy-baseline-current-citest-grid.sh
+```
+
+Each cell is one line in
+[`grpc-transport-phase6-8.2-results.txt`](../../docs/grpc-transport-phase6-8.2-results.txt)
+(`B1-JSON citest-stack PASS`). A `PASS` or `EXPECTED-FAIL` line is skipped on
+the next run. A `FAIL` line is retried. `citest-baseline-smoke` and `citest-mixed-fleet` are separate
+targets; they are not inside the grid script.
+
+### Proxy overlay hop (§8.3)
+
+Peer RPC on this tree’s versiond and router, through `proxy:8080`, the same
+port that carries JSON and healthz. The second half of the test makes the
+proxy reset the HTTP/2 preface and requires the same peers to continue over
+Connect on HTTP/1.1 through that port.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-overlay-citest.sh
+```
+
+`TestPeerRPCOverlayHop` (`make citest-peerrpc-overlay`).
+
+### Peer RPC parity (§8.4)
+
+Same chat and the same `GetSignatures` / `GetDiffs` read on one overlay stack.
+The gateway is the chat client: JSON on `:8080`, Connect over HTTP/2, then native gRPC.
+Unary reads use the escrow user key against the published router and `proxy` ports.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-parity-citest.sh
+```
+
+`TestPeerRPCParity` (`make citest-peerrpc-parity`).
+
+### Peer RPC rate limits (§9)
+
+R1–R2 on the 0.2.15-v5 pin (Connect over HTTP/1.1, no proxy). R3–R7 on the
+current-image overlay, with the child budget and proxy zones lowered in that
+stack only. R8 checks both stacks at the default ceilings.
+
+```bash
+cd devshard/testenv
+./scripts/run-peerrpc-limits-citest.sh
+```
+
+`TestPeerRPCLimitsNoProxy` and `TestPeerRPCLimitsOverlay` (`make citest-peerrpc-limits`).
+
+### HTTP/2 suite rerun (§9.1)
+
+The §8.2 suite list on this tree’s versiond and versiond-router, with
+`TESTENV_PROXY_OVERLAY=1` and Connect over HTTP/2 on `proxy:8080`, the
+pooled InferenceUrl. Rate limits stay at the defaults. A solo participant
+(`http://versiond-N:8080`) keeps dialing that host directly, on h2c. The
+0.2.15-v5 pin and native gRPC are not in this grid.
+
+```bash
+cd devshard/testenv
+./scripts/run-h2-overlay-citest-grid.sh
+```
+
+Each cell is one line in
+[`grpc-transport-phase6-9.1-results.txt`](../../docs/grpc-transport-phase6-9.1-results.txt)
+(`H2 citest-stack PASS`). A `PASS` line is skipped on the next run. A `FAIL`
+line is retried.
 
 ---
 
@@ -351,9 +467,9 @@ bail-out). The testenv suite pins the end-to-end effect: the wait returns and th
 swap completes. With the testenv's empty journal the wait is sub-second, so the
 suite does not assert a measurable wait duration.
 
-Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Also matched by
-the `citest-stack` pattern (`Versiond.*`); skips if the linux `devshardd` binary
-is absent (run `make build-devshardd` first).
+Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Not part of
+`citest-stack`. Skips if the linux `devshardd` binary is absent (run
+`make build-devshardd` first).
 
 Tests: `TestVersiondWarmCutoverBoot`,
 `TestVersiondWarmCutoverOverlapWaitsThenServes`.
@@ -647,8 +763,11 @@ alignment (`INVALID(height_regression)`) stays a unit pin.
 | Height-sync | `make citest-height-sync` | Cadence, dapi pause, host claims A/B/C ([`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)) |
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |
+| Observability | `make citest-observability` | Profile smoke, trace↔log correlation, disposition spans, payload capture, jaeger-promtail regression, mock-dapi hop, and shadow multi-host — see [`gateway-tracing.md`](../../docs/gateway-tracing.md) |
+| Observability (node-selection hop only) | `make citest-dapi-correlation` | Gateway, host, and mock-dapi share one trace; subset of `citest-observability` |
+| ML node pool | `make citest-ml-nodes` | Per-node ML fault targeting |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
+| No-proxy baseline versus current | [`scripts/run-noproxy-baseline-current-citest-grid.sh`](../scripts/run-noproxy-baseline-current-citest-grid.sh) | B1 JSON, B1+RPC HTTP/1.1, N0 JSON; no `proxy` |
 
 See [`README.md`](../README.md) for adversarial and observability detail.
 
@@ -772,6 +891,25 @@ inference succeeds with the live escrow query faulted.
 
 ---
 
+## ML node pool — per-node fault targeting
+
+**What we test:** the stack can express one ML node broken while the others stay healthy.
+`ml_nodes: N` in the citest config makes `gencompose` emit `mock-openai-0…N-1`, and mock-dapi
+hands them out through real `AcquireMLNode` node ids.
+
+**How:** `TestMLNodePool_PerNodeFault`
+
+1. `harness.BootMLNodePoolStack` with `ml_nodes: 2`; wait for stack health.
+2. Two `AcquireMLNode` calls return distinct `NodeId`s, then both locks are released.
+3. A latency fault applies to `mock-openai-1` only. Chat against node-0 stays fast; node-1 is slow.
+4. Stopping `mock-openai-1` leaves node-0 serving `/healthz`.
+
+**Pass criteria:** distinct node ids per acquire; fault and stop stay on the targeted instance.
+
+**Run:** `make citest-ml-nodes` (or `-run TestMLNodePool_`).
+
+---
+
 ## Chaining vs. parallelism
 
 Every full-stack citest boots a Docker Compose stack that pins a **fixed subnet
@@ -803,11 +941,13 @@ pattern and **no `t.Parallel()`**.
   (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A5`, `O1`, and **escrow long-poll warm**.
+  `A1–A5`, the observability suite (`O1`, correlation, disposition, payload capture,
+  jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow
+  long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
-  `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
+  `citest-ml-nodes`, `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
   supported form of parallelism today. CI enumerates these targets automatically
   with `make list-citest-targets` (excludes the `citest-images` /
   `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,

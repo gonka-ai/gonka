@@ -36,7 +36,7 @@ type CachingEscrowBridge struct {
 // arbitrarily old "open" row for as long as the chain stays unreachable. One
 // hour keeps the fallback useful across a chain outage while capping how far
 // behind chain truth a bind can be.
-const DefaultEscrowCacheTTL = time.Hour
+const DefaultEscrowCacheTTL = storage.EscrowCacheMaxAge
 
 // NewCachingEscrowBridge wraps inner with escrow_cache fallback. store may be nil
 // (fallback disabled), in which case GetEscrow behaves exactly like inner.

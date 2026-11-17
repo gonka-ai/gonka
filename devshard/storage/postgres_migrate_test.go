@@ -129,6 +129,53 @@ SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&ide
 	require.Equal(t, storageIdentity, identityAfterRerun)
 }
 
+func TestPostgresMigrationSteps_V6IDsStayPut(t *testing.T) {
+	byID := make(map[int]string, len(PostgresMigrationSteps()))
+	for _, step := range PostgresMigrationSteps() {
+		byID[step.ID] = step.Name
+	}
+	require.Equal(t, "devshard_validation_lease_identity", byID[15])
+	require.Equal(t, "devshard_sessions_obs_rebuild_pending", byID[16])
+	require.Equal(t, "devshard_validation_credits", byID[17])
+	require.Equal(t, "devshard_peer_rpc_sessions", byID[18])
+	require.Equal(t, "devshard_peer_rpc_session_last_seen", byID[19])
+	require.Equal(t, "devshard_validation_credit_holds", byID[20])
+}
+
+func TestMigratePostgres_PeerRPCAppliesAfterV6Ledger(t *testing.T) {
+	ctx := context.Background()
+	pool, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+
+	var v6 []migrate.Step
+	for _, step := range PostgresMigrationSteps() {
+		if step.ID <= 17 {
+			v6 = append(v6, step)
+		}
+	}
+	require.NoError(t, migrate.ApplyPG(ctx, pool, v6))
+
+	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_peer_rpc_sessions")
+	require.NoError(t, err)
+	require.False(t, exists, "recorded v6 IDs 15–17 must not own the peer RPC table")
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_validation_credits")
+	require.NoError(t, err)
+	require.True(t, exists, "v6 ID 17 must still create validation credits")
+
+	require.NoError(t, MigratePostgres(ctx, pool))
+
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_peer_rpc_sessions")
+	require.NoError(t, err)
+	require.True(t, exists, "peer RPC sessions must apply at an ID v6 has not recorded")
+	var lastSeen string
+	err = pool.QueryRow(ctx, `
+SELECT column_name FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'devshard_peer_rpc_sessions' AND column_name = 'last_seen'`).
+		Scan(&lastSeen)
+	require.NoError(t, err)
+	require.Equal(t, "last_seen", lastSeen)
+}
+
 func TestMigratePostgres_LeaseIdentityDefaultsBlank(t *testing.T) {
 	ctx := context.Background()
 	pool, cleanup := setupDevshardPostgresPool(t, nil)

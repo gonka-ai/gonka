@@ -172,7 +172,7 @@ func (r *obsTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) uin
 
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
-		ResponseHash: r.stub.ResponseHash,
+		ResponseHash: r.stub.ResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens:  r.stub.InputTokens,
 		OutputTokens: r.stub.OutputTokens,
 		ExecutorSlot: executorSlot,
@@ -502,7 +502,7 @@ func TestHost_ValidateAsync_DoesNotRecordObsBeforeDiff(t *testing.T) {
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		InferenceId: 1, ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40,
 		ExecutorSlot: 1, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
@@ -562,7 +562,7 @@ func TestHost_ValidateAsync_RecordsObsAfterDiffApplied(t *testing.T) {
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		InferenceId: 1, ResponseHash: engine.ResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80, OutputTokens: 40,
 		ExecutorSlot: 1, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)

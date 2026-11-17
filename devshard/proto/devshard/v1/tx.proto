@@ -19,6 +19,11 @@ message MsgStartInference {
   int64  started_at = 6;
   uint64 observed_height = 7;
   bytes  observed_block_hash = 8;
+  // protocol_version is the destshard runtime the gateway bound for this
+  // escrow (approved_versions.name / route prefix). It is inside the
+  // user-signed Diff so a later ChallengeReceipt can prove which version
+  // may CreateSession on a host the gateway never pinged.
+  string protocol_version = 9;
 }
 
 message MsgConfirmStart {
@@ -39,6 +44,7 @@ message MsgFinishInference {
   string escrow_id = 7;
   uint64 observed_height = 8;
   bytes  observed_block_hash = 9;
+  bytes  served_hash = 10;
 }
 
 message MsgTimeoutInference {
@@ -70,6 +76,9 @@ message ErrorMissVote {
 }
 
 message MsgValidation {
+  // Proposer_sig is over CanonicalSignedBytes with domain
+  // "devshard.validation.v1". Field layout matches MsgValidationVote; the
+  // domain tag is what keeps the signatures from being interchangeable.
   uint64 inference_id = 1;
   uint32 validator_slot = 2;
   bool   valid = 3;
@@ -78,6 +87,8 @@ message MsgValidation {
 }
 
 message MsgValidationVote {
+  // Proposer_sig is over CanonicalSignedBytes with domain
+  // "devshard.validationvote.v1". See MsgValidation.
   uint64 inference_id = 1;
   uint32 voter_slot = 2;
   bool   vote_valid = 3;

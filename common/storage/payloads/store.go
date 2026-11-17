@@ -8,6 +8,7 @@ import (
 
 	"common/logging"
 	"common/storage/pgpool"
+	"common/storage/pgtimeouts"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -48,6 +49,7 @@ func newPostgresStorage(ctx context.Context) (*postgresStorage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
+	pgtimeouts.ApplyConnConfig(cfg.ConnConfig)
 	// Same cap as the session pool. An uncapped pool follows the CPU count,
 	// and every HA version holds one.
 	if err := pgpool.ConfigureMaxConns(cfg); err != nil {
@@ -105,7 +107,7 @@ func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId
 	if err := s.ensurePartition(ctx, epochId); err != nil {
 		return err
 	}
-	_, err := s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`INSERT INTO payload_storage (escrow_id, inference_id, epoch_id, prompt_payload, response_payload)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (escrow_id, inference_id, epoch_id) DO NOTHING`,
@@ -113,6 +115,9 @@ func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId
 	)
 	if err != nil {
 		return fmt.Errorf("payloads: store: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAlreadyStored
 	}
 	return nil
 }

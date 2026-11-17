@@ -26,6 +26,18 @@ func TestMemory_AppendDiff_GetDiffs(t *testing.T) {
 	runAppendDiff_GetDiffs(t, NewMemory())
 }
 
+func TestMemory_DiffSizes(t *testing.T) {
+	runDiffSizes(t, NewMemory())
+}
+
+func TestMemory_DiffStateHash(t *testing.T) {
+	runDiffStateHash(t, NewMemory())
+}
+
+func TestMemory_GetDiffWires(t *testing.T) {
+	runGetDiffWires(t, NewMemory())
+}
+
 func TestMemory_GetSignatures(t *testing.T) {
 	runGetSignatures(t, NewMemory())
 }
@@ -52,6 +64,10 @@ func TestMemory_SealedInferenceBulkInsert(t *testing.T) {
 
 func TestMemory_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, NewMemory())
+}
+
+func TestMemory_ValidationObsRebuildPending(t *testing.T) {
+	runValidationObsRebuildPending(t, NewMemory())
 }
 
 func TestMemory_AddSignature(t *testing.T) {

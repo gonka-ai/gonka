@@ -14,6 +14,7 @@ import (
 	"common/completionapi"
 
 	"devshard/host"
+	"devshard/internal/testutil"
 	"devshard/types"
 	"devshard/user"
 )
@@ -55,7 +56,7 @@ func TestErrorMissRunnable_RequiresSignedFinish(t *testing.T) {
 		errorTerminal: true,
 		resp: &host.HostResponse{
 			Mempool: []*types.DevshardTx{
-				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}},
+				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7}}},
 			},
 		},
 	}
@@ -66,7 +67,7 @@ func TestErrorMissRunnable_RequiresSignedFinish(t *testing.T) {
 		nonce: 7,
 		resp: &host.HostResponse{
 			Mempool: []*types.DevshardTx{
-				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7}}},
+				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 7}}},
 			},
 		},
 	}
@@ -300,7 +301,7 @@ func TestErrorMissArtifacts_FinishFromMempool(t *testing.T) {
 		errorStreamLines: []string{`data: {"error":{"code":500,"message":"x","type":"InternalServerError"}}`, `data: [DONE]`},
 		resp: &host.HostResponse{
 			Mempool: []*types.DevshardTx{
-				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 3}}},
+				{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: 3}}},
 			},
 		},
 	}
