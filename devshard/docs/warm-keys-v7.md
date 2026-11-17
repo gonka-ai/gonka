@@ -133,7 +133,9 @@ still loading after 25 ms reports pending before ordinary peer RPC deadlines.
 V7 challenge replies carry available receipt/Finish evidence together with an
 independent `evidence_pending` flag. The separate receipt is selected from a
 surviving authorized ConfirmStart. HTTP and Connect clients preserve those
-proofs when reporting pending. The verifier checks available proofs first,
+proofs when reporting pending. A verifier can choose another independently
+verified ConfirmStart when that receipt hint is unavailable in its grant view.
+The verifier checks available proofs first,
 using its own inference phase, and applies bounded deferrals when the proof
 it needs is missing. The executor may still be pending while a verifier has
 already applied ConfirmStart. An unresolved Finish therefore stays pending

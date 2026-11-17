@@ -453,15 +453,15 @@ func judgeRefusedChallenge(
 		// The caller decides whether this error is an answer or no HTTP response.
 		return refusedUnreachable, err
 	}
-	if len(receipt) == 0 {
-		if err != nil {
-			return refusedUnreachable, err
-		}
-		return refusedNoReceipt, nil
-	}
-	// The receipt counts only as the ExecutorSig of a queued ConfirmStart
-	// that verifies for this escrow and this inference.
+	// Receipt is a hint: different replicas and grant views may prefer
+	// different signatures. Every independently verified ConfirmStart proves
+	// liveness, as on the local-mempool fast path above.
 	confirmTx, pending := verifiedConfirmOrPending(ev, inferenceID, rec, receipt, mempool, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	if confirmTx == nil && len(receipt) > 0 {
+		alternative, morePending := verifiedConfirmOrPending(ev, inferenceID, rec, nil, mempool, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+		confirmTx = alternative
+		pending = pending || morePending
+	}
 	if confirmTx == nil {
 		if pending {
 			return refusedNoReceipt, evidencePendingErr(inferenceID)
