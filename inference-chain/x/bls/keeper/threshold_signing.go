@@ -387,7 +387,6 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	}
 
 	writeCache()
-	ctx.EventManager().EmitEvents(cacheCtx.EventManager().Events())
 
 	k.Logger().Info("Automatically retrying threshold signing request",
 		"request_id", fmt.Sprintf("%x", retryReq.RequestId),
@@ -806,7 +805,6 @@ func (k Keeper) maybeCloseRetryAfterFailedPostProcess(ctx sdk.Context, request *
 	}
 
 	writeCache()
-	ctx.EventManager().EmitEvents(cacheCtx.EventManager().Events())
 	return closeRetry
 }
 
@@ -818,7 +816,6 @@ func (k Keeper) runThresholdSigningCompletedPostProcess(ctx sdk.Context, request
 	}
 
 	writeCache()
-	ctx.EventManager().EmitEvents(cacheCtx.EventManager().Events())
 	return nil
 }
 
