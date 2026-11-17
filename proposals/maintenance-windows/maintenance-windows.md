@@ -147,7 +147,9 @@ If a participant is already down, marked down, or jailed before the window begin
 The first version explicitly rejects maintenance windows that overlap the following critical ranges:
 
 1. PoC commit / exchange window
-2. DKG phase
+2. DKG phase: the inclusive interval from `EndOfPoCValidation` through
+   `SetNewValidators`. DKG starts when PoC validation ends; protecting only the
+   validator-switch block leaves dealing, verification, and disputes uncovered.
 
 The rationale is operational and safety-oriented:
 
