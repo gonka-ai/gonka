@@ -46,7 +46,7 @@ func initRootCmd(
 		snapshot.Cmd(newApp),
 	)
 
-	server.AddCommands(rootCmd, app.DefaultNodeHome, newApp, appExport, addModuleInitFlags)
+	addServerCommands(rootCmd)
 	server.AddTestnetCreatorCommand(rootCmd, newApp, addModuleInitFlags)
 
 	// add keybase, auxiliary RPC, query, genesis, and tx child commands
@@ -67,6 +67,16 @@ func initRootCmd(
 		SetTrustedBlock(),
 		PatchToml(),
 	)
+}
+
+// addServerCommands is server.AddCommands with application.db opened by openAppDB.
+func addServerCommands(rootCmd *cobra.Command) {
+	server.AddCommandsWithStartCmdOptions(rootCmd, app.DefaultNodeHome, newApp, appExport, server.StartCmdOptions{
+		AddFlags: addModuleInitFlags,
+		DBOpener: openAppDB,
+	})
+	// AddCommandsWithStartCmdOptions does not add this one; AddCommands did.
+	rootCmd.AddCommand(server.ModuleHashByHeightQuery(newApp))
 }
 
 func addModuleInitFlags(startCmd *cobra.Command) {
