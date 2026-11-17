@@ -326,6 +326,16 @@ const openapiSpec = `{
         }
       }
     },
+    "/v1/debug/timeout-clock": {
+      "get": {
+        "summary": "Timeout clock divergence debug",
+        "description": "Admin endpoint. Per-escrow heightsync_timeout_clock, the process mismatch total, and the last wall/stamp sample. Not a Prometheus series.",
+        "security": [{ "AdminBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Timeout clock debug snapshot" }
+        }
+      }
+    },
     "/v1/debug/heightsync": {
       "get": {
         "summary": "Height-sync operator debug",

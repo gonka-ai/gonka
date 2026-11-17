@@ -26,6 +26,10 @@ func MustStateMachine(
 	opts ...state.SMOption,
 ) *state.StateMachine {
 	t.Helper()
+	// Production sessions use the v7 tag and reject a start while the floor
+	// is empty. Fixtures that are not about that rule stay on v6, and a
+	// version passed in opts still wins.
+	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion("v6")}, opts...)
 	sm, err := state.NewStateMachine(
 		escrowID, config, group, balance, userAddr, verifier,
 		testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance),
@@ -50,7 +54,11 @@ func ArmRefusalDue(t *testing.T, sm *state.StateMachine, inferenceID uint64) {
 		floor = heightsync.NewFloorIndex()
 	}
 	due := uint64(startHeight + st.Config.RefusalTimeout)
-	floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{Signer: 0, Height: due, Hash: []byte{0x02}}})
+	// Carry TimeMs so TimeoutDue (StoredAt-only under lock) is armed without a map row.
+	floor.Observe(st.LatestNonce, []heightsync.FloorClaim{{
+		Signer: 0, Height: due, Hash: []byte{0x02},
+		TimeMs: int64(due) * testutil.HeightClockBlockMs,
+	}})
 	require.NoError(t, sm.RestoreStateWithFloor(st, floor))
 	require.NoError(t, sm.TimeoutDue(inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED))
 }

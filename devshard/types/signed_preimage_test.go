@@ -21,6 +21,7 @@ var signedProtoFullNames = map[string]struct{}{
 	"devshard.v1.ExecutorReceiptContent":     {},
 	"devshard.v1.TimeoutVoteContent":         {},
 	"devshard.v1.ErrorMissVoteContent":       {},
+	"devshard.v1.ChallengeVoteContent":       {},
 	"devshard.v1.StateSignatureContent":      {},
 	"devshard.v1.MsgFinishInference":         {},
 	"devshard.v1.MsgValidation":              {},
@@ -38,6 +39,8 @@ var unsignedProtoFullNames = map[string]struct{}{
 	"devshard.v1.TimeoutVote":               {},
 	"devshard.v1.MsgErrorMiss":              {},
 	"devshard.v1.ErrorMissVote":             {},
+	"devshard.v1.MsgChallenge":              {},
+	"devshard.v1.ChallengeVote":             {},
 	"devshard.v1.MsgFinalizeRound":          {},
 	"devshard.v1.MsgRevealSeed":             {},
 	"devshard.v1.MsgForceHeightSyncTurn":    {},
@@ -346,6 +349,108 @@ func TestCanonicalSignedBytesRejectsTimeoutErrorMissReplay(t *testing.T) {
 	}
 	if recovered == signer.Address() {
 		t.Fatal("timeout-vote signature verified as an error-miss vote")
+	}
+}
+
+func TestCanonicalSignedBytesRejectsErrorMissChallengeReplay(t *testing.T) {
+	signer, err := signing.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	responseHash := make([]byte, 32)
+	responseHash[0] = 7
+
+	miss := &ErrorMissVoteContent{
+		EscrowId:    "escrow-1",
+		InferenceId: 1,
+		Accept:      true,
+	}
+	missPreimage, err := CanonicalSignedBytes(miss)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := signer.Sign(missPreimage)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Fault 1 and accept=true are the same varint at field 3.
+	challenge := &ChallengeVoteContent{
+		EscrowId:    "escrow-1",
+		InferenceId: 1,
+		Fault:       ChallengeFault_CHALLENGE_FAULT_PAYLOAD_UNAVAILABLE,
+	}
+	challengePreimage, err := CanonicalSignedBytes(challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if SignedPreimageDomain(challenge) == SignedPreimageDomain(miss) {
+		t.Fatal("challenge votes and error-miss votes share a domain tag")
+	}
+	if string(missPreimage) == string(challengePreimage) {
+		t.Fatal("an error-miss accept and a challenge fault must not share a preimage")
+	}
+	recovered, err := verifier.RecoverAddress(challengePreimage, sig)
+	if err == nil && recovered == signer.Address() {
+		t.Fatal("error-miss signature verified as a challenge vote")
+	}
+}
+
+func TestChallengeVoteSignatureBindsVerdict(t *testing.T) {
+	signer, err := signing.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	signed := &ChallengeVoteContent{
+		EscrowId:     "escrow-1",
+		InferenceId:  9,
+		Fault:        ChallengeFault_CHALLENGE_FAULT_HASH_MISMATCH,
+		Check:        ChallengeCheck_CHALLENGE_CHECK_HASH,
+		Deviation:    -3,
+		ResponseHash: []byte{1, 2, 3},
+	}
+	preimage, err := CanonicalSignedBytes(signed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := signer.Sign(preimage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered, err := verifier.RecoverAddress(preimage, sig); err != nil || recovered != signer.Address() {
+		t.Fatalf("signature does not verify over its own content: %v", err)
+	}
+
+	edits := map[string]func(*ChallengeVoteContent){
+		"fault":         func(c *ChallengeVoteContent) { c.Fault = ChallengeFault_CHALLENGE_FAULT_NONE },
+		"check":         func(c *ChallengeVoteContent) { c.Check = ChallengeCheck_CHALLENGE_CHECK_POSITIONS },
+		"deviation":     func(c *ChallengeVoteContent) { c.Deviation = 0 },
+		"response hash": func(c *ChallengeVoteContent) { c.ResponseHash = []byte{1, 2, 4} },
+		"inference id":  func(c *ChallengeVoteContent) { c.InferenceId = 10 },
+		"escrow id":     func(c *ChallengeVoteContent) { c.EscrowId = "escrow-2" },
+	}
+	for name, edit := range edits {
+		t.Run(name, func(t *testing.T) {
+			changed := &ChallengeVoteContent{
+				EscrowId:     signed.EscrowId,
+				InferenceId:  signed.InferenceId,
+				Fault:        signed.Fault,
+				Check:        signed.Check,
+				Deviation:    signed.Deviation,
+				ResponseHash: append([]byte(nil), signed.ResponseHash...),
+			}
+			edit(changed)
+			changedPreimage, err := CanonicalSignedBytes(changed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recovered, err := verifier.RecoverAddress(changedPreimage, sig)
+			if err == nil && recovered == signer.Address() {
+				t.Fatalf("the vote signature still verifies with another %s", name)
+			}
+		})
 	}
 }
 

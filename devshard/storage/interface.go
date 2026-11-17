@@ -165,6 +165,7 @@ type EscrowCacheInfo struct {
 	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
 	RefusalTimeout            int64    `json:"refusal_timeout,omitempty"`
 	ExecutionTimeout          int64    `json:"execution_timeout,omitempty"`
+	HeightsyncTimeoutClock    bool     `json:"heightsync_timeout_clock,omitempty"`
 	EpochID                   uint64   `json:"epoch_id"`
 	// SlotURLs is {validator address → InferenceUrl} captured at warm time
 	// when this host is in Slots. Local directory metadata, not the state
@@ -253,4 +254,8 @@ type InferenceRow struct {
 	SealedActualCost        uint64
 	SealedStartedAtHeight   int64
 	SealedConfirmedAtHeight int64
+	// SealedChallenged says a challenge was applied to the record before
+	// the seal. Nothing reads it from the seal yet; it is kept so the sealed
+	// snapshot says the same as the live record did.
+	SealedChallenged bool
 }

@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -13,7 +12,6 @@ import (
 	"connectrpc.com/connect"
 
 	"devshard/transport/rpcpb/rpcpbconnect"
-	"devshard/types"
 )
 
 // Non-inference 429/503 (and transient dial failures) retry with exponential
@@ -92,15 +90,10 @@ func IsStorageBusy(err error) bool {
 	return isUnavailableWithCode(err, DevshardErrorStorageBusy)
 }
 
+// IsHeaderPending reports a legacy header_pending unavailable tag.
+// Deprecated: challenge/apply no longer emit or require this wire code.
 func IsHeaderPending(err error) bool {
 	return isUnavailableWithCode(err, DevshardErrorHeaderPending)
-}
-
-func TagHeaderPending(err error) error {
-	if err == nil || errors.Is(err, types.ErrHeaderPending) || !IsHeaderPending(err) {
-		return err
-	}
-	return fmt.Errorf("%w: %w", types.ErrHeaderPending, err)
 }
 
 func isUnavailableWithCode(err error, code string) bool {
@@ -233,6 +226,8 @@ func connectAdmissionPath(escrowID, procedure string) string {
 		return "/sessions/" + escrowID + "/verify-timeout"
 	case rpcpbconnect.SessionServiceVerifyErrorMissProcedure:
 		return "/sessions/" + escrowID + "/verify-error-miss"
+	case rpcpbconnect.SessionServiceVerifyChallengeProcedure:
+		return "/sessions/" + escrowID + "/verify-challenge"
 	case rpcpbconnect.SessionServiceChallengeReceiptProcedure:
 		return "/sessions/" + escrowID + "/challenge-receipt"
 	case rpcpbconnect.SessionServiceSeedHeightSyncProcedure:

@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"common/httpguard"
+
+	"devshard/state"
 )
 
 // TestMain enables the permissive dialer for this package's tests. Height-sync
@@ -13,5 +15,6 @@ import (
 // by default) and would otherwise reject every loopback connection.
 func TestMain(m *testing.M) {
 	httpguard.SetAllowPrivate(true)
+	state.SetFixtureProtocolVersion("v6")
 	os.Exit(m.Run())
 }

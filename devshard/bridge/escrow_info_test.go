@@ -26,6 +26,7 @@ func TestEscrowInfoFromQuery_MapsSessionTimeouts(t *testing.T) {
 		VoteThresholdFactor:       67,
 		RefusalTimeout:            5,
 		ExecutionTimeout:          17,
+		HeightsyncTimeoutClock:    true,
 		EpochIndex:                3,
 		Settled:                   true,
 	})
@@ -46,8 +47,22 @@ func TestEscrowInfoFromQuery_MapsSessionTimeouts(t *testing.T) {
 	require.Equal(t, uint32(67), got.VoteThresholdFactor)
 	require.Equal(t, int64(5), got.RefusalTimeout)
 	require.Equal(t, int64(17), got.ExecutionTimeout)
+	require.True(t, got.HeightsyncTimeoutClock)
 	require.Equal(t, uint64(3), got.EpochID)
 	require.True(t, got.Settled)
+}
+
+func TestEscrowInfoFromQuery_HeightsyncTimeoutClockOmittedIsFalse(t *testing.T) {
+	got, err := EscrowInfoFromQuery(1, &inferencetypes.DevshardEscrow{
+		Creator: "gonka1creator",
+		AppHash: "0102",
+		Slots:   []string{"h0"},
+		// HeightsyncTimeoutClock omitted → pre-0.2.18
+	})
+	require.NoError(t, err)
+	require.False(t, got.HeightsyncTimeoutClock)
+	cfg := SessionConfigAtBind(1, got)
+	require.False(t, cfg.HeightsyncTimeoutClock)
 }
 
 func TestEscrowInfoFromQuery_NilEscrow(t *testing.T) {

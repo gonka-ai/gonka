@@ -14,6 +14,21 @@ Previous line: [release-0.2.15-v5.md](./release-0.2.15-v5.md).
 Peer RPC path: [grpc-transport-connection.md](./grpc-transport-connection.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
 Load simulation: [gateway-load-simulation.md](./gateway-load-simulation.md).
+Bounty: [v6-bounty-estimation.md](./v6-bounty-estimation.md) has the detailed
+bounty explanation and estimation (proposed payouts, lead-role notes, and the
+two supporting methods).
+
+## Summary
+
+v6 is mainly a performance and operability release. Authenticated peer RPC over
+HTTP/2 (with HTTP/1.1 fallback on the old wrapping), gzip on that path, and
+per-peer / per-connection rate limits land alongside the Docker load-test
+harness and a set of security patches.
+
+On testnet load tests, sustained RPS improved by roughly **30–50%** versus the
+previous line. Steady-state memory is lower, and catch-up no longer spikes
+process memory: diffs are paged (at most 64 nonces / 8 MiB per read) and the
+gateway sends at most 200 diffs per chunk instead of holding the whole journal.
 
 ## What this release is
 
@@ -570,3 +585,33 @@ least; S and H if that ingress is still in the estate.
 - Discovery is per scheme/host/port. Explicit protocol mismatch is cached for 30 minutes ± 10%; connection closure uses backoff from 30 seconds to 30 minutes. Empty RPC twins during upgrade use bounded Connect/H1 forwarding through the original JSON placement. Overload may return 503; native gRPC cannot use H1. Follow the upgrade procedure in the [canonical host guide](https://github.com/gonka-ai/gonka-docs/pull/1515).
 - Transport compatibility supports mixed generations: a router without an available `:8081` RPC pool uses bounded Connect/H1 fallback through the JSON placement. This does not authorize arbitrary component replacement order; follow the canonical host guide and updater rollback result.
 - The public `proxy-router` is still one process on one host. The bundled PostgreSQL is still not database HA.
+
+## Proposed payout
+
+USDT (and vested GNK where noted) for the v6 line. The table below is the
+proposed payout. [v6-bounty-estimation.md](./v6-bounty-estimation.md) has the
+detailed bounty explanation and estimation: method notes, PR breakdowns, and
+lead-role context.
+
+Lead roles: Alexander Kuprin (devshard), Daniil Yankouski (gateway), Anatoly
+Kuznetsov (testing automation). Lead work includes design, testing, and
+maintenance across the release and is not scored with the same per-PR metrics
+as other contributors. Shared load-test work on open [#2089](https://github.com/gonka-ai/gonka/pull/2089)
+was done substantially by Yankouski and Kuznetsov, not only by the PR author.
+
+| GitHub | Name | Address | Payout |
+| --- | --- | --- | --- |
+| a-kuprin / akup | Alexander Kuprin | `gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56` | 20,000 USDT + **30,000 vested GNK** |
+| qdanik | Daniil Yankouski | `gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8` | 14,500 USDT + **55,000 vested GNK** |
+| snevolin | Stanislav Nevolin | `gonka1vnupswg7qz2w5k5ax6zrp02mxmln6arnvjc87h` | 9,000 USDT |
+| aikuznetsov | Anatoly Kuznetsov | `gonka1frlfyz2wtltdy47dq3w9pwc8ruvjvlthp2lh53` | 19,125 USDT |
+| zpoken | | `gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt` (joint with staaason; confirm) | mainnet upgrade |
+| staaason | Stanislav Karashchuk | `gonka1s8zggm642e3kncy48c7vxwmeclt2wxyyd8qtdt` (joint with zpoken; confirm) | mainnet upgrade |
+| cyberdelamain | Delamain | `gonka15u0r3mf6t7zsfuslusnyt7hsjrq357yumpe8st` | 5,000 USDT |
+| vitaly-andr | | `gonka1uqt4hue8tljwwgdkvtthyl3n8kkkqtydyns4cm` | 500 USDT |
+| redstartechno | | `gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l` | 300 USDT |
+| Ryanchen911 | | `gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57` | 500 USDT |
+| kaileido | | paid via @qdanik | — |
+| aleksandr-cstl | Aleksandr Khaustov | UNKNOWN — never paid on chain, ask | 300 USDT |
+
+**USDT subtotal (numeric rows):** 20,000 + 14,500 + 9,000 + 19,125 + 5,000 + 500 + 300 + 500 + 300 = **69,225**. zpoken and staaason are paid on the mainnet upgrade path (joint wallet). kaileido is included in qdanik.

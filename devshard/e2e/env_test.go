@@ -1,9 +1,11 @@
 package e2e
 
 import (
+	"net/http"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -41,6 +43,25 @@ func requireE2EEnabled(t *testing.T) {
 	if os.Getenv("DEVSHARD_E2E") != "1" {
 		t.Skip("set DEVSHARD_E2E=1 to run Docker-backed devshard e2e tests")
 	}
+}
+
+// waitNextTrafficSlot waits until the next assigned executor is wantSlot.
+// Bootstrap heartbeats raise the floor before chat, so the next executor is
+// whichever slot the cadence has reached.
+func waitNextTrafficSlot(t *testing.T, client *http.Client, clientURL string, hostCount, wantSlot int) int {
+	t.Helper()
+	require.Greater(t, hostCount, 0)
+	var nextSlot int
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		nextSlot = int((testutil.LatestSessionNonce(t, client, clientURL) + 1) % uint64(hostCount))
+		if nextSlot == wantSlot || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	require.Equal(t, wantSlot, nextSlot, "test setup expects slot %d to own the next traffic nonce", wantSlot)
+	return nextSlot
 }
 
 func requiredImages(t *testing.T) e2eImages {

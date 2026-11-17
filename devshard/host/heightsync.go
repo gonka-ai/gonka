@@ -61,6 +61,9 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 
 	for _, item := range mine {
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, now)
+		if ack == nil {
+			continue
+		}
 		if err := heightsync.SignAck(h.signer, ack); err != nil {
 			logging.Warn("height ack sign failed", "subsystem", "heightsync",
 				"escrow", h.escrowID, "nonce", item.nonce, "slot", item.slot, "error", err)
@@ -92,6 +95,44 @@ func headerStamp(hdr *blocks.Header, err error) (uint64, []byte) {
 		return 0, nil
 	}
 	return uint64(hdr.Height), append([]byte(nil), hdr.BlockHash...)
+}
+
+func headerStampTime(hdr *blocks.Header, err error) int64 {
+	if err != nil || hdr == nil {
+		return 0
+	}
+	return heightsync.HeaderTimeMs(hdr.Time)
+}
+
+// stampTimeSource is the host's non-fetching header-time map, if installed.
+func (h *Host) stampTimeSource() heightsync.StoredStampTime {
+	if h == nil || h.sm == nil {
+		return nil
+	}
+	src, _ := h.sm.HeaderTimes().(heightsync.StoredStampTime)
+	return src
+}
+
+// floorStampCandidate returns F(m).TimeMs when stamp height is exactly that
+// floor height. Optimistic ResolveObservedTimeMs candidate on map miss so a
+// floor carry does not stamp time 0.
+func (h *Host) floorStampCandidate(producingNonce, height uint64) int64 {
+	if h == nil || h.sm == nil || height == 0 {
+		return 0
+	}
+	p, ok := h.sm.HeightSyncFloorPointAsOf(producingNonce)
+	if !ok || p.Height != height || p.TimeMs <= 0 {
+		return 0
+	}
+	return p.TimeMs
+}
+
+// resolveStampTime applies the optimistic map rule for a stamp the host is
+// about to sign. candidate is the tip/event time when the stamp height is that
+// tip, or floor TimeMs when carrying F without a tip time. Caller holds h.mu
+// when the map may race with apply; StoredAt itself is concurrency-safe.
+func (h *Host) resolveStampTime(height uint64, hash []byte, candidate int64) (int64, error) {
+	return heightsync.ResolveObservedTimeMs(h.stampTimeSource(), height, hash, candidate)
 }
 
 func (h *Host) oracleNeededLocked(req HostRequest, newlyApplied []types.Diff) bool {
@@ -166,11 +207,25 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 		h.peerSeen.MarkFresh(item.slot, height, now)
 	}
 	refH, refHash := h.referenceStamp(item.nonce+1, height, hash)
+	candidate := int64(0)
+	if refH == height {
+		candidate = headerStampTime(hdr, hdrErr)
+	}
+	if candidate <= 0 {
+		candidate = h.floorStampCandidate(item.nonce+1, refH)
+	}
+	refTime, err := h.resolveStampTime(refH, refHash, candidate)
+	if err != nil {
+		logging.Warn("height ack stamp time rejected", "subsystem", "heightsync",
+			"escrow", h.escrowID, "slot", item.slot, "height", refH, "error", err)
+		return nil
+	}
 	return &types.MsgHeightAck{
 		RefNonce:          item.nonce,
 		SlotId:            item.slot,
 		ObservedHeight:    refH,
 		ObservedBlockHash: refHash,
+		ObservedTimeMs:    refTime,
 		SyncState:         st,
 		PeerSeen:          h.peerSeen.Bytes(),
 	}

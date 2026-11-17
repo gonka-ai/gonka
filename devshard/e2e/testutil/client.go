@@ -3,6 +3,7 @@ package testutil
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -117,21 +118,35 @@ func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {
 
 func GetJSONArray(t *testing.T, client *http.Client, url string) []any {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	decoded, err := getJSONArrayE(client, url)
 	require.NoError(t, err)
+	DebugLogf(t, "GET %s items=%d", url, len(decoded))
+	return decoded
+}
+
+func getJSONArrayE(client *http.Client, url string) ([]any, error) {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, err
+	}
 	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
-	DebugLogf(t, "GET %s", url)
 
 	resp, err := client.Do(req)
-	require.NoError(t, err)
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	DebugLogf(t, "GET %s status=%d response=%s", url, resp.StatusCode, string(respBody))
-	require.Less(t, resp.StatusCode, 300, "GET %s returned %d: %s", url, resp.StatusCode, string(respBody))
-
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("GET %s returned %d: %s", url, resp.StatusCode, string(respBody))
+	}
 	var decoded []any
-	require.NoError(t, json.Unmarshal(respBody, &decoded), "response body: %s", string(respBody))
-	return decoded
+	if err := json.Unmarshal(respBody, &decoded); err != nil {
+		return nil, fmt.Errorf("decode %s: %w", url, err)
+	}
+	return decoded, nil
 }

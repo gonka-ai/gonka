@@ -45,21 +45,27 @@ func auditRaise(t *testing.T, sm *state.StateMachine, hs []*signing.Secp256k1Sig
 	ref := sm.LatestNonce() + 1
 	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{SlotsNum: uint64(len(hs)), Reason: string(heightsync.ReasonQuietSession)}}})
 	slot := uint32(ref % uint64(len(hs)))
-	ack := &types.MsgHeightAck{RefNonce: ref, SlotId: slot, ObservedHeight: height, ObservedBlockHash: []byte("block"), SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
+	timeMs := int64(height) * testutil.HeightClockBlockMs
+	ack := &types.MsgHeightAck{RefNonce: ref, SlotId: slot, ObservedHeight: height, ObservedBlockHash: []byte("block"), ObservedTimeMs: timeMs, SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff}}
 	require.NoError(t, heightsync.SignAck(hs[slot], ack))
 	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}})
 }
 func auditStart(t *testing.T, sm *state.StateMachine, id uint64) {
-	h, hash, _ := sm.HeightSyncFloorAsOf(sm.LatestNonce() + 1)
-	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{InferenceId: id, PromptHash: testutil.TestPromptHash[:], Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, ObservedHeight: h, ObservedBlockHash: hash}}})
+	p, _ := sm.HeightSyncFloorPointAsOf(sm.LatestNonce() + 1)
+	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: id, PromptHash: testutil.TestPromptHash[:], Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+		ObservedHeight: p.Height, ObservedBlockHash: p.Hash, ObservedTimeMs: p.TimeMs,
+	}}})
 }
 func auditConfirm(t *testing.T, sm *state.StateMachine, id uint64, signer signing.Signer, h uint64) *types.MsgConfirmStart {
 	var hash []byte
+	var timeMs int64
 	if h > 0 {
 		hash = []byte("block")
+		timeMs = int64(h) * testutil.HeightClockBlockMs
 	}
-	sig := testutil.SignExecutorReceipt(t, signer, "escrow-1", id, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
-	return &types.MsgConfirmStart{InferenceId: id, ExecutorSig: sig, ObservedHeight: h, ObservedBlockHash: hash}
+	sig := testutil.SignExecutorReceipt(t, signer, "escrow-1", id, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash, TimeMs: timeMs})
+	return &types.MsgConfirmStart{InferenceId: id, ExecutorSig: sig, ObservedHeight: h, ObservedBlockHash: hash, ObservedTimeMs: timeMs}
 }
 func auditCS(c *types.MsgConfirmStart) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: c}}

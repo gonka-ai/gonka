@@ -444,6 +444,7 @@ func runSealedInferenceBatchInsert(t *testing.T, store Storage) {
 		SealedActualCost:        30,
 		SealedStartedAtHeight:   1000,
 		SealedConfirmedAtHeight: 2000,
+		SealedChallenged:        true,
 	}
 	bare := InferenceRow{InferenceID: 8, SealedNonce: 12}
 	require.NoError(t, store.InsertSealedInference("escrow-1", InferenceRow{InferenceID: 8, SealedNonce: 1}))

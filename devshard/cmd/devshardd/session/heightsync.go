@@ -19,6 +19,7 @@ import (
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/hostevents"
 	"devshard/transport"
 
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
@@ -91,7 +92,7 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 	}
 
 	m.chainOracle = oracle
-	m.headerTimes = headertime.New(oracle)
+	m.headerTimes = headertime.New(headertime.WithFiller(headertime.OracleFiller(oracle, headertime.OriginChain, false)))
 	m.heightSync = sched
 	m.heightSyncTip = cache
 	m.cometLiveness = func(ok bool) {
@@ -106,6 +107,62 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 		"direct_chain", chainOracle != nil,
 	)
 	return nil
+}
+
+// HeaderTimes is the process header-time map.
+func (m *HostManager) HeaderTimes() *headertime.Source {
+	if m == nil {
+		return nil
+	}
+	return m.headerTimes
+}
+
+// SetHostEventPoller keeps the process poller so status can read BlockFeedLive.
+func (m *HostManager) SetHostEventPoller(p *hostevents.Poller) {
+	if m == nil {
+		return
+	}
+	m.hostEvents = p
+}
+
+// HostEventPoller is the process GetHostEvents loop. Nil when it has not started.
+func (m *HostManager) HostEventPoller() *hostevents.Poller {
+	if m == nil {
+		return nil
+	}
+	return m.hostEvents
+}
+
+// AttachHeaderTimeCache restores an already-caught-up map from local
+// SQLite or Postgres. A failed open leaves the in-memory map empty.
+func (m *HostManager) AttachHeaderTimeCache(ctx context.Context, sqlitePath string) {
+	if m == nil || m.headerTimes == nil || sqlitePath == "" {
+		return
+	}
+	c, err := headertime.OpenCache(ctx, sqlitePath)
+	if err != nil {
+		logging.Warn("header times: cache unavailable", inferenceTypes.System, "error", err, "path", sqlitePath)
+		return
+	}
+	m.headerTimes.SetCache(c)
+}
+
+// SeedHeaderTimes stores the oracle's latest header before the Comet
+// subscription starts. Later NewBlock events extend that tip. A failed
+// read leaves the map empty; the subscription still starts.
+func (m *HostManager) SeedHeaderTimes(ctx context.Context) {
+	if m == nil || m.headerTimes == nil || m.chainOracle == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	h, err := m.chainOracle.Latest(ctx)
+	if err != nil || h == nil || h.Height <= 0 || blocks.IsDummyHeader(h) {
+		logging.Warn("header times: latest seed", inferenceTypes.System, "error", err)
+		return
+	}
+	m.headerTimes.Observe(h, headertime.OriginChain, false)
+	logging.Info("header times: seeded latest", inferenceTypes.System, "height", h.Height)
 }
 
 // ObserveChainHeader records a Comet NewBlock on the height-sync tip cache.
@@ -132,6 +189,12 @@ func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
 	logging.Debug("heightsync: comet observe", inferenceTypes.System,
 		"height", h.Height, "hash_len", len(h.BlockHash), "chain_id", h.ChainID)
 	tip.Observe(h)
+	// The host's own Comet socket writes the one header-time map. verified
+	// because this process is subscribed to its own chain. The poller writes
+	// the same map later with OriginDAPI.
+	if m.headerTimes != nil {
+		m.headerTimes.Observe(h, headertime.OriginComet, true)
+	}
 	m.SetCometConnected(true)
 }
 
@@ -159,6 +222,9 @@ func (m *HostManager) CloseHeightSync() {
 	if m.heightSyncCloser != nil {
 		m.heightSyncCloser()
 		m.heightSyncCloser = nil
+	}
+	if m.headerTimes != nil {
+		_ = m.headerTimes.CloseCache()
 	}
 	m.heightSync = nil
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -31,6 +32,14 @@ func main() {
 	st, err := seed.Load(configPath)
 	if err != nil {
 		log.Fatalf("mock-chain seed: %v", err)
+	}
+	if raw := os.Getenv("MOCK_CHAIN_HEIGHTSYNC_TIMEOUT_CLOCK"); raw != "" {
+		on, err := strconv.ParseBool(raw)
+		if err != nil {
+			log.Fatalf("MOCK_CHAIN_HEIGHTSYNC_TIMEOUT_CLOCK: %v", err)
+		}
+		seed.ApplyHeightsyncTimeoutClock(st, on)
+		log.Printf("mock-chain heightsync_timeout_clock=%v", on)
 	}
 
 	rpcSvc, err := rpcface.NewService(st, rpcface.Config{

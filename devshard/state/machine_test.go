@@ -26,7 +26,8 @@ func newTestSM(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64) (
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, balance)
-	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, store)
+	sm, err := NewStateMachine("escrow-1", config, group, balance, user.Address(), verifier, store,
+		WithStateRootAndProtocolVersion("v6"))
 	require.NoError(t, err)
 	return sm, user
 }

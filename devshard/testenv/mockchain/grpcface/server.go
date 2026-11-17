@@ -6,9 +6,9 @@ import (
 	"net"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 
 	"devshard/testenv/mockchain/rpcface"
@@ -40,7 +40,7 @@ func Register(srv *grpc.Server, deps Deps) {
 		panic("mockchain grpc: nil store")
 	}
 	inferencetypes.RegisterQueryServer(srv, NewInferenceServer(deps.Store))
-	cmtservice.RegisterServiceServer(srv, NewCometServer(deps.Store))
+	cmtservice.RegisterServiceServer(srv, NewCometServer(deps.Store, deps.RPC))
 	if deps.RPC != nil {
 		ledger := deps.ledger()
 		authtypes.RegisterQueryServer(srv, newAuthServer(deps.Store))

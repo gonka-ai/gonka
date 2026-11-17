@@ -61,6 +61,9 @@ type Params struct {
 	ExecutionTimeout        int64  `yaml:"execution_timeout"`
 	ValidationRate          uint32 `yaml:"validation_rate"`
 	VoteThresholdFactor     uint32 `yaml:"vote_threshold_factor"`
+	// HeightsyncTimeoutClock nil means false (legacy wall). A set value is
+	// frozen onto escrows created from these params.
+	HeightsyncTimeoutClock *bool `yaml:"heightsync_timeout_clock,omitempty"`
 }
 
 type Participant struct {
@@ -87,6 +90,8 @@ type Escrow struct {
 	// Optional. Omitted values inherit the mock-chain params timeout values.
 	RefusalTimeout   int64 `yaml:"refusal_timeout"`
 	ExecutionTimeout int64 `yaml:"execution_timeout"`
+	// HeightsyncTimeoutClock nil inherits params. False is the legacy wall clock.
+	HeightsyncTimeoutClock *bool `yaml:"heightsync_timeout_clock,omitempty"`
 }
 
 type GranteeBinding struct {
@@ -251,10 +256,10 @@ const (
 	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
 	// as they share join's :80/:443. With the overlay on, pooled hosts'
 	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
-	DefaultProxyService = "proxy"
-	DefaultProxyPort    = 8080
-	ProxyOverlayURL     = "http://proxy:8080"
-	ProxyOverlayEnv     = "TESTENV_PROXY_OVERLAY"
+	DefaultProxyService     = "proxy"
+	DefaultProxyPort        = 8080
+	ProxyOverlayURL         = "http://proxy:8080"
+	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432

@@ -108,7 +108,7 @@ func TestStressSnapshotRecoveryBudget(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 	for _, fixture := range fixtures {
 		clients := buildSnapshotRecoveryStressClients(t, fixture.escrowID, fixture.group, fixture.hosts, fixture.user, latestNonce)
-		recovered, recoveredSM, err := RecoverSession(spy, fixture.user, verifier, fixture.escrowID, testutil.RuntimeTestVersion, fixture.group, clients)
+		recovered, recoveredSM, err := recoverForTest(t, spy, fixture.user, verifier, fixture.escrowID, testutil.RuntimeTestVersion, fixture.group, clients)
 		require.NoError(t, err, "recover %s", fixture.escrowID)
 		require.Equal(t, latestNonce, recovered.Nonce(), "recover nonce %s", fixture.escrowID)
 

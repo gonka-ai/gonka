@@ -124,15 +124,23 @@ func VerifyRefusedProgress(
 	queryTimeout time.Duration,
 	verifyBudget time.Duration,
 	unreachable func(error) bool,
-) (bool, error) {
+) (accept bool, err error) {
 	requestCtx := ctx
-	if err := ctx.Err(); err != nil {
+	if err = ctx.Err(); err != nil {
+		return false, err
+	}
+	var release func(bool)
+	ctx, release, err = beginAnswer(ctx, ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	if release != nil {
+		defer func() { finishAnswer(release, accept, err) }()
+	}
+	if err != nil {
 		return false, err
 	}
 	if unreachable == nil {
 		unreachable = func(error) bool { return true }
 	}
-	localAccept, localErr := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, nil, nil, ev)
+	localAccept, localErr := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, nil, nil, ev, unreachable)
 	if localErr != nil || !localAccept {
 		if ctx.Err() != nil {
 			return false, ctx.Err()
@@ -140,7 +148,7 @@ func VerifyRefusedProgress(
 		return localAccept, localErr
 	}
 	if tip == nil || executorClient == nil || st.LatestNonce == 0 {
-		accept, err := verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev)
+		accept, err = verifyRefusedTimeout(ctx, st, inferenceID, rec, payload, localMempool, nil, executorClient, ingest, ev, unreachable)
 		if ctx.Err() != nil {
 			return false, ctx.Err()
 		}
@@ -316,7 +324,7 @@ func challengeAndMaybeRetry(
 	unreachable func(error) bool,
 ) (bool, error) {
 	outcome, err := challengeOnce(ctx, st, inferenceID, rec, payload, cursor, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
-	accept, done, err := classifyChallenge(outcome, err, unreachable, func() bool { return headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED) })
+	accept, done, err := classifyChallenge(outcome, err, unreachable)
 	if done {
 		return accept, err
 	}
@@ -327,18 +335,13 @@ func challengeAndMaybeRetry(
 }
 
 // classifyChallenge turns a challengeFrom result into an accept decision.
-// done is false when the caller may retry a matching root.
-func classifyChallenge(outcome refusedChallenge, err error, unreachable func(error) bool, deferPending func() bool) (accept bool, done bool, ret error) {
+// done is false when the caller may retry a matching root. Map-lag
+// ErrHeaderPending is not a yes vote; only unreachable() decides that.
+func classifyChallenge(outcome refusedChallenge, err error, unreachable func(error) bool) (accept bool, done bool, ret error) {
 	if err != nil {
 		var call *executorCallError
 		if !errors.As(err, &call) {
 			return false, true, err
-		}
-		if errors.Is(call.err, types.ErrHeaderPending) {
-			if deferPending() {
-				return false, true, call.err
-			}
-			return true, true, nil
 		}
 		if unreachable(call.err) {
 			return true, true, nil
@@ -399,7 +402,7 @@ func refusalAfterProgress(
 			return true, nil
 		}
 		outcome, err := challengeOnce(ctx, st, inferenceID, rec, payload, nonce+1, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
-		accept, done, err := classifyChallenge(outcome, err, unreachable, func() bool { return headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED) })
+		accept, done, err := classifyChallenge(outcome, err, unreachable)
 		if !done {
 			previous = nonce
 			continue
@@ -432,7 +435,7 @@ func challengeOnce(
 		return outcome, err
 	}
 	releaseColdWalk(ctx)
-	if errors.Is(catchUp.err, types.ErrHeaderPending) || unreachable(catchUp.err) {
+	if unreachable(catchUp.err) {
 		return 0, &executorCallError{err: catchUp.err}
 	}
 	return finishPayload(ctx, st.EscrowID, inferenceID, rec, payload, nil, executorClient, ingest, ev, unreachable)

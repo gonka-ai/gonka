@@ -131,20 +131,23 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	sessionPath := filepath.Join(t.TempDir(), "session")
 	db, err := storage.NewSQLite(sessionPath)
 	require.NoError(t, err)
-	require.NoError(t, db.CreateSession(storage.CreateSessionParams{EscrowID: escrowID, Version: testutil.RuntimeTestVersion, CreatorAddr: creator.Address(), Config: config, Group: group, InitialBalance: 1000000}))
+	// The package fixture pins the state machine at v6. The stored session
+	// tag has to be the same tag, or replay rejects the journaled start.
+	const sessionVersion = "v6"
+	require.NoError(t, db.CreateSession(storage.CreateSessionParams{EscrowID: escrowID, Version: sessionVersion, CreatorAddr: creator.Address(), Config: config, Group: group, InitialBalance: 1000000}))
 	chain := &testChain{start: time.Now()}
 	chain.manual.Store(100)
 	chain.clock.Store(time.Now().UnixNano())
 	clients := make([]user.HostClient, 16)
 	voters := make([]*numericCompletionClient, 16)
 	for i := range clients {
-		sm := statetest.MustStateMachine(t, escrowID, config, group, 1000000, creator.Address(), verifier)
+		sm := statetest.MustStateMachine(t, escrowID, config, group, 1000000, creator.Address(), verifier, state.WithHeaderTimes(chain))
 		h, err := host.NewHost(sm, signers[i], stub.NewInferenceEngine(), escrowID, group, nil, host.WithGrace(10), host.WithChainOracle(chain))
 		require.NoError(t, err)
 		voters[i] = &numericCompletionClient{InProcessClient: &user.InProcessClient{Host: h}, signer: signers[i], slot: group[i].SlotID}
 		clients[i] = voters[i]
 	}
-	sm := statetest.MustStateMachine(t, escrowID, config, group, 1000000, creator.Address(), verifier)
+	sm := statetest.MustStateMachine(t, escrowID, config, group, 1000000, creator.Address(), verifier, state.WithHeaderTimes(chain))
 	session, err := user.NewSession(sm, creator, escrowID, group, clients, verifier, user.WithStorage(db),
 		user.WithHeightSyncCadence(10, 16),
 		user.WithObservedHeight(func() (uint64, []byte, bool) { return uint64(chain.height()), []byte{0xaa}, true }),
@@ -194,7 +197,7 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	journal, err = NewSQLiteGatewayStore(path)
 	require.NoError(t, err)
 	defer journal.Close()
-	recovered, recoveredSM, err := user.RecoverSession(db, creator, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
+	recovered, recoveredSM, err := user.RecoverSession(db, creator, verifier, escrowID, sessionVersion, group, clients, state.WithHeaderTimes(chain))
 	require.NoError(t, err)
 	recovered.SetInferenceCompletionStore(journal)
 	for _, voter := range voters {

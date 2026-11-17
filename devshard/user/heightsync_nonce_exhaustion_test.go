@@ -112,7 +112,7 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 	// enabled. Separate state machines retain independent host state.
 	var limitErrors atomic.Uint64
 	for i := range keys {
-		_, hostSM, err := RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
+		_, hostSM, err := recoverForTest(t, store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
 		require.NoError(t, err)
 		h, err := host.NewHost(hostSM, keys[i], stub.NewInferenceEngine(), escrowID, group, nil,
 			host.WithGrace(100), host.WithChainOracle(oracle),
@@ -120,7 +120,7 @@ func TestHeartbeat_NonceExhaustionFromSnapshot(t *testing.T) {
 		require.NoError(t, err)
 		clients[i] = ackBlackholeClient{HostClient: &InProcessClient{Host: h}, limitErrors: &limitErrors}
 	}
-	session, sm, err = RecoverSession(store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
+	session, sm, err = recoverForTest(t, store, user, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 	session.SetHeightSyncCadence(16, numHosts)
 	session.clock = func() time.Time { return now }

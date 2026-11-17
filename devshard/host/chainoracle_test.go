@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -26,6 +27,7 @@ type fakeOracle struct {
 
 	latestCalls atomic.Int64
 	hash        atomic.Value // []byte
+	headerTime  atomic.Value // time.Time
 }
 
 func (f *fakeOracle) setHeight(h int64) { f.height.Store(h) }
@@ -39,8 +41,15 @@ func (f *fakeOracle) setErr(err error) {
 }
 
 func (f *fakeOracle) setHash(h []byte) { f.hash.Store(append([]byte(nil), h...)) }
-func (f *fakeOracle) setStale(v bool)  { f.stale.Store(v) }
-func (f *fakeOracle) Stale() bool      { return f.stale.Load() }
+func (f *fakeOracle) setTime(at time.Time) {
+	if at.IsZero() {
+		f.headerTime.Store(time.Time{})
+		return
+	}
+	f.headerTime.Store(at)
+}
+func (f *fakeOracle) setStale(v bool) { f.stale.Store(v) }
+func (f *fakeOracle) Stale() bool     { return f.stale.Load() }
 
 func (f *fakeOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	f.latestCalls.Add(1)
@@ -52,7 +61,11 @@ func (f *fakeOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	if v := f.hash.Load(); v != nil {
 		hash = append([]byte(nil), v.([]byte)...)
 	}
-	return &blocks.Header{Height: h, ChainID: "fake-chain", BlockHash: hash}, nil
+	var at time.Time
+	if v := f.headerTime.Load(); v != nil {
+		at, _ = v.(time.Time)
+	}
+	return &blocks.Header{Height: h, Time: at, ChainID: "fake-chain", BlockHash: hash}, nil
 }
 
 func (f *fakeOracle) At(ctx context.Context, height int64) (*blocks.Header, error) {

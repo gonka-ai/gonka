@@ -158,6 +158,7 @@ func buildEscrowFromTemplate(st *store.Store, id uint64, creator string, amount 
 		if p.ExecutionTimeout > 0 {
 			escrow.ExecutionTimeout = p.ExecutionTimeout
 		}
+		escrow.HeightsyncTimeoutClock = p.HeightsyncTimeoutClock
 	}
 	return escrow
 }

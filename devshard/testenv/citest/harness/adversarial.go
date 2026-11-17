@@ -86,6 +86,11 @@ func ResetMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL strin
 		StreamChunkDelay:    &zero,
 		PauseStream:         &f,
 		StreamErrorEnvelope: &f,
+
+		UsageCompletionTokens: &zero,
+		UsagePromptTokens:     &zero,
+		PadEmptyChunks:        &zero,
+		DropTokens:            &f,
 	})
 }
 

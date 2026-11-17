@@ -106,6 +106,8 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 		return nil, err
 	}
 
+	beforeLive := h.sm.LiveInferenceIDs()
+
 	h.mu.Unlock()
 	var sigErr error
 	for i, diff := range pending {
@@ -124,6 +126,7 @@ func (h *Host) applyDiffsLocked(ctx context.Context, diffs []types.Diff) ([]type
 	if err != nil {
 		return newly, err
 	}
+	h.forgetAnswersLeftLive(beforeLive)
 	return newly, sigErr
 }
 
@@ -162,35 +165,6 @@ func (h *Host) enqueueDiffsLocked(ctx context.Context, pending []types.Diff, que
 	}
 	h.mu.Lock()
 	return w.newly, w.err
-}
-
-const (
-	headerPendingRetryInterval = time.Second
-	headerPendingMaxWait       = 15 * time.Second
-)
-
-func (h *Host) applyDiffsAwaitingHeadersLocked(ctx context.Context, diffs []types.Diff) ([]types.Diff, error) {
-	newly, err := h.applyDiffsLocked(ctx, diffs)
-	if !errors.Is(err, types.ErrHeaderPending) {
-		return newly, err
-	}
-	deadline := time.Now().Add(headerPendingMaxWait)
-	for errors.Is(err, types.ErrHeaderPending) && time.Now().Before(deadline) {
-		h.mu.Unlock()
-		timer := time.NewTimer(headerPendingRetryInterval)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			h.mu.Lock()
-			return newly, err
-		case <-timer.C:
-		}
-		h.mu.Lock()
-		var more []types.Diff
-		more, err = h.applyDiffsLocked(ctx, diffs)
-		newly = append(newly, more...)
-	}
-	return newly, err
 }
 
 // runDiffWriter drains the queue one batch at a time and exits when it is
@@ -363,7 +337,11 @@ func (h *Host) applyChunkLocked(ctx context.Context, run []types.Diff, applied m
 	if len(vds) > 0 {
 		recs := make([]types.DiffRecord, len(vds))
 		for k, vd := range vds {
-			recs[k] = types.DiffRecord{Diff: run[k], StateHash: vd.Root, WarmKeyDelta: types.ComputeWarmKeyDelta(warm, vd.WarmAfter)}
+			recs[k] = types.DiffRecord{
+				Diff:         run[k],
+				StateHash:    vd.Root,
+				WarmKeyDelta: types.ComputeWarmKeyDelta(warm, vd.WarmAfter),
+			}
 			warm = vd.WarmAfter
 		}
 		h.mu.Unlock()

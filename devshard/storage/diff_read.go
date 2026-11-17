@@ -21,12 +21,12 @@ func readDiffRecords(rows diffScanner) ([]types.DiffRecord, error) {
 	for rows.Next() {
 		var nonce uint64
 		var txsProto, userSig, postStateRoot, stateHash []byte
-		var warmJSON *string
+		var warmJSON, headerJSON *string
 		var createdAt int64
-		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &warmJSON, &createdAt); err != nil {
+		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &warmJSON, &createdAt, &headerJSON); err != nil {
 			return nil, err
 		}
-		rec, err := diffRecordFromStored(nonce, txsProto, userSig, postStateRoot, stateHash, warmJSON, createdAt)
+		rec, err := diffRecordFromStored(nonce, txsProto, userSig, postStateRoot, stateHash, warmJSON, createdAt, headerJSON)
 		if err != nil {
 			return nil, err
 		}
@@ -35,7 +35,7 @@ func readDiffRecords(rows diffScanner) ([]types.DiffRecord, error) {
 	return recs, rows.Err()
 }
 
-func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateHash []byte, warmJSON *string, createdAt int64) (types.DiffRecord, error) {
+func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateHash []byte, warmJSON *string, createdAt int64, headerJSON *string) (types.DiffRecord, error) {
 	txs, err := unmarshalTxs(txsProto)
 	if err != nil {
 		return types.DiffRecord{}, err
@@ -50,6 +50,12 @@ func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateH
 		StateHash: stateHash,
 		CreatedAt: createdAt,
 	}
+	rows, known, err := decodeHeaderTimes(headerJSON)
+	if err != nil {
+		return types.DiffRecord{}, err
+	}
+	rec.HeaderTimes = rows
+	rec.HeaderTimesKnown = known
 	if warmJSON != nil {
 		wk := make(map[uint32]string)
 		if err := json.Unmarshal([]byte(*warmJSON), &wk); err != nil {
@@ -58,6 +64,22 @@ func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateH
 		rec.WarmKeyDelta = wk
 	}
 	return rec, nil
+}
+
+// decodeHeaderTimes reads legacy header_times_json from old journals.
+// New persists leave the column NULL; apply ignores any decoded rows.
+func decodeHeaderTimes(raw *string) ([]types.HeaderTimeRow, bool, error) {
+	if raw == nil || *raw == "" {
+		return nil, false, nil
+	}
+	var rows []types.HeaderTimeRow
+	if err := json.Unmarshal([]byte(*raw), &rows); err != nil {
+		return nil, false, fmt.Errorf("unmarshal header times: %w", err)
+	}
+	if rows == nil {
+		rows = []types.HeaderTimeRow{}
+	}
+	return rows, true, nil
 }
 
 // attachDiffSignatureRows adds signature rows onto recs. rows must be ordered

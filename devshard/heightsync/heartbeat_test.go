@@ -137,6 +137,12 @@ func TestHeartbeat_NoObservedHeightSkips(t *testing.T) {
 	txs := hb.SpanTxs(0, []byte{1}, 4, heightsync.ReasonQuietSession, nil)
 	require.Nil(t, txs)
 	require.Equal(t, 2, hb.SkippedNoHeight())
+
+	boot := hb.BootstrapSpanTxs(4, nil)
+	require.Len(t, boot, 4)
+	require.Zero(t, boot[0].GetHeartbeat().ObservedHeight)
+	require.Empty(t, boot[0].GetHeartbeat().ObservedBlockHash)
+	require.Equal(t, 2, hb.SkippedNoHeight(), "the opening span is not a skipped cadence tick")
 }
 
 func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
@@ -178,6 +184,42 @@ func ackTx(ref uint64, slot uint32, height uint64, st types.SyncState) *types.De
 		ObservedHeight: height,
 		SyncState:      st,
 	}}}
+}
+
+func TestSlotsWithBlockAckDropsASlotWhenItsTurnIsPruned(t *testing.T) {
+	tr := heightsync.NewTurnTracker(1, 1, heightsync.DefaultHeartbeatConfig())
+	hash := []byte{0xaa}
+	ack := func(ref uint64, slot uint32, height uint64) *types.DevshardTx {
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
+			RefNonce: ref, SlotId: slot, ObservedHeight: height, ObservedBlockHash: hash,
+			SyncState: types.SyncState_SYNCED,
+		}}}
+	}
+	tr.Observe(1, []*types.DevshardTx{heartbeatTx(100, 1)}, 100)
+	tr.Observe(2, []*types.DevshardTx{
+		ack(1, 0, 100),
+		ack(1, 1, 100),
+	}, 100)
+	require.Equal(t, 2, tr.SlotsWithBlockAck())
+
+	// Replacing slot 1's block ack with an empty one drops it immediately.
+	tr.Observe(3, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
+		RefNonce: 1, SlotId: 1, SyncState: types.SyncState_ORACLE_UNAVAILABLE,
+	}}}}, 100)
+	require.Equal(t, 1, tr.SlotsWithBlockAck())
+
+	tr.Observe(4, []*types.DevshardTx{ack(1, 1, 100)}, 100)
+	require.Equal(t, 2, tr.SlotsWithBlockAck())
+
+	// Slot 1 acks only the opening turn. After the retain window drops that
+	// turn, the count is the slot that kept acking.
+	for i := uint64(0); i < 70; i++ {
+		n := 10 + i*2
+		tr.Observe(n, []*types.DevshardTx{heartbeatTx(200+i, 1)}, 200+i)
+		tr.Observe(n+1, []*types.DevshardTx{ack(n, 0, 200+i)}, 200+i)
+	}
+	require.Equal(t, 1, tr.SlotsWithBlockAck())
+	require.Equal(t, int(heightsync.DefaultTurnRetain), tr.TurnCount())
 }
 
 func TestHeartbeat_SameBlockRequestAndAckCompletes(t *testing.T) {

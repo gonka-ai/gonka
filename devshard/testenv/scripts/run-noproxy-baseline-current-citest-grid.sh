@@ -9,7 +9,7 @@
 set -u
 cd "$(dirname "$0")/.."
 
-ENDPOINTS="signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,challenge-receipt,payload,chat"
+ENDPOINTS="signatures,mempool,diffs,gossip,repair,height-sync,verify-timeout,verify-error-miss,verify-challenge,challenge-receipt,payload,chat"
 B1_VERSIOND="${TESTENV_VERSIOND_IMAGE:-devshard-versiond:0.2.15-v5}"
 B1_ROUTER="${TESTENV_VERSIOND_ROUTER_IMAGE:-devshard-versiond-router:0.2.15-v5}"
 OUT="../docs/grpc-transport-phase6-8.2-results.txt"

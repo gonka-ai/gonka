@@ -10,7 +10,8 @@ import (
 	"devshard/types"
 )
 
-// DomainHeightAck is the canonical signing domain for MsgHeightAck fields 1–7.
+// DomainHeightAck is the canonical signing domain for MsgHeightAck (all fields
+// except host_sig, including observed_time_ms).
 const DomainHeightAck = "heightsync.ack.v1"
 
 var (
@@ -19,7 +20,8 @@ var (
 	ErrAckVerify = errors.New("heightsync: ack signature verification failed")
 )
 
-// CanonicalAckBytes returns DomainHeightAck || deterministic proto of fields 1..7.
+// CanonicalAckBytes returns DomainHeightAck || deterministic proto of the ack
+// with host_sig cleared (height, hash, time, and the other ack fields).
 func CanonicalAckBytes(ack *types.MsgHeightAck) ([]byte, error) {
 	if ack == nil {
 		return nil, ErrAckEmpty
@@ -36,7 +38,7 @@ func CanonicalAckBytes(ack *types.MsgHeightAck) ([]byte, error) {
 	return append([]byte(DomainHeightAck), body...), nil
 }
 
-// SignAck sets field 8 over fields 1–7.
+// SignAck sets host_sig over CanonicalAckBytes.
 func SignAck(signer signing.Signer, ack *types.MsgHeightAck) error {
 	if signer == nil {
 		return errors.New("heightsync: nil signer")

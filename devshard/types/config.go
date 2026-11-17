@@ -15,6 +15,19 @@ const (
 	// DefaultValidationRate is used when the escrow carries no rate. It is not
 	// the chain default: inference-chain DefaultDevshardValidationRate is 1000.
 	DefaultValidationRate uint32 = 5000
+	// ChallengeFetchWindowSeconds is how long a host that votes on a
+	// challenge keeps retrying the fetch of the body from the executor,
+	// counted from the moment it applied the Finish. It has to outlast an
+	// executor restart and the voter's own reconnect.
+	//
+	// The window plus the interval until the next diff carries the votes must
+	// stay below the seal clock gate, which opens InferenceSealGraceSeconds
+	// after the latest legal Finish (header-time state clock - ConfirmedAtTimeMs >=
+	// InferenceSealGraceSeconds + ExecutionTimeout, on top of the nonce gate;
+	// see autoSealLocked). A challenge never holds the seal, so votes that
+	// arrive after it are lost. Hosts and the gateway cap the window at half
+	// the grace; with the default grace of 3600 s this sits at that cap.
+	ChallengeFetchWindowSeconds int64 = 30 * 60
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -64,16 +77,17 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 // at create. Every field is "zero means use the compiled default" so callers can
 // populate only what the chain returned.
 type EscrowSessionFields struct {
-	TokenPrice                  uint64
-	CreateDevshardFee           uint64
-	FeePerNonce                 uint64
-	InferenceSealGraceNonces    uint32
-	InferenceSealGraceSeconds   uint32
-	AutoSealEveryNNonces        uint32
-	ValidationRate              uint32
-	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
-	RefusalTimeout              int64
-	ExecutionTimeout            int64
+	TokenPrice                uint64
+	CreateDevshardFee         uint64
+	FeePerNonce               uint64
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
+	ValidationRate            uint32
+	VoteThresholdFactor       uint32 // percent; 0 == legacy groupSize/2
+	RefusalTimeout            int64
+	ExecutionTimeout          int64
+	HeightsyncTimeoutClock    bool
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -120,6 +134,7 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	if fields.ExecutionTimeout > 0 {
 		cfg.ExecutionTimeout = fields.ExecutionTimeout
 	}
+	cfg.HeightsyncTimeoutClock = fields.HeightsyncTimeoutClock
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, fields.VoteThresholdFactor)
 	return NormalizeSessionConfig(cfg, groupSize)
 }

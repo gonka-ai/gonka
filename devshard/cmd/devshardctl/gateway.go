@@ -32,6 +32,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/internal/e2econfig"
 	"devshard/memwatch"
@@ -165,6 +166,10 @@ type devshardRuntime struct {
 	// testHeightSyncView, when set, is the collector source for unit tests.
 	// Production is nil.
 	testHeightSyncView *heightsync.OperatorView
+
+	// testTimeoutClock, when non-nil, is the debug-endpoint clock for unit
+	// tests. Production is nil and the session config is used.
+	testTimeoutClock *bool
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -417,31 +422,29 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		extraClient.RPCAdoption = deps.metrics.PeerRPCAdoption()
 	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex:              keyHex,
-		EscrowID:                   cfg.ID,
-		Bridge:                     br,
-		StoragePath:                cfg.StoragePath,
-		RoutePrefix:                routePrefix,
-		RequestAdmission:           sharedParticipantRequestLimiter,
-		RequireHeightSeed:          requireHeightSeedFromEnv(),
-		DisableHeightSyncHeartbeat: !heightSyncHeartbeatFromEnv(),
-		QuietSettleDelay:           quietSettleDelayFromEnv(),
-		Escrow:                     escrow,
-		RefusalTimeoutSeconds:      timeoutOverrides.RefusalTimeoutSeconds,
-		ExecutionTimeoutSeconds:    timeoutOverrides.ExecutionTimeoutSeconds,
-		ExtraClientConfig:          extraClient,
-		Heartbeat:                  heartbeatFromDeps(deps),
-		HeaderTimes:                gatewayHeaderTimes(),
+		PrivateKeyHex:           keyHex,
+		EscrowID:                cfg.ID,
+		Bridge:                  br,
+		StoragePath:             cfg.StoragePath,
+		RoutePrefix:             routePrefix,
+		RequestAdmission:        sharedParticipantRequestLimiter,
+		QuietSettleDelay:        quietSettleDelayFromEnv(),
+		Escrow:                  escrow,
+		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
+		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
+		ExtraClientConfig:       extraClient,
+		Heartbeat:               heartbeatFromDeps(deps),
+		HeaderTimes:             gatewayHeaderTimes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
-	// Quiet-session cadence (§10.3). Off unless DEVSHARD_HEIGHTSYNC_HEARTBEAT
-	// is true/1/on. StartHeartbeatLoop still starts the height-seed loop when
-	// that gate is on. Close() cancels whichever loops started. Not started
-	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
-	// inference. The loop waits for router catalog admission before the
-	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
+	// Quiet-session cadence (§10.3). Always on. StartHeartbeatLoop also sends
+	// the unstamped bootstrap span. It does not call the height-sync seed
+	// RPC. Close() cancels whichever loops started.
+	// Not started inside NewHTTPSession so in-process / E2E stacks keep nonce
+	// 1 for inference. The loop waits for router catalog admission before the
+	// first heartbeat so a cold router cannot 503 those into quarantine.
 	if deps.completionStore != nil {
 		session.SetInferenceCompletionStore(deps.completionStore)
 	}
@@ -1524,6 +1527,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
 	mux.HandleFunc("/v1/debug/memory", g.handleDebugMemory)
 	mux.HandleFunc("/v1/debug/heightsync", g.handleDebugHeightSync)
+	mux.HandleFunc("/v1/debug/timeout-clock", g.handleDebugTimeoutClock)
 	mux.HandleFunc("/v1/debug/rpc-traffic", g.handleDebugRPCTraffic)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
 	// canonical /debug/pprof/ path so pprof.Index's sub-profile links resolve.
@@ -1597,7 +1601,81 @@ func (g *Gateway) handleDebugHeightSync(w http.ResponseWriter, r *http.Request) 
 		}
 		escrows = append(escrows, rt.heightSyncView())
 	}
-	writeJSON(w, map[string]any{"escrows": escrows})
+	writeJSON(w, map[string]any{
+		"escrows":     escrows,
+		"header_time": gatewayHeaderTimeView(),
+	})
+}
+
+// timeoutClockEscrowDebug is one escrow's frozen timeout clock.
+// LastMismatch is set only when the process's latest sample names this escrow.
+type timeoutClockEscrowDebug struct {
+	Escrow                 string                          `json:"escrow"`
+	HeightsyncTimeoutClock bool                            `json:"heightsync_timeout_clock"`
+	LastMismatch           *headertime.ClockMismatchSample `json:"last_mismatch,omitempty"`
+}
+
+// handleDebugTimeoutClock is the legacy/stamp divergence snapshot.
+// Admin-gated via /v1/debug/. heightsync_timeout_clock is the escrow mode
+// (false = legacy wall). mismatch_total is the process counter.
+// The top-level last_mismatch is that process's latest sample and carries
+// its own escrow id. Each escrow entry repeats the sample only when the ids
+// match, so one escrow's mode is not read as another's divergence.
+// mismatch_total is the process sum of devshard_timeout_clock_mismatch_total.
+// Scraped /metrics is the rollout series; this JSON is that same sum.
+func (g *Gateway) handleDebugTimeoutClock(w http.ResponseWriter, r *http.Request) {
+	if !allowGetOrHead(w, r) {
+		return
+	}
+	g.mu.Lock()
+	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	g.mu.Unlock()
+	snap := headertime.TimeoutClockDebug()
+	escrows := make([]timeoutClockEscrowDebug, 0, len(runtimes))
+	for _, rt := range runtimes {
+		id, header, ok := rt.timeoutClockMode()
+		if !ok {
+			continue
+		}
+		entry := timeoutClockEscrowDebug{
+			Escrow:                 id,
+			HeightsyncTimeoutClock: header,
+		}
+		if snap.LastMismatch != nil && snap.LastMismatch.Escrow == id {
+			entry.LastMismatch = snap.LastMismatch
+		}
+		escrows = append(escrows, entry)
+	}
+	body := timeoutClockDebugBody{
+		MismatchTotal: snap.MismatchTotal,
+		LastMismatch:  snap.LastMismatch,
+		Escrows:       escrows,
+	}
+	if len(escrows) == 1 {
+		mode := escrows[0].HeightsyncTimeoutClock
+		body.HeightsyncTimeoutClock = &mode
+	}
+	writeJSON(w, body)
+}
+
+type timeoutClockDebugBody struct {
+	MismatchTotal          float64                         `json:"mismatch_total"`
+	LastMismatch           *headertime.ClockMismatchSample `json:"last_mismatch,omitempty"`
+	HeightsyncTimeoutClock *bool                           `json:"heightsync_timeout_clock,omitempty"`
+	Escrows                []timeoutClockEscrowDebug       `json:"escrows"`
+}
+
+func (rt *devshardRuntime) timeoutClockMode() (id string, header bool, ok bool) {
+	if rt == nil {
+		return "", false, false
+	}
+	if rt.testTimeoutClock != nil {
+		return rt.id, *rt.testTimeoutClock, true
+	}
+	if rt.session == nil || rt.session.StateMachine() == nil {
+		return "", false, false
+	}
+	return rt.id, rt.session.StateMachine().Config().HeightsyncTimeoutClock, true
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {

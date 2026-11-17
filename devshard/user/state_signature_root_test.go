@@ -129,8 +129,8 @@ func TestRecoveredWrongRootCannotProvideQuorum(t *testing.T) {
 	require.NoError(t, store.AddSignature("escrow-1", 1, 0, signRootForTest(t, signers[0], "escrow-1", 1, nil)))
 	require.NoError(t, store.AddSignature("escrow-1", 1, 2, signRootForTest(t, signers[2], "escrow-1", 1, root)))
 
-	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(), "escrow-1",
-		testutil.RuntimeTestVersion, group, buildRecoveryClients(t, signers, group, user))
+	recovered, _, err := recoverForTest(t, store, user, signing.NewSecp256k1Verifier(), "escrow-1",
+		"v6", group, buildRecoveryClients(t, signers, group, user))
 	require.NoError(t, err)
 	require.Len(t, recovered.Signatures()[1], 3)
 	require.False(t, recovered.HasQuorumAt(1))

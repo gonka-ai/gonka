@@ -315,7 +315,6 @@ func EnableHeightSyncCompose(t *testing.T, composePath string) {
 	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API",
 		"DEVSHARD_CHAINORACLE_URL: "+origin,
 		"DEVSHARD_LOG_LEVEL: debug",
-		`DEVSHARD_HEIGHTSYNC_HEARTBEAT: "1"`,
 	)
 }
 

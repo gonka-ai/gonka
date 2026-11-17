@@ -1058,13 +1058,20 @@ func withoutEscrowPhase(records []ParticipantRecord) []ParticipantRecord {
 type fakeProtocolView struct {
 	phase      types.SessionPhase
 	inferences map[uint64]types.InferenceRecord
-	hostStats  map[uint32]types.HostStats
-	statReads  int
-	snapshots  int
+	// sealed holds the records the auto-seal took out of the live map.
+	sealed    map[uint64]types.InferenceRecord
+	hostStats map[uint32]types.HostStats
+	statReads int
+	snapshots int
 }
 
 func (f *fakeProtocolView) GetInference(nonce uint64) (types.InferenceRecord, bool) {
 	record, ok := f.inferences[nonce]
+	return record, ok
+}
+
+func (f *fakeProtocolView) LookupSealedInference(nonce uint64) (types.InferenceRecord, bool) {
+	record, ok := f.sealed[nonce]
 	return record, ok
 }
 

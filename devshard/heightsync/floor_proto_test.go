@@ -29,12 +29,13 @@ func TestFloorIndexProtoRoundTrip(t *testing.T) {
 	cfg := FloorConfig{}
 	f := NewFloorIndexWith(cfg)
 	hash := []byte{0xaa, 0xbb}
-	f.Observe(1, []FloorClaim{{Signer: 0, Height: 50, Hash: hash}})
-	f.Observe(2, []FloorClaim{{Signer: 1, Height: 50, Hash: hash}})
+	f.Observe(1, []FloorClaim{{Signer: 0, Height: 50, Hash: hash, TimeMs: 1_234}})
+	f.Observe(2, []FloorClaim{{Signer: 1, Height: 50, Hash: hash, TimeMs: 1_234}})
 
 	p := f.ToProto()
 	require.NotNil(t, p)
 	require.Len(t, p.Entries, 1, "the second claim carries the floor, so it adds no entry")
+	require.Equal(t, int64(1_234), p.Entries[0].TimeMs)
 	require.False(t, p.Truncated)
 
 	got, err := FloorIndexFromProto(cfg, p)
@@ -49,6 +50,9 @@ func TestFloorIndexProtoRoundTrip(t *testing.T) {
 	require.Equal(t, f.truncated, got.truncated)
 	require.Equal(t, f.Len(), got.Len())
 	require.Equal(t, f.cfg, got.cfg)
+	wantP, _ := f.PointAsOf(3)
+	gotP, _ := got.PointAsOf(3)
+	require.Equal(t, wantP.TimeMs, gotP.TimeMs)
 
 	// Restore must not alias the live index's hash backing arrays.
 	got.Observe(3, []FloorClaim{{Signer: 2, Height: 60, Hash: []byte{0xcc}}})

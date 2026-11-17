@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"common/chainoracle/blocks"
+
 	"devshard/bridge"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -66,8 +68,28 @@ func setupBindTestGroupSignedBy(t *testing.T, escrowID string, localSlot int) (*
 			TokenPrice:     1,
 		},
 	}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[localSlot], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[localSlot], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
+	mgr.chainOracle = bindTipOracle{}
 	return mgr, store, user, hosts
+}
+
+// bindTipOracle is the block a test host stamps onto a confirm. A host with
+// no header does not sign a receipt.
+type bindTipOracle struct{}
+
+func (bindTipOracle) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(100, time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+}
+func (bindTipOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
+	return bindTipOracle{}.Latest(ctx)
+}
+func (bindTipOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+func (bindTipOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
 }
 
 func signedPOST(t *testing.T, e *echo.Echo, signer *signing.Secp256k1Signer, path, escrowID string, body []byte) *httptest.ResponseRecorder {
@@ -320,7 +342,7 @@ func TestChallengeReceiptUnbound_BindsAndAppliesStart(t *testing.T) {
 	rpc := newBindRPC(t, mgr)
 
 	const inferenceID uint64 = 1
-	diff := testutil.SignDiff(t, user, escrowID, inferenceID, []*types.DevshardTx{testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)})
+	diff := testutil.SignDiff(t, user, escrowID, inferenceID, []*types.DevshardTx{testutil.StartTxVersioned(inferenceID, "v6")})
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 
@@ -328,7 +350,7 @@ func TestChallengeReceiptUnbound_BindsAndAppliesStart(t *testing.T) {
 	require.NotEqual(t, hosts[1].Address(), challenger.Address())
 	resp, err := rpc.challenge(escrowID, challenger, transport.ChallengeReceiptRequest{
 		InferenceID:     inferenceID,
-		ProtocolVersion: testutil.RuntimeTestVersion,
+		ProtocolVersion: "v6",
 		Payload: &transport.PayloadJSON{
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
@@ -404,7 +426,7 @@ func TestChallengeReceiptUnbound_RequestVersionIsNotOnTheWire(t *testing.T) {
 	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
 	rpc := newBindRPC(t, mgr)
 
-	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTxVersioned(1, testutil.RuntimeTestVersion)})
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTxVersioned(1, "v6")})
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 
@@ -448,12 +470,12 @@ func TestVerifyTimeoutUnbound_BindsFromCreatorSignature(t *testing.T) {
 	_, rpcErr := rpc.verifyTimeout(escrowID, hosts[2], transport.VerifyTimeoutRequest{
 		InferenceID: 1,
 		Reason:      transport.TimeoutReasonToString(types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
-		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, testutil.RuntimeTestVersion)},
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, "v6")},
 	})
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err, "verify-timeout on a cold host must CreateSession from the creator signature; rpc=%v", rpcErr)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, "v6", meta.Version)
 }
 
 func TestVerifyTimeoutUnbound_ForeignSignatureDoesNotBind(t *testing.T) {
@@ -464,7 +486,7 @@ func TestVerifyTimeoutUnbound_ForeignSignatureDoesNotBind(t *testing.T) {
 	_, err := rpc.verifyTimeout(escrowID, hosts[2], transport.VerifyTimeoutRequest{
 		InferenceID: 1,
 		Reason:      transport.TimeoutReasonToString(types.TimeoutReason_TIMEOUT_REASON_EXECUTION),
-		Diffs:       []transport.DiffJSON{creatorStartDiff(t, hosts[2], escrowID, testutil.RuntimeTestVersion)},
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, hosts[2], escrowID, "v6")},
 	})
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "rpc=%v", err)
 	require.Contains(t, err.Error(), "invalid user signature")
@@ -509,12 +531,12 @@ func TestVerifyErrorMissUnbound_BindsFromCreatorSignature(t *testing.T) {
 
 	_, rpcErr := rpc.verifyErrorMiss(escrowID, hosts[2], transport.VerifyErrorMissRequest{
 		InferenceID: 1,
-		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, testutil.RuntimeTestVersion)},
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, user, escrowID, "v6")},
 	})
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err, "verify-error-miss on a cold host must CreateSession from the creator signature; rpc=%v", rpcErr)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, "v6", meta.Version)
 }
 
 func TestVerifyErrorMissUnbound_ForeignSignatureDoesNotBind(t *testing.T) {
@@ -524,7 +546,7 @@ func TestVerifyErrorMissUnbound_ForeignSignatureDoesNotBind(t *testing.T) {
 
 	_, err := rpc.verifyErrorMiss(escrowID, hosts[2], transport.VerifyErrorMissRequest{
 		InferenceID: 1,
-		Diffs:       []transport.DiffJSON{creatorStartDiff(t, hosts[2], escrowID, testutil.RuntimeTestVersion)},
+		Diffs:       []transport.DiffJSON{creatorStartDiff(t, hosts[2], escrowID, "v6")},
 	})
 	require.Equal(t, connect.CodePermissionDenied, connect.CodeOf(err), "rpc=%v", err)
 	require.Contains(t, err.Error(), "invalid user signature")
@@ -542,7 +564,7 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 	// Inference may fail downstream; bind must have happened regardless.
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err, "owner chat must CreateSession; rpc=%v", chatErr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, "v6", meta.Version)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
@@ -554,7 +576,7 @@ func TestHeightSyncSeed_BindsSession(t *testing.T) {
 	seedErr := rpc.seed(escrowID, user)
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err, "owner seed must CreateSession; rpc=%v", seedErr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, "v6", meta.Version)
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
@@ -642,7 +664,7 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 		},
 	}
 	br := &countingGetEscrowBridge{MainnetBridge: inner}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 
 	rpc := newBindRPC(t, mgr)
 	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
@@ -650,7 +672,7 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, "v6", meta.Version)
 	require.Equal(t, 1, br.calls, "first-bind path must GetEscrow once (reuse for BuildGroup + CreateSession)")
 }
 
@@ -679,7 +701,7 @@ func TestOwnerChat_WarmedCacheStillGetEscrow(t *testing.T) {
 		},
 	}
 	br := &countingGetEscrowBridge{MainnetBridge: inner}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 
 	rpc := newBindRPC(t, mgr)
 	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
@@ -779,7 +801,7 @@ func TestOwnerChat_BindsAfterExistingMiss(t *testing.T) {
 	chatErr := rpc.chat(escrowID, user, body)
 	meta, err := store.GetSessionMeta(escrowID)
 	require.NoError(t, err, "cached Existing miss must not block first bind; rpc=%v", chatErr)
-	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, "v6", meta.Version)
 }
 
 func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {
@@ -804,7 +826,7 @@ func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 
 	srv, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)

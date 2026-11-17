@@ -22,6 +22,7 @@ const (
 	EndpointRepair           = "repair"
 	EndpointVerifyTimeout    = "verify-timeout"
 	EndpointVerifyErrorMiss  = "verify-error-miss"
+	EndpointVerifyChallenge  = "verify-challenge"
 	EndpointChallengeReceipt = "challenge-receipt"
 	EndpointPayload          = "payload"
 )
@@ -78,6 +79,7 @@ var attachRPCEndpoints = []string{
 	EndpointSeed,
 	EndpointVerifyTimeout,
 	EndpointVerifyErrorMiss,
+	EndpointVerifyChallenge,
 	EndpointChallengeReceipt,
 	EndpointPayload,
 }
@@ -93,6 +95,7 @@ var knownRPCEndpoints = map[string]struct{}{
 	EndpointRepair:           {},
 	EndpointVerifyTimeout:    {},
 	EndpointVerifyErrorMiss:  {},
+	EndpointVerifyChallenge:  {},
 	EndpointChallengeReceipt: {},
 	EndpointPayload:          {},
 }

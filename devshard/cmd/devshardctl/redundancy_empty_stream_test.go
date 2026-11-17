@@ -1088,8 +1088,23 @@ func TestInflightFinished_StallHostNotFinished(t *testing.T) {
 	}
 	require.False(t, isEmptyStreamAttempt(noReceipt),
 		"path that never confirmed receipt must not be flagged as stall")
+	require.False(t, contentFreeStream(noReceipt))
 	require.True(t, inflightFinished(noReceipt),
 		"in-process style attempt still counts via protocol finish marker")
+
+	// Bytes with no content are an empty stream even when the receipt callback
+	// never stuck. The finish must not count, so the race starts another host.
+	streamedEmpty := &inflight{
+		hostID: "empty-body",
+		nonce:  7,
+		resp:   resp,
+	}
+	streamedEmpty.outputChunks.Store(2)
+	require.False(t, isEmptyStreamAttempt(streamedEmpty),
+		"a missing receipt must not charge the host with an empty-stream fault")
+	require.True(t, contentFreeStream(streamedEmpty))
+	require.False(t, inflightFinished(streamedEmpty),
+		"a content-free stream must not settle on its protocol finish")
 }
 
 func TestErrEmptyStreamSentinel(t *testing.T) {

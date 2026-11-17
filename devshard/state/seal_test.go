@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
@@ -13,7 +14,7 @@ import (
 
 func newSealTestSM(t *testing.T, escrowID string, hosts []*signing.Secp256k1Signer, withStore bool) (*StateMachine, *storage.Memory, *signing.Secp256k1Signer, []types.SlotAssignment) {
 	t.Helper()
-	return newSealTestSMVersion(t, escrowID, hosts, withStore, types.DevshardStateRootAndProtocolVersion)
+	return newSealTestSMVersion(t, escrowID, hosts, withStore, "v6")
 }
 
 func newSealTestSMVersion(t *testing.T, escrowID string, hosts []*signing.Secp256k1Signer, withStore bool, sessionVersion string) (*StateMachine, *storage.Memory, *signing.Secp256k1Signer, []types.SlotAssignment) {
@@ -232,22 +233,23 @@ func TestNextAutoSealNonce(t *testing.T) {
 	require.Equal(t, uint64(300), NextAutoSealNonce(299))
 }
 
-func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
+func TestAutoSealStateClock_UsesFloorAndSkipsUnconfirmedInTailWindow(t *testing.T) {
 	d := newFloorDriver(t)
 	hash := []byte{0x01, 0x00}
-	d.raise(100, hash)
+	d.raiseClock(100, hash)
 	pending := d.next()
-	require.NoError(t, d.start(pending, 100, hash))
+	require.NoError(t, d.startClock(pending, 100, hash))
 	confirmed := d.next()
-	require.NoError(t, d.start(confirmed, 100, hash))
-	d.raise(5000, []byte{0x50, 0x00})
-	require.NoError(t, d.apply(d.confirm(confirmed, 100, hash)))
+	require.NoError(t, d.startClock(confirmed, 100, hash))
+	d.raiseClock(5000, []byte{0x50, 0x00})
+	d.raiseClock(5000+heightsync.SealDrainFloorLagBlocks, []byte{0x50, 0x04})
+	require.NoError(t, d.apply(d.confirmClock(confirmed, 5000, []byte{0x50, 0x00})))
 
 	clock := d.sm.AutoSealStateClock()
 	require.True(t, clock.Known)
+	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.ClockMs, "the seal clock is carried time four blocks behind F")
 	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.MinConfirmedAtMs, "an unconfirmed record must not pull window min to zero")
 	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.MaxConfirmedAtMs)
-	require.Equal(t, int64(5000*testutil.HeightClockBlockMs), clock.ClockMs)
 }
 
 func TestExportAllInferenceRecords_IncludesSealedFromDB(t *testing.T) {
@@ -349,9 +351,14 @@ func TestAutoSeal_FinishedClockGateIncludesExecutionTimeout(t *testing.T) {
 	require.True(t, live, "must not seal when only InferenceSealGraceSeconds has elapsed")
 
 	required := uint64(FinishedClockRequiredSeconds(graceSeconds, executionTimeout))
-	startConfirmAt(6, 6, confirmedHeight+required+1)
+	high := confirmedHeight + required + 1
+	startConfirmAt(6, 6, high)
 	_, live = sm.SnapshotState().Inferences[1]
-	require.False(t, live, "must seal after grace + execution timeout")
+	require.True(t, live, "the fresh floor is not the seal clock yet")
+	seedFloor(t, sm, high+heightsync.SealDrainFloorLagBlocks, []byte{0x04})
+	apply(8)
+	_, live = sm.SnapshotState().Inferences[1]
+	require.False(t, live, "must seal after grace + execution timeout, four blocks behind F")
 	require.Contains(t, sm.ExportSealedNonces(), uint64(1))
 }
 

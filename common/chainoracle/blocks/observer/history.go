@@ -25,6 +25,7 @@ type historyEntry struct {
 	hash     []byte
 	prevHash []byte
 	timeMs   int64
+	fromDAPI bool
 }
 
 type StoredHeader struct {
@@ -35,6 +36,8 @@ type StoredHeader struct {
 	ChainID  string
 	Verified bool
 	Epoch    int64
+
+	fromDAPI bool
 }
 
 const DefaultDeepHeights = 32_768
@@ -74,11 +77,14 @@ func (h *History) PutStored(s StoredHeader) bool {
 	if s.ChainID != "" {
 		h.chainID = s.ChainID
 	}
-	e := historyEntry{hash: append([]byte(nil), s.Hash...), prevHash: append([]byte(nil), s.PrevHash...), timeMs: s.TimeMs}
+	e := historyEntry{hash: append([]byte(nil), s.Hash...), prevHash: append([]byte(nil), s.PrevHash...), timeMs: s.TimeMs, fromDAPI: s.fromDAPI}
 	if h.top > 0 && s.Height <= h.top-h.window {
 		if prev, had := h.deep[s.Height]; had {
 			if len(e.prevHash) == 0 {
 				e.prevHash = prev.prevHash
+			}
+			if prev.fromDAPI {
+				e.fromDAPI = true
 			}
 		} else {
 			h.deepOrder = append(h.deepOrder, s.Height)
@@ -94,8 +100,13 @@ func (h *History) PutStored(s StoredHeader) bool {
 		return true
 	}
 	prev, had := h.entries[s.Height]
-	if had && len(e.prevHash) == 0 {
-		e.prevHash = prev.prevHash
+	if had {
+		if len(e.prevHash) == 0 {
+			e.prevHash = prev.prevHash
+		}
+		if prev.fromDAPI {
+			e.fromDAPI = true
+		}
 	}
 	h.entries[s.Height] = e
 	if s.Height > h.top {

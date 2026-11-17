@@ -16,6 +16,29 @@ func claim(signer uint32, height uint64, hash []byte) heightsync.FloorClaim {
 	return heightsync.FloorClaim{Signer: signer, Height: height, Hash: hash}
 }
 
+func TestFloorIndex_PointBehindLagsTheLatestRaise(t *testing.T) {
+	f := heightsync.NewFloorIndex()
+	f.Observe(1, []heightsync.FloorClaim{{Signer: 0, Height: 100, Hash: []byte{0xaa}, TimeMs: 1_000}})
+
+	_, known, behind := f.PointBehind(2, heightsync.SealDrainFloorLagBlocks)
+	require.True(t, known)
+	require.False(t, behind, "the latest raise is not a settlement clock")
+
+	f.Observe(2, []heightsync.FloorClaim{{Signer: 1, Height: 110, Hash: []byte{0xbb}, TimeMs: 9_000}})
+	p, known, behind := f.PointBehind(3, heightsync.SealDrainFloorLagBlocks)
+	require.True(t, known)
+	require.True(t, behind)
+	require.Equal(t, uint64(100), p.Height)
+	require.Equal(t, int64(1_000), p.TimeMs)
+
+	f.Observe(3, []heightsync.FloorClaim{{Signer: 1, Height: 114, Hash: []byte{0xcc}, TimeMs: 9_500}})
+	p, known, behind = f.PointBehind(4, heightsync.SealDrainFloorLagBlocks)
+	require.True(t, known)
+	require.True(t, behind)
+	require.Equal(t, uint64(110), p.Height, "four blocks past 110 makes that point the clock")
+	require.Equal(t, int64(9_000), p.TimeMs)
+}
+
 func TestFloorIndex_AsOfExcludesTheQueriedNonce(t *testing.T) {
 	f := heightsync.NewFloorIndex()
 	hash := []byte{0xaa}

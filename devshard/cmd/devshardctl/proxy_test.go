@@ -22,12 +22,14 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -481,6 +483,9 @@ type killableClient struct {
 	err            error
 	last           *host.HostRequest
 	receivedHashes [][32]byte
+	// onSend observes each request after it is recorded. A later protocol send
+	// replaces last, so a test that needs the chat itself watches here.
+	onSend func(host.HostRequest)
 }
 
 func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -489,7 +494,11 @@ func (c *killableClient) Send(ctx context.Context, req host.HostRequest, stream 
 	c.last = &reqCopy
 	forcedErr := c.err
 	receivedHashes := c.receivedHashes
+	onSend := c.onSend
 	c.mu.Unlock()
+	if onSend != nil {
+		onSend(reqCopy)
+	}
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}
@@ -547,8 +556,12 @@ type delayedResultClient struct {
 	sendCalls atomic.Int32
 }
 
-func (c *delayedResultClient) Send(ctx context.Context, req host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
+func (c *delayedResultClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
 	c.sendCalls.Add(1)
+	// A timeout vote reuses Send with no stream. It is not an inference.
+	if stream == nil {
+		return &host.HostResponse{Nonce: req.Nonce}, nil
+	}
 	select {
 	case <-c.releaseCh:
 		if c.respond != nil {
@@ -703,7 +716,12 @@ func setSecondaryWaitAfterWinner(t *testing.T, d time.Duration) {
 
 func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
 	t.Helper()
-	return setupTestProxyWithBalance(t, numHosts, engines, verifierAccept, 1_000_000)
+	return setupTestProxyClock(t, numHosts, engines, verifierAccept, false)
+}
+
+func setupTestProxyClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, header bool) *testProxyEnv {
+	t.Helper()
+	return setupTestProxyFloorClock(t, numHosts, engines, verifierAccept, 1_000_000, 0, nil, header, 0)
 }
 
 func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance uint64) *testProxyEnv {
@@ -718,8 +736,24 @@ func setupTestProxyWithFeePerNonce(t *testing.T, numHosts int, engines []devshar
 
 func setupLiveFloorProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
 	t.Helper()
-	env := setupSeededFloorProxy(t, numHosts, engines, verifierAccept, &testChain{live: true, start: time.Now()})
+	return setupLiveFloorProxyClock(t, numHosts, engines, verifierAccept, false)
+}
+
+func setupLiveFloorProxyClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, header bool) *testProxyEnv {
+	t.Helper()
+	env := setupSeededLiveFloorProxyClock(t, numHosts, engines, verifierAccept, header)
 	env.session.StartHeartbeatLoop()
+	return env
+}
+
+func setupSeededLiveFloorProxyClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, header bool) *testProxyEnv {
+	t.Helper()
+	env := setupTestProxyFloorClock(t, numHosts, engines, verifierAccept, 1_000_000, 0, &testChain{live: true, start: time.Now()}, header, 0)
+	_, err := env.session.SendInference(context.Background(), defaultParams())
+	require.NoError(t, err)
+	require.NoError(t, env.session.SendPendingDiff(context.Background()))
+	f, _, _ := env.sm.HeightSyncFloorAsOf(env.session.Nonce() + 1)
+	require.NotZero(t, f, "the bootstrap inference's finish seeds the floor")
 	return env
 }
 
@@ -746,7 +780,13 @@ func (e *testProxyEnv) raiseFloor(t *testing.T, height uint64) {
 	t.Helper()
 	require.NotNil(t, e.chain)
 	require.False(t, e.chain.live)
+	// Pin the new tip before the heartbeat. One second per skipped height would
+	// put the floor a day ahead and the next stamp would wait on that future.
+	// Two seconds clears the fixture's one-second window and stays near now.
+	prev, err := e.chain.HeaderTimeMs(uint64(e.chain.height()), []byte{0xaa})
+	require.NoError(t, err)
 	e.chain.manual.Store(int64(height))
+	e.chain.setHeightTime(height, prev+int64((2*time.Second)/time.Millisecond))
 	for range 8 {
 		e.chain.clock.Add(int64(time.Hour))
 		_ = e.session.MaybeHeartbeat(context.Background())
@@ -763,9 +803,10 @@ func (e *testProxyEnv) floorReceipt(t *testing.T, nonce uint64, confirmedAt int6
 	t.Helper()
 	record, tracked := e.sm.GetInference(nonce)
 	require.True(t, tracked)
-	stamp := testutil.ReceiptStamp{}
+	stamp := testutil.ReceiptStamp{StartedAt: record.StartedAt, ConfirmedAt: confirmedAt}
 	if record.StartedAtHeight > 0 {
-		stamp = testutil.ReceiptStamp{Height: record.StartedAtHeight, Hash: []byte{0xaa}}
+		stamp.Height = record.StartedAtHeight
+		stamp.Hash = []byte{0xaa}
 	}
 	sig := testutil.SignExecutorReceipt(t, e.verifiers[record.ExecutorSlot].signer, "escrow-proxy", nonce,
 		record.PromptHash, record.Model, record.InputLength, record.MaxTokens, stamp)
@@ -777,6 +818,23 @@ type testChain struct {
 	start  time.Time
 	manual atomic.Int64
 	clock  atomic.Int64
+	mu     sync.Mutex
+	times  map[uint64]int64
+}
+
+// setHeightTime pins the map time of one height. A confirm stamped at a
+// raised tip would otherwise carry a block time in the future, and the
+// execution deadline would wait for that future instead of the receipt.
+func (c *testChain) setHeightTime(height uint64, ms int64) {
+	if c == nil || height == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.times == nil {
+		c.times = map[uint64]int64{}
+	}
+	c.times[height] = ms
 }
 
 func (c *testChain) height() int64 {
@@ -787,7 +845,12 @@ func (c *testChain) height() int64 {
 }
 
 func (c *testChain) Latest(context.Context) (*blocks.Header, error) {
-	return blocks.HashOnlyHeader(c.height(), time.Unix(1, 0).UTC(), "fake-chain", []byte{0xaa}), nil
+	h := c.height()
+	at := time.Unix(1, 0).UTC()
+	if ms, err := c.HeaderTimeMs(uint64(h), []byte{0xaa}); err == nil && ms > 0 {
+		at = time.UnixMilli(ms).UTC()
+	}
+	return blocks.HashOnlyHeader(h, at, "fake-chain", []byte{0xaa}), nil
 }
 func (c *testChain) At(ctx context.Context, _ int64) (*blocks.Header, error) { return c.Latest(ctx) }
 func (c *testChain) Prove(context.Context, string, int64) (*blocks.Proof, error) {
@@ -799,7 +862,62 @@ func (c *testChain) Subscribe(context.Context, int64) (<-chan *blocks.Header, er
 	return ch, nil
 }
 
+// StoredAt is the height-keyed map. The oracle header for the tip uses the
+// same milliseconds, so a stamp of the tip agrees with the map.
+func (c *testChain) StoredAt(height uint64) (headertime.Record, bool) {
+	if c == nil || height == 0 {
+		return headertime.Record{}, false
+	}
+	ms, err := c.HeaderTimeMs(height, []byte{0xaa})
+	if err != nil || ms <= 0 {
+		return headertime.Record{}, false
+	}
+	return headertime.Record{Hash: []byte{0xaa}, TimeMs: ms}, true
+}
+
+// HeaderTimeMs is the block time of this fixture chain. Height 100 is the
+// chain's start instant, and each later height is one second later. A pin
+// from setHeightTime wins, so a jumped tip does not inherit a second per
+// skipped height.
+func (c *testChain) HeaderTimeMs(height uint64, hash []byte) (int64, error) {
+	if height == 0 || !heightsync.StampPresent(hash) {
+		return 0, types.ErrHeaderPending
+	}
+	c.mu.Lock()
+	if c.times != nil {
+		if ms, ok := c.times[height]; ok {
+			c.mu.Unlock()
+			return ms, nil
+		}
+	}
+	c.mu.Unlock()
+	base := c.start
+	if base.IsZero() {
+		if c.clock.Load() == 0 {
+			return 0, types.ErrHeaderPending
+		}
+		base = time.Unix(0, c.clock.Load())
+	}
+	const originHeight = 100
+	return base.Add(time.Duration(int64(height)-originHeight) * time.Second).UnixMilli(), nil
+}
+
+// tipOracleChain is the chain a test host reads when the fixture is not given
+// one. A production host always has an oracle. With none, it has no header
+// and no floor, and it does not sign a receipt.
+func tipOracleChain() *testChain {
+	c := &testChain{start: time.Now()}
+	c.manual.Store(100)
+	c.clock.Store(c.start.UnixNano())
+	return c
+}
+
 func setupTestProxyFloor(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64, chain *testChain) *testProxyEnv {
+	t.Helper()
+	return setupTestProxyFloorClock(t, numHosts, engines, verifierAccept, balance, feePerNonce, chain, false, 0)
+}
+
+func setupTestProxyFloorClock(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool, balance, feePerNonce uint64, chain *testChain, header bool, executionTimeout int64, smOpts ...state.SMOption) *testProxyEnv {
 	t.Helper()
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
@@ -807,30 +925,38 @@ func setupTestProxyFloor(t *testing.T, numHosts int, engines []devshard.Inferenc
 	}
 	userKey := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hostSigners)
+	if executionTimeout == 0 {
+		executionTimeout = 1
+	}
 	config := types.SessionConfig{
-		RefusalTimeout:   1,
-		ExecutionTimeout: 1,
-		TokenPrice:       1,
-		FeePerNonce:      feePerNonce,
-		VoteThreshold:    uint32(numHosts) / 2,
+		RefusalTimeout:         1,
+		ExecutionTimeout:       executionTimeout,
+		TokenPrice:             1,
+		FeePerNonce:            feePerNonce,
+		VoteThreshold:          uint32(numHosts) / 2,
+		HeightsyncTimeoutClock: header,
 	}
 	verifier := signing.NewSecp256k1Verifier()
+
+	// Hosts stamp a receipt from their own tip when the floor is empty, so a
+	// fixture that does not drive a chain still gives them one shared tip.
+	hostChain := chain
+	if hostChain == nil {
+		hostChain = tipOracleChain()
+	}
 
 	killables := make([]*killableClient, numHosts)
 	verifiers := make([]*verifierClient, numHosts)
 	clients := make([]user.HostClient, numHosts)
 	for i := range hostSigners {
-		sm := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier)
+		sm := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier, append([]state.SMOption{state.WithHeaderTimes(hostChain)}, smOpts...)...)
 		var engine devshard.InferenceEngine
 		if engines != nil {
 			engine = engines[i]
 		} else {
 			engine = stub.NewInferenceEngine()
 		}
-		hostOpts := []host.HostOption{host.WithGrace(100)}
-		if chain != nil {
-			hostOpts = append(hostOpts, host.WithChainOracle(chain))
-		}
+		hostOpts := []host.HostOption{host.WithGrace(100), host.WithChainOracle(hostChain)}
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-proxy", group, nil, hostOpts...)
 		require.NoError(t, err)
 		kc := &killableClient{inner: &user.InProcessClient{Host: h}}
@@ -845,7 +971,7 @@ func setupTestProxyFloor(t *testing.T, numHosts int, engines []devshard.Inferenc
 		clients[i] = verifiers[i]
 	}
 
-	userSM := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier)
+	userSM := statetest.MustStateMachine(t, "escrow-proxy", config, group, balance, userKey.Address(), verifier, append([]state.SMOption{state.WithHeaderTimes(hostChain)}, smOpts...)...)
 	var sessionOpts []user.SessionOption
 	if chain != nil {
 		sessionOpts = append(sessionOpts,
@@ -892,6 +1018,11 @@ func setupTestProxyFloor(t *testing.T, numHosts int, engines []devshard.Inferenc
 
 func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testProxyEnv {
 	t.Helper()
+	return setupTestProxyWithClientsClock(t, clients, false)
+}
+
+func setupTestProxyWithClientsClock(t *testing.T, clients []user.HostClient, header bool) *testProxyEnv {
+	t.Helper()
 	numHosts := len(clients)
 	hostSigners := make([]*signing.Secp256k1Signer, numHosts)
 	for i := range hostSigners {
@@ -900,10 +1031,11 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 	userKey := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hostSigners)
 	config := types.SessionConfig{
-		RefusalTimeout:   1,
-		ExecutionTimeout: 1,
-		TokenPrice:       1,
-		VoteThreshold:    uint32(numHosts) / 2,
+		RefusalTimeout:         1,
+		ExecutionTimeout:       1,
+		TokenPrice:             1,
+		VoteThreshold:          uint32(numHosts) / 2,
+		HeightsyncTimeoutClock: header,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	userSM := statetest.MustStateMachine(t, "escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
@@ -940,7 +1072,9 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 // by that inference's executor. An unsigned stub no longer marks the nonce finished.
 func applicableFinishTx(t *testing.T, env *testProxyEnv, inferenceID uint64) *types.DevshardTx {
 	t.Helper()
-	idx := int(inferenceID % uint64(len(env.hostSigners)))
+	rec, ok := env.session.StateMachine().Inference(inferenceID)
+	require.True(t, ok, "inference %d not prepared", inferenceID)
+	idx := int(rec.ExecutorSlot)
 	msg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
 		EscrowId:     "escrow-proxy",
@@ -959,14 +1093,22 @@ func applicableResponse(t *testing.T, env *testProxyEnv, inferenceID uint64) *ho
 	t.Helper()
 	rec, ok := env.session.StateMachine().Inference(inferenceID)
 	require.True(t, ok, "inference %d not prepared", inferenceID)
-	idx := int(inferenceID % uint64(len(env.hostSigners)))
 	confirmedAt := time.Now().Unix()
+	stamp := testutil.ReceiptStamp{StartedAt: rec.StartedAt, ConfirmedAt: confirmedAt}
+	if height, hash := state.StartStamp(rec); height > 0 {
+		stamp.Height = height
+		stamp.Hash = hash
+		stamp.TimeMs = rec.StartedAtTimeMs
+	}
 	return &host.HostResponse{
 		Nonce: inferenceID,
-		Receipt: testutil.SignExecutorReceipt(t, env.hostSigners[idx], "escrow-proxy", inferenceID,
-			rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens),
-		ConfirmedAt: confirmedAt,
-		Mempool:     []*types.DevshardTx{applicableFinishTx(t, env, inferenceID)},
+		Receipt: testutil.SignExecutorReceipt(t, env.hostSigners[rec.ExecutorSlot], "escrow-proxy", inferenceID,
+			rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp),
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    stamp.Height,
+		ObservedBlockHash: stamp.Hash,
+		ObservedTimeMs:    stamp.TimeMs,
+		Mempool:           []*types.DevshardTx{applicableFinishTx(t, env, inferenceID)},
 	}
 }
 
@@ -1210,6 +1352,9 @@ type streamContentThenReleaseClient struct {
 }
 
 func (c *streamContentThenReleaseClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if stream == nil {
+		return &host.HostResponse{Nonce: req.Nonce}, nil
+	}
 	if receiptHandler != nil {
 		receiptHandler(&host.HostResponse{})
 	}
@@ -1388,10 +1533,22 @@ func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
 }
 
 func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runStalledWinnerCanCompleteAfterClientTimeout(t, header)
+		})
+	}
+}
+
+func runStalledWinnerCanCompleteAfterClientTimeout(t *testing.T, header bool) {
 	setInterChunkStallTimeout(t, 50*time.Millisecond)
 	release := make(chan struct{})
 	client := &streamContentThenReleaseClient{releaseCh: release}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithClientsClock(t, []user.HostClient{client}, header)
 	client.respond = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
 
 	var buf syncedBuffer
@@ -1555,28 +1712,83 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 
 const divergenceUpstreamError = `http /sessions/escrow-proxy/chat/completions: status 500: {"error":"apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"}`
 
+// inferenceDispatches are the chats a host was asked to run. A Finish or
+// catch-up for an earlier winner is a HostRequest with no payload, and that
+// send can land on this same slot before or after the replay.
+func inferenceDispatches(reqs []host.HostRequest) []host.HostRequest {
+	var out []host.HostRequest
+	for _, req := range reqs {
+		if req.Payload != nil {
+			out = append(out, req)
+		}
+	}
+	return out
+}
+
 // A host rolls the diff back when its root disagrees, so its state survives intact and one replay of the
 // retained chain is worth trying before the escrow writes it off.
 func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T) {
 	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
+	var reqMu sync.Mutex
+	var seen []host.HostRequest
+	divergent.onSend = func(req host.HostRequest) {
+		reqMu.Lock()
+		seen = append(seen, req)
+		reqMu.Unlock()
+	}
+	dispatches := func() []host.HostRequest {
+		reqMu.Lock()
+		defer reqMu.Unlock()
+		return inferenceDispatches(append([]host.HostRequest(nil), seen...))
+	}
 	divergent.ForceError(errors.New(divergenceUpstreamError))
 
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
-	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	// The failed chat returns with the winner, while its own send can still be
+	// entering. The dispatch log is the request, once that send has started.
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 1
+	}, time.Second, 5*time.Millisecond)
+	require.EqualValues(t, uint64(1), dispatchNonces(dispatches())[0])
+
+	// The winner's Finish is published on its own nonce once the race cleanup
+	// runs. Let that land before the replay, so the next chat is not racing
+	// that publish for this host's slot.
+	divergent.ForceError(nil)
+	require.Eventually(t, func() bool {
+		return env.session.Nonce() > 2
+	}, 2*time.Second, 5*time.Millisecond, "the winner finish is published before the replay")
 
 	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
 
-	divergent.ForceError(nil)
-	var second bytes.Buffer
-	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
-	require.EqualValues(t, 3, divergent.LastRequest().Nonce, "the host has to be dispatched to again to prove itself")
+	for range 4 {
+		if len(dispatchNonces(dispatches())) >= 2 {
+			break
+		}
+		var body bytes.Buffer
+		require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &body, nil))
+	}
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 2
+	}, time.Second, 5*time.Millisecond, "the host has to be dispatched to again to prove itself")
+	got := dispatchNonces(dispatches())
+	require.EqualValues(t, uint64(1), got[0])
+	require.Greater(t, got[1], got[0], "replay dispatches %v", got)
 
 	_, blocked = env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.False(t, blocked, "a host that agreed on the replay must not be written off")
+}
+
+func dispatchNonces(reqs []host.HostRequest) []uint64 {
+	nonces := make([]uint64, len(reqs))
+	for i, req := range reqs {
+		nonces[i] = req.Nonce
+	}
+	return nonces
 }
 
 // A disagreement that survives the replay is the evidence the block wanted.
@@ -1584,25 +1796,60 @@ func TestRunInference_AStateRootDivergenceThatSurvivesTheReplayBlocksTheHost(t *
 	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
+	var reqMu sync.Mutex
+	var seen []host.HostRequest
+	divergent.onSend = func(req host.HostRequest) {
+		reqMu.Lock()
+		seen = append(seen, req)
+		reqMu.Unlock()
+	}
+	dispatches := func() []host.HostRequest {
+		reqMu.Lock()
+		defer reqMu.Unlock()
+		return inferenceDispatches(append([]host.HostRequest(nil), seen...))
+	}
 	divergent.ForceError(errors.New(divergenceUpstreamError))
 
-	for range 2 {
+	var first bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 1
+	}, time.Second, 5*time.Millisecond)
+	require.EqualValues(t, uint64(1), dispatchNonces(dispatches())[0])
+
+	// The winner Finish publishes on its own nonce and can take this host's
+	// next slot before the replay is composed. The error stays forced, so the
+	// replay disagrees too.
+	require.Eventually(t, func() bool {
+		return env.session.Nonce() > 2
+	}, 2*time.Second, 5*time.Millisecond, "the winner finish is published before the replay")
+
+	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
+
+	for range 4 {
+		if len(dispatchNonces(dispatches())) >= 2 {
+			break
+		}
 		var body bytes.Buffer
 		require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &body, nil))
 	}
-
+	require.Eventually(t, func() bool {
+		return len(dispatchNonces(dispatches())) >= 2
+	}, time.Second, 5*time.Millisecond, "the replay has to reach this host")
 	require.Eventually(t, func() bool {
 		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 		return blocked
-	}, time.Second, 10*time.Millisecond)
+	}, 2*time.Second, 10*time.Millisecond, "a replay that disagreed again blocks the host")
 
 	// Even if the host would answer now, this escrow must stop sending it
 	// real traffic because its local state no longer matches our diff chain.
+	// A probe or catch-up can still arrive with no payload.
 	divergent.ForceError(nil)
-	lastNonce := divergent.LastRequest().Nonce
+	before := len(dispatches())
 	var after bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &after, nil))
-	require.EqualValues(t, lastNonce, divergent.LastRequest().Nonce)
+	require.Equal(t, before, len(dispatches()), "a blocked host must not be asked to run another chat")
 
 	reason, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.True(t, blocked)
@@ -1733,7 +1980,19 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 }
 
 func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {
-	env := setupTestProxy(t, 1, nil, true)
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t, header)
+		})
+	}
+}
+
+func runEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T, header bool) {
+	env := setupTestProxyClock(t, 1, nil, true, header)
 	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	require.NoError(t, env.session.SendPendingDiff(context.Background()))
@@ -1814,6 +2073,9 @@ func TestAFailedRequestReturnsBeforeItsTimeoutVoteAndStillVotes(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, hostErr.statusCode())
 	require.NotEqual(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[prepared.Nonce()].Status, "precondition: the vote is still held on the gate")
 
+	require.Eventually(t, func() bool {
+		return env.sm.TimeoutDue(prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED) == nil
+	}, 5*time.Second, 20*time.Millisecond, "the refusal is due once the floor's block time passes the start")
 	releaseVote()
 	requireClosedWithin(t, cleanupFinished, "the background cleanup never finished")
 	// Protocol timeout votes sleep/vote off the outer barrier; TimedOut can land
@@ -1950,9 +2212,21 @@ func TestRunInference_AContextLengthRejectedHostStillGetsItsTimeoutVote(t *testi
 }
 
 func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runCancelStillSettlesStartedAttempt(t, header)
+		})
+	}
+}
+
+func runCancelStillSettlesStartedAttempt(t *testing.T, header bool) {
 	releaseCh := make(chan struct{})
 	client := &delayedResultClient{releaseCh: releaseCh}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithClientsClock(t, []user.HostClient{client}, header)
 	client.respond = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1980,6 +2254,22 @@ func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return env.session.IsNonceFinished(1)
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestProxyChatGateExpiryReturnsHeightSeedIncomplete(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.session.SetRequireHeightSeed(true)
+	env.proxy.session.MarkHeightSeedGate(time.Now().Add(-time.Second))
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, "5", rec.Header().Get("Retry-After"))
+	require.Equal(t, transport.DevshardErrorHeightSeedIncomplete, rec.Header().Get(transport.HeaderDevshardError))
+	require.EqualValues(t, 0, env.proxy.session.Nonce())
 }
 
 func TestProxyHandleChatCompletionsRejectsWhenConfirmationPoCActive(t *testing.T) {
@@ -2521,10 +2811,11 @@ func TestRunInference_ReceiptTimeoutEscalatesEvenWhenSendTimeRaces(t *testing.T)
 	verifier := signing.NewSecp256k1Verifier()
 
 	clients := make([]user.HostClient, numHosts)
+	tip := tipOracleChain()
 	for i := range hostSigners {
 		sm := statetest.MustStateMachine(t, "escrow-proxy", config, group, 1_000_000, userKey.Address(), verifier)
 		engine := stub.NewInferenceEngine()
-		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-proxy", group, nil, host.WithGrace(100))
+		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-proxy", group, nil, host.WithGrace(100), host.WithChainOracle(tip))
 		require.NoError(t, err)
 		kc := &killableClient{inner: &user.InProcessClient{Host: h}}
 		vc := &verifierClient{
@@ -2621,6 +2912,11 @@ type receiptThenHangClient struct {
 }
 
 func (c *receiptThenHangClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	// A timeout vote reuses Send with no stream. Blocking here holds the race
+	// cleanup for the whole join grace, so the hung host is only sampled once.
+	if stream == nil {
+		return &host.HostResponse{Nonce: req.Nonce}, nil
+	}
 	if receiptHandler != nil {
 		receiptHandler(c.receipt(req.Nonce))
 	}
@@ -2645,10 +2941,22 @@ func TestShouldArmEscalationTimerFailClosedAtAttemptLimit(t *testing.T) {
 }
 
 func TestRunInference_AllHostsHangAfterReceiptFailsClosed(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runAllHostsHangAfterReceiptFailsClosed(t, header)
+		})
+	}
+}
+
+func runAllHostsHangAfterReceiptFailsClosed(t *testing.T, header bool) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 50*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
 	hang := &receiptThenHangClient{}
-	env := setupTestProxyWithClients(t, []user.HostClient{hang, hang, hang})
+	env := setupTestProxyWithClientsClock(t, []user.HostClient{hang, hang, hang}, header)
 	hang.receipt = func(nonce uint64) *host.HostResponse {
 		resp := applicableResponse(t, env, nonce)
 		resp.Mempool = nil
@@ -2686,36 +2994,35 @@ func TestRunInference_AllHostsHangBeforeReceiptFailsClosed(t *testing.T) {
 	require.GreaterOrEqual(t, gatewayStatusCodeForError(err), http.StatusInternalServerError)
 }
 
-// lateReceiptThenContentClient signs its receipt after receiptDelay and
-// streams its first content contentDelay later.
+// lateReceiptThenContentClient wraps a real host. The receipt is the host's
+// own signature, held for receiptDelay; the first content byte follows
+// contentDelay later.
 type lateReceiptThenContentClient struct {
+	inner        user.HostClient
 	receiptDelay time.Duration
 	contentDelay time.Duration
 }
 
 func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
-	for _, delay := range []time.Duration{c.receiptDelay, c.contentDelay} {
-		select {
-		case <-time.After(delay):
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-		if receiptHandler != nil {
-			receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
-			receiptHandler = nil
-			continue
-		}
-		if stream != nil {
-			_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"served"}}]}`+"\n\n")
+	if req.Payload == nil {
+		return c.inner.Send(ctx, req, stream, receiptHandler)
+	}
+	select {
+	case <-time.After(c.receiptDelay):
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	wrapped := receiptHandler
+	if receiptHandler != nil && c.contentDelay > 0 {
+		wrapped = func(resp *host.HostResponse) {
+			receiptHandler(resp)
+			select {
+			case <-time.After(c.contentDelay):
+			case <-ctx.Done():
+			}
 		}
 	}
-	return &host.HostResponse{
-		Nonce: req.Nonce,
-		Mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{
-			FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: req.Nonce},
-		}}},
-		ConfirmedAt: time.Now().Unix(),
-	}, nil
+	return c.inner.Send(ctx, req, stream, wrapped)
 }
 
 // Test flow:
@@ -2725,8 +3032,10 @@ func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostReq
 func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttemptLimit(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 40*time.Millisecond, 400*time.Millisecond, 0, 50*time.Millisecond)
-	slowHost := lateReceiptThenContentClient{receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
-	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	env := setupTestProxy(t, 2, nil, true)
+	for _, kc := range env.killables {
+		kc.inner = lateReceiptThenContentClient{inner: kc.inner, receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
+	}
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 400*time.Millisecond)
 
@@ -2734,7 +3043,7 @@ func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttem
 	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
 
 	require.NoError(t, err)
-	require.Contains(t, buf.String(), "served")
+	require.Contains(t, buf.String(), "stub")
 }
 
 // Test flow:
@@ -2744,8 +3053,10 @@ func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttem
 func TestRunInference_AtTheAttemptLimitAReceiptedAttemptPastOneFirstTokenBudgetIsServed(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 40*time.Millisecond, 100*time.Millisecond, 0, 50*time.Millisecond)
-	slowHost := lateReceiptThenContentClient{receiptDelay: 10 * time.Millisecond, contentDelay: 170 * time.Millisecond}
-	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	env := setupTestProxy(t, 2, nil, true)
+	for _, kc := range env.killables {
+		kc.inner = lateReceiptThenContentClient{inner: kc.inner, receiptDelay: 10 * time.Millisecond, contentDelay: 170 * time.Millisecond}
+	}
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 100*time.Millisecond)
 
@@ -2753,7 +3064,7 @@ func TestRunInference_AtTheAttemptLimitAReceiptedAttemptPastOneFirstTokenBudgetI
 	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
 
 	require.NoError(t, err)
-	require.Contains(t, buf.String(), "served")
+	require.Contains(t, buf.String(), "stub")
 }
 
 // Test flow:
@@ -2761,16 +3072,34 @@ func TestRunInference_AtTheAttemptLimitAReceiptedAttemptPastOneFirstTokenBudgetI
 //  2. Run ten inferences; each cancels the hung host as a loser once the winner's grace runs out, past its first-token budget.
 //  3. Require the hung host to collect a no-winner strike, as an empty stream past its budget is the host's own miss.
 func TestRunInference_AHostThatHangsAfterItsReceiptIsStruck(t *testing.T) {
+	for _, header := range []bool{false, true} {
+		name := "legacy"
+		if header {
+			name = "header"
+		}
+		t.Run(name, func(t *testing.T) {
+			runAHostThatHangsAfterItsReceiptIsStruck(t, header)
+		})
+	}
+}
+
+func runAHostThatHangsAfterItsReceiptIsStruck(t *testing.T, header bool) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 20*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
 	hang := &receiptThenHangClient{}
-	env := setupTestProxy(t, 2, nil, true)
+	// A one-second execution window lets the legacy wall close the hung
+	// attempt before it can collect three empty streams. An hour keeps that
+	// vote in the future on both clocks, so the strike is the empty stream.
+	env := setupTestProxyFloorClock(t, 2, nil, true, 1_000_000, 0, nil, header, 3600)
 	hang.receipt = func(nonce uint64) *host.HostResponse {
 		resp := applicableResponse(t, env, nonce)
 		resp.Mempool = nil
 		return resp
 	}
 	env.killables[0].inner = hang
+	// The healthy host's content waits past the first-token budget, so the
+	// hung host is started on every request and can collect its strikes.
+	env.killables[1].inner = lateReceiptThenContentClient{inner: env.killables[1].inner, contentDelay: 40 * time.Millisecond}
 	redundancy := env.proxy.redundancy
 	redundancy.participantLimiter = NewParticipantRequestLimiter(100, 100)
 	params := defaultParams()
@@ -2860,6 +3189,9 @@ func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	close(inf.done)
 	require.True(t, deliveredWholeAnswer(inf), "precondition: the caller was served a whole answer")
 	require.False(t, env.session.IsNonceFinished(prepared.Nonce()), "precondition: the nonce never closed")
+	require.Eventually(t, func() bool {
+		return env.sm.TimeoutDue(prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED) == nil
+	}, 5*time.Second, 20*time.Millisecond, "the refusal is due once the floor's block time passes the start")
 
 	err = env.proxy.redundancy.finishRaceOutcome(context.Background(), []*inflight{inf}, params,
 		Decision{Reason: "test"}, prepared.Nonce(), raceFinishOptions{})
@@ -2868,4 +3200,38 @@ func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
 	}, 10*time.Second, 25*time.Millisecond, "the open nonce never reached a timeout vote")
+}
+
+func TestProxyChatStaleFloorReturns503WithoutStartingInference(t *testing.T) {
+	env := setupV7FloorGateProxy(t)
+	env.chain.clock.Store(time.Now().UnixNano())
+	env.session.SetDisableHeightSyncHeartbeat(true)
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+	require.Equal(t, user.HeightSeedStatePending, env.session.HeightSeedStatus().State)
+
+	before := len(env.sm.SnapshotState().Inferences)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(`{"messages":[{"role":"user","content":"hello"}]}`))
+	rec := httptest.NewRecorder()
+	env.proxy.handleChatCompletions(rec, req)
+	require.NoError(t, req.Context().Err(), "the internal floor budget expires while the client is still connected")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, transport.DevshardErrorHeightSeedIncomplete, rec.Header().Get(transport.HeaderDevshardError))
+	require.Equal(t, before, len(env.sm.SnapshotState().Inferences))
+}
+
+// setupV7FloorGateProxy establishes the real v7 bootstrap before advancing
+// the gateway clock to simulate idle time. Stored block times stay immutable.
+func setupV7FloorGateProxy(t *testing.T) *testProxyEnv {
+	t.Helper()
+	initial := time.Now().Add(-time.Minute)
+	chain := &testChain{start: initial}
+	chain.manual.Store(100)
+	chain.clock.Store(initial.UnixNano())
+	env := setupTestProxyFloorClock(t, 3, nil, true, 1_000_000, 0, chain, false, 0,
+		state.WithStateRootAndProtocolVersion(types.DevshardStateRootAndProtocolVersion))
+	env.session.MarkHeightSeedGate(time.Now().Add(30 * time.Second))
+	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
+	require.Equal(t, user.HeightSeedStateOK, env.session.HeightSeedStatus().State)
+	env.session.SetDisableHeightSyncHeartbeat(true)
+	return env
 }

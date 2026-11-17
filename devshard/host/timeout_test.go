@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -94,7 +97,6 @@ func testPayload() *InferencePayload {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 }
 
@@ -188,11 +190,14 @@ func TestVerifyRefused_UnsignedLocalEvidenceDoesNotReject(t *testing.T) {
 
 func TestVerifyRefused_ChallengeErrorAcceptsTimeout(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		err  error
+		name   string
+		err    error
+		accept bool
 	}{
-		{name: "executor unreachable", err: errors.New("unreachable")},
-		{name: "challenge timeout", err: context.DeadlineExceeded},
+		{name: "net closed", err: net.ErrClosed, accept: true},
+		{name: "challenge timeout", err: context.DeadlineExceeded, accept: true},
+		{name: "plain header pending", err: types.ErrHeaderPending, accept: false},
+		{name: "generic answered error", err: errors.New("executor 500"), accept: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			st := stateWithPendingFull(1, 1)
@@ -200,7 +205,7 @@ func TestVerifyRefused_ChallengeErrorAcceptsTimeout(t *testing.T) {
 
 			accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, due(newEvidenceGroup(t).sm))
 			require.NoError(t, err)
-			require.True(t, accept, "challenge error should be treated as executor unreachable")
+			require.Equal(t, tc.accept, accept)
 		})
 	}
 }
@@ -248,6 +253,9 @@ func TestVerifyRefused_InferenceNotPending(t *testing.T) {
 
 func TestVerifyRefused_DeadlineNotPassed(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
+	// Legacy due is now.Unix()-StartedAt >= RefusalTimeout. A fresh anchor
+	// stays inside the window. Header mode ignores this and uses the stamp.
+	st.Inferences[1].StartedAt = time.Now().Unix()
 
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, nil, nil, notDue(nil))
 	require.NoError(t, err)
@@ -275,6 +283,18 @@ func TestVerifyRefused_PayloadMismatch_Rejects(t *testing.T) {
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], badPayload, nil, executor, nil, due(nil))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: payload mismatch")
+}
+
+func TestVerifyRefused_StartedAtMismatch_Rejects(t *testing.T) {
+	st := stateWithPendingFull(1, 1)
+	executor := &mockExecutorClient{challengeReceipt: []byte("would-return-receipt")}
+	payload := testPayload()
+	payload.StartedAt = st.Inferences[1].StartedAt + 1
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], payload, nil, executor, nil, due(nil))
+	require.NoError(t, err)
+	require.False(t, accept, "should reject: payload started_at is not the record")
+	require.Zero(t, executor.challengePayload, "a mismatched start time is not sent to the executor")
 }
 
 // A finish cannot apply to a pending record, so without its ConfirmStart it
@@ -543,6 +563,9 @@ func TestVerifyExecution_NilExecutorClient(t *testing.T) {
 
 func TestVerifyExecution_DeadlineNotPassed(t *testing.T) {
 	st := stateWithStarted(1, 1)
+	// Legacy due is now.Unix()-ConfirmedAt >= ExecutionTimeout. A fresh
+	// anchor stays inside the window. Header mode ignores this and uses the stamp.
+	st.Inferences[1].ConfirmedAt = time.Now().Unix()
 
 	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, st.Inferences[1], nil, nil, nil, notDue(nil))
 	require.NoError(t, err)
@@ -573,9 +596,17 @@ func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {
 
 var errNoEvidenceVerifier = errors.New("no evidence verifier")
 
+// evidenceHeader is the clock due and notDue report. The zero value is
+// legacy, the production default of HeightsyncTimeoutClock. Top-level
+// Verify* tests run that clock. TestVerifyTimeoutSuite_HeaderClock sets
+// this for a second pass of the same fixtures. Those tests must stay
+// sequential: the flag is package state for the duration of the pass.
+var evidenceHeader bool
+
 type dueEvidence struct {
-	inner EvidenceVerifier
-	due   error
+	inner  EvidenceVerifier
+	due    error
+	header bool
 }
 
 func (d dueEvidence) CheckEvidence(rec *types.InferenceRecord, txs ...*types.DevshardTx) error {
@@ -587,10 +618,82 @@ func (d dueEvidence) CheckEvidence(rec *types.InferenceRecord, txs ...*types.Dev
 
 func (d dueEvidence) TimeoutDue(uint64, types.TimeoutReason) error { return d.due }
 
-func due(ev EvidenceVerifier) EvidenceVerifier { return dueEvidence{inner: ev} }
+// A due verifier has a header time already past the window. A not-due
+// verifier has a full AnswerWait left, which is an ignore and not a wait.
+func (d dueEvidence) VerifierNow() time.Time {
+	return time.UnixMilli(time.Now().UnixMilli())
+}
+
+func (d dueEvidence) HasHeaderFeed() bool { return true }
+
+func (d dueEvidence) StampHeaderTime(uint64, []byte) (int64, bool) {
+	if d.due != nil {
+		return d.VerifierNow().Add(time.Second).UnixMilli(), true
+	}
+	return 1, true
+}
+
+func (d dueEvidence) TimeoutInterval(types.TimeoutReason) time.Duration {
+	return headertime.AnswerWait
+}
+
+// HeightsyncTimeoutClock selects the verifier loop. Legacy uses the record
+// wall anchor. Header uses StampHeaderTime: epoch when due, one second ahead
+// when not due (a full AnswerWait, so the verifier ignores rather than waits).
+func (d dueEvidence) HeightsyncTimeoutClock() bool { return d.header }
+
+func due(ev EvidenceVerifier) EvidenceVerifier {
+	return dueEvidence{inner: ev, header: evidenceHeader}
+}
 
 func notDue(ev EvidenceVerifier) EvidenceVerifier {
-	return dueEvidence{inner: ev, due: types.ErrTimeoutNotDue}
+	return dueEvidence{inner: ev, due: types.ErrTimeoutNotDue, header: evidenceHeader}
+}
+
+// TestVerifyTimeoutSuite_HeaderClock runs the bulk Verify* fixtures on the
+// stamp clock. The same tests, called directly, run on the legacy clock.
+func TestVerifyTimeoutSuite_HeaderClock(t *testing.T) {
+	evidenceHeader = true
+	t.Cleanup(func() { evidenceHeader = false })
+
+	for _, tc := range []struct {
+		name string
+		fn   func(*testing.T)
+	}{
+		{"ReceiptInLocalMempool", TestVerifyRefused_ReceiptInLocalMempool},
+		{"UnsignedLocalEvidenceDoesNotReject", TestVerifyRefused_UnsignedLocalEvidenceDoesNotReject},
+		{"ChallengeErrorAcceptsTimeout", TestVerifyRefused_ChallengeErrorAcceptsTimeout},
+		{"ChallengesOnceWithoutDiffs", TestVerifyRefused_ChallengesOnceWithoutDiffs},
+		{"ReceiptWithoutQueuedConfirmDoesNotReject", TestVerifyRefused_ReceiptWithoutQueuedConfirmDoesNotReject},
+		{"InferenceNotPending", TestVerifyRefused_InferenceNotPending},
+		{"RefusedDeadlineNotPassed", TestVerifyRefused_DeadlineNotPassed},
+		{"NilPayloadRejects", TestVerifyRefused_NilPayload_Rejects},
+		{"PayloadMismatchRejects", TestVerifyRefused_PayloadMismatch_Rejects},
+		{"StartedAtMismatchRejects", TestVerifyRefused_StartedAtMismatch_Rejects},
+		{"FinishWithoutConfirmDoesNotReject", TestVerifyRefused_FinishWithoutConfirmDoesNotReject},
+		{"CopiesVerifiedReceipt", TestVerifyRefused_CopiesVerifiedReceipt},
+		{"ReceiptForOtherEscrowOrSignerDoesNotReject", TestVerifyRefused_ReceiptForOtherEscrowOrSignerDoesNotReject},
+		{"ShortReservationAccepted", TestVerifyRefused_ShortReservationAccepted},
+		{"FinishInLocalMempool", TestVerifyExecution_FinishInLocalMempool},
+		{"StubFinishDoesNotReject", TestVerifyExecution_StubFinishDoesNotReject},
+		{"SignedFinishRejects", TestVerifyExecution_SignedFinishRejects},
+		{"FinishForOtherEscrowOrSlotDoesNotReject", TestVerifyExecution_FinishForOtherEscrowOrSlotDoesNotReject},
+		{"OtherSlotFinishesDoNotHideAValidOne", TestVerifyExecution_OtherSlotFinishesDoNotHideAValidOne},
+		{"BoundsSignatureChecks", TestVerifyExecution_BoundsSignatureChecks},
+		{"ShortHashFinishDoesNotReject", TestVerifyExecution_ShortHashFinishDoesNotReject},
+		{"OverflowingTokenCostDoesNotReject", TestVerifyExecution_OverflowingTokenCostDoesNotReject},
+		{"WarmKeyFinishRejectsWithoutBinding", TestVerifyExecution_WarmKeyFinishRejectsWithoutBinding},
+		{"ExecutionChallengesOnceWithoutDiffs", TestVerifyExecution_ChallengesOnceWithoutDiffs},
+		{"ExecutorUnreachableDeadlinePassed", TestVerifyExecution_ExecutorUnreachable_DeadlinePassed},
+		{"InferenceNotStarted", TestVerifyExecution_InferenceNotStarted},
+		{"NilExecutorClient", TestVerifyExecution_NilExecutorClient},
+		{"ExecutionDeadlineNotPassed", TestVerifyExecution_DeadlineNotPassed},
+		{"ExecutorUnreachableAcceptsTheTimeout", TestExecutorUnreachableAcceptsTheTimeout},
+		{"UnreachableAcceptsRefusalAndExecution", TestUnreachableAcceptsRefusalAndExecution},
+		{"FailedEvidenceDoesNotWithholdTheVote", TestFailedEvidenceDoesNotWithholdTheVote},
+	} {
+		t.Run(tc.name, tc.fn)
+	}
 }
 
 // Test flow:

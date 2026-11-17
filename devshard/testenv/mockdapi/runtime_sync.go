@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 
+	"common/nodemanager/gen"
 	"devshard/cmd/devshardd/events"
 )
 
@@ -17,8 +18,22 @@ func (s *Service) runBlockSync(ctx context.Context) error {
 		if err := s.syncRuntimeConfigAtBlock(ctx, e.BlockHeight); err != nil {
 			slog.Warn("mockdapi: runtime config block sync failed", "height", e.BlockHeight, "err", err)
 		}
+		s.appendHostEventBlock(e)
 	})
 	return l.Start(ctx)
+}
+
+func (s *Service) appendHostEventBlock(e events.NewBlockEvent) {
+	if s.hostEvents == nil || e.BlockHeight <= 0 || len(e.Header) == 0 {
+		return
+	}
+	s.hostEvents.AppendBlock(&gen.BlockPayload{
+		Height:           e.BlockHeight,
+		Hash:             append([]byte(nil), e.BlockHash...),
+		HeaderTimeUnixMs: e.Time.UnixMilli(),
+		EpochIndex:       s.paramsSrc.CurrentEpochID(),
+		Header:           e.Header,
+	})
 }
 
 // RefreshRuntimeConfig pulls the latest params revision from mock-chain (after admin

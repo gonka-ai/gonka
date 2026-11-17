@@ -96,33 +96,45 @@ func TestHost_CollectValidationJobs_MatchesFullScan(t *testing.T) {
 	h.validationLifecycleMu.Unlock()
 
 	executorOf := func(id uint64) uint32 { return uint32(id % uint64(len(group))) }
-	floorAt := func(m uint64) (uint64, []byte) {
-		h, hash, _ := sm.HeightSyncFloorAsOf(m)
-		if h == 0 {
-			return 0, nil
+	floorAt := func(m uint64) (uint64, []byte, int64) {
+		p, known := sm.HeightSyncFloorPointAsOf(m)
+		if !known || p.Height == 0 {
+			return 0, nil, 0
 		}
-		return h, hash
+		return p.Height, p.Hash, p.TimeMs
+	}
+	clockMs := func(height uint64) int64 {
+		if height == 0 {
+			return 0
+		}
+		return int64(height) * testutil.HeightClockBlockMs
 	}
 	startTx := func(n uint64) *types.DevshardTx {
 		tx := testutil.StartTx(n)
-		tx.GetStartInference().ObservedHeight, tx.GetStartInference().ObservedBlockHash = floorAt(n)
+		h, hash, timeMs := floorAt(n)
+		tx.GetStartInference().ObservedHeight = h
+		tx.GetStartInference().ObservedBlockHash = hash
+		tx.GetStartInference().ObservedTimeMs = timeMs
 		return tx
 	}
 	confirmTx := func(id uint64) *types.DevshardTx {
-		h, hash := floorAt(id)
+		h, hash, timeMs := floorAt(id)
 		sig := testutil.SignExecutorReceipt(t, slotSigners[executorOf(id)], escrowID, id,
-			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, testutil.ReceiptStamp{Height: h, Hash: hash})
+			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens,
+			testutil.ReceiptStamp{Height: h, Hash: hash, TimeMs: timeMs})
 		return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: id, ExecutorSig: sig, ObservedHeight: h, ObservedBlockHash: hash,
+			InferenceId: id, ExecutorSig: sig, ObservedHeight: h, ObservedBlockHash: hash, ObservedTimeMs: timeMs,
 		}}}
 	}
 	finishTx := func(id uint64) *types.DevshardTx {
 		slot := executorOf(id)
 		height := 2000 + 100*id
+		timeMs := clockMs(height)
 		msg := &types.MsgFinishInference{
 			InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 			InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot, EscrowId: escrowID,
 			ObservedHeight: height, ObservedBlockHash: []byte{byte(height), byte(height >> 8)},
+			ObservedTimeMs: timeMs,
 		}
 		msg.ProposerSig = testutil.SignProposerTx(t, slotSigners[slot], msg)
 		return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}}

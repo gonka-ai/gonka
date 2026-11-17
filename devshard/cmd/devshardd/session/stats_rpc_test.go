@@ -14,7 +14,6 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
-	"devshard/internal/testutil"
 	"devshard/stub"
 	"devshard/transport"
 )
@@ -24,7 +23,7 @@ func TestStatsRPCOneShotTwoEscrows(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, base, "escrow-a", 7, 0)
 	createStoredSession(t, base, "escrow-b", 7, 0)
 	store := currentEpochStore{Storage: base, epoch: 7}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", &mockBridge{}, nil, nil))
 	mgr.SetBinaryVersion("0.2.14-v4-r2")
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/rpc")
@@ -33,14 +32,14 @@ func TestStatsRPCOneShotTwoEscrows(t *testing.T) {
 
 	var snap transport.RPCStatsSnapshot
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &snap))
-	require.Equal(t, testutil.RuntimeTestVersion, snap.ProtocolVersion)
+	require.Equal(t, "v6", snap.ProtocolVersion)
 	require.Equal(t, "0.2.14-v4-r2", snap.BinaryVersion)
 	require.Equal(t, hostSigner.Address(), snap.HostAddress)
 	require.NotZero(t, snap.MinuteUnix)
 	require.Len(t, snap.Shards, 2)
 	require.Equal(t, "escrow-a", snap.Shards[0].EscrowID)
 	require.Equal(t, "escrow-b", snap.Shards[1].EscrowID)
-	require.Equal(t, testutil.RuntimeTestVersion, snap.Shards[0].ProtocolVersion)
+	require.Equal(t, "v6", snap.Shards[0].ProtocolVersion)
 }
 
 func TestWriteJSONMaybeGzip(t *testing.T) {
@@ -70,7 +69,7 @@ func TestWriteJSONMaybeGzip(t *testing.T) {
 func TestStatsRPCIdentityWithoutGzipHeader(t *testing.T) {
 	base := newManagerTestStore(t)
 	_, _, hostSigner := createStoredSession(t, base, "escrow-a", 7, 0)
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(base, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(base, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", &mockBridge{}, nil, nil))
 	e := echo.New()
 	mgr.Register(e.Group(""))
 	req := httptest.NewRequest(http.MethodGet, "/stats/rpc", nil)
@@ -86,7 +85,7 @@ func TestStatsRPCIdentityWithoutGzipHeader(t *testing.T) {
 func TestStatsRPCJSONInvalidatesOnMinuteBoundary(t *testing.T) {
 	base := newManagerTestStore(t)
 	_, _, hostSigner := createStoredSession(t, base, "escrow-a", 7, 0)
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(base, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(base, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", &mockBridge{}, nil, nil))
 
 	now1 := time.Unix(100*60+55, 0)
 	body1, err := mgr.statsRPCJSON(now1)

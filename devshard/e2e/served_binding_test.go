@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -15,17 +16,27 @@ import (
 )
 
 // Test flow:
-//  1. Start the three-host environment with every executor storing and signing its real answer but streaming a changed one.
+//  1. Start the three-host environment, once on each timeout clock, with every executor storing and signing its real answer but streaming a changed one.
 //  2. Send one streaming completion.
 //  3. Assert the client received the changed answer, so the swap reached the wire.
-//  4. Wait until that stream's Finish is queued. A pairwise loser can still be in flight when the HTTP body returns, and the Finish is queued only after that background race settles.
-//  5. Send one more completion. Its diff applies the queued Finish, which this stream's own diffs were composed too early to carry.
+//  4. Wait until that stream's Finish is queued or already applied. A pairwise loser can still be in flight when the HTTP body returns.
+//  5. Send one more completion. Its diff applies a Finish that is still queued.
 //  6. Assert the gateway judged the swapped stream a mismatch against the signed Finish and bound none.
 func TestE2E_ServedBindingCatchesAStreamTheExecutorDidNotSign(t *testing.T) {
-	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{hostEnv: map[string]string{
+	for _, header := range []bool{false, true} {
+		t.Run(timeoutClockSubtest(header), func(t *testing.T) {
+			runServedBindingCatchesAStreamTheExecutorDidNotSign(t, header)
+		})
+	}
+}
+
+func runServedBindingCatchesAStreamTheExecutorDidNotSign(t *testing.T, header bool) {
+	t.Helper()
+	env, client := startNonStreamingEnvWithOptions(t, withHeightsyncTimeoutClock(e2eEnvOptions{hostEnv: map[string]string{
 		e2econfig.StubInferenceTamperedStreamEnv: "true",
 		"DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED": "true",
-	}})
+	}}, header))
+	requireHostTimeoutClock(t, client, env, header)
 
 	stream := testutil.SendStreamingCompletion(t, client, env.clientURL, "served binding against a swapped stream")
 	testutil.DebugLogf(t, "client stream: %v", stream.Events)
@@ -63,15 +74,32 @@ func waitForPendingFinish(t *testing.T, client *http.Client, clientURL string, i
 	t.Helper()
 	deadline := time.Now().Add(servedBindingWindow)
 	var pending map[string]any
+	var inference map[string]any
 	for {
 		pending = testutil.GetJSON(t, client, clientURL+"/v1/debug/pending")
 		if pendingHasFinish(pending, inferenceID) {
 			return
 		}
+		// The request diff can apply the Finish before this poll runs. A
+		// validation for the same id is what then remains in the mempool.
+		var found bool
+		inference, found = testutil.InferenceStatus(t, client, clientURL, inferenceID)
+		if found && inferenceFinishApplied(fmt.Sprint(inference["status"])) {
+			return
+		}
 		if !time.Now().Before(deadline) {
-			t.Fatalf("finish %d was not queued before the follow-up diff: %v", inferenceID, pending["pending"])
+			t.Fatalf("finish %d was neither queued nor applied before the follow-up diff: pending=%v inference=%v", inferenceID, pending["pending"], inference)
 		}
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func inferenceFinishApplied(status string) bool {
+	switch status {
+	case "finished", "challenged", "validated", "invalidated":
+		return true
+	default:
+		return false
 	}
 }
 

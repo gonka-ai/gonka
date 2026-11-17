@@ -32,9 +32,13 @@ type Store struct {
 	Params                  inferencetypes.Params
 	Epoch                   inferencetypes.Epoch
 
-	Participants   map[string]*inferencetypes.Participant
-	Escrows        map[uint64]*inferencetypes.DevshardEscrow
-	Grantees       map[GranteeKey][]inferencetypes.Grantee
+	Participants map[string]*inferencetypes.Participant
+	Escrows      map[uint64]*inferencetypes.DevshardEscrow
+	Grantees     map[GranteeKey][]inferencetypes.Grantee
+	// WarmKeyLog mirrors the chain's append-only warm-key log per granter:
+	// SetGrantees appends an entry for every new grantee of the warm-key
+	// marker and ends the entries of grantees it drops.
+	WarmKeyLog     map[string][]*inferencetypes.WarmKeyLogEntry
 	EpochGroupData map[EpochGroupKey]*inferencetypes.EpochGroupData
 	// Pubkeys maps bech32 address → base64-encoded compressed secp256k1 pubkey
 	// for AccountByAddress (payload auth during validation).
@@ -228,6 +232,45 @@ func (s *Store) GetEscrow(id uint64) *inferencetypes.DevshardEscrow {
 		c.Slots = append([]string(nil), e.Slots...)
 	}
 	return &c
+}
+
+// SyncWarmKeyLog brings the warm-key log in step with the Grantees map for
+// every granter, for seeds that write Grantees directly.
+func (s *Store) SyncWarmKeyLog() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	seen := make(map[string]bool)
+	for key := range s.Grantees {
+		if !seen[key.GranterAddress] {
+			seen[key.GranterAddress] = true
+			s.syncWarmKeyLogLocked(key.GranterAddress)
+		}
+	}
+}
+
+// GetWarmKeyLog returns every warm-key log entry of granter in id order.
+func (s *Store) GetWarmKeyLog(granter string) []*inferencetypes.WarmKeyLogEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*inferencetypes.WarmKeyLogEntry, 0, len(s.WarmKeyLog[granter]))
+	for _, e := range s.WarmKeyLog[granter] {
+		cp := *e
+		out = append(out, &cp)
+	}
+	return out
+}
+
+// GetWarmKeyEntry returns warm-key log entry id of granter, or nil.
+func (s *Store) GetWarmKeyEntry(granter string, id uint64) *inferencetypes.WarmKeyLogEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, e := range s.WarmKeyLog[granter] {
+		if e.Id == id {
+			cp := *e
+			return &cp
+		}
+	}
+	return nil
 }
 
 // Grantees returns grantees for a granter + message type.

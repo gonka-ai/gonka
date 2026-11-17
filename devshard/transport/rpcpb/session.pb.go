@@ -902,6 +902,164 @@ func (x *VerifyErrorMissResponse) GetRejectCause() string {
 	return ""
 }
 
+// VerifyChallengeRequest asks a host for its verdict on a finished inference.
+// The diffs let a cold or lagging host open the session and apply the Finish;
+// the request carries no body or hash the gateway observed.
+type VerifyChallengeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Reason        types.ChallengeReason  `protobuf:"varint,2,opt,name=reason,proto3,enum=devshard.v1.ChallengeReason" json:"reason,omitempty"`
+	Diffs         []*Diff                `protobuf:"bytes,3,rep,name=diffs,proto3" json:"diffs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyChallengeRequest) Reset() {
+	*x = VerifyChallengeRequest{}
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyChallengeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyChallengeRequest) ProtoMessage() {}
+
+func (x *VerifyChallengeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyChallengeRequest.ProtoReflect.Descriptor instead.
+func (*VerifyChallengeRequest) Descriptor() ([]byte, []int) {
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *VerifyChallengeRequest) GetInferenceId() uint64 {
+	if x != nil {
+		return x.InferenceId
+	}
+	return 0
+}
+
+func (x *VerifyChallengeRequest) GetReason() types.ChallengeReason {
+	if x != nil {
+		return x.Reason
+	}
+	return types.ChallengeReason(0)
+}
+
+func (x *VerifyChallengeRequest) GetDiffs() []*Diff {
+	if x != nil {
+		return x.Diffs
+	}
+	return nil
+}
+
+// VerifyChallengeResponse is the host's kept verdict. pending means the
+// host's fetch from the executor is still open and the gateway asks again.
+// A reject_cause without a signature means the host cannot vote.
+type VerifyChallengeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Pending       bool                   `protobuf:"varint,1,opt,name=pending,proto3" json:"pending,omitempty"`
+	Fault         types.ChallengeFault   `protobuf:"varint,2,opt,name=fault,proto3,enum=devshard.v1.ChallengeFault" json:"fault,omitempty"`
+	Check         types.ChallengeCheck   `protobuf:"varint,3,opt,name=check,proto3,enum=devshard.v1.ChallengeCheck" json:"check,omitempty"`
+	Deviation     int64                  `protobuf:"varint,4,opt,name=deviation,proto3" json:"deviation,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,5,opt,name=signature,proto3" json:"signature,omitempty"`
+	VoterSlot     uint32                 `protobuf:"varint,6,opt,name=voter_slot,json=voterSlot,proto3" json:"voter_slot,omitempty"`
+	RejectCause   string                 `protobuf:"bytes,7,opt,name=reject_cause,json=rejectCause,proto3" json:"reject_cause,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *VerifyChallengeResponse) Reset() {
+	*x = VerifyChallengeResponse{}
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *VerifyChallengeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*VerifyChallengeResponse) ProtoMessage() {}
+
+func (x *VerifyChallengeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use VerifyChallengeResponse.ProtoReflect.Descriptor instead.
+func (*VerifyChallengeResponse) Descriptor() ([]byte, []int) {
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *VerifyChallengeResponse) GetPending() bool {
+	if x != nil {
+		return x.Pending
+	}
+	return false
+}
+
+func (x *VerifyChallengeResponse) GetFault() types.ChallengeFault {
+	if x != nil {
+		return x.Fault
+	}
+	return types.ChallengeFault(0)
+}
+
+func (x *VerifyChallengeResponse) GetCheck() types.ChallengeCheck {
+	if x != nil {
+		return x.Check
+	}
+	return types.ChallengeCheck(0)
+}
+
+func (x *VerifyChallengeResponse) GetDeviation() int64 {
+	if x != nil {
+		return x.Deviation
+	}
+	return 0
+}
+
+func (x *VerifyChallengeResponse) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+func (x *VerifyChallengeResponse) GetVoterSlot() uint32 {
+	if x != nil {
+		return x.VoterSlot
+	}
+	return 0
+}
+
+func (x *VerifyChallengeResponse) GetRejectCause() string {
+	if x != nil {
+		return x.RejectCause
+	}
+	return ""
+}
+
 type ChallengeReceiptRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
@@ -913,7 +1071,7 @@ type ChallengeReceiptRequest struct {
 
 func (x *ChallengeReceiptRequest) Reset() {
 	*x = ChallengeReceiptRequest{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[12]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -925,7 +1083,7 @@ func (x *ChallengeReceiptRequest) String() string {
 func (*ChallengeReceiptRequest) ProtoMessage() {}
 
 func (x *ChallengeReceiptRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[12]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -938,7 +1096,7 @@ func (x *ChallengeReceiptRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChallengeReceiptRequest.ProtoReflect.Descriptor instead.
 func (*ChallengeReceiptRequest) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{12}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *ChallengeReceiptRequest) GetInferenceId() uint64 {
@@ -972,7 +1130,7 @@ type ChallengeReceiptResponse struct {
 
 func (x *ChallengeReceiptResponse) Reset() {
 	*x = ChallengeReceiptResponse{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[13]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -984,7 +1142,7 @@ func (x *ChallengeReceiptResponse) String() string {
 func (*ChallengeReceiptResponse) ProtoMessage() {}
 
 func (x *ChallengeReceiptResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[13]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -997,7 +1155,7 @@ func (x *ChallengeReceiptResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChallengeReceiptResponse.ProtoReflect.Descriptor instead.
 func (*ChallengeReceiptResponse) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{13}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ChallengeReceiptResponse) GetReceipt() []byte {
@@ -1024,7 +1182,7 @@ type GetDiffsRequest struct {
 
 func (x *GetDiffsRequest) Reset() {
 	*x = GetDiffsRequest{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[14]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1036,7 +1194,7 @@ func (x *GetDiffsRequest) String() string {
 func (*GetDiffsRequest) ProtoMessage() {}
 
 func (x *GetDiffsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[14]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1049,7 +1207,7 @@ func (x *GetDiffsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDiffsRequest.ProtoReflect.Descriptor instead.
 func (*GetDiffsRequest) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{14}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *GetDiffsRequest) GetFrom() uint64 {
@@ -1076,7 +1234,7 @@ type DiffRecord struct {
 
 func (x *DiffRecord) Reset() {
 	*x = DiffRecord{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[15]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1088,7 +1246,7 @@ func (x *DiffRecord) String() string {
 func (*DiffRecord) ProtoMessage() {}
 
 func (x *DiffRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[15]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1101,7 +1259,7 @@ func (x *DiffRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DiffRecord.ProtoReflect.Descriptor instead.
 func (*DiffRecord) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{15}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *DiffRecord) GetDiff() *Diff {
@@ -1127,7 +1285,7 @@ type GetDiffsResponse struct {
 
 func (x *GetDiffsResponse) Reset() {
 	*x = GetDiffsResponse{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[16]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1139,7 +1297,7 @@ func (x *GetDiffsResponse) String() string {
 func (*GetDiffsResponse) ProtoMessage() {}
 
 func (x *GetDiffsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[16]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1152,7 +1310,7 @@ func (x *GetDiffsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetDiffsResponse.ProtoReflect.Descriptor instead.
 func (*GetDiffsResponse) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{16}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *GetDiffsResponse) GetRecords() []*DiffRecord {
@@ -1170,7 +1328,7 @@ type GetMempoolRequest struct {
 
 func (x *GetMempoolRequest) Reset() {
 	*x = GetMempoolRequest{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[17]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1182,7 +1340,7 @@ func (x *GetMempoolRequest) String() string {
 func (*GetMempoolRequest) ProtoMessage() {}
 
 func (x *GetMempoolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[17]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1195,7 +1353,7 @@ func (x *GetMempoolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMempoolRequest.ProtoReflect.Descriptor instead.
 func (*GetMempoolRequest) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{17}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{19}
 }
 
 type GetMempoolResponse struct {
@@ -1207,7 +1365,7 @@ type GetMempoolResponse struct {
 
 func (x *GetMempoolResponse) Reset() {
 	*x = GetMempoolResponse{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[18]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1219,7 +1377,7 @@ func (x *GetMempoolResponse) String() string {
 func (*GetMempoolResponse) ProtoMessage() {}
 
 func (x *GetMempoolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[18]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1232,7 +1390,7 @@ func (x *GetMempoolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetMempoolResponse.ProtoReflect.Descriptor instead.
 func (*GetMempoolResponse) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{18}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *GetMempoolResponse) GetTxs() [][]byte {
@@ -1250,7 +1408,7 @@ type GetStateRequest struct {
 
 func (x *GetStateRequest) Reset() {
 	*x = GetStateRequest{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[19]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1262,7 +1420,7 @@ func (x *GetStateRequest) String() string {
 func (*GetStateRequest) ProtoMessage() {}
 
 func (x *GetStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[19]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1275,7 +1433,7 @@ func (x *GetStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStateRequest.ProtoReflect.Descriptor instead.
 func (*GetStateRequest) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{19}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{21}
 }
 
 type GetStateResponse struct {
@@ -1288,7 +1446,7 @@ type GetStateResponse struct {
 
 func (x *GetStateResponse) Reset() {
 	*x = GetStateResponse{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[20]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1300,7 +1458,7 @@ func (x *GetStateResponse) String() string {
 func (*GetStateResponse) ProtoMessage() {}
 
 func (x *GetStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[20]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1313,7 +1471,7 @@ func (x *GetStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetStateResponse.ProtoReflect.Descriptor instead.
 func (*GetStateResponse) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{20}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *GetStateResponse) GetNonce() uint64 {
@@ -1339,7 +1497,7 @@ type GetSignaturesRequest struct {
 
 func (x *GetSignaturesRequest) Reset() {
 	*x = GetSignaturesRequest{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[21]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1351,7 +1509,7 @@ func (x *GetSignaturesRequest) String() string {
 func (*GetSignaturesRequest) ProtoMessage() {}
 
 func (x *GetSignaturesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[21]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1364,7 +1522,7 @@ func (x *GetSignaturesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSignaturesRequest.ProtoReflect.Descriptor instead.
 func (*GetSignaturesRequest) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{21}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *GetSignaturesRequest) GetNonce() uint64 {
@@ -1383,7 +1541,7 @@ type GetSignaturesResponse struct {
 
 func (x *GetSignaturesResponse) Reset() {
 	*x = GetSignaturesResponse{}
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[22]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1395,7 +1553,7 @@ func (x *GetSignaturesResponse) String() string {
 func (*GetSignaturesResponse) ProtoMessage() {}
 
 func (x *GetSignaturesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_transport_v1_session_proto_msgTypes[22]
+	mi := &file_devshard_transport_v1_session_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1408,7 +1566,7 @@ func (x *GetSignaturesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetSignaturesResponse.ProtoReflect.Descriptor instead.
 func (*GetSignaturesResponse) Descriptor() ([]byte, []int) {
-	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{22}
+	return file_devshard_transport_v1_session_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetSignaturesResponse) GetSignatures() map[uint32][]byte {
@@ -1422,7 +1580,7 @@ var File_devshard_transport_v1_session_proto protoreflect.FileDescriptor
 
 const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"\n" +
-	"#devshard/transport/v1/session.proto\x12\x15devshard.transport.v1\x1a\x16devshard/v1/diff.proto\x1a devshard/transport/v1/auth.proto\"q\n" +
+	"#devshard/transport/v1/session.proto\x12\x15devshard.transport.v1\x1a\x16devshard/v1/diff.proto\x1a\x14devshard/v1/tx.proto\x1a devshard/transport/v1/auth.proto\"q\n" +
 	"\x04Diff\x12\x14\n" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12\x10\n" +
 	"\x03txs\x18\x02 \x01(\fR\x03txs\x12\x19\n" +
@@ -1499,7 +1657,20 @@ const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"\n" +
 	"voter_slot\x18\x03 \x01(\rR\tvoterSlot\x12\x18\n" +
 	"\amempool\x18\x04 \x03(\fR\amempool\x12!\n" +
-	"\freject_cause\x18\x05 \x01(\tR\vrejectCause\"\xc1\x01\n" +
+	"\freject_cause\x18\x05 \x01(\tR\vrejectCause\"\xa4\x01\n" +
+	"\x16VerifyChallengeRequest\x12!\n" +
+	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x124\n" +
+	"\x06reason\x18\x02 \x01(\x0e2\x1c.devshard.v1.ChallengeReasonR\x06reason\x121\n" +
+	"\x05diffs\x18\x03 \x03(\v2\x1b.devshard.transport.v1.DiffR\x05diffs\"\x97\x02\n" +
+	"\x17VerifyChallengeResponse\x12\x18\n" +
+	"\apending\x18\x01 \x01(\bR\apending\x121\n" +
+	"\x05fault\x18\x02 \x01(\x0e2\x1b.devshard.v1.ChallengeFaultR\x05fault\x121\n" +
+	"\x05check\x18\x03 \x01(\x0e2\x1b.devshard.v1.ChallengeCheckR\x05check\x12\x1c\n" +
+	"\tdeviation\x18\x04 \x01(\x03R\tdeviation\x12\x1c\n" +
+	"\tsignature\x18\x05 \x01(\fR\tsignature\x12\x1d\n" +
+	"\n" +
+	"voter_slot\x18\x06 \x01(\rR\tvoterSlot\x12!\n" +
+	"\freject_cause\x18\a \x01(\tR\vrejectCause\"\xc1\x01\n" +
 	"\x17ChallengeReceiptRequest\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x128\n" +
 	"\apayload\x18\x02 \x01(\v2\x1e.devshard.transport.v1.PayloadR\apayload\x121\n" +
@@ -1533,13 +1704,14 @@ const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"signatures\x1a=\n" +
 	"\x0fSignaturesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\rR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x012\xf2\a\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x012\xdc\b\n" +
 	"\x0eSessionService\x12Q\n" +
 	"\x04Chat\x12%.devshard.transport.v1.SignedEnvelope\x1a .devshard.transport.v1.ChatFrame0\x01\x12f\n" +
 	"\x0eSeedHeightSync\x12%.devshard.transport.v1.SignedEnvelope\x1a-.devshard.transport.v1.SeedHeightSyncResponse\x12`\n" +
 	"\x10RepairHeightSync\x12%.devshard.transport.v1.SignedEnvelope\x1a%.devshard.transport.v1.RepairResponse\x12d\n" +
 	"\rVerifyTimeout\x12%.devshard.transport.v1.SignedEnvelope\x1a,.devshard.transport.v1.VerifyTimeoutResponse\x12h\n" +
-	"\x0fVerifyErrorMiss\x12%.devshard.transport.v1.SignedEnvelope\x1a..devshard.transport.v1.VerifyErrorMissResponse\x12j\n" +
+	"\x0fVerifyErrorMiss\x12%.devshard.transport.v1.SignedEnvelope\x1a..devshard.transport.v1.VerifyErrorMissResponse\x12h\n" +
+	"\x0fVerifyChallenge\x12%.devshard.transport.v1.SignedEnvelope\x1a..devshard.transport.v1.VerifyChallengeResponse\x12j\n" +
 	"\x10ChallengeReceipt\x12%.devshard.transport.v1.SignedEnvelope\x1a/.devshard.transport.v1.ChallengeReceiptResponse\x12[\n" +
 	"\bGetDiffs\x12&.devshard.transport.v1.GetDiffsRequest\x1a'.devshard.transport.v1.GetDiffsResponse\x12a\n" +
 	"\n" +
@@ -1559,7 +1731,7 @@ func file_devshard_transport_v1_session_proto_rawDescGZIP() []byte {
 	return file_devshard_transport_v1_session_proto_rawDescData
 }
 
-var file_devshard_transport_v1_session_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_devshard_transport_v1_session_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_devshard_transport_v1_session_proto_goTypes = []any{
 	(*Diff)(nil),                     // 0: devshard.transport.v1.Diff
 	(*Payload)(nil),                  // 1: devshard.transport.v1.Payload
@@ -1573,61 +1745,72 @@ var file_devshard_transport_v1_session_proto_goTypes = []any{
 	(*VerifyTimeoutResponse)(nil),    // 9: devshard.transport.v1.VerifyTimeoutResponse
 	(*VerifyErrorMissRequest)(nil),   // 10: devshard.transport.v1.VerifyErrorMissRequest
 	(*VerifyErrorMissResponse)(nil),  // 11: devshard.transport.v1.VerifyErrorMissResponse
-	(*ChallengeReceiptRequest)(nil),  // 12: devshard.transport.v1.ChallengeReceiptRequest
-	(*ChallengeReceiptResponse)(nil), // 13: devshard.transport.v1.ChallengeReceiptResponse
-	(*GetDiffsRequest)(nil),          // 14: devshard.transport.v1.GetDiffsRequest
-	(*DiffRecord)(nil),               // 15: devshard.transport.v1.DiffRecord
-	(*GetDiffsResponse)(nil),         // 16: devshard.transport.v1.GetDiffsResponse
-	(*GetMempoolRequest)(nil),        // 17: devshard.transport.v1.GetMempoolRequest
-	(*GetMempoolResponse)(nil),       // 18: devshard.transport.v1.GetMempoolResponse
-	(*GetStateRequest)(nil),          // 19: devshard.transport.v1.GetStateRequest
-	(*GetStateResponse)(nil),         // 20: devshard.transport.v1.GetStateResponse
-	(*GetSignaturesRequest)(nil),     // 21: devshard.transport.v1.GetSignaturesRequest
-	(*GetSignaturesResponse)(nil),    // 22: devshard.transport.v1.GetSignaturesResponse
-	nil,                              // 23: devshard.transport.v1.GetSignaturesResponse.SignaturesEntry
-	(types.SyncState)(0),             // 24: devshard.v1.SyncState
-	(*types.MsgHeightAck)(nil),       // 25: devshard.v1.MsgHeightAck
-	(*SignedEnvelope)(nil),           // 26: devshard.transport.v1.SignedEnvelope
+	(*VerifyChallengeRequest)(nil),   // 12: devshard.transport.v1.VerifyChallengeRequest
+	(*VerifyChallengeResponse)(nil),  // 13: devshard.transport.v1.VerifyChallengeResponse
+	(*ChallengeReceiptRequest)(nil),  // 14: devshard.transport.v1.ChallengeReceiptRequest
+	(*ChallengeReceiptResponse)(nil), // 15: devshard.transport.v1.ChallengeReceiptResponse
+	(*GetDiffsRequest)(nil),          // 16: devshard.transport.v1.GetDiffsRequest
+	(*DiffRecord)(nil),               // 17: devshard.transport.v1.DiffRecord
+	(*GetDiffsResponse)(nil),         // 18: devshard.transport.v1.GetDiffsResponse
+	(*GetMempoolRequest)(nil),        // 19: devshard.transport.v1.GetMempoolRequest
+	(*GetMempoolResponse)(nil),       // 20: devshard.transport.v1.GetMempoolResponse
+	(*GetStateRequest)(nil),          // 21: devshard.transport.v1.GetStateRequest
+	(*GetStateResponse)(nil),         // 22: devshard.transport.v1.GetStateResponse
+	(*GetSignaturesRequest)(nil),     // 23: devshard.transport.v1.GetSignaturesRequest
+	(*GetSignaturesResponse)(nil),    // 24: devshard.transport.v1.GetSignaturesResponse
+	nil,                              // 25: devshard.transport.v1.GetSignaturesResponse.SignaturesEntry
+	(types.SyncState)(0),             // 26: devshard.v1.SyncState
+	(*types.MsgHeightAck)(nil),       // 27: devshard.v1.MsgHeightAck
+	(types.ChallengeReason)(0),       // 28: devshard.v1.ChallengeReason
+	(types.ChallengeFault)(0),        // 29: devshard.v1.ChallengeFault
+	(types.ChallengeCheck)(0),        // 30: devshard.v1.ChallengeCheck
+	(*SignedEnvelope)(nil),           // 31: devshard.transport.v1.SignedEnvelope
 }
 var file_devshard_transport_v1_session_proto_depIdxs = []int32{
 	0,  // 0: devshard.transport.v1.InferenceRequest.diffs:type_name -> devshard.transport.v1.Diff
 	1,  // 1: devshard.transport.v1.InferenceRequest.payload:type_name -> devshard.transport.v1.Payload
 	4,  // 2: devshard.transport.v1.SeedHeightSyncResponse.height_sync:type_name -> devshard.transport.v1.HeightSyncSection
-	24, // 3: devshard.transport.v1.RepairResponse.sync_state:type_name -> devshard.v1.SyncState
-	25, // 4: devshard.transport.v1.RepairResponse.ack:type_name -> devshard.v1.MsgHeightAck
+	26, // 3: devshard.transport.v1.RepairResponse.sync_state:type_name -> devshard.v1.SyncState
+	27, // 4: devshard.transport.v1.RepairResponse.ack:type_name -> devshard.v1.MsgHeightAck
 	1,  // 5: devshard.transport.v1.VerifyTimeoutRequest.payload:type_name -> devshard.transport.v1.Payload
 	0,  // 6: devshard.transport.v1.VerifyTimeoutRequest.diffs:type_name -> devshard.transport.v1.Diff
 	0,  // 7: devshard.transport.v1.VerifyErrorMissRequest.diffs:type_name -> devshard.transport.v1.Diff
-	1,  // 8: devshard.transport.v1.ChallengeReceiptRequest.payload:type_name -> devshard.transport.v1.Payload
-	0,  // 9: devshard.transport.v1.ChallengeReceiptRequest.diffs:type_name -> devshard.transport.v1.Diff
-	0,  // 10: devshard.transport.v1.DiffRecord.diff:type_name -> devshard.transport.v1.Diff
-	15, // 11: devshard.transport.v1.GetDiffsResponse.records:type_name -> devshard.transport.v1.DiffRecord
-	23, // 12: devshard.transport.v1.GetSignaturesResponse.signatures:type_name -> devshard.transport.v1.GetSignaturesResponse.SignaturesEntry
-	26, // 13: devshard.transport.v1.SessionService.Chat:input_type -> devshard.transport.v1.SignedEnvelope
-	26, // 14: devshard.transport.v1.SessionService.SeedHeightSync:input_type -> devshard.transport.v1.SignedEnvelope
-	26, // 15: devshard.transport.v1.SessionService.RepairHeightSync:input_type -> devshard.transport.v1.SignedEnvelope
-	26, // 16: devshard.transport.v1.SessionService.VerifyTimeout:input_type -> devshard.transport.v1.SignedEnvelope
-	26, // 17: devshard.transport.v1.SessionService.VerifyErrorMiss:input_type -> devshard.transport.v1.SignedEnvelope
-	26, // 18: devshard.transport.v1.SessionService.ChallengeReceipt:input_type -> devshard.transport.v1.SignedEnvelope
-	14, // 19: devshard.transport.v1.SessionService.GetDiffs:input_type -> devshard.transport.v1.GetDiffsRequest
-	17, // 20: devshard.transport.v1.SessionService.GetMempool:input_type -> devshard.transport.v1.GetMempoolRequest
-	19, // 21: devshard.transport.v1.SessionService.GetState:input_type -> devshard.transport.v1.GetStateRequest
-	21, // 22: devshard.transport.v1.SessionService.GetSignatures:input_type -> devshard.transport.v1.GetSignaturesRequest
-	3,  // 23: devshard.transport.v1.SessionService.Chat:output_type -> devshard.transport.v1.ChatFrame
-	5,  // 24: devshard.transport.v1.SessionService.SeedHeightSync:output_type -> devshard.transport.v1.SeedHeightSyncResponse
-	7,  // 25: devshard.transport.v1.SessionService.RepairHeightSync:output_type -> devshard.transport.v1.RepairResponse
-	9,  // 26: devshard.transport.v1.SessionService.VerifyTimeout:output_type -> devshard.transport.v1.VerifyTimeoutResponse
-	11, // 27: devshard.transport.v1.SessionService.VerifyErrorMiss:output_type -> devshard.transport.v1.VerifyErrorMissResponse
-	13, // 28: devshard.transport.v1.SessionService.ChallengeReceipt:output_type -> devshard.transport.v1.ChallengeReceiptResponse
-	16, // 29: devshard.transport.v1.SessionService.GetDiffs:output_type -> devshard.transport.v1.GetDiffsResponse
-	18, // 30: devshard.transport.v1.SessionService.GetMempool:output_type -> devshard.transport.v1.GetMempoolResponse
-	20, // 31: devshard.transport.v1.SessionService.GetState:output_type -> devshard.transport.v1.GetStateResponse
-	22, // 32: devshard.transport.v1.SessionService.GetSignatures:output_type -> devshard.transport.v1.GetSignaturesResponse
-	23, // [23:33] is the sub-list for method output_type
-	13, // [13:23] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	28, // 8: devshard.transport.v1.VerifyChallengeRequest.reason:type_name -> devshard.v1.ChallengeReason
+	0,  // 9: devshard.transport.v1.VerifyChallengeRequest.diffs:type_name -> devshard.transport.v1.Diff
+	29, // 10: devshard.transport.v1.VerifyChallengeResponse.fault:type_name -> devshard.v1.ChallengeFault
+	30, // 11: devshard.transport.v1.VerifyChallengeResponse.check:type_name -> devshard.v1.ChallengeCheck
+	1,  // 12: devshard.transport.v1.ChallengeReceiptRequest.payload:type_name -> devshard.transport.v1.Payload
+	0,  // 13: devshard.transport.v1.ChallengeReceiptRequest.diffs:type_name -> devshard.transport.v1.Diff
+	0,  // 14: devshard.transport.v1.DiffRecord.diff:type_name -> devshard.transport.v1.Diff
+	17, // 15: devshard.transport.v1.GetDiffsResponse.records:type_name -> devshard.transport.v1.DiffRecord
+	25, // 16: devshard.transport.v1.GetSignaturesResponse.signatures:type_name -> devshard.transport.v1.GetSignaturesResponse.SignaturesEntry
+	31, // 17: devshard.transport.v1.SessionService.Chat:input_type -> devshard.transport.v1.SignedEnvelope
+	31, // 18: devshard.transport.v1.SessionService.SeedHeightSync:input_type -> devshard.transport.v1.SignedEnvelope
+	31, // 19: devshard.transport.v1.SessionService.RepairHeightSync:input_type -> devshard.transport.v1.SignedEnvelope
+	31, // 20: devshard.transport.v1.SessionService.VerifyTimeout:input_type -> devshard.transport.v1.SignedEnvelope
+	31, // 21: devshard.transport.v1.SessionService.VerifyErrorMiss:input_type -> devshard.transport.v1.SignedEnvelope
+	31, // 22: devshard.transport.v1.SessionService.VerifyChallenge:input_type -> devshard.transport.v1.SignedEnvelope
+	31, // 23: devshard.transport.v1.SessionService.ChallengeReceipt:input_type -> devshard.transport.v1.SignedEnvelope
+	16, // 24: devshard.transport.v1.SessionService.GetDiffs:input_type -> devshard.transport.v1.GetDiffsRequest
+	19, // 25: devshard.transport.v1.SessionService.GetMempool:input_type -> devshard.transport.v1.GetMempoolRequest
+	21, // 26: devshard.transport.v1.SessionService.GetState:input_type -> devshard.transport.v1.GetStateRequest
+	23, // 27: devshard.transport.v1.SessionService.GetSignatures:input_type -> devshard.transport.v1.GetSignaturesRequest
+	3,  // 28: devshard.transport.v1.SessionService.Chat:output_type -> devshard.transport.v1.ChatFrame
+	5,  // 29: devshard.transport.v1.SessionService.SeedHeightSync:output_type -> devshard.transport.v1.SeedHeightSyncResponse
+	7,  // 30: devshard.transport.v1.SessionService.RepairHeightSync:output_type -> devshard.transport.v1.RepairResponse
+	9,  // 31: devshard.transport.v1.SessionService.VerifyTimeout:output_type -> devshard.transport.v1.VerifyTimeoutResponse
+	11, // 32: devshard.transport.v1.SessionService.VerifyErrorMiss:output_type -> devshard.transport.v1.VerifyErrorMissResponse
+	13, // 33: devshard.transport.v1.SessionService.VerifyChallenge:output_type -> devshard.transport.v1.VerifyChallengeResponse
+	15, // 34: devshard.transport.v1.SessionService.ChallengeReceipt:output_type -> devshard.transport.v1.ChallengeReceiptResponse
+	18, // 35: devshard.transport.v1.SessionService.GetDiffs:output_type -> devshard.transport.v1.GetDiffsResponse
+	20, // 36: devshard.transport.v1.SessionService.GetMempool:output_type -> devshard.transport.v1.GetMempoolResponse
+	22, // 37: devshard.transport.v1.SessionService.GetState:output_type -> devshard.transport.v1.GetStateResponse
+	24, // 38: devshard.transport.v1.SessionService.GetSignatures:output_type -> devshard.transport.v1.GetSignaturesResponse
+	28, // [28:39] is the sub-list for method output_type
+	17, // [17:28] is the sub-list for method input_type
+	17, // [17:17] is the sub-list for extension type_name
+	17, // [17:17] is the sub-list for extension extendee
+	0,  // [0:17] is the sub-list for field type_name
 }
 
 func init() { file_devshard_transport_v1_session_proto_init() }
@@ -1642,7 +1825,7 @@ func file_devshard_transport_v1_session_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_transport_v1_session_proto_rawDesc), len(file_devshard_transport_v1_session_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

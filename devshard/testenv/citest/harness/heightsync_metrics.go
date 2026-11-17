@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"devshard/hostevents"
+
 	"github.com/stretchr/testify/require"
 )
 
@@ -141,4 +143,32 @@ func truncate(s string, n int) string {
 func GetDebugHeightSync(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, dest any) {
 	t.Helper()
 	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/debug/heightsync", adminAPIKey, dest))
+}
+
+type gatewayDebugHeaderTime struct {
+	HeaderTime hostevents.HeaderTimeView `json:"header_time"`
+}
+
+// GetGatewayHeaderTime is GET /v1/debug/heightsync header_time.
+func GetGatewayHeaderTime(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) hostevents.HeaderTimeView {
+	t.Helper()
+	var body gatewayDebugHeaderTime
+	GetDebugHeightSync(t, client, gatewayURL, adminAPIKey, &body)
+	return body.HeaderTime
+}
+
+// WaitGatewayHeaderTime polls until pred returns true.
+func WaitGatewayHeaderTime(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, timeout time.Duration, pred func(hostevents.HeaderTimeView) bool) hostevents.HeaderTimeView {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	var last hostevents.HeaderTimeView
+	ok := AssertEventually(t, timeout, 500*time.Millisecond, func() bool {
+		last = GetGatewayHeaderTime(t, client, gatewayURL, adminAPIKey)
+		return pred(last)
+	})
+	require.True(t, ok, "gateway header_time predicate not met within %s: high_water=%d tip_height=%d tip_origin=%s tip_verified=%v block_feed_live=%v",
+		timeout, last.HighWater, last.TipHeight, last.TipOrigin, last.TipVerified, last.BlockFeedLive)
+	return last
 }

@@ -160,6 +160,7 @@ func sessionLargeProcedures() []string {
 	return []string{
 		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
 		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceVerifyChallengeProcedure,
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 	}
 }
@@ -170,6 +171,7 @@ func sessionUnaryProcedures() []string {
 		rpcpbconnect.SessionServiceRepairHeightSyncProcedure,
 		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
 		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceVerifyChallengeProcedure,
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,
@@ -188,6 +190,7 @@ func AllProcedurePaths() []string {
 		rpcpbconnect.SessionServiceRepairHeightSyncProcedure,
 		rpcpbconnect.SessionServiceVerifyTimeoutProcedure,
 		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
+		rpcpbconnect.SessionServiceVerifyChallengeProcedure,
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,

@@ -51,7 +51,14 @@ func newEarlyFinishFixture(t *testing.T, numHosts int) *earlyFinishFixture {
 	TimeoutBuffer = 0
 	t.Cleanup(func() { TimeoutBuffer = prev })
 
-	session, signers, _, rig := setupArmedSession(t, numHosts, earlyFinishBalance, 100)
+	signers := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range signers {
+		signers[i] = testutil.MustGenerateKey(t)
+	}
+	config := testutil.DefaultConfig(numHosts)
+	config.RefusalTimeout = 1
+	config.ExecutionTimeout = 5
+	session, _, rig := armedSessionFor(t, testutil.MakeGroup(signers), signers, config, earlyFinishBalance, 100)
 	before := session.StateMachine().SnapshotState()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -162,7 +169,15 @@ func (f *earlyFinishFixture) voters(reject map[int][]*types.DevshardTx) *atomic.
 func (f *earlyFinishFixture) handleTimeout(t *testing.T) (TimeoutResult, error) {
 	t.Helper()
 	f.rig.raise(t, f.session, 100_000)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	rec := f.record()
+	height, hash := rec.StartedAtHeight, rec.StartedAtBlockHash
+	window := time.Duration(f.session.StateMachine().Config().RefusalTimeout) * time.Second
+	if rec.Status == types.StatusStarted && rec.ConfirmedAtHeight > 0 {
+		height, hash = rec.ConfirmedAtHeight, nil
+		window = time.Duration(f.session.StateMachine().Config().ExecutionTimeout) * time.Second
+	}
+	f.rig.coverTimeout(t, f.session, headerStampMs(t, f.session.StateMachine(), height, hash), window)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return f.session.HandleTimeout(ctx, f.nonce, time.Unix(0, 0), f.payload)
 }

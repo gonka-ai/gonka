@@ -10,6 +10,7 @@ import (
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockchain/fetcher"
 	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/rpcface"
 	"devshard/testenv/mockchain/seed"
 	"devshard/testenv/mockchain/store"
 
@@ -22,7 +23,12 @@ import (
 
 func startTestServer(t *testing.T, st *store.Store) *chain.Client {
 	t.Helper()
-	srv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
+	return startTestServerWith(t, grpcface.Deps{Store: st})
+}
+
+func startTestServerWith(t *testing.T, deps grpcface.Deps) *chain.Client {
+	t.Helper()
+	srv, lis, err := grpcface.NewInProcessServer(deps)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		srv.Stop()
@@ -85,6 +91,21 @@ func TestMockChainGRPC_Phase3aQueries(t *testing.T) {
 	blockResp, err := client.CometServiceClient().GetLatestBlock(ctx, &cmtservice.GetLatestBlockRequest{})
 	require.NoError(t, err)
 	require.Equal(t, int64(150), blockResp.SdkBlock.Header.Height)
+}
+
+func TestMockChainGRPC_LatestBlockMatchesSignedHeader(t *testing.T) {
+	st := seed.Defaults()
+	svc, err := rpcface.NewService(st, rpcface.Config{})
+	require.NoError(t, err)
+	client := startTestServerWith(t, grpcface.Deps{Store: st, RPC: svc})
+
+	resp, err := client.CometServiceClient().GetLatestBlock(context.Background(), &cmtservice.GetLatestBlockRequest{})
+	require.NoError(t, err)
+	require.NotNil(t, resp.BlockId)
+	hash, at, err := svc.BlockStamp(resp.SdkBlock.Header.Height)
+	require.NoError(t, err)
+	require.Equal(t, hash, resp.BlockId.Hash)
+	require.True(t, at.Equal(resp.SdkBlock.Header.Time))
 }
 
 func TestMockChainGRPC_ChainFetcherSnapshot(t *testing.T) {

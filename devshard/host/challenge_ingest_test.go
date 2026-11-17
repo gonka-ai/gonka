@@ -26,7 +26,9 @@ func newIngestFixture(t *testing.T) *ingestFixture {
 		hosts: []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)},
 		user:  testutil.MustGenerateKey(t),
 	}
-	f.start = testutil.SignDiff(t, f.user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	start := testutil.StartTx(1)
+	start.GetStartInference().StartedAt = 1000
+	f.start = testutil.SignDiff(t, f.user, "escrow-1", 1, []*types.DevshardTx{start})
 	return f
 }
 
@@ -37,7 +39,10 @@ func (f *ingestFixture) host(t *testing.T, idx int) *Host {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, f.user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", f.user.Address(), config, group, 10000))
 	require.NoError(t, err)
-	h, err := NewHost(sm, f.hosts[idx], stub.NewInferenceEngine(), "escrow-1", group, nil)
+	oracle := &fakeOracle{}
+	oracle.setHeight(100)
+	oracle.setHash([]byte{0xaa})
+	h, err := NewHost(sm, f.hosts[idx], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(oracle))
 	require.NoError(t, err)
 	return h
 }

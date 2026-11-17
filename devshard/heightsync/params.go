@@ -49,6 +49,16 @@ const (
 	DefaultBlockTime = time.Second
 
 	DefaultRepairStagger = time.Second
+
+	// StampTimeRaiseDelta is how far a host-signed floor raise may move the
+	// carried floor time past the previous entry before the strong proof is
+	// required. That proof stays deferred: the raise is logged and the entry
+	// keeps the carried time.
+	StampTimeRaiseDelta = 45 * time.Second
+	// StampFutureSkew is how far a host stamp may sit ahead of the composing
+	// gateway's wall clock, or a verifier's wall clock when the stamp is
+	// offered as challenge evidence. Apply does not read this.
+	StampFutureSkew = 30 * time.Second
 )
 
 // HeartbeatConfig is the log-plane height cadence (spec §20).

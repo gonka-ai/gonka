@@ -223,3 +223,4 @@ func checkDiffBatchConflicts(ctx context.Context, tx pgx.Tx, epochID uint64, esc
 	}
 	return nil
 }
+

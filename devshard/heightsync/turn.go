@@ -74,6 +74,10 @@ type TurnTracker struct {
 	latestTurnStart   uint64
 	lastCompleted     uint64 // max CompletedAtHeight; survives prune
 	lastCompleteStart uint64
+	// blockAckTurns is how many retained turns carry a block ack for each slot.
+	// SlotsWithBlockAck is the number of slots with a positive count. Prune
+	// drops a slot when its last such turn leaves the window.
+	blockAckTurns map[uint32]int
 }
 
 // NewTurnTracker constructs an empty tracker. quorum ≤ 0 uses QuorumForRoster(slotsNum).
@@ -86,12 +90,13 @@ func NewTurnTracker(slotsNum uint64, quorum int, cfg HeartbeatConfig) *TurnTrack
 		quorum = QuorumForRoster(int(slotsNum))
 	}
 	return &TurnTracker{
-		slotsNum:    slotsNum,
-		quorum:      quorum,
-		ackDeadline: cfg.AckDeadlineBlocks,
-		retain:      DefaultTurnRetain,
-		turns:       make(map[uint64]*SyncTurnRecord),
-		heartbeatAt: make(map[uint64]uint64),
+		slotsNum:      slotsNum,
+		quorum:        quorum,
+		ackDeadline:   cfg.AckDeadlineBlocks,
+		retain:        DefaultTurnRetain,
+		turns:         make(map[uint64]*SyncTurnRecord),
+		heartbeatAt:   make(map[uint64]uint64),
+		blockAckTurns: make(map[uint32]int),
 	}
 }
 
@@ -107,6 +112,58 @@ func (t *TurnTracker) SlotsNum() uint64 {
 		return 0
 	}
 	return t.slotsNum
+}
+
+// SlotsWithBlockAck is how many distinct slots have an applied ack that
+// carries a block inside the retained turns. An ack with no height does not
+// count. One ack still raises F; this count does not. The chat gate counts
+// participants from BlockAckSlots, not this total.
+func (t *TurnTracker) SlotsWithBlockAck() int {
+	if t == nil {
+		return 0
+	}
+	return len(t.blockAckTurns)
+}
+
+// BlockAckSlots lists the slots counted by SlotsWithBlockAck, in slot order.
+func (t *TurnTracker) BlockAckSlots() []uint32 {
+	if t == nil || len(t.blockAckTurns) == 0 {
+		return nil
+	}
+	out := make([]uint32, 0, len(t.blockAckTurns))
+	for slot, n := range t.blockAckTurns {
+		if n > 0 {
+			out = append(out, slot)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+func blockAckPresent(height uint64, hash []byte) bool {
+	return height > 0 && StampPresent(hash)
+}
+
+// noteBlockAck keeps blockAckTurns aligned with one slot's before/after
+// presence on a single turn. Caller holds the tracker.
+func (t *TurnTracker) noteBlockAck(slot uint32, hadBlock, hasBlock bool) {
+	if hadBlock == hasBlock {
+		return
+	}
+	if t.blockAckTurns == nil {
+		t.blockAckTurns = make(map[uint32]int)
+	}
+	n := t.blockAckTurns[slot]
+	if hasBlock {
+		n++
+	} else if n > 0 {
+		n--
+	}
+	if n == 0 {
+		delete(t.blockAckTurns, slot)
+	} else {
+		t.blockAckTurns[slot] = n
+	}
 }
 
 // ArmingContext returns the newest complete turn's start nonce and the start
@@ -263,6 +320,7 @@ func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
 	if had {
 		late = late || existing.Late
 	}
+	hadBlock := had && blockAckPresent(existing.Height, existing.Hash)
 	rec.Acks[ack.SlotId] = AckRecord{
 		Nonce:     nonce,
 		Height:    ack.ObservedHeight,
@@ -270,6 +328,7 @@ func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
 		SyncState: ack.SyncState,
 		Late:      late,
 	}
+	t.noteBlockAck(ack.SlotId, hadBlock, blockAckPresent(ack.ObservedHeight, ack.ObservedBlockHash))
 	if !had {
 		IncAck(ack.SyncState.String(), late)
 	}
@@ -303,6 +362,13 @@ func (t *TurnTracker) prune() {
 	}
 	slices.Sort(starts)
 	for _, start := range starts[:uint64(len(starts))-t.retain] {
+		if rec := t.turns[start]; rec != nil {
+			for slot, ack := range rec.Acks {
+				if blockAckPresent(ack.Height, ack.Hash) {
+					t.noteBlockAck(slot, true, false)
+				}
+			}
+		}
 		delete(t.turns, start)
 	}
 	// heartbeatAt is the L3 source of truth: ref_nonce names a heartbeat that
@@ -483,6 +549,10 @@ func (t *TurnTracker) Clone() *TurnTracker {
 		latestTurnStart:   t.latestTurnStart,
 		lastCompleted:     t.lastCompleted,
 		lastCompleteStart: t.lastCompleteStart,
+		blockAckTurns:     make(map[uint32]int, len(t.blockAckTurns)),
+	}
+	for slot, n := range t.blockAckTurns {
+		cp.blockAckTurns[slot] = n
 	}
 	for k, v := range t.turns {
 		cp.turns[k] = cloneTurn(v)

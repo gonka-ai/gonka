@@ -8,8 +8,12 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/host"
 	"devshard/types"
+	"devshard/user"
+
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func startedInferenceConfirmedAt(t *testing.T, env *testProxyEnv, confirmedAt time.Time) uint64 {
@@ -122,7 +126,7 @@ func TestSweepExecutionTimeoutsStartsOneEscrowFurtherAlongEachTick(t *testing.T)
 //  3. Expect the second escrow's inference timed out: the capped escrow cannot vote, so it must not spend the tick's budget.
 func TestSweepExecutionTimeoutsSpendsNoBudgetOnAnEscrowAtItsNonceCap(t *testing.T) {
 	gateway, cappedRuntime, cappedEnv := newSweepTestGateway(t)
-	secondEnv := setupTestProxy(t, 3, nil, true)
+	secondEnv := setupManualFloorProxy(t, 3, nil, true)
 	secondRuntime := &devshardRuntime{id: "escrow-second", model: "llama", proxy: secondEnv.proxy, session: secondEnv.session}
 	gateway.mu.Lock()
 	gateway.runtimes[secondRuntime.id] = secondRuntime
@@ -207,9 +211,10 @@ func TestSweepExecutionTimeoutsLeavesAPendingRefusalWithoutItsPayload(t *testing
 
 // Test flow:
 //  1. Leave an overdue Pending refusal with its payload, against verifiers that decline every vote.
-//  2. Run the sweep twice.
-//  3. Expect one failed attempt and nothing due on the second tick: a refusal the group declined with its payload is not retried every tick.
-func TestSweepExecutionTimeoutsTriesAPendingRefusalOnce(t *testing.T) {
+//  2. Run the sweep four times.
+//  3. Expect the first three ticks to vote and the fourth to skip. A decline tallies as
+//     insufficient votes, which the sweep retries until the attempt cap, then drops.
+func TestSweepExecutionTimeoutsRetriesADeclinedPendingRefusalUntilTheCap(t *testing.T) {
 	gateway, runtime, env := newSweepTestGateway(t)
 	nonce, payload := pendingRefusalStartedAt(t, env, time.Now().Add(-time.Hour))
 	env.proxy.redundancy.rememberRefusalPayload(nonce, payload)
@@ -217,12 +222,13 @@ func TestSweepExecutionTimeoutsTriesAPendingRefusalOnce(t *testing.T) {
 		verifier.accept = false
 	}
 
-	firstDue, _, firstFailed := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
-	secondDue, _, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+	var dues []int
+	for range 4 {
+		due, _, _ := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+		dues = append(dues, due)
+	}
 
-	require.Equal(t, 1, firstDue)
-	require.Equal(t, 1, firstFailed)
-	require.Zero(t, secondDue)
+	require.Equal(t, []int{1, 1, 1, 0}, dues)
 	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
 }
 
@@ -308,8 +314,8 @@ func TestSweepExecutionTimeoutsSkipsWhileEveryTimeoutVotePlaceIsTaken(t *testing
 
 // Test flow:
 //  1. Leave a Pending refusal whose deadline passed an hour ago, against verifiers that decline every vote.
-//  2. Let its race vote it and wait for the race cleanup to finish.
-//  3. Expect no payload kept for the sweep: the group judged the refusal, so voting it again would only repeat the same round.
+//  2. Let its race vote it (soft-retries insufficient_votes a few times on the map clock) and wait for cleanup.
+//  3. Expect no payload kept for the sweep once soft attempts are exhausted: further votes would only repeat the same round.
 func TestARaceRefusalTheGroupDeclinedLeavesNothingToSweep(t *testing.T) {
 	env := setupManualFloorProxy(t, 3, nil, false)
 	startedAt := time.Now().Add(-time.Hour)
@@ -336,4 +342,68 @@ func TestARaceRefusalTheGroupDeclinedLeavesNothingToSweep(t *testing.T) {
 
 	require.Equal(t, types.StatusPending, env.sm.SnapshotState().Inferences[nonce].Status)
 	require.False(t, redundancy.hasRefusalPayload(nonce))
+}
+
+func sweepMismatchCount() float64 {
+	return promtestutil.ToFloat64(headertime.TimeoutClockMismatchCounter().WithLabelValues("gateway", "refused")) +
+		promtestutil.ToFloat64(headertime.TimeoutClockMismatchCounter().WithLabelValues("gateway", "execution"))
+}
+
+func TestOverdueTimeoutInferencesLegacySelectsOnWallNotTheStamp(t *testing.T) {
+	prev := user.TimeoutBuffer
+	user.TimeoutBuffer = 5 * time.Second
+	t.Cleanup(func() { user.TimeoutBuffer = prev })
+	now := time.Unix(1_800_000_000, 0)
+	past := now.Add(-(time.Minute + user.TimeoutBuffer + executionTimeoutSweepGrace)).Unix()
+	fresh := now.Unix()
+	state := types.EscrowState{
+		Config: types.SessionConfig{RefusalTimeout: 60, ExecutionTimeout: 60},
+		Inferences: map[uint64]*types.InferenceRecord{
+			1: {Status: types.StatusPending, StartedAt: past, StartedAtTimeMs: now.UnixMilli()},
+			2: {Status: types.StatusStarted, ConfirmedAt: fresh, ConfirmedAtTimeMs: now.Add(-time.Hour).UnixMilli()},
+			3: {Status: types.StatusPending, StartedAtTimeMs: now.Add(-time.Hour).UnixMilli()},
+		},
+	}
+	before := sweepMismatchCount()
+
+	got := overdueTimeoutInferences(state, now, nil, executionTimeoutSweepBudget, func(uint64) bool { return true })
+
+	require.Equal(t, []uint64{1}, got)
+	require.Equal(t, before, sweepMismatchCount())
+}
+
+func TestOverdueTimeoutInferencesHeaderSelectsOnTheStampNotTheWall(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	state := types.EscrowState{
+		Config: types.SessionConfig{HeightsyncTimeoutClock: true, RefusalTimeout: 60, ExecutionTimeout: 60},
+		Inferences: map[uint64]*types.InferenceRecord{
+			1: {Status: types.StatusPending, StartedAt: now.Add(-time.Hour).Unix(), StartedAtHeight: 4},
+			2: {Status: types.StatusStarted, ConfirmedAt: now.Unix(), ConfirmedAtTimeMs: now.Add(-time.Hour).UnixMilli()},
+		},
+	}
+
+	got := overdueTimeoutInferences(state, now, nil, executionTimeoutSweepBudget, func(uint64) bool { return true })
+
+	require.Equal(t, []uint64{2}, got)
+}
+
+// A long execution window that is already past must vote without sleeping
+// that window again. The sweep found ConfirmedAt plus the timeout, the
+// buffer, and the grace already behind now.
+func TestSweepExecutionTimeoutsDoesNotSleepTheIntervalAgain(t *testing.T) {
+	gateway, runtime, env := newSweepTestGateway(t)
+	st := env.sm.ExportState()
+	st.Config.ExecutionTimeout = 3600
+	restoreGatewayTestState(t, env.sm, st)
+	confirmed := time.Now().Add(-(3600*time.Second + user.TimeoutBuffer + executionTimeoutSweepGrace + time.Second))
+	nonce := startedInferenceConfirmedAt(t, env, confirmed)
+
+	started := time.Now()
+	due, applied, failed := gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{runtime}, executionTimeoutSweepBudget)
+
+	require.Less(t, time.Since(started), 5*time.Second)
+	require.Equal(t, 1, due)
+	require.Equal(t, 1, applied)
+	require.Zero(t, failed)
+	require.Equal(t, types.StatusTimedOut, env.sm.SnapshotState().Inferences[nonce].Status)
 }

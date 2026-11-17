@@ -54,14 +54,14 @@ func setupWarmKeySession(t *testing.T, n int) (*Session, []*signing.Secp256k1Sig
 	group := testutil.MakeGroup(coldKeys)
 	config := testutil.DefaultConfig(n)
 	verifier := signing.NewSecp256k1Verifier()
-	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver), state.WithHeaderTimes(polledSource(t))}
 
 	clients := make([]HostClient, n)
 	for i := range coldKeys {
 		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
-		h, err := host.NewHost(sm, warmKeys[i], engine, "escrow-1", group, nil, host.WithGrace(10))
+		h, err := host.NewHost(sm, warmKeys[i], engine, "escrow-1", group, nil, host.WithGrace(10), host.WithChainOracle(testTip()))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}

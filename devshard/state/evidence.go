@@ -52,9 +52,6 @@ type unboundSigner struct {
 }
 
 func (sm *StateMachine) checkEvidence(rec *types.InferenceRecord, txs []*types.DevshardTx, resolve bool) error {
-	if resolve {
-		sm.awaitRaiseHeaders(txs)
-	}
 	unbound, err := sm.checkEvidenceState(rec, txs, resolve)
 	if err != nil {
 		return err
@@ -107,6 +104,10 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 				return nil, fmt.Errorf("%w: confirm expects pending, got %d", types.ErrInvalidTransition, status)
 			}
 			err = sm.checkReceiptLocked(rec, msg, allowed)
+			if err == nil {
+				sm.noteStampTimeRaiseLocked("challenge", "confirm", msg.ObservedHeight, msg.ObservedTimeMs)
+				err = sm.checkExecutorStampClockLocked("challenge", "confirm", msg.ObservedHeight, msg.ObservedTimeMs)
+			}
 			status = types.StatusStarted
 		case tx.GetFinishInference() != nil:
 			msg := tx.GetFinishInference()
@@ -115,6 +116,10 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 				return nil, fmt.Errorf("%w: finish expects started, got %d", types.ErrInvalidTransition, status)
 			}
 			_, err = sm.checkFinishLocked(rec, msg, allowed)
+			if err == nil {
+				sm.noteStampTimeRaiseLocked("challenge", "finish", msg.ObservedHeight, msg.ObservedTimeMs)
+				err = sm.checkExecutorStampClockLocked("challenge", "finish", msg.ObservedHeight, msg.ObservedTimeMs)
+			}
 			status = types.StatusFinished
 		default:
 			return nil, fmt.Errorf("%w: evidence is a ConfirmStart or a Finish", types.ErrInvalidTransition)
@@ -138,7 +143,7 @@ func (sm *StateMachine) checkEvidenceState(rec *types.InferenceRecord, txs []*ty
 		return nil, err
 	}
 	for _, tx := range txs {
-		if err := sm.checkRaiseResolvableLocked(sm.state.LatestNonce+1, tx); err != nil {
+		if err := sm.ackHashMismatchLocked(tx.GetHeightAck()); err != nil {
 			return nil, err
 		}
 	}

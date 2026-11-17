@@ -37,12 +37,18 @@ func divHeartbeatTx(height uint64, hash []byte) *types.DevshardTx {
 
 func divAckTx(t *testing.T, signer *signing.Secp256k1Signer, turnSeq, refNonce uint64, slot uint32,
 	height uint64, hash []byte, st types.SyncState) *types.DevshardTx {
+	return divAckTxWithTime(t, signer, turnSeq, refNonce, slot, height, hash, st, 0)
+}
+
+func divAckTxWithTime(t *testing.T, signer *signing.Secp256k1Signer, turnSeq, refNonce uint64, slot uint32,
+	height uint64, hash []byte, st types.SyncState, timeMs int64) *types.DevshardTx {
 	t.Helper()
 	ack := &types.MsgHeightAck{
 		RefNonce:          refNonce,
 		SlotId:            slot,
 		ObservedHeight:    height,
 		ObservedBlockHash: append([]byte(nil), hash...),
+		ObservedTimeMs:    timeMs,
 		SyncState:         st,
 		PeerSeen:          []byte{0xff},
 	}

@@ -48,9 +48,9 @@ type Heartbeat struct {
 	lastTurnoverFromStamp bool
 	// onTurnover is optional. The session sets it so a turnover that lands
 	// off the heartbeat loop can re-arm the sleep. Nil in unit tests.
-	onTurnover            func()
-	lastLimited           map[CadenceEventKind]time.Time
-	ring                  cadenceRing
+	onTurnover  func()
+	lastLimited map[CadenceEventKind]time.Time
+	ring        cadenceRing
 	// cadenceTotals counts every due-check disposition, including the ones the
 	// ring rate-limits. cadence_events_total is derived from this, so the
 	// discharged-by-inference ratio reports real savings rather than one
@@ -486,7 +486,8 @@ func SlotForNonce(nonce, slotsNum uint64) uint32 {
 }
 
 // SpanTxs returns slots_num MsgHeartbeat txs for one turn, with no ack wait.
-// hNow == 0 yields nil (spec §10.3: do not claim a height).
+// hNow == 0 yields nil (spec §10.3: do not claim a height). The one opening
+// span that is allowed to carry an empty stamp is BootstrapSpanTxs.
 //
 // The turn is not named here. Its identity is the nonce the first tx of this
 // span lands at, which the producer does not get to pick.
@@ -500,6 +501,17 @@ func (h *Heartbeat) SpanTxs(hNow uint64, hash []byte, slotsNum uint64, reason He
 		h.mu.Unlock()
 		return nil
 	}
+	return spanTxs(hNow, hash, slotsNum, reason, prevVector)
+}
+
+// BootstrapSpanTxs returns one MsgHeartbeat per slot with no height and no
+// hash. The producer sends it once, while F is empty. It does not count as
+// a skipped cadence tick: the ordinary cadence still refuses hNow == 0.
+func (h *Heartbeat) BootstrapSpanTxs(slotsNum uint64, prevVector []*types.SyncVectorEntry) []*types.DevshardTx {
+	return spanTxs(0, nil, slotsNum, ReasonQuietSession, prevVector)
+}
+
+func spanTxs(hNow uint64, hash []byte, slotsNum uint64, reason HeartbeatReason, prevVector []*types.SyncVectorEntry) []*types.DevshardTx {
 	if slotsNum == 0 {
 		slotsNum = 1
 	}
@@ -509,11 +521,13 @@ func (h *Heartbeat) SpanTxs(hNow uint64, hash []byte, slotsNum uint64, reason He
 	out := make([]*types.DevshardTx, 0, slotsNum)
 	for i := uint64(0); i < slotsNum; i++ {
 		hb := &types.MsgHeartbeat{
-			ObservedHeight:    hNow,
-			ObservedBlockHash: append([]byte(nil), hash...),
-			SlotsNum:          slotsNum,
-			Reason:            string(reason),
-			SyncVector:        prevVector,
+			ObservedHeight: hNow,
+			SlotsNum:       slotsNum,
+			Reason:         string(reason),
+			SyncVector:     prevVector,
+		}
+		if len(hash) > 0 {
+			hb.ObservedBlockHash = append([]byte(nil), hash...)
 		}
 		out = append(out, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: hb}})
 	}

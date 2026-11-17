@@ -1,6 +1,7 @@
 package event_listener
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -34,7 +35,7 @@ type EscrowSlotInfo struct {
 
 // escrowQuerier resolves escrow slot membership for host-event filtering.
 type escrowQuerier interface {
-	GetEscrow(escrowID string) (*EscrowSlotInfo, error)
+	GetEscrow(ctx context.Context, escrowID string) (*EscrowSlotInfo, error)
 }
 
 type DevshardEscrowCreatedEventHandler struct{}
@@ -46,43 +47,6 @@ func (e *DevshardEscrowCreatedEventHandler) CanHandle(event *chainevents.JSONRPC
 }
 
 func (e *DevshardEscrowCreatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	if el.hostEvents == nil {
-		return nil
-	}
-	ev := event.Result.Events
-	escrowID, err := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".escrow_id"), 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse escrow_id: %w", err)
-	}
-	epochIndex, err := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".epoch_index"), 10, 64)
-	if err != nil {
-		logging.Warn("host_events: malformed epoch_index on escrow_created; defaulting to 0", types.EventProcessing,
-			"escrow_id", escrowID, "raw", firstAttr(ev, escrowCreatedEvent+".epoch_index"), "error", err)
-		epochIndex = 0
-	}
-	payload := &apiconfig.EscrowPayload{
-		EscrowID:   escrowID,
-		EpochIndex: epochIndex,
-		ModelID:    firstAttr(ev, escrowCreatedEvent+".model_id"),
-		Creator:    firstAttr(ev, escrowCreatedEvent+".creator"),
-		Amount:     firstAttr(ev, escrowCreatedEvent+".amount"),
-	}
-
-	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
-	if ok && !hold {
-		logging.Debug("host_events: skip escrow_created; local node not in slots", types.EventProcessing,
-			"escrow_id", escrowID)
-		return nil
-	}
-	if !ok {
-		logging.Warn("host_events: escrow membership unresolved; appending created anyway", types.EventProcessing,
-			"escrow_id", escrowID)
-	}
-
-	el.hostEvents.Append(apiconfig.HostEvent{
-		Kind:   apiconfig.HostEventKindEscrowCreated,
-		Escrow: payload,
-	})
 	return nil
 }
 
@@ -95,51 +59,70 @@ func (e *DevshardEscrowSettledEventHandler) CanHandle(event *chainevents.JSONRPC
 }
 
 func (e *DevshardEscrowSettledEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	if el.hostEvents == nil {
-		return nil
-	}
-	ev := event.Result.Events
-	escrowID, err := strconv.ParseUint(firstAttr(ev, escrowSettledEvent+".escrow_id"), 10, 64)
-	if err != nil {
-		return fmt.Errorf("parse escrow_id: %w", err)
-	}
-	payload := &apiconfig.EscrowPayload{
-		EscrowID:    escrowID,
-		Settler:     firstAttr(ev, escrowSettledEvent+".settler"),
-		TotalPayout: firstAttr(ev, escrowSettledEvent+".total_payout"),
-		Fees:        firstAttr(ev, escrowSettledEvent+".fees"),
-		Remainder:   firstAttr(ev, escrowSettledEvent+".remainder"),
-	}
-
-	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
-	if ok && !hold {
-		logging.Debug("host_events: skip escrow_settled; local node not in slots", types.EventProcessing,
-			"escrow_id", escrowID)
-		return nil
-	}
-	if !ok {
-		logging.Warn("host_events: escrow membership unresolved; appending settled anyway", types.EventProcessing,
-			"escrow_id", escrowID)
-	}
-
-	el.hostEvents.Append(apiconfig.HostEvent{
-		Kind:   apiconfig.HostEventKindEscrowSettled,
-		Escrow: payload,
-	})
 	return nil
 }
 
-// localHoldsEscrowSlot returns (holds, resolved).
-// resolved=false means GetEscrow failed / querier unset — callers fall back to append.
-func (el *EventListener) localHoldsEscrowSlot(escrowID string) (holds bool, resolved bool) {
-	if el.escrowQuery == nil {
+// parseEscrowCreated reads one escrow-created attribute set. ok is false when
+// the map has no escrow id.
+func parseEscrowCreated(ev map[string][]string) (apiconfig.HostEvent, bool, error) {
+	raw := firstAttr(ev, escrowCreatedEvent+".escrow_id")
+	if raw == "" {
+		return apiconfig.HostEvent{}, false, nil
+	}
+	escrowID, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return apiconfig.HostEvent{}, false, fmt.Errorf("parse escrow_id: %w", err)
+	}
+	epochIndex, err := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".epoch_index"), 10, 64)
+	if err != nil {
+		logging.Warn("host_events: malformed epoch_index on escrow_created; defaulting to 0", types.EventProcessing,
+			"escrow_id", escrowID, "raw", firstAttr(ev, escrowCreatedEvent+".epoch_index"), "error", err)
+		epochIndex = 0
+	}
+	return apiconfig.HostEvent{
+		Kind: apiconfig.HostEventKindEscrowCreated,
+		Escrow: &apiconfig.EscrowPayload{
+			EscrowID:   escrowID,
+			EpochIndex: epochIndex,
+			ModelID:    firstAttr(ev, escrowCreatedEvent+".model_id"),
+			Creator:    firstAttr(ev, escrowCreatedEvent+".creator"),
+			Amount:     firstAttr(ev, escrowCreatedEvent+".amount"),
+		},
+	}, true, nil
+}
+
+// parseEscrowSettled reads one escrow-settled attribute set.
+func parseEscrowSettled(ev map[string][]string) (apiconfig.HostEvent, bool, error) {
+	raw := firstAttr(ev, escrowSettledEvent+".escrow_id")
+	if raw == "" {
+		return apiconfig.HostEvent{}, false, nil
+	}
+	escrowID, err := strconv.ParseUint(raw, 10, 64)
+	if err != nil {
+		return apiconfig.HostEvent{}, false, fmt.Errorf("parse escrow_id: %w", err)
+	}
+	return apiconfig.HostEvent{
+		Kind: apiconfig.HostEventKindEscrowSettled,
+		Escrow: &apiconfig.EscrowPayload{
+			EscrowID:    escrowID,
+			Settler:     firstAttr(ev, escrowSettledEvent+".settler"),
+			TotalPayout: firstAttr(ev, escrowSettledEvent+".total_payout"),
+			Fees:        firstAttr(ev, escrowSettledEvent+".fees"),
+			Remainder:   firstAttr(ev, escrowSettledEvent+".remainder"),
+		},
+	}, true, nil
+}
+
+// escrowMembership returns (holds, resolved). resolved=false means the query
+// failed or no querier is set; callers append the event anyway.
+func escrowMembership(ctx context.Context, q escrowQuerier, addr, escrowID string) (holds bool, resolved bool) {
+	if q == nil {
 		return false, false
 	}
-	info, err := el.escrowQuery.GetEscrow(escrowID)
+	info, err := q.GetEscrow(ctx, escrowID)
 	if err != nil || info == nil {
 		return false, false
 	}
-	addr := el.localParticipantAddress()
 	if addr == "" {
 		return false, false
 	}

@@ -113,8 +113,14 @@ func TestCheckEvidence_Confirm(t *testing.T) {
 	}
 
 	t.Run("stamp off the floor", func(t *testing.T) {
-		require.ErrorIs(t, sm.CheckEvidence(rec, moved(func(c *types.MsgConfirmStart) { c.ObservedHeight++ })), types.ErrStampNotFloor)
+		require.ErrorIs(t, sm.CheckEvidence(rec, moved(func(c *types.MsgConfirmStart) { c.ObservedHeight-- })), types.ErrStampNotFloor)
+		require.ErrorIs(t, sm.CheckEvidence(rec, moved(func(c *types.MsgConfirmStart) {
+			c.ObservedBlockHash = []byte("other-block")
+		})), types.ErrStampNotFloor)
 		require.ErrorIs(t, sm.CheckEvidence(rec, moved(func(c *types.MsgConfirmStart) { c.ObservedHeight, c.ObservedBlockHash = 0, nil })), types.ErrStampNotFloor)
+	})
+	t.Run("newer stamp", func(t *testing.T) {
+		require.NoError(t, sm.CheckEvidence(rec, evidenceConfirmFor(t, executor, "escrow-1", 1, rec, testutil.ReceiptStamp{Height: 43, Hash: []byte("block-43")})))
 	})
 	t.Run("nil record", func(t *testing.T) {
 		require.ErrorIs(t, sm.CheckEvidence(nil, evidenceConfirm(t, executor, "escrow-1", rec)), types.ErrInvalidTransition)
@@ -198,8 +204,8 @@ func TestCheckEvidence_ConfirmThenFinish(t *testing.T) {
 	})
 }
 
-// A receipt stamped anywhere but the floor at its inference id is signed and
-// well formed, but apply rejects it. It must not count as evidence.
+// A receipt below the start floor is signed and well formed, but apply rejects
+// it. It must not count as evidence. A newer stamp is the host tip and is kept.
 func TestCheckEvidence_StampBelowHeightFloor(t *testing.T) {
 	sm, hosts := evidenceSM(t, nil)
 	block42 := []byte("block-42")
@@ -218,20 +224,19 @@ func TestCheckEvidence_StampBelowHeightFloor(t *testing.T) {
 	require.True(t, ok)
 	executor := hosts[rec.ExecutorSlot]
 
-	for name, stamp := range map[string]testutil.ReceiptStamp{
-		"below": {Height: 30, Hash: []byte("block-30")},
-		"above": {Height: 80, Hash: []byte("block-80")},
-	} {
-		t.Run(name, func(t *testing.T) {
-			off := evidenceConfirmFor(t, executor, "escrow-1", 1, rec, stamp)
-			require.Error(t, sm.CheckEvidence(rec, off))
-			startTx := testutil.StartTx(2)
-			startTx.GetStartInference().ObservedHeight, startTx.GetStartInference().ObservedBlockHash = 80, []byte("block-80")
-			vd, err := sm.PreviewLocalBestEffort(2, []*types.DevshardTx{off, startTx})
-			require.NoError(t, err)
-			require.Len(t, vd.Applied, 1, "compose drops the same confirm")
-		})
-	}
+	t.Run("below", func(t *testing.T) {
+		off := evidenceConfirmFor(t, executor, "escrow-1", 1, rec, testutil.ReceiptStamp{Height: 30, Hash: []byte("block-30")})
+		require.Error(t, sm.CheckEvidence(rec, off))
+		startTx := testutil.StartTx(2)
+		startTx.GetStartInference().ObservedHeight, startTx.GetStartInference().ObservedBlockHash = 80, []byte("block-80")
+		vd, err := sm.PreviewLocalBestEffort(2, []*types.DevshardTx{off, startTx})
+		require.NoError(t, err)
+		require.Len(t, vd.Applied, 1, "compose drops a confirm below the start")
+	})
+	t.Run("above", func(t *testing.T) {
+		off := evidenceConfirmFor(t, executor, "escrow-1", 1, rec, testutil.ReceiptStamp{Height: 80, Hash: []byte("block-80")})
+		require.NoError(t, sm.CheckEvidence(rec, off), "a newer host tip is a legal confirm")
+	})
 
 	atFloor := evidenceConfirmFor(t, executor, "escrow-1", 1, rec, testutil.ReceiptStamp{Height: 42, Hash: block42})
 	require.NoError(t, sm.CheckEvidence(rec, atFloor))

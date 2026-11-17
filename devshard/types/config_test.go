@@ -47,10 +47,19 @@ func TestNormalizeSessionConfig_FillsInferenceSealGraceNoncesOnlyWhenUnset(t *te
 
 func TestSessionConfigFromEscrow_ZeroFallback(t *testing.T) {
 	const groupSize = 4
-	require.Equal(t,
-		DefaultSessionConfig(groupSize),
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{}),
-	)
+	got := SessionConfigFromEscrow(groupSize, EscrowSessionFields{})
+	require.Equal(t, DefaultSessionConfig(groupSize), got)
+	require.False(t, got.HeightsyncTimeoutClock)
+}
+
+func TestSessionConfigFromEscrow_HeightsyncTimeoutClock(t *testing.T) {
+	const groupSize = 4
+	require.False(t, SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+		HeightsyncTimeoutClock: false,
+	}).HeightsyncTimeoutClock)
+	require.True(t, SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+		HeightsyncTimeoutClock: true,
+	}).HeightsyncTimeoutClock)
 }
 
 func TestSessionConfigFromEscrow_PerFieldOverride(t *testing.T) {

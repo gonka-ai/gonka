@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestEscrowStateProtoRoundTrip(t *testing.T) {
@@ -20,6 +21,7 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 			ValidationRate:            5000,
 			InferenceSealGraceNonces:  20,
 			InferenceSealGraceSeconds: 120,
+			HeightsyncTimeoutClock:    true,
 		},
 		Group: []SlotAssignment{
 			{SlotID: 0, ValidatorAddress: "host-0"},
@@ -31,14 +33,18 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 		LatestNonce:   9,
 		Inferences: map[uint64]*InferenceRecord{
 			1: {
-				Status:       StatusStarted,
-				ExecutorSlot: 0,
-				Model:        "model-a",
-				PromptHash:   []byte("prompt"),
-				InputLength:  10,
-				MaxTokens:    100,
-				ReservedCost: 50,
-				ValidatedBy:  Bitmap128{1, 0},
+				Status:               StatusStarted,
+				ExecutorSlot:         0,
+				Model:                "model-a",
+				PromptHash:           []byte("prompt"),
+				InputLength:          10,
+				MaxTokens:            100,
+				ReservedCost:         50,
+				ValidatedBy:          Bitmap128{1, 0},
+				UsageChallenged:      true,
+				ConfirmedAtBlockHash: []byte("confirm-block"),
+				StartedAtTimeMs:      123000,
+				ConfirmedAtTimeMs:    124000,
 			},
 		},
 		HostStats: map[uint32]*HostStats{
@@ -55,7 +61,11 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 		HeightSyncTurnReason:          "heartbeat",
 	}
 
-	roundTrip := EscrowStateFromProto(EscrowStateToProto(state))
+	encoded, err := proto.Marshal(EscrowStateToProto(state))
+	require.NoError(t, err)
+	var decoded EscrowStateProto
+	require.NoError(t, proto.Unmarshal(encoded, &decoded))
+	roundTrip := EscrowStateFromProto(&decoded)
 	require.Equal(t, state.EscrowID, roundTrip.EscrowID)
 	require.Equal(t, state.StateRootAndProtocolVersion, roundTrip.StateRootAndProtocolVersion)
 	require.Equal(t, state.Config, roundTrip.Config)
@@ -131,4 +141,10 @@ func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
 	require.Equal(t, floor.Entries[0].Height, roundTripFloor.Entries[0].Height)
 	require.Equal(t, floor.Entries[0].Hash, roundTripFloor.Entries[0].Hash)
 	require.Equal(t, floor.Entries[0].Author, roundTripFloor.Entries[0].Author)
+}
+
+func TestInferenceRecordProto_ChallengeAndConfirmFields(t *testing.T) {
+	fields := (&InferenceRecordProto{}).ProtoReflect().Descriptor().Fields()
+	require.EqualValues(t, 24, fields.ByName("confirmed_at_block_hash").Number())
+	require.EqualValues(t, 25, fields.ByName("usage_challenged").Number())
 }

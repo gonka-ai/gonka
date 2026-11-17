@@ -148,7 +148,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "1",
 		EpochID:        7,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -156,7 +156,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 	}))
 
 	sm, err := state.NewStateMachine("1", config, group, 100000, user.Address(), verifier, store,
-		state.WithVersion(testutil.RuntimeTestVersion))
+		state.WithVersion("v6"))
 	require.NoError(t, err)
 
 	apply := func(nonce uint64, txs []*types.DevshardTx) {
@@ -217,7 +217,7 @@ func recoverTestManager(t *testing.T, store storage.Storage, hostSigner *signing
 			Slots:          addresses,
 		},
 	}
-	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 }
 
 func saveSnapshotThrough(t *testing.T, store storage.Storage, through uint64) {
@@ -226,7 +226,7 @@ func saveSnapshotThrough(t *testing.T, store storage.Storage, through uint64) {
 	require.NoError(t, err)
 	sm, err := state.NewStateMachine("1", meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, signing.NewSecp256k1Verifier(), store,
-		state.WithVersion(testutil.RuntimeTestVersion))
+		state.WithVersion("v6"))
 	require.NoError(t, err)
 	records, err := store.GetDiffs("1", 1, through)
 	require.NoError(t, err)
@@ -247,7 +247,7 @@ func saveMismatchedSnapshot(t *testing.T, store storage.Storage, stateThrough, c
 	require.NoError(t, err)
 	sm, err := state.NewStateMachine("1", meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, signing.NewSecp256k1Verifier(), store,
-		state.WithVersion(testutil.RuntimeTestVersion))
+		state.WithVersion("v6"))
 	require.NoError(t, err)
 	records, err := store.GetDiffs("1", 1, stateThrough)
 	require.NoError(t, err)
@@ -274,7 +274,7 @@ func fullReplayState(t *testing.T, store storage.Storage) types.EscrowState {
 	require.NoError(t, err)
 	sm, err := state.NewStateMachine("1", meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, signing.NewSecp256k1Verifier(), store,
-		state.WithVersion(testutil.RuntimeTestVersion))
+		state.WithVersion("v6"))
 	require.NoError(t, err)
 	if meta.LatestNonce == 0 {
 		return sm.SnapshotState()

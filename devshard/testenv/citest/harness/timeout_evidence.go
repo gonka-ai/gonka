@@ -30,13 +30,22 @@ const (
 // refusal and execution timeouts already in the seed escrow.
 func BootTimeoutEvidenceStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
+	return BootTimeoutEvidenceStackClock(t, prefix, false)
+}
+
+// BootTimeoutEvidenceStackClock is BootTimeoutEvidenceStack with the escrow
+// timeout clock set. header false is the legacy wall clock. The same value is
+// written on params and the seed escrow, which is what the bridge binds.
+func BootTimeoutEvidenceStackClock(t *testing.T, prefix string, header bool) (*Stack, *config.File, Endpoints) {
+	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
 	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{
-		Hosts:            4,
-		EscrowSlots:      3,
-		RefusalTimeout:   TimeoutEvidenceRefusalTimeout,
-		ExecutionTimeout: TimeoutEvidenceExecutionTimeout,
+		Hosts:                  4,
+		EscrowSlots:            3,
+		RefusalTimeout:         TimeoutEvidenceRefusalTimeout,
+		ExecutionTimeout:       TimeoutEvidenceExecutionTimeout,
+		HeightsyncTimeoutClock: &header,
 	})
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)

@@ -1185,7 +1185,7 @@ func newRetryHostManager(t *testing.T, store storage.Storage, signer *signing.Se
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	return NewHostManager(store, signer, stub.NewInferenceEngine(), nil, nil, testutil.RuntimeTestVersion, &mockBridge{
+	return NewHostManager(store, signer, stub.NewInferenceEngine(), nil, nil, "v6", &mockBridge{
 		escrow: &bridge.EscrowInfo{
 			EscrowID:       escrowID,
 			EpochID:        7,
@@ -1210,7 +1210,7 @@ func newStoredFinishedRetrySessionWithHosts(t *testing.T, escrowID string, hostC
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       escrowID,
 		EpochID:        7,
-		Version:        testutil.RuntimeTestVersion,
+		Version:        "v6",
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -1218,7 +1218,7 @@ func newStoredFinishedRetrySessionWithHosts(t *testing.T, escrowID string, hostC
 	}))
 
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, store, state.WithVersion(testutil.RuntimeTestVersion))
+	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, store, state.WithVersion("v6"))
 	require.NoError(t, err)
 	for _, diff := range diffs {
 		root, err := sm.ApplyLocal(diff.Nonce, diff.Txs)
@@ -1239,7 +1239,7 @@ func appendTerminalInvalidationDiffToStore(t *testing.T, store storage.Storage, 
 
 	version := meta.Version
 	if version == "" {
-		version = testutil.RuntimeTestVersion
+		version = "v6"
 	}
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := state.NewStateMachine(
@@ -1482,10 +1482,10 @@ func laggingReplica(t *testing.T, escrowID string, boundAt int) (*flakyMetaStore
 	store := &flakyMetaStore{Memory: mem}
 	config := retrySessionConfig()
 	require.NoError(t, mem.CreateSession(storage.CreateSessionParams{
-		EscrowID: escrowID, EpochID: 7, Version: testutil.RuntimeTestVersion,
+		EscrowID: escrowID, EpochID: 7, Version: "v6",
 		CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 100000,
 	}))
-	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), signing.NewSecp256k1Verifier(), mem, state.WithVersion(testutil.RuntimeTestVersion))
+	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), signing.NewSecp256k1Verifier(), mem, state.WithVersion("v6"))
 	require.NoError(t, err)
 	appendDiff := func(diff types.Diff) {
 		root, err := sm.ApplyLocal(diff.Nonce, diff.Txs)

@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
-	"devshard/internal/testutil"
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/transport/rpcpb"
@@ -54,7 +53,7 @@ func overrideLookupLimits(t *testing.T, peer, floor int) {
 func TestFetchEscrowForBind_CachesNotFound(t *testing.T) {
 	const escrowID = "9901"
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 
 	_, err := fetchBind(mgr, escrowID, "gonka1peer")
 	require.ErrorIs(t, err, bridge.ErrEscrowNotFound)
@@ -67,7 +66,7 @@ func TestFetchEscrowForBind_CachesSuccess(t *testing.T) {
 	const escrowID = "9902"
 	info := &bridge.EscrowInfo{EscrowID: escrowID, CreatorAddress: "gonka1owner", Slots: []string{"a"}}
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{escrowID: info}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 
 	got, err := fetchBind(mgr, escrowID, "gonka1peer")
 	require.NoError(t, err)
@@ -83,7 +82,7 @@ func TestFetchEscrowForBind_RateLimitsUnknownIDs(t *testing.T) {
 	overrideLookupLimits(t, 2, 100)
 
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 	peer := "gonka1attacker"
 
 	_, err := fetchBind(mgr, "9910", peer)
@@ -97,7 +96,7 @@ func TestFetchEscrowForBind_RateLimitsUnknownIDs(t *testing.T) {
 
 func TestAllowRPCPeer_UnknownEscrowDoesNotRepeatGetEscrow(t *testing.T) {
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 	ctx := rpcserver.WithEscrowID(context.Background(), "9920")
 
 	ok, err := mgr.allowRPCPeer(ctx, "gonka1peer")
@@ -111,7 +110,7 @@ func TestAllowRPCPeer_UnknownEscrowDoesNotRepeatGetEscrow(t *testing.T) {
 
 func TestFetchEscrowForBind_DoesNotCacheChainUnavailable(t *testing.T) {
 	inner := &countingEscrowBridge{mockBridge: mockBridge{getEscrowErr: bridge.ErrChainUnavailable}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 
 	_, err := fetchBind(mgr, "9930", "gonka1peer")
 	require.ErrorIs(t, err, bridge.ErrChainUnavailable)
@@ -124,7 +123,7 @@ func TestFetchEscrowForBind_FloorLimitsDistinctPeers(t *testing.T) {
 	overrideLookupLimits(t, 100, 2)
 
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 
 	_, err := fetchBind(mgr, "9940", "gonka1a")
 	require.ErrorIs(t, err, bridge.ErrEscrowNotFound)
@@ -171,7 +170,7 @@ func TestFetchEscrowForBind_RefundsEligibleFirstBind(t *testing.T) {
 	for _, peer := range []string{owner, slot} {
 		t.Run(peer, func(t *testing.T) {
 			inner := &countingEscrowBridge{found: newFound()}
-			mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+			mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 			for i := 0; i < 5; i++ {
 				id := fmt.Sprintf("996%d", i)
 				got, err := mgr.fetchEscrowForBind(id, peer)
@@ -198,7 +197,7 @@ func TestFetchEscrowForBind_IneligibleRealEscrowConsumesBudget(t *testing.T) {
 		found[id] = &bridge.EscrowInfo{EscrowID: id, CreatorAddress: "gonka1owner", Slots: []string{"gonka1slot"}}
 	}
 	inner := &countingEscrowBridge{found: found}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 	stranger := "gonka1stranger"
 
 	_, err := fetchBind(mgr, "9970", stranger)
@@ -213,7 +212,7 @@ func TestFetchEscrowForBind_IneligibleRealEscrowConsumesBudget(t *testing.T) {
 func TestAllowRPCPeer_WarmedEscrowSkipsGetEscrow(t *testing.T) {
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
 	store := storage.NewMemory()
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 	member := "gonka1member"
 	require.NoError(t, store.PutEscrowCache(storage.EscrowCacheInfo{
 		EscrowID:            "9987",
@@ -248,7 +247,7 @@ func (s epochClockStore) PruneCutoff() uint64 {
 func newRosterManager(t *testing.T, epoch uint64, br bridge.MainnetBridge) *HostManager {
 	t.Helper()
 	store := epochClockStore{Storage: storage.NewMemory(), epoch: epoch}
-	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 }
 
 func overrideLookupTTL(t *testing.T, ttl time.Duration) {
@@ -372,7 +371,7 @@ func TestRoster_PrunedEpochIsNotCached(t *testing.T) {
 func TestPayloadRoster_SharesAttachLookupBudget(t *testing.T) {
 	overrideLookupLimits(t, 2, 100)
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 	peer := "gonka1attacker"
 
 	_, err := mgr.payloadRoster("9130", peer)
@@ -641,7 +640,7 @@ func TestPayloadRoster_WarmedEscrowSkipsChain(t *testing.T) {
 	}))
 	inner := &countingEscrowBridge{found: map[string]*bridge.EscrowInfo{}}
 	store := epochClockStore{Storage: mem, epoch: current}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 
 	got, err := mgr.payloadRoster(id, slot)
 	require.NoError(t, err)

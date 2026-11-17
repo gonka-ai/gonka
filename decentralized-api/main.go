@@ -268,6 +268,15 @@ func main() {
 		}
 	}
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
+	const hostEventDataDir = "/root/.dapi/data"
+	hostStore, err := event_listener.NewHostEventStore(ctx, event_listener.HostEventStoreConfig{
+		Writer:  participantInfo.GetAddress(),
+		DataDir: hostEventDataDir,
+	})
+	if err != nil {
+		log.Fatalf("Failed to open host event store: %v", err)
+	}
+	defer hostStore.Close()
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
 	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url, configManager.SqlDb().GetDb())
 	if err != nil {
@@ -276,6 +285,7 @@ func main() {
 	listenerOpts := []event_listener.EventListenerOption{
 		event_listener.WithStatsStorage(statsStore),
 		event_listener.WithHostEventRing(hostEventRing),
+		event_listener.WithHostEventPersistence(hostStore, hostEventDataDir),
 		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
 	}
 	if chainOracle != nil {
@@ -376,7 +386,11 @@ func main() {
 		)
 		nmOpts := []nodemanager.ServerOption{
 			nodemanager.WithHostEventRing(hostEventRing),
+			nodemanager.WithHostEventLog(hostStore),
 			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
+		}
+		if feed := listener.HostEventFeed(); feed != nil {
+			nmOpts = append(nmOpts, nodemanager.WithHostEventStatus(feed))
 		}
 		// Guard like the HTTP mount below: a nil *observer.Oracle passed as an
 		// interface is not nil, so GetBlockHeader would answer NotFound for a

@@ -166,20 +166,59 @@ func TestTheReceiptDecidesTheTimeoutReasonAsSoonAsItArrives(t *testing.T) {
 }
 
 func TestAReceiptWithoutAConfirmedAtIsStillTheConfirmation(t *testing.T) {
-	session, hosts, _, _ := setupArmedSession(t, 3, 100000, 10)
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	config := testutil.DefaultConfig(len(hosts))
+	config.HeightsyncTimeoutClock = true
+	session, _, _ := armedSessionFor(t, testutil.MakeGroup(hosts), hosts, config, 100000, 10)
 	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 
-	resp := receiptResponseFor(t, session, hosts, prepared.Nonce())
-	resp.ConfirmedAt = 0
+	rec, ok := session.StateMachine().GetInference(prepared.Nonce())
+	require.True(t, ok)
+	stamp := floorStampOf(&rec)
+	stamp.StartedAt = rec.StartedAt
+	sig := testutil.SignExecutorReceipt(t, hosts[rec.ExecutorSlot], session.escrowID, prepared.Nonce(),
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
+	resp := &host.HostResponse{
+		Nonce: prepared.Nonce(), Receipt: sig, ConfirmedAt: 0,
+		ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash,
+	}
 	session.confirmStartOnReceipt(prepared.Nonce(), resp)
 	require.Equal(t, []uint64{prepared.Nonce()}, pendingConfirmStarts(session), "the receipt carries no time; its floor stamp is what the chain checks")
 
 	reason, _ := session.TimeoutDeadline(prepared.Nonce(), time.Now())
 	require.Equal(t, "execution", reason)
+}
+
+func TestLegacyReceiptWithoutConfirmedAtIsRejected(t *testing.T) {
+	session, hosts, _, _ := setupArmedSession(t, 3, 100000, 10)
+	require.False(t, session.sm.Config().HeightsyncTimeoutClock)
+	prepared, err := session.PrepareInference(context.Background(), InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+
+	rec, ok := session.StateMachine().GetInference(prepared.Nonce())
+	require.True(t, ok)
+	stamp := floorStampOf(&rec)
+	stamp.StartedAt = rec.StartedAt
+	sig := testutil.SignExecutorReceipt(t, hosts[rec.ExecutorSlot], session.escrowID, prepared.Nonce(),
+		rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp)
+	resp := &host.HostResponse{
+		Nonce: prepared.Nonce(), Receipt: sig, ConfirmedAt: 0,
+		ObservedHeight: stamp.Height, ObservedBlockHash: stamp.Hash,
+	}
+	require.False(t, session.confirmStartOnReceipt(prepared.Nonce(), resp))
+	require.Empty(t, pendingConfirmStarts(session))
+
+	reason, deadline := session.TimeoutDeadline(prepared.Nonce(), time.Unix(1_700_000_000, 0))
+	require.Equal(t, "refused", reason)
+	refusal := time.Duration(session.sm.Config().RefusalTimeout) * time.Second
+	require.Equal(t, time.Unix(1_700_000_000, 0).Add(refusal+TimeoutBuffer), deadline)
 }
 
 func receiptResponseFor(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, nonce uint64) *host.HostResponse {

@@ -8,6 +8,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"devshard/chainoracle/blocks/headertime"
 )
 
 var (
@@ -23,6 +25,7 @@ var (
 	validationTotal          *prometheus.CounterVec
 	validationOrphanTotal    *prometheus.CounterVec
 	validationFaultTotal     *prometheus.CounterVec
+	challengeVotesTotal      *prometheus.CounterVec
 	validationQueueDrops     prometheus.Counter
 	payloadRequestTotal      *prometheus.CounterVec
 	payloadFetchTTFB         prometheus.Histogram
@@ -138,6 +141,10 @@ func initRegistry() {
 		Name: "devshard_validation_executor_fault_total",
 		Help: "Validations that voted false because the executor did not serve usable payloads.",
 	}, []string{"reason"})
+	challengeVotesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_challenge_votes_total",
+		Help: "Usage challenge verdicts this host kept, by fault (none, payload_unavailable, hash_mismatch, empty_stream), or the reason no vote was kept (unchecked, late).",
+	}, []string{"fault"})
 	validationQueueDrops = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "devshard_validation_queue_drops_total",
 		Help: "Validation jobs dropped because the queue was full.",
@@ -338,6 +345,7 @@ func initRegistry() {
 		validationTotal,
 		validationOrphanTotal,
 		validationFaultTotal,
+		challengeVotesTotal,
 		validationQueueDrops,
 		payloadRequestTotal,
 		payloadFetchTTFB,
@@ -394,6 +402,7 @@ func initRegistry() {
 	diffsWaited = challengeDiffsTotal.WithLabelValues("waited")
 	retryClaimFailed = challengeClaimRetries.WithLabelValues("claim_failed")
 	retryGap = challengeClaimRetries.WithLabelValues("gap")
+	headertime.RegisterTimeoutClockMismatch(registry)
 }
 
 // RegisterRuntimeCollectors registers the standard Go runtime / process
@@ -503,6 +512,20 @@ func IncValidationOrphan(reason Reason) {
 func IncValidationExecutorFault(reason Reason) {
 	ensureMetrics()
 	validationFaultTotal.WithLabelValues(string(reason)).Inc()
+}
+
+// IncChallengeVote counts one kept challenge verdict. "unchecked" is a fetch
+// that ended without a verdict (a local failure); "late" is a challenge first
+// asked after the window, whose failed fetch is no vote.
+func IncChallengeVote(fault string) {
+	ensureMetrics()
+	challengeVotesTotal.WithLabelValues(fault).Inc()
+}
+
+// ChallengeVoteCounter exposes one fault series of the kept-vote counter.
+func ChallengeVoteCounter(fault string) prometheus.Counter {
+	ensureMetrics()
+	return challengeVotesTotal.WithLabelValues(fault)
 }
 
 func IncValidationQueueDrop() {

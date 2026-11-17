@@ -13,33 +13,25 @@ const (
 	executionTimeoutSweepTimeout = 5 * time.Minute
 )
 
-type timeoutClock interface {
-	TimeoutRemaining(inferenceID uint64, reason types.TimeoutReason) (time.Duration, error)
-}
-
-// overdueTimeoutInferences returns nonces whose timeout would pass the state
-// machine's height gate on the next diff: Started inferences against the
-// confirm anchor, Pending ones against the start anchor, and only those whose
-// race kept the payload a refusal vote must carry.
-func overdueTimeoutInferences(state types.EscrowState, clock timeoutClock, budget int, hasRefusalPayload func(nonce uint64) bool) []uint64 {
+// overdueTimeoutInferences returns nonces whose protocol timeout is already
+// past. Started inferences use the confirm anchor. Pending ones use the start
+// anchor, and only when the race kept the payload a refusal vote must carry.
+// Legacy ages the wall anchor plus TimeoutBuffer and the sweep grace. Header
+// mode ages the stamp. A missing stamp or a missing wall anchor is not due.
+// This selection does not record a clock mismatch.
+func overdueTimeoutInferences(state types.EscrowState, now time.Time, store headerTimeStore, budget int, hasRefusalPayload func(nonce uint64) bool) []uint64 {
 	var due []uint64
+	extra := sweepExtra(state.Config.HeightsyncTimeoutClock)
 	for nonce, inference := range state.Inferences {
 		if len(due) == budget {
 			break
 		}
-		var reason types.TimeoutReason
-		switch inference.Status {
-		case types.StatusStarted:
-			reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
-		case types.StatusPending:
-			if !hasRefusalPayload(nonce) {
-				continue
-			}
-			reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
-		default:
+		reason, ok := timeoutReason(inference, hasRefusalPayload, nonce)
+		if !ok {
 			continue
 		}
-		if remaining, err := clock.TimeoutRemaining(nonce, reason); err != nil || remaining > 0 {
+		deadline, armed := protocolTimeoutDue(state.Config, inference, reason, store, now, extra)
+		if !armed || now.Before(deadline) {
 			continue
 		}
 		due = append(due, nonce)
@@ -93,11 +85,12 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 		return 0, 0, 0
 	}
 	snapshot := runtime.proxy.sm.SnapshotState()
+	store := storedHeaders(runtime.proxy.sm)
 	redundancy.forgetRefusalPayloadsUnless(func(nonce uint64) bool {
 		inference, live := snapshot.Inferences[nonce]
 		return live && inference.Status == types.StatusPending
 	})
-	if len(overdueTimeoutInferences(snapshot, runtime.proxy.sm, budget, redundancy.hasRefusalPayload)) == 0 {
+	if len(overdueTimeoutInferences(snapshot, time.Now(), store, budget, redundancy.hasRefusalPayload)) == 0 {
 		return 0, 0, 0
 	}
 	g.mu.Lock()
@@ -115,7 +108,9 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 	if runtime.proxy.sm.Phase() != types.PhaseActive {
 		return 0, 0, 0
 	}
-	for _, nonce := range overdueTimeoutInferences(runtime.proxy.sm.SnapshotState(), runtime.proxy.sm, budget, redundancy.hasRefusalPayload) {
+	snap := runtime.proxy.sm.SnapshotState()
+	votedAt := time.Now()
+	for _, nonce := range overdueTimeoutInferences(snap, votedAt, store, budget, redundancy.hasRefusalPayload) {
 		if ctx.Err() != nil {
 			break
 		}
@@ -124,10 +119,15 @@ func (g *Gateway) sweepRuntimeExecutionTimeouts(ctx context.Context, runtime *de
 			break
 		}
 		due++
-		// sendTime zero makes a Pending refusal deadline already past once the
-		// sweep found the height gate open.
+		// The vote passes the wall instant the selection already found past.
+		sendTime := time.Time{}
+		if rec := snap.Inferences[nonce]; rec != nil {
+			if reason, ok := timeoutReason(rec, redundancy.hasRefusalPayload, nonce); ok {
+				sendTime = timeoutWall(rec, reason)
+			}
+		}
 		payload, _ := redundancy.refusalPayload(nonce)
-		result, err := runtime.session.HandleTimeout(ctx, nonce, time.Time{}, payload)
+		result, err := runtime.session.HandleTimeout(ctx, nonce, sendTime, payload)
 		releasePost()
 		if timeoutVoteUnjudged(result) {
 			redundancy.noteRefusalSweepFailed(nonce)

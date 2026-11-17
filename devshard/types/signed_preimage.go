@@ -18,6 +18,7 @@ const (
 	DomainMsgValidationVote = "devshard.validationvote.v1"
 	DomainTimeoutVote       = "devshard.timeoutvote.v1"
 	DomainErrorMissVote     = "devshard.errormissvote.v1"
+	DomainChallengeVote     = "devshard.challengevote.v1"
 )
 
 // signedPreimageDomain is the prefix CanonicalSignedBytes adds. Empty means the
@@ -28,6 +29,7 @@ var signedPreimageDomain = map[protoreflect.FullName]string{
 	"devshard.v1.MsgValidationVote":    DomainMsgValidationVote,
 	"devshard.v1.TimeoutVoteContent":   DomainTimeoutVote,
 	"devshard.v1.ErrorMissVoteContent": DomainErrorMissVote,
+	"devshard.v1.ChallengeVoteContent": DomainChallengeVote,
 }
 
 // SignedPreimageDomain is the domain tag CanonicalSignedBytes prefixes, or "".

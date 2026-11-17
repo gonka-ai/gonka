@@ -67,3 +67,36 @@ func TestSession_DropSealedOutcomesKeepsThemAWindowPastTheirSeal(t *testing.T) {
 	session.dropSealedOutcomesLocked()
 	require.Empty(t, session.nonceStates, "outcomes sealed a full retention window ago are dropped")
 }
+
+// A mismatch recorded for a nonce that never had an outcome is dropped once
+// that inference is sealed past the retention window. A sample inside the
+// window, and one that was never sealed, stay.
+func TestDropSealedOutcomesDropsUntrackedClockMismatches(t *testing.T) {
+	session := setupStoredSession(t, storage.NewMemory())
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	session.nonce = nonceOutcomeRetention + 10
+	cutoff := session.nonce - nonceOutcomeRetention
+	session.sm.RestoreSealedNonces(map[uint64]uint64{
+		4: 1,
+		7: 1,
+		8: cutoff + 1,
+	})
+	session.nonceStates[4] = &nonceOutcome{}
+	session.clockMismatchOnce = map[clockMismatchKey]struct{}{
+		{nonce: 4, kind: "refused"}:    {},
+		{nonce: 7, kind: "refused"}:    {},
+		{nonce: 7, kind: "execution"}:  {},
+		{nonce: 8, kind: "refused"}:    {},
+		{nonce: 99, kind: "execution"}: {},
+	}
+
+	session.dropSealedOutcomesLocked()
+
+	require.NotContains(t, session.nonceStates, uint64(4))
+	require.NotContains(t, session.clockMismatchOnce, clockMismatchKey{nonce: 4, kind: "refused"})
+	require.NotContains(t, session.clockMismatchOnce, clockMismatchKey{nonce: 7, kind: "refused"})
+	require.NotContains(t, session.clockMismatchOnce, clockMismatchKey{nonce: 7, kind: "execution"})
+	require.Contains(t, session.clockMismatchOnce, clockMismatchKey{nonce: 8, kind: "refused"})
+	require.Contains(t, session.clockMismatchOnce, clockMismatchKey{nonce: 99, kind: "execution"})
+}

@@ -9,9 +9,11 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"common/chainoracle/blocks"
 	"common/httpguard"
 
 	devshardpkg "devshard"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
@@ -55,7 +57,7 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	execStore := newManagerTestStore(t)
 	execMgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(
 		execStore, hosts[1], stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, &mockBridge{escrow: escrow}, nil, nil,
+		nil, "v6", &mockBridge{escrow: escrow}, nil, nil,
 	))
 	e := echo.New()
 	execMgr.Register(e.Group(devshardpkg.DefaultRoutePrefix()))
@@ -66,9 +68,10 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSessionNotFound)
 
 	verStore := newManagerTestStore(t)
+	verHeaders := headertime.New()
 	verMgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(
 		verStore, hosts[2], stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, &mockBridge{
+		nil, "v6", &mockBridge{
 			escrow: escrow,
 			// The first SelectTransport for this host wins the shared PeerConn.
 			// wireHostToHost runs inside sessionForOwner, so the executor URL
@@ -76,11 +79,15 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 			hostURLs: map[string]string{hosts[1].Address(): ts.URL},
 		}, nil, nil,
 	))
+	verMgr.headerTimes = verHeaders
 	srv, err := verMgr.sessionForOwner(escrowID, user.Address())
 	require.NoError(t, err)
 	require.NotNil(t, srv)
 
 	hash := []byte{0xaa}
+	// The execution vote reads time(ConfirmedAtHeight) from the map. Height
+	// 500 is a minute behind the one-second execution window.
+	verHeaders.Observe(blocks.HashOnlyHeader(500, time.Now().Add(-time.Minute), "test-chain", hash), headertime.OriginChain, true)
 	heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 		SlotsNum: uint64(len(hosts)),
 		Reason:   string(heightsync.ReasonQuietSession),
@@ -97,7 +104,7 @@ func TestExecutionTimeout_ColdExecutorStaysUnbound(t *testing.T) {
 		require.NoError(t, heightsync.SignAck(hosts[0], msg))
 		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
 	}
-	startTx := testutil.StartTxVersioned(inferenceID, testutil.RuntimeTestVersion)
+	startTx := testutil.StartTxVersioned(inferenceID, "v6")
 	startTx.GetStartInference().ObservedHeight = 500
 	startTx.GetStartInference().ObservedBlockHash = hash
 	receipt := testutil.SignExecutorReceipt(

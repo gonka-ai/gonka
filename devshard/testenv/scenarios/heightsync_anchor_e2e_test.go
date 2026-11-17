@@ -45,10 +45,16 @@ func echoHTTPEndpoints() transport.EndpointSet {
 	return transport.EndpointSet{"echo-http": {}}
 }
 
-// hsE2ERoutePrefix tracks RuntimeTestVersion so the user session (which binds
-// SM version from the route) and host SMs (EffectiveStateRootAndProtocolVersion)
-// compute the same state root.
-var hsE2ERoutePrefix = testutil.TestRoutePrefix()
+// hsE2EProtocolVersion is the protocol these stacks bind. v6 still accepts an
+// empty first start, which is what the height-sync scenarios apply before a
+// floor exists. The user session takes its version from the route, and that
+// explicit WithVersion overrides SetFixtureProtocolVersion. Capturing
+// TestRoutePrefix at init would freeze v7 and reject those starts.
+const hsE2EProtocolVersion = "v6"
+
+// hsE2ERoutePrefix is the HTTP mount matching hsE2EProtocolVersion. Host
+// state machines take the same tag from the fixture pin in TestMain.
+const hsE2ERoutePrefix = "/devshard/" + hsE2EProtocolVersion
 
 func registerHeightSyncServer(g *echo.Group, srv *transport.Server) {
 	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
@@ -2306,11 +2312,11 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	clientOracle := staticOracleWith(100, xHash)
 	st := setupFourHostHTTPHeightSyncWithOracles(t, hostOracles, clientOracle)
 	seedHTTPSession(t, st.Session)
-	opened := st.Session.HeightSeedStatus()
+	opened := st.Session.SeedRPCStatus()
 	require.GreaterOrEqual(t, opened.Seeded*2, opened.Slots,
 		"seed returns once half the roster has an anchor")
 	require.Eventually(t, func() bool {
-		status := st.Session.HeightSeedStatus()
+		status := st.Session.SeedRPCStatus()
 		return status.Slots > 0 && status.Seeded == status.Slots
 	}, 5*time.Second, 10*time.Millisecond,
 		"the background sweep anchors the slots quorum went without")

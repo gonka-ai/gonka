@@ -15,6 +15,7 @@ import (
 
 	abcitypes "github.com/cometbft/cometbft/abci/types"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 )
 
 // mockTmHTTPClient implements TmHTTPClient for tests.
@@ -50,6 +51,18 @@ func (m *mockTmHTTPClient) BlockResults(ctx context.Context, height *int64) (*co
 	return &coretypes.ResultBlockResults{TxsResults: txs}, nil
 }
 
+func (m *mockTmHTTPClient) BlockchainInfo(context.Context, int64, int64) (*coretypes.ResultBlockchainInfo, error) {
+	return &coretypes.ResultBlockchainInfo{}, nil
+}
+
+func (m *mockTmHTTPClient) Header(ctx context.Context, height *int64) (*coretypes.ResultHeader, error) {
+	h := int64(0)
+	if height != nil {
+		h = *height
+	}
+	return &coretypes.ResultHeader{Header: &cmttypes.Header{ChainID: "test", Height: h}}, nil
+}
+
 func (m *mockTmHTTPClient) Status(ctx context.Context) (*coretypes.ResultStatus, error) {
 	// Return a mock status with earliest block at 1 (full history available)
 	return &coretypes.ResultStatus{
@@ -57,6 +70,27 @@ func (m *mockTmHTTPClient) Status(ctx context.Context) (*coretypes.ResultStatus,
 			EarliestBlockHeight: 1,
 		},
 	}, nil
+}
+
+func TestBlockObserver_NoteLatestRaisesTip(t *testing.T) {
+	bo := NewBlockObserverWithClient(&apiconfig.ConfigManager{}, newMockTmHTTPClient(0))
+	bo.currentBlockHeight.Store(5)
+	bo.noteLatest(15)
+	if got := bo.currentBlockHeight.Load(); got != 15 {
+		t.Fatalf("tip=%d want 15", got)
+	}
+	bo.noteLatest(10)
+	if got := bo.currentBlockHeight.Load(); got != 15 {
+		t.Fatalf("lower latest rewound tip to %d", got)
+	}
+	bo.noteLatest(15)
+	if got := bo.currentBlockHeight.Load(); got != 15 {
+		t.Fatalf("equal latest changed tip to %d", got)
+	}
+	bo.noteLatest(0)
+	if got := bo.currentBlockHeight.Load(); got != 15 {
+		t.Fatalf("zero latest changed tip to %d", got)
+	}
 }
 
 // Test that BlockObserver handles a large backlog without deadlocking when the consumer is slow.

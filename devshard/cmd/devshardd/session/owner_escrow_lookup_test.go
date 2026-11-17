@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
-	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/stub"
@@ -33,7 +32,7 @@ func newOwnerLookupManager(t *testing.T, escrowIDs ...string) (*HostManager, *st
 		}
 	}
 	br := &countingEscrowBridge{found: found}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 	return mgr, store, user, br
 }
 
@@ -149,7 +148,7 @@ func TestFetchEscrowForBind_KnownCreatorKeepsPerSignerLimit(t *testing.T) {
 func TestFetchEscrowForBind_KnownCreatorRefundsChainUnavailable(t *testing.T) {
 	overrideLookupLimits(t, 2, 100)
 	inner := &countingEscrowBridge{mockBridge: mockBridge{getEscrowErr: bridge.ErrChainUnavailable}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, inner, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(storage.NewMemory(), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", inner, nil, nil))
 	const owner = "gonka1owner"
 	mgr.noteKnownCreator(owner, time.Now())
 
@@ -175,7 +174,7 @@ func TestRecoverSessions_NotesOwnerAsKnownCreator(t *testing.T) {
 		addresses[i] = s.ValidatorAddress
 	}
 	br := &mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses}}
-	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v6", br, nil, nil))
 	require.False(t, mgr.isKnownCreator(user.Address()))
 
 	require.NoError(t, mgr.RecoverSessions())

@@ -115,6 +115,19 @@ func (c *lazyHostClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64
 	return tv.VerifyErrorMiss(ctx, inferenceID, diffs, artifacts)
 }
 
+func (c *lazyHostClient) VerifyChallenge(ctx context.Context, inferenceID uint64, reason types.ChallengeReason, diffs []types.Diff) (*transport.VerifyChallengeResponse, error) {
+	hc, done, err := c.client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	cv, ok := hc.(ChallengeVerifier)
+	if !ok {
+		return nil, fmt.Errorf("%T does not verify challenges", hc)
+	}
+	return cv.VerifyChallenge(ctx, inferenceID, reason, diffs)
+}
+
 func (c *lazyHostClient) SeedHeightSync(ctx context.Context) (bool, error) {
 	hc, done, err := c.client(ctx)
 	if err != nil {

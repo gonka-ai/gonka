@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"time"
 
+	"devshard/logging"
 	"devshard/types"
 )
 
@@ -43,6 +44,7 @@ func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.streamsOpen, nonce)
 	finish, isApplied := s.appliedFinishHashes[nonce]
 	if !isApplied {
 		if s.receivedStreams == nil {
@@ -57,11 +59,78 @@ func (s *Session) BindReceivedStream(nonce uint64, received [][32]byte) {
 	s.reportServedBindingLocked(nonce, judgeServedBinding(received, finish.hashes))
 }
 
+// ReceivedStreamBindsFinish reports whether received hashes to the Finish of
+// nonce the session holds: the applied one, or else a queued one that applies
+// to the record. Finishes that were dropped or not queued, though a host's
+// response may still list them, are not consulted. A queued Finish can still
+// be replaced before it applies; the challenge reports the hashes it judged
+// (ChallengeResult.BindsReceivedStream).
+func (s *Session) ReceivedStreamBindsFinish(nonce uint64, received [][32]byte) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, bound := s.receivedStreamFinishLocked(nonce, received)
+	return bound
+}
+
+// ReceivedStreamChallengeDeadline returns the vote-collection deadline for
+// the Finish this stream binds to. A queued Finish may depend on a queued,
+// verified ConfirmStart that has not yet populated the live record's clock.
+// Read both under the same lock and apply the same deadline as RunChallenge;
+// never take a timestamp from an unverified response envelope.
+func (s *Session) ReceivedStreamChallengeDeadline(nonce uint64, received [][32]byte, now time.Time) (time.Time, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rec, bound := s.receivedStreamFinishLocked(nonce, received)
+	if !bound {
+		return time.Time{}, false
+	}
+	return s.challengeAskDeadline(rec, now), true
+}
+
+func (s *Session) receivedStreamFinishLocked(nonce uint64, received [][32]byte) (*types.InferenceRecord, bool) {
+	if s.sm == nil || len(received) == 0 {
+		return nil, false
+	}
+	rec, ok := s.sm.Inference(nonce)
+	if !ok {
+		return nil, false
+	}
+	if finishAppliedStatus(rec.Status) {
+		finish := servedFinishHashes{responseHash: rec.ResponseHash, servedHash: rec.ServedHash}
+		return rec, judgeServedBinding(received, finish) == ServedBindingBound
+	}
+	if rec.Status != types.StatusStarted && rec.Status != types.StatusPending {
+		return nil, false
+	}
+	confirm := s.pendingConfirmLocked(nonce)
+	for _, tx := range s.pendingTxs {
+		fi := tx.GetFinishInference()
+		if fi == nil || fi.InferenceId != nonce || !s.evidenceApplies(rec, confirm, tx) {
+			continue
+		}
+		finish := servedFinishHashes{responseHash: fi.ResponseHash, servedHash: fi.ServedHash}
+		if judgeServedBinding(received, finish) == ServedBindingBound {
+			// evidenceApplies verified this queued ConfirmStart and Finish in
+			// sequence. Inference returns a copy; mirror the timestamp that
+			// applyConfirmStart will store, without mutating live state.
+			if rec.Status == types.StatusPending && confirm != nil && confirm.GetConfirmStart().ObservedTimeMs > 0 {
+				rec.ConfirmedAtTimeMs = confirm.GetConfirmStart().ObservedTimeMs
+			}
+			return rec, true
+		}
+	}
+	return nil, false
+}
+
 func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {
 	nonce := finish.InferenceId
+	challenged := s.challengeFinishAppliedLocked(nonce)
 	hashes := servedFinishHashes{responseHash: finish.ResponseHash, servedHash: finish.ServedHash}
 	stream, isReceived := s.receivedStreams[nonce]
 	if !isReceived {
+		if challenged {
+			return
+		}
 		if s.appliedFinishHashes == nil {
 			s.appliedFinishHashes = make(map[uint64]waitingAppliedFinish)
 		}
@@ -75,6 +144,10 @@ func (s *Session) bindAppliedFinishLocked(finish *types.MsgFinishInference) {
 }
 
 func (s *Session) reportServedBindingLocked(nonce uint64, verdict ServedBinding) {
+	delete(s.challengeFinishes, nonce)
+	if verdict == ServedBindingMismatch {
+		s.startChallengeLocked(nonce, types.ChallengeReason_CHALLENGE_REASON_STREAM_UNBOUND)
+	}
 	if s.servedBindingHandler == nil || len(s.group) == 0 {
 		return
 	}
@@ -100,8 +173,16 @@ func (s *Session) forgetExpiredServedBindingsLocked(now time.Time) {
 	for nonce, finish := range s.appliedFinishHashes {
 		if now.Sub(finish.appliedAt) > retention {
 			delete(s.appliedFinishHashes, nonce)
+			if _, ended := s.streamsEnded[nonce]; ended {
+				// A probe, a phase-change abort or a cut before any receipt:
+				// its Finish was never going to be checked.
+				continue
+			}
+			logging.Info("applied Finish with no stream to check against, unchecked", "subsystem", "challenge",
+				"escrow", s.escrowID, "nonce", nonce)
 		}
 	}
+	s.forgetExpiredChallengesLocked(now, retention)
 }
 
 func (s *Session) finishCanStillApplyLocked(nonce uint64) bool {

@@ -63,3 +63,29 @@ func TestOpenEpochPool_MigrationsRunOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, n1, n2)
 }
+
+func TestMigrateEpochPool_FromHeaderTimeSchema(t *testing.T) {
+	ctx := context.Background()
+	db := openEpochTestDB(t)
+	steps := SQLiteEpochMigrationSteps()
+	var base []migrate.Step
+	for _, step := range steps {
+		if step.ID <= 9 {
+			base = append(base, step)
+		}
+	}
+	require.NoError(t, migrate.ApplySQLite(ctx, db, base))
+	require.NoError(t, MigrateEpochPool(ctx, db))
+	for _, query := range []string{
+		"SELECT header_times_json FROM diffs LIMIT 0",
+		"SELECT sealed_usage_challenged FROM sealed_inferences LIMIT 0",
+		"SELECT data FROM challenge_votes LIMIT 0",
+	} {
+		rows, err := db.QueryContext(ctx, query)
+		require.NoError(t, err)
+		require.NoError(t, rows.Close())
+	}
+	n, err := migrate.AppliedSQLite(ctx, db)
+	require.NoError(t, err)
+	require.Equal(t, len(steps), n)
+}

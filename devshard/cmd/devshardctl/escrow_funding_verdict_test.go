@@ -33,6 +33,7 @@ func TestProxyHandsAnUnfundableRequestBackToTheGateway(t *testing.T) {
 	for _, testCase := range escrowFundingStreamingCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := setupTestProxyWithBalance(t, 3, nil, true, unfundableBalance)
+			env.session.MarkFirstInferenceStarted()
 			verdict := &escrowFundingVerdict{}
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(escrowFundingChatBody(testCase.stream)))
 			req = req.WithContext(withEscrowFundingVerdict(req.Context(), verdict))
@@ -52,6 +53,7 @@ func TestProxyAnswersTheClientWhenNoPooledRouteCanTryAnotherEscrow(t *testing.T)
 	for _, testCase := range escrowFundingStreamingCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			env := setupTestProxyWithBalance(t, 3, nil, true, unfundableBalance)
+			env.session.MarkFirstInferenceStarted()
 			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(escrowFundingChatBody(testCase.stream)))
 			rec := httptest.NewRecorder()
 
@@ -67,6 +69,7 @@ func TestProxyAnswersTheClientWhenNoPooledRouteCanTryAnotherEscrow(t *testing.T)
 // healthy escrow, and every replacement carried a new ID the once-only guard never recognised.
 func TestProxyKeepsAnEscrowInServiceWhenOneRequestIsTooCostly(t *testing.T) {
 	env := setupTestProxyWithBalance(t, 3, nil, true, unfundableBalance)
+	env.session.MarkFirstInferenceStarted()
 	var exhaustedFirings atomic.Int64
 	env.proxy.redundancy.onBalanceExhausted = func() { exhaustedFirings.Add(1) }
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewBufferString(escrowFundingChatBody(false)))
@@ -80,6 +83,7 @@ func TestProxyKeepsAnEscrowInServiceWhenOneRequestIsTooCostly(t *testing.T) {
 // is reported exhausted for replacement and the request still moves to another escrow.
 func TestProxyReportsAnEscrowExhaustedWhenItCannotPayTheNonceFee(t *testing.T) {
 	env := setupTestProxyWithFeePerNonce(t, 3, nil, true, feeExceedingBalance, feeExceedingBalance)
+	env.session.MarkFirstInferenceStarted()
 	var exhaustedFirings atomic.Int64
 	env.proxy.redundancy.onBalanceExhausted = func() { exhaustedFirings.Add(1) }
 	verdict := &escrowFundingVerdict{}
@@ -129,6 +133,7 @@ func TestGatewayPooledChatMovesARealProxyRefusalToAnotherEscrow(t *testing.T) {
 	for _, testCase := range escrowFundingStreamingCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			proxyEnv := setupTestProxyWithBalance(t, 3, nil, true, unfundableBalance)
+			proxyEnv.session.MarkFirstInferenceStarted()
 			proxyEnv.proxy.model = mockenvDefaultModel
 			// Both runtimes idle and equally weighted, so the picker takes the unfunded one first.
 			unfunded := &gatewayMockRuntime{id: "11", model: mockenvDefaultModel, active: true, handler: newRuntimeMux(proxyEnv.proxy).ServeHTTP}

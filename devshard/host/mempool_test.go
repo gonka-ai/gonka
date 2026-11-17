@@ -54,6 +54,10 @@ func TestMempool_QueuedConfirmStart(t *testing.T) {
 	m.Add(MempoolEntry{Tx: confirmTx(2, 10), ProposedAt: 4})
 	m.Add(MempoolEntry{Tx: finishTx(1), ProposedAt: 4})
 
+	laterWithEarlierWall := confirmTx(1, 1)
+	laterWithEarlierWall.GetConfirmStart().ConfirmedAt = 1
+	m.Add(MempoolEntry{Tx: laterWithEarlierWall, ProposedAt: 9})
+
 	got := m.QueuedConfirmStart(1)
 	require.NotNil(t, got)
 	require.Equal(t, []byte{200}, got.ExecutorSig, "the first own receipt queued wins")

@@ -83,6 +83,11 @@ func (hasher *ReceivedResponseHasher) MarkComplete() {
 	hasher.isComplete = true
 }
 
+// Complete reports whether the stream reached [DONE] or the devshard_meta tail.
+func (hasher *ReceivedResponseHasher) Complete() bool {
+	return hasher.isComplete
+}
+
 func (hasher *ReceivedResponseHasher) Sums() [][32]byte {
 	if !hasher.isComplete || hasher.envelope.lineCount == 0 {
 		return nil

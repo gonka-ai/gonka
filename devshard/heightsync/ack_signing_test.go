@@ -96,4 +96,10 @@ func TestCanonicalAckBytes_DomainSeparated(t *testing.T) {
 	b3, err := CanonicalAckBytes(ack)
 	require.NoError(t, err)
 	require.NotEqual(t, b1, b3)
+
+	ack.ObservedHeight = 42
+	ack.ObservedTimeMs = 99
+	b4, err := CanonicalAckBytes(ack)
+	require.NoError(t, err)
+	require.NotEqual(t, b1, b4, "observed_time_ms is inside the signed ack preimage")
 }

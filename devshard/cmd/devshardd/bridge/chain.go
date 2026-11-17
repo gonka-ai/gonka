@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"common/chain"
@@ -15,21 +14,10 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
-const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
-
-// warmKeyQueryTimeout bounds a single grantee lookup. WarmKeyResolver has no
-// context parameter, so the deadline has to be applied here.
-const warmKeyQueryTimeout = 10 * time.Second
-
 // hostInfoQueryTimeout bounds a single Participant lookup. GetHostInfo has no
 // context parameter, so a stalled chain endpoint would otherwise hold the
 // caller forever.
 const hostInfoQueryTimeout = 10 * time.Second
-
-type warmCacheKey struct {
-	host string
-	warm string
-}
 
 // Submitter broadcasts dispute state to the chain.
 // Implemented by the wiring layer (e.g. common/chain/tx.Manager).
@@ -47,8 +35,17 @@ type ChainBridge struct {
 	settlementProposedHandler  func(escrowID string, stateRoot []byte, nonce uint64) error
 	settlementFinalizedHandler func(escrowID string) error
 
-	warmCache sync.Map // warmCacheKey -> bool
+	// warmKeys is the host's copy of the chain's warm-key log. dapi writes it
+	// when the feed lists warm keys; otherwise the process Comet socket does.
+	// WarmKeyLog is the per-granter catch-up, and HostWarmKeyRefresh is the
+	// backstop when both feeds are quiet.
+	warmKeys *bridge.WarmKeyLogCopy
 }
+
+// HostWarmKeyRefresh is how old a granter's warm-key copy may be on a host
+// before an access reloads it in the background. Events are the primary
+// feed, so this only bounds the staleness when they are lost.
+const HostWarmKeyRefresh = 10 * time.Minute
 
 var (
 	_ bridge.MainnetBridge = (*ChainBridge)(nil)
@@ -56,7 +53,36 @@ var (
 
 // NewChainBridge creates a ChainBridge. submitter may be nil if SubmitDisputeState is not needed.
 func NewChainBridge(client *chain.Client, submitter Submitter) *ChainBridge {
-	return &ChainBridge{client: client, submitter: submitter}
+	var fetch bridge.WarmKeyLogFetcher
+	if client != nil {
+		fetch = bridge.NewChainWarmKeyFetcher(client.InferenceQueryClient())
+	}
+	return &ChainBridge{
+		client:    client,
+		submitter: submitter,
+		warmKeys:  bridge.NewWarmKeyLogCopy(fetch, HostWarmKeyRefresh),
+	}
+}
+
+// WarmKeys is the host's grant source: the copy of the chain's warm-key log.
+func (b *ChainBridge) WarmKeys() *bridge.WarmKeyLogCopy {
+	return b.warmKeys
+}
+
+// LiveWarmKeys implements bridge.WarmKeyGrantSource.
+func (b *ChainBridge) LiveWarmKeys(granter string) ([]bridge.WarmKeyEntry, error) {
+	return b.warmKeys.LiveWarmKeys(granter)
+}
+
+// WarmKeyEntry implements bridge.WarmKeyGrantSource.
+func (b *ChainBridge) WarmKeyEntry(granter string, id uint64) (bridge.WarmKeyEntry, bool, error) {
+	return b.warmKeys.WarmKeyEntry(granter, id)
+}
+
+// ConfirmWarmKeyBind is the state machine's WarmKeyConfirmer: the log entry
+// of cold with id exists and names warm.
+func (b *ChainBridge) ConfirmWarmKeyBind(cold, warm string, id uint64) error {
+	return bridge.ConfirmWarmKeyBind(b.warmKeys, cold, warm, id)
 }
 
 func (b *ChainBridge) Subscribe(l *events.Listener) {
@@ -169,34 +195,22 @@ func (b *ChainBridge) modelSnapshot(ctx context.Context, epochID uint64, modelID
 	return resp.EpochGroupData.ModelSnapshot, nil
 }
 
+// VerifyWarmKey reports whether warmAddress holds a live warm-key grant from
+// validatorAddress, from the log copy. It is the local-admission answer
+// (transport membership, unbound payload fetches, repair). Diff application
+// uses ConsensusWarmKey, which does not consult the clock.
 func (b *ChainBridge) VerifyWarmKey(warmAddress, validatorAddress string) (bool, error) {
-	key := warmCacheKey{host: validatorAddress, warm: warmAddress}
-	if cached, ok := b.warmCache.Load(key); ok {
-		return cached.(bool), nil
-	}
+	return bridge.IsWarmKeyLive(b.warmKeys, validatorAddress, warmAddress, time.Now())
+}
 
-	// Callers reach this from state-machine apply while holding session locks,
-	// so an unresponsive node must not stall the escrow indefinitely.
-	ctx, cancel := context.WithTimeout(context.Background(), warmKeyQueryTimeout)
-	defer cancel()
-	resp, err := b.client.InferenceQueryClient().GranteesByMessageType(ctx,
-		&inferencetypes.QueryGranteesByMessageTypeRequest{
-			GranterAddress: validatorAddress,
-			MessageTypeUrl: warmKeyMsgTypeGRPC,
-		})
-	if err != nil {
-		return false, fmt.Errorf("GranteesByMessageType: %w", err)
+// ConsensusWarmKey reports whether warmAddress is named by a grant from
+// validatorAddress that the log has not ended. Expiration is ignored, so two
+// hosts applying the same diff agree when their clocks differ.
+func (b *ChainBridge) ConsensusWarmKey(warmAddress, validatorAddress string) (bool, error) {
+	if b == nil || b.warmKeys == nil {
+		return false, fmt.Errorf("warm-key log: copy is nil")
 	}
-
-	found := false
-	for _, g := range resp.Grantees {
-		if g.Address == warmAddress {
-			found = true
-			break
-		}
-	}
-	b.warmCache.Store(key, found)
-	return found, nil
+	return b.warmKeys.HasUnendedGrant(validatorAddress, warmAddress)
 }
 
 // -- MainnetBridge notification methods --

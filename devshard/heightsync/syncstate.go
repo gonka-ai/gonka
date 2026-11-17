@@ -45,6 +45,11 @@ func evaluateSyncState(stale bool, hdr *blocks.Header, latestErr error, hRef uin
 	if stale {
 		return types.SyncState_ORACLE_STALE
 	}
+	// A heartbeat with no stamp is not a height to catch up to. A host that
+	// has a header is synced; the ack then carries max(tip, F).
+	if hRef == 0 {
+		return types.SyncState_SYNCED
+	}
 	local := uint64(hdr.Height)
 	var delta uint64
 	if hRef > local {

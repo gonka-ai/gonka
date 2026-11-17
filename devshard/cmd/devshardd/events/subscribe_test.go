@@ -45,9 +45,7 @@ func TestSubscribe_CoalescesSameQuery(t *testing.T) {
 			},
 		},
 	}
-	for _, h := range l.subs[0].handlers {
-		h(context.Background(), result)
-	}
+	l.subs[0].dispatch(context.Background(), result)
 
 	mu.Lock()
 	defer mu.Unlock()

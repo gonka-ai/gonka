@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"common/chain"
 	"devshard/testenv/config"
@@ -48,6 +49,34 @@ func GetMockChainSnapshot(t *testing.T, cfg *config.File, eps Endpoints, client 
 		}
 	}
 	return snap
+}
+
+// MockChainBlockHeight is the mock-chain admin revision height.
+func MockChainBlockHeight(t *testing.T, client *http.Client, eps Endpoints) int64 {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	rev, err := tryMockChainRevision(client, eps.MockChainAdmin)
+	require.NoError(t, err, "GET mock-chain /testenv/revision")
+	return rev.BlockHeight
+}
+
+// WaitMockChainAdvance waits until mock-chain height is greater than the
+// snapshot taken at the call. Returns the new height.
+func WaitMockChainAdvance(t *testing.T, client *http.Client, eps Endpoints, timeout time.Duration) int64 {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	before := MockChainBlockHeight(t, client, eps)
+	var got int64
+	ok := AssertEventually(t, timeout, 200*time.Millisecond, func() bool {
+		got = MockChainBlockHeight(t, client, eps)
+		return got > before
+	})
+	require.True(t, ok, "mock-chain height did not advance past %d within %s (last %d)", before, timeout, got)
+	return got
 }
 
 func queryMockChainEpochInfo(t *testing.T, grpcAddr string) MockChainSnapshot {

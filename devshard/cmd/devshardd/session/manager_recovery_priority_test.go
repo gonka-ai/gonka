@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/bridge"
-	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/storage"
 	"devshard/stub"
@@ -29,7 +28,7 @@ func seedRecoveryManager(t *testing.T, store storage.Storage, count int) *HostMa
 		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 			EscrowID:       strconv.Itoa(i),
 			EpochID:        7,
-			Version:        testutil.RuntimeTestVersion,
+			Version:        "v6",
 			CreatorAddr:    user.Address(),
 			Config:         defaultConfig(3),
 			Group:          group,
@@ -41,7 +40,7 @@ func seedRecoveryManager(t *testing.T, store storage.Storage, count int) *HostMa
 		addresses[i] = slot.ValidatorAddress
 	}
 	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
-		testutil.RuntimeTestVersion, &mockBridge{
+		"v6", &mockBridge{
 			escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
 		}, nil, nil))
 }

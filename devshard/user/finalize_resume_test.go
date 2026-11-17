@@ -124,7 +124,7 @@ func TestFinalize_ResumesAfterRecoveryWithLiarStillPresent(t *testing.T) {
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
 		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithChainOracle(testTip()))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
@@ -151,7 +151,7 @@ func TestFinalize_ResumesAfterRecoveryWithLiarStillPresent(t *testing.T) {
 	finalizeNonce := session.StateMachine().FinalizeNonce()
 	require.NoError(t, session.FlushSnapshot())
 
-	recovered, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	recovered, _, err := recoverForTest(t, store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, types.PhaseFinalizing, recovered.StateMachine().Phase())
 	require.Equal(t, finalizeNonce, recovered.StateMachine().FinalizeNonce())
@@ -212,7 +212,7 @@ func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c Hos
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
 		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100), host.WithChainOracle(testTip()))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 		if wrap != nil {
@@ -234,7 +234,7 @@ func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c Hos
 
 func (f *storedFinalizeFixture) recover(t *testing.T) *Session {
 	t.Helper()
-	recovered, _, err := RecoverSession(f.store, f.user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, f.group, f.clients)
+	recovered, _, err := recoverForTest(t, f.store, f.user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, f.group, f.clients)
 	require.NoError(t, err)
 	return recovered
 }

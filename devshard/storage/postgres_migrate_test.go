@@ -280,3 +280,30 @@ func TestEnsurePartition_CreatesAllParentPartitionsOnce(t *testing.T) {
 	require.Equal(t, want, tracer.partitionDDLCount(),
 		"second ensurePartition must not issue partition DDL")
 }
+
+func TestMigratePostgres_FromHeaderTimeSchema(t *testing.T) {
+	ctx := context.Background()
+	pool, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+	steps := PostgresMigrationSteps()
+	var base []migrate.Step
+	for _, step := range steps {
+		if step.ID <= 21 {
+			base = append(base, step)
+		}
+	}
+	require.NoError(t, migrate.ApplyPG(ctx, pool, base))
+	require.NoError(t, MigratePostgres(ctx, pool))
+	for _, query := range []string{
+		"SELECT header_times_json FROM devshard_diffs LIMIT 0",
+		"SELECT sealed_usage_challenged FROM devshard_sealed_inferences LIMIT 0",
+		"SELECT data FROM devshard_challenge_votes LIMIT 0",
+	} {
+		rows, err := pool.Query(ctx, query)
+		require.NoError(t, err)
+		rows.Close()
+	}
+	n, err := migrate.AppliedPG(ctx, pool)
+	require.NoError(t, err)
+	require.Equal(t, len(steps), n)
+}
