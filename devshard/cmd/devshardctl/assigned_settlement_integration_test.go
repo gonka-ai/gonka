@@ -53,19 +53,32 @@ func TestAssignedSettlementRuntimeToChain(t *testing.T) {
 	require.NoError(t, json.Unmarshal(wireJSON, &parsed))
 	params, err := settleParamsFromJSON(parsed)
 	require.NoError(t, err)
-	require.Equal(t, uint64(3), params.HostStats[1].Assigned, "common tx conversion must retain Assigned")
+	wantAssigned := map[uint32]uint64{0: 0, 1: 3, 2: 1}
+	paramsAssigned := make(map[uint32]uint64, len(params.HostStats))
+	for _, hs := range params.HostStats {
+		paramsAssigned[hs.SlotID] = hs.Assigned
+	}
+	require.Equal(t, wantAssigned, paramsAssigned, "common tx conversion must retain Assigned for each slot")
 	encoded, err := encodeMsgSettleDevshardEscrow(slots[0], parsed)
 	require.NoError(t, err)
 	var msg chainTypes.MsgSettleDevshardEscrow
 	require.NoError(t, msg.Unmarshal(encoded))
-	require.Equal(t, uint64(3), msg.HostStats[1].Assigned)
+	chainAssigned := make(map[uint32]uint64, len(msg.HostStats))
+	for _, hs := range msg.HostStats {
+		chainAssigned[hs.SlotId] = hs.Assigned
+	}
+	require.Equal(t, wantAssigned, chainAssigned)
 	chainHash, err := keeper.ComputeDevshardHostStatsHash(msg.HostStats)
 	require.NoError(t, err)
 	require.Equal(t, hash, chainHash)
 	escrow := chainTypes.DevshardEscrow{Id: 42, Creator: slots[0], Amount: 10000, Slots: slots}
 	limits := &chainTypes.DevshardEscrowParams{MaxNonce: chainTypes.DefaultDevshardMaxNonce}
 	require.NoError(t, keeper.VerifyDevshardSettlement(escrow, &msg, limits, nil, nil))
-	msg.HostStats[1].Assigned++
+	for _, hs := range msg.HostStats {
+		if hs.SlotId == 1 {
+			hs.Assigned++
+		}
+	}
 	require.ErrorContains(t, keeper.VerifyDevshardSettlement(escrow, &msg, limits, nil, nil), "state_root mismatch")
 
 }
