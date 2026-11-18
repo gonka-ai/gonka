@@ -659,8 +659,8 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 		return h < want
 	}
 	if sec.Direction == "response" {
-		var originBlob, originSig []byte
-		originReady := false
+		var blob, sig []byte
+		ready := false
 		for _, ref := range acks {
 			if !StampPresent(ref.ack.ObservedBlockHash) {
 				continue
@@ -675,19 +675,19 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 			if !out.admit() {
 				continue
 			}
-			if !originReady {
-				blob, _ := CanonicalOriginBytes(sec)
-				originBlob = capMarkBlob(blob)
-				originSig = append([]byte(nil), sec.SenderSignature...)
-				originReady = true
+			if !ready {
+				blob, _ = CanonicalOriginBytes(sec)
+				blob = capMarkBlob(blob)
+				sig = append([]byte(nil), sec.SenderSignature...)
+				ready = true
 			}
 			out.mark(AttributableMark{
 				Kind:      MarkDisputeOriginator,
 				Slot:      ref.ack.SlotId,
 				TurnStart: idx.forAck(ref.ack.RefNonce),
 				Nonce:     in.Nonce,
-				Blob:      originBlob,
-				Sig:       originSig,
+				Blob:      blob,
+				Sig:       sig,
 				Detail: fmt.Sprintf("ack height %d != max(response section %d, floor) = %d",
 					ref.ack.ObservedHeight, envH, want),
 			})
@@ -703,10 +703,10 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 	if isCarryForwardAnchor(sec) {
 		return
 	}
-	var legBlob, legSig []byte
-	var legTS int64
-	legEscrow := ""
-	legReady := false
+	var blob, sig []byte
+	var ts int64
+	escrow := ""
+	ready := false
 	for _, ref := range hbs {
 		if !StampPresent(ref.hb.ObservedBlockHash) {
 			continue
@@ -721,23 +721,23 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 		if !out.admit() {
 			continue
 		}
-		if !legReady && in.RequestLeg != nil {
+		if !ready && in.RequestLeg != nil {
 			// Digest, not the HTTP body: CanonicalRequestLegBytes is already
 			// what the signature covers (spec §15 request leg).
-			legBlob = CanonicalRequestLegBytes(in.RequestLeg.EscrowID, in.RequestLeg.Body, in.RequestLeg.Timestamp)
-			legSig = in.RequestLeg.Sig
-			legTS = in.RequestLeg.Timestamp
-			legEscrow = in.RequestLeg.EscrowID
+			blob = CanonicalRequestLegBytes(in.RequestLeg.EscrowID, in.RequestLeg.Body, in.RequestLeg.Timestamp)
+			sig = in.RequestLeg.Sig
+			ts = in.RequestLeg.Timestamp
+			escrow = in.RequestLeg.EscrowID
 		}
-		legReady = true
+		ready = true
 		out.mark(AttributableMark{
 			Kind:      MarkDisputeCarrier,
 			TurnStart: idx.forHeartbeat(ref.nonce),
 			Nonce:     in.Nonce,
-			Blob:      legBlob,
-			Sig:       legSig,
-			EscrowID:  legEscrow,
-			Timestamp: legTS,
+			Blob:      blob,
+			Sig:       sig,
+			EscrowID:  escrow,
+			Timestamp: ts,
 			Detail: fmt.Sprintf("heartbeat height %d != max(request section %d, floor) = %d",
 				ref.hb.ObservedHeight, envH, want),
 		})
