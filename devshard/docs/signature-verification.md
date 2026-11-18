@@ -290,6 +290,24 @@ therefore does not evict an existing binding for the life of the escrow. This is
 pre-existing behavior, not a consequence of the unification; see
 `docs/proposals/warm-key-revoke.md`.
 
+### Known limitation: revoked warm keys at settlement
+
+The chain does not share the sticky binding. `VerifyDevshardSettlement` checks
+each warm signer against the live authz grant (`HasWarmKeyGrant`) when the
+settlement is submitted. A gateway can therefore submit a signature whose key
+was bound in devshard but whose grant was revoked or expired after signing.
+
+The chain treats such a signature as missing, as if that slot had not signed,
+and counts quorum over the remaining valid signatures. Duplicate slots,
+out-of-range slots, signatures of the wrong length and signatures that fail
+public-key recovery still reject the whole settlement.
+
+If the remaining signatures do not reach quorum, the settlement fails with
+`insufficient quorum`. While the gateway holds a local quorum it normally
+resubmits the same signatures, so the settlement keeps failing. Collecting a
+replacement signature for the skipped slot is left to the finalization
+redesign.
+
 ## 7. Pitfalls worth repeating
 
 - A bound slot is exclusive. Do not let a sibling binding or a live authz answer

@@ -422,8 +422,12 @@ func TestVerifyDevshardSettlement_InvalidSignature(t *testing.T) {
 	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
 
 	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
+	require.NoError(t, err)
+
+	msg.Signatures = msg.Signatures[:keeper.DevshardQuorumFor(len(slots))]
+	err = keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "recovered")
+	require.Contains(t, err.Error(), "insufficient quorum")
 }
 
 func TestVerifyDevshardSettlement_WarmKeyAccepted(t *testing.T) {
@@ -447,7 +451,7 @@ func TestVerifyDevshardSettlement_WarmKeyAccepted(t *testing.T) {
 	// Without warm key checker, should fail
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "recovered")
+	require.Contains(t, err.Error(), "insufficient quorum")
 
 	// With warm key checker that accepts all pairings, should pass
 	acceptAllWarmKeys := func(granter, grantee string) bool {
@@ -481,7 +485,72 @@ func TestVerifyDevshardSettlement_WarmKeyRejected(t *testing.T) {
 	}
 	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, rejectAll)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "recovered")
+	require.Contains(t, err.Error(), "insufficient quorum")
+}
+
+func revokedWarmKeyChecker(warmKeys []*dcrdsecp.PrivateKey, coldSlots []string, revokedSlot int) keeper.WarmKeyChecker {
+	return func(granter, grantee string) bool {
+		for i, wk := range warmKeys {
+			if cosmosAddressFromDcrdKey(wk).String() == grantee && coldSlots[i] == granter {
+				return i != revokedSlot
+			}
+		}
+		return false
+	}
+}
+
+func TestVerifyDevshardSettlement_RevokedWarmKeySkipped(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	warmKeys, _ := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	_, coldSlots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: coldSlots,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, revokedWarmKeyChecker(warmKeys, coldSlots, 1))
+	require.NoError(t, err)
+}
+
+func TestVerifyDevshardSettlement_RevokedWarmKeyBelowQuorum(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	warmKeys, _ := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	_, coldSlots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: coldSlots,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	msg := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
+	msg.Signatures = msg.Signatures[:keeper.DevshardQuorumFor(len(coldSlots))]
+
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, revokedWarmKeyChecker(warmKeys, coldSlots, 1))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient quorum")
+}
+
+func TestVerifyDevshardSettlement_SkippedSignatureKeepsHardErrors(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	warmKeys, _ := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	_, coldSlots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: 7_000_000_000, Slots: coldSlots,
+	}
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 100_000_000)
+	checker := revokedWarmKeyChecker(warmKeys, coldSlots, 1)
+
+	dup := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
+	dup.Signatures = append(dup.Signatures, dup.Signatures[1])
+	err := keeper.VerifyDevshardSettlement(escrow, dup, testDevshardEscrowParams(), nil, checker)
+	require.ErrorContains(t, err, "duplicate signature for slot 1")
+
+	bad := buildSettlementTestData(t, escrow, warmKeys, hostStats, 0)
+	bad.Signatures[1].Signature = bad.Signatures[1].Signature[:64]
+	err = keeper.VerifyDevshardSettlement(escrow, bad, testDevshardEscrowParams(), nil, checker)
+	require.ErrorContains(t, err, "failed to recover address for slot 1")
 }
 
 func TestVerifyDevshardSettlement_DuplicateSignerMultiSlot(t *testing.T) {
