@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"fmt"
+	"math"
 	"math/rand"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -262,21 +263,6 @@ func (k msgServer) validateClaim(ctx sdk.Context, msg *types.MsgClaimRewards, se
 }
 
 func (k msgServer) hasSignificantMissedValidations(ctx sdk.Context, msg *types.MsgClaimRewards) (bool, error) {
-	// Exempt participants who had a maintenance window covering the claimed
-	// epoch. Uses the same coverage check as GrantMaintenanceCredit so the
-	// two paths cannot disagree — otherwise a multi-epoch window's mid/end
-	// epoch could pass credit suppression but fail missed-validation here
-	// (the `==` match used previously only covered the window's start epoch).
-	participantAddr, err := sdk.AccAddressFromBech32(msg.Creator)
-	if err == nil {
-		state, found := k.GetMaintenanceState(ctx, participantAddr)
-		if found && k.maintenanceStateCoversEpoch(ctx, state, msg.EpochIndex) {
-			k.LogInfo("Skipping missed validation check: participant had maintenance in this epoch",
-				types.Maintenance, "participant", msg.Creator, "epoch", msg.EpochIndex)
-			return false, nil
-		}
-	}
-
 	//nolint:forbidigo // Must in different context
 	mustBeValidated, err := k.getMustBeValidatedInferences(ctx, msg)
 	if err != nil {
@@ -504,8 +490,28 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		"epoch", mainEpochData.EpochIndex,
 	)
 
+	// Inferences created during one of the validator's maintenance windows are
+	// exempt, as the spec waives validation duties only while a window is active.
+	var windows []maintenanceWindow
+	if creatorAddr, err := sdk.AccAddressFromBech32(msg.Creator); err == nil && len(sample) > 0 {
+		minHeight, maxHeight := int64(math.MaxInt64), int64(0)
+		for _, inference := range sample {
+			if inference.CreatedAtBlockHeight > 0 {
+				minHeight = min(minHeight, inference.CreatedAtBlockHeight)
+				maxHeight = max(maxHeight, inference.CreatedAtBlockHeight)
+			}
+		}
+		if maxHeight > 0 {
+			windows, err = k.maintenanceWindowsBetween(ctx, creatorAddr, minHeight, maxHeight)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read maintenance windows: %w", err)
+			}
+		}
+	}
+
 	// Run expensive ShouldValidate only on sampled inferences
 	skipped := 0
+	maintenanceSkipped := 0
 	mustBeValidated := make([]string, 0)
 	for _, inference := range sample {
 		modelId := inference.Model
@@ -524,6 +530,11 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		// signal.
 		if k.OverlapsWithPoC(&inference, epochContext) {
 			skipped++
+			continue
+		}
+
+		if inMaintenanceWindow(inference.CreatedAtBlockHeight, windows) {
+			maintenanceSkipped++
 			continue
 		}
 
@@ -557,6 +568,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	k.LogInfo("Must be validated inferences", types.Claims,
 		"count", len(mustBeValidated),
 		"poc_overlap_skipped", skipped,
+		"maintenance_skipped", maintenanceSkipped,
 		"sampled", len(sample),
 	)
 
