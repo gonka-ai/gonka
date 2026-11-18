@@ -13,7 +13,7 @@ An escrow is **routable** when it is not standby and not at its nonce cap. An un
 ## The algorithm
 
 ```text
-fullCount    = #{escrows not nonce-capped with Full}
+fullCount    = #{routable escrows with Full}
 guardShort   = priced && !misconfigured ? max(0, K − fullCount) : 0
 L            = Σ_routable atModelPrice(max(0, free − FullCost_e) + returning)
 need         = 1.5 × D_peak + (misconfigured ? 0 : K × Slot)
@@ -29,9 +29,11 @@ budget       = regulars + standbys > room          (Decision.BudgetReached)
 deficit      = max(guard, cap, spread) − room
 ```
 
-`allowed` is requests not blocked, an epoch known, the model served by the network, the regular create breaker not cooling down, and the tick outside the bridge window: inside it `prepareBridge` owns every create and retire, since a regular created there is retired by its next pass. A regular create's reason is `guard` while its index is under `guardShort`, then `capacity` while under `capShort`, then `spread`; every reason therefore matches the state it was decided in (the scenarios' `create reason` invariant). Every sum and product saturates instead of wrapping, and `capShort` is bounded by `MaxUnsettled + 1`.
+`fullCount` counts routable escrows only, so a full standby never stands in for a regular one: routing opens a standby only when no regular can pay and none was passed over for its hosts, so it is the reserve beside the guarantee, funded by `standbyShort`, not part of it. A fresh create reaches `fullCount` through its row: a commitment is in `PendingRegularCreates` and `counted` until it lands, and the unread row it becomes is routable and full at its stored amount, so the pending commitment stands in for the guard create until it lands and the landed row then meets the guard: the guard creates stop at `K` full regulars.
 
-A model is **misconfigured** when `Amount − CreateFee < Slot`: a fresh escrow could never be full, so the guarantee is off. Full means a balance of one slot here as in `liquidity.Classify` and routing, with no margin on top. `Decision.AmountNeeded` is that floor, `CreateFee + Slot`. Its `need` drops the `K × Slot` term too, so capacity creates follow demand alone and never fund escrows that could not be full. An **unpriced** model (no chain price yet, or an overflow) has no guard, no capacity and no planned retire but the nonce cap.
+`allowed` is requests not blocked by admission's own rule (`config.Modes.BlocksRequests`: relaxed `poc_mode` lets requests through a PoC, so a confirmation PoC is no gate there), no epoch PoC running (a regular created in one carries the latest epoch, N+1, while the chain stamps N, and the bridge window can open soon after and retire it), an epoch known, the model served by the network, the regular create breaker not cooling down, and the tick outside the bridge window: inside it `prepareBridge` owns every create and retire, since a regular created there is retired by its next pass. A regular create's reason is `guard` while its index is under `guardShort`, then `capacity` while under `capShort`, then `spread`; every reason therefore matches the state it was decided in (the scenarios' `create reason` invariant). Every sum and product saturates instead of wrapping, and `capShort` is bounded by `MaxUnsettled + 1`.
+
+A model is **misconfigured** when `Amount − CreateFee < Slot`: a fresh escrow could never be full, so the guarantee is off. Full means a balance of one slot here as in `liquidity.Classify` and routing, with no margin on top: an escrow holding a slot pays a request up to the retirement reserve the slot is priced from, and routing refuses on it a request that costs more than the slot. `Decision.AmountNeeded` is that floor, `CreateFee + Slot`. Its `need` drops the `K × Slot` term too, so capacity creates follow demand alone and never fund escrows that could not be full. An **unpriced** model (no chain price yet, or an overflow) has no guard, no capacity and no planned retire but the nonce cap.
 
 `Decision.Need` and `Decision.Liquid` carry `need` and `L`, so the manager can narrate what a capacity create was sized from.
 

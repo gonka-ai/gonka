@@ -3,6 +3,7 @@ package escrow
 import (
 	"context"
 	"errors"
+	"maps"
 	"slices"
 	"testing"
 	"time"
@@ -23,6 +24,8 @@ func (f fakeFunds) EscrowMoney(escrowID string) (EscrowMoney, bool) {
 	money, known := f[escrowID]
 	return money, known
 }
+
+const smallRequestReserve uint64 = 264
 
 func planningSnapshot() chain.PhaseSnapshot {
 	return chain.PhaseSnapshot{
@@ -116,20 +119,118 @@ func TestAModelListThatNoLongerParsesDropsTheReports(t *testing.T) {
 }
 
 // Test flow:
+//  1. Table-driven: build a planning manager with one starved escrow, so two guard creates are wanted, and a snapshot whose raw chain state blocks requests with the case's reason under the case's PoC mode.
+//  2. Plan once.
+//  3. Assert the guard creates the planner decided: two where admission lets requests through or the block is a confirmation PoC, none where admission refuses them or an epoch PoC holds.
+func TestPlannerCreatesFollowTheBlockingAdmissionUses(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		pocMode     string
+		reason      chain.BlockReason
+		wantCreates uint64
+	}{
+		{name: "relaxed mode in a confirmation PoC", pocMode: config.PoCModeRelaxed, reason: chain.BlockReasonConfirmationPoC, wantCreates: 2},
+		{name: "strict mode in a confirmation PoC", pocMode: config.PoCModeOff, reason: chain.BlockReasonConfirmationPoC},
+		{name: "relaxed mode in an epoch PoC", pocMode: config.PoCModeRelaxed, reason: chain.BlockReasonPoC},
+		{name: "relaxed mode with nothing blocked", pocMode: config.PoCModeRelaxed, reason: chain.BlockReasonNone, wantCreates: 2},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager, _, _, _ := planningManager(t)
+			snapshot := planningSnapshot()
+			snapshot.RequestsBlocked, snapshot.BlockReason = testCase.reason != chain.BlockReasonNone, testCase.reason
+			manager.snapshots.(*fakeSnapshotSource).snapshot = snapshot
+			configured := *manager.config.Load()
+			configured.Modes.PoCMode = testCase.pocMode
+			manager.config.Swap(&configured)
+
+			_ = manager.planFunding(context.Background(), true)
+
+			if got := manager.FundingReports()[0].Decisions[FundingDecision{Action: funding.ActionCreate, Reason: funding.ReasonGuard}]; got != testCase.wantCreates {
+				t.Fatalf("guard creates = %d under %s with reason %q, want %d", got, testCase.pocMode, testCase.reason, testCase.wantCreates)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Table-driven: a planning manager whose one escrow holds 1 000 000, full for a guarantee of one, in a model that opens escrows at 1 000 000 with a create fee of 100 and a price of 1 with a nonce fee of 10, and a money-short mark carrying the case's request reserve.
+//  2. Plan once.
+//  3. Assert one capacity create where a fresh escrow could pay the request, up to the last unit it holds after the fee, and none where it could not.
+func TestAMoneyShortMarkAsksForCreatesOnlyWhereAFreshEscrowCouldPayTheRequest(t *testing.T) {
+	for _, testCase := range []struct {
+		name        string
+		request     uint64
+		wantCreates uint64
+	}{
+		{name: "a small request", request: smallRequestReserve, wantCreates: 1},
+		{name: "the dearest request a fresh escrow pays", request: 999_890, wantCreates: 1},
+		{name: "one unit more than a fresh escrow pays", request: 999_891},
+		{name: "a request of five times the amount", request: 5_000_000},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager, _, _, _ := planningManager(t)
+			manager.funds = fakeFunds{"5": {Config: types.SessionConfig{RefusalTimeout: 60, ExecutionTimeout: 1800}, Balance: 1_000_000, TokenPrice: 1, FeePerNonce: 10}}
+			configured := *manager.config.Load()
+			configured.Rotation.ModelsJSON = `[{"model_id":"qwen","target_count":1,"amount":1000000,"full_context_slots":1,"private_key_env":"K"}]`
+			manager.config.Swap(&configured)
+			manager.OnMoneyShort("qwen", testCase.request)
+
+			_ = manager.planFunding(context.Background(), true)
+
+			if got := manager.FundingReports()[0].Decisions[FundingDecision{Action: funding.ActionCreate, Reason: funding.ReasonCapacity}]; got != testCase.wantCreates {
+				t.Fatalf("capacity creates = %d for a request reserve of %d, want %d", got, testCase.request, testCase.wantCreates)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Table-driven: build a planning manager and mark its model money-short with a request no fresh escrow could pay and with a small one, in the case's order.
+//  2. Plan once.
+//  3. Assert the small request decided, one capacity create, whichever order the marks came in.
+func TestTheCheapestMarkedRequestDecidesWhateverOrderTheMarksCome(t *testing.T) {
+	const unpayableReserve uint64 = 5_000_000
+	for _, testCase := range []struct {
+		name     string
+		reserves []uint64
+	}{
+		{name: "dear first", reserves: []uint64{unpayableReserve, smallRequestReserve}},
+		{name: "small first", reserves: []uint64{smallRequestReserve, unpayableReserve}},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			manager, _, _, _ := planningManager(t)
+			manager.funds = fakeFunds{"5": {Config: types.SessionConfig{RefusalTimeout: 60, ExecutionTimeout: 1800}, Balance: 1_000_000, TokenPrice: 1, FeePerNonce: 10}}
+			configured := *manager.config.Load()
+			configured.Rotation.ModelsJSON = `[{"model_id":"qwen","target_count":1,"amount":1000000,"full_context_slots":1,"private_key_env":"K"}]`
+			manager.config.Swap(&configured)
+			for _, reserve := range testCase.reserves {
+				manager.OnMoneyShort("qwen", reserve)
+			}
+
+			_ = manager.planFunding(context.Background(), true)
+
+			if got := manager.FundingReports()[0].Decisions[FundingDecision{Action: funding.ActionCreate, Reason: funding.ReasonCapacity}]; got != 1 {
+				t.Fatalf("capacity creates = %d after marks %v, want 1", got, testCase.reserves)
+			}
+		})
+	}
+}
+
+// Test flow:
 //  1. Build a planning manager whose store fails to list rows, and mark its model money-short.
 //  2. Plan once.
 //  3. Assert the failure was narrated and the mark is still there for the next tick.
 func TestAFailedStoreReadKeepsTheMoneyShortMarks(t *testing.T) {
 	manager, testStore, _, narrator := planningManager(t)
 	testStore.listDevshardsErr = errors.New("store unavailable")
-	manager.OnMoneyShort("qwen")
+	manager.OnMoneyShort("qwen", smallRequestReserve)
 
 	_ = manager.planFunding(context.Background(), true)
 
 	if recorded := narrator.recorded(); !slices.Contains(recorded, "plan failed: store unavailable") {
 		t.Fatalf("narration = %v, want the failed plan", recorded)
 	}
-	if marks := manager.moneyShort.drain(); !marks["qwen"] {
+	if marks := manager.moneyShort.drain(); !slices.Contains(slices.Sorted(maps.Keys(marks)), "qwen") {
 		t.Fatalf("marks after a failed read = %v, want qwen still marked", marks)
 	}
 }

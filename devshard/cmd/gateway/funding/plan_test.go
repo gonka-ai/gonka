@@ -189,6 +189,14 @@ func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
 			}),
 			wantBroken: true,
 		},
+		{
+			name: "an epoch PoC creates nothing and breaks the guarantee",
+			state: modelWith(func(state *ModelState) {
+				state.Escrows[1] = starvedEscrow("2", 40_000)
+				state.InEpochPoC = true
+			}),
+			wantBroken: true,
+		},
 		{name: "no epoch creates nothing", state: modelWith(func(state *ModelState) { state.MoneyShort, state.EpochKnown = true, false })},
 		{name: "a gated breaker creates nothing", state: modelWith(func(state *ModelState) { state.MoneyShort, state.BreakerGated = true, true })},
 		{name: "a model the network does not serve creates nothing", state: modelWith(func(state *ModelState) { state.MoneyShort, state.ServedByNetwork = true, false })},

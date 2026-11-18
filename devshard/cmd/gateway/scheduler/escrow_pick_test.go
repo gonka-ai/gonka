@@ -1228,14 +1228,22 @@ func TestPickFundsTheConfiguredAttempts(t *testing.T) {
 
 // moneyShortRecorder counts the models the scheduler reported as money-short.
 type moneyShortRecorder struct {
-	mu     sync.Mutex
-	models []string
+	mu       sync.Mutex
+	models   []string
+	requests []uint64
 }
 
-func (recorder *moneyShortRecorder) record(model string) {
+func (recorder *moneyShortRecorder) record(model string, reserveTokens uint64) {
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
 	recorder.models = append(recorder.models, model)
+	recorder.requests = append(recorder.requests, reserveTokens)
+}
+
+func (recorder *moneyShortRecorder) recordedRequests() []uint64 {
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return slices.Clone(recorder.requests)
 }
 
 func (recorder *moneyShortRecorder) recorded() []string {

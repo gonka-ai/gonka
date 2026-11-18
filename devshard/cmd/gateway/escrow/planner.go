@@ -32,9 +32,9 @@ type modelPricing struct {
 	attempts      uint64
 }
 
-// OnMoneyShort marks a model routing found no escrow able to pay for and wakes the tick once per mark; it does no I/O. See README.md, "The funding planner".
-func (m *Manager) OnMoneyShort(model string) {
-	if !m.moneyShort.mark(model) {
+// OnMoneyShort marks a model routing found no escrow able to pay a request of the given reserve for and wakes the tick once per mark; it does no I/O. See README.md, "The funding planner".
+func (m *Manager) OnMoneyShort(model string, reserveTokens uint64) {
+	if !m.moneyShort.mark(model, reserveTokens) {
 		return
 	}
 	select {
@@ -80,7 +80,8 @@ func (m *Manager) planFunding(ctx context.Context, scheduled bool) error {
 		}
 		planned[model.ModelID] = true
 		reading := m.readModel(model, rows, commitments, snapshot, configuration, now)
-		reading.state.MoneyShort = moneyShort[model.ModelID]
+		reserveTokens, marked := moneyShort[model.ModelID]
+		reading.state.MoneyShort = marked && freshEscrowPays(model, snapshot, reserveTokens)
 		reading.state.BreakerGated = m.breaker.gated(model.ModelID, roleRegular)
 		for _, escrowID := range reading.live {
 			liveEscrows[escrowID] = true
@@ -104,6 +105,11 @@ func (m *Manager) plannableModels(ctx context.Context, rotation config.Rotation)
 	return models, true
 }
 
+func freshEscrowPays(model ModelConfig, snapshot chain.PhaseSnapshot, reserveTokens uint64) bool {
+	cost, priced := scheduler.RequestCost(reserveTokens, snapshot.TokenPrice, snapshot.FeePerNonce)
+	return priced && model.Amount > snapshot.CreateDevshardFee && cost <= model.Amount-snapshot.CreateDevshardFee
+}
+
 func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, commitments []store.Commitment, snapshot chain.PhaseSnapshot, configuration *config.Config, now time.Time) modelReading {
 	pricing := newModelPricing(model.ModelID, snapshot, configuration)
 	fullCost, slot, priced := pricing.at(snapshot.TokenPrice, snapshot.FeePerNonce)
@@ -115,7 +121,7 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 			MaxUnsettled: model.MaxUnsettled, FullContextSlots: model.FullContextSlots,
 			Amount: model.Amount, CreateFee: snapshot.CreateDevshardFee,
 			FullCost: fullCost, Slot: slot, Priced: priced && snapshot.TokenPrice > 0,
-			RequestsBlocked: snapshot.RequestsBlocked, EpochKnown: !snapshotHasNoEpochYet(snapshot),
+			RequestsBlocked: configuration.Modes.BlocksRequests(snapshot), InEpochPoC: snapshot.RequestsBlocked && snapshot.BlockReason == chain.BlockReasonPoC, EpochKnown: !snapshotHasNoEpochYet(snapshot),
 			ServedByNetwork: served || !known, BreakerGated: m.breaker.open(model.ModelID, roleRegular),
 			InBridgeWindow:   blocksToSwitch >= 0 && blocksToSwitch <= prePoC,
 			NearBridgeWindow: blocksToSwitch > prePoC && blocksToSwitch <= nearBridgePrePoCWindows*prePoC,

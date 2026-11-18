@@ -179,7 +179,7 @@ The families no question above needs, with the help text each one exports.
 
 ### Watching the funding planner
 
-The planner alone creates and retires escrows. An escrow whose balance falls under the model's floor keeps serving the requests it can afford: routing spends starved residue first on small requests, and a depletion mark other than the nonce cap is dropped and counted instead of retiring the escrow. At least `full_context_slots` full escrows are kept (the guarantee), capacity follows demand, and creates are bounded by `max_unsettled` and by a rate bucket of two at once, then one per refill. The epoch bridge keeps its window; the planner plans nothing inside it, and after PoC it funds the regular set and retires the old temps once the spread is met. Read `escrow funding planned` and `devshard_gateway_planner_decisions_total` to see what it decided.
+The planner alone creates and retires escrows. An escrow whose balance falls under the model's floor keeps serving the requests it can afford: routing spends starved residue first on small requests, and a depletion mark other than the nonce cap is dropped and counted instead of retiring the escrow. At least `full_context_slots` full regular escrows are kept (the guarantee; a standby does not count), capacity follows demand, and creates are bounded by `max_unsettled` and by a rate bucket of two at once, then one per refill. The epoch bridge keeps its window; the planner plans nothing inside it, and after PoC it funds the regular set and retires the old temps once the spread is met. Read `escrow funding planned` and `devshard_gateway_planner_decisions_total` to see what it decided.
 
 What to watch:
 

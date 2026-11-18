@@ -25,7 +25,7 @@ type Deps struct {
 	Now               func() time.Time
 	OnEscrowExhausted func(escrowID string, reason ExhaustionReason)
 	OnReserveTaken    func(escrowID string)
-	OnMoneyShort      func(model string)
+	OnMoneyShort      func(model string, reserveTokens uint64)
 }
 
 // Scheduler owns one actor per escrow. See routing.md, "Picking an escrow".
@@ -41,7 +41,7 @@ type Scheduler struct {
 	newTimer          func(time.Duration) (<-chan time.Time, func())
 	onEscrowExhausted func(escrowID string, reason ExhaustionReason)
 	onReserveTaken    func(escrowID string)
-	onMoneyShort      func(model string)
+	onMoneyShort      func(model string, reserveTokens uint64)
 
 	tieBreak atomic.Int64
 

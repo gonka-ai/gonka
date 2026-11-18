@@ -58,7 +58,7 @@ type Manager struct {
 	belowFloorNarrated  markSet
 	unresolvedNarrated  markSet
 	reserveTaken        markSet
-	moneyShort          markSet
+	moneyShort          requestMarks
 	deadlines           deadlineWatch
 	wakeup              chan struct{}
 

@@ -56,7 +56,7 @@ The tier is a preference, never a gate: a request one attempt can pay for is sti
 
 The reserve tier ranks on score alone.
 
-**A pick that fails for money says so.** When an unpinned pick for a model with candidates ends declined for the balance floor, the scheduler calls `OnMoneyShort` with the model (`escrow_pick.go`, `pickEscrow`). It never fires for a pin, so `ErrPinnedEscrowShort` reports nothing, nor for a pick declined only by the nonce ceilings or refused by the allowlist. `AttemptsToFund` is the exported form of the attempt count the tier above prices.
+**A pick that fails for money says so.** When an unpinned pick for a model with candidates ends declined for the balance floor, the scheduler calls `OnMoneyShort` with the model and the request's reserve (`escrow_pick.go`, `pickEscrow`). It never fires for a pin, so `ErrPinnedEscrowShort` reports nothing, nor for a pick declined only by the nonce ceilings or refused by the allowlist. `AttemptsToFund` is the exported form of the attempt count the tier above prices.
 
 **Regulars first, reserves last.** The walk above runs over the regular escrows alone; only when it picks none, and passed none over for its hosts, does the same walk run over the model's reserve escrows, and the admitted counts of both tiers decide `ErrAllowlistUnreachable` together (`escrow_pick.go`, `pickEscrow` and `rankCandidates`). See "A reserve escrow", below.
 

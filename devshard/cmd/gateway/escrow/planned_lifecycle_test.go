@@ -81,16 +81,16 @@ func TestAThousandMoneyShortSignalsWakeTheTickOnce(t *testing.T) {
 	manager, _, _, _, _ := onManager(t, onModels(1, 0))
 
 	for range 1000 {
-		manager.OnMoneyShort("qwen")
+		manager.OnMoneyShort("qwen", smallRequestReserve)
 	}
 	require.Len(t, manager.wakeup, 1, "wakeups after a thousand signals")
 	<-manager.wakeup
 	for range 1000 {
-		manager.OnMoneyShort("qwen")
+		manager.OnMoneyShort("qwen", smallRequestReserve)
 	}
 	require.Empty(t, manager.wakeup, "wakeups while the mark is undrained")
-	require.True(t, manager.moneyShort.drain()["qwen"], "the model is marked")
-	manager.OnMoneyShort("qwen")
+	require.Contains(t, manager.moneyShort.drain(), "qwen", "the model is marked")
+	manager.OnMoneyShort("qwen", smallRequestReserve)
 
 	require.Len(t, manager.wakeup, 1, "wakeups after the mark was drained")
 }

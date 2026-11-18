@@ -50,7 +50,7 @@ Four small adapters exist because two subsystems want the same event for differe
 
 `modelCapacity` is one wrapper for both capacity readers, because the gauge must report the scale that admission actually applies, and only this type knows the operator's relaxed-mode override of the chain's raw blocking state.
 
-Reading the chain's raw state instead would zero the scale during PoC, and a zero scale clamps every weight-derived cap to nothing — so relaxed mode would go dead in exactly the deployments that set an input-token cap or a per-model override, which are the ones that need it. `api.admission` calls the same method for the pre-queue gate.
+Reading the chain's raw state instead would zero the scale during PoC, and a zero scale clamps every weight-derived cap to nothing — so relaxed mode would go dead in exactly the deployments that set an input-token cap or a per-model override, which are the ones that need it. `api.admission` calls the same method for the pre-queue gate, and the funding planner reads the same fold, so it creates escrows while admission lets requests through; it keeps its own pause for an epoch PoC, read from the raw `BlockReasonPoC`.
 
 The per-weight *allowance* is the exception: it follows the raw chain phase rather than the override, because it bounds what the hosts can actually do.
 
