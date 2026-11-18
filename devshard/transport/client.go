@@ -543,14 +543,18 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 // getBounded is get with the success body capped at maxBody bytes. A body past
 // the cap is ErrResponseBodyTooLarge; maxBody 0 reads the whole body.
 func (c *HTTPClient) getBounded(ctx context.Context, path string, timeout time.Duration, maxBody int64, resp any) error {
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url, maxBody)
+	body, err := c.getBoundedBody(ctx, path, timeout, maxBody)
 	if err != nil {
 		return err
 	}
 	return json.Unmarshal(body, resp)
+}
+
+func (c *HTTPClient) getBoundedBody(ctx context.Context, path string, timeout time.Duration, maxBody int64) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
+	return c.doGet(ctx, url, maxBody)
 }
 
 // Send implements user.HostClient.
@@ -1281,31 +1285,53 @@ var maxDiffPageBodyBytes = int64(max(
 	int(DefaultMaxBodySize),
 ) + storage.DiffPageMaxNonces*diffRecordJSONOverhead)
 
+func checkDiffPageRecords(n int) error {
+	if n > storage.DiffPageMaxNonces {
+		return fmt.Errorf("%w: %d records, at most %d", ErrDiffPageOversized, n, storage.DiffPageMaxNonces)
+	}
+	return nil
+}
+
+func checkDiffPageTxsBytes(n, total int) error {
+	if n <= 1 {
+		return nil
+	}
+	if limit := storage.DiffPageMaxBytes + n*diffWireNonceBytes; total > limit {
+		return fmt.Errorf("%w: %d records carry %d txs bytes, at most %d", ErrDiffPageOversized, n, total, limit)
+	}
+	return nil
+}
+
 func (c *HTTPClient) getDiffWindow(ctx context.Context, from, to uint64) ([]types.Diff, error) {
 	type diffRecordJSON struct {
 		DiffJSON  `json:"diff"`
 		StateHash []byte `json:"state_hash"`
 	}
-	var records []diffRecordJSON
 	path := fmt.Sprintf("/sessions/%s/diffs?from=%d&to=%d", c.escrowID, from, to)
-	if err := c.getBounded(ctx, path, c.config.QueryTimeout, maxDiffPageBodyBytes, &records); err != nil {
+	body, err := c.getBoundedBody(ctx, path, c.config.QueryTimeout, maxDiffPageBodyBytes)
+	if err != nil {
 		var status *UpstreamStatusError
 		if errors.As(err, &status) && strings.Contains(status.Body, storage.ErrDiffPageLimit.Error()) {
 			return nil, fmt.Errorf("%w: %s", storage.ErrDiffPageLimit, status.Body)
 		}
 		return nil, err
 	}
-	if len(records) > storage.DiffPageMaxNonces {
-		return nil, fmt.Errorf("%w: %d records, at most %d", ErrDiffPageOversized, len(records), storage.DiffPageMaxNonces)
+	if err := checkDiffPageRecords(devshardpkg.ScanJSONShape(body).TopLevelItems); err != nil {
+		return nil, err
 	}
-	if len(records) > 1 {
-		total := 0
-		for _, rec := range records {
-			total += len(rec.Txs)
-		}
-		if limit := storage.DiffPageMaxBytes + len(records)*diffWireNonceBytes; total > limit {
-			return nil, fmt.Errorf("%w: %d records carry %d txs bytes, at most %d", ErrDiffPageOversized, len(records), total, limit)
-		}
+	var records []diffRecordJSON
+	if err := json.Unmarshal(body, &records); err != nil {
+		return nil, err
+	}
+	if err := checkDiffPageRecords(len(records)); err != nil {
+		return nil, err
+	}
+	total := 0
+	for _, rec := range records {
+		total += len(rec.Txs)
+	}
+	if err := checkDiffPageTxsBytes(len(records), total); err != nil {
+		return nil, err
 	}
 
 	diffs := make([]types.Diff, len(records))
