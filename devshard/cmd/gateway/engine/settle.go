@@ -55,6 +55,7 @@ type TimeoutStep struct {
 	Kind      SettleKind
 	Proof     *MissProof
 	Event     TimeoutEvent
+	Pace      func(ctx context.Context) error
 }
 
 func timeoutKind(a AttemptOutcome) TimeoutKind {

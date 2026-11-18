@@ -16,6 +16,7 @@ type Timeouts interface {
 type Voter struct {
 	Posters  Posters
 	Timeouts Timeouts
+	Pace     *VotePacer
 }
 
 // Settle resolves a nonce no reply finished and reports the vote it posted; voted is false when no poster could be resolved, which it records as skipped.
@@ -46,7 +47,11 @@ func (v Voter) Settle(ctx context.Context, escrowID, model string, params user.I
 	v.recordTimeout(event)
 
 	posted = event
-	vote, err := poster.SettleTimeout(ctx, engine.TimeoutStep{Nonce: nonce, StartedAt: time.Unix(params.StartedAt, 0)})
+	step := engine.TimeoutStep{Nonce: nonce, StartedAt: time.Unix(params.StartedAt, 0)}
+	if v.Pace != nil {
+		step.Pace = v.Pace.Wait
+	}
+	vote, err := poster.SettleTimeout(ctx, step)
 	posted.Action, posted.Reason = engine.TimeoutOutcome(vote, err, false)
 	v.recordTimeout(posted)
 	return posted, true

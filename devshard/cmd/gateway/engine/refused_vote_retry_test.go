@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/host"
+	"devshard/types"
 	"devshard/user"
 )
 
@@ -263,6 +264,14 @@ func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (
 }
 
 func (outcomeHandler) FinishTxFor(uint64) []byte { return nil }
+
+func (outcomeHandler) WaitTimeoutDeadline(context.Context, uint64, time.Time) (types.TimeoutReason, bool, user.TimeoutResult, error) {
+	return types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED, false, user.TimeoutResult{}, nil
+}
+
+func (outcomeHandler) VoteTimeout(context.Context, uint64, time.Time, *host.InferencePayload, types.TimeoutReason) (user.TimeoutResult, bool, error) {
+	return user.TimeoutResult{}, false, nil
+}
 
 func (outcomeHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) { return "", time.Time{} }
 
