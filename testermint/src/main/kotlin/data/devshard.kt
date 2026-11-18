@@ -104,6 +104,9 @@ data class DevshardHostStatsEntry(
     val requiredValidations: Int? = null,
     @SerializedName("completed_validations")
     val completedValidations: Int? = null,
+    val validated: Int? = null,
+    val finished: Int? = null,
+    val assigned: Long? = null,
 )
 
 data class DevshardSlotSignatureEntry(

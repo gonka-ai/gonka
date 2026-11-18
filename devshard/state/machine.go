@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/gtank/ristretto255"
+	"github.com/productscience/inference/devshardversion"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/heightsync"
@@ -1072,6 +1073,9 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 	if state == nil {
 		return nil
 	}
+	if err := validateAssignedSnapshot(state); err != nil {
+		return err
+	}
 	restored := cloneEscrowState(state)
 	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
@@ -1299,6 +1303,14 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNo
 	sm.putInferenceLocked(msg.InferenceId, rec)
 	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
 		return err
+	}
+	if devshardversion.UsesAssignedCount(sm.state.StateRootAndProtocolVersion) {
+		hs := sm.hostStatsForWriteLocked(executorSlot)
+		next, ok := safeAdd(hs.Assigned, 1)
+		if !ok {
+			return fmt.Errorf("assigned inference count overflow for slot %d", executorSlot)
+		}
+		hs.Assigned = next
 	}
 	logging.Debug("inference -> pending", "subsystem", "state",
 		"inference_id", msg.InferenceId,

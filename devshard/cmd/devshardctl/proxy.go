@@ -1189,6 +1189,9 @@ func hostStatsDebugEntry(hs *types.HostStats) map[string]any {
 	if hs.Finished != 0 {
 		entry["finished"] = hs.Finished
 	}
+	if hs.Assigned != 0 {
+		entry["assigned"] = hs.Assigned
+	}
 	return entry
 }
 

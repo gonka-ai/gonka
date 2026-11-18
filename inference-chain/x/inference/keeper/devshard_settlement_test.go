@@ -79,6 +79,7 @@ func buildSettlementTestDataWithNonce(
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated, Finished: hs.Finished, Assigned: hs.Assigned,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -122,23 +123,22 @@ func buildSettlementTestDataWithNonce(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: settlementVersion,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
 // buildSettlementTestDataWithVersion constructs a settlement message tagged
 // with the supplied version (e.g. "v1", "v2"). The chain treats rest_hash as
-// opaque for every version: the only version-specific behavior is that the
-// version tag is folded into the state_root preimage, so signatures cover it
-// implicitly.
+// opaque for every version. The version tag is folded into the state-root
+// preimage, and v7 and later also use exact Assigned accounting.
 func buildSettlementTestDataWithVersion(
 	t *testing.T,
 	escrow types.DevshardEscrow,
@@ -156,6 +156,7 @@ func buildSettlementTestDataWithVersion(
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated, Finished: hs.Finished, Assigned: hs.Assigned,
 		}
 	}
 	slices.SortFunc(entries, func(a, b *types.DevshardHostStatsProto) int {
@@ -199,15 +200,15 @@ func buildSettlementTestDataWithVersion(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: version,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -521,6 +522,7 @@ func TestComputeDevshardHostStatsHash_Deterministic(t *testing.T) {
 			SlotId: hs.SlotId, Missed: hs.Missed, Invalid: hs.Invalid,
 			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated, Finished: hs.Finished, Assigned: hs.Assigned,
 		}
 	}
 	mapProto := &types.DevshardHostStatsMapProto{Entries: entries}
@@ -844,4 +846,43 @@ func TestSignatureFormatConversion(t *testing.T) {
 	s := new(big.Int).SetBytes(goEthSig[32:64])
 	require.True(t, r.Sign() > 0)
 	require.True(t, s.Sign() > 0)
+}
+
+// Sign every case, including invalid accounting, to exercise bounds separately
+// from root/signature verification. Service nonces must not inflate v7 work.
+func TestVerifyDevshardSettlement_Assigned(t *testing.T) {
+	keys, slots := generateDevshardKeys(t, 3)
+	escrow := types.DevshardEscrow{Id: 1, Creator: slots[0], Amount: 10000, Slots: slots}
+	for _, tc := range []struct {
+		name, version   string
+		assigned        uint64
+		missed, invalid uint32
+		wantErr         string
+	}{
+		{"sparse v7", "v7", 2, 1, 1, ""},
+		{"zero work v7", "v7", 0, 0, 0, ""},
+		{"no fallback for zero", "v7", 0, 1, 0, "missed count"},
+		{"misses exceed real starts", "v7", 2, 3, 0, "missed count"},
+		{"invalid exceeds real completions", "v7", 2, 1, 2, "invalid count"},
+		{"exceeds routing bound", "v7", 5, 0, 0, "routing upper bound"},
+		{"legacy nonce semantics", "v6", 0, 3, 0, ""},
+		{"legacy rejects new counter", "v6", 1, 0, 0, "requires devshard v7"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stats := []*types.DevshardSettlementHostStats{
+				{SlotId: 0}, {SlotId: 1, Assigned: tc.assigned, Missed: tc.missed, Invalid: tc.invalid}, {SlotId: 2},
+			}
+			msg := buildSettlementTestDataWithVersion(t, escrow, keys, stats, 0, 10, tc.version)
+			err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.wantErr)
+			}
+		})
+	}
+	stats := []*types.DevshardSettlementHostStats{{SlotId: 0}, {SlotId: 1, Assigned: 1}, {SlotId: 2}}
+	msg := buildSettlementTestDataWithVersion(t, escrow, keys, stats, 0, 10, "v7")
+	msg.HostStats[1].Assigned = 2
+	require.ErrorContains(t, keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil, nil), "state_root mismatch")
 }

@@ -59,6 +59,7 @@ type SettlementJSON struct {
 }
 
 type HostStatsJSON struct {
+	Assigned             uint64 `json:"assigned,omitempty"`
 	SlotID               uint32 `json:"slot_id"`
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
@@ -71,10 +72,11 @@ type HostStatsJSON struct {
 
 func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
 	entry := HostStatsJSON{
-		SlotID:  slot,
-		Missed:  hs.Missed,
-		Invalid: hs.Invalid,
-		Cost:    hs.Cost,
+		Assigned: hs.Assigned,
+		SlotID:   slot,
+		Missed:   hs.Missed,
+		Invalid:  hs.Invalid,
+		Cost:     hs.Cost,
 	}
 	if hs.RequiredValidations != 0 {
 		entry.RequiredValidations = hs.RequiredValidations

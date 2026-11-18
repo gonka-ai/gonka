@@ -53,6 +53,9 @@ type RootInputs struct {
 
 // RootHostStat is one slot's contribution to host_stats_hash.
 type RootHostStat struct {
+	Assigned             uint64 `json:"assigned"`
+	Validated            uint32 `json:"validated"`
+	Finished             uint32 `json:"finished"`
 	Slot                 uint32 `json:"slot"`
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
@@ -168,7 +171,8 @@ func rootHostStats(src map[uint32]*types.HostStats) []RootHostStat {
 			continue
 		}
 		out = append(out, RootHostStat{
-			Slot:                 id,
+			Slot:     id,
+			Assigned: s.Assigned, Validated: s.Validated, Finished: s.Finished,
 			Missed:               s.Missed,
 			Invalid:              s.Invalid,
 			Cost:                 s.Cost,
@@ -249,7 +253,7 @@ func formatWarmKeys(keys map[uint32]string) string {
 func formatHostStats(stats []RootHostStat) string {
 	parts := make([]string, 0, len(stats))
 	for _, s := range stats {
-		parts = append(parts, fmt.Sprintf("%d:%d:%d:%d:%d:%d", s.Slot, s.Missed, s.Invalid, s.Cost, s.RequiredValidations, s.CompletedValidations))
+		parts = append(parts, fmt.Sprintf("%d:%d:%d:%d:%d:%d:%d:%d:%d", s.Slot, s.Missed, s.Invalid, s.Cost, s.RequiredValidations, s.CompletedValidations, s.Validated, s.Finished, s.Assigned))
 	}
 	return strings.Join(parts, ",")
 }

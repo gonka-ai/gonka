@@ -97,6 +97,9 @@ func encodeSettlementHostStats(hs HostStatsJSON) []byte {
 	if hs.Finished != 0 {
 		out = appendVarintField(out, 8, uint64(hs.Finished))
 	}
+	if hs.Assigned != 0 {
+		out = appendVarintField(out, 9, hs.Assigned)
+	}
 	return out
 }
 
