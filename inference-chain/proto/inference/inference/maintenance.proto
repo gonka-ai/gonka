@@ -29,6 +29,9 @@ message MaintenanceReservation {
   string created_by      = 5;
   MaintenanceReservationStatus status = 6;
   string activation_warning = 7;
+  // Scheduling block. A confirmation PoC only exempts reservations committed
+  // before its trigger block; zero means the scheduling height is unknown.
+  int64 created_at_block_height = 8;
 }
 
 // MaintenanceState holds per-participant maintenance metadata, keyed by participant address.

@@ -250,6 +250,39 @@ During an active maintenance window:
 2. Expiry-related penalties caused by participant unavailability are waived.
 3. Participant-status degradation caused solely by maintenance-covered unavailability is suppressed.
 
+### Confirmation PoC Coverage
+
+A confirmation PoC event preserves a participant's prior confirmation weight and
+ratio when a maintenance window actually activated and overlaps any block from
+the event's generation start through its generation end, inclusive. The window
+may already be completed when the event is evaluated. Normal confirmation
+requirements still apply to windows confined to the exchange, validation or
+evaluation phases. Validator retries can tolerate temporary unavailability
+during validation, subject to the validation deadline and retry budget.
+
+The reservation must have been scheduled in a block strictly before the trigger
+block. The trigger is decided in EndBlock using randomness already available
+during that block, so reservations booked in the trigger block or later do not
+earn an exemption for that event. The trigger snapshots active and scheduled
+reservations that overlap its generation interval. Evaluation requires actual
+activation and checks generation overlap again using current epoch parameters.
+A duration change after the trigger can narrow eligibility but cannot add
+reservations to an in-flight event.
+
+When confirmation PoC triggers are enabled, cancellation is allowed only before
+`start height - (grace blocks + generation duration - 1)`. This closes
+cancellation on the earliest trigger block that can overlap the window.
+For a two-block grace period and 35 generation blocks, the last cancellable
+block is 37 blocks before maintenance begins. Reservations captured for an
+in-flight event stay locked even if governance later shortens generation or
+disables new confirmation triggers.
+
+This change must be deployed before enabling maintenance. Legacy reservations
+without a recorded scheduling height and events without a candidate snapshot
+do not establish an exemption. Networks that previously enabled maintenance
+must finish existing windows and confirmation events before upgrading, or use
+an explicit migration; the scheduling height must not be guessed.
+
 ### Epoch Group Membership
 
 Participants in maintenance are not removed from epoch groups and are not removed from the epoch’s structural state. The proposal intentionally keeps epoch structure stable and only changes active service expectations.
@@ -340,7 +373,8 @@ Validation should include:
 
 1. Caller is the participant or an authorized delegate via AuthZ.
 2. Reservation is still in scheduled state.
-3. Cancellation satisfies any configured cancellation policy.
+3. Cancellation is submitted before the confirmation PoC deadline described
+   above, and the reservation is not locked by an in-flight event.
 
 Canceled windows restore the unspent maintenance credit associated with the reservation.
 

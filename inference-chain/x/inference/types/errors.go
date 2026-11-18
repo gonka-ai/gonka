@@ -105,4 +105,5 @@ var (
 	ErrPoCChallengeWindow                    = sdkerrors.Register(ModuleName, 1204, "PoC challenge cannot be created in this window")
 	ErrInvalidBridgeKeyLink                  = sdkerrors.Register(ModuleName, 1205, "invalid bridge key link")
 	ErrPoCChallengeCPoCCommit                = sdkerrors.Register(ModuleName, 1206, "same-epoch PoC challenge target cannot submit a confirmation PoC commit")
+	ErrMaintenanceCancellationClosed         = sdkerrors.Register(ModuleName, 1208, "maintenance cancellation deadline has passed")
 )

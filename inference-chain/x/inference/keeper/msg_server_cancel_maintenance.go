@@ -36,6 +36,10 @@ func (k msgServer) CancelMaintenance(goCtx context.Context, msg *types.MsgCancel
 		return nil, types.ErrInvalidPermission
 	}
 
+	if err := k.checkMaintenanceCancellation(goCtx, sdkCtx.BlockHeight(), r); err != nil {
+		return nil, err
+	}
+
 	// Transition to canceled
 	r.Status = types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_CANCELED
 	if err := k.SetMaintenanceReservation(goCtx, r); err != nil {

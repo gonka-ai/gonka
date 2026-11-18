@@ -12,15 +12,62 @@ import (
 	sync "sync"
 )
 
+var _ protoreflect.List = (*_ConfirmationPoCEvent_11_list)(nil)
+
+type _ConfirmationPoCEvent_11_list struct {
+	list *[]uint64
+}
+
+func (x *_ConfirmationPoCEvent_11_list) Len() int {
+	if x.list == nil {
+		return 0
+	}
+	return len(*x.list)
+}
+
+func (x *_ConfirmationPoCEvent_11_list) Get(i int) protoreflect.Value {
+	return protoreflect.ValueOfUint64((*x.list)[i])
+}
+
+func (x *_ConfirmationPoCEvent_11_list) Set(i int, value protoreflect.Value) {
+	valueUnwrapped := value.Uint()
+	concreteValue := valueUnwrapped
+	(*x.list)[i] = concreteValue
+}
+
+func (x *_ConfirmationPoCEvent_11_list) Append(value protoreflect.Value) {
+	valueUnwrapped := value.Uint()
+	concreteValue := valueUnwrapped
+	*x.list = append(*x.list, concreteValue)
+}
+
+func (x *_ConfirmationPoCEvent_11_list) AppendMutable() protoreflect.Value {
+	panic(fmt.Errorf("AppendMutable can not be called on message ConfirmationPoCEvent at list field MaintenanceReservationIds as it is not of Message kind"))
+}
+
+func (x *_ConfirmationPoCEvent_11_list) Truncate(n int) {
+	*x.list = (*x.list)[:n]
+}
+
+func (x *_ConfirmationPoCEvent_11_list) NewElement() protoreflect.Value {
+	v := uint64(0)
+	return protoreflect.ValueOfUint64(v)
+}
+
+func (x *_ConfirmationPoCEvent_11_list) IsValid() bool {
+	return x.list != nil
+}
+
 var (
-	md_ConfirmationPoCEvent                         protoreflect.MessageDescriptor
-	fd_ConfirmationPoCEvent_epoch_index             protoreflect.FieldDescriptor
-	fd_ConfirmationPoCEvent_event_sequence          protoreflect.FieldDescriptor
-	fd_ConfirmationPoCEvent_trigger_height          protoreflect.FieldDescriptor
-	fd_ConfirmationPoCEvent_generation_start_height protoreflect.FieldDescriptor
-	fd_ConfirmationPoCEvent_phase                   protoreflect.FieldDescriptor
-	fd_ConfirmationPoCEvent_poc_seed_block_hash     protoreflect.FieldDescriptor
-	fd_ConfirmationPoCEvent_recipe                  protoreflect.FieldDescriptor
+	md_ConfirmationPoCEvent                             protoreflect.MessageDescriptor
+	fd_ConfirmationPoCEvent_epoch_index                 protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_event_sequence              protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_trigger_height              protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_generation_start_height     protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_phase                       protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_poc_seed_block_hash         protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_recipe                      protoreflect.FieldDescriptor
+	fd_ConfirmationPoCEvent_maintenance_reservation_ids protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -33,6 +80,7 @@ func init() {
 	fd_ConfirmationPoCEvent_phase = md_ConfirmationPoCEvent.Fields().ByName("phase")
 	fd_ConfirmationPoCEvent_poc_seed_block_hash = md_ConfirmationPoCEvent.Fields().ByName("poc_seed_block_hash")
 	fd_ConfirmationPoCEvent_recipe = md_ConfirmationPoCEvent.Fields().ByName("recipe")
+	fd_ConfirmationPoCEvent_maintenance_reservation_ids = md_ConfirmationPoCEvent.Fields().ByName("maintenance_reservation_ids")
 }
 
 var _ protoreflect.Message = (*fastReflection_ConfirmationPoCEvent)(nil)
@@ -142,6 +190,12 @@ func (x *fastReflection_ConfirmationPoCEvent) Range(f func(protoreflect.FieldDes
 			return
 		}
 	}
+	if len(x.MaintenanceReservationIds) != 0 {
+		value := protoreflect.ValueOfList(&_ConfirmationPoCEvent_11_list{list: &x.MaintenanceReservationIds})
+		if !f(fd_ConfirmationPoCEvent_maintenance_reservation_ids, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -171,6 +225,8 @@ func (x *fastReflection_ConfirmationPoCEvent) Has(fd protoreflect.FieldDescripto
 		return x.PocSeedBlockHash != ""
 	case "inference.inference.ConfirmationPoCEvent.recipe":
 		return x.Recipe != nil
+	case "inference.inference.ConfirmationPoCEvent.maintenance_reservation_ids":
+		return len(x.MaintenanceReservationIds) != 0
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationPoCEvent"))
@@ -201,6 +257,8 @@ func (x *fastReflection_ConfirmationPoCEvent) Clear(fd protoreflect.FieldDescrip
 		x.PocSeedBlockHash = ""
 	case "inference.inference.ConfirmationPoCEvent.recipe":
 		x.Recipe = nil
+	case "inference.inference.ConfirmationPoCEvent.maintenance_reservation_ids":
+		x.MaintenanceReservationIds = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationPoCEvent"))
@@ -238,6 +296,12 @@ func (x *fastReflection_ConfirmationPoCEvent) Get(descriptor protoreflect.FieldD
 	case "inference.inference.ConfirmationPoCEvent.recipe":
 		value := x.Recipe
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationPoCEvent.maintenance_reservation_ids":
+		if len(x.MaintenanceReservationIds) == 0 {
+			return protoreflect.ValueOfList(&_ConfirmationPoCEvent_11_list{})
+		}
+		listValue := &_ConfirmationPoCEvent_11_list{list: &x.MaintenanceReservationIds}
+		return protoreflect.ValueOfList(listValue)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationPoCEvent"))
@@ -272,6 +336,10 @@ func (x *fastReflection_ConfirmationPoCEvent) Set(fd protoreflect.FieldDescripto
 		x.PocSeedBlockHash = value.Interface().(string)
 	case "inference.inference.ConfirmationPoCEvent.recipe":
 		x.Recipe = value.Message().Interface().(*PocStageRecipe)
+	case "inference.inference.ConfirmationPoCEvent.maintenance_reservation_ids":
+		lv := value.List()
+		clv := lv.(*_ConfirmationPoCEvent_11_list)
+		x.MaintenanceReservationIds = *clv.list
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationPoCEvent"))
@@ -297,6 +365,12 @@ func (x *fastReflection_ConfirmationPoCEvent) Mutable(fd protoreflect.FieldDescr
 			x.Recipe = new(PocStageRecipe)
 		}
 		return protoreflect.ValueOfMessage(x.Recipe.ProtoReflect())
+	case "inference.inference.ConfirmationPoCEvent.maintenance_reservation_ids":
+		if x.MaintenanceReservationIds == nil {
+			x.MaintenanceReservationIds = []uint64{}
+		}
+		value := &_ConfirmationPoCEvent_11_list{list: &x.MaintenanceReservationIds}
+		return protoreflect.ValueOfList(value)
 	case "inference.inference.ConfirmationPoCEvent.epoch_index":
 		panic(fmt.Errorf("field epoch_index of message inference.inference.ConfirmationPoCEvent is not mutable"))
 	case "inference.inference.ConfirmationPoCEvent.event_sequence":
@@ -337,6 +411,9 @@ func (x *fastReflection_ConfirmationPoCEvent) NewField(fd protoreflect.FieldDesc
 	case "inference.inference.ConfirmationPoCEvent.recipe":
 		m := new(PocStageRecipe)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationPoCEvent.maintenance_reservation_ids":
+		list := []uint64{}
+		return protoreflect.ValueOfList(&_ConfirmationPoCEvent_11_list{list: &list})
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationPoCEvent"))
@@ -429,6 +506,13 @@ func (x *fastReflection_ConfirmationPoCEvent) ProtoMethods() *protoiface.Methods
 			l = options.Size(x.Recipe)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if len(x.MaintenanceReservationIds) > 0 {
+			l = 0
+			for _, e := range x.MaintenanceReservationIds {
+				l += runtime.Sov(uint64(e))
+			}
+			n += 1 + runtime.Sov(uint64(l)) + l
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -457,6 +541,26 @@ func (x *fastReflection_ConfirmationPoCEvent) ProtoMethods() *protoiface.Methods
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if len(x.MaintenanceReservationIds) > 0 {
+			var pksize2 int
+			for _, num := range x.MaintenanceReservationIds {
+				pksize2 += runtime.Sov(uint64(num))
+			}
+			i -= pksize2
+			j1 := i
+			for _, num := range x.MaintenanceReservationIds {
+				for num >= 1<<7 {
+					dAtA[j1] = uint8(uint64(num)&0x7f | 0x80)
+					num >>= 7
+					j1++
+				}
+				dAtA[j1] = uint8(num)
+				j1++
+			}
+			i = runtime.EncodeVarint(dAtA, i, uint64(pksize2))
+			i--
+			dAtA[i] = 0x5a
 		}
 		if x.Recipe != nil {
 			encoded, err := options.Marshal(x.Recipe)
@@ -716,6 +820,82 @@ func (x *fastReflection_ConfirmationPoCEvent) ProtoMethods() *protoiface.Methods
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
+			case 11:
+				if wireType == 0 {
+					var v uint64
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						v |= uint64(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					x.MaintenanceReservationIds = append(x.MaintenanceReservationIds, v)
+				} else if wireType == 2 {
+					var packedLen int
+					for shift := uint(0); ; shift += 7 {
+						if shift >= 64 {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+						}
+						if iNdEx >= l {
+							return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+						}
+						b := dAtA[iNdEx]
+						iNdEx++
+						packedLen |= int(b&0x7F) << shift
+						if b < 0x80 {
+							break
+						}
+					}
+					if packedLen < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					postIndex := iNdEx + packedLen
+					if postIndex < 0 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
+					}
+					if postIndex > l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					var elementCount int
+					var count int
+					for _, integer := range dAtA[iNdEx:postIndex] {
+						if integer < 128 {
+							count++
+						}
+					}
+					elementCount = count
+					if elementCount != 0 && len(x.MaintenanceReservationIds) == 0 {
+						x.MaintenanceReservationIds = make([]uint64, 0, elementCount)
+					}
+					for iNdEx < postIndex {
+						var v uint64
+						for shift := uint(0); ; shift += 7 {
+							if shift >= 64 {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+							}
+							if iNdEx >= l {
+								return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+							}
+							b := dAtA[iNdEx]
+							iNdEx++
+							v |= uint64(b&0x7F) << shift
+							if b < 0x80 {
+								break
+							}
+						}
+						x.MaintenanceReservationIds = append(x.MaintenanceReservationIds, v)
+					}
+				} else {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field MaintenanceReservationIds", wireType)
+				}
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -839,6 +1019,10 @@ type ConfirmationPoCEvent struct {
 	PocSeedBlockHash string `protobuf:"bytes,9,opt,name=poc_seed_block_hash,json=pocSeedBlockHash,proto3" json:"poc_seed_block_hash,omitempty"`
 	// Derived from the frozen epoch recipe.
 	Recipe *PocStageRecipe `protobuf:"bytes,10,opt,name=recipe,proto3" json:"recipe,omitempty"`
+	// Pre-trigger reservations overlapping generation at event creation.
+	// Evaluation checks generation overlap
+	// and actual activation, including windows completed before evaluation.
+	MaintenanceReservationIds []uint64 `protobuf:"varint,11,rep,packed,name=maintenance_reservation_ids,json=maintenanceReservationIds,proto3" json:"maintenance_reservation_ids,omitempty"`
 }
 
 func (x *ConfirmationPoCEvent) Reset() {
@@ -910,6 +1094,13 @@ func (x *ConfirmationPoCEvent) GetRecipe() *PocStageRecipe {
 	return nil
 }
 
+func (x *ConfirmationPoCEvent) GetMaintenanceReservationIds() []uint64 {
+	if x != nil {
+		return x.MaintenanceReservationIds
+	}
+	return nil
+}
+
 var File_inference_inference_confirmation_poc_event_proto protoreflect.FileDescriptor
 
 var file_inference_inference_confirmation_poc_event_proto_rawDesc = []byte{
@@ -919,7 +1110,7 @@ var file_inference_inference_confirmation_poc_event_proto_rawDesc = []byte{
 	0x74, 0x6f, 0x12, 0x13, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
 	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x1a, 0x20, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
 	0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61, 0x72,
-	0x61, 0x6d, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xea, 0x02, 0x0a, 0x14, 0x43, 0x6f,
+	0x61, 0x6d, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xaa, 0x03, 0x0a, 0x14, 0x43, 0x6f,
 	0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x6f, 0x43, 0x45, 0x76, 0x65,
 	0x6e, 0x74, 0x12, 0x1f, 0x0a, 0x0b, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x5f, 0x69, 0x6e, 0x64, 0x65,
 	0x78, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x0a, 0x65, 0x70, 0x6f, 0x63, 0x68, 0x49, 0x6e,
@@ -942,7 +1133,11 @@ var file_inference_inference_confirmation_poc_event_proto_rawDesc = []byte{
 	0x69, 0x70, 0x65, 0x18, 0x0a, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x23, 0x2e, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
 	0x50, 0x6f, 0x63, 0x53, 0x74, 0x61, 0x67, 0x65, 0x52, 0x65, 0x63, 0x69, 0x70, 0x65, 0x52, 0x06,
-	0x72, 0x65, 0x63, 0x69, 0x70, 0x65, 0x2a, 0xba, 0x01, 0x0a, 0x14, 0x43, 0x6f, 0x6e, 0x66, 0x69,
+	0x72, 0x65, 0x63, 0x69, 0x70, 0x65, 0x12, 0x3e, 0x0a, 0x1b, 0x6d, 0x61, 0x69, 0x6e, 0x74, 0x65,
+	0x6e, 0x61, 0x6e, 0x63, 0x65, 0x5f, 0x72, 0x65, 0x73, 0x65, 0x72, 0x76, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x5f, 0x69, 0x64, 0x73, 0x18, 0x0b, 0x20, 0x03, 0x28, 0x04, 0x52, 0x19, 0x6d, 0x61, 0x69,
+	0x6e, 0x74, 0x65, 0x6e, 0x61, 0x6e, 0x63, 0x65, 0x52, 0x65, 0x73, 0x65, 0x72, 0x76, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x49, 0x64, 0x73, 0x2a, 0xba, 0x01, 0x0a, 0x14, 0x43, 0x6f, 0x6e, 0x66, 0x69,
 	0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x50, 0x6f, 0x43, 0x50, 0x68, 0x61, 0x73, 0x65, 0x12,
 	0x1d, 0x0a, 0x19, 0x43, 0x4f, 0x4e, 0x46, 0x49, 0x52, 0x4d, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f,
 	0x50, 0x4f, 0x43, 0x5f, 0x49, 0x4e, 0x41, 0x43, 0x54, 0x49, 0x56, 0x45, 0x10, 0x00, 0x12, 0x21,

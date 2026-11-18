@@ -1,5 +1,10 @@
 package types
 
+// ConfirmationPoCGraceBlocks is the delay from the trigger to generation start.
+func (p *EpochParams) ConfirmationPoCGraceBlocks() int64 {
+	return max(1, p.InferenceValidationCutoff)
+}
+
 // ConfirmationPoCEvent helper methods provide calculated heights for a confirmation PoC event.
 // Similar to how EpochContext calculates heights from PocStartBlockHeight.
 // This creates a unified timing model between regular and confirmation PoC.
