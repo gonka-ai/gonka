@@ -2691,9 +2691,14 @@ func TestRunInference_AllHostsHangBeforeReceiptFailsClosed(t *testing.T) {
 type lateReceiptThenContentClient struct {
 	receiptDelay time.Duration
 	contentDelay time.Duration
+	response     func(uint64) *host.HostResponse
 }
 
 func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if req.Payload == nil {
+		return &host.HostResponse{Nonce: req.Nonce}, nil
+	}
+	var response *host.HostResponse
 	for _, delay := range []time.Duration{c.receiptDelay, c.contentDelay} {
 		select {
 		case <-time.After(delay):
@@ -2701,7 +2706,10 @@ func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostReq
 			return nil, ctx.Err()
 		}
 		if receiptHandler != nil {
-			receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+			response = c.response(req.Nonce)
+			receipt := *response
+			receipt.Mempool = nil // The Finish is delivered only after the content delay.
+			receiptHandler(&receipt)
 			receiptHandler = nil
 			continue
 		}
@@ -2709,13 +2717,10 @@ func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostReq
 			_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"served"}}]}`+"\n\n")
 		}
 	}
-	return &host.HostResponse{
-		Nonce: req.Nonce,
-		Mempool: []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{
-			FinishInference: &types.MsgFinishInference{ServedHash: testutil.TestServedHash, InferenceId: req.Nonce},
-		}}},
-		ConfirmedAt: time.Now().Unix(),
-	}, nil
+	if response == nil {
+		response = c.response(req.Nonce)
+	}
+	return response, nil
 }
 
 // Test flow:
@@ -2725,8 +2730,9 @@ func (c lateReceiptThenContentClient) Send(ctx context.Context, req host.HostReq
 func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttemptLimit(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 40*time.Millisecond, 400*time.Millisecond, 0, 50*time.Millisecond)
-	slowHost := lateReceiptThenContentClient{receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
+	slowHost := &lateReceiptThenContentClient{receiptDelay: 60 * time.Millisecond, contentDelay: 60 * time.Millisecond}
 	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	slowHost.response = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 400*time.Millisecond)
 
@@ -2744,8 +2750,9 @@ func TestRunInference_AttemptWithAReceiptOutlivesARivalsReceiptTimeoutAtTheAttem
 func TestRunInference_AtTheAttemptLimitAReceiptedAttemptPastOneFirstTokenBudgetIsServed(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 	setSpeculativeTiming(t, 40*time.Millisecond, 100*time.Millisecond, 0, 50*time.Millisecond)
-	slowHost := lateReceiptThenContentClient{receiptDelay: 10 * time.Millisecond, contentDelay: 170 * time.Millisecond}
+	slowHost := &lateReceiptThenContentClient{receiptDelay: 10 * time.Millisecond, contentDelay: 170 * time.Millisecond}
 	env := setupTestProxyWithClients(t, []user.HostClient{slowHost, slowHost})
+	slowHost.response = func(nonce uint64) *host.HostResponse { return applicableResponse(t, env, nonce) }
 	params := defaultParams()
 	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 100*time.Millisecond)
 

@@ -534,6 +534,8 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 	}
 	require.True(t, session.HasSufficientTimeoutVotes(votes))
 
+	// Exercise vote filtering after refusal is due under the height-based clock.
+	statetest.ArmRefusalDue(t, userSM, 1)
 	before := userSM.SnapshotState()
 	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(1, votes)})
 	require.NoError(t, err)
