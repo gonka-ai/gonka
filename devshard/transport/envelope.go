@@ -118,9 +118,13 @@ func UnwrapInferenceRequestBody(raw []byte) (UnwrappedInferenceRequest, error) {
 		}
 		req.Payload.Prompt = env.Prompt
 	}
+	hs, err := heightSyncFromProto(env.HeightSync)
+	if err != nil {
+		return UnwrappedInferenceRequest{}, err
+	}
 	return UnwrappedInferenceRequest{
 		SchemaVersion: int(env.SchemaVersion),
-		HeightSync:    heightSyncFromProto(env.HeightSync),
+		HeightSync:    hs,
 		Request:       req,
 		WholeBodyJSON: false,
 	}, nil
@@ -195,9 +199,13 @@ func UnwrapInferenceResponseBody(raw []byte) (UnwrappedInferenceResponse, error)
 	if err := json.Unmarshal(env.InferenceResponseJson, &resp); err != nil {
 		return UnwrappedInferenceResponse{}, fmt.Errorf("decode inference response json: %w", err)
 	}
+	hs, err := heightSyncFromProto(env.HeightSync)
+	if err != nil {
+		return UnwrappedInferenceResponse{}, err
+	}
 	return UnwrappedInferenceResponse{
 		SchemaVersion: int(env.SchemaVersion),
-		HeightSync:    heightSyncFromProto(env.HeightSync),
+		HeightSync:    hs,
 		Response:      resp,
 		WholeBodyJSON: false,
 	}, nil
@@ -249,9 +257,9 @@ func heightSyncToProto(hs *heightsync.HeightSyncSection) *types.InferenceHeightS
 	}
 }
 
-func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.HeightSyncSection {
+func heightSyncFromProto(hs *types.InferenceHeightSyncSection) (*heightsync.HeightSyncSection, error) {
 	if hs == nil {
-		return nil
+		return nil, nil
 	}
 	proof := ""
 	switch hs.GetProofType() {
@@ -262,7 +270,7 @@ func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.Heigh
 	if hs.GetResponse() {
 		dir = "response"
 	}
-	return &heightsync.HeightSyncSection{
+	sec := &heightsync.HeightSyncSection{
 		ChainID:               "",
 		ProofType:             proof,
 		MainnetHeight:         hs.GetMainnetHeight(),
@@ -273,6 +281,10 @@ func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.Heigh
 		OriginatorTimestampMs: hs.GetOriginatorTimestampUnixMs(),
 		SenderSignature:       cappedBytes(hs.GetSenderSignature(), heightsync.MaxOriginSignatureBytes),
 	}
+	if err := heightsync.CheckSectionWireBounds(sec); err != nil {
+		return nil, fmt.Errorf("decode height_sync: %w", err)
+	}
+	return sec, nil
 }
 
 func cappedBytes(b []byte, max int) []byte {
