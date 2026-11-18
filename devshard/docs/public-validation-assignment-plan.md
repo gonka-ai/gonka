@@ -1,6 +1,6 @@
 # Public validation assignment
 
-Implementation plan. Each step lands on its own, with the tests named in that step green, before the next step starts. The challenge protocol is a later document. This plan stops at the moment the network is allowed to open one.
+Implementation plan. Each step lands on its own, with the tests named in that step green, before the next step starts. The challenge protocol is a later document. This plan stops at the moment the network is allowed to open one. The two chat-frame votes that document will carry are named in [Chat-frame mismatch votes](#chat-frame-mismatch-votes).
 
 Related design notes: [proposals/VALIDATION_PROTOCOL_PROPOSAL.md](./proposals/VALIDATION_PROTOCOL_PROPOSAL.md), [inference-lifecycle.md](./inference-lifecycle.md) (seal triggers), [proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) (floor and heartbeats). This plan is the protocol to build. It does not use the three-party `MsgFinishInferenceCommit` sketch in the validation proposal.
 
@@ -133,7 +133,7 @@ Sessions are not resumable across the cut. Mixed binaries in one group diverge o
 
 ## Out of scope
 
-- Challenge messages, evidence, votes, and slashing after `ChallengeDue`.
+- Challenge messages, the bond, and slashing after `ChallengeDue`. The two chat-frame votes and the evidence each one carries are named in [Chat-frame mismatch votes](#chat-frame-mismatch-votes). This plan does not add the messages.
 - Replacing logprob scoring, payload storage, or the shared validation scheduler. The scheduler keeps running whatever the owed set contains.
 - A light-block proof of the seed. The header-time lookup is the check this version has. A proof can replace it when the height-sync strong path exists.
 - User-paid "validate every inference". The rate is the only sample size here. `ValidationRate = 10000` is the always-on setting.
@@ -363,7 +363,30 @@ Two choices remain.
 
 The complete design takes the validation-series seed from commitments the group publishes, instead of from a block hash at a height the user chooses when to reveal. Before the series is drawn, each participant commits to a value it has not opened. The seed is derived from the opened commitments, and `AssignValidator` runs on that seed for the inferences in the series. A party learns the draw only when enough openings are in the log to derive the seed. This plan does not add commit or open messages, and it does not define what a missing opening does. That rule is what keeps a withheld opening from becoming the later-answer redraw above.
 
+## Chat-frame mismatch votes
+
+The sparse chat-frame branch does not keep `content_hash` and `sig` on the gateway's `ChatFrameCheck` after the stream ends. Those values are the evidence of a vote, and the vote belongs here. The gateway still logs a bad signature and a token-count mismatch. It does not open a challenge from either one. This section names the two votes. The messages, the bond, and the slash stay later.
+
+Both votes carry one `ChatFrameEvidence`: `escrow_id`, `inference_id`, `content_hash`, `token_count`, and `sig`. The gzip chunk is not in it. The preimage is `devshard.chatframe.v1` followed by the protobuf of the two ids, the hash, and the count. `Verify` checks `sig` against the executor key. The newest signature covers the whole uncompressed prefix, so one evidence set is enough. A count or a hash that was substituted after signing fails `Verify`.
+
+### The finish claim is above the signed count
+
+`MsgFinishInference.OutputTokens` is what the executor claims it processed. The host copies that number from vLLM `completion_tokens`. The signed `token_count` is the content SSE events in the hashed prefix. The gateway recounts those events with the same predicate the executor used to sign.
+
+A vote opens when `OutputTokens` is greater than that signed count. The finish says the executor responded with more tokens than the signed stream contains. The evidence is `output_tokens` from the finish together with the tail `ChatFrameEvidence`. A verifier checks the signature, then compares the two numbers. The SSE body is not required for this comparison: the count is already bound to the hash.
+
+### The signed prefix is not the SSE artifact
+
+A vote opens when the SSE prefix is not what the signature attests. Either failure is enough:
+
+- The SHA-256 of the uncompressed prefix is not `content_hash`.
+- The content events in that prefix are not `token_count`.
+
+The evidence is the same `ChatFrameEvidence` plus the SSE prefix. A verifier recomputes the hash and the content-token count. A signature that does not verify is this same vote: the chunk was signed over a different artifact.
+
 ## Residuals the challenge document inherits
+
+- The two votes in [Chat-frame mismatch votes](#chat-frame-mismatch-votes). The evidence is named. The messages are not.
 
 - `ChallengeDue` with no messages defined for it. Settlement still seals leftover live records on the way into `PhaseSettlement` (`drainLiveIntoSealedAccLocked`). The pin, header-read, and `ChallengeDue` hooks have already stopped. Until the challenge document says otherwise, a challenge-due inference that reaches settlement is sealed there with the bit set in its snapshot and with no extra penalty. A `MsgFinalizeRound` before the answer quorum drains a finished record that was never pinned. `SeedHeight` is empty, nothing was sampled, and `ChallengeDue` is clear. That record is the same leftover: sealed at settlement, with no witness and no penalty.
 - The heartbeat loop is what keeps a quiet session moving. A new-version gateway runs it. A gateway that does not produces no pin and no header read. While turns are applied, the read runs from the chain header once the floor reaches `SeedHeight`, and there is no seed transaction to drop.
