@@ -523,8 +523,15 @@ test-version-routing:
 		http://127.0.0.1:18132/v2/sessions/legacy/chat); \
 	[ "$$legacy_v2" = 503 ] \
 		|| fail "legacy host missing v2 answered $$legacy_v2 instead of leaving only v2 down"; \
-	ha_header=$$(curl -s -m 3 -H 'Devshard-Ha: forged' \
-		http://127.0.0.1:18132/v4/ha-header); \
+	# /readyz?version=v4 only promises one usable host. After replacing \
+	# upstreams, wait for both v4 members before asserting the HA header. \
+	ha_header=; \
+	for i in $$(seq 30); do \
+		if ha_header=$$(curl -fsS -m 3 -H 'Devshard-Ha: forged' \
+			http://127.0.0.1:18132/v4/ha-header) \
+			&& [ "$$ha_header" = true ]; then break; fi; \
+		sleep 0.5; \
+	done; \
 	[ "$$ha_header" = true ] \
 		|| fail "two v4 hosts produced Devshard-Ha='$$ha_header' while the coarse pool had one"; \
 	ha_header=$$(curl -s -m 3 -H 'Devshard-Ha: forged' \
