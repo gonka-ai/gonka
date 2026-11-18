@@ -354,6 +354,25 @@ func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
 			wantCreates: creates(ReasonSpread),
 		},
 		{
+			name: "surplus leaves a temp and an older-label escrow beside a model at its target",
+			state: modelWith(func(state *ModelState) {
+				temp, older := fullEscrow("T", 100_000), fullEscrow("O", 100_000)
+				temp.Temp, older.Label = true, 6
+				state.Escrows = append(state.Escrows, temp, older)
+				state.Counted, state.DemandWindowFull, state.SurplusStreak = 4, true, 2
+			}),
+		},
+		{
+			name: "surplus retires the least-free current-label escrow while a temp has less free money",
+			state: modelWith(func(state *ModelState) {
+				temp := fullEscrow("T", 100_000)
+				temp.Temp = true
+				state.Escrows = append(state.Escrows, fullEscrow("3", 900_000), fullEscrow("4", 800_000), temp)
+				state.Counted, state.DemandWindowFull, state.SurplusStreak = 5, true, 2
+			}),
+			wantRetires: []Retire{{EscrowID: "4", Reason: ReasonSurplus}},
+		},
+		{
 			name: "surplus waits for a full demand window",
 			state: modelWith(func(state *ModelState) {
 				state.Escrows = append(state.Escrows, fullEscrow("3", 1_000_000), fullEscrow("4", 1_000_000))

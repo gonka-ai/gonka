@@ -113,7 +113,7 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 	if !expected.misconfigured {
 		expected.need += uint64(model.FullContextSlots) * model.Slot
 	}
-	routableCount, currentStandbys := 0, 0
+	currentStandbys := 0
 	for _, escrow := range model.Escrows {
 		if escrow.Standby && !escrow.NonceCapReached && escrow.Label >= model.CurrentLabel {
 			currentStandbys++
@@ -121,7 +121,6 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 		if !isRoutable(escrow) {
 			continue
 		}
-		routableCount++
 		if escrow.Money.Full {
 			expected.fullEscrows++
 		}
@@ -160,7 +159,7 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 			uncovered = expected.need - expected.routableFullFree
 		}
 		wanted := model.FullContextSlots + int((uncovered+perEscrow-1)/perEscrow)
-		expected.surplusHeld = routableCount > max(model.TargetCount, wanted)
+		expected.surplusHeld = expected.currentRegulars > max(model.TargetCount, wanted)
 	}
 	return expected
 }
@@ -229,6 +228,8 @@ func checkPlanProperties(t *testing.T, random *rand.Rand, model ModelState, wher
 				held++
 			}
 			require.GreaterOrEqual(t, held, surplusSamples, "%s: a surplus retire before three scheduled samples", where)
+			require.False(t, retired.Temp || retired.Label != model.CurrentLabel, "%s: a surplus retire of an escrow the spread count leaves out", where)
+			require.GreaterOrEqual(t, expected.currentRegulars-1, model.TargetCount, "%s: a surplus retire that a spread create would undo", where)
 			if retired.Money.Starved {
 				require.Greater(t, expected.fullEscrows, model.FullContextSlots, "%s: a starved surplus retire without a spare full escrow", where)
 			}

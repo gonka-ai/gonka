@@ -48,12 +48,14 @@ func oneRetire(state ModelState, routable []EscrowState, decision Decision) (Ret
 	if !decision.SurplusHeld || surplusSamplesHeld(state) < surplusSamples {
 		return Retire{}, false
 	}
-	if len(starved) > 0 && decision.FullCount > state.FullContextSlots {
-		return Retire{EscrowID: starved[0].ID, Reason: ReasonSurplus}, true
+	current := currentRegulars(state, routable)
+	currentStarved := leastFreeFirst(current, func(escrow EscrowState) bool { return escrow.Money.Starved && !escrow.Unread })
+	if len(currentStarved) > 0 && decision.FullCount > state.FullContextSlots {
+		return Retire{EscrowID: currentStarved[0].ID, Reason: ReasonSurplus}, true
 	}
-	full := leastFreeFirst(routable, func(escrow EscrowState) bool { return escrow.Money.Full && !escrow.Unread })
-	if len(full) > 0 && decision.FullCount >= state.FullContextSlots+2 {
-		return Retire{EscrowID: full[0].ID, Reason: ReasonSurplus}, true
+	currentFull := leastFreeFirst(current, func(escrow EscrowState) bool { return escrow.Money.Full && !escrow.Unread })
+	if len(currentFull) > 0 && decision.FullCount >= state.FullContextSlots+2 {
+		return Retire{EscrowID: currentFull[0].ID, Reason: ReasonSurplus}, true
 	}
 	return Retire{}, false
 }
@@ -100,5 +102,5 @@ func surplusHeld(state ModelState, shortfalls Shortfalls, routable []EscrowState
 		}
 	}
 	wanted := safemath.AddSaturatingUint64(uint64(max(state.FullContextSlots, 0)), ceilDivide(subtractFloor(need, fullFree), perEscrow))
-	return uint64(len(routable)) > max(uint64(max(state.TargetCount, 0)), wanted)
+	return uint64(len(currentRegulars(state, routable))) > max(uint64(max(state.TargetCount, 0)), wanted)
 }
