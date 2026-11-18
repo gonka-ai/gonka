@@ -244,7 +244,7 @@ func HostResponseFromJSON(ir InferenceResponse) (*host.HostResponse, error) {
 	var mempool []*types.DevshardTx
 	for i, b := range ir.Mempool {
 		tx := &types.DevshardTx{}
-		if err := proto.Unmarshal(b, tx); err != nil {
+		if err := types.UnmarshalHostTx(b, tx); err != nil {
 			return nil, fmt.Errorf("unmarshal mempool tx %d: %w", i, err)
 		}
 		mempool = append(mempool, tx)
@@ -277,7 +277,7 @@ func DevshardTxsFromBytes(data [][]byte) ([]*types.DevshardTx, error) {
 	result := make([]*types.DevshardTx, len(data))
 	for i, b := range data {
 		tx := &types.DevshardTx{}
-		if err := proto.Unmarshal(b, tx); err != nil {
+		if err := types.UnmarshalHostTx(b, tx); err != nil {
 			return nil, fmt.Errorf("unmarshal tx %d: %w", i, err)
 		}
 		result[i] = tx
