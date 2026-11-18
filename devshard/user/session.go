@@ -1130,6 +1130,12 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, syncCap)
 }
 
+// isCurrentFinalStateLocked identifies the frozen v7 tuple whose warm
+// attestations need the issuer's stored slot labels. Caller holds s.mu.
+func (s *Session) isCurrentFinalStateLocked(nonce uint64) bool {
+	return nonce == s.nonce && types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) && s.sm.Phase() == types.PhaseSettlement
+}
+
 // processResponseWithSyncCap is processResponse with an optional hostSyncNonce
 // ceiling. syncCap 0 means no ceiling. Catch-up passes its chunk's last nonce
 // for a response without a state hash: that resp.Nonce is unchecked, so it
@@ -1169,18 +1175,24 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 
-		// Store for all slots owned by this validator address.
-		if _, ok := s.signatures[resp.Nonce]; !ok {
-			s.signatures[resp.Nonce] = make(map[uint32][]byte)
-		}
-		cached := cachedSignatureSigner{signature: bytes.Clone(resp.StateSig), address: signer}
-		for _, slot := range s.addrToSlots[expectedAddr] {
-			s.signatures[resp.Nonce][slot] = resp.StateSig
-			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
-			if s.store != nil {
-				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
-					logging.Warn("failed to persist signature",
-						"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
+		// A terminal warm attestation may authorize only another participant
+		// served by this endpoint. The wire response has no slot labels; even
+		// a valid historical signature cannot identify the newly issued vote.
+		// Collection retrieves its slot-indexed stored form instead. A cold
+		// signature already identifies the participant without a grant lookup.
+		if !s.isCurrentFinalStateLocked(resp.Nonce) || signer == expectedAddr {
+			if _, ok := s.signatures[resp.Nonce]; !ok {
+				s.signatures[resp.Nonce] = make(map[uint32][]byte)
+			}
+			cached := cachedSignatureSigner{signature: bytes.Clone(resp.StateSig), address: signer}
+			for _, slot := range s.addrToSlots[expectedAddr] {
+				s.signatures[resp.Nonce][slot] = resp.StateSig
+				s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
+				if s.store != nil {
+					if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
+						logging.Warn("failed to persist signature",
+							"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
+					}
 				}
 			}
 		}
@@ -3361,8 +3373,14 @@ func (s *Session) retryCurrentSignature(ctx context.Context, hostIdx int, client
 	}
 	s.mu.Lock()
 	err = s.processResponse(hostIdx, resp, nonce)
+	final := s.isCurrentFinalStateLocked(nonce)
 	s.mu.Unlock()
 	s.publishHeightSyncView()
+	if err == nil && final {
+		// Triggering attestation and retrieving its indexed result are separate
+		// operations. Never relabel the unindexed warm signature for hostIdx.
+		s.fetchSignature(requestCtx, hostIdx, nonce, client)
+	}
 	return err
 }
 
@@ -3376,6 +3394,9 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	total = s.sm.TotalSlots()
 	threshold = s.sm.QuorumThreshold()
 	n := len(s.group)
+	s.mu.Lock()
+	final := s.isCurrentFinalStateLocked(nonce)
+	s.mu.Unlock()
 
 	logging.Info("collecting signatures", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", nonce, "hosts", n, "threshold", threshold)
@@ -3461,6 +3482,13 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				if err := s.sendCatchUpWith(collectCtx, h.idx, finClients[h.idx]); err != nil {
 					logging.Warn("collect signatures: send catch-up error", "subsystem", "finalize", "escrow", s.escrowID,
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+				}
+				if final && !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
+					// Catch-up can issue the final attestation too. Its response
+					// is unindexed, so read the stored labels before retrying Send.
+					fetchCtx, fetchCancel := context.WithTimeout(collectCtx, s.signatureCollectHostTimeout)
+					s.fetchSignature(fetchCtx, h.idx, nonce, finClients[h.idx])
+					fetchCancel()
 				}
 				if !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
 					if err := s.retryCurrentSignature(collectCtx, h.idx, finClients[h.idx], nonce); err != nil {

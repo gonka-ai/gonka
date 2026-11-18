@@ -75,6 +75,14 @@ existing empty-diff retry and first tries reading durable signatures, so a
 retained quorum needs no new signature. The same checks run after restart and
 HA takeover.
 
+The gateway does not assign an unlabeled terminal warm signature from a normal
+response to the contacted participant: the same key may serve another participant
+whose grant is still valid. After catch-up or a signing retry, collection reads
+the issuer's existing slot-indexed signature endpoint and verifies the returned
+signatures. V7 final warm-signature collection therefore requires that endpoint
+and issuer storage; an unlabeled response is not a fallback. Cold signatures
+identify their participant directly and keep their ordinary response path.
+
 The local host response carries the exact slots selected by the signing
 operation. Both ordinary request gossip and recovered-diff gossip retain those
 labels; neither re-derives them from broader historical authority at the frozen
