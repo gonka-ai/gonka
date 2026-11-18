@@ -3,6 +3,7 @@ package keeper_test
 import (
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil/sample"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -19,11 +20,13 @@ func TestSnapshotMaintenanceForConfirmation_Boundaries(t *testing.T) {
 		{"ends before generation", 1802, 200, 1700, false},
 		{"touches generation start", 1803, 200, 1700, true},
 		{"starts with generation", 2002, 200, 1800, true},
-		{"starts during validation", 2100, 100, 1800, true},
-		{"touches validation end", 2280, 1, 1800, true},
+		{"touches generation end", 2036, 1, 1800, true},
+		{"starts after generation", 2037, 1, 1800, false},
+		{"starts during validation", 2100, 100, 1800, false},
+		{"touches validation end", 2280, 1, 1800, false},
 		{"evaluation block only", 2281, 1, 1800, false},
-		{"booked in trigger block", 2100, 100, 2000, false},
-		{"booked after trigger", 2101, 100, 2001, false},
+		{"booked in trigger block", 2035, 1, 2000, false},
+		{"booked after trigger", 2036, 1, 2001, false},
 		{"legacy creation height unknown", 2002, 200, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -68,7 +71,7 @@ func TestConfirmationMaintenanceSnapshot_PersistsAndRequiresActivation(t *testin
 	participant := sample.AccAddress()
 	for _, r := range []types.MaintenanceReservation{
 		{ReservationId: 10, Participant: participant, StartHeight: 1900, DurationBlocks: 150, CreatedAtBlockHeight: 1700, Status: types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_ACTIVE},
-		{ReservationId: 2, Participant: participant, StartHeight: 2050, DurationBlocks: 100, CreatedAtBlockHeight: 1800, Status: types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_SCHEDULED},
+		{ReservationId: 2, Participant: participant, StartHeight: 2005, DurationBlocks: 100, CreatedAtBlockHeight: 1800, Status: types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_SCHEDULED},
 	} {
 		require.NoError(t, k.SetMaintenanceReservation(ctx, r))
 	}
@@ -119,15 +122,15 @@ func TestConfirmationMaintenanceSnapshot_PersistsAndRequiresActivation(t *testin
 	require.Error(t, err)
 }
 
-func TestConfirmationMaintenance_ValidationDurationChanges(t *testing.T) {
+func TestConfirmationMaintenance_GenerationDurationChanges(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
 		start              int64
-		validationDuration int64
-		want               bool
+		generationDuration int64
+		snapshotted        bool
 	}{
-		{"shortened event makes window evaluation-only", 2200, 159, false},
-		{"extended event reaches prebooked future window", 2300, 260, true},
+		{"shortened generation no longer overlaps", 2036, 34, true},
+		{"extension does not add a reservation after the trigger", 2037, 36, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			k, _, ctx := setupMaintenanceTest(t)
@@ -145,18 +148,18 @@ func TestConfirmationMaintenance_ValidationDurationChanges(t *testing.T) {
 			require.Equal(t, int64(2280), event.GetValidationEnd(params.EpochParams))
 			event.MaintenanceReservationIds, err = k.SnapshotMaintenanceForConfirmation(ctx, &event)
 			require.NoError(t, err)
-			require.Equal(t, []uint64{1}, event.MaintenanceReservationIds)
-			params.EpochParams.PocValidationDuration = tc.validationDuration
+			if tc.snapshotted {
+				require.Equal(t, []uint64{1}, event.MaintenanceReservationIds)
+			} else {
+				require.Empty(t, event.MaintenanceReservationIds)
+			}
+			params.EpochParams.PocStageDuration = tc.generationDuration
 			require.NoError(t, k.SetParams(ctx, params))
 			r.Status = types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_COMPLETED
 			require.NoError(t, k.SetMaintenanceReservation(ctx, r))
 			addresses, err := k.MaintenanceAddressesForConfirmation(ctx, &event)
 			require.NoError(t, err)
-			if tc.want {
-				require.Contains(t, addresses, r.Participant)
-			} else {
-				require.Empty(t, addresses)
-			}
+			require.Empty(t, addresses)
 		})
 	}
 }
@@ -166,4 +169,57 @@ func TestSnapshotMaintenanceForConfirmation_RejectsIncompleteIndex(t *testing.T)
 	require.NoError(t, k.MaintenanceScheduledIndex.Set(ctx, 42))
 	_, err := k.SnapshotMaintenanceForConfirmation(ctx, &types.ConfirmationPoCEvent{TriggerHeight: 2000, GenerationStartHeight: 2002})
 	require.ErrorContains(t, err, "indexed maintenance reservation 42")
+}
+
+func TestCancelMaintenance_ConfirmationDeadline(t *testing.T) {
+	const start = int64(500)
+	for _, tc := range []struct {
+		name       string
+		height     int64
+		cutoff     int64
+		enabled    bool
+		wantClosed bool
+	}{
+		{"before deadline", start - 37, 2, true, false},
+		{"at deadline", start - 36, 2, true, true},
+		{"after deadline", start - 1, 2, true, true},
+		{"minimum grace period", start - 35, 0, true, true},
+		{"no scheduled confirmations", start - 1, 2, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k, ms, ctx := setupMaintenanceTest(t)
+			participant := sample.AccAddress()
+			registerParticipant(t, k, ctx, participant)
+			grantCredit(t, k, ctx, participant, 100)
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			params.EpochParams.InferenceValidationCutoff = tc.cutoff
+			params.EpochParams.PocStageDuration = 35
+			if tc.enabled {
+				params.ConfirmationPocParams.ExpectedConfirmationsPerEpoch = 4
+			}
+			require.NoError(t, k.SetParams(ctx, params))
+			booked, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
+				Creator: participant, Participant: participant, StartHeight: start, DurationBlocks: 1,
+			})
+			require.NoError(t, err)
+			_, err = ms.CancelMaintenance(ctx.WithBlockHeight(tc.height), &types.MsgCancelMaintenance{
+				Creator: participant, ReservationId: booked.ReservationId,
+			})
+			addr := sdk.MustAccAddressFromBech32(participant)
+			state, found := k.GetMaintenanceState(ctx, addr)
+			require.True(t, found)
+			if tc.wantClosed {
+				require.ErrorIs(t, err, types.ErrMaintenanceCancellationClosed)
+				require.Equal(t, uint64(99), state.CreditBlocks)
+				require.Equal(t, booked.ReservationId, state.ScheduledReservationId)
+				require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(start)))
+				require.True(t, k.IsParticipantInActiveMaintenance(ctx, addr))
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, uint64(100), state.CreditBlocks)
+				require.Zero(t, state.ScheduledReservationId)
+			}
+		})
+	}
 }

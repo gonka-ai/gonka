@@ -25,8 +25,8 @@ message ConfirmationPoCEvent {
   // Derived from the frozen epoch recipe.
   PocStageRecipe recipe = 10;
 
-  // Pre-trigger reservations that have not ended before generation,
-  // snapshotted when the event is created. Evaluation checks event overlap
+  // Pre-trigger reservations overlapping generation at event creation.
+  // Evaluation checks generation overlap
   // and actual activation, including windows completed before evaluation.
   repeated uint64 maintenance_reservation_ids = 11;
 }

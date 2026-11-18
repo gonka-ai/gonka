@@ -189,12 +189,7 @@ func (am AppModule) checkConfirmationPoCTrigger(
 	}
 	eventSequence := uint64(len(existingEvents))
 
-	// Calculate event heights with minimum grace period of 1 block
-	gracePeriod := epochParams.InferenceValidationCutoff
-	if gracePeriod < 1 {
-		gracePeriod = 1
-	}
-	generationStartHeight := blockHeight + gracePeriod
+	generationStartHeight := blockHeight + epochParams.ConfirmationPoCGraceBlocks()
 
 	// Create event - only store anchor, calculate rest dynamically via helper methods
 	event := types.ConfirmationPoCEvent{

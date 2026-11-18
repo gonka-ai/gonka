@@ -72,8 +72,8 @@ type ConfirmationPoCEvent struct {
 	PocSeedBlockHash string `protobuf:"bytes,9,opt,name=poc_seed_block_hash,json=pocSeedBlockHash,proto3" json:"poc_seed_block_hash,omitempty"`
 	// Derived from the frozen epoch recipe.
 	Recipe *PocStageRecipe `protobuf:"bytes,10,opt,name=recipe,proto3" json:"recipe,omitempty"`
-	// Pre-trigger reservations that have not ended before generation,
-	// snapshotted when the event is created. Evaluation checks event overlap
+	// Pre-trigger reservations overlapping generation at event creation.
+	// Evaluation checks generation overlap
 	// and actual activation, including windows completed before evaluation.
 	MaintenanceReservationIds []uint64 `protobuf:"varint,11,rep,packed,name=maintenance_reservation_ids,json=maintenanceReservationIds,proto3" json:"maintenance_reservation_ids,omitempty"`
 }

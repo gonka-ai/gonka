@@ -254,17 +254,28 @@ During an active maintenance window:
 
 A confirmation PoC event preserves a participant's prior confirmation weight and
 ratio when a maintenance window actually activated and overlaps any block from
-the event's generation start through its validation end, inclusive. The window
-may already be completed when the event is evaluated. A window covering only
-the evaluation block does not excuse that event.
+the event's generation start through its generation end, inclusive. The window
+may already be completed when the event is evaluated. Normal confirmation
+requirements still apply to windows confined to the exchange, validation or
+evaluation phases. Validator retries can tolerate temporary unavailability
+during validation, subject to the validation deadline and retry budget.
 
 The reservation must have been scheduled in a block strictly before the trigger
 block. The trigger is decided in EndBlock using randomness already available
 during that block, so reservations booked in the trigger block or later do not
-earn an exemption for that event. Candidate reservation IDs are snapshotted at
-the trigger from the active and scheduled indexes; canceled or never-activated
-reservations do not qualify. Evaluation checks the interval against the same
-current epoch parameters used by the event's phase transitions.
+earn an exemption for that event. The trigger snapshots active and scheduled
+reservations that overlap its generation interval. Evaluation requires actual
+activation and checks generation overlap again using current epoch parameters.
+A duration change after the trigger can narrow eligibility but cannot add
+reservations to an in-flight event.
+
+When confirmation PoC triggers are enabled, cancellation is allowed only before
+`start height - (grace blocks + generation duration - 1)`. This closes
+cancellation on the earliest trigger block that can overlap the window.
+For a two-block grace period and 35 generation blocks, the last cancellable
+block is 37 blocks before maintenance begins. Reservations captured for an
+in-flight event stay locked even if governance later shortens generation or
+disables new confirmation triggers.
 
 This change must be deployed before enabling maintenance. Legacy reservations
 without a recorded scheduling height and events without a candidate snapshot
@@ -362,7 +373,8 @@ Validation should include:
 
 1. Caller is the participant or an authorized delegate via AuthZ.
 2. Reservation is still in scheduled state.
-3. Cancellation satisfies any configured cancellation policy.
+3. Cancellation is submitted before the confirmation PoC deadline described
+   above, and the reservation is not locked by an in-flight event.
 
 Canceled windows restore the unspent maintenance credit associated with the reservation.
 

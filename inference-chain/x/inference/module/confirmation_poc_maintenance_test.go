@@ -151,10 +151,20 @@ func seedReactiveConfirmationMaintenance(t *testing.T, k keeper.Keeper, ctx sdk.
 }
 
 func TestConfirmationMaintenance_CompletedWindowProtectsThenDutiesResume(t *testing.T) {
-	for _, start := range []int64{1990, 2002} {
-		t.Run(map[int64]string{1990: "active at trigger", 2002: "scheduled at trigger"}[start], func(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		start    int64
+		duration uint64
+	}{
+		{"active at trigger", 1990, 200},
+		{"scheduled at trigger", 2002, 200},
+		{"single block at generation end", 2036, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			am, k, ctx, collateral := maintenanceConfirmationApp(t)
-			id := scheduleConfirmationMaintenance(t, k, ctx, 1800, start, 200)
+			start := tc.start
+			end := start + int64(tc.duration)
+			id := scheduleConfirmationMaintenance(t, k, ctx, 1800, start, tc.duration)
 			if start < 2000 {
 				require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(start)))
 			}
@@ -164,7 +174,7 @@ func TestConfirmationMaintenance_CompletedWindowProtectsThenDutiesResume(t *test
 				require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(start)))
 			}
 			require.Contains(t, k.CollectActiveMaintenanceAddresses(ctx), testutil.Executor)
-			require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(start+200)))
+			require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(end)))
 			require.Empty(t, k.CollectActiveMaintenanceAddresses(ctx))
 			r, found := k.GetMaintenanceReservation(ctx, id)
 			require.True(t, found)
@@ -173,7 +183,7 @@ func TestConfirmationMaintenance_CompletedWindowProtectsThenDutiesResume(t *test
 			require.NoError(t, err)
 			evaluationHeight := event.GetValidationEnd(params.EpochParams) + 1
 			require.Equal(t, int64(2281), evaluationHeight)
-			require.Less(t, start+200, evaluationHeight)
+			require.Less(t, end, evaluationHeight)
 			require.NoError(t, am.updateConfirmationWeights(ctx.WithBlockHeight(evaluationHeight), &event))
 			requireUnchangedConfirmationWeightAndRatio(t, k, ctx)
 			p, found := k.GetParticipant(ctx, testutil.Executor)
@@ -205,15 +215,19 @@ func TestConfirmationMaintenance_ReactiveReservationCannotExempt(t *testing.T) {
 	for _, created := range []int64{2000, 2001} {
 		t.Run(map[int64]string{2000: "same trigger block", 2001: "after trigger"}[created], func(t *testing.T) {
 			am, k, ctx, collateral := maintenanceConfirmationApp(t)
+			params, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			params.MaintenanceParams.MaintenanceMinScheduleLeadBlocks = 1
+			require.NoError(t, k.SetParams(ctx, params))
 			if created == 2000 {
-				scheduleConfirmationMaintenance(t, k, ctx, created, 2101, 200)
+				scheduleConfirmationMaintenance(t, k, ctx, created, 2035, 200)
 			}
 			event := triggerMaintenanceConfirmation(t, am, k, ctx, 2000)
 			if created == 2001 {
-				seedReactiveConfirmationMaintenance(t, k, ctx, created, 2101, 200)
+				seedReactiveConfirmationMaintenance(t, k, ctx, created, 2035, 200)
 			}
 			require.Empty(t, event.MaintenanceReservationIds)
-			require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(2101)))
+			require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(2035)))
 			require.Contains(t, k.CollectActiveMaintenanceAddresses(ctx), testutil.Executor)
 			require.NoError(t, am.updateConfirmationWeights(ctx.WithBlockHeight(2281), &event))
 			p, found := k.GetParticipant(ctx, testutil.Executor)
@@ -224,16 +238,31 @@ func TestConfirmationMaintenance_ReactiveReservationCannotExempt(t *testing.T) {
 	}
 }
 
-func TestConfirmationMaintenance_CanceledSnapshotCannotTransferExemption(t *testing.T) {
-	am, k, ctx, collateral := maintenanceConfirmationApp(t)
-	id := scheduleConfirmationMaintenance(t, k, ctx, 1800, 2101, 200)
+func TestConfirmationMaintenance_ShorterGenerationDoesNotReopenCancellation(t *testing.T) {
+	am, k, ctx, _ := maintenanceConfirmationApp(t)
+	id := scheduleConfirmationMaintenance(t, k, ctx, 1800, 2036, 1)
 	event := triggerMaintenanceConfirmation(t, am, k, ctx, 2000)
 	require.Equal(t, []uint64{id}, event.MaintenanceReservationIds)
-	_, err := keeper.NewMsgServerImpl(k).CancelMaintenance(ctx.WithBlockHeight(2001), &types.MsgCancelMaintenance{Creator: testutil.Executor, ReservationId: id})
+
+	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
-	replacement := seedReactiveConfirmationMaintenance(t, k, ctx, 2001, 2101, 200)
-	require.NotEqual(t, id, replacement)
-	require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(2101)))
+	params.EpochParams.PocStageDuration = 34
+	require.NoError(t, k.SetParams(ctx, params))
+	_, err = keeper.NewMsgServerImpl(k).CancelMaintenance(ctx.WithBlockHeight(2000), &types.MsgCancelMaintenance{
+		Creator: testutil.Executor, ReservationId: id,
+	})
+	require.ErrorIs(t, err, types.ErrMaintenanceCancellationClosed)
+}
+
+func TestConfirmationMaintenance_ValidationOnlyDoesNotExcuseMissingGeneration(t *testing.T) {
+	am, k, ctx, collateral := maintenanceConfirmationApp(t)
+	scheduleConfirmationMaintenance(t, k, ctx, 1800, 2280, 1)
+	event := triggerMaintenanceConfirmation(t, am, k, ctx, 2000)
+	require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(2280)))
+	require.NoError(t, k.ProcessMaintenanceTransitions(ctx.WithBlockHeight(2281)))
 	require.NoError(t, am.updateConfirmationWeights(ctx.WithBlockHeight(2281), &event))
+	p, found := k.GetParticipant(ctx, testutil.Executor)
+	require.True(t, found)
+	require.Equal(t, types.ParticipantStatus_INACTIVE, p.Status)
 	require.Equal(t, 1, collateral.calls)
 }

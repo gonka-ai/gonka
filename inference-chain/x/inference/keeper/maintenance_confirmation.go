@@ -4,38 +4,44 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// SnapshotMaintenanceForConfirmation records the existing reservations that may
-// excuse absence from this event. It scans only active and scheduled windows,
-// not accumulated reservation history. Window lengths come from the reservation,
-// so a later reduction of MaintenanceMaxWindowBlocks cannot hide an old window.
+// SnapshotMaintenanceForConfirmation records the existing reservations that
+// overlap the generation interval at trigger time. It scans only active and
+// scheduled windows, not accumulated reservation history. Window lengths come
+// from the reservation so changes to the maximum do not hide old windows.
 //
 // The trigger is computed in EndBlock, after transactions. Its randomness is
 // already available during that block, so same-block reservations must be
 // excluded too. Unknown legacy creation heights do not establish eligibility;
 // maintenance must remain disabled until this upgrade on chains without them.
 func (k Keeper) SnapshotMaintenanceForConfirmation(ctx context.Context, event *types.ConfirmationPoCEvent) ([]uint64, error) {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if params.EpochParams == nil {
+		return nil, fmt.Errorf("epoch params not found")
+	}
+	generationEnd := event.GetGenerationEnd(params.EpochParams)
 	reservations, err := k.confirmationMaintenanceReservations(ctx)
 	if err != nil {
 		return nil, err
 	}
 	var ids []uint64
 	for _, r := range reservations {
-		if r.CreatedAtBlockHeight <= 0 || r.CreatedAtBlockHeight >= event.TriggerHeight {
+		if r.CreatedAtBlockHeight <= 0 || r.CreatedAtBlockHeight >= event.TriggerHeight || r.StartHeight > generationEnd {
 			continue
 		}
 		endHeight, err := confirmationMaintenanceEnd(r)
 		if err != nil {
 			return nil, err
 		}
-		// Event phase transitions use live EpochParams. Keep future candidates
-		// too, then test the upper bound at evaluation in case governance
-		// changes the validation duration while the event is in flight.
 		if endHeight >= event.GenerationStartHeight {
 			ids = append(ids, r.ReservationId)
 		}
@@ -86,7 +92,7 @@ func (k Keeper) MaintenanceAddressesForConfirmation(ctx context.Context, event *
 	if params.EpochParams == nil {
 		return nil, fmt.Errorf("epoch params not found")
 	}
-	validationEnd := event.GetValidationEnd(params.EpochParams)
+	generationEnd := event.GetGenerationEnd(params.EpochParams)
 	for _, id := range event.MaintenanceReservationIds {
 		r, err := k.MaintenanceReservations.Get(ctx, id)
 		if err != nil {
@@ -99,7 +105,7 @@ func (k Keeper) MaintenanceAddressesForConfirmation(ctx context.Context, event *
 		if err != nil {
 			return nil, err
 		}
-		if r.StartHeight > validationEnd || endHeight < event.GenerationStartHeight {
+		if r.StartHeight > generationEnd || endHeight < event.GenerationStartHeight {
 			continue
 		}
 		if r.Status == types.MaintenanceReservationStatus_MAINTENANCE_RESERVATION_STATUS_ACTIVE ||
@@ -108,6 +114,39 @@ func (k Keeper) MaintenanceAddressesForConfirmation(ctx context.Context, event *
 		}
 	}
 	return addresses, nil
+}
+
+func (k Keeper) checkMaintenanceCancellation(ctx context.Context, height int64, r types.MaintenanceReservation) error {
+	event, found, err := k.GetActiveConfirmationPoCEvent(ctx)
+	if err != nil {
+		return err
+	}
+	// A parameter change must not reopen cancellation for a reservation
+	// already counted at the trigger of an in-flight event.
+	if found && event != nil && event.Phase != types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED &&
+		slices.Contains(event.MaintenanceReservationIds, r.ReservationId) {
+		return types.ErrMaintenanceCancellationClosed
+	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.ConfirmationPocParams == nil || params.ConfirmationPocParams.ExpectedConfirmationsPerEpoch == 0 {
+		return nil
+	}
+	if params.EpochParams == nil {
+		return fmt.Errorf("epoch params not found")
+	}
+	// Lock at the earliest trigger whose generation could reach this start.
+	// The trigger block itself is included because its randomness is already
+	// known to transactions in that block.
+	delay := params.EpochParams.ConfirmationPoCGraceBlocks() - 1
+	blocksUntilStart := r.StartHeight - height
+	if blocksUntilStart <= delay || blocksUntilStart-delay <= params.EpochParams.PocStageDuration {
+		return types.ErrMaintenanceCancellationClosed
+	}
+	return nil
 }
 
 func confirmationMaintenanceEnd(r types.MaintenanceReservation) (int64, error) {
