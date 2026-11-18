@@ -62,6 +62,7 @@ const (
 	Msg_CreatePoCChallenge_FullMethodName               = "/inference.inference.Msg/CreatePoCChallenge"
 	Msg_PoCChallengeStoreCommit_FullMethodName          = "/inference.inference.Msg/PoCChallengeStoreCommit"
 	Msg_SubmitPoCChallengeValidations_FullMethodName    = "/inference.inference.Msg/SubmitPoCChallengeValidations"
+	Msg_RegisterBridgeKeyLink_FullMethodName            = "/inference.inference.Msg/RegisterBridgeKeyLink"
 )
 
 // MsgClient is the client API for Msg service.
@@ -115,6 +116,10 @@ type MsgClient interface {
 	CreatePoCChallenge(ctx context.Context, in *MsgCreatePoCChallenge, opts ...grpc.CallOption) (*MsgCreatePoCChallengeResponse, error)
 	PoCChallengeStoreCommit(ctx context.Context, in *MsgPoCChallengeStoreCommit, opts ...grpc.CallOption) (*MsgPoCChallengeStoreCommitResponse, error)
 	SubmitPoCChallengeValidations(ctx context.Context, in *MsgSubmitPoCChallengeValidations, opts ...grpc.CallOption) (*MsgSubmitPoCChallengeValidationsResponse, error)
+	// RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
+	// Bridge settlement then credits that Gonka account when a receipt's owner address
+	// was derived from the Ethereum key.
+	RegisterBridgeKeyLink(ctx context.Context, in *MsgRegisterBridgeKeyLink, opts ...grpc.CallOption) (*MsgRegisterBridgeKeyLinkResponse, error)
 }
 
 type msgClient struct {
@@ -512,6 +517,15 @@ func (c *msgClient) SubmitPoCChallengeValidations(ctx context.Context, in *MsgSu
 	return out, nil
 }
 
+func (c *msgClient) RegisterBridgeKeyLink(ctx context.Context, in *MsgRegisterBridgeKeyLink, opts ...grpc.CallOption) (*MsgRegisterBridgeKeyLinkResponse, error) {
+	out := new(MsgRegisterBridgeKeyLinkResponse)
+	err := c.cc.Invoke(ctx, Msg_RegisterBridgeKeyLink_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -563,6 +577,10 @@ type MsgServer interface {
 	CreatePoCChallenge(context.Context, *MsgCreatePoCChallenge) (*MsgCreatePoCChallengeResponse, error)
 	PoCChallengeStoreCommit(context.Context, *MsgPoCChallengeStoreCommit) (*MsgPoCChallengeStoreCommitResponse, error)
 	SubmitPoCChallengeValidations(context.Context, *MsgSubmitPoCChallengeValidations) (*MsgSubmitPoCChallengeValidationsResponse, error)
+	// RegisterBridgeKeyLink binds an Ethereum secp256k1 key to the signer's Gonka account.
+	// Bridge settlement then credits that Gonka account when a receipt's owner address
+	// was derived from the Ethereum key.
+	RegisterBridgeKeyLink(context.Context, *MsgRegisterBridgeKeyLink) (*MsgRegisterBridgeKeyLinkResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -698,6 +716,9 @@ func (UnimplementedMsgServer) PoCChallengeStoreCommit(context.Context, *MsgPoCCh
 }
 func (UnimplementedMsgServer) SubmitPoCChallengeValidations(context.Context, *MsgSubmitPoCChallengeValidations) (*MsgSubmitPoCChallengeValidationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPoCChallengeValidations not implemented")
+}
+func (UnimplementedMsgServer) RegisterBridgeKeyLink(context.Context, *MsgRegisterBridgeKeyLink) (*MsgRegisterBridgeKeyLinkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterBridgeKeyLink not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1486,6 +1507,24 @@ func _Msg_SubmitPoCChallengeValidations_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_RegisterBridgeKeyLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRegisterBridgeKeyLink)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RegisterBridgeKeyLink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RegisterBridgeKeyLink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RegisterBridgeKeyLink(ctx, req.(*MsgRegisterBridgeKeyLink))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1664,6 +1703,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPoCChallengeValidations",
 			Handler:    _Msg_SubmitPoCChallengeValidations_Handler,
+		},
+		{
+			MethodName: "RegisterBridgeKeyLink",
+			Handler:    _Msg_RegisterBridgeKeyLink_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

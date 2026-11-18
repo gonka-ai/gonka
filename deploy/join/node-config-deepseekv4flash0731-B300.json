@@ -8,6 +8,9 @@
     "models": {
       "deepseek-ai/DeepSeek-V4-Flash-0731": {
         "args": [
+          "--scheduling-policy", "priority",
+          "--max-num-seqs", "2048",
+          "--compilation-config", "{\"max_cudagraph_capture_size\": 2048}",
           "--revision", "7872f01b1d1fe23eabc4c98b48bffcef5a386062",
           "--tensor-parallel-size", "1",
           "--gpu-memory-utilization", "0.90",

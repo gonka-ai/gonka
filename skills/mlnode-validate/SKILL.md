@@ -48,6 +48,14 @@ explicit `--reference <path>`.
 | `Qwen/Qwen3-0.6B` | `qwen-qwen3-0.6b.json` | 32 | local dev / single GPU |
 | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (default lookup) | `qwen-qwen3-235b-a22b-instruct-2507-fp8.json` | 32 | tp=4, FlashInfer baseline. Quick smoke test. |
 | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` (extended) | `qwen-qwen3-235b-a22b-instruct-2507-fp8-deepgemm.json` | 2000 | tp=2, DeepGEMM MoE backend (`VLLM_USE_DEEP_GEMM=1`, `VLLM_MOE_USE_DEEP_GEMM=1`), recorded on 4xB200. Pass with `--reference`. |
+| `deepseek-ai/DeepSeek-V4-Flash-0731` (decode) | `deepseek-ai-deepseek-v4-flash-0731-decode.json` | 200 | Decode scheme, run with `--scheme decode`. tp=1 FP8, recorded on 1xB300; tau 0.05. |
+| `MiniMaxAI/MiniMax-M2.7` (decode) | `minimaxai-minimax-m2.7-decode.json` | 200 | Decode scheme. tp=2 triton MoE, recorded on 2xH200; tau 0.05. Across GPU types expect a few nonces over tau (a B300 reference validated on 2xH200: 18 of 250), within the stat test. |
+| `zai-org/GLM-5.3-Flash` (decode) | `zai-org-glm-5.3-flash-decode.json` | 200 | Decode scheme. tp=2, recorded on 2xB300; tau 0.025. |
+
+A decode reference (`--scheme decode`, looked up as `<sanitized
+model>-decode.json`) stores each nonce's point trajectory instead of a
+vector; `--threshold` is then the claimed-margin tau, and the throughput
+phase mines the decode scheme. Report it the same way, naming the scheme.
 
 For Qwen3-235B the same model id has two references, and they
 exercise different code paths (tp-size + MoE backend). When
