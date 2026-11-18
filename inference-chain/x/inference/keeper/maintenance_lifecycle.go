@@ -209,11 +209,7 @@ func (k Keeper) activateMaintenanceReservation(ctx context.Context, sdkCtx sdk.C
 	state.ActiveReservationId = reservationID
 	state.ScheduledReservationId = 0
 
-	// Mark the activation epoch as the start of the credit-suppression range.
-	// LastMaintenanceEndEpoch is provisionally set to the same value and will be
-	// overwritten at completion to reflect the true end epoch. While the window
-	// is still ACTIVE, the active-reservation overlap check in GrantMaintenanceCredit
-	// covers any in-progress epoch regardless of these fields.
+	// Retain the activation and completion epochs in the participant state.
 	epochIndex, found := k.GetEffectiveEpochIndex(ctx)
 	if found {
 		state.LastMaintenanceEpoch = epochIndex
@@ -268,13 +264,7 @@ func (k Keeper) completeMaintenanceReservation(ctx context.Context, sdkCtx sdk.C
 		return err
 	}
 
-	// Clear participant's active reservation reference and record the end
-	// epoch so credit accrual stays suppressed for any past epoch the window
-	// covered, even after the window has finished. Combined with the start
-	// epoch written at activation, this defines a closed [start, end] range
-	// over which GrantMaintenanceCredit will skip — preventing double-dip
-	// when a multi-epoch maintenance ends and a delayed claim arrives for
-	// one of the covered epochs.
+	// Clear the active reservation reference and record the completion epoch.
 	participantAddr, err := sdk.AccAddressFromBech32(r.Participant)
 	if err != nil {
 		return err

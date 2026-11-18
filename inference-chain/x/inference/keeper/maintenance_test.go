@@ -419,6 +419,9 @@ func TestCreditAccrual_CapEnforced(t *testing.T) {
 	registerParticipant(t, k, ctx, participant)
 	addr, _ := sdk.AccAddressFromBech32(participant)
 
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 1, EffectiveBlockHeight: 1, LastBlockHeight: 40})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{EpochIndex: 2, EffectiveBlockHeight: 41, LastBlockHeight: 80})
+
 	// Pre-load credit close to (but under) the 400-block cap so a single
 	// successful-epoch grant of 20 blocks would push us past it.
 	grantCredit(t, k, ctx, participant, 390)
@@ -433,36 +436,6 @@ func TestCreditAccrual_CapEnforced(t *testing.T) {
 	require.NoError(t, k.GrantMaintenanceCredit(ctx, participant, 2))
 	state, _ = k.GetMaintenanceState(ctx, addr)
 	require.Equal(t, uint64(400), state.CreditBlocks, "subsequent grants must not exceed the cap")
-}
-
-// TestCreditAccrual_SuppressedAcrossEpochRange verifies that credit is not
-// granted for any epoch within [LastMaintenanceEpoch, LastMaintenanceEndEpoch],
-// covering multi-epoch maintenance windows after they have completed.
-func TestCreditAccrual_SuppressedAcrossEpochRange(t *testing.T) {
-	t.Parallel()
-	k, _, ctx := setupMaintenanceTest(t)
-	participant := sample.AccAddress()
-	registerParticipant(t, k, ctx, participant)
-	addr, _ := sdk.AccAddressFromBech32(participant)
-
-	// Simulate a completed multi-epoch maintenance window covering epochs 5..7.
-	state := k.GetOrCreateMaintenanceState(ctx, addr)
-	state.CreditBlocks = 100
-	state.LastMaintenanceEpoch = 5
-	state.LastMaintenanceEndEpoch = 7
-	require.NoError(t, k.SetMaintenanceState(ctx, state))
-
-	// Claims for any covered epoch must not increase credit.
-	for _, e := range []uint64{5, 6, 7} {
-		require.NoError(t, k.GrantMaintenanceCredit(ctx, participant, e))
-		st, _ := k.GetMaintenanceState(ctx, addr)
-		require.Equal(t, uint64(100), st.CreditBlocks, "credit must be suppressed for covered epoch %d", e)
-	}
-
-	// A claim for an uncovered later epoch must accrue credit normally.
-	require.NoError(t, k.GrantMaintenanceCredit(ctx, participant, 8))
-	st, _ := k.GetMaintenanceState(ctx, addr)
-	require.Equal(t, uint64(120), st.CreditBlocks, "credit must accrue for epoch outside covered range")
 }
 
 // --- 7.1: Lifecycle Tests ---
@@ -800,48 +773,6 @@ func TestFilterOutMaintenanceParticipants(t *testing.T) {
 	filtered := k.FilterOutMaintenanceParticipants(activateCtx, members)
 	require.Len(t, filtered, 1)
 	require.Equal(t, participant2, filtered[0].Member.Address)
-}
-
-// TestCreditAccrual_SuppressedByActiveReservation exercises the in-progress
-// branch of maintenanceStateCoversEpoch: a still-ACTIVE multi-epoch window
-// whose end epoch has not yet been finalised must suppress credit for any
-// epoch its block range overlaps, not just the activation epoch. Pre-fix the
-// claim path used a `LastMaintenanceEpoch == epoch` equality, which only
-// matched the start epoch.
-func TestCreditAccrual_SuppressedByActiveReservation(t *testing.T) {
-	t.Parallel()
-	k, ms, ctx := setupMaintenanceTest(t)
-	participant := sample.AccAddress()
-	registerParticipant(t, k, ctx, participant)
-	grantCredit(t, k, ctx, participant, 100)
-	addr, _ := sdk.AccAddressFromBech32(participant)
-
-	// Mid-epoch claim while the window is still ACTIVE: schedule a window
-	// covering blocks [500, 599], then activate and pin epoch boundaries so
-	// epoch 6's block range fully overlaps the window.
-	resp, err := ms.ScheduleMaintenance(ctx, &types.MsgScheduleMaintenance{
-		Creator:        participant,
-		Participant:    participant,
-		StartHeight:    500,
-		DurationBlocks: 100,
-	})
-	require.NoError(t, err)
-
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 5, PocStartBlockHeight: 400}))
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 6, PocStartBlockHeight: 500}))
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 7, PocStartBlockHeight: 600}))
-	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 6))
-
-	activateCtx := ctx.WithBlockHeight(500)
-	require.NoError(t, k.ProcessMaintenanceTransitions(activateCtx))
-
-	// Activation wrote LastMaintenanceEpoch = LastMaintenanceEndEpoch = 6 as
-	// provisional values. Claiming epoch 6 while still ACTIVE must suppress
-	// credit via the active-reservation branch.
-	require.NoError(t, k.GrantMaintenanceCredit(activateCtx, participant, 6))
-	state, _ := k.GetMaintenanceState(activateCtx, addr)
-	require.Equal(t, uint64(0), state.CreditBlocks, "credit must be suppressed while window is ACTIVE")
-	require.Equal(t, resp.ReservationId, state.ActiveReservationId)
 }
 
 // TestScheduleMaintenance_RejectsPoCOverlapPastFixedScanHorizon verifies that

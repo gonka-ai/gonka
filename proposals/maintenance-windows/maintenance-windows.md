@@ -180,7 +180,7 @@ Maintenance credit should be granted in the reward-claim flow for that epoch. In
 
 All participants begin with zero maintenance credit when the feature is introduced. No retroactive credit is granted for epochs completed before the feature exists.
 
-The implementation should track whether maintenance was activated for the participant in the relevant epoch and suppress credit accrual accordingly.
+Credit accrual checks the participant's activated maintenance windows against the claimed epoch's recorded effective block range. A window that spans multiple effective epochs suppresses credit for each one, including when the claim arrives after a later window.
 
 ---
 
