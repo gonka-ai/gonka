@@ -1,12 +1,14 @@
 package scheduler
 
 import (
+	"errors"
 	"slices"
 	"testing"
 	"time"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
+	"devshard/types"
 )
 
 const plannerTestContext = 8_192
@@ -126,5 +128,35 @@ func TestAnyMoneyDeclineOfAFailedPickReportsTheModelMoneyShort(t *testing.T) {
 				t.Fatalf("money-short reports = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Price a model whose context length neither governance nor a pin names: its floor is one 4 096-token answer, so a balance of two attempts of it is full. Give it two such escrows.
+//  2. Pick an escrow for a 264-token request, then for a 169 000-token prompt of about 676 000 bytes.
+//  3. Assert the small request is served and reports nothing, and the long one is declined for money by every escrow, reported money-short with its own reserve, though both escrows are full.
+func TestAnUnpinnedModelsFullEscrowsDeclineAPromptLongerThanTheirFloor(t *testing.T) {
+	t.Parallel()
+	const slot = 2 * 4_096
+	scheduler, _, recorder := plannerScheduler(
+		candidate{id: "first", weight: 1, latestNonce: 1, balance: slot, tokenPrice: 1},
+		candidate{id: "second", weight: 1, latestNonce: 1, balance: slot, tokenPrice: 1},
+	)
+	unpinned := chain.PhaseSnapshot{MaxNonce: 1_000, Models: map[string]chain.ModelParams{modelA: {MaxModelLen: config.NoContextLength}}}
+	long := RequestProfile{Model: modelA, InputBytes: 676_000, OutputTokens: 64}
+
+	if floor := scheduler.retirementReserve(modelA, unpinned); floor != 4_096 {
+		t.Fatalf("retirementReserve() = %d, want one capped answer of 4096", floor)
+	}
+	if _, err := pickWith(scheduler, RequestProfile{Model: modelA, InputBytes: 200, OutputTokens: 64}, unpinned); err != nil || len(recorder.recorded()) != 0 {
+		t.Fatalf("pickEscrow(small) = %v, reports %v, want served and nothing reported", err, recorder.recorded())
+	}
+	_, err := pickWith(scheduler, long, unpinned)
+
+	if !errors.Is(err, ErrNoEscrowCapacity) || !errors.Is(err, types.ErrInsufficientBalance) {
+		t.Fatalf("pickEscrow(long) = %v, want %v wrapping %v", err, ErrNoEscrowCapacity, types.ErrInsufficientBalance)
+	}
+	if models, requests := recorder.recorded(), recorder.recordedRequests(); !slices.Equal(models, []string{modelA}) || !slices.Equal(requests, []uint64{676_064}) {
+		t.Fatalf("money-short reports = %v with requests %v, want one for %s carrying 676064", models, requests, modelA)
 	}
 }

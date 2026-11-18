@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/chain"
+	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/funding"
 	"devshard/cmd/gateway/internal/logcapture"
@@ -194,12 +195,59 @@ func TestALateSetNewValidatorsLosesNoEscrow(t *testing.T) {
 }
 
 // Test flow:
-//  1. Before boot, turn confirmation PoC on; seed one starved escrow and a reserve count of one, so guard and standby are short.
-//  2. Advance two minutes and assert nothing was created and the escrow still serves.
-//  3. Turn confirmation PoC off, advance one minute, and assert the guarantee and the standby were funded with planner reasons (`create reason` at every step).
-func TestConfirmationPoCBlocksEveryPlannerCreate(t *testing.T) {
+//  1. Before boot, turn confirmation PoC on in the default relaxed mode; seed one starved escrow, a guarantee of two full escrows and a reserve count of one.
+//  2. Advance six ticks; after each assert requests are blocked by the chain, the creates so far never shrink and no row was retired.
+//  3. Assert the planner created the two guard escrows and the standby, no more than that, and that the creates of the sixth tick equal those of the fourth.
+func TestRelaxedConfirmationPoCFundsTheShortfallOnceAndStops(t *testing.T) {
+	const ticks, settledBy = 6, 4
 	spec := plannerSpec()
 	spec.model.reserveCount = 1
+	spec.seeded = repeatSeeded(1, 20_000, regularRole)
+	var createdSoFar, createdAtSettled int
+	for tick := 1; tick <= ticks; tick++ {
+		spec.steps = append(spec.steps,
+			advance{by: escrow.TickInterval},
+			expectThat{label: fmt.Sprintf("tick %d inside the confirmation PoC", tick), verify: func(harness *gatewayHarness) error {
+				if snapshot := harness.currentGateway().Observer().Snapshot(); !snapshot.RequestsBlocked || snapshot.BlockReason != chain.BlockReasonConfirmationPoC {
+					return fmt.Errorf("snapshot RequestsBlocked %v with reason %q, want blocked by the confirmation PoC", snapshot.RequestsBlocked, snapshot.BlockReason)
+				}
+				created := len(harness.chain.createsOf(testModelID))
+				if created < createdSoFar {
+					return fmt.Errorf("%d creates after tick %d, want at least the %d before it", created, tick, createdSoFar)
+				}
+				createdSoFar = created
+				if tick == settledBy {
+					createdAtSettled = created
+				}
+				if tick > settledBy && created != createdAtSettled {
+					return fmt.Errorf("%d creates after tick %d, want the %d of tick %d: the shortfall was filled", created, tick, createdAtSettled, settledBy)
+				}
+				for _, row := range harness.rows() {
+					if !row.Active {
+						return fmt.Errorf("row %+v retired after tick %d, want every escrow still serving", row, tick)
+					}
+				}
+				return nil
+			}},
+		)
+	}
+	spec.steps = append(spec.steps, expectThat{label: "the shortfall and nothing more", verify: func(harness *gatewayHarness) error {
+		if guards, standbys, created := harness.createdWithReason(testModelID, string(funding.ReasonGuard)), harness.createdWithReason(testModelID, string(funding.ReasonStandby)), len(harness.chain.createsOf(testModelID)); guards != 2 || standbys != 1 || created != guards+standbys {
+			return fmt.Errorf("%d guard, %d standby and %d creates in all, want 2 guard, 1 standby and nothing else", guards, standbys, created)
+		}
+		return seededServing(harness)
+	}})
+	runStepsWith(t, spec, func(blockchain *fakeChain) { blockchain.setConfirmationPoC(true) })
+}
+
+// Test flow:
+//  1. Before boot, turn confirmation PoC on with poc_mode off, so admission blocks requests; seed one starved escrow and a reserve count of one.
+//  2. Advance two minutes and assert nothing was created and the escrow still serves.
+//  3. Turn confirmation PoC off, advance one minute, and assert the guarantee and the standby were funded with planner reasons (`create reason` at every step).
+func TestStrictConfirmationPoCBlocksEveryPlannerCreate(t *testing.T) {
+	spec := plannerSpec()
+	spec.model.reserveCount = 1
+	spec.environment = map[string]string{"DEVSHARD_POC_REQUEST_MODE": config.PoCModeOff}
 	spec.seeded = repeatSeeded(1, 20_000, regularRole)
 	spec.steps = []harnessStep{
 		advance{by: 2 * time.Minute},
@@ -223,7 +271,7 @@ func TestConfirmationPoCBlocksEveryPlannerCreate(t *testing.T) {
 
 // Test flow:
 //  1. Table-driven: boot with one starved escrow, so the guarantee is short, either inside PoC (latest 8, effective 7) with the switch 450 blocks ahead, outside the bridge window, or before PoC with the switch 200 blocks ahead, inside the bridge window with requests open.
-//  2. Assert the snapshot shows exactly the one gate of the case: requests blocked, or the bridge window.
+//  2. Assert the snapshot shows exactly the one gate of the case: an epoch PoC, or the bridge window.
 //  3. Send three small requests and advance two minutes; assert the planner created nothing (the bridge's own temp is not the planner's).
 //  4. Reach set_new_validators, advance thirty seconds, and assert the guarantee was funded.
 func TestMoneyShortDuringPoCCreatesNothing(t *testing.T) {
@@ -234,7 +282,7 @@ func TestMoneyShortDuringPoCCreatesNothing(t *testing.T) {
 		toTheSwitch []harnessStep
 	}{
 		{
-			name:        "requests blocked outside the bridge window",
+			name:        "an epoch PoC outside the bridge window",
 			epoch:       chainEpoch{latest: 8, effective: 7, blockHeight: 2050, pocStart: 2000, setNewValidators: 2500, phase: chain.EpochPhasePoCGenerate},
 			blocked:     true,
 			toTheSwitch: []harnessStep{moveChain{move: func(blockchain *fakeChain) { blockchain.setNewValidators(3000, 3100) }}},

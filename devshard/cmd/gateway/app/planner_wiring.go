@@ -28,9 +28,9 @@ func (f escrowFunds) EscrowMoney(escrowID string) (escrow.EscrowMoney, bool) {
 	}, true
 }
 
-func (d *depletionNotice) OnMoneyShort(model string) {
+func (d *depletionNotice) OnMoneyShort(model string, reserveTokens uint64) {
 	if d.manager != nil {
-		d.manager.OnMoneyShort(model)
+		d.manager.OnMoneyShort(model, reserveTokens)
 	}
 }
 

@@ -104,7 +104,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	}
 	if picked < 0 {
 		if moneyDeclined {
-			s.reportMoneyShort(profile.Model)
+			s.reportMoneyShort(profile.Model, request)
 		}
 		return Escrow{}, noCapacity(declined)
 	}
@@ -236,9 +236,9 @@ func (s *Scheduler) reportReserveTaken(escrowID string) {
 	}
 }
 
-func (s *Scheduler) reportMoneyShort(model string) {
+func (s *Scheduler) reportMoneyShort(model string, reserveTokens uint64) {
 	if s.onMoneyShort != nil {
-		s.onMoneyShort(model)
+		s.onMoneyShort(model, reserveTokens)
 	}
 }
 

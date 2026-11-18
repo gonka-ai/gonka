@@ -40,7 +40,11 @@ import (
 	"devshard/user"
 )
 
-const routeTestAdminKey = "route-test-admin-key"
+const (
+	routeTestAdminKey = "route-test-admin-key"
+
+	smallRequestReserve uint64 = 264
+)
 
 var errNoChainDialed = errors.New("the composed test gateway dials no chain")
 
@@ -476,7 +480,7 @@ func TestADepletionNoticeWithoutAManagerDropsItsNotices(t *testing.T) {
 
 	notice.OnBalanceExhausted("5", scheduler.ExhaustionBalanceFloor)
 	notice.OnReserveTaken("5")
-	notice.OnMoneyShort("qwen")
+	notice.OnMoneyShort("qwen", smallRequestReserve)
 }
 
 // Test flow:

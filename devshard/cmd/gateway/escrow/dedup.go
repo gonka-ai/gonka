@@ -88,6 +88,32 @@ func (s *markSet) drain() map[string]bool {
 	return marks
 }
 
+type requestMarks struct {
+	mu       sync.Mutex
+	cheapest map[string]uint64
+}
+
+func (s *requestMarks) mark(model string, reserveTokens uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cheapest == nil {
+		s.cheapest = make(map[string]uint64)
+	}
+	previous, seen := s.cheapest[model]
+	if !seen || reserveTokens < previous {
+		s.cheapest[model] = reserveTokens
+	}
+	return !seen
+}
+
+func (s *requestMarks) drain() map[string]uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	marks := s.cheapest
+	s.cheapest = nil
+	return marks
+}
+
 type retryWindows struct {
 	mu     sync.Mutex
 	opened map[string]time.Time

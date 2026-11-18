@@ -48,6 +48,7 @@ type ModelState struct {
 	MoneyShort            bool
 	WalletShort           bool
 	RequestsBlocked       bool
+	InEpochPoC            bool
 	EpochKnown            bool
 	ServedByNetwork       bool
 	BreakerGated          bool
@@ -96,7 +97,7 @@ type Decision struct {
 // Plan sizes one model's creates and its planned retires from its money, demand and budget. See README.md, "The algorithm".
 func Plan(state ModelState) Decision {
 	routable := routableEscrows(state.Escrows)
-	decision := Decision{FullCount: fullCount(state.Escrows), Misconfigured: misconfigured(state), AmountNeeded: amountNeeded(state)}
+	decision := Decision{FullCount: fullCount(routable), Misconfigured: misconfigured(state), AmountNeeded: amountNeeded(state)}
 	decision.Need, decision.Liquid = demandNeed(state, decision.Misconfigured), liquidMoney(state, routable)
 	decision.Shortfalls = Shortfalls{
 		Guard:    guardShortfall(state, decision),
@@ -143,10 +144,10 @@ func routableEscrows(escrows []EscrowState) []EscrowState {
 	return routable
 }
 
-func fullCount(escrows []EscrowState) int {
+func fullCount(routable []EscrowState) int {
 	count := 0
-	for _, escrow := range escrows {
-		if escrow.Money.Full && !escrow.NonceCapReached {
+	for _, escrow := range routable {
+		if escrow.Money.Full {
 			count++
 		}
 	}
@@ -254,7 +255,7 @@ func plannedCreates(state ModelState, shortfalls Shortfalls, regularWanted, coun
 }
 
 func createsAllowed(state ModelState) bool {
-	return !state.RequestsBlocked && state.EpochKnown && state.ServedByNetwork && !state.BreakerGated && !state.InBridgeWindow
+	return !state.RequestsBlocked && !state.InEpochPoC && state.EpochKnown && state.ServedByNetwork && !state.BreakerGated && !state.InBridgeWindow
 }
 
 func regularReason(index int, shortfalls Shortfalls) Reason {
