@@ -369,6 +369,7 @@ func connectClientOptions(maxBytes int) []connect.ClientOption {
 		withGzipReadCap(maxBytes),
 		connect.WithSendGzip(),
 		connect.WithCompressMinBytes(MinGzipBodyBytes),
+		connect.WithCodec(boundedCodec{}),
 	}
 }
 
@@ -479,6 +480,16 @@ func (c *RPCClient) GetDiffs(ctx context.Context, from, to uint64) ([]types.Diff
 			return err
 		}
 		records := resp.Msg.GetRecords()
+		if err := checkDiffPageRecords(len(records)); err != nil {
+			return err
+		}
+		total := 0
+		for _, rec := range records {
+			total += len(rec.GetDiff().GetTxs())
+		}
+		if err := checkDiffPageTxsBytes(len(records), total); err != nil {
+			return err
+		}
 		diffs = make([]types.Diff, len(records))
 		for i, rec := range records {
 			d, dErr := DiffFromJSON(DiffJSONFromProto(rec.GetDiff()))
