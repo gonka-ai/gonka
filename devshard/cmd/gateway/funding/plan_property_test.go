@@ -113,7 +113,7 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 	if !expected.misconfigured {
 		expected.need += uint64(model.FullContextSlots) * model.Slot
 	}
-	routableCount, currentStandbys := 0, 0
+	currentStandbys := 0
 	for _, escrow := range model.Escrows {
 		if escrow.Standby && !escrow.NonceCapReached && escrow.Label >= model.CurrentLabel {
 			currentStandbys++
@@ -121,7 +121,6 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 		if !isRoutable(escrow) {
 			continue
 		}
-		routableCount++
 		if escrow.Money.Full {
 			expected.fullEscrows++
 		}
@@ -160,7 +159,7 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 			uncovered = expected.need - expected.routableFullFree
 		}
 		wanted := model.FullContextSlots + int((uncovered+perEscrow-1)/perEscrow)
-		expected.surplusHeld = routableCount > max(model.TargetCount, wanted)
+		expected.surplusHeld = expected.currentRegulars > max(model.TargetCount, wanted)
 	}
 	return expected
 }
@@ -229,6 +228,8 @@ func checkPlanProperties(t *testing.T, random *rand.Rand, model ModelState, wher
 				held++
 			}
 			require.GreaterOrEqual(t, held, surplusSamples, "%s: a surplus retire before three scheduled samples", where)
+			require.False(t, retired.Temp || retired.Label != model.CurrentLabel, "%s: a surplus retire of an escrow the spread count leaves out", where)
+			require.GreaterOrEqual(t, expected.currentRegulars-1, model.TargetCount, "%s: a surplus retire that a spread create would undo", where)
 			if retired.Money.Starved {
 				require.Greater(t, expected.fullEscrows, model.FullContextSlots, "%s: a starved surplus retire without a spare full escrow", where)
 			}
@@ -272,7 +273,7 @@ func escrowByID(escrows []EscrowState, escrowID string) EscrowState {
 // Test flow:
 //  1. For sixteen fixed seeds, generate five hundred random model states each.
 //  2. Plan every state, and plan it again with its escrows shuffled.
-//  3. Assert every property of the design against terms computed apart from Plan: room, full count, misconfiguration, shortfalls and surplus as the README formulas give them; creates within the room and the bucket and, when allowed, exactly the shortfalls bounded by both; none while blocked, without an epoch, while the breaker is gated, the model is not served or inside the bridge window; none when every shortfall is zero; broken exactly when regular creates fall below the guard; every create reason true of the state; at most one planned retire; surplus only after three scheduled samples, never beside a wanted regular create, and of a starved escrow only above K full; budget pressure only past the parking escrows or for a short wallet with nothing parking, and only of a starved escrow; no planned retire inside the bridge window; the need and liquid money the decision carries; a planned retire never takes the full count below K and removes a full escrow only with two spares; standby money never moves the decision; the same input gives the same decision in any escrow order.
+//  3. Assert every property of the design against terms computed apart from Plan: room, full count, misconfiguration, shortfalls and surplus as the README formulas give them; creates within the room and the bucket and, when allowed, exactly the shortfalls bounded by both; none while blocked, without an epoch, while the breaker is gated, the model is not served or inside the bridge window; none when every shortfall is zero; broken exactly when regular creates fall below the guard; every create reason true of the state; at most one planned retire; surplus only after three scheduled samples, never beside a wanted regular create, only of a current-label regular escrow and never below K of them, and of a starved escrow only above K full; budget pressure only past the parking escrows or for a short wallet with nothing parking, and only of a starved escrow; no planned retire inside the bridge window; the need and liquid money the decision carries; a planned retire never takes the full count below K and removes a full escrow only with two spares; standby money never moves the decision; the same input gives the same decision in any escrow order.
 func TestPlanKeepsEveryPropertyOverRandomModelStates(t *testing.T) {
 	t.Parallel()
 	surplusRetires := 0

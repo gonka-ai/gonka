@@ -206,13 +206,17 @@ func capacityShortfall(state ModelState, need, liquid uint64) int {
 }
 
 func spreadShortfall(state ModelState, routable []EscrowState) int {
-	current := 0
+	return max(0, state.TargetCount-len(currentRegulars(state, routable)))
+}
+
+func currentRegulars(state ModelState, routable []EscrowState) []EscrowState {
+	regulars := make([]EscrowState, 0, len(routable))
 	for _, escrow := range routable {
 		if !escrow.Temp && escrow.Label == state.CurrentLabel {
-			current++
+			regulars = append(regulars, escrow)
 		}
 	}
-	return max(0, state.TargetCount-current)
+	return regulars
 }
 
 func standbyShortfall(state ModelState) int {
