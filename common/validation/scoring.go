@@ -95,7 +95,7 @@ func shortOutputVerdict(
 			return nil
 		}
 		logging.Warn(check+" failed: "+reason, types.Validation, "inferenceId", base.InferenceId)
-		return &InvalidInferenceResult{InferenceId: base.InferenceId, Reason: reason}
+		return &InvalidInferenceResult{InferenceId: base.InferenceId, Reason: reason, ResponseBytes: base.ResponseBytes}
 	}
 
 	if len(original) == 0 {

@@ -2,6 +2,7 @@ package validation
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"math"
@@ -304,6 +305,25 @@ func TestTapeOfReplay_AReplayPastTheAnswerIsJudgedOnTheAnswer(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, whole.ReplayPast)
 	require.Equal(t, "length", whole.Finish)
+}
+
+// An answer the logprob comparison rejects on its output checks was replayed
+// all the same: the rejection keeps the replay, and the tape is scored on it.
+func TestTapeOfReplay_AnAnswerTheOutputChecksRejectIsScored(t *testing.T) {
+	lp := tapeTestLogprobs()
+	out := tapeAnswer(lp, 42)
+	stored, replay := storedTapeAnswer(t, out, false), replayStream(lp, out)
+	result, err := ExecuteValidationWithPolicy(context.Background(), "42", []byte(tapeTestPrompt), stored,
+		func(context.Context, []byte) (*http.Response, error) {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(replay))}, nil
+		}, 3, uint64(len(out)), tapeLogprobsMode, modelVocab[tapeTestModel],
+		DefaultShortOutputScoringPolicy.ForModel("deepseek-ai/DeepSeek-V4-Flash-0731"))
+	require.NoError(t, err)
+	require.Equal(t, "Output positions diverge from the validator.", result.(*InvalidInferenceResult).Reason)
+	tape, err := TapeOfReplay("42", []byte(tapeTestPrompt), stored, result.GetValidationResponseBytes(), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Equal(t, tapeTestSteps, tape.Signals.Steps)
+	require.Zero(t, tape.Signals.Count)
 }
 
 func TestTapeOfReplay_WhatItCannotJudge(t *testing.T) {
