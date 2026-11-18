@@ -593,6 +593,12 @@ func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types
 	return h.sm.SnapshotWithInference(inferenceID)
 }
 
+func (h *Host) ExecutorParticipated(slot uint32) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.ExecutorParticipated(slot)
+}
+
 // IsWarmKeyAddress returns true if addr is a known warm key in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()

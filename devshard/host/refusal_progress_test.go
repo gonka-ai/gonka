@@ -157,16 +157,28 @@ func (j *progressJournal) Pages(ctx context.Context, from, to uint64, _ func() u
 	return nil
 }
 
+const progressVersion = "v-progress"
+
 func progressState(latest uint64) types.EscrowState {
 	st := stateWithPendingFull(1, 1)
 	st.LatestNonce = latest
+	st.StateRootAndProtocolVersion = progressVersion
 	return st
+}
+
+func progressStartTx() *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1, ProtocolVersion: progressVersion,
+	}}}
 }
 
 func progressDiffs(n int, root []byte) []types.Diff {
 	diffs := make([]types.Diff, n)
 	for i := range diffs {
 		diffs[i] = types.Diff{Nonce: uint64(i + 1), PostStateRoot: root}
+	}
+	if n > 0 {
+		diffs[0].Txs = []*types.DevshardTx{progressStartTx()}
 	}
 	return diffs
 }
@@ -406,7 +418,7 @@ func diffWithStoredBytes(nonce uint64, root []byte, want int) types.Diff {
 	d := types.Diff{Nonce: nonce, PostStateRoot: append([]byte(nil), root...)}
 	for range 8 {
 		d.Txs = []*types.DevshardTx{{
-			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{Model: model}},
+			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{Model: model, ProtocolVersion: progressVersion}},
 		}}
 		got := proto.Size(&types.DiffContent{Txs: d.Txs})
 		if got >= want && got < want+8 {

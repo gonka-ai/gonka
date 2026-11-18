@@ -699,11 +699,12 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 	promptHash, err := devshard.CanonicalPromptHash(largePrompt)
 	require.NoError(t, err)
 	start := &types.MsgStartInference{
-		InferenceId: 1,
-		PromptHash:  promptHash,
-		Model:       "llama",
-		InputLength: 0,
-		MaxTokens:   testutil.TestMaxTokens,
+		InferenceId:     1,
+		PromptHash:      promptHash,
+		Model:           "llama",
+		InputLength:     0,
+		MaxTokens:       testutil.TestMaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -733,11 +734,12 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 	promptHash, err := devshard.CanonicalPromptHash(prompt)
 	require.NoError(t, err)
 	start := &types.MsgStartInference{
-		InferenceId: 1,
-		PromptHash:  promptHash,
-		Model:       "llama",
-		InputLength: uint64(len(prompt)),
-		MaxTokens:   testutil.TestMaxTokens,
+		InferenceId:     1,
+		PromptHash:      promptHash,
+		Model:           "llama",
+		InputLength:     uint64(len(prompt)),
+		MaxTokens:       testutil.TestMaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},

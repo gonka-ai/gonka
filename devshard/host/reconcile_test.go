@@ -379,3 +379,44 @@ func TestDurableRangeComplete(t *testing.T) {
 	require.False(t, durableRangeComplete(recs, 2, 5))
 	require.True(t, durableRangeComplete(nil, 5, 4))
 }
+
+func TestHost_CatchUpFromStore_ReplaysADurableUnversionedStart(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	store := storage.NewMemory()
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion,
+		CreatorAddr: user.Address(), Config: config, Group: group, InitialBalance: 10000,
+	}))
+
+	writer, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, store)
+	require.NoError(t, err)
+	var diffs []types.Diff
+	for n := uint64(1); n <= 3; n++ {
+		var txs []*types.DevshardTx
+		if n == 3 {
+			txs = []*types.DevshardTx{testutil.StartTxVersioned(3, "")}
+		}
+		root, err := writer.ApplyLocalPersisted(n, txs)
+		require.NoError(t, err)
+		diff := testutil.SignDiffWithRoot(t, user, "escrow-1", n, txs, root)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: diff, StateHash: root}))
+		diffs = append(diffs, diff)
+	}
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, store)
+	require.NoError(t, err)
+	for _, d := range diffs[:2] {
+		_, err := sm.ApplyDiff(d)
+		require.NoError(t, err)
+	}
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithGrace(10), WithStorage(store), WithVerifier(verifier))
+	require.NoError(t, err)
+
+	require.NoError(t, h.CatchUpFromStore(context.Background()))
+	require.Equal(t, uint64(3), h.LatestNonce())
+}

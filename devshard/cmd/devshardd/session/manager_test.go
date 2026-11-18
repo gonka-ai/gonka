@@ -166,10 +166,11 @@ func defaultConfig(n int) types.SessionConfig {
 
 func startTx(inferenceID uint64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-		InferenceId: inferenceID,
-		Model:       "llama",
-		InputLength: 100,
-		MaxTokens:   testutil.TestMaxTokens,
+		InferenceId:     inferenceID,
+		Model:           "llama",
+		InputLength:     100,
+		MaxTokens:       testutil.TestMaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}}}
 }
 
@@ -256,7 +257,8 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 
 	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, Model: "llama", InputLength: 100,
-		MaxTokens: 0,
+		MaxTokens:       0,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}}}}
 	_, err = sm.ApplyLocal(1, txs)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")

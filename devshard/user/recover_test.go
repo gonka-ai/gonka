@@ -167,6 +167,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
 		InputLength: 100, MaxTokens: 0,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -2013,6 +2014,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 		StartInference: &types.MsgStartInference{
 			InferenceId: 1, PromptHash: promptHash, Model: "llama",
 			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+			ProtocolVersion: testutil.RuntimeTestVersion,
 		},
 	}}})
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens)
@@ -2841,11 +2843,12 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	belowFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{
-			InferenceId: 1,
-			PromptHash:  testutil.TestPromptHash[:],
-			Model:       "llama",
-			InputLength: 100,
-			MaxTokens:   0,
+			InferenceId:     1,
+			PromptHash:      testutil.TestPromptHash[:],
+			Model:           "llama",
+			InputLength:     100,
+			MaxTokens:       0,
+			ProtocolVersion: testutil.RuntimeTestVersion,
 		},
 	}}}
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)

@@ -51,7 +51,7 @@ func auditRaise(t *testing.T, sm *state.StateMachine, hs []*signing.Secp256k1Sig
 }
 func auditStart(t *testing.T, sm *state.StateMachine, id uint64) {
 	h, hash, _ := sm.HeightSyncFloorAsOf(sm.LatestNonce() + 1)
-	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{InferenceId: id, PromptHash: testutil.TestPromptHash[:], Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, ObservedHeight: h, ObservedBlockHash: hash}}})
+	auditApply(t, sm, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{InferenceId: id, PromptHash: testutil.TestPromptHash[:], Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, ObservedHeight: h, ObservedBlockHash: hash, ProtocolVersion: testutil.RuntimeTestVersion}}})
 }
 func auditConfirm(t *testing.T, sm *state.StateMachine, id uint64, signer signing.Signer, h uint64) *types.MsgConfirmStart {
 	var hash []byte

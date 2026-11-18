@@ -23,8 +23,25 @@ const coldWalkLongNonces = 256
 // the nonce already sent. Progress is a root-matched tip above the highest one
 // seen here; it clears the nonce and the count. Other verifiers keep their own.
 type ColdWalks struct {
-	mu    sync.Mutex
-	execs map[string]*coldWalkExec
+	mu         sync.Mutex
+	execs      map[string]*coldWalkExec
+	proofKnown bool
+	proofBinds bool
+}
+
+func (g *ColdWalks) startProof() (bindable, known bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.proofBinds, g.proofKnown
+}
+
+func (g *ColdWalks) noteStartProof(bindable, final bool) {
+	if !bindable && !final {
+		return
+	}
+	g.mu.Lock()
+	g.proofKnown, g.proofBinds = true, bindable
+	g.mu.Unlock()
 }
 
 type coldWalkExec struct {

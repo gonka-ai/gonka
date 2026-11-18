@@ -92,6 +92,7 @@ func TestSealInference_PreservesRootAndBlocksDuplicateID(t *testing.T) {
 
 	err = sm.applyStartInference(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("other"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}, sm.LatestNonce()+1)
 	require.ErrorIs(t, err, types.ErrDuplicateInferenceID)
 }

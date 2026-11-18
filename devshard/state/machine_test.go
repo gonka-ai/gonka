@@ -51,6 +51,9 @@ func TestNewStateMachine_NormalizesInferenceSealGraceNonces(t *testing.T) {
 
 // txStart wraps MsgStartInference in a DevshardTx.
 func txStart(msg *types.MsgStartInference) *types.DevshardTx {
+	if msg.ProtocolVersion == "" {
+		msg.ProtocolVersion = testutil.RuntimeTestVersion
+	}
 	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: msg}}
 }
 

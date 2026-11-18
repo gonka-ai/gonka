@@ -2042,6 +2042,7 @@ func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 
 	start := &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}
 	_, err = sm.ApplyLocal(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: start}}})
 	require.NoError(t, err)

@@ -401,11 +401,12 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 	}
 
 	start := &types.MsgStartInference{
-		InferenceId: 1,
-		PromptHash:  []byte("prompt"),
-		Model:       "llama",
-		InputLength: 100,
-		MaxTokens:   testutil.TestMaxTokens,
+		InferenceId:     1,
+		PromptHash:      []byte("prompt"),
+		Model:           "llama",
+		InputLength:     100,
+		MaxTokens:       testutil.TestMaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}
 	apply(1, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: start}})
 	executorSlot := uint32(1)
