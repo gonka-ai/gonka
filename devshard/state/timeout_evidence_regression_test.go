@@ -175,7 +175,7 @@ func TestTimeoutEvidenceVerificationDoesNotMutateState(t *testing.T) {
 					require.NoError(t, sm.VerifyFinishCandidate(f))
 				}
 				require.NoError(t, sm.VerifyFinishProposerSig(f))
-				require.Empty(t, sm.WarmKeys(), "successful verification must be read-only too")
+				require.Empty(t, sm.WarmKeyHistory(), "successful verification must be read-only too")
 				f.InputTokens = math.MaxUint64
 				f.OutputTokens = 1
 				f.ProposerSig = nil
@@ -188,8 +188,8 @@ func TestTimeoutEvidenceVerificationDoesNotMutateState(t *testing.T) {
 			}
 			after := sm.SnapshotState()
 			require.Equal(t, before.LatestNonce, after.LatestNonce)
-			require.Empty(t, before.WarmKeys)
-			require.Empty(t, after.WarmKeys)
+			require.Empty(t, before.WarmKeyHistory)
+			require.Empty(t, after.WarmKeyHistory)
 			root2, e := sm.ComputeStateRoot()
 			require.NoError(t, e)
 			require.Equal(t, root, root2)
@@ -207,7 +207,7 @@ func TestBestEffortRejectedValidationDoesNotBindWarmKey(t *testing.T) {
 	_, applied, err := sm.ApplyLocalBestEffort(sm.LatestNonce()+1, []*types.DevshardTx{{Tx: &types.DevshardTx_Validation{Validation: v}}})
 	require.NoError(t, err)
 	require.Empty(t, applied)
-	require.Empty(t, sm.WarmKeys())
+	require.Empty(t, sm.WarmKeyHistory())
 
 }
 
@@ -226,10 +226,9 @@ func TestBestEffortRejectedWarmVotesMatchAdvertisedDiff(t *testing.T) {
 	vd, err := sm.PreviewLocalBestEffort(sm.LatestNonce()+1, []*types.DevshardTx{tx})
 	require.NoError(t, err)
 	require.Empty(t, vd.Applied)
-	require.Empty(t, vd.WarmAfter)
 	require.Equal(t, before, sm.SnapshotState())
 	root, err := sm.ApplyLocal(sm.LatestNonce()+1, vd.Applied)
 	require.NoError(t, err)
 	require.Equal(t, root, vd.Root, "signed root must replay from exactly the advertised transactions")
-	require.Empty(t, sm.WarmKeys())
+	require.Empty(t, sm.WarmKeyHistory())
 }

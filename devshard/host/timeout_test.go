@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -501,7 +502,7 @@ func TestVerifyExecution_WarmKeyFinishRejectsWithoutBinding(t *testing.T) {
 	accept, err := VerifyExecutionTimeout(context.Background(), st, 1, st.Inferences[1], nil, executor, nil, due(g.sm))
 	require.NoError(t, err)
 	require.False(t, accept, "a finish signed by the executor's warm key rejects the timeout")
-	require.Empty(t, g.sm.WarmKeys(), "challenge evidence must not write a warm binding into hashed state")
+	require.Empty(t, g.sm.WarmKeyHistory(), "challenge evidence must not write a warm binding into hashed state")
 }
 
 func TestVerifyExecution_ChallengesOnceWithoutDiffs(t *testing.T) {
@@ -609,4 +610,64 @@ func TestVerifyRefused_ShortReservationAccepted(t *testing.T) {
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, rec, payload, nil, nil, nil, due(newEvidenceGroup(t).sm))
 	require.NoError(t, err)
 	require.True(t, accept)
+}
+
+// A peer may have a different local phase and return usable proofs together
+// with ErrHeaderPending for other work. Always verify those proofs first.
+func TestTimeoutVerifiersUseAvailableProofBeforePendingOtherEvidence(t *testing.T) {
+	g := newEvidenceGroup(t)
+	judge := windowedJudge{EvidenceVerifier: due(g.sm), deferrals: &evidenceDeferrals{clock: time.Now}}
+	pending := stateWithPendingFull(1, 1)
+	confirm, receipt := signedConfirm(t, g.signers[1], pending.EscrowID, pending, 1, 1000)
+	finish := signedFinish(t, g.signers[1], pending.EscrowID, 1, 1)
+	peer := &mockExecutorClient{challengeReceipt: receipt, challengeMempool: []*types.DevshardTx{confirm}, challengeReceiptErr: types.ErrHeaderPending}
+	pool := NewMempool()
+	accept, err := VerifyRefusedTimeout(context.Background(), pending, 1, pending.Inferences[1], testPayload(), nil, peer, pool, judge)
+	require.NoError(t, err)
+	require.False(t, accept, "valid receipt rejects refusal even when a Finish remains unresolved")
+	require.Len(t, pool.Txs(), 1)
+	started := stateWithStarted(1, 1)
+	accept, err = VerifyExecutionTimeout(context.Background(), started, 1, started.Inferences[1], nil, peer, nil, judge)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.False(t, accept, "the same partial response must defer a started verifier needing a Finish")
+	peer.challengeReceipt = nil
+	peer.challengeMempool = []*types.DevshardTx{finish}
+	pool = NewMempool()
+	accept, err = VerifyExecutionTimeout(context.Background(), started, 1, started.Inferences[1], nil, peer, pool, judge)
+	require.NoError(t, err)
+	require.False(t, accept, "valid Finish rejects execution timeout despite unrelated missing receipt evidence")
+	require.Len(t, pool.Txs(), 1)
+	peer.challengeMempool = []*types.DevshardTx{signedFinish(t, g.signers[1], "wrong-escrow", 1, 1)}
+	accept, err = VerifyExecutionTimeout(context.Background(), started, 1, started.Inferences[1], nil, peer, nil, judge)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.False(t, accept, "unverified returned bytes are not a proof")
+}
+
+func TestRefusalReceiptHintCannotHideAnotherVerifiedConfirmStart(t *testing.T) {
+	g := newEvidenceGroup(t)
+	st := stateWithPendingFull(1, 1)
+	cold, coldSig := signedConfirm(t, g.signers[1], st.EscrowID, st, 1, 1000)
+	warm := testutil.MustGenerateKey(t)
+	unknown, warmSig := signedConfirm(t, warm, st.EscrowID, st, 1, 1000)
+	for name, hint := range map[string][]byte{"unconfirmed warm": warmSig, "missing": nil, "mismatched": []byte("unrelated receipt")} {
+		t.Run(name, func(t *testing.T) {
+			for _, pending := range []bool{false, true} {
+				peer := &mockExecutorClient{challengeReceipt: hint, challengeMempool: []*types.DevshardTx{unknown, cold}}
+				if pending {
+					peer.challengeReceiptErr = types.ErrHeaderPending
+				}
+				sink := NewMempool()
+				judge := windowedJudge{EvidenceVerifier: due(g.sm), deferrals: &evidenceDeferrals{clock: time.Now}}
+				accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peer, sink, judge)
+				require.NoError(t, err)
+				require.False(t, accept, "a selected/missing receipt cannot conceal a valid alternative")
+				require.Len(t, sink.Txs(), 1)
+				require.Equal(t, coldSig, sink.Txs()[0].GetConfirmStart().ExecutorSig)
+			}
+		})
+	}
+	peer := &mockExecutorClient{challengeReceipt: warmSig, challengeMempool: []*types.DevshardTx{unknown}}
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peer, nil, due(g.sm))
+	require.NoError(t, err)
+	require.True(t, accept, "an unverified hint and body alone do not prove execution")
 }

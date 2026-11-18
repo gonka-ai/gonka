@@ -310,6 +310,18 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}},
 				},
 				{
+					RpcMethod:      "WarmKeyLog",
+					Use:            "warm-key-log [granter]",
+					Short:          "Query a participant's warm-key log (live and ended grants, in id order)",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "granter"}},
+				},
+				{
+					RpcMethod:      "WarmKeyEntry",
+					Use:            "warm-key-entry [granter] [id]",
+					Short:          "Query one entry of a participant's warm-key log",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "granter"}, {ProtoField: "id"}},
+				},
+				{
 					RpcMethod:      "MaintenanceCredit",
 					Use:            "maintenance-credit [participant]",
 					Short:          "Query maintenance credit for a participant",

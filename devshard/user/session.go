@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -261,17 +262,6 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
-type warmCheckKey struct {
-	warm string
-	cold string
-}
-
-type warmCheckResult struct {
-	done    chan struct{}
-	valid   bool
-	retryAt time.Time
-}
-
 type cachedSignatureSigner struct {
 	signature []byte
 	address   string
@@ -280,8 +270,6 @@ type cachedSignatureSigner struct {
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
-	warmCheckMu sync.Mutex
-	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -328,6 +316,9 @@ type Session struct {
 	confirmWait      chan struct{}            // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
 	diffObserver     func(types.Diff)
+	// warmKeySource is the sequencer's view of the chain's warm-key log;
+	// nil means no bind or revoke proposals. See warmkeys.go.
+	warmKeySource bridge.WarmKeyGrantSource
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
@@ -611,7 +602,6 @@ func NewSession(
 		sm:               sm,
 		signer:           signer,
 		verifier:         verifier,
-		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
 		escrowID:         escrowID,
 		group:            group,
 		addrToSlots:      addrToSlots,
@@ -1332,9 +1322,21 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
+	// Warm-key entries lead: compose applies them before the other
+	// candidates whatever their position, and a message by a key bound in
+	// this diff is accepted in it.
+	keyEntries := s.warmKeyProposalsLocked(nonce)
+	candidates := make([]*types.DevshardTx, 0, len(keyEntries)+len(pending)+len(extraTxs))
+	candidates = append(candidates, keyEntries...)
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
+	heightTx, err := s.sm.BuildMainnetHeightTx(ctx)
+	if err != nil {
+		return types.Diff{}, 0, err
+	}
+	if heightTx != nil {
+		candidates = append([]*types.DevshardTx{heightTx}, candidates...)
+	}
 
 	hasStart := false
 	for _, tx := range candidates {
@@ -1351,7 +1353,6 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 
 	var diff types.Diff
 	if s.store != nil {
-		warmBefore := s.sm.WarmKeys()
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -1360,11 +1361,9 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
 		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
+			Diff:      diff,
+			StateHash: vd.Root,
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
@@ -3172,49 +3171,18 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 	if err != nil {
 		return "", err
 	}
-	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.warmKeyAuthorizedAt(nonce, recovered, expectedAddr) {
 		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return recovered, nil
 }
 
-func (s *Session) warmKeyAuthorized(warm, cold string) bool {
-	if s.sm.HostSignerBoundAddr(cold, warm) {
-		return true
-	}
-	key := warmCheckKey{warm: warm, cold: cold}
-	for {
-		s.warmCheckMu.Lock()
-		check := s.warmChecks[key]
-		if check != nil {
-			if check.done != nil {
-				done := check.done
-				s.warmCheckMu.Unlock()
-				<-done
-				continue
-			}
-			if check.valid || time.Now().Before(check.retryAt) {
-				valid := check.valid
-				s.warmCheckMu.Unlock()
-				return valid
-			}
-		}
-		check = &warmCheckResult{done: make(chan struct{})}
-		s.warmChecks[key] = check
-		s.warmCheckMu.Unlock()
-
-		valid := s.sm.CheckWarmKey(warm, cold)
-		s.warmCheckMu.Lock()
-		check.valid = valid
-		if !check.valid {
-			check.retryAt = time.Now().Add(30 * time.Second)
-		}
-		close(check.done)
-		check.done = nil
-		accepted := check.valid
-		s.warmCheckMu.Unlock()
-		return accepted
-	}
+// warmKeyAuthorizedAt reports whether warm may sign for cold the state at
+// nonce: a binding in the history that covers that nonce, or a live grant in
+// the grant source for a key the gateway has not bound yet, minus a key whose
+// grant the source has seen end.
+func (s *Session) warmKeyAuthorizedAt(nonce uint64, warm, cold string) bool {
+	return s.sm.HostSignerAllowedAddrAt(cold, warm, nonce)
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
@@ -3366,9 +3334,42 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	return false
 }
 
+// retryCurrentSignature asks an already caught-up v7 host to rerun its normal
+// signing policy. A transient oracle failure may have withheld its signature
+// on the original Send; reading stored signatures cannot retry that decision.
+// No diff is created, and historical nonces are never re-signed this way.
+func (s *Session) retryCurrentSignature(ctx context.Context, hostIdx int, client HostClient, nonce uint64) error {
+	s.mu.Lock()
+	current := nonce == s.nonce && s.hostSyncNonce[hostIdx] >= nonce &&
+		types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	s.mu.Unlock()
+	if !current {
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, s.signatureCollectHostTimeout)
+	defer cancel()
+	resp, err := client.Send(requestCtx, host.HostRequest{Nonce: nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
+	if err != nil {
+		s.forgetHostState(hostIdx, err)
+		return err
+	}
+	if resp == nil {
+		return ErrNilHostResponse
+	}
+	if resp.Nonce != nonce {
+		return nil
+	}
+	s.mu.Lock()
+	err = s.processResponse(hostIdx, resp, nonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
+}
+
 // CollectSignatures actively polls all hosts to collect signatures for the
 // given nonce. For each host: tries the cheap GET /signatures first, then
-// falls back to sending catch-up diffs. Retries failed hosts with backoff.
+// falls back to catch-up diffs and a current-state signing retry for v7.
+// Retries failed hosts with backoff.
 // Uses per-host timeouts independent of the parent context.
 // Returns the signature status at that nonce after collection. Thread-safe.
 func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, threshold, total uint32) {
@@ -3460,6 +3461,12 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				if err := s.sendCatchUpWith(collectCtx, h.idx, finClients[h.idx]); err != nil {
 					logging.Warn("collect signatures: send catch-up error", "subsystem", "finalize", "escrow", s.escrowID,
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+				}
+				if !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
+					if err := s.retryCurrentSignature(collectCtx, h.idx, finClients[h.idx], nonce); err != nil {
+						logging.Warn("collect signatures: retry signing error", "subsystem", "finalize", "escrow", s.escrowID,
+							"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+					}
 				}
 
 				if s.hasQuorum(nonce, threshold) {

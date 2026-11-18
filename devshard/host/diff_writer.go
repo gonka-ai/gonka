@@ -346,29 +346,40 @@ func (h *Host) applyRunLocked(ctx context.Context, run []types.Diff, applied map
 }
 
 func (h *Host) applyChunkLocked(ctx context.Context, run []types.Diff, applied map[uint64]bool) error {
-	if h.store == nil {
-		for _, diff := range run {
-			phaseBefore := h.sm.Phase()
-			if _, err := h.sm.ApplyDiff(diff); err != nil {
-				return fmt.Errorf("apply diff nonce %d: %w", diff.Nonce, err)
-			}
-			h.afterCommitLocked(diff, phaseBefore)
-			applied[diff.Nonce] = true
+	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		// Another HA writer may already have admitted this exact prefix while
+		// this process was behind. Replay the trusted local rows, not the
+		// request's bytes, before imposing live policy on truly first-seen work.
+		meta, err := h.store.GetSessionMeta(h.escrowID)
+		if err != nil {
+			return err
 		}
-		return nil
+		through := min(meta.HostAdmissionNonce, run[len(run)-1].Nonce)
+		if through >= run[0].Nonce {
+			if err := h.applyDurablePagesLocked(ctx, h.sm.LatestNonce()+1, through, "admitted catch-up", "reconcile_catch_up", 0); err != nil {
+				return err
+			}
+			for len(run) > 0 && run[0].Nonce <= h.sm.LatestNonce() {
+				applied[run[0].Nonce] = true
+				run = run[1:]
+			}
+			if len(run) == 0 {
+				return nil
+			}
+		}
 	}
-
-	warm := h.sm.WarmKeys()
-	vds, validateErr := h.sm.ValidateDiffs(run)
+	vds, validateErr := h.sm.ValidateDiffsForAdmission(ctx, run)
 	if len(vds) > 0 {
 		recs := make([]types.DiffRecord, len(vds))
 		for k, vd := range vds {
-			recs[k] = types.DiffRecord{Diff: run[k], StateHash: vd.Root, WarmKeyDelta: types.ComputeWarmKeyDelta(warm, vd.WarmAfter)}
-			warm = vd.WarmAfter
+			recs[k] = types.DiffRecord{Diff: run[k], StateHash: vd.Root, HostAdmitted: types.RequiresMainnetHeightProof(h.sm.ProtocolVersion())}
 		}
-		h.mu.Unlock()
-		persistErr := storage.PersistDiffBatch(ctx, h.store, h.escrowID, recs)
-		h.mu.Lock()
+		var persistErr error
+		if h.store != nil {
+			h.mu.Unlock()
+			persistErr = storage.PersistDiffBatch(ctx, h.store, h.escrowID, recs)
+			h.mu.Lock()
+		}
 		if persistErr != nil {
 			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff,
 				fmt.Errorf("persist diff nonce %d..%d: %w", recs[0].Nonce, recs[len(recs)-1].Nonce, persistErr))

@@ -30,15 +30,14 @@ var ErrDiffFork = errors.New("diff fork: conflicting payload at same nonce")
 // diff payload (idempotent replay). On mismatch it increments
 // diff_fork_detected and returns ErrDiffFork.
 //
-// Compared: UserSig, PostStateRoot, StateHash, Txs, WarmKeyDelta.
+// Compared: UserSig, PostStateRoot, StateHash, Txs.
 // Not compared: CreatedAt (may differ across writers), Signatures (upserted
-// separately with ON CONFLICT DO UPDATE).
+// separately with ON CONFLICT DO UPDATE), HostAdmitted (local write intent).
 func checkDiffReplayIdentity(escrowID string, want, have types.DiffRecord) error {
 	if want.Nonce != have.Nonce ||
 		!bytes.Equal(want.UserSig, have.UserSig) ||
 		!bytes.Equal(want.PostStateRoot, have.PostStateRoot) ||
 		!bytes.Equal(want.StateHash, have.StateHash) ||
-		!equalWarmKeyDelta(want.WarmKeyDelta, have.WarmKeyDelta) ||
 		!equalTxs(want.Txs, have.Txs) {
 		observability.IncDiffForkDetected(escrowID)
 		slog.Error("diff_fork_detected",

@@ -163,9 +163,19 @@ type Host struct {
 	slotToAddr  map[uint32]string   // slotID -> validator address
 	addrToSlots map[string][]uint32 // address -> all slotIDs owned
 
-	sortedSlots []uint32            // deterministic slot order for this host
-	executing   map[uint64]struct{} // inference IDs with in-flight execution
-	validating  map[uint64]struct{} // inference IDs with queued or in-flight validation
+	sortedSlots        []uint32 // deterministic slot order for this host
+	signingCandidates  map[uint32]bool
+	sortedSigningSlots []uint32
+	executing          map[uint64]struct{} // inference IDs with in-flight execution
+	finishing          map[uint64]struct{} // payload complete, Finish publication pending
+	// Completed work awaiting live authority to publish its Finish. It is
+	// retried by ordinary mempool reads; persisted payloads cover process loss.
+	pendingFinishes       map[uint64]*types.MsgFinishInference
+	pendingFinishCursor   uint64
+	finishRecoveries      map[uint64]*finishRecovery
+	finishRecoveryClosed  bool
+	finishRecoveryWorkers sync.WaitGroup
+	validating            map[uint64]struct{} // inference IDs with queued or in-flight validation
 	// validationCooldown is inference ID -> not-before. The zero time holds the
 	// inference until it leaves the validatable set; any other time expires.
 	validationCooldown map[uint64]time.Time
@@ -235,14 +245,16 @@ func NewHost(
 		}
 	}
 
-	// Check state's WarmKeys for existing bindings, then try the warm key
-	// resolver directly (without caching in SM state, which would change
-	// the state root before any diffs are applied).
+	// A warm signer owns the slots the history binds it to, or, before the
+	// gateway has bound it, the slots whose cold key granted it according to
+	// the grant source. Neither read writes state.
 	if len(slotIDs) == 0 {
-		warmKeys := sm.WarmKeys()
-		for slotID, warmAddr := range warmKeys {
-			if warmAddr == addr {
-				slotIDs[slotID] = true
+		history := sm.WarmKeyHistory()
+		for slotID := range history {
+			for _, live := range history.Live(slotID) {
+				if live == addr {
+					slotIDs[slotID] = true
+				}
 			}
 		}
 	}
@@ -259,6 +271,16 @@ func NewHost(
 	}
 
 	sortedSlots := slices.Sorted(maps.Keys(slotIDs))
+
+	// Signing roles may move between slots of the same cold participant.
+	// Keep the participant domain fixed while checking each slot dynamically.
+	candidates := make(map[uint32]bool)
+	for slot := range slotIDs {
+		for _, owned := range addrToSlots[slotToAddr[slot]] {
+			candidates[owned] = true
+		}
+	}
+	sortedCandidates := slices.Sorted(maps.Keys(candidates))
 
 	// Derive deterministic seed from signer + escrowID.
 	seedSig, err := signer.Sign([]byte(escrowID))
@@ -282,6 +304,8 @@ func NewHost(
 		slotToAddr:         slotToAddr,
 		addrToSlots:        addrToSlots,
 		sortedSlots:        sortedSlots,
+		signingCandidates:  candidates,
+		sortedSigningSlots: sortedCandidates,
 		executing:          make(map[uint64]struct{}),
 		validating:         make(map[uint64]struct{}),
 		validationCooldown: make(map[uint64]time.Time),
@@ -305,7 +329,7 @@ func NewHost(
 // machine and fills the set from inferences already live (recovery). Later
 // diffs maintain the set at each record write.
 func (h *Host) installOwedValidations() {
-	mySlots := h.slotIDs
+	mySlots := h.SlotIDs()
 	mySlotCount := uint32(len(mySlots))
 	totalSlots := h.sm.TotalSlots()
 	seed := h.ownSeed
@@ -339,7 +363,8 @@ func (h *Host) Start() {
 	})
 }
 
-// Close cancels in-flight Validate and waits for workers to unwind. Cancel
+// Close cancels in-flight validation and stored-Finish recovery and waits for
+// workers to unwind. Cancel
 // aborts ML immediately; the wait is only so Release can DELETE the pending
 // lease while storage is still open. It is safe to call multiple times and
 // safe to call on hosts that were never started.
@@ -357,6 +382,13 @@ func (h *Host) Close() {
 		}
 		h.validationLifecycleMu.Unlock()
 		h.validationWorkers.Wait()
+		h.mu.Lock()
+		h.finishRecoveryClosed = true
+		for _, recovery := range h.finishRecoveries {
+			recovery.cancel()
+		}
+		h.mu.Unlock()
+		h.finishRecoveryWorkers.Wait()
 	})
 }
 
@@ -488,7 +520,7 @@ func (h *Host) StateHead() (uint64, []byte, error) {
 func (h *Host) MempoolTxs() []*types.DevshardTx {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.mempool.Txs()
+	return h.authorizedMempoolTxs()
 }
 
 // AddTx inserts a tx into the local mempool (ProposedAt = 0). Used to copy
@@ -528,6 +560,8 @@ func (h *Host) settledRecoveryTxLocked(tx *types.DevshardTx) (uint64, bool) {
 
 func (h *Host) EscrowID() string { return h.escrowID }
 
+func (h *Host) ProtocolVersion() string { return h.sm.ProtocolVersion() }
+
 // MemoryCounts is the size of the maps that retain an escrow in this process.
 // Lengths only: nothing is copied and no record is visited.
 type MemoryCounts struct {
@@ -558,11 +592,51 @@ func (h *Host) MemoryCounts() MemoryCounts {
 }
 func (h *Host) EpochID() uint64               { return h.epochID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }
-func (h *Host) SlotIDs() map[uint32]bool      { return h.slotIDs }
+
+// SlotIDs is participant membership, not current signing authority. V7 keeps
+// every slot of its cold participants available for an explicit later bind.
+func (h *Host) SlotIDs() map[uint32]bool {
+	if h.sm != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		return h.signingCandidates
+	}
+	return h.slotIDs
+}
 
 // PrimarySlot returns the lowest slot ID owned by this host.
 // Deterministic: derived from sortedSlots which is sorted at construction time.
 func (h *Host) PrimarySlot() uint32 { return h.sortedSlots[0] }
+
+// SigningSlot selects a currently authorized slot for a new locally proposed
+// message. PrimarySlot is stable identity for scheduling, not signing authority.
+func (h *Host) SigningSlot() (uint32, error) {
+	if !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		return h.PrimarySlot(), nil
+	}
+	actors := h.SlotActors()
+	for _, slot := range h.sortedSigningSlots {
+		if actors.Allows(slot, h.signer.Address()) {
+			return slot, nil
+		}
+	}
+	return 0, types.ErrWarmKeyUnconfirmed
+}
+
+// CanSignSlot is live admission for a message whose role fixes its slot.
+func (h *Host) CanSignSlot(slot uint32) bool {
+	if !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		return h.slotIDs[slot]
+	}
+	return h.signingCandidates[slot] && h.SlotActors().Allows(slot, h.signer.Address())
+}
+
+// StateSigningSlot labels an existing state signature at its exact nonce.
+func (h *Host) StateSigningSlot(nonce uint64) (uint32, error) {
+	slots := h.stateSigningSlots(nonce)
+	if len(slots) == 0 {
+		return 0, types.ErrWarmKeyUnconfirmed
+	}
+	return slots[0], nil
+}
 
 // IsGroupMemberAddr returns true if addr is a group member (owns at least one slot).
 // Safe to call without locking -- addrToSlots is immutable after construction.
@@ -585,6 +659,12 @@ func (h *Host) SnapshotState() types.EscrowState {
 	return h.sm.SnapshotState()
 }
 
+// WarmKeyBoundTo reports whether the history binds addr, at the next nonce,
+// to a slot of validator.
+func (h *Host) WarmKeyBoundTo(addr, validator string) bool {
+	return h.sm.HostSignerBoundAddr(validator, addr)
+}
+
 // SnapshotForTimeout copies the escrow summary and one inference record under
 // the same lock. The returned state has a nil inference map.
 func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types.InferenceRecord, bool) {
@@ -593,7 +673,7 @@ func (h *Host) SnapshotForTimeout(inferenceID uint64) (types.EscrowState, *types
 	return h.sm.SnapshotWithInference(inferenceID)
 }
 
-// IsWarmKeyAddress returns true if addr is a known warm key in the current state.
+// IsWarmKeyAddress returns true if addr has a live binding in the current state.
 func (h *Host) IsWarmKeyAddress(addr string) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -602,28 +682,24 @@ func (h *Host) IsWarmKeyAddress(addr string) bool {
 
 func (h *Host) Signer() signing.Signer { return h.signer }
 
-// SlotActors is the host-signature identity set for this escrow (cold keys,
-// bound warm keys, live authz). Same rule as HeightAck L2 and confirm/finish.
+// SlotActors is the host-signature identity set for admission at the next
+// nonce: cold keys, the binding history, the grant source for a key the
+// history does not cover (one the sequencer may bind in its next diff) and
+// the grant source against a bound key whose grant has ended. Same rule as
+// HeightAck L2 and confirm/finish, plus the local-admission fallback.
 //
-// The returned value memoises its authz lookups, so a caller that checks two
-// identities for one request -- the repair handler checks the signer and the
-// HTTP sender -- should reuse one value rather than call this twice. The memo
-// is not synchronised; treat the value as request-scoped.
+// The returned value memoises its grant-source lookups, so a caller that
+// checks two identities for one request -- the repair handler checks the
+// signer and the HTTP sender -- should reuse one value rather than call this
+// twice. The memo is not synchronised; treat the value as request-scoped.
 func (h *Host) SlotActors() signing.SlotActors {
-	authz := make(map[[2]string]bool, 2)
-	return signing.SlotActors{
-		SlotKeys: h.slotToAddr,
-		WarmKeys: h.sm.WarmKeys(),
-		AcceptWarm: func(_ uint32, recovered, expected string) bool {
-			pair := [2]string{recovered, expected}
-			ok, seen := authz[pair]
-			if !seen {
-				ok = h.sm.CheckWarmKey(recovered, expected)
-				authz[pair] = ok
-			}
-			return ok
-		},
-	}
+	return h.sm.HostSlotActors()
+}
+
+// SlotActorsAt checks a signature at its signed nonce. V7 uses that diff's
+// authenticated checkpoint, including for late signatures after a revoke.
+func (h *Host) SlotActorsAt(nonce uint64) signing.SlotActors {
+	return h.sm.HostSlotActorsAt(nonce)
 }
 
 // HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
@@ -760,7 +836,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		ConfirmedAt:        confirmedAt,
 		ObservedHeight:     receiptOutcome.observedHeight,
 		ObservedBlockHash:  append([]byte(nil), receiptOutcome.observedHash...),
-		Mempool:            h.mempool.Txs(),
+		Mempool:            h.MempoolTxs(),
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
 		InferenceID:        receiptOutcome.inferenceID,
@@ -960,6 +1036,7 @@ func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
 // signIfAccepted computes state root, checks acceptance, signs if allowed,
 // stores sig and checks finalization. Caller must hold h.mu.
 func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byte, nonce uint64, err error) {
+	h.authorizedMempoolTxs() // stale revoked proposals must not withhold an otherwise valid state signature
 	nonce = h.sm.LatestNonce()
 	root, err = h.sm.ComputeStateRoot()
 	if err != nil {
@@ -972,14 +1049,23 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 		}
 	}
 
-	sig, err := h.signState(nonce, root)
+	sig, signingSlots, err := h.signState(nonce, root)
 	if err != nil {
+		if errors.Is(err, types.ErrHeaderPending) || errors.Is(err, types.ErrWarmKeyUnconfirmed) {
+			// Freshness and signer authority gate state signatures, not execution of an already
+			// authenticated diff. Aborting here would strand a receipt that
+			// signReceipt has already queued, without running its execution job.
+			// Recovery must also be able to pass old checkpoints on its way
+			// to a fresh diff; never sign those intermediate roots.
+			logging.Debug("state signature withheld: checkpoint or signer unavailable", "subsystem", "host", "nonce", nonce, "error", err)
+			return nil, root, nonce, nil
+		}
 		return nil, nil, 0, fmt.Errorf("sign state root: %w", err)
 	}
 	stateSig = sig
 
 	if h.store != nil {
-		for slotID := range h.slotIDs {
+		for _, slotID := range signingSlots {
 			if err := h.store.AddSignature(h.escrowID, nonce, slotID, sig); err != nil {
 				logging.Debug("store own sig failed", "subsystem", "host", "nonce", nonce, "error", err)
 			}
@@ -997,6 +1083,9 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 // receipt stamped with the height-sync floor as of inferenceID, and queues it.
 // Caller must hold h.mu.
 func (h *Host) confirmStartLocked(inferenceID uint64, rec types.InferenceRecord, hdr *blocks.Header, hdrErr error) (*types.MsgConfirmStart, error) {
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && !h.CanSignSlot(rec.ExecutorSlot) {
+		return nil, types.ErrWarmKeyUnconfirmed
+	}
 	if queued := h.mempool.QueuedConfirmStart(inferenceID); queued != nil {
 		return queued, nil
 	}
@@ -1067,7 +1156,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 	inferenceID := req.Nonce
 	outcome.inferenceID = inferenceID
 	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
-	if !h.slotIDs[executorSlot] {
+	if !h.CanSignSlot(executorSlot) {
 		// Here reason is default observability.ReasonNotExecutor
 		return nil, 0, nil, nil, outcome, nil
 	}
@@ -1310,6 +1399,15 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		h.mu.Lock()
+		if h.finishing == nil {
+			h.finishing = make(map[uint64]struct{})
+		}
+		h.finishing[inferenceID] = struct{}{}
+		h.mu.Unlock()
+		defer func() { h.mu.Lock(); delete(h.finishing, inferenceID); h.mu.Unlock() }()
+	}
 
 	obsH, obsHash := h.observedTip(ctx)
 	if job != nil {
@@ -1327,8 +1425,16 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		ObservedHeight:    obsH,
 		ObservedBlockHash: obsHash,
 	}
-	proposerSig, err := h.signProposer(finishMsg)
+	proposerSig, err := h.signProposerContext(ctx, finishMsg)
 	if err != nil {
+		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+			h.mu.Lock()
+			if h.pendingFinishes == nil {
+				h.pendingFinishes = make(map[uint64]*types.MsgFinishInference)
+			}
+			h.pendingFinishes[inferenceID] = finishMsg
+			h.mu.Unlock()
+		}
 		return result, observability.FailReceiptOrphan(ctx, h.escrowID,
 			observability.ReasonSignFinishErr, observability.WhereHostPublishFinish,
 			observability.StageFinished, "sign finish msg failed", err, "inference_id", inferenceID)
@@ -1400,6 +1506,10 @@ func (h *Host) collectValidationJobs() []validateJob {
 	if available <= 0 {
 		return nil
 	}
+	validatorSlot, slotErr := h.SigningSlot()
+	if slotErr != nil {
+		return nil
+	}
 	owed := h.sm.OwedValidationIDs()
 	if len(h.validationCooldown) > 0 {
 		owedSet := make(map[uint64]struct{}, len(owed))
@@ -1452,7 +1562,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 		h.validating[infID] = struct{}{}
 		jobs = append(jobs, validateJob{
 			inferenceID:     infID,
-			validatorSlot:   h.sortedSlots[0],
+			validatorSlot:   validatorSlot,
 			flow:            flow,
 			model:           rec.Model,
 			promptHash:      rec.PromptHash,
@@ -1563,11 +1673,11 @@ func (h *Host) enqueueValidation(job validateJob) {
 // once: the ids this host already has a validation or vote queued for.
 func (h *Host) ownMempoolValidationIDs() map[uint64]struct{} {
 	var ids map[uint64]struct{}
-	for _, tx := range h.mempool.Txs() {
+	for _, tx := range h.authorizedMempoolTxs() {
 		var id uint64
-		if v := tx.GetValidation(); v != nil && h.slotIDs[v.ValidatorSlot] {
+		if v := tx.GetValidation(); v != nil && h.SlotIDs()[v.ValidatorSlot] {
 			id = v.InferenceId
-		} else if v := tx.GetValidationVote(); v != nil && h.slotIDs[v.VoterSlot] {
+		} else if v := tx.GetValidationVote(); v != nil && h.SlotIDs()[v.VoterSlot] {
 			id = v.InferenceId
 		} else {
 			continue
@@ -1581,14 +1691,14 @@ func (h *Host) ownMempoolValidationIDs() map[uint64]struct{} {
 }
 
 func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
-	for _, tx := range h.mempool.Txs() {
+	for _, tx := range h.authorizedMempoolTxs() {
 		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
-			if h.slotIDs[v.ValidatorSlot] {
+			if h.SlotIDs()[v.ValidatorSlot] {
 				return true
 			}
 		}
 		if v := tx.GetValidationVote(); v != nil && v.InferenceId == infID {
-			if h.slotIDs[v.VoterSlot] {
+			if h.SlotIDs()[v.VoterSlot] {
 				return true
 			}
 		}
@@ -1617,6 +1727,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	if validationEnqueueStopped.Load() {
 		return
 	}
+	currentSlot, slotErr := h.SigningSlot()
+	if slotErr != nil {
+		return
+	}
+	job.validatorSlot = currentSlot
+
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
@@ -1725,6 +1841,13 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	}
 	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
 
+	currentSlot, slotErr = h.SigningSlot()
+	if slotErr != nil {
+		h.stampValidationCooldown(job.inferenceID)
+		h.releaseValidationLease(ctx, job.inferenceID)
+		return
+	}
+	job.validatorSlot = currentSlot
 	var tx *types.DevshardTx
 	var validationTx string
 	switch rec.Status {
@@ -1913,10 +2036,10 @@ func (h *Host) inferenceValidatable(rec *types.InferenceRecord) bool {
 	if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
 		return false
 	}
-	if h.slotIDs[rec.ExecutorSlot] {
+	if h.SlotIDs()[rec.ExecutorSlot] {
 		return false
 	}
-	for slot := range h.slotIDs {
+	for slot := range h.SlotIDs() {
 		if rec.ValidatedBy.IsSet(slot) {
 			return false
 		}
@@ -1955,6 +2078,12 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 		return fmt.Errorf("host not configured for sig accumulation (verifier=%v, store=%v)", h.verifier != nil, h.store != nil)
 	}
 
+	// A shared HA store can be ahead of this replica's applied machine. A
+	// durable root alone does not authenticate the signer at that nonce.
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && nonce > h.sm.LatestNonce() {
+		return fmt.Errorf("gossip nonce %d has not been applied locally", nonce)
+	}
+
 	expected, ok := h.slotToAddr[senderSlot]
 	if !ok {
 		return fmt.Errorf("sender slot %d not in group", senderSlot)
@@ -1974,7 +2103,8 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 	if err != nil {
 		return fmt.Errorf("recover address: %w", err)
 	}
-	if !h.SlotActors().Allows(senderSlot, addr) {
+	actors := h.SlotActorsAt(nonce)
+	if !actors.Allows(senderSlot, addr) {
 		return fmt.Errorf("sig from slot %d: expected %s, got %s", senderSlot, expected, addr)
 	}
 
@@ -1993,6 +2123,9 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 		storeAddr = expected
 	}
 	for _, slot := range h.addrToSlots[storeAddr] {
+		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && !actors.Allows(slot, addr) {
+			continue
+		}
 		if err := h.store.AddSignature(h.escrowID, nonce, slot, sig); err != nil {
 			return err
 		}
@@ -2021,7 +2154,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]t
 		}
 
 		if stateSig != nil && h.store != nil {
-			for slotID := range h.slotIDs {
+			for _, slotID := range h.stateSigningSlots(nonce) {
 				sigs = append(sigs, types.GossipSig{
 					Nonce:     nonce,
 					StateHash: root,
@@ -2075,8 +2208,42 @@ func (h *Host) checkFinalization(nonce uint64) {
 	if err != nil {
 		return
 	}
+	weight := len(sigs)
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		// Shared rows can have been written by another replica. Validate the
+		// actual signatures before counting participant weight, not row count.
+		if nonce > h.sm.LatestNonce() {
+			return
+		}
+		records, err := h.store.GetDiffs(h.escrowID, nonce, nonce)
+		if err != nil || len(records) != 1 {
+			return
+		}
+		content, err := proto.Marshal(&types.StateSignatureContent{StateRoot: records[0].StateHash, EscrowId: h.escrowID, Nonce: nonce})
+		if err != nil {
+			return
+		}
+		verifier := h.verifier
+		if verifier == nil {
+			verifier = signing.NewSecp256k1Verifier()
+		}
+		actors := h.SlotActorsAt(nonce)
+		counted := make(map[string]bool)
+		weight = 0
+		for slot, sig := range sigs {
+			recovered, err := verifier.RecoverAddress(content, sig)
+			if err != nil || !actors.Allows(slot, recovered) {
+				continue
+			}
+			cold := h.slotToAddr[slot]
+			if !counted[cold] {
+				counted[cold] = true
+				weight += len(h.addrToSlots[cold])
+			}
+		}
+	}
 	threshold := 2*len(h.group)/3 + 1
-	if len(sigs) >= threshold {
+	if weight >= threshold {
 		if err := h.store.MarkFinalized(h.escrowID, nonce); err != nil {
 			logging.Debug("mark finalized failed", "subsystem", "host", "nonce", nonce, "error", err)
 			return
@@ -2095,22 +2262,81 @@ func (h *Host) GetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return h.store.GetSignatures(h.escrowID, nonce)
 }
 
-// signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
-func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
-	sigContent := &types.StateSignatureContent{
-		StateRoot: root,
-		EscrowId:  h.escrowID,
-		Nonce:     nonce,
+// stateSigningSlots rechecks startup slot ownership against the exact state
+// nonce. A replica can outlive its warm grant or a sequenced nonce revoke.
+// Host membership is immutable; the state machine synchronizes its own reads.
+func (h *Host) stateSigningSlots(nonce uint64) []uint32 {
+	if !types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		return h.sortedSlots
 	}
+	actors := h.SlotActorsAt(nonce)
+	var slots []uint32
+	for _, slot := range h.sortedSigningSlots {
+		if actors.Allows(slot, h.signer.Address()) {
+			slots = append(slots, slot)
+		}
+	}
+	return slots
+}
+
+// signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
+// It returns the slots authorized for this signer, never just startup ownership.
+func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
+	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		meta, err := h.store.GetSessionMeta(h.escrowID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("%w: host admission prefix: %v", types.ErrHeaderPending, err)
+		}
+		if meta.HostAdmissionNonce < nonce {
+			return nil, nil, fmt.Errorf("%w: unchecked host history through nonce %d", types.ErrHeaderPending, nonce)
+		}
+	}
+	slots := h.stateSigningSlots(nonce)
+	if len(slots) == 0 {
+		return nil, nil, types.ErrWarmKeyUnconfirmed
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); err != nil {
+		return nil, nil, err
+	}
+	sigContent := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}
 	sigData, err := proto.Marshal(sigContent)
 	if err != nil {
-		return nil, fmt.Errorf("marshal state sig content: %w", err)
+		return nil, nil, fmt.Errorf("marshal state sig content: %w", err)
 	}
-	return h.signer.Sign(sigData)
+	sig, err := h.signer.Sign(sigData)
+	return sig, slots, err
 }
 
 // signProposer marshals msg and signs it, returning the proposer signature.
 func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
+	return h.signProposerContext(context.Background(), msg)
+}
+
+func (h *Host) signProposerContext(ctx context.Context, msg proto.Message) ([]byte, error) {
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		var slot uint32
+		switch m := msg.(type) {
+		case *types.MsgFinishInference:
+			slot = m.ExecutorSlot
+		case *types.MsgValidation:
+			slot = m.ValidatorSlot
+		case *types.MsgValidationVote:
+			slot = m.VoterSlot
+		default:
+			return nil, types.ErrWarmKeyUnconfirmed
+		}
+		if !h.signingCandidates[slot] || !h.sm.HostSlotActorsWithContext(ctx, 100*time.Millisecond).Allows(slot, h.signer.Address()) {
+			return nil, types.ErrWarmKeyUnconfirmed
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+	}
 	data, err := types.CanonicalSignedBytes(msg)
 	if err != nil {
 		return nil, fmt.Errorf("marshal proposer msg: %w", err)

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -36,6 +37,9 @@ type escrowWarmSink struct {
 	log       *slog.Logger
 	onSettled func(escrowID string) error
 	localAddr string
+	// warmKeys is the host's copy of the chain's warm-key log; nil when the
+	// bridge keeps none (tests).
+	warmKeys *bridge.WarmKeyLogCopy
 
 	mu            sync.Mutex
 	lastRehydrate time.Time
@@ -48,9 +52,36 @@ func newEscrowWarmSink(b bridge.MainnetBridge, store devshardstorage.Storage, lo
 	return &escrowWarmSink{bridge: b, store: store, log: log, onSettled: onSettled, localAddr: localAddr}
 }
 
+// withWarmKeys gives the sink the copy that warm-key events feed.
+func (s *escrowWarmSink) withWarmKeys(cp *bridge.WarmKeyLogCopy) *escrowWarmSink {
+	s.warmKeys = cp
+	return s
+}
+
+// OnWarmKeyEvent applies one warm-key log entry to the copy. The copy is
+// append-only, so an entry is only ever added or ended.
+func (s *escrowWarmSink) OnWarmKeyEvent(entry bridge.WarmKeyEntry) error {
+	if s.warmKeys == nil {
+		return nil
+	}
+	s.warmKeys.Apply(entry)
+	return nil
+}
+
 // WarmEscrow fetches escrow metadata from chain and caches it for lazy bind.
 func (s *escrowWarmSink) WarmEscrow(escrowID string) error {
 	info, err := s.bridge.GetEscrow(escrowID)
+	if errors.Is(err, bridge.ErrEscrowNotFound) {
+		// A retained creation can outlive its escrow: block PoC epochs and
+		// escrow effective epochs differ. Warming is only a cache hint. A node
+		// behind the event may also answer NotFound; lazy bind will fetch it
+		// later, so this must not finalize a potentially live session.
+		s.log.Debug("hostevents: skipping warm of absent escrow", "escrow_id", escrowID)
+		if err := s.store.DeleteEscrowCache(escrowID); err != nil {
+			return fmt.Errorf("drop absent escrow cache %s: %w", escrowID, err)
+		}
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("warm escrow %s: %w", escrowID, err)
 	}
@@ -147,6 +178,11 @@ func (s *escrowWarmSink) OnEscrowSettled(escrowID string) error {
 // Warm cache rows are deliberately not rebuilt here: lazy bind still falls back
 // to a live chain fetch, and subsequent escrow-created events refill them.
 func (s *escrowWarmSink) RehydrateOpenEscrows() {
+	// Events may have been lost in the gap: every granter's copy is reloaded
+	// from the chain on its next use.
+	if s.warmKeys != nil {
+		s.warmKeys.Reset()
+	}
 	if s.store == nil {
 		return
 	}

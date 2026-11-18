@@ -91,7 +91,7 @@ func gatewayHeaderTimeSource(cometRPC string, fallback blocks.BlockOracle) *head
 		verified, err := observer.NewTendermint(observer.TendermintConfig{RPCURL: cometRPC, VerifyCommits: true})
 		if err == nil {
 			slog.Info("header times verified by commit signatures", "comet_rpc", cometRPC)
-			return headertime.New(verified)
+			return headertime.New(verified, headertime.WithLatestOracle(fallback))
 		}
 		slog.Warn("header times: verifying oracle unavailable", "err", err, "comet_rpc", cometRPC)
 	}

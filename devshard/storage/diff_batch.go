@@ -102,7 +102,7 @@ func PersistDiffBatch(ctx context.Context, store Storage, escrowID string, recs 
 			}
 			return nil
 		}
-		if errors.Is(last, ErrDiffFork) || errors.Is(last, ErrSessionNotFound) {
+		if errors.Is(last, ErrHostAdmissionGap) || errors.Is(last, ErrDiffFork) || errors.Is(last, ErrSessionNotFound) {
 			return last
 		}
 		if err := ctx.Err(); err != nil && errors.Is(err, context.Canceled) {

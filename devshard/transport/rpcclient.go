@@ -819,7 +819,7 @@ func (c *RPCClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint6
 	if err != nil {
 		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
 	}
-	return resp.GetReceipt(), mempool, nil
+	return resp.GetReceipt(), mempool, challengeEvidenceError(resp.GetEvidencePending())
 }
 
 func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte, []*types.DevshardTx, error) {
@@ -827,6 +827,7 @@ func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte
 	defer cancel()
 	var receipt []byte
 	var mempool []*types.DevshardTx
+	var evidencePending bool
 	err := c.rpcAttempt(ctx, rpcpbconnect.SessionServiceChallengeReceiptProcedure, func() error {
 		env, err := c.signEnvelope(raw)
 		if err != nil {
@@ -846,12 +847,13 @@ func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte
 		}
 		receipt = resp.Msg.GetReceipt()
 		mempool = decoded
+		evidencePending = resp.Msg.GetEvidencePending()
 		return nil
 	})
 	if err != nil {
 		return nil, nil, TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 	}
-	return receipt, mempool, nil
+	return receipt, mempool, challengeEvidenceError(evidencePending)
 }
 
 // ChallengeCatchUp sends one encoded page with a nil payload and drops the

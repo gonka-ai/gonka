@@ -19,6 +19,8 @@ import (
 	"github.com/productscience/inference/app/upgrades/v0_2_14"
 	"github.com/productscience/inference/app/upgrades/v0_2_15"
 	"github.com/productscience/inference/app/upgrades/v0_2_16"
+	"github.com/productscience/inference/app/upgrades/v0_2_17"
+	"github.com/productscience/inference/app/upgrades/v0_2_18"
 	v0_2_2 "github.com/productscience/inference/app/upgrades/v0_2_2"
 	v0_2_3 "github.com/productscience/inference/app/upgrades/v0_2_3"
 	"github.com/productscience/inference/app/upgrades/v0_2_4"
@@ -73,6 +75,8 @@ func (app *App) setupUpgradeHandlers() {
 	app.setTrackedUpgradeHandler(v0_2_14.UpgradeName, v0_2_14.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.GenesistransferKeeper, app.MintKeeper))
 	app.setTrackedUpgradeHandler(v0_2_15.UpgradeName, v0_2_15.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.AuthzKeeper))
 	app.setTrackedUpgradeHandler(v0_2_16.UpgradeName, v0_2_16.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.AuthzKeeper))
+	app.setTrackedUpgradeHandler(v0_2_17.UpgradeName, v0_2_17.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
+	app.setTrackedUpgradeHandler(v0_2_18.UpgradeName, v0_2_18.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 }
 
 func (app *App) registerMigrations() {
@@ -134,5 +138,13 @@ func (app *App) registerMigrations() {
 
 	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 14, func(ctx sdk.Context) error {
 		return app.InferenceKeeper.MigrateFeeParamsToTree(ctx)
+	})
+
+	// Consensus version 16: the warm-key log. Seed it from the authz grants
+	// that exist at the upgrade so every warm key in use has an entry to
+	// point at without a new grant transaction.
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 15, func(ctx sdk.Context) error {
+		_, err := app.InferenceKeeper.SeedWarmKeyLog(ctx, app.AuthzKeeper.IterateGrants)
+		return err
 	})
 }

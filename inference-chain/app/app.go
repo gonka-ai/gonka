@@ -125,6 +125,7 @@ type App struct {
 	appCodec          codec.Codec
 	txConfig          client.TxConfig
 	interfaceRegistry codectypes.InterfaceRegistry
+	warmKeyGrantHooks bool
 
 	// keepers
 	AccountKeeper         authkeeper.AccountKeeper
@@ -286,6 +287,11 @@ func New(
 		//init code:
 		panic(err)
 	}
+
+	// Install before InitChain/upgrade migrations. SDK #23 shares the hook
+	// slot with the message-server keeper copy. Older SDKs use the post
+	// handler instead; never install both writers for the same grant.
+	app.warmKeyGrantHooks = installWarmKeyGrantHooks(&app.AuthzKeeper, app.InferenceKeeper.WarmKeyAuthzHooks())
 
 	app.CollateralKeeper.SetRequiredCollateralProvider(app.InferenceKeeper)
 	app.CollateralKeeper.SetMaintenanceChecker(&app.InferenceKeeper)

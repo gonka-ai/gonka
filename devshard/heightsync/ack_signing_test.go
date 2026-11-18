@@ -69,11 +69,12 @@ func TestVerifyAckAllowed_ColdWarmSibling(t *testing.T) {
 
 	actors := signing.SlotActors{
 		SlotKeys: map[uint32]string{0: cold.Address(), 1: cold.Address(), 2: other.Address()},
-		WarmKeys: map[uint32]string{0: warm.Address()},
+		History:  signing.WarmKeyHistory{0: {{Addr: warm.Address(), FromNonce: 1, GrantID: 1}}},
+		Nonce:    5,
 	}
 	require.NoError(t, VerifyAckAllowed(v, ack, actors), "sibling bound warm key")
 
-	actors.WarmKeys = nil
+	actors.History = nil
 	actors.AcceptWarm = func(slotID uint32, recovered, expected string) bool {
 		return slotID == 1 && recovered == warm.Address() && expected == cold.Address()
 	}
