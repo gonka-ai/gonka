@@ -9,8 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/proto"
-
 	"common/completionapi"
 
 	"devshard/heightsync"
@@ -635,7 +633,7 @@ func resolveFinishMessage(finishTx []byte, localMempool []*types.DevshardTx, inf
 
 func decodeFinishTx(finishTx []byte) *types.MsgFinishInference {
 	tx := &types.DevshardTx{}
-	if err := proto.Unmarshal(finishTx, tx); err != nil {
+	if err := types.UnmarshalHostTx(finishTx, tx); err != nil {
 		return nil
 	}
 	return tx.GetFinishInference()

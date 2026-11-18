@@ -743,7 +743,11 @@ func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types
 	if err != nil {
 		return nil, false, err
 	}
-	return diffs, true, nil
+	n := wireBudgetPrefix(diffs, maxCatchUpWireBytes)
+	if n < len(diffs) && diffs[n-1].Nonce < target {
+		return nil, false, nil
+	}
+	return diffs[:n], true, nil
 }
 
 // hostCatchUpLock serializes chunked catch-up to one host.
@@ -1149,6 +1153,7 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 	if resp == nil {
 		return ErrNilHostResponse
 	}
+	resp = admissibleHostMempool(resp)
 	// A response without a state hash is not checked against a root, so its
 	// nonce is the only bound on the host's cursor.
 	if resp.Nonce > s.nonce {
@@ -1332,12 +1337,8 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
-	candidates = append(candidates, pending...)
-	candidates = append(candidates, extraTxs...)
-
 	hasStart := false
-	for _, tx := range candidates {
+	for _, tx := range slices.Concat(pending, extraTxs) {
 		if tx.GetStartInference() != nil {
 			hasStart = true
 			break
@@ -1348,6 +1349,16 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 			return types.Diff{}, 0, err
 		}
 	}
+
+	pending, overflow, err := s.boundPendingToDiffBudgetLocked(nonce, pending, extraTxs, includePinned)
+	if err != nil {
+		return types.Diff{}, 0, err
+	}
+	held = append(held, overflow...)
+
+	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
+	candidates = append(candidates, pending...)
+	candidates = append(candidates, extraTxs...)
 
 	var diff types.Diff
 	if s.store != nil {
@@ -2288,6 +2299,7 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 		if len(chunk) == 0 {
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
 		}
+		chunk = chunk[:wireBudgetPrefix(chunk, maxCatchUpWireBytes)]
 		chunkNonce := chunk[len(chunk)-1].Nonce
 
 		logging.Info("sendCatchUp chunk", "subsystem", "finalize", "escrow", s.escrowID,
@@ -2622,8 +2634,6 @@ func hostMayProposeTx(tx *types.DevshardTx) bool {
 		return inner.Validation != nil
 	case *types.DevshardTx_ValidationVote:
 		return inner.ValidationVote != nil
-	case *types.DevshardTx_RevealSeed:
-		return inner.RevealSeed != nil
 	case *types.DevshardTx_HeightAck:
 		return inner.HeightAck != nil
 	default:
@@ -2854,6 +2864,13 @@ const recoveryHostIdx = -1
 // and skip the envelope check.
 func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse, tx *types.DevshardTx) {
 	if tx == nil {
+		return
+	}
+	tx = canonicalHostTx(tx)
+	if size := proto.Size(tx); size > maxHostTxBytes {
+		logging.Warn("dropped oversized host-proposed tx",
+			"subsystem", "session", "escrow", s.escrowID, "host_idx", hostIdx,
+			"tx_type", fmt.Sprintf("%T", tx.GetTx()), "tx_bytes", size)
 		return
 	}
 	if !hostMayProposeTx(tx) {
@@ -3264,7 +3281,7 @@ func (s *Session) errorMissResponseHash(inferenceID uint64, finishTx []byte) []b
 		return rec.ResponseHash
 	}
 	tx := &types.DevshardTx{}
-	if err := proto.Unmarshal(finishTx, tx); err != nil {
+	if err := types.UnmarshalHostTx(finishTx, tx); err != nil {
 		return nil
 	}
 	if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {

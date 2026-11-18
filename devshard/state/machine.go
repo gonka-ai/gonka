@@ -1537,6 +1537,9 @@ func (sm *StateMachine) checkFinishLocked(rec *types.InferenceRecord, msg *types
 	if len(msg.ResponseHash) != sha256.Size || len(msg.ServedHash) != sha256.Size {
 		return 0, fmt.Errorf("%w: response %d bytes, served %d bytes", types.ErrInvalidFinishHash, len(msg.ResponseHash), len(msg.ServedHash))
 	}
+	if len(msg.ObservedBlockHash) > heightsync.MaxObservedBlockHashBytes {
+		return 0, fmt.Errorf("%w: observed block hash %d bytes", types.ErrInvalidFinishHash, len(msg.ObservedBlockHash))
+	}
 	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
 	if !ok {
 		return 0, fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
