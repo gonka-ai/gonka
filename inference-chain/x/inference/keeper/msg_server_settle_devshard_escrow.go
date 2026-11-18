@@ -219,9 +219,9 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		assignedToSlot := uint64(0)
 		if treatAsCurrentEpochSettle[addr] {
 			var err error
-			assignedToSlot, err = devshardAssignedUpperBoundForSlot(msg.Nonce, totalSlots, hs.SlotId)
+			assignedToSlot, err = devshardAssignedForSettlement(msg.StateRootAndProtocolVersion, msg.Nonce, totalSlots, hs)
 			if err != nil {
-				return nil, fmt.Errorf("failed to derive assigned upper bound for slot %d: %w", hs.SlotId, err)
+				return nil, fmt.Errorf("failed to resolve assigned count for slot %d: %w", hs.SlotId, err)
 			}
 		}
 		// TODO: waive only challenge-window misses. Host stats are epoch totals, so all misses are waived for now.

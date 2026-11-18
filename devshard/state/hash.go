@@ -235,6 +235,7 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 			CompletedValidations: s.CompletedValidations,
 			Validated:            s.Validated,
 			Finished:             s.Finished,
+			Assigned:             s.Assigned,
 		})
 	}
 

@@ -70,6 +70,9 @@ type InferenceRecord struct {
 
 // HostStats tracks per-host performance metrics within a session.
 type HostStats struct {
+	// Assigned counts accepted StartInference messages routed to this slot.
+	// It is cumulative across sealing and is populated by v7+ protocols only.
+	Assigned             uint64
 	Missed               uint32
 	Invalid              uint32
 	Cost                 uint64

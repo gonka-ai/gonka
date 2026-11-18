@@ -758,3 +758,49 @@ func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "address is not allowed to create devshard escrows")
 }
+
+func TestSettleDevshardEscrow_AssignedExcludesServiceNonces(t *testing.T) {
+	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keys, addrs := generateDevshardKeys(t, 2)
+	for _, addr := range addrs {
+		setParticipantForDevshardTest(t, k, ctx, addr)
+	}
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 5))
+	setActiveParticipantsForDevshardTest(t, k, ctx, 5, addrs...)
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0x25
+	escrow := types.DevshardEscrow{Id: 1, Creator: creator.String(), Amount: 5000,
+		Slots: []string{addrs[0], addrs[0], addrs[1], addrs[1]}, EpochIndex: 5}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+	stats := []*types.DevshardSettlementHostStats{
+		{SlotId: 0, Assigned: 0},
+		{SlotId: 1, Assigned: 3, Missed: 1, Invalid: 1},
+		{SlotId: 2, Assigned: 1},
+		{SlotId: 3, Assigned: 0},
+	}
+	msg := buildSettlementTestDataWithVersion(t, escrow,
+		[]*dcrdsecp.PrivateKey{keys[0], keys[0], keys[1], keys[1]}, stats, 0, 100, "v7")
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, creator, gomock.Any(), gomock.Eq("devshard_escrow_refund")).
+		Return(nil)
+	mocks.BankKeeper.EXPECT().
+		LogSubAccountTransaction(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		AnyTimes()
+	_, err = ms.SettleDevshardEscrow(ctx, msg)
+	require.NoError(t, err)
+
+	first, found := k.GetParticipant(ctx, addrs[0])
+	require.True(t, found)
+	require.Equal(t, uint64(2), first.CurrentEpochStats.InferenceCount, "3 starts - 1 miss, even with 100 nonces")
+	require.Equal(t, uint64(1), first.CurrentEpochStats.MissedRequests)
+	require.Equal(t, uint64(1), first.CurrentEpochStats.InvalidatedInferences)
+	require.Equal(t, uint64(1), first.CurrentEpochStats.ValidatedInferences)
+	second, found := k.GetParticipant(ctx, addrs[1])
+	require.True(t, found)
+	require.Equal(t, uint64(1), second.CurrentEpochStats.InferenceCount, "empty slots contribute no inferred work")
+	stored, found := k.GetDevshardEscrow(ctx, escrow.Id)
+	require.True(t, found)
+	require.True(t, stored.Settled)
+}

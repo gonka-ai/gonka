@@ -1,8 +1,8 @@
 # What a settlement would record, before settling
 
-A settlement submits `MsgSettleDevshardEscrow`, and the part of it that concerns a host is one `host_stats` entry per slot: `slot_id`, `missed`, `invalid`, `cost`, `required_validations`, `completed_validations`, `validated`, `finished`.
+A settlement submits `MsgSettleDevshardEscrow`, and the part of it that concerns a host is one `host_stats` entry per slot: `slot_id`, `missed`, `invalid`, `cost`, `required_validations`, `completed_validations`, `validated`, `finished`, and (v7+) `assigned`.
 
-Every one of those numbers except `cost` is already visible while the escrow is live, per participant and per slot, at
+Every one of those numbers except `cost` and `assigned` is already visible while the escrow is live, per participant and per slot, at
 
 ```
 GET /api/v1/epochs/{epoch}/participants
@@ -45,3 +45,5 @@ Drift between the two is normal while an escrow is live and converges on its own
 - `clock_drift` — the host's signed receipt stamps a deadline the chain measures from, so a drifted clock can get a nonce voted timed out while the answer is still being written. Expect `protocol_misses` to follow.
 
 Both are visible per host long before a settlement records the consequence.
+
+For v7, `assigned` is the cumulative number of accepted inference starts for the slot, rather than its share of all nonces. It is carried in snapshots and settlement JSON; the live participant accounting view does not publish it yet. See [v7 Assigned accounting](./v7-assigned-accounting.md).

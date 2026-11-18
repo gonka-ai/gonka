@@ -17,6 +17,7 @@ import (
 	"devshard/internal/testutil"
 	"devshard/logging"
 	"devshard/signing"
+	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
@@ -179,15 +180,20 @@ func (c *hideInferenceMempoolClient) Send(ctx context.Context, req host.HostRequ
 }
 
 type storedFinalizeFixture struct {
-	store   *storage.SQLite
-	group   []types.SlotAssignment
-	user    *signing.Secp256k1Signer
-	clients []HostClient
-	session *Session
+	protocol string
+	store    *storage.SQLite
+	group    []types.SlotAssignment
+	user     *signing.Secp256k1Signer
+	clients  []HostClient
+	session  *Session
 }
 
-func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c HostClient) HostClient) *storedFinalizeFixture {
+func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c HostClient) HostClient, protocols ...string) *storedFinalizeFixture {
 	t.Helper()
+	protocol := testutil.RuntimeTestVersion
+	if len(protocols) != 0 {
+		protocol = protocols[0]
+	}
 	store, err := storage.NewSQLite(filepath.Join(t.TempDir(), "test.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
@@ -202,7 +208,7 @@ func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c Hos
 	verifier := signing.NewSecp256k1Verifier()
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
+		Version:        protocol,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -211,7 +217,7 @@ func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c Hos
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, state.WithStateRootAndProtocolVersion(protocol))
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
@@ -220,7 +226,7 @@ func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c Hos
 		}
 	}
 
-	userSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	userSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier, state.WithStateRootAndProtocolVersion(protocol))
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, WithStorage(store))
 	require.NoError(t, err)
 
@@ -229,12 +235,12 @@ func newStoredFinalizeFixture(t *testing.T, numHosts int, wrap func(i int, c Hos
 		_, err := session.SendInference(ctx, finalizeTestParams())
 		require.NoError(t, err)
 	}
-	return &storedFinalizeFixture{store: store, group: group, user: user, clients: clients, session: session}
+	return &storedFinalizeFixture{protocol: protocol, store: store, group: group, user: user, clients: clients, session: session}
 }
 
 func (f *storedFinalizeFixture) recover(t *testing.T) *Session {
 	t.Helper()
-	recovered, _, err := RecoverSession(f.store, f.user, signing.NewSecp256k1Verifier(), "escrow-1", testutil.RuntimeTestVersion, f.group, f.clients)
+	recovered, _, err := RecoverSession(f.store, f.user, signing.NewSecp256k1Verifier(), "escrow-1", f.protocol, f.group, f.clients, state.WithStateRootAndProtocolVersion(f.protocol))
 	require.NoError(t, err)
 	return recovered
 }
@@ -623,4 +629,44 @@ func TestFinalize_ResumeRefreshDoesNotPushCatchUpToLaggingHost(t *testing.T) {
 	require.NoError(t, session.Finalize(ctx))
 	require.Equal(t, types.PhaseSettlement, session.StateMachine().Phase())
 	require.True(t, session.HasQuorumAt(session.Nonce()))
+}
+
+func TestAssignedRecoveryFromSnapshotAndJournalTail(t *testing.T) {
+	f := newStoredFinalizeFixture(t, 3, nil, "v7")
+	require.NoError(t, f.session.sendDiffRound(context.Background(), nil, true))
+	require.NoError(t, f.session.FlushSnapshot())
+	_, err := f.session.SendInference(context.Background(), finalizeTestParams())
+	require.NoError(t, err)
+	want := f.session.StateMachine().SnapshotState()
+	recovered := f.recover(t)
+	require.Equal(t, want, recovered.StateMachine().SnapshotState())
+	journalOnly, _, err := RecoverSession(assignedJournalOnlyStorage{f.store}, f.user, signing.NewSecp256k1Verifier(),
+		"escrow-1", "v7", f.group, f.clients)
+	require.NoError(t, err)
+	require.Equal(t, want, journalOnly.StateMachine().SnapshotState(), "full replay also reconstructs Assigned")
+
+	var count uint64
+	for _, hs := range want.HostStats {
+		count += hs.Assigned
+	}
+	require.Equal(t, uint64(4), count)
+	require.Greater(t, want.LatestNonce, count)
+	require.NoError(t, recovered.Finalize(context.Background()))
+	sigs, err := recovered.SettlementSignatures(recovered.Nonce())
+	require.NoError(t, err)
+	payload, err := state.BuildSettlement("escrow-1", recovered.StateMachine().SnapshotState(), sigs, recovered.Nonce())
+	require.NoError(t, err)
+	count = 0
+	for _, hs := range payload.HostStats {
+		count += hs.Assigned
+	}
+	require.Equal(t, uint64(4), count, "finalization and drain do not add assignments")
+}
+
+// Force the production recovery path to rebuild state from the persisted diff
+// journal, independently of the snapshot path tested above.
+type assignedJournalOnlyStorage struct{ storage.Storage }
+
+func (assignedJournalOnlyStorage) LoadSnapshot(string) (uint64, []byte, error) {
+	return 0, nil, nil
 }
