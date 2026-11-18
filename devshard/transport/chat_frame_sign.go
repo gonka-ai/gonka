@@ -21,8 +21,9 @@ const (
 	// DefaultChatFrameSignEvery is how many chunks share one signature.
 	DefaultChatFrameSignEvery = 13
 	// MaxChatFrameJoin bounds a gateway's request. A joined group holds tokens
-	// until it fills, and the gateway cancels a winner that stays silent for its
-	// inter-chunk stall timeout, so the group has to fill well inside it.
+	// until it fills. The gateway's inter-chunk stall allowance grows with
+	// Join, so a group of this size is the same number of token intervals as
+	// the default group is inside the base allowance.
 	MaxChatFrameJoin = 64
 	// MaxChatFrameSignEvery bounds how many chunks can pass between signatures.
 	// The interval does not hold tokens.
@@ -173,20 +174,28 @@ func (s *ChatFrameSigner) sign(tokenCount uint64) ([]byte, uint64, error) {
 // hash has reached exactly that many. Failures do not stop the stream; Check
 // reports the first.
 type ChatFrameVerifier struct {
-	escrowID       string
-	inferenceID    uint64
-	authorized     func(address string) bool
-	stream         hash.Hash
-	streamBytes    uint64
-	candidates     [][]byte
-	verified       uint64
-	pending        []pendingFrameSig
-	lastAt         uint64
-	check          host.ChatFrameCheck
-	closed         bool
-	event          []byte
-	contentTokens  uint64
-	countAbandoned bool
+	escrowID        string
+	inferenceID     uint64
+	authorized      func(address string) bool
+	stream          hash.Hash
+	streamBytes     uint64
+	candidates      [][]byte
+	verified        uint64
+	pending         []pendingFrameSig
+	lastAt          uint64
+	check           host.ChatFrameCheck
+	closed          bool
+	contentTokens   uint64
+	sawFinishReason bool
+	sawError        bool
+	// notedBytes is how much of the stream NoteEvent has classified. A
+	// signature's token count waits until the events in its prefix are noted.
+	notedBytes    uint64
+	pendingCounts []pendingTokenCount
+}
+
+type pendingTokenCount struct {
+	at, claimed uint64
 }
 
 type pendingFrameSig struct {
@@ -243,8 +252,9 @@ func (v *ChatFrameVerifier) Frame(sig []byte, streamBytes, tokenCount uint64) {
 }
 
 // Write folds decompressed stream bytes into the prefix hash, stopping at
-// each byte a pending signature names. The same bytes are scanned for content
-// tokens, so a verified token_count can be compared with the prefix it signs.
+// each byte a pending signature names. It does not parse the events. The
+// reader that already has a finished event reports it with NoteEvent, and the
+// token count is compared once those events cover the signature's prefix.
 func (v *ChatFrameVerifier) Write(p []byte) {
 	for len(p) > 0 {
 		if len(v.pending) == 0 || v.check.Invalid != "" {
@@ -261,46 +271,63 @@ func (v *ChatFrameVerifier) Write(p []byte) {
 func (v *ChatFrameVerifier) absorb(p []byte) {
 	v.stream.Write(p)
 	v.streamBytes += uint64(len(p))
-	v.noteContent(p)
 }
 
-// maxChatFrameEventScan bounds the unfinished SSE event kept while counting
-// content tokens. Past it the count is abandoned rather than held in memory.
+// maxChatFrameEventScan is the unfinished-event size where the executor stops
+// retaining a line's body. A complete line is classified, the class is kept
+// until the blank line, and the body is dropped. Later events are still
+// counted. The gateway classifies the finished event NoteEvent already holds,
+// so a line of this size is counted here too.
 const maxChatFrameEventScan = 1 << 20
 
-func (v *ChatFrameVerifier) noteContent(p []byte) {
-	if v.countAbandoned || len(p) == 0 {
+// NoteEvent classifies one finished SSE event with the same predicate the
+// executor used to schedule it. Write has already hashed these bytes. A line
+// longer than the executor's scan cap is still classified: the reader already
+// has the finished event.
+func (v *ChatFrameVerifier) NoteEvent(ev []byte) {
+	if v == nil || len(ev) == 0 {
 		return
 	}
-	v.event = append(v.event, p...)
-	for {
-		i := bytes.Index(v.event, []byte("\n\n"))
-		if i < 0 {
-			if len(v.event) > maxChatFrameEventScan {
-				v.event = nil
-				v.countAbandoned = true
-			}
-			return
-		}
-		ev := v.event[:i+2]
-		v.event = v.event[i+2:]
-		if len(v.event) == 0 {
-			v.event = nil
-		}
-		if sseEventContentToken(ev) {
-			v.contentTokens++
-		}
+	v.notedBytes += uint64(len(ev))
+	sc := scanSSE(ev)
+	if sc.finish {
+		v.sawFinishReason = true
 	}
+	if sc.failed {
+		v.sawError = true
+	}
+	if sc.kind == sseContent {
+		v.contentTokens++
+	}
+	// [DONE] with no finish_reason is a bad close. An error object is its
+	// own close, so that stream is not this fault.
+	if sc.done && !v.sawFinishReason && !v.sawError {
+		v.check.DoneWithoutFinish = true
+	}
+	v.settleCounts()
 }
 
-func (v *ChatFrameVerifier) noteVerifiedCount(claimed uint64) {
+func (v *ChatFrameVerifier) noteVerifiedCount(claimed, at uint64) {
 	v.check.TokenCounts = append(v.check.TokenCounts, claimed)
-	if v.countAbandoned || v.check.TokenCountMismatch {
+	if v.check.TokenCountMismatch {
 		return
 	}
-	v.check.TokenCount = claimed
-	v.check.ContentTokens = v.contentTokens
-	v.check.TokenCountMismatch = claimed != v.contentTokens
+	v.pendingCounts = append(v.pendingCounts, pendingTokenCount{at: at, claimed: claimed})
+	v.settleCounts()
+}
+
+func (v *ChatFrameVerifier) settleCounts() {
+	for len(v.pendingCounts) > 0 && v.notedBytes >= v.pendingCounts[0].at {
+		c := v.pendingCounts[0]
+		v.pendingCounts = v.pendingCounts[1:]
+		v.check.TokenCount = c.claimed
+		v.check.ContentTokens = v.contentTokens
+		v.check.TokenCountMismatch = c.claimed != v.contentTokens
+		if v.check.TokenCountMismatch {
+			v.pendingCounts = nil
+			return
+		}
+	}
 }
 
 // Close reports a signature whose bytes never arrived, and whether the key
@@ -310,6 +337,10 @@ func (v *ChatFrameVerifier) Close() {
 		return
 	}
 	v.closed = true
+	// A trailing partial event is not a content token. The events NoteEvent
+	// already classified are the whole count.
+	v.notedBytes = v.streamBytes
+	v.settleCounts()
 	if len(v.pending) > 0 {
 		v.fail("the stream ended at %d bytes, before the %d a signature covers", v.streamBytes, v.pending[0].at)
 	}
@@ -349,7 +380,7 @@ func (v *ChatFrameVerifier) verify(p pendingFrameSig) {
 			return
 		}
 		v.verified++
-		v.noteVerifiedCount(p.tokens)
+		v.noteVerifiedCount(p.tokens, p.at)
 		return
 	}
 	var kept [][]byte
@@ -364,7 +395,7 @@ func (v *ChatFrameVerifier) verify(p pendingFrameSig) {
 	}
 	v.candidates = kept
 	v.verified++
-	v.noteVerifiedCount(p.tokens)
+	v.noteVerifiedCount(p.tokens, p.at)
 }
 
 func (v *ChatFrameVerifier) fail(format string, args ...any) {
@@ -387,59 +418,156 @@ const (
 	sseContent
 	sseTerminal
 	sseProtocol
+	// sseFinish is a finish_reason or usage event with no content token.
+	// It is held until [DONE] and written into that same tail.
+	sseFinish
 )
+
+// sseClass is one finished SSE event. finish is a non-empty finish_reason.
+// done is [DONE]. failed is an error object.
+type sseClass struct {
+	kind   sseKind
+	finish bool
+	done   bool
+	failed bool
+}
+
+// sseFold is the class of an event built one complete line at a time.
+// active means some of those lines were already sent and dropped. carryNewline
+// means the dropped bytes ended on '\n', so the next '\n' ends the event.
+// stop means a terminal line ended the classification.
+type sseFold struct {
+	class        sseClass
+	sawFinish    bool
+	active       bool
+	carryNewline bool
+	stop         bool
+}
+
+// resolved applies the finish-without-content rule once the event has ended.
+func (f sseFold) resolved() sseClass {
+	if f.stop {
+		return f.class
+	}
+	out := f.class
+	if out.kind == sseContent {
+		return out
+	}
+	if f.sawFinish {
+		out.kind = sseFinish
+	}
+	return out
+}
 
 // classifySSE reads one finished SSE event. A content token is a non-empty
 // content, reasoning, or tool-call delta, or a data line that is not JSON.
-// [DONE] and an error object are terminal. JSON with no choices (the receipt,
-// devshard_meta) is protocol and stays in the stream. A role-only delta, an
-// empty delta, and a comment are ignored: they do not join, sign, or count.
+// [DONE] and an error object are terminal. A finish_reason or usage object
+// with no content token is sseFinish: it joins [DONE] and is not a token.
+// JSON with no choices and no usage (the receipt, devshard_meta) is protocol
+// and stays in the stream. A role-only delta, an empty delta, and a comment
+// are ignored: they do not join, sign, or count.
 func classifySSE(event []byte) sseKind {
-	kind := sseIgnore
+	return scanSSE(event).kind
+}
+
+func scanSSE(event []byte) sseClass {
+	var f sseFold
 	for _, line := range strings.Split(string(event), "\n") {
-		data, ok := strings.CutPrefix(line, "data:")
-		if !ok {
-			continue
-		}
-		data = strings.TrimSpace(data)
-		if data == "" {
-			continue
-		}
-		if data == "[DONE]" {
-			return sseTerminal
-		}
-		var chunk struct {
-			Error   json.RawMessage `json:"error"`
-			Choices []struct {
-				Delta   sseDelta `json:"delta"`
-				Message sseDelta `json:"message"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			kind = sseContent
-			continue
-		}
-		if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
-			return sseTerminal
-		}
-		if len(chunk.Choices) == 0 {
-			if kind != sseContent {
-				kind = sseProtocol
-			}
-			continue
-		}
-		for _, choice := range chunk.Choices {
-			if choice.Delta.carriesOutput() || choice.Message.carriesOutput() {
-				kind = sseContent
-				break
-			}
+		f = foldSSELine(f, line)
+		if f.stop {
+			return f.class
 		}
 	}
-	return kind
+	return f.resolved()
+}
+
+// foldSSELine updates the class with one SSE line. A later line can still
+// change it: content wins over finish. The line itself is not retained.
+func foldSSELine(f sseFold, line string) sseFold {
+	if f.stop {
+		return f
+	}
+	data, ok := strings.CutPrefix(line, "data:")
+	if !ok {
+		return f
+	}
+	data = strings.TrimSpace(data)
+	if data == "" {
+		return f
+	}
+	if data == "[DONE]" {
+		f.class.kind = sseTerminal
+		f.class.done = true
+		f.stop = true
+		return f
+	}
+	var chunk struct {
+		Error   json.RawMessage `json:"error"`
+		Usage   json.RawMessage `json:"usage"`
+		Choices []struct {
+			FinishReason json.RawMessage `json:"finish_reason"`
+			Delta        sseDelta        `json:"delta"`
+			Message      sseDelta        `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+		f.class.kind = sseContent
+		return f
+	}
+	if len(chunk.Error) > 0 && string(chunk.Error) != "null" {
+		f.class.kind = sseTerminal
+		f.class.failed = true
+		f.stop = true
+		return f
+	}
+	if jsonPresent(chunk.Usage) {
+		f.sawFinish = true
+	}
+	if len(chunk.Choices) == 0 {
+		if f.class.kind != sseContent && !f.sawFinish {
+			f.class.kind = sseProtocol
+		}
+		return f
+	}
+	for _, choice := range chunk.Choices {
+		if jsonPresent(choice.FinishReason) {
+			f.sawFinish = true
+			f.class.finish = true
+		}
+		if choice.Delta.carriesOutput() || choice.Message.carriesOutput() {
+			f.class.kind = sseContent
+			break
+		}
+	}
+	return f
+}
+
+// jsonPresent reports a JSON value that is there and is not null or "".
+func jsonPresent(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	return s != "" && s != "null" && s != `""`
 }
 
 func sseEventContentToken(event []byte) bool {
 	return classifySSE(event) == sseContent
+}
+
+// ContentTokens counts finished SSE events in p that the signature schedule
+// counts as content tokens. A trailing partial event is not a token. One
+// joined frame can carry several events, so the count is not the chunk count.
+func ContentTokens(p []byte) int {
+	n := 0
+	for len(p) > 0 {
+		i := bytes.Index(p, []byte("\n\n"))
+		if i < 0 {
+			return n
+		}
+		if sseEventContentToken(p[:i+2]) {
+			n++
+		}
+		p = p[i+2:]
+	}
+	return n
 }
 
 func sseEventTerminal(event []byte) bool {

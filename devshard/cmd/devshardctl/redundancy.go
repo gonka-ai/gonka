@@ -65,6 +65,16 @@ var (
 	StreamingAttemptHardTimeout = 30 * time.Minute
 )
 
+const (
+	// outputTokenThroughputWindow is the trailing span of content tokens the
+	// gateway keeps. Marks older than this leave the rate.
+	outputTokenThroughputWindow = time.Minute
+	// MinOutputTokensPerMinute is the warn floor for that window. A live
+	// attempt under it is logged the way a stall is recorded. Escalation
+	// stays on the stall path until a later change.
+	MinOutputTokensPerMinute int64 = 30
+)
+
 const DefaultMaxSpeculativeAttempts = 2
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
@@ -890,27 +900,33 @@ type inflight struct {
 	catchUpFirst    bool
 	requestSentNano atomic.Int64 // unix nano; 0 while the catch-up runs
 
-	tokenOnce         sync.Once
-	firstTokenNano    atomic.Int64 // unix nano; 0 means no chunk of any kind yet
-	firstTokenCh      chan struct{}
-	outputChunks      atomic.Int64
-	contentChunks     atomic.Int64
-	outputBytes       atomic.Int64
-	lastChunkAt       atomic.Int64
-	maxChunkGap       atomic.Int64
-	maxChunkGapAt     atomic.Int64
-	firstContentNano  atomic.Int64
-	stallMu           sync.Mutex
-	stallActive       bool
-	stalls            []attemptStall
-	forwardedLog      sync.Once
-	suppressedLog     sync.Once
-	ctxCancelledLog   sync.Once
-	hardTimeoutLog    sync.Once
-	sampleOnce        sync.Once
-	limiterStrikeOnce sync.Once
-	processOnce       sync.Once
-	processErr        error
+	tokenOnce        sync.Once
+	firstTokenNano   atomic.Int64 // unix nano; 0 means no chunk of any kind yet
+	firstTokenCh     chan struct{}
+	outputChunks     atomic.Int64
+	contentChunks    atomic.Int64
+	outputBytes      atomic.Int64
+	outputTokens     atomic.Int64 // content tokens, not chunks
+	lastChunkAt      atomic.Int64
+	maxChunkGap      atomic.Int64
+	maxChunkGapAt    atomic.Int64
+	firstContentNano atomic.Int64
+	stallMu          sync.Mutex
+	stallActive      bool
+	stalls           []attemptStall
+	// outputTokenMarks is the content tokens noted inside the trailing minute.
+	// The write goroutine is the only one that touches it.
+	outputTokenMarks   []tokenMark
+	throughputLow      bool
+	throughputEpisodes []throughputEpisode
+	forwardedLog       sync.Once
+	suppressedLog      sync.Once
+	ctxCancelledLog    sync.Once
+	hardTimeoutLog     sync.Once
+	sampleOnce         sync.Once
+	limiterStrikeOnce  sync.Once
+	processOnce        sync.Once
+	processErr         error
 
 	// pendingBuf holds bytes received before any content event was observed.
 	// Each attempt has at most one writer goroutine driving Write/Flush, so no
@@ -1129,6 +1145,22 @@ func (inf *inflight) captureShortContentResponseChunk(p []byte) {
 	inf.shortContentResponseBody = append(inf.shortContentResponseBody, p...)
 }
 
+// tokenMark is one observation of content tokens. A joined frame is one mark
+// whose n is the events in that frame, not 1 per chunk.
+type tokenMark struct {
+	at int64
+	n  int64
+}
+
+// throughputEpisode is a stretch where the trailing minute stayed under
+// MinOutputTokensPerMinute. End is zero while it is still low. A later
+// upgrade can escalate from these the way it escalates from a stall.
+type throughputEpisode struct {
+	Start  time.Time
+	End    time.Time
+	Tokens int64
+}
+
 type attemptStall struct {
 	StartTime           time.Time
 	DetectedTime        time.Time
@@ -1180,7 +1212,7 @@ func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 		return attemptStall{}, false
 	}
 	start := time.Unix(0, lastChunkAt)
-	if now.Sub(start) < InterChunkStallLogThreshold {
+	if now.Sub(start) < interChunkStallAllowance() {
 		return attemptStall{}, false
 	}
 	if inf.contentChunks.Load() == 0 {
@@ -1801,6 +1833,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 			// Handle a newline-less final event buffered into classifyPartial.
 			rw.inf.usageComplTokens.Store(tokens)
 		}
+		rw.inf.noteOutputTokens(rw.group.logCtx, now, transport.ContentTokens(parseable))
 	}
 	if chunkHasContent || chunkHasError {
 		rw.inf.contentChunks.Add(1)
@@ -2700,7 +2733,77 @@ func interChunkStallDeadline(inf *inflight) (time.Time, bool) {
 	if lastChunkAt <= 0 {
 		return time.Time{}, false
 	}
-	return time.Unix(0, lastChunkAt).Add(InterChunkStallLogThreshold), true
+	return time.Unix(0, lastChunkAt).Add(interChunkStallAllowance()), true
+}
+
+// chatFrameJoin is the content-token group the gateway asked for. An unset
+// schedule is the executor default.
+func chatFrameJoin() int {
+	if chatFrameSchedule == nil || chatFrameSchedule.Join == 0 {
+		return transport.DefaultChatFrameJoin
+	}
+	join := int(chatFrameSchedule.Join)
+	if join > transport.MaxChatFrameJoin {
+		return transport.MaxChatFrameJoin
+	}
+	return join
+}
+
+// interChunkStallAllowance is how long a winner may stay silent between
+// frames. The base threshold is the budget for the default join. The silence
+// is about Join token intervals, so the allowance is that budget scaled by
+// Join.
+func interChunkStallAllowance() time.Duration {
+	return InterChunkStallLogThreshold * time.Duration(chatFrameJoin()) / time.Duration(transport.DefaultChatFrameJoin)
+}
+
+// noteOutputTokens records content tokens from one forwarded buffer and, once
+// a minute of content has passed, warns when the trailing minute is under
+// MinOutputTokensPerMinute. n is events, so one joined frame counts as every
+// token it carries. The warning is the stall's shape: one episode, no abort.
+func (inf *inflight) noteOutputTokens(ctx context.Context, now time.Time, n int) {
+	if inf == nil || inf.probe {
+		return
+	}
+	if n > 0 {
+		inf.outputTokenMarks = append(inf.outputTokenMarks, tokenMark{at: now.UnixNano(), n: int64(n)})
+		inf.outputTokens.Add(int64(n))
+	}
+	cutoff := now.Add(-outputTokenThroughputWindow).UnixNano()
+	drop := 0
+	for drop < len(inf.outputTokenMarks) && inf.outputTokenMarks[drop].at < cutoff {
+		drop++
+	}
+	inf.outputTokenMarks = inf.outputTokenMarks[drop:]
+	if inf.firstContentNano.Load() == 0 || now.Sub(inf.firstContentAt()) < outputTokenThroughputWindow {
+		return
+	}
+	var rate int64
+	for _, mark := range inf.outputTokenMarks {
+		rate += mark.n
+	}
+	if rate >= MinOutputTokensPerMinute {
+		if inf.throughputLow && len(inf.throughputEpisodes) > 0 {
+			inf.throughputEpisodes[len(inf.throughputEpisodes)-1].End = now
+		}
+		inf.throughputLow = false
+		return
+	}
+	if inf.throughputLow {
+		return
+	}
+	inf.throughputLow = true
+	inf.throughputEpisodes = append(inf.throughputEpisodes, throughputEpisode{Start: now, Tokens: rate})
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	logInferenceWarn(ctx, inf.escrowID, inf.nonce, "output_token_throughput",
+		"host", inf.hostID,
+		"tokens_per_minute", rate,
+		"min_tokens_per_minute", MinOutputTokensPerMinute,
+		"window_ms", outputTokenThroughputWindow.Milliseconds(),
+		"output_tokens", inf.outputTokens.Load(),
+	)
 }
 
 func nextInterChunkStallTrigger(attempts []*inflight) (*inflight, time.Time, bool) {
@@ -3097,7 +3200,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				"host", stallInf.hostID,
 				"role", role,
 				"winner_nonce", w,
-				"stall_threshold_ms", InterChunkStallLogThreshold.Milliseconds(),
+				"stall_threshold_ms", interChunkStallAllowance().Milliseconds(),
 				"since_last_chunk_ms", now.Sub(rec.StartTime).Milliseconds(),
 				"output_chunks_before_stall", rec.OutputChunksBefore,
 				"content_chunks_before_stall", rec.ContentChunksBefore,

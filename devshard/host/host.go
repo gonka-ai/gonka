@@ -127,6 +127,10 @@ type ChatFrameCheck struct {
 	TokenCount         uint64
 	ContentTokens      uint64
 	TokenCountMismatch bool
+	// DoneWithoutFinish is set when the stream carried [DONE] and no event
+	// carried a finish_reason. An error object is a close of its own and does
+	// not set this. The gateway logs it and still delivers the stream.
+	DoneWithoutFinish bool
 }
 
 type receiptOutcome struct {

@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"io"
+	"log/slog"
 	"testing"
 	"time"
+
+	"devshard/host"
+	"devshard/transport"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,6 +26,67 @@ func streamAt(inf *inflight, gaps ...time.Duration) {
 		previousNano := inf.lastChunkAt.Swap(inf.lastChunkAt.Load() + int64(gap))
 		inf.recordChunkGap(inf.lastChunkAt.Load() - previousNano)
 	}
+}
+
+func TestInterChunkStallDeadline_ScalesWithJoin(t *testing.T) {
+	t.Cleanup(func() { chatFrameSchedule = nil })
+	last := time.Unix(1_700_000_000, 0)
+	inf := &inflight{done: make(chan struct{})}
+	inf.contentChunks.Store(1)
+	inf.lastChunkAt.Store(last.UnixNano())
+
+	got, ok := interChunkStallDeadline(inf)
+	require.True(t, ok)
+	require.Equal(t, last.Add(InterChunkStallLogThreshold), got)
+
+	chatFrameSchedule = &host.ChatFrameSchedule{Join: 64}
+	got, ok = interChunkStallDeadline(inf)
+	require.True(t, ok)
+	require.Equal(t, last.Add(InterChunkStallLogThreshold*64/time.Duration(transport.DefaultChatFrameJoin)), got)
+
+	_, recorded := inf.startInterChunkStall(last.Add(31 * time.Second))
+	require.False(t, recorded, "31s is inside the join-64 allowance")
+	_, recorded = inf.startInterChunkStall(last.Add(interChunkStallAllowance() + time.Second))
+	require.True(t, recorded)
+}
+
+func TestOutputTokenThroughput_SlidingWindowWarnsOnce(t *testing.T) {
+	var logs bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	now := time.Unix(1_700_000_000, 0)
+	inf := &inflight{escrowID: "escrow-1", nonce: 7, hostID: "host-a"}
+	inf.firstContentNano.Store(now.Add(-2 * time.Minute).UnixNano())
+
+	young := &inflight{escrowID: "escrow-1", nonce: 8, hostID: "host-a"}
+	young.firstContentNano.Store(now.UnixNano())
+	young.noteOutputTokens(context.Background(), now, 1)
+	require.False(t, young.throughputLow, "the first minute has no rate yet")
+	require.NotContains(t, logs.String(), "output_token_throughput")
+
+	inf.noteOutputTokens(context.Background(), now.Add(-30*time.Second), 5)
+	require.Equal(t, int64(5), inf.outputTokens.Load())
+	require.True(t, inf.throughputLow)
+	require.Contains(t, logs.String(), "output_token_throughput")
+	require.Len(t, inf.throughputEpisodes, 1)
+	require.True(t, inf.throughputEpisodes[0].End.IsZero())
+
+	logs.Reset()
+	inf.noteOutputTokens(context.Background(), now.Add(-20*time.Second), 5)
+	require.NotContains(t, logs.String(), "output_token_throughput")
+	require.Len(t, inf.throughputEpisodes, 1)
+
+	inf.noteOutputTokens(context.Background(), now, int(MinOutputTokensPerMinute))
+	require.False(t, inf.throughputLow)
+	require.False(t, inf.throughputEpisodes[0].End.IsZero())
+
+	logs.Reset()
+	inf.noteOutputTokens(context.Background(), now.Add(2*time.Minute), 0)
+	require.True(t, inf.throughputLow, "marks older than a minute have left the window")
+	require.Contains(t, logs.String(), "output_token_throughput")
+	require.Len(t, inf.throughputEpisodes, 2)
 }
 
 // A host that streams steadily and one that emits a chunk then stops look identical in a chunk

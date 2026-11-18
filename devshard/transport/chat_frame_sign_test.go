@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -87,8 +88,20 @@ func verifyFrames(t *testing.T, frames []sentFrame, allowed func(string) bool) (
 		}
 		require.NoError(t, err)
 	}
+	noteFinishedEvents(v, out.Bytes())
 	v.Close()
 	return out.String(), v.Check()
+}
+
+func noteFinishedEvents(v *ChatFrameVerifier, stream []byte) {
+	for len(stream) > 0 {
+		i := bytes.Index(stream, []byte("\n\n"))
+		if i < 0 {
+			return
+		}
+		v.NoteEvent(stream[:i+2])
+		stream = stream[i+2:]
+	}
 }
 
 type frameFeed struct {
@@ -422,12 +435,215 @@ func TestChatFrameSink_OneFlushWithDoneKeepsTheAnswer(t *testing.T) {
 	})
 }
 
+func TestChatFrameSink_LargeEventIsScheduled(t *testing.T) {
+	const padN = 20 << 10
+	schedule := &host.ChatFrameSchedule{Join: 5, SignEvery: 1}
+
+	t.Run("finished event waits for the next token", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		pad := strings.Repeat("q", padN)
+		_, err := sink.Write([]byte(contentEvent(pad)))
+		require.NoError(t, err)
+		require.NoError(t, sink.FlushErr())
+		require.Empty(t, frames, "a finished event larger than 16 KiB waits for the next token")
+
+		require.NoError(t, relaySSELines(contentEvent("next"), sink))
+		chunks := contentChunks(t, frames)
+		require.Len(t, chunks, 1)
+		require.Contains(t, chunks[0].text, pad)
+		require.NotContains(t, chunks[0].text, contentMarker("next"))
+		require.NotEmpty(t, chunks[0].frame.sig)
+		require.Equal(t, uint64(1), chunks[0].frame.tokens)
+
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.Equal(t, []uint64{1, 2}, check.TokenCounts)
+		require.Equal(t, uint64(2), check.ContentTokens)
+		require.Equal(t, 1, strings.Count(inflateSent(t, sentOnly(frames)), pad))
+	})
+
+	t.Run("non-streaming body", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		pad := strings.Repeat("y", padN)
+		body := fmt.Sprintf("data: {\"choices\":[{\"message\":{\"content\":%q},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", pad)
+		require.Greater(t, len(body), chatGzipCoalesceMax)
+		_, err := sink.Write([]byte(body))
+		require.NoError(t, err)
+		require.NoError(t, sink.FlushErr())
+		require.NoError(t, sink.Close())
+
+		chunks := contentChunks(t, frames)
+		require.Len(t, chunks, 1)
+		require.Contains(t, chunks[0].text, pad)
+		require.Contains(t, chunks[0].text, "data: [DONE]")
+		require.NotEmpty(t, chunks[0].frame.sig)
+		require.Equal(t, uint64(1), chunks[0].frame.tokens)
+		require.Equal(t, 1, signedCount(sentOnly(frames)))
+
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.Equal(t, []uint64{1}, check.TokenCounts)
+		require.Equal(t, uint64(1), check.ContentTokens)
+	})
+
+	t.Run("unfinished tail still leaves", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		pad := strings.Repeat("z", padN)
+		head := `data: {"choices":[{"delta":{"content":"` + pad
+		require.NotContains(t, head, "\n\n")
+		require.GreaterOrEqual(t, len(head), chatGzipCoalesceMax)
+		_, err := sink.Write([]byte(head))
+		require.NoError(t, err)
+		require.Len(t, frames, 1, "a line with no blank line still leaves at 16 KiB")
+		require.Empty(t, frames[0].sig)
+		require.Zero(t, frames[0].tokens)
+
+		_, err = sink.Write([]byte("\"}}]}\n\n"))
+		require.NoError(t, err)
+		require.Len(t, frames, 1, "the token is held until the chunk closes")
+
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+		require.Equal(t, 1, signedCount(sentOnly(frames)))
+		var signed scheduleFrame
+		for _, f := range frames {
+			if len(f.sig) > 0 {
+				signed = f
+			}
+		}
+		require.Equal(t, uint64(1), signed.tokens)
+		require.Equal(t, 1, strings.Count(inflateSent(t, sentOnly(frames)), pad))
+
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.Equal(t, []uint64{1}, check.TokenCounts)
+		require.Equal(t, uint64(1), check.ContentTokens)
+	})
+}
+
+func TestChatFrameSink_LargeLineKeepsTheCount(t *testing.T) {
+	pad := strings.Repeat("q", maxChatFrameEventScan)
+	schedule := &host.ChatFrameSchedule{Join: 5, SignEvery: 1}
+	line := `data: {"choices":[{"delta":{"content":"` + pad + `"}}]}` + "\n"
+	require.Greater(t, len(line), maxChatFrameEventScan)
+
+	stream := func(t *testing.T, sink *ChatFrameSink) {
+		t.Helper()
+		require.NoError(t, relaySSELines(contentEvent("Hi"), sink))
+		_, err := sink.Write([]byte(line))
+		require.NoError(t, err)
+		require.NoError(t, sink.FlushErr())
+		require.Less(t, len(sink.event), 8, "the line is classified and its body dropped before the blank line")
+		_, err = sink.Write([]byte("\n"))
+		require.NoError(t, err)
+		require.NoError(t, sink.FlushErr())
+		require.NoError(t, relaySSELines(contentEvent("after"), sink))
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+	}
+
+	t.Run("content line", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		stream(t, sink)
+
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.Equal(t, uint64(3), check.ContentTokens)
+		require.Equal(t, []uint64{1, 3}, check.TokenCounts)
+		require.Equal(t, 1, strings.Count(inflateSent(t, sentOnly(frames)), pad))
+	})
+
+	t.Run("split across writes", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		require.NoError(t, relaySSELines(contentEvent("Hi"), sink))
+		head, tail := line[:len(line)-1], line[len(line)-1:]
+		require.Greater(t, len(head), maxChatFrameEventScan)
+		require.NotContains(t, head, "\n")
+		_, err := sink.Write([]byte(head))
+		require.NoError(t, err)
+		require.Greater(t, len(sink.event), maxChatFrameEventScan, "a line with no newline is still buffered")
+		_, err = sink.Write([]byte(tail))
+		require.NoError(t, err)
+		require.Less(t, len(sink.event), 8, "the class is kept once the line ends")
+		_, err = sink.Write([]byte("\n"))
+		require.NoError(t, err)
+		require.NoError(t, relaySSELines(contentEvent("after"), sink))
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.Equal(t, uint64(3), check.ContentTokens)
+	})
+
+	t.Run("finish line is not a token", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		finish := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2,"extra":"` + pad + `"}}` + "\n"
+		require.Greater(t, len(finish), maxChatFrameEventScan)
+		require.NoError(t, relaySSELines(contentEvent("Hi"), sink))
+		_, err := sink.Write([]byte(finish))
+		require.NoError(t, err)
+		require.Less(t, len(sink.event), 8)
+		_, err = sink.Write([]byte("\n"))
+		require.NoError(t, err)
+		require.NoError(t, relaySSELines(contentEvent("after"), sink))
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+
+		text, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.False(t, check.DoneWithoutFinish)
+		require.Equal(t, uint64(2), check.ContentTokens)
+		require.Contains(t, text, `"finish_reason":"stop"`)
+		require.Contains(t, text, contentMarker("after"))
+	})
+
+	t.Run("lied count still mismatches", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		body := contentEvent("Hi") + line + "\n" + contentEvent("after") + "data: [DONE]\n\n"
+		signer := NewChatFrameSigner(key, "escrow-1", 1, testPromptHash)
+		signer.add([]byte(body))
+		sig, n, err := signer.sign(0)
+		require.NoError(t, err)
+
+		v := NewChatFrameVerifier("escrow-1", 1, testPromptHash, func(addr string) bool { return addr == key.Address() })
+		v.Frame(sig, n, 0)
+		v.Write([]byte(body))
+		noteFinishedEvents(v, []byte(body))
+		v.Close()
+		check := v.Check()
+		require.Empty(t, check.Invalid)
+		require.True(t, check.TokenCountMismatch)
+		require.Equal(t, uint64(3), check.ContentTokens)
+		require.Equal(t, uint64(0), check.TokenCount)
+	})
+}
+
 func TestChatFrameSink_EmptyContentSendsNothing(t *testing.T) {
 	empty := []string{
 		`data: {"choices":[{"delta":{"role":"assistant","content":""}}]}` + "\n\n",
 		`data: {"choices":[{"delta":{"content":""}}]}` + "\n\n",
 		`data: {"choices":[{"message":{"role":"assistant","content":""}}]}` + "\n\n",
-		`data: {"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"completion_tokens":1}}` + "\n\n",
 		"data: [DONE]\n\n",
 	}
 	schedule := &host.ChatFrameSchedule{Join: 5, SignEvery: 13}
@@ -452,6 +668,163 @@ func TestChatFrameSink_EmptyContentSendsNothing(t *testing.T) {
 		require.NoError(t, sink.FlushErr())
 		require.NoError(t, sink.Close())
 		require.Empty(t, frames)
+	})
+}
+
+func TestChatFrameSink_FinishReasonJoinsDone(t *testing.T) {
+	finish := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}` + "\n\n"
+	schedule := &host.ChatFrameSchedule{Join: 5, SignEvery: 13}
+
+	t.Run("joins the open chunk", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		require.NoError(t, relaySSELines(contentEvent("t1"), sink))
+		require.NoError(t, relaySSELines(contentEvent("t2"), sink))
+		require.NoError(t, relaySSELines(finish, sink))
+		require.Len(t, contentChunks(t, frames), 1)
+		require.NotContains(t, inflateSent(t, sentOnly(frames)), "finish_reason")
+
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+
+		chunks := contentChunks(t, frames)
+		require.Len(t, chunks, 2)
+		require.Contains(t, chunks[0].text, contentMarker("t1"))
+		require.Empty(t, chunks[0].frame.sig)
+		require.Contains(t, chunks[1].text, contentMarker("t2"))
+		require.Contains(t, chunks[1].text, `"finish_reason":"stop"`)
+		require.Contains(t, chunks[1].text, `"completion_tokens":2`)
+		require.Contains(t, chunks[1].text, "data: [DONE]")
+		require.NotEmpty(t, chunks[1].frame.sig)
+		require.Equal(t, uint64(2), chunks[1].frame.tokens)
+
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.False(t, check.DoneWithoutFinish)
+		require.Equal(t, uint64(2), check.ContentTokens)
+	})
+
+	t.Run("one flush", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		body := contentEvent("t1") + contentEvent("t2") + finish + "data: [DONE]\n\n"
+		_, err := sink.Write([]byte(body))
+		require.NoError(t, err)
+		require.NoError(t, sink.FlushErr())
+		require.NoError(t, sink.Close())
+
+		chunks := contentChunks(t, frames)
+		require.Len(t, chunks, 2)
+		require.Contains(t, chunks[1].text, contentMarker("t2"))
+		require.Contains(t, chunks[1].text, `"finish_reason":"stop"`)
+		require.Contains(t, chunks[1].text, "data: [DONE]")
+		require.Equal(t, uint64(2), chunks[1].frame.tokens)
+	})
+
+	t.Run("required without content", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		require.NoError(t, relaySSELines(finish, sink))
+		require.Empty(t, frames)
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+
+		chunks := contentChunks(t, frames)
+		require.Len(t, chunks, 1)
+		require.Contains(t, chunks[0].text, `"finish_reason":"stop"`)
+		require.Contains(t, chunks[0].text, "data: [DONE]")
+		require.NotEmpty(t, chunks[0].frame.sig)
+		require.Equal(t, uint64(0), chunks[0].frame.tokens)
+		_, check := verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+		require.Empty(t, check.Invalid)
+		require.False(t, check.TokenCountMismatch)
+		require.False(t, check.DoneWithoutFinish)
+		require.Equal(t, uint64(0), check.ContentTokens)
+	})
+
+	t.Run("content token keeps its own finish reason", func(t *testing.T) {
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		event := `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"stop"}]}` + "\n\n"
+		require.NoError(t, relaySSELines(event, sink))
+		require.NoError(t, relaySSELines("data: [DONE]\n\n", sink))
+		require.NoError(t, sink.Close())
+
+		chunks := contentChunks(t, frames)
+		require.Len(t, chunks, 1)
+		require.Contains(t, chunks[0].text, contentMarker("Hi"))
+		require.Contains(t, chunks[0].text, `"finish_reason":"stop"`)
+		require.Contains(t, chunks[0].text, "data: [DONE]")
+		require.Equal(t, uint64(1), chunks[0].frame.tokens)
+	})
+}
+
+func TestChatFrameVerifier_DoneWithoutFinishReason(t *testing.T) {
+	schedule := &host.ChatFrameSchedule{Join: 5, SignEvery: 13}
+	finish := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}` + "\n\n"
+
+	check := func(t *testing.T, body string) (string, host.ChatFrameCheck) {
+		t.Helper()
+		key := testutil.MustGenerateKey(t)
+		var frames []scheduleFrame
+		sink := newScheduleSink(schedule, key, &frames)
+		_, err := sink.Write([]byte(body))
+		require.NoError(t, err)
+		require.NoError(t, sink.FlushErr())
+		require.NoError(t, sink.Close())
+		if len(frames) == 0 {
+			return "", host.ChatFrameCheck{}
+		}
+		return verifyFrames(t, sentOnly(frames), func(addr string) bool { return addr == key.Address() })
+	}
+
+	t.Run("content then done", func(t *testing.T) {
+		text, got := check(t, contentEvent("Hi")+"data: [DONE]\n\n")
+		require.NotContains(t, text, `"finish_reason":"stop"`)
+		require.Contains(t, text, "data: [DONE]")
+		require.True(t, got.DoneWithoutFinish)
+		require.Empty(t, got.Invalid)
+	})
+
+	t.Run("finish reason null", func(t *testing.T) {
+		body := `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n" + "data: [DONE]\n\n"
+		_, got := check(t, body)
+		require.True(t, got.DoneWithoutFinish)
+	})
+
+	t.Run("finish event joins done", func(t *testing.T) {
+		text, got := check(t, contentEvent("Hi")+finish+"data: [DONE]\n\n")
+		require.Contains(t, text, `"finish_reason":"stop"`)
+		require.Contains(t, text, "data: [DONE]")
+		require.False(t, got.DoneWithoutFinish)
+		require.Equal(t, uint64(1), got.ContentTokens)
+	})
+
+	t.Run("reason rides on the content token", func(t *testing.T) {
+		body := `data: {"choices":[{"delta":{"content":"Hi"},"finish_reason":"length"}]}` + "\n\n" + "data: [DONE]\n\n"
+		text, got := check(t, body)
+		require.Contains(t, text, `"finish_reason":"length"`)
+		require.False(t, got.DoneWithoutFinish)
+		require.Equal(t, uint64(1), got.ContentTokens)
+	})
+
+	t.Run("error is its own close", func(t *testing.T) {
+		body := contentEvent("Hi") + `data: {"error":{"message":"boom"}}` + "\n\n" + "data: [DONE]\n\n"
+		v := NewChatFrameVerifier("escrow-1", 1, testPromptHash, func(string) bool { return true })
+		v.Write([]byte(body))
+		noteFinishedEvents(v, []byte(body))
+		v.Close()
+		require.False(t, v.Check().DoneWithoutFinish)
+	})
+
+	t.Run("no done", func(t *testing.T) {
+		_, got := check(t, contentEvent("Hi")+contentEvent("there"))
+		require.False(t, got.DoneWithoutFinish)
 	})
 }
 
@@ -656,6 +1029,9 @@ func TestChatFrameVerifier_DetectsAWrongTokenCount(t *testing.T) {
 	v := NewChatFrameVerifier("escrow-1", 1, testPromptHash, func(addr string) bool { return addr == key.Address() })
 	v.Frame(sig, n, 9)
 	v.Write([]byte(body))
+	require.Zero(t, v.Check().ContentTokens, "Write hashes the bytes and leaves them uncounted")
+	require.False(t, v.Check().TokenCountMismatch)
+	noteFinishedEvents(v, []byte(body))
 	v.Close()
 	check := v.Check()
 	require.Empty(t, check.Invalid)
@@ -663,6 +1039,27 @@ func TestChatFrameVerifier_DetectsAWrongTokenCount(t *testing.T) {
 	require.True(t, check.TokenCountMismatch)
 	require.Equal(t, uint64(9), check.TokenCount)
 	require.Equal(t, uint64(2), check.ContentTokens)
+}
+
+func TestChatFrameVerifier_NonJSONCountsAsAContentToken(t *testing.T) {
+	key := testutil.MustGenerateKey(t)
+	body := "data: not json\n\ndata: [DONE]\n\n"
+	signer := NewChatFrameSigner(key, "escrow-1", 1, testPromptHash)
+	signer.add([]byte(body))
+	sig, n, err := signer.sign(0)
+	require.NoError(t, err)
+
+	v := NewChatFrameVerifier("escrow-1", 1, testPromptHash, func(addr string) bool { return addr == key.Address() })
+	v.Frame(sig, n, 0)
+	cr := &countingReader{r: strings.NewReader(body), frames: v}
+	_, err = (&HTTPClient{}).parseSSEResponse(context.Background(), cr, io.Discard, nil)
+	require.NoError(t, err)
+	v.Close()
+	check := v.Check()
+	require.Empty(t, check.Invalid)
+	require.True(t, check.TokenCountMismatch)
+	require.Equal(t, uint64(0), check.TokenCount)
+	require.Equal(t, uint64(1), check.ContentTokens)
 }
 
 func TestChatFrameVerifier_TokenCountMatchesThePrefix(t *testing.T) {
@@ -780,6 +1177,10 @@ func TestSSEEventCarriesOutput(t *testing.T) {
 	require.False(t, sseEventContentToken([]byte("data: [DONE]\n\n")))
 	require.True(t, sseEventTerminal([]byte("data: {\"error\":{\"message\":\"boom\"}}\n\n")))
 	require.False(t, sseEventContentToken([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n")))
+	finish := []byte(`data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":2}}` + "\n\n")
+	require.Equal(t, sseFinish, classifySSE(finish))
+	require.False(t, sseEventContentToken(finish))
+	require.False(t, sseEventTerminal(finish))
 }
 
 // A compact signature recovers to two keys. Asking about the wrong one would
@@ -861,6 +1262,14 @@ func newScheduleSink(schedule *host.ChatFrameSchedule, key signing.Signer, frame
 	})
 	sink.SignFrames(schedule, cs)
 	return sink
+}
+
+func TestContentTokens_CountsEventsInOneFrame(t *testing.T) {
+	body := contentEvent("a") + contentEvent("b") + contentEvent("c") + contentEvent("d") + contentEvent("e")
+	require.Equal(t, 5, ContentTokens([]byte(body)))
+	finish := `data: {"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"completion_tokens":5}}` + "\n\n"
+	require.Equal(t, 5, ContentTokens([]byte(body+finish)))
+	require.Equal(t, 0, ContentTokens([]byte(`data: {"choices":[{"delta":{"content":"a"}}]}`+"\n")))
 }
 
 func contentEvent(token string) string {

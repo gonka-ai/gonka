@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"strings"
 
 	"devshard/host"
 )
@@ -102,9 +103,14 @@ func (e *ChatGzipEmitter) emit() error {
 // tail. Bytes of the held-back token are not hashed until that token is
 // placed into a chunk that is being sent.
 //
-// Pending bytes also leave at chatGzipCoalesceMax, so a stream that never
-// sends a blank line cannot stall. Close signs whatever is still open. No
-// prefix is signed twice.
+// An unfinished tail also leaves at chatGzipCoalesceMax, so a stream that
+// never sends a blank line cannot stall. That flush is not a content chunk.
+// The tail is kept until the blank line, then classified once. A finished
+// event is scheduled before the cap is considered, including one larger than
+// the cap. Past the 1 MiB scan, a complete line is classified and its body
+// dropped; the class is applied when the blank line arrives, and later
+// events are still counted. Close signs whatever is still open. No prefix
+// is signed twice.
 type ChatFrameSink struct {
 	header  http.Header
 	status  int
@@ -126,10 +132,18 @@ type ChatFrameSink struct {
 	// sawOutput is set by the first event that carries output. Unsigned path.
 	sawOutput bool
 	signNext  bool
-	// bufPending and bufTail find the blank line that finishes the event the
-	// signer is holding outside the gzip writer.
+	// bufPending is the unfinished tail that is not yet hashed. bufTail is its
+	// last two bytes. spilled is how much of event is already hashed: a tail
+	// that crossed the coalesce cap left early and is classified when its
+	// blank line arrives.
 	bufPending int
 	bufTail    [2]byte
+	spilled    int
+	// folded is the class of complete lines whose body has already been sent.
+	// A line past the scan cap is not kept until the blank line. The class
+	// is applied when that blank line arrives, and the next event is counted
+	// again from an empty buffer.
+	folded sseFold
 	// openTokens is the content tokens in the chunk that has not been sent.
 	// chunksSent is how many content chunks have been sent. totalTokens is
 	// the content tokens already hashed. signTokens is the count the next
@@ -138,6 +152,10 @@ type ChatFrameSink struct {
 	chunksSent  int
 	totalTokens uint64
 	signTokens  uint64
+	// finishHeld is a finish_reason or usage event. It is not a content
+	// token. It stays out of the open chunk until [DONE], an error, or Close,
+	// and then it is written into that same tail.
+	finishHeld []byte
 }
 
 // perEventChatFrames is one frame per finished event, the schedule a stream
@@ -207,28 +225,96 @@ func (s *ChatFrameSink) Write(p []byte) (int, error) {
 	return n, nil
 }
 
-// writeSigned keeps the event out of the gzip writer until FlushErr has
-// classified it. The token that closes a chunk is therefore not in the chunk
-// it closes, and it is not in the hash.
+// writeSigned keeps a finished event out of the gzip writer until the schedule
+// places it. A complete event is peeled before the coalesce cap, so a finished
+// event larger than the cap is held, counted, and signed like a short one.
+// Only an unfinished tail is sent at the cap, and that send is not a content
+// chunk. The token that closes a chunk is therefore not in the chunk it
+// closes, and it is not in the hash until its own chunk is sent.
 func (s *ChatFrameSink) writeSigned(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
 	s.wrote = true
 	s.event = append(s.event, p...)
-	noteTail(&s.bufTail, &s.bufPending, p)
-	if s.bufPending >= chatGzipCoalesceMax {
-		if err := s.commit(s.event); err != nil {
-			return len(p), err
-		}
-		s.event = nil
-		s.bufPending = 0
-		s.bufTail = [2]byte{}
-		if err := s.flushGzip(false); err != nil {
-			return len(p), err
-		}
+	if err := s.flushSigned(); err != nil {
+		return len(p), err
+	}
+	if err := s.spillUnfinished(); err != nil {
+		return len(p), err
 	}
 	return len(p), nil
+}
+
+// spillUnfinished sends an unfinished tail that has reached the coalesce cap.
+// The bytes stay in event so the whole event is classified once, when its
+// blank line arrives. An open content chunk leaves first, on the normal
+// schedule, so the tail is not glued onto it. Past the scan cap, a complete
+// line is classified and dropped; only its class stays until the blank line.
+func (s *ChatFrameSink) spillUnfinished() error {
+	if len(s.event) > maxChatFrameEventScan && bytes.LastIndexByte(s.event, '\n') >= 0 {
+		if err := s.flushOpenChunk(); err != nil {
+			return err
+		}
+		if err := s.releaseFoldedLines(); err != nil {
+			return err
+		}
+	}
+	if len(s.event)-s.spilled < chatGzipCoalesceMax {
+		return nil
+	}
+	if err := s.flushOpenChunk(); err != nil {
+		return err
+	}
+	if err := s.commit(s.event[s.spilled:]); err != nil {
+		return err
+	}
+	s.spilled = len(s.event)
+	return s.flushGzip(false)
+}
+
+// flushOpenChunk sends a content chunk that is already full so an unfinished
+// tail is not appended to it.
+func (s *ChatFrameSink) flushOpenChunk() error {
+	if s.pending > 0 && s.openTokens > 0 {
+		return s.flushChunk(false)
+	}
+	return nil
+}
+
+// releaseFoldedLines classifies every complete line in an oversized unfinished
+// event, sends those bytes, and keeps the class. The incomplete tail stays.
+// The blank line applies the class and the body is not held until then.
+func (s *ChatFrameSink) releaseFoldedLines() error {
+	last := bytes.LastIndexByte(s.event, '\n')
+	if last < 0 {
+		return nil
+	}
+	complete := s.event[:last+1]
+	rest := append([]byte(nil), s.event[last+1:]...)
+	if s.spilled < len(complete) {
+		if err := s.commit(complete[s.spilled:]); err != nil {
+			return err
+		}
+	}
+	spilledRest := 0
+	if s.spilled > len(complete) {
+		spilledRest = s.spilled - len(complete)
+	}
+	for _, line := range strings.Split(string(complete), "\n") {
+		s.folded = foldSSELine(s.folded, line)
+	}
+	s.folded.active = true
+	s.folded.carryNewline = true
+	if len(rest) == 0 {
+		s.event = nil
+	} else {
+		s.event = rest
+	}
+	s.spilled = spilledRest
+	s.bufPending = 0
+	s.bufTail = [2]byte{}
+	return s.flushGzip(false)
 }
 
 func (s *ChatFrameSink) commit(p []byte) error {
@@ -311,18 +397,44 @@ func (s *ChatFrameSink) FlushErr() error {
 // buffer. One flush may carry several events: a non-streaming body writes the
 // answer and [DONE] together, and a stored replay flushes once at the end.
 // Each event is scheduled on its own. An unfinished tail stays in s.event.
+// Bytes already sent at the coalesce cap are not committed again.
 func (s *ChatFrameSink) flushSigned() error {
 	for {
+		// A line past the scan cap was classified and dropped, so the blank
+		// line that ends it is a single '\n' with the class kept beside it.
+		if s.folded.carryNewline && len(s.event) > 0 && s.event[0] == '\n' {
+			ev := []byte{'\n'}
+			already := 0
+			if s.spilled > 0 {
+				already = 1
+				s.spilled--
+			}
+			s.event = s.event[1:]
+			if len(s.event) == 0 {
+				s.event = nil
+			}
+			s.folded.carryNewline = false
+			if err := s.scheduleSignedEvent(ev, already); err != nil {
+				s.syncSignedEventTail()
+				return err
+			}
+			continue
+		}
 		i := bytes.Index(s.event, []byte("\n\n"))
 		if i < 0 {
 			break
 		}
-		ev := s.event[:i+2]
+		ev := append([]byte(nil), s.event[:i+2]...)
+		already := s.spilled
+		if already > len(ev) {
+			already = len(ev)
+		}
+		s.spilled -= already
 		s.event = s.event[i+2:]
 		if len(s.event) == 0 {
 			s.event = nil
 		}
-		if err := s.scheduleSignedEvent(ev); err != nil {
+		if err := s.scheduleSignedEvent(ev, already); err != nil {
 			s.syncSignedEventTail()
 			return err
 		}
@@ -334,7 +446,10 @@ func (s *ChatFrameSink) flushSigned() error {
 // syncSignedEventTail keeps the coalesce cursor aligned with the unfinished
 // tail flushSigned left behind.
 func (s *ChatFrameSink) syncSignedEventTail() {
-	s.bufPending = len(s.event)
+	s.bufPending = len(s.event) - s.spilled
+	if s.bufPending < 0 {
+		s.bufPending = 0
+	}
 	s.bufTail = [2]byte{}
 	switch n := len(s.event); {
 	case n >= 2:
@@ -345,33 +460,83 @@ func (s *ChatFrameSink) syncSignedEventTail() {
 	}
 }
 
-func (s *ChatFrameSink) scheduleSignedEvent(ev []byte) error {
-	switch classifySSE(ev) {
+// scheduleSignedEvent classifies one finished event. already is how many
+// leading bytes were hashed when an unfinished tail crossed the coalesce cap.
+func (s *ChatFrameSink) scheduleSignedEvent(ev []byte, already int) error {
+	rest := ev[already:]
+	// A folded line was hashed when it was released. already covers only the
+	// suffix still in ev, so the body counts as sent even when rest is the
+	// blank line alone.
+	folded := s.folded.active
+	kind := s.takeEventKind(ev)
+	sent := already > 0 || folded
+	switch kind {
 	case sseContent:
 		if s.openTokens >= s.chunkTarget() && s.pending > 0 {
 			if err := s.flushChunk(false); err != nil {
 				return err
 			}
 		}
-		if err := s.commit(ev); err != nil {
+		if err := s.commit(rest); err != nil {
 			return err
 		}
 		s.openTokens++
 		s.totalTokens++
 		return nil
+	case sseFinish:
+		if sent {
+			return s.commit(rest)
+		}
+		s.finishHeld = append(s.finishHeld, ev...)
+		return nil
 	case sseTerminal:
-		if s.pending == 0 && s.openTokens == 0 {
+		if s.pending == 0 && s.openTokens == 0 && len(s.finishHeld) == 0 && !sent {
 			return nil
 		}
-		if err := s.commit(ev); err != nil {
+		if err := s.commitFinish(); err != nil {
+			return err
+		}
+		if err := s.commit(rest); err != nil {
 			return err
 		}
 		return s.flushChunk(true)
 	case sseProtocol:
-		return s.commit(ev)
+		return s.commit(rest)
 	default:
+		if sent {
+			return s.commit(rest)
+		}
 		return nil
 	}
+}
+
+// takeEventKind classifies a finished event. Lines released past the scan cap
+// are already in s.folded; ev is the suffix that was still buffered, including
+// the blank line.
+func (s *ChatFrameSink) takeEventKind(ev []byte) sseKind {
+	f := s.folded
+	s.folded = sseFold{}
+	if !f.active {
+		return classifySSE(ev)
+	}
+	for _, line := range strings.Split(string(ev), "\n") {
+		f = foldSSELine(f, line)
+		if f.stop {
+			return f.class.kind
+		}
+	}
+	return f.resolved().kind
+}
+
+// commitFinish writes the held finish_reason event into the open tail.
+// It is not a content token, so the signed count does not move.
+func (s *ChatFrameSink) commitFinish() error {
+	if len(s.finishHeld) == 0 {
+		return nil
+	}
+	ev := s.finishHeld
+	s.finishHeld = nil
+	return s.commit(ev)
 }
 
 // chunkTarget is 1 for the first content chunk and Join for every chunk
@@ -409,10 +574,14 @@ func (s *ChatFrameSink) FlushNow() error {
 		return s.sendErr
 	}
 	if s.signer != nil && len(s.event) > 0 {
-		if err := s.commit(s.event); err != nil {
-			return err
+		if s.spilled < len(s.event) {
+			if err := s.commit(s.event[s.spilled:]); err != nil {
+				return err
+			}
 		}
 		s.event = nil
+		s.spilled = 0
+		s.folded = sseFold{}
 		s.bufPending = 0
 		s.bufTail = [2]byte{}
 	}
@@ -475,8 +644,13 @@ func (s *ChatFrameSink) Close() error {
 		if err := s.flushSigned(); err != nil {
 			return err
 		}
-		if len(s.event) > 0 {
-			if err := s.commit(s.event); err != nil {
+		// An unfinished line has no blank line, so its class is not a token.
+		s.folded = sseFold{}
+		if err := s.commitFinish(); err != nil {
+			return err
+		}
+		if s.spilled < len(s.event) {
+			if err := s.commit(s.event[s.spilled:]); err != nil {
 				return err
 			}
 		}

@@ -656,14 +656,23 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var sawMeta bool // true once we observe a devshard_meta tail
 	received := completionapi.NewReceivedResponseHasher()
 	defer func() { result.ReceivedResponseHashes = received.Sums() }()
+	notifier, _ := r.(interface{ NoteEvent([]byte) })
+	var event []byte
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
 		if len(raw) > 0 {
 			streamBytes += int64(len(raw))
+			event = append(event, raw...)
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			// Handled before the bound: the line arrived whole.
 			c.handleSSELine(line, stream, received, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawDone, &forwardedInference, &sawMeta)
+			// A blank line finishes the event. The signature recount uses that
+			// event once, here, with the same predicate the executor scheduled on.
+			if notifier != nil && line == "" && len(event) > len(raw) {
+				notifier.NoteEvent(event)
+				event = nil
+			}
 			if streamBytes > maxStream {
 				logging.Warn("sse_stream_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxStream)
 				return &result, fmt.Errorf("%w: %d byte limit", ErrSSEStreamTooLarge, maxStream)
@@ -939,6 +948,14 @@ func (cr *countingReader) Read(p []byte) (int, error) {
 		cr.frames.Write(p[:n])
 	}
 	return n, err
+}
+
+// NoteEvent reports one finished SSE event to the frame verifier. Write has
+// already hashed the bytes.
+func (cr *countingReader) NoteEvent(ev []byte) {
+	if cr.frames != nil {
+		cr.frames.NoteEvent(ev)
+	}
 }
 
 func truncate(s string, n int) string {
