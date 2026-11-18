@@ -29,7 +29,7 @@ func TestGatewayStartVersion_RequiresCreatorSignedStart(t *testing.T) {
 func TestGatewayStartVersion_MissingVersion(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	const escrowID = "escrow-1"
-	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTxVersioned(1, "")})
 	_, err := GatewayStartVersion(signing.NewSecp256k1Verifier(), user.Address(), escrowID, []types.Diff{diff})
 	require.ErrorIs(t, err, types.ErrStartProofMissing)
 }

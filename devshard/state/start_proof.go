@@ -2,7 +2,6 @@ package state
 
 import (
 	"fmt"
-	"strings"
 
 	"devshard/signing"
 	"devshard/types"
@@ -38,33 +37,10 @@ func GatewayStartVersion(verifier signing.Verifier, creatorAddr, escrowID string
 	if len(diffs) == 0 {
 		return "", types.ErrStartProofMissing
 	}
-	var version string
-	found := false
 	for i, diff := range diffs {
 		if err := VerifyDiffUserSig(verifier, creatorAddr, escrowID, diff); err != nil {
 			return "", fmt.Errorf("diff %d: %w", i, err)
 		}
-		for _, tx := range diff.Txs {
-			if tx == nil {
-				continue
-			}
-			start := tx.GetStartInference()
-			if start == nil {
-				continue
-			}
-			got := strings.TrimSpace(start.GetProtocolVersion())
-			if got == "" {
-				return "", fmt.Errorf("%w: MsgStartInference missing protocol_version", types.ErrStartProofMissing)
-			}
-			if found && version != got {
-				return "", fmt.Errorf("%w: %s vs %s", types.ErrProtocolVersionMismatch, version, got)
-			}
-			version = got
-			found = true
-		}
 	}
-	if !found {
-		return "", types.ErrStartProofMissing
-	}
-	return version, nil
+	return types.StartProofVersion(diffs)
 }

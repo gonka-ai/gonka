@@ -34,6 +34,7 @@ func ghostNonceVerifier(t *testing.T, params user.InferenceParams) (*state.State
 	start := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: promptHash, Model: params.Model,
 		InputLength: params.InputLength, MaxTokens: params.MaxTokens,
+		ProtocolVersion: testutil.RuntimeTestVersion,
 	}}}
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, userKey, "escrow-1", 1, []*types.DevshardTx{start}))
 	require.NoError(t, err)

@@ -114,7 +114,7 @@ type StateMachine struct {
 	// validation lives in committedEntries (and on disk in the snapshot).
 	sealedNonces   map[uint64]uint64
 	inferenceStore storage.Storage
-	// replayingPersisted is written only under mu, by ApplyLocalPersisted.
+	// replayingPersisted is written only under mu, by ApplyLocalPersisted and ApplyDiffPersisted.
 	replayingPersisted bool
 
 	// Lookup maps derived from group at construction time.
@@ -439,14 +439,31 @@ func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byt
 	return sm.applyCore(nonce, txs, nil, "user")
 }
 
-// ApplyLocalPersisted replays a diff this node already accepted and persisted. It is the only path that
-// relaxes policy, and it relaxes it only for checks that guard the creation of new work.
+// ApplyLocalPersisted replays a diff this node already accepted and persisted. It and ApplyDiffPersisted are
+// the only paths that relax policy, and they relax it only for checks that guard the creation of new work.
 func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.replayingPersisted = true
 	defer func() { sm.replayingPersisted = false }()
 	return sm.applyCore(nonce, txs, nil, "user")
+}
+
+func (sm *StateMachine) ExecutorParticipated(slot uint32) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state != nil && types.ExecutorParticipated(*sm.state, slot)
+}
+
+func (sm *StateMachine) ApplyDiffPersisted(diff types.Diff) ([]byte, error) {
+	if err := sm.verifyDiffUserSig(diff); err != nil {
+		return nil, err
+	}
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.replayingPersisted = true
+	defer func() { sm.replayingPersisted = false }()
+	return sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
 }
 
 // ApplyLocalBestEffort applies txs one by one, skipping any that fail.
@@ -1246,8 +1263,8 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNo
 		return types.ErrSessionFinalizing
 	}
 
-	if v := strings.TrimSpace(msg.GetProtocolVersion()); v != "" && v != sm.state.StateRootAndProtocolVersion {
-		return fmt.Errorf("%w: start %s session %s", types.ErrProtocolVersionMismatch, v, sm.state.StateRootAndProtocolVersion)
+	if v := strings.TrimSpace(msg.GetProtocolVersion()); v != sm.state.StateRootAndProtocolVersion && !(sm.replayingPersisted && v == "") {
+		return fmt.Errorf("%w: start %q session %s", types.ErrProtocolVersionMismatch, v, sm.state.StateRootAndProtocolVersion)
 	}
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit

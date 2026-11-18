@@ -115,7 +115,7 @@ func seedFloor(f *heightsync.FloorIndex, nonce, height uint64, hash []byte) {
 
 func startTxAt(id, height uint64, hash []byte) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-		InferenceId: id, ObservedHeight: height, ObservedBlockHash: hash,
+		InferenceId: id, ObservedHeight: height, ObservedBlockHash: hash, ProtocolVersion: testutil.RuntimeTestVersion,
 	}}}
 }
 

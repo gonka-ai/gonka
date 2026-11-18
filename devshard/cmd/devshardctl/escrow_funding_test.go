@@ -125,11 +125,12 @@ func applyStartInferenceWithBalance(t *testing.T, config types.SessionConfig, co
 
 	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-			InferenceId: 1,
-			PromptHash:  []byte("prompt"),
-			Model:       "m",
-			InputLength: cost.inputLengthBytes,
-			MaxTokens:   cost.maxTokens,
+			InferenceId:     1,
+			PromptHash:      []byte("prompt"),
+			Model:           "m",
+			InputLength:     cost.inputLengthBytes,
+			MaxTokens:       cost.maxTokens,
+			ProtocolVersion: testutil.RuntimeTestVersion,
 		}},
 	}}))
 	return err

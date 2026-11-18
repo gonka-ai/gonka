@@ -96,6 +96,7 @@ func createStoredSessionWithVersion(t *testing.T, store storage.Storage, escrowI
 	require.NoError(t, err)
 	for i := uint64(1); i <= uint64(numDiffs); i++ {
 		txs := []*types.DevshardTx{startTx(i)}
+		txs[0].GetStartInference().ProtocolVersion = version
 		root, err := sm.ApplyLocal(i, txs)
 		require.NoError(t, err)
 		require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{
