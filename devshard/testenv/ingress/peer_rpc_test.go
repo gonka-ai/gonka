@@ -48,6 +48,7 @@ import (
 
 var repo, policyImage string
 var sequence atomic.Int32
+var fixturePorts sync.Map
 
 const rpcPath = "/devshard/v6/sessions/escrow-1/rpc/"
 const attach = rpcPath + "devshard.transport.v1.PeerAuthService/Attach"
@@ -78,11 +79,20 @@ func run(t *testing.T, env []string, command string, args ...string) string {
 }
 func freePort(t *testing.T) string {
 	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
-	require.NoError(t, ln.Close())
-	return port
+	// Containers bind after rendering. Closing each probe immediately lets the
+	// OS return the same port to another listener in this fixture before either
+	// container starts, producing duplicate nginx/HAProxy listen directives.
+	for range 128 {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		require.NoError(t, err)
+		port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+		require.NoError(t, ln.Close())
+		if _, used := fixturePorts.LoadOrStore(port, struct{}{}); !used {
+			return port
+		}
+	}
+	t.Fatal("could not select a distinct fixture port")
+	return ""
 }
 func write(t *testing.T, path, data string) {
 	t.Helper()
