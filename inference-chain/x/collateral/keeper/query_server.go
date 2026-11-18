@@ -80,7 +80,7 @@ func (k Keeper) AllUnbondingCollaterals(c context.Context, req *types.QueryAllUn
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-		// Unbonding entries live in collections.IndexedMap UnbondingIM (prefix UnbondingCollPrefix), not legacy UnbondingKey.
+	// Unbonding entries live in collections.IndexedMap UnbondingIM (prefix UnbondingCollPrefix), not legacy UnbondingKey.
 	unbondings, pageRes, err := query.CollectionPaginate(
 		c,
 		&k.UnbondingIM,

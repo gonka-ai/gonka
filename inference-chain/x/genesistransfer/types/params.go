@@ -5,21 +5,13 @@ import (
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 )
-
-var _ paramtypes.ParamSet = (*Params)(nil)
 
 // Parameter store keys
 var (
 	KeyAllowedAccounts = []byte("AllowedAccounts")
 	KeyRestrictToList  = []byte("RestrictToList")
 )
-
-// ParamKeyTable the param key table for launch module
-func ParamKeyTable() paramtypes.KeyTable {
-	return paramtypes.NewKeyTable().RegisterParamSet(&Params{})
-}
 
 // NewParams creates a new Params instance
 func NewParams(allowedAccounts []string, restrictToList bool) Params {
@@ -41,14 +33,6 @@ func DefaultParams() Params {
 		params.AllowedAccounts = []string{}
 	}
 	return params
-}
-
-// ParamSetPairs get the params.ParamSet
-func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
-	return paramtypes.ParamSetPairs{
-		paramtypes.NewParamSetPair(KeyAllowedAccounts, &p.AllowedAccounts, validateAllowedAccounts),
-		paramtypes.NewParamSetPair(KeyRestrictToList, &p.RestrictToList, validateRestrictToList),
-	}
 }
 
 // Validate validates the set of params

@@ -6,12 +6,12 @@ import (
 	"context"
 	"fmt"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	districutiontypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	"github.com/productscience/inference/app/upgrades/v0_2_10"
 	"github.com/productscience/inference/app/upgrades/v0_2_11"
 	"github.com/productscience/inference/app/upgrades/v0_2_12"
@@ -59,6 +59,9 @@ func (app *App) setupUpgradeHandlers() {
 		return
 	}
 	app.Logger().Info("Applying upgrade", "upgradeInfo", upgradeInfo)
+	if upgradeInfo.Name == v0_2_18.UpgradeName {
+		app.SetStoreLoader(upgradetypes.UpgradeStoreLoader(upgradeInfo.Height, v0_2_18.RemovedModuleStores()))
+	}
 
 	app.setTrackedUpgradeHandler(v0_2_2.UpgradeName, v0_2_2.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 	app.setTrackedUpgradeHandler(v0_2_3.UpgradeName, v0_2_3.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
@@ -76,7 +79,14 @@ func (app *App) setupUpgradeHandlers() {
 	app.setTrackedUpgradeHandler(v0_2_15.UpgradeName, v0_2_15.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.AuthzKeeper))
 	app.setTrackedUpgradeHandler(v0_2_16.UpgradeName, v0_2_16.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.AuthzKeeper))
 	app.setTrackedUpgradeHandler(v0_2_17.UpgradeName, v0_2_17.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
-	app.setTrackedUpgradeHandler(v0_2_18.UpgradeName, v0_2_18.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
+	app.setTrackedUpgradeHandler(v0_2_18.UpgradeName, v0_2_18.CreateUpgradeHandler(
+		app.ModuleManager,
+		app.Configurator(),
+		app.InferenceKeeper,
+		app.IBCKeeper.ChannelKeeper,
+		app.BankKeeper,
+		app.DistrKeeper,
+	))
 }
 
 func (app *App) registerMigrations() {

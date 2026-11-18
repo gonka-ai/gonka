@@ -418,13 +418,13 @@ func TestInitiateKeyGenerationForEpoch_RejectsOversizeShape(t *testing.T) {
 
 	participants := []types.ParticipantWithWeightAndKey{
 		{
-			Address:            "cosmos1val",
-			PercentageWeight:   math.LegacyNewDec(100),
-			Secp256k1PublicKey: []byte("val_key"),
+			Address:                    "cosmos1val",
+			PercentageWeight:           math.LegacyNewDec(100),
+			Secp256k1PublicKey:         []byte("val_key"),
 			AllowedSecp256k1PublicKeys: make([][]byte, 100),
 		},
 	}
-	
+
 	for i := range participants[0].AllowedSecp256k1PublicKeys {
 		participants[0].AllowedSecp256k1PublicKeys[i] = []byte(fmt.Sprintf("warm_key_%d", i))
 	}

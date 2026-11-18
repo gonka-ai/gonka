@@ -6,7 +6,7 @@ import (
 	"math/big"
 	"math/bits"
 
-	"cosmossdk.io/log"
+	"cosmossdk.io/log/v2"
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"

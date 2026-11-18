@@ -19,7 +19,7 @@ ldflags = -X github.com/cosmos/cosmos-sdk/version.Name=decentralized-api \
 
 BUILD_FLAGS ?= -ldflags '$(ldflags)'
 
-WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a
+WASMVM_STATIC_LINUX_X64_URL := $(shell sh ../scripts/fetch-libwasmvm.sh print LIBWASMVM_X64_URL)
 
 USE_REGISTRY_CACHE ?= 0
 GHCR_CACHE_NAMESPACE ?= gonka-ai

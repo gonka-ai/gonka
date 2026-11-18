@@ -35,7 +35,7 @@ func setupMsgExecCheckTx(t *testing.T, registerParticipant bool) msgExecCheckTxF
 	t.Helper()
 	testApp := createTestApp(t)
 
-	ctx := testApp.NewUncachedContext(false, cmtproto.Header{
+	ctx := testApp.NewNextBlockContext(cmtproto.Header{
 		Height:  testApp.LastBlockHeight(),
 		ChainID: TallyTestChainID,
 		Time:    time.Now().UTC(),
@@ -106,7 +106,7 @@ func setupMsgExecCheckTx(t *testing.T, registerParticipant bool) msgExecCheckTxF
 
 func persistGrant(t *testing.T, f msgExecCheckTxFixture, authorization authz.Authorization, expiration *time.Time) {
 	t.Helper()
-	grantCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+	grantCtx := f.testApp.NewNextBlockContext(cmtproto.Header{
 		Height:  f.testApp.LastBlockHeight(),
 		ChainID: TallyTestChainID,
 		Time:    time.Now().UTC(),
@@ -202,7 +202,7 @@ func TestMsgExecAuthorization_ExpiredGrantFailsCheckTx(t *testing.T) {
 
 	now := time.Now().UTC()
 	expires := now.Add(time.Minute)
-	grantCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+	grantCtx := f.testApp.NewNextBlockContext(cmtproto.Header{
 		Height:  f.testApp.LastBlockHeight(),
 		ChainID: TallyTestChainID,
 		Time:    now,

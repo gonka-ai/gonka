@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/testutil/sample"
 	inference "github.com/productscience/inference/x/inference/module"

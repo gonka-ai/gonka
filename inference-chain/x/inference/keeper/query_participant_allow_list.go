@@ -26,4 +26,3 @@ func (k Keeper) ParticipantAllowList(goCtx context.Context, req *types.QueryPart
 
 	return &types.QueryParticipantAllowListResponse{Addresses: addrs}, nil
 }
-

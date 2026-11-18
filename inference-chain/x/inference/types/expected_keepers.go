@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"cosmossdk.io/math"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
@@ -12,6 +11,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/group"
 	"github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	"github.com/cosmos/cosmos-sdk/x/staking/types"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
@@ -147,7 +147,7 @@ type BlsKeeper interface {
 	// ActiveEpochID tracks the epoch that is currently undergoing the DKG process
 	SetActiveEpochID(ctx sdk.Context, epochID uint64)
 	GetActiveEpochID(ctx sdk.Context) (uint64, bool)
-	
+
 	// CurrentSigningEpochID tracks the active epoch used for threshold signing requests
 	SetCurrentSigningEpochID(ctx sdk.Context, epochID uint64)
 	GetCurrentSigningEpochID(ctx sdk.Context) (uint64, bool)

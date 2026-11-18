@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 

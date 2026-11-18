@@ -5,10 +5,8 @@ import (
 	"time"
 
 	"cosmossdk.io/math"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	cmtcrypto "github.com/cometbft/cometbft/crypto"
 	cmtbytes "github.com/cometbft/cometbft/libs/bytes"
-	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/cosmos/cosmos-sdk/server"
@@ -16,6 +14,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 )
 
 // InitInferenceAppForTestnet rewrites staking and slashing state so that the
@@ -42,7 +41,7 @@ func InitInferenceAppForTestnet(app *App, appOpts servertypes.AppOptions) error 
 	}
 	consAddr := sdk.ConsAddress(valAddr.Bytes())
 
-	ctx := app.BaseApp.NewUncachedContext(true, cmtproto.Header{})
+	ctx := app.BaseApp.NewContext(true)
 
 	if err := replaceStakingValidatorSet(ctx, app, pubKey, opAddr); err != nil {
 		return err

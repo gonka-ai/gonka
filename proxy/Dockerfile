@@ -1,5 +1,5 @@
 # Build Stage for Sidecar
-FROM golang:1.24.2-alpine3.21 AS builder
+FROM golang:1.26.5-alpine3.23 AS builder
 WORKDIR /app
 COPY sidecar/main.go .
 # Build static binary

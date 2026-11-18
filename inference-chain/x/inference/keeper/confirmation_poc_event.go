@@ -33,7 +33,7 @@ func (k Keeper) GetActiveConfirmationPoCEvent(ctx context.Context) (*types.Confi
 	if !has {
 		return nil, false, nil // No active event is normal
 	}
-	
+
 	// Get the active event
 	event, err := k.ActiveConfirmationPoCEventItem.Get(ctx)
 	if err != nil {

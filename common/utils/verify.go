@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	"cosmossdk.io/store/rootmulti"
+	"github.com/cosmos/cosmos-sdk/store/v2/rootmulti"
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
 	"github.com/cometbft/cometbft/rpc/client/http"
 	comettypes "github.com/cometbft/cometbft/types"
-	ibctypes "github.com/cosmos/ibc-go/v8/modules/core/23-commitment/types"
+	ibctypes "github.com/cosmos/ibc-go/v11/modules/core/23-commitment/types"
+	ibccommitmentv2 "github.com/cosmos/ibc-go/v11/modules/core/23-commitment/types/v2"
 )
 
 func VerifyBlockSignatures(address string, height int64) error {
@@ -89,7 +90,7 @@ func VerifyUsingMerkleProof(proofOps *cryptotypes.ProofOps, root []byte, moduleK
 	}
 
 	merkleRoot := ibctypes.MerkleRoot{Hash: root}
-	path := ibctypes.MerklePath{KeyPath: []string{moduleKey, valueKey}}
+	path := ibccommitmentv2.NewMerklePath([]byte(moduleKey), []byte(valueKey))
 
 	return merkleProof.VerifyMembership(ibctypes.GetSDKSpecs(), merkleRoot, path, value)
 }

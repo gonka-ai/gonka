@@ -158,24 +158,6 @@ func TestVestingParameterValidation(t *testing.T) {
 	}
 }
 
-func TestTokenomicsParamsParamSetPairs(t *testing.T) {
-	params := *types.DefaultTokenomicsParams()
-
-	// Test that ParamSetPairs returns the correct number of pairs
-	pairs := params.ParamSetPairs()
-	require.Len(t, pairs, 2, "TokenomicsParams should have 2 parameter pairs for vesting")
-
-	// Verify the parameter keys are correctly set
-	expectedKeys := [][]byte{
-		types.KeyWorkVestingPeriod,
-		types.KeyRewardVestingPeriod,
-	}
-
-	for i, pair := range pairs {
-		require.Equal(t, expectedKeys[i], pair.Key, "Parameter key mismatch for pair %d", i)
-	}
-}
-
 func TestTokenomicsParamsValidate(t *testing.T) {
 	testCases := []struct {
 		name                  string
@@ -581,29 +563,6 @@ func TestBitcoinRewardParamsGovernance(t *testing.T) {
 			require.Equal(t, tc.fullCoverageBonusFactor, retrievedParams.BitcoinRewardParams.FullCoverageBonusFactor.ToFloat())
 			require.Equal(t, tc.partialCoverageBonusFactor, retrievedParams.BitcoinRewardParams.PartialCoverageBonusFactor.ToFloat())
 		})
-	}
-}
-
-func TestBitcoinRewardParamsParamSetPairs(t *testing.T) {
-	params := *types.DefaultBitcoinRewardParams()
-
-	// Test that ParamSetPairs returns the correct number of pairs
-	pairs := params.ParamSetPairs()
-	require.Len(t, pairs, 7, "BitcoinRewardParams should have 7 parameter pairs")
-
-	// Verify the parameter keys are correctly set
-	expectedKeys := [][]byte{
-		types.KeyUseBitcoinRewards,
-		types.KeyInitialEpochReward,
-		types.KeyDecayRate,
-		types.KeyGenesisEpoch,
-		types.KeyUtilizationBonusFactor,
-		types.KeyFullCoverageBonusFactor,
-		types.KeyPartialCoverageBonusFactor,
-	}
-
-	for i, pair := range pairs {
-		require.Equal(t, expectedKeys[i], pair.Key, "Parameter key mismatch for pair %d", i)
 	}
 }
 

@@ -3,7 +3,7 @@ package types
 import (
 	"fmt"
 
-	"github.com/cosmos/ibc-go/v8/modules/core/02-client/types"
+	"github.com/cosmos/ibc-go/v11/modules/core/02-client/types"
 )
 
 // EpochContext provides a stable context for an Epoch, anchored by its starting block height.

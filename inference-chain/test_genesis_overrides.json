@@ -71,6 +71,23 @@
           "cap_factor": { "value": "1", "exponent": 0 },
           "initial_model_id": "Qwen/Qwen2.5-7B-Instruct"
         },
+        "poc_params": {
+          "poc_v2_enabled": true,
+          "confirmation_poc_v2_enabled": true,
+          "model_id": "Qwen/Qwen2.5-7B-Instruct",
+          "models": [
+            {
+              "model_id": "Qwen/Qwen2.5-7B-Instruct",
+              "seq_len": "256",
+              "dynamic_coefficient": {
+                "coeff_min": { "value": "1", "exponent": 0 },
+                "coeff_max": { "value": "1", "exponent": 0 },
+                "relative_difficulty": { "value": "1", "exponent": 0 },
+                "target_share_bps": 10000
+              }
+            }
+          ]
+        },
         "maintenance_params": {
           "maintenance_enabled": true,
           "maintenance_min_schedule_lead_blocks": "2",

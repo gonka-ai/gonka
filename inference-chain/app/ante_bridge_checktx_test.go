@@ -37,9 +37,9 @@ func setupDoomedBridgeCheckTx(t *testing.T) bridgeCheckTxFixture {
 	t.Helper()
 	testApp := createTestApp(t)
 
-	// Seed into the root multistore. Writes on finalizeBlockState after FinalizeBlock
-	// are lost on Commit (workingHash already Write()'d), so use NewUncachedContext.
-	ctx := testApp.NewUncachedContext(false, cmtproto.Header{
+	// Seed the next finalize branch. A write on the previous finalize cache is
+	// dropped at Commit, and NewUncachedContext wrote the root store directly.
+	ctx := testApp.NewNextBlockContext(cmtproto.Header{
 		Height:  testApp.LastBlockHeight(),
 		ChainID: TallyTestChainID,
 		Time:    time.Now().UTC(),

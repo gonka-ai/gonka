@@ -36,4 +36,3 @@ func (k Keeper) IsParticipantAllowed(ctx context.Context, height int64, address 
 	}
 	return allowed
 }
-

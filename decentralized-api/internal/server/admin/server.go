@@ -10,8 +10,8 @@ import (
 	"net/http"
 	_ "net/http/pprof"
 
-	"cosmossdk.io/x/feegrant"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
+	"github.com/cosmos/cosmos-sdk/x/feegrant"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	blstypes "github.com/productscience/inference/x/bls/types"
 
 	"github.com/cosmos/cosmos-sdk/codec"

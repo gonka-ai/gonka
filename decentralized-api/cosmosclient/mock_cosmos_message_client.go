@@ -14,7 +14,7 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/mock"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	blstypes "github.com/productscience/inference/x/bls/types"

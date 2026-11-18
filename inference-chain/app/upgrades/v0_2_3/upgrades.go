@@ -3,8 +3,8 @@ package v0_2_2
 import (
 	"context"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	"github.com/productscience/inference/x/inference/keeper"
 )
 

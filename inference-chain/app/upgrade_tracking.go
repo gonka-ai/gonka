@@ -3,8 +3,8 @@ package app
 import (
 	"context"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 )
 
 func (app *App) withLastUpgradeHeight(next upgradetypes.UpgradeHandler) upgradetypes.UpgradeHandler {
