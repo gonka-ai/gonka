@@ -24,9 +24,11 @@ TESTS := $(shell if [ "$(TESTS)" = "1" ]; then echo 1; else echo 0; fi)
 
 LIBWASMVM_SCRIPT := sh ../scripts/fetch-libwasmvm.sh
 WASMVM_STATIC_DARWIN_URL := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_DARWIN_URL)
+WASMVM_STATIC_DARWIN_SHA256 := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_DARWIN_SHA256)
 WASMVM_STATIC_LINUX_X64_URL := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_X64_URL)
 WASMVM_STATIC_LINUX_X64_SHA256 := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_X64_SHA256)
 WASMVM_STATIC_LINUX_ARM64_URL := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_AARCH64_URL)
+WASMVM_STATIC_LINUX_ARM64_SHA256 := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_AARCH64_SHA256)
 
 USE_REGISTRY_CACHE ?= 0
 GHCR_CACHE_NAMESPACE ?= gonka-ai
@@ -50,7 +52,8 @@ _build-macos:
 	@echo "Building macOS binary with static wasmvm library..."
 	@echo "Downloading static wasmvm library for macOS..."
 	@mkdir -p /tmp/wasmvm-static
-	@curl -L -o /tmp/wasmvm-static/libwasmvm.a $(WASMVM_STATIC_DARWIN_URL)
+	@curl -fsSL -o /tmp/wasmvm-static/libwasmvm.a $(WASMVM_STATIC_DARWIN_URL)
+	@echo "$(WASMVM_STATIC_DARWIN_SHA256)  /tmp/wasmvm-static/libwasmvm.a" | shasum -a 256 -c
 	@echo "Building with static wasmvm library..."
 	@CGO_ENABLED=1 CC=gcc \
 		CGO_LDFLAGS="-L/tmp/wasmvm-static -lwasmvm" \
@@ -258,7 +261,8 @@ build-linux-docker:
 			go mod download && \
 			echo "Downloading static wasmvm library for amd64..." && \
 			mkdir -p /lib/wasmvm-static && \
-			curl -L -o /lib/wasmvm-static/libwasmvm_muslc.x86_64.a $(WASMVM_STATIC_LINUX_X64_URL) && \
+			curl -fsSL -o /lib/wasmvm-static/libwasmvm_muslc.x86_64.a $(WASMVM_STATIC_LINUX_X64_URL) && \
+			echo "$(WASMVM_STATIC_LINUX_X64_SHA256)  /lib/wasmvm-static/libwasmvm_muslc.x86_64.a" | sha256sum -c && \
 			ln -sf /lib/wasmvm-static/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a && \
 		echo "Building static linux/amd64..." && \
 		CGO_ENABLED=1 CC=gcc CGO_LDFLAGS="-L/lib/wasmvm-static" GOOS=linux GOARCH=amd64 \
@@ -275,7 +279,8 @@ build-linux-docker:
 			go mod download && \
 			echo "Downloading static wasmvm library for arm64..." && \
 			mkdir -p /lib/wasmvm-static && \
-			curl -L -o /lib/wasmvm-static/libwasmvm_muslc.aarch64.a $(WASMVM_STATIC_LINUX_ARM64_URL) && \
+			curl -fsSL -o /lib/wasmvm-static/libwasmvm_muslc.aarch64.a $(WASMVM_STATIC_LINUX_ARM64_URL) && \
+			echo "$(WASMVM_STATIC_LINUX_ARM64_SHA256)  /lib/wasmvm-static/libwasmvm_muslc.aarch64.a" | sha256sum -c && \
 			ln -sf /lib/wasmvm-static/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a && \
 		echo "Building static linux/arm64..." && \
 		CGO_ENABLED=1 CC=gcc CGO_LDFLAGS="-L/lib/wasmvm-static" GOOS=linux GOARCH=arm64 \
@@ -294,7 +299,8 @@ build-%:
 		if [ "$(OS)" = "darwin" ]; then \
 			echo "Setting up static wasmvm for macOS..."; \
 			mkdir -p /tmp/wasmvm-static-$(OS)-$(ARCH); \
-			curl -L -o /tmp/wasmvm-static-$(OS)-$(ARCH)/libwasmvm.a $(WASMVM_STATIC_DARWIN_URL); \
+			curl -fsSL -o /tmp/wasmvm-static-$(OS)-$(ARCH)/libwasmvm.a $(WASMVM_STATIC_DARWIN_URL) && \
+			echo "$(WASMVM_STATIC_DARWIN_SHA256)  /tmp/wasmvm-static-$(OS)-$(ARCH)/libwasmvm.a" | shasum -a 256 -c || exit 1; \
 			CGO_ENABLED=1 CC=gcc GOOS=$(OS) GOARCH=$(ARCH) \
 			CGO_LDFLAGS="-L/tmp/wasmvm-static-$(OS)-$(ARCH) -lwasmvm" \
 			go build -ldflags "$(ldflags)" -tags "sys_wasmvm" -o build/$(OS)/$(ARCH)/inferenced ./cmd/inferenced/main.go; \
