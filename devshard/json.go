@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -14,9 +13,6 @@ import (
 // CanonicalizeJSON returns a deterministic JSON encoding with sorted keys and
 // no HTML escaping. Used to ensure hash consistency across components.
 func CanonicalizeJSON(data []byte) ([]byte, error) {
-	if shape := ScanJSONShape(data); shape.MaxDepth > MaxCanonicalJSONDepth || shape.Composites > MaxCanonicalJSONComposites {
-		return nil, fmt.Errorf("canonicalize json: %w: depth %d, %d objects and arrays", ErrJSONTooComplex, shape.MaxDepth, shape.Composites)
-	}
 	var obj interface{}
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return nil, fmt.Errorf("canonicalize json: %w", err)
@@ -33,71 +29,6 @@ func CanonicalizeJSON(data []byte) ([]byte, error) {
 
 	// json.Encoder appends a newline; trim it for hash consistency.
 	return bytes.TrimRight(buf.Bytes(), "\n"), nil
-}
-
-const (
-	MaxCanonicalJSONDepth      = 64
-	MaxCanonicalJSONComposites = 1 << 16
-)
-
-var ErrJSONTooComplex = errors.New("json too complex")
-
-type JSONShape struct {
-	MaxDepth      int
-	Composites    int
-	TopLevelItems int
-}
-
-func ScanJSONShape(data []byte) JSONShape {
-	var s JSONShape
-	depth := 0
-	inString, escaped := false, false
-	seen, topArray, expect := false, false, false
-	for _, c := range data {
-		if inString {
-			switch {
-			case escaped:
-				escaped = false
-			case c == '\\':
-				escaped = true
-			case c == '"':
-				inString = false
-			}
-			continue
-		}
-		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
-			continue
-		}
-		if !seen {
-			seen = true
-			topArray = c == '['
-		}
-		if topArray && depth == 1 {
-			switch {
-			case c == ',':
-				expect = true
-			case c != ']' && expect:
-				s.TopLevelItems++
-				expect = false
-			}
-		}
-		switch c {
-		case '"':
-			inString = true
-		case '{', '[':
-			depth++
-			s.Composites++
-			if depth > s.MaxDepth {
-				s.MaxDepth = depth
-			}
-			if depth == 1 && topArray {
-				expect = true
-			}
-		case '}', ']':
-			depth--
-		}
-	}
-	return s
 }
 
 // CanonicalPromptHash returns sha256(canonicalize(prompt)).

@@ -1316,7 +1316,7 @@ func (c *HTTPClient) getDiffWindow(ctx context.Context, from, to uint64) ([]type
 		}
 		return nil, err
 	}
-	if err := checkDiffPageRecords(devshardpkg.ScanJSONShape(body).TopLevelItems); err != nil {
+	if err := checkDiffPageRecords(countTopLevelJSONItems(body)); err != nil {
 		return nil, err
 	}
 	var records []diffRecordJSON
