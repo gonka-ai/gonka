@@ -122,15 +122,15 @@ func buildSettlementTestDataWithNonce(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: settlementVersion,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -199,15 +199,15 @@ func buildSettlementTestDataWithVersion(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: version,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 

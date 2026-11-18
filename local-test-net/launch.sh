@@ -34,6 +34,15 @@ if [ -n "$(ls -A ./public-html 2>/dev/null)" ]; then
 fi
 
 echo "Starting genesis node"
+export DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_SIZE=1
+export DAPI_TX_BATCHING__VALIDATION_V2_FLUSH_TIMEOUT_SECONDS=1
+export RPC_PORT=26657
+export P2P_PORT=26656
+unset P2P_EXTERNAL_ADDRESS
+mkdir -p "./prod-local/$KEY_NAME" "./prod-local/$KEY_NAME/.nats" "./prod-local/mock-server/$KEY_NAME"
+# Applied by init-docker-genesis.sh after the image's baked overrides. jq replaces
+# a models[] element instead of merging it, so this file carries the whole PoC model.
+cp ../inference-chain/test_genesis_overrides.json "./prod-local/$KEY_NAME/genesis_overrides.json"
 docker compose -p genesis -f docker-compose-base.yml -f docker-compose.genesis.yml -f docker-compose.postgres.yml up -d
 sleep 40
 

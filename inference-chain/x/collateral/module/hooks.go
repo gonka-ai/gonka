@@ -29,6 +29,10 @@ func (h StakingHooks) BeforeValidatorModified(ctx context.Context, valAddr sdk.V
 	return nil
 }
 
+func (h StakingHooks) AfterValidatorConsKeyUpdated(ctx context.Context, oldConsAddr, newConsAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
+	return nil
+}
+
 func (h StakingHooks) AfterValidatorRemoved(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
 	return nil
 }

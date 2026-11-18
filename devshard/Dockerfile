@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.4
 
-FROM golang:1.25.9-alpine3.23 AS devshardctl-builder
+FROM golang:1.26.5-alpine3.23 AS devshardctl-builder
 
 ARG DEVSHARD_VERSION=dev
 
@@ -32,7 +32,7 @@ COPY --from=devshardctl-builder /devshardctl /usr/local/bin/devshardctl
 EXPOSE 8080
 ENTRYPOINT ["devshardctl"]
 
-FROM golang:1.25.9-alpine3.23 AS builder
+FROM golang:1.26.5-alpine3.23 AS builder
 
 ARG GOOS
 ARG GOARCH=amd64

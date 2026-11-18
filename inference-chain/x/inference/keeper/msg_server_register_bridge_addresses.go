@@ -42,7 +42,7 @@ func (k msgServer) RegisterBridgeAddresses(goCtx context.Context, msg *types.Msg
 				"orphanedCW20", existingWrapped.WrappedContractAddress,
 			)
 			tokenKey := collections.Join(chainId, strings.ToLower(address))
-			
+
 			if err := k.WrappedTokenContractsMap.Remove(ctx, tokenKey); err != nil {
 				return nil, err
 			}

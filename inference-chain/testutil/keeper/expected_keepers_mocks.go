@@ -14,7 +14,6 @@ import (
 	reflect "reflect"
 
 	math "cosmossdk.io/math"
-	types "cosmossdk.io/x/upgrade/types"
 	types0 "github.com/CosmWasm/wasmd/x/wasm/types"
 	types1 "github.com/cosmos/cosmos-sdk/types"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
@@ -22,6 +21,7 @@ import (
 	group "github.com/cosmos/cosmos-sdk/x/group"
 	keeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
 	types3 "github.com/cosmos/cosmos-sdk/x/staking/types"
+	types "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 	types4 "github.com/productscience/inference/x/bls/types"
 	types5 "github.com/productscience/inference/x/inference/types"
 	gomock "go.uber.org/mock/gomock"

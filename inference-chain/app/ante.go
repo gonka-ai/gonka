@@ -10,13 +10,11 @@ import (
 	"math/big"
 	"strings"
 
-	ibcante "github.com/cosmos/ibc-go/v8/modules/core/ante"
-	"github.com/cosmos/ibc-go/v8/modules/core/keeper"
+	ibcante "github.com/cosmos/ibc-go/v11/modules/core/ante"
+	"github.com/cosmos/ibc-go/v11/modules/core/keeper"
 
 	corestoretypes "cosmossdk.io/core/store"
-	storetypes "cosmossdk.io/store/types"
-	circuitante "cosmossdk.io/x/circuit/ante"
-	circuitkeeper "cosmossdk.io/x/circuit/keeper"
+	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -40,7 +38,6 @@ type HandlerOptions struct {
 	NodeConfig            *wasmtypes.NodeConfig
 	WasmKeeper            *wasmkeeper.Keeper
 	TXCounterStoreService corestoretypes.KVStoreService
-	CircuitKeeper         *circuitkeeper.Keeper
 	InferenceKeeper       *inferencemodulekeeper.Keeper
 	Codec                 codec.Codec
 	AuthzKeeper           AuthzAuthorizationKeeper
@@ -321,9 +318,6 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	if options.TXCounterStoreService == nil {
 		return nil, errors.New("wasm store service is required for ante builder")
 	}
-	if options.CircuitKeeper == nil {
-		return nil, errors.New("circuit keeper is required for ante builder")
-	}
 
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
@@ -331,7 +325,6 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
 		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
-		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
 		ante.NewExtensionOptionsDecorator(options.ExtensionOptionChecker),
 		ante.NewValidateBasicDecorator(),
 		MaxTxFeeDecorator{},
@@ -409,7 +402,6 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 			Codec:                 app.appCodec,
 			AuthzKeeper:           &app.AuthzKeeper,
 			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),
-			CircuitKeeper:         &app.CircuitBreakerKeeper,
 		},
 	)
 	if err != nil {

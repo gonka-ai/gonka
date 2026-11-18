@@ -21,4 +21,3 @@ func (msg *MsgAddParticipantsToAllowList) ValidateBasic() error {
 	}
 	return nil
 }
-

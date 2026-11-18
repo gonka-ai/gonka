@@ -2,11 +2,7 @@ package types
 
 import (
 	"fmt"
-
-	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 )
-
-var _ paramtypes.ParamSet = (*Params)(nil)
 
 // Parameter store keys
 var (
@@ -19,11 +15,6 @@ var (
 	KeyCompletedFallbackBlocks         = []byte("CompletedFallbackBlocks")
 	KeyMaxSigningAttempts              = []byte("MaxSigningAttempts")
 )
-
-// ParamKeyTable the param key table for launch module
-func ParamKeyTable() paramtypes.KeyTable {
-	return paramtypes.NewKeyTable().RegisterParamSet(&Params{})
-}
 
 // NewParams creates a new Params instance
 func NewParams(
@@ -60,20 +51,6 @@ func DefaultParams() Params {
 		0,   // completed_fallback_blocks: disabled by default
 		3,   // max_signing_attempts: initial attempt + 2 retries
 	)
-}
-
-// ParamSetPairs get the params.ParamSet
-func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
-	return paramtypes.ParamSetPairs{
-		paramtypes.NewParamSetPair(KeyITotalSlots, &p.ITotalSlots, validateITotalSlots),
-		paramtypes.NewParamSetPair(KeyTSlotsDegreeOffset, &p.TSlotsDegreeOffset, validateTSlotsDegreeOffset),
-		paramtypes.NewParamSetPair(KeyDealingPhaseDurationBlocks, &p.DealingPhaseDurationBlocks, validateDealingPhaseDurationBlocks),
-		paramtypes.NewParamSetPair(KeyVerificationPhaseDurationBlocks, &p.VerificationPhaseDurationBlocks, validateVerificationPhaseDurationBlocks),
-		paramtypes.NewParamSetPair(KeySigningDeadlineBlocks, &p.SigningDeadlineBlocks, validateSigningDeadlineBlocks),
-		paramtypes.NewParamSetPair(KeyDisputePhaseDurationBlocks, &p.DisputePhaseDurationBlocks, validateDisputePhaseDurationBlocks),
-		paramtypes.NewParamSetPair(KeyCompletedFallbackBlocks, &p.CompletedFallbackBlocks, validateCompletedFallbackBlocks),
-		paramtypes.NewParamSetPair(KeyMaxSigningAttempts, &p.MaxSigningAttempts, validateMaxSigningAttempts),
-	}
 }
 
 // Validate validates the set of params

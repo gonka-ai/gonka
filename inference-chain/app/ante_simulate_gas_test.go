@@ -8,10 +8,9 @@ import (
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/stretchr/testify/require"
 
-	"cosmossdk.io/log"
-	"cosmossdk.io/store"
-	storemetrics "cosmossdk.io/store/metrics"
-	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/log/v2"
+	"github.com/cosmos/cosmos-sdk/store/v2"
+	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
@@ -25,7 +24,7 @@ import (
 func TestCountTXSimulateGasDecorator_SimulateMetersWithoutAssigningCounter(t *testing.T) {
 	keyWasm := storetypes.NewKVStoreKey(wasmtypes.StoreKey)
 	db := dbm.NewMemDB()
-	ms := store.NewCommitMultiStore(db, log.NewTestLogger(t), storemetrics.NewNoOpMetrics())
+	ms := store.NewCommitMultiStore(db, log.NewTestLogger(t))
 	ms.MountStoreWithDB(keyWasm, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, ms.LoadLatestVersion())
 
@@ -49,7 +48,7 @@ func TestCountTXSimulateGasDecorator_SimulateMetersWithoutAssigningCounter(t *te
 func TestCountTXSimulateGasDecorator_CheckTxAssignsCounter(t *testing.T) {
 	keyWasm := storetypes.NewKVStoreKey(wasmtypes.StoreKey)
 	db := dbm.NewMemDB()
-	ms := store.NewCommitMultiStore(db, log.NewTestLogger(t), storemetrics.NewNoOpMetrics())
+	ms := store.NewCommitMultiStore(db, log.NewTestLogger(t))
 	ms.MountStoreWithDB(keyWasm, storetypes.StoreTypeIAVL, db)
 	require.NoError(t, ms.LoadLatestVersion())
 

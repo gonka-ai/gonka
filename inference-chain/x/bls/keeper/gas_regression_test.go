@@ -3,7 +3,7 @@ package keeper
 import (
 	"testing"
 
-	storetypes "cosmossdk.io/store/types"
+	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/x/bls/types"

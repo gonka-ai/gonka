@@ -18,6 +18,10 @@ func (cometSlog) Info(msg string, keyvals ...interface{}) {
 	slog.Info("chain events: comet "+msg, slogKVs(keyvals)...)
 }
 
+func (cometSlog) Warn(msg string, keyvals ...interface{}) {
+	slog.Warn("chain events: comet "+msg, slogKVs(keyvals)...)
+}
+
 func (cometSlog) Error(msg string, keyvals ...interface{}) {
 	slog.Error("chain events: comet "+msg, slogKVs(keyvals)...)
 }

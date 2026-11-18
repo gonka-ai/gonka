@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 	"github.com/productscience/inference/internal/rpc"
-	"net"
 	"github.com/spf13/cobra"
+	"net"
 	"net/url"
 	"os"
 	"regexp"

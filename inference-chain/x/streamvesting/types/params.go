@@ -2,21 +2,12 @@ package types
 
 import (
 	"fmt"
-
-	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
 )
-
-var _ paramtypes.ParamSet = (*Params)(nil)
 
 // Parameter store keys
 var (
 	KeyRewardVestingPeriod = []byte("RewardVestingPeriod")
 )
-
-// ParamKeyTable the param key table for launch module
-func ParamKeyTable() paramtypes.KeyTable {
-	return paramtypes.NewKeyTable().RegisterParamSet(&Params{})
-}
 
 // NewParams creates a new Params instance
 func NewParams(rewardVestingPeriod uint64) Params {
@@ -28,13 +19,6 @@ func NewParams(rewardVestingPeriod uint64) Params {
 // DefaultParams returns a default set of parameters
 func DefaultParams() Params {
 	return NewParams(180) // Default 180 epochs
-}
-
-// ParamSetPairs get the params.ParamSet
-func (p *Params) ParamSetPairs() paramtypes.ParamSetPairs {
-	return paramtypes.ParamSetPairs{
-		paramtypes.NewParamSetPair(KeyRewardVestingPeriod, &p.RewardVestingPeriod, validateRewardVestingPeriod),
-	}
 }
 
 // Validate validates the set of params

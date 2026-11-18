@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	aminojson "cosmossdk.io/x/tx/signing/aminojson"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	aminojson "github.com/cosmos/cosmos-sdk/x/tx/signing/aminojson"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 

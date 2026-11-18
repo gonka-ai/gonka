@@ -15,12 +15,12 @@ import (
 	"strconv"
 
 	math "cosmossdk.io/math"
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 
 	genesistransferkeeper "github.com/productscience/inference/x/genesistransfer/keeper"
 	genesistransfertypes "github.com/productscience/inference/x/genesistransfer/types"

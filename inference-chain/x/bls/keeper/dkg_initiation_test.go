@@ -559,4 +559,3 @@ func TestInitiateKeyGenerationForEpoch_EnforcesSecp256k1KeyInvariants(t *testing
 		})
 	}
 }
-

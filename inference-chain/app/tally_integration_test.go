@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"cosmossdk.io/log"
+	"cosmossdk.io/log/v2"
 	"cosmossdk.io/math"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -47,7 +47,7 @@ const TallyTestChainID = "tally-test-chain"
 func TestTallyBugReproduction(t *testing.T) {
 	// Setup app
 	testApp := createTestApp(t)
-	ctx := testApp.BaseApp.NewUncachedContext(false, cmtproto.Header{ChainID: TallyTestChainID, Height: 1000000})
+	ctx := testApp.BaseApp.NewNextBlockContext(cmtproto.Header{ChainID: TallyTestChainID, Height: 1000000})
 
 	// Configuration matching mainnet behavior:
 	// - maxValidators = 100 (standard cosmos-sdk setting)
@@ -114,12 +114,12 @@ func TestTallyBugReproduction(t *testing.T) {
 	validator101, err := testApp.StakingKeeper.GetValidator(ctx, valAddresses[100])
 	require.NoError(t, err)
 	require.True(t, validator101.IsBonded(), "Validator #101 should be bonded (via SetComputeValidators)")
-	t.Logf("Validator #101: bonded=%v, tokens=%s", validator101.IsBonded(), validator101.GetBondedTokens())
+	t.Logf("Validator #101: bonded=%v, tokens=%s", validator101.IsBonded(), validator101.GetTokens())
 
-	// 4. Verify TotalBondedTokens includes ALL validators (the denominator)
-	totalBonded, err := testApp.StakingKeeper.TotalBondedTokens(ctx)
+	// 4. Verify the bonded-token sum includes ALL validators (the denominator)
+	totalBonded, err := testApp.StakingKeeper.TotalValidatorPower(ctx)
 	require.NoError(t, err)
-	t.Logf("TotalBondedTokens (denominator): %s", totalBonded)
+	t.Logf("TotalValidatorPower (denominator): %s", totalBonded)
 
 	// ============================================
 	// TEST THE FIX: Votes from validator #101 should be counted
@@ -212,7 +212,7 @@ func createTestApp(t *testing.T) *app.App {
 	var emptyWasmOpts []wasmkeeper.Option
 
 	testApp, err := app.New(
-		logger, db, nil, true, appOptions, emptyWasmOpts,
+		logger, db, true, appOptions, emptyWasmOpts,
 		baseapp.SetChainID(TallyTestChainID),
 	)
 	require.NoError(t, err)

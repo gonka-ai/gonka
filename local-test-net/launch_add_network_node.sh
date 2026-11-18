@@ -75,3 +75,7 @@ if [ "${BRIDGE_ACTIVE}" = "true" ]; then
 fi
 
 docker compose -p "$project_name" $COMPOSE_FILES up -d
+
+# The join API signs as ${KEY_NAME}-WARM. That key is created at container
+# start and is absent from genesis, so fund it from the genesis account.
+"${SCRIPT_DIR}/fund-join.sh" "$project_name" "${KEY_NAME}-WARM"

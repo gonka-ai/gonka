@@ -20,6 +20,10 @@ func (s StakingHooksLogger) BeforeValidatorModified(ctx context.Context, valAddr
 	return nil
 }
 
+func (s StakingHooksLogger) AfterValidatorConsKeyUpdated(ctx context.Context, oldConsAddr, newConsAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
+	return nil
+}
+
 func (s StakingHooksLogger) AfterValidatorRemoved(ctx context.Context, consAddr sdk.ConsAddress, valAddr sdk.ValAddress) error {
 	return nil
 }

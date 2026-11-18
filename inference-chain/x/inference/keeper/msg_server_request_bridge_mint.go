@@ -102,10 +102,10 @@ func (k msgServer) RequestBridgeMint(goCtx context.Context, msg *types.MsgReques
 	// Prepare BLS signature data for WGNK mint command
 	// Only prepare the data portion - BLS system will prepend epochId, gonkaChainId, requestId
 	blsData, err := k.prepareBridgeMintSignatureData(
-		destinationChainId,     // Numeric chain ID (e.g., "1", "137")
-		msg.DestinationAddress, // Ethereum address to receive WGNK
+		destinationChainId,           // Numeric chain ID (e.g., "1", "137")
+		msg.DestinationAddress,       // Ethereum address to receive WGNK
 		msg.DestinationBridgeAddress, // Specific bridge contract
-		msg.Amount,             // Amount as string
+		msg.Amount,                   // Amount as string
 	)
 	if err != nil {
 		// Rollback the escrow transfer

@@ -44,10 +44,10 @@ func (k Keeper) PocValidationsForStage(goCtx context.Context, req *types.QueryPo
 		}
 
 		pocValidationsWithParticipants = append(pocValidationsWithParticipants, types.PoCValidationsWithParticipants{
-			Participant:    participantIndex,
-			PocValidation:  validations,
-			PubKey:         utils.PubKeyToString(pubKey),
-			HexPubKey:      utils.PubKeyToHexString(pubKey),
+			Participant:   participantIndex,
+			PocValidation: validations,
+			PubKey:        utils.PubKeyToString(pubKey),
+			HexPubKey:     utils.PubKeyToHexString(pubKey),
 		})
 	}
 
@@ -55,4 +55,3 @@ func (k Keeper) PocValidationsForStage(goCtx context.Context, req *types.QueryPo
 		PocValidation: pocValidationsWithParticipants,
 	}, nil
 }
-

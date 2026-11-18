@@ -3,7 +3,7 @@ package keeper_test
 import (
 	"context"
 	"testing"
-	
+
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"

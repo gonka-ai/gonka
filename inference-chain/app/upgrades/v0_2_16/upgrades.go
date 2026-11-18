@@ -16,10 +16,10 @@ import (
 	"slices"
 	"time"
 
-	upgradetypes "cosmossdk.io/x/upgrade/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authz "github.com/cosmos/cosmos-sdk/x/authz"
+	upgradetypes "github.com/cosmos/cosmos-sdk/x/upgrade/types"
 
 	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/keeper"

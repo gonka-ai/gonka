@@ -13,16 +13,15 @@ import (
 	"golang.org/x/exp/slog"
 
 	"cosmossdk.io/core/header"
-	"cosmossdk.io/log"
-	"cosmossdk.io/store"
-	"cosmossdk.io/store/metrics"
-	storetypes "cosmossdk.io/store/types"
+	"cosmossdk.io/log/v2"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	dbm "github.com/cosmos/cosmos-db"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/runtime"
+	"github.com/cosmos/cosmos-sdk/store/v2"
+	storetypes "github.com/cosmos/cosmos-sdk/store/v2/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/address"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -204,7 +203,7 @@ func InferenceKeeperWithMock(
 	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)
 
 	db := dbm.NewMemDB()
-	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger(), metrics.NewNoOpMetrics())
+	stateStore := store.NewCommitMultiStore(db, log.NewNopLogger())
 	stateStore.MountStoreWithDB(storeKey, storetypes.StoreTypeIAVL, db)
 	stateStore.MountStoreWithDB(transientStoreKey, storetypes.StoreTypeTransient, db)
 	stateStore.MountStoreWithDB(blsStoreKey, storetypes.StoreTypeIAVL, db)
@@ -279,6 +278,22 @@ func (PrintlnLogger) Error(msg string, keyVals ...any) {
 
 func (PrintlnLogger) Debug(msg string, keyVals ...any) {
 	slog.Debug(msg, keyVals...)
+}
+
+func (l PrintlnLogger) InfoContext(_ context.Context, msg string, keyVals ...any) {
+	l.Info(msg, keyVals...)
+}
+
+func (l PrintlnLogger) WarnContext(_ context.Context, msg string, keyVals ...any) {
+	l.Warn(msg, keyVals...)
+}
+
+func (l PrintlnLogger) ErrorContext(_ context.Context, msg string, keyVals ...any) {
+	l.Error(msg, keyVals...)
+}
+
+func (l PrintlnLogger) DebugContext(_ context.Context, msg string, keyVals ...any) {
+	l.Debug(msg, keyVals...)
 }
 
 func (PrintlnLogger) With(keyVals ...any) log.Logger {

@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"cosmossdk.io/log"
+	"cosmossdk.io/log/v2"
 	"github.com/productscience/inference/testutil"
 	"go.uber.org/mock/gomock"
 
