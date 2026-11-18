@@ -250,10 +250,8 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	_ = writeSSEEvent(w, metaWrapper)
 
-	if s.gossip != nil && resp.StateSig != nil {
-		if slot, slotErr := s.host.StateSigningSlot(resp.Nonce); slotErr == nil {
-			go s.gossip.AfterRequestFrom(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig, slot)
-		}
+	if s.gossip != nil && resp.StateSig != nil && len(resp.StateSigningSlots) > 0 {
+		go s.gossip.AfterRequestFrom(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig, resp.StateSigningSlots[0])
 	}
 	if s.gossip != nil && resp.StateSig == nil && len(resp.Mempool) > 0 {
 		go s.gossip.BroadcastTxs(context.Background(), resp.Mempool)

@@ -63,12 +63,16 @@ type HostRequest struct {
 
 // HostResponse carries the host's reply back to the user.
 type HostResponse struct {
-	StateSig          []byte // nil = withheld
-	StateHash         []byte // always set after applying diffs
-	Nonce             uint64 // current nonce after applying diffs
-	Receipt           []byte // executor receipt sig, nil if not executor
-	ConfirmedAt       int64  // executor wall-clock timestamp, 0 if not executor
-	ObservedHeight    uint64 // executor stamp; 0 if unstamped
+	StateSig  []byte // nil = withheld
+	StateHash []byte // always set after applying diffs
+	Nonce     uint64 // current nonce after applying diffs
+	// StateSigningSlots is local transport metadata from the exact signing
+	// decision. It is not serialized: gossip must preserve these labels rather
+	// than deriving potentially broader authority from the frozen checkpoint.
+	StateSigningSlots []uint32 `json:"-"`
+	Receipt           []byte   // executor receipt sig, nil if not executor
+	ConfirmedAt       int64    // executor wall-clock timestamp, 0 if not executor
+	ObservedHeight    uint64   // executor stamp; 0 if unstamped
 	ObservedBlockHash []byte
 	// EnvelopeHeight is the response-leg HeightSyncSection.mainnet_height when
 	// the hop attached a section (HasEnvelope). Honest compose uses it to drop
@@ -629,7 +633,9 @@ func (h *Host) CanSignSlot(slot uint32) bool {
 	return h.signingCandidates[slot] && h.SlotActors().Allows(slot, h.signer.Address())
 }
 
-// StateSigningSlot labels an existing state signature at its exact nonce.
+// StateSigningSlot labels an existing state signature at its historical nonce.
+// A newly issued response uses HostResponse.StateSigningSlots instead: final
+// attestation may authorize fewer slots than the frozen checkpoint does.
 func (h *Host) StateSigningSlot(nonce uint64) (uint32, error) {
 	slots := h.stateSigningSlots(nonce)
 	if len(slots) == 0 {
@@ -781,7 +787,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	// (c) Sign state (with acceptance check + mempool staleness).
-	stateSig, root, nonce, _, err := h.signIfAccepted(lastAppliedTxs)
+	stateSig, root, nonce, signingSlots, err := h.signIfAccepted(lastAppliedTxs)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, observability.Classify(observability.ReasonStateSignErr, observability.WhereHostSignState, err)
@@ -832,6 +838,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		StateSig:           stateSig,
 		StateHash:          root,
 		Nonce:              nonce,
+		StateSigningSlots:  append([]uint32(nil), signingSlots...),
 		Receipt:            receipt,
 		ConfirmedAt:        confirmedAt,
 		ObservedHeight:     receiptOutcome.observedHeight,

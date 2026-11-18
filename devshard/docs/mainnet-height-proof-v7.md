@@ -75,6 +75,11 @@ existing empty-diff retry and first tries reading durable signatures, so a
 retained quorum needs no new signature. The same checks run after restart and
 HA takeover.
 
+The local host response carries the exact slots selected by the signing
+operation. Both ordinary request gossip and recovered-diff gossip retain those
+labels; neither re-derives them from broader historical authority at the frozen
+checkpoint. This metadata is not part of the wire response or signed content.
+
 An active/finalizing state or a host without durable admission provenance keeps
 the ordinary checkpoint freshness rule. Unchecked remote history cannot acquire
 provenance through this retry. A replacement warm key must already be bound at
