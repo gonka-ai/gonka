@@ -14,6 +14,11 @@ import (
 	"github.com/productscience/inference/x/bls/types"
 )
 
+// errNilBLSPoint is a dealer-validity proof failure caused by a nil or identity
+// point (uncompressed point is nil, or the signature or slot key is infinity).
+// It must not reject the rest of the verification ballot.
+var errNilBLSPoint = errors.New("nil BLS point")
+
 // SubmitVerificationVector handles verification vector submissions during the verifying phase
 func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.MsgSubmitVerificationVector) (*types.MsgSubmitVerificationVectorResponse, error) {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
@@ -61,7 +66,8 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("dealer_validity length %d does not match participants count %d", len(msg.DealerValidity), len(epochBLSData.Participants)))
 	}
 
-	if err := ms.validateDealerValidityProofs(msg, &epochBLSData, participantIndex); err != nil {
+	nilPointDealers, err := ms.validateDealerValidityProofs(msg, &epochBLSData, participantIndex)
+	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
@@ -91,6 +97,11 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	// Persist complaint evidence alongside verification vote. One complaint per (dealer, complainer).
 	for dealerIndex, dealerValid := range msg.DealerValidity {
 		if dealerValid {
+			continue
+		}
+		// A nil-point proof cleared this yes. The verifier had no complaint for
+		// it, and that must not reject the ballot they did submit.
+		if _, nilPoint := nilPointDealers[dealerIndex]; nilPoint {
 			continue
 		}
 
@@ -176,7 +187,7 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	return &types.MsgSubmitVerificationVectorResponse{}, nil
 }
 
-func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {
+func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) (map[int]struct{}, error) {
 	trueNonSelfDealerCount := 0
 	selfMarkedTrue := participantIndex >= 0 && participantIndex < len(msg.DealerValidity) && msg.DealerValidity[participantIndex]
 	for dealerIndex, isValid := range msg.DealerValidity {
@@ -192,14 +203,14 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 	}
 	if len(msg.DealerValidityProofs) < trueNonSelfDealerCount || len(msg.DealerValidityProofs) > maxProofCount {
 		if selfMarkedTrue {
-			return fmt.Errorf(
+			return nil, fmt.Errorf(
 				"dealer_validity_proofs count %d is invalid: expected %d (without self proof) or %d (with optional self proof)",
 				len(msg.DealerValidityProofs),
 				trueNonSelfDealerCount,
 				maxProofCount,
 			)
 		}
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"dealer_validity_proofs count %d does not match true non-self dealer count %d",
 			len(msg.DealerValidityProofs),
 			trueNonSelfDealerCount,
@@ -211,25 +222,29 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 	for i := range msg.DealerValidityProofs {
 		proof := &msg.DealerValidityProofs[i]
 		if proof.DealerIndex >= uint32(len(epochBLSData.Participants)) {
-			return fmt.Errorf("dealer_validity_proofs[%d].dealer_index %d out of range", i, proof.DealerIndex)
+			return nil, fmt.Errorf("dealer_validity_proofs[%d].dealer_index %d out of range", i, proof.DealerIndex)
 		}
 		if len(proof.ProofSignature) == 0 {
-			return fmt.Errorf("dealer_validity_proofs[%d].proof_signature must be non-empty", i)
+			return nil, fmt.Errorf("dealer_validity_proofs[%d].proof_signature must be non-empty", i)
 		}
 		dealerIndex := int(proof.DealerIndex)
 		if dealerIndex >= len(msg.DealerValidity) || !msg.DealerValidity[dealerIndex] {
-			return fmt.Errorf("proof provided for dealer %d that is marked false", proof.DealerIndex)
+			return nil, fmt.Errorf("proof provided for dealer %d that is marked false", proof.DealerIndex)
 		}
 		if proofsByDealer[dealerIndex] != nil {
-			return fmt.Errorf("duplicate proof for dealer %d", proof.DealerIndex)
+			return nil, fmt.Errorf("duplicate proof for dealer %d", proof.DealerIndex)
 		}
 		proofsByDealer[dealerIndex] = proof
 	}
 
 	slotIndices, err := participantSlotIndices(epochBLSData, participantIndex)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	// Dealers whose yes could not be proven because a point was nil or infinity.
+	// The rest of the ballot is still stored.
+	nilPointDealers := make(map[int]struct{})
 
 	// Deterministic iteration: walk dealer_validity by index
 	for dealerIndex, isValid := range msg.DealerValidity {
@@ -242,14 +257,25 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 
 		proof := proofsByDealer[dealerIndex]
 		if proof == nil {
-			return fmt.Errorf("missing proof for dealer %d", dealerIndex)
+			return nil, fmt.Errorf("missing proof for dealer %d", dealerIndex)
 		}
 		if err := ms.verifyDealerValidityProof(epochBLSData, dealerIndex, slotIndices, proof.ProofSignature); err != nil {
-			return fmt.Errorf("invalid proof for dealer %d: %w", dealerIndex, err)
+			if errors.Is(err, errNilBLSPoint) {
+				ms.Logger().Info("dealer validity proof contains a nil point; keeping the rest of the vote",
+					"epoch_id", msg.EpochId,
+					"participant", msg.Creator,
+					"dealer_index", dealerIndex,
+					"error", err,
+				)
+				msg.DealerValidity[dealerIndex] = false
+				nilPointDealers[dealerIndex] = struct{}{}
+				continue
+			}
+			return nil, fmt.Errorf("invalid proof for dealer %d: %w", dealerIndex, err)
 		}
 	}
 
-	return nil
+	return nilPointDealers, nil
 }
 
 func participantSlotIndices(epochBLSData *types.EpochBLSData, participantIndex int) ([]uint32, error) {
@@ -324,23 +350,76 @@ func (ms msgServer) verifyDealerValidityProof(epochBLSData *types.EpochBLSData, 
 		return fmt.Errorf("dealer %d has no commitments", dealerIndex)
 	}
 
-	epochForProof := *epochBLSData
 	slotPublicKeys, err := buildDealerSlotPublicKeysForSlots(
 		epochBLSData.DealerParts[dealerIndex].Commitments,
 		epochBLSData.ITotalSlots,
 		slotIndices,
 	)
 	if err != nil {
+		if errors.Is(err, errNilBLSPoint) {
+			return err
+		}
 		return fmt.Errorf("failed to precompute dealer slot public keys: %w", err)
 	}
-	epochForProof.SlotPublicKeys = slotPublicKeys
 
+	// A zero share signs as the identity and its slot key is the identity.
+	// Those slots are consistent, so they stay a yes. Any other nil point is
+	// reported separately and does not reject the ballot.
+	keptSignature, keptSlots, err := filterZeroShareProofSlots(proofSignature, slotPublicKeys, slotIndices)
+	if err != nil {
+		return err
+	}
+	if len(keptSlots) == 0 {
+		return nil
+	}
+
+	epochForProof := *epochBLSData
+	epochForProof.SlotPublicKeys = slotPublicKeys
 	proofHash := types.BuildDealerValidityProofHash(epochBLSData.EpochId, uint32(dealerIndex))
-	if !ms.verifyBLSPartialSignatureBlst(proofSignature, proofHash, &epochForProof, slotIndices) {
+	if !ms.verifyBLSPartialSignatureBlst(keptSignature, proofHash, &epochForProof, keptSlots) {
 		return fmt.Errorf("BLS proof signature verification failed")
 	}
 
 	return nil
+}
+
+// filterZeroShareProofSlots drops slots whose signature and public key are both
+// the identity. A nil encoding, or an identity on only one side, is errNilBLSPoint.
+func filterZeroShareProofSlots(proofSignature []byte, slotPublicKeys [][]byte, slotIndices []uint32) ([]byte, []uint32, error) {
+	if len(proofSignature)%48 != 0 || len(proofSignature)/48 != len(slotIndices) {
+		return nil, nil, fmt.Errorf("proof signature length does not match slot count")
+	}
+
+	keptSignature := make([]byte, 0, len(proofSignature))
+	keptSlots := make([]uint32, 0, len(slotIndices))
+	for i, slotIndex := range slotIndices {
+		start := i * 48
+		signature := new(blst.P1Affine).Uncompress(proofSignature[start : start+48])
+		if signature == nil {
+			return nil, nil, fmt.Errorf("%w: signature for slot %d", errNilBLSPoint, slotIndex)
+		}
+		if int(slotIndex) >= len(slotPublicKeys) || len(slotPublicKeys[slotIndex]) == 0 {
+			return nil, nil, fmt.Errorf("precomputed slot public key missing for slot %d", slotIndex)
+		}
+		slotPubKey := new(blst.P2Affine).Uncompress(slotPublicKeys[slotIndex])
+		if slotPubKey == nil {
+			return nil, nil, fmt.Errorf("%w: slot public key %d", errNilBLSPoint, slotIndex)
+		}
+
+		signatureInfinity := signature.InG1() && !signature.SigValidate(true)
+		keyInfinity := slotPubKey.InG2() && !slotPubKey.KeyValidate()
+		if signatureInfinity && keyInfinity {
+			continue
+		}
+		if signatureInfinity || keyInfinity {
+			return nil, nil, fmt.Errorf("%w: slot %d", errNilBLSPoint, slotIndex)
+		}
+
+		keptSignature = append(keptSignature, proofSignature[start:start+48]...)
+		keptSlots = append(keptSlots, slotIndex)
+	}
+
+	return keptSignature, keptSlots, nil
 }
 
 func buildDealerSlotPublicKeysForSlots(commitments [][]byte, totalSlots uint32, slotIndices []uint32) ([][]byte, error) {
@@ -352,7 +431,7 @@ func buildDealerSlotPublicKeysForSlots(commitments [][]byte, totalSlots uint32, 
 	for i, commitmentBytes := range commitments {
 		point := new(blst.P2Affine).Uncompress(commitmentBytes)
 		if point == nil {
-			return nil, fmt.Errorf("failed to unmarshal commitment %d with blst", i)
+			return nil, fmt.Errorf("%w: failed to unmarshal commitment %d with blst", errNilBLSPoint, i)
 		}
 		if !point.InG2() {
 			return nil, fmt.Errorf("commitment %d is not in G2 subgroup", i)

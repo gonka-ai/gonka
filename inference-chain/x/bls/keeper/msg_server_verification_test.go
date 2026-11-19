@@ -428,6 +428,93 @@ func TestSubmitVerificationVector_TrueDealerWithValidProof(t *testing.T) {
 	require.Empty(t, storedData.DealerComplaints)
 }
 
+func TestSubmitVerificationVector_ZeroShareNilPointKeepsVoteAndComplaint(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(117)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
+	epochBLSData.DealerParts[1].Commitments = [][]byte{infinityG2Bytes()}
+	attachComplaintDealer(&epochBLSData, 2)
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	slotCount := int(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, true, false},
+		DealerValidityProofs: []types.DealerValidityProof{
+			{
+				DealerIndex:    1,
+				ProofSignature: repeatInfinityG1(slotCount),
+			},
+		},
+		DealerComplaints: []types.VerificationDealerComplaint{
+			{
+				DealerIndex:             2,
+				DisputedSlotIndex:       0,
+				DisputedCiphertextIndex: 0,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, true, false}, storedData.VerificationSubmissions[0].DealerValidity)
+	require.Len(t, storedData.DealerComplaints, 1)
+	require.Equal(t, uint32(2), storedData.DealerComplaints[0].DealerIndex)
+	require.Equal(t, uint32(0), storedData.DealerComplaints[0].ComplainerIndex)
+}
+
+func TestSubmitVerificationVector_NilPointOnRealKeyKeepsComplaint(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(118)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
+	epochBLSData.DealerParts[1].Commitments = [][]byte{g2CommitmentFromScalar(7)}
+	attachComplaintDealer(&epochBLSData, 2)
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	slotCount := int(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, true, false},
+		DealerValidityProofs: []types.DealerValidityProof{
+			{
+				DealerIndex:    1,
+				ProofSignature: repeatInfinityG1(slotCount),
+			},
+		},
+		DealerComplaints: []types.VerificationDealerComplaint{
+			{
+				DealerIndex:             2,
+				DisputedSlotIndex:       0,
+				DisputedCiphertextIndex: 0,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	storedData, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Equal(t, []bool{false, false, false}, storedData.VerificationSubmissions[0].DealerValidity)
+	require.Len(t, storedData.DealerComplaints, 1)
+	require.Equal(t, uint32(2), storedData.DealerComplaints[0].DealerIndex)
+}
+
 func TestSubmitVerificationVector_ComplaintsPersisted(t *testing.T) {
 	k, msgServer, goCtx := setupMsgServerVerification(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -636,6 +723,41 @@ func TestSubmitVerificationVector_InvalidComplaintCiphertextRejected(t *testing.
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.Contains(t, err.Error(), "disputed_ciphertext_index")
+}
+
+func attachComplaintDealer(epochBLSData *types.EpochBLSData, dealerIndex int) {
+	epochBLSData.DealerParts[dealerIndex].DealerAddress = epochBLSData.Participants[dealerIndex].Address
+	epochBLSData.DealerParts[dealerIndex].Commitments = make([][]byte, int(epochBLSData.TSlotsDegree)+1)
+	for i := range epochBLSData.DealerParts[dealerIndex].Commitments {
+		epochBLSData.DealerParts[dealerIndex].Commitments[i] = g2CommitmentFromScalar(uint64(i + 1))
+	}
+	participant0Shares := dummyEncryptedShares(33)
+	epochBLSData.DealerParts[dealerIndex].ParticipantShares = []*types.EncryptedSharesForParticipant{
+		{EncryptedShares: participant0Shares},
+		{EncryptedShares: dummyEncryptedShares(33)},
+		{EncryptedShares: dummyEncryptedShares(34)},
+	}
+}
+
+func infinityG1Bytes() []byte {
+	var point bls12381.G1Affine
+	encoded := point.Bytes()
+	return encoded[:]
+}
+
+func infinityG2Bytes() []byte {
+	var point bls12381.G2Affine
+	encoded := point.Bytes()
+	return encoded[:]
+}
+
+func repeatInfinityG1(slotCount int) []byte {
+	one := infinityG1Bytes()
+	proof := make([]byte, 0, slotCount*len(one))
+	for i := 0; i < slotCount; i++ {
+		proof = append(proof, one...)
+	}
+	return proof
 }
 
 func g2CommitmentFromScalar(scalar uint64) []byte {
