@@ -50,8 +50,11 @@ func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID strin
 		return
 	}
 	signals := tape.Signals
-	if !tape.Pass() {
+	switch {
+	case !tape.Pass():
 		outcome, valid = "fail", false
+	case !tape.EndPasses():
+		outcome, valid = "end", false
 	}
 	details := []any{"steps", signals.Steps, "count", signals.Count, "max_gap", signals.MaxGap, "z", signals.Z}
 	if signals.Masked > 0 {
@@ -76,6 +79,9 @@ func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID strin
 	}
 	if tape.ReplayPast > 0 {
 		details = append(details, "replay_past", tape.ReplayPast)
+	}
+	if tape.End != "" {
+		details = append(details, "end", tape.End, "end_gap", tape.EndGap)
 	}
 	fields = append(fields, "tape", outcome, "tape_valid", valid, "agree", valid == verdict.Valid)
 	fields = append(fields, details...)

@@ -211,7 +211,7 @@ func storedTapeAnswer(t *testing.T, out []int, stream bool) []byte {
 // replayStream is the response of the logprob comparison's replay: a stream
 // with the answer's tokens enforced and the five most likely tokens of every
 // position, the usage in its last event.
-func replayStream(lp []map[int]float64, out []int) []byte {
+func replayStream(lp []map[int]float64, out []int, finish ...string) []byte {
 	var body strings.Builder
 	write := func(chunk map[string]interface{}) {
 		chunk["id"], chunk["object"], chunk["model"] = "x", "chat.completion.chunk", "m"
@@ -226,8 +226,12 @@ func replayStream(lp []map[int]float64, out []int) []byte {
 				top[candidate] = l
 			}
 		}
+		var finishReason interface{}
+		if i == len(out)-1 && len(finish) > 0 {
+			finishReason = finish[0]
+		}
 		write(map[string]interface{}{"choices": []interface{}{map[string]interface{}{"index": 0, "delta": map[string]interface{}{"content": "a"},
-			"logprobs": map[string]interface{}{"content": []interface{}{tapeTestPosition(tok, lp[i][tok], top)}}, "finish_reason": nil}}})
+			"logprobs": map[string]interface{}{"content": []interface{}{tapeTestPosition(tok, lp[i][tok], top)}}, "finish_reason": finishReason}}})
 	}
 	write(map[string]interface{}{"choices": []interface{}{},
 		"usage": map[string]interface{}{"prompt_tokens": 3, "completion_tokens": len(out), "total_tokens": 3 + len(out)}})
@@ -305,6 +309,61 @@ func TestTapeOfReplay_AReplayPastTheAnswerIsJudgedOnTheAnswer(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, whole.ReplayPast)
 	require.Equal(t, "length", whole.Finish)
+}
+
+// The share of positions cannot see an answer cut short: every token it keeps
+// is on the tape. The validator's engine closes such an answer with its own end
+// token, and that token is judged at its position.
+func TestTapeOfReplay_AnAnswerCutShortEndsOffItsTape(t *testing.T) {
+	lp := tapeTestLogprobs()
+	out := tapeAnswer(lp, 42)
+	const end = 15
+	closed := func(endLogprob float64) []byte {
+		at := make([]map[int]float64, 201)
+		copy(at, lp[:200])
+		at[200] = map[int]float64{end: endLogprob, 3: -0.01, 4: -8, 5: -9, 6: -10, 7: -11}
+		return replayStream(at, append(append([]int{}, out[:200]...), end), "stop")
+	}
+	stored := storedTapeAnswer(t, out[:200], true)
+
+	cut, err := TapeOfReplay("42", []byte(tapeTestPrompt), stored, closed(-40), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.True(t, cut.Pass())
+	require.Equal(t, "appended", cut.End)
+	require.Greater(t, cut.EndGap, 30.0)
+	require.False(t, cut.EndPasses())
+
+	// The model was ending there: the engine's end token wins its position.
+	ended, err := TapeOfReplay("42", []byte(tapeTestPrompt), stored, closed(-0.0001), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Equal(t, "appended", ended.End)
+	require.Less(t, ended.EndGap, endGapLimit)
+	require.True(t, ended.EndPasses())
+
+	// Processed logprobs are logits over the temperature: the gap is read in logits.
+	cold := strings.Replace(tapeTestPrompt, `"max_tokens"`, `"temperature":0.1,"max_tokens"`, 1)
+	scaled, err := TapeOfReplay("42", []byte(cold), stored, closed(-40), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.InDelta(t, cut.EndGap*0.1, scaled.EndGap, 1e-9)
+}
+
+// An answer that ends on its own token is judged there, and an answer the
+// engine ran to the token limit has no end to judge.
+func TestTapeOfReplay_TheAnswersOwnEndIsJudgedAtItsPosition(t *testing.T) {
+	lp := tapeTestLogprobs()
+	out := tapeAnswer(lp, 42)
+	stored := storedTapeAnswer(t, out, true)
+
+	own, err := TapeOfReplay("42", []byte(tapeTestPrompt), stored, replayStream(lp, out, "stop"), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Equal(t, "token", own.End)
+	require.Zero(t, own.EndGap)
+	require.True(t, own.EndPasses())
+
+	limit, err := TapeOfReplay("42", []byte(tapeTestPrompt), stored, replayStream(lp, out, "length"), tapeLogprobsMode)
+	require.NoError(t, err)
+	require.Empty(t, limit.End)
+	require.True(t, limit.EndPasses())
 }
 
 // An answer the logprob comparison rejects on its output checks was replayed

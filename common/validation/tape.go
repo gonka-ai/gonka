@@ -195,12 +195,64 @@ type TapeResult struct {
 	// no end token and the engine added its own.
 	Finish     string
 	ReplayPast int
+	// End says which token ended the answer for the validator's engine:
+	// "token" when the replay stopped on the answer's own last token,
+	// "appended" when the answer carried none and the engine closed it with
+	// its own, empty when the replay ran to the token limit. EndGap is how far
+	// that token sits behind the winner of its position, in logits.
+	End    string
+	EndGap float64
 }
 
 // Pass reports whether the answer stays within the model's thresholds.
 func (r TapeResult) Pass() bool {
 	t, _ := TapeThresholdsFor(r.Model)
 	return t.Pass(r.Signals)
+}
+
+// endGapLimit bounds, in logits, how far behind the winner of its position the
+// token that ends an answer may sit. The share of positions cannot see an
+// answer cut short: every token it keeps is on the tape, and the cut is one
+// position. An honest answer ends where the end token wins its position, or
+// loses a near-tie to the noise of another node; an answer cut where the model
+// was going on ends on a token tens of logits behind.
+//
+// Qwen3-0.6B on one RTX 3090, executor and validator one engine: over 515
+// honest answers the end token is at most 0.10 behind; over 648 answers cut at
+// 64 tokens under a sampler with no top_k or top_p it is 9 to 48 behind, three
+// of them under the limit. Under a top_k or top_p the sampler does not hold the
+// end token at the cut at all (432 answers of 432).
+const endGapLimit = 10.0
+
+// endGapCeiling stands for an end token the validator's sampler masked out.
+const endGapCeiling = 9000.0
+
+// EndPasses reports whether the answer ends where its tape ends it.
+func (r TapeResult) EndPasses() bool {
+	return r.End == "" || r.EndGap <= endGapLimit
+}
+
+// endGap is how far token x sits behind the best other candidate of its
+// position, zero when it is the winner.
+func endGap(candidates map[int]float64, x int, seed uint64, step uint32, vocab int, greedy bool) float64 {
+	scoreX, ok := candidates[x]
+	if !ok || scoreX <= maskedLogprob {
+		return endGapCeiling
+	}
+	if !greedy {
+		scoreX += TapeNoise(seed, step, vocab, x)
+	}
+	gap := 0.0
+	for token, score := range candidates {
+		if token == x || score <= maskedLogprob {
+			continue
+		}
+		if !greedy {
+			score += TapeNoise(seed, step, vocab, token)
+		}
+		gap = math.Max(gap, score-scoreX)
+	}
+	return gap
 }
 
 // TapeOfReplay scores a stored answer on its tape from the response of the
@@ -264,12 +316,12 @@ func TapeOfReplay(inferenceID string, promptPayload, responsePayload, replayResp
 	// its own, so a replay may run past the answer; the answer's positions are
 	// all there, as the logprob comparison reads them. A shorter replay lost
 	// positions of the answer.
-	positions := replay.ExtractLogits()
-	if len(positions) < len(enforced.Tokens) {
-		return nil, unjudged("the replay returned %d of %d positions", len(positions), len(enforced.Tokens))
+	replayed := replay.ExtractLogits()
+	if len(replayed) < len(enforced.Tokens) {
+		return nil, unjudged("the replay returned %d of %d positions", len(replayed), len(enforced.Tokens))
 	}
-	past := len(positions) - len(enforced.Tokens)
-	positions = positions[:len(enforced.Tokens)]
+	past := len(replayed) - len(enforced.Tokens)
+	positions := replayed[:len(enforced.Tokens)]
 	out := make([]int, len(positions))
 	logprobs := make([]map[int]float64, len(positions))
 	for i, position := range positions {
@@ -286,7 +338,7 @@ func TapeOfReplay(inferenceID string, promptPayload, responsePayload, replayResp
 		}
 	}
 	greedy := request.Temperature != nil && *request.Temperature < samplingEps
-	return &TapeResult{
+	result := &TapeResult{
 		Model:       request.Model,
 		Signals:     ScoreTape(logprobs, out, uint64(*request.Seed), vocab, greedy),
 		Temperature: request.Temperature,
@@ -295,34 +347,81 @@ func TapeOfReplay(inferenceID string, promptPayload, responsePayload, replayResp
 		Grammar:     completionapi.GrammarConstrained(requestMap),
 		Finish:      storedFinishReason(responsePayload),
 		ReplayPast:  past,
-	}, nil
+	}
+	// Where the answer ends is read from the validator's own engine, not from
+	// the finish_reason the executor stored: the engine stops on the answer's
+	// last token, or closes an answer that carries no end token with its own,
+	// or runs to the token limit.
+	end, endCandidates := -1, map[int]float64(nil)
+	switch {
+	case past > 0:
+		appended := replayed[len(enforced.Tokens)]
+		if id, ok := tokenID(appended.Token); ok {
+			result.End, end = "appended", id
+			endCandidates = map[int]float64{id: appended.Logprob}
+			for _, top := range appended.TopLogprobs {
+				if candidate, ok := tokenID(top.Token); ok {
+					endCandidates[candidate] = top.Logprob
+				}
+			}
+		}
+	case replayFinishReason(replayResponse) == "stop":
+		result.End, end, endCandidates = "token", out[len(out)-1], logprobs[len(out)-1]
+	}
+	if result.End != "" {
+		step := len(out) - 1
+		if result.End == "appended" {
+			step = len(out)
+		}
+		// Processed logprobs are logits over the temperature.
+		scale := 1.0
+		if request.Temperature != nil && !greedy {
+			scale = *request.Temperature
+		}
+		result.EndGap = math.Min(endGap(endCandidates, end, uint64(*request.Seed), uint32(step), vocab, greedy)*scale, endGapCeiling)
+	}
+	return result, nil
+}
+
+func finishReasonOf(body []byte) string {
+	var resp struct {
+		Choices []struct {
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(body, &resp) != nil || len(resp.Choices) == 0 {
+		return ""
+	}
+	return resp.Choices[0].FinishReason
 }
 
 // storedFinishReason is the finish_reason of the stored answer: the choice's
 // in a JSON body, the last non-empty one in the events of a stream.
 func storedFinishReason(responsePayload []byte) string {
-	finishOf := func(body []byte) string {
-		var resp struct {
-			Choices []struct {
-				FinishReason string `json:"finish_reason"`
-			} `json:"choices"`
-		}
-		if json.Unmarshal(body, &resp) != nil || len(resp.Choices) == 0 {
-			return ""
-		}
-		return resp.Choices[0].FinishReason
-	}
 	var streamed completionapi.SerializedStreamedResponse
 	if json.Unmarshal(responsePayload, &streamed) != nil || len(streamed.Events) == 0 {
-		return finishOf(responsePayload)
+		return finishReasonOf(responsePayload)
 	}
+	return lastFinishReason(streamed.Events)
+}
+
+// replayFinishReason is the finish_reason the validator's engine gave the replay.
+func replayFinishReason(replayResponse []byte) string {
+	lines, isStream := replayDataLines(replayResponse)
+	if !isStream {
+		return finishReasonOf(replayResponse)
+	}
+	return lastFinishReason(lines)
+}
+
+func lastFinishReason(events []string) string {
 	finish := ""
-	for _, line := range streamed.Events {
-		data, ok := strings.CutPrefix(line, "data: ")
+	for _, line := range events {
+		data, ok := strings.CutPrefix(line, "data:")
 		if !ok || strings.TrimSpace(data) == "[DONE]" {
 			continue
 		}
-		if f := finishOf([]byte(data)); f != "" {
+		if f := finishReasonOf([]byte(data)); f != "" {
 			finish = f
 		}
 	}
