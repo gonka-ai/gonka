@@ -61,6 +61,8 @@ type Params struct {
 	ExecutionTimeout        int64  `yaml:"execution_timeout"`
 	ValidationRate          uint32 `yaml:"validation_rate"`
 	VoteThresholdFactor     uint32 `yaml:"vote_threshold_factor"`
+	ChatFrameJoin           uint32 `yaml:"chat_frame_join"`
+	ChatFrameSignEvery      uint32 `yaml:"chat_frame_sign_every"`
 }
 
 type Participant struct {
@@ -84,6 +86,8 @@ type Escrow struct {
 	AutoSealEveryNNonces      uint32   `yaml:"auto_seal_every_n_nonces"`
 	ValidationRate            uint32   `yaml:"validation_rate"`
 	VoteThresholdFactor       uint32   `yaml:"vote_threshold_factor"`
+	ChatFrameJoin             uint32   `yaml:"chat_frame_join"`
+	ChatFrameSignEvery        uint32   `yaml:"chat_frame_sign_every"`
 	// Optional. Omitted values inherit the mock-chain params timeout values.
 	RefusalTimeout   int64 `yaml:"refusal_timeout"`
 	ExecutionTimeout int64 `yaml:"execution_timeout"`
@@ -329,6 +333,12 @@ func (c *File) ApplyDefaults() {
 	}
 	if c.Params.VoteThresholdFactor == 0 {
 		c.Params.VoteThresholdFactor = 50
+	}
+	if c.Params.ChatFrameJoin == 0 {
+		c.Params.ChatFrameJoin = 5
+	}
+	if c.Params.ChatFrameSignEvery == 0 {
+		c.Params.ChatFrameSignEvery = 13
 	}
 	if !c.Params.DevshardRequestsEnabled {
 		c.Params.DevshardRequestsEnabled = true

@@ -16,6 +16,12 @@ message SessionConfigProto {
   uint32 inference_seal_grace_nonces = 8;
   uint32 inference_seal_grace_seconds = 9;
   uint32 auto_seal_every_n_nonces = 10;
+  // chat_frame_join is how many content tokens share one gzip chunk after the
+  // first chunk. Zero at bind means the compiled default (5).
+  uint32 chat_frame_join = 11;
+  // chat_frame_sign_every is how many chunks share one signature. Zero at bind
+  // means the compiled default (13).
+  uint32 chat_frame_sign_every = 12;
 }
 
 message SlotAssignmentProto {

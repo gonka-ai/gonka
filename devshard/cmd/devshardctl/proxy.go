@@ -258,7 +258,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:                    req.MaxTokens,
 		StartedAt:                    time.Now().Unix(),
 		LogprobsOptimizationOverride: logprobsOptimizationOverride,
-		ChatFrames:                   chatFrameSchedule,
+		ChatFrames:                   chatFrameScheduleForInference(chatFramesEnabledForRequest(r), p.sm.Config()),
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
@@ -771,6 +771,8 @@ type statusSessionConfig struct {
 	InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
 	InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
 	AutoSealEveryNNonces      uint32 `json:"auto_seal_every_n_nonces"`
+	ChatFrameJoin             uint32 `json:"chat_frame_join"`
+	ChatFrameSignEvery        uint32 `json:"chat_frame_sign_every"`
 }
 
 func writeJSON(w http.ResponseWriter, v any) {
@@ -936,6 +938,8 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 			InferenceSealGraceNonces:  cfg.InferenceSealGraceNonces,
 			InferenceSealGraceSeconds: cfg.InferenceSealGraceSeconds,
 			AutoSealEveryNNonces:      cfg.AutoSealEveryNNonces,
+			ChatFrameJoin:             cfg.ChatFrameJoin,
+			ChatFrameSignEvery:        cfg.ChatFrameSignEvery,
 		},
 	}
 	if p.phaseGate != nil {

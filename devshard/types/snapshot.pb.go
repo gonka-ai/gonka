@@ -34,8 +34,14 @@ type SessionConfigProto struct {
 	InferenceSealGraceNonces  uint32                 `protobuf:"varint,8,opt,name=inference_seal_grace_nonces,json=inferenceSealGraceNonces,proto3" json:"inference_seal_grace_nonces,omitempty"`
 	InferenceSealGraceSeconds uint32                 `protobuf:"varint,9,opt,name=inference_seal_grace_seconds,json=inferenceSealGraceSeconds,proto3" json:"inference_seal_grace_seconds,omitempty"`
 	AutoSealEveryNNonces      uint32                 `protobuf:"varint,10,opt,name=auto_seal_every_n_nonces,json=autoSealEveryNNonces,proto3" json:"auto_seal_every_n_nonces,omitempty"`
-	unknownFields             protoimpl.UnknownFields
-	sizeCache                 protoimpl.SizeCache
+	// chat_frame_join is how many content tokens share one gzip chunk after the
+	// first chunk. Zero at bind means the compiled default (5).
+	ChatFrameJoin uint32 `protobuf:"varint,11,opt,name=chat_frame_join,json=chatFrameJoin,proto3" json:"chat_frame_join,omitempty"`
+	// chat_frame_sign_every is how many chunks share one signature. Zero at bind
+	// means the compiled default (13).
+	ChatFrameSignEvery uint32 `protobuf:"varint,12,opt,name=chat_frame_sign_every,json=chatFrameSignEvery,proto3" json:"chat_frame_sign_every,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SessionConfigProto) Reset() {
@@ -134,6 +140,20 @@ func (x *SessionConfigProto) GetInferenceSealGraceSeconds() uint32 {
 func (x *SessionConfigProto) GetAutoSealEveryNNonces() uint32 {
 	if x != nil {
 		return x.AutoSealEveryNNonces
+	}
+	return 0
+}
+
+func (x *SessionConfigProto) GetChatFrameJoin() uint32 {
+	if x != nil {
+		return x.ChatFrameJoin
+	}
+	return 0
+}
+
+func (x *SessionConfigProto) GetChatFrameSignEvery() uint32 {
+	if x != nil {
+		return x.ChatFrameSignEvery
 	}
 	return 0
 }
@@ -598,7 +618,7 @@ var File_devshard_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x1adevshard/v1/snapshot.proto\x12\vdevshard.v1\x1a\x17devshard/v1/state.proto\"\xe7\x03\n" +
+	"\x1adevshard/v1/snapshot.proto\x12\vdevshard.v1\x1a\x17devshard/v1/state.proto\"\xc2\x04\n" +
 	"\x12SessionConfigProto\x12'\n" +
 	"\x0frefusal_timeout\x18\x01 \x01(\x03R\x0erefusalTimeout\x12+\n" +
 	"\x11execution_timeout\x18\x02 \x01(\x03R\x10executionTimeout\x12\x1f\n" +
@@ -611,7 +631,9 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\x1binference_seal_grace_nonces\x18\b \x01(\rR\x18inferenceSealGraceNonces\x12?\n" +
 	"\x1cinference_seal_grace_seconds\x18\t \x01(\rR\x19inferenceSealGraceSeconds\x126\n" +
 	"\x18auto_seal_every_n_nonces\x18\n" +
-	" \x01(\rR\x14autoSealEveryNNonces\"[\n" +
+	" \x01(\rR\x14autoSealEveryNNonces\x12&\n" +
+	"\x0fchat_frame_join\x18\v \x01(\rR\rchatFrameJoin\x121\n" +
+	"\x15chat_frame_sign_every\x18\f \x01(\rR\x12chatFrameSignEvery\"[\n" +
 	"\x13SlotAssignmentProto\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12+\n" +
 	"\x11validator_address\x18\x02 \x01(\tR\x10validatorAddress\"\xf9\t\n" +

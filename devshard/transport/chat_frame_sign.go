@@ -17,8 +17,10 @@ import (
 const (
 	// DefaultChatFrameJoin is how many content tokens share one gzip chunk
 	// after the first chunk, when the gateway asks for nothing else.
+	// Must match types.DefaultChatFrameJoin.
 	DefaultChatFrameJoin = 5
 	// DefaultChatFrameSignEvery is how many chunks share one signature.
+	// Must match types.DefaultChatFrameSignEvery.
 	DefaultChatFrameSignEvery = 13
 	// MaxChatFrameJoin bounds a gateway's request. A joined group holds tokens
 	// until it fills. The gateway's inter-chunk stall allowance grows with
@@ -29,6 +31,13 @@ const (
 	// The interval does not hold tokens.
 	MaxChatFrameSignEvery = 4096
 )
+
+func init() {
+	if DefaultChatFrameJoin != int(types.DefaultChatFrameJoin) ||
+		DefaultChatFrameSignEvery != int(types.DefaultChatFrameSignEvery) {
+		panic("transport chat-frame defaults drifted from types")
+	}
+}
 
 func chatFrameJoin(s *host.ChatFrameSchedule) int {
 	if s == nil || s.Join == 0 {

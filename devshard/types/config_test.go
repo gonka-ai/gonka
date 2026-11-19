@@ -116,6 +116,8 @@ func TestSessionConfigFromEscrow_ConsensusFieldsFromEscrow(t *testing.T) {
 		VoteThresholdFactor:       67,
 		RefusalTimeout:            5,
 		ExecutionTimeout:          17,
+		ChatFrameJoin:             7,
+		ChatFrameSignEvery:        11,
 	})
 	require.Equal(t, uint32(6000), cfg.ValidationRate)
 	require.Equal(t, uint32(55), cfg.InferenceSealGraceNonces)
@@ -123,6 +125,14 @@ func TestSessionConfigFromEscrow_ConsensusFieldsFromEscrow(t *testing.T) {
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
 	require.Equal(t, int64(5), cfg.RefusalTimeout)
 	require.Equal(t, int64(17), cfg.ExecutionTimeout)
+	require.Equal(t, uint32(7), cfg.ChatFrameJoin)
+	require.Equal(t, uint32(11), cfg.ChatFrameSignEvery)
+}
+
+func TestSessionConfigFromEscrow_ChatFrameDefaultsWhenZero(t *testing.T) {
+	cfg := SessionConfigFromEscrow(4, EscrowSessionFields{})
+	require.Equal(t, DefaultChatFrameJoin, cfg.ChatFrameJoin)
+	require.Equal(t, DefaultChatFrameSignEvery, cfg.ChatFrameSignEvery)
 }
 
 func TestSessionConfigFromEscrow_PreservesDefaultValidationRateWhenZero(t *testing.T) {

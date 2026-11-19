@@ -20,6 +20,8 @@ func TestEscrowStateProtoRoundTrip(t *testing.T) {
 			ValidationRate:            5000,
 			InferenceSealGraceNonces:  20,
 			InferenceSealGraceSeconds: 120,
+			ChatFrameJoin:             7,
+			ChatFrameSignEvery:        11,
 		},
 		Group: []SlotAssignment{
 			{SlotID: 0, ValidatorAddress: "host-0"},

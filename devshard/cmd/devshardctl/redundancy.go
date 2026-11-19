@@ -860,6 +860,9 @@ type inflight struct {
 	escrowID                   string
 	model                      string
 	sendTime                   time.Time
+	// frameJoin is the content-token group this inference asked for. Used for
+	// inter-chunk stall budgeting. Zero means the executor default.
+	frameJoin                  int
 	escalated                  bool
 	endedByGateway             atomic.Bool
 	probe                      bool
@@ -1212,7 +1215,7 @@ func (inf *inflight) startInterChunkStall(now time.Time) (attemptStall, bool) {
 		return attemptStall{}, false
 	}
 	start := time.Unix(0, lastChunkAt)
-	if now.Sub(start) < interChunkStallAllowance() {
+	if now.Sub(start) < interChunkStallAllowance(inf) {
 		return attemptStall{}, false
 	}
 	if inf.contentChunks.Load() == 0 {
@@ -2414,6 +2417,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			nonce:                    res.prepared.Nonce(),
 			escrowID:                 e.devshardID,
 			model:                    normalizeModelID(params.Model),
+			frameJoin:                chatFrameJoinFromSchedule(params.ChatFrames),
 			probe:                    res.isProbe,
 			suspicious:               noWinnerOK,
 			noWinnerReason:           noWinner.reason,
@@ -2733,28 +2737,19 @@ func interChunkStallDeadline(inf *inflight) (time.Time, bool) {
 	if lastChunkAt <= 0 {
 		return time.Time{}, false
 	}
-	return time.Unix(0, lastChunkAt).Add(interChunkStallAllowance()), true
-}
-
-// chatFrameJoin is the content-token group the gateway asked for. An unset
-// schedule is the executor default.
-func chatFrameJoin() int {
-	if chatFrameSchedule == nil || chatFrameSchedule.Join == 0 {
-		return transport.DefaultChatFrameJoin
-	}
-	join := int(chatFrameSchedule.Join)
-	if join > transport.MaxChatFrameJoin {
-		return transport.MaxChatFrameJoin
-	}
-	return join
+	return time.Unix(0, lastChunkAt).Add(interChunkStallAllowance(inf)), true
 }
 
 // interChunkStallAllowance is how long a winner may stay silent between
 // frames. The base threshold is the budget for the default join. The silence
 // is about Join token intervals, so the allowance is that budget scaled by
-// Join.
-func interChunkStallAllowance() time.Duration {
-	return InterChunkStallLogThreshold * time.Duration(chatFrameJoin()) / time.Duration(transport.DefaultChatFrameJoin)
+// this inference's Join.
+func interChunkStallAllowance(inf *inflight) time.Duration {
+	join := transport.DefaultChatFrameJoin
+	if inf != nil && inf.frameJoin > 0 {
+		join = inf.frameJoin
+	}
+	return InterChunkStallLogThreshold * time.Duration(join) / time.Duration(transport.DefaultChatFrameJoin)
 }
 
 // noteOutputTokens records content tokens from one forwarded buffer and, once
@@ -3200,7 +3195,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				"host", stallInf.hostID,
 				"role", role,
 				"winner_nonce", w,
-				"stall_threshold_ms", interChunkStallAllowance().Milliseconds(),
+				"stall_threshold_ms", interChunkStallAllowance(stallInf).Milliseconds(),
 				"since_last_chunk_ms", now.Sub(rec.StartTime).Milliseconds(),
 				"output_chunks_before_stall", rec.OutputChunksBefore,
 				"content_chunks_before_stall", rec.ContentChunksBefore,

@@ -35,6 +35,8 @@ func Defaults() *store.Store {
 			ExecutionTimeout:        1200,
 			ValidationRate:          6000,
 			VoteThresholdFactor:     50,
+			ChatFrameJoin:           5,
+			ChatFrameSignEvery:      13,
 		},
 	}
 	host := "gonka1host000000000000000000000000000000000"
@@ -63,6 +65,8 @@ func Defaults() *store.Store {
 		VoteThresholdFactor:       50,
 		RefusalTimeout:            60,
 		ExecutionTimeout:          1200,
+		ChatFrameJoin:             5,
+		ChatFrameSignEvery:        13,
 	}
 	s.Grantees[store.GranteeKey{
 		GranterAddress: host,
@@ -150,6 +154,8 @@ func FromFile(f *config.File) (*store.Store, error) {
 			ExecutionTimeout:        executionTimeout,
 			ValidationRate:          f.Params.ValidationRate,
 			VoteThresholdFactor:     f.Params.VoteThresholdFactor,
+			ChatFrameJoin:           f.Params.ChatFrameJoin,
+			ChatFrameSignEvery:      f.Params.ChatFrameSignEvery,
 		},
 	}
 
@@ -188,6 +194,8 @@ func FromFile(f *config.File) (*store.Store, error) {
 			VoteThresholdFactor:       e.VoteThresholdFactor,
 			RefusalTimeout:            timeoutOrDefault(e.RefusalTimeout, refusalTimeout),
 			ExecutionTimeout:          timeoutOrDefault(e.ExecutionTimeout, executionTimeout),
+			ChatFrameJoin:             e.ChatFrameJoin,
+			ChatFrameSignEvery:        e.ChatFrameSignEvery,
 		}
 	}
 

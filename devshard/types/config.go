@@ -15,6 +15,14 @@ const (
 	// DefaultValidationRate is used when the escrow carries no rate. It is not
 	// the chain default: inference-chain DefaultDevshardValidationRate is 1000.
 	DefaultValidationRate uint32 = 5000
+	// DefaultChatFrameJoin is how many content tokens share one gzip chunk
+	// after the first. Must match transport.DefaultChatFrameJoin and
+	// inference-chain DefaultDevshardChatFrameJoin.
+	DefaultChatFrameJoin uint32 = 5
+	// DefaultChatFrameSignEvery is how many chunks share one signature.
+	// Must match transport.DefaultChatFrameSignEvery and
+	// inference-chain DefaultDevshardChatFrameSignEvery.
+	DefaultChatFrameSignEvery uint32 = 13
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -42,6 +50,12 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 	if cfg.AutoSealEveryNNonces == 0 {
 		cfg.AutoSealEveryNNonces = DefaultAutoSealEveryNNonces
 	}
+	if cfg.ChatFrameJoin == 0 {
+		cfg.ChatFrameJoin = DefaultChatFrameJoin
+	}
+	if cfg.ChatFrameSignEvery == 0 {
+		cfg.ChatFrameSignEvery = DefaultChatFrameSignEvery
+	}
 	return cfg
 }
 
@@ -50,13 +64,15 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 // by config mismatches (e.g. different ValidationRate values).
 func DefaultSessionConfig(groupSize int) SessionConfig {
 	return NormalizeSessionConfig(SessionConfig{
-		RefusalTimeout:    60,
-		ExecutionTimeout:  32 * 60,
-		TokenPrice:        1,
-		CreateDevshardFee: 10_000,
-		FeePerNonce:       1_000,
-		VoteThreshold:     uint32(groupSize) / 2,
-		ValidationRate:    DefaultValidationRate,
+		RefusalTimeout:     60,
+		ExecutionTimeout:   32 * 60,
+		TokenPrice:         1,
+		CreateDevshardFee:  10_000,
+		FeePerNonce:        1_000,
+		VoteThreshold:      uint32(groupSize) / 2,
+		ValidationRate:     DefaultValidationRate,
+		ChatFrameJoin:      DefaultChatFrameJoin,
+		ChatFrameSignEvery: DefaultChatFrameSignEvery,
 	}, groupSize)
 }
 
@@ -74,6 +90,8 @@ type EscrowSessionFields struct {
 	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
 	RefusalTimeout              int64
 	ExecutionTimeout            int64
+	ChatFrameJoin               uint32
+	ChatFrameSignEvery          uint32
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -119,6 +137,12 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	}
 	if fields.ExecutionTimeout > 0 {
 		cfg.ExecutionTimeout = fields.ExecutionTimeout
+	}
+	if fields.ChatFrameJoin > 0 {
+		cfg.ChatFrameJoin = fields.ChatFrameJoin
+	}
+	if fields.ChatFrameSignEvery > 0 {
+		cfg.ChatFrameSignEvery = fields.ChatFrameSignEvery
 	}
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, fields.VoteThresholdFactor)
 	return NormalizeSessionConfig(cfg, groupSize)

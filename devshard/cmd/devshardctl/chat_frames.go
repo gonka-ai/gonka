@@ -3,88 +3,112 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
 	"os"
-	"strconv"
 	"strings"
 
 	"devshard/host"
 	"devshard/transport"
+	"devshard/types"
 )
 
-// chatFrameSchedule is what every inference asks the executor for, read once
-// at startup. Nil means the gateway has turned Chat-frame join/sign off: the
-// executor must not sign. A non-nil value (including a zero Join/SignEvery)
-// asks the executor to sign; zero fields use the executor defaults (join 5,
-// sign every 13th chunk).
-var chatFrameSchedule *host.ChatFrameSchedule
+// chatFramesEnabledHeader is the per-inference enable override. When unset,
+// the process default from GATEWAY_CHAT_FRAMES applies.
+const chatFramesEnabledHeader = "X-Devshard-Chat-Frames"
 
-// configureChatFramesFromEnv controls whether the gateway asks executors to
-// join and sign Chat frames, and with which schedule.
+// chatFramesEnabledDefault is the process fallback for whether an inference
+// asks the executor to join/sign Chat frames when the request does not set
+// X-Devshard-Chat-Frames. Join and SignEvery come from session config
+// (governance-frozen at escrow create), not from env.
 //
-// GATEWAY_CHAT_FRAMES is the on/off switch:
-//   - 1 / true / on / yes  → enabled
-//   - 0 / false / off / no → disabled (nil schedule; no signatures)
-//   - unset                → enabled (same as today's sparse-frame default)
-//
-// When enabled, GATEWAY_CHAT_FRAME_JOIN is how many content tokens share a
-// chunk after the first, and GATEWAY_CHAT_FRAME_SIGN_EVERY is how many chunks
-// share one signature. Empty values keep the executor defaults. A value that
-// is not an integer disables the feature for safety.
+// GATEWAY_CHAT_FRAMES:
+//   - 1 / true / on / yes  → default enabled
+//   - 0 / false / off / no → default disabled (nil ChatFrames)
+//   - unset                → default enabled
+var chatFramesEnabledDefault = true
+
+// configureChatFramesFromEnv reads only the per-process enable fallback.
+// Schedule knobs are session config (ChatFrameJoin / ChatFrameSignEvery).
 func configureChatFramesFromEnv() {
-	enabled, explicit, ok := readChatFramesEnabled("GATEWAY_CHAT_FRAMES")
+	enabled, ok := parseChatFramesEnabled(os.Getenv("GATEWAY_CHAT_FRAMES"), true)
 	if !ok {
-		chatFrameSchedule = nil
+		chatFramesEnabledDefault = false
 		return
 	}
-	if explicit && !enabled {
-		chatFrameSchedule = nil
-		return
-	}
-
-	join, joinOK := readScheduleUint("GATEWAY_CHAT_FRAME_JOIN", transport.MaxChatFrameJoin)
-	signEvery, signOK := readScheduleUint("GATEWAY_CHAT_FRAME_SIGN_EVERY", transport.MaxChatFrameSignEvery)
-	if !joinOK || !signOK {
-		chatFrameSchedule = nil
-		return
-	}
-	chatFrameSchedule = &host.ChatFrameSchedule{Join: join, SignEvery: signEvery}
+	chatFramesEnabledDefault = enabled
 }
 
-// readChatFramesEnabled parses name as a boolean enable switch. explicit is
-// true when the variable is set. ok is false when the value is not recognized.
-func readChatFramesEnabled(name string) (enabled, explicit, ok bool) {
-	raw := strings.TrimSpace(os.Getenv(name))
+// parseChatFramesEnabled parses a boolean enable switch. emptyDefault is used
+// when raw is empty. ok is false when the value is not recognized.
+func parseChatFramesEnabled(raw string, emptyDefault bool) (enabled, ok bool) {
+	raw = strings.TrimSpace(raw)
 	if raw == "" {
-		return true, false, true
+		return emptyDefault, true
 	}
 	switch strings.ToLower(raw) {
 	case "1", "true", "on", "yes":
-		return true, true, true
+		return true, true
 	case "0", "false", "off", "no":
-		return false, true, true
+		return false, true
 	default:
-		log.Printf("invalid %s=%q, disabling chat frame signing", name, raw)
-		return false, true, false
+		return false, false
 	}
 }
 
-// readScheduleUint parses name as a non-negative integer. An empty value is
-// zero and ok. A value that is not an integer is not ok. Values above max
-// are capped.
-func readScheduleUint(name string, max uint32) (uint32, bool) {
-	raw := strings.TrimSpace(os.Getenv(name))
-	if raw == "" {
-		return 0, true
+// chatFramesEnabledForRequest decides enable for one inference. The request
+// header wins when present; otherwise the process default is used. An
+// unrecognized header value disables signing for that inference only.
+func chatFramesEnabledForRequest(r *http.Request) bool {
+	if r == nil {
+		return chatFramesEnabledDefault
 	}
-	v, err := strconv.ParseUint(raw, 10, 32)
-	if err != nil {
-		log.Printf("invalid %s=%q, disabling chat frame signing", name, raw)
-		return 0, false
+	raw := r.Header.Get(chatFramesEnabledHeader)
+	if strings.TrimSpace(raw) == "" {
+		return chatFramesEnabledDefault
 	}
-	if v > uint64(max) {
-		v = uint64(max)
+	enabled, ok := parseChatFramesEnabled(raw, chatFramesEnabledDefault)
+	if !ok {
+		log.Printf("invalid %s=%q, disabling chat frame signing for this request", chatFramesEnabledHeader, raw)
+		return false
 	}
-	return uint32(v), true
+	return enabled
+}
+
+// chatFrameScheduleForInference returns the frame schedule for one inference.
+// Nil means signing is off for that inference. When enabled, Join and
+// SignEvery come from the frozen session config.
+func chatFrameScheduleForInference(enabled bool, cfg types.SessionConfig) *host.ChatFrameSchedule {
+	if !enabled {
+		return nil
+	}
+	join := cfg.ChatFrameJoin
+	if join == 0 {
+		join = types.DefaultChatFrameJoin
+	}
+	if join > transport.MaxChatFrameJoin {
+		join = transport.MaxChatFrameJoin
+	}
+	signEvery := cfg.ChatFrameSignEvery
+	if signEvery == 0 {
+		signEvery = types.DefaultChatFrameSignEvery
+	}
+	if signEvery > transport.MaxChatFrameSignEvery {
+		signEvery = transport.MaxChatFrameSignEvery
+	}
+	return &host.ChatFrameSchedule{Join: join, SignEvery: signEvery}
+}
+
+// chatFrameJoinFromSchedule is the content-token group for stall budgeting.
+// An unset schedule is the executor default.
+func chatFrameJoinFromSchedule(schedule *host.ChatFrameSchedule) int {
+	if schedule == nil || schedule.Join == 0 {
+		return transport.DefaultChatFrameJoin
+	}
+	join := int(schedule.Join)
+	if join > transport.MaxChatFrameJoin {
+		return transport.MaxChatFrameJoin
+	}
+	return join
 }
 
 // logBadArtifact warns about a stream the gateway can already show is bad:

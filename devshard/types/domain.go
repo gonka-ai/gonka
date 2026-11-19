@@ -155,6 +155,12 @@ type SessionConfig struct {
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
+	// ChatFrameJoin is how many content tokens share one gzip chunk after the
+	// first chunk. Frozen from the escrow at bind.
+	ChatFrameJoin uint32
+	// ChatFrameSignEvery is how many chunks share one signature. Frozen from
+	// the escrow at bind.
+	ChatFrameSignEvery uint32
 }
 
 // EscrowState is the full state of a devshard session.

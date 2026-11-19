@@ -522,6 +522,8 @@ func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
 		RefusalTimeout:            int64(uintEnv("DEVSHARD_REFUSAL_TIMEOUT", 0)),
 		ExecutionTimeout:          int64(uintEnv("DEVSHARD_EXECUTION_TIMEOUT", 0)),
+		ChatFrameJoin:             uint32(uintEnv("DEVSHARD_CHAT_FRAME_JOIN", 0)),
+		ChatFrameSignEvery:        uint32(uintEnv("DEVSHARD_CHAT_FRAME_SIGN_EVERY", 0)),
 	})
 	overrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
 	if err != nil {

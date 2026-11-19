@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -13,65 +14,79 @@ import (
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/transport"
+	"devshard/types"
 )
 
 func TestConfigureChatFramesFromEnv(t *testing.T) {
-	t.Cleanup(func() { chatFrameSchedule = nil })
+	t.Cleanup(func() { chatFramesEnabledDefault = true })
 
-	set := func(enabled, join, signEvery, events, separate string) {
-		t.Helper()
-		t.Setenv("GATEWAY_CHAT_FRAMES", enabled)
-		t.Setenv("GATEWAY_CHAT_FRAME_JOIN", join)
-		t.Setenv("GATEWAY_CHAT_FRAME_SIGN_EVERY", signEvery)
-		t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", events)
-		t.Setenv("GATEWAY_CHAT_FRAME_SEPARATE", separate)
-	}
-
-	set("", "", "", "10", "true")
+	t.Setenv("GATEWAY_CHAT_FRAMES", "")
 	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{}, chatFrameSchedule,
-		"unset GATEWAY_CHAT_FRAMES enables signing with defaults; old variables are ignored")
+	require.True(t, chatFramesEnabledDefault, "unset GATEWAY_CHAT_FRAMES enables signing")
 
-	set("0", "5", "13", "", "")
+	t.Setenv("GATEWAY_CHAT_FRAMES", "0")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "GATEWAY_CHAT_FRAMES=0 disables signing even when a schedule is set")
+	require.False(t, chatFramesEnabledDefault, "GATEWAY_CHAT_FRAMES=0 disables signing")
 
-	set("false", "", "", "", "")
+	t.Setenv("GATEWAY_CHAT_FRAMES", "false")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "GATEWAY_CHAT_FRAMES=false disables signing")
+	require.False(t, chatFramesEnabledDefault)
 
-	set("off", "5", "13", "", "")
+	t.Setenv("GATEWAY_CHAT_FRAMES", "off")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "GATEWAY_CHAT_FRAMES=off disables signing")
+	require.False(t, chatFramesEnabledDefault)
 
-	set("1", "", "", "", "")
+	t.Setenv("GATEWAY_CHAT_FRAMES", "1")
 	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{}, chatFrameSchedule,
-		"GATEWAY_CHAT_FRAMES=1 enables signing with defaults")
+	require.True(t, chatFramesEnabledDefault)
 
-	set("true", "5", "13", "99", "true")
+	t.Setenv("GATEWAY_CHAT_FRAMES", "maybe")
 	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{Join: 5, SignEvery: 13}, chatFrameSchedule)
+	require.False(t, chatFramesEnabledDefault, "an unrecognized value disables signing")
+}
 
-	set("on", "100", "13", "", "")
-	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{Join: 64, SignEvery: 13}, chatFrameSchedule)
+func TestChatFramesEnabledForRequest_PerInference(t *testing.T) {
+	t.Cleanup(func() { chatFramesEnabledDefault = true })
+	cfg := types.SessionConfig{ChatFrameJoin: 7, ChatFrameSignEvery: 11}
 
-	set("yes", "5", "5000", "", "")
-	configureChatFramesFromEnv()
-	require.Equal(t, &host.ChatFrameSchedule{Join: 5, SignEvery: 4096}, chatFrameSchedule)
+	chatFramesEnabledDefault = true
+	onReq := &http.Request{Header: http.Header{}}
+	offReq := &http.Request{Header: http.Header{chatFramesEnabledHeader: []string{"0"}}}
+	require.Equal(t, &host.ChatFrameSchedule{Join: 7, SignEvery: 11},
+		chatFrameScheduleForInference(chatFramesEnabledForRequest(onReq), cfg))
+	require.Nil(t, chatFrameScheduleForInference(chatFramesEnabledForRequest(offReq), cfg),
+		"one request can disable signing while the process default stays on")
 
-	set("1", "nope", "13", "", "")
-	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "a join that is not an integer disables signing")
+	chatFramesEnabledDefault = false
+	require.Nil(t, chatFrameScheduleForInference(chatFramesEnabledForRequest(onReq), cfg))
+	forceOn := &http.Request{Header: http.Header{chatFramesEnabledHeader: []string{"1"}}}
+	require.Equal(t, &host.ChatFrameSchedule{Join: 7, SignEvery: 11},
+		chatFrameScheduleForInference(chatFramesEnabledForRequest(forceOn), cfg),
+		"one request can enable signing while the process default is off")
 
-	set("1", "5", "nope", "", "")
-	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "a sign interval that is not an integer disables signing")
+	bad := &http.Request{Header: http.Header{chatFramesEnabledHeader: []string{"maybe"}}}
+	require.False(t, chatFramesEnabledForRequest(bad))
+}
 
-	set("maybe", "5", "13", "", "")
-	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "an unrecognized GATEWAY_CHAT_FRAMES value disables signing")
+func TestChatFrameScheduleForInference(t *testing.T) {
+	cfg := types.SessionConfig{ChatFrameJoin: 7, ChatFrameSignEvery: 11}
+
+	require.Nil(t, chatFrameScheduleForInference(false, cfg))
+	require.Equal(t, &host.ChatFrameSchedule{Join: 7, SignEvery: 11},
+		chatFrameScheduleForInference(true, cfg))
+
+	require.Equal(t, &host.ChatFrameSchedule{
+		Join:      types.DefaultChatFrameJoin,
+		SignEvery: types.DefaultChatFrameSignEvery,
+	}, chatFrameScheduleForInference(true, types.SessionConfig{}))
+
+	require.Equal(t, &host.ChatFrameSchedule{
+		Join:      transport.MaxChatFrameJoin,
+		SignEvery: transport.MaxChatFrameSignEvery,
+	}, chatFrameScheduleForInference(true, types.SessionConfig{
+		ChatFrameJoin:      10_000,
+		ChatFrameSignEvery: 10_000,
+	}))
 }
 
 func TestLogChatFrameCheck_DoneWithoutFinish(t *testing.T) {

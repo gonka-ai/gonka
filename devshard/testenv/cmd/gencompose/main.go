@@ -367,6 +367,12 @@ func syncChainSeed(cfg *config.File) {
 	if e.VoteThresholdFactor == 0 {
 		e.VoteThresholdFactor = cfg.Params.VoteThresholdFactor
 	}
+	if e.ChatFrameJoin == 0 {
+		e.ChatFrameJoin = cfg.Params.ChatFrameJoin
+	}
+	if e.ChatFrameSignEvery == 0 {
+		e.ChatFrameSignEvery = cfg.Params.ChatFrameSignEvery
+	}
 
 	if len(cfg.Hosts) > 0 && cfg.Hosts[0].Address != "" {
 		grantees := []string{}

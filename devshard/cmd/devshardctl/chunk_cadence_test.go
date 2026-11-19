@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"devshard/host"
 	"devshard/transport"
 
 	"github.com/stretchr/testify/require"
@@ -29,7 +28,6 @@ func streamAt(inf *inflight, gaps ...time.Duration) {
 }
 
 func TestInterChunkStallDeadline_ScalesWithJoin(t *testing.T) {
-	t.Cleanup(func() { chatFrameSchedule = nil })
 	last := time.Unix(1_700_000_000, 0)
 	inf := &inflight{done: make(chan struct{})}
 	inf.contentChunks.Store(1)
@@ -39,14 +37,14 @@ func TestInterChunkStallDeadline_ScalesWithJoin(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, last.Add(InterChunkStallLogThreshold), got)
 
-	chatFrameSchedule = &host.ChatFrameSchedule{Join: 64}
+	inf.frameJoin = 64
 	got, ok = interChunkStallDeadline(inf)
 	require.True(t, ok)
 	require.Equal(t, last.Add(InterChunkStallLogThreshold*64/time.Duration(transport.DefaultChatFrameJoin)), got)
 
 	_, recorded := inf.startInterChunkStall(last.Add(31 * time.Second))
 	require.False(t, recorded, "31s is inside the join-64 allowance")
-	_, recorded = inf.startInterChunkStall(last.Add(interChunkStallAllowance() + time.Second))
+	_, recorded = inf.startInterChunkStall(last.Add(interChunkStallAllowance(inf) + time.Second))
 	require.True(t, recorded)
 }
 
