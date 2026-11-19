@@ -219,8 +219,18 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 		return nil, fmt.Errorf("failed to generate random polynomial: %w", err)
 	}
 
-	// Compute public commitments to coefficients (C_kj = g * a_kj, G2 points)
-	commitments := computeG2CommitmentsBlst(polynomial)
+	// Compute public commitments and a Schnorr proof of each exponent.
+	creator := bm.cosmosClient.GetAddress()
+	commitments := make([][]byte, len(polynomial))
+	commitmentProofs := make([]types.CommitmentKnowledgeProof, len(polynomial))
+	for i, coefficient := range polynomial {
+		commitment, proof, err := types.BuildCommitmentKnowledgeProof(epochID, creator, uint32(i), coefficient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build commitment knowledge proof %d: %w", i, err)
+		}
+		commitments[i] = commitment
+		commitmentProofs[i] = proof
+	}
 
 	// Create encrypted shares for participants using deterministic array indexing.
 	encryptedSharesForParticipants := make([]types.EncryptedSharesForParticipant, len(participants))
@@ -286,9 +296,10 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	}
 
 	dealerPart := &types.MsgSubmitDealerPart{
-		Creator:                        bm.cosmosClient.GetAddress(),
+		Creator:                        creator,
 		EpochId:                        epochID,
 		Commitments:                    commitments,
+		CommitmentProofs:               commitmentProofs,
 		EncryptedSharesForParticipants: encryptedSharesForParticipants,
 	}
 

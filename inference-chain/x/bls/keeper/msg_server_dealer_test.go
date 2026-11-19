@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"cosmossdk.io/math"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/bls/keeper"
@@ -66,13 +67,12 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 	k.SetEpochBLSData(ctx, epochBLSData)
 
 	// Create test message
+	commitments, proofs := dealerCommitmentsWithProofs(t, dealerAddr, epochID, 3, 5)
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
-		Commitments: [][]byte{
-			[]byte("commitment1"),
-			[]byte("commitment2"),
-		},
+		Creator:          dealerAddr,
+		EpochId:          epochID,
+		Commitments:      commitments,
+		CommitmentProofs: proofs,
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
 			{EncryptedShares: [][]byte{dummyEncryptedShare(2)}},
@@ -467,13 +467,12 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	}
 	k.SetEpochBLSData(ctx, epochBLSData)
 
+	commitments, proofs := dealerCommitmentsWithProofs(t, dealerAddr, epochID, 3, 5)
 	msg := &types.MsgSubmitDealerPart{
-		Creator: dealerAddr,
-		EpochId: epochID,
-		Commitments: [][]byte{
-			[]byte("commitment1"),
-			[]byte("commitment2"),
-		},
+		Creator:          dealerAddr,
+		EpochId:          epochID,
+		Commitments:      commitments,
+		CommitmentProofs: proofs,
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
 			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
 		},
@@ -512,4 +511,118 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 	}
 	assert.True(t, epochAttr, "Event should contain epoch_id")
 	assert.True(t, dealerAttr, "Event should contain dealer_address")
+}
+
+func TestSubmitDealerPart_MissingCommitmentProof(t *testing.T) {
+	k, ms, goCtx := setupMsgServerDealer(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	epochID := uint64(11)
+	dealerAddr := "dealer1"
+	k.SetEpochBLSData(ctx, singleDealerEpoch(ctx, epochID, dealerAddr))
+
+	commitments, _ := dealerCommitmentsWithProofs(t, dealerAddr, epochID, 1, 2)
+	msg := &types.MsgSubmitDealerPart{
+		Creator:     dealerAddr,
+		EpochId:     epochID,
+		Commitments: commitments,
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+		},
+	}
+
+	_, err := ms.SubmitDealerPart(goCtx, msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "commitment_proofs count 0 does not match commitments count 2")
+}
+
+func TestSubmitDealerPart_UnknownCommitmentScalar(t *testing.T) {
+	k, ms, goCtx := setupMsgServerDealer(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	epochID := uint64(12)
+	dealerAddr := "dealer1"
+	k.SetEpochBLSData(ctx, singleDealerEpoch(ctx, epochID, dealerAddr))
+
+	commitments, proofs := dealerCommitmentsWithProofs(t, dealerAddr, epochID, 4, 6)
+	other, _ := dealerCommitmentsWithProofs(t, dealerAddr, epochID, 9, 6)
+	commitments[0] = other[0]
+
+	msg := &types.MsgSubmitDealerPart{
+		Creator:          dealerAddr,
+		EpochId:          epochID,
+		Commitments:      commitments,
+		CommitmentProofs: proofs,
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+		},
+	}
+
+	_, err := ms.SubmitDealerPart(goCtx, msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "verification failed")
+
+	stored, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	assert.Empty(t, stored.DealerParts[0].DealerAddress)
+}
+
+func TestSubmitDealerPart_ZeroCoefficientProof(t *testing.T) {
+	k, ms, goCtx := setupMsgServerDealer(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+	epochID := uint64(13)
+	dealerAddr := "dealer1"
+	k.SetEpochBLSData(ctx, singleDealerEpoch(ctx, epochID, dealerAddr))
+
+	commitments, proofs := dealerCommitmentsWithProofs(t, dealerAddr, epochID, 0, 7)
+	msg := &types.MsgSubmitDealerPart{
+		Creator:          dealerAddr,
+		EpochId:          epochID,
+		Commitments:      commitments,
+		CommitmentProofs: proofs,
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+		},
+	}
+
+	resp, err := ms.SubmitDealerPart(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	stored, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	assert.Equal(t, commitments, stored.DealerParts[0].Commitments)
+}
+
+func dealerCommitmentsWithProofs(t testing.TB, creator string, epochID uint64, scalars ...uint64) ([][]byte, []types.CommitmentKnowledgeProof) {
+	t.Helper()
+	commitments := make([][]byte, len(scalars))
+	proofs := make([]types.CommitmentKnowledgeProof, len(scalars))
+	for i, scalar := range scalars {
+		commitment, proof, err := types.BuildCommitmentKnowledgeProof(epochID, creator, uint32(i), new(fr.Element).SetUint64(scalar))
+		require.NoError(t, err)
+		commitments[i] = commitment
+		proofs[i] = proof
+	}
+	return commitments, proofs
+}
+
+func singleDealerEpoch(ctx sdk.Context, epochID uint64, dealerAddr string) types.EpochBLSData {
+	return types.EpochBLSData{
+		EpochId:                   epochID,
+		ITotalSlots:               1,
+		TSlotsDegree:              1,
+		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		Participants: []types.BLSParticipantInfo{
+			{
+				Address:            dealerAddr,
+				Secp256K1PublicKey: []byte("pubkey1"),
+				PercentageWeight:   math.LegacyNewDec(100),
+				SlotStartIndex:     0,
+				SlotEndIndex:       0,
+			},
+		},
+		DealerParts: []*types.DealerPartStorage{
+			{DealerAddress: "", Commitments: [][]byte{}, ParticipantShares: []*types.EncryptedSharesForParticipant{}},
+		},
+	}
 }

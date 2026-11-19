@@ -77,6 +77,12 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		}
 	}
 
+	// The dealer must know the scalar behind every commitment. Proofs are
+	// checked here and are not stored with the dealer part.
+	if err := types.VerifyCommitmentKnowledgeProofs(msg.EpochId, msg.Creator, msg.Commitments, msg.CommitmentProofs); err != nil {
+		return nil, fmt.Errorf("invalid commitment knowledge proof: %w", err)
+	}
+
 	// Create dealer part storage
 	participantShares := make([]*types.EncryptedSharesForParticipant, len(msg.EncryptedSharesForParticipants))
 	for i := range msg.EncryptedSharesForParticipants {

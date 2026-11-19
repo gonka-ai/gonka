@@ -65,12 +65,19 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 	validCommitment[0] = 0x01
 	validShare := make([]byte, MinEncryptedShareCiphertextLen)
 	validShare[0] = 0x01
+	validProof := CommitmentKnowledgeProof{
+		NoncePoint: append([]byte(nil), validCommitment...),
+		Response:   make([]byte, commitmentKnowledgeResponseLen),
+	}
 
 	mkValidMsg := func() *MsgSubmitDealerPart {
 		return &MsgSubmitDealerPart{
 			Creator:     creator,
 			EpochId:     1,
 			Commitments: [][]byte{validCommitment},
+			CommitmentProofs: []CommitmentKnowledgeProof{
+				validProof,
+			},
 			EncryptedSharesForParticipants: []EncryptedSharesForParticipant{{
 				EncryptedShares: [][]byte{validShare},
 			}},
@@ -117,6 +124,24 @@ func TestMsgSubmitDealerPart_ValidateBasic(t *testing.T) {
 	t.Run("all-zero commitment", func(t *testing.T) {
 		msg := mkValidMsg()
 		msg.Commitments = [][]byte{make([]byte, commitmentCompressedG2Len)}
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("missing commitment proof", func(t *testing.T) {
+		msg := mkValidMsg()
+		msg.CommitmentProofs = nil
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("commitment proof nonce wrong length", func(t *testing.T) {
+		msg := mkValidMsg()
+		msg.CommitmentProofs[0].NoncePoint = make([]byte, commitmentCompressedG2Len-1)
+		require.Error(t, msg.ValidateBasic())
+	})
+
+	t.Run("commitment proof response wrong length", func(t *testing.T) {
+		msg := mkValidMsg()
+		msg.CommitmentProofs[0].Response = make([]byte, commitmentKnowledgeResponseLen-1)
 		require.Error(t, msg.ValidateBasic())
 	})
 
