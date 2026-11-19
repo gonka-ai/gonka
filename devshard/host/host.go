@@ -59,8 +59,10 @@ type HostRequest struct {
 	LogprobsOptimizationOverride *bool
 	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
 	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
-	// ChatFrames is how the executor cuts and signs the Chat stream. Nil is
-	// the executor's default.
+	// ChatFrames is how the executor cuts and signs the Chat stream. Nil
+	// means the gateway disabled join/sign for this request. A non-nil value
+	// (including zero Join/SignEvery) asks the executor to sign; zero fields
+	// use the executor defaults.
 	ChatFrames *ChatFrameSchedule
 	// PromptHash and FrameSignerAllowed let the gateway check the executor's
 	// Chat frame signatures. Neither is serialized.
@@ -69,7 +71,8 @@ type HostRequest struct {
 }
 
 // ChatFrameSchedule is the gateway's request for how Chat frames are cut and
-// signed. The zero value, and a nil schedule, is the executor's default:
+// signed. A nil *ChatFrameSchedule on HostRequest means signing is off. The
+// zero value of the struct (non-nil pointer) is the executor's default:
 // join 5, sign every 13th chunk.
 type ChatFrameSchedule struct {
 	// Join is how many content tokens share one gzip chunk after the first

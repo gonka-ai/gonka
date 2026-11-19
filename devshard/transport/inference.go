@@ -276,13 +276,18 @@ type frameSigningSink interface {
 	SignFrames(*host.ChatFrameSchedule, *ChatFrameSigner)
 }
 
-// startFrameSigning signs this stream when this host is the inference's
-// executor: it verified the payload against the started record, so the
-// frames carry its answer, run now or replayed from storage. A catch-up, a
-// finalize or a host that is not the executor keeps unsigned per-event
-// frames. It runs before the receipt is written, so the first signature
-// covers the stream from its first byte.
+// startFrameSigning signs this stream when the gateway asked for Chat frames
+// and this host is the inference's executor: it verified the payload against
+// the started record, so the frames carry its answer, run now or replayed
+// from storage. Nil ChatFrames means the gateway disabled join/sign for this
+// request, so the stream stays unsigned. A catch-up, a finalize or a host
+// that is not the executor keeps unsigned per-event frames. It runs before
+// the receipt is written, so the first signature covers the stream from its
+// first byte.
 func (s *Server) startFrameSigning(w InferenceSink, req host.HostRequest, resp *host.HostResponse) {
+	if req.ChatFrames == nil {
+		return
+	}
 	sink, ok := w.(frameSigningSink)
 	if !ok || resp == nil || len(resp.PromptHash) == 0 {
 		return

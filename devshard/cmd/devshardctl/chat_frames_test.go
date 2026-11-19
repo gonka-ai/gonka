@@ -18,37 +18,60 @@ import (
 func TestConfigureChatFramesFromEnv(t *testing.T) {
 	t.Cleanup(func() { chatFrameSchedule = nil })
 
-	set := func(join, signEvery, events, separate string) {
+	set := func(enabled, join, signEvery, events, separate string) {
 		t.Helper()
+		t.Setenv("GATEWAY_CHAT_FRAMES", enabled)
 		t.Setenv("GATEWAY_CHAT_FRAME_JOIN", join)
 		t.Setenv("GATEWAY_CHAT_FRAME_SIGN_EVERY", signEvery)
 		t.Setenv("GATEWAY_CHAT_FRAME_EVENTS", events)
 		t.Setenv("GATEWAY_CHAT_FRAME_SEPARATE", separate)
 	}
 
-	set("", "", "10", "true")
+	set("", "", "", "10", "true")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "unset leaves each executor its default, and the old variables are ignored")
+	require.Equal(t, &host.ChatFrameSchedule{}, chatFrameSchedule,
+		"unset GATEWAY_CHAT_FRAMES enables signing with defaults; old variables are ignored")
 
-	set("5", "13", "99", "true")
+	set("0", "5", "13", "", "")
+	configureChatFramesFromEnv()
+	require.Nil(t, chatFrameSchedule, "GATEWAY_CHAT_FRAMES=0 disables signing even when a schedule is set")
+
+	set("false", "", "", "", "")
+	configureChatFramesFromEnv()
+	require.Nil(t, chatFrameSchedule, "GATEWAY_CHAT_FRAMES=false disables signing")
+
+	set("off", "5", "13", "", "")
+	configureChatFramesFromEnv()
+	require.Nil(t, chatFrameSchedule, "GATEWAY_CHAT_FRAMES=off disables signing")
+
+	set("1", "", "", "", "")
+	configureChatFramesFromEnv()
+	require.Equal(t, &host.ChatFrameSchedule{}, chatFrameSchedule,
+		"GATEWAY_CHAT_FRAMES=1 enables signing with defaults")
+
+	set("true", "5", "13", "99", "true")
 	configureChatFramesFromEnv()
 	require.Equal(t, &host.ChatFrameSchedule{Join: 5, SignEvery: 13}, chatFrameSchedule)
 
-	set("100", "13", "", "")
+	set("on", "100", "13", "", "")
 	configureChatFramesFromEnv()
 	require.Equal(t, &host.ChatFrameSchedule{Join: 64, SignEvery: 13}, chatFrameSchedule)
 
-	set("5", "5000", "", "")
+	set("yes", "5", "5000", "", "")
 	configureChatFramesFromEnv()
 	require.Equal(t, &host.ChatFrameSchedule{Join: 5, SignEvery: 4096}, chatFrameSchedule)
 
-	set("nope", "13", "", "")
+	set("1", "nope", "13", "", "")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "a join that is not an integer leaves the default")
+	require.Nil(t, chatFrameSchedule, "a join that is not an integer disables signing")
 
-	set("5", "nope", "", "")
+	set("1", "5", "nope", "", "")
 	configureChatFramesFromEnv()
-	require.Nil(t, chatFrameSchedule, "a sign interval that is not an integer leaves the default")
+	require.Nil(t, chatFrameSchedule, "a sign interval that is not an integer disables signing")
+
+	set("maybe", "5", "13", "", "")
+	configureChatFramesFromEnv()
+	require.Nil(t, chatFrameSchedule, "an unrecognized GATEWAY_CHAT_FRAMES value disables signing")
 }
 
 func TestLogChatFrameCheck_DoneWithoutFinish(t *testing.T) {

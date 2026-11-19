@@ -213,7 +213,7 @@ func TestRPCClient_SendVerifiesSignedFrames(t *testing.T) {
 		name     string
 		schedule *host.ChatFrameSchedule
 	}{
-		{name: "joined default"},
+		{name: "joined default", schedule: &host.ChatFrameSchedule{}},
 		{name: "join every 2", schedule: &host.ChatFrameSchedule{Join: 2}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -237,12 +237,33 @@ func TestRPCClient_SendVerifiesSignedFrames(t *testing.T) {
 	}
 }
 
+func TestRPCClient_SendLeavesFramesUnsignedWhenGatewayDisables(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	rpc, user, pc := startLiveChatRPCWithHost(t, hostSigner, transport.DefaultClientConfig(), nil, transport.PeerConnConfig{}, false)
+	pc.Start()
+	waitPeerReady(t, pc)
+
+	req := chatHostRequest(t, user)
+	req.ChatFrames = nil
+	req.PromptHash = testutil.TestPromptHash[:]
+	req.FrameSignerAllowed = func(addr string) bool { return addr == hostSigner.Address() }
+	var stream bytes.Buffer
+	resp, err := rpc.Send(context.Background(), req, &stream, nil)
+	require.NoError(t, err)
+	require.Contains(t, stream.String(), "stub")
+	check := resp.ChatFrames
+	require.Empty(t, check.Invalid)
+	require.Zero(t, check.Signed, "nil ChatFrames disables signing")
+	require.Empty(t, check.TokenCounts)
+}
+
 func TestRPCClient_SendReportsFramesFromAnotherKey(t *testing.T) {
 	rpc, user, pc := startLiveChatRPCWithHost(t, testutil.MustGenerateKey(t), transport.DefaultClientConfig(), nil, transport.PeerConnConfig{}, false)
 	pc.Start()
 	waitPeerReady(t, pc)
 
 	req := chatHostRequest(t, user)
+	req.ChatFrames = &host.ChatFrameSchedule{}
 	req.PromptHash = testutil.TestPromptHash[:]
 	someoneElse := testutil.MustGenerateKey(t)
 	req.FrameSignerAllowed = func(addr string) bool { return addr == someoneElse.Address() }

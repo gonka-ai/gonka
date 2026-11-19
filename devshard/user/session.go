@@ -259,8 +259,8 @@ type InferenceParams struct {
 	Stream                       bool
 	ForceHeightSyncAnchor        bool
 	LogprobsOptimizationOverride *bool
-	// ChatFrames is the frame schedule the executor is asked for. Nil is the
-	// executor's default.
+	// ChatFrames is the frame schedule the executor is asked for. Nil
+	// disables join/sign for this request.
 	ChatFrames *host.ChatFrameSchedule
 }
 

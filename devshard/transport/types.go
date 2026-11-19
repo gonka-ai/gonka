@@ -37,8 +37,9 @@ type InferenceRequest struct {
 	// ForceHeightSyncAnchor triggers manual-force Anchor on this message (policy hook).
 	ForceHeightSyncAnchor        bool  `json:"force_height_sync_anchor,omitempty"`
 	LogprobsOptimizationOverride *bool `json:"logprobs_optimization_override,omitempty"`
-	// ChatFrames is the gateway's frame schedule. A host that predates it
-	// ignores the field and sends one unsigned frame per event.
+	// ChatFrames is the gateway's frame schedule. Nil disables join/sign for
+	// this request. A host that predates the field ignores it and sends one
+	// unsigned frame per event.
 	ChatFrames *host.ChatFrameSchedule `json:"chat_frames,omitempty"`
 }
 
