@@ -6,7 +6,7 @@ COPY sidecar/main.go .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sidecar main.go
 
 # Final Stage
-FROM nginx:1.28-alpine3.21
+FROM nginx:1.30.7-alpine3.24
 
 LABEL ai.gonka.component="proxy-policy" \
       ai.gonka.proxy-policy-contract="1"

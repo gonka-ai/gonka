@@ -1,6 +1,6 @@
 x-proxy-policy: &proxy-policy
   image: >-
-    ${PROXY_POLICY_IMAGE:-ghcr.io/gonka-ai/proxy:0.2.16-devshard-v6}
+    ${PROXY_POLICY_IMAGE:-ghcr.io/gonka-ai/proxy:0.2.16-post1}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
     - DEVSHARD_RPC_POLICY_HOST=proxy-policy-ingress
