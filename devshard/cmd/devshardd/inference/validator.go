@@ -139,21 +139,6 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeValidate, fmt.Errorf("fetch payloads from executor: %w", err))
 	}
 
-	if _, err := completionapi.ModifyRequestBodyWithLogprobsMode(promptPayload, int32(req.InferenceID), v.chainParams.LogprobsMode()); err != nil {
-		tagged := tagExecutorPayloadFault(err)
-		if verdict := executorFaultVerdict(ctx, v.phase, req, epochID, tagged, v.voteFalseOnFetchFailure); verdict != nil {
-			return verdict, nil
-		}
-		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate, fmt.Errorf("modify request body for validation: %w", err))
-	}
-	if _, err := commonvalidation.UnmarshalResponsePayload(responsePayload); err != nil {
-		tagged := tagExecutorPayloadFault(err)
-		if verdict := executorFaultVerdict(ctx, v.phase, req, epochID, tagged, v.voteFalseOnFetchFailure); verdict != nil {
-			return verdict, nil
-		}
-		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
-	}
-
 	result, err := commonvalidation.ExecuteValidationWithPolicy(
 		ctx,
 		inferenceID,
@@ -170,6 +155,9 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 	if err != nil {
 		return nil, classifyExecuteValidationErr(err)
 	}
+	if verdict, verr := v.storedPayloadVerdict(ctx, req, epochID, result); verdict != nil || verr != nil {
+		return verdict, verr
+	}
 
 	valid, err := evaluateValidationResult(ctx, result, epochID, req.Model, v.thresholds)
 	if err != nil {
@@ -177,6 +165,27 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 			fmt.Errorf("evaluate validation result: %w", err))
 	}
 	return &devshardpkg.ValidateResult{Valid: valid}, nil
+}
+
+// storedPayloadVerdict preserves the vote the preflight parse used to produce.
+// ExecuteValidationWithPolicy parses the stored prompt and response once;
+// a failure there is still the executor's payload, not a local validation error.
+func (v *Validator) storedPayloadVerdict(ctx context.Context, req devshardpkg.ValidateRequest, epochID uint64, result commonvalidation.ValidationResult) (*devshardpkg.ValidateResult, error) {
+	kind, cause := commonvalidation.RejectedStoredPayload(result)
+	if kind == commonvalidation.StoredPayloadOK {
+		return nil, nil
+	}
+	tagged := tagExecutorPayloadFault(cause)
+	if verdict := executorFaultVerdict(ctx, v.phase, req, epochID, tagged, v.voteFalseOnFetchFailure); verdict != nil {
+		return verdict, nil
+	}
+	reason := observability.ReasonValidationBuildErr
+	msg := "modify request body for validation"
+	if kind == commonvalidation.StoredPayloadResponse {
+		reason = observability.ReasonOriginalParseErr
+		msg = "parse original response"
+	}
+	return nil, observability.Classify(reason, observability.WhereRuntimeValidate, fmt.Errorf("%s: %w", msg, cause))
 }
 
 func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error) {

@@ -710,6 +710,48 @@ func (resolver stubVocabularyResolver) Resolve(context.Context, uint64, string) 
 // 1. The executor stored token id 42 and the resolver reports the model's vocab size.
 // 2. With vocab 42 the id is out of range: the validator votes false and never calls its ML node.
 // 3. With vocab 43 the id is valid and the replay reaches the ML node.
+func TestValidator_StoredPayloadParseVotesFalseWithoutReplay(t *testing.T) {
+	validPrompt := []byte(`{"messages":[]}`)
+	validResponse := []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"logprobs":{"content":[{"token":"42","logprob":-0.5,"top_logprobs":[{"token":"42","logprob":-0.5}]}]}}]}`)
+	cases := []struct {
+		name          string
+		prompt        []byte
+		response      []byte
+		voteFalse     bool
+		wantVoteFalse bool
+	}{
+		{name: "bad prompt votes false", prompt: []byte("not-json"), response: validResponse, voteFalse: true, wantVoteFalse: true},
+		{name: "bad prompt with the switch off returns the error", prompt: []byte("not-json"), response: validResponse, voteFalse: false},
+		{name: "bad response votes false", prompt: validPrompt, response: []byte("not-json"), voteFalse: true, wantVoteFalse: true},
+		{name: "bad response with the switch off returns the error", prompt: validPrompt, response: []byte("not-json"), voteFalse: false},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			replayed := false
+			fetch := func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+				return testCase.prompt, testCase.response, nil
+			}
+			executeML := func(context.Context, string, string, []byte) (*http.Response, error) {
+				replayed = true
+				return &http.Response{StatusCode: http.StatusBadRequest, Body: http.NoBody}, nil
+			}
+			validator := newFaultTestValidator(10, testCase.voteFalse, fetch, executeML, nil)
+
+			result, err := validator.Validate(context.Background(), faultReq(10))
+			assert.False(t, replayed, "a stored payload that does not parse is not replayed")
+			if testCase.wantVoteFalse {
+				require.NoError(t, err)
+				require.NotNil(t, result)
+				assert.False(t, result.Valid)
+				assert.Equal(t, executorPayloadUnavailableReason, result.Reason)
+				return
+			}
+			require.Error(t, err)
+			assert.Nil(t, result)
+		})
+	}
+}
+
 func TestValidator_Validate_BoundsTokenIDsByResolvedVocabulary(t *testing.T) {
 	validPrompt := []byte(`{"messages":[]}`)
 	storedResponse := []byte(`{"id":"test","object":"chat.completion","choices":[{"index":0,"logprobs":{"content":[{"token":"42","logprob":-0.5,"top_logprobs":[{"token":"42","logprob":-0.5}]}]}}]}`)
