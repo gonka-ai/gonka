@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "tool_choice.function: invalid shape: function.name length 65 exceeds limit 64",
+  "status": "rejected"
+}

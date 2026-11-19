@@ -24,7 +24,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | `enable_thinking` lifts into `chat_template_kwargs` | Qwen3 canonical placement | [#translate-enable_thinking](#translate-enable_thinking) |
 | `reasoning` object decomposed to top-level `reasoning_effort` | OpenRouter unified-reasoning convention | [#translate-reasoning](#translate-reasoning) |
 | 400 on out-of-range `top_p` / `repetition_penalty` / `top_k` | value outside backend-accepted range | [#reject-out-of-range-sampling](#reject-out-of-range-sampling) |
-| 400 on `max_tokens: 0` (non-Kimi route) | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
+| 400 on `max_tokens: 0` | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
 | 400 on wrong-typed param (bool / int / array element) | type mismatch caught at the gateway | [#reject-malformed-param-types](#reject-malformed-param-types) |
 | 400 `tools[N].function.parameters: serialized size exceeded` | one tool's `parameters` schema is over 64 KiB | [#reject-oversized-tool-schema](#reject-oversized-tool-schema) |
 | `thinking_token_budget` forced to `0` on Kimi-K2.6 with small `max_tokens` | content-headroom guard | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
@@ -467,9 +467,9 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #reject-nonpositive-max-tokens
 
-**What**: HTTP 400 on `max_tokens: 0` (or `max_completion_tokens: 0`) for non-Kimi routes.
+**What**: HTTP 400 on `max_tokens: 0` (or `max_completion_tokens: 0`), on every route.
 
-**Why**: A zero output budget is not a meaningful request — vLLM emits no content, and the gateway's redundancy layer then waits for a winner that can never arrive, so the request hangs to the deadline instead of failing fast. The gateway requires `max_tokens ≥ 1` [[OpenAI-1]](references.md#openai). Kimi-K2.6 instead floors small budgets to 16 as part of its think-burn mitigation (see [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn)), so `0` becomes `16` on that route rather than a 400.
+**Why**: A zero output budget is not a meaningful request — vLLM emits no content, and the gateway's redundancy layer then waits for a winner that can never arrive, so the request hangs to the deadline instead of failing fast. The gateway requires `max_tokens ≥ 1` [[OpenAI-1]](references.md#openai).
 
 **Fix (client-side)**: send `max_tokens ≥ 1`, or omit it to take the route default.
 
