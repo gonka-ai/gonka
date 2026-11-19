@@ -253,7 +253,18 @@ func freezeActiveEpochRecipe(ctx context.Context, k keeper.Keeper) error {
 	if participants, ok := k.GetActiveParticipants(ctx, epoch.Index); ok {
 		height = participants.PocStartBlockHeight
 	}
-	_, err := k.FreezePocStageRecipe(ctx, height)
+	if _, err := k.FreezePocStageRecipe(ctx, height); err != nil {
+		return err
+	}
+	// A regular PoC stage that v0.2.16 started before the upgrade height has no
+	// recipe either. Its epoch record exists from PoC start. Without a recipe
+	// the stage cannot be validated, and once its epoch is effective the next
+	// PoC start cannot retain it.
+	upcoming, found := k.GetUpcomingEpoch(ctx)
+	if !found || upcoming == nil {
+		return nil
+	}
+	_, err := k.FreezePocStageRecipe(ctx, upcoming.PocStartBlockHeight)
 	return err
 }
 
