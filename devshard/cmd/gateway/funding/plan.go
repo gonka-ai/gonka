@@ -173,10 +173,14 @@ func demandNeed(state ModelState, misconfigured bool) uint64 {
 func liquidMoney(state ModelState, routable []EscrowState) uint64 {
 	var liquid uint64
 	for _, escrow := range routable {
-		ownPrice := safemath.AddSaturatingUint64(subtractFloor(escrow.Money.Free, escrow.FullCost), escrow.Money.Returning)
-		liquid = safemath.AddSaturatingUint64(liquid, atModelPrice(state, escrow, ownPrice))
+		liquid = safemath.AddSaturatingUint64(liquid, escrowLiquidMoney(state, escrow))
 	}
 	return liquid
+}
+
+func escrowLiquidMoney(state ModelState, escrow EscrowState) uint64 {
+	ownPrice := safemath.AddSaturatingUint64(subtractFloor(escrow.Money.Free, escrow.FullCost), escrow.Money.Returning)
+	return atModelPrice(state, escrow, ownPrice)
 }
 
 // atModelPrice is what money an escrow spends at its own session price buys at the model's current price. See README.md, "Money at one price".

@@ -51,10 +51,13 @@ func oneRetire(state ModelState, routable []EscrowState, decision Decision) (Ret
 	current := currentRegulars(state, routable)
 	currentStarved := leastFreeFirst(current, func(escrow EscrowState) bool { return escrow.Money.Starved && !escrow.Unread })
 	if len(currentStarved) > 0 && decision.FullCount > state.FullContextSlots {
+		if !keepsLiquid(state, decision, currentStarved[0]) {
+			return Retire{}, false
+		}
 		return Retire{EscrowID: currentStarved[0].ID, Reason: ReasonSurplus}, true
 	}
 	currentFull := leastFreeFirst(current, func(escrow EscrowState) bool { return escrow.Money.Full && !escrow.Unread })
-	if len(currentFull) > 0 && decision.FullCount >= state.FullContextSlots+2 {
+	if len(currentFull) > 0 && decision.FullCount >= state.FullContextSlots+2 && keepsLiquid(state, decision, currentFull[0]) {
 		return Retire{EscrowID: currentFull[0].ID, Reason: ReasonSurplus}, true
 	}
 	return Retire{}, false
@@ -103,4 +106,9 @@ func surplusHeld(state ModelState, shortfalls Shortfalls, routable []EscrowState
 	}
 	wanted := safemath.AddSaturatingUint64(uint64(max(state.FullContextSlots, 0)), ceilDivide(subtractFloor(need, fullFree), perEscrow))
 	return uint64(len(currentRegulars(state, routable))) > max(uint64(max(state.TargetCount, 0)), wanted)
+}
+
+// keepsLiquid is whether the liquid money still covers the need without the victim's own term, so the capacity rule does not create the victim back.
+func keepsLiquid(state ModelState, decision Decision, victim EscrowState) bool {
+	return subtractFloor(decision.Liquid, escrowLiquidMoney(state, victim)) >= decision.Need
 }
