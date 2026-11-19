@@ -74,9 +74,13 @@ func (k Keeper) UpdateParticipantStatus(ctx context.Context, participant *types.
 }
 
 func (k Keeper) deactiveParticipant(ctx context.Context, participant *types.Participant, reason calculations.ParticipantStatusReason, params types.Params) error {
-	k.LogWarn("Participant deactivated for downtime", types.Validation, "address", participant.Address, "reason", reason, "stats", participant.CurrentEpochStats)
-	// 1) Slash collateral
-	k.SlashForDowntime(ctx, participant, params)
+	k.LogWarn("Participant deactivated", types.Validation, "address", participant.Address, "reason", reason, "stats", participant.CurrentEpochStats)
+	// 1) Slash collateral: a failed confirmation PoC has its own fraction, every other reason is downtime
+	if reason == calculations.FailedConfirmationPoC {
+		k.SlashForFailedConfirmationPoC(ctx, participant, params)
+	} else {
+		k.SlashForDowntime(ctx, participant, params)
+	}
 
 	// 2) Record exclusion
 	k.recordExclusion(ctx, participant, reason)

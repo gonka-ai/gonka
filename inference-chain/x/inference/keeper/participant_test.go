@@ -408,3 +408,81 @@ func TestParticipantStatusFlow_InactiveStaysInactive(t *testing.T) {
 	require.Equal(t, types.ParticipantStatus_INACTIVE, saved.Status)
 	require.Equal(t, uint32(8), saved.EpochsCompleted) // Unchanged
 }
+
+// setupFailedConfirmationPoC builds an epoch group and an ACTIVE participant whose
+// confirmation PoC ratio (0.3) is below the alpha threshold (0.5), so the status
+// update moves it to INACTIVE with reason FailedConfirmationPoC.
+func setupFailedConfirmationPoC(t *testing.T, cpocSlash float64) (keeper.Keeper, sdk.Context, keepertest.InferenceMocks, types.Participant) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	epochIndex := uint64(1)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: epochIndex, PocStartBlockHeight: 100})
+	_ = k.SetEffectiveEpochIndex(sdkCtx, epochIndex)
+	mocks.ExpectCreateGroupWithPolicyCall(ctx, epochIndex)
+	eg, err := k.CreateEpochGroup(ctx, epochIndex, epochIndex)
+	require.NoError(t, err)
+	err = eg.CreateGroup(ctx)
+	require.NoError(t, err)
+
+	params := types.DefaultParams()
+	params.ValidationParams.FalsePositiveRate = types.DecimalFromFloat(0.05)
+	params.ConfirmationPocParams.AlphaThreshold = types.DecimalFromFloat(0.5)
+	params.ConfirmationPocParams.SlashFraction = types.DecimalFromFloat(cpocSlash)
+	params.CollateralParams.SlashFractionDowntime = types.DecimalFromFloat(0.1)
+	k.SetParams(ctx, params)
+
+	participant := types.Participant{
+		Index:   testutil.Bech32Addr(1),
+		Address: testutil.Bech32Addr(1),
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			ValidatedInferences:   0,
+			InvalidatedInferences: 0,
+			InvalidLLR:            types.DecimalFromFloat(0),
+			InactiveLLR:           types.DecimalFromFloat(0),
+			ConfirmationPoCRatio:  types.DecimalFromFloat(0.3),
+		},
+		EpochsCompleted: 10,
+	}
+
+	mocks.GroupKeeper.EXPECT().
+		UpdateGroupMetadata(ctx, gomock.Any()).
+		Return(&group.MsgUpdateGroupMetadataResponse{}, nil).
+		Times(1)
+	mocks.GroupKeeper.EXPECT().
+		UpdateGroupMembers(ctx, gomock.Any()).
+		Return(&group.MsgUpdateGroupMembersResponse{}, nil).
+		Times(1)
+
+	return k, ctx, mocks, participant
+}
+
+func TestUpdateParticipantStatus_FailedConfirmationPoC_ZeroFractionDoesNotSlash(t *testing.T) {
+	k, ctx, mocks, participant := setupFailedConfirmationPoC(t, 0.0)
+
+	// confirmation_poc_params.slash_fraction is 0: no slash, and in particular not the
+	// 10% collateral_params.slash_fraction_downtime.
+	mocks.CollateralKeeper.EXPECT().
+		Slash(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Times(0)
+
+	err := k.UpdateParticipantStatus(ctx, &participant)
+	require.NoError(t, err)
+	require.Equal(t, types.ParticipantStatus_INACTIVE, participant.Status)
+}
+
+func TestUpdateParticipantStatus_FailedConfirmationPoC_SlashesByConfirmationFraction(t *testing.T) {
+	k, ctx, mocks, participant := setupFailedConfirmationPoC(t, 0.05)
+
+	expected, err := types.DecimalFromFloat(0.05).ToLegacyDec()
+	require.NoError(t, err)
+	mocks.CollateralKeeper.EXPECT().
+		Slash(ctx, gomock.Any(), expected, types.SlashReasonConfirmationPoC, gomock.Any()).
+		Return(sdk.Coin{}, nil).
+		Times(1)
+
+	err = k.UpdateParticipantStatus(ctx, &participant)
+	require.NoError(t, err)
+	require.Equal(t, types.ParticipantStatus_INACTIVE, participant.Status)
+}
