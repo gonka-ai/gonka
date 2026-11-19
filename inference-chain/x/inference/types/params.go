@@ -108,6 +108,12 @@ const (
 	DefaultDevshardExecutionTimeout    int64  = 32 * 60
 	DefaultDevshardValidationRate      uint32 = 1000
 	DefaultDevshardVoteThresholdFactor uint32 = 50
+	// Must match devshard/types.DefaultChatFrameJoin / SignEvery.
+	DefaultDevshardChatFrameJoin      uint32 = 5
+	DefaultDevshardChatFrameSignEvery uint32 = 13
+	// Caps must match devshard/transport MaxChatFrameJoin / SignEvery.
+	MaxDevshardChatFrameJoin      uint32 = 64
+	MaxDevshardChatFrameSignEvery uint32 = 4096
 
 	DefaultMaintenanceEnabled                         = false
 	DefaultMaintenanceMinScheduleLeadBlocks    uint64 = 100
@@ -415,6 +421,8 @@ func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 		ValidationRate:                   DefaultDevshardValidationRate,
 		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
 		ApplySampledPassCount:            false,
+		ChatFrameJoin:                    DefaultDevshardChatFrameJoin,
+		ChatFrameSignEvery:               DefaultDevshardChatFrameSignEvery,
 	}
 }
 
@@ -536,6 +544,12 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.VoteThresholdFactor == 0 || p.VoteThresholdFactor > 100 {
 		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
+	}
+	if p.ChatFrameJoin > MaxDevshardChatFrameJoin {
+		return fmt.Errorf("devshard escrow chat_frame_join (%d) must be <= %d", p.ChatFrameJoin, MaxDevshardChatFrameJoin)
+	}
+	if p.ChatFrameSignEvery > MaxDevshardChatFrameSignEvery {
+		return fmt.Errorf("devshard escrow chat_frame_sign_every (%d) must be <= %d", p.ChatFrameSignEvery, MaxDevshardChatFrameSignEvery)
 	}
 	return nil
 }
