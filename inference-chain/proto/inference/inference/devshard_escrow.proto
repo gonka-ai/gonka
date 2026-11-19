@@ -23,6 +23,10 @@ message DevshardEscrow {
   uint32 vote_threshold_factor = 16;
   int64 refusal_timeout = 17;
   int64 execution_timeout = 18;
+  // Frozen at create from DevshardEscrowParams.chat_frame_join.
+  uint32 chat_frame_join = 19;
+  // Frozen at create from DevshardEscrowParams.chat_frame_sign_every.
+  uint32 chat_frame_sign_every = 20;
 }
 
 message DevshardHostEpochStats {

@@ -17,6 +17,8 @@ func TestDefaultDevshardEscrowParams_FeeDefaults(t *testing.T) {
 	require.Equal(t, int64(32*60), p.ExecutionTimeout)
 	require.Equal(t, types.DefaultDevshardValidationRate, p.ValidationRate)
 	require.Equal(t, types.DefaultDevshardVoteThresholdFactor, p.VoteThresholdFactor)
+	require.Equal(t, types.DefaultDevshardChatFrameJoin, p.ChatFrameJoin)
+	require.Equal(t, types.DefaultDevshardChatFrameSignEvery, p.ChatFrameSignEvery)
 	require.NoError(t, p.Validate())
 }
 
@@ -71,5 +73,17 @@ func TestDevshardEscrowParams_Validate_RejectsInvalidPhase4(t *testing.T) {
 		p := base()
 		p.VoteThresholdFactor = 101
 		require.ErrorContains(t, p.Validate(), "vote_threshold_factor")
+	})
+
+	t.Run("chat_frame_join", func(t *testing.T) {
+		p := base()
+		p.ChatFrameJoin = types.MaxDevshardChatFrameJoin + 1
+		require.ErrorContains(t, p.Validate(), "chat_frame_join")
+	})
+
+	t.Run("chat_frame_sign_every", func(t *testing.T) {
+		p := base()
+		p.ChatFrameSignEvery = types.MaxDevshardChatFrameSignEvery + 1
+		require.ErrorContains(t, p.Validate(), "chat_frame_sign_every")
 	})
 }
