@@ -3,7 +3,6 @@ package inference
 import (
 	"errors"
 	"fmt"
-	"time"
 
 	commonvalidation "common/validation"
 	devshardpkg "devshard"
@@ -20,21 +19,11 @@ const (
 	TapeOff = "off"
 )
 
-const (
-	// A participant's positions off the winner are pooled over its recent
-	// answers: the sum catches a substitute that passes answer by answer.
-	poolWindow = 32
-	poolMaxAge = 24 * time.Hour
-	// The pool judges from pooledMinAnswers answers on, at a bound of 99.9 %.
-	pooledQuantile   = 3.09
-	pooledMinAnswers = 4
-)
-
 // judgeTape scores the answer on its tape from the replay the logprob
 // comparison made, which costs the ML node nothing, and logs what it finds.
 // In TapeEnforce a verdict that the comparison left valid turns invalid when
-// the answer, or the participant's pool with it, is off the tape. Nothing else
-// it does reaches the vote: an answer it cannot judge keeps the comparison's.
+// the answer is off the tape. Nothing else it does reaches the vote: an answer
+// it cannot judge keeps the comparison's.
 func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID string, promptPayload, responsePayload []byte,
 	result commonvalidation.ValidationResult, verdict *devshardpkg.ValidateResult) {
 	if v.tapeMode != TapeShadow && v.tapeMode != TapeEnforce {
@@ -87,14 +76,6 @@ func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID strin
 	}
 	if tape.ReplayPast > 0 {
 		details = append(details, "replay_past", tape.ReplayPast)
-	}
-	if v.pool != nil {
-		answers, steps, count := v.pool.Observe(req.ExecutorAddress, req.Model, signals.Steps, signals.Count)
-		details = append(details, "pooled_answers", answers, "pooled_steps", steps, "pooled_count", count)
-		thresholds, _ := commonvalidation.TapeThresholdsFor(req.Model)
-		if valid && answers >= pooledMinAnswers && !thresholds.CountPasses(steps, count, pooledQuantile) {
-			outcome, valid = "pooled_flips", false
-		}
 	}
 	fields = append(fields, "tape", outcome, "tape_valid", valid, "agree", valid == verdict.Valid)
 	fields = append(fields, details...)

@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -62,7 +61,6 @@ func tapeModeValidator(mode string, engine *tapeModeEngine) (*Validator, devshar
 	v := newFaultTestValidator(10, true, engine.fetch, engine.executeML, nil)
 	v.chainParams = processedChainParams{}
 	v.tapeMode = mode
-	v.pool = newFlipPool(poolWindow, time.Hour)
 	req := faultReq(10)
 	req.Model = engine.model
 	req.InputTokens, req.OutputTokens = 3, 64
@@ -120,25 +118,10 @@ func TestValidator_TapeEnforceKeepsTheVoteOfWhatItCannotJudge(t *testing.T) {
 	require.True(t, verdict.Valid)
 }
 
-// A participant whose answers pass one by one is voted invalid when their sum
-// is off the tape.
-func TestValidator_TapeEnforceVotesByTheParticipantsPool(t *testing.T) {
-	engine := newTapeModeEngine(onTheTape)
-	v, req := tapeModeValidator(TapeEnforce, engine)
-	for i := 0; i < 5; i++ {
-		v.pool.Observe(req.ExecutorAddress, req.Model, 64, 4)
-	}
-	verdict, err := v.Validate(context.Background(), req)
-	require.NoError(t, err)
-	require.False(t, verdict.Valid)
-	require.Equal(t, "tape_pooled_flips", verdict.Reason)
-}
-
 func TestValidator_TapeOffIsTheLogprobComparisonAlone(t *testing.T) {
 	engine := newTapeModeEngine(offTheTape)
 	v, req := tapeModeValidator(TapeOff, engine)
 	verdict, err := v.Validate(context.Background(), req)
 	require.NoError(t, err)
 	require.True(t, verdict.Valid)
-	require.Empty(t, v.pool.entries)
 }

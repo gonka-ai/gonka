@@ -54,7 +54,6 @@ type Validator struct {
 	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
 	tapeMode                string
-	pool                    *flipPool
 	payloadHTTPClient       *http.Client
 	payloadSigner           signing.Signer
 	rpcEndpoints            transport.EndpointSet
@@ -98,7 +97,6 @@ func NewValidator(
 		vocabularySizes:         vocabularySizes,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 		tapeMode:                tapeMode,
-		pool:                    newFlipPool(poolWindow, poolMaxAge),
 		payloadHTTPClient:       newPayloadFetchClient(),
 	}
 }

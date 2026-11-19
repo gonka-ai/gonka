@@ -105,9 +105,9 @@ type TapeThresholds struct {
 // that were not measured.
 //
 // At DeepSeek's 0.08 on the logprob comparison's replay an answer under
-// another seed is 20 % off the winner: two answers in three are flagged alone,
-// 98 % by the sum of four. An answer of a checkpoint with half the experts
-// pruned is 18 % off the winner.
+// another seed is 20 % off the winner, and three answers in four are flagged.
+// An answer of a checkpoint with half the experts pruned is 18 % off the
+// winner.
 var tapeThresholds = map[string]TapeThresholds{
 	"deepseek-ai/DeepSeek-V4-Flash-0731": {FlipRate: 0.08},
 	"MiniMaxAI/MiniMax-M2.7":             {FlipRate: 0.08},
@@ -124,18 +124,13 @@ func TapeThresholdsFor(model string) (TapeThresholds, bool) {
 	return t, ok
 }
 
+// Pass is the binomial bound on the positions off the winner: the honest count
+// over the answer's positions is Binomial(steps, FlipRate), and an answer
+// passes within the 99.5 % bound of it (normal quantile 2.576).
 func (t TapeThresholds) Pass(s TapeSignals) bool {
-	return s.Steps > 0 && t.CountPasses(s.Steps, s.Count, 2.576)
-}
-
-// CountPasses is the binomial bound on the positions off the winner: the
-// honest count over steps positions is Binomial(steps, FlipRate), and quantile
-// is the normal quantile of the bound (2.576 for 99.5 %). It applies to one
-// answer and to the pooled positions of a participant alike.
-func (t TapeThresholds) CountPasses(steps, count int, quantile float64) bool {
-	n := float64(steps)
-	bound := t.FlipRate*n + quantile*math.Sqrt(n*t.FlipRate*(1-t.FlipRate)) + 0.5
-	return float64(count) <= bound
+	n := float64(s.Steps)
+	bound := t.FlipRate*n + 2.576*math.Sqrt(n*t.FlipRate*(1-t.FlipRate)) + 0.5
+	return s.Steps > 0 && float64(s.Count) <= bound
 }
 
 // ScoreTape scores an answer on the processed logprobs of its positions:
