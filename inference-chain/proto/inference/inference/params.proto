@@ -503,6 +503,12 @@ message DevshardEscrowParams {
   // sampled for SPRT. Per-name pass_count still selects settlement
   // verification.
   bool apply_sampled_pass_count = 19;
+  // chat_frame_join is how many content tokens share one gzip chunk after the
+  // first chunk. Snapshotted onto DevshardEscrow at create. 0 = compiled default.
+  uint32 chat_frame_join = 20;
+  // chat_frame_sign_every is how many chunks share one signature. Snapshotted
+  // onto DevshardEscrow at create. 0 = compiled default.
+  uint32 chat_frame_sign_every = 21;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level
