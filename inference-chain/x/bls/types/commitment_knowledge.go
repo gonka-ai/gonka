@@ -74,7 +74,9 @@ func verifyCommitmentKnowledgeProof(epochID uint64, creator string, index uint32
 	if err != nil {
 		return fmt.Errorf("nonce_point: %w", err)
 	}
-	if noncePoint.InG2() && !noncePoint.KeyValidate() {
+	// uncompressG2 already checked subgroup membership; KeyValidate adds the
+	// non-identity check.
+	if !noncePoint.KeyValidate() {
 		return fmt.Errorf("nonce_point must not be the identity")
 	}
 
@@ -103,28 +105,27 @@ func commitmentProofHolds(response *fr.Element, noncePoint *blst.P2Affine, chall
 	return left.Equals(right.ToAffine())
 }
 
+// commitmentKnowledgeChallenge hashes the statement to a scalar. Two
+// domain-separated SHA-256 outputs (512 bits) are reduced mod r so the result
+// is statistically close to uniform; one 256-bit output would be biased.
 func commitmentKnowledgeChallenge(epochID uint64, creator string, index uint32, commitment, noncePoint []byte) *fr.Element {
-	hasher := sha256.New()
-	_, _ = hasher.Write([]byte(commitmentKnowledgeDomain))
+	var input []byte
+	input = append(input, commitmentKnowledgeDomain...)
+	input = binary.BigEndian.AppendUint64(input, epochID)
+	input = binary.BigEndian.AppendUint32(input, uint32(len(creator)))
+	input = append(input, creator...)
+	input = binary.BigEndian.AppendUint32(input, index)
+	input = append(input, commitment...)
+	input = append(input, noncePoint...)
 
-	var epochBuf [8]byte
-	binary.BigEndian.PutUint64(epochBuf[:], epochID)
-	_, _ = hasher.Write(epochBuf[:])
-
-	var creatorLen [4]byte
-	binary.BigEndian.PutUint32(creatorLen[:], uint32(len(creator)))
-	_, _ = hasher.Write(creatorLen[:])
-	_, _ = hasher.Write([]byte(creator))
-
-	var indexBuf [4]byte
-	binary.BigEndian.PutUint32(indexBuf[:], index)
-	_, _ = hasher.Write(indexBuf[:])
-
-	_, _ = hasher.Write(commitment)
-	_, _ = hasher.Write(noncePoint)
+	wide := make([]byte, 0, 2*sha256.Size)
+	for _, label := range []byte{0, 1} {
+		sum := sha256.Sum256(append([]byte{label}, input...))
+		wide = append(wide, sum[:]...)
+	}
 
 	challenge := new(fr.Element)
-	challenge.SetBytes(hasher.Sum(nil))
+	challenge.SetBytes(wide) // big-endian, reduced mod r
 	return challenge
 }
 

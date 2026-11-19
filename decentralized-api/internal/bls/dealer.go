@@ -349,6 +349,8 @@ func computeG2Commitments(coefficients []*fr.Element) [][]byte {
 }
 
 // computeG2CommitmentsBlst computes G2 commitments for polynomial coefficients using blst.
+// Production dealing derives commitments via types.BuildCommitmentKnowledgeProof;
+// this stays as an independent reference that tests compare against.
 func computeG2CommitmentsBlst(coefficients []*fr.Element) [][]byte {
 	commitments := make([][]byte, len(coefficients))
 

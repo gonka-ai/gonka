@@ -77,16 +77,6 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 		if len(proof.NoncePoint) != commitmentCompressedG2Len {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].nonce_point must be exactly %d bytes", i, commitmentCompressedG2Len)
 		}
-		nonceAllZero := true
-		for _, b := range proof.NoncePoint {
-			if b != 0 {
-				nonceAllZero = false
-				break
-			}
-		}
-		if nonceAllZero {
-			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].nonce_point must not be all-zero bytes", i)
-		}
 		if len(proof.Response) != commitmentKnowledgeResponseLen {
 			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].response must be exactly %d bytes", i, commitmentKnowledgeResponseLen)
 		}

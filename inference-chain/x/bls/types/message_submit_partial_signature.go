@@ -9,7 +9,7 @@ import (
 var _ sdk.Msg = &MsgSubmitPartialSignature{}
 
 const (
-	partialSignatureChunkLen      = 48
+	partialSignatureChunkLen       = 48
 	maxPartialSignatureSlotIndices = 65536
 )
 
