@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	"devshard/internal/boolvalue"
 	"devshard/signing"
@@ -46,6 +47,7 @@ type runtimeConfig struct {
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
 	VoteFalseOnFetchFailure bool
+	TapeValidation          string
 	ShutdownGrace           time.Duration
 	Node                    ChainNodeConfig
 }
@@ -147,6 +149,13 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_SHUTDOWN_GRACE: %w", err)
 	}
 
+	tapeMode := envOr("DEVSHARD_TAPE_VALIDATION", inference.TapeShadow)
+	switch tapeMode {
+	case inference.TapeShadow, inference.TapeEnforce, inference.TapeOff:
+	default:
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_TAPE_VALIDATION: unknown mode %q (shadow, enforce, off)", tapeMode)
+	}
+
 	return runtimeConfig{
 		Port:                        *port,
 		AdminAddr:                   strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_ADDR")),
@@ -162,6 +171,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ValidationRetryInterval:     retryInterval,
 		ValidationLeaseTTL:          leaseTTL,
 		VoteFalseOnFetchFailure:     envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
+		TapeValidation:              tapeMode,
 		ShutdownGrace:               shutdownGrace,
 		Node:                        loadNodeConfigFromEnv(),
 	}, nil

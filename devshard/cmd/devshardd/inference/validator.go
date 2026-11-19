@@ -53,6 +53,7 @@ type Validator struct {
 	thresholds              ValidationThresholdResolver
 	vocabularySizes         VocabularyResolver
 	voteFalseOnFetchFailure bool
+	tapeMode                string
 	payloadHTTPClient       *http.Client
 	payloadSigner           signing.Signer
 	rpcEndpoints            transport.EndpointSet
@@ -71,7 +72,8 @@ type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte
 // similarity pass threshold (long-poll snapshot first, chain fallback).
 // vocabularySizes bounds enforced token ids by the model's vocab before the replay reaches the ML node.
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
-// Valid:false instead of abandoning the attempt.
+// Valid:false instead of abandoning the attempt. tapeMode is TapeShadow,
+// TapeEnforce or TapeOff.
 func NewValidator(
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
@@ -82,6 +84,7 @@ func NewValidator(
 	thresholds ValidationThresholdResolver,
 	vocabularySizes VocabularyResolver,
 	voteFalseOnFetchFailure bool,
+	tapeMode string,
 ) *Validator {
 	return &Validator{
 		bridge:                  br,
@@ -93,6 +96,7 @@ func NewValidator(
 		thresholds:              thresholds,
 		vocabularySizes:         vocabularySizes,
 		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
+		tapeMode:                tapeMode,
 		payloadHTTPClient:       newPayloadFetchClient(),
 	}
 }
@@ -167,7 +171,9 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate,
 			fmt.Errorf("evaluate validation result: %w", err))
 	}
-	return &devshardpkg.ValidateResult{Valid: valid}, nil
+	verdict := &devshardpkg.ValidateResult{Valid: valid}
+	v.judgeTape(req, inferenceID, promptPayload, responsePayload, result, verdict)
+	return verdict, nil
 }
 
 func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error) {
