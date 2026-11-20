@@ -1,12 +1,46 @@
 package mlnodeclient
 
+import "fmt"
+
 // PoC v2 (artifact-based) types for MLNode API callbacks.
 // These match the schemas in mlnode/packages/api/tests/batch_receiver_v2.py.
 
 // ArtifactV2 represents a single artifact from PoC v2 generation.
 type ArtifactV2 struct {
-	Nonce     int64  `json:"nonce"`
-	VectorB64 string `json:"vector_b64"` // base64-encoded fp16 little-endian vector
+	Nonce        int64  `json:"nonce"`
+	VectorB64    string `json:"vector_b64"`               // base64-encoded fp16 little-endian vector (prefill scheme)
+	KPointsSteps []int  `json:"k_points_steps,omitempty"` // decode scheme: one sphere index per step
+}
+
+// KStepsToBytes packs a decode trajectory into the opaque artifact vector, one byte per step.
+func KStepsToBytes(steps []int) ([]byte, error) {
+	out := make([]byte, len(steps))
+	for i, k := range steps {
+		if k < 0 || k >= DecodeSpherePoints {
+			return nil, fmt.Errorf("k_points_steps[%d]=%d is outside [0,%d)", i, k, DecodeSpherePoints)
+		}
+		out[i] = byte(k)
+	}
+	return out, nil
+}
+
+// BytesToKSteps unpacks it.
+func BytesToKSteps(vector []byte) []int {
+	out := make([]int, len(vector))
+	for i, b := range vector {
+		out[i] = int(b)
+	}
+	return out
+}
+
+// ValidatePackedKSteps rejects a stored DECODE leaf whose bytes are not codebook indices.
+func ValidatePackedKSteps(vector []byte) error {
+	for i, b := range vector {
+		if int(b) >= DecodeSpherePoints {
+			return fmt.Errorf("trajectory[%d]=%d is outside [0,%d)", i, b, DecodeSpherePoints)
+		}
+	}
+	return nil
 }
 
 // EncodingV2 describes the artifact encoding (protocol-level defaults; informational only).
@@ -29,6 +63,9 @@ type GeneratedArtifactBatchV2 struct {
 }
 
 // ValidatedResultV2 is the V2 validated-artifacts callback payload.
+// NExcluded is the vllm poc plugin signal: nonces dropped before scoring
+// (a non-finite snap, or any other missing artifact). The chain only
+// checks the sign of the vote, so a pass over the remainder is a full yes.
 type ValidatedResultV2 struct {
 	RequestId      string  `json:"request_id,omitempty"`
 	BlockHash      string  `json:"block_hash,omitempty"`
@@ -37,9 +74,18 @@ type ValidatedResultV2 struct {
 	NodeId         int     `json:"node_id,omitempty"`
 	NTotal         int64   `json:"n_total"`
 	NMismatch      int64   `json:"n_mismatch"`
+	NNanSteps      int64   `json:"n_nan_steps,omitempty"`
+	NExcluded      int64   `json:"n_excluded,omitempty"`
 	MismatchNonces []int64 `json:"mismatch_nonces"`
 	PValue         float64 `json:"p_value"`
 	FraudDetected  bool    `json:"fraud_detected"`
+}
+
+// ShouldAbstain is a validator-side failure (NaN / excluded nonce / compared-nothing),
+// not generatee fraud. Callers must not SubmitPocValidationsV2 and must not map
+// this to validated_weight=-1.
+func (v *ValidatedResultV2) ShouldAbstain() bool {
+	return v.NNanSteps > 0 || v.NExcluded > 0 || v.NMismatch < 0
 }
 
 // ToValidatedWeight returns NTotal (sample size) on success, -1 on fraud/failure.
