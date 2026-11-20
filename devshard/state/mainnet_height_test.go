@@ -44,8 +44,11 @@ func heightFixture(t *testing.T) (*StateMachine, *signing.Secp256k1Signer, *mock
 type deadlineHeightSource struct {
 	MainnetHeightSource
 	blocks.BlockOracle
-	check func(context.Context)
+	check     func(context.Context)
+	recentTip int64
 }
+
+func (s deadlineHeightSource) RecentProofTipHeight() int64 { return s.recentTip }
 
 func (s deadlineHeightSource) Latest(ctx context.Context) (*blocks.Header, error) {
 	s.check(ctx)
@@ -101,9 +104,17 @@ func TestMainnetHeightLagRejectsBeforeCanonicalLookup(t *testing.T) {
 
 	calls := 0
 	sm.headerTimes = nil
-	sm.mainnetHeights = deadlineHeightSource{MainnetHeightSource: source, BlockOracle: source, check: func(context.Context) { calls++ }}
+	proofSource := deadlineHeightSource{MainnetHeightSource: source, BlockOracle: source, check: func(context.Context) { calls++ }}
+	sm.mainnetHeights = proofSource
 	require.ErrorIs(t, sm.CheckMainnetHeightFreshness(t.Context(), time.Now()), types.ErrHeaderPending)
 	require.Equal(t, 1, calls, "only the live tip is queried when the checkpoint is too far behind")
+
+	proofSource.recentTip = sm.MainnetCheckpoint().Height + MainnetCheckpointMaxLag + 1
+	sm.mainnetHeights = proofSource
+	for range 40 {
+		require.ErrorIs(t, sm.CheckMainnetHeightFreshness(t.Context(), time.Now()), types.ErrHeaderPending)
+	}
+	require.Equal(t, 1, calls, "recovered stale diffs need no repeated live tip lookup")
 }
 
 func TestMainnetHeightApplyReplaySnapshotAndPreview(t *testing.T) {

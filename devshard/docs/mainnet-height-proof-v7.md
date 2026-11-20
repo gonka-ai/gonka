@@ -39,6 +39,11 @@ On a cache miss, the host can use verified Comet evidence at the checkpoint
 height. The canonical lookup also keeps an old escrow
 anchor from authorizing a long-range fork after its validator keys have left
 the trusting period. These checks do not invalidate already accepted history.
+Without a fresh WebSocket tip, dAPI gets a bounded head start before the host
+queries chain gRPC for a fresh tip. If both eligible replies are ready, the
+higher one wins. A recent observation can reject an already stale checkpoint
+without another RPC. Signing an eligible checkpoint still requires a live
+observation within the request deadline.
 A fresh local canonical header is required for new signatures, while replay
 of the authenticated journal remains deterministic. Settlement is not an
 exception: replaying a never-signed stale history into its terminal phase must

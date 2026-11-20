@@ -565,6 +565,15 @@ func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
 	return s.latestOracle.Latest(ctx)
 }
 
+func (s *Source) RecentProofTipHeight() int64 {
+	if s != nil {
+		if oracle, ok := s.latestOracle.(interface{ RecentProofTipHeight() int64 }); ok {
+			return oracle.RecentProofTipHeight()
+		}
+	}
+	return 0
+}
+
 func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
 	if s == nil || height <= 0 {
 		return nil, blocks.ErrProveNotImplemented

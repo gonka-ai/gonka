@@ -43,16 +43,18 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	o.mu.Lock()
 	preferDirect := now.Before(o.preferDirectProofUntil)
 	o.mu.Unlock()
+	policy := alternativePolicy[[]byte]{headStart: primaryAttemptBudget(ctx)}
 	if preferDirect {
-		return withAlternative(ctx, primaryAttemptBudget(ctx), attempt(direct), attempt(nm), nil)
+		return withAlternative(ctx, attempt(direct), attempt(nm), policy)
 	}
-	return withAlternative(ctx, primaryAttemptBudget(ctx), attempt(nm), attempt(direct), func() {
+	policy.onFallback = func() {
 		// Spend at most one primary delay on an unavailable dAPI during a
 		// sequence of bootstrap or validator-transition reads.
 		o.mu.Lock()
 		o.preferDirectProofUntil = now.Add(30 * time.Second)
 		o.mu.Unlock()
-	})
+	}
+	return withAlternative(ctx, attempt(nm), attempt(direct), policy)
 }
 
 // LatestForProof keeps a live Comet cache first. Without it, give dAPI
@@ -75,7 +77,6 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	now := o.now()
 	o.mu.Lock()
 	cometOn := o.cometConnected
-	preferDirect := now.Before(o.preferDirectTipUntil)
 	o.mu.Unlock()
 	if cometOn && o.tip != nil && o.cometFresh() {
 		if h, err := o.tip.Latest(ctx); err == nil && o.checkProofTip(h) == nil {
@@ -89,44 +90,44 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	}
 	readDAPI := func(ctx context.Context) (*blocks.Header, error) {
 		h, err, _ := o.tryNM(ctx, now)
-		if err == nil {
-			err = o.checkProofTip(h)
-		}
-		if err == nil && preferDirect {
-			o.mu.Lock()
-			o.preferDirectTipUntil = time.Time{}
-			o.mu.Unlock()
+		if err == nil && !usable(h) {
+			err = blocks.ErrHeaderNotFound
 		}
 		return h, err
 	}
 	readChain := func(ctx context.Context) (*blocks.Header, error) {
-		h, err := o.queryChainTip(ctx, o.now())
-		if err == nil {
-			err = o.checkProofTip(h)
-		}
-		if err == nil && !preferDirect && ctx.Err() == nil {
-			// Reuse the working route, never its height. A stalled dAPI
-			// should cost only one grace period during a sequence of reads.
-			until := o.now().Add(ChainRefresh)
-			o.mu.Lock()
-			o.preferDirectTipUntil = until
-			o.mu.Unlock()
-		}
-		return h, err
+		return o.queryChainTip(ctx, o.now())
 	}
-	if preferDirect {
-		readDAPI, readChain = readChain, readDAPI
+	policy := alternativePolicy[*blocks.Header]{
+		headStart: budget,
+		accept:    o.checkProofTip,
+		prefer:    newerProofTip,
 	}
-	latest, err := withAlternative(ctx, budget, readDAPI, readChain, nil)
-	if err == nil {
-		// A concurrent read may have observed a higher tip in the meantime.
-		err = o.checkProofTip(latest)
-	}
+	latest, err := withAlternative(ctx, readDAPI, readChain, policy)
 	o.noteLatest(latest, err == nil)
-	if err != nil {
-		return nil, err
+	return latest, err
+}
+
+func newerProofTip(a, b *blocks.Header) *blocks.Header {
+	if b.Height > a.Height {
+		return b
 	}
-	return latest, nil
+	return a
+}
+
+// RecentProofTipHeight is a lower bound for rejecting stale checkpoints.
+// Admission must still obtain a live tip from LatestForProof.
+func (o *Oracle) RecentProofTipHeight() int64 {
+	if o == nil {
+		return 0
+	}
+	now := o.now()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if now.Sub(o.proofTipAt) > CometMaxAge {
+		return 0
+	}
+	return o.proofTipHeight
 }
 
 // checkProofTip rejects regression below a recent tip observation. That
@@ -181,61 +182,97 @@ func primaryAttemptBudget(ctx context.Context) time.Duration {
 	return budget
 }
 
+type alternativePolicy[T any] struct {
+	headStart  time.Duration
+	onFallback func()
+	accept     func(T) error
+	prefer     func(T, T) T
+}
+
+type alternativeResult[T any] struct {
+	value T
+	err   error
+}
+
 // withAlternative starts an independent source after a short delay or an
 // explicit error. A slow primary retains the caller's deadline if the
-// secondary cannot answer. The caller must authenticate the selected value.
-func withAlternative[T any](ctx context.Context, headStart time.Duration, primary, secondary func(context.Context) (T, error), onFallback func()) (T, error) {
+// secondary cannot answer. A policy can select between two ready results.
+func withAlternative[T any](ctx context.Context, primary, secondary func(context.Context) (T, error), policy alternativePolicy[T]) (T, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	type result struct {
-		value T
-		err   error
-	}
-	start := func(read func(context.Context) (T, error)) <-chan result {
-		done := make(chan result, 1)
+	start := func(read func(context.Context) (T, error)) <-chan alternativeResult[T] {
+		done := make(chan alternativeResult[T], 1)
 		go func() {
 			value, err := read(ctx)
-			done <- result{value, err}
+			done <- alternativeResult[T]{value, err}
 		}()
 		return done
 	}
+	accept := func(got alternativeResult[T]) error {
+		if got.err == nil && policy.accept != nil {
+			return policy.accept(got.value)
+		}
+		return got.err
+	}
 	first := start(primary)
-	timer := time.NewTimer(headStart)
+	timer := time.NewTimer(policy.headStart)
 	defer timer.Stop()
 	var zero T
 	var failures []error
 	select {
 	case got := <-first:
-		if got.err == nil {
+		err := accept(got)
+		if err == nil {
 			return got.value, nil
 		}
-		failures = append(failures, got.err)
+		failures = append(failures, err)
 		first = nil
 	case <-timer.C:
 	case <-ctx.Done():
 		return zero, ctx.Err()
 	}
-	if onFallback != nil && ctx.Err() == nil {
-		onFallback()
+	if policy.onFallback != nil && ctx.Err() == nil {
+		policy.onFallback()
 	}
 	second := start(secondary)
 	for first != nil || second != nil {
+		var got alternativeResult[T]
+		var pending *<-chan alternativeResult[T]
 		select {
-		case got := <-first:
-			if got.err == nil {
-				return got.value, nil
-			}
-			failures = append(failures, got.err)
+		case got = <-first:
 			first = nil
-		case got := <-second:
-			if got.err == nil {
-				return got.value, nil
-			}
-			failures = append(failures, got.err)
+			pending = &second
+		case got = <-second:
 			second = nil
+			pending = &first
 		case <-ctx.Done():
 			return zero, ctx.Err()
 		}
+		if got.err == nil && policy.prefer != nil {
+			var otherErr error
+			got, otherErr = preferReadyAlternative(got, pending, policy.prefer)
+			if otherErr != nil {
+				failures = append(failures, otherErr)
+			}
+		}
+		err := accept(got)
+		if err == nil {
+			return got.value, nil
+		}
+		failures = append(failures, err)
 	}
 	return zero, errors.Join(failures...)
+}
+
+func preferReadyAlternative[T any](got alternativeResult[T], pending *<-chan alternativeResult[T], prefer func(T, T) T) (alternativeResult[T], error) {
+	select {
+	case other := <-*pending:
+		*pending = nil
+		if other.err != nil {
+			return got, other.err
+		}
+		got.value = prefer(got.value, other.value)
+	default:
+	}
+	return got, nil
 }
