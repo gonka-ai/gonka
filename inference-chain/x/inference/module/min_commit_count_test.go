@@ -73,11 +73,13 @@ func TestComputeNewWeightsMinCountUsesCommittedCount(t *testing.T) {
 		freshNode   = "node-2"
 	)
 
+	frozenMinCount := func(v uint32) *uint32 { return &v }
 	cases := []struct {
-		name         string
-		minCount     uint32
-		distribution []*types.MLNodeWeight
-		expectFresh  bool
+		name           string
+		minCount       uint32
+		recipeMinCount *uint32
+		distribution   []*types.MLNodeWeight
+		expectFresh    bool
 	}{
 		{
 			name:     "small fresh share of a large commit keeps its weight",
@@ -100,12 +102,36 @@ func TestComputeNewWeightsMinCountUsesCommittedCount(t *testing.T) {
 			distribution: []*types.MLNodeWeight{{NodeId: freshNode, Weight: 150}},
 			expectFresh:  true,
 		},
+		{
+			name:           "frozen recipe threshold applies when live params disable it",
+			minCount:       0,
+			recipeMinCount: frozenMinCount(200),
+			distribution:   []*types.MLNodeWeight{{NodeId: freshNode, Weight: 150}},
+			expectFresh:    false,
+		},
+		{
+			name:           "frozen recipe without threshold ignores live params",
+			minCount:       200,
+			recipeMinCount: frozenMinCount(0),
+			distribution:   []*types.MLNodeWeight{{NodeId: freshNode, Weight: 150}},
+			expectFresh:    true,
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			k, ctx := newMinimalInferenceKeeper(t)
 			am := NewAppModule(nil, k, nil, nil, nil, nil)
+			if tc.recipeMinCount != nil {
+				setMinCountParams(t, k, ctx, map[string]uint32{"model-a": *tc.recipeMinCount})
+				params, err := k.GetParams(ctx)
+				require.NoError(t, err)
+				require.NoError(t, k.LatestPocStageRecipe.Set(ctx, types.PocStageRecipe{
+					StageHeight: stage,
+					Scheme:      types.PocScheme_POC_SCHEME_PREFILL,
+					Models:      params.PocParams.Models,
+				}))
+			}
 			setMinCountParams(t, k, ctx, map[string]uint32{"model-a": tc.minCount})
 
 			currentEpoch := types.Epoch{Index: 1, PocStartBlockHeight: 50}
