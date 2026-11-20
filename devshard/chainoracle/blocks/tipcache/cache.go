@@ -160,6 +160,20 @@ func (c *Cache) Subscribe(ctx context.Context, fromHeight int64) (<-chan *blocks
 	return sub.ch, nil
 }
 
+// LastObservedHeight returns the height and receive time of the same local
+// NewBlock observation. Historical cache writes do not update either value.
+func (c *Cache) LastObservedHeight() (int64, time.Time) {
+	if c == nil {
+		return 0, time.Time{}
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if c.latest == nil {
+		return 0, time.Time{}
+	}
+	return c.latest.Height, c.LastObservedAt()
+}
+
 // LastObservedAt is when Observe last advanced the tip. Zero means never.
 func (c *Cache) LastObservedAt() time.Time {
 	if c == nil {

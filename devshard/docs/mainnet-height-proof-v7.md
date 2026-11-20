@@ -43,7 +43,8 @@ Without a fresh WebSocket tip, dAPI gets a bounded head start before the host
 queries chain gRPC for a fresh tip. If both eligible replies are ready, the
 higher one wins. A recent observation can reject an already stale checkpoint
 without another RPC. Signing an eligible checkpoint still requires a live
-observation within the request deadline.
+observation within the request deadline. A host can reuse a fresh observation
+from the same request and checkpoint. Newer known local progress still applies.
 A fresh local canonical header is required for new signatures, while replay
 of the authenticated journal remains deterministic. Settlement is not an
 exception: replaying a never-signed stale history into its terminal phase must

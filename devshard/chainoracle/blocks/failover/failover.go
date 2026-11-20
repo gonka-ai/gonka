@@ -201,6 +201,10 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	if h, err, skipped := o.tryNM(ctx, now); skipped {
 		logLatestTry("get_block_header", nil, err)
 	} else if err == nil && usable(h) {
+		observed := o.now()
+		o.mu.Lock()
+		o.rememberRPCTipLocked(h.Height, observed)
+		o.mu.Unlock()
 		o.noteLatest(h, true)
 		return h, nil
 	} else {
@@ -357,18 +361,28 @@ func (o *Oracle) tryChain(ctx context.Context, now time.Time) (*blocks.Header, e
 }
 
 func (o *Oracle) queryChainTip(ctx context.Context, now time.Time) (*blocks.Header, error) {
-	h, err := o.chain.Latest(ctx)
-	logLatestTry("get_latest_block", h, err)
-	if err != nil || !usable(h) {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("blockoracle/failover: no tip")
+	h, err := o.fetchChainTip(ctx)
+	if err != nil {
+		return nil, err
 	}
+	observed := o.now()
 	o.mu.Lock()
 	o.chainLast = cloneHeader(h)
 	o.chainLastAt = now
+	o.rememberRPCTipLocked(h.Height, observed)
 	o.mu.Unlock()
+	return h, nil
+}
+
+func (o *Oracle) fetchChainTip(ctx context.Context) (*blocks.Header, error) {
+	h, err := o.chain.Latest(ctx)
+	logLatestTry("get_latest_block", h, err)
+	if err != nil {
+		return nil, err
+	}
+	if !usable(h) {
+		return nil, errors.New("blockoracle/failover: no tip")
+	}
 	return h, nil
 }
 

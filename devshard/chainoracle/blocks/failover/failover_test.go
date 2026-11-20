@@ -825,7 +825,7 @@ func TestProofTipRejectsDirectRegressionBelowRecentDAPIHeight(t *testing.T) {
 	dapi := &delayedTipOracle{recOracle: &recOracle{hdr: fresh}}
 	o := failover.New(nil, dapi, chain)
 
-	got, err := o.LatestForProof(t.Context())
+	got, err := o.Latest(t.Context()) // Startup uses the ordinary tip path.
 	require.NoError(t, err)
 	require.Equal(t, fresh.Height, got.Height)
 
@@ -835,4 +835,28 @@ func TestProofTipRejectsDirectRegressionBelowRecentDAPIHeight(t *testing.T) {
 	require.Equal(t, fresh.Height, got.Height, "a responsive but lagging direct endpoint cannot lower the already observed tip")
 	require.Equal(t, int64(1), chain.calls.Load())
 	require.Equal(t, int64(2), dapi.calls.Load(), "the current result comes from a fresh dAPI response")
+}
+
+func TestProofTipKeepsRecentWebSocketProgressAfterDisconnect(t *testing.T) {
+	cache := tipcache.New(time.Hour)
+	newer := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	cache.Observe(newer)
+	observedAt := cache.LastObservedAt()
+	older := blocks.HashOnlyHeader(100, newer.Time, newer.ChainID, []byte{100})
+	nm := &recOracle{err: status.Error(codes.Unavailable, "dAPI down")}
+	chain := &recOracle{hdr: older}
+	o := failover.New(cache, nm, chain)
+	o.SetCometConnected(false) // No proof-tip read got to see the last live tip.
+	o.SetNow(func() time.Time { return observedAt.Add(time.Second) })
+
+	require.Equal(t, newer.Height, o.RecentProofTipHeight())
+	_, err := o.LatestForProof(t.Context())
+	require.ErrorIs(t, err, blocks.ErrHeaderUnverified)
+	require.Equal(t, observedAt, cache.LastObservedAt())
+
+	o.SetNow(func() time.Time { return observedAt.Add(failover.CometMaxAge + time.Millisecond) })
+	require.Zero(t, o.RecentProofTipHeight(), "a disconnected observation keeps its original age")
+	got, err := o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, older.Height, got.Height)
 }
