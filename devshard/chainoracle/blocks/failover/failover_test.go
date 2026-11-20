@@ -816,3 +816,21 @@ func TestProofTipDoesNotRepeatTheGraceForAStalledDAPI(t *testing.T) {
 	require.Equal(t, int64(1), dapi.started.Load(), "the second read goes straight to the working route")
 	require.Equal(t, int64(2), chain.calls.Load(), "every lookup gets a new chain tip")
 }
+
+func TestProofTipRejectsDirectRegressionBelowRecentDAPIHeight(t *testing.T) {
+	fresh := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(100, fresh.Time, fresh.ChainID, []byte{100})}
+	dapi := &delayedTipOracle{recOracle: &recOracle{hdr: fresh}}
+	o := failover.New(nil, dapi, chain)
+
+	got, err := o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, fresh.Height, got.Height)
+
+	dapi.delay = 2150 * time.Millisecond
+	got, err = o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, fresh.Height, got.Height, "a responsive but lagging direct endpoint cannot lower the already observed tip")
+	require.Equal(t, int64(1), chain.calls.Load())
+	require.Equal(t, int64(2), dapi.calls.Load(), "the current result comes from a fresh dAPI response")
+}
