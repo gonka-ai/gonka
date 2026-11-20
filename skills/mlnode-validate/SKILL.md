@@ -360,9 +360,18 @@ to substitute. Stop, surface the script's message, and either:
   python3 mlnode/packages/benchmarks/scripts/poc_validation/make_artifact.py \
       --mlnode-url "$TRUSTED_MLNODE_URL" \
       --model     "$MODEL" \
-      --num-nonces 32 --batch-size 32 \
+      --num-nonces 32 \
       --out mlnode/packages/benchmarks/scripts/poc_validation/artifacts/<filename printed by validate.py>
   ```
+
+  Do not pass `--batch-size` (and do not pass `--validation-batch-size` to
+  `validate.py`): both leave the batch unset so the MLNode uses the
+  `POC_BATCH_SIZE_DEFAULT` it was started with. PoC numerics depend on batch
+  composition, so a reference baked at one batch size validates with a few
+  percent of mismatches at another; baked and validated at the node's own
+  default it reproduces bit-exactly on the same topology. A reference is tied
+  to the topology it was baked on (TP, GPU class); against a different one
+  expect roughly 3–7 % past the gate and a clean p-value.
 
   `make_artifact.py` does not deploy; the trusted MLNode must already
   be serving `MODEL`. It pulls vectors via

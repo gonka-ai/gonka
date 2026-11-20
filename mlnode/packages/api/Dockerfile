@@ -3,6 +3,10 @@
 ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.25.1-poc-v4-cu13-hopper-blackwell@sha256:82877b425fd8f3c156446452665ef59f371d26d527cc4b65ea592d30500b86da
 ARG MLNODE_RELEASE_VERSION=unknown
 FROM ${VLLM_BASE_IMAGE} AS base
+ARG OPENSSL_URL=https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz
+ENV OPENSSL_URL=${OPENSSL_URL}
+ARG EXPECTED_VLLM_VERSION=0.25.1
+ENV EXPECTED_VLLM_VERSION=${EXPECTED_VLLM_VERSION}
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
     --mount=type=cache,target=/root/.cache/pip \
@@ -13,8 +17,9 @@ RUN --mount=type=cache,target=/var/lib/apt/lists \
     checkinstall \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install --upgrade "setuptools<81" wheel pip \
-    && curl -fLO https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1u/openssl-1.1.1u.tar.gz \
+    && pip install --upgrade "setuptools<81" pip \
+    && pip install --upgrade --ignore-installed wheel \
+    && curl -fL --retry 10 --retry-all-errors --retry-delay 3 -o openssl-1.1.1u.tar.gz "${OPENSSL_URL}" \
     && tar -xzf openssl-1.1.1u.tar.gz \
     && cd openssl-1.1.1u \
     && ./config --prefix=/usr/local/openssl-1.1 \
@@ -32,7 +37,7 @@ RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
     && ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
         /usr/local/lib/libnvrtc.so \
     && ldconfig \
-    && python3 -c "import vllm; assert vllm.__version__.startswith('0.25.1')" \
+    && python3 -c "import vllm, os; e = os.environ['EXPECTED_VLLM_VERSION']; assert vllm.__version__.startswith(e), (vllm.__version__, e)" \
     && python3 -c "from gonka_poc.worker import PoCWorkerExtension; from vllm.v1.worker.gpu.sample.replay import ReplayState"
 
 ################################################################################

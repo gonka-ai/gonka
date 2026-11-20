@@ -38,14 +38,20 @@ class VersionsResponse(VersionedResponse):
     poc_validation_inference: bool = False
 
 
-_vllm_versions_cache: Optional[VersionsResponse] = None
+# Cached per loaded model: the capability is a build property of vLLM, but
+# gonka-poc >= 0.1.6 reports it per model (off for GLM-5.3-Flash), so a
+# model switch through /inference/down + /up must re-query.
+_vllm_versions_cache: Optional[tuple[Optional[str], VersionsResponse]] = None
 
 
-async def _query_vllm_versions(backends: Optional[list[int]] = None) -> VersionsResponse:
+async def _query_vllm_versions(
+    backends: Optional[list[int]] = None,
+    loaded_model: Optional[str] = None,
+) -> VersionsResponse:
     global _vllm_versions_cache
 
-    if _vllm_versions_cache is not None:
-        return _vllm_versions_cache
+    if _vllm_versions_cache is not None and _vllm_versions_cache[0] == loaded_model:
+        return _vllm_versions_cache[1]
 
     backend_ports = backends if backends is not None else proxy_module.get_healthy_backends()
     if not backend_ports:
@@ -65,11 +71,12 @@ async def _query_vllm_versions(backends: Optional[list[int]] = None) -> Versions
         return VersionsResponse()
 
     vllm_version = data.get("vllm_version")
-    _vllm_versions_cache = VersionsResponse(
+    versions_response = VersionsResponse(
         vllm_version=vllm_version if isinstance(vllm_version, str) else None,
         poc_validation_inference=data.get("poc_validation_inference") is True,
     )
-    return _vllm_versions_cache
+    _vllm_versions_cache = (loaded_model, versions_response)
+    return versions_response
 
 
 @router.get("/state")
@@ -101,7 +108,7 @@ async def state(request: Request) -> StateResponse:
 
     runner = getattr(request.app.state.inference_manager, "vllm_runner", None)
     loaded_model = getattr(runner, "model", None) if runner is not None else None
-    versions_response = await _query_vllm_versions(healthy_ports)
+    versions_response = await _query_vllm_versions(healthy_ports, loaded_model)
 
     return StateResponse(
         state=current_state,
@@ -113,8 +120,11 @@ async def state(request: Request) -> StateResponse:
 
 
 @router.get("/versions")
-async def versions() -> VersionsResponse:
-    return await _query_vllm_versions()
+async def versions(request: Request) -> VersionsResponse:
+    manager = getattr(request.app.state, "inference_manager", None)
+    runner = getattr(manager, "vllm_runner", None)
+    loaded_model = getattr(runner, "model", None) if runner is not None else None
+    return await _query_vllm_versions(loaded_model=loaded_model)
 
 
 @router.post("/stop")
