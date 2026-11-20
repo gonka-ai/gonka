@@ -223,7 +223,11 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 		require.NoError(t, heightsync.SignAck(validator, ack))
 		h.HostMempool().AddTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}})
 	}
-	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(10, 1, oracle)
+	k := uint64(10)
+	if expireBefore == "streaming" {
+		k = 1 // Every nonce would ordinarily have an anchor.
+	}
+	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(k, 1, oracle)
 	require.NoError(t, err)
 	srv, err := NewServer(h, nil, verifier, owner.Address(), WithHeightSync(scheduler, oracle))
 	require.NoError(t, err)
@@ -242,10 +246,24 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 			if expireBefore == "streaming" {
 				higher, err := chain.AdvanceOne()
 				require.NoError(t, err)
-				ack := &types.MsgHeightAck{SlotId: 0, RefNonce: 1, ObservedHeight: uint64(higher.Height), ObservedBlockHash: higher.BlockHash}
-				require.NoError(t, heightsync.SignAck(validator, ack))
-				duringStream = &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
-				h.HostMempool().AddTx(duringStream)
+				heartbeatProof, err := producer.BuildMainnetHeightTx(t.Context())
+				require.NoError(t, err)
+				heartbeatTxs := []*types.DevshardTx{heartbeatProof, {Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+					ObservedHeight: uint64(higher.Height), ObservedBlockHash: higher.BlockHash,
+					SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+				}}}}
+				root, err := producer.ApplyLocal(2, heartbeatTxs)
+				require.NoError(t, err)
+				heartbeatDiff := testutil.SignDiffWithRoot(t, owner, escrowID, 2, heartbeatTxs, root)
+				response, err := h.HandleRequest(t.Context(), host.HostRequest{Nonce: 2, Diffs: []types.Diff{heartbeatDiff}})
+				require.NoError(t, err)
+				for _, tx := range response.Mempool {
+					if ack := tx.GetHeightAck(); ack != nil && ack.RefNonce == 2 {
+						duringStream = tx
+						break
+					}
+				}
+				require.NotNil(t, duringStream)
 			}
 		}
 		chunks = append(chunks, bytes.Clone(chunk))
@@ -303,21 +321,42 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 			require.Nil(t, tx.GetHeightAck(), "the late acknowledgment was never paired with this anchor")
 		}
 		require.Contains(t, h.MempoolTxs(), duringStream, "the acknowledgment remains available for the next exchange")
-		retryBody, err := json.Marshal(InferenceRequest{Nonce: 1, Stream: true})
+		_, err = chain.AdvanceOne()
+		require.NoError(t, err)
+		retryBody, err := json.Marshal(InferenceRequest{Nonce: 2, Stream: true})
 		require.NoError(t, err)
 		_, retry := collectChatFrames(t, &serverTestEnv{server: srv, userSigner: owner}, retryBody)
 		next, err := client.parseSSEResponse(t.Context(), strings.NewReader(retry), io.Discard, nil)
 		require.NoError(t, err)
-		require.Contains(t, retry, `"height_sync"`)
+		require.NotContains(t, retry, `"height_sync"`, "the advanced tip cannot bind the earlier ACK")
 		var delivered *types.MsgHeightAck
 		for _, tx := range next.Mempool {
-			if tx.GetHeightAck() != nil {
-				delivered = tx.GetHeightAck()
+			if ack := tx.GetHeightAck(); ack != nil && ack.RefNonce == 2 {
+				delivered = ack
 				break
 			}
 		}
 		require.NotNil(t, delivered, "the acknowledgment is sent on the next compatible response")
 		require.Equal(t, duringStream.GetHeightAck().ObservedHeight, delivered.ObservedHeight)
+
+		// A different pending signature for the same slot and heartbeat no
+		// longer suppresses anchors once the accepted diff covers the slot.
+		duplicate := &types.MsgHeightAck{
+			SlotId: 0, RefNonce: 2, ObservedHeight: uint64(anchor.Height), ObservedBlockHash: anchor.BlockHash,
+		}
+		require.NoError(t, heightsync.SignAck(validator, duplicate))
+		h.HostMempool().AddTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: duplicate}})
+		proof, err := producer.BuildMainnetHeightTx(t.Context())
+		require.NoError(t, err)
+		txs := []*types.DevshardTx{proof, duringStream}
+		root, err := producer.ApplyLocal(3, txs)
+		require.NoError(t, err)
+		committed, err := DiffToJSON(testutil.SignDiffWithRoot(t, owner, escrowID, 3, txs, root))
+		require.NoError(t, err)
+		committedBody, err := json.Marshal(InferenceRequest{Nonce: 3, Diffs: []DiffJSON{committed}, Stream: true})
+		require.NoError(t, err)
+		_, nextAnchor := collectChatFrames(t, &serverTestEnv{server: srv, userSigner: owner}, committedBody)
+		require.Contains(t, nextAnchor, `"height_sync"`, "the accepted slot cannot block the next anchor")
 	}
 }
 
@@ -333,6 +372,9 @@ func TestResponseAnchorKeepsRelayedAcksIndependent(t *testing.T) {
 	paired := responseHeightAcks(section, []*types.DevshardTx{own}, []*types.DevshardTx{obsolete, relayed}, slots)
 	require.Equal(t, map[*types.DevshardTx]struct{}{own: {}}, paired)
 	require.True(t, responseAnchorCompatibleWithAcks(section, []*types.DevshardTx{own}))
+	lower := *section
+	lower.MainnetHeight--
+	require.False(t, responseAnchorCompatibleWithAcks(&lower, []*types.DevshardTx{own}), "a lower anchor can also cause the peer to discard a fresh ACK")
 	require.Equal(t, []*types.DevshardTx{own, relayed}, retainAnchoredResponseAcks(
 		[]*types.DevshardTx{own, obsolete, relayed, later}, paired, slots))
 }

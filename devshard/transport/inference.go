@@ -175,10 +175,14 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			RefreshLocalResponseTip: usesProof,
 		}
 		sec, dErr, oracleMiss := s.heightSync.Decide(proofContext, h)
-		if usesProof && !responseAnchorCompatibleWithAcks(sec, resp.ResponseAnchorAcks) {
-			// A fresh tip can advance after this response's acknowledgments
-			// were signed. Omit the anchor that would contradict them.
-			sec = nil
+		var outstandingAcks []*types.DevshardTx
+		if usesProof && sec != nil {
+			outstandingAcks = s.host.OutstandingLocalHeightAcks(resp.Mempool)
+			if !responseAnchorCompatibleWithAcks(sec, outstandingAcks) {
+				// An incompatible anchor would cause the gateway to discard
+				// a still-needed ACK, including on retries after a lost response.
+				sec = nil
+			}
 		}
 		if oracleMiss {
 			heightsync.IncOracleFailure(s.host.Signer().Address())
@@ -193,8 +197,8 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			sec.Direction = "response"
 			if s.attachResponseOriginSignature(sec, req.Nonce) {
 				if usesProof {
-					anchoredAcks = responseHeightAcks(sec, resp.ResponseAnchorAcks, resp.Mempool, s.host.SlotIDs())
-					s.recordEnvelopeBindingResponse(req.Nonce, sec, resp.ResponseAnchorAcks)
+					anchoredAcks = responseHeightAcks(sec, outstandingAcks, resp.Mempool, s.host.SlotIDs())
+					s.recordEnvelopeBindingResponse(req.Nonce, sec, outstandingAcks)
 				} else {
 					s.recordEnvelopeBindingResponse(req.Nonce, sec, s.host.MempoolTxs())
 				}
