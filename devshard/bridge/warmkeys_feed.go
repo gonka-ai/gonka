@@ -43,6 +43,9 @@ func (c *WarmKeyLogCopy) ApplyWarmKeyFeedPage(generation uint64, events []WarmKe
 		case e.Entry != nil:
 			if c.feed.last != 0 {
 				if e.Height == c.feed.last+1 {
+					for c.feed.stored+len(c.feed.pending) >= maxWarmKeyFeedEvents && c.feed.first <= c.feed.last {
+						c.foldOldestLocked()
+					}
 					if c.feed.stored+len(c.feed.pending) >= maxWarmKeyFeedEvents {
 						c.restartFeedLocked(generation, 0)
 					} else {
@@ -69,13 +72,36 @@ func (c *WarmKeyLogCopy) ApplyWarmKeyFeedPage(generation uint64, events []WarmKe
 				c.feed.pending = nil
 			}
 			floor := c.feed.last - warmKeyFeedWindow + 1
-			if floor > c.feed.first {
-				c.feed.stored -= len(c.feed.changes[c.feed.first])
-				delete(c.feed.changes, c.feed.first)
-				c.feed.first = floor
+			for floor > c.feed.first {
+				c.foldOldestLocked()
 			}
 		}
 	}
+}
+
+// foldOldestLocked advances already bootstrapped granters before discarding
+// a closed block. Each grant keeps its start and end heights, so folding
+// preserves decisions at all previously covered heights.
+func (c *WarmKeyLogCopy) foldOldestLocked() {
+	height := c.feed.first
+	changes := c.feed.changes[height]
+	for _, e := range changes {
+		g := c.granters[e.Granter]
+		if g != nil && g.complete && g.coveredHeight == height-1 {
+			mergeWarmKeyEntry(g.confirmed, e)
+			if g.confirmed[e.ID].GrantedAtHeight <= 0 {
+				g.complete = false
+			}
+		}
+	}
+	for _, g := range c.granters {
+		if g.complete && g.coveredHeight == height-1 && g.confirmedHeight > 0 {
+			g.coveredHeight = height
+		}
+	}
+	delete(c.feed.changes, height)
+	c.feed.stored -= len(changes)
+	c.feed.first++
 }
 
 func (c *WarmKeyLogCopy) restartFeedLocked(generation uint64, boundary int64) {
@@ -110,16 +136,22 @@ func (c *WarmKeyLogCopy) coverageLocked(g *granterLog, height int64) bool {
 	if g == nil || !g.complete || g.confirmedHeight <= 0 {
 		return false
 	}
-	return height <= g.confirmedHeight ||
-		(c.feed.last >= height && c.feed.first <= g.confirmedHeight+1)
+	return height <= g.coveredHeight ||
+		(c.feed.last >= height && c.feed.first <= g.coveredHeight+1)
 }
 
 func (c *WarmKeyLogCopy) historicalLocked(granter string, g *granterLog, height int64) map[uint64]WarmKeyEntry {
 	out := &granterLog{entries: make(map[uint64]WarmKeyEntry, len(g.confirmed))}
 	for id, entry := range g.confirmed {
+		if entry.GrantedAtHeight > height {
+			continue
+		}
+		if entry.RevokedAtHeight > height {
+			entry.RevokedAtHeight, entry.End = 0, ""
+		}
 		out.entries[id] = entry
 	}
-	for h := g.confirmedHeight + 1; h <= height; h++ {
+	for h := g.coveredHeight + 1; h <= height; h++ {
 		for _, entry := range c.feed.changes[h] {
 			if entry.Granter == granter {
 				out.apply(entry)

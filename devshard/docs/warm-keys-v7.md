@@ -119,7 +119,9 @@ stream. A `BLOCK` marker closes all grant and revoke events for that height
 after processing, even when a page ends partway through a block. An unsupported
 feed, a gap or a generation change requires another chain read. A full read
 replaces the baseline at its response height and leaves later feed events
-separate. A single event, an individual entry read or cache age supplies
+separate. As the feed advances, bootstrapped granters fold closed blocks into
+their local log, retaining grant and revoke heights for historical reads.
+A single event, an individual entry read or cache age supplies
 no coverage. If the requested height is still unavailable, apply waits for
 a complete view. The gateway uses the authenticated time for bind and revoke
 proposals, including a bind for the first work signed by a newly granted key.
