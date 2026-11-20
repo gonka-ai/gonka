@@ -181,13 +181,14 @@ func (sm *StateMachine) CheckMainnetHeightFreshnessWithTip(ctx context.Context, 
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
 	var latest *blocks.Header
+	var validUntil time.Time
 	if requestTip != nil {
 		latest = requestTip()
 	}
 	reused := usableMainnetTip(latest)
 	if !reused {
 		var err error
-		latest, err = latestMainnetHeader(ctx, source)
+		latest, validUntil, err = readMainnetTip(ctx, source)
 		if err != nil {
 			return err
 		}
@@ -206,13 +207,16 @@ func (sm *StateMachine) CheckMainnetHeightFreshnessWithTip(ctx context.Context, 
 	// and any newer local progress before authorizing a signature.
 	if reused {
 		latest = requestTip()
-		if !usableMainnetTip(latest) {
-			var err error
-			latest, err = latestMainnetHeader(ctx, source)
-			if err != nil {
-				return err
-			}
+	}
+	if !usableMainnetTip(latest) || (!validUntil.IsZero() && !time.Now().Before(validUntil)) {
+		var err error
+		latest, validUntil, err = readMainnetTip(ctx, source)
+		if err != nil {
+			return err
 		}
+	}
+	if !validUntil.IsZero() && !time.Now().Before(validUntil) {
+		return fmt.Errorf("%w: live mainnet tip expired", types.ErrHeaderPending)
 	}
 	tipHeight := latest.Height
 	if hasRecentTip {
@@ -223,6 +227,24 @@ func (sm *StateMachine) CheckMainnetHeightFreshnessWithTip(ctx context.Context, 
 
 func usableMainnetTip(h *blocks.Header) bool {
 	return h != nil && h.Height > 0 && !blocks.IsDummyHeader(h)
+}
+
+func readMainnetTip(ctx context.Context, source MainnetHeightSource) (*blocks.Header, time.Time, error) {
+	var h *blocks.Header
+	var until time.Time
+	var err error
+	if timed, ok := source.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
+	}); ok {
+		h, until, err = timed.LatestForProofObservation(ctx)
+	} else {
+		h, err := latestMainnetHeader(ctx, source)
+		return h, time.Time{}, err
+	}
+	if err != nil || !usableMainnetTip(h) {
+		return nil, time.Time{}, fmt.Errorf("%w: live mainnet tip unavailable: %v", types.ErrHeaderPending, err)
+	}
+	return h, until, nil
 }
 
 func checkCheckpointTipLag(cp lightproof.Checkpoint, tipHeight int64) error {

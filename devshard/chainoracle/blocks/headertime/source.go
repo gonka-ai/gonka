@@ -554,15 +554,28 @@ func (s *Source) pullBaseLocked() {
 // Latest and LightBlockAt expose evidence for the carried per-diff proof.
 // HeaderTimeMs remains available for historical inference timestamps.
 func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
+	h, _, err := s.LatestForProofObservation(ctx)
+	return h, err
+}
+
+// LatestForProofObservation preserves the live tip's original validity cutoff.
+func (s *Source) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
 	if s == nil || s.latestOracle == nil {
-		return nil, blocks.ErrHeaderNotFound
+		return nil, time.Time{}, blocks.ErrHeaderNotFound
+	}
+	if timed, ok := s.latestOracle.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
+	}); ok {
+		return timed.LatestForProofObservation(ctx)
 	}
 	if proofTip, ok := s.latestOracle.(interface {
 		LatestForProof(context.Context) (*blocks.Header, error)
 	}); ok {
-		return proofTip.LatestForProof(ctx)
+		h, err := proofTip.LatestForProof(ctx)
+		return h, time.Time{}, err
 	}
-	return s.latestOracle.Latest(ctx)
+	h, err := s.latestOracle.Latest(ctx)
+	return h, time.Time{}, err
 }
 
 func (s *Source) RecentProofTipHeight() int64 {

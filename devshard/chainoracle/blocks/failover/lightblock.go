@@ -106,7 +106,9 @@ func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time
 		if err == nil {
 			err = o.acceptProofTip(h, &validUntil)
 		}
-		o.noteLatest(h, err == nil)
+		if ctx.Err() == nil {
+			o.noteLatest(h, err == nil)
+		}
 		if err != nil {
 			return nil, time.Time{}, err
 		}
@@ -129,7 +131,9 @@ func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time
 		prefer:    newerProofTip,
 	}
 	latest, err := withAlternative(ctx, readDAPI, o.fetchChainTip, policy)
-	o.noteLatest(latest, err == nil)
+	if ctx.Err() == nil {
+		o.noteLatest(latest, err == nil)
+	}
 	if err != nil {
 		return nil, time.Time{}, err
 	}

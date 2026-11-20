@@ -733,6 +733,11 @@ func (h *Host) LatestHeight(ctx context.Context) (int64, error) {
 // ChainOracle returns the injected BlockOracle or nil if unwired.
 func (h *Host) ChainOracle() blocks.BlockOracle { return h.oracle }
 
+// RequiresMainnetHeightProof reports whether this escrow uses carried proofs.
+func (h *Host) RequiresMainnetHeightProof() bool {
+	return types.RequiresMainnetHeightProof(h.sm.ProtocolVersion())
+}
+
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()
 

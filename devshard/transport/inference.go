@@ -94,7 +94,11 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	if req.Payload != nil && executorDropsPayload() {
 		req.Payload = nil
 	}
-	proofContext := failover.WithRequestProofObservation(ctx)
+	proofContext := ctx
+	usesProof := s.host.RequiresMainnetHeightProof()
+	if usesProof {
+		proofContext = failover.WithRequestProofObservation(ctx)
+	}
 	resp, err := s.host.HandleRequest(proofContext, req)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
@@ -169,6 +173,11 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			Direction:          "response",
 		}
 		sec, dErr, oracleMiss := s.heightSync.Decide(proofContext, h)
+		if usesProof && !responseAnchorCompatibleWithAcks(sec, resp.Mempool) {
+			// A fresh tip can advance after this response's acknowledgments
+			// were signed. Omit the anchor that would contradict them.
+			sec = nil
+		}
 		if oracleMiss {
 			heightsync.IncOracleFailure(s.host.Signer().Address())
 		}
@@ -181,7 +190,11 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		} else if sec != nil {
 			sec.Direction = "response"
 			if s.attachResponseOriginSignature(sec, req.Nonce) {
-				s.recordEnvelopeBindingResponse(req.Nonce, sec)
+				ackTxs := resp.Mempool
+				if !usesProof {
+					ackTxs = s.host.MempoolTxs()
+				}
+				s.recordEnvelopeBindingResponse(req.Nonce, sec, ackTxs)
 				receiptWrapper["height_sync"] = sec
 				if resp.ExecutionJob != nil {
 					if h, hash, ok := heightsync.SectionObserved(sec); ok {

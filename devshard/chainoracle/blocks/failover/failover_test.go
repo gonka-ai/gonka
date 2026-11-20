@@ -975,3 +975,18 @@ func TestHeightSyncProofTipRequiresALiveResponseContext(t *testing.T) {
 	require.Equal(t, chain.hdr.Height, tip.Height)
 	require.Equal(t, int64(2), first.calls.Load())
 }
+
+func TestHeightSyncProofTipShortDeadlineDoesNotQuarantineDAPI(t *testing.T) {
+	dapi := delayedTipOracle{&recOracle{hdr: nmHdr()}, 600 * time.Millisecond}
+	chain := &recOracle{err: status.Error(codes.Unavailable, "chain RPC refused")}
+	o := failover.New(nil, dapi, chain)
+	request := failover.WithRequestProofObservation(t.Context())
+	_, err := o.LatestForHeightSync(request)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, int64(1), chain.calls.Load())
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	tip, err := o.Latest(ctx)
+	require.NoError(t, err)
+	require.Equal(t, dapi.hdr.Height, tip.Height)
+}
