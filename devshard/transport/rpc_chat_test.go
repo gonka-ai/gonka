@@ -122,7 +122,8 @@ func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
 	require.NoError(t, err)
 	dapi := &chatTipOracle{Mock: chain}
 	oracle := failover.New(nil, dapi, chain, failover.WithDirectLightBlocks(chain))
-	h, err := host.NewHost(newState(headertime.New(oracle)), validator, stub.NewInferenceEngine(), escrowID, group, nil,
+	times := headertime.New(headertime.WithLatestOracle(oracle), headertime.WithLightBlockSource(oracle))
+	h, err := host.NewHost(newState(times), validator, stub.NewInferenceEngine(), escrowID, group, nil,
 		host.WithChainOracle(oracle))
 	require.NoError(t, err)
 	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(10, 1, oracle)
