@@ -525,7 +525,12 @@ func DeleteBLSDealerOpeningsByEpoch(ctx context.Context, db *sql.DB, epochID uin
 	return err
 }
 
-// ExportAllDb returns a JSON-friendly dump of all user tables in the database.
+// These tables contain private BLS shares and seeds that must never be exported.
+var dbExportSecretTables = map[string]struct{}{
+	"bls_dealer_openings": {},
+}
+
+// ExportAllDb returns a JSON-friendly dump of non-secret user tables in the database.
 // It introspects table schemas and converts values into Go primitives suitable for JSON encoding.
 func ExportAllDb(ctx context.Context, db *sql.DB) (map[string]any, error) {
 	tables, err := listUserTables(ctx, db)
@@ -534,6 +539,9 @@ func ExportAllDb(ctx context.Context, db *sql.DB) (map[string]any, error) {
 	}
 	out := make(map[string]any, len(tables))
 	for _, t := range tables {
+		if _, secret := dbExportSecretTables[t]; secret {
+			continue
+		}
 		rows, err := dumpTable(ctx, db, t)
 		if err != nil {
 			return nil, fmt.Errorf("dump table %s: %w", t, err)
