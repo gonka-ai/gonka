@@ -3,6 +3,7 @@ package state
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -151,23 +152,41 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	// oracle. This prevents an old escrow anchor being used for a long-range
 	// fork after its old validator keys have left the trusting period. Replay
 	// remains independent of that mutable source.
-	if headerTimes != nil {
-		if _, err := headerTimes.HeaderTimeMs(uint64(cp.Height), cp.Hash); err != nil {
-			return err
-		}
-	} else if oracle, ok := source.(blocks.BlockOracle); ok {
-		local, err := oracle.At(ctx, cp.Height)
-		if err != nil || local == nil {
-			return fmt.Errorf("%w: canonical checkpoint unavailable", types.ErrHeaderPending)
-		}
-		if !bytes.Equal(local.BlockHash, cp.Hash) {
-			return fmt.Errorf("%w: canonical checkpoint hash", types.ErrHeaderMismatch)
-		}
-	} else {
-		return fmt.Errorf("%w: no canonical checkpoint lookup", types.ErrHeaderPending)
+	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
+		return err
 	}
 	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
 		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
+	}
+	return nil
+}
+
+func checkCanonicalCheckpoint(ctx context.Context, cp lightproof.Checkpoint, source MainnetHeightSource, headerTimes HeaderTimeSource) error {
+	if oracle, ok := source.(interface {
+		CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
+	}); ok {
+		local, err := oracle.CanonicalHeaderForProof(ctx, cp.Height)
+		if !errors.Is(err, blocks.ErrProveNotImplemented) {
+			return matchCanonicalCheckpoint(cp, local, err)
+		}
+	}
+	if headerTimes != nil {
+		_, err := headerTimes.HeaderTimeMs(uint64(cp.Height), cp.Hash)
+		return err
+	}
+	if oracle, ok := source.(blocks.BlockOracle); ok {
+		local, err := oracle.At(ctx, cp.Height)
+		return matchCanonicalCheckpoint(cp, local, err)
+	}
+	return fmt.Errorf("%w: no canonical checkpoint lookup", types.ErrHeaderPending)
+}
+
+func matchCanonicalCheckpoint(cp lightproof.Checkpoint, local *blocks.Header, err error) error {
+	if err != nil || local == nil || blocks.IsDummyHeader(local) || local.Height != cp.Height {
+		return fmt.Errorf("%w: canonical checkpoint unavailable: %v", types.ErrHeaderPending, err)
+	}
+	if !bytes.Equal(local.BlockHash, cp.Hash) {
+		return fmt.Errorf("%w: canonical checkpoint hash", types.ErrHeaderMismatch)
 	}
 	return nil
 }

@@ -230,7 +230,9 @@ func (o *Oracle) tryNM(ctx context.Context, now time.Time) (h *blocks.Header, er
 	}
 
 	h, err = o.nm.Latest(ctx)
-	o.noteNMOutcome(now, h, err)
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		o.noteNMOutcome(now, h, err)
+	}
 	return h, err, false
 }
 
@@ -450,72 +452,6 @@ func (o *Oracle) HeaderAt(ctx context.Context, height int64) (*blocks.Header, er
 }
 
 func (o *Oracle) HeaderAtWait(ctx context.Context, height int64, wait time.Duration) (*blocks.Header, error) {
-	if o == nil || height <= 0 {
-		return blocks.DummyHeader(height), nil
-	}
-	if o.lightBlocks == nil {
-		return o.headerAtWait(ctx, height, wait)
-	}
-
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	type result struct {
-		header *blocks.Header
-		err    error
-	}
-	ordinary := make(chan result, 1)
-	go func() {
-		h, err := o.headerAtWait(ctx, height, wait)
-		ordinary <- result{h, err}
-	}()
-	timer := time.NewTimer(primaryAttemptBudget(ctx))
-	defer timer.Stop()
-	var first *result
-	select {
-	case got := <-ordinary:
-		if got.err == nil && usable(got.header) || errors.Is(got.err, blocks.ErrHeaderUnverified) {
-			return got.header, got.err
-		}
-		first = &got
-	case <-timer.C:
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
-
-	comet := make(chan result, 1)
-	go func() {
-		h, err := o.directLightHeader(ctx, height)
-		comet <- result{h, err}
-	}()
-	for {
-		select {
-		case got := <-ordinary:
-			if got.err == nil && usable(got.header) || errors.Is(got.err, blocks.ErrHeaderUnverified) {
-				return got.header, got.err
-			}
-			first = &got
-			ordinary = nil
-		case got := <-comet:
-			if got.err == nil {
-				return got.header, nil
-			}
-			if first != nil {
-				return first.header, first.err
-			}
-			// Leave a slow but working dAPI its original caller deadline.
-			select {
-			case got := <-ordinary:
-				return got.header, got.err
-			case <-ctx.Done():
-				return nil, ctx.Err()
-			}
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-}
-
-func (o *Oracle) headerAtWait(ctx context.Context, height int64, wait time.Duration) (*blocks.Header, error) {
 	if o == nil || height <= 0 {
 		return blocks.DummyHeader(height), nil
 	}

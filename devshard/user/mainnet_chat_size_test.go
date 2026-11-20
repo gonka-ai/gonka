@@ -103,7 +103,25 @@ func TestMainnetChatCatchUpSplitsByEncodedSize(t *testing.T) {
 		session.diffs = append(session.diffs, types.Diff{Nonce: nonce, Txs: []*types.DevshardTx{tx}})
 		session.nonce = nonce
 	}
+	lastDiff := session.diffs[1]
 	require.NoError(t, session.sendCatchUpThrough(t.Context(), 0, client, 2))
 	require.Equal(t, [][]uint64{{1}, {2}}, client.sent)
 	require.Equal(t, uint64(2), session.hostSyncNonce[0])
+
+	session.hostSyncNonce[0] = 1
+	session.diffs = []types.Diff{lastDiff}
+	reason := types.TimeoutReason_TIMEOUT_REASON_REFUSED
+	payload := &host.InferencePayload{Prompt: make([]byte, 8<<20)}
+	tail, err := session.catchUpDiffsForVerifier(t.Context(), 0)
+	require.NoError(t, err)
+	require.Len(t, tail, 1)
+	fits, err := transport.VerifyTimeoutFits(escrowID, 2, reason, payload, tail)
+	require.NoError(t, err)
+	require.False(t, fits)
+	inline, err := session.catchUpForVote(t.Context(), 0, nil, func(diffs []types.Diff) (bool, error) {
+		return transport.VerifyTimeoutFits(escrowID, 2, reason, payload, diffs)
+	})
+	require.NoError(t, err)
+	require.Empty(t, inline, "the prompt fits after the verifier's signed diff was sent separately")
+	require.Equal(t, [][]uint64{{1}, {2}, {2}}, client.sent)
 }
