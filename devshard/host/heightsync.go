@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"time"
 
@@ -208,4 +209,10 @@ func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint6
 		return height, hash
 	}
 	return floor, floorHash
+}
+
+// HeightAckMatchesAnchor checks the producer's reference stamp for this ACK.
+func (h *Host) HeightAckMatchesAnchor(ack *types.MsgHeightAck, height uint64, hash []byte) bool {
+	wantHeight, wantHash := h.referenceStamp(ack.RefNonce+1, height, hash)
+	return ack.ObservedHeight == wantHeight && bytes.Equal(ack.ObservedBlockHash, wantHash)
 }

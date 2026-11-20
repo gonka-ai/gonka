@@ -178,7 +178,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		var outstandingAcks []*types.DevshardTx
 		if usesProof && sec != nil {
 			outstandingAcks = s.host.OutstandingLocalHeightAcks(resp.Mempool)
-			if !responseAnchorCompatibleWithAcks(sec, outstandingAcks) {
+			if !s.responseAnchorCompatibleWithAcks(sec, outstandingAcks) {
 				// An incompatible anchor would cause the gateway to discard
 				// a still-needed ACK, including on retries after a lost response.
 				sec = nil
