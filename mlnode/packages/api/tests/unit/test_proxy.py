@@ -549,7 +549,7 @@ async def test_pick_longer_prefix_match_beats_rendezvous(prefix_state):
     prefix_state.vllm_prefix_index[holder] = OrderedDict((h, None) for h in _hashes(1, 2))
     assert await prefix_state._pick_vllm_backend(KEY_A, _hashes(1, 2, 3)) == holder
     # the pick recorded the whole request for the holder
-    assert list(prefix_state.vllm_prefix_index[holder]) == _hashes(1, 2, 3)
+    assert list(prefix_state.vllm_prefix_index[holder]) == _hashes(3, 2, 1)
 
 
 @pytest.mark.asyncio
@@ -571,13 +571,29 @@ async def test_pick_skips_unhealthy_instance(prefix_state):
 
 @pytest.mark.asyncio
 async def test_prefix_index_evicts_oldest_at_capacity(prefix_state):
-    """Capacity 4: inserting 6 hashes keeps the newest 4; a re-seen hash is refreshed."""
+    # Test flow:
+    # 1. With capacity 4, pick for the chain 1,2,3 and release the instance.
+    # 2. Pick again for the chain 1,4,5,6, which lands on the same instance.
+    # 3. Assert the index holds 4 hashes, the tails of the older chain are evicted and the re-seen root 1 is the most recent.
     port = await prefix_state._pick_vllm_backend(None, _hashes(1, 2, 3))
     await prefix_state._release_vllm_backend(port)
     port = await prefix_state._pick_vllm_backend(None, _hashes(1, 4, 5, 6))
     index = prefix_state.vllm_prefix_index[port]
-    assert list(index) == _hashes(1, 4, 5, 6)
+    assert list(index) == _hashes(6, 5, 4, 1)
     assert len(index) == 4
+
+
+def test_prefix_index_eviction_shortens_chain_from_the_tail(prefix_state, monkeypatch):
+    # Test flow:
+    # 1. With capacity 6, remember the chain A = 1,2,3,4 and then the chain B = 5,6,7,8 on one port.
+    # 2. Assert the index holds 2,1,8,7,6,5.
+    # 3. Assert the leading match of A is 2 and the leading match of B is 4.
+    monkeypatch.setattr(prefix_state, "PREFIX_INDEX_CAPACITY", 6)
+    prefix_state._remember_prefix(5001, _hashes(1, 2, 3, 4))
+    prefix_state._remember_prefix(5001, _hashes(5, 6, 7, 8))
+    assert list(prefix_state.vllm_prefix_index[5001]) == _hashes(2, 1, 8, 7, 6, 5)
+    assert prefix_state._prefix_match_len(5001, _hashes(1, 2, 3, 4)) == 2
+    assert prefix_state._prefix_match_len(5001, _hashes(5, 6, 7, 8)) == 4
 
 
 def test_parse_headers_accept_valid_values():
@@ -634,10 +650,12 @@ async def test_request_with_malformed_headers_still_routes(prefix_state, monkeyp
 
 
 @pytest.mark.parametrize("raw,expected", [
-    (None, 31250), ("", 31250), ("abc", 31250), ("0", 1), ("-5", 1), ("100", 100),
+    (None, 31250), ("", 31250), ("abc", 31250), ("0", 31250), ("-5", 31250), ("1", 1), ("100", 100),
 ])
 def test_prefix_index_capacity_env(monkeypatch, raw, expected):
-    """Unset or garbage falls back to the default; non-positive is clamped to 1."""
+    # Test flow:
+    # 1. Set INFERENCE_PREFIX_INDEX_CAPACITY to the raw value, or unset it.
+    # 2. Assert unset, empty, non-numeric, zero and negative values give the default and a positive integer is used as is.
     if raw is None:
         monkeypatch.delenv("INFERENCE_PREFIX_INDEX_CAPACITY", raising=False)
     else:

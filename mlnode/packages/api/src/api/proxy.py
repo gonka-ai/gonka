@@ -43,9 +43,10 @@ PREFIX_MAX_HASHES: int = 512
 def _prefix_index_capacity(default: int = 31250) -> int:
     """INFERENCE_PREFIX_INDEX_CAPACITY as a positive int; anything else -> default."""
     try:
-        return max(1, int(os.getenv("INFERENCE_PREFIX_INDEX_CAPACITY", default)))
+        capacity = int(os.getenv("INFERENCE_PREFIX_INDEX_CAPACITY", default))
     except ValueError:
         return default
+    return capacity if capacity > 0 else default
 
 
 PREFIX_INDEX_CAPACITY: int = _prefix_index_capacity()
@@ -214,7 +215,7 @@ def _prefix_match_len(port: int, hashes: Sequence[bytes]) -> int:
 
 def _remember_prefix(port: int, hashes: Sequence[bytes]) -> None:
     index = vllm_prefix_index.setdefault(port, OrderedDict())
-    for h in hashes:
+    for h in reversed(hashes):
         index[h] = None
         index.move_to_end(h)
     while len(index) > PREFIX_INDEX_CAPACITY:
