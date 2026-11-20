@@ -52,7 +52,9 @@ expired observation can be refreshed in the same request. The response anchor
 uses the sample only while that request is live. With no usable sample, the
 anchor has a half-second RPC budget with time reserved for chain fallback.
 This caller deadline does not change dAPI backoff. Repair probes take their own
-tip observations.
+tip observations. If an anchor refreshed while preparing a response would
+contradict a signed acknowledgment, the response still sends the acknowledged
+state and omits that anchor.
 Timeout verification uses the observed height to recognize plausible evidence
 while its header is pending.
 A fresh local canonical header is required for new signatures, while replay
