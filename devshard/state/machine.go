@@ -2506,6 +2506,12 @@ func (sm *StateMachine) HostSlotActorsAt(nonce uint64) signing.SlotActors {
 	return sm.localActorsAt(nonce, false)
 }
 
+// HostSlotActorsAtWithContext lazily resolves the historical grant checks
+// used by a submission batch, sharing its cancellation and time budget.
+func (sm *StateMachine) HostSlotActorsAtWithContext(ctx context.Context, nonce uint64, budget time.Duration) signing.SlotActors {
+	return sm.localActorsAt(nonce, false, localActorBudget{ctx: ctx, deadline: time.Now().Add(budget)})
+}
+
 // HostSignerAllowed reports whether recovered may act for slotID in the
 // next diff: the apply rule, then the grant source, asked with sm.mu
 // released, for a key the history does not cover and against a key whose
