@@ -1322,21 +1322,20 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	// Warm-key entries lead: compose applies them before the other
-	// candidates whatever their position, and a message by a key bound in
-	// this diff is accepted in it.
-	keyEntries := s.warmKeyProposalsLocked(nonce)
-	candidates := make([]*types.DevshardTx, 0, len(keyEntries)+len(pending)+len(extraTxs))
-	candidates = append(candidates, keyEntries...)
-	candidates = append(candidates, pending...)
-	candidates = append(candidates, extraTxs...)
 	heightTx, err := s.sm.BuildMainnetHeightTx(ctx)
 	if err != nil {
 		return types.Diff{}, 0, err
 	}
+	// The authenticated height determines grant activity for this diff. Binds
+	// are applied before proposer work, including a new key's first message.
+	keyEntries := s.warmKeyProposalsAtLocked(nonce, heightTx.GetMainnetHeight())
+	candidates := make([]*types.DevshardTx, 0, 1+len(keyEntries)+len(pending)+len(extraTxs))
 	if heightTx != nil {
-		candidates = append([]*types.DevshardTx{heightTx}, candidates...)
+		candidates = append(candidates, heightTx)
 	}
+	candidates = append(candidates, keyEntries...)
+	candidates = append(candidates, pending...)
+	candidates = append(candidates, extraTxs...)
 
 	hasStart := false
 	for _, tx := range candidates {

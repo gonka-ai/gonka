@@ -95,8 +95,8 @@ func TestMainnetNeverSignedTerminalHistoryCannotBypassFreshness(t *testing.T) {
 	cfg.MainnetAnchorHeight, cfg.MainnetAnchorHash = anchor.Height, bytes.Clone(anchor.BlockHash)
 	hostSigner, user := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
-	times := headertime.New(source)
-	times.Observe(anchor)
+	times := headertime.New(headertime.WithFiller(headertime.OracleFiller(source, headertime.OriginChain, false)), headertime.WithLatestOracle(source), headertime.WithLightBlockSource(source))
+	times.Observe(anchor, headertime.OriginComet, true)
 	newSM := func() *state.StateMachine {
 		sm, err := state.NewStateMachine("terminal-height", cfg, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(), testutil.MustMemoryStore(t, "terminal-height", user.Address(), cfg, group, 1_000_000), state.WithVersion("v7"), state.WithMainnetHeights(source), state.WithHeaderTimes(times))
 		require.NoError(t, err)

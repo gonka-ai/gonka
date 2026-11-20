@@ -24,6 +24,15 @@ type localHistoricalGrants struct {
 	lookups *atomic.Int32
 }
 
+func (g localHistoricalGrants) WarmKeyLogAtHeight(cold string, _ int64) (map[uint64]bridge.WarmKeyEntry, error) {
+	entries, err := g.LiveWarmKeys(cold)
+	out := make(map[uint64]bridge.WarmKeyEntry, len(entries))
+	for _, entry := range entries {
+		out[entry.ID] = entry
+	}
+	return out, err
+}
+
 func (g localHistoricalGrants) WarmKeyEntryAtHeight(cold string, id uint64, _ int64) (bridge.WarmKeyEntry, bool, error) {
 	if g.lookups != nil {
 		g.lookups.Add(1)
@@ -57,7 +66,7 @@ func TestLocalSessionRecoversV7WarmHistory(t *testing.T) {
 			const escrow = "local-warm"
 			require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: escrow, Version: "v7", CreatorAddr: owner.Address(), Config: cfg, Group: group, InitialBalance: 1_000_000}))
 			verifier := signing.NewSecp256k1Verifier()
-			times := headertime.New(oracle)
+			times := headertime.New(headertime.WithFiller(headertime.OracleFiller(oracle, headertime.OriginChain, false)), headertime.WithLatestOracle(oracle), headertime.WithLightBlockSource(oracle))
 			sm, err := state.NewStateMachine(escrow, cfg, group, 1_000_000, owner.Address(), verifier, store, state.WithVersion("v7"), state.WithMainnetHeights(oracle), state.WithHeaderTimes(times))
 			require.NoError(t, err)
 			writer, err := NewSession(sm, owner, escrow, group, make([]HostClient, 1), verifier, WithStorage(store), WithWarmKeyGrantSource(grants))

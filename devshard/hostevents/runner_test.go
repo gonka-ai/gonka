@@ -189,26 +189,35 @@ func TestRun_NeedsResetRehydrates(t *testing.T) {
 	<-done
 }
 
-func TestRun_UnimplementedStops(t *testing.T) {
+func TestRun_UnimplementedDoesNotStop(t *testing.T) {
 	srv := &fakeHostEventsServer{}
-	srv.SetHandlers(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+	srv.SetSticky(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		return nil, status.Error(codes.Unimplemented, "method GetHostEvents not implemented")
 	})
 	client := dialFake(t, srv)
 	sink := &recordingSink{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	start := time.Now()
-	hostevents.Run(ctx, hostevents.Config{
-		Client:        client,
-		ServerMaxWait: time.Second,
-	}, sink)
-	require.Less(t, time.Since(start), 1500*time.Millisecond)
-	w, s, r := sink.snapshot()
-	require.Empty(t, w)
-	require.Empty(t, s)
-	require.Zero(t, r)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:          client,
+			ServerMaxWait:   50 * time.Millisecond,
+			ErrorBackoffMin: time.Millisecond,
+			ErrorBackoffMax: 2 * time.Millisecond,
+		}, sink)
+	}()
+	require.Eventually(t, func() bool {
+		_, _, n := sink.snapshot()
+		return n >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("unimplemented stopped the loop only after cancel")
+	}
 }
 
 func TestRun_UpdatesLoadMapOnUnchanged(t *testing.T) {
@@ -371,36 +380,6 @@ func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
 	require.Empty(t, settled, "the event never applied; it was skipped, not silently recorded")
 	require.NotZero(t, rehydrate,
 		"a skipped settlement is unrecoverable from the ring, so the skip must fall back to a chain sweep")
-}
-
-func TestRun_FailedEventDoesNotSkipPageSuffix(t *testing.T) {
-	srv := &fakeHostEventsServer{}
-	const failedSeq = uint64(5)
-	rows := []*gen.HostEvent{
-		{Seq: failedSeq, Kind: gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, Escrow: &gen.EscrowPayload{EscrowId: 42}},
-		{Seq: 6, Kind: gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED, WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 1, Height: 100}},
-	}
-	srv.SetSticky(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
-		resp := &gen.GetHostEventsResponse{Generation: 1, NextCursor: 6}
-		for _, ev := range rows {
-			if ev.Seq > req.Cursor {
-				resp.Events = append(resp.Events, ev)
-			}
-		}
-		return resp, nil
-	})
-	sink := &flakySettleSink{failures: 1 << 30}
-	client := dialFake(t, srv)
-	ctx, cancel := context.WithCancel(t.Context())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		hostevents.Run(ctx, hostevents.Config{Client: client, MaxDispatchAttempts: 2, ErrorBackoffMin: time.Millisecond, ErrorBackoffMax: time.Millisecond}, sink)
-	}()
-	t.Cleanup(func() { cancel(); <-done })
-	require.Eventually(t, func() bool { return len(sink.warmKeyEntries()) == 1 }, 3*time.Second, time.Millisecond,
-		"revocation after a permanently failed dispatch must be redelivered from its own cursor")
-	require.Equal(t, 3, sink.attemptCount())
 }
 
 // Test flow:

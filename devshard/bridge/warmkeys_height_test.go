@@ -119,10 +119,11 @@ func TestWarmKeyUnknownEndMustLoadGrantBeforeHistoricalAuthorization(t *testing.
 			live, err := CheckWarmKeyAtHeight(source, "cold", "warm", 2, 99, time.Unix(1000, 0))
 			require.NoError(t, err)
 			require.False(t, live)
-			require.Equal(t, 2, fetch.count(), "a partial tombstone must trigger a complete read even below the cached height")
+			require.Equal(t, 1, fetch.count(), "a legacy tombstone cannot override certified absence")
 			live, err = CheckWarmKeyAtHeight(source, "cold", "warm", 2, 101, time.Unix(1000, 0))
 			require.NoError(t, err)
 			require.True(t, live)
+			require.Equal(t, 2, fetch.count())
 			got, found, err := source.WarmKeyEntry("cold", 2)
 			require.NoError(t, err)
 			require.True(t, found)
@@ -131,4 +132,72 @@ func TestWarmKeyUnknownEndMustLoadGrantBeforeHistoricalAuthorization(t *testing.
 			require.Equal(t, entry.ExpiresAtUnix, got.ExpiresAtUnix)
 		})
 	}
+}
+
+func TestFullWarmKeyReadReplacesConflictingEventsAndKeepsNewerCoverage(t *testing.T) {
+	at := time.Unix(1000, 100)
+	fetch := &heightWarmFetcher{
+		fakeWarmKeyFetcher: fakeWarmKeyFetcher{logs: map[string][]WarmKeyEntry{}},
+		height:             100,
+	}
+	cache := NewWarmKeyLogCopy(fetch, time.Hour)
+	_, err := cache.WarmKeyLogAtHeight("cold", 100)
+	require.NoError(t, err)
+
+	bad := WarmKeyEntry{Granter: "cold", Grantee: "bad", ID: 1, GrantedAtHeight: 101}
+	later := WarmKeyEntry{Granter: "cold", Grantee: "later", ID: 2, GrantedAtHeight: 102}
+	cache.Apply(bad)
+	cache.Apply(later)
+	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 100},
+		{Height: 101, Entry: &bad}, {Height: 101}, {Height: 102, Entry: &later}, {Height: 102}})
+	// Reload independently of the feed, while it has moved ahead of the query.
+	fetch.height = 101
+	authoritative := WarmKeyEntry{Granter: "cold", Grantee: "actual", ID: 1, GrantedAtHeight: 101}
+	fetch.set("cold", authoritative)
+	require.NoError(t, cache.load("cold", false))
+	current, err := cache.WarmKeyLogAtHeight("cold", 101)
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]WarmKeyEntry{1: authoritative}, current)
+	current, err = cache.WarmKeyLogAtHeight("cold", 102)
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]WarmKeyEntry{1: authoritative, 2: later}, current)
+
+	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 104}})
+	fetch.height = 104
+	fetch.set("cold", authoritative)
+	_, found, err := cache.WarmKeyEntryAtHeight("cold", 2, 104)
+	require.NoError(t, err)
+	require.False(t, found, "a gap forces a full read and forgets the conflicting feed row")
+
+	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 105}})
+	live, err := CheckWarmKeyAtHeight(cache, "cold", "actual", 1, 105, at)
+	require.NoError(t, err)
+	require.True(t, live)
+}
+
+type delayedWarmKeyFetcher struct {
+	heightWarmFetcher
+	entered, release chan struct{}
+}
+
+func (f *delayedWarmKeyFetcher) FetchWarmKeyLogWithHeight(ctx context.Context, cold string) ([]WarmKeyEntry, int64, error) {
+	entries, height, err := f.heightWarmFetcher.FetchWarmKeyLogWithHeight(ctx, cold)
+	close(f.entered)
+	<-f.release
+	return entries, height, err
+}
+
+func TestWarmKeyResetInvalidatesAnInFlightFullRead(t *testing.T) {
+	fetch := &delayedWarmKeyFetcher{
+		heightWarmFetcher: heightWarmFetcher{height: 100},
+		entered:           make(chan struct{}), release: make(chan struct{}),
+	}
+	cache := NewWarmKeyLogCopy(fetch, time.Hour)
+	done := make(chan error, 1)
+	go func() { _, err := cache.WarmKeyLogAtHeight("cold", 100); done <- err }()
+	<-fetch.entered
+	cache.Reset()
+	cache.ApplyWarmKeyFeedPage(2, []WarmKeyFeedEvent{{Height: 100}, {Height: 101}})
+	close(fetch.release)
+	require.ErrorIs(t, <-done, ErrWarmKeyViewBehind)
 }

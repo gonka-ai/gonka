@@ -33,6 +33,7 @@ import (
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/hostevents"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -111,6 +112,7 @@ type HostManager struct {
 	headerTimes      *headertime.Source
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
+	hostEvents       *hostevents.Poller
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
 	// cometLiveness is captured at wiring so CloseHeightSync can drop the
 	// scheduler without racing the chain-events goroutine.

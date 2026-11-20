@@ -59,6 +59,23 @@ func (r *batchRPC) BlockchainInfo(_ context.Context, minHeight, maxHeight int64)
 	return res, nil
 }
 
+func TestOracleHeaderAndBlockchainInfo(t *testing.T) {
+	rpc := &batchRPC{tip: 40}
+	o := newOracle(rpc)
+	one, err := o.Header(context.Background(), 40)
+	require.NoError(t, err)
+	want := batchHeader(40)
+	require.Equal(t, want.Hash().Bytes(), one.BlockHash)
+	require.Equal(t, int64(1), rpc.headerCall.Load())
+	require.Zero(t, rpc.batchCalls.Load())
+
+	got, err := o.BlockchainInfo(context.Background(), 1, 20)
+	require.NoError(t, err)
+	require.Len(t, got, 20)
+	require.Equal(t, int64(1), rpc.batchCalls.Load())
+	require.Equal(t, int64(1), rpc.headerCall.Load(), "the batch does not call Header")
+}
+
 func TestAtBackfillsOldHeightsInBatches(t *testing.T) {
 	rpc := &batchRPC{tip: 1000}
 	o := newOracle(rpc)

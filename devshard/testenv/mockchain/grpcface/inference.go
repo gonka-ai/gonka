@@ -94,12 +94,11 @@ func (s *InferenceServer) WarmKeyLog(ctx context.Context, req *inferencetypes.Qu
 	if req.GetGranter() == "" {
 		return nil, status.Error(codes.InvalidArgument, "invalid granter address")
 	}
-	// Capture the lower bound before reading the body; a concurrent block
-	// advance can only make the returned append-only log newer than this bound.
-	if err := grpc.SetHeader(ctx, metadata.Pairs("x-cosmos-block-height", strconv.FormatInt(s.store.GetBlockHeight(), 10))); err != nil {
+	entries, height := s.store.GetWarmKeyLogWithHeight(req.GetGranter())
+	if err := grpc.SetHeader(ctx, metadata.Pairs("x-cosmos-block-height", strconv.FormatInt(height, 10))); err != nil {
 		return nil, err
 	}
-	return &inferencetypes.QueryWarmKeyLogResponse{Entries: s.store.GetWarmKeyLog(req.GetGranter())}, nil
+	return &inferencetypes.QueryWarmKeyLogResponse{Entries: entries}, nil
 }
 
 func (s *InferenceServer) WarmKeyEntry(_ context.Context, req *inferencetypes.QueryWarmKeyEntryRequest) (*inferencetypes.QueryWarmKeyEntryResponse, error) {
