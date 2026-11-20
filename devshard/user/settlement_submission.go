@@ -88,9 +88,11 @@ func (q *SettlementQuorum) selectSignatures(ctx context.Context, query Settlemen
 	ctx, cancel := context.WithTimeout(ctx, authorityBudget)
 	defer cancel()
 	actors := q.session.sm.HostSlotActorsAtWithContext(ctx, q.nonce, authorityBudget)
-	current := make(map[string]settlementGrantView)
+	current := make(map[string]*settlementGrantView)
+	pending := make(map[uint32][]string)
 	selected := make(map[uint32][]byte)
 	missing := make(map[uint32]string)
+	var reads sync.WaitGroup
 	for _, slot := range q.session.group {
 		if only != nil && only[slot.SlotID] == nil {
 			continue
@@ -113,31 +115,42 @@ func (q *SettlementQuorum) selectSignatures(ctx context.Context, query Settlemen
 				reason = "historical grant unavailable"
 			}
 		}
-		if len(warmSigners) > 0 {
-			view, checked := current[cold]
-			if !checked {
-				if query == nil {
-					view.err = errors.New("no current grant source")
-				} else {
-					view.warm, view.err = query(ctx, cold)
-				}
-				current[cold] = view
-			}
-			if view.err != nil {
-				reason = "current grant unavailable"
+		missing[slot.SlotID] = reason
+		if len(warmSigners) == 0 {
+			continue
+		}
+		pending[slot.SlotID] = warmSigners
+		if current[cold] == nil {
+			view := new(settlementGrantView)
+			current[cold] = view
+			if query == nil {
+				view.err = errors.New("no current grant source")
 			} else {
-				reason = "warm grant ended"
-				slices.Sort(warmSigners)
-				for _, signer := range warmSigners {
-					if _, ok := view.warm[signer]; ok {
-						selected[slot.SlotID] = candidates[signer]
-						break
-					}
-				}
+				reads.Go(func() {
+					view.warm, view.err = query(ctx, cold)
+				})
 			}
 		}
-		if selected[slot.SlotID] == nil {
-			missing[slot.SlotID] = reason
+	}
+	reads.Wait()
+	for _, slot := range q.session.group {
+		warmSigners := pending[slot.SlotID]
+		if len(warmSigners) == 0 {
+			continue
+		}
+		view := current[slot.ValidatorAddress]
+		if view.err != nil {
+			missing[slot.SlotID] = "current grant unavailable"
+			continue
+		}
+		missing[slot.SlotID] = "warm grant ended"
+		slices.Sort(warmSigners)
+		for _, signer := range warmSigners {
+			if _, ok := view.warm[signer]; ok {
+				selected[slot.SlotID] = q.candidates[slot.SlotID][signer]
+				delete(missing, slot.SlotID)
+				break
+			}
 		}
 	}
 	return selected, missing
