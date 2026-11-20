@@ -106,6 +106,9 @@ func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
 	t.Run("tip refreshed during signing", func(t *testing.T) {
 		serveInferenceWithRequestTip(t, "signing", 3, 0)
 	})
+	t.Run("stale checkpoint without a tip sample", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "stale checkpoint", 2, 1)
+	})
 }
 
 func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIReads, wantDirectReads int64) {
@@ -137,10 +140,17 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	producer := newState(chain)
 	proof, err := producer.BuildMainnetHeightTx(t.Context())
 	require.NoError(t, err)
-	txs := []*types.DevshardTx{proof, testutil.StartTx(1)}
+	txs := []*types.DevshardTx{proof}
+	var payload *PayloadJSON
+	staleCheckpoint := expireBefore == "stale checkpoint"
+	if !staleCheckpoint {
+		txs = append(txs, testutil.StartTx(1))
+		payload = &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	}
 	root, err := producer.ApplyLocal(1, txs)
 	require.NoError(t, err)
-	diff, err := DiffToJSON(testutil.SignDiffWithRoot(t, owner, escrowID, 1, txs, root))
+	signedDiff := testutil.SignDiffWithRoot(t, owner, escrowID, 1, txs, root)
+	diff, err := DiffToJSON(signedDiff)
 	require.NoError(t, err)
 	dapi := &chatTipOracle{Mock: chain}
 	direct := &chatTipOracle{Mock: chain}
@@ -155,13 +165,24 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	h, err := host.NewHost(newState(headertime.New(oracle)), validator, stub.NewInferenceEngine(), escrowID, group, checker,
 		host.WithChainOracle(oracle))
 	require.NoError(t, err)
+	diffs := []DiffJSON{diff}
+	if staleCheckpoint {
+		_, err := h.ApplyRecoveredDiffs(t.Context(), []types.Diff{signedDiff})
+		require.NoError(t, err)
+		diffs = nil
+		for range state.MainnetCheckpointMaxLag + 1 {
+			_, err := chain.AdvanceOne()
+			require.NoError(t, err)
+		}
+		dapi.latestCalls.Store(0)
+		direct.latestCalls.Store(0)
+	}
 	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(10, 1, oracle)
 	require.NoError(t, err)
 	srv, err := NewServer(h, nil, verifier, owner.Address(), WithHeightSync(scheduler, oracle))
 	require.NoError(t, err)
 	body, err := json.Marshal(InferenceRequest{
-		Diffs: []DiffJSON{diff}, Nonce: 1, Stream: true,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
+		Diffs: diffs, Nonce: 1, Stream: true, Payload: payload,
 	})
 	require.NoError(t, err)
 	var dapiReadsAtReceipt, directReadsAtReceipt int64
@@ -180,7 +201,7 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	require.NoError(t, srv.ServeInference(ctx, InferenceCall{
 		SessionID: escrowID, Sender: owner.Address(), Body: body, Source: "test", Sink: sink,
 		OnStreamStart: func() {
-			if expireBefore == "anchor" {
+			if expireBefore == "anchor" || staleCheckpoint {
 				clock.Store(int64(time.Second))
 				dapi.stall.Store(true)
 			}
@@ -190,7 +211,11 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	decoded := gzipConcat(t, chunks)
 	require.Contains(t, decoded, `"devshard_receipt"`)
 	require.Contains(t, decoded, `"height_sync"`)
-	require.Regexp(t, `"state_sig":"[^"]+"`, decoded)
+	if staleCheckpoint {
+		require.NotContains(t, decoded, `"state_sig"`, "the stale checkpoint contributes no state signature")
+	} else {
+		require.Regexp(t, `"state_sig":"[^"]+"`, decoded)
+	}
 	require.Equal(t, wantDAPIReads, dapiReadsAtReceipt, "dAPI RPCs before the signed receipt and anchor")
 	require.Equal(t, wantDirectReads, directReadsAtReceipt, "chain RPCs before the signed receipt and anchor")
 }

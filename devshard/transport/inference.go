@@ -94,7 +94,10 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	if req.Payload != nil && executorDropsPayload() {
 		req.Payload = nil
 	}
-	proofContext := failover.WithRequestProofObservation(ctx)
+	proofContext := ctx
+	if s.host.RequiresMainnetHeightProof() {
+		proofContext = failover.WithRequestProofObservation(ctx)
+	}
 	resp, err := s.host.HandleRequest(proofContext, req)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)

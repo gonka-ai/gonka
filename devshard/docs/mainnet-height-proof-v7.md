@@ -46,11 +46,13 @@ without another RPC. Signing an eligible checkpoint still requires a live
 observation within the request deadline. A host can reuse a fresh observation
 from the same request and checkpoint for state signing and the outgoing
 height-sync anchor. Reuse ends at the earlier observation or request deadline.
-After checking the canonical header, signing rechecks the observation and
-newer local progress. An expired observation can be refreshed in the same
-request. The response anchor uses this sample only while that request is live.
-Refreshing an expired response anchor uses a half-second RPC budget with time
-reserved for chain fallback. Repair probes take their own tip observations.
+After checking the canonical header, signing rechecks the deadline of either
+a reused or newly fetched observation and checks newer local progress. An
+expired observation can be refreshed in the same request. The response anchor
+uses the sample only while that request is live. With no usable sample, the
+anchor has a half-second RPC budget with time reserved for chain fallback.
+This caller deadline does not change dAPI backoff. Repair probes take their own
+tip observations.
 Timeout verification uses the observed height to recognize plausible evidence
 while its header is pending.
 A fresh local canonical header is required for new signatures, while replay

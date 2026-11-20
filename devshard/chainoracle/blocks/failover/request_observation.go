@@ -17,8 +17,8 @@ type requestObservation struct {
 	validUntil time.Time
 }
 
-// WithRequestProofObservation allows a local request to reuse the proof tip
-// for its height-sync response while the originating observation is fresh.
+// WithRequestProofObservation scopes the v7 response's proof tip. The
+// response uses a short fallback read if the request has no usable sample.
 func WithRequestProofObservation(ctx context.Context) context.Context {
 	return context.WithValue(ctx, requestObservationKey{}, &requestObservation{})
 }
@@ -65,10 +65,7 @@ func (o *Oracle) requestProofObservation(ctx context.Context) (*blocks.Header, b
 	scope.mu.Lock()
 	oracle, h, validUntil := scope.oracle, scope.header, scope.validUntil
 	scope.mu.Unlock()
-	if oracle == nil || oracle != o {
-		return nil, false
-	}
-	if !o.now().Before(validUntil) || o.acceptProofTip(h, nil) != nil {
+	if oracle == nil || oracle != o || !o.now().Before(validUntil) || o.acceptProofTip(h, nil) != nil {
 		return nil, true
 	}
 	return cloneHeader(h), true

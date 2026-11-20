@@ -227,16 +227,29 @@ func (s *Source) liveTipOracle() blocks.BlockOracle {
 
 // Latest returns the live tip hint for a carried proof.
 func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
+	h, _, err := s.LatestForProofObservation(ctx)
+	return h, err
+}
+
+// LatestForProofObservation preserves the live tip's original validity cutoff.
+func (s *Source) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
 	oracle := s.liveTipOracle()
+	if timed, ok := oracle.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
+	}); ok {
+		return timed.LatestForProofObservation(ctx)
+	}
 	if proofTip, ok := oracle.(interface {
 		LatestForProof(context.Context) (*blocks.Header, error)
 	}); ok {
-		return proofTip.LatestForProof(ctx)
+		h, err := proofTip.LatestForProof(ctx)
+		return h, time.Time{}, err
 	}
 	if oracle == nil {
-		return nil, blocks.ErrHeaderNotFound
+		return nil, time.Time{}, blocks.ErrHeaderNotFound
 	}
-	return oracle.Latest(ctx)
+	h, err := oracle.Latest(ctx)
+	return h, time.Time{}, err
 }
 
 func (s *Source) RecentProofTipHeight() int64 {
