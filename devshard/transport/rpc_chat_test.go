@@ -109,6 +109,9 @@ func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
 	t.Run("stale checkpoint without a tip sample", func(t *testing.T) {
 		serveInferenceWithRequestTip(t, "stale checkpoint", 2, 1)
 	})
+	t.Run("refreshed anchor would contradict a heartbeat acknowledgment", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "heartbeat", 3, 1)
+	})
 }
 
 func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIReads, wantDirectReads int64) {
@@ -143,7 +146,13 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	txs := []*types.DevshardTx{proof}
 	var payload *PayloadJSON
 	staleCheckpoint := expireBefore == "stale checkpoint"
-	if !staleCheckpoint {
+	heartbeat := expireBefore == "heartbeat"
+	if heartbeat {
+		txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: uint64(anchor.Height), ObservedBlockHash: anchor.BlockHash,
+			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+		}}})
+	} else if !staleCheckpoint {
 		txs = append(txs, testutil.StartTx(1))
 		payload = &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 	}
@@ -201,16 +210,35 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	require.NoError(t, srv.ServeInference(ctx, InferenceCall{
 		SessionID: escrowID, Sender: owner.Address(), Body: body, Source: "test", Sink: sink,
 		OnStreamStart: func() {
-			if expireBefore == "anchor" || staleCheckpoint {
+			if expireBefore == "anchor" || staleCheckpoint || heartbeat {
 				clock.Store(int64(time.Second))
 				dapi.stall.Store(true)
+			}
+			if heartbeat {
+				_, err := chain.AdvanceOne()
+				require.NoError(t, err)
 			}
 		},
 	}))
 	require.NoError(t, sink.Close())
 	decoded := gzipConcat(t, chunks)
 	require.Contains(t, decoded, `"devshard_receipt"`)
-	require.Contains(t, decoded, `"height_sync"`)
+	if heartbeat {
+		require.NotContains(t, decoded, `"height_sync"`, "the newer anchor would contradict the emitted acknowledgment")
+		var ack *types.MsgHeightAck
+		for _, tx := range h.MempoolTxs() {
+			if tx.GetHeightAck() != nil {
+				ack = tx.GetHeightAck()
+				break
+			}
+		}
+		require.NotNil(t, ack)
+		require.EqualValues(t, anchor.Height, ack.ObservedHeight)
+		require.Equal(t, anchor.BlockHash, ack.ObservedBlockHash)
+		require.False(t, srv.HeightSyncMarks().HasKind(heightsync.MarkDisputeOriginator))
+	} else {
+		require.Contains(t, decoded, `"height_sync"`)
+	}
 	if staleCheckpoint {
 		require.NotContains(t, decoded, `"state_sig"`, "the stale checkpoint contributes no state signature")
 	} else {

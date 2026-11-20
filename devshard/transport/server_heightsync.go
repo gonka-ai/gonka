@@ -585,13 +585,26 @@ func (s *Server) recordEnvelopeBinding(req host.HostRequest, sec *heightsync.Hei
 	s.heightSyncMarks.AppendAll(marks)
 }
 
-func (s *Server) recordEnvelopeBindingResponse(nonce uint64, sec *heightsync.HeightSyncSection) {
+func responseAnchorCompatibleWithAcks(sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) bool {
+	if !heightsync.IsAnchorSection(sec) || sec.MainnetHeight <= 0 {
+		return true
+	}
+	for _, tx := range txs {
+		ack := tx.GetHeightAck()
+		if ack != nil && heightsync.StampPresent(ack.ObservedBlockHash) && ack.ObservedHeight < uint64(sec.MainnetHeight) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) recordEnvelopeBindingResponse(nonce uint64, sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) {
 	if s == nil || s.heightSyncMarks == nil || sec == nil {
 		return
 	}
 	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 		Nonce: nonce,
-		Txs:   s.host.MempoolTxs(),
+		Txs:   txs,
 		Sec:   sec,
 	}, heightsync.DefaultHeartbeatConfig())
 	s.heightSyncMarks.AppendAll(marks)
