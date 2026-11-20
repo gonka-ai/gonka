@@ -177,23 +177,33 @@ again plastic athlete arrow first measure danger drastic wolf coyote work memory
 ```
 
 
-## 4. [Server]: Register new participant
+## 4. [Server & Local machine]: Fund Account Key and Register New Participant
 
-To register new participant, we need to send new participants details to the seed node:
-1. Public Key for Account Key - we've created at local device: `"Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY"`
-2. Public Key for Consensus Key - corresponding private key is generated inside `tmkms` containers and shouldn't leave it. 
+> **Note:** Unfunded HTTP registration (`POST /v1/participants` and `inferenced register-new-participant`) and on-chain `MsgSubmitNewUnfundedParticipant` are **suspended** now that `epoch` and `cosmos` transaction fees are enabled. Every host must fund its Cold Account Key (`gonka-account-key`) first and sign `MsgSubmitNewParticipant` directly on-chain.
 
-### 4.1 [Server]: Start all containers excluding `api`:
+### 4.1 [Local machine]: Fund the Cold Account Key with GNK
 
-We can start `tmkms`, `node` and `proxy` containers to generate Consensus Key and endpoint to receive it:
+Before registering on-chain or granting permissions to the Warm Key, transfer GNK (`ngonka`) to the Cold Account address (`gonka1...` from Step 1) so the account exists in `x/auth` and can cover:
+- On-chain registration (`MsgSubmitNewParticipant` — `cosmos` fee group, `1 ngonka` min gas price)
+- Authz & feegrant setup (`grant-ml-ops-permissions` — `cosmos` fee group, plus the `10 GNK` / `10_000_000_000 ngonka` `BasicAllowance` granted to the Warm Key for `epoch` transactions)
+- Any required participant collateral (`MsgDepositCollateral`)
+
+Verify the Cold Account balance:
+```bash
+./inferenced query bank balances <cold-account-address> --node $SEED_API_URL/chain-rpc/
 ```
+
+### 4.2 [Server]: Start `tmkms`, `node`, and `proxy` containers
+
+Start `tmkms`, `node`, and `proxy` containers to generate the Consensus Key:
+```bash
 docker compose up tmkms node proxy -d --no-deps
 ```
 
-### 4.2 [From server]: Get Consensus Public Key
+### 4.3 [Server]: Get Consensus Public Key
 
-Use 26657 port for your new `node` container to get Consensus Public Key
-```
+Query port `26657` on the new `node` container to obtain the base64-encoded ED25519 Consensus Public Key:
+```bash
 curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value'
 ```
 
@@ -203,127 +213,69 @@ curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value
 IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=
 ```
 
+### 4.4 [Local machine]: Register participant on-chain via `tx inference submit-new-participant`
 
-### 4.3 [Any machine]: Register participant via `register-new-participant`
+Run `submit-new-participant` on your **local machine** (where the Cold Account Key `gonka-account-key` is stored) using the node's public URL and the Consensus Public Key from Step 4.3. Signing this first transaction with `gonka-account-key` also publishes the Cold Account's `secp256k1` public key in `x/auth`:
 
-This command doesn't require signing from either the cold or warm private key and can be executed on any machine.
-
-#### Auto-Fetch Mode (Recommended for API containers)
-When running from within API containers, the consensus key can be automatically fetched from the chain node:
-```
-./inferenced register-new-participant \
-    <new-node-url> \
-    <account-public-key> \
-    --node-address $SEED_API_URL
-```
-
-#### Manual Mode (For external usage)
-For external usage or when auto-fetch is not available, provide the consensus key explicitly:
-```
-./inferenced register-new-participant \
-    <new-node-url> \
-    <account-public-key> \
-    --consensus-key <consensus-key> \
-    --node-address $SEED_API_URL
+```bash
+./inferenced tx inference submit-new-participant <new-node-url> \
+    --validator-key <consensus-key> \
+    --from <account-key-name-in-registry> \
+    --keyring-backend file \
+    --chain-id gonka-mainnet \
+    --gas auto \
+    --gas-adjustment 1.5 \
+    --gas-prices 1ngonka \
+    --node $SEED_API_URL/chain-rpc/ \
+    --yes
 ```
 
-**Note**: Auto-fetch mode requires the `DAPI_CHAIN_NODE__URL` environment variable to be set (automatically configured in API containers). If auto-fetch fails, the command will provide clear guidance on using manual mode.
-
-#### Example: Auto-Fetch Mode (from API container)
-
-```
-❯ ./inferenced register-new-participant \
+**Example:**
+```bash
+./inferenced tx inference submit-new-participant \
     http://36.189.234.237:19252 \
-    "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
-    --node-address http://36.189.234.237:19250
-
-No consensus key provided, attempting to auto-fetch from chain node...
-Successfully auto-fetched and validated consensus key from chain node
-Registering new participant:
-  Node URL: http://36.189.234.237:19252
-  Account Address: gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
-  Account Public Key: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY
-  Validator Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA= (auto-fetched)
-  Seed Node Address: http://36.189.234.237:19250
-Sending registration request to http://36.189.234.237:19250/v1/participants
-Response status code: 200
-Participant registration successful.
-Waiting for participant to be available (timeout: 30 seconds)...
-..
-Found participant with pubkey: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY (balance: 0)
-Participant is now available at http://36.189.234.237:19250/v1/participants/gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
+    --validator-key "IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=" \
+    --from gonka-account-key \
+    --keyring-backend file \
+    --chain-id gonka-mainnet \
+    --gas auto \
+    --gas-adjustment 1.5 \
+    --gas-prices 1ngonka \
+    --node http://36.189.234.237:19250/chain-rpc/ \
+    --yes
 ```
 
-#### Example: Manual Mode (external usage)
-
-```
-❯ ./inferenced register-new-participant \
-    http://36.189.234.237:19252 \
-    "Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY" \
-    --consensus-key "IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA=" \
-    --node-address http://36.189.234.237:19250
-
-Using provided consensus key (validated)
-Registering new participant:
-  Node URL: http://36.189.234.237:19252
-  Account Address: gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
-  Account Public Key: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY
-  Validator Consensus Key: IytsMYMPIMh+AFe3iYBQAj1Dt3UkIdGvbJCyJwGoJfA= (provided)
-  Seed Node Address: http://36.189.234.237:19250
-Sending registration request to http://36.189.234.237:19250/v1/participants
-Response status code: 200
-Participant registration successful.
-Waiting for participant to be available (timeout: 30 seconds)...
-..
-Found participant with pubkey: Au+a3CpMj6nqFV6d0tUlVajCTkOP3cxKnps+1/lMv5zY (balance: 0)
-Participant is now available at http://36.189.234.237:19250/v1/participants/gonka1rk52j24xj9ej87jas4zqpvjuhrgpnd7h3feqmm
-```
-
-#### Troubleshooting `register-new-participant`
-
-**Auto-fetch fails with environment variable error:**
-- Ensure you're running from within an API container where `DAPI_CHAIN_NODE__URL` is automatically set
-- For external usage, use manual mode with `--consensus-key` flag
-
-**Auto-fetch fails with connection error:**
-- Verify the chain node is running and accessible
-- Check network connectivity between API container and chain node
-- Use manual mode as fallback
-
-**Invalid consensus key error:**
-- Ensure the consensus key is exactly 32 bytes when base64-decoded (ED25519 requirement)
-- Verify the key was obtained from the correct chain node status endpoint
-- For manual debugging, use: `curl http://localhost:26657/status | jq -r '.result.validator_info.pub_key.value'`
-
-**Missing validator information:**
-- The node may not be configured as a validator
-- Ensure TMKMS and node containers are running properly
-- Use manual mode with explicit consensus key from TMKMS
+Verify registration at `$SEED_API_URL/v1/participants/<cold-account-address>`.
 
 ### 5. [Local machine]: Grant Permissions to ML Operational Key
 
-Finally, we need to grant permissions from Account Key to ML Operational Key to create transactions required for proper node operation.  
-This can be done using `grant-ml-ops-permissions` and signed by Account Key:
+Finally, grant `authz` permissions and the `feegrant` allowance from the Cold Account Key to the ML Operational Key (`warm key`) so the node can submit operational transactions. Because `MsgGrant` and `MsgGrantAllowance` are in the `cosmos` fee group, include `--gas-prices`:
 
-```
+```bash
 ./inferenced tx inference grant-ml-ops-permissions \
     <account-key-name-in-registry> \
     <ml-operational-key-address> \
     --from <account-key-name-in-registry> \
+    --keyring-backend file \
+    --chain-id gonka-mainnet \
     --gas 2000000 \
-    --node $SEED_API_URL/chain-rpc/
+    --gas-prices 1ngonka \
+    --node $SEED_API_URL/chain-rpc/ \
+    --yes
 ```
 
-**Example output:**
-```
+**Example:**
+```bash
 ./inferenced tx inference grant-ml-ops-permissions \
     gonka-account-key \
     gonka1gyz2agg5yx49gy2z4qpsz9826t6s9xev6tkehw \
     --from gonka-account-key \
     --keyring-backend file \
+    --chain-id gonka-mainnet \
     --gas 2000000 \
-    --node http://36.189.234.237:19250/chain-rpc/
-
+    --gas-prices 1ngonka \
+    --node http://36.189.234.237:19250/chain-rpc/ \
+    --yes
 ```
 
 ### 6. [Server]: Launch full Node

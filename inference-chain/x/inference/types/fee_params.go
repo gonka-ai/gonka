@@ -19,13 +19,32 @@ const (
 	// legacy uncapped rates down to these rather than persisting an invalid tree.
 	MaxPeriodBaseGas = uint64(10_000_000) // 20× default StoreCommit 500k
 	MaxGasPerUnit    = uint64(10_000)     // 100× default StoreCommit 100
+	// StoreCommitGasPerNewKey is the v0.2.17 activation gas for one new
+	// (stage, participant, model) store-commit key. updateEpochFeeGroup
+	// writes it on a StoreCommit static rule. It is not part of
+	// DefaultFeeParams: module migration 14 copies that tree, and the
+	// v0.2.16 result must stay a single stored_delta rule.
+	// The handler multiplies it by the number of ids that are not stored
+	// yet for that stage.
+	//
+	// At the epoch minimum gas price of 1 ngonka, one key costs 100_000
+	// ngonka (0.0001 gonka). 10_000 new keys cost 1 gonka. This is an
+	// economic throttle, not a hard workload bound. Raise it with
+	// governance up to MaxPeriodBaseGas.
+	StoreCommitGasPerNewKey uint64 = 100_000
+	// NewParticipantGas is the one-time surcharge when MsgSubmitNewParticipant
+	// creates an account. It matches the StoreCommit period-base amount and
+	// is a separate parameter. At 1 ngonka per gas this is 0.0005 gonka.
+	// Updating an existing participant does not pay it.
+	NewParticipantGas uint64 = 500_000
 
 	StoredBytesUnitB  = "b"
 	StoredBytesUnitKB = "kb"
 	StoredBytesUnitMB = "mb"
 )
 
-// DefaultFeeParams returns the default fee parameters.
+// DefaultFeeParams returns the fee tree module migration 14 installs.
+// The StoreCommit new-key price is added later by the v0.2.17 upgrade.
 func DefaultFeeParams() *FeeParams {
 	storeCommitURL := sdk.MsgTypeURL(&MsgPoCV2StoreCommit{})
 	hdURL := sdk.MsgTypeURL(&MsgSubmitHardwareDiff{})
@@ -76,7 +95,8 @@ func (fp *FeeParams) Validate() error {
 	}
 
 	groupNames := make(map[string]struct{}, len(fp.Groups))
-	seenTypeURLs := make(map[string]struct{})
+	seenRuleFuncs := make(map[string]struct{})
+	seenPeriodBase := make(map[string]struct{})
 	for i, g := range fp.Groups {
 		if g == nil {
 			return fmt.Errorf("groups[%d] is nil", i)
@@ -107,10 +127,18 @@ func (fp *FeeParams) Validate() error {
 			if rule.TypeUrl == "" {
 				return fmt.Errorf("groups[%q].msgs[%d].type_url is empty", g.Name, j)
 			}
-			if _, dup := seenTypeURLs[rule.TypeUrl]; dup {
-				return fmt.Errorf("duplicate type_url %q in fee groups", rule.TypeUrl)
+			funcKind := feeFuncKind(rule)
+			ruleKey := rule.TypeUrl + "\x00" + funcKind
+			if _, dup := seenRuleFuncs[ruleKey]; dup {
+				return fmt.Errorf("duplicate fee func %q for type_url %q", funcKind, rule.TypeUrl)
 			}
-			seenTypeURLs[rule.TypeUrl] = struct{}{}
+			seenRuleFuncs[ruleKey] = struct{}{}
+			if rule.Base != nil {
+				if _, dup := seenPeriodBase[rule.TypeUrl]; dup {
+					return fmt.Errorf("duplicate period base for type_url %q", rule.TypeUrl)
+				}
+				seenPeriodBase[rule.TypeUrl] = struct{}{}
+			}
 			compiled := CompiledFeeGroupForTypeURL(rule.TypeUrl)
 			if compiled == "" {
 				return fmt.Errorf("groups[%q].msgs[%d].type_url %q is not a fee-grouped message", g.Name, j, rule.TypeUrl)
@@ -234,6 +262,9 @@ func ClampFeeTreeSafetyLimits(fp *FeeParams) bool {
 			if r := rule.GetRepeatedLen(); r != nil {
 				clamp(&r.GasPerUnit, MaxGasPerUnit)
 			}
+			if s := rule.GetStatic(); s != nil {
+				clamp(&s.Gas, MaxPeriodBaseGas)
+			}
 		}
 	}
 	return changed
@@ -323,6 +354,14 @@ func validateMsgGasRuleFunc(rule *MsgGasRule) error {
 		}
 		if !protoFieldIsRepeated(msg, f.RepeatedLen.Field) {
 			return fmt.Errorf("repeated_len.field %q is not a repeated field on %s", f.RepeatedLen.Field, rule.TypeUrl)
+		}
+		return nil
+	case *MsgGasRule_Static:
+		if f.Static == nil {
+			return fmt.Errorf("static is nil")
+		}
+		if f.Static.Gas > MaxPeriodBaseGas {
+			return fmt.Errorf("static.gas %d exceeds safety limit of %d", f.Static.Gas, MaxPeriodBaseGas)
 		}
 		return nil
 	default:
@@ -531,22 +570,56 @@ func (fp *FeeParams) GroupByName(name string) *FeeGroup {
 	return nil
 }
 
-// RuleForTypeURL returns the group and msg rule for typeURL, or (nil, nil).
-func (fp *FeeParams) RuleForTypeURL(typeURL string) (*FeeGroup, *MsgGasRule) {
+// RulesForTypeURL returns every rule for typeURL and the group of the first
+// match. One message can carry more than one func. StoreCommit uses
+// stored_delta for the count and static for each new id.
+func (fp *FeeParams) RulesForTypeURL(typeURL string) (*FeeGroup, []*MsgGasRule) {
 	if fp == nil {
 		return nil, nil
 	}
+	var group *FeeGroup
+	var rules []*MsgGasRule
 	for _, g := range fp.Groups {
 		if g == nil {
 			continue
 		}
 		for _, rule := range g.Msgs {
 			if rule != nil && rule.TypeUrl == typeURL {
-				return g, rule
+				if group == nil {
+					group = g
+				}
+				rules = append(rules, rule)
 			}
 		}
 	}
-	return nil, nil
+	return group, rules
+}
+
+// RuleForTypeURL returns the group and the first msg rule for typeURL, or (nil, nil).
+func (fp *FeeParams) RuleForTypeURL(typeURL string) (*FeeGroup, *MsgGasRule) {
+	group, rules := fp.RulesForTypeURL(typeURL)
+	if len(rules) == 0 {
+		return nil, nil
+	}
+	return group, rules[0]
+}
+
+func feeFuncKind(rule *MsgGasRule) string {
+	if rule == nil {
+		return ""
+	}
+	switch rule.GetFunc().(type) {
+	case *MsgGasRule_StoredDelta:
+		return "stored_delta"
+	case *MsgGasRule_StoredBytes:
+		return "stored_bytes"
+	case *MsgGasRule_RepeatedLen:
+		return "repeated_len"
+	case *MsgGasRule_Static:
+		return "static"
+	default:
+		return ""
+	}
 }
 
 // EnabledPayingPrice returns the max min_gas_price of enabled groups that

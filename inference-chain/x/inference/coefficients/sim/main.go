@@ -67,7 +67,7 @@ func main() {
 
 	cfg := loadConfig(*configPath)
 	params, modelIDs := buildParams(cfg)
-	frozen, err := coefficient.Freeze(params)
+	frozen, err := coefficient.Freeze(params, nil)
 	check(err)
 	rng := rand.New(rand.NewSource(cfg.Seed))
 	hardware := buildHardware(cfg, rng)
@@ -132,12 +132,16 @@ func buildParams(cfg config) (*types.PocParams, []string) {
 	for _, model := range cfg.Models {
 		params.Models = append(params.Models, &types.PoCModelConfig{
 			ModelId: model.ID,
-			DynamicCoefficient: &types.DynamicCoefficientModelConfig{
-				CoeffMin:           protoDec(model.Min),
-				CoeffMax:           protoDec(model.Max),
-				RelativeDifficulty: protoDec(model.Difficulty),
-				TargetShareBps:     model.TargetShareBPS,
-			},
+			Schemes: []*types.PocSchemeParams{{
+				Scheme: types.PocScheme_POC_SCHEME_PREFILL,
+				SeqLen: 1024,
+				DynamicCoefficient: &types.DynamicCoefficientModelConfig{
+					CoeffMin:           protoDec(model.Min),
+					CoeffMax:           protoDec(model.Max),
+					RelativeDifficulty: protoDec(model.Difficulty),
+					TargetShareBps:     model.TargetShareBPS,
+				},
+			}},
 		})
 		modelIDs = append(modelIDs, model.ID)
 	}
