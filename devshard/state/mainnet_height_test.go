@@ -175,6 +175,44 @@ func TestMainnetHeightRechecksTipAfterCanonicalLookup(t *testing.T) {
 	}
 }
 
+type expiringHeightSource struct {
+	deadlineHeightSource
+	expiresAt time.Time
+	reads     int
+}
+
+func (s *expiringHeightSource) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
+	s.reads++
+	if s.reads == 1 {
+		s.expiresAt = time.Now().Add(20 * time.Millisecond)
+	} else {
+		s.expiresAt = time.Now().Add(time.Second)
+	}
+	h, err := s.MainnetHeightSource.Latest(ctx)
+	return h, s.expiresAt, err
+}
+
+func TestMainnetHeightRefreshesExpiredTipOnSignatureRetry(t *testing.T) {
+	sm, _, chain, _ := heightFixture(t)
+	tx, err := sm.BuildMainnetHeightTx(t.Context())
+	require.NoError(t, err)
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{tx})
+	require.NoError(t, err)
+	source := &expiringHeightSource{deadlineHeightSource: deadlineHeightSource{MainnetHeightSource: chain, BlockOracle: chain}}
+	source.check = func(context.Context) {
+		for range MainnetCheckpointMaxLag + 1 {
+			_, err := chain.AdvanceOne()
+			require.NoError(t, err)
+		}
+		time.Sleep(time.Until(source.expiresAt))
+	}
+	sm.mainnetHeights, sm.headerTimes = source, nil
+	err = sm.CheckMainnetHeightFreshness(t.Context(), time.Now())
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.ErrorContains(t, err, "trails local tip")
+	require.Equal(t, 2, source.reads, "a read made by signing also carries source expiry")
+}
+
 func TestMainnetHeightApplyReplaySnapshotAndPreview(t *testing.T) {
 	sm, user, _, fresh := heightFixture(t)
 	before, err := sm.ComputeStateRoot()

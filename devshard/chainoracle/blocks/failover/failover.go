@@ -234,7 +234,8 @@ func (o *Oracle) tryNM(ctx context.Context, now time.Time) (h *blocks.Header, er
 	}
 
 	h, err = o.nm.Latest(ctx)
-	if !errors.Is(ctx.Err(), context.Canceled) {
+	// A caller's deadline or cancellation does not establish dAPI health.
+	if ctx.Err() == nil {
 		o.noteNMOutcome(now, h, err)
 	}
 	return h, err, false
