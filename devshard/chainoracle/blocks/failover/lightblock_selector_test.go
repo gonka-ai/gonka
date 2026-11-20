@@ -24,6 +24,7 @@ func TestProofTipSelectsHigherReadyObservationBeforePublishing(t *testing.T) {
 
 	oracle := New(nil, nil, nil)
 	require.Zero(t, oracle.RecentProofTipHeight())
-	require.NoError(t, oracle.checkProofTip(chosen.value))
+	var validUntil time.Time
+	require.NoError(t, oracle.acceptProofTip(chosen.value, &validUntil))
 	require.Equal(t, next.Height, oracle.RecentProofTipHeight())
 }

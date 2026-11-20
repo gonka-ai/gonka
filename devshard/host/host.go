@@ -689,17 +689,24 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	needOracle := h.oracleNeededLocked(req, newlyApplied)
 	var tip mainnetTipObservation
-	_, proofOracle := h.oracle.(interface {
-		LatestForProof(context.Context) (*blocks.Header, error)
+	proofOracle, hasProofClock := h.oracle.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
 	})
-	if needOracle && proofOracle && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+	reuseTip := needOracle && hasProofClock && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion())
+	if reuseTip {
 		cp := h.sm.MainnetCheckpoint()
 		tip.checkpointHeight, tip.checkpointHash = cp.Height, cp.Hash
 	}
 	h.mu.Unlock()
-	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
-	if tip.checkpointHeight > 0 && hdrErr == nil && hdr != nil && !blocks.IsDummyHeader(hdr) {
-		tip.header, tip.receivedAt = hdr, time.Now()
+	var hdr *blocks.Header
+	var hdrErr error
+	if reuseTip {
+		hdr, tip.validUntil, hdrErr = proofOracle.LatestForProofObservation(ctx)
+		if hdrErr == nil && hdr != nil && !blocks.IsDummyHeader(hdr) {
+			tip.header, tip.receivedAt = hdr, time.Now()
+		}
+	} else {
+		hdr, hdrErr = h.latestHeaderIf(ctx, needOracle)
 	}
 	h.mu.Lock()
 
@@ -2118,6 +2125,7 @@ func (h *Host) GetSignatures(nonce uint64) (map[uint32][]byte, error) {
 type mainnetTipObservation struct {
 	header           *blocks.Header
 	receivedAt       time.Time
+	validUntil       time.Time
 	checkpointHeight int64
 	checkpointHash   []byte
 }
@@ -2148,7 +2156,11 @@ func (h *Host) signState(nonce uint64, root []byte, observations ...mainnetTipOb
 }
 
 func (h *Host) reusableMainnetTip(observation mainnetTipObservation, now time.Time) *blocks.Header {
-	if observation.header == nil || now.Sub(observation.receivedAt) > time.Second {
+	until := observation.receivedAt.Add(time.Second)
+	if observation.validUntil.Before(until) {
+		until = observation.validUntil
+	}
+	if observation.header == nil || !now.Before(until) {
 		return nil
 	}
 	cp := h.sm.MainnetCheckpoint()

@@ -78,8 +78,7 @@ type Oracle struct {
 	nmNextTry  time.Time
 
 	preferDirectProofUntil time.Time
-	proofTipHeight         int64
-	proofTipAt             time.Time
+	recentRPCTips          []rpcTipObservation
 
 	chainLast    *blocks.Header
 	chainLastAt  time.Time
@@ -177,6 +176,9 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	if o == nil {
 		return nil, errors.New("blockoracle/failover: no tip")
 	}
+	if h := o.requestProofObservation(ctx); h != nil {
+		return h, nil
+	}
 	now := o.now()
 
 	o.mu.Lock()
@@ -201,9 +203,8 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	if h, err, skipped := o.tryNM(ctx, now); skipped {
 		logLatestTry("get_block_header", nil, err)
 	} else if err == nil && usable(h) {
-		observed := o.now()
 		o.mu.Lock()
-		o.rememberRPCTipLocked(h.Height, observed)
+		o.rememberRPCTipLocked(h.Height)
 		o.mu.Unlock()
 		o.noteLatest(h, true)
 		return h, nil
@@ -365,11 +366,10 @@ func (o *Oracle) queryChainTip(ctx context.Context, now time.Time) (*blocks.Head
 	if err != nil {
 		return nil, err
 	}
-	observed := o.now()
 	o.mu.Lock()
 	o.chainLast = cloneHeader(h)
 	o.chainLastAt = now
-	o.rememberRPCTipLocked(h.Height, observed)
+	o.rememberRPCTipLocked(h.Height)
 	o.mu.Unlock()
 	return h, nil
 }

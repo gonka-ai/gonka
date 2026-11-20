@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"devshard"
+	"devshard/chainoracle/blocks/failover"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
@@ -93,7 +94,8 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	if req.Payload != nil && executorDropsPayload() {
 		req.Payload = nil
 	}
-	resp, err := s.host.HandleRequest(ctx, req)
+	proofContext := failover.WithRequestProofObservation(ctx)
+	resp, err := s.host.HandleRequest(proofContext, req)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
 		if errors.Is(err, devshard.ErrRequestsDisabled) {
@@ -166,7 +168,7 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 			OriginatorSenderID: s.host.Signer().Address(),
 			Direction:          "response",
 		}
-		sec, dErr, oracleMiss := s.heightSync.Decide(ctx, h)
+		sec, dErr, oracleMiss := s.heightSync.Decide(proofContext, h)
 		if oracleMiss {
 			heightsync.IncOracleFailure(s.host.Signer().Address())
 		}

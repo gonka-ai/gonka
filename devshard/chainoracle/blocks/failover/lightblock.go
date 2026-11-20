@@ -61,28 +61,56 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 // a bounded opportunity to report the tip, then ask chain gRPC directly.
 // A cached chain response can understate the tip during that transition.
 func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
+	h, _, err := o.LatestForProofObservation(ctx)
+	return h, err
+}
+
+// LatestForProofObservation also returns the originating observation's
+// freshness deadline. A request reusing the tip must honor this deadline.
+func (o *Oracle) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
+	h, until, err := o.readProofObservation(ctx)
+	if err == nil {
+		o.rememberRequestObservation(ctx, h, until)
+	}
+	return h, until, err
+}
+
+func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
 	if o == nil {
-		return o.Latest(ctx)
+		return nil, time.Time{}, blocks.ErrHeaderNotFound
 	}
 	now := o.now()
 	o.mu.Lock()
 	cometOn := o.cometConnected
 	o.mu.Unlock()
-	if cometOn && o.tip != nil && o.cometFresh() {
-		if h, err := o.tip.Latest(ctx); err == nil && o.acceptProofTip(h, false) == nil {
-			o.noteLatest(h, true)
-			return h, nil
+	if cometOn && o.tip != nil {
+		if observed, ok := o.tip.(interface {
+			LastObservation() (*blocks.Header, time.Time)
+		}); ok {
+			h, received := observed.LastObservation()
+			until := received.Add(CometMaxAge)
+			if now.Before(until) && o.acceptProofTip(h, nil) == nil {
+				o.noteLatest(h, true)
+				return h, until, nil
+			}
+		} else if o.cometFresh() {
+			if h, err := o.tip.Latest(ctx); err == nil && o.acceptProofTip(h, nil) == nil {
+				o.noteLatest(h, true)
+				return h, time.Time{}, nil
+			}
 		}
 	}
+	var validUntil time.Time
 	if o.chain == nil {
-		h, err := o.Latest(ctx)
+		h, err, _ := o.tryNM(ctx, now)
+		if err == nil {
+			err = o.acceptProofTip(h, &validUntil)
+		}
+		o.noteLatest(h, err == nil)
 		if err != nil {
-			return nil, err
+			return nil, time.Time{}, err
 		}
-		if err := o.checkProofTip(h); err != nil {
-			return nil, err
-		}
-		return h, nil
+		return h, validUntil, nil
 	}
 	budget := 2 * time.Second
 	if deadline, ok := ctx.Deadline(); ok {
@@ -97,12 +125,15 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	}
 	policy := alternativePolicy[*blocks.Header]{
 		headStart: budget,
-		accept:    o.checkProofTip,
+		accept:    func(h *blocks.Header) error { return o.acceptProofTip(h, &validUntil) },
 		prefer:    newerProofTip,
 	}
 	latest, err := withAlternative(ctx, readDAPI, o.fetchChainTip, policy)
 	o.noteLatest(latest, err == nil)
-	return latest, err
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return latest, validUntil, nil
 }
 
 func newerProofTip(a, b *blocks.Header) *blocks.Header {
@@ -126,29 +157,35 @@ func (o *Oracle) RecentProofTipHeight() int64 {
 }
 
 func (o *Oracle) recentCometHeight(now time.Time) int64 {
-	if observed, ok := o.tip.(interface{ LastObservedHeight() (int64, time.Time) }); ok {
-		height, received := observed.LastObservedHeight()
-		if !received.IsZero() && now.Sub(received) <= CometMaxAge {
-			return height
+	if observed, ok := o.tip.(interface {
+		LastObservation() (*blocks.Header, time.Time)
+	}); ok {
+		h, received := observed.LastObservation()
+		if h != nil && now.Before(received.Add(CometMaxAge)) {
+			return h.Height
 		}
 	}
 	return 0
 }
 
-func (o *Oracle) recentRPCTipHeightLocked(now time.Time) int64 {
-	if now.Sub(o.proofTipAt) <= CometMaxAge {
-		return o.proofTipHeight
-	}
-	return 0
+type rpcTipObservation struct {
+	height    int64
+	expiresAt time.Time
 }
 
-func (o *Oracle) checkProofTip(h *blocks.Header) error {
-	return o.acceptProofTip(h, true)
+func (o *Oracle) recentRPCTipHeightLocked(now time.Time) int64 {
+	for len(o.recentRPCTips) > 0 && !now.Before(o.recentRPCTips[0].expiresAt) {
+		o.recentRPCTips = o.recentRPCTips[1:]
+	}
+	if len(o.recentRPCTips) == 0 {
+		return 0
+	}
+	return o.recentRPCTips[0].height
 }
 
 // A successful RPC can extend the recent floor. The Comet cache retains its
 // own original receive timestamp, including when the socket disconnects.
-func (o *Oracle) acceptProofTip(h *blocks.Header, rememberRPC bool) error {
+func (o *Oracle) acceptProofTip(h *blocks.Header, rpcValidUntil *time.Time) error {
 	if !usable(h) || h.Height <= 0 {
 		return blocks.ErrHeaderNotFound
 	}
@@ -160,17 +197,26 @@ func (o *Oracle) acceptProofTip(h *blocks.Header, rememberRPC bool) error {
 	if h.Height < floor {
 		return fmt.Errorf("%w: proof tip %d trails recently observed height %d", blocks.ErrHeaderUnverified, h.Height, floor)
 	}
-	if rememberRPC {
-		o.rememberRPCTipLocked(h.Height, now)
+	if rpcValidUntil != nil {
+		*rpcValidUntil = o.rememberRPCTipLocked(h.Height)
 	}
 	return nil
 }
 
-func (o *Oracle) rememberRPCTipLocked(height int64, observed time.Time) {
-	if height >= o.recentRPCTipHeightLocked(observed) {
-		o.proofTipHeight = height
-		o.proofTipAt = observed
+func (o *Oracle) rememberRPCTipLocked(height int64) time.Time {
+	now := time.Now()
+	if o.nowFn != nil {
+		now = o.nowFn()
 	}
+	o.recentRPCTipHeightLocked(now)
+	// Drop observations superseded by a higher or equal tip with a later
+	// expiry. Older highs and newer lows can each be the current floor.
+	for n := len(o.recentRPCTips); n > 0 && o.recentRPCTips[n-1].height <= height; n-- {
+		o.recentRPCTips = o.recentRPCTips[:n-1]
+	}
+	expiresAt := now.Add(CometMaxAge)
+	o.recentRPCTips = append(o.recentRPCTips, rpcTipObservation{height: height, expiresAt: expiresAt})
+	return expiresAt
 }
 
 // CanonicalHeaderForProof selects the configured local Comet endpoint for
