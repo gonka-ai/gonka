@@ -84,7 +84,20 @@ if [ -n "$NODE_HOST" ]; then
 fi
 
 echo "Initial config (before env var merge)"
-cat "$yaml_file"
+# Redact secret values, including indented continuations of multiline scalars.
+awk '
+  {
+    indent = match($0, /[^[:space:]]/) - 1
+    if (redacting && (indent < 0 || indent > secret_indent)) next
+    redacting = 0
+    if (tolower($0) ~ /^[[:space:]]*(keyring_?password|worker_?private(_?key)?|seed):/) {
+      sub(/:.*/, ": \"***\"")
+      secret_indent = indent
+      redacting = 1
+    }
+    print
+  }
+' "$yaml_file"
 
 echo "init for cosmovisor"
 mkdir -p /root/.dapi/data
