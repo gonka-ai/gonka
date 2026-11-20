@@ -147,10 +147,7 @@ func checkCheckpointAge(cp lightproof.Checkpoint, now time.Time) error {
 }
 
 func checkCheckpointLag(cp lightproof.Checkpoint, tip *blocks.Header) error {
-	if tip.Height > cp.Height+MainnetCheckpointMaxLag {
-		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, tip.Height)
-	}
-	return nil
+	return checkCheckpointTipLag(cp, tip.Height)
 }
 
 func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now time.Time) error {
@@ -165,6 +162,11 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	}
 	if err := checkCheckpointAge(cp, now); err != nil {
 		return err
+	}
+	if known, ok := source.(interface{ RecentProofTipHeight() int64 }); ok {
+		if err := checkCheckpointTipLag(cp, known.RecentProofTipHeight()); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
@@ -181,6 +183,13 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	// remains independent of that mutable source.
 	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
 		return err
+	}
+	return nil
+}
+
+func checkCheckpointTipLag(cp lightproof.Checkpoint, tipHeight int64) error {
+	if tipHeight > cp.Height+MainnetCheckpointMaxLag {
+		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, tipHeight)
 	}
 	return nil
 }

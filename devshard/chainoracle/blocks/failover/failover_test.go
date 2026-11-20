@@ -815,20 +815,23 @@ func TestProofTipWaitsForSlowDAPIAndAvoidsStaleChainCache(t *testing.T) {
 	})
 }
 
-type stalledTipOracle struct {
+type recoveringTipOracle struct {
 	*recOracle
 	started atomic.Int64
 }
 
-func (o *stalledTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
-	o.started.Add(1)
-	<-ctx.Done()
-	return nil, ctx.Err()
+func (o *recoveringTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	if o.started.Add(1) == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return o.recOracle.Latest(ctx)
 }
 
-func TestProofTipDoesNotRepeatTheGraceForAStalledDAPI(t *testing.T) {
-	dapi := &stalledTipOracle{recOracle: &recOracle{}}
-	chain := &recOracle{hdr: chainHdr()}
+func TestProofTipChecksDAPIRecoveryAfterDirectFallback(t *testing.T) {
+	higher := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	dapi := &recoveringTipOracle{recOracle: &recOracle{hdr: higher}}
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(100, higher.Time, higher.ChainID, []byte{100})}
 	o := failover.New(nil, dapi, chain)
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
@@ -837,12 +840,11 @@ func TestProofTipDoesNotRepeatTheGraceForAStalledDAPI(t *testing.T) {
 	require.Equal(t, chain.hdr.Height, got.Height)
 	require.Equal(t, int64(1), dapi.started.Load())
 
-	chain.hdr = blocks.HashOnlyHeader(103, got.Time.Add(time.Second), got.ChainID, []byte{103})
 	got, err = o.LatestForProof(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, chain.hdr.Height, got.Height)
-	require.Equal(t, int64(1), dapi.started.Load(), "the second read goes straight to the working route")
-	require.Equal(t, int64(2), chain.calls.Load(), "every lookup gets a new chain tip")
+	require.Equal(t, higher.Height, got.Height)
+	require.Equal(t, int64(2), dapi.started.Load(), "the next admission can see the recovered dAPI")
+	require.Equal(t, int64(1), chain.calls.Load())
 }
 
 func TestProofTipRejectsDirectRegressionBelowRecentDAPIHeight(t *testing.T) {
