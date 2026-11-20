@@ -30,7 +30,34 @@ func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
-			name: "amount at digit limit",
+			name: "amount at uint256 max",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0xabc",
+				OwnerAddress:    "0xowner",
+				OwnerPubKey:     "pk",
+				Amount:          "115792089237316195423570985008687907853269984665640564039457584007913129639935",
+				BlockNumber:     "1",
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    "0xroot",
+			},
+		}, {
+			name: "amount 2^256 within digit limit",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0xabc",
+				OwnerAddress:    "0xowner",
+				OwnerPubKey:     "pk",
+				Amount:          "115792089237316195423570985008687907853269984665640564039457584007913129639936",
+				BlockNumber:     "1",
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    "0xroot",
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		}, {
+			name: "amount at digit limit above uint256",
 			msg: MsgBridgeExchange{
 				Validator:       sample.AccAddress(),
 				OriginChain:     "ethereum",
@@ -42,6 +69,7 @@ func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
 				ReceiptIndex:    "0",
 				ReceiptsRoot:    "0xroot",
 			},
+			err: sdkerrors.ErrInvalidRequest,
 		}, {
 			name: "amount over digit limit",
 			msg: MsgBridgeExchange{

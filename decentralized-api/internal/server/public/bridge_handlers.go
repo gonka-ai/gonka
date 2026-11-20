@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -81,6 +82,7 @@ type BridgeStatusResponse struct {
 	BlockCountByNumber   map[string]int `json:"blockCountByNumber"`
 	EarliestBlockNumber  uint64         `json:"earliestBlockNumber"`
 	LatestBlockNumber    uint64         `json:"latestBlockNumber"`
+	QuarantinedCount     *int           `json:"quarantinedCount"` // null when the count is unavailable
 }
 
 // BridgeAddressesResponse returns bridge contract addresses for a chain.
@@ -360,14 +362,31 @@ func (q *BridgeQueue) processBlockReceipts(ctx context.Context, block *BridgeBlo
 	return nil
 }
 
-// commitReceipt sends a receipt optimistically (no pre-check). On submit:
+// commitReceipt sends a receipt after a local stateless pre-check. Outcomes:
+//   - malformed receipt content (can never pass ValidateBasic) → quarantine +
+//     return OK (advance drain); an unrecordable quarantine pauses instead
 //   - permanent feeder rejects → specific log + return OK (advance drain)
 //   - success → confirm via index-independent state poll
 //   - uncertain / retryable → pause drain for the next POST
 func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, block BridgeBlock) error {
+	// The validator is the only field not taken from the receipt. Check it first
+	// so a local misconfiguration pauses the drain instead of quarantining every
+	// receipt as malformed.
+	if _, err := sdk.AccAddressFromBech32(q.recorder.GetAccountAddress()); err != nil {
+		slog.Error("Bridge: Local validator address invalid; pausing drain", "err", err)
+		return fmt.Errorf("Bridge: invalid local validator address: %w", err)
+	}
+
 	msg, err := q.buildBridgeExchangeMsg(receipt, block)
 	if err != nil {
-		return err
+		return q.quarantineReceipt(ctx, receipt, block, bridgeQuarantineMalformedPubKey, err)
+	}
+
+	// ValidateBasic is stateless and compiled from the same package the chain
+	// runs, so a failure here is final for this receipt: resubmitting it would
+	// be rejected identically on every retry and park the cursor forever.
+	if err := msg.ValidateBasic(); err != nil {
+		return q.quarantineReceipt(ctx, receipt, block, bridgeQuarantineMalformedContent, err)
 	}
 
 	slog.Info("Bridge: Committing receipt",
@@ -402,6 +421,47 @@ func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, 
 	}
 
 	return q.confirmReceiptRecorded(ctx, msg)
+}
+
+// quarantineReceipt durably records a receipt this node will never submit and
+// lets the drain advance past it. If the record cannot be written the drain
+// pauses, so a receipt is never skipped without a trace.
+func (q *BridgeQueue) quarantineReceipt(ctx context.Context, receipt BridgeReceipt, block BridgeBlock, reason string, cause error) error {
+	attrs := []any{
+		"reason", reason,
+		"chain", block.OriginChain,
+		"blockNumber", block.BlockNumber,
+		"receiptIndex", receipt.ReceiptIndex,
+		"contract", receipt.ContractAddress,
+		"amountLen", len(receipt.Amount),
+		"err", cause,
+	}
+	record := apiconfig.BridgeQuarantinedReceipt{
+		ChainId:         block.OriginChain,
+		BlockNumber:     block.BlockNumber,
+		ReceiptIndex:    receipt.ReceiptIndex,
+		ContractAddress: receipt.ContractAddress,
+		OwnerPubKey:     receipt.OwnerPubKey,
+		Reason:          reason,
+		Error:           cause.Error(),
+	}
+	inserted, err := apiconfig.InsertBridgeQuarantinedReceipt(ctx, q.db, record, receipt.Amount)
+	if err != nil {
+		slog.Error("Bridge: Failed to record quarantined receipt; pausing drain", append(attrs, "dbErr", err)...)
+		return fmt.Errorf("Bridge: failed to quarantine receipt (%s): %w", reason, err)
+	}
+	if inserted {
+		slog.Error("Bridge: Malformed receipt quarantined; skipping", attrs...)
+	} else {
+		// A retried drain revisits receipts quarantined on an earlier pass.
+		slog.Debug("Bridge: Receipt already quarantined; skipping", attrs...)
+	}
+	return nil
+}
+
+// GetQuarantinedReceipts returns the most recent quarantined receipts for a chain.
+func (q *BridgeQueue) GetQuarantinedReceipts(ctx context.Context, chain string, limit int) ([]apiconfig.BridgeQuarantinedReceipt, error) {
+	return apiconfig.ListBridgeQuarantinedReceipts(ctx, q.db, chain, limit)
 }
 
 // buildBridgeExchangeMsg builds the MsgBridgeExchange for a receipt, deriving the
@@ -514,6 +574,9 @@ const (
 	bridgeSkipNotActive        = "not_active_participant"
 	bridgeSkipContentMismatch  = "content_mismatch"
 	bridgeRetryUncertain       = "uncertain_retry"
+
+	bridgeQuarantineMalformedContent = "malformed_content"
+	bridgeQuarantineMalformedPubKey  = "malformed_pubkey"
 )
 
 // classifyBridgeExchangeSubmit maps chain RawLog / errors to skip vs retry.
@@ -603,6 +666,15 @@ func (s *Server) getBridgeStatus(c echo.Context) error {
 		BlockCountByNumber:   blockCountByNumber,
 		EarliestBlockNumber:  earliestBlock,
 		LatestBlockNumber:    latestBlock,
+	}
+	// Left null on failure so monitoring can tell "unknown" from "none".
+	if s.blockQueue.db != nil {
+		count, err := apiconfig.CountBridgeQuarantinedReceipts(c.Request().Context(), s.blockQueue.db)
+		if err != nil {
+			slog.Warn("Bridge: Failed to count quarantined receipts", "err", err)
+		} else {
+			response.QuarantinedCount = &count
+		}
 	}
 
 	return c.JSON(http.StatusOK, response)

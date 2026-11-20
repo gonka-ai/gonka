@@ -77,20 +77,25 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		if validated.VotedPower >= requiredPower {
 			// Only process completion once to avoid duplicate mints
 			if existingTx.Status == types.BridgeTransactionStatus_BRIDGE_PENDING {
+				cacheCtx, write := ctx.CacheContext()
 				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
-				k.SetBridgeTransaction(ctx, existingTx)
-				k.removeBridgePending(ctx, existingTx.EpochIndex, existingTx.Id)
+				k.SetBridgeTransaction(cacheCtx, existingTx)
 
-				// Handle token minting / native release for completed transaction
-				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
-					k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
+				if err := k.handleCompletedBridgeTransaction(cacheCtx, existingTx); err != nil {
+					k.LogError("Bridge exchange: release failed, record stays pending",
 						types.Messages,
 						"error", err,
 						"originChain", msg.OriginChain,
 						"blockNumber", msg.BlockNumber,
 						"receiptIndex", msg.ReceiptIndex)
-					return nil, err
+					existingTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
+					k.SetBridgeTransaction(ctx, existingTx)
+					return &types.MsgBridgeExchangeResponse{
+						Id: existingTx.Id,
+					}, nil
 				}
+				write()
+				k.removeBridgePending(ctx, existingTx.EpochIndex, existingTx.Id)
 
 				k.LogInfo("Bridge exchange: transaction reached majority validation",
 					types.Messages,
