@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -537,50 +538,54 @@ func TestSourceHighWaterFollowsTheRunWhenFloorHeightIsMissing(t *testing.T) {
 }
 
 func TestSourceHeaderTimeBelowFloorIsPassThrough(t *testing.T) {
-	at := time.Unix(1_800_000_000, 0)
-	hash := []byte{0x05, 0x00}
-	release := make(chan struct{})
-	var calls atomic.Int64
-	s := New(
-		WithFloor(func() uint64 { return 1000 }),
-		WithMissWait(time.Second),
-		WithFiller(fillerFunc(func(ctx context.Context, height int64) (Fill, error) {
-			calls.Add(1)
-			select {
-			case <-release:
-			case <-ctx.Done():
-				return Fill{}, ctx.Err()
-			}
-			return Fill{Header: hdr(height, at, hash), Origin: OriginChain}, nil
-		})),
-	)
+	synctest.Test(t, func(t *testing.T) {
+		at := time.Unix(1_800_000_000, 0)
+		hash := []byte{0x05, 0x00}
+		release := make(chan struct{})
+		var calls atomic.Int64
+		s := New(
+			WithFloor(func() uint64 { return 1000 }),
+			WithMissWait(time.Second),
+			WithFiller(fillerFunc(func(ctx context.Context, height int64) (Fill, error) {
+				calls.Add(1)
+				select {
+				case <-release:
+				case <-ctx.Done():
+					return Fill{}, ctx.Err()
+				}
+				return Fill{Header: hdr(height, at, hash), Origin: OriginChain}, nil
+			})),
+		)
 
-	var wg sync.WaitGroup
-	errCh := make(chan error, 2)
-	msCh := make(chan int64, 2)
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			ms, err := s.HeaderTimeMs(500, hash)
-			errCh <- err
-			msCh <- ms
-		}()
-	}
-	require.Eventually(t, func() bool { return calls.Load() == 1 }, time.Second, 5*time.Millisecond)
-	close(release)
-	wg.Wait()
-	close(errCh)
-	close(msCh)
-	for err := range errCh {
-		require.NoError(t, err)
-	}
-	for ms := range msCh {
-		require.Equal(t, at.UnixMilli(), ms)
-	}
-	require.Equal(t, int64(1), calls.Load())
-	_, ok := s.StoredAt(500)
-	require.False(t, ok)
+		var wg sync.WaitGroup
+		errCh := make(chan error, 2)
+		msCh := make(chan int64, 2)
+		for i := 0; i < 2; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				ms, err := s.HeaderTimeMs(500, hash)
+				errCh <- err
+				msCh <- ms
+			}()
+		}
+		// Both lookups must join the in-flight read before it can complete.
+		synctest.Wait()
+		require.Equal(t, int64(1), calls.Load())
+		close(release)
+		wg.Wait()
+		close(errCh)
+		close(msCh)
+		for err := range errCh {
+			require.NoError(t, err)
+		}
+		for ms := range msCh {
+			require.Equal(t, at.UnixMilli(), ms)
+		}
+		require.Equal(t, int64(1), calls.Load())
+		_, ok := s.StoredAt(500)
+		require.False(t, ok)
+	})
 }
 
 func TestSourceCatchUpSkipsStoredHeights(t *testing.T) {
