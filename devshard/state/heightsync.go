@@ -121,9 +121,8 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 
 // applyHeightAck accepts MsgHeightAck into Diff while Active. Log-plane L0–L7
 // still run in applyCore / compose; this is the same apply-path identity check
-// confirm, finish, and votes use (hostSignerAllowedLocked). L2 admits with
-// CheckWarmKey and must not bind: compose trials it on prefixes that can still
-// be dropped. The binding is written here, on a tx that is actually applied.
+// confirm, finish, and votes use (hostSignerAllowedLocked): the history at
+// this nonce, with the diff's own warm-key entries already applied.
 func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -185,21 +184,20 @@ func (sm *StateMachine) recordMarksLocked(ms []heightsync.AttributableMark) {
 }
 
 func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
+	actors := sm.consensusActorsAtLocked(sm.state.LatestNonce + 1)
 	return heightsync.LogPlaneState{
 		SlotsNum: uint64(len(sm.state.Group)),
 		SlotKeys: sm.slotToAddress,
-		WarmKeys: sm.state.WarmKeys,
-		// Non-binding: L2 runs on compose trial prefixes that may still be
-		// dropped. Apply writes the binding via hostSignerAllowedLocked, the
-		// same AcceptWarm as confirm/finish/vote.
-		AcceptWarm: func(_ uint32, recovered, expected string) bool {
-			return sm.CheckWarmKey(recovered, expected)
-		},
-		Verifier: sm.verifier,
-		Tracker:  sm.turnTracker,
-		Floor:    sm.heightSyncFloor,
-		Cfg:      sm.heartbeatCfg,
-		EscrowID: sm.state.EscrowID,
+		// L2 reads the consensus history only: the diff's bind and revoke
+		// entries apply before the log-plane check, so a first ack by a
+		// freshly bound key verifies on every replica alike.
+		History:        actors.History,
+		BindingAllowed: actors.BindingAllowed,
+		Verifier:       sm.verifier,
+		Tracker:        sm.turnTracker,
+		Floor:          sm.heightSyncFloor,
+		Cfg:            sm.heartbeatCfg,
+		EscrowID:       sm.state.EscrowID,
 	}
 }
 
@@ -446,6 +444,26 @@ func (sm *StateMachine) HeightSyncMissingAcks(turnStart uint64) []uint32 {
 		return nil
 	}
 	return sm.turnTracker.MissingAcksDue(turnStart, sm.turnTracker.LastCompletedHeight())
+}
+
+// HeightSyncAckOutstanding reports whether this local response can still
+// deliver an acknowledgment to a slot missing from a retained turn.
+func (sm *StateMachine) HeightSyncAckOutstanding(refNonce uint64, slot uint32) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.state.Phase != types.PhaseActive || sm.turnTracker == nil {
+		return false
+	}
+	turn, ok := sm.turnTracker.HeartbeatTurn(refNonce)
+	if !ok {
+		return false
+	}
+	record := sm.turnTracker.Record(turn)
+	if record == nil {
+		return false
+	}
+	_, acknowledged := record.Acks[slot]
+	return !acknowledged
 }
 
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.

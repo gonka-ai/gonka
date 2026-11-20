@@ -176,24 +176,3 @@ func TestPostgresDiffBatch_ReplayIsIdempotentAndForkWritesNothing(t *testing.T) 
 	require.Equal(t, 30, sigs)
 	require.Equal(t, uint64(30), latest)
 }
-
-func TestPostgresDiffBatch_WarmKeysRoundTripAndCountInReplayIdentity(t *testing.T) {
-	pg := newBatchPostgres(t)
-	ctx := context.Background()
-	recs := batchRecs(1, 5)
-	recs[1].WarmKeyDelta = map[uint32]string{0: "warm-a", 2: "warm-b"}
-	recs[3].WarmKeyDelta = map[uint32]string{1: "warm-c"}
-	require.NoError(t, pg.AppendDiffBatch(ctx, "escrow-1", recs))
-	require.NoError(t, pg.AppendDiffBatch(ctx, "escrow-1", recs), "an identical replay with warm keys succeeds")
-
-	got, err := pg.GetDiffs("escrow-1", 1, 5)
-	require.NoError(t, err)
-	require.Len(t, got, 5)
-	require.Equal(t, recs[1].WarmKeyDelta, got[1].WarmKeyDelta)
-	require.Equal(t, recs[3].WarmKeyDelta, got[3].WarmKeyDelta)
-	require.Empty(t, got[0].WarmKeyDelta)
-
-	forked := batchRecs(1, 5)
-	forked[1].WarmKeyDelta = map[uint32]string{0: "warm-other"}
-	require.ErrorIs(t, pg.AppendDiffBatch(ctx, "escrow-1", forked), ErrDiffFork)
-}

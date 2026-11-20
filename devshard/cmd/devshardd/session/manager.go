@@ -33,6 +33,7 @@ import (
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/hostevents"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -58,13 +59,9 @@ type HostManager struct {
 	// on a lookup. Their lookups skip escrowLookupFloor.
 	knownCreators map[string]time.Time
 	// rosterEscrows keeps chain escrows inside retention (current epoch and
-	// the two before it). Unknown ids stay in escrowLookups. peers on each
-	// entry is the unbound GetPayload warm-key decision for that escrow.
+	// the two before it). Unknown ids stay in escrowLookups.
 	rosterEscrows map[string]*rosterEscrow
-	// rosterPeerSF collapses concurrent warm-key scans for one escrow and
-	// peer. It is not the session-create group: those keys are escrow ids.
-	rosterPeerSF singleflight.Group
-	sf           singleflight.Group
+	sf            singleflight.Group
 
 	store              storage.Storage
 	signer             *signing.Secp256k1Signer
@@ -74,12 +71,17 @@ type HostManager struct {
 	validationRecorder devshardpkg.ValidationCompletionRecorder
 	boundVersion       string
 	bridge             bridge.MainnetBridge
-	payloadStore       PayloadStore
-	recorder           PayloadAuthClient
-	availability       devshardpkg.AvailabilityProvider
-	maxNonce           devshardpkg.MaxNonceProvider
-	params             runtimeparams.Provider
-	maxBodySize        int64
+	// warmKeys is the host's grant source: every MsgWarmKeyBind a session
+	// applies is confirmed against it, and the bindings of a restored
+	// snapshot are confirmed the same way. Nil skips the confirmation
+	// (tests without a chain).
+	warmKeys     bridge.WarmKeyGrantSource
+	payloadStore PayloadStore
+	recorder     PayloadAuthClient
+	availability devshardpkg.AvailabilityProvider
+	maxNonce     devshardpkg.MaxNonceProvider
+	params       runtimeparams.Provider
+	maxBodySize  int64
 
 	recoveryGate   recoveryGate
 	backlogDrained atomic.Bool
@@ -110,6 +112,7 @@ type HostManager struct {
 	headerTimes      *headertime.Source
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
+	hostEvents       *hostevents.Poller
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
 	// cometLiveness is captured at wiring so CloseHeightSync can drop the
 	// scheduler without racing the chain-events goroutine.
@@ -401,6 +404,51 @@ func NewHostManager(
 }
 
 // SetAvailabilityProvider gates completion requests on devshard_requests_enabled.
+// SetWarmKeyGrantSource installs the chain's warm-key log view that binds
+// are confirmed against. Call before sessions are created or recovered.
+func (m *HostManager) SetWarmKeyGrantSource(src bridge.WarmKeyGrantSource) {
+	m.warmKeys = src
+}
+
+// warmKeySMOpts are the state-machine options every session gets for warm
+// keys: the grant source for local admission and, when the manager has one,
+// the chain-log confirmation of binds.
+func (m *HostManager) warmKeySMOpts() []state.SMOption {
+	opts := []state.SMOption{state.WithWarmKeyResolver(m.bridge.VerifyWarmKey)}
+	if m.warmKeys != nil {
+		src := m.warmKeys
+		opts = append(opts, state.WithWarmKeyHeightChecker(func(cold, warm string, id uint64, height int64, t time.Time) (bool, error) {
+			return bridge.CheckWarmKeyAtHeight(src, cold, warm, id, height, t)
+		}))
+		opts = append(opts, state.WithWarmKeyConfirmer(func(cold, warm string, id uint64) error {
+			return bridge.ConfirmWarmKeyBind(src, cold, warm, id)
+		}))
+	}
+	return opts
+}
+
+// confirmWarmKeyHistory checks every binding of a restored snapshot against
+// the chain log, the way a live apply would have. A snapshot vouches for its
+// own signers through its history, so the history is not taken on trust.
+func (m *HostManager) confirmWarmKeyHistory(sm *state.StateMachine) error {
+	if m.warmKeys == nil {
+		return nil
+	}
+	history := sm.WarmKeyHistory()
+	for slot, entries := range history {
+		cold := sm.SlotAddress(slot)
+		if cold == "" {
+			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, slot)
+		}
+		for _, b := range entries {
+			if err := bridge.ConfirmWarmKeyBind(m.warmKeys, cold, b.Addr, b.GrantID); err != nil {
+				return fmt.Errorf("slot %d %s grant %d: %w", slot, b.Addr, b.GrantID, err)
+			}
+		}
+	}
+	return nil
+}
+
 func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider) {
 	m.availability = p
 }
@@ -997,7 +1045,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	config := bridge.SessionConfigAtBind(len(group), escrow)
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier, m.store,
-		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(m.boundVersion))...,
+		m.sessionSMOpts(append(m.warmKeySMOpts(), state.WithVersion(m.boundVersion))...)...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -1323,7 +1371,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		return state.NewStateMachine(
 			escrowID, meta.Config, meta.Group, meta.InitialBalance,
 			meta.CreatorAddr, m.verifier, m.store,
-			m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
+			m.sessionSMOpts(append(m.warmKeySMOpts(), state.WithVersion(recoveredVersion))...)...,
 		)
 	}
 	sm, err := newStateMachine()
@@ -1334,7 +1382,8 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	replayFrom := uint64(1)
 	if meta.LatestNonce > 0 {
 		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
-		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce &&
+			(!types.RequiresMainnetHeightProof(sm.ProtocolVersion()) || snapNonce <= meta.HostAdmissionNonce) {
 			snapState, committedEntries, sealedNonces, floorProto, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
 			if decodeErr != nil {
 				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
@@ -1369,6 +1418,12 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 						if sm, err = newStateMachine(); err != nil {
 							return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
 						}
+					} else if keyErr := m.confirmWarmKeyHistory(sm); keyErr != nil {
+						logging.Error("devshard snapshot warm-key history not confirmed by the chain log, replaying full history", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", keyErr)
+						if sm, err = newStateMachine(); err != nil {
+							return nil, nil, fmt.Errorf("recreate state machine after warm-key reject: %w", err)
+						}
 					} else {
 						replayFrom = snapNonce + 1
 						logging.Info("restored devshard snapshot", inferenceTypes.System,
@@ -1385,11 +1440,10 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		if replayFrom <= meta.LatestNonce {
 			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 				for _, rec := range page {
-					sm.InjectWarmKeys(rec.WarmKeyDelta)
 					var root []byte
 					applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
 						var err error
-						root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+						root, err = host.ReplayStoredDiff(context.Background(), sm, m.store, escrowID, rec)
 						return err
 					})
 					if applyErr != nil {
@@ -1554,6 +1608,10 @@ func (m *HostManager) Register(g *echo.Group) {
 			rpcserver.WithGossipService(rpcserver.NewGossipHandler(lookup)),
 			rpcserver.WithPayloadService(payloads),
 		))
+	} else if types.RequiresMainnetHeightProof(m.boundVersion) {
+		// A v7 child must restart after its shared key becomes available rather
+		// than advertise readiness forever without any mounted peer RPC routes.
+		panic("devshard: v7 peer RPC authentication unavailable; refusing startup")
 	}
 	devshardserver.RegisterLazySessionRoutes(g, m, m, m, opts...)
 }
@@ -1573,7 +1631,16 @@ func (m *HostManager) peerAuthHandler() *rpcserver.PeerAuthHandler {
 			return
 		}
 		version := strings.TrimSpace(m.boundVersion)
-		sessionKey, err := m.signer.DerivePeerSessionKey(hostAddr, version, rpcserver.SessionKeyID)
+		var sessionKey []byte
+		var err error
+		shared := false
+		if types.RequiresMainnetHeightProof(version) {
+			sessionKey, shared, err = storage.SharedPeerSessionKey(m.store, hostAddr, version, rpcserver.SessionKeyID)
+		}
+		if err == nil && !shared {
+			// Legacy protocols and non-HA stores retain their existing key.
+			sessionKey, err = m.signer.DerivePeerSessionKey(hostAddr, version, rpcserver.SessionKeyID)
+		}
 		if err != nil {
 			slog.Error("devshardd: peer session key", "err", err)
 			return

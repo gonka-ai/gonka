@@ -1,7 +1,12 @@
 package types
 
 import (
+	"common/chainoracle/blocks/lightproof"
 	"fmt"
+	"sort"
+
+	"devshard/signing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -39,16 +44,14 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 		}
 	}
 
-	warmKeys := make(map[uint32]string, len(state.WarmKeys))
-	for slotID, addr := range state.WarmKeys {
-		warmKeys[slotID] = addr
-	}
-
 	cfg := state.Config
 	return &EscrowStateProto{
+		MainnetCheckpoint:           checkpointToProto(state.MainnetCheckpoint),
 		EscrowId:                    state.EscrowID,
 		StateRootAndProtocolVersion: state.StateRootAndProtocolVersion,
 		Config: &SessionConfigProto{
+			MainnetAnchorHeight:       cfg.MainnetAnchorHeight,
+			MainnetAnchorHash:         append([]byte(nil), cfg.MainnetAnchorHash...),
 			RefusalTimeout:            cfg.RefusalTimeout,
 			ExecutionTimeout:          cfg.ExecutionTimeout,
 			TokenPrice:                cfg.TokenPrice,
@@ -67,7 +70,7 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 		FinalizeNonce:                 state.FinalizeNonce,
 		Inferences:                    inferences,
 		HostStats:                     hostStats,
-		WarmKeys:                      warmKeys,
+		WarmKeyHistory:                warmKeyHistoryToProto(state.WarmKeyHistory),
 		LatestNonce:                   state.LatestNonce,
 		SealedAcc:                     append([]byte(nil), state.SealedAcc...),
 		HeightSyncForcedStart:         state.HeightSyncForcedStart,
@@ -118,15 +121,12 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 		}
 	}
 
-	warmKeys := make(map[uint32]string, len(msg.WarmKeys))
-	for slotID, addr := range msg.WarmKeys {
-		warmKeys[slotID] = addr
-	}
-
 	var cfg SessionConfig
 	if msg.Config != nil {
 		p := msg.Config
 		cfg = SessionConfig{
+			MainnetAnchorHeight:       p.MainnetAnchorHeight,
+			MainnetAnchorHash:         append([]byte(nil), p.MainnetAnchorHash...),
 			RefusalTimeout:            p.RefusalTimeout,
 			ExecutionTimeout:          p.ExecutionTimeout,
 			TokenPrice:                p.TokenPrice,
@@ -141,6 +141,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 	}
 
 	return &EscrowState{
+		MainnetCheckpoint:             checkpointFromProto(msg.MainnetCheckpoint),
 		EscrowID:                      msg.EscrowId,
 		StateRootAndProtocolVersion:   msg.StateRootAndProtocolVersion,
 		Config:                        cfg,
@@ -151,7 +152,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 		FinalizeNonce:                 msg.FinalizeNonce,
 		Inferences:                    inferences,
 		HostStats:                     hostStats,
-		WarmKeys:                      warmKeys,
+		WarmKeyHistory:                warmKeyHistoryFromProto(msg.WarmKeyHistory),
 		LatestNonce:                   msg.LatestNonce,
 		SealedAcc:                     append([]byte(nil), msg.SealedAcc...),
 		HeightSyncForcedStart:         msg.GetHeightSyncForcedStart(),
@@ -186,6 +187,14 @@ func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, 
 	}
 	if msg.State == nil {
 		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
+	}
+	if len(msg.State.ProtoReflect().GetUnknown()) > 0 {
+		// Field 11 was the v6 warm_keys map, reserved since v7. A snapshot
+		// that carries it belongs to a session of an earlier protocol, whose
+		// key rule this binary does not implement: refusing it here keeps a
+		// v6 session from continuing under the v7 rule with its bindings
+		// silently dropped.
+		return nil, nil, nil, nil, ErrSnapshotFromEarlierProtocol
 	}
 	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), msg.HeightSyncFloor, nil
 }
@@ -267,4 +276,68 @@ func cloneUint64Map(src map[uint64]uint64) map[uint64]uint64 {
 		out[k] = v
 	}
 	return out
+}
+
+// warmKeyHistoryToProto flattens the history in slot order and binding order.
+func warmKeyHistoryToProto(h signing.WarmKeyHistory) []*WarmKeyBindingProto {
+	if len(h) == 0 {
+		return nil
+	}
+	slots := make([]uint32, 0, len(h))
+	for slot := range h {
+		slots = append(slots, slot)
+	}
+	sort.Slice(slots, func(i, j int) bool { return slots[i] < slots[j] })
+	var out []*WarmKeyBindingProto
+	for _, slot := range slots {
+		for _, b := range h[slot] {
+			out = append(out, &WarmKeyBindingProto{
+				SlotId:         slot,
+				Address:        b.Addr,
+				FromNonce:      b.FromNonce,
+				GrantId:        b.GrantID,
+				RevokedAtNonce: b.RevokedAtNonce,
+			})
+		}
+	}
+	return out
+}
+
+// warmKeyHistoryFromProto rebuilds the history, keeping the binding order of
+// the wire form within each slot.
+func warmKeyHistoryFromProto(entries []*WarmKeyBindingProto) signing.WarmKeyHistory {
+	h := make(signing.WarmKeyHistory, len(entries))
+	for _, e := range entries {
+		if e == nil {
+			continue
+		}
+		h[e.SlotId] = append(h[e.SlotId], signing.WarmKeyBinding{
+			Addr:           e.Address,
+			FromNonce:      e.FromNonce,
+			GrantID:        e.GrantId,
+			RevokedAtNonce: e.RevokedAtNonce,
+		})
+	}
+	return h
+}
+
+func checkpointToProto(cp lightproof.Checkpoint) *MainnetCheckpointProto {
+	if cp.Height == 0 {
+		return nil
+	}
+	var ns int64
+	if !cp.Time.IsZero() {
+		ns = cp.Time.UnixNano()
+	}
+	return &MainnetCheckpointProto{Height: cp.Height, Hash: append([]byte(nil), cp.Hash...), NextValidatorsHash: append([]byte(nil), cp.NextValidatorsHash...), TimeUnixNano: ns, ChainId: cp.ChainID}
+}
+func checkpointFromProto(cp *MainnetCheckpointProto) lightproof.Checkpoint {
+	if cp == nil {
+		return lightproof.Checkpoint{}
+	}
+	var t time.Time
+	if cp.TimeUnixNano != 0 {
+		t = time.Unix(0, cp.TimeUnixNano).UTC()
+	}
+	return lightproof.Checkpoint{Height: cp.Height, Hash: append([]byte(nil), cp.Hash...), NextValidatorsHash: append([]byte(nil), cp.NextValidatorsHash...), Time: t, ChainID: cp.ChainId}
 }

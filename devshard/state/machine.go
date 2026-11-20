@@ -2,17 +2,19 @@ package state
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
+	"common/chainoracle/blocks/lightproof"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -85,10 +87,22 @@ func copyInferences(src map[uint64]*types.InferenceRecord) map[uint64]*types.Inf
 	return dst
 }
 
-// WarmKeyResolver checks whether warmAddr is authorized to act on behalf of
-// coldAddr. Injected callback, wraps a cached bridge query. Called at most
-// once per slot. Set to nil when warm keys are not used.
+// WarmKeyResolver is the grant source: it reports whether warmAddr holds a
+// live warm-key grant from coldAddr, from the bridge's copy of the chain's
+// warm-key log. It is consulted only for local admission (a host message
+// whose key the history does not cover yet, repair, gossip membership),
+// never on the apply path: a key becomes a consensus actor only through
+// MsgWarmKeyBind. Nil disables the fallback.
 type WarmKeyResolver func(warmAddr, coldAddr string) (bool, error)
+
+// WarmKeyConfirmer checks a MsgWarmKeyBind against the chain's warm-key log:
+// Legacy identity check: entry grantID of coldAddr names warmAddr. V7 also
+// requires WarmKeyHeightChecker on every apply and replay. The answer is
+// a fact about an append-only record, so every host that asks, whenever it
+// asks, gets the same one. It may wait for the entry to become available;
+// an error refuses the diff. Nil skips the check (the gateway, which
+// proposes from the same log, and tests).
+type WarmKeyConfirmer func(coldAddr, warmAddr string, grantID uint64) error
 
 // StateMachine applies diffs and tracks session state.
 // The embedded RWMutex protects mutable fields in state (Inferences,
@@ -123,9 +137,14 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver WarmKeyResolver // optional, nil = no warm key support
-	headerTimes  HeaderTimeSource
-	deferred     []*types.DevshardTx
+	warmResolver       WarmKeyResolver  // optional grant source for local admission
+	warmConfirm        WarmKeyConfirmer // optional chain-log confirmation of binds
+	warmAdmission      *warmAdmission
+	warmHeightCheck    WarmKeyHeightChecker
+	warmHeightValidity map[warmGrantKey]bool
+	mainnetHeights     MainnetHeightSource
+	headerTimes        HeaderTimeSource
+	deferred           []*types.DevshardTx
 
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
@@ -177,14 +196,13 @@ type deferredObsWrite struct {
 // redoing it is equivalent to re-applying (minus the obs writes, which are
 // buffered in obs and flushed on commit).
 type ValidatedDiff struct {
-	Root      []byte
-	WarmAfter map[uint32]string
-	Applied   []*types.DevshardTx // populated for the best-effort (gateway) path
-	Deferred  []*types.DevshardTx
-	nonce     uint64
-	journal   *mutationJournal
-	obs       []deferredObsWrite
-	marks     []heightsync.AttributableMark
+	Deferred []*types.DevshardTx
+	Root     []byte
+	Applied  []*types.DevshardTx // populated for the best-effort (gateway) path
+	nonce    uint64
+	journal  *mutationJournal
+	obs      []deferredObsWrite
+	marks    []heightsync.AttributableMark
 }
 
 // Nonce reports the nonce this validated diff will commit.
@@ -193,9 +211,16 @@ func (vd *ValidatedDiff) Nonce() uint64 { return vd.nonce }
 // SMOption configures optional StateMachine behavior.
 type SMOption func(*StateMachine)
 
-// WithWarmKeyResolver sets a callback for warm key verification.
+// WithWarmKeyResolver sets the grant source for local admission decisions.
 func WithWarmKeyResolver(r WarmKeyResolver) SMOption {
 	return func(sm *StateMachine) { sm.warmResolver = r }
+}
+
+// WithWarmKeyConfirmer sets the chain-log check every applied MsgWarmKeyBind
+// passes through (hosts). Replay of diffs this node already accepted
+// (ApplyLocalPersisted) skips it.
+func WithWarmKeyConfirmer(c WarmKeyConfirmer) SMOption {
+	return func(sm *StateMachine) { sm.warmConfirm = c }
 }
 
 // WithStateRootAndProtocolVersion binds the state-root and settlement protocol
@@ -218,7 +243,23 @@ func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
 }
 
 func WithHeaderTimes(src HeaderTimeSource) SMOption {
-	return func(sm *StateMachine) { sm.headerTimes = src }
+	return func(sm *StateMachine) {
+		sm.headerTimes = src
+		if source, ok := src.(MainnetHeightSource); ok {
+			sm.mainnetHeights = source
+		}
+	}
+}
+
+// AppliedHeaderTimes returns the header-time source installed by opts.
+func AppliedHeaderTimes(opts ...SMOption) HeaderTimeSource {
+	sm := &StateMachine{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(sm)
+		}
+	}
+	return sm.headerTimes
 }
 
 // HeartbeatConfig is the log-plane config this machine was constructed with.
@@ -262,6 +303,7 @@ func NewStateMachine(
 		addrToSlotCount[s.ValidatorAddress]++
 	}
 	config = types.NormalizeSessionConfig(config, len(group))
+	config.MainnetAnchorHash = bytes.Clone(config.MainnetAnchorHash)
 
 	groupCopy := make([]types.SlotAssignment, len(group))
 	copy(groupCopy, group)
@@ -296,7 +338,7 @@ func NewStateMachine(
 			Fees:                        config.CreateDevshardFee,
 			Inferences:                  make(map[uint64]*types.InferenceRecord),
 			HostStats:                   hostStats,
-			WarmKeys:                    make(map[uint32]string),
+			WarmKeyHistory:              make(signing.WarmKeyHistory),
 		},
 		verifier:           verifier,
 		userAddress:        userAddress,
@@ -316,6 +358,12 @@ func NewStateMachine(
 	}
 	if sm.headerTimes == nil {
 		sm.headerTimes = fallbackHeaderTimes
+	}
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		if config.MainnetAnchorHeight <= 0 || len(config.MainnetAnchorHash) != 32 {
+			return nil, fmt.Errorf("v7 requires a chain-pinned mainnet checkpoint")
+		}
+		sm.state.MainnetCheckpoint = lightproof.Checkpoint{Height: config.MainnetAnchorHeight, Hash: bytes.Clone(config.MainnetAnchorHash)}
 	}
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
 	sm.heightSyncFloor = heightsync.NewFloorIndex()
@@ -374,9 +422,8 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 		// applyCore undoes its journal on every error path.
 		return nil, err
 	}
-	warmAfter := copyStringMap(sm.state.WarmKeys)
 	sm.detachJournalLocked(j)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
+	return &ValidatedDiff{Root: root, nonce: diff.Nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
 // ValidateDiffs is ValidateDiff for a contiguous run. Each diff is
@@ -385,6 +432,22 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 // for every diff of the valid prefix, in order, and the error that ended it.
 // The handles must be committed in order with CommitValidated.
 func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, error) {
+	return sm.validateDiffs(diffs, nil)
+}
+
+// ValidateDiffsForAdmission adds live authority checks for first-seen network
+// history. It must run before persistence. Historical replay uses ValidateDiffs
+// or ApplyLocalPersisted instead; it never reinterprets old work at today's tip.
+func (sm *StateMachine) ValidateDiffsForAdmission(ctx context.Context, diffs []types.Diff) ([]*ValidatedDiff, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
+	defer cancel()
+	return sm.validateDiffs(diffs, &warmAdmission{ctx: ctx, decisions: make(map[warmGrantKey]warmAdmissionDecision)})
+}
+
+func (sm *StateMachine) validateDiffs(diffs []types.Diff, admission *warmAdmission) ([]*ValidatedDiff, error) {
 	var sigErr error
 	for i, diff := range diffs {
 		if err := sm.verifyDiffUserSig(diff); err != nil {
@@ -396,6 +459,11 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		sm.warmAdmission = admission
+		defer func() { sm.warmAdmission = nil }()
+	}
+
 	out := make([]*ValidatedDiff, 0, len(diffs))
 	defer func() {
 		for i := len(out) - 1; i >= 0; i-- {
@@ -403,6 +471,9 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 		}
 	}()
 	for _, diff := range diffs {
+		if admission != nil {
+			admission.err = nil
+		}
 		var obs []deferredObsWrite
 		var marks []heightsync.AttributableMark
 		sm.obsDeferred = &obs
@@ -411,12 +482,14 @@ func (sm *StateMachine) ValidateDiffs(diffs []types.Diff) ([]*ValidatedDiff, err
 		sm.obsDeferred = nil
 		sm.marksDeferred = nil
 		if err != nil {
+			if admission != nil && admission.err != nil {
+				return out, admission.err
+			}
 			return out, err
 		}
-		warmAfter := copyStringMap(sm.state.WarmKeys)
 		sm.detachJournalLocked(j)
 		sm.installJournalLocked(j)
-		out = append(out, &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, journal: j, obs: obs, marks: marks})
+		out = append(out, &ValidatedDiff{Root: root, nonce: diff.Nonce, journal: j, obs: obs, marks: marks})
 	}
 	return out, sigErr
 }
@@ -480,8 +553,8 @@ func (sm *StateMachine) takeDeferredLocked() []*types.DevshardTx {
 
 // PreviewLocalBestEffort is the validate-on-clone form of ApplyLocalBestEffort:
 // it trial-applies candidates and returns a handle carrying root, the applied
-// subset, warm keys and the detached journal, then undoes the apply so the live
-// SM is unchanged. Used for persist-first compose: preview →
+// subset and the detached journal, then undoes the apply so the live SM is
+// unchanged. Used for persist-first compose: preview →
 // persist → CommitValidated (which installs the post-state without recompute).
 func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.DevshardTx) (*ValidatedDiff, error) {
 	sm.mu.Lock()
@@ -498,9 +571,8 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 		// localBestEffortLocked undoes its journal on every error path.
 		return nil, err
 	}
-	warmAfter := copyStringMap(sm.state.WarmKeys)
 	sm.detachJournalLocked(j)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, Deferred: sm.takeDeferredLocked(), nonce: nonce, journal: j, obs: obs, marks: marks}, nil
+	return &ValidatedDiff{Root: root, Applied: applied, Deferred: sm.takeDeferredLocked(), nonce: nonce, journal: j, obs: obs, marks: marks}, nil
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -621,6 +693,13 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 		return nil, nil, nil, err
 	}
 	defer sm.closeJournalLocked(j)
+	if err := sm.stageMainnetHeightLocked(txs); err != nil {
+		return nil, nil, nil, err
+	}
+	_, err = sm.prepareWarmHeightLocked(nonce, txs)
+	if err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Height-sync txs also have to survive CheckDiffLogPlane: applyTx for
 	// heartbeat/ack is admission-only, and skipping L0–L3 here would persist
@@ -631,9 +710,25 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 	// Once MsgFinalizeRound has flipped the phase, heartbeats and height acks
 	// are over: skip them before the log plane so a leftover mempool ack
 	// cannot abort the N+1 finalize rounds.
+	//
+	// Warm-key entries go first, whatever their position among the
+	// candidates: a key bound here signs for this nonce's messages, and the
+	// log-plane identity check reads the history they leave behind.
+	keyTxs, rest := splitWarmKeyTxs(txs)
 	var applied []*types.DevshardTx
+	if len(rest) > 0 && rest[0].GetMainnetHeight() != nil {
+		applied = append(applied, rest[0])
+		rest = rest[1:]
+	}
 	var logPlaneReject error
-	for _, tx := range txs {
+	for _, tx := range keyTxs {
+		if err := sm.applyTx(tx, nonce); err != nil {
+			logDroppedTx(nonce, tx, err)
+			continue
+		}
+		applied = append(applied, tx)
+	}
+	for _, tx := range rest {
 		if sm.state.Phase == types.PhaseFinalizing && heightSyncTraffic(tx) {
 			logDroppedTx(nonce, tx, types.ErrSessionFinalizing)
 			continue
@@ -664,7 +759,13 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 		}
 		applied = append(applied, tx)
 	}
-	if len(applied) == 0 && logPlaneReject != nil {
+	appliedWork := len(applied)
+	if appliedWork > 0 && applied[0].GetMainnetHeight() != nil {
+		// The mandatory prelude authenticates the checkpoint; it does not
+		// make an otherwise rejected height-sync batch useful work.
+		appliedWork--
+	}
+	if appliedWork == 0 && logPlaneReject != nil {
 		return nil, nil, nil, logPlaneReject
 	}
 	sm.observeHeightSyncLocked(nonce, applied)
@@ -725,6 +826,8 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 	return root, applied, j, nil
 }
 
+// splitWarmKeyTxs separates the bind and revoke entries of a diff from its
+// other transactions, keeping the order within each part.
 func (sm *StateMachine) applyTxAtomicLocked(tx *types.DevshardTx, nonce uint64) error {
 	sp := sm.beginSavepointLocked()
 	parentObs := sm.obsDeferred
@@ -751,13 +854,19 @@ func (sm *StateMachine) applyTxAtomicLocked(tx *types.DevshardTx, nonce uint64) 
 	return nil
 }
 
-func copyStringMap(m map[uint32]string) map[uint32]string {
-	if len(m) == 0 {
-		return nil
+func splitWarmKeyTxs(txs []*types.DevshardTx) (keys, rest []*types.DevshardTx) {
+	for _, tx := range txs {
+		if isWarmKeyTx(tx) {
+			keys = append(keys, tx)
+		} else {
+			rest = append(rest, tx)
+		}
 	}
-	cp := make(map[uint32]string, len(m))
-	maps.Copy(cp, m)
-	return cp
+	return keys, rest
+}
+
+func isWarmKeyTx(tx *types.DevshardTx) bool {
+	return tx != nil && (tx.GetWarmKeyBind() != nil || tx.GetWarmKeyRevoke() != nil)
 }
 
 // markScope buffers height-sync marks for one apply. If the caller already
@@ -841,19 +950,33 @@ func (sm *StateMachine) applyCoreJournaled(nonce uint64, txs []*types.DevshardTx
 	scope := sm.pushMarkScopeLocked()
 	defer scope.discard()
 
-	if err := sm.checkLogPlaneLocked(nonce, txs); err != nil {
-		return nil, nil, err
-	}
-
 	// 3. Journal every write so any error below undoes the whole diff.
 	j, err := sm.beginJournalLocked()
 	if err != nil {
 		return nil, nil, err
 	}
 	defer sm.closeJournalLocked(j)
+	if err := sm.stageMainnetHeightLocked(txs); err != nil {
+		return nil, nil, err
+	}
+	_, err = sm.prepareWarmHeightLocked(nonce, txs)
+	if err != nil {
+		return nil, nil, err
+	}
 
-	// 4. Apply each tx.
-	for _, tx := range txs {
+	// 4. Apply each tx: warm-key entries first, whatever their position in
+	// the diff, so a key bound here signs for this nonce's messages and the
+	// log-plane identity check reads the history they leave behind.
+	keyTxs, rest := splitWarmKeyTxs(txs)
+	for _, tx := range keyTxs {
+		if err := sm.applyTx(tx, nonce); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := sm.checkLogPlaneLocked(nonce, txs); err != nil {
+		return nil, nil, err
+	}
+	for _, tx := range rest {
 		if err := sm.checkRaiseResolvableLocked(nonce, tx); err != nil {
 			return nil, nil, err
 		}
@@ -975,7 +1098,9 @@ func (sm *StateMachine) Balance() uint64 {
 func (sm *StateMachine) Config() types.SessionConfig {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return sm.state.Config
+	config := sm.state.Config
+	config.MainnetAnchorHash = bytes.Clone(config.MainnetAnchorHash)
+	return config
 }
 
 // SnapshotState returns a deep copy of the current escrow state.
@@ -1014,6 +1139,8 @@ func snapshotNoInferencesLocked(src *types.EscrowState) types.EscrowState {
 	// only ever replaced wholesale (append to a nil slice), never mutated in
 	// place, so readers of the snapshot see a stable value.
 	s := *src
+	s.MainnetCheckpoint = cloneCheckpoint(src.MainnetCheckpoint)
+	s.Config.MainnetAnchorHash = bytes.Clone(src.Config.MainnetAnchorHash)
 	s.Inferences = nil
 
 	s.Group = make([]types.SlotAssignment, len(src.Group))
@@ -1025,8 +1152,7 @@ func snapshotNoInferencesLocked(src *types.EscrowState) types.EscrowState {
 		s.HostStats[k] = &cp
 	}
 
-	s.WarmKeys = make(map[uint32]string, len(src.WarmKeys))
-	maps.Copy(s.WarmKeys, src.WarmKeys)
+	s.WarmKeyHistory = cloneWarmKeyHistory(src.WarmKeyHistory)
 
 	return s
 }
@@ -1072,17 +1198,25 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 	if state == nil {
 		return nil
 	}
+	if err := sm.validateSnapshotCheckpoint(state); err != nil {
+		return err
+	}
 	restored := cloneEscrowState(state)
 	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.state = restored
 	sm.rebuildCommittedEntriesLocked()
+	if _, err := sm.prepareWarmHeightLocked(restored.LatestNonce, nil); err != nil {
+		return err
+	}
 	return hs.installLocked(sm)
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	s := *src
+	s.MainnetCheckpoint = cloneCheckpoint(src.MainnetCheckpoint)
+	s.Config.MainnetAnchorHash = bytes.Clone(src.Config.MainnetAnchorHash)
 
 	// Deep copy Group.
 	s.Group = make([]types.SlotAssignment, len(src.Group))
@@ -1095,9 +1229,8 @@ func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 		s.HostStats[k] = &cp
 	}
 
-	// Deep copy WarmKeys.
-	s.WarmKeys = make(map[uint32]string, len(src.WarmKeys))
-	maps.Copy(s.WarmKeys, src.WarmKeys)
+	// Deep copy the warm-key history.
+	s.WarmKeyHistory = cloneWarmKeyHistory(src.WarmKeyHistory)
 
 	// Deep copy Inferences.
 	s.Inferences = copyInferences(src.Inferences)
@@ -1186,28 +1319,37 @@ func (sm *StateMachine) ComputeStateRoot() ([]byte, error) {
 	return sm.computeStateRootLocked()
 }
 
-// WarmKeys returns the current warm key bindings (shallow copy).
-func (sm *StateMachine) WarmKeys() map[uint32]string {
+// WarmKeyHistory returns a copy of the warm-key binding history.
+func (sm *StateMachine) WarmKeyHistory() signing.WarmKeyHistory {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	if len(sm.state.WarmKeys) == 0 {
-		return nil
-	}
-	cp := make(map[uint32]string, len(sm.state.WarmKeys))
-	maps.Copy(cp, sm.state.WarmKeys)
-	return cp
+	return cloneWarmKeyHistory(sm.state.WarmKeyHistory)
 }
 
-// IsWarmKeyAddress returns true if addr is a known warm key for any slot.
+// IsWarmKeyAddress returns true if addr has a live binding on any slot.
 func (sm *StateMachine) IsWarmKeyAddress(addr string) bool {
+	if addr == "" {
+		return false
+	}
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	for _, warmAddr := range sm.state.WarmKeys {
-		if warmAddr == addr {
-			return true
+	for slot := range sm.state.WarmKeyHistory {
+		for _, live := range sm.state.WarmKeyHistory.Live(slot) {
+			if live == addr {
+				return true
+			}
 		}
 	}
 	return false
+}
+
+// cloneWarmKeyHistory is Clone with a non-nil result, so state restored from
+// a snapshot without bindings can take a bind without a nil-map write.
+func cloneWarmKeyHistory(h signing.WarmKeyHistory) signing.WarmKeyHistory {
+	if cp := h.Clone(); cp != nil {
+		return cp
+	}
+	return make(signing.WarmKeyHistory)
 }
 
 func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
@@ -1234,11 +1376,111 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 		return sm.applyForceHeightSyncTurn(inner.ForceHeightSyncTurn, diffNonce)
 	case *types.DevshardTx_Heartbeat:
 		return sm.applyHeartbeat(inner.Heartbeat)
+	case *types.DevshardTx_MainnetHeight:
+		// Verified once, atomically, before all transaction effects.
+		return nil
 	case *types.DevshardTx_HeightAck:
 		return sm.applyHeightAck(inner.HeightAck)
+	case *types.DevshardTx_WarmKeyBind:
+		return sm.applyWarmKeyBind(inner.WarmKeyBind, diffNonce)
+	case *types.DevshardTx_WarmKeyRevoke:
+		return sm.applyWarmKeyRevoke(inner.WarmKeyRevoke, diffNonce)
 	default:
 		return types.ErrEmptyTx
 	}
+}
+
+// applyWarmKeyBind binds msg.Address to msg.SlotId from diffNonce on, after
+// the confirmer has checked the named chain-log entry. The history refuses a
+// key that is already live on the slot, an entry at a nonce before the
+// slot's latest change, and a grant id that does not exceed the earlier
+// grants of the same key on the slot.
+func (sm *StateMachine) applyWarmKeyBind(msg *types.MsgWarmKeyBind, diffNonce uint64) error {
+	if msg == nil {
+		return types.ErrEmptyTx
+	}
+	cold, addr, err := sm.warmKeyEntryPartiesLocked(msg.SlotId, msg.Address, msg.GrantId)
+	if err != nil {
+		return err
+	}
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		if !sm.warmHeightValidity[warmGrantKey{cold, msg.GrantId, addr}] {
+			return fmt.Errorf("%w: grant %s/%d is not valid at authenticated height %d", types.ErrWarmKeyUnconfirmed, cold, msg.GrantId, sm.state.MainnetCheckpoint.Height)
+		}
+	} else if sm.warmConfirm != nil && !sm.replayingPersisted {
+		if err := sm.warmConfirm(cold, addr, msg.GrantId); err != nil {
+			return fmt.Errorf("%w: slot %d %s grant %d: %v", types.ErrWarmKeyUnconfirmed, msg.SlotId, addr, msg.GrantId, err)
+		}
+	}
+	scratch := signing.WarmKeyHistory{msg.SlotId: slices.Clone(sm.state.WarmKeyHistory[msg.SlotId])}
+	if err := scratch.Bind(msg.SlotId, addr, diffNonce, msg.GrantId); err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidWarmKeyEntry, err)
+	}
+	sm.setWarmHistoryLocked(msg.SlotId, scratch[msg.SlotId])
+	logging.Debug("warm key bound", "subsystem", "state",
+		"nonce", diffNonce, "slot", msg.SlotId, "address", addr, "grant_id", msg.GrantId)
+	return nil
+}
+
+// applyWarmKeyRevoke ends the live binding of msg.Address on msg.SlotId at
+// diffNonce. The entry must name the live binding's grant. While that chain
+// grant is live, participant consent is required: creator-only revocation could
+// otherwise hide an executor's completed work and manufacture an unpaid timeout.
+func (sm *StateMachine) applyWarmKeyRevoke(msg *types.MsgWarmKeyRevoke, diffNonce uint64) error {
+	if msg == nil {
+		return types.ErrEmptyTx
+	}
+	cold, addr, err := sm.warmKeyEntryPartiesLocked(msg.SlotId, msg.Address, msg.GrantId)
+	if err != nil {
+		return err
+	}
+	scratch := signing.WarmKeyHistory{msg.SlotId: slices.Clone(sm.state.WarmKeyHistory[msg.SlotId])}
+	if err := scratch.Revoke(msg.SlotId, addr, diffNonce, msg.GrantId); err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidWarmKeyEntry, err)
+	}
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) && sm.warmHeightValidity[warmGrantKey{cold, msg.GrantId, addr}] {
+		if sm.verifier == nil {
+			return fmt.Errorf("%w: no verifier for live grant revoke consent", types.ErrInvalidWarmKeyEntry)
+		}
+		data, err := types.WarmKeyRevokeSignBytes(sm.state.EscrowID, msg)
+		if err != nil {
+			return err
+		}
+		recovered, err := sm.verifier.RecoverAddress(data, msg.ParticipantSig)
+		if err != nil || (recovered != cold && recovered != addr) {
+			return fmt.Errorf("%w: live grant revoke requires consent of slot %d participant", types.ErrInvalidWarmKeyEntry, msg.SlotId)
+		}
+		if recovered == addr && !sm.allowWarmAdmissionLocked(warmGrantKey{cold, msg.GrantId, addr}) {
+			return sm.warmAdmission.err
+		}
+	}
+	sm.setWarmHistoryLocked(msg.SlotId, scratch[msg.SlotId])
+	logging.Debug("warm key revoked", "subsystem", "state",
+		"nonce", diffNonce, "slot", msg.SlotId, "address", addr, "grant_id", msg.GrantId)
+	return nil
+}
+
+// warmKeyEntryPartiesLocked validates the fields a bind and a revoke share
+// and returns the slot's cold key and the trimmed warm address.
+func (sm *StateMachine) warmKeyEntryPartiesLocked(slot uint32, address string, grantID uint64) (cold, addr string, err error) {
+	if sm.state.Phase == types.PhaseSettlement {
+		return "", "", fmt.Errorf("%w: warm key entry after settlement", types.ErrInvalidTransition)
+	}
+	cold, ok := sm.slotToAddress[slot]
+	if !ok {
+		return "", "", fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, slot)
+	}
+	addr = strings.TrimSpace(address)
+	if addr == "" {
+		return "", "", fmt.Errorf("%w: empty address", types.ErrInvalidWarmKeyEntry)
+	}
+	if addr == cold {
+		return "", "", fmt.Errorf("%w: %s is the cold key of slot %d", types.ErrInvalidWarmKeyEntry, addr, slot)
+	}
+	if grantID == 0 {
+		return "", "", fmt.Errorf("%w: grant id is zero", types.ErrInvalidWarmKeyEntry)
+	}
+	return cold, addr, nil
 }
 
 func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference, diffNonce uint64) error {
@@ -1425,12 +1667,6 @@ func (sm *StateMachine) checkAppliedReceipt(rec *types.InferenceRecord, msg *typ
 	sm.mu.RLock()
 	expected, ok := sm.slotToAddress[rec.ExecutorSlot]
 	err := sm.checkReceiptLocked(rec, msg, func(slot uint32, recovered string) bool {
-		if sm.hostSignerCachedLocked(slot, recovered) {
-			return true
-		}
-		if _, bound := sm.state.WarmKeys[slot]; bound {
-			return false
-		}
 		unbound = recovered
 		return true
 	})
@@ -1441,7 +1677,7 @@ func (sm *StateMachine) checkAppliedReceipt(rec *types.InferenceRecord, msg *typ
 	if err != nil {
 		return err
 	}
-	if unbound != "" && !sm.CheckWarmKey(unbound, expected) {
+	if !sm.HostSignerAllowed(rec.ExecutorSlot, unbound) {
 		return fmt.Errorf("%w: expected executor %s (slot %d), got %s", types.ErrInvalidExecutorSig, expected, rec.ExecutorSlot, unbound)
 	}
 	return nil
@@ -1982,44 +2218,41 @@ func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, po
 	}
 }
 
-// VerifyFinishProposerSig checks that msg.ProposerSig was produced by the
-// executor slot named in the message, under the signer rule
-// applyFinishInference uses. It never binds a warm key: root-committed
-// bindings are installed only by applied transactions. A key the slot has not
-// bound goes to the resolver without sm.mu held.
+// VerifyFinishProposerSig checks that msg.ProposerSig was produced by an
+// actor of the executor slot named in the message: the history as apply
+// would read it, then the grant source for a key the history does not cover.
+// Safe to call from a verifier goroutine; the grant source is asked with
+// sm.mu released and nothing is written.
 func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
 	recovered, err := sm.recoveredProposerAddress(msg)
 	if err != nil {
 		return err
 	}
-	sm.mu.RLock()
-	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
-	allowed := sm.hostSignerCachedLocked(msg.ExecutorSlot, recovered)
-	_, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
-	sm.mu.RUnlock()
+	expected, ok := sm.SlotAddress(msg.ExecutorSlot), true
+	if expected == "" {
+		ok = false
+	}
 	if !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
 	}
-	if allowed {
-		return nil
-	}
-	if !hasCached && sm.CheckWarmKey(recovered, expected) {
+	if sm.HostSignerAllowed(msg.ExecutorSlot, recovered) {
 		return nil
 	}
 	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
 }
 
 // RejectFinishProposerSigLocal reports a proposer-signature failure that can be
-// decided from local state alone: the executor slot's cold key plus any warm
-// binding already cached in state. It never consults the warm-key resolver, so
-// it makes no network call and never takes the write lock.
+// decided from local state alone: the executor slot's cold key plus the
+// binding history. It never consults the grant source, so it makes no network
+// call.
 //
 // A nil return means "accepted, or not yet decidable". A mismatch is decidable
-// when the slot already has a warm binding, or when no resolver is configured
-// at all, because in neither case could the bridge change the answer. Otherwise
-// the signature may still belong to an unresolved warm key, and that is left to
-// apply-time verification via VerifyFinishProposerSig. Callers must therefore
-// treat nil as "may enqueue", not as "authenticated".
+// when the history has revoked the key on the slot, or when no grant source is
+// configured at all, because in neither case could the source change the
+// answer. Otherwise the signature may still belong to a key the gateway is
+// about to bind, and that is left to apply-time verification via
+// VerifyFinishProposerSig. Callers must therefore treat nil as "may enqueue",
+// not as "authenticated".
 func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInference) error {
 	recovered, err := sm.recoveredProposerAddress(msg)
 	if err != nil {
@@ -2028,8 +2261,8 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 
 	sm.mu.RLock()
 	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
-	allowed := sm.hostSignerCachedLocked(msg.ExecutorSlot, recovered)
-	_, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	allowed := sm.hostSignerAllowedLocked(msg.ExecutorSlot, recovered)
+	revoked := sm.state.WarmKeyHistory.RevokedOn(msg.ExecutorSlot, recovered, sm.state.LatestNonce+1)
 	canResolve := sm.warmResolver != nil
 	sm.mu.RUnlock()
 	if !ok {
@@ -2038,7 +2271,7 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 	if allowed {
 		return nil
 	}
-	if hasCached || !canResolve {
+	if revoked || !canResolve {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
 	}
 	return nil
@@ -2082,63 +2315,256 @@ func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byt
 	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expectedAddress, recovered)
 }
 
-// hostSignerCachedLocked answers from consensus state alone: the slot's cold
-// key, the slot's own warm binding, or — only while the slot is still unbound
-// — a sibling slot's binding for the same validator. authz grants are
-// per-address, so a sibling binding is the same fact, already checked. No
-// bridge call and no mutation, so every replica decides it identically.
-func (sm *StateMachine) hostSignerCachedLocked(slotID uint32, recovered string) bool {
-	return signing.SlotActors{
-		SlotKeys: sm.slotToAddress,
-		WarmKeys: sm.state.WarmKeys,
-	}.Allows(slotID, recovered)
+// consensusActorsLocked is the identity set apply decides host signatures
+// with: the group's cold keys and the binding history at the next nonce,
+// which is the diff being applied. The history is cloned so the value can
+// be used after the lock is released. Caller holds sm.mu.
+func (sm *StateMachine) consensusActorsLocked() signing.SlotActors {
+	return sm.consensusActorsAtLocked(sm.state.LatestNonce + 1)
 }
 
-// hostSignerAllowedLocked is the apply-path check: hostSignerCachedLocked plus
-// the live authz fallback for a still-unbound slot. Caller holds sm.mu.
-// Resolution goes through ResolveWarmKey, so a binding admitted here is written
-// into state and travels to the other hosts as WarmKeyDelta. Read-only callers
-// want HostSignerAllowed, which never binds.
-func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string) bool {
-	return signing.SlotActors{
-		SlotKeys:   sm.slotToAddress,
-		WarmKeys:   sm.state.WarmKeys,
-		AcceptWarm: sm.ResolveWarmKey,
-	}.Allows(slotID, recovered)
+// consensusActorsAtLocked is consensusActorsLocked at an explicit
+// authorization nonce: the nonce a state signature or settlement signs.
+func (sm *StateMachine) consensusActorsAtLocked(nonce uint64) signing.SlotActors {
+	actors := signing.SlotActors{SlotKeys: sm.slotToAddress, History: cloneWarmKeyHistory(sm.state.WarmKeyHistory), Nonce: nonce}
+	if !types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		return actors
+	}
+	actors = restrictWarmActors(actors, func(slot uint32, b signing.WarmKeyBinding) bool {
+		return sm.warmHeightValidity[warmGrantKey{sm.slotToAddress[slot], b.GrantID, b.Addr}]
+	})
+	if sm.warmAdmission != nil {
+		historical := actors.BindingAllowed
+		actors.BindingAllowed = func(slot uint32, b signing.WarmKeyBinding) bool {
+			return historical(slot, b) && sm.allowWarmAdmissionLocked(warmGrantKey{sm.slotToAddress[slot], b.GrantID, b.Addr})
+		}
+	}
+	return actors
 }
 
-// HostSignerAllowed reports whether recovered may act for slotID. It never
-// binds WarmKeys, and it makes at most one bridge call — only when state alone
-// cannot decide — with sm.mu released.
-func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool {
+// localActorsAt is the local-admission identity set at nonce: the consensus
+// rule plus the grant source against a bound key whose grant it has seen
+// end (RefuseWarm) and, when admit is set, for a key the history does not
+// cover (AcceptWarm). admit is for messages the sequencer may still bind
+// the key for in its next diff; a signature that names its nonce gets no
+// such fallback, since a grant the history has not bound at that nonce does
+// not sign it. The source is asked with sm.mu released.
+type localActorBudget struct {
+	ctx      context.Context
+	deadline time.Time
+}
+
+func (sm *StateMachine) localActorsAt(nonce uint64, admit bool, budgets ...localActorBudget) signing.SlotActors {
 	sm.mu.RLock()
-	cached := sm.hostSignerCachedLocked(slotID, recovered)
-	expected, inGroup := sm.slotToAddress[slotID]
-	_, bound := sm.state.WarmKeys[slotID]
+	actors := sm.consensusActorsAtLocked(nonce)
+	required := types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion)
+	cp := cloneCheckpoint(sm.state.MainnetCheckpoint)
+	latest := sm.state.LatestNonce
+	checker := sm.warmHeightCheck
+	escrowID := sm.state.EscrowID
+	resolver := sm.warmResolver
+	if required {
+		actors.History = cloneWarmKeyHistory(sm.state.WarmKeyHistory)
+	}
 	sm.mu.RUnlock()
-	if cached {
-		return true
+	bounded := len(budgets) > 0
+	if bounded {
+		budget := budgets[0]
+		checkBudget := func() error {
+			if err := budget.ctx.Err(); err != nil {
+				return fmt.Errorf("%w: local authorization cancelled: %v", types.ErrHeaderPending, err)
+			}
+			if time.Now().After(budget.deadline) {
+				return fmt.Errorf("%w: local authorization budget exhausted", types.ErrHeaderPending)
+			}
+			return nil
+		}
+		original := checker
+		checker = func(cold, warm string, id uint64, height int64, at time.Time) (bool, error) {
+			if err := checkBudget(); err != nil {
+				return false, err
+			}
+			if original == nil {
+				return false, types.ErrHeaderPending
+			}
+			return original(cold, warm, id, height, at)
+		}
+		originalResolver := resolver
+		resolver = func(warm, cold string) (bool, error) {
+			if err := checkBudget(); err != nil {
+				return false, err
+			}
+			if originalResolver == nil {
+				return false, types.ErrHeaderPending
+			}
+			return originalResolver(warm, cold)
+		}
 	}
-	// A bound slot accepts only its warm key on apply; asking the chain here
-	// would admit a second granted key that apply then rejects.
-	if !inGroup || bound {
-		return false
+	if required && !admit && nonce > latest {
+		// A named future state has not supplied its bindings or authenticated
+		// checkpoint yet. Only the live-admission path may trigger catch-up.
+		actors.History = nil
+		actors.BindingAllowed = nil
+		actors.AuthorizationError = func(uint32, string) error {
+			return fmt.Errorf("%w: future state authorization unavailable", types.ErrHeaderPending)
+		}
+		return actors
 	}
-	return sm.CheckWarmKey(recovered, expected)
+	if required {
+		actors = sm.historicalWarmActors(actors, cp, latest, checker, escrowID, bounded)
+		if !admit {
+			return actors
+		}
+	}
+	// One source lookup per (key, validator) pair however many slots the
+	// validator owns; the value is request-scoped, so the memo is too.
+	priorError := actors.AuthorizationError
+	liveErrors := make(map[[2]string]error)
+	keys := actors.SlotKeys
+	actors.AuthorizationError = func(slot uint32, recovered string) error {
+		if err := liveErrors[[2]string{recovered, keys[slot]}]; err != nil {
+			return err
+		}
+		if priorError != nil {
+			return priorError(slot, recovered)
+		}
+		return nil
+	}
+	live := make(map[[2]string]bool, 1)
+	ended := make(map[[2]string]bool, 1)
+	if admit {
+		actors.AcceptWarm = func(_ uint32, recovered, expected string) bool {
+			pair := [2]string{recovered, expected}
+			ok, seen := live[pair]
+			if !seen {
+				if resolver != nil {
+					var err error
+					ok, err = resolver(recovered, expected)
+					if err != nil {
+						ok = false
+						liveErrors[pair] = err
+					}
+				}
+				live[pair] = ok
+			}
+			return ok
+		}
+	}
+	actors.RefuseWarm = func(_ uint32, recovered, expected string) bool {
+		pair := [2]string{recovered, expected}
+		over, seen := ended[pair]
+		if !seen {
+			if resolver != nil {
+				allowed, err := resolver(recovered, expected)
+				over = err == nil && !allowed
+				if err != nil {
+					liveErrors[pair] = err
+				}
+			}
+			ended[pair] = over
+		}
+		return over
+	}
+	return actors
+}
+
+// hostSignerAllowedLocked is the apply-path check, decided from consensus
+// state and the grant decisions preloaded at its authenticated checkpoint:
+// the slot's cold key, a warm key the history binds to the slot
+// at this diff's nonce, or, while the slot has no binding, a sibling slot's
+// binding for the same validator. No grant-source call and no mutation, so
+// every replica decides it identically. Caller holds sm.mu.
+func (sm *StateMachine) hostSignerAllowedLocked(slotID uint32, recovered string) bool {
+	return sm.consensusActorsLocked().Allows(slotID, recovered)
+}
+
+// HostSlotActors returns the local admission policy for the next nonce,
+// including current chain authorization for keys not yet bound in a diff.
+func (sm *StateMachine) HostSlotActors() signing.SlotActors {
+	return sm.localActorsAt(sm.LatestNonce()+1, true)
+}
+
+// HostSlotActorsWithBudget shares lazy grant decisions across one local batch.
+// Once the budget expires it starts no further RPCs; an already running source
+// lookup retains the source's own deadline. This never changes consensus apply.
+func (sm *StateMachine) HostSlotActorsWithBudget(budget time.Duration) signing.SlotActors {
+	return sm.HostSlotActorsWithContext(context.Background(), budget)
+}
+
+// HostSlotActorsWithContext starts no further authorization lookups after
+// cancellation, including publication after stored-payload retrieval.
+func (sm *StateMachine) HostSlotActorsWithContext(ctx context.Context, budget time.Duration) signing.SlotActors {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return sm.localActorsAt(sm.LatestNonce()+1, true, localActorBudget{ctx: ctx, deadline: time.Now().Add(budget)})
+}
+
+// HostSlotActorsAt returns the policy for an already signed nonce. V7 checks
+// its verified checkpoint; legacy versions retain their existing policy.
+func (sm *StateMachine) HostSlotActorsAt(nonce uint64) signing.SlotActors {
+	return sm.localActorsAt(nonce, false)
+}
+
+// HostSlotActorsAtWithContext lazily resolves the historical grant checks
+// used by a submission batch, sharing its cancellation and time budget.
+func (sm *StateMachine) HostSlotActorsAtWithContext(ctx context.Context, nonce uint64, budget time.Duration) signing.SlotActors {
+	return sm.localActorsAt(nonce, false, localActorBudget{ctx: ctx, deadline: time.Now().Add(budget)})
+}
+
+// HostSignerAllowed reports whether recovered may act for slotID in the
+// next diff: the apply rule, then the grant source, asked with sm.mu
+// released, for a key the history does not cover and against a key whose
+// grant it has seen end. It never binds anything; it is the local-admission
+// view of a key the gateway may bind, or revoke, in a later diff.
+func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool {
+	return sm.localActorsAt(sm.LatestNonce()+1, true).Allows(slotID, recovered)
+}
+
+// HostSignerAllowedAt reports whether recovered may have signed slotID's
+// part of the state at nonce: the history at that nonce, minus a bound key
+// whose grant the source has seen end. No grant-source admission: a key the
+// history has not bound at nonce did not sign it.
+func (sm *StateMachine) HostSignerAllowedAt(slotID uint32, recovered string, nonce uint64) bool {
+	return sm.localActorsAt(nonce, false).Allows(slotID, recovered)
 }
 
 // HostSignerAllowedAddr is HostSignerAllowed for any slot owned by expected.
 // Used where the message names a host address rather than a slot.
 func (sm *StateMachine) HostSignerAllowedAddr(expected, recovered string) bool {
+	return sm.hostSignerAllowedAddr(expected, recovered, sm.LatestNonce()+1, true)
+}
+
+// HostSignerAllowedAddrAt is HostSignerAllowedAt for any slot owned by
+// expected: a state signature over nonce by recovered on expected's behalf.
+func (sm *StateMachine) HostSignerAllowedAddrAt(expected, recovered string, nonce uint64) bool {
+	return sm.hostSignerAllowedAddr(expected, recovered, nonce, false)
+}
+
+func (sm *StateMachine) hostSignerAllowedAddr(expected, recovered string, nonce uint64, admit bool) bool {
 	if expected == "" || recovered == "" {
 		return false
 	}
-	if sm.HostSignerBoundAddr(expected, recovered) {
+	if recovered == expected {
 		return true
 	}
-	return sm.CheckWarmKey(recovered, expected)
+	sm.mu.RLock()
+	slots := append([]uint32(nil), sm.addressToSlots[expected]...)
+	sm.mu.RUnlock()
+	if len(slots) == 0 {
+		return false
+	}
+	actors := sm.localActorsAt(nonce, admit)
+	for _, slot := range slots {
+		if actors.Allows(slot, recovered) {
+			return true
+		}
+	}
+	return false
 }
 
+// HostSignerBoundAddr reports whether recovered is expected itself or a warm
+// key the history binds to one of expected's slots at the next nonce.
 func (sm *StateMachine) HostSignerBoundAddr(expected, recovered string) bool {
 	if expected == "" || recovered == "" {
 		return false
@@ -2149,53 +2575,35 @@ func (sm *StateMachine) HostSignerBoundAddr(expected, recovered string) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	for _, slot := range sm.addressToSlots[expected] {
-		if sm.hostSignerCachedLocked(slot, recovered) {
+		if sm.hostSignerAllowedLocked(slot, recovered) {
 			return true
 		}
 	}
 	return false
 }
 
-// ResolveWarmKey checks if recovered is an authorized warm key for the given slot.
-// Returns true if the key is accepted (either cached or newly verified via bridge).
-// On first successful resolution the binding is cached in state.
-func (sm *StateMachine) ResolveWarmKey(slotID uint32, recovered, expected string) bool {
-	if warm, ok := sm.state.WarmKeys[slotID]; ok {
-		return warm == recovered
-	}
-	if sm.warmResolver == nil {
-		return false
-	}
-	ok, err := sm.warmResolver(recovered, expected)
-	if err != nil || !ok {
-		return false
-	}
-	sm.setWarmKeyLocked(slotID, recovered)
-	return true
-}
-
-// InjectWarmKeys adds warm key bindings to state without calling the resolver.
-// Used during replay to restore bindings that were discovered during the original run.
-// Existing bindings are not overwritten.
-func (sm *StateMachine) InjectWarmKeys(delta map[uint32]string) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	for slotID, addr := range delta {
-		if _, exists := sm.state.WarmKeys[slotID]; !exists {
-			sm.state.WarmKeys[slotID] = addr
-		}
-	}
-}
-
-// CheckWarmKey checks if warmAddr is authorized to act on behalf of coldAddr
-// without caching the result in state. Use for slot discovery at host startup
-// to avoid mutating state before any diffs are applied.
+// CheckWarmKey asks the grant source whether warmAddr holds a live warm-key
+// grant from coldAddr. It never writes state: a grant becomes a binding only
+// through MsgWarmKeyBind.
 func (sm *StateMachine) CheckWarmKey(warmAddr, coldAddr string) bool {
 	if sm.warmResolver == nil {
 		return false
 	}
 	ok, err := sm.warmResolver(warmAddr, coldAddr)
 	return err == nil && ok
+}
+
+// WarmKeyGrantEnded reports that the grant source answered, and answered that
+// warmAddr holds no live grant from coldAddr: the backstop that refuses a key
+// the history still binds once the chain has ended its grant. A source that
+// is absent or cannot answer reports false, so an outage never refuses a key
+// consensus accepts.
+func (sm *StateMachine) WarmKeyGrantEnded(warmAddr, coldAddr string) bool {
+	if sm.warmResolver == nil {
+		return false
+	}
+	ok, err := sm.warmResolver(warmAddr, coldAddr)
+	return err == nil && !ok
 }
 
 func (sm *StateMachine) TotalSlots() uint32 {

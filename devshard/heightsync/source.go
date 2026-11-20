@@ -44,7 +44,13 @@ func (s *LocalOracleSource) LatestSection(ctx context.Context) (*HeightSyncSecti
 	if s == nil || s.oracle == nil {
 		return nil, ErrNoOracle
 	}
-	hdr, err := s.oracle.Latest(ctx)
+	latest := s.oracle.Latest
+	if oracle, ok := s.oracle.(interface {
+		LatestForHeightSync(context.Context) (*blocks.Header, error)
+	}); ok {
+		latest = oracle.LatestForHeightSync
+	}
+	hdr, err := latest(ctx)
 	if err != nil {
 		return nil, err
 	}

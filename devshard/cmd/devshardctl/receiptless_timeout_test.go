@@ -213,7 +213,7 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	require.Empty(t, entries)
 	payload, err := state.BuildSettlement(escrowID, after, recovered.Signatures()[recovered.Nonce()], recovered.Nonce())
 	require.NoError(t, err)
-	_, err = state.VerifySettlement(*payload, group, verifier, after.WarmKeys)
+	_, err = state.VerifySettlement(*payload, group, verifier, after.WarmKeyHistory)
 	require.NoError(t, err)
 	return payload, group, creator.Address(), uint32(p.HostIdx())
 }
@@ -243,7 +243,9 @@ func (c *numericCompletionClient) VerifyErrorMiss(context.Context, uint64, []typ
 func TestCompletionRestartReconcilesBeforeSettlement(t *testing.T) { completionRestartFixture(t) }
 
 func TestLongContentWithCanonicalFinishChargesActualCost(t *testing.T) {
-	env := setupLiveFloorProxy(t, 3, nil, true)
+	// This test sequences responses explicitly; a background heartbeat can
+	// advance/prune their nonce before ProcessResponse observes the Finish.
+	env := setupManualFloorProxy(t, 3, nil, true)
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	defer store.Close()

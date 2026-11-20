@@ -112,6 +112,8 @@ message ChallengeReceiptRequest {
 message ChallengeReceiptResponse {
   bytes          receipt = 1;
   repeated bytes mempool = 2;
+  // V7: verify available proofs before deferring for unresolved evidence.
+  bool evidence_pending = 3;
 }
 
 message GetDiffsRequest {

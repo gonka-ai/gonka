@@ -34,6 +34,13 @@ func initSDKConfig() {
 func initCometBFTConfig() *cmtcfg.Config {
 	cfg := cmtcfg.DefaultConfig()
 
+	// devshardd keeps one WebSocket and five queries on it: NewBlock, the two
+	// escrow filters, and the two warm-key filters. The Comet default of 5
+	// leaves no room. A refused warm-key Subscribe is skipped; 10 lets those
+	// queries stay on the socket. A node that already has config.toml keeps
+	// its file; set rpc.max_subscriptions_per_client there too.
+	cfg.RPC.MaxSubscriptionsPerClient = 10
+
 	// these values put a higher strain on node memory
 	// cfg.P2P.MaxNumInboundPeers = 100
 	// cfg.P2P.MaxNumOutboundPeers = 40

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+	"devshard/bridge"
 	"devshard/hostevents"
 
 	"github.com/stretchr/testify/require"
@@ -22,6 +23,7 @@ type recordingSink struct {
 	mu        sync.Mutex
 	warmed    []string
 	settled   []string
+	warmKeys  []bridge.WarmKeyEntry
 	rehydrate int
 }
 
@@ -43,6 +45,19 @@ func (s *recordingSink) RehydrateOpenEscrows() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.rehydrate++
+}
+
+func (s *recordingSink) OnWarmKeyEvent(entry bridge.WarmKeyEntry) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.warmKeys = append(s.warmKeys, entry)
+	return nil
+}
+
+func (s *recordingSink) warmKeyEntries() []bridge.WarmKeyEntry {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]bridge.WarmKeyEntry(nil), s.warmKeys...)
 }
 
 func (s *recordingSink) snapshot() (warmed, settled []string, rehydrate int) {
@@ -174,26 +189,35 @@ func TestRun_NeedsResetRehydrates(t *testing.T) {
 	<-done
 }
 
-func TestRun_UnimplementedStops(t *testing.T) {
+func TestRun_UnimplementedDoesNotStop(t *testing.T) {
 	srv := &fakeHostEventsServer{}
-	srv.SetHandlers(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+	srv.SetSticky(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		return nil, status.Error(codes.Unimplemented, "method GetHostEvents not implemented")
 	})
 	client := dialFake(t, srv)
 	sink := &recordingSink{}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	start := time.Now()
-	hostevents.Run(ctx, hostevents.Config{
-		Client:        client,
-		ServerMaxWait: time.Second,
-	}, sink)
-	require.Less(t, time.Since(start), 1500*time.Millisecond)
-	w, s, r := sink.snapshot()
-	require.Empty(t, w)
-	require.Empty(t, s)
-	require.Zero(t, r)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:          client,
+			ServerMaxWait:   50 * time.Millisecond,
+			ErrorBackoffMin: time.Millisecond,
+			ErrorBackoffMax: 2 * time.Millisecond,
+		}, sink)
+	}()
+	require.Eventually(t, func() bool {
+		_, _, n := sink.snapshot()
+		return n >= 1
+	}, 2*time.Second, 10*time.Millisecond)
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("unimplemented stopped the loop only after cancel")
+	}
 }
 
 func TestRun_UpdatesLoadMapOnUnchanged(t *testing.T) {
@@ -238,9 +262,13 @@ type flakySettleSink struct {
 	failMu   sync.Mutex
 	failures int
 	attempts int
+	failID   string
 }
 
 func (s *flakySettleSink) OnEscrowSettled(id string) error {
+	if s.failID != "" && s.failID != id {
+		return s.recordingSink.OnEscrowSettled(id)
+	}
 	s.failMu.Lock()
 	s.attempts++
 	fail := s.attempts <= s.failures
@@ -257,15 +285,19 @@ func (s *flakySettleSink) attemptCount() int {
 	return s.attempts
 }
 
-// settledEventsServer serves one settled event to any cursor below its seq,
-// mimicking the ring's "seq > cursor" contract so a rewound cursor redelivers.
+// settledEventsServer serves only events ahead of the cursor, as the ring does.
 // The second return value reports whether the loop has ever polled from a
 // cursor at or past the event, i.e. whether it moved on.
-func settledEventsServer(escrowID, seq uint64) (*fakeHostEventsServer, func() bool) {
+func settledEventsServer(escrowID, seq uint64, following ...*gen.HostEvent) (*fakeHostEventsServer, func() bool) {
 	var (
 		mu       sync.Mutex
 		advanced bool
 	)
+	events := append([]*gen.HostEvent{{
+		Seq:    seq,
+		Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+		Escrow: &gen.EscrowPayload{EscrowId: escrowID},
+	}}, following...)
 	srv := &fakeHostEventsServer{}
 	srv.SetSticky(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		cursor := req.GetCursor()
@@ -273,17 +305,15 @@ func settledEventsServer(escrowID, seq uint64) (*fakeHostEventsServer, func() bo
 			mu.Lock()
 			advanced = true
 			mu.Unlock()
-			return &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: seq}, nil
 		}
-		return &gen.GetHostEventsResponse{
-			Generation: 1,
-			NextCursor: seq,
-			Events: []*gen.HostEvent{{
-				Seq:    seq,
-				Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
-				Escrow: &gen.EscrowPayload{EscrowId: escrowID},
-			}},
-		}, nil
+		resp := &gen.GetHostEventsResponse{Generation: 1, NextCursor: events[len(events)-1].GetSeq()}
+		for _, event := range events {
+			if event.GetSeq() > cursor {
+				resp.Events = append(resp.Events, event)
+			}
+		}
+		resp.Unchanged = len(resp.Events) == 0
+		return resp, nil
 	})
 	return srv, func() bool {
 		mu.Lock()
@@ -324,10 +354,14 @@ func TestRun_RedeliversFailedDispatch(t *testing.T) {
 }
 
 // One permanently wedged event must not stall the stream forever.
-func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
-	srv, movedOn := settledEventsServer(42, 5)
+func TestRun_FailedEventDoesNotSkipPageSuffix(t *testing.T) {
+	srv, movedOn := settledEventsServer(42, 5, &gen.HostEvent{
+		Seq:    6,
+		Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+		Escrow: &gen.EscrowPayload{EscrowId: 43},
+	})
 	client := dialFake(t, srv)
-	sink := &flakySettleSink{failures: 1 << 30}
+	sink := &flakySettleSink{failures: 1 << 30, failID: "42"}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -349,11 +383,72 @@ func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
 	// Once the bound is hit the loop advances past the event, so the server
 	// starts seeing the post-event cursor instead of the rewound one.
 	require.Eventually(t, movedOn, 3*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, settled, _ := sink.snapshot()
+		return len(settled) == 1
+	}, 3*time.Second, 10*time.Millisecond)
 	cancel()
 	<-done
 
 	_, settled, rehydrate := sink.snapshot()
-	require.Empty(t, settled, "the event never applied; it was skipped, not silently recorded")
+	require.Equal(t, []string{"43"}, settled, "the later settlement in the same page must still apply")
 	require.NotZero(t, rehydrate,
 		"a skipped settlement is unrecoverable from the ring, so the skip must fall back to a chain sweep")
+}
+
+// Test flow:
+//  1. Serve a warm-key grant and a warm-key end event and assert the subscribe set names both kinds.
+//  2. Assert the sink receives the grant with its granted-at height and the end with its revoked-at height and
+//     end name, in order.
+func TestRun_RoutesWarmKeyEvents(t *testing.T) {
+	srv := &fakeHostEventsServer{}
+	srv.SetHandlers(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		require.Contains(t, req.Subscribe, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED)
+		require.Contains(t, req.Subscribe, gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED)
+		return &gen.GetHostEventsResponse{
+			Generation: 1,
+			NextCursor: 2,
+			Events: []*gen.HostEvent{
+				{
+					Seq:     1,
+					Kind:    gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+					WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 3, Height: 100, ExpiresAtUnix: 5000},
+				},
+				{
+					Seq:     2,
+					Kind:    gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED,
+					WarmKey: &gen.WarmKeyPayload{Granter: "cold", Grantee: "warm", GrantId: 3, Height: 120, End: "WARM_KEY_LOG_END_REVOKED"},
+				},
+				{
+					Seq:  3,
+					Kind: gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED,
+				},
+			},
+		}, nil
+	})
+	client := dialFake(t, srv)
+	sink := &recordingSink{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:          client,
+			ServerMaxWait:   100 * time.Millisecond,
+			ErrorBackoffMin: 10 * time.Millisecond,
+			ErrorBackoffMax: 20 * time.Millisecond,
+		}, sink)
+	}()
+
+	require.Eventually(t, func() bool {
+		return len(sink.warmKeyEntries()) >= 2
+	}, 2*time.Second, 20*time.Millisecond)
+	cancel()
+	<-done
+
+	entries := sink.warmKeyEntries()
+	require.Len(t, entries, 2, "an event without a payload is dropped, not dispatched")
+	require.Equal(t, bridge.WarmKeyEntry{Granter: "cold", ID: 3, Grantee: "warm", GrantedAtHeight: 100, ExpiresAtUnix: 5000}, entries[0])
+	require.Equal(t, bridge.WarmKeyEntry{Granter: "cold", ID: 3, Grantee: "warm", RevokedAtHeight: 120, End: "WARM_KEY_LOG_END_REVOKED"}, entries[1])
 }

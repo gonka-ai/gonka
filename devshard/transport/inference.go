@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"devshard"
+	"devshard/chainoracle/blocks/failover"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
@@ -93,7 +94,12 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	if req.Payload != nil && executorDropsPayload() {
 		req.Payload = nil
 	}
-	resp, err := s.host.HandleRequest(ctx, req)
+	proofContext := ctx
+	usesProof := s.host.RequiresMainnetHeightProof()
+	if usesProof {
+		proofContext = failover.WithRequestProofObservation(ctx)
+	}
+	resp, err := s.host.HandleRequest(proofContext, req)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonHandleRequestErr, observability.WhereTransportHandleInference)
 		if errors.Is(err, devshard.ErrRequestsDisabled) {
@@ -154,19 +160,30 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		}
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
+	var anchoredAcks map[*types.DevshardTx]struct{}
 	if s.heightSync != nil {
 		schedK := s.heightSync.K()
 		schedSlots := s.heightSync.SlotsNum()
 		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
 		h := heightsync.DecideHints{
-			Nonce:              req.Nonce,
-			SessionStart:       req.Nonce == 1,
-			ForceAnchor:        req.ForceHeightSyncAnchor && escrowH == nil,
-			Escrow:             escrowH,
-			OriginatorSenderID: s.host.Signer().Address(),
-			Direction:          "response",
+			Nonce:                   req.Nonce,
+			SessionStart:            req.Nonce == 1,
+			ForceAnchor:             req.ForceHeightSyncAnchor && escrowH == nil,
+			Escrow:                  escrowH,
+			OriginatorSenderID:      s.host.Signer().Address(),
+			Direction:               "response",
+			RefreshLocalResponseTip: usesProof,
 		}
-		sec, dErr, oracleMiss := s.heightSync.Decide(ctx, h)
+		sec, dErr, oracleMiss := s.heightSync.Decide(proofContext, h)
+		var outstandingAcks []*types.DevshardTx
+		if usesProof && sec != nil {
+			outstandingAcks = s.host.OutstandingLocalHeightAcks(resp.Mempool)
+			if !s.responseAnchorCompatibleWithAcks(sec, outstandingAcks) {
+				// An incompatible anchor would cause the gateway to discard
+				// a still-needed ACK, including on retries after a lost response.
+				sec = nil
+			}
+		}
 		if oracleMiss {
 			heightsync.IncOracleFailure(s.host.Signer().Address())
 		}
@@ -179,7 +196,12 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		} else if sec != nil {
 			sec.Direction = "response"
 			if s.attachResponseOriginSignature(sec, req.Nonce) {
-				s.recordEnvelopeBindingResponse(req.Nonce, sec)
+				if usesProof {
+					anchoredAcks = responseHeightAcks(sec, outstandingAcks, resp.Mempool, s.host.SlotIDs())
+					s.recordEnvelopeBindingResponse(req.Nonce, sec, outstandingAcks)
+				} else {
+					s.recordEnvelopeBindingResponse(req.Nonce, sec, s.host.MempoolTxs())
+				}
 				receiptWrapper["height_sync"] = sec
 				if resp.ExecutionJob != nil {
 					if h, hash, ok := heightsync.SectionObserved(sec); ok {
@@ -246,12 +268,15 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	}
 
 	mempoolTxs := s.host.MempoolTxs()
+	if anchoredAcks != nil {
+		mempoolTxs = retainAnchoredResponseAcks(mempoolTxs, anchoredAcks, s.host.SlotIDs())
+	}
 	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	_ = writeSSEEvent(w, metaWrapper)
 
-	if s.gossip != nil && resp.StateSig != nil {
-		go s.gossip.AfterRequest(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig)
+	if s.gossip != nil && resp.StateSig != nil && len(resp.StateSigningSlots) > 0 {
+		go s.gossip.AfterRequestFrom(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig, resp.StateSigningSlots[0])
 	}
 	if s.gossip != nil && resp.StateSig == nil && len(resp.Mempool) > 0 {
 		go s.gossip.BroadcastTxs(context.Background(), resp.Mempool)

@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -46,15 +45,9 @@ func prepareDiffBatch(recs []types.DiffRecord) (*preparedDiffBatch, error) {
 		if err != nil {
 			return nil, err
 		}
+		// warm_keys_json is kept for the schema only: since v7 the warm-key
+		// history is consensus state carried by the diffs themselves.
 		var warmJSON *string
-		if len(rec.WarmKeyDelta) > 0 {
-			raw, err := json.Marshal(rec.WarmKeyDelta)
-			if err != nil {
-				return nil, fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
-			}
-			str := string(raw)
-			warmJSON = &str
-		}
 		b.nonces = append(b.nonces, int64(rec.Nonce))
 		b.txs = append(b.txs, txsProto)
 		b.userSigs = append(b.userSigs, rec.UserSig)
@@ -108,6 +101,19 @@ func (s *Postgres) AppendDiffBatch(ctx context.Context, escrowID string, recs []
 
 	if err := writeDiffBatchTx(txCtx, tx, epochID, escrowID, b); err != nil {
 		return err
+	}
+	first, last, err := hostAdmissionRange(recs)
+	if err != nil {
+		return err
+	}
+	if first > 0 {
+		result, err := tx.Exec(txCtx, `UPDATE devshard_sessions SET host_admission_nonce = GREATEST(host_admission_nonce, $1) WHERE epoch_id = $2 AND escrow_id = $3 AND host_admission_nonce >= $4`, last, epochID, escrowID, first-1)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() != 1 {
+			return ErrHostAdmissionGap
+		}
 	}
 	if hook := pgDiffBatchBeforeCommit; hook != nil {
 		if err := hook(txCtx, tx); err != nil {

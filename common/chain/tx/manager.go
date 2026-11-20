@@ -31,6 +31,10 @@ import (
 // than "never".
 var ErrTxNotFound = errors.New("chain tx: tx not found on chain")
 
+// ErrTxRejected indicates an explicit CheckTx or DeliverTx failure. Transport
+// errors and confirmation timeouts do not establish that the tx was rejected.
+var ErrTxRejected = errors.New("chain tx: rejected")
+
 // txHashFromBytes returns the cosmos tx hash (uppercase-hex SHA-256 of the tx
 // bytes), computable before broadcast and equal to the hash the node returns.
 func txHashFromBytes(txBytes []byte) string {
@@ -180,6 +184,12 @@ func (m *Manager) GetTxEscrowID(ctx context.Context, txHash string) (uint64, boo
 // alone is not treated as success — callers must not clear settlement_pending
 // until this returns.
 func (m *Manager) SettleDevshardEscrow(ctx context.Context, signer UnorderedSigner, settlement SettleParams) (*SettleDevshardEscrowResult, error) {
+	return m.SettleDevshardEscrowWithPreflight(ctx, signer, settlement, nil)
+}
+
+// SettleDevshardEscrowWithPreflight checks the prepared settlement immediately
+// before broadcast, after account and chain queries and transaction signing.
+func (m *Manager) SettleDevshardEscrowWithPreflight(ctx context.Context, signer UnorderedSigner, settlement SettleParams, preflight func(context.Context) error) (*SettleDevshardEscrowResult, error) {
 	if m == nil {
 		return nil, fmt.Errorf("chain tx manager is nil")
 	}
@@ -200,6 +210,11 @@ func (m *Manager) SettleDevshardEscrow(ctx context.Context, signer UnorderedSign
 	txBytes, err := buildSettleDevshardEscrowTx(signer, chainID, account, m.cfg.FeeDenom, m.cfg.FeeAmount, m.cfg.GasLimit, settlement)
 	if err != nil {
 		return nil, err
+	}
+	if preflight != nil {
+		if err := preflight(ctx); err != nil {
+			return nil, err
+		}
 	}
 	txHash, err := m.broadcastTx(ctx, txBytes)
 	if err != nil {
@@ -310,8 +325,8 @@ func (m *Manager) broadcastTx(ctx context.Context, txBytes []byte) (string, erro
 		return "", fmt.Errorf("broadcast tx: %w", err)
 	}
 	if resp.TxResponse.Code != 0 {
-		return "", fmt.Errorf("broadcast tx failed code=%d codespace=%s raw_log=%s",
-			resp.TxResponse.Code, resp.TxResponse.Codespace, resp.TxResponse.RawLog)
+		return "", fmt.Errorf("broadcast tx failed code=%d codespace=%s raw_log=%s: %w",
+			resp.TxResponse.Code, resp.TxResponse.Codespace, resp.TxResponse.RawLog, ErrTxRejected)
 	}
 	txHash := strings.TrimSpace(resp.TxResponse.TxHash)
 	if txHash == "" {
@@ -357,8 +372,8 @@ func (m *Manager) waitForTxSuccess(ctx context.Context, txHash string) error {
 		resp, err := m.getTx(ctx, txHash)
 		if err == nil {
 			if resp.Code != 0 {
-				return fmt.Errorf("tx %s failed code=%d codespace=%s raw_log=%s",
-					txHash, resp.Code, resp.Codespace, resp.RawLog)
+				return fmt.Errorf("tx %s failed code=%d codespace=%s raw_log=%s: %w",
+					txHash, resp.Code, resp.Codespace, resp.RawLog, ErrTxRejected)
 			}
 			return nil
 		}

@@ -26,17 +26,6 @@ func copyGroup(src []types.SlotAssignment) []types.SlotAssignment {
 	return dst
 }
 
-func copyWarmKeyDelta(src map[uint32]string) map[uint32]string {
-	if src == nil {
-		return nil
-	}
-	dst := make(map[uint32]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
-	return dst
-}
-
 type snapshotData struct {
 	nonce uint64
 	data  []byte
@@ -52,6 +41,7 @@ type sessionData struct {
 	balance                uint64
 	diffs                  []types.DiffRecord
 	nonceToIndex           map[uint64]int
+	hostAdmissionNonce     uint64
 	lastFinalized          uint64
 	status                 string // "active", "settled"
 	snapshot               *snapshotData
@@ -140,36 +130,7 @@ func (m *Memory) ListActiveSessions() ([]ActiveSession, error) {
 }
 
 func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	s, ok := m.sessions[escrowID]
-	if !ok {
-		return fmt.Errorf("session %s not found", escrowID)
-	}
-
-	if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
-		existing := s.diffs[idx]
-		if err := checkDiffReplayIdentity(escrowID, rec, existing); err != nil {
-			return err
-		}
-		// Mirror Postgres/SQLite: upsert signatures on identical replay.
-		if existing.Signatures == nil {
-			existing.Signatures = make(map[uint32][]byte, len(rec.Signatures))
-		}
-		for slotID, sig := range rec.Signatures {
-			existing.Signatures[slotID] = append([]byte(nil), sig...)
-		}
-		s.diffs[idx] = existing
-		return nil
-	}
-
-	rec.Signatures = copySignatures(rec.Signatures)
-	rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
-
-	s.diffs = append(s.diffs, rec)
-	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
-	return nil
+	return m.AppendDiffBatch(context.Background(), escrowID, []types.DiffRecord{rec})
 }
 
 // AppendDiffBatch implements DiffBatchWriter: every record is checked before
@@ -186,6 +147,13 @@ func (m *Memory) AppendDiffBatch(ctx context.Context, escrowID string, recs []ty
 	s, ok := m.sessions[escrowID]
 	if !ok {
 		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+	}
+	first, last, err := hostAdmissionRange(recs)
+	if err != nil {
+		return err
+	}
+	if first > 0 && s.hostAdmissionNonce < first-1 {
+		return ErrHostAdmissionGap
 	}
 	for i, rec := range recs {
 		if i > 0 && rec.Nonce <= recs[i-1].Nonce {
@@ -209,11 +177,12 @@ func (m *Memory) AppendDiffBatch(ctx context.Context, escrowID string, recs []ty
 			s.diffs[idx] = existing
 			continue
 		}
+		rec.HostAdmitted = false
 		rec.Signatures = copySignatures(rec.Signatures)
-		rec.WarmKeyDelta = copyWarmKeyDelta(rec.WarmKeyDelta)
 		s.diffs = append(s.diffs, rec)
 		s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
 	}
+	s.hostAdmissionNonce = max(s.hostAdmissionNonce, last)
 	return nil
 }
 
@@ -259,6 +228,8 @@ func (m *Memory) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	}
 
 	meta := &SessionMeta{
+		HostAdmissionNonce: s.hostAdmissionNonce,
+
 		EscrowID:       s.escrowID,
 		EpochID:        s.epochID,
 		Version:        s.version,
@@ -648,6 +619,7 @@ func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := stampEscrowCache(info)
+	cp.MainnetAnchorHash = append([]byte(nil), info.MainnetAnchorHash...)
 	if info.AppHash != nil {
 		cp.AppHash = append([]byte(nil), info.AppHash...)
 	}
@@ -667,6 +639,7 @@ func (m *Memory) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
 		return nil, ErrEscrowCacheNotFound
 	}
 	cp := info
+	cp.MainnetAnchorHash = append([]byte(nil), info.MainnetAnchorHash...)
 	if info.AppHash != nil {
 		cp.AppHash = append([]byte(nil), info.AppHash...)
 	}
@@ -699,7 +672,6 @@ func (m *Memory) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	s.eachDiffInRange(fromNonce, toNonce, func(d *types.DiffRecord) bool {
 		dc := *d
 		dc.Signatures = copySignatures(d.Signatures)
-		dc.WarmKeyDelta = copyWarmKeyDelta(d.WarmKeyDelta)
 		result = append(result, dc)
 		return true
 	})

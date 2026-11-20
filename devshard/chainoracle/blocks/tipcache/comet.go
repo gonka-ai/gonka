@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"time"
 
+	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/observer"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 )
 
 const (
@@ -18,10 +20,16 @@ const (
 )
 
 // CometHooks reports subscription liveness to failover.Oracle.
+// OnEvent receives the NewBlock delivery, including transaction results.
+// OnHeader receives the header after it is stored in the tip cache.
 type CometHooks struct {
 	OnConnected    func()
 	OnDisconnected func()
+	OnHeader       func(*blocks.Header)
+	OnEvent        func(ctypes.ResultEvent)
 }
+
+const cometNewBlockQuery = "tm.event='NewBlock'"
 
 // StartComet feeds c from CometBFT tm.event='NewBlock' until ctx is cancelled.
 // Same subscription hosts already use; gateway has no other NewBlock listener.
@@ -60,6 +68,29 @@ func runComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks) {
 	}
 }
 
+// handleCometDelivery applies the NewBlock event to the hooks and tip cache.
+func handleCometDelivery(result ctypes.ResultEvent, c *Cache, hooks CometHooks) {
+	if hooks.OnEvent != nil {
+		hooks.OnEvent(result)
+	}
+	data, ok := observer.AsEventDataNewBlock(result.Data)
+	if !ok {
+		if result.Query == cometNewBlockQuery {
+			slog.Warn("height-sync comet: unexpected NewBlock data type",
+				"query", result.Query, "got", fmt.Sprintf("%T", result.Data))
+		}
+		return
+	}
+	hdr, ok := observer.HeaderFromNewBlock(data)
+	if !ok {
+		return
+	}
+	c.Observe(hdr)
+	if hooks.OnHeader != nil {
+		hooks.OnHeader(hdr)
+	}
+}
+
 func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks) error {
 	client, err := rpchttp.New(rpcURL, "/websocket")
 	if err != nil {
@@ -70,11 +101,9 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks
 	}
 	defer client.Stop() //nolint:errcheck
 
-	subCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	ch, err := client.Subscribe(subCtx, cometSubscriberID, "tm.event='NewBlock'", cometSubBuffer)
+	events, err := client.Subscribe(ctx, cometSubscriberID, cometNewBlockQuery, cometSubBuffer)
 	if err != nil {
-		return fmt.Errorf("subscribe NewBlock: %w", err)
+		return fmt.Errorf("subscribe %q: %w", cometNewBlockQuery, err)
 	}
 	if hooks.OnConnected != nil {
 		hooks.OnConnected()
@@ -88,20 +117,11 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case result, ok := <-ch:
+		case result, ok := <-events:
 			if !ok {
-				return fmt.Errorf("subscription closed")
+				return fmt.Errorf("NewBlock subscription closed")
 			}
-			data, ok := observer.AsEventDataNewBlock(result.Data)
-			if !ok {
-				slog.Warn("height-sync comet: unexpected NewBlock data type",
-					"query", result.Query, "got", fmt.Sprintf("%T", result.Data))
-				continue
-			}
-			hdr, ok := observer.HeaderFromNewBlock(data)
-			if ok {
-				c.Observe(hdr)
-			}
+			handleCometDelivery(result, c, hooks)
 		}
 	}
 }
