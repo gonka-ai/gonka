@@ -709,7 +709,7 @@ func readConfig(provider koanf.Provider) (Config, error) {
 
 	if keyringPassword, found := os.LookupEnv("KEYRING_PASSWORD"); found {
 		config.ChainNode.KeyringPassword = keyringPassword
-		log.Printf("Loaded KEYRING_PASSWORD: %+v", keyringPassword)
+		log.Printf("Loaded KEYRING_PASSWORD from environment")
 	} else {
 		log.Printf("Warning: KEYRING_PASSWORD environment variable not set - keyring operations may fail")
 	}
