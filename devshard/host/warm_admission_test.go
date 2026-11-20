@@ -193,7 +193,7 @@ func TestFreshTailCannotSignAnUncheckedStoredPrefix(t *testing.T) {
 	records, err := f.store.GetDiffs("warm-recovery", 3, 3)
 	require.NoError(t, err)
 	require.Empty(t, records)
-	_, _, err = h.signState(2, diff.PostStateRoot)
+	_, _, err = h.signState(t.Context(), 2, diff.PostStateRoot)
 	require.ErrorIs(t, err, types.ErrHeaderPending)
 }
 

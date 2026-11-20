@@ -175,9 +175,6 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	if o == nil {
 		return nil, errors.New("blockoracle/failover: no tip")
 	}
-	if h := o.requestProofObservation(ctx); h != nil {
-		return h, nil
-	}
 	now := o.now()
 
 	o.mu.Lock()

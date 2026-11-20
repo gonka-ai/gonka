@@ -54,13 +54,15 @@ func (h *Host) reusableMainnetTip(observation mainnetTipObservation, now time.Ti
 // signState selects ordinary state signing or attestation of a durable final
 // state. The two operations use the same wire signature but separate policies.
 // Caller holds h.mu, so the final identity cannot change while signing.
-func (h *Host) signState(nonce uint64, root []byte, observations ...mainnetTipObservation) ([]byte, []uint32, error) {
+func (h *Host) signState(ctx context.Context, nonce uint64, root []byte, observations ...mainnetTipObservation) ([]byte, []uint32, error) {
 	content := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	if h.store != nil && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && h.sm.Phase() == types.PhaseSettlement {
-		return h.signFinalState(ctx, content)
+		finalCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return h.signFinalState(finalCtx, content)
 	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
 	if err := h.checkAdmittedState(nonce); err != nil {
 		return nil, nil, err
 	}
@@ -68,12 +70,11 @@ func (h *Host) signState(nonce uint64, root []byte, observations ...mainnetTipOb
 	if len(slots) == 0 {
 		return nil, nil, types.ErrWarmKeyUnconfirmed
 	}
-	now := time.Now()
-	var tip *blocks.Header
+	var requestTip func() *blocks.Header
 	if len(observations) > 0 {
-		tip = h.reusableMainnetTip(observations[0], now)
+		requestTip = func() *blocks.Header { return h.reusableMainnetTip(observations[0], time.Now()) }
 	}
-	if err := h.sm.CheckMainnetHeightFreshnessWithTip(ctx, now, tip); err != nil {
+	if err := h.sm.CheckMainnetHeightFreshnessWithTip(ctx, time.Now(), requestTip); err != nil {
 		return nil, nil, err
 	}
 	return h.signStateContent(content, slots)
