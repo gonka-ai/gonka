@@ -585,6 +585,39 @@ func (s *Server) recordEnvelopeBinding(req host.HostRequest, sec *heightsync.Hei
 	s.heightSyncMarks.AppendAll(marks)
 }
 
+func responseHeightAcks(sec *heightsync.HeightSyncSection, signed, pending []*types.DevshardTx, slots map[uint32]bool) map[*types.DevshardTx]struct{} {
+	paired := make(map[*types.DevshardTx]struct{}, len(signed))
+	for _, tx := range signed {
+		paired[tx] = struct{}{}
+	}
+	height, hash, ok := heightsync.SectionObserved(sec)
+	if ok {
+		for _, tx := range pending {
+			ack := tx.GetHeightAck()
+			if ack != nil && slots[ack.SlotId] && ack.ObservedHeight == height && bytes.Equal(ack.ObservedBlockHash, hash) {
+				paired[tx] = struct{}{}
+			}
+		}
+	}
+	return paired
+}
+
+// Keep the host's acknowledgments paired with the anchor that was already
+// sent. A concurrent acknowledgment stays queued for a subsequent response.
+// Relayed acknowledgments belong to another slot and carry no binding here.
+func retainAnchoredResponseAcks(txs []*types.DevshardTx, anchored map[*types.DevshardTx]struct{}, slots map[uint32]bool) []*types.DevshardTx {
+	kept := txs[:0]
+	for _, tx := range txs {
+		if ack := tx.GetHeightAck(); ack != nil && slots[ack.SlotId] {
+			if _, paired := anchored[tx]; !paired {
+				continue
+			}
+		}
+		kept = append(kept, tx)
+	}
+	return kept
+}
+
 func responseAnchorCompatibleWithAcks(sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) bool {
 	if !heightsync.IsAnchorSection(sec) || sec.MainnetHeight <= 0 {
 		return true
