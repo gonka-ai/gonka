@@ -11,7 +11,9 @@ func pocParamsWithMinCount(sampleSize int32, minCount uint32) *PocParams {
 	p.ValidationSampleSize = sampleSize
 	model := DefaultPoCModelConfig()
 	model.ModelId = "model-a"
-	model.StatTest.MinCount = minCount
+	for _, block := range model.Schemes {
+		block.StatTest.MinCount = minCount
+	}
 	p.Models = []*PoCModelConfig{model}
 	return p
 }
@@ -56,6 +58,9 @@ func TestDefaultParamsHaveNoMinCount(t *testing.T) {
 	require.Zero(t, p.GetStatTest().GetMinCount())
 	for _, model := range p.Models {
 		require.Zero(t, model.GetStatTest().GetMinCount())
+		for _, block := range model.Schemes {
+			require.Zero(t, block.GetStatTest().GetMinCount())
+		}
 	}
 	require.NoError(t, p.Validate())
 }
@@ -68,4 +73,27 @@ func TestMinCommitCount(t *testing.T) {
 	var nilParams *PocParams
 	require.Zero(t, nilParams.MinCommitCount("model-a"))
 	require.Equal(t, int64(DefaultPocValidationSampleSize), nilParams.EffectiveValidationSampleSize())
+}
+
+func TestPocParamsValidateRejectsFlatMinCountWithSchemes(t *testing.T) {
+	p := pocParamsWithMinCount(200, 0)
+	p.Models[0].StatTest = DefaultPoCStatTestParams()
+	p.Models[0].StatTest.MinCount = 100
+	require.Error(t, p.Validate())
+}
+
+func TestMinCommitCountReadsActiveScheme(t *testing.T) {
+	p := pocParamsWithMinCount(200, 0)
+	for _, block := range p.Models[0].Schemes {
+		if block.Scheme == PocScheme_POC_SCHEME_DECODE {
+			block.StatTest.MinCount = 120
+		} else {
+			block.StatTest.MinCount = 150
+		}
+	}
+	require.NoError(t, p.Validate())
+	p.PocScheme = PocScheme_POC_SCHEME_PREFILL
+	require.Equal(t, uint32(150), p.MinCommitCount("model-a"))
+	p.PocScheme = PocScheme_POC_SCHEME_DECODE
+	require.Equal(t, uint32(120), p.MinCommitCount("model-a"))
 }

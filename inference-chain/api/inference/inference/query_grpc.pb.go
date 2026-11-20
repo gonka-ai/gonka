@@ -72,6 +72,7 @@ const (
 	Query_BridgeTransaction_FullMethodName                         = "/inference.inference.Query/BridgeTransaction"
 	Query_BridgeTransactions_FullMethodName                        = "/inference.inference.Query/BridgeTransactions"
 	Query_BridgeAddressesByChain_FullMethodName                    = "/inference.inference.Query/BridgeAddressesByChain"
+	Query_BridgeKeyLink_FullMethodName                             = "/inference.inference.Query/BridgeKeyLink"
 	Query_LiquidityPool_FullMethodName                             = "/inference.inference.Query/LiquidityPool"
 	Query_WrappedTokenBalances_FullMethodName                      = "/inference.inference.Query/WrappedTokenBalances"
 	Query_ValidateWrappedTokenForTrade_FullMethodName              = "/inference.inference.Query/ValidateWrappedTokenForTrade"
@@ -94,6 +95,7 @@ const (
 	Query_ListRandomSeeds_FullMethodName                           = "/inference.inference.Query/ListRandomSeeds"
 	Query_ParticipantsWithBalances_FullMethodName                  = "/inference.inference.Query/ParticipantsWithBalances"
 	Query_PoCValidationSnapshot_FullMethodName                     = "/inference.inference.Query/PoCValidationSnapshot"
+	Query_PocStageRecipe_FullMethodName                            = "/inference.inference.Query/PocStageRecipe"
 	Query_DevshardEscrow_FullMethodName                            = "/inference.inference.Query/DevshardEscrow"
 	Query_PreservedNodesSnapshot_FullMethodName                    = "/inference.inference.Query/PreservedNodesSnapshot"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
@@ -200,6 +202,12 @@ type QueryClient interface {
 	BridgeTransactions(ctx context.Context, in *QueryAllBridgeTransactionsRequest, opts ...grpc.CallOption) (*QueryAllBridgeTransactionsResponse, error)
 	// Queries bridge addresses by chain
 	BridgeAddressesByChain(ctx context.Context, in *QueryBridgeAddressesByChainRequest, opts ...grpc.CallOption) (*QueryBridgeAddressesByChainResponse, error)
+	// Queries the bridge key link for a receipt owner address.
+	// owner_address is the Gonka address derived from the compressed external
+	// public key, the same value MsgBridgeExchange stores as ownerAddress.
+	// found is false when no link is stored. Settlement then pays owner_address.
+	// nonce is the last accepted Ethereum authorization for that owner.
+	BridgeKeyLink(ctx context.Context, in *QueryBridgeKeyLinkRequest, opts ...grpc.CallOption) (*QueryBridgeKeyLinkResponse, error)
 	// Queries the singleton liquidity pool
 	LiquidityPool(ctx context.Context, in *QueryLiquidityPoolRequest, opts ...grpc.CallOption) (*QueryLiquidityPoolResponse, error)
 	// Queries all wrapped token balances for a specific address
@@ -240,6 +248,9 @@ type QueryClient interface {
 	ParticipantsWithBalances(ctx context.Context, in *QueryParticipantsWithBalancesRequest, opts ...grpc.CallOption) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error)
+	// Frozen generate/validate/evaluate snapshot for a PoC stage height
+	// (regular PocStartBlockHeight or CPoC trigger height).
+	PocStageRecipe(ctx context.Context, in *QueryPocStageRecipeRequest, opts ...grpc.CallOption) (*QueryPocStageRecipeResponse, error)
 	DevshardEscrow(ctx context.Context, in *QueryGetDevshardEscrowRequest, opts ...grpc.CallOption) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error)
@@ -748,6 +759,15 @@ func (c *queryClient) BridgeAddressesByChain(ctx context.Context, in *QueryBridg
 	return out, nil
 }
 
+func (c *queryClient) BridgeKeyLink(ctx context.Context, in *QueryBridgeKeyLinkRequest, opts ...grpc.CallOption) (*QueryBridgeKeyLinkResponse, error) {
+	out := new(QueryBridgeKeyLinkResponse)
+	err := c.cc.Invoke(ctx, Query_BridgeKeyLink_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) LiquidityPool(ctx context.Context, in *QueryLiquidityPoolRequest, opts ...grpc.CallOption) (*QueryLiquidityPoolResponse, error) {
 	out := new(QueryLiquidityPoolResponse)
 	err := c.cc.Invoke(ctx, Query_LiquidityPool_FullMethodName, in, out, opts...)
@@ -940,6 +960,15 @@ func (c *queryClient) ParticipantsWithBalances(ctx context.Context, in *QueryPar
 func (c *queryClient) PoCValidationSnapshot(ctx context.Context, in *QueryPoCValidationSnapshotRequest, opts ...grpc.CallOption) (*QueryPoCValidationSnapshotResponse, error) {
 	out := new(QueryPoCValidationSnapshotResponse)
 	err := c.cc.Invoke(ctx, Query_PoCValidationSnapshot_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) PocStageRecipe(ctx context.Context, in *QueryPocStageRecipeRequest, opts ...grpc.CallOption) (*QueryPocStageRecipeResponse, error) {
+	out := new(QueryPocStageRecipeResponse)
+	err := c.cc.Invoke(ctx, Query_PocStageRecipe_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1154,6 +1183,12 @@ type QueryServer interface {
 	BridgeTransactions(context.Context, *QueryAllBridgeTransactionsRequest) (*QueryAllBridgeTransactionsResponse, error)
 	// Queries bridge addresses by chain
 	BridgeAddressesByChain(context.Context, *QueryBridgeAddressesByChainRequest) (*QueryBridgeAddressesByChainResponse, error)
+	// Queries the bridge key link for a receipt owner address.
+	// owner_address is the Gonka address derived from the compressed external
+	// public key, the same value MsgBridgeExchange stores as ownerAddress.
+	// found is false when no link is stored. Settlement then pays owner_address.
+	// nonce is the last accepted Ethereum authorization for that owner.
+	BridgeKeyLink(context.Context, *QueryBridgeKeyLinkRequest) (*QueryBridgeKeyLinkResponse, error)
 	// Queries the singleton liquidity pool
 	LiquidityPool(context.Context, *QueryLiquidityPoolRequest) (*QueryLiquidityPoolResponse, error)
 	// Queries all wrapped token balances for a specific address
@@ -1194,6 +1229,9 @@ type QueryServer interface {
 	ParticipantsWithBalances(context.Context, *QueryParticipantsWithBalancesRequest) (*QueryParticipantsWithBalancesResponse, error)
 	// Queries PoC validation snapshot for deterministic sampling synchronization.
 	PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error)
+	// Frozen generate/validate/evaluate snapshot for a PoC stage height
+	// (regular PocStartBlockHeight or CPoC trigger height).
+	PocStageRecipe(context.Context, *QueryPocStageRecipeRequest) (*QueryPocStageRecipeResponse, error)
 	DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error)
 	// Queries preserved nodes snapshot for the active PoC episode.
 	PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error)
@@ -1381,6 +1419,9 @@ func (UnimplementedQueryServer) BridgeTransactions(context.Context, *QueryAllBri
 func (UnimplementedQueryServer) BridgeAddressesByChain(context.Context, *QueryBridgeAddressesByChainRequest) (*QueryBridgeAddressesByChainResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method BridgeAddressesByChain not implemented")
 }
+func (UnimplementedQueryServer) BridgeKeyLink(context.Context, *QueryBridgeKeyLinkRequest) (*QueryBridgeKeyLinkResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method BridgeKeyLink not implemented")
+}
 func (UnimplementedQueryServer) LiquidityPool(context.Context, *QueryLiquidityPoolRequest) (*QueryLiquidityPoolResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LiquidityPool not implemented")
 }
@@ -1446,6 +1487,9 @@ func (UnimplementedQueryServer) ParticipantsWithBalances(context.Context, *Query
 }
 func (UnimplementedQueryServer) PoCValidationSnapshot(context.Context, *QueryPoCValidationSnapshotRequest) (*QueryPoCValidationSnapshotResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PoCValidationSnapshot not implemented")
+}
+func (UnimplementedQueryServer) PocStageRecipe(context.Context, *QueryPocStageRecipeRequest) (*QueryPocStageRecipeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method PocStageRecipe not implemented")
 }
 func (UnimplementedQueryServer) DevshardEscrow(context.Context, *QueryGetDevshardEscrowRequest) (*QueryGetDevshardEscrowResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DevshardEscrow not implemented")
@@ -2453,6 +2497,24 @@ func _Query_BridgeAddressesByChain_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_BridgeKeyLink_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryBridgeKeyLinkRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).BridgeKeyLink(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_BridgeKeyLink_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).BridgeKeyLink(ctx, req.(*QueryBridgeKeyLinkRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_LiquidityPool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryLiquidityPoolRequest)
 	if err := dec(in); err != nil {
@@ -2845,6 +2907,24 @@ func _Query_PoCValidationSnapshot_Handler(srv interface{}, ctx context.Context, 
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).PoCValidationSnapshot(ctx, req.(*QueryPoCValidationSnapshotRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_PocStageRecipe_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryPocStageRecipeRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).PocStageRecipe(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_PocStageRecipe_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).PocStageRecipe(ctx, req.(*QueryPocStageRecipeRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3303,6 +3383,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_BridgeAddressesByChain_Handler,
 		},
 		{
+			MethodName: "BridgeKeyLink",
+			Handler:    _Query_BridgeKeyLink_Handler,
+		},
+		{
 			MethodName: "LiquidityPool",
 			Handler:    _Query_LiquidityPool_Handler,
 		},
@@ -3389,6 +3473,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PoCValidationSnapshot",
 			Handler:    _Query_PoCValidationSnapshot_Handler,
+		},
+		{
+			MethodName: "PocStageRecipe",
+			Handler:    _Query_PocStageRecipe_Handler,
 		},
 		{
 			MethodName: "DevshardEscrow",

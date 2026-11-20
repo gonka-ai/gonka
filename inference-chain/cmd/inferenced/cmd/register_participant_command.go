@@ -110,8 +110,9 @@ func fetchConsensusKeyFromNode() (string, error) {
 
 func RegisterNewParticipantCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "register-new-participant <node-url> <account-public-key>",
-		Short: "Register a new participant with the seed node",
+		Use:        "register-new-participant <node-url> <account-public-key>",
+		Short:      "Register a new participant with the seed node (deprecated)",
+		Deprecated: "POST /v1/participants and MsgSubmitNewUnfundedParticipant are suspended; fund the cold account and run 'inferenced tx inference submit-new-participant' instead",
 		Long: `Register a new participant with the seed node.
 
 The account address will be automatically derived from the account public key.

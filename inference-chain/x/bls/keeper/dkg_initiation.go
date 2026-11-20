@@ -1,6 +1,7 @@
 package keeper
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -38,8 +39,41 @@ func (k Keeper) dealerComplaintsStore(ctx sdk.Context, epochID uint64) prefix.St
 	return prefix.NewStore(store, types.DealerComplaintEpochPrefix(epochID))
 }
 
+// validateFinalizedParticipantKeys enforces secp256k1 curve validity, deduplication,
+// and strict lexicographical ordering invariants on all participant keys before DKG
+// initiation assigns slots, mutates state, or emits events.
+func validateFinalizedParticipantKeys(finalizedParticipants []types.ParticipantWithWeightAndKey) error {
+	for _, p := range finalizedParticipants {
+		if err := types.ValidateCompressedSecp256k1PubKey(p.Secp256k1PublicKey); err != nil {
+			return fmt.Errorf("invalid primary secp256k1 public key for participant %s: %w", p.Address, err)
+		}
+		for i, additionalKey := range p.AllowedSecp256k1PublicKeys {
+			if err := types.ValidateCompressedSecp256k1PubKey(additionalKey); err != nil {
+				return fmt.Errorf("invalid additional secp256k1 public key at index %d for participant %s: %w", i, p.Address, err)
+			}
+			if bytes.Equal(additionalKey, p.Secp256k1PublicKey) {
+				return fmt.Errorf("additional secp256k1 public key at index %d matches primary key for participant %s", i, p.Address)
+			}
+			if i > 0 {
+				cmp := bytes.Compare(p.AllowedSecp256k1PublicKeys[i-1], additionalKey)
+				if cmp == 0 {
+					return fmt.Errorf("duplicate additional secp256k1 public key at index %d for participant %s", i, p.Address)
+				}
+				if cmp > 0 {
+					return fmt.Errorf("unsorted additional secp256k1 public keys at index %d for participant %s", i, p.Address)
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // InitiateKeyGenerationForEpoch initiates DKG for a given epoch with finalized participants
 func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, finalizedParticipants []types.ParticipantWithWeightAndKey) error {
+	if err := validateFinalizedParticipantKeys(finalizedParticipants); err != nil {
+		return fmt.Errorf("failed participant key validation: %w", err)
+	}
+
 	// Get module parameters
 	params, err := k.GetParams(ctx)
 	if err != nil {

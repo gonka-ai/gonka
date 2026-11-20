@@ -28,7 +28,10 @@ type Result struct {
 }
 
 // Freeze copies live governance config into deterministic epoch scale entries.
-func Freeze(pocParams *types.PocParams) (*FrozenConfig, error) {
+// With dynamic coefficients each model's config is the one in its block for
+// the stage scheme: the block recipe froze for the stage, else the live block
+// for the live scheme.
+func Freeze(pocParams *types.PocParams, recipe *types.PocStageRecipe) (*FrozenConfig, error) {
 	if pocParams == nil {
 		return &FrozenConfig{}, nil
 	}
@@ -48,14 +51,22 @@ func Freeze(pocParams *types.PocParams) (*FrozenConfig, error) {
 		})
 		return &FrozenConfig{Scales: scales}, nil
 	}
-	scales := make([]*types.ConfirmationWeightScale, 0, len(pocParams.Models))
-	for _, model := range pocParams.Models {
-		if model == nil || model.ModelId == "" || model.DynamicCoefficient == nil {
+	scheme, models := pocParams.PocScheme, pocParams.Models
+	if recipe != nil {
+		scheme, models = recipe.Scheme, recipe.Models
+	}
+	scales := make([]*types.ConfirmationWeightScale, 0, len(models))
+	for _, model := range models {
+		if model == nil || model.ModelId == "" {
+			continue
+		}
+		config := model.DynamicCoefficientFor(scheme)
+		if config == nil {
 			continue
 		}
 		scales = append(scales, &types.ConfirmationWeightScale{
 			ModelId: model.ModelId,
-			Config:  cloneModelConfig(model.DynamicCoefficient),
+			Config:  cloneModelConfig(config),
 		})
 	}
 	slices.SortFunc(scales, func(a, b *types.ConfirmationWeightScale) int {
@@ -82,13 +93,14 @@ func GovernanceCoefficients(pocParams *types.PocParams) map[string]mathsdk.Legac
 			result[model.ModelId] = legacyWeightScaleFactor(model)
 			continue
 		}
-		if model.DynamicCoefficient == nil {
+		config := model.DynamicCoefficientFor(pocParams.PocScheme)
+		if config == nil {
 			result[model.ModelId] = mathsdk.LegacyZeroDec()
 			continue
 		}
 		coeff, err := positiveDecimal(
 			fmt.Sprintf("coeff_min for model %q", model.ModelId),
-			model.DynamicCoefficient.CoeffMin,
+			config.CoeffMin,
 		)
 		if err != nil {
 			result[model.ModelId] = mathsdk.LegacyZeroDec()
@@ -314,13 +326,17 @@ func initialState(
 	previous *types.ConfirmationWeightScale,
 	stepMax mathsdk.LegacyDec,
 ) (mathsdk.LegacyDec, mathsdk.LegacyDec, int32, bool, error) {
-	if previous != nil && previous.BaseCoefficient != nil && previous.AdaptiveStep != nil {
+	if previous != nil && previous.BaseCoefficient != nil {
 		base, err := positiveDecimal(
 			fmt.Sprintf("previous base coefficient for model %q", modelID),
 			previous.BaseCoefficient,
 		)
 		if err != nil {
 			return mathsdk.LegacyDec{}, mathsdk.LegacyDec{}, 0, false, err
+		}
+		// A missing step initializes new adjustment history at the supplied base.
+		if previous.AdaptiveStep == nil {
+			return base, stepMax.QuoInt64(2), 0, false, nil
 		}
 		step, err := positiveDecimal(
 			fmt.Sprintf("previous adaptive step for model %q", modelID),

@@ -27,6 +27,10 @@ type ChallengeCache struct {
 	self          string
 	list          []*types.OpenPoCChallenge
 	minPunishable int64
+	// targetsByEpoch is every same-epoch challenge target from the last query,
+	// including passed, failed, and aborted records. The operational list stays
+	// open-only because generation and voting treat it as live work.
+	targetsByEpoch map[uint64]map[string]struct{}
 }
 
 func NewChallengeCache() *ChallengeCache {
@@ -54,9 +58,18 @@ func cloneChallenge(ch *types.OpenPoCChallenge) *types.OpenPoCChallenge {
 
 func (c *ChallengeCache) Replace(self string, list []*types.OpenPoCChallenge, minPunishable int64) {
 	copied := make([]*types.OpenPoCChallenge, 0, len(list))
+	targetsByEpoch := make(map[uint64]map[string]struct{})
 	for _, ch := range list {
 		if ch == nil {
 			continue
+		}
+		if ch.Challenge != nil && ch.Target() != "" {
+			epochTargets := targetsByEpoch[ch.Challenge.EpochIndex]
+			if epochTargets == nil {
+				epochTargets = make(map[string]struct{})
+				targetsByEpoch[ch.Challenge.EpochIndex] = epochTargets
+			}
+			epochTargets[ch.Target()] = struct{}{}
 		}
 		if ch.Challenge != nil && ch.Challenge.State != types.PoCChallengeState_POC_CHALLENGE_STATE_OPEN {
 			continue
@@ -66,8 +79,25 @@ func (c *ChallengeCache) Replace(self string, list []*types.OpenPoCChallenge, mi
 	c.mu.Lock()
 	c.self = self
 	c.list = copied
+	c.targetsByEpoch = targetsByEpoch
 	c.minPunishable = minPunishable
 	c.mu.Unlock()
+}
+
+// TargetsForEpoch returns challenge targets for one epoch, including terminal
+// records. The caller receives a copy.
+func (c *ChallengeCache) TargetsForEpoch(epochIndex uint64) map[string]struct{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	src := c.targetsByEpoch[epochIndex]
+	if len(src) == 0 {
+		return nil
+	}
+	out := make(map[string]struct{}, len(src))
+	for addr := range src {
+		out[addr] = struct{}{}
+	}
+	return out
 }
 
 func (c *ChallengeCache) Reset() {

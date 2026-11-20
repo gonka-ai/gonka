@@ -293,6 +293,11 @@ func TestDecideCurrentChallengeSegment_DropsCommitsBelowMinCount(t *testing.T) {
 				StatTest:          statTest,
 			}}
 			require.NoError(t, k.SetParams(ctx, params))
+			frozen, found, err := k.GetEpochPocRecipe(ctx, 2)
+			require.NoError(t, err)
+			require.True(t, found)
+			frozen.Models = params.PocParams.Models
+			require.NoError(t, k.LatestPocStageRecipe.Set(ctx, frozen))
 
 			require.NoError(t, am.decideCurrentChallengeSegments(ctx, 2, 500, 180, false))
 			ch, found, err := k.GetPoCChallenge(ctx, testutil.Executor)
