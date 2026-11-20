@@ -1,13 +1,18 @@
 services:
   mlnode-308:
-    # CUDA 12.9 fallback: ghcr.io/gonka-ai/mlnode:3.0.16-cu129@sha256:f3db246b45dbe7f71cb9d8ad8ab15877d31bf28f742da04eed22b177d78e62c3
-    image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1}
+    # NVIDIA driver older than 580 (CUDA 12.x): ghcr.io/gonka-ai/mlnode:4.0.0-sigma2-cu12@sha256:fd2790dfa384fc455559f9e01c9d21db7fad14a750f3673e7dc82549c6d348d2
+    image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:4.0.0-sigma2@sha256:e45bae55f11c9d72291dd075af781d5b7cf0b1bdb030fb611a937c8d7685b496}
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
     environment:
       - HF_HOME=/root/.cache
+      # Model-specific image and PoC settings: docs/mlnode-configs.md.
       - POC_BATCH_SIZE_DEFAULT=${POC_BATCH_SIZE_DEFAULT:-32}
+      - POC_WORKER_MINING=${POC_WORKER_MINING:-0}
+      - POC_CALLBACK_INTERVAL_SEC=${POC_CALLBACK_INTERVAL_SEC:-5}
+      # Set to 0 for DeepSeek-V4-Flash on 2xH200 (see docs/mlnode-configs.md).
+      - VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS=${VLLM_MEMORY_PROFILER_ESTIMATE_CUDAGRAPHS:-1}
     deploy:
       resources:
         reservations:

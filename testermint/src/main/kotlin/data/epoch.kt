@@ -122,7 +122,15 @@ data class ConfirmationPoCEvent(
     val generationStartHeight: Long,
     val phase: ConfirmationPoCPhase,
     @SerializedName("poc_seed_block_hash")
-    val pocSeedBlockHash: String = ""
+    val pocSeedBlockHash: String = "",
+    val recipe: PocStageRecipe? = null,
+)
+
+data class PocStageRecipe(
+    @SerializedName("stage_height") val stageHeight: Long = 0,
+    val scheme: String = "POC_SCHEME_PREFILL",
+    val tracking: Boolean = false,
+    val models: List<PoCModelConfig> = emptyList(),
 )
 
 enum class ConfirmationPoCPhase(val value: Int) {

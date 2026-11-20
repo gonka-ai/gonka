@@ -18,6 +18,7 @@ import (
 	"common/httpguard"
 	"common/logging"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -37,6 +38,15 @@ var (
 
 const DefaultKDim = 12
 
+// maxProofResponseBytes bounds the validatee's /v1/poc/proofs response. A
+// legitimate response holds ValidationSampleSize (default 200) proof items, a
+// few MiB at most; 64 MiB is a last-resort memory bound. The validatee controls
+// this URL, so without a cap the unbounded decoder lets a host OOM the validator.
+const maxProofResponseBytes = 64 << 20
+
+// maxProofErrorBodyBytes caps how much of a non-200 body is quoted into an error.
+const maxProofErrorBodyBytes = 512
+
 // ProofClient fetches and verifies SMST proofs from participant APIs.
 type ProofClient struct {
 	httpClient *http.Client
@@ -52,6 +62,7 @@ type ProofRequest struct {
 	TreeDepth                uint32
 	LeafIndices              []uint32
 	ParticipantAddress       string // participant whose API we're calling
+	DecodeSteps              int64  // >0: artifacts are packed decode trajectories, one byte per step
 }
 
 // ProofByNonceRequest contains parameters for requesting proofs by nonce.
@@ -63,6 +74,7 @@ type ProofByNonceRequest struct {
 	TreeDepth                uint32
 	Nonces                   []int32
 	ParticipantAddress       string // participant whose API we're calling
+	DecodeSteps              int64  // >0: artifacts are packed decode trajectories, one byte per step
 }
 
 // ProofResponse is the response from the proof API.
@@ -178,12 +190,12 @@ func (c *ProofClient) FetchAndVerifyProofs(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProofErrorBodyBytes))
 		return nil, fmt.Errorf("proof request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var proofResp ProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxProofResponseBytes)).Decode(&proofResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
@@ -194,7 +206,7 @@ func (c *ProofClient) FetchAndVerifyProofs(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item, req.DecodeSteps)
 		if err != nil {
 			return nil, err
 		}
@@ -272,12 +284,12 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxProofErrorBodyBytes))
 		return nil, fmt.Errorf("proof by nonce request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var proofResp ProofResponse
-	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxProofResponseBytes)).Decode(&proofResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 	if err := validateNonceCoverage(req.Nonces, proofResp.Proofs); err != nil {
@@ -286,7 +298,7 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.TreeDepth, req.ParticipantAddress, item, req.DecodeSteps)
 		if err != nil {
 			return nil, err
 		}
@@ -374,7 +386,7 @@ func validateNonceCoverage(requested []int32, proofs []ProofItem) error {
 	return nil
 }
 
-func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participantAddress string, item ProofItem) (VerifiedArtifact, error) {
+func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participantAddress string, item ProofItem, decodeSteps int64) (VerifiedArtifact, error) {
 	vectorBytes, err := base64.StdEncoding.DecodeString(item.VectorBytes)
 	if err != nil {
 		logging.Warn("Failed to decode vector bytes", types.PoC,
@@ -382,7 +394,17 @@ func verifyProofItem(rootHash []byte, count uint32, treeDepth uint32, participan
 		return VerifiedArtifact{}, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
 	}
 
-	if err := ValidateFP16Vector(vectorBytes, DefaultKDim); err != nil {
+	err = ValidateFP16Vector(vectorBytes, DefaultKDim)
+	if decodeSteps > 0 {
+		// Decode scheme: the leaf is the trajectory, the prefill step plus one byte per decode step.
+		err = nil
+		if int64(len(vectorBytes)) != decodeSteps+1 {
+			err = fmt.Errorf("invalid trajectory length: got %d bytes, expected %d", len(vectorBytes), decodeSteps+1)
+		} else if packErr := mlnodeclient.ValidatePackedKSteps(vectorBytes); packErr != nil {
+			err = packErr
+		}
+	}
+	if err != nil {
 		logging.Warn("Invalid FP16 vector data", types.PoC,
 			"participant", participantAddress, "leafIndex", item.LeafIndex, "error", err)
 		return VerifiedArtifact{}, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)

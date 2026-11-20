@@ -17,12 +17,16 @@ func dynamicModel(
 	return &types.PoCModelConfig{
 		ModelId:           id,
 		WeightScaleFactor: weightScale,
-		DynamicCoefficient: &types.DynamicCoefficientModelConfig{
-			CoeffMin:           min,
-			CoeffMax:           max,
-			RelativeDifficulty: difficulty,
-			TargetShareBps:     target,
-		},
+		Schemes: []*types.PocSchemeParams{{
+			Scheme: types.PocScheme_POC_SCHEME_PREFILL,
+			SeqLen: 128,
+			DynamicCoefficient: &types.DynamicCoefficientModelConfig{
+				CoeffMin:           min,
+				CoeffMax:           max,
+				RelativeDifficulty: difficulty,
+				TargetShareBps:     target,
+			},
+		}},
 	}
 }
 

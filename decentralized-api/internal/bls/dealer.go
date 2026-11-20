@@ -32,7 +32,6 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/cosmos/cosmos-sdk/crypto/ecies"
-	"github.com/decred/dcrd/dcrec/secp256k1/v4"
 	blst "github.com/supranational/blst/bindings/go"
 )
 
@@ -195,6 +194,25 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	logging.Debug("Generating dealer part", inferenceTypes.BLS,
 		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "participantCount", len(participants))
 
+	if len(participants) == 0 {
+		return nil, fmt.Errorf("epoch %d snapshot has no participants", epochID)
+	}
+
+	// Validate all participant primary and additional secp256k1 keys upfront before
+	// performing polynomial generation, G2 commitments, or share encryption.
+	allowedPubKeysByParticipant := make([][][]byte, len(participants))
+	for i, participant := range participants {
+		allowedPubKeys, err := participantAllowedPubKeys(participant)
+		if err != nil {
+			return nil, fmt.Errorf("epoch %d failed to build allowed public keys from snapshot for participant %s: %w",
+				epochID, participant.Address, err)
+		}
+		if len(allowedPubKeys) == 0 {
+			return nil, fmt.Errorf("epoch %d participant %s has no allowed public keys", epochID, participant.Address)
+		}
+		allowedPubKeysByParticipant[i] = allowedPubKeys
+	}
+
 	// Generate secret BLS polynomial Poly_k(x) of degree tDegree
 	polynomial, err := generateRandomPolynomial(tDegree)
 	if err != nil {
@@ -208,15 +226,7 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	encryptedSharesForParticipants := make([]types.EncryptedSharesForParticipant, len(participants))
 	openingRecords := make([]dealerOpeningPersistRecord, 0)
 	for i, participant := range participants {
-		// Build encryption key set from on-chain participant snapshot (primary + additional).
-		allowedPubKeys, err := participantAllowedPubKeys(participant)
-		if err != nil {
-			return nil, fmt.Errorf("failed to build allowed public keys from snapshot for participant %s: %w",
-				participant.Address, err)
-		}
-		if len(allowedPubKeys) == 0 {
-			return nil, fmt.Errorf("participant %s has no allowed public keys", participant.Address)
-		}
+		allowedPubKeys := allowedPubKeysByParticipant[i]
 
 		// Calculate number of slots for this participant
 		numSlots := participant.SlotEndIndex - participant.SlotStartIndex + 1
@@ -407,18 +417,7 @@ func encryptForParticipantWithReader(data []byte, secp256k1PubKeyBytes []byte, e
 }
 
 func parseECIESPublicKeyFromCompressed(secp256k1PubKeyBytes []byte) (*ecies.PublicKey, error) {
-	// Validate the compressed secp256k1 public key format
-	// (33 bytes: 0x02 or 0x03 + 32 bytes X)
-	if len(secp256k1PubKeyBytes) != 33 {
-		return nil, fmt.Errorf("invalid compressed secp256k1 public key format, expected 33 bytes, got %d bytes", len(secp256k1PubKeyBytes))
-	}
-	// Check for valid prefix (0x02 or 0x03)
-	if secp256k1PubKeyBytes[0] != 0x02 && secp256k1PubKeyBytes[0] != 0x03 {
-		return nil, fmt.Errorf("invalid compressed secp256k1 public key prefix, expected 0x02 or 0x03, got 0x%x", secp256k1PubKeyBytes[0])
-	}
-
-	// Use Decred secp256k1 to parse the compressed key bytes into a secp256k1.PublicKey
-	pubKey, err := secp256k1.ParsePubKey(secp256k1PubKeyBytes)
+	pubKey, err := types.ParseCompressedSecp256k1PubKey(secp256k1PubKeyBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse secp256k1 public key: %w", err)
 	}
@@ -480,8 +479,8 @@ func (r *deterministicSeedReader) Read(p []byte) (int, error) {
 }
 
 func participantAllowedPubKeys(participant ParticipantInfo) ([][]byte, error) {
-	if len(participant.Secp256K1PublicKey) != 33 {
-		return nil, fmt.Errorf("invalid primary secp256k1 public key length for participant %s: %d", participant.Address, len(participant.Secp256K1PublicKey))
+	if err := types.ValidateCompressedSecp256k1PubKey(participant.Secp256K1PublicKey); err != nil {
+		return nil, fmt.Errorf("invalid primary secp256k1 public key for participant %s: %w", participant.Address, err)
 	}
 
 	allowedPubKeys := make([][]byte, 0, 1+len(participant.AllowedSecp256K1PublicKeys))
@@ -490,8 +489,8 @@ func participantAllowedPubKeys(participant ParticipantInfo) ([][]byte, error) {
 	allowedPubKeys = append(allowedPubKeys, primaryKey)
 
 	for idx, additionalKey := range participant.AllowedSecp256K1PublicKeys {
-		if len(additionalKey) != 33 {
-			return nil, fmt.Errorf("invalid additional secp256k1 public key length at index %d for participant %s: %d", idx, participant.Address, len(additionalKey))
+		if err := types.ValidateCompressedSecp256k1PubKey(additionalKey); err != nil {
+			return nil, fmt.Errorf("invalid additional secp256k1 public key at index %d for participant %s: %w", idx, participant.Address, err)
 		}
 
 		keyCopy := append([]byte(nil), additionalKey...)
