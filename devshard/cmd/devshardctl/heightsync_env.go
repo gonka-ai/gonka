@@ -216,7 +216,7 @@ func seedGatewayTrustedDAPI(ctx context.Context, oracle blocks.BlockOracle, src 
 // observeGatewayCometHeader hands a Comet NewBlock to the verifier, which
 // writes it into the map once its commit checks out. Without a verifier the
 // websocket header is written unverified.
-// gatewayCometHooks subscribes warm-key queries on the same client as NewBlock.
+// gatewayCometHooks reads warm-key changes from the NewBlock delivery.
 func gatewayCometHooks(setConnected func(bool), onHeader func(*blocks.Header), poller *hostevents.Poller) tipcache.CometHooks {
 	return tipcache.CometHooks{
 		OnConnected: func() {

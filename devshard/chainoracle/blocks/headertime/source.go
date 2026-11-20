@@ -15,6 +15,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/lightproof"
+	"common/chainoracle/blocks/tipcache"
 	"common/logging"
 	"devshard/types"
 )
@@ -73,6 +74,7 @@ type entry struct {
 type Source struct {
 	proofSource   lightproof.Source
 	latestOracle  blocks.BlockOracle
+	proofHeaders  *tipcache.Cache
 	filler        Filler
 	fetchTimeout  time.Duration
 	missWait      time.Duration
@@ -188,6 +190,7 @@ func WithFiller(f Filler) Option {
 
 func New(opts ...Option) *Source {
 	s := &Source{
+		proofHeaders:  tipcache.New(0),
 		fetchTimeout:  DefaultFetchTimeout,
 		missWait:      DefaultMissWait,
 		capacity:      DefaultCapacity,
@@ -226,6 +229,9 @@ func (s *Source) Observe(h *blocks.Header, origin Origin, verified bool) {
 func (s *Source) ObserveEpoch(h *blocks.Header, origin Origin, verified bool, epoch uint64) {
 	if s == nil || h == nil || h.Height <= 0 {
 		return
+	}
+	if origin == OriginComet && verified {
+		s.proofHeaders.Remember(h)
 	}
 	floor := s.writeFloor()
 	s.mu.Lock()
@@ -563,15 +569,15 @@ func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*bl
 	if s == nil || height <= 0 {
 		return nil, blocks.ErrProveNotImplemented
 	}
-	if cached, found := s.StoredAt(uint64(height)); found && cached.Verified {
-		return blocks.HashOnlyHeader(height, time.UnixMilli(cached.TimeMs).UTC(), "", cached.Hash), nil
+	if h, err := s.proofHeaders.At(ctx, height); err == nil {
+		return h, nil
 	}
 	if oracle, ok := s.proofSource.(interface {
 		CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
 	}); ok {
 		h, err := oracle.CanonicalHeaderForProof(ctx, height)
 		if err == nil {
-			s.Observe(h, OriginComet, true)
+			s.proofHeaders.Remember(h)
 		}
 		return h, err
 	}
