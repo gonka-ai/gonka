@@ -38,6 +38,21 @@ func TestApplyLocalBestEffort_HeartbeatAndAckStayInDiff(t *testing.T) {
 	require.NotNil(t, applied[1].GetHeightAck())
 }
 
+func TestHeightSyncAckStopsBeingOutstandingWhenFinalizing(t *testing.T) {
+	sm, _ := newTestSM(t, []*signing.Secp256k1Signer{testutil.MustGenerateKey(t)}, 100000)
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+	}}}})
+	require.NoError(t, err)
+	require.True(t, sm.HeightSyncAckOutstanding(1, 0))
+
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txFinalize()})
+	require.NoError(t, err)
+	require.NotEqual(t, types.PhaseActive, sm.Phase())
+	require.NotNil(t, sm.HeightSyncTurnRecord(1), "the unacknowledged turn still exists")
+	require.False(t, sm.HeightSyncAckOutstanding(1, 0), "its ACK can no longer enter a diff")
+}
+
 func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
