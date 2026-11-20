@@ -262,9 +262,13 @@ type flakySettleSink struct {
 	failMu   sync.Mutex
 	failures int
 	attempts int
+	failID   string
 }
 
 func (s *flakySettleSink) OnEscrowSettled(id string) error {
+	if s.failID != "" && s.failID != id {
+		return s.recordingSink.OnEscrowSettled(id)
+	}
 	s.failMu.Lock()
 	s.attempts++
 	fail := s.attempts <= s.failures
@@ -281,15 +285,19 @@ func (s *flakySettleSink) attemptCount() int {
 	return s.attempts
 }
 
-// settledEventsServer serves one settled event to any cursor below its seq,
-// mimicking the ring's "seq > cursor" contract so a rewound cursor redelivers.
+// settledEventsServer serves only events ahead of the cursor, as the ring does.
 // The second return value reports whether the loop has ever polled from a
 // cursor at or past the event, i.e. whether it moved on.
-func settledEventsServer(escrowID, seq uint64) (*fakeHostEventsServer, func() bool) {
+func settledEventsServer(escrowID, seq uint64, following ...*gen.HostEvent) (*fakeHostEventsServer, func() bool) {
 	var (
 		mu       sync.Mutex
 		advanced bool
 	)
+	events := append([]*gen.HostEvent{{
+		Seq:    seq,
+		Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+		Escrow: &gen.EscrowPayload{EscrowId: escrowID},
+	}}, following...)
 	srv := &fakeHostEventsServer{}
 	srv.SetSticky(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
 		cursor := req.GetCursor()
@@ -297,17 +305,15 @@ func settledEventsServer(escrowID, seq uint64) (*fakeHostEventsServer, func() bo
 			mu.Lock()
 			advanced = true
 			mu.Unlock()
-			return &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: seq}, nil
 		}
-		return &gen.GetHostEventsResponse{
-			Generation: 1,
-			NextCursor: seq,
-			Events: []*gen.HostEvent{{
-				Seq:    seq,
-				Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
-				Escrow: &gen.EscrowPayload{EscrowId: escrowID},
-			}},
-		}, nil
+		resp := &gen.GetHostEventsResponse{Generation: 1, NextCursor: events[len(events)-1].GetSeq()}
+		for _, event := range events {
+			if event.GetSeq() > cursor {
+				resp.Events = append(resp.Events, event)
+			}
+		}
+		resp.Unchanged = len(resp.Events) == 0
+		return resp, nil
 	})
 	return srv, func() bool {
 		mu.Lock()
@@ -348,10 +354,14 @@ func TestRun_RedeliversFailedDispatch(t *testing.T) {
 }
 
 // One permanently wedged event must not stall the stream forever.
-func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
-	srv, movedOn := settledEventsServer(42, 5)
+func TestRun_FailedEventDoesNotSkipPageSuffix(t *testing.T) {
+	srv, movedOn := settledEventsServer(42, 5, &gen.HostEvent{
+		Seq:    6,
+		Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+		Escrow: &gen.EscrowPayload{EscrowId: 43},
+	})
 	client := dialFake(t, srv)
-	sink := &flakySettleSink{failures: 1 << 30}
+	sink := &flakySettleSink{failures: 1 << 30, failID: "42"}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -373,11 +383,15 @@ func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
 	// Once the bound is hit the loop advances past the event, so the server
 	// starts seeing the post-event cursor instead of the rewound one.
 	require.Eventually(t, movedOn, 3*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		_, settled, _ := sink.snapshot()
+		return len(settled) == 1
+	}, 3*time.Second, 10*time.Millisecond)
 	cancel()
 	<-done
 
 	_, settled, rehydrate := sink.snapshot()
-	require.Empty(t, settled, "the event never applied; it was skipped, not silently recorded")
+	require.Equal(t, []string{"43"}, settled, "the later settlement in the same page must still apply")
 	require.NotZero(t, rehydrate,
 		"a skipped settlement is unrecoverable from the ring, so the skip must fall back to a chain sweep")
 }

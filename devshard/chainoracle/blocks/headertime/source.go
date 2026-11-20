@@ -551,7 +551,23 @@ func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
 	if s == nil || s.latestOracle == nil {
 		return nil, blocks.ErrHeaderNotFound
 	}
+	if proofTip, ok := s.latestOracle.(interface {
+		LatestForProof(context.Context) (*blocks.Header, error)
+	}); ok {
+		return proofTip.LatestForProof(ctx)
+	}
 	return s.latestOracle.Latest(ctx)
+}
+
+func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
+	if s != nil {
+		if oracle, ok := s.proofSource.(interface {
+			CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
+		}); ok {
+			return oracle.CanonicalHeaderForProof(ctx, height)
+		}
+	}
+	return nil, blocks.ErrProveNotImplemented
 }
 
 func (s *Source) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {

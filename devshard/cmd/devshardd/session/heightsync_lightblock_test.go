@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"common/chain"
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/lightproof"
 	"common/nodemanager/gen"
@@ -20,11 +21,13 @@ import (
 	"devshard/types"
 
 	"github.com/cometbft/cometbft/libs/log"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	rpcserver "github.com/cometbft/cometbft/rpc/jsonrpc/server"
 	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
-	"github.com/stretchr/testify/assert"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -42,14 +45,32 @@ func (s *stalledHeightSyncNM) GetBlockHeader(ctx context.Context, req *gen.GetBl
 	return nil, status.FromContextError(ctx.Err()).Err()
 }
 
+type latestChainConn struct {
+	grpc.ClientConnInterface
+	header *blocks.Header
+}
+
+func (c latestChainConn) Invoke(_ context.Context, method string, _, reply any, _ ...grpc.CallOption) error {
+	if method != "/cosmos.base.tendermint.v1beta1.Service/GetLatestBlock" {
+		return status.Error(codes.Unimplemented, method)
+	}
+	*reply.(*cmtservice.GetLatestBlockResponse) = cmtservice.GetLatestBlockResponse{
+		BlockId:  &cmtproto.BlockID{Hash: c.header.BlockHash},
+		SdkBlock: &cmtservice.Block{Header: cmtservice.Header{Height: c.header.Height, Time: c.header.Time, ChainID: c.header.ChainID}},
+	}
+	return nil
+}
+
 func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		nm   gen.NodeManagerServer
+		name         string
+		nm           gen.NodeManagerServer
+		coldReceiver bool
 	}{
-		{"unimplemented", &gen.UnimplementedNodeManagerServer{}},
-		{"unavailable", unavailableHeightSyncNM{}},
-		{"stalled", &stalledHeightSyncNM{}},
+		{name: "unimplemented", nm: &gen.UnimplementedNodeManagerServer{}},
+		{name: "unavailable", nm: unavailableHeightSyncNM{}},
+		{name: "stalled", nm: &stalledHeightSyncNM{}},
+		{name: "stalled_without_receiver_websocket_tip", nm: &stalledHeightSyncNM{}, coldReceiver: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			unsetHeightSyncSources(t)
@@ -59,23 +80,23 @@ func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 			validator := mustGenerateKey(t)
 			addr, err := blocks.AddressBytes(validator.CompressedPublicKeyBytes())
 			require.NoError(t, err)
-			chain, err := mockoracle.NewMock(mockoracle.MockConfig{
+			mockChain, err := mockoracle.NewMock(mockoracle.MockConfig{
 				LightBlocks: true, ChainID: "direct-proof-test", InitialHeight: 100,
 				Validators: []mockoracle.MockValidator{{Signer: validator, Address: addr, Power: 10}},
 				Start:      time.Now().Add(-10 * time.Second).UTC(), BlockInterval: time.Second,
 			})
 			require.NoError(t, err)
-			anchor, err := chain.AdvanceOne()
+			anchor, err := mockChain.AdvanceOne()
 			require.NoError(t, err)
-			atH, err := chain.AdvanceOne()
+			atH, err := mockChain.AdvanceOne()
 			require.NoError(t, err)
-			atNext, err := chain.AdvanceOne()
+			atNext, err := mockChain.AdvanceOne()
 			require.NoError(t, err)
 
 			mux := http.NewServeMux()
 			rpcserver.RegisterRPCFuncs(mux, map[string]*rpcserver.RPCFunc{
 				"commit": rpcserver.NewRPCFunc(func(_ *rpctypes.Context, height int64) (*ctypes.ResultCommit, error) {
-					raw, err := chain.LightBlockAt(ctx, height)
+					raw, err := mockChain.LightBlockAt(ctx, height)
 					if err != nil {
 						return nil, err
 					}
@@ -86,7 +107,7 @@ func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 					return &ctypes.ResultCommit{SignedHeader: *lb.SignedHeader, CanonicalCommit: true}, nil
 				}, "height"),
 				"validators": rpcserver.NewRPCFunc(func(_ *rpctypes.Context, height int64, page, perPage int) (*ctypes.ResultValidators, error) {
-					raw, err := chain.LightBlockAt(ctx, height)
+					raw, err := mockChain.LightBlockAt(ctx, height)
 					if err != nil {
 						return nil, err
 					}
@@ -105,9 +126,15 @@ func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 			sequencer := newHeightSyncMgr(t)
 			receiver := newHeightSyncMgr(t)
 			require.NoError(t, sequencer.SetHeightSyncFromEnv(ctx, nil, nm, rpc.URL))
-			require.NoError(t, receiver.SetHeightSyncFromEnv(ctx, nil, nm, rpc.URL))
+			var chainQuery *chain.Client
+			if tc.coldReceiver {
+				chainQuery = chain.NewFromConn(latestChainConn{header: atNext})
+			}
+			require.NoError(t, receiver.SetHeightSyncFromEnv(ctx, chainQuery, nm, rpc.URL))
 			sequencer.ObserveChainHeader(atH)
-			receiver.ObserveChainHeader(atNext)
+			if !tc.coldReceiver {
+				receiver.ObserveChainHeader(atNext)
+			}
 			cfg := testutil.DefaultConfig(1)
 			cfg.MainnetAnchorHeight, cfg.MainnetAnchorHash = anchor.Height, anchor.BlockHash
 			user := mustGenerateKey(t)
@@ -138,14 +165,12 @@ func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 			h, err := host.NewHost(sm, validator, stub.NewInferenceEngine(), escrowID, group, nil, receiver.appendChainOracleOpt(nil)...)
 			require.NoError(t, err)
 			diff := testutil.SignDiffWithRoot(t, user, escrowID, 1, txs, root)
-			// HeaderTimeMs deliberately returns pending on a slow first lookup.
-			// A subsequent request can sign once the background lookup finishes.
-			require.EventuallyWithT(t, func(c *assert.CollectT) {
-				resp, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff}, Nonce: 1})
-				require.NoError(c, err)
-				require.Equal(c, root, resp.StateHash)
-				require.NotEmpty(c, resp.StateSig)
-			}, 4*time.Second, 50*time.Millisecond)
+			// A receiver without a websocket tip can use chain gRPC while
+			// the dAPI call is still blocked.
+			resp, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff}, Nonce: 1})
+			require.NoError(t, err)
+			require.Equal(t, root, resp.StateHash)
+			require.NotEmpty(t, resp.StateSig)
 			require.Equal(t, atH.Height, sm.MainnetCheckpoint().Height)
 		})
 	}

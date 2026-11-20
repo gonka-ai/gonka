@@ -4883,13 +4883,14 @@ func (s *Session) collectTimeoutVotes(
 				return
 			}
 
-			verifierCatchUp, err := s.catchUpDiffsForVerifier(ctx, av.idx)
+			arts := firstTimeoutArtifacts(artifacts)
+			catchUp, err := s.catchUpForVote(ctx, av.idx, diffs, func(catchUp []types.Diff) (bool, error) {
+				return transport.VerifyTimeoutFits(s.escrowID, inferenceID, reason, payload, catchUp)
+			})
 			if err != nil {
 				results <- voteResult{err: fmt.Errorf("catch up verifier: %w", err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			catchUp := mergeTimeoutCatchUpDiffs(verifierCatchUp, diffs)
-			arts := firstTimeoutArtifacts(artifacts)
 
 			rec := inflightVerify{
 				Escrow: s.escrowID,
@@ -5125,12 +5126,14 @@ func (s *Session) CollectErrorMissVotes(
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			verifierCatchUp, err := s.catchUpDiffsForVerifier(ctx, av.idx)
+			catchUp, err := s.catchUpForVote(ctx, av.idx, diffs, func(catchUp []types.Diff) (bool, error) {
+				return transport.VerifyErrorMissFits(s.escrowID, inferenceID, artifacts, catchUp)
+			})
 			if err != nil {
 				results <- voteResult{err: fmt.Errorf("catch up verifier: %w", err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, mergeTimeoutCatchUpDiffs(verifierCatchUp, diffs), artifacts)
+			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, catchUp, artifacts)
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
@@ -5219,6 +5222,37 @@ func (s *Session) catchUpDiffsForVerifier(ctx context.Context, hostIdx int) ([]t
 	target := s.nonce
 	s.mu.Unlock()
 	return s.catchUpForSend(ctx, hostIdx, target)
+}
+
+// catchUpForVote separates the signed diff tail from an otherwise oversized
+// v7 verification request using the existing chat catch-up path.
+func (s *Session) catchUpForVote(ctx context.Context, hostIdx int, extra []types.Diff, fits func([]types.Diff) (bool, error)) ([]types.Diff, error) {
+	tail, err := s.catchUpDiffsForVerifier(ctx, hostIdx)
+	if err != nil {
+		return nil, err
+	}
+	diffs := mergeTimeoutCatchUpDiffs(tail, extra)
+	if !types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) {
+		return diffs, nil
+	}
+	ok, err := fits(diffs)
+	if ok || err != nil {
+		return diffs, err
+	}
+	ok, err = fits(extra)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(tail) == 0 {
+		return nil, transport.ErrVerifyRequestTooLarge
+	}
+	run := s.startHostCatchUp(hostIdx, tail[len(tail)-1].Nonce)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-run.done:
+		return extra, run.err
+	}
 }
 
 // mergeTimeoutCatchUpDiffs prefers the per-verifier catch-up set and appends

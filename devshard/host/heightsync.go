@@ -80,6 +80,13 @@ func (h *Host) latestHeader(ctx context.Context) (*blocks.Header, error) {
 	if h.oracle == nil {
 		return nil, ErrNoChainOracle
 	}
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		if oracle, ok := h.oracle.(interface {
+			LatestForProof(context.Context) (*blocks.Header, error)
+		}); ok {
+			return oracle.LatestForProof(ctx)
+		}
+	}
 	return h.oracle.Latest(ctx)
 }
 

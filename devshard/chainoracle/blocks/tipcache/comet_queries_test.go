@@ -3,6 +3,7 @@ package tipcache
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log/slog"
 	"testing"
 
@@ -45,14 +46,30 @@ func TestSubscribeQueries_OneClientForNewBlockAndWarmKeys(t *testing.T) {
 	require.Equal(t, []string{cometSubscriberID, cometSubscriberID, cometSubscriberID}, client.subscribers)
 }
 
+func TestSubscribeQueries_WarmRefusalKeepsNewBlock(t *testing.T) {
+	hooks := CometHooks{ExtraQueries: []string{"warm-granted", "warm-revoked"}}
+	client := &fakeComet{refused: "warm-granted"}
+	channels, err := subscribeComet(t.Context(), client, SubscribeQueries(hooks))
+	require.NoError(t, err)
+	require.Equal(t, []string{cometNewBlockQuery, "warm-granted", "warm-revoked"}, client.queries)
+	require.Equal(t, client.channels, channels)
+	require.Len(t, channels, 2)
+}
+
 type fakeComet struct {
 	queries     []string
 	subscribers []string
+	refused     string
+	channels    []<-chan ctypes.ResultEvent
 }
 
 func (f *fakeComet) Subscribe(_ context.Context, subscriber, query string, _ ...int) (<-chan ctypes.ResultEvent, error) {
 	f.queries = append(f.queries, query)
 	f.subscribers = append(f.subscribers, subscriber)
+	if query == f.refused {
+		return nil, errors.New("subscription limit")
+	}
 	ch := make(chan ctypes.ResultEvent)
+	f.channels = append(f.channels, ch)
 	return ch, nil
 }
