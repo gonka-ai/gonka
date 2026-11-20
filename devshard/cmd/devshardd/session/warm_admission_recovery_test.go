@@ -66,7 +66,11 @@ func TestWarmAdmissionSnapshotCannotBlessUncheckedHistory(t *testing.T) {
 			require.NoError(t, err)
 			mgr := NewHostManager(store, cold, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, "v7", &mockBridge{}, nil, nil)
 			mgr.SetWarmKeyGrantSource(grants)
-			mgr.headerTimes = headertime.New(oracle)
+			mgr.headerTimes = headertime.New(
+				headertime.WithFiller(headertime.OracleFiller(oracle, headertime.OriginChain, false)),
+				headertime.WithLatestOracle(oracle),
+				headertime.WithLightBlockSource(oracle),
+			)
 			mgr.chainOracle = oracle
 			srv, _, err := mgr.recoverStoredSession("1")
 			if admitted {

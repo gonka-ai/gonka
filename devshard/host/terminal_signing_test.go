@@ -112,7 +112,11 @@ func newTerminalFixture(t *testing.T, age time.Duration, admitted, terminal bool
 func (f *terminalFixture) newSM(t *testing.T) *state.StateMachine {
 	t.Helper()
 	sm, err := state.NewStateMachine("123", f.cfg, f.group, 1_000_000, f.user.Address(), signing.NewSecp256k1Verifier(), f.store,
-		state.WithVersion("v7"), state.WithMainnetHeights(f.source), state.WithHeaderTimes(headertime.New(f.source)),
+		state.WithVersion("v7"), state.WithMainnetHeights(f.source), state.WithHeaderTimes(headertime.New(
+			headertime.WithFiller(headertime.OracleFiller(f.source, headertime.OriginChain, false)),
+			headertime.WithLatestOracle(f.source),
+			headertime.WithLightBlockSource(f.source),
+		)),
 		state.WithWarmKeyResolver(func(_, cold string) (bool, error) { return cold == f.cold.Address(), nil }),
 		state.WithWarmKeyHeightChecker(func(c, w string, id uint64, _ int64, _ time.Time) (bool, error) {
 			return c == f.cold.Address() && w == f.warm.Address() && id == 1, nil
