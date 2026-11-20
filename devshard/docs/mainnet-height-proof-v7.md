@@ -55,8 +55,9 @@ This caller deadline does not change dAPI backoff. Repair probes take their own
 tip observations. If a response anchor cannot carry a pending local
 acknowledgment for a slot still missing from its heartbeat turn, the response
 sends the acknowledgment without the anchor. This also applies to a retry
-after the chain advances. Once a committed diff covers that slot, pending
-alternates no longer block anchors. A response that already sent an anchor
+after the chain advances. Once a committed diff covers that slot or the
+escrow leaves its active phase, pending alternatives no longer block anchors.
+A response that already sent an anchor
 keeps its original local acknowledgment snapshot. Relayed acknowledgments
 from other slots keep their existing delivery path.
 Timeout verification uses the observed height to recognize plausible evidence
