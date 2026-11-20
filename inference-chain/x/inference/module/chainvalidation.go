@@ -954,6 +954,16 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		"participantCount", len(inferenceServingNodeIds),
 		"nodeCount", servingNodeCount)
 
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("ComputeNewWeights: Error getting params", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index,
+			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
+			"error", err)
+		return computedWeights{}
+	}
+	allStoreCommits = am.dropCommitsBelowMinCount(allStoreCommits, am.stagePocParams(ctx, params.PocParams, epochStartBlockHeight))
+
 	// Allowlist, participant, and seed checks read the store-commit keys.
 	// Distributions for keys that fail are not decoded.
 	participants := make(map[string]types.Participant)
@@ -1046,14 +1056,6 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 	}
 
 	// Create weight calculator and calculate
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		am.LogError("ComputeNewWeights: Error getting params", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index,
-			"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight,
-			"error", err)
-		return computedWeights{}
-	}
 	guardianEnabled := am.keeper.GetGenesisGuardianEnabled(ctx)
 	guardianAddrs := am.keeper.GetGenesisGuardianAddresses(ctx)
 	guardianSet := make(map[string]bool, len(guardianAddrs))
@@ -1200,6 +1202,38 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		participants: allActiveParticipants,
 		freshNodeIDs: freshNodeIDs,
 	}
+}
+
+func (am AppModule) stagePocParams(ctx context.Context, pocParams *types.PocParams, stageHeight int64) *types.PocParams {
+	recipe, found, err := am.keeper.GetPocStageRecipe(ctx, stageHeight)
+	if err != nil {
+		am.LogError("PoC stage recipe lookup failed, using live params for min_count", types.PoC,
+			"stageHeight", stageHeight, "error", err)
+		return pocParams
+	}
+	if !found {
+		return pocParams
+	}
+	return types.ApplyStageRecipe(pocParams, &recipe)
+}
+
+func (am AppModule) dropCommitsBelowMinCount(
+	commits map[types.PoCParticipantModelKey]types.PoCV2StoreCommit,
+	pocParams *types.PocParams,
+) map[types.PoCParticipantModelKey]types.PoCV2StoreCommit {
+	kept := make(map[types.PoCParticipantModelKey]types.PoCV2StoreCommit, len(commits))
+	for key, commit := range commits {
+		if minCount := pocParams.MinCommitCount(key.ModelID); minCount > 0 && commit.Count < minCount {
+			am.LogWarn("PoC commit below min_count, no PoC weight", types.PoC,
+				"participant", key.ParticipantAddress,
+				"modelId", key.ModelID,
+				"count", commit.Count,
+				"minCount", minCount)
+			continue
+		}
+		kept[key] = commit
+	}
+	return kept
 }
 
 // distributionsForAdmittedKeys reads one distribution per key. A missing key is

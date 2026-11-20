@@ -89,6 +89,7 @@ type StatTestParamsV2 struct {
 	DistThreshold   float64 `json:"dist_threshold,omitempty"`
 	PMismatch       float64 `json:"p_mismatch,omitempty"`
 	PValueThreshold float64 `json:"fraud_threshold,omitempty"`
+	MinCount        uint32  `json:"min_count,omitempty"`
 }
 
 // Default stat test parameter values.
@@ -123,6 +124,7 @@ func StatTestParamsFromChain(chainParams *types.PoCStatTestParams) *StatTestPara
 	if chainParams.PValueThreshold != nil {
 		result.PValueThreshold = chainParams.PValueThreshold.ToFloat()
 	}
+	result.MinCount = chainParams.MinCount
 	return result
 }
 

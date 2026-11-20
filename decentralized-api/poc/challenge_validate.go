@@ -82,6 +82,11 @@ func (v *OffChainValidator) challengeWorkItems(queryClient types.QueryClient, ch
 		if commit == nil {
 			continue
 		}
+		if belowMinCommitCount(pocParams, commit.ModelId, commit.Count) {
+			logging.Info("OffChainValidator: skipping challenge commit below min_count", types.PoC,
+				"address", commit.ParticipantAddress, "modelId", commit.ModelId, "count", commit.Count)
+			continue
+		}
 		participantResp, err := queryClient.Participant(context.Background(),
 			&types.QueryGetParticipantRequest{Index: commit.ParticipantAddress})
 		if err != nil {

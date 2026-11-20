@@ -585,6 +585,18 @@ func (am AppModule) updateConfirmationWeightsV2(
 		return nil
 	}
 
+	params, err := am.keeper.GetParams(ctx)
+	if err != nil {
+		am.LogError("updateConfirmationWeightsV2: failed to get params", types.PoC, "error", err)
+		return nil
+	}
+
+	minCountParams := params.PocParams
+	if event.Recipe != nil {
+		minCountParams = types.ApplyStageRecipe(params.PocParams, event.Recipe)
+	}
+	storeCommits = am.dropCommitsBelowMinCount(storeCommits, minCountParams)
+
 	validationsV2, err := am.keeper.GetPoCValidationsV2ByStage(ctx, event.TriggerHeight)
 	if err != nil {
 		am.LogError("updateConfirmationWeightsV2: failed to get PoC v2 validations for confirmation", types.PoC, "error", err)
@@ -643,12 +655,6 @@ func (am AppModule) updateConfirmationWeightsV2(
 	am.LogInfo("calculateConfirmationPoCWeight: Resolved guardian addresses", types.PoC,
 		"guardianEnabled", guardianEnabled,
 		"guardianAccAddrs", guardianAccAddrs)
-
-	params, err := am.keeper.GetParams(ctx)
-	if err != nil {
-		am.LogError("updateConfirmationWeightsV2: failed to get params", types.PoC, "error", err)
-		return nil
-	}
 
 	var appHash string
 	var validationSlots int

@@ -92,6 +92,7 @@ const (
 	DefaultLogprobsMode   = LogprobsModeProcessed
 
 	DefaultPocValidationVoteThresholdBps uint32 = 5000
+	DefaultPocValidationSampleSize              = 200
 )
 
 const (
@@ -352,7 +353,7 @@ func DefaultValidationParams() *ValidationParams {
 func DefaultPocParams() *PocParams {
 	return &PocParams{
 		DefaultDifficulty:            5,
-		ValidationSampleSize:         200,
+		ValidationSampleSize:         DefaultPocValidationSampleSize,
 		PocDataPruningEpochThreshold: 1,
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
@@ -1062,6 +1063,9 @@ func (p *PocParams) Validate() error {
 		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
 		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
+	if p.ValidationSampleSize < 0 {
+		return fmt.Errorf("poc_params.validation_sample_size cannot be negative")
+	}
 	requiredSchemes, err := activePocSchemes(p)
 	if err != nil {
 		return err
@@ -1080,6 +1084,12 @@ func (p *PocParams) Validate() error {
 		if err := model.validateSchemeBlocks(requiredSchemes); err != nil {
 			return err
 		}
+		if err := model.validateMinCount(p.EffectiveValidationSampleSize()); err != nil {
+			return err
+		}
+	}
+	if p.GetStatTest().GetMinCount() != 0 {
+		return fmt.Errorf("poc_params.stat_test.min_count is not supported, use poc_params.models[*].stat_test.min_count")
 	}
 	if _, needDecode := requiredSchemes[PocScheme_POC_SCHEME_DECODE]; needDecode && p.PocScheme == PocScheme_POC_SCHEME_DECODE && len(p.GetModelConfigs()) == 0 {
 		return fmt.Errorf("DECODE requires at least one model with a DECODE scheme block")
@@ -1796,6 +1806,45 @@ func (p *PocParams) GetPrimaryModelConfig() *PoCModelConfig {
 		return DefaultPoCModelConfig()
 	}
 	return configs[0]
+}
+
+func (p *PocParams) EffectiveValidationSampleSize() int64 {
+	if p == nil || p.ValidationSampleSize == 0 {
+		return DefaultPocValidationSampleSize
+	}
+	return int64(p.ValidationSampleSize)
+}
+
+func (p *PocParams) MinCommitCount(modelID string) uint32 {
+	config, ok := p.GetModelConfig(modelID)
+	if !ok {
+		return 0
+	}
+	return StatTestForScheme(p.GetPocScheme(), config).GetMinCount()
+}
+
+func (m *PoCModelConfig) validateMinCount(sampleSize int64) error {
+	if len(m.Schemes) > 0 && m.GetStatTest().GetMinCount() != 0 {
+		return fmt.Errorf("poc_params.models[%q].stat_test.min_count is not supported with scheme blocks, use poc_params.models[%q].schemes[*].stat_test.min_count", m.ModelId, m.ModelId)
+	}
+	check := func(field string, minCount uint32) error {
+		if minCount > 0 && int64(minCount) > sampleSize {
+			return fmt.Errorf("poc_params.models[%q].%s.min_count %d exceeds validation_sample_size %d", m.ModelId, field, minCount, sampleSize)
+		}
+		return nil
+	}
+	if len(m.Schemes) == 0 {
+		return check("stat_test", m.GetStatTest().GetMinCount())
+	}
+	for _, block := range m.Schemes {
+		if block == nil {
+			continue
+		}
+		if err := check(fmt.Sprintf("schemes[%s].stat_test", block.Scheme), block.GetStatTest().GetMinCount()); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {

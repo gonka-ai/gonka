@@ -404,3 +404,110 @@ func decimalString(t *testing.T, value *types.Decimal) string {
 	require.NoError(t, err)
 	return actual.String()
 }
+
+func preUpgradeModel(id string, statTest *types.PoCStatTestParams, shareBps uint32) *types.PoCModelConfig {
+	return &types.PoCModelConfig{
+		ModelId:  id,
+		SeqLen:   1024,
+		StatTest: statTest,
+		DynamicCoefficient: &types.DynamicCoefficientModelConfig{
+			CoeffMin: types.DecimalFromFloat(1), CoeffMax: types.DecimalFromFloat(2),
+			RelativeDifficulty: types.DecimalFromFloat(1), TargetShareBps: shareBps,
+		},
+	}
+}
+
+func TestMigratePoCMinCommitCount(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+
+	customStatTest := &types.PoCStatTestParams{
+		DistThreshold:   types.DecimalFromFloat(0.44),
+		PMismatch:       types.DecimalFromFloat(0.1),
+		PValueThreshold: types.DecimalFromFloat(0.05),
+	}
+	preset := types.DefaultPoCStatTestParams()
+	preset.MinCount = 64
+	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
+	params.PocParams.ValidationSampleSize = 200
+	params.PocParams.Models = []*types.PoCModelConfig{
+		preUpgradeModel("deepseek-ai/DeepSeek-V4-Flash-0731", types.DefaultPoCStatTestParams(), 2500),
+		preUpgradeModel("zai-org/GLM-5.3-Flash", customStatTest, 2500),
+		preUpgradeModel("MiniMaxAI/MiniMax-M2.7", nil, 2500),
+		preUpgradeModel("preset", preset, 2500),
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
+	before, err := k.GetParams(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, migratePoCMinCommitCount(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NoError(t, got.Validate())
+	for _, id := range []string{"deepseek-ai/DeepSeek-V4-Flash-0731", "zai-org/GLM-5.3-Flash", "MiniMaxAI/MiniMax-M2.7"} {
+		require.Equal(t, uint32(200), got.PocParams.MinCommitCount(id), id)
+		model, ok := got.PocParams.GetModelConfig(id)
+		require.True(t, ok)
+		for _, scheme := range []types.PocScheme{types.PocScheme_POC_SCHEME_PREFILL, types.PocScheme_POC_SCHEME_DECODE} {
+			require.Equal(t, uint32(200), types.StatTestForScheme(scheme, model).GetMinCount(), id)
+		}
+		require.Nil(t, model.StatTest)
+	}
+	presetModel, ok := got.PocParams.GetModelConfig("preset")
+	require.True(t, ok)
+	require.Equal(t, uint32(64), types.StatTestForScheme(types.PocScheme_POC_SCHEME_PREFILL, presetModel).GetMinCount())
+	require.Equal(t, uint32(200), types.StatTestForScheme(types.PocScheme_POC_SCHEME_DECODE, presetModel).GetMinCount())
+
+	glm, ok := got.PocParams.GetModelConfig("zai-org/GLM-5.3-Flash")
+	require.True(t, ok)
+	glmPrefill := types.StatTestForScheme(types.PocScheme_POC_SCHEME_PREFILL, glm)
+	require.Equal(t, customStatTest.DistThreshold, glmPrefill.DistThreshold)
+	require.Equal(t, customStatTest.PMismatch, glmPrefill.PMismatch)
+
+	for i := range got.PocParams.Models {
+		gotModel, beforeModel := got.PocParams.Models[i], before.PocParams.Models[i]
+		require.Len(t, gotModel.Schemes, len(beforeModel.Schemes))
+		for j := range gotModel.Schemes {
+			gotBlock, beforeBlock := *gotModel.Schemes[j], *beforeModel.Schemes[j]
+			gotStat, beforeStat := *gotBlock.StatTest, *beforeBlock.StatTest
+			gotStat.MinCount, beforeStat.MinCount = 0, 0
+			require.Equal(t, beforeStat, gotStat)
+			gotBlock.StatTest, beforeBlock.StatTest = nil, nil
+			require.Equal(t, beforeBlock, gotBlock)
+		}
+	}
+	got.PocParams.Models, before.PocParams.Models = nil, nil
+	require.Equal(t, before, got)
+
+	firstRun, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NoError(t, migratePoCMinCommitCount(ctx, k))
+	again, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, firstRun, again)
+}
+
+func TestMigratePoCMinCommitCountCapsAtSampleSize(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.PocScheme = types.PocScheme_POC_SCHEME_PREFILL
+	params.PocParams.ValidationSampleSize = 100
+	params.PocParams.Models = []*types.PoCModelConfig{preUpgradeModel("model-a", types.DefaultPoCStatTestParams(), 10000)}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, migratePocSchemeBlocks(ctx, k))
+
+	require.NoError(t, migratePoCMinCommitCount(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NoError(t, got.Validate())
+	model, ok := got.PocParams.GetModelConfig("model-a")
+	require.True(t, ok)
+	for _, scheme := range []types.PocScheme{types.PocScheme_POC_SCHEME_PREFILL, types.PocScheme_POC_SCHEME_DECODE} {
+		require.Equal(t, uint32(100), types.StatTestForScheme(scheme, model).GetMinCount())
+	}
+}

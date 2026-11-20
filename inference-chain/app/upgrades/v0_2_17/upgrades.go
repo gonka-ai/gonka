@@ -57,6 +57,9 @@ func CreateUpgradeHandler(
 		if err := freezeActiveEpochRecipe(ctx, k); err != nil {
 			return fromVM, err
 		}
+		if err := migratePoCMinCommitCount(ctx, k); err != nil {
+			return fromVM, err
+		}
 
 		// Index records left pending before the recheck existed; EndBlock re-evaluates them.
 		if n, err := k.BackfillBridgePendingIndex(ctx); err != nil {
@@ -294,5 +297,47 @@ func migratePocSchemeBlocks(ctx context.Context, k keeper.Keeper) error {
 		return err
 	}
 	k.LogInfo("migrated prefill scheme blocks", types.Upgrades, "models", len(params.PocParams.Models))
+	return nil
+}
+
+const pocMinCommitCount uint32 = 200
+
+func migratePoCMinCommitCount(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	minCount := pocMinCommitCount
+	if sampleSize := params.PocParams.EffectiveValidationSampleSize(); sampleSize > 0 && sampleSize < int64(minCount) {
+		minCount = uint32(sampleSize)
+	}
+	updated := 0
+	for _, model := range params.PocParams.GetModelConfigs() {
+		if model == nil {
+			continue
+		}
+		for _, block := range model.Schemes {
+			if block == nil || block.GetStatTest().GetMinCount() != 0 {
+				continue
+			}
+			if block.StatTest == nil {
+				block.StatTest = &types.PoCStatTestParams{}
+			}
+			block.StatTest.MinCount = minCount
+			updated++
+		}
+	}
+	if updated == 0 {
+		return nil
+	}
+	if err := params.Validate(); err != nil {
+		return fmt.Errorf("min commit count migration produced invalid params: %w", err)
+	}
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("migrated PoC min commit count", types.Upgrades,
+		"min_count", minCount,
+		"scheme_blocks", updated)
 	return nil
 }

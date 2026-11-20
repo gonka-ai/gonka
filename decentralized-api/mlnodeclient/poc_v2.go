@@ -67,18 +67,19 @@ type GeneratedArtifactBatchV2 struct {
 // (a non-finite snap, or any other missing artifact). The chain only
 // checks the sign of the vote, so a pass over the remainder is a full yes.
 type ValidatedResultV2 struct {
-	RequestId      string  `json:"request_id,omitempty"`
-	BlockHash      string  `json:"block_hash,omitempty"`
-	BlockHeight    int64   `json:"block_height,omitempty"`
-	PublicKey      string  `json:"public_key,omitempty"`
-	NodeId         int     `json:"node_id,omitempty"`
-	NTotal         int64   `json:"n_total"`
-	NMismatch      int64   `json:"n_mismatch"`
-	NNanSteps      int64   `json:"n_nan_steps,omitempty"`
-	NExcluded      int64   `json:"n_excluded,omitempty"`
-	MismatchNonces []int64 `json:"mismatch_nonces"`
-	PValue         float64 `json:"p_value"`
-	FraudDetected  bool    `json:"fraud_detected"`
+	RequestId          string  `json:"request_id,omitempty"`
+	BlockHash          string  `json:"block_hash,omitempty"`
+	BlockHeight        int64   `json:"block_height,omitempty"`
+	PublicKey          string  `json:"public_key,omitempty"`
+	NodeId             int     `json:"node_id,omitempty"`
+	NTotal             int64   `json:"n_total"`
+	NMismatch          int64   `json:"n_mismatch"`
+	NNanSteps          int64   `json:"n_nan_steps,omitempty"`
+	NExcluded          int64   `json:"n_excluded,omitempty"`
+	MismatchNonces     []int64 `json:"mismatch_nonces"`
+	PValue             float64 `json:"p_value"`
+	FraudDetected      bool    `json:"fraud_detected"`
+	InsufficientSample bool    `json:"insufficient_sample,omitempty"`
 }
 
 // ShouldAbstain is a validator-side failure (NaN / excluded nonce / compared-nothing),
