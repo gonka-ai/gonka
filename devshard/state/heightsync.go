@@ -446,6 +446,26 @@ func (sm *StateMachine) HeightSyncMissingAcks(turnStart uint64) []uint32 {
 	return sm.turnTracker.MissingAcksDue(turnStart, sm.turnTracker.LastCompletedHeight())
 }
 
+// HeightSyncAckOutstanding reports whether this local response can still
+// deliver an acknowledgment to a slot missing from a retained turn.
+func (sm *StateMachine) HeightSyncAckOutstanding(refNonce uint64, slot uint32) bool {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return false
+	}
+	turn, ok := sm.turnTracker.HeartbeatTurn(refNonce)
+	if !ok {
+		return false
+	}
+	record := sm.turnTracker.Record(turn)
+	if record == nil {
+		return false
+	}
+	_, acknowledged := record.Acks[slot]
+	return !acknowledged
+}
+
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.
 func (sm *StateMachine) HeightSyncTurnRecord(turnStart uint64) *heightsync.SyncTurnRecord {
 	sm.mu.RLock()
