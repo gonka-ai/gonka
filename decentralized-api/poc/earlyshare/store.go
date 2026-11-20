@@ -21,6 +21,7 @@ type Checkpoint struct {
 	ModelID               string
 	EarlyCount            uint32
 	EarlyRootHash         []byte
+	EarlyTreeDepth        *uint32
 	CheckpointBlockHeight int64
 	CapturedAtBlockHeight int64
 }
@@ -81,7 +82,33 @@ CREATE TABLE IF NOT EXISTS poc_early_capture_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_poc_early_checkpoints_stage ON poc_early_checkpoints(stage_height);
 CREATE INDEX IF NOT EXISTS idx_poc_early_capture_runs_stage ON poc_early_capture_runs(stage_height);`
-	_, err := s.db.ExecContext(ctx, stmt)
+	if _, err := s.db.ExecContext(ctx, stmt); err != nil {
+		return err
+	}
+
+	rows, err := s.db.QueryContext(ctx, "PRAGMA table_info(poc_early_checkpoints)")
+	if err != nil {
+		return err
+	}
+	found := false
+	for rows.Next() {
+		var cid, notnull, pk int
+		var name, typ string
+		var def sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notnull, &def, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		found = found || name == "early_tree_depth"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if !found {
+		_, err = s.db.ExecContext(ctx, "ALTER TABLE poc_early_checkpoints ADD COLUMN early_tree_depth INTEGER")
+	}
 	return err
 }
 
@@ -110,13 +137,14 @@ func (s *Store) UpsertCheckpoints(ctx context.Context, checkpoints []Checkpoint)
 
 	q := `INSERT INTO poc_early_checkpoints (
   stage_height, participant_address, model_id, early_count, early_root_hash,
-  checkpoint_block_height, captured_at_block_height
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+  checkpoint_block_height, captured_at_block_height, early_tree_depth
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(stage_height, participant_address, model_id) DO UPDATE SET
   early_count = excluded.early_count,
   early_root_hash = excluded.early_root_hash,
   checkpoint_block_height = excluded.checkpoint_block_height,
-  captured_at_block_height = excluded.captured_at_block_height`
+  captured_at_block_height = excluded.captured_at_block_height,
+  early_tree_depth = excluded.early_tree_depth`
 	stmt, err := tx.PrepareContext(ctx, q)
 	if err != nil {
 		return err
@@ -132,6 +160,7 @@ ON CONFLICT(stage_height, participant_address, model_id) DO UPDATE SET
 			c.EarlyRootHash,
 			c.CheckpointBlockHeight,
 			c.CapturedAtBlockHeight,
+			c.EarlyTreeDepth,
 		); err != nil {
 			return err
 		}
@@ -146,7 +175,7 @@ func (s *Store) GetCheckpoints(ctx context.Context, stageHeight int64) ([]Checkp
 	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT stage_height, participant_address, model_id, early_count, early_root_hash,
-       checkpoint_block_height, captured_at_block_height
+       checkpoint_block_height, captured_at_block_height, early_tree_depth
 FROM poc_early_checkpoints WHERE stage_height = ?`, stageHeight)
 	if err != nil {
 		return nil, err
@@ -164,6 +193,7 @@ FROM poc_early_checkpoints WHERE stage_height = ?`, stageHeight)
 			&c.EarlyRootHash,
 			&c.CheckpointBlockHeight,
 			&c.CapturedAtBlockHeight,
+			&c.EarlyTreeDepth,
 		); err != nil {
 			return nil, err
 		}

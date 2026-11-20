@@ -77,14 +77,22 @@ func TestChallengeCommitGrowthUsesLatestConfirmedCountPerModel(t *testing.T) {
 	sendChallengeAt(w, ch, 800)
 	require.Len(t, r.submissions, 1)
 	require.Len(t, r.submissions[0].entries, 2)
-	ch.Commits = []*types.PoCV2StoreCommit{{ModelId: "a", Count: 100}, {ModelId: "b", Count: 100}}
+	ch.Commits = nil
+	for _, entry := range r.submissions[0].entries {
+		ch.Commits = append(ch.Commits, &types.PoCV2StoreCommit{ModelId: entry.ModelId, Count: entry.Count, RootHash: entry.RootHash, TreeDepth: entry.TreeDepth})
+	}
 	growChallengeModel(t, w, "a", 103)
 	growChallengeModel(t, w, "b", 104)
 	sendChallengeAt(w, ch, 801)
 	require.Len(t, r.submissions, 2)
 	require.Len(t, r.submissions[1].entries, 1)
 	require.Equal(t, "b", r.submissions[1].entries[0].ModelId)
-	ch.Commits[1] = &types.PoCV2StoreCommit{ModelId: "b", Count: 104}
+	entry := r.submissions[1].entries[0]
+	for i, c := range ch.Commits {
+		if c.ModelId == "b" {
+			ch.Commits[i] = &types.PoCV2StoreCommit{ModelId: "b", Count: 104, RootHash: entry.RootHash, TreeDepth: entry.TreeDepth}
+		}
+	}
 	growChallengeModel(t, w, "a", 104)
 	growChallengeModel(t, w, "b", 107)
 	sendChallengeAt(w, ch, 802)

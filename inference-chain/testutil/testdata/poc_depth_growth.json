@@ -1,0 +1,38 @@
+[
+  {
+    "count": 1,
+    "depth": 24,
+    "nonce": 1,
+    "root": "7931033adce62901c80bd18d4b4bf3c16e576a4b76fafa51950dda2ece55cd24"
+  },
+  {
+    "count": 2,
+    "depth": 24,
+    "nonce": 2,
+    "root": "b609bee2a29ca3b0c946eabb018a06fc58184539655ac612356173b65aedca4d"
+  },
+  {
+    "count": 3,
+    "depth": 24,
+    "nonce": 3,
+    "root": "5b13fd09d05ab874bd203a1a95701fddab7c708f119104c3a6efe31a22c086ea"
+  },
+  {
+    "count": 4,
+    "depth": 25,
+    "nonce": 16777216,
+    "root": "11420e9b424f9c8f73738c62de7b5a16a0575fbb7d3c190ac9612e3842a53e23"
+  },
+  {
+    "count": 5,
+    "depth": 31,
+    "nonce": 1073741824,
+    "root": "dab1dc62683064acaf2438a544abbe553d54ba78049a83ac02f0d7d8d492a480"
+  },
+  {
+    "count": 6,
+    "depth": 32,
+    "nonce": -2147483648,
+    "root": "c5afb76b0924824ae67b37abb3343ac802827523aba03c8997d5fb5cd5851df2"
+  }
+]

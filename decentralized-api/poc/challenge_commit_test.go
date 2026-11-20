@@ -165,6 +165,7 @@ func TestCommitWorker_ChallengeCommitPendingUntilConfirmed(t *testing.T) {
 		ModelId:            "model-a",
 		Count:              count,
 		RootHash:           root,
+		TreeDepth:          artifactStore.FlushedDepth(),
 	}}
 	OpenChallenges.Replace(addr, []*types.OpenPoCChallenge{ch}, 0)
 	tracker.Update(

@@ -23,6 +23,8 @@ type ArtifactStore interface {
 	// Returns nil if snapshotCount is 0, error if snapshotCount exceeds current count.
 	GetRootAt(snapshotCount uint32) ([]byte, error)
 
+	GetFlushedSnapshot() (count uint32, root []byte, depth uint32, err error)
+
 	// GetFlushedRoot returns the root and count of ONLY persisted artifacts.
 	// Safe to report externally - survives process crashes.
 	GetFlushedRoot() (count uint32, root []byte)

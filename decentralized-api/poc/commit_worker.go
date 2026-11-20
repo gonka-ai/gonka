@@ -33,8 +33,9 @@ const (
 )
 
 type commitState struct {
-	count    uint32
-	rootHash []byte
+	count     uint32
+	rootHash  []byte
+	treeDepth uint32
 }
 
 type commitKey struct {
@@ -360,7 +361,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 
 	stageStores, err := w.store.GetStoresForStage(pocHeight)
 	if err != nil {
-		logging.Debug("CommitWorker: no stores for height", types.PoC, "pocHeight", pocHeight, "error", err)
+		logging.Warn("CommitWorker: failed to open stage stores", types.PoC, "pocHeight", pocHeight, "error", err)
 		return
 	}
 	if len(stageStores) == 0 {
@@ -392,12 +393,12 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 		if stageStore.Store == nil {
 			continue
 		}
-		count, rootHash := stageStore.Store.GetFlushedRoot()
-		if count == 0 || rootHash == nil {
+		count, rootHash, treeDepth, err := stageStore.Store.GetFlushedSnapshot()
+		if err != nil {
+			logging.Warn("CommitWorker: flushed snapshot unavailable", types.PoC, "model", stageStore.ModelID, "error", err)
 			continue
 		}
-		treeDepth := stageStore.Store.FlushedDepth()
-		if treeDepth == 0 {
+		if count == 0 {
 			continue
 		}
 
@@ -448,7 +449,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 		}
 
 		if hasLast {
-			if last.count == count && (last.rootHash == nil || bytes.Equal(last.rootHash, rootHash)) {
+			if sameCommitState(last, count, rootHash, treeDepth) {
 				continue
 			}
 			if count <= last.count {
@@ -463,8 +464,9 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 			TreeDepth: treeDepth,
 		})
 		submittedStates[key] = commitState{
-			count:    count,
-			rootHash: bytes.Clone(rootHash),
+			count:     count,
+			rootHash:  bytes.Clone(rootHash),
+			treeDepth: treeDepth,
 		}
 	}
 	entries = keepEpochModelEntries(entries, w.stageEpochModels, pocHeight)
@@ -610,7 +612,11 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 	finalWindow := inFinalCommitWindow(height, deadline)
 	pocHeight := ch.StartHeight()
 	stageStores, err := w.store.GetStoresForServing(pocHeight)
-	if err != nil || len(stageStores) == 0 {
+	if err != nil {
+		logging.Warn("CommitWorker: failed to open challenge stores", types.PoC, "pocHeight", pocHeight, "error", err)
+		return
+	}
+	if len(stageStores) == 0 {
 		return
 	}
 
@@ -624,12 +630,12 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 		if stageStore.Store == nil {
 			continue
 		}
-		count, rootHash := stageStore.Store.GetFlushedRoot()
-		if count == 0 || rootHash == nil {
+		count, rootHash, treeDepth, err := stageStore.Store.GetFlushedSnapshot()
+		if err != nil {
+			logging.Warn("CommitWorker: flushed snapshot unavailable", types.PoC, "model", stageStore.ModelID, "error", err)
 			continue
 		}
-		treeDepth := stageStore.Store.FlushedDepth()
-		if treeDepth == 0 {
+		if count == 0 {
 			continue
 		}
 		key := commitKey{stage: pocHeight, modelID: stageStore.ModelID}
@@ -641,7 +647,7 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 		}
 		last, hasLast := w.challengeLastCommitted[key]
 		if hasLast {
-			if last.count == count && (last.rootHash == nil || bytes.Equal(last.rootHash, rootHash)) {
+			if sameCommitState(last, count, rootHash, treeDepth) {
 				continue
 			}
 			if count <= last.count {
@@ -658,8 +664,9 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 			TreeDepth: treeDepth,
 		})
 		submittedStates[key] = commitState{
-			count:    count,
-			rootHash: bytes.Clone(rootHash),
+			count:     count,
+			rootHash:  bytes.Clone(rootHash),
+			treeDepth: treeDepth,
 		}
 	}
 	modelsUnknown := false
@@ -777,7 +784,7 @@ func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
 		if commit == nil {
 			continue
 		}
-		onChain[commit.ModelId] = commitState{count: commit.Count, rootHash: bytes.Clone(commit.RootHash)}
+		onChain[commit.ModelId] = commitState{count: commit.Count, rootHash: bytes.Clone(commit.RootHash), treeDepth: commit.TreeDepth}
 		key := commitKey{stage: ch.StartHeight(), modelID: commit.ModelId}
 		if commit.Count >= w.challengeLastCommitted[key].count {
 			w.challengeLastCommitted[key] = onChain[commit.ModelId]
@@ -792,7 +799,7 @@ func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
 		if !ok {
 			continue
 		}
-		if chain.count > pending.state.count || sameCommitState(pending.state, chain.count, chain.rootHash) {
+		if chain.count > pending.state.count || sameCommitState(pending.state, chain.count, chain.rootHash, chain.treeDepth) {
 			delete(w.challengePending, key)
 		}
 	}
@@ -821,12 +828,12 @@ func (w *CommitWorker) reconcilePending(pocHeight int64) {
 		}
 		w.rememberStoreCommitQuery(pocHeight, key.modelID, resp)
 		if resp.Found && resp.Count > pending.state.count {
-			w.lastCommitted[key] = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash)}
+			w.lastCommitted[key] = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash), treeDepth: resp.TreeDepth}
 			delete(w.pending, key)
 			delete(w.retryAfterHeight, key)
 			continue
 		}
-		if resp.Found && sameCommitState(pending.state, resp.Count, resp.RootHash) {
+		if resp.Found && sameCommitState(pending.state, resp.Count, resp.RootHash, resp.TreeDepth) {
 			w.lastCommitted[key] = pending.state
 			delete(w.pending, key)
 			delete(w.retryAfterHeight, key)
@@ -839,14 +846,8 @@ func (w *CommitWorker) reconcilePending(pocHeight int64) {
 	}
 }
 
-func sameCommitState(st commitState, count uint32, rootHash []byte) bool {
-	if st.count != count {
-		return false
-	}
-	if len(st.rootHash) == 0 || len(rootHash) == 0 {
-		return true
-	}
-	return bytes.Equal(st.rootHash, rootHash)
+func sameCommitState(st commitState, count uint32, rootHash []byte, depth uint32) bool {
+	return st.count == count && st.treeDepth == depth && bytes.Equal(st.rootHash, rootHash)
 }
 
 // samePayloadRetryable is true when the admitted tx can no longer be
@@ -870,7 +871,7 @@ func (w *CommitWorker) rememberStoreCommitQuery(pocHeight int64, modelID string,
 	key := commitKey{stage: pocHeight, modelID: modelID}
 	w.storeCommitQueried[key] = struct{}{}
 	if resp != nil && resp.Found && resp.Count >= w.lastCommitted[key].count {
-		w.lastCommitted[key] = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash)}
+		w.lastCommitted[key] = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash), treeDepth: resp.TreeDepth}
 	}
 }
 
@@ -915,7 +916,7 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 
 	stageStores, err := w.store.GetStoresForStage(pocHeight)
 	if err != nil {
-		logging.Debug("CommitWorker: no stores for distribution", types.PoC, "pocHeight", pocHeight, "error", err)
+		logging.Warn("CommitWorker: failed to open distribution stores", types.PoC, "pocHeight", pocHeight, "error", err)
 		return
 	}
 	if len(stageStores) == 0 {

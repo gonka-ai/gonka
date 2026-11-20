@@ -505,6 +505,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		// Only a passing CPoC clears the miss streak. Challenge targets are not
 		// part of ordinary CPoC, so do not let legacy/pre-filter commits affect
 		// the guard either.
+		if err := v.guard.PrepareDepths(context.Background(), v.recorder.NewInferenceQueryClient(), pocStageStartBlockHeight); err != nil {
+			logging.Warn("EarlyShareGuard: stage not ready for depth growth; checkpoint preparation incomplete", types.PoC, "stage", pocStageStartBlockHeight, "error", err)
+		}
 		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, stageCommits, modelVotingPowers, assigned)
 		if len(decisions) > 0 {
 			gr = &guardRuntime{

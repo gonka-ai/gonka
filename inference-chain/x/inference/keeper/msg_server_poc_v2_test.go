@@ -623,7 +623,7 @@ func TestPoCV2StoreCommit_InvalidEntriesFailBeforeWrites(t *testing.T) {
 	}
 }
 
-func TestPoCV2StoreCommit_TreeDepthBoundAndFrozen(t *testing.T) {
+func TestPoCV2StoreCommit_TreeDepthBoundAndNondecreasing(t *testing.T) {
 	k, sdkCtx, msgServer := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID)
 
 	zero := makePoCV2CommitEntry(testPoCModelID, 10, 1)
@@ -673,12 +673,12 @@ func TestPoCV2StoreCommit_TreeDepthBoundAndFrozen(t *testing.T) {
 		PocStageStartBlockHeight: 100,
 		Entries:                  []*types.PoCV2CommitEntry{changed},
 	})
-	require.ErrorContains(t, err, "tree_depth must stay 24")
+	require.NoError(t, err)
 
 	stored, err = k.GetAllPoCV2StoreCommitsForStage(nextCtx, 100)
 	require.NoError(t, err)
-	require.Equal(t, uint32(10), stored[commitKey(testutil.Executor, testPoCModelID)].Count)
-	require.Equal(t, uint32(24), stored[commitKey(testutil.Executor, testPoCModelID)].TreeDepth)
+	require.Equal(t, uint32(12), stored[commitKey(testutil.Executor, testPoCModelID)].Count)
+	require.Equal(t, uint32(25), stored[commitKey(testutil.Executor, testPoCModelID)].TreeDepth)
 }
 
 func TestPoCV2StoreCommit_SeparateRetriesIsolateStaleModel(t *testing.T) {

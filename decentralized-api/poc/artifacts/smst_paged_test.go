@@ -1185,8 +1185,15 @@ func TestSMSTPagedFlushPersistRetry(t *testing.T) {
 		t.Fatal("expected suffix persist error")
 	}
 	flushed, _ := paged.GetFlushedRoot()
-	if flushed != paged.Count() {
-		t.Fatalf("flushed count %d want %d after persist error", flushed, paged.Count())
+	if flushed != limit {
+		t.Fatalf("failed flush published %d, want previous %d", flushed, limit)
+	}
+
+	if err := paged.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if count, _, _, err := paged.GetFlushedSnapshot(); err != nil || count != paged.Count() {
+		t.Fatalf("retry snapshot count=%d error=%v", count, err)
 	}
 
 	addPrefixed(t, ram, 4, 1, 3)

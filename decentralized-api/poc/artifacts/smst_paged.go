@@ -797,12 +797,12 @@ func (s *SMSTArtifactStore) recoverPaged() error {
 	}
 	s.smst.leafCount = total
 	s.smst.ensureHashed()
+	if total != n {
+		return fmt.Errorf("paged recovered count %d differs from data count %d", total, n)
+	}
 	if s.smst.root != nil {
-		if prev, ok := s.flushedRoots[total]; ok && prev != nil && !bytes.Equal(prev, s.smst.root.hash) {
-			log.Printf("warning: flushed root mismatch at count %d: persisted=%x recomputed=%x",
-				total, prev, s.smst.root.hash)
-		} else if total > 0 {
-			s.flushedRoots[total] = s.smst.root.hash
+		if err := s.recordRecoveredSnapshot(total, s.smst.root.hash, uint32(s.smst.Depth())); err != nil {
+			return err
 		}
 	}
 	if err := s.replaySealJournal(); err != nil {
@@ -812,6 +812,10 @@ func (s *SMSTArtifactStore) recoverPaged() error {
 		return err
 	}
 	s.captureRetainedLocked()
+	if err := s.backfillFlushedRootsLocked(); err != nil {
+		return err
+	}
+	s.publishedCount = total
 	return nil
 }
 
@@ -964,7 +968,7 @@ func (s *SMSTArtifactStore) replaySealJournal() error {
 				if tree.root == nil || tree.root.count != entry.Count {
 					continue
 				}
-				if expected, ok := s.flushedRoots[entry.Count]; ok && expected != nil && !bytes.Equal(tree.root.hash, expected) {
+				if expected, ok := s.flushedRoots[entry.Count]; ok && expected.root != nil && !bytes.Equal(tree.root.hash, expected.root) {
 					log.Printf("warning: seal journal root mismatch at count %d; ignoring journal", entry.Count)
 					s.retained = make(map[uint32]smstSnapshot)
 					return nil
@@ -1001,9 +1005,16 @@ func (s *SMSTArtifactStore) recaptureCommittedUppers() error {
 	var prev uint32
 	var tree *SMST
 	for _, c := range counts {
-		if _, ok := s.retained[c]; ok {
+		if snap, ok := s.retained[c]; ok {
+			if err := s.recordRecoveredSnapshot(c, snap.root.hash, uint32(snap.depth)); err != nil {
+				return err
+			}
+
+			tree = NewSMST(snap.depth)
+			tree.root, tree.leafCount, tree.cutHeight = snap.root, snap.count, snap.cutHeight
+			tree.deferredHash = s.smst.deferredHash
+			tree.parallelHash = s.smst.parallelHash
 			prev = c
-			tree = nil
 			continue
 		}
 		if tree == nil || prev == 0 {
@@ -1020,8 +1031,11 @@ func (s *SMSTArtifactStore) recaptureCommittedUppers() error {
 		if tree.root == nil || tree.root.count != c {
 			return fmt.Errorf("paged SMST recapture empty tree at count %d", c)
 		}
-		if expected, ok := s.flushedRoots[c]; ok && expected != nil && !bytes.Equal(tree.root.hash, expected) {
+		if expected, ok := s.flushedRoots[c]; ok && expected.root != nil && !bytes.Equal(tree.root.hash, expected.root) {
 			return fmt.Errorf("paged SMST recapture root mismatch at count %d", c)
+		}
+		if err := s.recordRecoveredSnapshot(c, tree.root.hash, uint32(tree.Depth())); err != nil {
+			return err
 		}
 		s.retained[c] = tree.snapshot()
 		prev = c

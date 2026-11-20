@@ -150,3 +150,57 @@ func TestStoreDeleteStageKeepsGuardState(t *testing.T) {
 		t.Fatal("guard state must persist across stage prune")
 	}
 }
+
+func TestLegacyCheckpointDepthMigration(t *testing.T) {
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`CREATE TABLE poc_early_checkpoints (
+ stage_height INTEGER NOT NULL, participant_address TEXT NOT NULL, model_id TEXT NOT NULL,
+ early_count INTEGER NOT NULL, early_root_hash BLOB NOT NULL, checkpoint_block_height INTEGER NOT NULL,
+ captured_at_block_height INTEGER NOT NULL, PRIMARY KEY(stage_height,participant_address,model_id));
+ INSERT INTO poc_early_checkpoints VALUES(100,'p','m',2,X'0102',110,111);`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewStore(db)
+	for i := 0; i < 2; i++ {
+		if err := s.EnsureSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := s.MarkStageCaptured(ctx, 100, 110, 111, map[string]int{"m": 1}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.GetCheckpoints(ctx, 100)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows=%v err=%v", rows, err)
+	}
+	cp := rows[0]
+	if cp.EarlyTreeDepth != nil || cp.EarlyCount != 2 || string(cp.EarlyRootHash) != string([]byte{1, 2}) {
+		t.Fatal("legacy row changed")
+	}
+	depth := uint32(24)
+	cp.EarlyTreeDepth = &depth
+	if err := s.UpsertCheckpoints(ctx, []Checkpoint{cp}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.GetCheckpoints(ctx, 100)
+	if err != nil || rows[0].EarlyTreeDepth == nil || *rows[0].EarlyTreeDepth != 24 {
+		t.Fatal("depth did not round trip")
+	}
+
+	depth = 0
+	cp.EarlyTreeDepth = &depth
+	if err := s.UpsertCheckpoints(ctx, []Checkpoint{cp}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err = s.GetCheckpoints(ctx, 100)
+	if err != nil || rows[0].EarlyTreeDepth == nil || *rows[0].EarlyTreeDepth != 0 {
+		t.Fatal("invalid zero conflated with unknown")
+	}
+}
