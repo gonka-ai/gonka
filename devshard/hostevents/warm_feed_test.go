@@ -555,10 +555,18 @@ func (f *pollerHeightGrants) FetchWarmKeyLogWithHeight(ctx context.Context, gran
 func TestPollerTrustedWarmCoverageWithDirectQueriesOffline(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	fetch := &pollerHeightGrants{height: 100}
+	const baseline, rotation, tip = int64(100), int64(621), int64(1150)
+	at := time.Unix(100, 123)
+	fetch := &pollerHeightGrants{
+		height: baseline,
+		granterCounter: granterCounter{logs: map[string][]bridge.WarmKeyEntry{
+			"cold": {{Granter: "cold", Grantee: "previous", ID: 1, GrantedAtHeight: baseline - 1}},
+		}},
+	}
 	grants := bridge.NewWarmKeyLogCopy(fetch, time.Hour)
-	_, err := grants.WarmKeyLogAtHeight("cold", 100)
+	entries, err := grants.WarmKeyLogAtHeight("cold", baseline)
 	require.NoError(t, err)
+	require.Equal(t, "previous", entries[1].Grantee)
 	offline := status.Error(codes.Unavailable, "direct grant query disabled")
 	fetch.setErr(offline)
 
@@ -583,7 +591,7 @@ func TestPollerTrustedWarmCoverageWithDirectQueriesOffline(t *testing.T) {
 		}
 	})
 	headers := headertime.New()
-	headers.Observe(blocks.HashOnlyHeader(100, time.Unix(99, 0), "chain", make([]byte, 32)), headertime.OriginChain, true)
+	headers.Observe(blocks.HashOnlyHeader(baseline, time.Unix(99, 0), "chain", make([]byte, 32)), headertime.OriginChain, true)
 	p := hostevents.NewPoller(hostevents.PollerConfig{
 		Config: hostevents.Config{Client: dialFake(t, server), ServerMaxWait: 10 * time.Second},
 		Source: headers, Warm: grants, TrustWarmFeed: true,
@@ -597,27 +605,59 @@ func TestPollerTrustedWarmCoverageWithDirectQueriesOffline(t *testing.T) {
 			t.Fatal("poller did not request next page")
 		}
 	}
-	send(1, 2, warmHostEvent(2, grant, "cold", "warm", 1, 101, ""))
-	require.Equal(t, uint64(100), initialAfter.Load(), "explicitly resume after the baseline block")
-	at := time.Unix(100, 0)
-	_, err = bridge.CheckWarmKeyAtHeight(grants, "cold", "warm", 1, 101, at)
+	send(1, 2, warmHostEvent(2, grant, "cold", "warm", 2, baseline+1, ""))
+	require.Equal(t, uint64(baseline), initialAfter.Load(), "explicitly resume after the baseline block")
+	_, err = bridge.CheckWarmKeyAtHeight(grants, "cold", "warm", 2, baseline+1, at)
 	require.Error(t, err, "the grant event alone cannot close the block")
-	send(1, 3, block(3, 101))
-	require.Eventually(t, func() bool {
-		live, err := bridge.CheckWarmKeyAtHeight(grants, "cold", "warm", 1, 101, at)
-		return err == nil && live
-	}, time.Second, 5*time.Millisecond)
+	reads := fetch.granter("cold")
+	cursor := uint64(3)
+	send(1, cursor, block(cursor, baseline+1))
+	sendBlocks := func(from, through int64) {
+		const pageSize = 64
+		for from <= through {
+			var events []*gen.HostEvent
+			for len(events) < pageSize && from <= through {
+				cursor++
+				events = append(events, block(cursor, from))
+				from++
+			}
+			send(1, cursor, events...)
+		}
+	}
+	sendBlocks(baseline+2, rotation-1)
+	// The first grant has left the feed window by the time it is revoked.
+	send(1, cursor+4,
+		warmHostEvent(cursor+1, revoke, "cold", "previous", 1, rotation, "WARM_KEY_LOG_END_REVOKED"),
+		warmHostEvent(cursor+2, revoke, "cold", "warm", 2, rotation, "WARM_KEY_LOG_END_REVOKED"),
+		warmHostEvent(cursor+3, grant, "cold", "rotated", 3, rotation, ""),
+		block(cursor+4, rotation),
+	)
+	cursor += 4
+	sendBlocks(rotation+1, tip+1) // The last page may still be processing.
+	send(1, cursor+1, block(cursor+1, tip+2))
+	cursor++
+	for _, tc := range []struct {
+		key    string
+		id     uint64
+		height int64
+		live   bool
+	}{
+		{"previous", 1, baseline, true},
+		{"previous", 1, rotation, false},
+		{"warm", 2, baseline, false},
+		{"warm", 2, baseline + 1, true},
+		{"warm", 2, rotation - 1, true},
+		{"warm", 2, rotation, false},
+		{"rotated", 3, rotation - 1, false},
+		{"rotated", 3, tip, true},
+	} {
+		live, err := bridge.CheckWarmKeyAtHeight(grants, "cold", tc.key, tc.id, tc.height, at)
+		require.NoErrorf(t, err, "%s at %d", tc.key, tc.height)
+		require.Equalf(t, tc.live, live, "%s at %d", tc.key, tc.height)
+	}
+	require.Equal(t, reads, fetch.granter("cold"), "closed blocks keep the bootstrapped granter covered without chain reads")
 
-	send(1, 5, warmHostEvent(4, revoke, "cold", "warm", 1, 102, "WARM_KEY_LOG_END_REVOKED"), block(5, 102))
-	require.Eventually(t, func() bool {
-		live, err := bridge.CheckWarmKeyAtHeight(grants, "cold", "warm", 1, 102, at)
-		return err == nil && !live
-	}, time.Second, 5*time.Millisecond)
-	live, err := bridge.CheckWarmKeyAtHeight(grants, "cold", "warm", 1, 101, at)
-	require.NoError(t, err)
-	require.True(t, live)
-
-	send(2, 6, block(6, 103))
+	send(2, cursor+1, block(cursor+1, tip+3))
 	require.Eventually(t, func() bool {
 		_, err := grants.WarmKeyLogAtHeight("cold", 101)
 		return err != nil
