@@ -133,8 +133,16 @@ func TestGateway_SetOnDAPIFailureSuppressesForgedPage(t *testing.T) {
 			Events: dapiBlockEvents(1, page),
 		}, nil
 	})
+	releaseLive := make(chan struct{})
 	var livePages atomic.Int32
-	srv.SetSticky(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+	srv.SetSticky(func(ctx context.Context, _ *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		// Verification runs asynchronously. Only deliver this page after
+		// the test has observed suppression of the forged page.
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-releaseLive:
+		}
 		livePages.Add(1)
 		c.Grow(101)
 		return &gen.GetHostEventsResponse{
@@ -150,6 +158,7 @@ func TestGateway_SetOnDAPIFailureSuppressesForgedPage(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return rejectedBlocks(t) >= before+1 && !p.BlockFeedLive()
 	}, 5*time.Second, 10*time.Millisecond)
+	close(releaseLive)
 	require.Eventually(t, func() bool { return livePages.Load() >= 2 }, 2*time.Second, 10*time.Millisecond)
 	_, stored := src.StoredAt(101)
 	require.False(t, stored, "blocks are suppressed after the forged page")
