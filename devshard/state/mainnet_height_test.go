@@ -88,6 +88,24 @@ func TestMainnetHeightBuildBoundsEveryRPCFromBackgroundContext(t *testing.T) {
 	require.Greater(t, calls, 1, "live signing must bound Latest and canonical lookup too")
 }
 
+func TestMainnetHeightLagRejectsBeforeCanonicalLookup(t *testing.T) {
+	sm, _, source, _ := heightFixture(t)
+	tx, err := sm.BuildMainnetHeightTx(t.Context())
+	require.NoError(t, err)
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{tx})
+	require.NoError(t, err)
+	for range MainnetCheckpointMaxLag + 1 {
+		_, err := source.AdvanceOne()
+		require.NoError(t, err)
+	}
+
+	calls := 0
+	sm.headerTimes = nil
+	sm.mainnetHeights = deadlineHeightSource{MainnetHeightSource: source, BlockOracle: source, check: func(context.Context) { calls++ }}
+	require.ErrorIs(t, sm.CheckMainnetHeightFreshness(t.Context(), time.Now()), types.ErrHeaderPending)
+	require.Equal(t, 1, calls, "only the live tip is queried when the checkpoint is too far behind")
+}
+
 func TestMainnetHeightApplyReplaySnapshotAndPreview(t *testing.T) {
 	sm, user, _, fresh := heightFixture(t)
 	before, err := sm.ComputeStateRoot()

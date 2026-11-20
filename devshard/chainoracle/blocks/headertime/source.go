@@ -226,12 +226,23 @@ func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
 }
 
 func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
-	if s != nil {
-		if oracle, ok := s.oracle.(interface {
-			CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
-		}); ok {
-			return oracle.CanonicalHeaderForProof(ctx, height)
+	if s == nil || height <= 0 {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	s.mu.Lock()
+	cached, found := s.entries[uint64(height)]
+	s.mu.Unlock()
+	if found {
+		return blocks.HashOnlyHeader(height, time.UnixMilli(cached.ms).UTC(), "", cached.hash), nil
+	}
+	if oracle, ok := s.oracle.(interface {
+		CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
+	}); ok {
+		h, err := oracle.CanonicalHeaderForProof(ctx, height)
+		if err == nil {
+			s.Observe(h)
 		}
+		return h, err
 	}
 	return nil, blocks.ErrProveNotImplemented
 }

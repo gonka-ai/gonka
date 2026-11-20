@@ -54,11 +54,11 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	})
 }
 
-// LatestForProof keeps a live Comet cache first. If the ordinary path is
-// waiting on dAPI, its tip is only a hint and the chain path can also supply
-// the height. Ordinary Latest retains its original behavior.
+// LatestForProof keeps a live Comet cache first. Without it, give dAPI
+// a bounded opportunity to report the tip, then ask chain gRPC directly.
+// A cached chain response can understate the tip during that transition.
 func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
-	if o == nil || o.lightBlocks == nil || o.chain == nil {
+	if o == nil || o.chain == nil {
 		return o.Latest(ctx)
 	}
 	now := o.now()
@@ -71,17 +71,23 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 			return h, nil
 		}
 	}
-	latest, err := withAlternative(ctx, func(ctx context.Context) (*blocks.Header, error) {
-		h, err, _ := o.tryNM(ctx, now)
-		if err == nil && !usable(h) {
-			err = blocks.ErrHeaderNotFound
-		}
-		return h, err
-	}, func(ctx context.Context) (*blocks.Header, error) {
-		return o.tryChain(ctx, now)
-	}, nil)
+	budget := 2 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(deadline)/2)
+	}
+	nmCtx, cancel := context.WithTimeout(ctx, budget)
+	latest, nmErr, _ := o.tryNM(nmCtx, now)
+	cancel()
+	if nmErr == nil && usable(latest) {
+		o.noteLatest(latest, true)
+		return latest, nil
+	}
+	latest, err := o.queryChainTip(ctx, o.now())
 	o.noteLatest(latest, err == nil)
-	return latest, err
+	if err != nil {
+		return nil, errors.Join(nmErr, err)
+	}
+	return latest, nil
 }
 
 // CanonicalHeaderForProof selects the configured local Comet endpoint for

@@ -351,7 +351,10 @@ func (o *Oracle) tryChain(ctx context.Context, now time.Time) (*blocks.Header, e
 		return h, nil
 	}
 	o.mu.Unlock()
+	return o.queryChainTip(ctx, now)
+}
 
+func (o *Oracle) queryChainTip(ctx context.Context, now time.Time) (*blocks.Header, error) {
 	h, err := o.chain.Latest(ctx)
 	logLatestTry("get_latest_block", h, err)
 	if err != nil || !usable(h) {

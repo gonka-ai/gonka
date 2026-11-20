@@ -148,15 +148,15 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if err != nil || latest == nil || blocks.IsDummyHeader(latest) {
 		return fmt.Errorf("%w: live mainnet tip unavailable: %v", types.ErrHeaderPending, err)
 	}
+	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
+		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
+	}
 	// Live signers also reconcile the carried proof with their own canonical
 	// oracle. This prevents an old escrow anchor being used for a long-range
 	// fork after its old validator keys have left the trusting period. Replay
 	// remains independent of that mutable source.
 	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
 		return err
-	}
-	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
-		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
 	}
 	return nil
 }

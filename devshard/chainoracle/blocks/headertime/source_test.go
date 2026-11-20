@@ -145,3 +145,24 @@ func TestSourceDoesNotHoldTheCallerForASlowLookup(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "the lookup keeps running and fills the cache")
 	require.Equal(t, int64(1), o.calls.Load(), "concurrent misses share one fetch")
 }
+
+type canonicalCountingOracle struct{ *countingOracle }
+
+func (o canonicalCountingOracle) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
+	return o.At(ctx, height)
+}
+
+func TestCanonicalProofLookupUsesAndPopulatesHeaderCache(t *testing.T) {
+	at := time.Now().UTC()
+	first := blocks.HashOnlyHeader(100, at, "gonka", []byte{100})
+	second := blocks.HashOnlyHeader(101, at.Add(time.Second), "gonka", []byte{101})
+	o := canonicalCountingOracle{&countingOracle{headers: map[int64]*blocks.Header{101: second}}}
+	s := New(o)
+	s.Observe(first)
+	for _, h := range []*blocks.Header{first, second, second} {
+		got, err := s.CanonicalHeaderForProof(t.Context(), h.Height)
+		require.NoError(t, err)
+		require.Equal(t, h.BlockHash, got.BlockHash)
+	}
+	require.Equal(t, int64(1), o.calls.Load())
+}
