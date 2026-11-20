@@ -21,7 +21,15 @@
 # x-versiond anchor holds everything shared between versiond and versiond2;
 # only container_name and per-instance data volumes differ.
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "${DOCKER_LOG_MAX_SIZE:-100m}"
+    max-file: "5"
+    compress: "true"
+
 x-versiond: &versiond
+  logging: *default-logging
   image: >-
     ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.16}
   environment:
@@ -90,6 +98,7 @@ x-versiond: &versiond
 
 services:
   devshard-postgres:
+    logging: *default-logging
     container_name: devshard-postgres
     image: >-
       ${DEVSHARD_POSTGRES_IMAGE:-postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777}
