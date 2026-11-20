@@ -62,6 +62,10 @@ type PoCWeightCalculator struct {
 	GuardianAddresses       map[string]bool
 	AppHash                 string
 	ValidationSlots         int
+	// MinEpochAcceptanceWeight is the raw claimed-weight floor used when this
+	// calculator forms the next epoch. Zero keeps the historical floor of 1.
+	// Confirmation PoC and challenges leave it unset.
+	MinEpochAcceptanceWeight int64
 
 	// sortedVotingPowers caches PrepareSortedEntries output per model.
 	// Avoids re-sorting the same voting power map for every participant on the same model.
@@ -184,8 +188,16 @@ func (wc *PoCWeightCalculator) validatedParticipant(key types.PoCParticipantMode
 
 	// Get claimed weight from store commit and per-node weights from distribution
 	nodeWeights, claimedWeight := wc.calculateParticipantWeight(key)
-	if claimedWeight < 1 {
-		wc.Logger.LogWarn("Calculate: Participant has non-positive claimedWeight.", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID, "claimedWeight", claimedWeight)
+	// Raw claimed weight, before dynamic coefficients. Those coefficients are
+	// computed from the accepted set, so they cannot be an input to this gate.
+	acceptanceFloor := wc.epochAcceptanceWeightFloor()
+	if claimedWeight < acceptanceFloor {
+		wc.Logger.LogWarn("Calculate: Participant claimed weight is below the epoch acceptance floor.", types.PoC,
+			"participant", key.ParticipantAddress,
+			"modelId", key.ModelID,
+			"claimedWeight", claimedWeight,
+			"minEpochAcceptanceWeight", acceptanceFloor,
+		)
 		return nil
 	}
 	wc.Logger.LogInfo("Calculate: participant claims weight", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID, "claimedWeight", claimedWeight)
@@ -339,6 +351,13 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 		return false
 	}
 	return wc.guardianProtection(key, outcome)
+}
+
+func (wc *PoCWeightCalculator) epochAcceptanceWeightFloor() int64 {
+	if wc == nil || wc.MinEpochAcceptanceWeight < 1 {
+		return types.DefaultMinEpochAcceptanceWeight
+	}
+	return wc.MinEpochAcceptanceWeight
 }
 
 func (wc *PoCWeightCalculator) validationVoteThresholdBps() int64 {
@@ -1112,6 +1131,7 @@ func (am AppModule) computeNewWeights(ctx context.Context, upcomingEpoch types.E
 		appHash,
 		validationSlots,
 	)
+	calculator.MinEpochAcceptanceWeight = params.GetEpochValidationParams().EpochAcceptanceWeightFloor()
 	pocMiningParticipants := calculator.Calculate()
 	freshNodeIDs := participantNodeIDs(pocMiningParticipants)
 
