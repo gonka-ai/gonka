@@ -114,6 +114,9 @@ func (h *Host) PendingEvidenceDeferrable(reason types.TimeoutReason, txs ...*typ
 		ctx, cancel := context.WithTimeout(context.Background(), pendingEvidenceTipTimeout)
 		tip, err := h.LatestHeight(ctx)
 		cancel()
+		if oracle, ok := h.oracle.(interface{ RecentProofTipHeight() int64 }); ok {
+			tip = max(tip, oracle.RecentProofTipHeight())
+		}
 		if err == nil && tip > 0 && top > uint64(tip)+PendingEvidenceTipSlack {
 			return false
 		}

@@ -771,17 +771,24 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	needOracle := h.oracleNeededLocked(req, newlyApplied)
 	var tip mainnetTipObservation
-	_, proofOracle := h.oracle.(interface {
-		LatestForProof(context.Context) (*blocks.Header, error)
+	proofOracle, hasProofClock := h.oracle.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
 	})
-	if needOracle && proofOracle && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+	reuseTip := needOracle && hasProofClock && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion())
+	if reuseTip {
 		cp := h.sm.MainnetCheckpoint()
 		tip.checkpointHeight, tip.checkpointHash = cp.Height, cp.Hash
 	}
 	h.mu.Unlock()
-	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
-	if tip.checkpointHeight > 0 && hdrErr == nil && hdr != nil && !blocks.IsDummyHeader(hdr) {
-		tip.header, tip.receivedAt = hdr, time.Now()
+	var hdr *blocks.Header
+	var hdrErr error
+	if reuseTip {
+		hdr, tip.validUntil, hdrErr = proofOracle.LatestForProofObservation(ctx)
+		if hdrErr == nil && hdr != nil && !blocks.IsDummyHeader(hdr) {
+			tip.header, tip.receivedAt = hdr, time.Now()
+		}
+	} else {
+		hdr, hdrErr = h.latestHeaderIf(ctx, needOracle)
 	}
 	h.mu.Lock()
 

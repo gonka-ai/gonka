@@ -31,6 +31,11 @@ func (o *countingHeightTip) LatestForProof(ctx context.Context) (*blocks.Header,
 	return o.Mock.Latest(ctx)
 }
 
+func (o *countingHeightTip) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
+	h, err := o.LatestForProof(ctx)
+	return h, time.Now().Add(time.Second), err
+}
+
 func (o *countingHeightTip) Latest(ctx context.Context) (*blocks.Header, error) {
 	return o.LatestForProof(ctx)
 }
@@ -71,6 +76,18 @@ func TestMainnetFreshnessWithholdsSignatureWithoutAbortingReceiptOrRecovery(t *t
 		require.NotEmpty(t, fresh.Receipt)
 		require.Equal(t, int64(i+1), observed.calls.Load(), "each request fetches a tip once")
 	}
+
+	checkpoint := freshHost.sm.MainnetCheckpoint()
+	now := time.Now()
+	earlier := mainnetTipObservation{
+		header:     blocks.HashOnlyHeader(checkpoint.Height, checkpoint.Time, checkpoint.ChainID, checkpoint.Hash),
+		receivedAt: now, validUntil: now.Add(100 * time.Millisecond),
+		checkpointHeight: checkpoint.Height, checkpointHash: checkpoint.Hash,
+	}
+	require.Same(t, earlier.header, freshHost.reusableMainnetTip(earlier, earlier.validUntil.Add(-time.Nanosecond)))
+	require.Nil(t, freshHost.reusableMainnetTip(earlier, earlier.validUntil))
+	earlier.validUntil = now.Add(time.Hour)
+	require.Nil(t, freshHost.reusableMainnetTip(earlier, now.Add(time.Second)))
 
 	for i := 0; i < 4; i++ {
 		_, err = source.AdvanceOne()

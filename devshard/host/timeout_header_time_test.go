@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/chainoracle/blocks"
+	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
@@ -64,6 +65,33 @@ func (c *headerChain) Prove(context.Context, string, int64) (*blocks.Proof, erro
 
 func (c *headerChain) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	return nil, errFakeOracleNotImpl
+}
+
+func TestPendingEvidenceDefersAtRecentlyObservedProofTip(t *testing.T) {
+	chain := newHeaderChain()
+	now := time.Now()
+	chain.add(100, []byte{1}, now)
+	oracle := failover.New(nil, nil, chain)
+	h := &Host{oracle: oracle}
+	old, err := oracle.Latest(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(100), old.Height)
+
+	stampHash := make([]byte, 32)
+	stampHash[0] = 2
+	chain.add(104, stampHash, now)
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId: 1, ObservedHeight: 104, ObservedBlockHash: stampHash,
+	}}}
+	reason := types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED
+	require.False(t, h.PendingEvidenceDeferrable(reason, finish))
+	latest, err := oracle.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(104), latest.Height)
+	old, err = oracle.Latest(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(100), old.Height, "ordinary chain RPC cache still holds the old height")
+	require.True(t, h.PendingEvidenceDeferrable(reason, finish), "known proof tip makes the pending evidence plausible")
 }
 
 func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {

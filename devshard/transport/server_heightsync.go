@@ -349,13 +349,10 @@ func (s *Server) logOutboundHeightSync(sec *heightsync.HeightSyncSection, nonce 
 	}
 	prefix := heightSyncHashPrefix(sec.MainnetBlockHashHex)
 	var localH int64
-	if s.heightSyncLogOracle != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		hdr, err := s.heightSyncLogOracle.Latest(ctx)
-		cancel()
-		if err == nil && hdr != nil {
-			localH = hdr.Height
-		}
+	if oracle, ok := s.heightSyncLogOracle.(interface {
+		StaleDetails() (bool, int64, int64, bool)
+	}); ok {
+		_, _, localH, _ = oracle.StaleDetails()
 	}
 	delta := sec.MainnetHeight - localH
 	logging.Debug("heightsync: emit",

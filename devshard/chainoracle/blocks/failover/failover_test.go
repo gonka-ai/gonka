@@ -888,3 +888,66 @@ func TestProofTipKeepsRecentWebSocketProgressAfterDisconnect(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, older.Height, got.Height)
 }
+
+func TestProofTipFloorUsesEveryUnexpiredRPCObservation(t *testing.T) {
+	origin := time.Now()
+	now := origin
+	dapi := &recOracle{}
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(100, origin, "gonka", []byte{100})}
+	o := failover.New(nil, dapi, chain)
+	o.SetNow(func() time.Time { return now })
+	for _, sample := range []struct {
+		offset time.Duration
+		height int64
+	}{{0, 106}, {5 * time.Second, 104}, {19 * time.Second, 103}} {
+		now = origin.Add(sample.offset)
+		dapi.hdr = blocks.HashOnlyHeader(sample.height, now, "gonka", []byte{byte(sample.height)})
+		_, err := o.Latest(t.Context())
+		require.NoError(t, err)
+	}
+	now = origin.Add(20*time.Second - time.Nanosecond)
+	require.Equal(t, int64(106), o.RecentProofTipHeight())
+	now = origin.Add(20 * time.Second)
+	require.Equal(t, int64(104), o.RecentProofTipHeight())
+	now = origin.Add(25 * time.Second)
+	require.Equal(t, int64(103), o.RecentProofTipHeight())
+
+	dapi.err = status.Error(codes.Unavailable, "dAPI down")
+	_, err := o.LatestForProof(t.Context())
+	require.ErrorIs(t, err, blocks.ErrHeaderUnverified)
+	now = origin.Add(39 * time.Second)
+	require.Zero(t, o.RecentProofTipHeight())
+}
+
+func TestProofTipValidityUsesOriginalWebSocketReceiveTime(t *testing.T) {
+	cache := tipcache.New(time.Hour)
+	h := blocks.HashOnlyHeader(100, time.Now(), "gonka", []byte{100})
+	cache.Observe(h)
+	until := cache.LastObservedAt().Add(failover.CometMaxAge)
+	now := until.Add(-time.Nanosecond)
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(103, now, "gonka", []byte{103})}
+	o := failover.New(cache, nil, chain)
+	o.SetNow(func() time.Time { return now })
+	o.SetCometConnected(true)
+	request := failover.WithRequestProofObservation(t.Context())
+	tip, freshUntil, err := o.LatestForProofObservation(request)
+	require.NoError(t, err)
+	require.Equal(t, h.Height, tip.Height)
+	require.Equal(t, until, freshUntil)
+	require.Zero(t, chain.calls.Load())
+	o.SetCometConnected(false)
+	tip, err = o.Latest(request)
+	require.NoError(t, err)
+	require.Equal(t, h.Height, tip.Height)
+	require.Zero(t, chain.calls.Load(), "the request can reuse the live observation before its own deadline")
+
+	now = until
+	tip, err = o.Latest(request)
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(1), chain.calls.Load(), "at the deadline the request must obtain a fresh observation")
+	tip, _, err = o.LatestForProofObservation(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(2), chain.calls.Load())
+}

@@ -44,7 +44,10 @@ queries chain gRPC for a fresh tip. If both eligible replies are ready, the
 higher one wins. A recent observation can reject an already stale checkpoint
 without another RPC. Signing an eligible checkpoint still requires a live
 observation within the request deadline. A host can reuse a fresh observation
-from the same request and checkpoint. Newer known local progress still applies.
+from the same request and checkpoint for state signing and the outgoing
+height-sync anchor. Reuse ends at the earlier observation or request deadline.
+Newer unexpired local observations still apply. Timeout verification also uses
+the observed height to recognize plausible evidence while its header is pending.
 A fresh local canonical header is required for new signatures, while replay
 of the authenticated journal remains deterministic. Reaching settlement alone
 does not authorize signing unchecked history. An unavailable or stale checkpoint

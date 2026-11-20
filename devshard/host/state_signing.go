@@ -31,12 +31,17 @@ func (h *Host) stateSigningSlots(nonce uint64) []uint32 {
 type mainnetTipObservation struct {
 	header           *blocks.Header
 	receivedAt       time.Time
+	validUntil       time.Time
 	checkpointHeight int64
 	checkpointHash   []byte
 }
 
 func (h *Host) reusableMainnetTip(observation mainnetTipObservation, now time.Time) *blocks.Header {
-	if observation.header == nil || now.Sub(observation.receivedAt) > time.Second {
+	until := observation.receivedAt.Add(time.Second)
+	if observation.validUntil.Before(until) {
+		until = observation.validUntil
+	}
+	if observation.header == nil || !now.Before(until) {
 		return nil
 	}
 	cp := h.sm.MainnetCheckpoint()
