@@ -918,6 +918,7 @@ func TestBLSKeyGeneration_EndToEndOffCurveRegression(t *testing.T) {
 				EpochId:                        epochID,
 				Commitments:                    commitments,
 				EncryptedSharesForParticipants: encryptedShares,
+				ConstantTermPok:                dealerConstantTermPoK(t, epochID, dealer.Address, commitments, &dealerCoeffs[dealerIdx][0]),
 			})
 			require.NoError(t, err)
 		}
@@ -1204,3 +1205,19 @@ func BenchmarkInitiateBLSKeyGenerationSnapshotValidation(b *testing.B) {
 }
 
 
+
+func dealerConstantTermPoK(t *testing.T, epochID uint64, dealer string, commitments [][]byte, a0 *fr.Element) []byte {
+	var k fr.Element
+	k.SetUint64(0x5eed)
+	_, _, _, g2Gen := bls12381.Generators()
+	var nonce bls12381.G2Affine
+	nonce.ScalarMultiplication(&g2Gen, k.BigInt(new(big.Int)))
+	nonceBytes := nonce.Bytes()
+	challenge := blstypes.DealerConstantTermPoKChallenge(epochID, dealer, commitments, nonceBytes[:])
+	var c fr.Element
+	require.NoError(t, c.SetBytesCanonical(challenge[:]))
+	var z fr.Element
+	z.Mul(&c, a0).Add(&z, &k)
+	cb, zb := c.Bytes(), z.Bytes()
+	return append(cb[:], zb[:]...)
+}

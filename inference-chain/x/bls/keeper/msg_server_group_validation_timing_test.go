@@ -64,6 +64,7 @@ func TestSubmitGroupKeyValidationSignature_Timing(t *testing.T) {
 		dealerParts[i] = &types.DealerPartStorage{
 			DealerAddress:     participants[i].Address,
 			Commitments:       commitments,
+			ConstantTermPok:   admittedPoK(),
 			ParticipantShares: []*types.EncryptedSharesForParticipant{},
 		}
 		validDealers[i] = true
@@ -275,8 +276,9 @@ func TestPrecomputeSlotPublicKeys_TimingComparison(t *testing.T) {
 			commitments[j] = g2BytesFromScalar(g2Gen, dealerCoeffs[i][j])
 		}
 		dealerParts[i] = &types.DealerPartStorage{
-			DealerAddress: participants[i].Address,
-			Commitments:   commitments,
+			DealerAddress:   participants[i].Address,
+			Commitments:     commitments,
+			ConstantTermPok: admittedPoK(),
 		}
 		validDealers[i] = true
 	}
@@ -344,8 +346,9 @@ func TestVerifyBLSPartialSignature_TimingComparison(t *testing.T) {
 			commitments[j] = g2BytesFromScalar(g2Gen, dealerCoeffs[i][j])
 		}
 		dealerParts[i] = &types.DealerPartStorage{
-			DealerAddress: participants[i].Address,
-			Commitments:   commitments,
+			DealerAddress:   participants[i].Address,
+			Commitments:     commitments,
+			ConstantTermPok: admittedPoK(),
 		}
 		validDealers[i] = true
 	}

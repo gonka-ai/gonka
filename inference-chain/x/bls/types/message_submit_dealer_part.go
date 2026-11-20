@@ -89,5 +89,8 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 			}
 		}
 	}
+	if len(m.ConstantTermPok) != DealerConstantTermPoKLen {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "constant_term_pok must be exactly %d bytes", DealerConstantTermPoKLen)
+	}
 	return nil
 }

@@ -420,7 +420,8 @@ func (k Keeper) determineValidDealersWithConsensus(epochBLSData *types.EpochBLSD
 		dealerSubmittedParts := dealerIndex < len(epochBLSData.DealerParts) &&
 			epochBLSData.DealerParts[dealerIndex] != nil &&
 			epochBLSData.DealerParts[dealerIndex].DealerAddress != "" &&
-			len(epochBLSData.DealerParts[dealerIndex].Commitments) > 0
+			len(epochBLSData.DealerParts[dealerIndex].Commitments) > 0 &&
+			len(epochBLSData.DealerParts[dealerIndex].ConstantTermPok) == types.DealerConstantTermPoKLen
 
 		validDealers[dealerIndex] = dealerIsValid && dealerSubmittedParts
 	}

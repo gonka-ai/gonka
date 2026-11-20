@@ -322,8 +322,10 @@ func TestCompleteDKG_SufficientVerification(t *testing.T) {
 	testCommitment := createTestG2Commitment()
 	epochBLSData.DealerParts[0].DealerAddress = "participant1"
 	epochBLSData.DealerParts[0].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[0].ConstantTermPok = admittedPoK()
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[1].ConstantTermPok = admittedPoK()
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
@@ -407,8 +409,10 @@ func TestCompleteDKG_RecomputesCandidatesWhenStoredSnapshotIsMalformed(t *testin
 	testCommitment := createTestG2Commitment()
 	epochBLSData.DealerParts[0].DealerAddress = "participant1"
 	epochBLSData.DealerParts[0].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[0].ConstantTermPok = admittedPoK()
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[1].ConstantTermPok = admittedPoK()
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[1].DealerValidity = []bool{true, true, false}
 	epochBLSData.VerificationSubmissions[2].DealerValidity = []bool{true, true, false}
@@ -430,6 +434,7 @@ func TestDetermineValidDealersWithConsensus(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
 		epochBLSData.DealerParts[i].Commitments = [][]byte{createTestG2Commitment()}
+		epochBLSData.DealerParts[i].ConstantTermPok = admittedPoK()
 	}
 
 	// Set up verification submissions with mixed opinions
@@ -463,8 +468,10 @@ func TestDetermineValidDealersWithConsensus_TieVotes(t *testing.T) {
 	// Set up dealer parts for both participants
 	epochBLSData.DealerParts[0].DealerAddress = "participant1"
 	epochBLSData.DealerParts[0].Commitments = [][]byte{createTestG2Commitment()}
+	epochBLSData.DealerParts[0].ConstantTermPok = admittedPoK()
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{createTestG2Commitment()}
+	epochBLSData.DealerParts[1].ConstantTermPok = admittedPoK()
 
 	// Set up verification submissions with tie votes (1/2 each)
 	// Because of implicit self-vote, each gets 50/100 slots approval. Quorum is 51/100 slots (totalSlots/2 + 1).
@@ -488,8 +495,10 @@ func TestDetermineValidDealersWithConsensus_DealerOwnsExactlyHalfSlots(t *testin
 	// Both participants submitted dealer parts.
 	epochBLSData.DealerParts[0].DealerAddress = "participant1"
 	epochBLSData.DealerParts[0].Commitments = [][]byte{createTestG2Commitment()}
+	epochBLSData.DealerParts[0].ConstantTermPok = admittedPoK()
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{createTestG2Commitment()}
+	epochBLSData.DealerParts[1].ConstantTermPok = admittedPoK()
 
 	// Everyone votes "true" for dealer 0.
 	// With self vote included, dealer 0 gets 50 (self) + 50 (peer) = 100 slots. Total passes quorum.
@@ -513,6 +522,7 @@ func TestDetermineValidDealersWithConsensus_ShortVectorsCountAsNo(t *testing.T) 
 	for i := 0; i < 3; i++ {
 		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
 		epochBLSData.DealerParts[i].Commitments = [][]byte{createTestG2Commitment()}
+		epochBLSData.DealerParts[i].ConstantTermPok = admittedPoK()
 	}
 
 	// Verifier 0 submits full vector, verifier 1 submits short vector, verifier 2 abstains.
@@ -562,8 +572,10 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToCompleted(t *testing.T) {
 	testCommitment := createTestG2Commitment()
 	epochBLSData.DealerParts[0].DealerAddress = "participant1"
 	epochBLSData.DealerParts[0].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[0].ConstantTermPok = admittedPoK()
 	epochBLSData.DealerParts[1].DealerAddress = "participant2"
 	epochBLSData.DealerParts[1].Commitments = [][]byte{testCommitment}
+	epochBLSData.DealerParts[1].ConstantTermPok = admittedPoK()
 
 	// Set up verification submissions so both dealers pass slot-weighted quorum
 	epochBLSData.VerificationSubmissions[0].DealerValidity = []bool{true, true, false}
@@ -614,6 +626,7 @@ func TestProcessDKGPhaseTransitionForEpoch_VerifyingToDisputing_PreservesComplai
 	for i := 0; i < 3; i++ {
 		epochBLSData.DealerParts[i].DealerAddress = "participant" + string(rune('1'+i))
 		epochBLSData.DealerParts[i].Commitments = [][]byte{testCommitment}
+		epochBLSData.DealerParts[i].ConstantTermPok = admittedPoK()
 	}
 
 	// Two verifiers submit vectors (>50% verification participation),

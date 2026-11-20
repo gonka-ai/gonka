@@ -76,6 +76,8 @@ message DealerPartStorage {
   // participant_shares contains encrypted shares for all participants in order
   // Index i = shares for EpochBLSData.participants[i]
   repeated EncryptedSharesForParticipant participant_shares = 3;
+
+  bytes constant_term_pok = 4;
 }
 
 // VerificationVectorSubmission contains verification results from a specific participant

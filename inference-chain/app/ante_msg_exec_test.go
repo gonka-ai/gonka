@@ -209,6 +209,50 @@ func TestMsgExecAuthorizationDecorator_InnerDealerPartValidateBasicFails(t *test
 	require.False(t, nextCalled)
 }
 
+func validDealerPartShape(creator string) *blstypes.MsgSubmitDealerPart {
+	commitment := make([]byte, 96)
+	commitment[0] = 0x01
+	share := make([]byte, blstypes.MinEncryptedShareCiphertextLen)
+	share[0] = 0x04
+	return &blstypes.MsgSubmitDealerPart{
+		Creator:     creator,
+		EpochId:     1,
+		Commitments: [][]byte{commitment},
+		EncryptedSharesForParticipants: []blstypes.EncryptedSharesForParticipant{{
+			EncryptedShares: [][]byte{share},
+		}},
+		ConstantTermPok: make([]byte, blstypes.DealerConstantTermPoKLen),
+	}
+}
+
+func TestMsgExecAuthorizationDecorator_InnerDealerPartMissingPoKFails(t *testing.T) {
+	_, ctx, ak, decorator := setupMsgExecAuthzAnte(t)
+
+	granter := sdk.MustAccAddressFromBech32(testutil.Creator)
+	grantee := sdk.MustAccAddressFromBech32(testutil.Executor)
+	inner := validDealerPartShape(testutil.Creator)
+	inner.ConstantTermPok = nil
+	ak.save(grantee, granter, authz.NewGenericAuthorization(sdk.MsgTypeURL(inner)))
+
+	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, inner))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "constant_term_pok")
+	require.False(t, nextCalled)
+}
+
+func TestMsgExecAuthorizationDecorator_InnerDealerPartWithPoKPasses(t *testing.T) {
+	_, ctx, ak, decorator := setupMsgExecAuthzAnte(t)
+
+	granter := sdk.MustAccAddressFromBech32(testutil.Creator)
+	grantee := sdk.MustAccAddressFromBech32(testutil.Executor)
+	inner := validDealerPartShape(testutil.Creator)
+	ak.save(grantee, granter, authz.NewGenericAuthorization(sdk.MsgTypeURL(inner)))
+
+	nextCalled, err := runMsgExecAuthzAnte(t, decorator, ctx, wrapExec(t, testutil.Executor, inner))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
+
 func TestMsgExecAuthorizationDecorator_DirectMessagePassesThrough(t *testing.T) {
 	_, ctx, _, decorator := setupMsgExecAuthzAnte(t)
 
