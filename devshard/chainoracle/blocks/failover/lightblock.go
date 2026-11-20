@@ -3,6 +3,7 @@ package failover
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"common/chainoracle/blocks"
@@ -58,15 +59,26 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 // a bounded opportunity to report the tip, then ask chain gRPC directly.
 // A cached chain response can understate the tip during that transition.
 func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
-	if o == nil || o.chain == nil {
+	if o == nil {
 		return o.Latest(ctx)
+	}
+	if o.chain == nil {
+		h, err := o.Latest(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if err := o.checkProofTip(h); err != nil {
+			return nil, err
+		}
+		return h, nil
 	}
 	now := o.now()
 	o.mu.Lock()
 	cometOn := o.cometConnected
+	preferDirect := now.Before(o.preferDirectTipUntil)
 	o.mu.Unlock()
 	if cometOn && o.tip != nil && o.cometFresh() {
-		if h, err := o.tip.Latest(ctx); err == nil && usable(h) {
+		if h, err := o.tip.Latest(ctx); err == nil && o.checkProofTip(h) == nil {
 			o.noteLatest(h, true)
 			return h, nil
 		}
@@ -75,17 +87,63 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		budget = min(budget, time.Until(deadline)/2)
 	}
-	latest, err := withAlternative(ctx, budget, func(ctx context.Context) (*blocks.Header, error) {
+	readDAPI := func(ctx context.Context) (*blocks.Header, error) {
 		h, err, _ := o.tryNM(ctx, now)
-		if err == nil && !usable(h) {
-			err = blocks.ErrHeaderNotFound
+		if err == nil {
+			err = o.checkProofTip(h)
+		}
+		if err == nil && preferDirect {
+			o.mu.Lock()
+			o.preferDirectTipUntil = time.Time{}
+			o.mu.Unlock()
 		}
 		return h, err
-	}, func(ctx context.Context) (*blocks.Header, error) {
-		return o.queryChainTip(ctx, o.now())
-	}, nil)
+	}
+	readChain := func(ctx context.Context) (*blocks.Header, error) {
+		h, err := o.queryChainTip(ctx, o.now())
+		if err == nil {
+			err = o.checkProofTip(h)
+		}
+		if err == nil && !preferDirect && ctx.Err() == nil {
+			// Reuse the working route, never its height. A stalled dAPI
+			// should cost only one grace period during a sequence of reads.
+			until := o.now().Add(ChainRefresh)
+			o.mu.Lock()
+			o.preferDirectTipUntil = until
+			o.mu.Unlock()
+		}
+		return h, err
+	}
+	if preferDirect {
+		readDAPI, readChain = readChain, readDAPI
+	}
+	latest, err := withAlternative(ctx, budget, readDAPI, readChain, nil)
+	if err == nil {
+		// A concurrent read may have observed a higher tip in the meantime.
+		err = o.checkProofTip(latest)
+	}
 	o.noteLatest(latest, err == nil)
-	return latest, err
+	if err != nil {
+		return nil, err
+	}
+	return latest, nil
+}
+
+// checkProofTip rejects regression below a recent tip observation. That
+// observation is only a floor: it is never returned as a live tip.
+func (o *Oracle) checkProofTip(h *blocks.Header) error {
+	if !usable(h) || h.Height <= 0 {
+		return blocks.ErrHeaderNotFound
+	}
+	now := o.now()
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if now.Sub(o.proofTipAt) <= CometMaxAge && h.Height < o.proofTipHeight {
+		return fmt.Errorf("%w: proof tip %d trails recently observed height %d", blocks.ErrHeaderUnverified, h.Height, o.proofTipHeight)
+	}
+	o.proofTipHeight = h.Height
+	o.proofTipAt = now
+	return nil
 }
 
 // CanonicalHeaderForProof selects the configured local Comet endpoint for

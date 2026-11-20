@@ -1283,31 +1283,50 @@ func TestSourceCatchUpBatchTimeoutLetsTheNextJobRun(t *testing.T) {
 	require.GreaterOrEqual(t, calls, 2)
 }
 
-type canonicalCountingOracle struct{ *countingOracle }
+type canonicalCountingOracle struct {
+	*countingOracle
+	canonical *blocks.Header
+}
 
-func (o canonicalCountingOracle) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
-	return o.At(ctx, height)
+func (o canonicalCountingOracle) CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error) {
+	o.calls.Add(1)
+	return o.canonical, nil
 }
 
 func (canonicalCountingOracle) LightBlockAt(context.Context, int64) ([]byte, error) {
 	return nil, blocks.ErrProveNotImplemented
 }
 
+type proofPersistenceProbe struct {
+	Cache
+	writes atomic.Int64
+}
+
+func (*proofPersistenceProbe) Load(context.Context) ([]Row, error) { return nil, nil }
+
+func (p *proofPersistenceProbe) Save(context.Context, []Row) error {
+	p.writes.Add(1)
+	return nil
+}
+
 func TestCanonicalProofLookupUsesAndPopulatesHeaderCache(t *testing.T) {
 	at := time.Now().UTC()
 	first := blocks.HashOnlyHeader(100, at, "gonka", []byte{100})
 	second := blocks.HashOnlyHeader(101, at.Add(time.Second), "gonka", []byte{101})
-	o := canonicalCountingOracle{&countingOracle{headers: map[int64]*blocks.Header{101: second}}}
+	wrong := blocks.HashOnlyHeader(101, second.Time, "gonka", []byte{7})
+	o := canonicalCountingOracle{&countingOracle{}, second}
 	s := New(WithLightBlockSource(o))
 	s.Observe(first, OriginComet, true)
-	s.Observe(second, OriginChain, false)
+	s.Observe(wrong, OriginDAPI, true)
+	_, err := s.HeaderTimeMs(101, second.BlockHash)
+	require.ErrorIs(t, err, types.ErrHeaderMismatch)
+	persisted := &proofPersistenceProbe{}
+	s.SetCache(persisted)
 	for _, h := range []*blocks.Header{first, second, second} {
 		got, err := s.CanonicalHeaderForProof(t.Context(), h.Height)
 		require.NoError(t, err)
 		require.Equal(t, h.BlockHash, got.BlockHash)
 	}
-	require.Equal(t, int64(1), o.calls.Load())
-	cached, found := s.StoredAt(101)
-	require.True(t, found)
-	require.True(t, cached.Verified)
+	require.Equal(t, int64(1), o.calls.Load(), "one independent Comet lookup")
+	require.Zero(t, persisted.writes.Load(), "signing cannot wait on header-time persistence")
 }
