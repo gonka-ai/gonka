@@ -735,10 +735,11 @@ func (h *Host) RequiresMainnetHeightProof() bool {
 // OutstandingLocalHeightAcks selects pending ACKs that still contribute to
 // their retained heartbeat turn. Relayed ACKs are independent of this host's response.
 func (h *Host) OutstandingLocalHeightAcks(txs []*types.DevshardTx) []*types.DevshardTx {
+	slots := h.SlotIDs()
 	var outstanding []*types.DevshardTx
 	for _, tx := range txs {
 		ack := tx.GetHeightAck()
-		if ack != nil && h.slotIDs[ack.SlotId] && h.sm.HeightSyncAckOutstanding(ack.RefNonce, ack.SlotId) {
+		if ack != nil && slots[ack.SlotId] && h.sm.HeightSyncAckOutstanding(ack.RefNonce, ack.SlotId) {
 			outstanding = append(outstanding, tx)
 		}
 	}
