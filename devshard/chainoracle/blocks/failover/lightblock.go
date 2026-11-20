@@ -43,9 +43,9 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	preferDirect := now.Before(o.preferDirectProofUntil)
 	o.mu.Unlock()
 	if preferDirect {
-		return withAlternative(ctx, attempt(direct), attempt(nm), nil)
+		return withAlternative(ctx, primaryAttemptBudget(ctx), attempt(direct), attempt(nm), nil)
 	}
-	return withAlternative(ctx, attempt(nm), attempt(direct), func() {
+	return withAlternative(ctx, primaryAttemptBudget(ctx), attempt(nm), attempt(direct), func() {
 		// Spend at most one primary delay on an unavailable dAPI during a
 		// sequence of bootstrap or validator-transition reads.
 		o.mu.Lock()
@@ -75,19 +75,17 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		budget = min(budget, time.Until(deadline)/2)
 	}
-	nmCtx, cancel := context.WithTimeout(ctx, budget)
-	latest, nmErr, _ := o.tryNM(nmCtx, now)
-	cancel()
-	if nmErr == nil && usable(latest) {
-		o.noteLatest(latest, true)
-		return latest, nil
-	}
-	latest, err := o.queryChainTip(ctx, o.now())
+	latest, err := withAlternative(ctx, budget, func(ctx context.Context) (*blocks.Header, error) {
+		h, err, _ := o.tryNM(ctx, now)
+		if err == nil && !usable(h) {
+			err = blocks.ErrHeaderNotFound
+		}
+		return h, err
+	}, func(ctx context.Context) (*blocks.Header, error) {
+		return o.queryChainTip(ctx, o.now())
+	}, nil)
 	o.noteLatest(latest, err == nil)
-	if err != nil {
-		return nil, errors.Join(nmErr, err)
-	}
-	return latest, nil
+	return latest, err
 }
 
 // CanonicalHeaderForProof selects the configured local Comet endpoint for
@@ -128,7 +126,7 @@ func primaryAttemptBudget(ctx context.Context) time.Duration {
 // withAlternative starts an independent source after a short delay or an
 // explicit error. A slow primary retains the caller's deadline if the
 // secondary cannot answer. The caller must authenticate the selected value.
-func withAlternative[T any](ctx context.Context, primary, secondary func(context.Context) (T, error), onFallback func()) (T, error) {
+func withAlternative[T any](ctx context.Context, headStart time.Duration, primary, secondary func(context.Context) (T, error), onFallback func()) (T, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type result struct {
@@ -144,7 +142,7 @@ func withAlternative[T any](ctx context.Context, primary, secondary func(context
 		return done
 	}
 	first := start(primary)
-	timer := time.NewTimer(primaryAttemptBudget(ctx))
+	timer := time.NewTimer(headStart)
 	defer timer.Stop()
 	var zero T
 	var failures []error

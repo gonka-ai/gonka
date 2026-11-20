@@ -761,6 +761,17 @@ func TestProofTipWaitsForSlowDAPIAndAvoidsStaleChainCache(t *testing.T) {
 		require.Equal(t, fresh.Height, got.Height)
 		require.Zero(t, chain.calls.Load())
 	})
+	t.Run("a refused direct query leaves the slower dAPI running", func(t *testing.T) {
+		chain := &recOracle{err: status.Error(codes.Unavailable, "direct chain down")}
+		dapi := delayedTipOracle{&recOracle{hdr: fresh}, 2150 * time.Millisecond}
+		o := failover.New(nil, dapi, chain)
+		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+		defer cancel()
+		got, err := o.LatestForProof(ctx)
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Equal(t, int64(1), chain.calls.Load())
+	})
 	t.Run("dAPI failure falls back to a new chain response", func(t *testing.T) {
 		chain := &recOracle{hdr: stale}
 		dapi := &recOracle{err: status.Error(codes.Unavailable, "dAPI down")}
