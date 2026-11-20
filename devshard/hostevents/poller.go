@@ -410,6 +410,11 @@ func (p *Poller) Run(ctx context.Context) {
 			if p.IncludeEscrow && p.Escrow != nil {
 				p.Escrow.RehydrateOpenEscrows()
 			}
+			// Dispatch stopped at this event. Poll again from its sequence
+			// so the rest of the page is delivered normally.
+			cursor = seq
+			backoff, retrySeq, retries = 0, 0, 0
+			continue
 		}
 		cursor = resp.GetNextCursor()
 		backoff, retrySeq, retries = 0, 0, 0
