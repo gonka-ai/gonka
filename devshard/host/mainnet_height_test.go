@@ -165,6 +165,6 @@ func TestMainnetNeverSignedTerminalHistoryCannotBypassFreshness(t *testing.T) {
 	sigs, err := h.ApplyRecoveredDiffs(context.Background(), []types.Diff{first, last})
 	require.NoError(t, err)
 	require.Empty(t, sigs, "reaching settlement must never make stale, never-signed history signable")
-	_, err = h.signState(2, root)
+	_, err = h.signState(t.Context(), 2, root)
 	require.ErrorIs(t, err, types.ErrHeaderPending)
 }

@@ -46,8 +46,11 @@ without another RPC. Signing an eligible checkpoint still requires a live
 observation within the request deadline. A host can reuse a fresh observation
 from the same request and checkpoint for state signing and the outgoing
 height-sync anchor. Reuse ends at the earlier observation or request deadline.
-Newer unexpired local observations still apply. Timeout verification also uses
-the observed height to recognize plausible evidence while its header is pending.
+After checking the canonical header, signing rechecks the observation and
+newer local progress. An expired observation can be refreshed in the same
+request. Refreshing an expired response anchor uses a half-second RPC budget
+with time reserved for chain fallback. Timeout verification uses the observed
+height to recognize plausible evidence while its header is pending.
 A fresh local canonical header is required for new signatures, while replay
 of the authenticated journal remains deterministic. Settlement is not an
 exception: replaying a never-signed stale history into its terminal phase must

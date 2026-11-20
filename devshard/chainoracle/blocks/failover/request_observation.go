@@ -37,16 +37,19 @@ func (o *Oracle) rememberRequestObservation(ctx context.Context, h *blocks.Heade
 	scope.mu.Unlock()
 }
 
-func (o *Oracle) requestProofObservation(ctx context.Context) *blocks.Header {
+func (o *Oracle) requestProofObservation(ctx context.Context) (*blocks.Header, bool) {
 	scope, _ := ctx.Value(requestObservationKey{}).(*requestObservation)
 	if scope == nil {
-		return nil
+		return nil, false
 	}
 	scope.mu.Lock()
 	oracle, h, validUntil := scope.oracle, scope.header, scope.validUntil
 	scope.mu.Unlock()
-	if oracle != o || !o.now().Before(validUntil) || o.acceptProofTip(h, nil) != nil {
-		return nil
+	if oracle != o {
+		return nil, false
 	}
-	return cloneHeader(h)
+	if !o.now().Before(validUntil) || o.acceptProofTip(h, nil) != nil {
+		return nil, true
+	}
+	return cloneHeader(h), true
 }

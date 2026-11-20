@@ -176,8 +176,15 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	if o == nil {
 		return nil, errors.New("blockoracle/failover: no tip")
 	}
-	if h := o.requestProofObservation(ctx); h != nil {
-		return h, nil
+	if h, scoped := o.requestProofObservation(ctx); scoped {
+		if h != nil {
+			return h, nil
+		}
+		// A height-sync anchor accompanies the receipt. Give a stalled dAPI
+		// a short head start while leaving time for a fresh chain RPC.
+		refresh, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+		return o.LatestForProof(refresh)
 	}
 	now := o.now()
 
