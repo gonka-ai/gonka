@@ -64,6 +64,7 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	now := o.now()
 	o.mu.Lock()
 	cometOn := o.cometConnected
+	preferDirect := now.Before(o.preferDirectTipUntil)
 	o.mu.Unlock()
 	if cometOn && o.tip != nil && o.cometFresh() {
 		if h, err := o.tip.Latest(ctx); err == nil && usable(h) {
@@ -75,15 +76,34 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 	if deadline, ok := ctx.Deadline(); ok {
 		budget = min(budget, time.Until(deadline)/2)
 	}
-	latest, err := withAlternative(ctx, budget, func(ctx context.Context) (*blocks.Header, error) {
+	readDAPI := func(ctx context.Context) (*blocks.Header, error) {
 		h, err, _ := o.tryNM(ctx, now)
 		if err == nil && !usable(h) {
 			err = blocks.ErrHeaderNotFound
 		}
+		if err == nil && preferDirect {
+			o.mu.Lock()
+			o.preferDirectTipUntil = time.Time{}
+			o.mu.Unlock()
+		}
 		return h, err
-	}, func(ctx context.Context) (*blocks.Header, error) {
-		return o.queryChainTip(ctx, o.now())
-	}, nil)
+	}
+	readChain := func(ctx context.Context) (*blocks.Header, error) {
+		h, err := o.queryChainTip(ctx, o.now())
+		if err == nil && !preferDirect && ctx.Err() == nil {
+			// Reuse the working route, never its height. A stalled dAPI
+			// should cost only one grace period during a sequence of reads.
+			until := o.now().Add(ChainRefresh)
+			o.mu.Lock()
+			o.preferDirectTipUntil = until
+			o.mu.Unlock()
+		}
+		return h, err
+	}
+	if preferDirect {
+		readDAPI, readChain = readChain, readDAPI
+	}
+	latest, err := withAlternative(ctx, budget, readDAPI, readChain, nil)
 	o.noteLatest(latest, err == nil)
 	return latest, err
 }

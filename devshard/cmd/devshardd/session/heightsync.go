@@ -143,6 +143,7 @@ func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
 	logging.Debug("heightsync: comet observe", inferenceTypes.System,
 		"height", h.Height, "hash_len", len(h.BlockHash), "chain_id", h.ChainID)
 	tip.Observe(h)
+	m.headerTimes.ObserveProofHeader(h)
 	m.SetCometConnected(true)
 }
 

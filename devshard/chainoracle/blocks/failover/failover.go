@@ -78,6 +78,7 @@ type Oracle struct {
 	nmNextTry  time.Time
 
 	preferDirectProofUntil time.Time
+	preferDirectTipUntil   time.Time
 
 	chainLast    *blocks.Header
 	chainLastAt  time.Time

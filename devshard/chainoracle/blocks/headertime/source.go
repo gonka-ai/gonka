@@ -10,6 +10,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/lightproof"
+	"common/chainoracle/blocks/tipcache"
 	"devshard/types"
 )
 
@@ -35,6 +36,7 @@ type entry struct {
 type Source struct {
 	oracle       blocks.BlockOracle
 	latestOracle blocks.BlockOracle
+	proofHeaders *tipcache.Cache
 	fetchTimeout time.Duration
 	missWait     time.Duration
 	capacity     int
@@ -70,6 +72,7 @@ func WithCapacity(n int) Option {
 func New(oracle blocks.BlockOracle, opts ...Option) *Source {
 	s := &Source{
 		oracle:       oracle,
+		proofHeaders: tipcache.New(0),
 		fetchTimeout: DefaultFetchTimeout,
 		missWait:     DefaultMissWait,
 		capacity:     DefaultCapacity,
@@ -86,9 +89,17 @@ func (s *Source) Observe(h *blocks.Header) {
 	if s == nil || h == nil || h.Height <= 0 || h.Time.IsZero() || len(h.BlockHash) == 0 {
 		return
 	}
+	s.ObserveProofHeader(h)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.putLocked(uint64(h.Height), h.BlockHash, h.Time.UnixMilli())
+}
+
+// ObserveProofHeader records a header from the configured local Comet feed.
+func (s *Source) ObserveProofHeader(h *blocks.Header) {
+	if s != nil {
+		s.proofHeaders.Remember(h)
+	}
 }
 
 func (s *Source) HeaderTimeMs(height uint64, hash []byte) (int64, error) {
@@ -229,18 +240,15 @@ func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*bl
 	if s == nil || height <= 0 {
 		return nil, blocks.ErrProveNotImplemented
 	}
-	s.mu.Lock()
-	cached, found := s.entries[uint64(height)]
-	s.mu.Unlock()
-	if found {
-		return blocks.HashOnlyHeader(height, time.UnixMilli(cached.ms).UTC(), "", cached.hash), nil
+	if h, err := s.proofHeaders.At(ctx, height); err == nil {
+		return h, nil
 	}
 	if oracle, ok := s.oracle.(interface {
 		CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
 	}); ok {
 		h, err := oracle.CanonicalHeaderForProof(ctx, height)
 		if err == nil {
-			s.Observe(h)
+			s.proofHeaders.Remember(h)
 		}
 		return h, err
 	}

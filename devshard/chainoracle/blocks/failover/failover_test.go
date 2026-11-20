@@ -786,3 +786,33 @@ func TestProofTipWaitsForSlowDAPIAndAvoidsStaleChainCache(t *testing.T) {
 		require.Equal(t, int64(2), chain.calls.Load())
 	})
 }
+
+type stalledTipOracle struct {
+	*recOracle
+	started atomic.Int64
+}
+
+func (o *stalledTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	o.started.Add(1)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestProofTipDoesNotRepeatTheGraceForAStalledDAPI(t *testing.T) {
+	dapi := &stalledTipOracle{recOracle: &recOracle{}}
+	chain := &recOracle{hdr: chainHdr()}
+	o := failover.New(nil, dapi, chain)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	got, err := o.LatestForProof(ctx)
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, got.Height)
+	require.Equal(t, int64(1), dapi.started.Load())
+
+	chain.hdr = blocks.HashOnlyHeader(103, got.Time.Add(time.Second), got.ChainID, []byte{103})
+	got, err = o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, got.Height)
+	require.Equal(t, int64(1), dapi.started.Load(), "the second read goes straight to the working route")
+	require.Equal(t, int64(2), chain.calls.Load(), "every lookup gets a new chain tip")
+}
