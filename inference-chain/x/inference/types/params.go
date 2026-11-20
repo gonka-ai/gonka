@@ -131,18 +131,20 @@ const (
 	// MaxValidationsPerMessage rejects one fee-exempt validation batch.
 	// One observed signer stored at most 40 votes in an epoch.
 	MaxValidationsPerMessage = 128
-	// MaxValidationsPerSignerPerStage stops further stores once this signer
-	// already has this many rows for the stage.
-	MaxValidationsPerSignerPerStage = 256
+	// DefaultMinEpochAcceptanceWeight is the historical raw-weight gate:
+	// a participant and model entered the next epoch when claimed weight
+	// was at least 1. Claimed weight is the store-commit count times the
+	// time-normalization factor, before dynamic model coefficients.
+	DefaultMinEpochAcceptanceWeight int64 = 1
 )
 
 // DefaultEpochValidationParams is the governance value written at genesis
 // and by the v0.2.17 upgrade.
 func DefaultEpochValidationParams() *EpochValidationParams {
 	return &EpochValidationParams{
-		MaxPositiveDistributionRows:     DefaultMaxPositiveDistributionRows,
-		MaxValidationsPerMessage:        MaxValidationsPerMessage,
-		MaxValidationsPerSignerPerStage: MaxValidationsPerSignerPerStage,
+		MaxPositiveDistributionRows: DefaultMaxPositiveDistributionRows,
+		MaxValidationsPerMessage:    MaxValidationsPerMessage,
+		MinEpochAcceptanceWeight:    DefaultMinEpochAcceptanceWeight,
 	}
 }
 
@@ -165,13 +167,14 @@ func (p *EpochValidationParams) ValidationsPerMessageLimit() int {
 	return int(p.MaxValidationsPerMessage)
 }
 
-// ValidationsPerSignerPerStageLimit is the governed cap on rows stored for
-// one signer in one stage.
-func (p *EpochValidationParams) ValidationsPerSignerPerStageLimit() int {
-	if p == nil || p.MaxValidationsPerSignerPerStage == 0 {
-		return MaxValidationsPerSignerPerStage
+// EpochAcceptanceWeightFloor is the governed minimum raw claimed weight for
+// one participant and one model to enter the next epoch. A field that is
+// still absent on stored params is read as the historical floor of 1.
+func (p *EpochValidationParams) EpochAcceptanceWeightFloor() int64 {
+	if p == nil || p.MinEpochAcceptanceWeight < 1 {
+		return DefaultMinEpochAcceptanceWeight
 	}
-	return int(p.MaxValidationsPerSignerPerStage)
+	return p.MinEpochAcceptanceWeight
 }
 
 func (p *EpochValidationParams) Validate() error {
@@ -184,8 +187,8 @@ func (p *EpochValidationParams) Validate() error {
 	if p.MaxValidationsPerMessage == 0 {
 		return fmt.Errorf("epoch_validation_params.max_validations_per_message must be greater than 0")
 	}
-	if p.MaxValidationsPerSignerPerStage == 0 {
-		return fmt.Errorf("epoch_validation_params.max_validations_per_signer_per_stage must be greater than 0")
+	if p.MinEpochAcceptanceWeight < 1 {
+		return fmt.Errorf("epoch_validation_params.min_epoch_acceptance_weight must be at least 1")
 	}
 	return nil
 }

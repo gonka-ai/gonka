@@ -45,7 +45,7 @@ func testOpenCh(target string, start, finish int64, generating bool, seed ...byt
 
 func withOverlay(t *testing.T, o challengeOverlay) {
 	t.Helper()
-	prev := overlay
+	prev := getChallengeOverlay()
 	SetChallengeOverlay(o)
 	t.Cleanup(func() { SetChallengeOverlay(prev) })
 }

@@ -98,7 +98,7 @@ type TxManager interface {
 	SimulateMsgs(msgs []sdk.Msg) (uint64, error)
 	SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint)
 	ClearStoreCommitIntrinsic()
-	StoreCommitRawLeaf() (rate, base uint64, loaded bool)
+	StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool)
 }
 
 type blockTimeTracker struct {
@@ -867,9 +867,9 @@ func (m *manager) ClearStoreCommitIntrinsic() {
 	}
 }
 
-func (m *manager) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+func (m *manager) StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool) {
 	if m.feeTree == nil {
-		return 0, 0, false
+		return 0, 0, 0, false
 	}
 	return m.feeTree.RawStoreCommitLeaf()
 }

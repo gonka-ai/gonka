@@ -106,7 +106,7 @@ type storeCommitGasCalibrator interface {
 	SimulatePoCV2StoreCommit(msg *types.MsgPoCV2StoreCommit) (uint64, error)
 	SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint)
 	ClearStoreCommitIntrinsic()
-	StoreCommitRawLeaf() (rate, base uint64, loaded bool)
+	StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool)
 }
 
 // NewCommitWorker creates and starts a new commit worker.
@@ -229,7 +229,7 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 	if !ok {
 		return
 	}
-	rate, base, loaded := cal.StoreCommitRawLeaf()
+	rate, base, gasPerNew, loaded := cal.StoreCommitRawLeaf()
 	if !loaded {
 		return
 	}
@@ -304,16 +304,16 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 		return
 	}
 	dummyCount := uint64(len(entries))
-	intrinsic, ok := tx_manager.StoreCommitIntrinsicFromSim(used, rate, base, dummyCount)
+	intrinsic, ok := tx_manager.StoreCommitIntrinsicFromSim(used, rate, base, gasPerNew, dummyCount)
 	if !ok {
 		logging.Warn("CommitWorker: StoreCommit simulate gas too small to peel surcharge; using static formula", types.PoC,
-			"pocHeight", pocHeight, "simulated", used, "rate", rate, "base", base, "dummyCount", dummyCount)
+			"pocHeight", pocHeight, "simulated", used, "rate", rate, "base", base, "gasPerNew", gasPerNew, "dummyCount", dummyCount)
 		return
 	}
 	cal.SetStoreCommitIntrinsic(intrinsic, uint(len(entries)))
 	logging.Info("CommitWorker: measured StoreCommit intrinsic gas", types.PoC,
 		"pocHeight", pocHeight, "models", len(modelIDs), "simulated", used, "intrinsic", intrinsic,
-		"rate", rate, "base", base)
+		"rate", rate, "base", base, "gasPerNew", gasPerNew)
 }
 
 // storeCommitRetryBlocks bounds how long one admitted StoreCommit holds its

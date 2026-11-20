@@ -82,10 +82,7 @@ func (k Keeper) GetPoCValidationsV2Pruner(params types.Params) Pruner[collection
 			state.PocValidationsV2PrunedEpoch = epoch
 		},
 		Remover: func(ctx context.Context, key collections.Triple[int64, sdk.AccAddress, collections.Pair[string, sdk.AccAddress]]) error {
-			if err := k.PoCValidationsV2.Remove(ctx, key); err != nil {
-				return err
-			}
-			return k.adjustPocValidationV2Count(ctx, key.K1(), key.K3().K2(), -1)
+			return k.PoCValidationsV2.Remove(ctx, key)
 		},
 		Logger: k,
 	}
