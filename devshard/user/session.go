@@ -724,14 +724,26 @@ func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
 // always reaching target. ok is false when the host is further behind than
 // one chunk; catchUpForSend then teaches it the earlier nonces first, outside
 // the lock. Caller must hold s.mu.
-func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool, err error) {
+func (s *Session) inlineCatchUpForRequestLocked(hostIdx int, target uint64, req host.HostRequest) ([]types.Diff, bool, error) {
 	from := s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
 		return nil, false, nil
 	}
-	diffs, err = s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1))
+	v7 := types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	to := min(s.nonce, from+catchUpChunkSize-1)
+	if v7 {
+		to = min(to, target)
+	}
+	diffs, err := s.diffRangeLocked(from, to)
 	if err != nil {
 		return nil, false, err
+	}
+	if v7 {
+		req.Diffs, req.Nonce = diffs, target
+		fit, err := transport.ChatDiffPrefix(req, s.escrowID)
+		if err != nil || fit != len(diffs) {
+			return nil, false, err
+		}
 	}
 	return diffs, true, nil
 }
@@ -1300,10 +1312,10 @@ type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, pers
 // PreviewLocalBestEffort leaves the SM unchanged until AppendDiff succeeds,
 // so persist failure cannot leave sequencer nonce/diffs ahead of durable state.
 func (s *Session) composeDiffLocked(ctx context.Context, extraTxs []*types.DevshardTx) (types.Diff, int, error) {
-	return s.composeDiffLockedInclude(ctx, extraTxs, nil)
+	return s.composeDiffLockedInclude(ctx, extraTxs, nil, host.HostRequest{})
 }
 
-func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, int, error) {
+func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64, req host.HostRequest) (types.Diff, int, error) {
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
 
@@ -1351,7 +1363,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	}
 
 	var diff types.Diff
-	if s.store != nil {
+	if s.store != nil || heightTx != nil {
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -1360,11 +1372,22 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:      diff,
-			StateHash: vd.Root,
-		}); err != nil {
-			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		if heightTx != nil {
+			req.Diffs, req.Nonce = []types.Diff{diff}, nonce
+			fit, err := transport.ChatDiffPrefix(req, s.escrowID)
+			if err != nil {
+				return types.Diff{}, 0, err
+			}
+			if fit == 0 {
+				return types.Diff{}, 0, fmt.Errorf("escrow %s nonce %d: %w", s.escrowID, nonce, transport.ErrChatRequestTooLarge)
+			}
+		}
+		if s.store != nil {
+			if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
+				Diff: diff, StateHash: vd.Root,
+			}); err != nil {
+				return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+			}
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
 		// so a retried compose cannot fork on a new UserSig after a durable
@@ -1377,7 +1400,9 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.nonce = nonce
 		s.dropDiffPrefixLocked()
 		s.retainPendingLocked(append(held, vd.Deferred...), vd.Applied)
-		s.maybeSaveSnapshotLocked()
+		if s.store != nil {
+			s.maybeSaveSnapshotLocked()
+		}
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
 		s.syncLaggingHostsLocked()
@@ -1873,7 +1898,8 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	// Stopping the quiet settle here is what keeps that from becoming its
 	// own nonce while another inference is still arriving.
 	s.stopQuietSettleLocked()
-	diff, composedIdx, err := s.composeDiffLocked(persistCtx, txsForDiff)
+	chat := (&PreparedInference{params: params}).chatRequest(s.heightSyncK == 0)
+	diff, composedIdx, err := s.composeDiffLockedInclude(persistCtx, txsForDiff, nil, chat)
 	if err != nil {
 		if !probe {
 			s.removeUncommittedCompletionLocked(nonce)
@@ -1891,7 +1917,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
+	catchUp, inline, err := s.inlineCatchUpForRequestLocked(hostIdx, nonce, chat)
 	if err != nil {
 		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w", hostIdx, nonce, err)
 	}
@@ -1931,6 +1957,15 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 	}
 }
 
+func (p *PreparedInference) chatRequest(legacyHeightSync bool) host.HostRequest {
+	return host.HostRequest{
+		Nonce:                        p.diff.Nonce,
+		ForceHeightSyncAnchor:        p.params.ForceHeightSyncAnchor && legacyHeightSync,
+		Payload:                      p.Payload(),
+		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
+	}
+}
+
 // SendOnly sends a prepared inference to the host and returns the raw response
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
@@ -1947,10 +1982,11 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		s.activeInferenceSends--
 		s.mu.Unlock()
 	}()
+	req := p.chatRequest(s.heightSyncK == 0)
 	catchUp := p.catchUp
 	if p.farBehind {
 		var err error
-		catchUp, err = s.catchUpForSend(ctx, p.hostIdx, p.diff.Nonce)
+		catchUp, err = s.catchUpForRequest(ctx, p.hostIdx, p.diff.Nonce, req)
 		if err != nil {
 			return nil, fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
@@ -1958,15 +1994,9 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 	if p.onSend != nil {
 		p.onSend()
 	}
-	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
-	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:                        catchUp,
-		Nonce:                        p.diff.Nonce,
-		ForceHeightSyncAnchor:        legacyForce,
-		HeightSyncEscrow:             s.heightSyncEscrowHints(),
-		Payload:                      p.Payload(),
-		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
-	}, stream, func(partial *host.HostResponse) {
+	req.Diffs = catchUp
+	req.HeightSyncEscrow = s.heightSyncEscrowHints()
+	resp, err := s.clients[p.hostIdx].Send(ctx, req, stream, func(partial *host.HostResponse) {
 		if s.confirmStartOnReceipt(p.diff.Nonce, partial) && receiptHandler != nil {
 			receiptHandler()
 		}
@@ -2285,6 +2315,16 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 		}
 		if len(chunk) == 0 {
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
+		}
+		if types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) {
+			fit, err := transport.ChatDiffPrefix(host.HostRequest{Diffs: chunk, Nonce: chunk[len(chunk)-1].Nonce}, s.escrowID)
+			if err != nil {
+				return err
+			}
+			if fit == 0 {
+				return fmt.Errorf("catch up host %d at nonce %d: %w", hostIdx, from, transport.ErrChatRequestTooLarge)
+			}
+			chunk = chunk[:fit]
 		}
 		chunkNonce := chunk[len(chunk)-1].Nonce
 
@@ -3612,7 +3652,7 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 
 func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, error) {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned)
+	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned, host.HostRequest{})
 	if err != nil {
 		s.mu.Unlock()
 		return types.Diff{}, err

@@ -339,17 +339,17 @@ func TestSession_InlineCatchUpIsAtMostOneChunk(t *testing.T) {
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	_, ok, err := session.inlineCatchUpLocked(0, n)
+	_, ok, err := session.inlineCatchUpForRequestLocked(0, n, host.HostRequest{})
 	require.NoError(t, err)
 	require.False(t, ok, "a host at 0 is more than one chunk behind the tip")
 
-	diffs, ok, err := session.inlineCatchUpLocked(0, catchUpChunkSize)
+	diffs, ok, err := session.inlineCatchUpForRequestLocked(0, catchUpChunkSize, host.HostRequest{})
 	require.NoError(t, err)
 	require.True(t, ok)
 	requireContiguous(t, diffs, 1, catchUpChunkSize)
 
 	session.hostSyncNonce[0] = 60
-	diffs, ok, err = session.inlineCatchUpLocked(0, n)
+	diffs, ok, err = session.inlineCatchUpForRequestLocked(0, n, host.HostRequest{})
 	require.NoError(t, err)
 	require.True(t, ok)
 	requireContiguous(t, diffs, 61, n)
