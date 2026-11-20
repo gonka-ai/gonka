@@ -91,7 +91,7 @@ type ChainNodeConfig struct {
 	SignerKeyName    string `koanf:"signer_key_name" json:"signer_key_name"`
 	KeyringBackend   string `koanf:"keyring_backend" json:"keyring_backend"`
 	KeyringDir       string `koanf:"keyring_dir" json:"keyring_dir"`
-	KeyringPassword  string `json:"-"`
+	KeyringPassword  string `koanf:"-" json:"-"`
 	// MinGasPriceNgonka is the gas price in ngonka used for transaction fee calculation.
 	//
 	// When set to a non-zero value, the DAPI uses it as-is (this is an override
