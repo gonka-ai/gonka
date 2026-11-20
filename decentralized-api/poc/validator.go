@@ -3,6 +3,7 @@ package poc
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -108,15 +109,16 @@ const (
 
 // participantWork represents a single participant to validate.
 type participantWork struct {
-	address    string
-	modelId    string
-	url        string
-	pubKey     string
-	count      uint32
-	rootHash   []byte
-	treeDepth  uint32
-	attempt    int       // current attempt number (0-based)
-	retryAfter time.Time // don't process before this time
+	address     string
+	modelId     string
+	url         string
+	pubKey      string
+	count       uint32
+	rootHash    []byte
+	decodeSteps int64 // frozen decode step count; 0 = prefill
+	treeDepth   uint32
+	attempt     int       // current attempt number (0-based)
+	retryAfter  time.Time // don't process before this time
 
 	checksPassed bool               // validatee checks already passed; retries only redo the local dispatch
 	verified     []VerifiedArtifact // artifacts from those checks, reused by every retry
@@ -131,8 +133,8 @@ func hasModelList(snapshotFound bool, modelSampling map[string]*modelSamplingDat
 	return snapshotFound && len(modelSampling) > 0
 }
 
-func buildValidationCallbackURL(callbackBase, modelID string) string {
-	return callbackBase + "/v2/poc-batches/" + url.PathEscape(url.PathEscape(modelID))
+func buildValidationCallbackURL(callbackBase, modelID string, scheme types.PocScheme) string {
+	return mlnodeclient.PoCCallbackBase(callbackBase, scheme) + "/" + url.PathEscape(url.PathEscape(modelID))
 }
 
 // absInt32 returns the absolute value of an int32 as int64,
@@ -305,6 +307,13 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 	pocParams := paramsResp.Params.PocParams
+	recipe, recipeErr := loadStageRecipe(queryClient, epochState, pocStageStartBlockHeight)
+	if recipeErr != nil || recipe == nil {
+		logging.Error("OffChainValidator: missing PocStageRecipe, fail closed", types.PoC,
+			"pocStageStartBlockHeight", pocStageStartBlockHeight, "error", recipeErr)
+		return
+	}
+	pocParams = types.ApplyStageRecipe(pocParams, recipe)
 	sampleSize := int(pocParams.ValidationSampleSize)
 	if sampleSize == 0 {
 		sampleSize = 200
@@ -340,6 +349,18 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 
 	logging.Info("OffChainValidator: found participants with commits", types.PoC,
 		"count", len(commitsResp.Commits))
+
+	isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.CurrentPhase == types.InferencePhase &&
+		pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
+	stageCommits := commitsResp.Commits
+	skippedChallengeTargets := 0
+	if isConfirmation {
+		stageCommits, skippedChallengeTargets = filterChallengedConfirmationCommits(
+			stageCommits,
+			OpenChallenges.TargetsForEpoch(epochState.ActiveConfirmationPoCEvent.EpochIndex),
+		)
+	}
 
 	// Query validation snapshot for per-model sampling and authoritative model gating.
 	// An empty model set is treated as non-authoritative so bootstrap/startup epochs
@@ -385,11 +406,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	}
 
 	// Build work items with participant URLs
-	workItems := make([]participantWork, 0, len(commitsResp.Commits))
+	workItems := make([]participantWork, 0, len(stageCommits))
 	skippedNotAssigned := 0
 	skippedExcludedModel := 0
 	authoritativeModelAllowlist := hasModelList(snapshotFound, modelSampling)
-	for _, commit := range commitsResp.Commits {
+	for _, commit := range stageCommits {
 		if authoritativeModelAllowlist {
 			if _, allowed := modelSampling[commit.ModelId]; !allowed {
 				skippedExcludedModel++
@@ -439,7 +460,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			continue
 		}
 
-		workItems = append(workItems, participantWork{
+		work := participantWork{
 			address:   commit.ParticipantAddress,
 			modelId:   commit.ModelId,
 			url:       participantResp.Participant.InferenceUrl,
@@ -447,13 +468,20 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 			count:     commit.Count,
 			rootHash:  commit.RootHash,
 			treeDepth: commit.TreeDepth,
-		})
+		}
+		if mc, ok := pocParams.GetModelConfig(commit.ModelId); ok {
+			if steps, ok := mc.DecodeStepsForScheme(pocParams.PocScheme); ok {
+				work.decodeSteps = steps
+			}
+		}
+		workItems = append(workItems, work)
 	}
 
-	if validationSlots > 0 || snapshotFound {
+	if validationSlots > 0 || snapshotFound || skippedChallengeTargets > 0 {
 		logging.Info("OffChainValidator: filtered work items before validation", types.PoC,
 			"totalCommits", len(commitsResp.Commits),
 			"assignedToUs", len(workItems),
+			"skippedChallengeTargets", skippedChallengeTargets,
 			"skippedNotAssigned", skippedNotAssigned,
 			"skippedExcludedModel", skippedExcludedModel,
 		)
@@ -474,13 +502,10 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		for _, item := range workItems {
 			assigned[earlyShareKey(item.address, item.modelId)] = true
 		}
-		// A confirmation PoC (CPoC) run is identified by an active confirmation
-		// event during the inference phase whose trigger height matches this
-		// stage. Only a passing CPoC clears the miss streak.
-		isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
-			epochState.CurrentPhase == types.InferencePhase &&
-			pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
-		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, commitsResp.Commits, modelVotingPowers, assigned)
+		// Only a passing CPoC clears the miss streak. Challenge targets are not
+		// part of ordinary CPoC, so do not let legacy/pre-filter commits affect
+		// the guard either.
+		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, stageCommits, modelVotingPowers, assigned)
 		if len(decisions) > 0 {
 			gr = &guardRuntime{
 				guard:             v.guard,
@@ -493,6 +518,28 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	}
 
 	v.executeValidation(pocStageStartBlockHeight, samplingBlockHash, pocStartBlockHash, pocParams, sampleSize, nodes, workItems, gr, false)
+}
+
+func filterChallengedConfirmationCommits(
+	commits []*types.PoCV2StoreCommitWithAddress,
+	targets map[string]struct{},
+) ([]*types.PoCV2StoreCommitWithAddress, int) {
+	if len(targets) == 0 {
+		return commits, 0
+	}
+
+	filtered := make([]*types.PoCV2StoreCommitWithAddress, 0, len(commits))
+	skipped := 0
+	for _, commit := range commits {
+		if commit != nil {
+			if _, challenged := targets[commit.ParticipantAddress]; challenged {
+				skipped++
+				continue
+			}
+		}
+		filtered = append(filtered, commit)
+	}
+	return filtered, skipped
 }
 
 func (v *OffChainValidator) executeValidation(
@@ -841,6 +888,7 @@ func (v *OffChainValidator) checkValidateeProofs(
 		TreeDepth:                work.treeDepth,
 		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
+		DecodeSteps:              work.decodeSteps,
 	})
 	if err != nil {
 		logging.Warn("OffChainValidator: proof fetch/verify failed", types.PoC,
@@ -940,7 +988,7 @@ func (v *OffChainValidator) dispatchToMLNode(
 	}
 
 	// IMPORTANT: Use pocStartBlockHash (not samplingBlockHash) to match generation seed
-	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId)
+	validationCallbackUrl := buildValidationCallbackURL(v.callbackUrl, work.modelId, pocParams.PocScheme)
 	// Commits are gated on governance models, not on PoC params, so a model can
 	// legitimately be committed without a config here.
 	modelConfig, ok := pocParams.GetModelConfig(work.modelId)
@@ -948,6 +996,26 @@ func (v *OffChainValidator) dispatchToMLNode(
 		logging.Warn("OffChainValidator: abstaining, missing model config for validation work", types.PoC,
 			"participant", work.address, "modelId", work.modelId)
 		return validateAbstain
+	}
+
+	scheme := pocParams.PocScheme
+	seqLen := modelConfig.SeqLen
+	decodeSteps := int64(0)
+	if block, ok := modelConfig.SchemeParams(scheme); ok && block != nil {
+		seqLen = block.SeqLen
+		if scheme == types.PocScheme_POC_SCHEME_DECODE {
+			decodeSteps = block.DecodeSteps
+		}
+	} else if scheme == types.PocScheme_POC_SCHEME_DECODE {
+		seqLen = 0
+	}
+	decode := scheme == types.PocScheme_POC_SCHEME_DECODE
+	if decode {
+		for i := range artifacts {
+			raw, _ := base64.StdEncoding.DecodeString(artifacts[i].VectorB64)
+			artifacts[i].VectorB64 = ""
+			artifacts[i].KPointsSteps = mlnodeclient.BytesToKSteps(raw)
+		}
 	}
 
 	// nodes is a snapshot taken once per stage, so retrying cannot make an executor appear.
@@ -964,15 +1032,12 @@ func (v *OffChainValidator) dispatchToMLNode(
 		PublicKey:   work.pubKey,
 		NodeCount:   len(modelNodes),
 		Nonces:      nonces,
-		Params: mlnodeclient.PoCParamsV2{
-			Model:  modelConfig.ModelId,
-			SeqLen: modelConfig.SeqLen,
-		},
-		URL: validationCallbackUrl,
+		Params:      mlnodeclient.PoCParamsForScheme(modelConfig.ModelId, seqLen, decodeSteps, scheme),
+		URL:         validationCallbackUrl,
 		Validation: &mlnodeclient.ValidationV2{
 			Artifacts: artifacts,
 		},
-		StatTest:       mlnodeclient.StatTestParamsFromChain(modelConfig.StatTest),
+		StatTest:       mlnodeclient.StatTestParamsFromChain(types.StatTestForScheme(scheme, modelConfig)),
 		PocStrongerRng: pocParams.PocStrongerRngEnabled,
 	}
 
@@ -1045,6 +1110,29 @@ func sampleLeafIndices(validatorPubKey string, blockHash string, blockHeight int
 	}
 
 	return result
+}
+
+func loadStageRecipe(
+	queryClient types.QueryClient,
+	epochState *chainphase.EpochState,
+	stageHeight int64,
+) (*types.PocStageRecipe, error) {
+	if epochState != nil && epochState.ActiveConfirmationPoCEvent != nil &&
+		epochState.ActiveConfirmationPoCEvent.TriggerHeight == stageHeight &&
+		epochState.ActiveConfirmationPoCEvent.Recipe != nil {
+		return epochState.ActiveConfirmationPoCEvent.Recipe, nil
+	}
+	if queryClient == nil {
+		return nil, fmt.Errorf("no query client")
+	}
+	resp, err := queryClient.PocStageRecipe(context.Background(), &types.QueryPocStageRecipeRequest{Lookup: &types.QueryPocStageRecipeRequest_StageHeight{StageHeight: stageHeight}})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || !resp.Found || resp.Recipe == nil {
+		return nil, fmt.Errorf("PocStageRecipe not found for height %d", stageHeight)
+	}
+	return resp.Recipe, nil
 }
 
 // getSamplingBlockHash returns the block hash used as sampling randomness.

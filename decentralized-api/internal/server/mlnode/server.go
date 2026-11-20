@@ -55,9 +55,13 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 		opt(s)
 	}
 
-	// V2 callback routes (per-model).
+	// PREFILL callbacks are transitional; DECODE uses v3.
 	e.POST("/v2/poc-batches/:model_id/generated", s.postGeneratedArtifactsV2)
+	e.POST("/v2/poc-batches/:model_id/m/generated", s.postGeneratedArtifactsV2)
 	e.POST("/v2/poc-batches/:model_id/validated", s.postValidatedArtifactsV2)
+	e.POST("/v3/poc-batches/:model_id/generated", s.postGeneratedArtifactsV3)
+	e.POST("/v3/poc-batches/:model_id/m/generated", s.postGeneratedArtifactsV3)
+	e.POST("/v3/poc-batches/:model_id/validated", s.postValidatedArtifactsV3)
 
 	// Devshard version list from chain params
 	e.GET("/versions", s.getVersions)
