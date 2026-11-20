@@ -101,6 +101,23 @@ func hashHeightSyncEscrow(h types.HeightSyncEscrowCommit) []byte {
 	hsh := sha256.New()
 	hsh.Write(buf)
 	hsh.Write(reason)
+	if h.MainnetCheckpoint.Height > 0 {
+		// Appended only in v7; legacy state roots remain byte-identical.
+		hsh.Write([]byte("devshard/mainnet-checkpoint/v1"))
+		cp := h.MainnetCheckpoint
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(cp.Height))
+		hsh.Write(b[:])
+		hsh.Write(cp.Hash)
+		hsh.Write(cp.NextValidatorsHash)
+		ns := int64(0)
+		if !cp.Time.IsZero() {
+			ns = cp.Time.UnixNano()
+		}
+		binary.BigEndian.PutUint64(b[:], uint64(ns))
+		hsh.Write(b[:])
+		hsh.Write([]byte(cp.ChainID))
+	}
 	return hsh.Sum(nil)
 }
 

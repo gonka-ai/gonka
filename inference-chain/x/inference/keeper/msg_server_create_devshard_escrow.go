@@ -95,6 +95,8 @@ func (k msgServer) CreateDevshardEscrow(goCtx context.Context, msg *types.MsgCre
 	}
 
 	escrow := &types.DevshardEscrow{
+		MainnetAnchorHeight:       ctx.BlockHeight(),
+		MainnetAnchorHash:         append([]byte(nil), ctx.HeaderInfo().Hash...),
 		Creator:                   msg.Creator,
 		Amount:                    msg.Amount,
 		Slots:                     slots,

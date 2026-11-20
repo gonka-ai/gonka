@@ -1,6 +1,7 @@
 package state
 
 import (
+	"common/chainoracle/blocks/lightproof"
 	"fmt"
 
 	"github.com/gtank/ristretto255"
@@ -46,13 +47,14 @@ type mutationJournal struct {
 // floor are pointers: observeHeightSyncLocked replaces them with a clone
 // before the first write, so the saved pointer is the pre-state.
 type journalScalars struct {
-	balance       uint64
-	fees          uint64
-	phase         types.SessionPhase
-	finalizeNonce uint64
-	latestNonce   uint64
-	liveEntrySum  ristretto255.Element
-	sealedAcc     []byte
+	balance           uint64
+	fees              uint64
+	phase             types.SessionPhase
+	finalizeNonce     uint64
+	latestNonce       uint64
+	liveEntrySum      ristretto255.Element
+	sealedAcc         []byte
+	mainnetCheckpoint lightproof.Checkpoint
 
 	hsForcedStart         uint64
 	hsForcedEnd           uint64
@@ -73,6 +75,7 @@ type journalScalars struct {
 func (sm *StateMachine) readScalarsLocked() journalScalars {
 	st := sm.state
 	return journalScalars{
+		mainnetCheckpoint:     st.MainnetCheckpoint,
 		balance:               st.Balance,
 		fees:                  st.Fees,
 		phase:                 st.Phase,
@@ -96,6 +99,7 @@ func (sm *StateMachine) readScalarsLocked() journalScalars {
 
 func (sm *StateMachine) writeScalarsLocked(s journalScalars) {
 	st := sm.state
+	st.MainnetCheckpoint = s.mainnetCheckpoint
 	st.Balance = s.balance
 	st.Fees = s.fees
 	st.Phase = s.phase

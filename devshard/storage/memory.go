@@ -648,6 +648,7 @@ func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	cp := stampEscrowCache(info)
+	cp.MainnetAnchorHash = append([]byte(nil), info.MainnetAnchorHash...)
 	if info.AppHash != nil {
 		cp.AppHash = append([]byte(nil), info.AppHash...)
 	}
@@ -667,6 +668,7 @@ func (m *Memory) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
 		return nil, ErrEscrowCacheNotFound
 	}
 	cp := info
+	cp.MainnetAnchorHash = append([]byte(nil), info.MainnetAnchorHash...)
 	if info.AppHash != nil {
 		cp.AppHash = append([]byte(nil), info.AppHash...)
 	}

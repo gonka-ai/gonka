@@ -4,8 +4,10 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
+	"maps"
 	"time"
 
+	"github.com/cosmos/gogoproto/proto"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -79,6 +81,15 @@ func (c GetNodesCommand) Execute(b *Broker) {
 
 		// --- Deep copy NodeState ---
 		stateCopy := nodeWithState.State // Start with a shallow copy
+		stateCopy.EpochModels = maps.Clone(nodeWithState.State.EpochModels)
+		for id, model := range stateCopy.EpochModels {
+			stateCopy.EpochModels[id] = *proto.Clone(&model).(*types.Model)
+		}
+		stateCopy.EpochMLNodes = maps.Clone(nodeWithState.State.EpochMLNodes)
+		for id, node := range stateCopy.EpochMLNodes {
+			stateCopy.EpochMLNodes[id] = *proto.Clone(&node).(*types.MLNodeInfo)
+		}
+		stateCopy.PreservedModels = maps.Clone(nodeWithState.State.PreservedModels)
 
 		// Nil out internal-only fields
 		stateCopy.cancelInFlightTask = nil

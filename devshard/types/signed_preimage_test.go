@@ -32,6 +32,8 @@ var signedProtoFullNames = map[string]struct{}{
 // unsignedProtoFullNames is every other message in proto/devshard/v1. Map
 // entries generated for proto maps are ignored by the walker.
 var unsignedProtoFullNames = map[string]struct{}{
+	"devshard.v1.MsgMainnetHeight":          {}, // signed inside DiffContent
+	"devshard.v1.MainnetCheckpointProto":    {}, // committed by state root
 	"devshard.v1.MsgStartInference":         {},
 	"devshard.v1.MsgConfirmStart":           {},
 	"devshard.v1.MsgTimeoutInference":       {},

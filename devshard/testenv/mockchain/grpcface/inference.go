@@ -100,6 +100,10 @@ func NewCometServer(st *store.Store) *CometServer {
 
 func (s *CometServer) GetLatestBlock(_ context.Context, _ *cmtservice.GetLatestBlockRequest) (*cmtservice.GetLatestBlockResponse, error) {
 	height := s.store.GetBlockHeight()
+	if lb, err := s.store.MainnetLightBlock(context.Background(), height); err == nil {
+		id := lb.Commit.BlockID.ToProto()
+		return &cmtservice.GetLatestBlockResponse{BlockId: &id, SdkBlock: &cmtservice.Block{Header: cmtservice.Header{Height: lb.Height, ChainID: lb.ChainID, Time: lb.Time, ValidatorsHash: lb.ValidatorsHash, NextValidatorsHash: lb.NextValidatorsHash, AppHash: lb.AppHash}}}, nil
+	}
 	return &cmtservice.GetLatestBlockResponse{
 		SdkBlock: &cmtservice.Block{
 			Header: cmtservice.Header{
@@ -108,4 +112,13 @@ func (s *CometServer) GetLatestBlock(_ context.Context, _ *cmtservice.GetLatestB
 			},
 		},
 	}, nil
+}
+
+func (s *CometServer) GetBlockByHeight(ctx context.Context, req *cmtservice.GetBlockByHeightRequest) (*cmtservice.GetBlockByHeightResponse, error) {
+	lb, err := s.store.MainnetLightBlock(ctx, req.Height)
+	if err != nil {
+		return nil, err
+	}
+	id := lb.Commit.BlockID.ToProto()
+	return &cmtservice.GetBlockByHeightResponse{BlockId: &id, SdkBlock: &cmtservice.Block{Header: cmtservice.Header{Height: lb.Height, ChainID: lb.ChainID, Time: lb.Time, ValidatorsHash: lb.ValidatorsHash, NextValidatorsHash: lb.NextValidatorsHash, AppHash: lb.AppHash}}}, nil
 }

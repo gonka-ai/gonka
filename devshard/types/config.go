@@ -64,16 +64,18 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 // at create. Every field is "zero means use the compiled default" so callers can
 // populate only what the chain returned.
 type EscrowSessionFields struct {
-	TokenPrice                  uint64
-	CreateDevshardFee           uint64
-	FeePerNonce                 uint64
-	InferenceSealGraceNonces    uint32
-	InferenceSealGraceSeconds   uint32
-	AutoSealEveryNNonces        uint32
-	ValidationRate              uint32
-	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
-	RefusalTimeout              int64
-	ExecutionTimeout            int64
+	MainnetAnchorHeight       int64
+	MainnetAnchorHash         []byte
+	TokenPrice                uint64
+	CreateDevshardFee         uint64
+	FeePerNonce               uint64
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
+	ValidationRate            uint32
+	VoteThresholdFactor       uint32 // percent; 0 == legacy groupSize/2
+	RefusalTimeout            int64
+	ExecutionTimeout          int64
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -93,6 +95,8 @@ func ComputeVoteThreshold(groupSize int, factor uint32) uint32 {
 // keep today's behavior.
 func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionConfig {
 	cfg := DefaultSessionConfig(groupSize)
+	cfg.MainnetAnchorHeight = fields.MainnetAnchorHeight
+	cfg.MainnetAnchorHash = append([]byte(nil), fields.MainnetAnchorHash...)
 	if fields.TokenPrice > 0 {
 		cfg.TokenPrice = fields.TokenPrice
 	}

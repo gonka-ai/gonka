@@ -269,7 +269,10 @@ func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
 	t.Helper()
 	s.UpInfra(t, build)
 	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
-	s.UpGateway(t)
+	// Carry the requested build policy through the delayed gateway startup.
+	// UpGateway intentionally reuses images, but UpBuild must not silently run
+	// a stale gateway from a different protocol/source checkout.
+	s.composeUp(t, build, []string{gatewayComposeService})
 }
 
 func (s *Stack) composeServiceNames(t *testing.T) []string {
@@ -384,6 +387,12 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 
 	args := append([]string{"compose"}, s.composeFileArgs()...)
 	args = append(args, "up", "-d", "--wait", "--pull", "missing")
+	if len(services) == 1 && services[0] == gatewayComposeService {
+		// Infra was already started and catalog-admitted. Rebuilding/recreating
+		// its dependencies here can reset the mock chain and change pinned escrow
+		// anchors after hosts have bound their sessions.
+		args = append(args, "--no-deps")
+	}
 	if build {
 		args = append(args, "--build")
 	}

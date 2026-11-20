@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"time"
 
@@ -76,6 +77,13 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 func (h *Host) latestHeader(ctx context.Context) (*blocks.Header, error) {
 	if h.oracle == nil {
 		return nil, ErrNoChainOracle
+	}
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		if oracle, ok := h.oracle.(interface {
+			LatestForProof(context.Context) (*blocks.Header, error)
+		}); ok {
+			return oracle.LatestForProof(ctx)
+		}
 	}
 	return h.oracle.Latest(ctx)
 }
@@ -201,4 +209,10 @@ func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint6
 		return height, hash
 	}
 	return floor, floorHash
+}
+
+// HeightAckMatchesAnchor checks the producer's reference stamp for this ACK.
+func (h *Host) HeightAckMatchesAnchor(ack *types.MsgHeightAck, height uint64, hash []byte) bool {
+	wantHeight, wantHash := h.referenceStamp(ack.RefNonce+1, height, hash)
+	return ack.ObservedHeight == wantHeight && bytes.Equal(ack.ObservedBlockHash, wantHash)
 }

@@ -1,7 +1,9 @@
 package types
 
 import (
+	"common/chainoracle/blocks/lightproof"
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -46,9 +48,12 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 
 	cfg := state.Config
 	return &EscrowStateProto{
+		MainnetCheckpoint:           checkpointToProto(state.MainnetCheckpoint),
 		EscrowId:                    state.EscrowID,
 		StateRootAndProtocolVersion: state.StateRootAndProtocolVersion,
 		Config: &SessionConfigProto{
+			MainnetAnchorHeight:       cfg.MainnetAnchorHeight,
+			MainnetAnchorHash:         append([]byte(nil), cfg.MainnetAnchorHash...),
 			RefusalTimeout:            cfg.RefusalTimeout,
 			ExecutionTimeout:          cfg.ExecutionTimeout,
 			TokenPrice:                cfg.TokenPrice,
@@ -127,6 +132,8 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 	if msg.Config != nil {
 		p := msg.Config
 		cfg = SessionConfig{
+			MainnetAnchorHeight:       p.MainnetAnchorHeight,
+			MainnetAnchorHash:         append([]byte(nil), p.MainnetAnchorHash...),
 			RefusalTimeout:            p.RefusalTimeout,
 			ExecutionTimeout:          p.ExecutionTimeout,
 			TokenPrice:                p.TokenPrice,
@@ -141,6 +148,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 	}
 
 	return &EscrowState{
+		MainnetCheckpoint:             checkpointFromProto(msg.MainnetCheckpoint),
 		EscrowID:                      msg.EscrowId,
 		StateRootAndProtocolVersion:   msg.StateRootAndProtocolVersion,
 		Config:                        cfg,
@@ -267,4 +275,25 @@ func cloneUint64Map(src map[uint64]uint64) map[uint64]uint64 {
 		out[k] = v
 	}
 	return out
+}
+
+func checkpointToProto(cp lightproof.Checkpoint) *MainnetCheckpointProto {
+	if cp.Height == 0 {
+		return nil
+	}
+	var ns int64
+	if !cp.Time.IsZero() {
+		ns = cp.Time.UnixNano()
+	}
+	return &MainnetCheckpointProto{Height: cp.Height, Hash: append([]byte(nil), cp.Hash...), NextValidatorsHash: append([]byte(nil), cp.NextValidatorsHash...), TimeUnixNano: ns, ChainId: cp.ChainID}
+}
+func checkpointFromProto(cp *MainnetCheckpointProto) lightproof.Checkpoint {
+	if cp == nil {
+		return lightproof.Checkpoint{}
+	}
+	var t time.Time
+	if cp.TimeUnixNano != 0 {
+		t = time.Unix(0, cp.TimeUnixNano).UTC()
+	}
+	return lightproof.Checkpoint{Height: cp.Height, Hash: append([]byte(nil), cp.Hash...), NextValidatorsHash: append([]byte(nil), cp.NextValidatorsHash...), Time: t, ChainID: cp.ChainId}
 }
