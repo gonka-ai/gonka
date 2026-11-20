@@ -78,6 +78,7 @@ func InvalidSECP256K1AccountKeys() map[string]string {
 		"uncompressed_key": base64.StdEncoding.EncodeToString(append([]byte{0x04}, make([]byte, 64)...)),
 		"wrong_prefix":     base64.StdEncoding.EncodeToString(append([]byte{0x01}, make([]byte, 32)...)),
 		"no_prefix":        base64.StdEncoding.EncodeToString(make([]byte, 32)), // 32 bytes without proper prefix
+		"off_curve_key":    base64.StdEncoding.EncodeToString(append(append([]byte{0x02}, make([]byte, 31)...), 0x05)),
 
 		// Invalid base64 encodings
 		"invalid_base64":    "invalid-base64-string!!!",

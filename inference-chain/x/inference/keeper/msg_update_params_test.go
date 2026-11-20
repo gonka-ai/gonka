@@ -64,3 +64,34 @@ func TestMsgUpdateParams(t *testing.T) {
 		})
 	}
 }
+
+func TestMsgUpdateParamsRequiresUsablePocRecipe(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	original := types.DefaultParams()
+	require.NoError(t, k.SetParams(ctx, original))
+
+	legacy := types.DefaultParams()
+	model := legacy.PocParams.Models[0]
+	prefill, _ := model.SchemeParams(types.PocScheme_POC_SCHEME_PREFILL)
+	model.SeqLen = prefill.SeqLen
+	model.StatTest = prefill.StatTest
+	model.DynamicCoefficient = prefill.DynamicCoefficient
+	model.Schemes = nil
+	require.NoError(t, legacy.Validate(), "legacy migration format remains readable")
+	_, err := ms.UpdateParams(ctx, &types.MsgUpdateParams{Authority: k.GetAuthority(), Params: legacy})
+	require.ErrorContains(t, err, "DECODE scheme block")
+	stored, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, original, stored, "rejected update must not change live params")
+
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: 1, PocStartBlockHeight: 100}))
+	require.NoError(t, k.EffectiveEpochIndex.Set(ctx, 1))
+	for _, scheme := range []types.PocScheme{types.PocScheme_POC_SCHEME_PREFILL, types.PocScheme_POC_SCHEME_DECODE} {
+		params := types.DefaultParams()
+		params.PocParams.PocScheme = scheme
+		_, err := ms.UpdateParams(ctx, &types.MsgUpdateParams{Authority: k.GetAuthority(), Params: params})
+		require.NoError(t, err)
+		_, err = k.FreezePocStageRecipe(ctx, 100+int64(scheme))
+		require.NoError(t, err, "accepted params must support the next regular PoC")
+	}
+}

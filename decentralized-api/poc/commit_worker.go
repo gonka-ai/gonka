@@ -96,13 +96,17 @@ type CommitWorker struct {
 	// not repeat those LCDs on the same tick. Cleared at the start of each
 	// canCommit tick so later retries query chain again.
 	storeCommitQueried map[commitKey]struct{}
+	epochModelsIndex   uint64
+	epochModels        map[string]bool
+	stageEpochModels   map[string]bool
+	stageModelsUnknown bool
 }
 
 type storeCommitGasCalibrator interface {
 	SimulatePoCV2StoreCommit(msg *types.MsgPoCV2StoreCommit) (uint64, error)
 	SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint)
 	ClearStoreCommitIntrinsic()
-	StoreCommitRawLeaf() (rate, base uint64, loaded bool)
+	StoreCommitRawLeaf() (rate, base, gasPerNew uint64, loaded bool)
 }
 
 // NewCommitWorker creates and starts a new commit worker.
@@ -199,6 +203,7 @@ func (w *CommitWorker) tick() {
 			"pocHeight", pocHeight,
 			"canCommit", canCommit)
 		if canCommit {
+			w.stageEpochModels, w.stageModelsUnknown = w.confirmationStageEpochModels(epochState, pocHeight)
 			w.storeCommitQueried = make(map[commitKey]struct{})
 			w.maybeCalibrateStoreCommitGas(pocHeight)
 			w.maybeSubmitCommit(pocHeight, StoreCommitTimeoutHeight(epochState, pocHeight))
@@ -224,7 +229,7 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 	if !ok {
 		return
 	}
-	rate, base, loaded := cal.StoreCommitRawLeaf()
+	rate, base, gasPerNew, loaded := cal.StoreCommitRawLeaf()
 	if !loaded {
 		return
 	}
@@ -242,6 +247,9 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 			continue
 		}
 		if _, dup := seen[stageStore.ModelID]; dup {
+			continue
+		}
+		if w.stageEpochModels != nil && !w.stageEpochModels[stageStore.ModelID] {
 			continue
 		}
 		seen[stageStore.ModelID] = struct{}{}
@@ -296,16 +304,16 @@ func (w *CommitWorker) maybeCalibrateStoreCommitGas(pocHeight int64) {
 		return
 	}
 	dummyCount := uint64(len(entries))
-	intrinsic, ok := tx_manager.StoreCommitIntrinsicFromSim(used, rate, base, dummyCount)
+	intrinsic, ok := tx_manager.StoreCommitIntrinsicFromSim(used, rate, base, gasPerNew, dummyCount)
 	if !ok {
 		logging.Warn("CommitWorker: StoreCommit simulate gas too small to peel surcharge; using static formula", types.PoC,
-			"pocHeight", pocHeight, "simulated", used, "rate", rate, "base", base, "dummyCount", dummyCount)
+			"pocHeight", pocHeight, "simulated", used, "rate", rate, "base", base, "gasPerNew", gasPerNew, "dummyCount", dummyCount)
 		return
 	}
 	cal.SetStoreCommitIntrinsic(intrinsic, uint(len(entries)))
 	logging.Info("CommitWorker: measured StoreCommit intrinsic gas", types.PoC,
 		"pocHeight", pocHeight, "models", len(modelIDs), "simulated", used, "intrinsic", intrinsic,
-		"rate", rate, "base", base)
+		"rate", rate, "base", base, "gasPerNew", gasPerNew)
 }
 
 // storeCommitRetryBlocks bounds how long one admitted StoreCommit holds its
@@ -459,11 +467,12 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 			rootHash: bytes.Clone(rootHash),
 		}
 	}
+	entries = keepEpochModelEntries(entries, w.stageEpochModels, pocHeight)
 	if len(entries) == 0 {
 		return
 	}
 
-	for _, batch := range commitBatches(entries, finalWindow) {
+	for _, batch := range commitBatches(entries, finalWindow || w.stageModelsUnknown) {
 		states := make(map[commitKey]commitState, len(batch))
 		for _, entry := range batch {
 			key := commitKey{stage: pocHeight, modelID: entry.ModelId}
@@ -653,6 +662,14 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 			rootHash: bytes.Clone(rootHash),
 		}
 	}
+	modelsUnknown := false
+	if ch.Challenge != nil {
+		models, ok := w.ownEpochModels(ch.Challenge.EpochIndex)
+		if ok {
+			entries = keepEpochModelEntries(entries, models, pocHeight)
+		}
+		modelsUnknown = !ok
+	}
 	if len(entries) == 0 {
 		return
 	}
@@ -661,7 +678,7 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 	if finalWindow {
 		timeoutHeight = deadline
 	}
-	for _, batch := range commitBatches(entries, finalWindow) {
+	for _, batch := range commitBatches(entries, finalWindow || modelsUnknown) {
 		msg := &types.MsgPoCChallengeStoreCommit{
 			PocStageStartBlockHeight: pocHeight,
 			Entries:                  batch,
@@ -680,6 +697,75 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 		logging.Debug("CommitWorker: submitted challenge store commit", types.PoC,
 			"pocHeight", pocHeight, "models", len(batch), "height", height, "timeoutHeight", timeoutHeight)
 	}
+}
+
+func (w *CommitWorker) confirmationStageEpochModels(epochState *chainphase.EpochState, pocHeight int64) (map[string]bool, bool) {
+	event := epochState.ActiveConfirmationPoCEvent
+	if event == nil || event.TriggerHeight != pocHeight {
+		return nil, false
+	}
+	models, ok := w.ownEpochModels(event.EpochIndex)
+	if !ok {
+		return nil, true
+	}
+	return models, false
+}
+
+func (w *CommitWorker) ownEpochModels(epochIndex uint64) (map[string]bool, bool) {
+	if w.epochModels != nil && w.epochModelsIndex == epochIndex {
+		return w.epochModels, true
+	}
+	if w.participantAddress == "" || w.recorder == nil {
+		return nil, false
+	}
+	queryClient := w.recorder.NewInferenceQueryClient()
+	ctx, cancel := context.WithTimeout(context.Background(), storeCommitQueryTimeout)
+	defer cancel()
+	root, err := queryClient.EpochGroupData(ctx, &types.QueryGetEpochGroupDataRequest{EpochIndex: epochIndex})
+	if err != nil {
+		logging.Warn("CommitWorker: epoch group query failed, commits are not limited to epoch models", types.PoC,
+			"epochIndex", epochIndex, "error", err)
+		return nil, false
+	}
+	if len(root.EpochGroupData.SubGroupModels) == 0 {
+		logging.Warn("CommitWorker: epoch group has no model subgroups yet, commits are not limited to epoch models", types.PoC,
+			"epochIndex", epochIndex)
+		return nil, false
+	}
+	models := make(map[string]bool)
+	for _, modelID := range root.EpochGroupData.SubGroupModels {
+		sub, err := queryClient.EpochGroupData(ctx, &types.QueryGetEpochGroupDataRequest{EpochIndex: epochIndex, ModelId: modelID})
+		if err != nil {
+			logging.Warn("CommitWorker: model subgroup query failed, commits are not limited to epoch models", types.PoC,
+				"epochIndex", epochIndex, "modelId", modelID, "error", err)
+			return nil, false
+		}
+		for _, vw := range sub.EpochGroupData.ValidationWeights {
+			if vw != nil && strings.EqualFold(vw.MemberAddress, w.participantAddress) {
+				models[modelID] = true
+				break
+			}
+		}
+	}
+	w.epochModelsIndex = epochIndex
+	w.epochModels = models
+	return models, true
+}
+
+func keepEpochModelEntries(entries []*types.PoCV2CommitEntry, epochModels map[string]bool, pocHeight int64) []*types.PoCV2CommitEntry {
+	if epochModels == nil {
+		return entries
+	}
+	kept := entries[:0:0]
+	for _, entry := range entries {
+		if epochModels[entry.ModelId] {
+			kept = append(kept, entry)
+			continue
+		}
+		logging.Warn("CommitWorker: skipping commit for a model outside the participant's epoch models", types.PoC,
+			"pocHeight", pocHeight, "modelId", entry.ModelId)
+	}
+	return kept
 }
 
 func (w *CommitWorker) reconcileChallengePending(ch *types.OpenPoCChallenge) {
@@ -993,7 +1079,7 @@ func getWeightDistribution(distribution map[string]uint32, targetCount uint32) (
 				Weight: count,
 			})
 		}
-		return weights, nil
+		return omitZeroWeights(weights)
 	}
 
 	logging.Warn("CommitWorker: adjusting distribution proportionally", types.PoC,
@@ -1025,7 +1111,24 @@ func getWeightDistribution(distribution map[string]uint32, targetCount uint32) (
 		diff--
 	}
 
-	return weights, nil
+	return omitZeroWeights(weights)
+}
+
+// omitZeroWeights drops rounded zeros before broadcast. Consensus still
+// accepts a structurally valid zero from an older DAPI; this is bandwidth
+// only. The retained rows still sum to targetCount.
+func omitZeroWeights(weights []*types.MLNodeWeight) ([]*types.MLNodeWeight, error) {
+	out := make([]*types.MLNodeWeight, 0, len(weights))
+	for _, weight := range weights {
+		if weight == nil || weight.Weight == 0 {
+			continue
+		}
+		out = append(out, weight)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("distribution sum is 0")
+	}
+	return out, nil
 }
 
 func formatWeightDistribution(weights []*types.MLNodeWeight) string {
