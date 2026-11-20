@@ -618,7 +618,7 @@ func retainAnchoredResponseAcks(txs []*types.DevshardTx, anchored map[*types.Dev
 	return kept
 }
 
-func responseAnchorCompatibleWithAcks(sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) bool {
+func (s *Server) responseAnchorCompatibleWithAcks(sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) bool {
 	height, hash, ok := heightsync.SectionObserved(sec)
 	if !heightsync.IsAnchorSection(sec) || !ok {
 		return true
@@ -626,7 +626,7 @@ func responseAnchorCompatibleWithAcks(sec *heightsync.HeightSyncSection, txs []*
 	for _, tx := range txs {
 		ack := tx.GetHeightAck()
 		if ack != nil && heightsync.StampPresent(ack.ObservedBlockHash) &&
-			(ack.ObservedHeight != height || !bytes.Equal(ack.ObservedBlockHash, hash)) {
+			!s.host.HeightAckMatchesAnchor(ack, height, hash) {
 			return false
 		}
 	}

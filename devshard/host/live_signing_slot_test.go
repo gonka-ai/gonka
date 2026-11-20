@@ -32,14 +32,16 @@ func TestLiveSigningSlotTracksPartialRevoke(t *testing.T) {
 		return c == cold.Address() && w == warm.Address() && (id == 1 || id == 2), nil
 	}))
 	require.NoError(t, err)
-	apply := func(extra ...*types.DevshardTx) {
+	apply := func(extra ...*types.DevshardTx) types.Diff {
 		height, err := sm.BuildMainnetHeightTx(context.Background())
 		require.NoError(t, err)
 		nonce := sm.LatestNonce() + 1
 		txs := append([]*types.DevshardTx{height}, extra...)
 		root, err := sm.ApplyLocal(nonce, txs)
 		require.NoError(t, err)
-		require.NoError(t, shared.AppendDiff("live-slots", types.DiffRecord{Diff: testutil.SignDiffWithRoot(t, user, "live-slots", nonce, txs, root), StateHash: root}))
+		diff := testutil.SignDiffWithRoot(t, user, "live-slots", nonce, txs, root)
+		require.NoError(t, shared.AppendDiff("live-slots", types.DiffRecord{Diff: diff, StateHash: root}))
+		return diff
 	}
 	apply(testutil.WarmKeyBindTx(0, warm.Address(), 1), testutil.WarmKeyBindTx(1, warm.Address(), 1))
 	h, err := NewHost(sm, warm, stub.NewInferenceEngine(), "live-slots", group, nil, WithStorage(shared), WithVerifier(signing.NewSecp256k1Verifier()), WithChainOracle(source))
@@ -112,16 +114,27 @@ func TestLiveSigningSlotTracksPartialRevoke(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, receipt, "challenge ingress must accept the rebound executor slot too")
 	require.Eventually(t, func() bool { return h.HostMempool().HasFinish(3) }, time.Second, time.Millisecond)
+	apply()
+	apply()
+	heartbeat := apply(&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum:          3,
+		Reason:            string(heightsync.ReasonQuietSession),
+		ObservedHeight:    uint64(cp.Height),
+		ObservedBlockHash: cp.Hash,
+	}}})
+	require.True(t, sm.HeightSyncAckOutstanding(heartbeat.Nonce, 0))
 	h.mu.Lock()
-	h.maybeAckHeartbeatsLocked(diffs, &blocks.Header{Height: cp.Height, BlockHash: cp.Hash, Time: cp.Time}, nil)
+	h.maybeAckHeartbeatsLocked([]types.Diff{heartbeat}, &blocks.Header{Height: cp.Height, BlockHash: cp.Hash, Time: cp.Time}, nil)
 	h.mu.Unlock()
-	var reboundAck bool
-	for _, tx := range h.MempoolTxs() {
-		if ack := tx.GetHeightAck(); ack != nil && ack.SlotId == 0 {
-			reboundAck = true
+	var reboundAck *types.DevshardTx
+	txs := h.MempoolTxs()
+	for _, tx := range txs {
+		if ack := tx.GetHeightAck(); ack != nil && ack.SlotId == 0 && ack.RefNonce == heartbeat.Nonce {
+			reboundAck = tx
 		}
 	}
-	require.True(t, reboundAck, "rebound slot must also resume HeightAck production")
+	require.NotNil(t, reboundAck, "rebound slot must also resume HeightAck production")
+	require.Contains(t, h.OutstandingLocalHeightAcks(txs), reboundAck, "an outstanding ACK from a rebound slot must remain deliverable")
 
 	apply(testutil.SignedWarmKeyRevokeTx(t, 0, warm, 2, "live-slots"), testutil.SignedWarmKeyRevokeTx(t, 1, warm, 1, "live-slots"))
 	_, err = h.SigningSlot()

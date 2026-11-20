@@ -80,6 +80,7 @@ func collectChatFrames(t *testing.T, env *serverTestEnv, body []byte) (chunks []
 
 type chatTipOracle struct {
 	*mockoracle.Mock
+	tip         *blocks.Header
 	latestCalls atomic.Int64
 	stall       atomic.Bool
 	offline     atomic.Bool
@@ -93,6 +94,9 @@ func (o *chatTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	}
 	if o.offline.Load() {
 		return nil, blocks.ErrHeaderNotFound
+	}
+	if o.tip != nil {
+		return o.tip, nil
 	}
 	return o.Mock.Latest(ctx)
 }
@@ -122,6 +126,9 @@ func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
 	})
 	t.Run("first live tip becomes available before the response", func(t *testing.T) {
 		serveInferenceWithRequestTip(t, "cold retry", 1, 2)
+	})
+	t.Run("acknowledgment carries the committed floor above the anchor", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "floor carry", 2, 0)
 	})
 }
 
@@ -156,7 +163,39 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 		require.NoError(t, err)
 		return sm
 	}
-	producer := newState(chain)
+	dapi := &chatTipOracle{Mock: chain}
+	direct := &chatTipOracle{Mock: chain}
+	var floor *blocks.Header
+	var producerSource state.MainnetHeightSource = chain
+	if expireBefore == "floor carry" {
+		floor, err = chain.AdvanceOne()
+		require.NoError(t, err)
+		dapi.tip, direct.tip = anchor, anchor
+		producerSource = dapi
+	}
+	producer := newState(producerSource)
+	var prior []types.Diff
+	if floor != nil {
+		apply := func(tx *types.DevshardTx) types.Diff {
+			t.Helper()
+			proof, err := producer.BuildMainnetHeightTx(t.Context())
+			require.NoError(t, err)
+			txs := []*types.DevshardTx{proof, tx}
+			nonce := producer.LatestNonce() + 1
+			root, err := producer.ApplyLocal(nonce, txs)
+			require.NoError(t, err)
+			return testutil.SignDiffWithRoot(t, owner, escrowID, nonce, txs, root)
+		}
+		prior = append(prior, apply(&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+		}}}))
+		ack := &types.MsgHeightAck{
+			SlotId: 0, RefNonce: 1, ObservedHeight: uint64(floor.Height), ObservedBlockHash: floor.BlockHash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{1},
+		}
+		require.NoError(t, heightsync.SignAck(validator, ack))
+		prior = append(prior, apply(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}))
+	}
 	var proof *types.DevshardTx
 	if coldRetry {
 		pins := lightproof.Checkpoint{Height: anchor.Height, Hash: anchor.BlockHash}
@@ -178,17 +217,21 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 			ObservedHeight: uint64(anchor.Height), ObservedBlockHash: anchor.BlockHash,
 			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
 		}}})
+	} else if floor != nil {
+		txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: uint64(floor.Height), ObservedBlockHash: floor.BlockHash,
+			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+		}}})
 	} else if !staleCheckpoint {
 		txs = append(txs, testutil.StartTx(1))
 		payload = &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 	}
-	root, err := producer.ApplyLocal(1, txs)
+	nonce := producer.LatestNonce() + 1
+	root, err := producer.ApplyLocal(nonce, txs)
 	require.NoError(t, err)
-	signedDiff := testutil.SignDiffWithRoot(t, owner, escrowID, 1, txs, root)
+	signedDiff := testutil.SignDiffWithRoot(t, owner, escrowID, nonce, txs, root)
 	diff, err := DiffToJSON(signedDiff)
 	require.NoError(t, err)
-	dapi := &chatTipOracle{Mock: chain}
-	direct := &chatTipOracle{Mock: chain}
 	oracle := failover.New(nil, dapi, direct, failover.WithDirectLightBlocks(chain))
 	initial := time.Now()
 	var clock atomic.Int64
@@ -202,6 +245,12 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 		host.WithChainOracle(oracle))
 	require.NoError(t, err)
 	diffs := []DiffJSON{diff}
+	if len(prior) > 0 {
+		_, err := h.ApplyRecoveredDiffs(t.Context(), prior)
+		require.NoError(t, err)
+		dapi.latestCalls.Store(0)
+		direct.latestCalls.Store(0)
+	}
 	if staleCheckpoint {
 		_, err := h.ApplyRecoveredDiffs(t.Context(), []types.Diff{signedDiff})
 		require.NoError(t, err)
@@ -224,7 +273,7 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 		h.HostMempool().AddTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}})
 	}
 	k := uint64(10)
-	if expireBefore == "streaming" {
+	if expireBefore == "streaming" || floor != nil {
 		k = 1 // Every nonce would ordinarily have an anchor.
 	}
 	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(k, 1, oracle)
@@ -232,7 +281,7 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	srv, err := NewServer(h, nil, verifier, owner.Address(), WithHeightSync(scheduler, oracle))
 	require.NoError(t, err)
 	body, err := json.Marshal(InferenceRequest{
-		Diffs: diffs, Nonce: 1, Stream: true, Payload: payload,
+		Diffs: diffs, Nonce: nonce, Stream: true, Payload: payload,
 	})
 	require.NoError(t, err)
 	var dapiReadsAtReceipt, directReadsAtReceipt int64
@@ -305,6 +354,23 @@ func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIRea
 	} else {
 		require.Contains(t, decoded, `"height_sync"`)
 	}
+	if floor != nil {
+		client := &HTTPClient{}
+		response, err := client.parseSSEResponse(t.Context(), strings.NewReader(decoded), io.Discard, nil)
+		require.NoError(t, err)
+		require.True(t, response.HasEnvelope)
+		require.EqualValues(t, anchor.Height, response.EnvelopeHeight)
+		var carried *types.MsgHeightAck
+		for _, tx := range response.Mempool {
+			if ack := tx.GetHeightAck(); ack != nil && ack.RefNonce == nonce {
+				carried = ack
+			}
+		}
+		require.NotNil(t, carried)
+		require.EqualValues(t, floor.Height, carried.ObservedHeight)
+		require.Equal(t, floor.BlockHash, carried.ObservedBlockHash)
+		require.False(t, srv.HeightSyncMarks().HasKind(heightsync.MarkDisputeOriginator))
+	}
 	if staleCheckpoint {
 		require.NotContains(t, decoded, `"state_sig"`, "the stale checkpoint contributes no state signature")
 	} else {
@@ -371,10 +437,11 @@ func TestResponseAnchorKeepsRelayedAcksIndependent(t *testing.T) {
 	section := &heightsync.HeightSyncSection{MainnetHeight: 100, ProofType: heightsync.AnchorProofType, MainnetBlockHashHex: "01"}
 	paired := responseHeightAcks(section, []*types.DevshardTx{own}, []*types.DevshardTx{obsolete, relayed}, slots)
 	require.Equal(t, map[*types.DevshardTx]struct{}{own: {}}, paired)
-	require.True(t, responseAnchorCompatibleWithAcks(section, []*types.DevshardTx{own}))
+	server := setupServerEnv(t).server
+	require.True(t, server.responseAnchorCompatibleWithAcks(section, []*types.DevshardTx{own}))
 	lower := *section
 	lower.MainnetHeight--
-	require.False(t, responseAnchorCompatibleWithAcks(&lower, []*types.DevshardTx{own}), "a lower anchor can also cause the peer to discard a fresh ACK")
+	require.False(t, server.responseAnchorCompatibleWithAcks(&lower, []*types.DevshardTx{own}), "a lower anchor without a matching floor could cause the peer to discard a fresh ACK")
 	require.Equal(t, []*types.DevshardTx{own, relayed}, retainAnchoredResponseAcks(
 		[]*types.DevshardTx{own, obsolete, relayed, later}, paired, slots))
 }
