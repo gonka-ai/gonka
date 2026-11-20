@@ -12,13 +12,12 @@ import (
 	tmtypes "github.com/cometbft/cometbft/types"
 )
 
-// EnableMainnetProofs gives the v7 stand a single canonical signed chain. All
-// RPC, gRPC, events and escrow anchors use this same source, rather than
-// fabricating mutually inconsistent headers in separate processes.
+// EnableMainnetProofs gives the stand one signed chain for RPC, gRPC and block
+// events across protocol versions. V7 escrows also pin an anchor from it.
 func (s *Store) EnableMainnetProofs(interval time.Duration) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if !s.MainnetProofs || s.mainnet != nil {
+	if s.mainnet != nil {
 		return nil
 	}
 	key, err := signing.GenerateKey()
@@ -38,9 +37,11 @@ func (s *Store) EnableMainnetProofs(interval time.Duration) error {
 		return err
 	}
 	s.mainnet = oracle
-	for _, escrow := range s.Escrows {
-		escrow.MainnetAnchorHeight = first.Height
-		escrow.MainnetAnchorHash = append([]byte(nil), first.BlockHash...)
+	if s.MainnetProofs {
+		for _, escrow := range s.Escrows {
+			escrow.MainnetAnchorHeight = first.Height
+			escrow.MainnetAnchorHash = append([]byte(nil), first.BlockHash...)
+		}
 	}
 	return nil
 }
