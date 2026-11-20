@@ -242,10 +242,9 @@ func gatewayCometHooks(setConnected func(bool), onHeader func(*blocks.Header), p
 		},
 		OnEvent: func(result ctypes.ResultEvent) {
 			if poller != nil {
-				poller.OfferCometWarm(hostevents.WarmKeysFromResult(result))
+				poller.OfferCometWarm(hostevents.WarmKeysFromCometBlock(result))
 			}
 		},
-		ExtraQueries: hostevents.WarmKeyQueries(),
 	}
 }
 
