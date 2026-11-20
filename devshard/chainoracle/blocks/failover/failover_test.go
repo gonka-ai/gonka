@@ -699,3 +699,35 @@ func TestHeaderAtWaitDoesNotInheritLatestBackoff(t *testing.T) {
 		})
 	}
 }
+
+type delayedProofSource struct {
+	*recOracle
+	delay time.Duration
+}
+
+func (s delayedProofSource) LightBlockAt(ctx context.Context, h int64) ([]byte, error) {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		if s.err != nil {
+			return nil, s.err
+		}
+		return []byte{byte(h)}, nil
+	}
+}
+
+func TestLightBlockProofCanUseSlowDAPIForMultipleHeights(t *testing.T) {
+	nm := delayedProofSource{recOracle: &recOracle{}, delay: 1250 * time.Millisecond}
+	comet := delayedProofSource{recOracle: &recOracle{err: errors.New("direct Comet unavailable")}}
+	o := failover.New(nil, nm, nil, failover.WithDirectLightBlocks(comet))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for _, height := range []int64{10, 11} {
+		raw, err := o.LightBlockAt(ctx, height)
+		require.NoError(t, err)
+		require.Equal(t, []byte{byte(height)}, raw)
+	}
+}

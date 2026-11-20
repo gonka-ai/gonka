@@ -9,9 +9,8 @@ import (
 	"common/chainoracle/blocks/lightproof"
 )
 
-// LightBlockAt does not apply the short At lookback window: escrow bootstrap
-// and validator transitions can precede that cache. Every caller authenticates
-// the returned evidence against its own checkpoint.
+// LightBlockAt does not apply the short At lookback window. The consumer
+// authenticates evidence from either source against its pinned checkpoint.
 func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {
 	if o == nil || height <= 0 {
 		return nil, blocks.ErrHeaderNotFound
@@ -21,59 +20,95 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	if direct == nil {
 		direct, _ = o.chain.(lightproof.Source)
 	}
+	if nm == nil && direct == nil {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	attempt := func(src lightproof.Source) func(context.Context) ([]byte, error) {
+		return func(ctx context.Context) ([]byte, error) {
+			raw, err := src.LightBlockAt(ctx, height)
+			if err == nil && (len(raw) == 0 || len(raw) > lightproof.MaxBlockBytes) {
+				return nil, blocks.ErrHeaderUnverified
+			}
+			return raw, err
+		}
+	}
+	if direct == nil {
+		return attempt(nm)(ctx)
+	}
+	if nm == nil {
+		return attempt(direct)(ctx)
+	}
 	now := o.now()
 	o.mu.Lock()
 	preferDirect := now.Before(o.preferDirectProofUntil)
 	o.mu.Unlock()
-	first, second := nm, direct
 	if preferDirect {
-		first, second = direct, nm
+		return withAlternative(ctx, attempt(direct), attempt(nm), nil)
 	}
-	var failures []error
-	for i, source := range []lightproof.Source{first, second} {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if source == nil {
-			continue
-		}
-		attemptCtx := ctx
-		cancel := func() {}
-		usingNM := (i == 0) != preferDirect
-		if i == 0 && second != nil {
-			if usingNM {
-				attemptCtx, cancel = context.WithTimeout(ctx, primaryAttemptBudget(ctx))
-			} else if deadline, ok := ctx.Deadline(); ok {
-				attemptCtx, cancel = context.WithTimeout(ctx, 2*(time.Until(deadline)/3))
-			}
-		}
-		raw, err := source.LightBlockAt(attemptCtx, height)
-		cancel()
-		if err == nil && len(raw) > 0 && len(raw) <= lightproof.MaxBlockBytes {
-			if usingNM && preferDirect {
-				o.mu.Lock()
-				o.preferDirectProofUntil = time.Time{}
-				o.mu.Unlock()
-			}
-			return raw, nil
-		}
-		if usingNM && direct != nil && ctx.Err() == nil &&
-			(permanentNMSkip(err) || transientNM(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, blocks.ErrProveNotImplemented)) {
-			// Bootstrap and validator transitions share a deadline across
-			// many heights. One stalled dAPI is enough to prefer Comet.
-			o.mu.Lock()
-			o.preferDirectProofUntil = now.Add(30 * time.Second)
-			o.mu.Unlock()
-		}
-		if err == nil {
-			err = blocks.ErrHeaderUnverified
-		}
-		failures = append(failures, err)
+	return withAlternative(ctx, attempt(nm), attempt(direct), func() {
+		// Spend at most one primary delay on an unavailable dAPI during a
+		// sequence of bootstrap or validator-transition reads.
+		o.mu.Lock()
+		o.preferDirectProofUntil = now.Add(30 * time.Second)
+		o.mu.Unlock()
+	})
+}
+
+// LatestForProof keeps a live Comet cache first. If the ordinary path is
+// waiting on dAPI, its tip is only a hint and the chain path can also supply
+// the height. Ordinary Latest retains its original behavior.
+func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
+	if o == nil || o.lightBlocks == nil || o.chain == nil {
+		return o.Latest(ctx)
 	}
-	if len(failures) == 0 {
+	now := o.now()
+	o.mu.Lock()
+	cometOn := o.cometConnected
+	o.mu.Unlock()
+	if cometOn && o.tip != nil && o.cometFresh() {
+		if h, err := o.tip.Latest(ctx); err == nil && usable(h) {
+			o.noteLatest(h, true)
+			return h, nil
+		}
+	}
+	latest, err := withAlternative(ctx, func(ctx context.Context) (*blocks.Header, error) {
+		h, err, _ := o.tryNM(ctx, now)
+		if err == nil && !usable(h) {
+			err = blocks.ErrHeaderNotFound
+		}
+		return h, err
+	}, func(ctx context.Context) (*blocks.Header, error) {
+		return o.tryChain(ctx, now)
+	}, nil)
+	o.noteLatest(latest, err == nil)
+	return latest, err
+}
+
+// CanonicalHeaderForProof selects the configured local Comet endpoint for
+// v7 reconciliation. An unavailable endpoint falls back to ordinary header
+// lookup. A successful Comet answer is compared to the escrow checkpoint
+// regardless of how quickly another endpoint might have answered.
+func (o *Oracle) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
+	if o == nil || o.lightBlocks == nil {
 		return nil, blocks.ErrProveNotImplemented
 	}
-	return nil, errors.Join(failures...)
+	rpcCtx, cancel := context.WithTimeout(ctx, primaryAttemptBudget(ctx))
+	raw, err := o.lightBlocks.LightBlockAt(rpcCtx, height)
+	cancel()
+	if errors.Is(err, blocks.ErrHeaderUnverified) {
+		return nil, err
+	}
+	if err != nil {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	lb, err := lightproof.Decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	if lb.Height != height {
+		return nil, blocks.ErrHeaderUnverified
+	}
+	return blocks.HashOnlyHeader(lb.Height, lb.Time, lb.ChainID, lb.Hash()), nil
 }
 
 func primaryAttemptBudget(ctx context.Context) time.Duration {
@@ -84,17 +119,61 @@ func primaryAttemptBudget(ctx context.Context) time.Duration {
 	return budget
 }
 
-func (o *Oracle) directLightHeader(ctx context.Context, height int64) (*blocks.Header, error) {
-	raw, err := o.lightBlocks.LightBlockAt(ctx, height)
-	if err != nil {
-		return nil, err
+// withAlternative starts an independent source after a short delay or an
+// explicit error. A slow primary retains the caller's deadline if the
+// secondary cannot answer. The caller must authenticate the selected value.
+func withAlternative[T any](ctx context.Context, primary, secondary func(context.Context) (T, error), onFallback func()) (T, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	type result struct {
+		value T
+		err   error
 	}
-	lb, err := lightproof.Decode(raw)
-	if err != nil {
-		return nil, err
+	start := func(read func(context.Context) (T, error)) <-chan result {
+		done := make(chan result, 1)
+		go func() {
+			value, err := read(ctx)
+			done <- result{value, err}
+		}()
+		return done
 	}
-	if lb.Height != height {
-		return nil, blocks.ErrHeaderUnverified
+	first := start(primary)
+	timer := time.NewTimer(primaryAttemptBudget(ctx))
+	defer timer.Stop()
+	var zero T
+	var failures []error
+	select {
+	case got := <-first:
+		if got.err == nil {
+			return got.value, nil
+		}
+		failures = append(failures, got.err)
+		first = nil
+	case <-timer.C:
+	case <-ctx.Done():
+		return zero, ctx.Err()
 	}
-	return blocks.HashOnlyHeader(lb.Height, lb.Time, lb.ChainID, lb.Hash()), nil
+	if onFallback != nil && ctx.Err() == nil {
+		onFallback()
+	}
+	second := start(secondary)
+	for first != nil || second != nil {
+		select {
+		case got := <-first:
+			if got.err == nil {
+				return got.value, nil
+			}
+			failures = append(failures, got.err)
+			first = nil
+		case got := <-second:
+			if got.err == nil {
+				return got.value, nil
+			}
+			failures = append(failures, got.err)
+			second = nil
+		case <-ctx.Done():
+			return zero, ctx.Err()
+		}
+	}
+	return zero, errors.Join(failures...)
 }
