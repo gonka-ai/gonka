@@ -1104,6 +1104,216 @@ func TestComputeStoreCommitVotingPowers_BootstrapModelUsesDirectCommittersAndFro
 	}, got)
 }
 
+func setupBootstrapVotingPowerCapFixture(t *testing.T, capPct float64, bootstrapCommitters []string) (AppModule, sdk.Context) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "existing-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		WThreshold:                    types.DecimalFromFloat(0.5),
+		VMin:                          1,
+		MaxModelVotingPowerPercentage: types.DecimalFromFloat(capPct),
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	ap := types.ActiveParticipants{
+		EpochId:             1,
+		EpochGroupId:        1,
+		PocStartBlockHeight: 100,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index:        testutil.Executor,
+				Weight:       100,
+				Models:       []string{"existing-model"},
+				VotingPowers: []*types.ModelVotingPower{{ModelId: "existing-model", VotingPower: 70}},
+			},
+			{
+				Index:        testutil.Executor2,
+				Weight:       60,
+				Models:       []string{"existing-model"},
+				VotingPowers: []*types.ModelVotingPower{{ModelId: "existing-model", VotingPower: 30}},
+			},
+			{Index: testutil.Requester, Weight: 40},
+			{Index: testutil.Validator, Weight: 200},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+	setupEpochGroupDataFromAP(k, ctx, ap)
+
+	require.NoError(t, k.SetBootstrapDelegationSnapshot(ctx, types.BootstrapDelegationSnapshot{
+		SnapshotHeight: 111,
+		Delegations: []*types.PoCDelegation{
+			{
+				ModelId:    "new-model",
+				Delegator:  testutil.Validator,
+				DelegateTo: testutil.Executor,
+			},
+		},
+		TotalNetworkWeight: 400,
+	}))
+
+	for _, addr := range bootstrapCommitters {
+		require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+			ParticipantAddress:       addr,
+			PocStageStartBlockHeight: 180,
+			ModelId:                  "new-model",
+			Count:                    1,
+		}))
+	}
+
+	return NewAppModule(nil, k, nil, nil, nil, nil), ctx
+}
+
+func computeStoreCommitVotingPowersByModel(t *testing.T, am AppModule, ctx sdk.Context) map[string]map[string]int64 {
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+	require.Equal(t, int64(400), totalWeight)
+	got := map[string]map[string]int64{}
+	for _, modelWeight := range modelWeights {
+		got[modelWeight.ModelId] = types.VotingPowerSliceToMap(modelWeight.VotingPowers)
+	}
+	return got
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelAppliesPerModelCap(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3,
+		[]string{testutil.Executor, testutil.Executor2, testutil.Requester})
+
+	got := computeStoreCommitVotingPowersByModel(t, am, ctx)
+
+	require.Equal(t, map[string]int64{
+		testutil.Executor:  120,
+		testutil.Executor2: 60,
+		testutil.Requester: 40,
+	}, got["new-model"])
+	require.Equal(t, map[string]int64{
+		testutil.Executor:  70,
+		testutil.Executor2: 30,
+	}, got["existing-model"])
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelCapDisabled(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0,
+		[]string{testutil.Executor, testutil.Executor2, testutil.Requester})
+
+	got := computeStoreCommitVotingPowersByModel(t, am, ctx)
+
+	require.Equal(t, map[string]int64{
+		testutil.Executor:  300,
+		testutil.Executor2: 60,
+		testutil.Requester: 40,
+	}, got["new-model"])
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelSingleHostNotCapped(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3, []string{testutil.Executor})
+
+	got := computeStoreCommitVotingPowersByModel(t, am, ctx)
+
+	require.Equal(t, map[string]int64{
+		testutil.Executor: 300,
+	}, got["new-model"])
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelZeroWeightCommitterDoesNotTriggerCap(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3, []string{testutil.Executor, testutil.Creator})
+
+	got := computeStoreCommitVotingPowersByModel(t, am, ctx)
+
+	require.Equal(t, map[string]int64{
+		testutil.Executor: 300,
+		testutil.Creator:  0,
+	}, got["new-model"])
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelZeroWeightCommitterDoesNotBlockValidation(t *testing.T) {
+	for _, committers := range [][]string{
+		{testutil.Executor},
+		{testutil.Executor, testutil.Creator},
+	} {
+		am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3, committers)
+		modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+
+		modelVotingPowers := map[string]map[string]int64{}
+		for _, mw := range modelWeights {
+			modelVotingPowers[mw.ModelId] = types.VotingPowerSliceToMap(mw.VotingPowers)
+		}
+		wc := &PoCWeightCalculator{
+			ModelVotingPowers:  modelVotingPowers,
+			TotalNetworkWeight: totalWeight,
+			Logger:             noopLogger{},
+		}
+		key := types.PoCParticipantModelKey{ParticipantAddress: testutil.Executor, ModelID: "new-model"}
+		vals := []types.PoCValidationV2{{ValidatorParticipantAddress: testutil.Executor, ValidatedWeight: 1}}
+
+		require.True(t, wc.pocValidated(vals, key), "committers=%v", committers)
+	}
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelCappedVotersStillPassValidation(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3,
+		[]string{testutil.Executor, testutil.Executor2, testutil.Requester})
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, am.getEffectiveValidationBaseState(ctx), 180, "test")
+
+	modelVotingPowers := map[string]map[string]int64{}
+	for _, mw := range modelWeights {
+		modelVotingPowers[mw.ModelId] = types.VotingPowerSliceToMap(mw.VotingPowers)
+	}
+	require.Equal(t, map[string]int64{
+		testutil.Executor:  120,
+		testutil.Executor2: 60,
+		testutil.Requester: 40,
+	}, modelVotingPowers["new-model"])
+
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers:  modelVotingPowers,
+		TotalNetworkWeight: totalWeight,
+		Logger:             noopLogger{},
+	}
+	key := types.PoCParticipantModelKey{ParticipantAddress: testutil.Executor2, ModelID: "new-model"}
+	allValid := []types.PoCValidationV2{
+		{ValidatorParticipantAddress: testutil.Executor, ValidatedWeight: 1},
+		{ValidatorParticipantAddress: testutil.Executor2, ValidatedWeight: 1},
+		{ValidatorParticipantAddress: testutil.Requester, ValidatedWeight: 1},
+	}
+	require.True(t, wc.pocValidated(allValid, key))
+
+	cappedHostAlone := []types.PoCValidationV2{
+		{ValidatorParticipantAddress: testutil.Executor, ValidatedWeight: 1},
+	}
+	require.False(t, wc.pocValidated(cappedHostAlone, key))
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelZeroWeightCommitterWithTwoHostsCapped(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3,
+		[]string{testutil.Executor, testutil.Executor2, testutil.Creator})
+
+	got := computeStoreCommitVotingPowersByModel(t, am, ctx)
+
+	require.Equal(t, map[string]int64{
+		testutil.Executor:  108,
+		testutil.Executor2: 60,
+		testutil.Creator:   0,
+	}, got["new-model"])
+}
+
+func TestComputeStoreCommitVotingPowers_BootstrapModelTwoHostsCapped(t *testing.T) {
+	am, ctx := setupBootstrapVotingPowerCapFixture(t, 0.3, []string{testutil.Executor, testutil.Executor2})
+
+	got := computeStoreCommitVotingPowersByModel(t, am, ctx)
+
+	require.Equal(t, map[string]int64{
+		testutil.Executor:  108,
+		testutil.Executor2: 60,
+	}, got["new-model"])
+}
+
 func TestBuildDelegationWeightCalculator_UsesPreviousConfirmedWeights(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -1295,6 +1505,121 @@ func TestProjectedReachableVotingPower(t *testing.T) {
 
 	require.Equal(t, int64(100), calc.ProjectedReachableVotingPower("candidate"))
 	require.True(t, calc.MeetsReachabilityThreshold("candidate"))
+}
+
+func TestProjectedReachableVotingPower_AppliesPerModelCap(t *testing.T) {
+	newCalc := func(capPct sdkmath.LegacyDec) *DelegationWeightCalculator {
+		return &DelegationWeightCalculator{
+			Groups: map[string]*GroupData{
+				"candidate": {
+					Members:          []string{"a", "b", "c"},
+					MemberPocWeights: map[string]int64{},
+					ConsensusKoeff:   sdkmath.LegacyOneDec(),
+				},
+			},
+			ConsensusWeights:   map[string]int64{"a": 10, "b": 10, "c": 10, "d": 70},
+			TotalNetworkWeight: 100,
+			Delegations:        map[string]map[string]string{"candidate": {"d": "a"}},
+			Params:             WeightParams{PerModelVPCap: capPct},
+		}
+	}
+
+	uncapped := newCalc(sdkmath.LegacyZeroDec())
+	require.Equal(t, int64(100), uncapped.ProjectedReachableVotingPower("candidate"))
+	require.True(t, uncapped.MeetsReachabilityThreshold("candidate"))
+
+	capped := newCalc(sdkmath.LegacyNewDecWithPrec(30, 2))
+	require.Equal(t, int64(50), capped.ProjectedReachableVotingPower("candidate"))
+	require.False(t, capped.MeetsReachabilityThreshold("candidate"))
+}
+
+func TestProjectedReachableVotingPower_ZeroWeightIntentDoesNotTriggerCap(t *testing.T) {
+	calc := &DelegationWeightCalculator{
+		Groups: map[string]*GroupData{
+			"candidate": {
+				Members:          []string{"a", "z"},
+				MemberPocWeights: map[string]int64{},
+				ConsensusKoeff:   sdkmath.LegacyOneDec(),
+			},
+		},
+		ConsensusWeights:   map[string]int64{"a": 30, "d": 70},
+		TotalNetworkWeight: 100,
+		Delegations:        map[string]map[string]string{"candidate": {"d": "a"}},
+		Params:             WeightParams{PerModelVPCap: sdkmath.LegacyNewDecWithPrec(30, 2)},
+	}
+
+	require.Equal(t, int64(100), calc.ProjectedReachableVotingPower("candidate"))
+}
+
+func TestBootstrapPreEligibility_CappedBelowTwoThirdsSkipsPenalties(t *testing.T) {
+	params := types.Params{
+		PocParams: &types.PocParams{
+			Models: []*types.PoCModelConfig{
+				{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			},
+		},
+		DelegationParams: &types.DelegationParams{
+			VMin:                          3,
+			MaxModelVotingPowerPercentage: types.DecimalFromFloat(0.3),
+		},
+	}
+	consensusWeights := map[string]int64{"a": 100, "b": 60, "c": 40, "d": 200}
+	delegations := map[string]map[string]string{"new-model": {"d": "a"}}
+	intents := map[string]map[string]bool{"new-model": {"a": true, "b": true, "c": true}}
+	calc := buildBootstrapPreEligibilityCalculator(consensusWeights, 400, []string{"new-model"}, delegations, intents, params)
+
+	results := buildBootstrapPreEligibilityResults(calc, []string{"new-model"})
+	require.Len(t, results, 1)
+	require.Equal(t, int64(220), results[0].ReachableVotingPower)
+	require.False(t, results[0].PreEligible)
+
+	participants := []*types.ActiveParticipant{
+		{Index: "a", Weight: 100},
+		{Index: "b", Weight: 60},
+		{Index: "c", Weight: 40},
+		{Index: "d", Weight: 200},
+	}
+	modes := ResolveBootstrapPenaltyModes(
+		participants,
+		map[string]bool{"a": true, "b": true, "c": true, "d": true},
+		indexBootstrapPreEligibility(results),
+		delegations,
+		intents,
+		map[string]map[string]bool{"new-model": {"a": true}},
+	)
+	require.Empty(t, modes)
+}
+
+func TestBuildBootstrapPreEligibilityResults_ReachabilityUsesPerModelCap(t *testing.T) {
+	params := types.Params{
+		PocParams: &types.PocParams{
+			Models: []*types.PoCModelConfig{
+				{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			},
+		},
+		DelegationParams: &types.DelegationParams{
+			WThreshold:                    types.DecimalFromFloat(0.1),
+			VMin:                          3,
+			MaxModelVotingPowerPercentage: types.DecimalFromFloat(0.3),
+		},
+	}
+	consensusWeights := map[string]int64{"a": 10, "b": 10, "c": 10, "d": 70}
+	calc := buildBootstrapPreEligibilityCalculator(
+		consensusWeights,
+		100,
+		[]string{"new-model"},
+		map[string]map[string]string{"new-model": {"d": "a"}},
+		map[string]map[string]bool{"new-model": {"a": true, "b": true, "c": true}},
+		params,
+	)
+
+	results := buildBootstrapPreEligibilityResults(calc, []string{"new-model"})
+	require.Len(t, results, 1)
+	require.True(t, results[0].MeetsWeightThreshold)
+	require.True(t, results[0].MeetsVMin)
+	require.False(t, results[0].MeetsReachability)
+	require.False(t, results[0].PreEligible)
+	require.Equal(t, int64(50), results[0].ReachableVotingPower)
 }
 
 func TestGetEffectiveValidationBaseState_ExcludesRemovedMembers(t *testing.T) {
@@ -1512,12 +1837,6 @@ func TestCurrentModelRawTotalsRejectsOverflow(t *testing.T) {
 
 // --- Voting power cap tests ---
 
-// nopCapLogger satisfies votingPowerCapLogger without touching any real logger.
-type nopCapLogger struct{}
-
-func (nopCapLogger) LogInfo(msg string, subSystem types.SubSystem, keyvals ...interface{}) {}
-func (nopCapLogger) LogWarn(msg string, subSystem types.SubSystem, keyvals ...interface{}) {}
-
 func sumVP(m map[string]int64) int64 {
 	var s int64
 	for _, v := range m {
@@ -1540,6 +1859,19 @@ func TestCapPerModelVotingPowers_NoCapNeeded(t *testing.T) {
 	require.Equal(t, int64(100), vp["a"])
 	require.Equal(t, int64(100), vp["b"])
 	require.Equal(t, int64(100), vp["c"])
+}
+
+func TestCapPerModelVotingPowers_SinglePositiveVoterWithZeroMembersIsCapped(t *testing.T) {
+	vp := map[string]int64{
+		"a": 100,
+		"b": 0,
+		"c": 0,
+	}
+	capPct := sdkmath.LegacyNewDecWithPrec(30, 2) // 30%
+
+	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
+
+	require.Equal(t, map[string]int64{"a": 30, "b": 0, "c": 0}, vp)
 }
 
 func TestCapPerModelVotingPowers_ClipsWhaleAndBurnsExcess(t *testing.T) {

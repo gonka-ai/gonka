@@ -41,9 +41,10 @@ type GroupData struct {
 
 // WeightParams holds governance parameters for delegation.
 type WeightParams struct {
-	WThreshold mathsdk.LegacyDec // min fraction of total weight from members for eligibility
-	VMin       int64             // min hosts with non-zero consensus weight
-	CapFactor  mathsdk.LegacyDec // fraction of N-1 total network weight allowed per non-initial group
+	WThreshold    mathsdk.LegacyDec // min fraction of total weight from members for eligibility
+	VMin          int64             // min hosts with non-zero consensus weight
+	CapFactor     mathsdk.LegacyDec // fraction of N-1 total network weight allowed per non-initial group
+	PerModelVPCap mathsdk.LegacyDec
 }
 
 // DelegationWeightCalculator sits above PoCWeightCalculator and handles
@@ -70,15 +71,17 @@ func (wc *DelegationWeightCalculator) participates(p string) bool {
 
 func buildWeightParams(params types.Params) WeightParams {
 	wp := WeightParams{
-		WThreshold: mathsdk.LegacyZeroDec(),
-		VMin:       0,
-		CapFactor:  mathsdk.LegacyZeroDec(),
+		WThreshold:    mathsdk.LegacyZeroDec(),
+		VMin:          0,
+		CapFactor:     mathsdk.LegacyZeroDec(),
+		PerModelVPCap: mathsdk.LegacyZeroDec(),
 	}
 	if params.DelegationParams != nil {
 		dp := params.DelegationParams
 		wp.WThreshold = protoDecToLegacy(dp.WThreshold)
 		wp.VMin = dp.VMin
 		wp.CapFactor = protoDecToLegacy(dp.CapFactor)
+		wp.PerModelVPCap = protoDecToLegacy(dp.MaxModelVotingPowerPercentage)
 	}
 	return wp
 }
@@ -141,19 +144,27 @@ func (wc *DelegationWeightCalculator) ProjectedReachableVotingPower(modelID stri
 	}
 
 	memberSet := make(map[string]bool, len(g.Members))
-	reachable := int64(0)
+	vpByHost := make(map[string]int64, len(g.Members))
 	for _, m := range g.Members {
 		memberSet[m] = true
-		reachable += wc.ConsensusWeights[m]
+		vpByHost[m] += wc.ConsensusWeights[m]
 	}
 
 	for delegator, target := range wc.Delegations[modelID] {
 		if !memberSet[target] || memberSet[delegator] {
 			continue
 		}
-		reachable += wc.ConsensusWeights[delegator]
+		vpByHost[target] += wc.ConsensusWeights[delegator]
 	}
 
+	if capPct := wc.Params.PerModelVPCap; !capPct.IsNil() && capPct.IsPositive() {
+		capPositiveVotingPowers(vpByHost, capPct, modelID, nopCapLogger{})
+	}
+
+	reachable := int64(0)
+	for _, vp := range vpByHost {
+		reachable += vp
+	}
 	return reachable
 }
 
