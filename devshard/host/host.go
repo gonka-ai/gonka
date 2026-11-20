@@ -799,7 +799,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	// (c) Sign state (with acceptance check + mempool staleness).
-	stateSig, root, nonce, err := h.signIfAccepted(lastAppliedTxs, tip)
+	stateSig, root, nonce, err := h.signIfAccepted(ctx, lastAppliedTxs, tip)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, observability.Classify(observability.ReasonStateSignErr, observability.WhereHostSignState, err)
@@ -1053,7 +1053,7 @@ func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
 
 // signIfAccepted computes state root, checks acceptance, signs if allowed,
 // stores sig and checks finalization. Caller must hold h.mu.
-func (h *Host) signIfAccepted(applied []*types.DevshardTx, observations ...mainnetTipObservation) (stateSig, root []byte, nonce uint64, err error) {
+func (h *Host) signIfAccepted(ctx context.Context, applied []*types.DevshardTx, observations ...mainnetTipObservation) (stateSig, root []byte, nonce uint64, err error) {
 	h.authorizedMempoolTxs() // stale revoked proposals must not withhold an otherwise valid state signature
 	nonce = h.sm.LatestNonce()
 	root, err = h.sm.ComputeStateRoot()
@@ -1067,7 +1067,7 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx, observations ...mainn
 		}
 	}
 
-	sig, signingSlots, err := h.signState(nonce, root, observations...)
+	sig, signingSlots, err := h.signState(ctx, nonce, root, observations...)
 	if err != nil {
 		if errors.Is(err, types.ErrHeaderPending) || errors.Is(err, types.ErrWarmKeyUnconfirmed) {
 			// Freshness and signer authority gate state signatures, not execution of an already
@@ -2166,7 +2166,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]t
 		}
 
 		// Sign state with acceptance check (same path as HandleRequest).
-		stateSig, root, nonce, err := h.signIfAccepted(nil)
+		stateSig, root, nonce, err := h.signIfAccepted(ctx, nil)
 		if err != nil {
 			return sigs, fmt.Errorf("sign recovered state: %w", err)
 		}
@@ -2307,19 +2307,18 @@ type mainnetTipObservation struct {
 
 // signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
 // It returns the slots authorized for this signer, never just startup ownership.
-func (h *Host) signState(nonce uint64, root []byte, observations ...mainnetTipObservation) ([]byte, []uint32, error) {
+func (h *Host) signState(ctx context.Context, nonce uint64, root []byte, observations ...mainnetTipObservation) ([]byte, []uint32, error) {
 	slots := h.stateSigningSlots(nonce)
 	if len(slots) == 0 {
 		return nil, nil, types.ErrWarmKeyUnconfirmed
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	now := time.Now()
-	var tip *blocks.Header
+	var requestTip func() *blocks.Header
 	if len(observations) > 0 {
-		tip = h.reusableMainnetTip(observations[0], now)
+		requestTip = func() *blocks.Header { return h.reusableMainnetTip(observations[0], time.Now()) }
 	}
-	if err := h.sm.CheckMainnetHeightFreshnessWithTip(ctx, now, tip); err != nil {
+	if err := h.sm.CheckMainnetHeightFreshnessWithTip(ctx, time.Now(), requestTip); err != nil {
 		return nil, nil, err
 	}
 	sigContent := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}

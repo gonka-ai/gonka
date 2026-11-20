@@ -80,14 +80,36 @@ func collectChatFrames(t *testing.T, env *serverTestEnv, body []byte) (chunks []
 type chatTipOracle struct {
 	*mockoracle.Mock
 	latestCalls atomic.Int64
+	stall       atomic.Bool
 }
 
 func (o *chatTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	o.latestCalls.Add(1)
+	if o.stall.Load() {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	return o.Mock.Latest(ctx)
 }
 
+type delayedChatAcceptance struct{ clock *atomic.Int64 }
+
+func (d delayedChatAcceptance) Check(types.EscrowState, []*types.DevshardTx) error {
+	time.Sleep(time.Second)
+	d.clock.Store(int64(time.Second))
+	return nil
+}
+
 func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
+	t.Run("fresh same-request tip", func(t *testing.T) { serveInferenceWithRequestTip(t, "", 2, 0) })
+	t.Run("expired tip with stalled dAPI", func(t *testing.T) { serveInferenceWithRequestTip(t, "anchor", 3, 1) })
+	t.Run("tip refreshed during signing", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "signing", 3, 0)
+	})
+}
+
+func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIReads, wantDirectReads int64) {
+	t.Helper()
 	const escrowID = "escrow-1"
 	const balance = 1_000_000
 	validator, owner := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
@@ -121,9 +143,17 @@ func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
 	diff, err := DiffToJSON(testutil.SignDiffWithRoot(t, owner, escrowID, 1, txs, root))
 	require.NoError(t, err)
 	dapi := &chatTipOracle{Mock: chain}
-	oracle := failover.New(nil, dapi, chain, failover.WithDirectLightBlocks(chain))
+	direct := &chatTipOracle{Mock: chain}
+	oracle := failover.New(nil, dapi, direct, failover.WithDirectLightBlocks(chain))
+	initial := time.Now()
+	var clock atomic.Int64
+	oracle.SetNow(func() time.Time { return initial.Add(time.Duration(clock.Load())) })
+	var checker host.AcceptanceChecker
+	if expireBefore == "signing" {
+		checker = delayedChatAcceptance{clock: &clock}
+	}
 	times := headertime.New(headertime.WithLatestOracle(oracle), headertime.WithLightBlockSource(oracle))
-	h, err := host.NewHost(newState(times), validator, stub.NewInferenceEngine(), escrowID, group, nil,
+	h, err := host.NewHost(newState(times), validator, stub.NewInferenceEngine(), escrowID, group, checker,
 		host.WithChainOracle(oracle))
 	require.NoError(t, err)
 	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(10, 1, oracle)
@@ -135,24 +165,35 @@ func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
 		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	})
 	require.NoError(t, err)
-	var readsAtReceipt int64
+	var dapiReadsAtReceipt, directReadsAtReceipt int64
 	var chunks [][]byte
 	sink := NewChatFrameSink(func(chunk []byte) error {
 		if len(chunks) == 0 {
-			readsAtReceipt = dapi.latestCalls.Load()
+			dapiReadsAtReceipt = dapi.latestCalls.Load()
+			directReadsAtReceipt = direct.latestCalls.Load()
+			dapi.stall.Store(false)
 		}
 		chunks = append(chunks, bytes.Clone(chunk))
 		return nil
 	})
-	require.NoError(t, srv.ServeInference(t.Context(), InferenceCall{
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+	require.NoError(t, srv.ServeInference(ctx, InferenceCall{
 		SessionID: escrowID, Sender: owner.Address(), Body: body, Source: "test", Sink: sink,
+		OnStreamStart: func() {
+			if expireBefore == "anchor" {
+				clock.Store(int64(time.Second))
+				dapi.stall.Store(true)
+			}
+		},
 	}))
 	require.NoError(t, sink.Close())
 	decoded := gzipConcat(t, chunks)
 	require.Contains(t, decoded, `"devshard_receipt"`)
 	require.Contains(t, decoded, `"height_sync"`)
 	require.Regexp(t, `"state_sig":"[^"]+"`, decoded)
-	require.Equal(t, int64(2), readsAtReceipt, "only inbound classification and host admission read the RPC tip before the receipt")
+	require.Equal(t, wantDAPIReads, dapiReadsAtReceipt, "dAPI RPCs before the signed receipt and anchor")
+	require.Equal(t, wantDirectReads, directReadsAtReceipt, "chain RPCs before the signed receipt and anchor")
 }
 
 func TestServeInference_ChatGzipParityWithSSE(t *testing.T) {

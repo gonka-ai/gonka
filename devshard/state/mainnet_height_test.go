@@ -113,11 +113,66 @@ func TestMainnetHeightLagRejectsBeforeCanonicalLookup(t *testing.T) {
 	sm.mainnetHeights = proofSource
 	checkpoint := sm.MainnetCheckpoint()
 	earlierTip := blocks.HashOnlyHeader(checkpoint.Height, checkpoint.Time, checkpoint.ChainID, checkpoint.Hash)
-	require.ErrorIs(t, sm.CheckMainnetHeightFreshnessWithTip(t.Context(), time.Now(), earlierTip), types.ErrHeaderPending)
+	require.ErrorIs(t, sm.CheckMainnetHeightFreshnessWithTip(t.Context(), time.Now(), func() *blocks.Header { return earlierTip }), types.ErrHeaderPending)
 	for range 40 {
 		require.ErrorIs(t, sm.CheckMainnetHeightFreshness(t.Context(), time.Now()), types.ErrHeaderPending)
 	}
 	require.Equal(t, 1, calls, "recovered stale diffs need no repeated live tip lookup")
+}
+
+func TestMainnetHeightRechecksTipAfterCanonicalLookup(t *testing.T) {
+	for _, expiry := range []bool{false, true} {
+		name := "higher tip arrives"
+		if expiry {
+			name = "tip expires"
+		}
+		t.Run(name, func(t *testing.T) {
+			sm, _, chain, _ := heightFixture(t)
+			tx, err := sm.BuildMainnetHeightTx(t.Context())
+			require.NoError(t, err)
+			_, err = sm.ApplyLocal(1, []*types.DevshardTx{tx})
+			require.NoError(t, err)
+			sampled, err := chain.Latest(t.Context())
+			require.NoError(t, err)
+
+			clock := time.Now()
+			expiresAt := clock.Add(time.Nanosecond)
+			source := &deadlineHeightSource{MainnetHeightSource: chain, BlockOracle: chain}
+			calls := 0
+			source.check = func(context.Context) {
+				calls++
+				if calls != 1 {
+					return
+				}
+				// A newer canonical block becomes available while the historical
+				// lookup is returning the still-correct checkpoint header.
+				for range MainnetCheckpointMaxLag + 1 {
+					_, err := chain.AdvanceOne()
+					require.NoError(t, err)
+				}
+				if expiry {
+					clock = expiresAt
+				} else {
+					source.recentTip = sampled.Height + MainnetCheckpointMaxLag + 1
+				}
+			}
+			sm.mainnetHeights, sm.headerTimes = source, nil
+			selectTip := func() *blocks.Header {
+				if clock.Before(expiresAt) {
+					return sampled
+				}
+				return nil
+			}
+			err = sm.CheckMainnetHeightFreshnessWithTip(t.Context(), clock, selectTip)
+			require.ErrorIs(t, err, types.ErrHeaderPending)
+			require.ErrorContains(t, err, "trails local tip")
+			if expiry {
+				require.Equal(t, 2, calls, "canonical lookup followed by a fresh live tip read")
+			} else {
+				require.Equal(t, 1, calls, "canonical lookup exposes already-observed higher progress")
+			}
+		})
+	}
 }
 
 func TestMainnetHeightApplyReplaySnapshotAndPreview(t *testing.T) {
