@@ -192,6 +192,33 @@ func (k Keeper) SlashForInvalidStatus(ctx context.Context, participant *types.Pa
 	}
 }
 
+// SlashForFailedConfirmationPoC slashes a participant that failed confirmation PoC by
+// confirmation_poc_params.slash_fraction. A nil or zero fraction means no slash.
+func (k Keeper) SlashForFailedConfirmationPoC(ctx context.Context, participant *types.Participant, params types.Params) {
+	if params.ConfirmationPocParams == nil || params.ConfirmationPocParams.SlashFraction == nil {
+		return
+	}
+	slashFraction, err := params.ConfirmationPocParams.SlashFraction.ToLegacyDec()
+	if err != nil {
+		k.LogError("invalid confirmation_poc_params.slash_fraction:", types.Tokenomics, "error", err)
+		return
+	}
+	if !slashFraction.IsPositive() {
+		return
+	}
+
+	participantAddress, err := sdk.AccAddressFromBech32(participant.Address)
+	if err != nil {
+		k.LogError("Could not parse participant address for confirmation PoC slashing", types.Tokenomics, "address", participant.Address, "error", err)
+		return
+	}
+	requiredCollateral := k.calculateRequiredCollateral(ctx, participant.Address, params.CollateralParams)
+	_, err = k.collateralKeeper.Slash(ctx, participantAddress, slashFraction, types.SlashReasonConfirmationPoC, requiredCollateral)
+	if err != nil {
+		k.LogError("Failed to slash participant for failed confirmation PoC", types.Tokenomics, "participant", participant.Address, "error", err)
+	}
+}
+
 // SlashForDowntime checks a participant's performance for the completed epoch and
 // slashes their collateral if their missed request percentage exceeds the threshold.
 func (k Keeper) SlashForDowntime(ctx context.Context, participant *types.Participant, params types.Params) {
