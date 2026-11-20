@@ -457,6 +457,11 @@ func TestFeeRelatedHints(t *testing.T) {
 	require.Len(t, grant, 1)
 	assert.Contains(t, grant[0], "grant-ml-ops-permissions")
 
+	spent := feeRelatedHints("gonka1cold does not allow to pay fees for gonka1warm: basic allowance: fee limit exceeded")
+	require.Len(t, spent, 1)
+	assert.Contains(t, spent[0], "spend limit")
+	assert.Contains(t, spent[0], "grant-ml-ops-permissions")
+
 	fee := feeRelatedHints("insufficient fee: got 0ngonka, required at least 10ngonka")
 	require.Len(t, fee, 1)
 	assert.Contains(t, fee[0], "enabled_fee_groups")

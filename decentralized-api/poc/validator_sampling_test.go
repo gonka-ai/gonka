@@ -68,7 +68,7 @@ func TestSampleLeafIndices_DifferentModel(t *testing.T) {
 }
 
 func TestBuildValidationCallbackURL(t *testing.T) {
-	url := buildValidationCallbackURL("http://localhost:8080/callback", "org/model-b")
+	url := buildValidationCallbackURL("http://localhost:8080/callback", "org/model-b", types.PocScheme_POC_SCHEME_PREFILL)
 	assert.Equal(t, "http://localhost:8080/callback/v2/poc-batches/org%252Fmodel-b", url)
 }
 

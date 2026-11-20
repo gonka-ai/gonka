@@ -174,6 +174,9 @@ Fund the account by sending `ngonka` from another wallet:
 ```bash
 inferenced tx bank send <sender-key-name> "$GONKA_ADDRESS" 1000000ngonka \
   --chain-id gonka-mainnet \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --gas-prices 1ngonka \
   --node "$NODE_URL/chain-rpc"
 ```
 
@@ -182,6 +185,10 @@ Once funded, publish your public key on-chain:
 ```bash
 inferenced publish-pubkey \
   --from "$ACCOUNT_NAME" \
+  --chain-id gonka-mainnet \
+  --gas auto \
+  --gas-adjustment 1.5 \
+  --gas-prices 1ngonka \
   --node "$NODE_URL/chain-rpc" \
   --yes
 ```

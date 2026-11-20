@@ -241,11 +241,7 @@ async def test_task_cancellation_during_active_request(mock_backend_server):
     mock_request.headers = {}
     mock_request.query_params = {}
 
-    async def empty_body():
-        if False:
-            yield b""
-
-    mock_request.stream = empty_body
+    mock_request.body = AsyncMock(return_value=b"")
 
     async def track_and_stream():
         try:
@@ -297,7 +293,7 @@ async def test_new_requests_rejected_during_shutdown():
     mock_request.method = "GET"
     mock_request.headers = {}
     mock_request.query_params = {}
-    mock_request.stream = AsyncMock(return_value=iter([]))
+    mock_request.body = AsyncMock(return_value=b"")
     
     response = await _proxy_request_to_backend(mock_request, "/test")
     
@@ -321,7 +317,7 @@ async def test_task_registration_race_condition_prevention():
     mock_request.method = "GET"
     mock_request.headers = {}
     mock_request.query_params = {}
-    mock_request.stream = AsyncMock(return_value=iter([]))
+    mock_request.body = AsyncMock(return_value=b"")
     
     # Mock upstream
     mock_upstream = MagicMock()
@@ -421,6 +417,90 @@ async def test_resource_cleanup_verification():
     # Verify backend counts reset
     for port in [5001, 5002]:
         assert proxy_module.vllm_counts[port] == 0
+
+# ---------------------------------------------------------------------------
+# Client disconnect before the backend sends headers (non-streaming requests)
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def holding_backend():
+    """Backend that answers like a non-streaming vLLM request: headers only
+    after the work is done. Records whether the proxy closed the connection."""
+    app = web.Application()
+    state = {"closed": asyncio.Event(), "delay": 5.0}
+
+    async def hold(request):
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + state["delay"]
+        while loop.time() < deadline:
+            transport = request.transport
+            if transport is None or transport.is_closing():
+                state["closed"].set()
+                break
+            await asyncio.sleep(0.02)
+        return web.json_response({"ok": True})
+
+    app.router.add_post("/hold", hold)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 8766)
+    await site.start()
+    yield 8766, state
+    await runner.cleanup()
+
+
+def _post_request(receive):
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.headers = {"content-type": "application/json"}
+    request.query_params = {}
+    request.body = AsyncMock(return_value=b"{}")
+    request.receive = receive
+    return request
+
+
+@pytest.mark.asyncio
+async def test_client_disconnect_closes_upstream_before_headers(holding_backend):
+    port, state = holding_backend
+    proxy_module.vllm_healthy.clear()
+    setup_vllm_proxy([port])
+    proxy_module.vllm_healthy[port] = True
+    proxy_module.vllm_client = httpx.AsyncClient()
+
+    async def receive():
+        await asyncio.sleep(0.2)
+        return {"type": "http.disconnect"}
+
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+    response = await _proxy_request_to_backend(_post_request(receive), "/hold")
+
+    assert response.status_code == 499
+    assert loop.time() - started < 2
+    await asyncio.wait_for(state["closed"].wait(), timeout=2)
+    assert proxy_module.vllm_counts[port] == 0
+    await stop_vllm_proxy()
+
+
+@pytest.mark.asyncio
+async def test_response_passes_through_when_client_stays(holding_backend):
+    port, state = holding_backend
+    state["delay"] = 0.2
+    proxy_module.vllm_healthy.clear()
+    setup_vllm_proxy([port])
+    proxy_module.vllm_healthy[port] = True
+    proxy_module.vllm_client = httpx.AsyncClient()
+
+    async def receive():
+        await asyncio.Event().wait()
+
+    response = await _proxy_request_to_backend(_post_request(receive), "/hold")
+    assert response.status_code == 200
+    body = b"".join([chunk async for chunk in response.body_iterator])
+    assert body == b'{"ok": true}'
+    assert not state["closed"].is_set()
+    await stop_vllm_proxy()
+
 
 # ---------------------------------------------------------------------------
 # Health-probe damping (_apply_health_damping)
