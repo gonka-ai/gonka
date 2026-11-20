@@ -32,6 +32,7 @@ var (
 	// in mind if renaming either prefix.
 	GroupValidationPartialSigPrefix = []byte("bls_partial_sig/")
 	CompletedPostProcessRetryPrefix = []byte("completed_post_process_retry")
+	ExposedPartialSignaturesPrefix  = []byte("exposed_partial_signatures/")
 )
 
 func KeyPrefix(p string) []byte {

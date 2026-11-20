@@ -9,6 +9,7 @@ import (
 
 	"cosmossdk.io/collections"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -17,6 +18,20 @@ type bridgeCancelOptions struct {
 	reason                  string
 	overrideRecipient       string
 	overrideWrappedContract string
+}
+
+func (k Keeper) cancelThresholdSigningRequest(ctx sdk.Context, requestID []byte) error {
+	request, err := k.BlsKeeper.GetSigningStatus(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	if request.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
+		return fmt.Errorf("threshold signing already completed")
+	}
+	if err := k.ensureBridgeRefundHasNoExposedPartials(ctx, requestID); err != nil {
+		return err
+	}
+	return k.BlsKeeper.CancelThresholdSignature(ctx, requestID)
 }
 
 func (k msgServer) CancelBridgeOperation(goCtx context.Context, msg *types.MsgCancelBridgeOperation) (*types.MsgCancelBridgeOperationResponse, error) {

@@ -155,6 +155,7 @@ type BlsKeeper interface {
 	// Threshold signing methods
 	RequestThresholdSignature(ctx sdk.Context, signingData blstypes.SigningData) error
 	GetSigningStatus(ctx sdk.Context, requestID []byte) (*blstypes.ThresholdSigningRequest, error)
+	HasExposedPartialSignatures(ctx sdk.Context, requestID []byte) (bool, error)
 	ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64) ([]*blstypes.ThresholdSigningRequest, error)
 	CancelThresholdSignature(ctx sdk.Context, requestID []byte) error
 }

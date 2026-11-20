@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"fmt"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/core/store"
 	"cosmossdk.io/log"
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -22,6 +23,9 @@ type (
 		storeService store.KVStoreService
 		logger       log.Logger
 		hooksState   *blsHooksState
+
+		Schema                   collections.Schema
+		exposedPartialSignatures collections.Map[[]byte, bool]
 
 		// the address capable of executing a MsgUpdateParams message. Typically, this
 		// should be the x/gov module account.
@@ -47,13 +51,28 @@ func NewKeeper(
 		panic(fmt.Sprintf("invalid authority address: %s", authority))
 	}
 
-	return Keeper{
+	sb := collections.NewSchemaBuilder(storeService)
+	k := Keeper{
 		cdc:          cdc,
 		storeService: storeService,
 		authority:    authority,
 		logger:       logger,
 		hooksState:   &blsHooksState{},
 	}
+	k.exposedPartialSignatures = collections.NewMap(
+		sb,
+		collections.NewPrefix(types.ExposedPartialSignaturesPrefix),
+		"exposed_partial_signatures",
+		collections.BytesKey,
+		collections.BoolValue,
+	)
+	schema, err := sb.Build()
+	if err != nil {
+		//nolint:forbidigo // init code
+		panic(err)
+	}
+	k.Schema = schema
+	return k
 }
 
 // GetAuthority returns the module's authority.

@@ -3,8 +3,10 @@ package keeper
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 
+	"cosmossdk.io/collections"
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -240,6 +242,38 @@ func (k Keeper) GetSigningStatus(ctx sdk.Context, requestID []byte) (*types.Thre
 	}
 
 	return &request, nil
+}
+
+// HasExposedPartialSignatures reports whether any signing attempt has disclosed a share.
+// The marker lasts as long as the request, including retries and terminal states.
+func (k Keeper) HasExposedPartialSignatures(ctx sdk.Context, requestID []byte) (bool, error) {
+	exposed, err := k.exposedPartialSignatures.Get(ctx, requestID)
+	if err == nil && exposed {
+		return true, nil
+	}
+	if err != nil && !errors.Is(err, collections.ErrNotFound) {
+		return false, fmt.Errorf("failed to read partial signature exposure: %w", err)
+	}
+
+	// Requests written before exposure tracking may still hold inline or split shares.
+	value, err := k.storeService.OpenKVStore(ctx).Get(types.ThresholdSigningRequestKey(requestID))
+	if err != nil {
+		return false, fmt.Errorf("failed to read signing request for partial signature exposure: %w", err)
+	}
+	if value != nil {
+		var request types.ThresholdSigningRequest
+		if err := k.cdc.Unmarshal(value, &request); err != nil {
+			return false, fmt.Errorf("failed to decode signing request for partial signature exposure: %w", err)
+		}
+		if len(request.PartialSignatures) > 0 {
+			return true, nil
+		}
+	}
+	partials, err := k.ListThresholdPartialSignatures(ctx, requestID)
+	if err != nil {
+		return false, err
+	}
+	return len(partials) > 0, nil
 }
 
 func (k Keeper) CancelThresholdSignature(ctx sdk.Context, requestID []byte) error {
@@ -700,7 +734,7 @@ func (k Keeper) SetThresholdPartialSignature(ctx sdk.Context, requestID []byte, 
 		return fmt.Errorf("marshal threshold partial signature: %w", err)
 	}
 	k.thresholdPartialSigStore(ctx, requestID).Set(types.ThresholdPartialSigSubKey(ps.ParticipantAddress), value)
-	return nil
+	return k.exposedPartialSignatures.Set(ctx, requestID, true)
 }
 
 // GetThresholdPartialSignature reads the partial signature submitted by a
@@ -747,6 +781,17 @@ func (k Keeper) ListThresholdPartialSignatures(ctx sdk.Context, requestID []byte
 // signature sub-key for a request. Called on retry reset (to clear the
 // prior attempt's accumulated sigs) and on terminal failure cleanup.
 func (k Keeper) DeleteThresholdPartialSignaturesForRequest(ctx sdk.Context, requestID []byte) error {
+	// Preserve exposure before a retry clears shares, including pre-upgrade entries.
+	exposed, err := k.HasExposedPartialSignatures(ctx, requestID)
+	if err != nil {
+		return err
+	}
+	if exposed {
+		if err := k.exposedPartialSignatures.Set(ctx, requestID, true); err != nil {
+			return fmt.Errorf("failed to retain partial signature exposure: %w", err)
+		}
+	}
+
 	store := k.thresholdPartialSigStore(ctx, requestID)
 	it := store.Iterator(nil, nil)
 
