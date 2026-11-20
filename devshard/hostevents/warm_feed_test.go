@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	"common/nodemanager/gen"
 	"devshard/bridge"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/hostevents"
 
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -570,7 +572,9 @@ func TestPollerTrustedWarmCoverageWithDirectQueriesOffline(t *testing.T) {
 	}
 	pages := make(chan *gen.GetHostEventsResponse)
 	server := &fakeHostEventsServer{}
-	server.SetSticky(func(ctx context.Context, _ *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+	var initialAfter atomic.Uint64
+	server.SetSticky(func(ctx context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		initialAfter.CompareAndSwap(0, req.GetAfterHeight())
 		select {
 		case page := <-pages:
 			return page, nil
@@ -578,9 +582,11 @@ func TestPollerTrustedWarmCoverageWithDirectQueriesOffline(t *testing.T) {
 			return nil, ctx.Err()
 		}
 	})
+	headers := headertime.New()
+	headers.Observe(blocks.HashOnlyHeader(100, time.Unix(99, 0), "chain", make([]byte, 32)), headertime.OriginChain, true)
 	p := hostevents.NewPoller(hostevents.PollerConfig{
 		Config: hostevents.Config{Client: dialFake(t, server), ServerMaxWait: 10 * time.Second},
-		Warm:   grants, TrustWarmFeed: true,
+		Source: headers, Warm: grants, TrustWarmFeed: true,
 	})
 	go p.Run(ctx)
 	send := func(genID, cursor uint64, events ...*gen.HostEvent) {
@@ -591,8 +597,8 @@ func TestPollerTrustedWarmCoverageWithDirectQueriesOffline(t *testing.T) {
 			t.Fatal("poller did not request next page")
 		}
 	}
-	send(1, 1, block(1, 100))
 	send(1, 2, warmHostEvent(2, grant, "cold", "warm", 1, 101, ""))
+	require.Equal(t, uint64(100), initialAfter.Load(), "explicitly resume after the baseline block")
 	at := time.Unix(100, 0)
 	_, err = bridge.CheckWarmKeyAtHeight(grants, "cold", "warm", 1, 101, at)
 	require.Error(t, err, "the grant event alone cannot close the block")
