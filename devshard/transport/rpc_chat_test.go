@@ -21,10 +21,16 @@ import (
 
 	"connectrpc.com/connect"
 
+	"common/chainoracle/blocks"
 	"devshard"
+	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/headertime"
+	mockoracle "devshard/chainoracle/blocks/observer"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/state"
 	"devshard/stub"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
@@ -69,6 +75,83 @@ func collectChatFrames(t *testing.T, env *serverTestEnv, body []byte) (chunks []
 	require.NoError(t, sink.Close())
 	decoded = gzipConcat(t, chunks)
 	return chunks, decoded
+}
+
+type chatTipOracle struct {
+	*mockoracle.Mock
+	latestCalls atomic.Int64
+}
+
+func (o *chatTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	o.latestCalls.Add(1)
+	return o.Mock.Latest(ctx)
+}
+
+func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
+	const escrowID = "escrow-1"
+	const balance = 1_000_000
+	validator, owner := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	address, err := blocks.AddressBytes(validator.CompressedPublicKeyBytes())
+	require.NoError(t, err)
+	chain, err := mockoracle.NewMock(mockoracle.MockConfig{
+		LightBlocks: true, ChainID: "chat-proof", InitialHeight: 100,
+		Validators: []mockoracle.MockValidator{{Signer: validator, Address: address, Power: 10}},
+		Start:      time.Now().Add(-10 * time.Second), BlockInterval: time.Second,
+	})
+	require.NoError(t, err)
+	anchor, err := chain.AdvanceOne()
+	require.NoError(t, err)
+	cfg := testutil.DefaultConfig(1)
+	cfg.MainnetAnchorHeight, cfg.MainnetAnchorHash = anchor.Height, bytes.Clone(anchor.BlockHash)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{validator})
+	verifier := signing.NewSecp256k1Verifier()
+	newState := func(source state.MainnetHeightSource) *state.StateMachine {
+		store := testutil.MustMemoryStore(t, escrowID, owner.Address(), cfg, group, balance)
+		sm, err := state.NewStateMachine(escrowID, cfg, group, balance, owner.Address(), verifier, store,
+			state.WithVersion("v7"), state.WithMainnetHeights(source))
+		require.NoError(t, err)
+		return sm
+	}
+	producer := newState(chain)
+	proof, err := producer.BuildMainnetHeightTx(t.Context())
+	require.NoError(t, err)
+	txs := []*types.DevshardTx{proof, testutil.StartTx(1)}
+	root, err := producer.ApplyLocal(1, txs)
+	require.NoError(t, err)
+	diff, err := DiffToJSON(testutil.SignDiffWithRoot(t, owner, escrowID, 1, txs, root))
+	require.NoError(t, err)
+	dapi := &chatTipOracle{Mock: chain}
+	oracle := failover.New(nil, dapi, chain, failover.WithDirectLightBlocks(chain))
+	h, err := host.NewHost(newState(headertime.New(oracle)), validator, stub.NewInferenceEngine(), escrowID, group, nil,
+		host.WithChainOracle(oracle))
+	require.NoError(t, err)
+	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(10, 1, oracle)
+	require.NoError(t, err)
+	srv, err := NewServer(h, nil, verifier, owner.Address(), WithHeightSync(scheduler, oracle))
+	require.NoError(t, err)
+	body, err := json.Marshal(InferenceRequest{
+		Diffs: []DiffJSON{diff}, Nonce: 1, Stream: true,
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
+	})
+	require.NoError(t, err)
+	var readsAtReceipt int64
+	var chunks [][]byte
+	sink := NewChatFrameSink(func(chunk []byte) error {
+		if len(chunks) == 0 {
+			readsAtReceipt = dapi.latestCalls.Load()
+		}
+		chunks = append(chunks, bytes.Clone(chunk))
+		return nil
+	})
+	require.NoError(t, srv.ServeInference(t.Context(), InferenceCall{
+		SessionID: escrowID, Sender: owner.Address(), Body: body, Source: "test", Sink: sink,
+	}))
+	require.NoError(t, sink.Close())
+	decoded := gzipConcat(t, chunks)
+	require.Contains(t, decoded, `"devshard_receipt"`)
+	require.Contains(t, decoded, `"height_sync"`)
+	require.Regexp(t, `"state_sig":"[^"]+"`, decoded)
+	require.Equal(t, int64(2), readsAtReceipt, "only inbound classification and host admission read the RPC tip before the receipt")
 }
 
 func TestServeInference_ChatGzipParityWithSSE(t *testing.T) {
