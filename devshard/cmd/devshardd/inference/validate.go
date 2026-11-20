@@ -610,9 +610,28 @@ func sleepPayloadFetch(ctx context.Context, d time.Duration) error {
 	}
 }
 
+// replayAbortedError defers a validation whose replay the validator's own ML
+// node aborted. It matches both devshard.ErrValidationDeferred, so the host
+// keeps the obligation and retries after the cooldown without voting, and the
+// commonvalidation.ErrReplayAborted cause it carries.
+type replayAbortedError struct {
+	cause error
+}
+
+func (e replayAbortedError) Error() string {
+	return "validation deferred: " + e.cause.Error()
+}
+
+func (e replayAbortedError) Unwrap() []error {
+	return []error{devshardpkg.ErrValidationDeferred, e.cause}
+}
+
 func classifyExecuteValidationErr(err error) error {
 	if err == nil || errors.Is(err, devshardpkg.ErrValidationDeferred) {
 		return err
+	}
+	if errors.Is(err, commonvalidation.ErrReplayAborted) {
+		return replayAbortedError{cause: err}
 	}
 	var classified *observability.ClassifiedError
 	if errors.As(err, &classified) {
