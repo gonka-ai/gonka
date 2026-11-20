@@ -91,6 +91,9 @@ type DecideHints struct {
 	Propagator LazyPropagator
 	// Direction is optional ("request" | "response") for heightsync: decide debug logs.
 	Direction string
+	// RefreshLocalResponseTip allows the v7 host's bounded response source
+	// to attempt a due anchor after an earlier tip lookup failed.
+	RefreshLocalResponseTip bool
 }
 
 // LazyPropagator tracks which mainnet heights were already sent to each peer.
@@ -229,7 +232,7 @@ func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyn
 		return nil, nil, false
 	}
 
-	if src.Stale() {
+	if src.Stale() && !h.RefreshLocalResponseTip {
 		if sec, dErr, ok := tryStaleCachedTip(ctx, src, h, now, snap); ok {
 			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, false, DecideEventAnchorStale, snap, dErr)
 			return sec, dErr, false

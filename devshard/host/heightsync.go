@@ -23,12 +23,12 @@ type heartbeatTarget struct {
 // response-leg Anchor of this exchange (honest L4). An ack is required even
 // when Latest() fails (ORACLE_UNAVAILABLE); silence is worse for the roster.
 // After MsgFinalizeRound the host is no longer Active and must not emit acks.
-func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, hdrErr error) {
+func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, hdrErr error) []*types.DevshardTx {
 	if len(diffs) == 0 {
-		return
+		return nil
 	}
 	if h.sm.Phase() != types.PhaseActive {
-		return
+		return nil
 	}
 	if h.peerSeen == nil {
 		h.peerSeen = heightsync.NewPeerSeen(uint32(len(h.group)), 0)
@@ -56,9 +56,10 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 		}
 	}
 	if len(mine) == 0 {
-		return
+		return nil
 	}
 
+	var signed []*types.DevshardTx
 	for _, item := range mine {
 		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && !h.CanSignSlot(item.slot) {
 			continue
@@ -69,11 +70,14 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 				"escrow", h.escrowID, "nonce", item.nonce, "slot", item.slot, "error", err)
 			continue
 		}
+		tx := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
 		h.mempool.Add(MempoolEntry{
-			Tx:         &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+			Tx:         tx,
 			ProposedAt: h.sm.LatestNonce(),
 		})
+		signed = append(signed, tx)
 	}
+	return signed
 }
 
 func (h *Host) latestHeader(ctx context.Context) (*blocks.Header, error) {

@@ -40,7 +40,8 @@ func (o *Oracle) LatestForHeightSync(ctx context.Context) (*blocks.Header, error
 	// a short head start while leaving time for a fresh chain RPC.
 	refresh, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
 	defer cancel()
-	return o.LatestForProof(refresh)
+	h, _, err := o.latestForProofObservation(refresh, nmResponseAnchorRead)
+	return h, err
 }
 
 func (o *Oracle) rememberRequestObservation(ctx context.Context, h *blocks.Header, validUntil time.Time) {
