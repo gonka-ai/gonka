@@ -542,7 +542,7 @@ start_policy() {
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
         --network "$network" --network-alias proxy-policy \
         -v "$tmpdir/policy.conf:/etc/nginx/nginx.conf:ro" \
-        nginx:1.28-alpine3.21 >/dev/null
+        nginx:1.30.7-alpine3.24 >/dev/null
 }
 for name in a b; do
     start_policy "$name"
@@ -689,7 +689,7 @@ docker rm -f gonka-pr-proxy-admission gonka-pr-policy-admission >/dev/null
 docker run -d --name gonka-pr-policy-generation --network "$network" \
     --network-alias proxy-policy-generation \
     -v "$tmpdir/policy.conf:/etc/nginx/nginx.conf:ro" \
-    nginx:1.28-alpine3.21 >/dev/null
+    nginx:1.30.7-alpine3.24 >/dev/null
 docker run -d --name gonka-pr-proxy-generation --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy-generation \
     -e NGINX_MODE=http \
@@ -809,7 +809,7 @@ docker rm -f gonka-pr-proxy-v2 gonka-pr-policy-v2 >/dev/null
 docker run -d --name gonka-pr-policy-plain --network "$network" \
     --network-alias proxy-policy-plain \
     -v "$tmpdir/policy-plain.conf:/etc/nginx/nginx.conf:ro" \
-    nginx:1.28-alpine3.21 >/dev/null
+    nginx:1.30.7-alpine3.24 >/dev/null
 docker run -d --name gonka-pr-proxy-plain --network "$network" \
     -e PROXY_POLICY_POOL_HOST=proxy-policy-plain \
     -e NGINX_MODE=http \
