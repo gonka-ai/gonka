@@ -10,7 +10,10 @@ import (
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/nmrpc"
 	"common/nodemanager/gen"
+	"devshard/chainoracle/blocks/headertime"
+	"devshard/hostevents"
 	"devshard/internal/testutil"
+	"devshard/state"
 	"devshard/stub"
 
 	"github.com/stretchr/testify/require"
@@ -96,10 +99,67 @@ func unimplementedNM(t *testing.T) gen.NodeManagerClient {
 	return dialNM(t, &gen.UnimplementedNodeManagerServer{})
 }
 
+func TestHostManager_SetHostEventPoller(t *testing.T) {
+	mgr := newHeightSyncMgr(t)
+	require.Nil(t, mgr.HostEventPoller())
+	p := hostevents.NewPoller(hostevents.PollerConfig{})
+	mgr.SetHostEventPoller(p)
+	require.True(t, mgr.HostEventPoller() == p)
+}
+
+func TestSetHeightSyncFromEnv_SharesOneHeaderTimeSource(t *testing.T) {
+	unsetHeightSyncSources(t)
+	nmHdr := blocks.HashOnlyHeader(12, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
+	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
+	mgr := newHeightSyncMgr(t)
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm, ""))
+	require.NotNil(t, mgr.headerTimes)
+
+	got := state.AppliedHeaderTimes(mgr.sessionSMOpts()...)
+	require.True(t, got == mgr.headerTimes, "session state machines read the manager's one map")
+
+	at := time.Unix(1_700_000_001, 0).UTC()
+	hash := []byte{1, 2, 3, 4}
+	mgr.ObserveChainHeader(blocks.HashOnlyHeader(7, at, "gonka-test", hash))
+	ms, err := mgr.headerTimes.HeaderTimeMs(7, hash)
+	require.NoError(t, err)
+	require.Equal(t, at.UnixMilli(), ms)
+	rec, ok := mgr.headerTimes.StoredAt(7)
+	require.True(t, ok)
+	require.Equal(t, headertime.OriginComet, rec.Origin)
+	require.True(t, rec.Verified)
+
+	ms, err = got.HeaderTimeMs(7, hash)
+	require.NoError(t, err)
+	require.Equal(t, at.UnixMilli(), ms)
+	mgr.CloseHeightSync()
+}
+
+func TestSeedHeaderTimesStoresLatestBeforeComet(t *testing.T) {
+	unsetHeightSyncSources(t)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	nmHdr := blocks.HashOnlyHeader(1000, at, "gonka-test", []byte{9, 9, 9, 9})
+	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
+	mgr := newHeightSyncMgr(t)
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm, ""))
+	_, ok := mgr.headerTimes.StoredAt(1000)
+	require.False(t, ok)
+
+	mgr.SeedHeaderTimes(context.Background())
+	rec, ok := mgr.headerTimes.StoredAt(1000)
+	require.True(t, ok)
+	require.Equal(t, headertime.OriginChain, rec.Origin)
+	require.False(t, rec.Verified)
+	ms, err := mgr.headerTimes.HeaderTimeMs(1000, []byte{9, 9, 9, 9})
+	require.NoError(t, err)
+	require.Equal(t, at.UnixMilli(), ms)
+	mgr.CloseHeightSync()
+}
+
 func TestSetHeightSyncFromEnv_EmptyIsNoop(t *testing.T) {
 	unsetHeightSyncSources(t)
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nil))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nil, ""))
 	require.Nil(t, mgr.heightSync)
 	require.Nil(t, mgr.chainOracle)
 	require.Len(t, mgr.transportServerOpts(), 3)
@@ -109,7 +169,7 @@ func TestSetHeightSyncFromEnv_InvalidK(t *testing.T) {
 	unsetHeightSyncSources(t)
 	t.Setenv("DEVSHARD_HEIGHTSYNC_K", "nope")
 	mgr := newHeightSyncMgr(t)
-	err := mgr.SetHeightSyncFromEnv(context.Background(), nil, unimplementedNM(t))
+	err := mgr.SetHeightSyncFromEnv(context.Background(), nil, unimplementedNM(t), "")
 	require.Error(t, err)
 	require.Nil(t, mgr.heightSync)
 }
@@ -122,7 +182,7 @@ func TestSetHeightSyncFromEnv_WiresGetBlockHeader(t *testing.T) {
 	nmHdr := blocks.HashOnlyHeader(12, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
 	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm, ""))
 	require.NotNil(t, mgr.heightSync)
 	require.NotNil(t, mgr.chainOracle)
 	require.Equal(t, uint64(10), mgr.heightSync.K())
@@ -155,7 +215,7 @@ func TestSetHeightSyncFromEnv_WiresGetBlockHeader(t *testing.T) {
 func TestSetHeightSyncFromEnv_UnimplementedFallsBackToCometTip(t *testing.T) {
 	unsetHeightSyncSources(t)
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, unimplementedNM(t)))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, unimplementedNM(t), ""))
 	require.NotNil(t, mgr.heightSync)
 
 	mgr.ObserveChainHeader(blocks.HashOnlyHeader(7, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{1, 2, 3, 4}))
@@ -169,7 +229,7 @@ func TestSetHeightSyncFromEnv_ChainRPCAloneIsNoop(t *testing.T) {
 	unsetHeightSyncSources(t)
 	t.Setenv("NODE_RPC_URL", "http://127.0.0.1:26657")
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nil))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nil, ""))
 	require.Nil(t, mgr.heightSync)
 	require.Nil(t, mgr.chainOracle)
 }
@@ -177,7 +237,7 @@ func TestSetHeightSyncFromEnv_ChainRPCAloneIsNoop(t *testing.T) {
 func TestSetHeightSyncFromEnv_NodeManagerWires(t *testing.T) {
 	unsetHeightSyncSources(t)
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, unimplementedNM(t)))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, unimplementedNM(t), ""))
 	require.NotNil(t, mgr.heightSync)
 	require.NotNil(t, mgr.chainOracle)
 	mgr.CloseHeightSync()
@@ -190,7 +250,7 @@ func TestObserveChainHeader_AfterCloseStillRecordsTip(t *testing.T) {
 	nmHdr := blocks.HashOnlyHeader(12, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
 	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm, ""))
 
 	mgr.CloseHeightSync()
 	require.Nil(t, mgr.heightSync)
@@ -212,7 +272,7 @@ func TestObserveChainHeader_ConcurrentCloseHeightSync(t *testing.T) {
 	nmHdr := blocks.HashOnlyHeader(12, time.Unix(1_700_000_000, 0).UTC(), "gonka-test", []byte{9, 9, 9, 9})
 	nm := dialNM(t, &heightSyncNMServer{oracle: staticHeaderOracle{hdr: nmHdr}})
 	mgr := newHeightSyncMgr(t)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil, nm, ""))
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup

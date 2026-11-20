@@ -1,7 +1,9 @@
 package user
 
 import (
+	"cmp"
 	"log/slog"
+	"slices"
 	"time"
 
 	"devshard/bridge"
@@ -35,12 +37,17 @@ func (s *Session) SetWarmKeyGrantSource(src bridge.WarmKeyGrantSource) {
 // has. A source error for one cold key skips that key for this diff: the
 // next compose tries again. Caller must hold s.mu.
 func (s *Session) warmKeyProposalsLocked(nonce uint64) []*types.DevshardTx {
+	return s.warmKeyProposalsAtLocked(nonce, nil)
+}
+
+func (s *Session) warmKeyProposalsAtLocked(nonce uint64, checkpoint *types.MsgMainnetHeight) []*types.DevshardTx {
 	if s.warmKeySource == nil || s.sm == nil {
 		return nil
 	}
 	history := s.sm.WarmKeyHistory()
 	var out []*types.DevshardTx
 	liveByCold := make(map[string][]bridge.WarmKeyEntry, len(s.addrToSlots))
+	historicalByCold := make(map[string]map[uint64]bridge.WarmKeyEntry)
 	failed := make(map[string]bool)
 	for _, slot := range s.group {
 		cold := slot.ValidatorAddress
@@ -50,7 +57,11 @@ func (s *Session) warmKeyProposalsLocked(nonce uint64) []*types.DevshardTx {
 		live, ok := liveByCold[cold]
 		if !ok {
 			var err error
-			live, err = s.warmKeySource.LiveWarmKeys(cold)
+			if checkpoint == nil {
+				live, err = s.warmKeySource.LiveWarmKeys(cold)
+			} else {
+				live, historicalByCold[cold], err = s.warmKeysAtCheckpoint(cold, checkpoint)
+			}
 			if err != nil {
 				slog.Warn("warm keys: grant source unavailable, no proposals for this cold key",
 					"escrow_id", s.escrowID, "cold", cold, "error", err)
@@ -64,7 +75,7 @@ func (s *Session) warmKeyProposalsLocked(nonce uint64) []*types.DevshardTx {
 		// the same key) is revoked and re-bound in one diff, so the key is
 		// never without a binding between the two.
 		scratch := signing.WarmKeyHistory{slot.SlotID: append([]signing.WarmKeyBinding(nil), history[slot.SlotID]...)}
-		for _, tx := range s.warmKeyRevokesForSlotLocked(history, slot.SlotID, cold, live) {
+		for _, tx := range s.warmKeyRevokesForSlotLocked(history, slot.SlotID, cold, live, historicalByCold[cold]) {
 			r := tx.GetWarmKeyRevoke()
 			if err := scratch.Revoke(r.SlotId, r.Address, nonce, r.GrantId); err != nil {
 				continue
@@ -74,6 +85,28 @@ func (s *Session) warmKeyProposalsLocked(nonce uint64) []*types.DevshardTx {
 		out = append(out, s.warmKeyBindsForSlotLocked(scratch, slot.SlotID, live, nonce)...)
 	}
 	return out
+}
+
+func (s *Session) warmKeysAtCheckpoint(cold string, checkpoint *types.MsgMainnetHeight) ([]bridge.WarmKeyEntry, map[uint64]bridge.WarmKeyEntry, error) {
+	source, ok := s.warmKeySource.(bridge.WarmKeyLogHeightSource)
+	if !ok {
+		return nil, nil, bridge.ErrWarmKeyViewBehind
+	}
+	entries, err := source.WarmKeyLogAtHeight(cold, checkpoint.Height)
+	if err != nil {
+		return nil, nil, err
+	}
+	at := time.Unix(0, checkpoint.TimeUnixNano)
+	var live []bridge.WarmKeyEntry
+	for _, entry := range entries {
+		if entry.LiveAtHeight(checkpoint.Height, at) {
+			live = append(live, entry)
+		}
+	}
+	slices.SortFunc(live, func(a, b bridge.WarmKeyEntry) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+	return live, entries, nil
 }
 
 // warmKeyBindsForSlotLocked proposes a bind for every live grant the history
@@ -99,8 +132,7 @@ func (s *Session) warmKeyBindsForSlotLocked(history signing.WarmKeyHistory, slot
 // A binding whose entry the source cannot see at all is
 // left alone; the source is append-only, so a missing entry is a gap in the
 // copy, not an end.
-func (s *Session) warmKeyRevokesForSlotLocked(history signing.WarmKeyHistory, slot uint32, cold string, live []bridge.WarmKeyEntry) []*types.DevshardTx {
-	now := time.Now()
+func (s *Session) warmKeyRevokesForSlotLocked(history signing.WarmKeyHistory, slot uint32, cold string, live []bridge.WarmKeyEntry, historical map[uint64]bridge.WarmKeyEntry) []*types.DevshardTx {
 	liveIDs := make(map[uint64]bool, len(live))
 	for _, g := range live {
 		liveIDs[g.ID] = true
@@ -110,9 +142,15 @@ func (s *Session) warmKeyRevokesForSlotLocked(history signing.WarmKeyHistory, sl
 		if b.RevokedAtNonce != 0 || liveIDs[b.GrantID] {
 			continue
 		}
-		entry, found, err := s.warmKeySource.WarmKeyEntry(cold, b.GrantID)
-		if err != nil || !found || entry.LiveAt(now) {
-			continue
+		if historical != nil {
+			if _, found := historical[b.GrantID]; !found {
+				continue
+			}
+		} else {
+			entry, found, err := s.warmKeySource.WarmKeyEntry(cold, b.GrantID)
+			if err != nil || !found || entry.LiveAt(time.Now()) {
+				continue
+			}
 		}
 		out = append(out, &types.DevshardTx{Tx: &types.DevshardTx_WarmKeyRevoke{WarmKeyRevoke: &types.MsgWarmKeyRevoke{
 			SlotId: slot, Address: b.Addr, GrantId: b.GrantID,

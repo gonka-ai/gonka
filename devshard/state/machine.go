@@ -251,6 +251,17 @@ func WithHeaderTimes(src HeaderTimeSource) SMOption {
 	}
 }
 
+// AppliedHeaderTimes returns the header-time source installed by opts.
+func AppliedHeaderTimes(opts ...SMOption) HeaderTimeSource {
+	sm := &StateMachine{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(sm)
+		}
+	}
+	return sm.headerTimes
+}
+
 // HeartbeatConfig is the log-plane config this machine was constructed with.
 func (sm *StateMachine) HeartbeatConfig() heightsync.HeartbeatConfig {
 	return sm.heartbeatCfg
@@ -1392,10 +1403,11 @@ func (sm *StateMachine) applyWarmKeyBind(msg *types.MsgWarmKeyBind, diffNonce ui
 	if err != nil {
 		return err
 	}
-	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) && !sm.warmHeightValidity[warmGrantKey{cold, msg.GrantId, addr}] {
-		return fmt.Errorf("%w: grant %s/%d is not valid at authenticated height %d", types.ErrWarmKeyUnconfirmed, cold, msg.GrantId, sm.state.MainnetCheckpoint.Height)
-	}
-	if sm.warmConfirm != nil && !sm.replayingPersisted {
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		if !sm.warmHeightValidity[warmGrantKey{cold, msg.GrantId, addr}] {
+			return fmt.Errorf("%w: grant %s/%d is not valid at authenticated height %d", types.ErrWarmKeyUnconfirmed, cold, msg.GrantId, sm.state.MainnetCheckpoint.Height)
+		}
+	} else if sm.warmConfirm != nil && !sm.replayingPersisted {
 		if err := sm.warmConfirm(cold, addr, msg.GrantId); err != nil {
 			return fmt.Errorf("%w: slot %d %s grant %d: %v", types.ErrWarmKeyUnconfirmed, msg.SlotId, addr, msg.GrantId, err)
 		}

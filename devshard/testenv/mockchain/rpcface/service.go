@@ -126,12 +126,13 @@ func (s *Service) PublishEscrowSettled(id uint64, settler string, totalPayout, f
 }
 
 func (s *Service) publishNewBlock(height int64) error {
-	if lb, err := s.store.MainnetLightBlock(context.Background(), height); err == nil {
-		block := cmttypes.MakeBlock(height, nil, nil, nil)
-		block.Header = *lb.Header
-		return s.bus.PublishEventNewBlock(cmttypes.EventDataNewBlock{Block: block, BlockID: lb.Commit.BlockID})
+	lb, err := s.store.MainnetLightBlock(context.Background(), height)
+	if err != nil {
+		return err
 	}
-	return s.bus.PublishEventNewBlock(newBlockEvent(s.store.GetChainID(), height))
+	block := cmttypes.MakeBlock(height, nil, nil, nil)
+	block.Header = *lb.Header
+	return s.bus.PublishEventNewBlock(cmttypes.EventDataNewBlock{Block: block, BlockID: lb.Commit.BlockID})
 }
 
 func (s *Service) runBlockTicker(ctx context.Context) {

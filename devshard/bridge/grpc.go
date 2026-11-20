@@ -184,3 +184,10 @@ func (b *GRPCBridge) WarmKeyEntryAtHeight(granter string, id uint64, height int6
 }
 
 var _ WarmKeyHeightSource = (*GRPCBridge)(nil)
+
+func (b *GRPCBridge) WarmKeyLogAtHeight(granter string, height int64) (map[uint64]WarmKeyEntry, error) {
+	if b == nil || b.warmKeys == nil {
+		return nil, ErrChainUnavailable
+	}
+	return b.warmKeys.WarmKeyLogAtHeight(granter, height)
+}

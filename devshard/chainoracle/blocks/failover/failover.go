@@ -1,9 +1,9 @@
 // Package failover is the host/gateway BlockOracle. Latest prefers a live
 // Comet NewBlock cache, then NodeManager GetBlockHeader, then chain
 // GetLatestBlock. Comet is skipped when the WS is down or the last Observe
-// is older than CometMaxAge. GetBlockHeader(0) backs off 1m → 5m → 15m on
-// any non-success. Unimplemented (old dapi) re-probes every
-// NMUnimplementedReprobe (15m). Dummy / not found / transient use 1m → 5m → 15m.
+// is older than CometMaxAge. GetBlockHeader(0) backs off 1m → 5m on any
+// non-success, so dapi is tried again at least every 5m while chain serves.
+// Unimplemented (old dapi) re-probes every NMUnimplementedReprobe (5m).
 // GetLatestBlock is at most once per ChainRefresh; within that window the
 // last chain header is reused. At prefers the cached window, then
 // GetBlockHeader (same Unimplemented / backoff skip as Latest), then chain
@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"common/logging"
 
 	"golang.org/x/sync/singleflight"
@@ -45,15 +46,14 @@ const (
 	// GetBlockHeader / GetBlockByHeight for that height.
 	AtNegativeTTL = 5 * time.Second
 	// NMUnimplementedReprobe is how long GetBlockHeader is skipped after
-	// Unimplemented. Same as the last 1m→5m→15m step; old dapi is retried
-	// so an upgrade is picked up without a process restart.
-	NMUnimplementedReprobe = 15 * time.Minute
+	// Unimplemented. Same as the last 1m→5m step; old dapi is retried so an
+	// upgrade is picked up without a process restart.
+	NMUnimplementedReprobe = 5 * time.Minute
 	atMissCap              = 128
 )
 
 var nmBackoffSchedule = []time.Duration{
 	time.Minute,
-	5 * time.Minute,
 	NMUnimplementedReprobe,
 }
 
@@ -61,9 +61,10 @@ var nmBackoffSchedule = []time.Duration{
 // nm is GetBlockHeader. chain is GetLatestBlock for Latest() and
 // GetBlockByHeight for At outside the window. HTTP is never used.
 type Oracle struct {
-	tip   blocks.BlockOracle
-	nm    blocks.BlockOracle
-	chain blocks.BlockOracle
+	tip         blocks.BlockOracle
+	nm          blocks.BlockOracle
+	chain       blocks.BlockOracle
+	lightBlocks lightproof.Source
 
 	mu             sync.Mutex
 	nowFn          func() time.Time
@@ -87,8 +88,19 @@ type Oracle struct {
 // New wraps tip (Comet cache), optional nm (GetBlockHeader), and optional
 // chain (GetLatestBlock / GetBlockByHeight). Comet is not served until
 // SetCometConnected(true).
-func New(tip blocks.BlockOracle, nm blocks.BlockOracle, chain blocks.BlockOracle) *Oracle {
-	return &Oracle{tip: tip, nm: nm, chain: chain, nowFn: time.Now}
+func New(tip blocks.BlockOracle, nm blocks.BlockOracle, chain blocks.BlockOracle, opts ...Option) *Oracle {
+	o := &Oracle{tip: tip, nm: nm, chain: chain, nowFn: time.Now}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+type Option func(*Oracle)
+
+// WithDirectLightBlocks adds independent Comet RPC evidence.
+func WithDirectLightBlocks(source lightproof.Source) Option {
+	return func(o *Oracle) { o.lightBlocks = source }
 }
 
 // SetCometConnected reports whether the Comet NewBlock subscription is up.
@@ -215,7 +227,12 @@ func (o *Oracle) tryNM(ctx context.Context, now time.Time) (h *blocks.Header, er
 		return nil, skipErr, true
 	}
 
-	h, err = o.nm.Latest(ctx)
+	attemptCtx, cancel := ctx, func() {}
+	if o.lightBlocks != nil && o.chain != nil {
+		attemptCtx, cancel = boundedPrimaryAttempt(ctx)
+	}
+	h, err = o.nm.Latest(attemptCtx)
+	cancel()
 	o.noteNMOutcome(now, h, err)
 	return h, err, false
 }
@@ -257,7 +274,7 @@ func (o *Oracle) noteNMOutcome(now time.Time, h *blocks.Header, err error) {
 		o.nmNextTry = now.Add(NMUnimplementedReprobe)
 		o.mu.Unlock()
 		if entered {
-			logging.Warn("heightsync: GetBlockHeader unimplemented; retrying every 15m", "heightsync",
+			logging.Warn("heightsync: GetBlockHeader unimplemented; retrying periodically", "heightsync",
 				"retry", NMUnimplementedReprobe.String())
 		}
 		return
@@ -446,11 +463,16 @@ func (o *Oracle) HeaderAtWait(ctx context.Context, height int64, wait time.Durat
 	if !skipNM {
 		var h *blocks.Header
 		var err error
-		if w, ok := o.nm.(blocks.HeaderWaiter); ok && wait > 0 {
-			h, err = w.AtWait(ctx, height, wait)
-		} else {
-			h, err = o.nm.At(ctx, height)
+		attemptCtx, cancel := ctx, func() {}
+		if o.lightBlocks != nil {
+			attemptCtx, cancel = boundedPrimaryAttempt(ctx)
 		}
+		if w, ok := o.nm.(blocks.HeaderWaiter); ok && wait > 0 {
+			h, err = w.AtWait(attemptCtx, height, wait)
+		} else {
+			h, err = o.nm.At(attemptCtx, height)
+		}
+		cancel()
 		logAtTry("get_block_header_wait", height, h, err)
 		if err == nil && usable(h) && h.Height == height {
 			o.noteNMOutcome(now, h, nil)
@@ -462,23 +484,36 @@ func (o *Oracle) HeaderAtWait(ctx context.Context, height int64, wait time.Durat
 		if err == nil || errors.Is(err, blocks.ErrHeaderNotFound) {
 			return blocks.DummyHeader(height), nil
 		}
-		if !permanentNMSkip(err) && !nmTransportStatus(err) {
+		if !permanentNMSkip(err) && !nmTransportStatus(err) && !errors.Is(err, context.DeadlineExceeded) {
 			return nil, err
 		}
 		o.noteNMOutcome(now, nil, err)
 	}
-	if o.chain == nil {
-		return blocks.DummyHeader(height), nil
+	var chainErr error
+	if o.chain != nil {
+		attemptCtx, cancel := ctx, func() {}
+		if o.lightBlocks != nil {
+			attemptCtx, cancel = boundedPrimaryAttempt(ctx)
+		}
+		h, err := o.chain.At(attemptCtx, height)
+		cancel()
+		logAtTry("get_block_by_height", height, h, err)
+		if err == nil && usable(h) && h.Height == height {
+			return cloneHeader(h), nil
+		}
+		chainErr = err
 	}
-	h, err := o.chain.At(ctx, height)
-	logAtTry("get_block_by_height", height, h, err)
-	if err != nil {
-		return nil, err
+	if o.lightBlocks != nil {
+		h, err := o.directLightHeader(ctx, height)
+		if err == nil {
+			return h, nil
+		}
+		return nil, errors.Join(chainErr, err)
 	}
-	if !usable(h) || h.Height != height {
-		return blocks.DummyHeader(height), nil
+	if chainErr != nil {
+		return nil, chainErr
 	}
-	return cloneHeader(h), nil
+	return blocks.DummyHeader(height), nil
 }
 
 func (o *Oracle) atFetch(ctx context.Context, height int64, now time.Time) (*blocks.Header, error) {

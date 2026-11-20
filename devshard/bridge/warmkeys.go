@@ -215,6 +215,8 @@ type WarmKeyLogCopy struct {
 	mu       sync.Mutex
 	granters map[string]*granterLog
 	loading  map[string]chan struct{}
+	resetID  uint64
+	feed     warmKeyFeed
 }
 
 type granterLog struct {
@@ -223,6 +225,7 @@ type granterLog struct {
 	// confirmedHeight comes only from a full chain query's response header.
 	// Events and individual entry fetches never raise this completeness bound.
 	confirmedHeight int64
+	confirmed       map[uint64]WarmKeyEntry
 	// attemptedAt is the start of the last reload, successful or not, so a
 	// failing chain does not turn misses into a reload per request.
 	attemptedAt time.Time
@@ -302,7 +305,10 @@ func (c *WarmKeyLogCopy) Apply(e WarmKeyEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if g := c.granters[e.Granter]; g != nil {
-		g.apply(e)
+		height := max(e.GrantedAtHeight, e.RevokedAtHeight)
+		if g.confirmedHeight == 0 || height > g.confirmedHeight {
+			g.apply(e)
+		}
 	}
 }
 
@@ -329,6 +335,12 @@ func (c *WarmKeyLogCopy) NoteMiss(granter string) {
 func (c *WarmKeyLogCopy) Reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.resetLocked()
+}
+
+func (c *WarmKeyLogCopy) resetLocked() {
+	c.resetID++
+	c.feed = warmKeyFeed{}
 	for _, g := range c.granters {
 		g.complete = false
 	}
@@ -440,6 +452,7 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 		return nil
 	}
 	done := make(chan struct{})
+	resetID := c.resetID
 	c.loading[granter] = done
 	if !background {
 		g := c.granters[granter]
@@ -472,16 +485,41 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if resetID != c.resetID {
+		return fmt.Errorf("%w: warm-key log reset during read", ErrWarmKeyViewBehind)
+	}
 	g := c.granters[granter]
 	if g == nil {
 		g = &granterLog{entries: make(map[uint64]WarmKeyEntry)}
 		c.granters[granter] = g
 	}
-	for _, e := range entries {
-		g.apply(e)
+	if height > 0 {
+		g.confirmed = make(map[uint64]WarmKeyEntry, len(entries))
+		current := &granterLog{entries: make(map[uint64]WarmKeyEntry, len(entries))}
+		for _, e := range entries {
+			g.confirmed[e.ID] = e
+			current.entries[e.ID] = e
+		}
+		// A full query replaces earlier guesses. Only later changes may
+		// survive in the legacy live view. Historical reads use confirmed
+		// rows plus the independently validated block feed.
+		for _, e := range g.entries {
+			if e.GrantedAtHeight > height {
+				current.apply(e)
+			} else if e.RevokedAtHeight > height {
+				current.apply(WarmKeyEntry{Granter: e.Granter, ID: e.ID, Grantee: e.Grantee,
+					RevokedAtHeight: e.RevokedAtHeight, End: e.End})
+			}
+		}
+		g.entries = current.entries
+		g.confirmedHeight = height
+	} else {
+		for _, e := range entries {
+			g.apply(e)
+		}
+		g.confirmedHeight, g.confirmed = 0, nil
 	}
 	g.complete = true
-	g.confirmedHeight = max(g.confirmedHeight, height)
 	g.loadedAt = c.now()
 	return nil
 }
@@ -490,6 +528,14 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 // copy, so a gateway with many escrows reloads each granter once per refresh
 // window rather than once per escrow.
 var sharedWarmKeyCopies sync.Map // chain.InferenceClient (comparable) -> *WarmKeyLogCopy
+
+// WarmKeyCopyFor returns the gateway cache used by its grant source and event poller.
+func WarmKeyCopyFor(client *chain.Client) *WarmKeyLogCopy {
+	if client == nil {
+		return nil
+	}
+	return sharedWarmKeyCopy(client)
+}
 
 func sharedWarmKeyCopy(client *chain.Client) *WarmKeyLogCopy {
 	if client == nil {

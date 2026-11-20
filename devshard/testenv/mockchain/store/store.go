@@ -258,6 +258,11 @@ func (s *Store) SyncWarmKeyLog() {
 
 // GetWarmKeyLog returns every warm-key log entry of granter in id order.
 func (s *Store) GetWarmKeyLog(granter string) []*inferencetypes.WarmKeyLogEntry {
+	entries, _ := s.GetWarmKeyLogWithHeight(granter)
+	return entries
+}
+
+func (s *Store) GetWarmKeyLogWithHeight(granter string) ([]*inferencetypes.WarmKeyLogEntry, int64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	out := make([]*inferencetypes.WarmKeyLogEntry, 0, len(s.WarmKeyLog[granter]))
@@ -265,7 +270,7 @@ func (s *Store) GetWarmKeyLog(granter string) []*inferencetypes.WarmKeyLogEntry 
 		cp := *e
 		out = append(out, &cp)
 	}
-	return out
+	return out, s.BlockHeight
 }
 
 // GetWarmKeyEntry returns warm-key log entry id of granter, or nil.

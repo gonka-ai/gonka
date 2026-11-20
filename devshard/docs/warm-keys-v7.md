@@ -112,11 +112,17 @@ the signature even if the gateway omits `MsgWarmKeyRevoke`. Later revokes and
 expiration do not erase a grant's earlier validity.
 
 The latest append-only log can answer historical questions, but the node must
-have applied at least H. Completeness comes only from a full query response's
-`x-cosmos-block-height` header. Delivered events, individual entry reads and
-cache age do not prove it. Missing headers, lagging nodes and query failures
-pause apply instead of guessing that no revoke exists. A completed view is
-shared across that granter's slots/keys and reused for covered heights.
+have applied at least H. A full granter query establishes a baseline at its
+`x-cosmos-block-height`. Hosts and the gateway can extend that baseline
+through consecutive blocks from their trusted local dAPI's `GetHostEvents`
+stream. A `BLOCK` marker closes all grant and revoke events for that height
+after processing, even when a page ends partway through a block. An unsupported
+feed, a gap or a generation change requires another chain read. A full read
+replaces the baseline at its response height and leaves later feed events
+separate. A single event, an individual entry read or cache age supplies
+no coverage. If the requested height is still unavailable, apply waits for
+a complete view. The gateway uses the authenticated time for bind and revoke
+proposals, including a bind for the first work signed by a newly granted key.
 Derived grant decisions are journaled with the checkpoint for preview and
 rollback, and rebuilt on snapshot recovery; they are not hashed separately.
 

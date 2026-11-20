@@ -15,6 +15,11 @@ type WarmKeyHeightSource interface {
 	WarmKeyEntryAtHeight(granter string, id uint64, height int64) (WarmKeyEntry, bool, error)
 }
 
+// WarmKeyLogHeightSource exposes a complete granter log at a verified height.
+type WarmKeyLogHeightSource interface {
+	WarmKeyLogAtHeight(granter string, height int64) (map[uint64]WarmKeyEntry, error)
+}
+
 var ErrWarmKeyViewBehind = errors.New("warm-key chain view has not reached the verified diff height")
 
 // LiveAtHeight answers a historical fact, including after replacement/revoke
@@ -47,40 +52,49 @@ func CheckWarmKeyAtHeight(src WarmKeyGrantSource, cold, warm string, id uint64, 
 	return e.LiveAtHeight(height, blockTime), nil
 }
 
-// WarmKeyEntryAtHeight uses the latest append-only log, but only after a full
-// response proves the node has applied at least H. This avoids historical
-// store/pruning dependencies without mistaking a lagging node for no revoke.
-// A single granter query is shared by its slots, keys and concurrent callers.
+// WarmKeyEntryAtHeight uses the authoritative granter log and the trusted
+// feed only through height. A later revoke is evaluated against height by
+// the caller.
 func (c *WarmKeyLogCopy) WarmKeyEntryAtHeight(granter string, id uint64, height int64) (WarmKeyEntry, bool, error) {
-	if height <= 0 {
-		return WarmKeyEntry{}, false, ErrWarmKeyViewBehind
+	entries, err := c.WarmKeyLogAtHeight(granter, height)
+	if err != nil {
+		return WarmKeyEntry{}, false, err
 	}
-	read := func() (WarmKeyEntry, bool, bool) {
+	entry, found := entries[id]
+	return entry, found, nil
+}
+
+func (c *WarmKeyLogCopy) WarmKeyLogAtHeight(granter string, height int64) (map[uint64]WarmKeyEntry, error) {
+	if height <= 0 {
+		return nil, ErrWarmKeyViewBehind
+	}
+	read := func() (map[uint64]WarmKeyEntry, bool) {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		g := c.granters[granter]
-		if g == nil || !g.complete || g.confirmedHeight < height {
-			return WarmKeyEntry{}, false, false
+		if !c.coverageLocked(g, height) {
+			return nil, false
 		}
-		e, found := g.entries[id]
-		if found && e.GrantedAtHeight <= 0 {
-			// An end event may arrive before its grant. Even a covered log
-			// height does not make this partial tombstone a complete entry.
-			return WarmKeyEntry{}, false, false
+		entries := c.historicalLocked(granter, g, height)
+		for _, e := range entries {
+			if e.GrantedAtHeight <= 0 {
+				// An end without the original grant is not a complete entry.
+				return nil, false
+			}
 		}
-		return e, found, true
+		return entries, true
 	}
-	if e, found, complete := read(); complete {
-		return e, found, nil
+	if entries, complete := read(); complete {
+		return entries, nil
 	}
 	if _, ok := c.fetch.(WarmKeyHeightFetcher); !ok {
-		return WarmKeyEntry{}, false, ErrWarmKeyViewBehind
+		return nil, ErrWarmKeyViewBehind
 	}
 	if err := c.load(granter, false); err != nil {
-		return WarmKeyEntry{}, false, err
+		return nil, err
 	}
-	if e, found, complete := read(); complete {
-		return e, found, nil
+	if entries, complete := read(); complete {
+		return entries, nil
 	}
-	return WarmKeyEntry{}, false, fmt.Errorf("%w: %s needs height %d", ErrWarmKeyViewBehind, granter, height)
+	return nil, fmt.Errorf("%w: %s needs height %d", ErrWarmKeyViewBehind, granter, height)
 }
