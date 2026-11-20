@@ -22,11 +22,11 @@ GENESIS_OVERRIDES_FILE ?= inference-chain/prod_genesis_overrides.json
 TESTS ?= 0
 TESTS := $(shell if [ "$(TESTS)" = "1" ]; then echo 1; else echo 0; fi)
 
-# wasmvm static library URLs
-WASMVM_VERSION := v2.2.10
-WASMVM_STATIC_DARWIN_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvmstatic_darwin.a
-WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.x86_64.a
-WASMVM_STATIC_LINUX_ARM64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.aarch64.a
+LIBWASMVM_SCRIPT := sh ../scripts/fetch-libwasmvm.sh
+WASMVM_STATIC_DARWIN_URL := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_DARWIN_URL)
+WASMVM_STATIC_LINUX_X64_URL := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_X64_URL)
+WASMVM_STATIC_LINUX_X64_SHA256 := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_X64_SHA256)
+WASMVM_STATIC_LINUX_ARM64_URL := $(shell $(LIBWASMVM_SCRIPT) print LIBWASMVM_AARCH64_URL)
 
 USE_REGISTRY_CACHE ?= 0
 GHCR_CACHE_NAMESPACE ?= gonka-ai
@@ -77,8 +77,24 @@ build:
 download-linux-deps:
 	@echo "--> Downloading static wasmvm library for Linux (x86_64)..."
 	@mkdir -p build/deps
-	@if [ ! -f build/deps/libwasmvm_muslc.x86_64.a ]; then \
-		curl -L -o build/deps/libwasmvm_muslc.x86_64.a $(WASMVM_STATIC_LINUX_X64_URL); \
+	@archive=build/deps/libwasmvm_muslc.x86_64.a; \
+	expected='$(WASMVM_STATIC_LINUX_X64_SHA256)'; \
+	sum_file() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$$1"; else shasum -a 256 "$$1"; fi; }; \
+	if [ -f "$$archive" ]; then \
+		actual=$$(sum_file "$$archive" | awk '{print $$1}'); \
+		if [ "$$actual" != "$$expected" ]; then \
+			echo "Cached $$archive checksum $$actual does not match $$expected; replacing"; \
+			rm -f "$$archive"; \
+		fi; \
+	fi; \
+	if [ ! -f "$$archive" ]; then \
+		curl -fsSL -o "$$archive" '$(WASMVM_STATIC_LINUX_X64_URL)'; \
+		actual=$$(sum_file "$$archive" | awk '{print $$1}'); \
+		if [ "$$actual" != "$$expected" ]; then \
+			rm -f "$$archive"; \
+			echo "Downloaded wasmvm archive checksum $$actual does not match $$expected" >&2; \
+			exit 1; \
+		fi; \
 	fi
 	@ln -sf libwasmvm_muslc.x86_64.a build/deps/libwasmvm_muslc.a
 	@echo "Dependencies downloaded to ./build/deps/"
@@ -99,6 +115,7 @@ define DOCKER_BUILD
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@rm -rf .docker-context/inference-chain/.docker-context
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
+	@mkdir -p .docker-context/scripts && cp ../scripts/fetch-libwasmvm.sh .docker-context/scripts/
 	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
@@ -127,6 +144,7 @@ define DOCKER_BUILD_UPGRADE
 	@cp -r .[^.]* .docker-context/inference-chain/ 2>/dev/null || true
 	@rm -rf .docker-context/inference-chain/.docker-context
 	@mkdir -p .docker-context/cosmovisor && cp -r ../cosmovisor/* .docker-context/cosmovisor/
+	@mkdir -p .docker-context/scripts && cp ../scripts/fetch-libwasmvm.sh .docker-context/scripts/
 	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \

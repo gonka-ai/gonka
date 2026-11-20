@@ -72,6 +72,9 @@ func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2St
 		if !activeEvent.IsInBatchSubmissionWindow(currentBlockHeight, epochParams) {
 			return nil, sdkerrors.Wrap(types.ErrPocTooLate, "confirmation PoC batch submission window closed")
 		}
+		if err := k.CheckConfirmationPoCCommitEligibility(ctx, activeEvent.EpochIndex, addr); err != nil {
+			return nil, err
+		}
 		if err := k.CheckEpochModelCommit(ctx, activeEvent.EpochIndex, addr, msg.Entries); err != nil {
 			return nil, err
 		}

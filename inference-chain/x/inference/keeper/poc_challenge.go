@@ -73,6 +73,23 @@ func (k Keeper) SameEpochChallengeTargets(ctx context.Context, epochIndex uint64
 	return out, nil
 }
 
+// CheckConfirmationPoCCommitEligibility prevents a challenge target from also
+// participating in the ordinary confirmation PoC for the same epoch. Challenge
+// targets have their own generate/validate path and are excluded from CPoC
+// scoring, so admitting an ordinary CPoC commit would only create validator
+// work that cannot affect the target's CPoC result.
+func (k Keeper) CheckConfirmationPoCCommitEligibility(ctx context.Context, epochIndex uint64, participant sdk.AccAddress) error {
+	ch, found, err := k.GetPoCChallenge(ctx, participant.String())
+	if err != nil {
+		return err
+	}
+	if found && ch.EpochIndex == epochIndex {
+		return sdkerrors.Wrapf(types.ErrPoCChallengeCPoCCommit,
+			"participant %s is a challenge target in epoch %d", participant.String(), epochIndex)
+	}
+	return nil
+}
+
 func (k Keeper) ChallengeSafetyFinish(ctx context.Context, ch types.PoCChallenge) (int64, error) {
 	params, err := k.GetParams(ctx)
 	if err != nil {
