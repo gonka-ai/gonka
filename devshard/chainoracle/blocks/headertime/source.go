@@ -215,16 +215,19 @@ func (s *Source) putLocked(height uint64, hash []byte, ms int64) {
 	}
 }
 
-// Latest and LightBlockAt expose evidence for the carried per-diff proof.
-// HeaderTimeMs remains available for historical inference timestamps.
-func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
+func (s *Source) liveTipOracle() blocks.BlockOracle {
 	if s == nil {
-		return nil, blocks.ErrHeaderNotFound
+		return nil
 	}
-	oracle := s.latestOracle
-	if oracle == nil {
-		oracle = s.oracle
+	if s.latestOracle != nil {
+		return s.latestOracle
 	}
+	return s.oracle
+}
+
+// Latest returns the live tip hint for a carried proof.
+func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
+	oracle := s.liveTipOracle()
 	if proofTip, ok := oracle.(interface {
 		LatestForProof(context.Context) (*blocks.Header, error)
 	}); ok {
@@ -234,6 +237,13 @@ func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
 		return nil, blocks.ErrHeaderNotFound
 	}
 	return oracle.Latest(ctx)
+}
+
+func (s *Source) RecentProofTipHeight() int64 {
+	if oracle, ok := s.liveTipOracle().(interface{ RecentProofTipHeight() int64 }); ok {
+		return oracle.RecentProofTipHeight()
+	}
+	return 0
 }
 
 func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {

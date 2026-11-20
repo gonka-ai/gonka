@@ -142,14 +142,19 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if source == nil {
 		return fmt.Errorf("%w: no mainnet height source", types.ErrHeaderPending)
 	}
+	if known, ok := source.(interface{ RecentProofTipHeight() int64 }); ok {
+		if err := checkCheckpointTipLag(cp, known.RecentProofTipHeight()); err != nil {
+			return err
+		}
+	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
 	latest, err := source.Latest(ctx)
 	if err != nil || latest == nil || blocks.IsDummyHeader(latest) {
 		return fmt.Errorf("%w: live mainnet tip unavailable: %v", types.ErrHeaderPending, err)
 	}
-	if latest.Height > cp.Height+MainnetCheckpointMaxLag {
-		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, latest.Height)
+	if err := checkCheckpointTipLag(cp, latest.Height); err != nil {
+		return err
 	}
 	// Live signers also reconcile the carried proof with their own canonical
 	// oracle. This prevents an old escrow anchor being used for a long-range
@@ -157,6 +162,13 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	// remains independent of that mutable source.
 	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
 		return err
+	}
+	return nil
+}
+
+func checkCheckpointTipLag(cp lightproof.Checkpoint, tipHeight int64) error {
+	if tipHeight > cp.Height+MainnetCheckpointMaxLag {
+		return fmt.Errorf("%w: diff height %d trails local tip %d", types.ErrHeaderPending, cp.Height, tipHeight)
 	}
 	return nil
 }
