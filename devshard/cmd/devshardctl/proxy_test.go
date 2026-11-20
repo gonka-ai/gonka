@@ -1562,10 +1562,18 @@ func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
 	divergent.ForceError(errors.New(divergenceUpstreamError))
+	waitForDispatch := func(nonce uint64) {
+		t.Helper()
+		// The winning response can finish while the competing send is pending.
+		require.Eventually(t, func() bool {
+			req := divergent.LastRequest()
+			return req != nil && req.Nonce == nonce
+		}, time.Second, time.Millisecond, "host should be dispatched nonce %d", nonce)
+	}
 
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
-	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	waitForDispatch(1)
 
 	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
@@ -1573,7 +1581,7 @@ func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T
 	divergent.ForceError(nil)
 	var second bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
-	require.EqualValues(t, 3, divergent.LastRequest().Nonce, "the host has to be dispatched to again to prove itself")
+	waitForDispatch(3)
 
 	_, blocked = env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.False(t, blocked, "a host that agreed on the replay must not be written off")
