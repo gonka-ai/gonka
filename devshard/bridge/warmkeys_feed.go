@@ -22,8 +22,10 @@ type warmKeyFeed struct {
 }
 
 // ApplyWarmKeyFeedPage is called after all events on a trusted dAPI page have
-// been dispatched. The first BLOCK only establishes a cursor boundary.
-func (c *WarmKeyLogCopy) ApplyWarmKeyFeedPage(generation uint64, events []WarmKeyFeedEvent) {
+// been dispatched. A request resumed after an explicit BLOCK starts from
+// that height. A replay or start-at-head establishes its boundary from the
+// first BLOCK it sees, which may have been delivered without its earlier events.
+func (c *WarmKeyLogCopy) ApplyWarmKeyFeedPage(generation uint64, afterHeight int64, events []WarmKeyFeedEvent) {
 	if generation == 0 {
 		c.DisconnectWarmKeyFeed()
 		return
@@ -35,6 +37,9 @@ func (c *WarmKeyLogCopy) ApplyWarmKeyFeedPage(generation uint64, events []WarmKe
 			c.resetLocked()
 		}
 		c.feed.generation = generation
+		if afterHeight > 0 {
+			c.feed.first, c.feed.last = afterHeight+1, afterHeight
+		}
 	}
 	for _, e := range events {
 		switch {

@@ -56,7 +56,7 @@ func TestV7FirstWarmReceiptAndBindShareDiffWithOfflineGrantQueries(t *testing.T)
 	for _, grants := range []*bridge.WarmKeyLogCopy{gatewayGrants, hostGrants} {
 		_, err = grants.WarmKeyLogAtHeight(cold.Address(), anchor.Height)
 		require.NoError(t, err)
-		grants.ApplyWarmKeyFeedPage(1, []bridge.WarmKeyFeedEvent{{Height: anchor.Height}})
+		grants.ApplyWarmKeyFeedPage(1, 0, []bridge.WarmKeyFeedEvent{{Height: anchor.Height}})
 	}
 	fetch.closed = true
 
@@ -97,7 +97,7 @@ func TestV7FirstWarmReceiptAndBindShareDiffWithOfflineGrantQueries(t *testing.T)
 		ExpiresAtUnix: atH.Time.Add(time.Second).UnixNano(), // inclusive at the receiver tip, even though wall time has passed it
 	}
 	for _, grants := range []*bridge.WarmKeyLogCopy{gatewayGrants, hostGrants} {
-		grants.ApplyWarmKeyFeedPage(1, []bridge.WarmKeyFeedEvent{{Height: atH.Height, Entry: &entry}, {Height: atH.Height}})
+		grants.ApplyWarmKeyFeedPage(1, 0, []bridge.WarmKeyFeedEvent{{Height: atH.Height, Entry: &entry}, {Height: atH.Height}})
 	}
 
 	// This is the key's first signature. The initial diff predates the grant.
@@ -117,7 +117,7 @@ func TestV7FirstWarmReceiptAndBindShareDiffWithOfflineGrantQueries(t *testing.T)
 	atNext, err := oracle.AdvanceOne()
 	require.NoError(t, err)
 	require.Equal(t, atH.Height+1, atNext.Height)
-	hostGrants.ApplyWarmKeyFeedPage(1, []bridge.WarmKeyFeedEvent{{Height: atNext.Height}})
+	hostGrants.ApplyWarmKeyFeedPage(1, 0, []bridge.WarmKeyFeedEvent{{Height: atNext.Height}})
 	resp, err := receiver.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff}, Nonce: 2})
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.StateSig)

@@ -148,7 +148,7 @@ func TestFullWarmKeyReadReplacesConflictingEventsAndKeepsNewerCoverage(t *testin
 	later := WarmKeyEntry{Granter: "cold", Grantee: "later", ID: 2, GrantedAtHeight: 102}
 	cache.Apply(bad)
 	cache.Apply(later)
-	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 100},
+	cache.ApplyWarmKeyFeedPage(1, 0, []WarmKeyFeedEvent{{Height: 100},
 		{Height: 101, Entry: &bad}, {Height: 101}, {Height: 102, Entry: &later}, {Height: 102}})
 	// Reload independently of the feed, while it has moved ahead of the query.
 	fetch.height = 101
@@ -162,14 +162,14 @@ func TestFullWarmKeyReadReplacesConflictingEventsAndKeepsNewerCoverage(t *testin
 	require.NoError(t, err)
 	require.Equal(t, map[uint64]WarmKeyEntry{1: authoritative, 2: later}, current)
 
-	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 104}})
+	cache.ApplyWarmKeyFeedPage(1, 0, []WarmKeyFeedEvent{{Height: 104}})
 	fetch.height = 104
 	fetch.set("cold", authoritative)
 	_, found, err := cache.WarmKeyEntryAtHeight("cold", 2, 104)
 	require.NoError(t, err)
 	require.False(t, found, "a gap forces a full read and forgets the conflicting feed row")
 
-	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 105}})
+	cache.ApplyWarmKeyFeedPage(1, 0, []WarmKeyFeedEvent{{Height: 105}})
 	live, err := CheckWarmKeyAtHeight(cache, "cold", "actual", 1, 105, at)
 	require.NoError(t, err)
 	require.True(t, live)
@@ -197,7 +197,7 @@ func TestWarmKeyResetInvalidatesAnInFlightFullRead(t *testing.T) {
 	go func() { _, err := cache.WarmKeyLogAtHeight("cold", 100); done <- err }()
 	<-fetch.entered
 	cache.Reset()
-	cache.ApplyWarmKeyFeedPage(2, []WarmKeyFeedEvent{{Height: 100}, {Height: 101}})
+	cache.ApplyWarmKeyFeedPage(2, 0, []WarmKeyFeedEvent{{Height: 100}, {Height: 101}})
 	close(fetch.release)
 	require.ErrorIs(t, <-done, ErrWarmKeyViewBehind)
 }
@@ -212,7 +212,7 @@ func TestWarmKeyCoverageSurvivesJournalCompactionWithQueriesOffline(t *testing.T
 	_, err := cache.WarmKeyLogAtHeight("cold", baseline)
 	require.NoError(t, err)
 	fetch.err = fmt.Errorf("direct grant query disabled")
-	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: baseline}})
+	cache.ApplyWarmKeyFeedPage(1, 0, []WarmKeyFeedEvent{{Height: baseline}})
 
 	at := time.Unix(1200, 456)
 	granted := baseline + 1
@@ -234,7 +234,7 @@ func TestWarmKeyCoverageSurvivesJournalCompactionWithQueriesOffline(t *testing.T
 				Granter: "cold", Grantee: "second", ID: 2, GrantedAtHeight: h,
 			}})
 		}
-		cache.ApplyWarmKeyFeedPage(1, append(page, WarmKeyFeedEvent{Height: h}))
+		cache.ApplyWarmKeyFeedPage(1, 0, append(page, WarmKeyFeedEvent{Height: h}))
 	}
 	for _, tc := range []struct {
 		key    string
@@ -275,9 +275,9 @@ func TestWarmKeyReadFinishingAfterCompactionKeepsOnlyLaterFeedChanges(t *testing
 	go func() { done <- cache.load("cold", false) }()
 	<-delayed.entered
 	newGrant := WarmKeyEntry{Granter: "cold", Grantee: "new", ID: 2, GrantedAtHeight: 101}
-	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 100}, {Height: 101, Entry: &newGrant}, {Height: 101}})
+	cache.ApplyWarmKeyFeedPage(1, 0, []WarmKeyFeedEvent{{Height: 100}, {Height: 101, Entry: &newGrant}, {Height: 101}})
 	for h := int64(102); h <= 101+warmKeyFeedWindow; h++ {
-		cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: h}})
+		cache.ApplyWarmKeyFeedPage(1, 0, []WarmKeyFeedEvent{{Height: h}})
 	}
 	close(delayed.release)
 	require.NoError(t, <-done)

@@ -3,6 +3,7 @@ package hostevents
 import (
 	"context"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -380,12 +381,12 @@ func (p *Poller) Run(ctx context.Context) {
 			continue
 		}
 		failed, ok := p.dispatch(resp.GetEvents())
-		p.offerBlocks(resp.GetEvents())
 		if ok {
-			p.applyWarmCoverage(resp, cursor, requestGeneration)
+			p.applyWarmCoverage(resp, cursor, requestGeneration, after)
 		} else {
 			p.disconnectWarmCoverage()
 		}
+		p.offerBlocks(resp.GetEvents())
 		if !ok && failed.GetSeq() > 0 {
 			seq := failed.GetSeq()
 			if seq != retrySeq {
@@ -530,7 +531,7 @@ func (p *Poller) disconnectWarmCoverage() {
 	}
 }
 
-func (p *Poller) applyWarmCoverage(resp *gen.GetHostEventsResponse, cursor, requestedGeneration uint64) {
+func (p *Poller) applyWarmCoverage(resp *gen.GetHostEventsResponse, cursor, requestedGeneration, after uint64) {
 	if p.Warm == nil || !p.TrustWarmFeed {
 		return
 	}
@@ -573,7 +574,12 @@ func (p *Poller) applyWarmCoverage(resp *gen.GetHostEventsResponse, cursor, requ
 		p.disconnectWarmCoverage()
 		return
 	}
-	p.Warm.ApplyWarmKeyFeedPage(generation, page)
+	var afterHeight int64
+	// Cursor and the start-at-head sentinel do not identify a prior height.
+	if cursor == 0 && after < math.MaxInt64 {
+		afterHeight = int64(after)
+	}
+	p.Warm.ApplyWarmKeyFeedPage(generation, afterHeight, page)
 }
 
 func (p *Poller) noteWarm(resp *gen.GetHostEventsResponse) {
