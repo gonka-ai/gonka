@@ -453,7 +453,7 @@ func (sm *StateMachine) HeightSyncMissingAcks(turnStart uint64) []uint32 {
 func (sm *StateMachine) HeightSyncAckOutstanding(refNonce uint64, slot uint32) bool {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	if sm.turnTracker == nil {
+	if sm.state.Phase != types.PhaseActive || sm.turnTracker == nil {
 		return false
 	}
 	turn, ok := sm.turnTracker.HeartbeatTurn(refNonce)
