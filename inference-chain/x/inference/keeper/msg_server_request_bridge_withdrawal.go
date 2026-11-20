@@ -65,6 +65,10 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current epoch group: %v", err)
 	}
+	signingEpochID, err := k.GetBridgeSigningEpochID(ctx, currentEpochGroup.GroupData.EpochIndex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to select bridge signing epoch: %w", err)
+	}
 
 	// 7. Prepare BLS signature data according to Ethereum bridge format
 	// Get numeric chain ID from metadata's string chain identifier
@@ -93,7 +97,7 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 	gonkaChainIdHash := sha256.Sum256([]byte(gonkaChainID)) // Convert to bytes32
 
 	signingData := blstypes.SigningData{
-		CurrentEpochId: currentEpochGroup.GroupData.EpochIndex,
+		CurrentEpochId: signingEpochID,
 		ChainId:        gonkaChainIdHash[:], // GONKA_CHAIN_ID (32 bytes) - SOURCE chain
 		RequestId:      requestIdHash[:],    // Request ID as bytes32 (32 bytes)
 		Data:           blsData,             // The remaining data fields
@@ -121,13 +125,13 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		"destination_address", msg.DestinationAddress,
 		"destination_bridge_address", msg.DestinationBridgeAddress,
 		"request_id", requestID,
-		"epoch_index", currentEpochGroup.GroupData.EpochIndex,
+		"epoch_index", signingEpochID,
 		"chain_id", chainID,
 	)
 
 	return &types.MsgRequestBridgeWithdrawalResponse{
 		RequestId:    requestID,
-		EpochIndex:   currentEpochGroup.GroupData.EpochIndex,
+		EpochIndex:   signingEpochID,
 		BlsRequestId: requestID, // Use same ID for simplicity
 	}, nil
 }

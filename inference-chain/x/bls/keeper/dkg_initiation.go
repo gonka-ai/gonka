@@ -616,19 +616,8 @@ func (k Keeper) DeleteDealerComplaintsForEpoch(ctx sdk.Context, epochID uint64) 
 // the split take effect immediately after upgrade without a migration
 // step.
 func (k Keeper) GetEpochBLSData(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
-	store := k.storeService.OpenKVStore(ctx)
-	key := types.EpochBLSDataKey(epochID)
-
-	value, err := store.Get(key)
+	epochBLSData, err := k.getEpochBLSDataBase(ctx, epochID)
 	if err != nil {
-		return types.EpochBLSData{}, err
-	}
-	if value == nil {
-		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
-	}
-
-	var epochBLSData types.EpochBLSData
-	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
 		return types.EpochBLSData{}, err
 	}
 
@@ -767,4 +756,24 @@ func rehydrateFromSubKeys(
 		}
 	}
 	return nil
+}
+
+func (k Keeper) getEpochBLSDataBase(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
+	store := k.storeService.OpenKVStore(ctx)
+	key := types.EpochBLSDataKey(epochID)
+
+	value, err := store.Get(key)
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	if value == nil {
+		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
+	}
+
+	var epochBLSData types.EpochBLSData
+	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
+		return types.EpochBLSData{}, err
+	}
+
+	return epochBLSData, nil
 }
