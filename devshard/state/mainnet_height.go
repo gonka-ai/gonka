@@ -151,6 +151,12 @@ func checkCheckpointLag(cp lightproof.Checkpoint, tip *blocks.Header) error {
 }
 
 func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now time.Time) error {
+	return sm.CheckMainnetHeightFreshnessWithTip(ctx, now, nil)
+}
+
+// CheckMainnetHeightFreshnessWithTip can reuse the local tip just read for
+// this request. It still checks newer local progress and the canonical proof.
+func (sm *StateMachine) CheckMainnetHeightFreshnessWithTip(ctx context.Context, now time.Time, latest *blocks.Header) error {
 	sm.mu.RLock()
 	required := types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion)
 	cp := cloneCheckpoint(sm.state.MainnetCheckpoint)
@@ -163,6 +169,9 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if err := checkCheckpointAge(cp, now); err != nil {
 		return err
 	}
+	if source == nil {
+		return fmt.Errorf("%w: no mainnet height source", types.ErrHeaderPending)
+	}
 	if known, ok := source.(interface{ RecentProofTipHeight() int64 }); ok {
 		if err := checkCheckpointTipLag(cp, known.RecentProofTipHeight()); err != nil {
 			return err
@@ -170,9 +179,12 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	}
 	ctx, cancel := context.WithTimeout(ctx, mainnetCheckpointRPCTimeout)
 	defer cancel()
-	latest, err := latestMainnetHeader(ctx, source)
-	if err != nil {
-		return err
+	if latest == nil || latest.Height <= 0 || blocks.IsDummyHeader(latest) {
+		h, err := latestMainnetHeader(ctx, source)
+		if err != nil {
+			return err
+		}
+		latest = h
 	}
 	if err := checkCheckpointLag(cp, latest); err != nil {
 		return err

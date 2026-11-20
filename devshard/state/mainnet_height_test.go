@@ -111,6 +111,9 @@ func TestMainnetHeightLagRejectsBeforeCanonicalLookup(t *testing.T) {
 
 	proofSource.recentTip = sm.MainnetCheckpoint().Height + MainnetCheckpointMaxLag + 1
 	sm.mainnetHeights = proofSource
+	checkpoint := sm.MainnetCheckpoint()
+	earlierTip := blocks.HashOnlyHeader(checkpoint.Height, checkpoint.Time, checkpoint.ChainID, checkpoint.Hash)
+	require.ErrorIs(t, sm.CheckMainnetHeightFreshnessWithTip(t.Context(), time.Now(), earlierTip), types.ErrHeaderPending)
 	for range 40 {
 		require.ErrorIs(t, sm.CheckMainnetHeightFreshness(t.Context(), time.Now()), types.ErrHeaderPending)
 	}

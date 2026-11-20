@@ -3,6 +3,7 @@ package host
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -20,6 +21,20 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+type countingHeightTip struct {
+	*mockoracle.Mock
+	calls atomic.Int64
+}
+
+func (o *countingHeightTip) LatestForProof(ctx context.Context) (*blocks.Header, error) {
+	o.calls.Add(1)
+	return o.Mock.Latest(ctx)
+}
+
+func (o *countingHeightTip) Latest(ctx context.Context) (*blocks.Header, error) {
+	return o.LatestForProof(ctx)
+}
+
 func TestMainnetFreshnessWithholdsSignatureWithoutAbortingReceiptOrRecovery(t *testing.T) {
 	validator := testutil.MustGenerateKey(t)
 	addr, err := blocks.AddressBytes(validator.CompressedPublicKeyBytes())
@@ -32,27 +47,40 @@ func TestMainnetFreshnessWithholdsSignatureWithoutAbortingReceiptOrRecovery(t *t
 	cfg.MainnetAnchorHeight, cfg.MainnetAnchorHash = anchor.Height, bytes.Clone(anchor.BlockHash)
 	hostSigner, user := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
-	newSM := func() *state.StateMachine {
-		sm, err := state.NewStateMachine("escrow-1", cfg, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(), testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 1_000_000), state.WithVersion("v7"), state.WithMainnetHeights(source))
+	newSM := func(heights state.MainnetHeightSource) *state.StateMachine {
+		sm, err := state.NewStateMachine("escrow-1", cfg, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(), testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 1_000_000), state.WithVersion("v7"), state.WithMainnetHeights(heights))
 		require.NoError(t, err)
 		return sm
 	}
-	producer := newSM()
+	producer := newSM(source)
 	tx, err := producer.BuildMainnetHeightTx(context.Background())
 	require.NoError(t, err)
-	for i := 0; i < 4; i++ {
-		_, err = source.AdvanceOne()
-		require.NoError(t, err)
-	}
-	sm := newSM()
-	h, err := NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(source))
-	require.NoError(t, err)
-	// A delayed, authenticated Start still returns its execution receipt/job.
-	// Withholding the state signature must not orphan the queued ConfirmStart.
 	txs := []*types.DevshardTx{tx, testutil.StartTx(1)}
 	root, err := producer.ApplyLocal(1, txs)
 	require.NoError(t, err)
 	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", 1, txs, root)
+
+	observed := &countingHeightTip{Mock: source}
+	freshHost, err := NewHost(newSM(observed), hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(observed))
+	require.NoError(t, err)
+	request := HostRequest{Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload()}
+	for i := range 2 {
+		fresh, err := freshHost.HandleRequest(t.Context(), request)
+		require.NoError(t, err)
+		require.NotEmpty(t, fresh.StateSig)
+		require.NotEmpty(t, fresh.Receipt)
+		require.Equal(t, int64(i+1), observed.calls.Load(), "each request fetches a tip once")
+	}
+
+	for i := 0; i < 4; i++ {
+		_, err = source.AdvanceOne()
+		require.NoError(t, err)
+	}
+	sm := newSM(source)
+	h, err := NewHost(sm, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(source))
+	require.NoError(t, err)
+	// A delayed, authenticated Start still returns its execution receipt/job.
+	// Withholding the state signature must not orphan the queued ConfirmStart.
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload()})
 	require.NoError(t, err)
 	require.Empty(t, resp.StateSig)

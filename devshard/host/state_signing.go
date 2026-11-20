@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"common/chainoracle/blocks"
 	"devshard/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -27,10 +28,28 @@ func (h *Host) stateSigningSlots(nonce uint64) []uint32 {
 	return slots
 }
 
+type mainnetTipObservation struct {
+	header           *blocks.Header
+	receivedAt       time.Time
+	checkpointHeight int64
+	checkpointHash   []byte
+}
+
+func (h *Host) reusableMainnetTip(observation mainnetTipObservation, now time.Time) *blocks.Header {
+	if observation.header == nil || now.Sub(observation.receivedAt) > time.Second {
+		return nil
+	}
+	cp := h.sm.MainnetCheckpoint()
+	if cp.Height != observation.checkpointHeight || !bytes.Equal(cp.Hash, observation.checkpointHash) {
+		return nil
+	}
+	return observation.header
+}
+
 // signState selects ordinary state signing or attestation of a durable final
 // state. The two operations use the same wire signature but separate policies.
 // Caller holds h.mu, so the final identity cannot change while signing.
-func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
+func (h *Host) signState(nonce uint64, root []byte, observations ...mainnetTipObservation) ([]byte, []uint32, error) {
 	content := &types.StateSignatureContent{StateRoot: root, EscrowId: h.escrowID, Nonce: nonce}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -44,7 +63,12 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, []uint32, error) {
 	if len(slots) == 0 {
 		return nil, nil, types.ErrWarmKeyUnconfirmed
 	}
-	if err := h.sm.CheckMainnetHeightFreshness(ctx, time.Now()); err != nil {
+	now := time.Now()
+	var tip *blocks.Header
+	if len(observations) > 0 {
+		tip = h.reusableMainnetTip(observations[0], now)
+	}
+	if err := h.sm.CheckMainnetHeightFreshnessWithTip(ctx, now, tip); err != nil {
 		return nil, nil, err
 	}
 	return h.signStateContent(content, slots)
