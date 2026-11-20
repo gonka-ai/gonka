@@ -88,6 +88,7 @@ func (am AppModule) resolveBootstrapPenaltyModes(
 	return ResolveBootstrapPenaltyModes(
 		participants,
 		previousRootMembers(previous),
+		previousWeights(previous),
 		inputs.ReportByModel,
 		inputs.Delegations,
 		inputs.Intents,
@@ -106,9 +107,17 @@ func previousRootMembers(previous *previousConfirmedWeights) map[string]bool {
 	return members
 }
 
+func previousWeights(previous *previousConfirmedWeights) map[string]int64 {
+	if previous == nil {
+		return nil
+	}
+	return previous.weights
+}
+
 func ResolveBootstrapPenaltyModes(
 	participants []*types.ActiveParticipant,
 	previousRoot map[string]bool,
+	previousWeights map[string]int64,
 	reportByModel map[string]*types.BootstrapModelPreEligibility,
 	delegations map[string]map[string]string,
 	intents map[string]map[string]bool,
@@ -119,6 +128,18 @@ func ResolveBootstrapPenaltyModes(
 		modelIDs = append(modelIDs, modelID)
 	}
 	slices.Sort(modelIDs)
+
+	participating := make(map[string]bool, len(participants)+len(previousWeights))
+	for addr, weight := range previousWeights {
+		if weight > 0 {
+			participating[addr] = true
+		}
+	}
+	for _, participant := range participants {
+		if participant != nil {
+			participating[participant.Index] = true
+		}
+	}
 
 	modes := make(map[string]map[string]BootstrapPenaltyMode, len(modelIDs))
 	for _, modelID := range modelIDs {
@@ -144,7 +165,7 @@ func ResolveBootstrapPenaltyModes(
 			switch {
 			case modelCommitters[addr]:
 				modelModes[addr] = BootstrapPenaltyDirect
-			case modelDelegations != nil && modelDelegations[addr] != "":
+			case modelDelegations != nil && isValidBootstrapDelegateTarget(modelDelegations[addr], modelCommitters, participating):
 				modelModes[addr] = BootstrapPenaltyDelegate
 			case modelIntents != nil && modelIntents[addr]:
 				modelModes[addr] = BootstrapPenaltyIntentMissed
@@ -157,6 +178,10 @@ func ResolveBootstrapPenaltyModes(
 	}
 
 	return modes
+}
+
+func isValidBootstrapDelegateTarget(target string, modelCommitters map[string]bool, participating map[string]bool) bool {
+	return target != "" && modelCommitters[target] && participating[target]
 }
 
 // AccumulateBootstrapPenalties adds penalty fractions for non-eligible bootstrap
