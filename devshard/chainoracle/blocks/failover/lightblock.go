@@ -43,9 +43,9 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	preferDirect := now.Before(o.preferDirectProofUntil)
 	o.mu.Unlock()
 	if preferDirect {
-		return withAlternative(ctx, attempt(direct), attempt(nm), nil)
+		return withAlternative(ctx, primaryAttemptBudget(ctx), attempt(direct), attempt(nm), nil)
 	}
-	return withAlternative(ctx, attempt(nm), attempt(direct), func() {
+	return withAlternative(ctx, primaryAttemptBudget(ctx), attempt(nm), attempt(direct), func() {
 		// Spend at most one primary delay on an unavailable dAPI during a
 		// sequence of bootstrap or validator-transition reads.
 		o.mu.Lock()
@@ -54,11 +54,11 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	})
 }
 
-// LatestForProof keeps a live Comet cache first. If the ordinary path is
-// waiting on dAPI, its tip is only a hint and the chain path can also supply
-// the height. Ordinary Latest retains its original behavior.
+// LatestForProof keeps a live Comet cache first. Without it, give dAPI
+// a bounded opportunity to report the tip, then ask chain gRPC directly.
+// A cached chain response can understate the tip during that transition.
 func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
-	if o == nil || o.lightBlocks == nil || o.chain == nil {
+	if o == nil || o.chain == nil {
 		return o.Latest(ctx)
 	}
 	now := o.now()
@@ -71,14 +71,18 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 			return h, nil
 		}
 	}
-	latest, err := withAlternative(ctx, func(ctx context.Context) (*blocks.Header, error) {
+	budget := 2 * time.Second
+	if deadline, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(deadline)/2)
+	}
+	latest, err := withAlternative(ctx, budget, func(ctx context.Context) (*blocks.Header, error) {
 		h, err, _ := o.tryNM(ctx, now)
 		if err == nil && !usable(h) {
 			err = blocks.ErrHeaderNotFound
 		}
 		return h, err
 	}, func(ctx context.Context) (*blocks.Header, error) {
-		return o.tryChain(ctx, now)
+		return o.queryChainTip(ctx, o.now())
 	}, nil)
 	o.noteLatest(latest, err == nil)
 	return latest, err
@@ -122,7 +126,7 @@ func primaryAttemptBudget(ctx context.Context) time.Duration {
 // withAlternative starts an independent source after a short delay or an
 // explicit error. A slow primary retains the caller's deadline if the
 // secondary cannot answer. The caller must authenticate the selected value.
-func withAlternative[T any](ctx context.Context, primary, secondary func(context.Context) (T, error), onFallback func()) (T, error) {
+func withAlternative[T any](ctx context.Context, headStart time.Duration, primary, secondary func(context.Context) (T, error), onFallback func()) (T, error) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type result struct {
@@ -138,7 +142,7 @@ func withAlternative[T any](ctx context.Context, primary, secondary func(context
 		return done
 	}
 	first := start(primary)
-	timer := time.NewTimer(primaryAttemptBudget(ctx))
+	timer := time.NewTimer(headStart)
 	defer timer.Stop()
 	var zero T
 	var failures []error

@@ -21,8 +21,10 @@ self-signed replacement set establishes no authority.
 The verified checkpoint (height, block hash, next validator hash, block time
 and chain ID) is part of the state root, mutation journal and snapshot. Failed
 apply and previews roll it back with the other state. Carried proof bytes use
-the ordinary signed transaction journal and transport, so replay needs no
-current oracle, wall clock or later validator set. Snapshot restore independently
+the ordinary signed transaction journal and transport. Replaying the carried
+checkpoints needs no current oracle, wall clock or later validator set. Full
+session recovery can still need historical header times for height-sync floor
+entries outside the local cache. Snapshot restore independently
 rebuilds an anchor-to-checkpoint proof before trusting its header time or
 validator set; the snapshot cannot replace the original chain-derived anchor.
 This recovery check needs retained bootstrap/transition evidence from the
@@ -32,7 +34,9 @@ can read its authenticated height and time directly from its prelude.
 Freshness is separate live signing policy. A host withholds new state
 signatures if the checkpoint is over two minutes old, over ten seconds in
 the future, over two blocks behind its own tip, or disagrees with its own
-canonical header lookup. The canonical lookup also keeps an old escrow
+canonical header lookup. A cached canonical header can satisfy the lookup.
+On a cache miss, the host can use verified Comet evidence at the checkpoint
+height. The canonical lookup also keeps an old escrow
 anchor from authorizing a long-range fork after its validator keys have left
 the trusting period. These checks do not invalidate already accepted history.
 A fresh local canonical header is required for new signatures, while replay

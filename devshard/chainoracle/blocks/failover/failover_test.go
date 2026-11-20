@@ -759,3 +759,58 @@ func TestLightBlockProofCanUseSlowDAPIForMultipleHeights(t *testing.T) {
 		require.Equal(t, []byte{byte(height)}, raw)
 	}
 }
+
+type delayedTipOracle struct {
+	*recOracle
+	delay time.Duration
+}
+
+func (o delayedTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	timer := time.NewTimer(o.delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return o.recOracle.Latest(ctx)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestProofTipWaitsForSlowDAPIAndAvoidsStaleChainCache(t *testing.T) {
+	fresh := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	stale := blocks.HashOnlyHeader(100, fresh.Time, fresh.ChainID, []byte{100})
+	directProof := delayedProofSource{recOracle: &recOracle{err: blocks.ErrProveNotImplemented}}
+	t.Run("dAPI reports the newer tip within its budget", func(t *testing.T) {
+		chain := &recOracle{hdr: stale}
+		dapi := delayedTipOracle{&recOracle{hdr: fresh}, 1200 * time.Millisecond}
+		o := failover.New(nil, dapi, chain)
+		got, err := o.LatestForProof(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Zero(t, chain.calls.Load())
+	})
+	t.Run("a refused direct query leaves the slower dAPI running", func(t *testing.T) {
+		chain := &recOracle{err: status.Error(codes.Unavailable, "direct chain down")}
+		dapi := delayedTipOracle{&recOracle{hdr: fresh}, 2150 * time.Millisecond}
+		o := failover.New(nil, dapi, chain)
+		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+		defer cancel()
+		got, err := o.LatestForProof(ctx)
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Equal(t, int64(1), chain.calls.Load())
+	})
+	t.Run("dAPI failure falls back to a new chain response", func(t *testing.T) {
+		chain := &recOracle{hdr: stale}
+		dapi := &recOracle{err: status.Error(codes.Unavailable, "dAPI down")}
+		o := failover.New(nil, dapi, chain, failover.WithDirectLightBlocks(directProof))
+		got, err := o.Latest(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, stale.Height, got.Height)
+		chain.hdr = fresh
+		got, err = o.LatestForProof(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Equal(t, int64(2), chain.calls.Load())
+	})
+}
