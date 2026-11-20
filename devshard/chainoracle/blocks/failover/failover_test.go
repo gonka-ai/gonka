@@ -962,3 +962,17 @@ func TestHeightSyncProofTipShortDeadlineDoesNotQuarantineDAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dapi.hdr.Height, tip.Height)
 }
+
+func TestLegacyTipDeadlineStillAllowsNextCallToReachChain(t *testing.T) {
+	dapi := &recoveringTipOracle{recOracle: &recOracle{hdr: nmHdr()}}
+	chain := delayedTipOracle{&recOracle{hdr: chainHdr()}, time.Millisecond}
+	o := failover.New(nil, dapi, chain)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	_, err := o.Latest(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	tip, err := o.Latest(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(1), dapi.started.Load(), "legacy backoff leaves budget for chain RPC on the next call")
+}

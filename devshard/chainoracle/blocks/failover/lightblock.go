@@ -68,14 +68,18 @@ func (o *Oracle) LatestForProof(ctx context.Context) (*blocks.Header, error) {
 // LatestForProofObservation also returns the originating observation's
 // freshness deadline. A request reusing the tip must honor this deadline.
 func (o *Oracle) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
-	h, until, err := o.readProofObservation(ctx)
+	return o.latestForProofObservation(ctx, nmProofRead)
+}
+
+func (o *Oracle) latestForProofObservation(ctx context.Context, mode nmReadMode) (*blocks.Header, time.Time, error) {
+	h, until, err := o.readProofObservation(ctx, mode)
 	if err == nil {
 		o.rememberRequestObservation(ctx, h, until)
 	}
 	return h, until, err
 }
 
-func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
+func (o *Oracle) readProofObservation(ctx context.Context, mode nmReadMode) (*blocks.Header, time.Time, error) {
 	if o == nil {
 		return nil, time.Time{}, blocks.ErrHeaderNotFound
 	}
@@ -102,11 +106,11 @@ func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time
 	}
 	var validUntil time.Time
 	if o.chain == nil {
-		h, err, _ := o.tryNM(ctx, now)
+		h, err, _ := o.tryNM(ctx, now, mode)
 		if err == nil {
 			err = o.acceptProofTip(h, &validUntil)
 		}
-		if ctx.Err() == nil {
+		if mode != nmResponseAnchorRead || ctx.Err() == nil {
 			o.noteLatest(h, err == nil)
 		}
 		if err != nil {
@@ -119,7 +123,7 @@ func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time
 		budget = min(budget, time.Until(deadline)/2)
 	}
 	readDAPI := func(ctx context.Context) (*blocks.Header, error) {
-		h, err, _ := o.tryNM(ctx, now)
+		h, err, _ := o.tryNM(ctx, now, mode)
 		if err == nil && !usable(h) {
 			err = blocks.ErrHeaderNotFound
 		}
@@ -131,7 +135,7 @@ func (o *Oracle) readProofObservation(ctx context.Context) (*blocks.Header, time
 		prefer:    newerProofTip,
 	}
 	latest, err := withAlternative(ctx, readDAPI, o.fetchChainTip, policy)
-	if ctx.Err() == nil {
+	if mode != nmResponseAnchorRead || ctx.Err() == nil {
 		o.noteLatest(latest, err == nil)
 	}
 	if err != nil {

@@ -160,20 +160,22 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		}
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
+	var anchoredAcks map[*types.DevshardTx]struct{}
 	if s.heightSync != nil {
 		schedK := s.heightSync.K()
 		schedSlots := s.heightSync.SlotsNum()
 		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
 		h := heightsync.DecideHints{
-			Nonce:              req.Nonce,
-			SessionStart:       req.Nonce == 1,
-			ForceAnchor:        req.ForceHeightSyncAnchor && escrowH == nil,
-			Escrow:             escrowH,
-			OriginatorSenderID: s.host.Signer().Address(),
-			Direction:          "response",
+			Nonce:                   req.Nonce,
+			SessionStart:            req.Nonce == 1,
+			ForceAnchor:             req.ForceHeightSyncAnchor && escrowH == nil,
+			Escrow:                  escrowH,
+			OriginatorSenderID:      s.host.Signer().Address(),
+			Direction:               "response",
+			RefreshLocalResponseTip: usesProof,
 		}
 		sec, dErr, oracleMiss := s.heightSync.Decide(proofContext, h)
-		if usesProof && !responseAnchorCompatibleWithAcks(sec, resp.Mempool) {
+		if usesProof && !responseAnchorCompatibleWithAcks(sec, resp.ResponseAnchorAcks) {
 			// A fresh tip can advance after this response's acknowledgments
 			// were signed. Omit the anchor that would contradict them.
 			sec = nil
@@ -190,11 +192,12 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 		} else if sec != nil {
 			sec.Direction = "response"
 			if s.attachResponseOriginSignature(sec, req.Nonce) {
-				ackTxs := resp.Mempool
-				if !usesProof {
-					ackTxs = s.host.MempoolTxs()
+				if usesProof {
+					anchoredAcks = responseHeightAcks(sec, resp.ResponseAnchorAcks, resp.Mempool, s.host.SlotIDs())
+					s.recordEnvelopeBindingResponse(req.Nonce, sec, resp.ResponseAnchorAcks)
+				} else {
+					s.recordEnvelopeBindingResponse(req.Nonce, sec, s.host.MempoolTxs())
 				}
-				s.recordEnvelopeBindingResponse(req.Nonce, sec, ackTxs)
 				receiptWrapper["height_sync"] = sec
 				if resp.ExecutionJob != nil {
 					if h, hash, ok := heightsync.SectionObserved(sec); ok {
@@ -261,6 +264,9 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	}
 
 	mempoolTxs := s.host.MempoolTxs()
+	if anchoredAcks != nil {
+		mempoolTxs = retainAnchoredResponseAcks(mempoolTxs, anchoredAcks, s.host.SlotIDs())
+	}
 	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
 	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	_ = writeSSEEvent(w, metaWrapper)

@@ -197,7 +197,7 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	}
 
 	var nmErr error
-	if h, err, skipped := o.tryNM(ctx, now); skipped {
+	if h, err, skipped := o.tryNM(ctx, now, nmLegacyRead); skipped {
 		logLatestTry("get_block_header", nil, err)
 	} else if err == nil && usable(h) {
 		o.mu.Lock()
@@ -229,14 +229,24 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	return nil, errors.New("blockoracle/failover: no tip")
 }
 
-func (o *Oracle) tryNM(ctx context.Context, now time.Time) (h *blocks.Header, err error, skipped bool) {
+type nmReadMode uint8
+
+const (
+	nmLegacyRead nmReadMode = iota
+	nmProofRead
+	nmResponseAnchorRead
+)
+
+func (o *Oracle) tryNM(ctx context.Context, now time.Time, mode nmReadMode) (h *blocks.Header, err error, skipped bool) {
 	if blocked, skipErr := o.nmBlocked(now); blocked {
 		return nil, skipErr, true
 	}
 
 	h, err = o.nm.Latest(ctx)
-	// A caller's deadline or cancellation does not establish dAPI health.
-	if ctx.Err() == nil {
+	// Regular reads use the existing backoff. A response anchor's short
+	// deadline should not change health for other callers.
+	ctxErr := ctx.Err()
+	if mode == nmLegacyRead || ctxErr == nil || (mode == nmProofRead && errors.Is(ctxErr, context.DeadlineExceeded)) {
 		o.noteNMOutcome(now, h, err)
 	}
 	return h, err, false
