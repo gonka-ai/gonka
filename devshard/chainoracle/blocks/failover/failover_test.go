@@ -908,13 +908,13 @@ func TestProofTipValidityUsesOriginalWebSocketReceiveTime(t *testing.T) {
 	require.Equal(t, until, freshUntil)
 	require.Zero(t, chain.calls.Load())
 	o.SetCometConnected(false)
-	tip, err = o.Latest(request)
+	tip, err = o.LatestForHeightSync(request)
 	require.NoError(t, err)
 	require.Equal(t, h.Height, tip.Height)
 	require.Zero(t, chain.calls.Load(), "the request can reuse the live observation before its own deadline")
 
 	now = until
-	tip, err = o.Latest(request)
+	tip, err = o.LatestForHeightSync(request)
 	require.NoError(t, err)
 	require.Equal(t, chain.hdr.Height, tip.Height)
 	require.Equal(t, int64(1), chain.calls.Load(), "at the deadline the request must obtain a fresh observation")
@@ -922,4 +922,28 @@ func TestProofTipValidityUsesOriginalWebSocketReceiveTime(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, chain.hdr.Height, tip.Height)
 	require.Equal(t, int64(2), chain.calls.Load())
+}
+
+func TestHeightSyncProofTipRequiresALiveResponseContext(t *testing.T) {
+	first := &recOracle{hdr: nmHdr()}
+	chain := &recOracle{hdr: chainHdr()}
+	o := failover.New(nil, first, chain)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	request := failover.WithRequestProofObservation(ctx)
+	tip, err := o.LatestForProof(request)
+	require.NoError(t, err)
+	require.Equal(t, first.hdr.Height, tip.Height)
+	cancel()
+	_, err = o.LatestForHeightSync(request)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, int64(1), first.calls.Load())
+
+	// Detached repair probes call the ordinary Latest path under the same
+	// context values. They still make a fresh observation.
+	first.hdr = chain.hdr
+	tip, err = o.Latest(context.WithoutCancel(request))
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(2), first.calls.Load())
 }
