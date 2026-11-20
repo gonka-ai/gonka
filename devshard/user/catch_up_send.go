@@ -38,8 +38,12 @@ var errCatchUpClosed = errors.New("session closed")
 // attempt that is canceled stops waiting, but the host keeps being caught up
 // for the next request. Concurrent sends to the same host share it.
 func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64) ([]types.Diff, error) {
+	return s.catchUpForRequest(ctx, hostIdx, target, host.HostRequest{})
+}
+
+func (s *Session) catchUpForRequest(ctx context.Context, hostIdx int, target uint64, req host.HostRequest) ([]types.Diff, error) {
 	s.mu.Lock()
-	diffs, ok, err := s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err := s.inlineCatchUpForRequestLocked(hostIdx, target, req)
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -60,13 +64,13 @@ func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	diffs, ok, err = s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err = s.inlineCatchUpForRequestLocked(hostIdx, target, req)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("host %d is still more than %d diffs behind nonce %d after catch-up (cursor %d)",
-			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
+		return nil, fmt.Errorf("catch-up for host %d cannot fit nonce %d in one request (cursor %d)",
+			hostIdx, target, s.hostSyncNonce[hostIdx])
 	}
 	return diffs, nil
 }
@@ -179,7 +183,7 @@ func (s *Session) sendCatchUpChunk(ctx context.Context, hostIdx int, client Host
 		logging.Info("sendCatchUp chunk resend", "subsystem", "finalize", "escrow", s.escrowID,
 			"host", s.HostLabel(hostIdx), "host_idx", hostIdx,
 			"chunk_first_nonce", chunk[0].Nonce, "chunk_last_nonce", chunkNonce,
-			"attempt", attempt, "storage_busy", transport.IsStorageBusy(err), "error", err)
+			"attempt", attempt, "storage_busy", transport.IsStorageBusy(err), "header_pending", transport.IsHeaderPending(err), "error", err)
 		t := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
@@ -203,7 +207,7 @@ func catchUpChunkRetryable(err error) bool {
 		errors.Is(err, storage.ErrDiffFork) {
 		return false
 	}
-	if transport.IsStorageBusy(err) {
+	if transport.IsStorageBusy(err) || transport.IsHeaderPending(err) {
 		return true
 	}
 	var status *transport.UpstreamStatusError

@@ -12,7 +12,7 @@ ChallengeReceipt also handles the case where the executor is alive but the user 
 
 The user sends MsgStartInference but never delivers the prompt, or sends a prompt that doesn't match the committed prompt_hash.
 
-Verifiers run VerifyPayload before forwarding to the executor. Mismatched prompt_hash, model, input_length, max_tokens, or started_at causes the verifier to reject the timeout. Corrupt payloads never reach vote threshold.
+Verifiers run VerifyPayload before forwarding to the executor. Mismatched prompt_hash, model, input_length, or max_tokens causes the verifier to reject the timeout. Corrupt payloads never reach vote threshold.
 
 If verifiers also lack the payload (user never sent it to anyone), they reject the timeout because VerifyRefusedTimeout requires a valid payload. No payload means no timeout votes.
 
@@ -24,13 +24,15 @@ Timeout requires >voteThreshold signed accept votes. Hosts contact the executor 
 
 After `grace` nonces without inclusion, the executor withholds its state signature. Without 2/3+ signatures the user can't settle. Grace is nonce-based (not time-based) because the user is the sequencer -- wall-clock time would let the user delay requests to game the window.
 
-## StartedAt manipulation
+## Timeout clock manipulation
 
-User sends MsgStartInference with StartedAt=0. Timeout deadlines are computed as nowUnix - base >= timeout. With a past base both deadlines are immediately satisfied.
+Timeouts carry no wall-clock time. MsgStartInference must carry exactly the height-sync floor F at its nonce, and the record keeps that floor (height and block hash) as its start anchor. The executor signs its receipt over the same floor, and the confirm anchor is F at the nonce where the receipt lands. Each anchor also stores the block time of its floor block. A timeout applies only when the block time of F at the timeout's nonce, minus the anchor's block time, is at least the timeout. The auto-seal clock is the latest confirm block time, and its grace is measured the same way.
 
-Refused timeout is safe: ChallengeReceipt delivers data to the executor, the executor produces a receipt, timeout rejected. Execution timeout is vulnerable: the executor just started computing, has no MsgFinishInference in its mempool yet, verifiers see the deadline passed and accept the timeout. User gets a full refund for work already started.
+A block time is taken only from the verifier's own chain view, and only when that block's hash equals the floor hash. A height the chain has not produced, or a hash that is not the canonical block at that height, gives no time: the diff waits (header pending) or is rejected (header mismatch). No block interval is ever substituted. A host that is a block behind waits for its node and retries.
 
-Execution timeout uses confirmed_at as its deadline base instead of started_at. The executor sets confirmed_at to its wall-clock time when signing the ExecutorReceiptContent. The signature covers this value, so the user cannot alter it. VerifyExecutionTimeout computes the deadline from confirmed_at, which the executor controls. Refused timeout still uses started_at because ChallengeReceipt makes it non-exploitable regardless of the base.
+The user cannot back-date an anchor: a start or receipt stamped anywhere but the floor is rejected. A record with no anchor (the escrow's first inferences, before any host stamp) can never time out; settlement refunds it instead of paying it.
+
+F only moves on host-signed claims (finishes and height acks), so the user cannot advance the timeout clock alone. A host that signs a fabricated future height cannot advance it either: the fabricated block has no header on any honest node, so no verifier can read a time for it, and the gateway does not sequence a floor raise its own chain cannot prove.
 
 ## Redundant validations halt devshard
 
@@ -60,3 +62,9 @@ Enforce to use previously used warm key.
 A malicious group member gossips an invalid tx (e.g. MsgFinishInference with a bad signature). OnTxsReceived adds it with ProposedAt=0. HasStaleEntry evaluates 0+grace < currentNonce -- immediately stale. The host withholds its state signature. The invalid tx never gets applied (state machine rejects it), so RemoveIncluded never removes it. The session stalls.
 
 Gossip is restricted to group members (not any external node). A malicious member can already withhold their own signature, so this amplifies the damage -- one bad host causes all others to withhold too.
+
+## Slots withhold the final state signature
+
+Six of the sixteen slots can refuse to sign the final state. Settlement needs eleven signatures, so the escrow stays unsettled. When that epoch is pruned, the whole amount is split equally across the slots.
+
+That payout is a temporary choice while devshard is experimental. It is not the target design. [Unsettled escrow distribution](./unsettled-escrow-distribution.md).

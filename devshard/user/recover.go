@@ -2,6 +2,7 @@ package user
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -93,7 +94,27 @@ func decodeSnapshot(data []byte) (*types.EscrowState, map[int]uint64, map[uint64
 	if blob.State == nil {
 		return nil, nil, nil, nil, nil, errors.New("snapshot state missing")
 	}
+	if err := refuseEarlierProtocolSnapshot(data); err != nil {
+		return nil, nil, nil, nil, nil, err
+	}
 	return blob.State, blob.HostSyncNonce, blob.CommittedEntries, blob.SealedNonces, blob.HeightSyncFloor, nil
+}
+
+// refuseEarlierProtocolSnapshot rejects a snapshot whose state carries the
+// v6 WarmKeys map (one key per slot, bound on first use). json.Unmarshal
+// would drop the field and the session would go on under the v7 rule with
+// its bindings gone; a v6 session belongs to the v6 binary.
+func refuseEarlierProtocolSnapshot(data []byte) error {
+	var probe struct {
+		State map[string]json.RawMessage `json:"state"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return err
+	}
+	if raw, ok := probe.State["WarmKeys"]; ok && len(raw) > 0 && string(raw) != "null" {
+		return types.ErrSnapshotFromEarlierProtocol
+	}
+	return nil
 }
 
 // restoredHostCursor names every host in the group. A host the snapshot does
@@ -208,9 +229,6 @@ func RecoverSession(
 					escrowID, snapNonce, floorErr)
 				floor = nil
 			}
-			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
-				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
-			}
 			// A rejected blob has already advanced the machine, so replay from 1
 			// needs a fresh one. The snapshot root is not compared to the diff
 			// hash: a seal can fold into that nonce after the diff was stored,
@@ -233,9 +251,16 @@ func RecoverSession(
 				sess = freshSess
 				return nil
 			}
-			if commitErr := sm.RestoreCommittedEntries(committedEntries); commitErr != nil {
-				log.Printf("recover_session escrow=%s snapshot_nonce=%d committed_entries_rejected=%v (replaying from 1)",
-					escrowID, snapNonce, commitErr)
+			restoreErr := sm.RestoreStateWithFloor(snapState, floor)
+			if restoreErr == nil {
+				restoreErr = sm.RestoreCommittedEntries(committedEntries)
+			}
+			if restoreErr != nil {
+				// Snapshot bootstrap can need an unavailable historical oracle.
+				// A complete journal authenticates its carried proofs offline;
+				// replay from a fresh machine rather than trusting the snapshot.
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d snapshot_rejected=%v (replaying from 1)",
+					escrowID, snapNonce, restoreErr)
 				if recErr := recreate(); recErr != nil {
 					return nil, nil, recErr
 				}
@@ -314,8 +339,12 @@ func RecoverSession(
 	var replayed int
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
-			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+			var root []byte
+			applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
+				var err error
+				root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+				return err
+			})
 			if applyErr != nil {
 				if errors.Is(applyErr, types.ErrInvalidNonce) {
 					return fmt.Errorf("%w: replay nonce %d: %w",

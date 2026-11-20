@@ -31,17 +31,34 @@ is_true() {
 	esac
 }
 
-is_three_part() {
-	[[ ${1:-} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+# Host version is vX.Y.Z or vX.Y.Z-rcN. N is a positive integer with no leading zero
+# (rc1, rc2, rc10). -rcN means release candidate N.
+host_version_re='v[0-9]+\.[0-9]+\.[0-9]+(-rc[1-9][0-9]*)?'
+
+is_host_version() {
+	[[ ${1:-} =~ ^${host_version_re}$ ]]
 }
 
+# Peel a valid -rcN, then drop trailing .0 components (v6.0.0-rc1 -> v6).
 strip_trailing_zeros() {
 	local v=$1
+	if [[ $v =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)-rc[1-9][0-9]*$ ]]; then
+		v=${BASH_REMATCH[1]}
+	fi
 	[[ $v =~ ^v[0-9]+(\.[0-9]+)*$ ]] || die "cannot strip version $v"
 	while [[ $v =~ ^(.+)\.0$ ]]; do
 		v=${BASH_REMATCH[1]}
 	done
 	printf '%s' "$v"
+}
+
+release_body_line() {
+	local version=$1 protocol=$2 binary=$3
+	local line="devshardd ${version} protocol ${protocol} binary stamp ${binary}"
+	if [[ $binary =~ -rc([1-9][0-9]*)$ ]]; then
+		line="${line} release candidate ${BASH_REMATCH[1]}"
+	fi
+	printf '%s' "$line"
 }
 
 major_version() {
@@ -64,7 +81,7 @@ emit_bool() {
 emit_host_fields() {
 	local binary=$1
 	local version protocol
-	is_three_part "$binary" || die "DEVSHARD_BINARY_VERSION must be vX.Y.Z, got ${binary:-<empty>}"
+	is_host_version "$binary" || die "DEVSHARD_BINARY_VERSION must be vX.Y.Z or vX.Y.Z-rcN, got ${binary:-<empty>}"
 	version=$(strip_trailing_zeros "$binary")
 	protocol=$(major_version "$binary")
 	emit build_devshardd true
@@ -74,7 +91,7 @@ emit_host_fields() {
 	emit make_devshard_version "$protocol"
 	emit release_name "Devshard Release $binary"
 	emit release_tag "devshard/$binary"
-	emit release_body_line "devshardd $version protocol $protocol binary stamp $binary"
+	emit release_body_line "$(release_body_line "$version" "$protocol" "$binary")"
 }
 
 emit_chain_false() {
@@ -96,17 +113,16 @@ emit_host_false() {
 	emit release_body_line ""
 }
 
-# Prints leftover vX.Y.Z with no trailing newline. Returns 1 if REF is not a host tag.
+# Prints leftover vX.Y.Z or vX.Y.Z-rcN with no trailing newline.
+# Returns 1 if REF is not a host tag.
 leftover_from_ref() {
-	local ref_name=$1 leftover=""
-	if [[ $ref_name =~ ^release/devshard/(.*)$ ]]; then
-		leftover=${BASH_REMATCH[1]}
-		is_three_part "$leftover" || return 1
-		printf '%s' "$leftover"
+	local ref_name=$1
+	if [[ $ref_name =~ ^release/devshard/(${host_version_re})$ ]]; then
+		printf '%s' "${BASH_REMATCH[1]}"
 		return 0
 	fi
 	if [[ $ref_name == *-devshard-* ]]; then
-		if [[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(.*)-devshard-(v[0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+		if [[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+(.*)-devshard-(${host_version_re})$ ]]; then
 			printf '%s' "${BASH_REMATCH[2]}"
 			return 0
 		fi
@@ -161,12 +177,15 @@ docker_tag_cmd() {
 	leftover=$(leftover_from_ref "$ref_name") || die "docker-tag requires a chain-shaped host tag, got $ref_name"
 	prefix=${ref_name#release/}
 	local suffix="-devshard-${leftover}"
-	[[ $prefix == *"$suffix" ]] || die "docker-tag requires release/vX.Y.Z-devshard-vA.B.C, got $ref_name"
+	[[ $prefix == *"$suffix" ]] || die "docker-tag requires release/vX.Y.Z-devshard-vA.B.C[-rcN], got $ref_name"
 	chain=${prefix%"$suffix"}
 	[[ $chain == v* ]] || die "docker-tag chain version must start with v, got $chain from $ref_name"
-	[[ $chain != "$prefix" ]] || die "docker-tag requires release/vX.Y.Z-devshard-vA.B.C, got $ref_name"
+	[[ $chain != "$prefix" ]] || die "docker-tag requires release/vX.Y.Z-devshard-vA.B.C[-rcN], got $ref_name"
 	leftover_major=$(major_version "$leftover")
 	image_tag=${chain#v}-devshard-${leftover_major}
+	if [[ $leftover =~ -rc([1-9][0-9]*)$ ]]; then
+		image_tag="${image_tag}-rc${BASH_REMATCH[1]}"
+	fi
 	version=$(strip_trailing_zeros "$leftover")
 	protocol=$(major_version "$leftover")
 	emit leftover "$leftover"
@@ -175,7 +194,7 @@ docker_tag_cmd() {
 	emit image_tag "$image_tag"
 	emit release_name "Devshard Release $leftover"
 	emit release_tag "devshard/$leftover"
-	emit release_body_line "devshardd $version protocol $protocol binary stamp $leftover"
+	emit release_body_line "$(release_body_line "$version" "$protocol" "$leftover")"
 	emit image_versiond "${registry}/${owner}/versiond:${image_tag}"
 	emit image_versiond_router "${registry}/${owner}/versiond-router:${image_tag}"
 	emit image_proxy "${registry}/${owner}/proxy:${image_tag}"
@@ -210,7 +229,7 @@ classify_tag() {
 		return
 	fi
 	if [[ $ref_name =~ ^release/devshard/ ]] || [[ $ref_name == *-devshard-* ]]; then
-		die "host leftover must be vX.Y.Z, got invalid tag $ref_name"
+		die "host leftover must be vX.Y.Z or vX.Y.Z-rcN, got invalid tag $ref_name"
 	fi
 	if [[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
 		[[ $ref_name =~ ^release/v[0-9]+\.[0-9]+\.[0-9]+-.+$ ]]; then
@@ -319,7 +338,7 @@ classify_dispatch() {
 		[[ -n "$devshard_version" ]] || die "DEVSHARD_VERSION is required when building devshardd"
 		[[ -n "$devshard_protocol_version" ]] || die "DEVSHARD_PROTOCOL_VERSION is required when building devshardd"
 		[[ -n "$devshard_binary_version" ]] || die "DEVSHARD_BINARY_VERSION is required when building devshardd"
-		is_three_part "$devshard_binary_version" || die "DEVSHARD_BINARY_VERSION must be vX.Y.Z, got $devshard_binary_version"
+		is_host_version "$devshard_binary_version" || die "DEVSHARD_BINARY_VERSION must be vX.Y.Z or vX.Y.Z-rcN, got $devshard_binary_version"
 		emit build_devshardd true
 		emit devshard_binary_version "$devshard_binary_version"
 		emit devshard_version "$devshard_version"
@@ -327,7 +346,7 @@ classify_dispatch() {
 		emit make_devshard_version "$devshard_protocol_version"
 		emit release_name "Devshard Release $devshard_binary_version"
 		emit release_tag "devshard/$devshard_binary_version"
-		emit release_body_line "devshardd $devshard_version protocol $devshard_protocol_version binary stamp $devshard_binary_version"
+		emit release_body_line "$(release_body_line "$devshard_version" "$devshard_protocol_version" "$devshard_binary_version")"
 	else
 		emit_host_false
 	fi

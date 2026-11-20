@@ -3,6 +3,7 @@ package nmclient_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -152,4 +153,45 @@ func TestLookup_TransportErrorIsNotAMiss(t *testing.T) {
 	require.Error(t, err)
 	require.NotErrorIs(t, err, blocks.ErrHeaderNotFound)
 	require.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+type verifyingStub struct{ stubOracle }
+
+func (verifyingStub) Verifying() bool { return true }
+
+func TestLookup_VerificationOutcomesAreNotTransportErrors(t *testing.T) {
+	refused := dialNM(t, &nmServer{oracle: verifyingStub{stubOracle{atErr: fmt.Errorf("%w: forged", blocks.ErrHeaderUnverified)}}})
+	lookup, err := nmclient.New(refused)
+	require.NoError(t, err)
+	_, err = lookup.At(context.Background(), 1)
+	require.ErrorIs(t, err, blocks.ErrHeaderUnverified)
+
+	failing := dialNM(t, &nmServer{oracle: verifyingStub{stubOracle{atErr: errors.New("commit rpc: i/o timeout")}}})
+	lookup, err = nmclient.New(failing)
+	require.NoError(t, err)
+	_, err = lookup.At(context.Background(), 1)
+	require.Equal(t, codes.Internal, status.Code(err), "a verifying dapi's own failure is not Unavailable")
+}
+
+type lightBlockOracle struct {
+	stubOracle
+	raw []byte
+}
+
+func (o lightBlockOracle) LightBlockAt(context.Context, int64) ([]byte, error) { return o.raw, nil }
+
+func TestLookupLightBlockWireAndHashOnlyCompatibility(t *testing.T) {
+	hdr := blocks.HashOnlyHeader(3, time.Unix(9, 0).UTC(), "gonka-test", []byte{3})
+	ctx := context.Background()
+	lookup, err := nmclient.New(dialNM(t, &nmServer{oracle: lightBlockOracle{stubOracle: stubOracle{hdr: hdr}, raw: []byte{1, 2, 3}}}))
+	require.NoError(t, err)
+	raw, err := lookup.LightBlockAt(ctx, 3)
+	require.NoError(t, err)
+	require.Equal(t, []byte{1, 2, 3}, raw)
+	hashOnly, err := nmclient.New(dialNM(t, &nmServer{oracle: stubOracle{hdr: hdr}}))
+	require.NoError(t, err)
+	_, err = hashOnly.At(ctx, 3)
+	require.NoError(t, err)
+	_, err = hashOnly.LightBlockAt(ctx, 3)
+	require.ErrorIs(t, err, blocks.ErrHeaderRPCUnimplemented)
 }

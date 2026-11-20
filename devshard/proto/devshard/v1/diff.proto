@@ -22,6 +22,18 @@ message MsgForceHeightSyncTurn {
   string reason = 5;
 }
 
+// MsgMainnetHeight carries a deterministic, authenticated checkpoint for the
+// entire diff. V7 requires exactly one as its first transaction. Proof blocks
+// link the escrow's consensus-pinned bootstrap hash (or the last checkpoint)
+// to height; each is a tendermint.types.LightBlock protobuf.
+message MsgMainnetHeight {
+  int64 height = 1;
+  repeated bytes light_blocks = 2;
+  // Repeated on same-height diffs for historical consumers; must equal the
+  // authenticated header time, never the sender wall clock.
+  int64 time_unix_nano = 3;
+}
+
 // DevshardTx wraps all tx types in a oneof for deterministic serialization.
 message DevshardTx {
   oneof tx {
@@ -38,9 +50,46 @@ message DevshardTx {
     MsgHeartbeat heartbeat = 10;
     MsgHeightAck height_ack = 11;
     MsgErrorMiss error_miss = 14;
+    MsgWarmKeyBind warm_key_bind = 15;
+    MsgWarmKeyRevoke warm_key_revoke = 16;
+    MsgMainnetHeight mainnet_height = 17;
   }
   // cPoC MsgSkipProbe / CarrySkip claim 12 / 13; reserved so they cannot be reused.
   reserved 12, 13;
+}
+
+// MsgWarmKeyBind binds a warm key to a slot from the diff that carries it.
+// The gateway authors it from its grant source; every host confirms grant_id
+// against the chain's warm-key log: identity matches and the grant was live
+// at the diff's authenticated mainnet height and block time before it counts. The
+// entries of a diff apply before its other transactions, so the key signs
+// for the messages of the same nonce. See docs/warm-keys-v7.md.
+message MsgWarmKeyBind {
+  uint32 slot_id = 1;
+  string address = 2;
+  uint64 grant_id = 3;
+}
+
+// MsgWarmKeyRevoke ends the live binding of address on slot_id whose grant is
+// grant_id, from the diff that carries it. Signatures in earlier diffs keep
+// verifying on replay.
+message MsgWarmKeyRevoke {
+  uint32 slot_id = 1;
+  string address = 2;
+  uint64 grant_id = 3;
+  // Required while the named chain grant is still live. The cold participant
+  // or this bound warm key signs WarmKeyRevokeAuthorization. An ended grant
+  // needs no signature, so the gateway can synchronize on-chain revocations.
+  bytes participant_sig = 4;
+}
+
+// Separate, domain-tagged preimage: consent is scoped to this escrow and exact
+// binding, and cannot be replayed against a later grant or another slot.
+message WarmKeyRevokeAuthorization {
+  string escrow_id = 1;
+  uint32 slot_id = 2;
+  string address = 3;
+  uint64 grant_id = 4;
 }
 
 // MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
@@ -103,9 +152,9 @@ message ExecutorReceiptContent {
   string model = 3;
   uint64 input_length = 4;
   uint64 max_tokens = 5;
-  int64  started_at = 6;
+  reserved 6, 8;
+  reserved "started_at", "confirmed_at";
   string escrow_id = 7;
-  int64  confirmed_at = 8;
   uint64 observed_height = 9;
   bytes  observed_block_hash = 10;
 }

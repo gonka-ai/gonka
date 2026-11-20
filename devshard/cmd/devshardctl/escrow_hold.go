@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	"devshard/types"
-	"devshard/user"
 )
 
 type keyedInFlight struct {
@@ -45,10 +45,6 @@ func escrowHoldReleaseBalance(modelID string, config types.SessionConfig) uint64
 	return escrowMinimumBalance(modelID, config) + escrowHoldReleaseResponses*RequestMaxTokensCap*config.TokenPrice
 }
 
-func escrowHoldPendingWindow(config types.SessionConfig) time.Duration {
-	return time.Duration(config.RefusalTimeout)*time.Second + user.TimeoutBuffer + balanceCheckInterval
-}
-
 type escrowHoldInFlightSummary struct {
 	pendingCount          int
 	pendingCost           uint64
@@ -61,15 +57,18 @@ type escrowHoldInFlightSummary struct {
 	latestPendingDeadline time.Time
 }
 
-func summarizeEscrowHoldInFlight(inferences map[uint64]*types.InferenceRecord, config types.SessionConfig, now time.Time) escrowHoldInFlightSummary {
+func summarizeEscrowHoldInFlight(inferences map[uint64]*types.InferenceRecord, clock timeoutClock, now time.Time) escrowHoldInFlightSummary {
 	var summary escrowHoldInFlightSummary
-	pendingWindow := escrowHoldPendingWindow(config)
-	for _, inference := range inferences {
+	for nonce, inference := range inferences {
 		switch inference.Status {
 		case types.StatusPending:
 			summary.pendingCount++
 			summary.pendingCost += inference.ReservedCost
-			deadline := deadlineFromStamp(inference.StartedAt, now, pendingWindow)
+			remaining, err := clock.TimeoutRemaining(nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+			deadline := now.Add(remaining)
+			if err != nil && !errors.Is(err, types.ErrTimeoutNotArmed) {
+				continue
+			}
 			if !now.Before(deadline) {
 				summary.overduePendingCount++
 				summary.overduePendingCost += inference.ReservedCost
@@ -126,7 +125,7 @@ func (g *Gateway) holdOrReplaceDepletedEscrow(runtime *devshardRuntime, reason s
 		return
 	}
 	state := runtime.proxy.sm.SnapshotState()
-	recoverable := summarizeEscrowHoldInFlight(state.Inferences, state.Config, time.Now()).recoverable(runtime.escrowHasBackgroundWork())
+	recoverable := summarizeEscrowHoldInFlight(state.Inferences, runtime.proxy.sm, time.Now()).recoverable(runtime.escrowHasBackgroundWork())
 	releaseBalance := escrowHoldReleaseBalance(runtime.model, state.Config)
 	if state.Balance+recoverable < releaseBalance || !g.canReplaceEscrowModel(runtime.model) {
 		g.scheduleDepletedEscrowReplacement(runtime.id, runtime.model, reason)
@@ -158,7 +157,7 @@ func (g *Gateway) holdOrReplaceExhaustedEscrow(escrowID, modelID string) {
 
 func (g *Gateway) resolveHeldEscrow(runtime *devshardRuntime, now time.Time) {
 	state := runtime.proxy.sm.SnapshotState()
-	summary := summarizeEscrowHoldInFlight(state.Inferences, state.Config, now)
+	summary := summarizeEscrowHoldInFlight(state.Inferences, runtime.proxy.sm, now)
 	recoverable := summary.recoverable(runtime.escrowHasBackgroundWork())
 	releaseBalance := escrowHoldReleaseBalance(runtime.model, state.Config)
 	switch {

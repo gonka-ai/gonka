@@ -237,10 +237,15 @@ message ListNodeCapacityResponse {
 // GetBlockHeaderRequest looks up a committed header. Height 0 means Latest().
 message GetBlockHeaderRequest {
   int64 height = 1;
+  int64 wait_ms = 2;
+  // Request the signed header and validator set. Hash-only servers may
+  // still answer ordinary lookups, but must not claim to supply a proof.
+  bool include_light_block = 3;
 }
 
 message GetBlockHeaderResponse {
   BlockHeader header = 1;
+  bytes light_block = 2; // CometBFT tendermint.types.LightBlock
 }
 
 // ProveBlockPathRequest is GET /block/:height/prove?path=. Hash-only

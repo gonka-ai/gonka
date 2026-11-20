@@ -1,11 +1,13 @@
 package state
 
 import (
+	"common/chainoracle/blocks/lightproof"
 	"fmt"
 
 	"github.com/gtank/ristretto255"
 
 	"devshard/heightsync"
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -33,7 +35,9 @@ type mutationJournal struct {
 	// leave a stale id behind.
 	owed      journalMap[uint64, struct{}]
 	hostStats journalMap[uint32, *types.HostStats]
-	warmKeys  journalMap[uint32, string]
+	// warmHistory saves a slot's whole binding slice before its first write:
+	// a bind or revoke replaces the slice rather than writing into it.
+	warmHistory journalMap[uint32, []signing.WarmKeyBinding]
 
 	trackerCopied bool
 	floorCopied   bool
@@ -46,13 +50,15 @@ type mutationJournal struct {
 // floor are pointers: observeHeightSyncLocked replaces them with a clone
 // before the first write, so the saved pointer is the pre-state.
 type journalScalars struct {
-	balance       uint64
-	fees          uint64
-	phase         types.SessionPhase
-	finalizeNonce uint64
-	latestNonce   uint64
-	liveEntrySum  ristretto255.Element
-	sealedAcc     []byte
+	balance            uint64
+	fees               uint64
+	phase              types.SessionPhase
+	finalizeNonce      uint64
+	latestNonce        uint64
+	liveEntrySum       ristretto255.Element
+	sealedAcc          []byte
+	mainnetCheckpoint  lightproof.Checkpoint
+	warmHeightValidity map[warmGrantKey]bool
 
 	hsForcedStart         uint64
 	hsForcedEnd           uint64
@@ -73,6 +79,8 @@ type journalScalars struct {
 func (sm *StateMachine) readScalarsLocked() journalScalars {
 	st := sm.state
 	return journalScalars{
+		mainnetCheckpoint:     st.MainnetCheckpoint,
+		warmHeightValidity:    sm.warmHeightValidity,
 		balance:               st.Balance,
 		fees:                  st.Fees,
 		phase:                 st.Phase,
@@ -96,6 +104,8 @@ func (sm *StateMachine) readScalarsLocked() journalScalars {
 
 func (sm *StateMachine) writeScalarsLocked(s journalScalars) {
 	st := sm.state
+	st.MainnetCheckpoint = s.mainnetCheckpoint
+	sm.warmHeightValidity = s.warmHeightValidity
 	st.Balance = s.balance
 	st.Fees = s.fees
 	st.Phase = s.phase
@@ -173,6 +183,49 @@ func (m *journalMap[K, V]) redo(live map[K]V) {
 	}
 }
 
+func (m *journalMap[K, V]) absorb(child journalMap[K, V]) {
+	for k, s := range child.pre {
+		if m.seen(k) {
+			continue
+		}
+		if m.pre == nil {
+			m.pre = make(map[K]journalSlot[V])
+		}
+		m.pre[k] = s
+	}
+}
+
+type savepoint struct {
+	parent, child *mutationJournal
+}
+
+func (sm *StateMachine) beginSavepointLocked() savepoint {
+	sp := savepoint{parent: sm.journal, child: &mutationJournal{pre: sm.readScalarsLocked()}}
+	sm.journal = sp.child
+	return sp
+}
+
+func (sm *StateMachine) rollbackSavepointLocked(sp savepoint) {
+	sm.undoJournalLocked(sp.child)
+	sm.journal = sp.parent
+}
+
+func (sm *StateMachine) releaseSavepointLocked(sp savepoint) {
+	sm.journal = sp.parent
+	p, c := sp.parent, sp.child
+	if p == nil {
+		return
+	}
+	p.inferences.absorb(c.inferences)
+	p.committed.absorb(c.committed)
+	p.sealed.absorb(c.sealed)
+	p.owed.absorb(c.owed)
+	p.hostStats.absorb(c.hostStats)
+	p.warmHistory.absorb(c.warmHistory)
+	p.trackerCopied = p.trackerCopied || c.trackerCopied
+	p.floorCopied = p.floorCopied || c.floorCopied
+}
+
 // beginJournalLocked opens the journal for one apply. Every return after it
 // must go through closeJournalLocked. Caller must hold sm.mu.
 func (sm *StateMachine) beginJournalLocked() (*mutationJournal, error) {
@@ -201,7 +254,7 @@ func (sm *StateMachine) undoJournalLocked(j *mutationJournal) {
 	sm.ensureOwedMapLocked(j.owed.pre)
 	j.owed.undo(sm.owed)
 	j.hostStats.undo(sm.state.HostStats)
-	j.warmKeys.undo(sm.state.WarmKeys)
+	j.warmHistory.undo(sm.state.WarmKeyHistory)
 	sm.writeScalarsLocked(j.pre)
 }
 
@@ -214,7 +267,7 @@ func (sm *StateMachine) detachJournalLocked(j *mutationJournal) {
 	j.sealed.capture(sm.sealedNonces)
 	j.owed.capture(sm.owed)
 	j.hostStats.capture(sm.state.HostStats)
-	j.warmKeys.capture(sm.state.WarmKeys)
+	j.warmHistory.capture(sm.state.WarmKeyHistory)
 	sm.undoJournalLocked(j)
 }
 
@@ -237,7 +290,7 @@ func (sm *StateMachine) installJournalLocked(j *mutationJournal) {
 	sm.ensureOwedMapLocked(j.owed.post)
 	j.owed.redo(sm.owed)
 	j.hostStats.redo(sm.state.HostStats)
-	j.warmKeys.redo(sm.state.WarmKeys)
+	j.warmHistory.redo(sm.state.WarmKeyHistory)
 	sm.writeScalarsLocked(j.post)
 }
 
@@ -312,11 +365,16 @@ func (sm *StateMachine) setSealedNonceLocked(id, nonce uint64) {
 	sm.sealedNonces[id] = nonce
 }
 
-func (sm *StateMachine) setWarmKeyLocked(slot uint32, addr string) {
-	if j := sm.journal; j != nil {
-		j.warmKeys.touch(sm.state.WarmKeys, slot)
+// setWarmHistoryLocked replaces slot's binding slice. Callers build the new
+// slice on a copy, so the journaled pre-value is never written through.
+func (sm *StateMachine) setWarmHistoryLocked(slot uint32, entries []signing.WarmKeyBinding) {
+	if sm.state.WarmKeyHistory == nil {
+		sm.state.WarmKeyHistory = make(signing.WarmKeyHistory)
 	}
-	sm.state.WarmKeys[slot] = addr
+	if j := sm.journal; j != nil {
+		j.warmHistory.touch(sm.state.WarmKeyHistory, slot)
+	}
+	sm.state.WarmKeyHistory[slot] = entries
 }
 
 // journalHeightSyncLocked clones the tracker before Observe writes it, and

@@ -274,9 +274,7 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 		EscrowId:    "escrow-1",
-		ConfirmedAt: resp.ConfirmedAt,
 	}
 	data, err := proto.Marshal(receiptContent)
 	require.NoError(t, err)
@@ -706,7 +704,6 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 		Model:       "llama",
 		InputLength: 0,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -741,7 +738,6 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 		Model:       "llama",
 		InputLength: uint64(len(prompt)),
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -1045,9 +1041,7 @@ func signTestReceipt(t *testing.T, signer *signing.Secp256k1Signer, inferenceID 
 		Model:       rec.Model,
 		InputLength: rec.InputLength,
 		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
 		EscrowId:    "escrow-1",
-		ConfirmedAt: confirmedAt,
 	})
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
@@ -1074,7 +1068,6 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	queued := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: signTestReceipt(t, hosts[1], 1, rec, earlier),
-		ConfirmedAt: earlier,
 	}}}
 	h.mempool.RemoveIncluded([]*types.DevshardTx{findMempoolConfirm(h.MempoolTxs())})
 	h.mempool.Add(MempoolEntry{Tx: queued, ProposedAt: 1})
@@ -1082,13 +1075,11 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	retry, err := h.HandleRequest(context.Background(), req)
 	require.NoError(t, err)
 	require.Equal(t, queued.GetConfirmStart().ExecutorSig, retry.Receipt, "a retry while pending returns the queued receipt")
-	require.Equal(t, earlier, retry.ConfirmedAt)
 	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1), "a retry must not queue a second ConfirmStart")
 
-	challenge, challengeAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
+	challenge, _, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
 	require.NoError(t, err)
 	require.Equal(t, retry.Receipt, challenge, "the challenge path hands out the same receipt")
-	require.Equal(t, earlier, challengeAt)
 	require.Equal(t, 1, countMempoolConfirms(h.MempoolTxs(), 1))
 
 	// The gateway composes the receipt it got back. Its bytes match the queued
@@ -1096,7 +1087,6 @@ func TestHost_RetryWhilePendingReturnsTheQueuedReceipt(t *testing.T) {
 	landed := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId:       1,
 		ExecutorSig:       retry.Receipt,
-		ConfirmedAt:       retry.ConfirmedAt,
 		ObservedHeight:    retry.ObservedHeight,
 		ObservedBlockHash: retry.ObservedBlockHash,
 	}}}
@@ -1122,7 +1112,6 @@ func TestHost_ReceiptIgnoresPeerImportedConfirmStart(t *testing.T) {
 	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1,
 		ExecutorSig: forged,
-		ConfirmedAt: 1,
 	}}})
 
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{startDiff}, Nonce: 1, Payload: defaultPayload()})
@@ -1340,7 +1329,6 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartToMempool(t *testing.T) {
 	confirm := confirmTx.GetConfirmStart()
 	require.Equal(t, uint64(1), confirm.InferenceId)
 	require.Equal(t, receipt, confirm.ExecutorSig)
-	require.Equal(t, confirmedAt, confirm.ConfirmedAt)
 }
 
 func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *testing.T) {
@@ -1383,7 +1371,6 @@ func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *
 	confirm := confirmTx.GetConfirmStart()
 	require.Equal(t, uint64(1), confirm.InferenceId)
 	require.Equal(t, res.receipt, confirm.ExecutorSig)
-	require.Equal(t, res.confirmedAt, confirm.ConfirmedAt)
 
 	close(engine.release)
 	require.Eventually(t, func() bool {
@@ -1657,7 +1644,7 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.
 	require.NoError(t, err)
 
 	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
-	receipt, confirmedAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{startDiff})
+	receipt, _, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{startDiff})
 	require.NoError(t, err)
 	require.NotNil(t, receipt)
 
@@ -1670,7 +1657,6 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.
 	cs := confirmTx.GetConfirmStart()
 	require.Equal(t, uint64(1), cs.InferenceId)
 	require.Equal(t, receipt, cs.ExecutorSig, "queued ConfirmStart must carry the receipt that was returned")
-	require.Equal(t, confirmedAt, cs.ConfirmedAt)
 
 	// A repeat challenge must not stack a second ConfirmStart differing only by
 	// confirmed_at, which the state machine would reject anyway.
@@ -1714,33 +1700,42 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
-	// Apply start + confirm with warm key to populate WarmKeys in state.
+	// Bind the warm key and apply start + confirm with it.
 	nonce := uint64(1)
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(1)})
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(uint32(executorIdx), warmSigner.Address(), 1), testutil.StartTx(1),
+	})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Verify warm key binding exists.
-	warmKeys := sm.WarmKeys()
-	require.Equal(t, warmSigner.Address(), warmKeys[uint32(executorIdx)])
+	require.Equal(t, []string{warmSigner.Address()}, sm.WarmKeyHistory().Live(uint32(executorIdx)))
 
 	// Create Host with warmSigner (not in group as cold key).
 	engine := stub.NewInferenceEngine()
 	h, err := NewHost(sm, warmSigner, engine, "escrow-1", group, nil, WithGrace(10))
 	require.NoError(t, err)
 
-	// Host should have found its slot via WarmKeys check.
+	// Host should have found its slot via the history.
 	require.True(t, h.SlotIDs()[uint32(executorIdx)], "host should own executor slot via warm key")
 	require.Len(t, h.SlotIDs(), 1)
+
+	// Before any bind the grant source alone names the slot.
+	fresh, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
+	h2, err := NewHost(fresh, warmSigner, engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.True(t, h2.SlotIDs()[uint32(executorIdx)], "host should own executor slot via the grant source")
+	require.Empty(t, fresh.WarmKeyHistory(), "slot discovery never binds")
 }
 
 // trackingValidationEngine records Validate calls for test assertions.
@@ -1881,9 +1876,9 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	require.Empty(t, valEngine.getCalls(), "should not validate pending inference")
 
 	// Nonce 2: ConfirmStart (to transition from Pending to Started).
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
@@ -1983,13 +1978,11 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 		}))
 		nonce++
 
-		confirmedAt := int64(2000 + i)
 		execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-queue", inferenceID,
-			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 		confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID,
 			ExecutorSig: execSig,
-			ConfirmedAt: confirmedAt,
 		}}}
 		diffs = append(diffs, testutil.SignDiff(t, user, "escrow-queue", nonce, []*types.DevshardTx{confirmTx}))
 		nonce++
@@ -2390,17 +2383,17 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
 
-	// Create warm key binding via confirm start.
-	// inference 1 % 3 = 1, executor = slot 1.
+	// Bind the warm key for slot 1 and start inference 1 (1 % 3 = 1).
 	nonce := uint64(1)
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.StartTx(1)})
+	bindAndStart := []*types.DevshardTx{testutil.WarmKeyBindTx(1, warmSigner.Address(), 1), testutil.StartTx(1)}
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, bindAndStart)
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	}}}
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff)
@@ -2411,7 +2404,7 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	// Create a fresh SM+host for storage population.
 	sm2, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), state.WithWarmKeyResolver(resolver))
 	require.NoError(t, err)
-	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, bindAndStart)
 	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
 	h2, err := NewHost(sm2, hosts[0], engine, "escrow-1", group, nil,

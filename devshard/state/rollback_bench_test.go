@@ -8,6 +8,7 @@ import (
 	"github.com/gtank/ristretto255"
 
 	"devshard/heightsync"
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -147,7 +148,7 @@ type copyRollback struct {
 	inferences                                map[uint64]*types.InferenceRecord
 	committed                                 map[uint64][]byte
 	hostStats                                 map[uint32]*types.HostStats
-	warmKeys                                  map[uint32]string
+	warmKeys                                  signing.WarmKeyHistory
 	sealedAcc                                 []byte
 	sealedNonces                              map[uint64]uint64
 	turnTracker                               *heightsync.TurnTracker
@@ -161,8 +162,7 @@ func copyRollbackOf(sm *StateMachine) copyRollback {
 		cp := *v
 		hostStats[k] = &cp
 	}
-	warmKeys := make(map[uint32]string, len(st.WarmKeys))
-	maps.Copy(warmKeys, st.WarmKeys)
+	warmKeys := cloneWarmKeyHistory(st.WarmKeyHistory)
 	sealedNonces := make(map[uint64]uint64, len(sm.sealedNonces))
 	maps.Copy(sealedNonces, sm.sealedNonces)
 	return copyRollback{
@@ -194,7 +194,7 @@ func (c copyRollback) restore(sm *StateMachine) {
 	st.Inferences = c.inferences
 	sm.committedEntries = c.committed
 	st.HostStats = c.hostStats
-	st.WarmKeys = c.warmKeys
+	st.WarmKeyHistory = c.warmKeys
 	st.SealedAcc = append([]byte(nil), c.sealedAcc...)
 	sm.sealedNonces = c.sealedNonces
 	sm.turnTracker = c.turnTracker

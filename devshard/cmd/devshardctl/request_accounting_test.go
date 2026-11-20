@@ -54,8 +54,6 @@ func TestHandleRequestAccountingReturnsJoinedInferenceCosts(t *testing.T) {
 			OutputTokens: 50,
 			ReservedCost: 1200,
 			ActualCost:   150,
-			StartedAt:    100,
-			ConfirmedAt:  101,
 		},
 		8: {
 			Status:       types.StatusFinished,
@@ -67,8 +65,6 @@ func TestHandleRequestAccountingReturnsJoinedInferenceCosts(t *testing.T) {
 			OutputTokens: 25,
 			ReservedCost: 1200,
 			ActualCost:   125,
-			StartedAt:    100,
-			ConfirmedAt:  102,
 		},
 	}
 	require.NoError(t, sm.RestoreState(state))
@@ -159,8 +155,6 @@ func TestHandleRequestAccountingResolvesCachedRequestAliasCosts(t *testing.T) {
 			OutputTokens: 50,
 			ReservedCost: 1200,
 			ActualCost:   150,
-			StartedAt:    100,
-			ConfirmedAt:  101,
 		},
 		8: {
 			Status:       types.StatusFinished,
@@ -172,8 +166,6 @@ func TestHandleRequestAccountingResolvesCachedRequestAliasCosts(t *testing.T) {
 			OutputTokens: 25,
 			ReservedCost: 1200,
 			ActualCost:   125,
-			StartedAt:    100,
-			ConfirmedAt:  102,
 		},
 	}
 	require.NoError(t, sm.RestoreState(state))

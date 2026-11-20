@@ -166,7 +166,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -535,7 +535,7 @@ func TestRecoverSession_HeartbeatDrainCatchUpAfterCrashBeforeDispatch(t *testing
 	require.NoError(t, err)
 	require.NotEmpty(t, composed)
 
-	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), seedNonce)
+	confirmNonce, confirmH, ok := firstRaisingFinish(session.Diffs(), seedNonce)
 	require.True(t, ok)
 	require.Equal(t, uint64(150), confirmH)
 	span := heartbeatDiffsAfter(session.Diffs(), seedNonce)
@@ -896,12 +896,19 @@ func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
 	ctx := context.Background()
 
 	session.SeedHeightSync(ctx)
-	for i, client := range seedClients {
+	// Quorum is half the roster. The tail is a sweep SeedHeightSync does not wait for.
+	seeded := 0
+	for _, client := range seedClients {
 		h, hash, ok := client.ObservedStampNow()
-		require.True(t, ok, "slot %d should expose the volatile seed before restart", i)
+		if !ok {
+			continue
+		}
+		seeded++
 		require.Equal(t, uint64(55), h)
 		require.NotEmpty(t, hash)
 	}
+	require.GreaterOrEqual(t, seeded*2, len(seedClients),
+		"seed returns once half the slots expose a volatile anchor")
 	require.Equal(t, uint64(0), session.Nonce())
 	require.Empty(t, session.Diffs())
 	require.Equal(t, uint64(0), session.StateMachine().HeightSyncLatestTurnStart())
@@ -1620,7 +1627,11 @@ func ackNoncesBySlot(rec *heightsync.SyncTurnRecord) map[uint32]uint64 {
 	return out
 }
 
-func TestRecoverSession_WarmKeyDelta(t *testing.T) {
+// Test flow:
+//  1. Bind a warm key through a diff and finish an inference with it; persist both diffs.
+//  2. Recover the session with no grant source at all and assert the replay reaches the same root: the binding is
+//     in the diffs, so nothing has to be looked up.
+func TestRecoverSession_WarmKeyBindReplays(t *testing.T) {
 	store := newTestStore(t)
 	numHosts := 3
 
@@ -1645,58 +1656,35 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	// Inference 1 executor = slot 1%3 = 1 -> hosts[1].
 	executorSlot := uint32(1 % numHosts)
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 
-	// Resolver recognizes warmKey as authorized for the executor's cold key.
-	resolver := func(warm, cold string) (bool, error) {
-		if warm == warmKey.Address() && cold == hosts[executorSlot].Address() {
-			return true, nil
-		}
-		return false, nil
-	}
-
-	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier,
-		state.WithWarmKeyResolver(resolver),
-	)
-
-	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
+	// Nonce 1: bind the executor's warm key, StartInference + ConfirmStart.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	txs1 := []*types.DevshardTx{
+		testutil.WarmKeyBindTx(executorSlot, warmKey.Address(), 1),
 		testutil.StartTx(1),
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: confirmSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: confirmSig,
 		}}},
 	}
 	root1, err := sm.ApplyLocal(1, txs1)
 	require.NoError(t, err)
-
 	diff1 := testutil.SignDiffWithRoot(t, user, "escrow-1", 1, txs1, root1)
-	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
-		Diff: diff1, StateHash: root1,
-	}))
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: diff1, StateHash: root1}))
 
-	// Nonce 2: FinishInference signed by warmKey. The resolver resolves during
-	// ApplyLocal, caching the warm key in state. Capture delta.
-	warmBefore := sm.WarmKeys()
+	// Nonce 2: FinishInference signed by warmKey.
 	finishMsg := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
 		InputTokens: 10, OutputTokens: 20, ExecutorSlot: executorSlot, EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, warmKey, finishMsg)
-
 	txs2 := []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}}}
 	root2, err := sm.ApplyLocal(2, txs2)
 	require.NoError(t, err)
-	warmAfter := sm.WarmKeys()
-	delta := types.ComputeWarmKeyDelta(warmBefore, warmAfter)
-	require.NotNil(t, delta, "warm key delta must be non-nil after resolver resolves")
-
 	diff2 := testutil.SignDiffWithRoot(t, user, "escrow-1", 2, txs2, root2)
-	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
-		Diff: diff2, StateHash: root2, WarmKeyDelta: delta,
-	}))
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: diff2, StateHash: root2}))
 
-	// Recover WITHOUT a resolver. Warm keys must come from stored delta only.
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
 		sm2 := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -1709,12 +1697,12 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), session.Nonce())
 
-	// State root after recovery must match original.
 	recRoot, err := recSM.ComputeStateRoot()
 	require.NoError(t, err)
 	origRoot, err := sm.ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, origRoot, recRoot)
+	require.Equal(t, []string{warmKey.Address()}, recSM.WarmKeyHistory().Live(executorSlot))
 }
 
 func TestRecoverSession_WithSMOptions(t *testing.T) {
@@ -2005,12 +1993,12 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 	appendAppliedDiff(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{
 			InferenceId: 1, PromptHash: promptHash, Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		},
 	}}})
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens)
 	appendAppliedDiff(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{
-		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000},
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig},
 	}}})
 	finish := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
@@ -2839,7 +2827,6 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   0,
-			StartedAt:   1000,
 		},
 	}}}
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)
@@ -2884,4 +2871,23 @@ func TestDecodeSnapshot_HeightSyncFloor(t *testing.T) {
 	require.NoError(t, err)
 	_, _, _, _, _, err = decodeSnapshot(legacy)
 	require.ErrorContains(t, err, "snapshot state missing")
+}
+
+// Test flow:
+//  1. Decode a gateway snapshot whose state carries the v6 WarmKeys map, and one without it.
+//  2. Assert the v6 snapshot is refused as one of an earlier protocol and the v7 one decodes.
+func TestDecodeSnapshot_RefusesV6WarmKeys(t *testing.T) {
+	v7 := []byte(`{"state":{"EscrowID":"escrow-1","LatestNonce":3,"WarmKeyHistory":{"0":[{"Addr":"gonka1warm","FromNonce":1,"GrantID":1}]}}}`)
+	st, _, _, _, _, err := decodeSnapshot(v7)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), st.LatestNonce)
+	require.Len(t, st.WarmKeyHistory[0], 1)
+
+	v6 := []byte(`{"state":{"EscrowID":"escrow-1","LatestNonce":3,"WarmKeys":{"0":"gonka1warm"}}}`)
+	_, _, _, _, _, err = decodeSnapshot(v6)
+	require.ErrorIs(t, err, types.ErrSnapshotFromEarlierProtocol)
+
+	nulled := []byte(`{"state":{"EscrowID":"escrow-1","WarmKeys":null}}`)
+	_, _, _, _, _, err = decodeSnapshot(nulled)
+	require.NoError(t, err, "an explicit null is not a binding")
 }

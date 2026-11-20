@@ -148,10 +148,14 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 				continue
 			}
 
+			requester, slotErr := h.SigningSlot()
+			if slotErr != nil {
+				return
+			}
 			req := &heightsync.RepairRequest{
 				TurnStart:         tgt.TurnStart,
 				RefNonce:          heightsync.HeartbeatNonceForSlot(tgt.TurnStart, j, uint32(len(h.group))),
-				RequesterSlot:     h.PrimarySlot(),
+				RequesterSlot:     requester,
 				ObservedHeight:    hNow,
 				ObservedBlockHash: append([]byte(nil), hash...),
 			}
@@ -214,6 +218,13 @@ func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.Re
 	if req == nil || h.sm.HeightSyncTurnRecord(req.TurnStart) == nil {
 		return nil, heightsync.ErrRepairUnknownTurn
 	}
+	slot := h.PrimarySlot()
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		slot = heightsync.SlotForNonce(req.RefNonce, uint64(len(h.group)))
+		if !h.CanSignSlot(slot) {
+			return nil, types.ErrWarmKeyUnconfirmed
+		}
+	}
 	if h.repairResponder != nil {
 		if cached := h.repairResponder.Replay(req.TurnStart, req.RequesterSlot); cached != nil {
 			return cached, nil
@@ -247,8 +258,7 @@ func (h *Host) BuildRepairHeightResponse(ctx context.Context, req *heightsync.Re
 		SyncState:         st,
 	}
 
-	slot := h.PrimarySlot()
-	if rec := h.sm.HeightSyncTurnRecord(req.TurnStart); rec != nil && h.slotIDs[slot] {
+	if rec := h.sm.HeightSyncTurnRecord(req.TurnStart); rec != nil && h.SlotIDs()[slot] {
 		item := heartbeatTarget{
 			nonce: req.RefNonce,
 			slot:  slot,

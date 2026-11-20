@@ -126,11 +126,11 @@ func TestHostEvents_ParsersReadPayloads(t *testing.T) {
 		"warm_key_granted.grantee":    {"gonka1old"},
 		"warm_key_granted.grant_id":   {"2"},
 		"warm_key_granted.height":     {"500"},
-		"warm_key_granted.expires_at": {"1700000000"},
+		"warm_key_granted.expires_at": {"1700000000000000123"},
 	}, warmKeyGrantedEvent, apiconfig.HostEventKindWarmKeyGranted)
 	require.NoError(t, err)
 	require.Len(t, warm, 1)
-	require.Equal(t, &apiconfig.WarmKeyPayload{Granter: "gonka1cold", Grantee: "gonka1old", GrantID: 2, Height: 500, ExpiresAtUnix: 1700000000}, warm[0].WarmKey)
+	require.Equal(t, &apiconfig.WarmKeyPayload{Granter: "gonka1cold", Grantee: "gonka1old", GrantID: 2, Height: 500, ExpiresAtUnix: 1700000000000000123}, warm[0].WarmKey)
 
 	revoked, err := parseWarmKeyEvents(map[string][]string{
 		"warm_key_revoked.granter":  {"gonka1cold"},

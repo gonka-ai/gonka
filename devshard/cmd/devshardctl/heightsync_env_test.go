@@ -1,18 +1,35 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/observer"
+	"devshard/bridge"
+	"devshard/chainoracle/blocks/headertime"
+	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
+	"devshard/hostevents"
 	"devshard/internal/testutil"
 	"devshard/transport"
 	"devshard/user"
+
+	abci "github.com/cometbft/cometbft/abci/types"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
+	cmttypes "github.com/cometbft/cometbft/types"
+	"github.com/gorilla/websocket"
 )
 
 func resetHeightSyncForTest() {
@@ -163,6 +180,48 @@ func TestGatewayChainOracle_FlagValues(t *testing.T) {
 	}
 }
 
+func TestGatewayHeaderTimes_OneSource(t *testing.T) {
+	resetHeightSyncForTest()
+	t.Cleanup(resetHeightSyncForTest)
+	unsetHeightSyncSources(t)
+
+	var commits atomic.Int64
+	var lastHeight atomic.Int64
+	lastHeight.Store(-1)
+	rpc := observer.ServeCometJSONRPC(nil, func(h int64) {
+		lastHeight.Store(h)
+		commits.Add(1)
+	})
+	t.Cleanup(rpc.Close)
+	t.Setenv("DEVSHARD_CHAIN_RPC", rpc.URL)
+
+	require.NoError(t, initGatewayHeightSync(nil, rpc.URL))
+	require.NotNil(t, hsSt)
+	require.NotNil(t, hsSt.headerTimes)
+	require.NotNil(t, hsSt.cometHeader)
+
+	reader := gatewayHeaderTimes()
+	require.True(t, reader == hsSt.headerTimes)
+	require.True(t, gatewayHeaderTimes() == reader, "every gateway reader calls the same source")
+
+	require.NotNil(t, hsSt.verifier, "a Comet RPC builds the commit verifier")
+
+	before := commits.Load()
+	at := time.Unix(1_700_000_040, 0).UTC()
+	hash := []byte{0x28}
+	hsSt.cometHeader(blocks.HashOnlyHeader(40, at, "gonka-test", hash))
+	require.Eventually(t, func() bool { return commits.Load() > before }, 5*time.Second, 10*time.Millisecond,
+		"the verifier must hit the stub RPC for the queued height")
+	require.True(t, lastHeight.Load() == 0 || lastHeight.Load() == 40,
+		"the queued header's commit is height 40, or the bootstrap commit for that verify")
+	_, ok := hsSt.headerTimes.StoredAt(40)
+	require.False(t, ok, "a socket header reaches the map only after its commit checks out")
+
+	// A second construction is the same process state, not a second map.
+	require.NoError(t, initGatewayHeightSync(nil, rpc.URL))
+	require.True(t, gatewayHeaderTimes() == reader)
+}
+
 func TestGatewayChainOracle_DefaultOffDoesNotMint(t *testing.T) {
 	resetHeightSyncForTest()
 	t.Cleanup(resetHeightSyncForTest)
@@ -170,14 +229,14 @@ func TestGatewayChainOracle_DefaultOffDoesNotMint(t *testing.T) {
 	t.Setenv("DEVSHARD_CHAIN_RPC", "http://127.0.0.1:26657")
 
 	require.NoError(t, initGatewayHeightSync(nil, "http://127.0.0.1:26657"))
-	require.Nil(t, hsSt, "follower must not start when the flag is unset")
+	require.NotNil(t, hsSt, "the follower always starts: timeouts read block times through it")
+	require.NotNil(t, gatewayHeaderTimes())
 
 	cfg, err := extraClientConfigFromEnv()
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
-	require.Nil(t, cfg.HeightSyncLogOracle)
-	require.Nil(t, hsSt)
+	require.Nil(t, cfg.HeightSyncLogOracle, "the log oracle stays behind the flag")
 
 	got, err, miss := cfg.HeightSync.Decide(context.Background(), heightsync.DecideHints{Nonce: 1})
 	require.NoError(t, err)
@@ -285,4 +344,180 @@ func (o *staticBlockOracle) Subscribe(context.Context, int64) (<-chan *blocks.He
 	ch := make(chan *blocks.Header)
 	close(ch)
 	return ch, nil
+}
+
+func TestPublishVerifiedKeepsTheDAPIOrigin(t *testing.T) {
+	src := headertime.New(headertime.WithGateway())
+	publish := publishVerified(src)
+	at := time.Unix(1_700_000_000, 0).UTC()
+	publish(blocks.HashOnlyHeader(10, at, "gonka-test", []byte{10}), true)
+	publish(blocks.HashOnlyHeader(11, at.Add(time.Second), "gonka-test", []byte{11}), false)
+
+	rec, ok := src.StoredAt(10)
+	require.True(t, ok)
+	require.Equal(t, headertime.OriginDAPI, rec.Origin)
+	require.True(t, rec.Verified)
+	rec, ok = src.StoredAt(11)
+	require.True(t, ok)
+	require.Equal(t, headertime.OriginComet, rec.Origin)
+	require.True(t, rec.Verified)
+}
+
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func captureSlog(t *testing.T) *lockedBuffer {
+	t.Helper()
+	buf := &lockedBuffer{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	return buf
+}
+
+func TestGatewayWithoutRPCTrustsDAPI(t *testing.T) {
+	resetHeightSyncForTest()
+	t.Cleanup(resetHeightSyncForTest)
+	unsetHeightSyncSources(t)
+	t.Setenv("NODE_MANAGER_ADDR", "127.0.0.1:9")
+	logs := captureSlog(t)
+
+	_, err := loadHeightSyncProcessState(nil, "", "")
+	require.NoError(t, err)
+	require.NotNil(t, hsSt)
+	require.Nil(t, hsSt.verifier)
+	require.NotContains(t, logs.String(), "dapi blocks are not written")
+	require.Contains(t, logs.String(), "trusted source of warm-key events and block times")
+	require.True(t, gatewayBlockVerifier(nil) == nil)
+}
+
+func TestGatewayWithoutDAPIDoesNotFillTheMap(t *testing.T) {
+	src := headertime.New(headertime.WithGateway())
+	require.False(t, seedGatewayMap(context.Background(), nil, nil, src))
+	require.Equal(t, uint64(0), src.HighWater())
+}
+
+func TestSeedGatewayTrustedDAPIStoresLatest(t *testing.T) {
+	at := time.Unix(1_700_000_000, 0).UTC()
+	oracle := &staticBlockOracle{hdr: blocks.HashOnlyHeader(1000, at, "gonka-test", []byte{1, 2, 3, 4})}
+	src := headertime.New(headertime.WithGateway())
+	require.False(t, seedGatewayMap(context.Background(), nil, oracle, src), "dapi seed is not a comet seed")
+
+	rec, ok := src.StoredAt(1000)
+	require.True(t, ok)
+	require.Equal(t, headertime.OriginDAPI, rec.Origin)
+	require.True(t, rec.Verified)
+	ms, err := src.HeaderTimeMs(1000, []byte{1, 2, 3, 4})
+	require.NoError(t, err)
+	require.Equal(t, at.UnixMilli(), ms)
+	require.Equal(t, uint64(1000), src.HighWater())
+}
+
+func TestGatewayDebugHeightSync_HeaderTimeBlockFeedLive(t *testing.T) {
+	resetHeightSyncForTest()
+	t.Cleanup(resetHeightSyncForTest)
+	src := headertime.New()
+	p := hostevents.NewPoller(hostevents.PollerConfig{Source: src, BlocksVerified: true})
+	hsSt = &heightSyncProcessState{headerTimes: src, poller: p}
+
+	g := &Gateway{}
+	req := httptest.NewRequest(http.MethodGet, "/v1/debug/heightsync", nil)
+	rec := httptest.NewRecorder()
+	g.handleDebugHeightSync(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body struct {
+		HeaderTime hostevents.HeaderTimeView `json:"header_time"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.False(t, body.HeaderTime.BlockFeedLive)
+	require.Equal(t, uint64(0), body.HeaderTime.HighWater)
+}
+
+func TestGatewayCometHooks_ReadsWarmChangesOnTheNewBlockSocket(t *testing.T) {
+	warm := bridge.NewWarmKeyLogCopy(nil, time.Hour)
+	_, err := warm.LiveWarmKeys("cold")
+	require.NoError(t, err)
+	p := hostevents.NewPoller(hostevents.PollerConfig{Warm: warm})
+	cache := tipcache.New(time.Hour)
+	var connected atomic.Bool
+	var rejected atomic.Int32
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	const newBlockQuery = "tm.event='NewBlock'"
+	grant := func(id string) abci.Event {
+		return abci.Event{Type: "warm_key_granted", Attributes: []abci.EventAttribute{
+			{Key: "granter", Value: "cold"}, {Key: "grantee", Value: "warm"}, {Key: "grant_id", Value: id},
+		}}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		socket, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer socket.Close()
+		for {
+			var req rpctypes.RPCRequest
+			if err := socket.ReadJSON(&req); err != nil {
+				return
+			}
+			var params struct{ Query string }
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				t.Errorf("read Comet subscription params: %v", err)
+				return
+			}
+			if req.Method != "subscribe" || params.Query != newBlockQuery {
+				rejected.Add(1)
+				if err := socket.WriteJSON(rpctypes.NewRPCErrorResponse(req.ID, -32603, "subscription limit", "")); err != nil {
+					return
+				}
+				continue
+			}
+			event := ctypes.ResultEvent{Query: newBlockQuery, Data: cmttypes.EventDataNewBlock{
+				Block:   &cmttypes.Block{Header: cmttypes.Header{Height: 20, Time: time.Now().UTC(), ChainID: "test"}},
+				BlockID: cmttypes.BlockID{Hash: bytes.Repeat([]byte{20}, 32)},
+				ResultFinalizeBlock: abci.ResponseFinalizeBlock{TxResults: []*abci.ExecTxResult{
+					{Events: []abci.Event{grant("4")}},
+					{Code: 1, Events: []abci.Event{grant("5")}},
+				}},
+			}}
+			if err := socket.WriteJSON(rpctypes.NewRPCSuccessResponse(req.ID, event)); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	hooks := gatewayCometHooks(func(up bool) { connected.Store(up) }, nil, p)
+	require.NoError(t, tipcache.StartCometWithHooks(ctx, server.URL, cache, hooks))
+	require.Eventually(t, func() bool {
+		tip, err := cache.Latest(ctx)
+		return err == nil && tip.Height == 20
+	}, 3*time.Second, 10*time.Millisecond)
+	require.True(t, connected.Load())
+	entry, found, err := warm.WarmKeyEntry("cold", 4)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "warm", entry.Grantee)
+	require.Equal(t, int64(20), entry.GrantedAtHeight)
+	_, found, err = warm.WarmKeyEntry("cold", 5)
+	require.NoError(t, err)
+	require.False(t, found, "a failed transaction must not introduce grant evidence")
+	require.Zero(t, rejected.Load(), "NewBlock is the only subscription the gateway needs")
+	cancel()
+	require.Eventually(t, func() bool { return !connected.Load() }, 3*time.Second, 10*time.Millisecond)
 }

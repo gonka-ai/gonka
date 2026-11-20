@@ -40,20 +40,20 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":3072`)
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	floor := completionapi.MinTokensFloor
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	explicitMaxTokens := 64
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
 	require.Zero(t, req.MaxCompletionTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_completion_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_completion_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
-	require.EqualValues(t, floor, req.MaxCompletionTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
-	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
+	require.EqualValues(t, explicitMaxTokens, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, explicitMaxTokens))
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"max_completion_tokens":20000,"messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
@@ -62,12 +62,12 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":4096`)
 	require.Contains(t, string(body), `"max_completion_tokens":4096`)
 
-	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`, floor)))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`, explicitMaxTokens)))
 	require.NoError(t, err)
-	require.EqualValues(t, floor, req.MaxTokens)
-	require.EqualValues(t, floor, req.MaxCompletionTokens)
-	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
-	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
+	require.EqualValues(t, explicitMaxTokens, req.MaxTokens)
+	require.EqualValues(t, explicitMaxTokens, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, explicitMaxTokens))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, explicitMaxTokens))
 }
 
 func TestNormalizeChatRequestUsesProvidedOutputTokenLimits(t *testing.T) {
@@ -272,6 +272,54 @@ func TestNormalizeChatRequestDropsMinTokensOnGrammarRequests(t *testing.T) {
 			require.EqualValues(t, 100, raw["max_tokens"])
 		})
 	}
+}
+
+// Test flow:
+// 1. Normalize tool requests with max_tokens 100 and min_tokens 64, streaming on and off.
+// 2. A required tool call is forwarded as auto without min_tokens.
+// 3. Named tool_choice and json_object drop min_tokens; plain auto keeps 64.
+func TestNormalizeChatRequestToolChoiceMinTokens(t *testing.T) {
+	cases := []struct {
+		name          string
+		fields        string
+		forwarded     any
+		keepMinTokens bool
+	}{
+		{name: "required", fields: `"tool_choice":"required"`, forwarded: "auto"},
+		{name: "required in extra_body", fields: `"extra_body":{"tool_choice":"required"}`, forwarded: "auto"},
+		{name: "named", fields: `"tool_choice":{"type":"function","function":{"name":"answer"}}`, forwarded: map[string]any{"type": "function", "function": map[string]any{"name": "answer"}}},
+		{name: "json_object", fields: `"tool_choice":"auto","response_format":{"type":"json_object"}`, forwarded: "auto"},
+		{name: "auto", fields: `"tool_choice":"auto"`, forwarded: "auto", keepMinTokens: true},
+	}
+	for _, stream := range []bool{false, true} {
+		for _, tc := range cases {
+			t.Run(fmt.Sprintf("stream=%t/%s", stream, tc.name), func(t *testing.T) {
+				body := fmt.Sprintf(`{"stream":%t,"max_tokens":100,"min_tokens":64,"messages":[{"role":"user","content":"hi"}],"tools":[{"type":"function","function":{"name":"answer"}}],%s}`, stream, tc.fields)
+				out, req, err := normalizeChatRequest([]byte(body))
+				require.NoError(t, err)
+				require.EqualValues(t, 100, req.MaxTokens)
+
+				var raw map[string]any
+				require.NoError(t, json.Unmarshal(out, &raw))
+				require.Equal(t, tc.forwarded, raw["tool_choice"])
+				require.EqualValues(t, 100, raw["max_tokens"])
+				if tc.keepMinTokens {
+					require.EqualValues(t, 64, raw["min_tokens"])
+				} else {
+					require.NotContains(t, raw, "min_tokens")
+				}
+			})
+		}
+	}
+}
+
+// Test flow:
+// 1. Normalize a required tool call with a non-integer min_tokens.
+// 2. The request is rejected naming min_tokens.
+func TestNormalizeChatRequestRejectsMalformedMinTokensOnRequiredToolChoice(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(`{"max_tokens":100,"min_tokens":3.5,"messages":[{"role":"user","content":"hi"}],"tools":` + singleFunctionToolJSON + `,"tool_choice":"required"}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "min_tokens")
 }
 
 func TestNormalizeChatRequestStripsTemperatureAboveMax(t *testing.T) {

@@ -150,6 +150,8 @@ type Storage interface {
 // EscrowCacheInfo is chain escrow metadata cached ahead of session bind.
 // No runtime/versiond tag — version is stamped only at CreateSession.
 type EscrowCacheInfo struct {
+	MainnetAnchorHeight       int64    `json:"mainnet_anchor_height,omitempty"`
+	MainnetAnchorHash         []byte   `json:"mainnet_anchor_hash,omitempty"`
 	EscrowID                  string   `json:"escrow_id"`
 	Amount                    uint64   `json:"amount"`
 	CreatorAddress            string   `json:"creator_address"`
@@ -242,15 +244,15 @@ type InferenceRow struct {
 	SealedVotesInvalid uint32
 	SealedValidatedBy  []byte // up to 16 bytes (ValidatedBy bitmap)
 	// Statistics snapshot for API lookup after live record eviction.
-	SealedModel        string
-	SealedPromptHash   []byte
-	SealedResponseHash []byte
-	SealedInputLength  uint64
-	SealedMaxTokens    uint64
-	SealedInputTokens  uint64
-	SealedOutputTokens uint64
-	SealedReservedCost uint64
-	SealedActualCost   uint64
-	SealedStartedAt    int64
-	SealedConfirmedAt  int64
+	SealedModel             string
+	SealedPromptHash        []byte
+	SealedResponseHash      []byte
+	SealedInputLength       uint64
+	SealedMaxTokens         uint64
+	SealedInputTokens       uint64
+	SealedOutputTokens      uint64
+	SealedReservedCost      uint64
+	SealedActualCost        uint64
+	SealedStartedAtHeight   int64
+	SealedConfirmedAtHeight int64
 }

@@ -36,10 +36,11 @@ type storeBackend interface {
 }
 
 type escrowBlob struct {
-	Meta      EscrowMetadata             `json:"meta"`
-	Latest    uint64                     `json:"latest"`
-	HostStats map[uint32]types.HostStats `json:"host_stats"`
-	Counters  []counterBlob              `json:"counters"`
+	Meta           EscrowMetadata             `json:"meta"`
+	Latest         uint64                     `json:"latest"`
+	HostStats      map[uint32]types.HostStats `json:"host_stats"`
+	HostStatsNonce map[uint32]uint64          `json:"host_stats_nonce,omitempty"`
+	Counters       []counterBlob              `json:"counters"`
 	// The per-nonce sets: replicated facts are persisted by identity so they can
 	// be merged by union rather than by arithmetic.
 	ProtocolOnly []nonceSlot     `json:"protocol_only,omitempty"`
@@ -126,6 +127,7 @@ func applyLoadedEscrow(t *Tracker, blob escrowBlob) error {
 		Meta:            meta,
 		Latest:          blob.Latest,
 		HostStats:       make(map[uint32]types.HostStats, len(blob.HostStats)),
+		HostStatsNonce:  blob.HostStatsNonce,
 		Counters:        make(map[CounterKey]uint64, len(blob.Counters)),
 		ProtocolOnly:    make(map[uint64]uint32, len(blob.ProtocolOnly)),
 		Challenge:       make(map[uint64]challengeRecord, len(blob.Challenges)),
@@ -192,6 +194,7 @@ func blobFromEscrow(escrow *escrowState) escrowBlob {
 		Meta:            escrow.Meta,
 		Latest:          escrow.Latest,
 		HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
+		HostStatsNonce:  copyUint32Map(escrow.HostStatsNonce),
 		ProtocolOnly:    sortedNonceSlots(escrow.ProtocolOnly),
 		Invalid:         sortedNonceSlots(escrow.Invalid),
 		Challenges:      sortedChallenges(escrow.Challenge),

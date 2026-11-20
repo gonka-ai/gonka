@@ -1,8 +1,11 @@
 package types
 
 import (
+	"common/chainoracle/blocks/lightproof"
 	"fmt"
 	"strings"
+
+	"devshard/signing"
 )
 
 // DevshardStateRootAndProtocolVersion is the default protocol name when no
@@ -46,25 +49,26 @@ const (
 
 // InferenceRecord tracks the state of a single inference within a session.
 type InferenceRecord struct {
-	Status            InferenceStatus `json:"status"`
-	ExecutorSlot      uint32          `json:"executor_slot"`
-	Model             string          `json:"model"`
-	PromptHash        []byte          `json:"prompt_hash"`
-	ResponseHash      []byte          `json:"response_hash,omitempty"`
-	ServedHash        []byte          `json:"served_hash,omitempty"`
-	InputLength       uint64          `json:"input_length"`
-	MaxTokens         uint64          `json:"max_tokens"`
-	InputTokens       uint64          `json:"input_tokens,omitempty"`
-	OutputTokens      uint64          `json:"output_tokens,omitempty"`
-	ReservedCost      uint64          `json:"reserved_cost"`
-	ActualCost        uint64          `json:"actual_cost,omitempty"`
-	StartedAt         int64           `json:"started_at"`
-	ConfirmedAt       int64           `json:"confirmed_at,omitempty"`
-	StartedAtHeight   uint64          `json:"started_at_height,omitempty"`
-	ConfirmedAtHeight uint64          `json:"confirmed_at_height,omitempty"`
-	VotesValid        uint32          `json:"votes_valid,omitempty"`
-	VotesInvalid      uint32          `json:"votes_invalid,omitempty"`
-	ValidatedBy       Bitmap128       `json:"validated_by,omitempty"`
+	Status             InferenceStatus `json:"status"`
+	ExecutorSlot       uint32          `json:"executor_slot"`
+	Model              string          `json:"model"`
+	PromptHash         []byte          `json:"prompt_hash"`
+	ResponseHash       []byte          `json:"response_hash,omitempty"`
+	ServedHash         []byte          `json:"served_hash,omitempty"`
+	InputLength        uint64          `json:"input_length"`
+	MaxTokens          uint64          `json:"max_tokens"`
+	InputTokens        uint64          `json:"input_tokens,omitempty"`
+	OutputTokens       uint64          `json:"output_tokens,omitempty"`
+	ReservedCost       uint64          `json:"reserved_cost"`
+	ActualCost         uint64          `json:"actual_cost,omitempty"`
+	StartedAtHeight    uint64          `json:"started_at_height,omitempty"`
+	StartedAtBlockHash []byte          `json:"started_at_block_hash,omitempty"`
+	ConfirmedAtHeight  uint64          `json:"confirmed_at_height,omitempty"`
+	StartedAtTimeMs    int64           `json:"started_at_time_ms,omitempty"`
+	ConfirmedAtTimeMs  int64           `json:"confirmed_at_time_ms,omitempty"`
+	VotesValid         uint32          `json:"votes_valid,omitempty"`
+	VotesInvalid       uint32          `json:"votes_invalid,omitempty"`
+	ValidatedBy        Bitmap128       `json:"validated_by,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
@@ -74,6 +78,8 @@ type HostStats struct {
 	Cost                 uint64
 	RequiredValidations  uint32
 	CompletedValidations uint32
+	Validated            uint32
+	Finished             uint32
 }
 
 // ProtocolVersion identifies the gateway/runtime protocol version for
@@ -137,17 +143,19 @@ func numericProtocolSlot(s string) string {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout    int64  // seconds before reason=refused timeout
-	ExecutionTimeout  int64  // seconds before reason=execution timeout
-	TokenPrice        uint64 // price per input / output token (flat per session)
-	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce       uint64 // fee charged per applied nonce (diff)
+	MainnetAnchorHeight int64
+	MainnetAnchorHash   []byte
+	RefusalTimeout      int64  // seconds before reason=refused timeout
+	ExecutionTimeout    int64  // seconds before reason=execution timeout
+	TokenPrice          uint64 // price per input / output token (flat per session)
+	CreateDevshardFee   uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce         uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold             uint32
-	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces  uint32
+	VoteThreshold            uint32
+	ValidationRate           uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces uint32
 	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
 	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
@@ -156,7 +164,9 @@ type SessionConfig struct {
 
 // EscrowState is the full state of a devshard session.
 type EscrowState struct {
-	EscrowID string
+	// MainnetCheckpoint is advanced only by an authenticated height transaction.
+	MainnetCheckpoint lightproof.Checkpoint
+	EscrowID          string
 	// StateRootAndProtocolVersion is the protocol tag stamped at session creation
 	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
 	// matches CreateSessionParams.Version / host boundVersion (approved_versions.name).
@@ -169,8 +179,11 @@ type EscrowState struct {
 	FinalizeNonce               uint64
 	Inferences                  map[uint64]*InferenceRecord
 	HostStats                   map[uint32]*HostStats
-	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce                 uint64
+	// WarmKeyHistory is every warm-key binding ever applied, by slot. It
+	// changes only through MsgWarmKeyBind and MsgWarmKeyRevoke and is hashed
+	// into the state root. See docs/warm-keys-v7.md.
+	WarmKeyHistory signing.WarmKeyHistory
+	LatestNonce    uint64
 
 	// Height-sync forced turn + cadence swallow (hashed into state root).
 	HeightSyncForcedStart         uint64
@@ -192,6 +205,7 @@ type EscrowState struct {
 
 // HeightSyncEscrowCommit is the subset of EscrowState hashed into the state root.
 type HeightSyncEscrowCommit struct {
+	MainnetCheckpoint              lightproof.Checkpoint
 	ForcedStart, ForcedEnd         uint64
 	CadenceSwallowUntil, SwallowFe uint64
 	TurnK, TurnSlots               uint64
@@ -204,6 +218,7 @@ func HeightSyncEscrowCommitFromState(s *EscrowState) HeightSyncEscrowCommit {
 		return HeightSyncEscrowCommit{}
 	}
 	return HeightSyncEscrowCommit{
+		MainnetCheckpoint:   s.MainnetCheckpoint,
 		ForcedStart:         s.HeightSyncForcedStart,
 		ForcedEnd:           s.HeightSyncForcedEnd,
 		CadenceSwallowUntil: s.HeightSyncCadenceSwallowUntil,
@@ -228,27 +243,9 @@ type Diff struct {
 // DiffRecord is the storage representation: Diff + computed metadata.
 type DiffRecord struct {
 	Diff
-	StateHash    []byte
-	Signatures   map[uint32][]byte
-	WarmKeyDelta map[uint32]string // warm key bindings introduced at this nonce
-	CreatedAt    int64
-}
-
-// ComputeWarmKeyDelta returns entries in after that are not in before.
-func ComputeWarmKeyDelta(before, after map[uint32]string) map[uint32]string {
-	if len(after) == 0 {
-		return nil
-	}
-	var delta map[uint32]string
-	for slotID, addr := range after {
-		if before[slotID] != addr {
-			if delta == nil {
-				delta = make(map[uint32]string)
-			}
-			delta[slotID] = addr
-		}
-	}
-	return delta
+	StateHash  []byte
+	Signatures map[uint32][]byte
+	CreatedAt  int64
 }
 
 // SlotAssignment maps a slot to a validator in the session group.

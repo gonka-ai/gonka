@@ -125,23 +125,25 @@ func measureStateSize(st types.EscrowState) (hostStatsMB, inferencesMB, totalMB 
 	for _, id := range ids {
 		r := st.Inferences[id]
 		infEntries = append(infEntries, &types.InferenceRecordProto{
-			InferenceId:  id,
-			Status:       uint32(r.Status),
-			ExecutorSlot: r.ExecutorSlot,
-			Model:        r.Model,
-			PromptHash:   r.PromptHash,
-			ResponseHash: r.ResponseHash,
-			InputLength:  r.InputLength,
-			MaxTokens:    r.MaxTokens,
-			InputTokens:  r.InputTokens,
-			OutputTokens: r.OutputTokens,
-			ReservedCost: r.ReservedCost,
-			ActualCost:   r.ActualCost,
-			StartedAt:    r.StartedAt,
-			ConfirmedAt:  r.ConfirmedAt,
-			VotesValid:   r.VotesValid,
-			VotesInvalid: r.VotesInvalid,
-			ValidatedBy:  r.ValidatedBy.Bytes(),
+			InferenceId:        id,
+			Status:             uint32(r.Status),
+			ExecutorSlot:       r.ExecutorSlot,
+			Model:              r.Model,
+			PromptHash:         r.PromptHash,
+			ResponseHash:       r.ResponseHash,
+			InputLength:        r.InputLength,
+			MaxTokens:          r.MaxTokens,
+			InputTokens:        r.InputTokens,
+			OutputTokens:       r.OutputTokens,
+			ReservedCost:       r.ReservedCost,
+			ActualCost:         r.ActualCost,
+			StartedAtHeight:    r.StartedAtHeight,
+			ConfirmedAtHeight:  r.ConfirmedAtHeight,
+			StartedAtBlockHash: r.StartedAtBlockHash,
+			ServedHash:         r.ServedHash,
+			VotesValid:         r.VotesValid,
+			VotesInvalid:       r.VotesInvalid,
+			ValidatedBy:        r.ValidatedBy.Bytes(),
 		})
 	}
 	infData, _ := proto.Marshal(&types.InferencesMapProto{Entries: infEntries})
@@ -228,7 +230,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 	// --- State root at peak (pre-finalize, measures raw hashing cost at N inferences) ---
 	preFinSt := session.StateMachine().SnapshotState()
 	srStart := time.Now()
-	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys, preFinSt.Fees, preFinSt.StateRootAndProtocolVersion)
+	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeyHistory, preFinSt.Fees, preFinSt.StateRootAndProtocolVersion)
 	require.NoError(t, err)
 	srDuration := time.Since(srStart)
 

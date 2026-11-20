@@ -42,20 +42,20 @@ func siblingSM(t *testing.T) (sm *StateMachine, cold, warm *signing.Secp256k1Sig
 // bridges disagree would seal different rest hashes.
 func TestApplyConfirmStart_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
 	sm, _, warm, calls := siblingSM(t)
-	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 
-	// inference 1 -> group[1 % 3] -> slot 1, cold's other slot.
-	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.StartTx(1)})
+	// inference 1 -> group[1 % 3] -> slot 1, cold's other slot. The bind on
+	// slot 0 rides in the same diff: entries apply before the start.
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.StartTx(1), testutil.WarmKeyBindTx(0, warm.Address(), 1)})
 	require.NoError(t, err)
 	rec, ok := sm.Inference(1)
 	require.True(t, ok)
 	require.Equal(t, uint32(1), rec.ExecutorSlot)
 
 	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 1, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: execSig,
 		}},
 	}})
 	require.NoError(t, err)
@@ -64,7 +64,7 @@ func TestApplyConfirmStart_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
 	require.Equal(t, types.StatusStarted, rec.Status)
 
 	require.Zero(t, *calls, "sibling binding is already in state; apply must not hit the bridge")
-	require.NotContains(t, sm.WarmKeys(), uint32(1), "sibling acceptance must not write a new binding")
+	require.Empty(t, sm.WarmKeyHistory()[1], "sibling acceptance must not write a new binding")
 }
 
 // Once a slot has its own binding, that binding is exclusive: only the slot's
@@ -74,37 +74,39 @@ func TestApplyConfirmStart_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
 func TestApplyConfirmStart_BoundSlotRejectsSiblingWarmKey(t *testing.T) {
 	sm, _, warm, calls := siblingSM(t)
 	stranger := testutil.MustGenerateKey(t)
-	sm.InjectWarmKeys(map[uint32]string{0: warm.Address(), 1: stranger.Address()})
 
-	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{
+		testutil.StartTx(1),
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
+		testutil.WarmKeyBindTx(1, stranger.Address(), 1),
+	})
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 1, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: execSig,
 		}},
 	}})
 	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
 	require.Zero(t, *calls, "a bound slot is decided from state alone")
-	require.Equal(t, stranger.Address(), sm.WarmKeys()[1], "binding must not be replaced")
+	require.Equal(t, []string{stranger.Address()}, sm.WarmKeyHistory().Live(1), "binding must not be replaced")
 }
 
 // The cold key always acts for its own slot, even after a warm key is bound.
 func TestApplyConfirmStart_ColdKeyActsForBoundSlot(t *testing.T) {
 	sm, cold, _, calls := siblingSM(t)
 	stranger := testutil.MustGenerateKey(t)
-	sm.InjectWarmKeys(map[uint32]string{1: stranger.Address()})
 
-	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.StartTx(1), testutil.WarmKeyBindTx(1, stranger.Address(), 1)})
 	require.NoError(t, err)
 
 	execSig := testutil.SignExecutorReceipt(t, cold, "escrow-1", 1, testutil.TestPromptHash[:],
-		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: execSig,
 		}},
 	}})
 	require.NoError(t, err)
@@ -116,14 +118,14 @@ func TestApplyConfirmStart_ColdKeyActsForBoundSlot(t *testing.T) {
 // write a second WarmKeys entry.
 func TestApplyHeightAck_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
 	sm, _, warm, calls := siblingSM(t)
-	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
 	hash := []byte{0xaa}
 
-	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
-		}},
-	}})
+		}}},
+	})
 	require.NoError(t, err)
 
 	ack := &types.MsgHeightAck{
@@ -137,7 +139,7 @@ func TestApplyHeightAck_SiblingWarmKeyNeedsNoBridgeCall(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, applied, 1)
 	require.Zero(t, *calls, "sibling binding is already in state; apply must not hit the bridge")
-	require.NotContains(t, sm.WarmKeys(), uint32(1), "sibling acceptance must not write a new binding")
+	require.Empty(t, sm.WarmKeyHistory()[1], "sibling acceptance must not write a new binding")
 }
 
 // HostSignerAllowedAddr answers from state when it can, and otherwise makes
@@ -153,13 +155,52 @@ func TestHostSignerAllowedAddr_AtMostOneBridgeCall(t *testing.T) {
 	require.Equal(t, 1, *calls)
 
 	*calls = 0
-	sm.InjectWarmKeys(map[uint32]string{0: warm.Address()})
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warm.Address(), 1)})
+	require.NoError(t, err)
 	require.True(t, sm.HostSignerAllowedAddr(cold.Address(), warm.Address()))
-	require.Zero(t, *calls, "cached binding must short-circuit the bridge")
+	require.Equal(t, 1, *calls, "a binding in state is confirmed against the grant source once, for the backstop")
 
 	*calls = 0
 	stranger := testutil.MustGenerateKey(t)
 	require.False(t, sm.HostSignerAllowedAddr(cold.Address(), stranger.Address()))
 	require.Equal(t, 1, *calls)
 	require.False(t, sm.HostSignerAllowedAddr("", stranger.Address()))
+}
+
+// A second live key is admitted locally and becomes a consensus signer only
+// when its binding is included at the head of the carrying diff.
+func TestHostSignerAllowed_SecondGrantedKeyNeedsItsOwnBinding(t *testing.T) {
+	cold := testutil.MustGenerateKey(t)
+	other := testutil.MustGenerateKey(t)
+	warm1 := testutil.MustGenerateKey(t)
+	warm2 := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup([]*signing.Secp256k1Signer{cold, other}, []int{2, 1})
+	config := testutil.DefaultConfig(len(group))
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		return coldAddr == cold.Address() && (warmAddr == warm1.Address() || warmAddr == warm2.Address()), nil
+	}
+	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000),
+		WithWarmKeyResolver(resolver))
+	require.NoError(t, err)
+
+	require.True(t, sm.HostSignerAllowed(0, warm2.Address()), "unbound slot: any granted key")
+
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warm1.Address(), 1)})
+	require.NoError(t, err)
+	require.True(t, sm.HostSignerAllowed(0, warm1.Address()))
+	require.True(t, sm.HostSignerAllowed(0, cold.Address()))
+	require.True(t, sm.HostSignerAllowed(0, warm2.Address()), "the gateway may bind the second live grant")
+
+	sm.mu.Lock()
+	applyAllows := sm.hostSignerAllowedLocked(0, warm2.Address())
+	sm.mu.Unlock()
+	require.False(t, applyAllows)
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{testutil.WarmKeyBindTx(0, warm2.Address(), 2)})
+	require.NoError(t, err)
+	sm.mu.Lock()
+	applyAllows = sm.hostSignerAllowedLocked(0, warm2.Address())
+	sm.mu.Unlock()
+	require.True(t, applyAllows)
 }

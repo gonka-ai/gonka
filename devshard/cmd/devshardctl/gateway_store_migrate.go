@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"devshard/user"
 	"fmt"
 	"log"
 	"time"
@@ -71,6 +72,14 @@ func MigrateGatewaySQLiteToPostgres(ctx context.Context, src GatewayStore, dst *
 	if err != nil {
 		return fmt.Errorf("load source participant throttles: %w", err)
 	}
+	var completions map[string][]user.InferenceCompletion
+	if journal, ok := src.(interface {
+		AllInferenceCompletions() (map[string][]user.InferenceCompletion, error)
+	}); ok {
+		if completions, err = journal.AllInferenceCompletions(); err != nil {
+			return fmt.Errorf("load source inference completions: %w", err)
+		}
+	}
 
 	tx, err := dst.pool.Begin(ctx)
 	if err != nil {
@@ -106,6 +115,14 @@ func MigrateGatewaySQLiteToPostgres(ctx context.Context, src GatewayStore, dst *
 	for _, row := range throttles {
 		if err := applyGatewayThrottleToPG(ctx, tx, row); err != nil {
 			return err
+		}
+	}
+
+	for escrowID, entries := range completions {
+		for _, entry := range entries {
+			if err := applyGatewayCompletionToPG(ctx, tx, escrowID, entry); err != nil {
+				return fmt.Errorf("migrate inference completion escrow=%s nonce=%d: %w", escrowID, entry.Nonce, err)
+			}
 		}
 	}
 

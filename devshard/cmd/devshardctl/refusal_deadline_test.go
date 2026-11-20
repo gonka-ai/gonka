@@ -10,19 +10,14 @@ import (
 	"devshard/host"
 )
 
-// A verifier measures the refusal deadline from the record's StartedAt against its own clock. When
-// that difference cannot reach the timeout, every vote is a guaranteed reject, so the gateway must
-// not spend a round on it — and must say so, because the vote result carries no reason of its own.
-func TestRefusalDeadline_UnreachableDeadlineSkipsTheRoundInsteadOfLosingIt(t *testing.T) {
+func TestRefusalDeadline_PayloadStartedAtUnitDoesNotMoveTheDeadline(t *testing.T) {
 	shortRefusalWindow(t)
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	params := defaultParams()
 	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
-	// A stamp in the wrong unit lands far in the future, which is exactly how a millisecond
-	// StartedAt reaches a verifier reading seconds.
 	result, err := env.session.HandleTimeout(context.Background(), prepared.Nonce(), time.Now(),
 		&host.InferencePayload{
 			Prompt:      params.Prompt,
@@ -33,15 +28,12 @@ func TestRefusalDeadline_UnreachableDeadlineSkipsTheRoundInsteadOfLosingIt(t *te
 		})
 
 	require.Error(t, err)
-	require.Equal(t, "skipped", result.Outcome)
-	require.Equal(t, "refusal_deadline_unreachable", result.DetailReason)
-	require.Nil(t, env.killables[prepared.HostIdx()].LastRequest(),
-		"a round that cannot pass must cost no verifier traffic")
+	require.Equal(t, "applied", result.Outcome)
+	require.True(t, result.Applied)
 }
 
-// The guard must not stand in the way of a deadline that has genuinely run.
 func TestRefusalDeadline_APassedDeadlineStillCollectsVotes(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupLiveFloorProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	params := defaultParams()
 	prepared, err := env.session.PrepareInference(context.Background(), params)

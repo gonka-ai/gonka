@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"sync"
 
 	"devshard/types"
@@ -118,7 +119,7 @@ func (m *Mempool) HasFinish(inferenceID uint64) bool {
 // QueuedConfirmStart returns the MsgConfirmStart this host proposed for
 // inferenceID, or nil. Peer-imported entries (ProposedAt == 0) are skipped:
 // AddTx does not verify signatures, so a gossiped copy must not stand in for
-// this host's own receipt. With several queued, the earliest confirmed_at wins.
+// this host's own receipt. With several queued, the earliest proposed wins.
 func (m *Mempool) QueuedConfirmStart(inferenceID uint64) *types.MsgConfirmStart {
 	if m == nil {
 		return nil
@@ -126,6 +127,7 @@ func (m *Mempool) QueuedConfirmStart(inferenceID uint64) *types.MsgConfirmStart 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out *types.MsgConfirmStart
+	var outAt uint64
 	for _, e := range m.entries {
 		if e.ProposedAt == 0 || e.Tx == nil {
 			continue
@@ -134,8 +136,8 @@ func (m *Mempool) QueuedConfirmStart(inferenceID uint64) *types.MsgConfirmStart 
 		if cs == nil || cs.InferenceId != inferenceID {
 			continue
 		}
-		if out == nil || cs.ConfirmedAt < out.ConfirmedAt {
-			out = cs
+		if out == nil || e.ProposedAt < outAt || e.ProposedAt == outAt && bytes.Compare(cs.ExecutorSig, out.ExecutorSig) < 0 {
+			out, outAt = cs, e.ProposedAt
 		}
 	}
 	return out

@@ -314,8 +314,6 @@ func TestHeartbeat_StampedBusySessionEmitsNoAcks(t *testing.T) {
 	h := newAckTestHost(t, 1, hosts, user, WithChainOracle(or))
 
 	start := testutil.StartTx(1)
-	start.GetStartInference().ObservedHeight = 100
-	start.GetStartInference().ObservedBlockHash = []byte{0xaa}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{start})
 	resp, err := h.HandleRequest(context.Background(), HostRequest{
 		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
@@ -589,17 +587,26 @@ func TestHost_WarmAckAppliesWithoutCachedBinding(t *testing.T) {
 	recovered, err := heightsync.RecoverAckSigner(signing.NewSecp256k1Verifier(), acks[0])
 	require.NoError(t, err)
 	require.Equal(t, warm.Address(), recovered)
-	require.Empty(t, signerHost.sm.WarmKeys(), "emitting an ack must not bind WarmKeys")
+	require.Empty(t, signerHost.sm.WarmKeyHistory(), "emitting an ack must not bind the key")
 
+	// The sequencer binds the key in the diff that carries its first ack.
 	ackDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
 		{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}},
 	})
 	_, err = signerHost.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, ackDiff}})
 	require.NoError(t, err, "signing host must apply its own first-time warm ack")
-	require.Equal(t, warm.Address(), signerHost.sm.WarmKeys()[0])
+	require.Equal(t, []string{warm.Address()}, signerHost.sm.WarmKeyHistory().Live(0))
 
 	_, err = peer.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, ackDiff}})
-	require.NoError(t, err, "peer applyCore must accept the warm ack with empty WarmKeys")
+	require.NoError(t, err, "peer applyCore must accept the warm ack bound in the same diff")
 	require.Equal(t, uint64(4), peer.sm.LatestNonce())
-	require.Equal(t, warm.Address(), peer.sm.WarmKeys()[0])
+	require.Equal(t, []string{warm.Address()}, peer.sm.WarmKeyHistory().Live(0))
+
+	unbound := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}},
+	})
+	stranger := newHost(cold[2])
+	_, err = stranger.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3, unbound}})
+	require.Error(t, err, "without the bind the warm ack is refused even though the grant source accepts the key")
 }

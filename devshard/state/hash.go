@@ -9,6 +9,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -39,7 +40,7 @@ func ComputeStateRoot(
 	hostStats map[uint32]*types.HostStats,
 	inferences map[uint64]*types.InferenceRecord,
 	phase types.SessionPhase,
-	warmKeys map[uint32]string,
+	warmKeys signing.WarmKeyHistory,
 	fees uint64,
 	version string,
 	heightSync ...types.HeightSyncEscrowCommit,
@@ -69,7 +70,7 @@ func ComputeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 
 // ComputeRestHash computes sha256(balance_be || inferences_hash || warm_keys_hash).
 // Exported for settlement verification on mainnet.
-func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
+func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys signing.WarmKeyHistory) ([]byte, error) {
 	return computeRestHash(balance, inferences, warmKeys)
 }
 
@@ -101,12 +102,29 @@ func hashHeightSyncEscrow(h types.HeightSyncEscrowCommit) []byte {
 	hsh := sha256.New()
 	hsh.Write(buf)
 	hsh.Write(reason)
+	if h.MainnetCheckpoint.Height > 0 {
+		// Appended only in v7; legacy state roots remain byte-identical.
+		hsh.Write([]byte("devshard/mainnet-checkpoint/v1"))
+		cp := h.MainnetCheckpoint
+		var b [8]byte
+		binary.BigEndian.PutUint64(b[:], uint64(cp.Height))
+		hsh.Write(b[:])
+		hsh.Write(cp.Hash)
+		hsh.Write(cp.NextValidatorsHash)
+		ns := int64(0)
+		if !cp.Time.IsZero() {
+			ns = cp.Time.UnixNano()
+		}
+		binary.BigEndian.PutUint64(b[:], uint64(ns))
+		hsh.Write(b[:])
+		hsh.Write([]byte(cp.ChainID))
+	}
 	return hsh.Sum(nil)
 }
 
 // ComputeRestHashV2 returns sha256(balance_be || inferences_hash_v2 || warm_keys_hash || height_sync_hash)
 // for Phase 1 v2 sessions (sealed accumulator + live inference set + height-sync escrow flags).
-func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string, heightSync types.HeightSyncEscrowCommit) ([]byte, error) {
+func ComputeRestHashV2(balance uint64, sealedAcc [32]byte, liveInferences map[uint64]*types.InferenceRecord, warmKeys signing.WarmKeyHistory, heightSync types.HeightSyncEscrowCommit) ([]byte, error) {
 	liveHash, err := computeInferencesHash(liveInferences)
 	if err != nil {
 		return nil, err
@@ -186,33 +204,43 @@ func ComputeVersionHash(version string) []byte {
 	return sum[:]
 }
 
-// computeWarmKeysHash computes sha256 over sorted (slotID, address) pairs.
-// Deterministic: entries sorted by slot ID, each serialized as 4-byte BE slot
-// ID followed by UTF-8 address bytes with a 4-byte BE length prefix.
-func computeWarmKeysHash(warmKeys map[uint32]string) []byte {
-	if len(warmKeys) == 0 {
+// computeWarmKeysHash computes sha256 over the warm-key history: slots in
+// ascending order, each binding in its slot's order, serialized as 4-byte BE
+// slot ID, 4-byte BE address length, the UTF-8 address, then from_nonce,
+// grant_id and revoked_at_nonce as 8-byte BE. A slot without bindings
+// contributes nothing, so an empty history hashes like a nil one.
+func computeWarmKeysHash(warmKeys signing.WarmKeyHistory) []byte {
+	slotIDs := make([]uint32, 0, len(warmKeys))
+	for id, entries := range warmKeys {
+		if len(entries) > 0 {
+			slotIDs = append(slotIDs, id)
+		}
+	}
+	if len(slotIDs) == 0 {
 		empty := sha256.Sum256(nil)
 		return empty[:]
-	}
-
-	slotIDs := make([]uint32, 0, len(warmKeys))
-	for id := range warmKeys {
-		slotIDs = append(slotIDs, id)
 	}
 	slices.SortFunc(slotIDs, func(a, b uint32) int { return cmp.Compare(a, b) })
 
 	h := sha256.New()
-	buf := make([]byte, 4)
+	buf := make([]byte, 8)
 	for _, id := range slotIDs {
-		binary.BigEndian.PutUint32(buf, id)
-		h.Write(buf)
-		addr := []byte(warmKeys[id])
-		binary.BigEndian.PutUint32(buf, uint32(len(addr)))
-		h.Write(buf)
-		h.Write(addr)
+		for _, b := range warmKeys[id] {
+			binary.BigEndian.PutUint32(buf[:4], id)
+			h.Write(buf[:4])
+			addr := []byte(b.Addr)
+			binary.BigEndian.PutUint32(buf[:4], uint32(len(addr)))
+			h.Write(buf[:4])
+			h.Write(addr)
+			binary.BigEndian.PutUint64(buf, b.FromNonce)
+			h.Write(buf)
+			binary.BigEndian.PutUint64(buf, b.GrantID)
+			h.Write(buf)
+			binary.BigEndian.PutUint64(buf, b.RevokedAtNonce)
+			h.Write(buf)
+		}
 	}
-	sum := h.Sum(nil)
-	return sum
+	return h.Sum(nil)
 }
 
 func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error) {
@@ -233,6 +261,8 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 			Cost:                 s.Cost,
 			RequiredValidations:  s.RequiredValidations,
 			CompletedValidations: s.CompletedValidations,
+			Validated:            s.Validated,
+			Finished:             s.Finished,
 		})
 	}
 
@@ -245,7 +275,7 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	return hash[:], nil
 }
 
-func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
+func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys signing.WarmKeyHistory) ([]byte, error) {
 	infHash, err := computeInferencesHash(inferences)
 	if err != nil {
 		return nil, err
@@ -278,26 +308,27 @@ func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte
 
 func marshalInferenceEntry(id uint64, r *types.InferenceRecord) ([]byte, error) {
 	data, err := deterministicMarshal.Marshal(&types.InferenceRecordProto{
-		InferenceId:       id,
-		Status:            uint32(r.Status),
-		ExecutorSlot:      r.ExecutorSlot,
-		Model:             r.Model,
-		PromptHash:        r.PromptHash,
-		ResponseHash:      r.ResponseHash,
-		ServedHash:        r.ServedHash,
-		InputLength:       r.InputLength,
-		MaxTokens:         r.MaxTokens,
-		InputTokens:       r.InputTokens,
-		OutputTokens:      r.OutputTokens,
-		ReservedCost:      r.ReservedCost,
-		ActualCost:        r.ActualCost,
-		StartedAt:         r.StartedAt,
-		ConfirmedAt:       r.ConfirmedAt,
-		StartedAtHeight:   r.StartedAtHeight,
-		ConfirmedAtHeight: r.ConfirmedAtHeight,
-		VotesValid:        r.VotesValid,
-		VotesInvalid:      r.VotesInvalid,
-		ValidatedBy:       r.ValidatedBy.Bytes(),
+		InferenceId:        id,
+		Status:             uint32(r.Status),
+		ExecutorSlot:       r.ExecutorSlot,
+		Model:              r.Model,
+		PromptHash:         r.PromptHash,
+		ResponseHash:       r.ResponseHash,
+		ServedHash:         r.ServedHash,
+		InputLength:        r.InputLength,
+		MaxTokens:          r.MaxTokens,
+		InputTokens:        r.InputTokens,
+		OutputTokens:       r.OutputTokens,
+		ReservedCost:       r.ReservedCost,
+		ActualCost:         r.ActualCost,
+		StartedAtHeight:    r.StartedAtHeight,
+		StartedAtBlockHash: r.StartedAtBlockHash,
+		ConfirmedAtHeight:  r.ConfirmedAtHeight,
+		StartedAtTimeMs:    r.StartedAtTimeMs,
+		ConfirmedAtTimeMs:  r.ConfirmedAtTimeMs,
+		VotesValid:         r.VotesValid,
+		VotesInvalid:       r.VotesInvalid,
+		ValidatedBy:        r.ValidatedBy.Bytes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshal inference %d: %w", id, err)
@@ -311,25 +342,26 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		return 0, nil, fmt.Errorf("unmarshal inference entry: %w", err)
 	}
 	rec := &types.InferenceRecord{
-		Status:            types.InferenceStatus(msg.Status),
-		ExecutorSlot:      msg.ExecutorSlot,
-		Model:             msg.Model,
-		PromptHash:        append([]byte(nil), msg.PromptHash...),
-		ResponseHash:      append([]byte(nil), msg.ResponseHash...),
-		ServedHash:        append([]byte(nil), msg.ServedHash...),
-		InputLength:       msg.InputLength,
-		MaxTokens:         msg.MaxTokens,
-		InputTokens:       msg.InputTokens,
-		OutputTokens:      msg.OutputTokens,
-		ReservedCost:      msg.ReservedCost,
-		ActualCost:        msg.ActualCost,
-		StartedAt:         msg.StartedAt,
-		ConfirmedAt:       msg.ConfirmedAt,
-		StartedAtHeight:   msg.StartedAtHeight,
-		ConfirmedAtHeight: msg.ConfirmedAtHeight,
-		VotesValid:        msg.VotesValid,
-		VotesInvalid:      msg.VotesInvalid,
-		ValidatedBy:       types.Bitmap128FromBytes(msg.ValidatedBy),
+		Status:             types.InferenceStatus(msg.Status),
+		ExecutorSlot:       msg.ExecutorSlot,
+		Model:              msg.Model,
+		PromptHash:         append([]byte(nil), msg.PromptHash...),
+		ResponseHash:       append([]byte(nil), msg.ResponseHash...),
+		ServedHash:         append([]byte(nil), msg.ServedHash...),
+		InputLength:        msg.InputLength,
+		MaxTokens:          msg.MaxTokens,
+		InputTokens:        msg.InputTokens,
+		OutputTokens:       msg.OutputTokens,
+		ReservedCost:       msg.ReservedCost,
+		ActualCost:         msg.ActualCost,
+		StartedAtHeight:    msg.StartedAtHeight,
+		StartedAtBlockHash: append([]byte(nil), msg.StartedAtBlockHash...),
+		ConfirmedAtHeight:  msg.ConfirmedAtHeight,
+		StartedAtTimeMs:    msg.StartedAtTimeMs,
+		ConfirmedAtTimeMs:  msg.ConfirmedAtTimeMs,
+		VotesValid:         msg.VotesValid,
+		VotesInvalid:       msg.VotesInvalid,
+		ValidatedBy:        types.Bitmap128FromBytes(msg.ValidatedBy),
 	}
 	return msg.InferenceId, rec, nil
 }

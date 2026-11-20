@@ -36,9 +36,9 @@ func validationTx(inferenceID uint64, slot uint32) *types.DevshardTx {
 	}}
 }
 
-func confirmTx(inferenceID uint64, confirmedAt int64) *types.DevshardTx {
+func confirmTx(inferenceID uint64, tag int64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
-		ConfirmStart: &types.MsgConfirmStart{InferenceId: inferenceID, ConfirmedAt: confirmedAt},
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: inferenceID, ExecutorSig: []byte{byte(tag)}},
 	}}
 }
 
@@ -56,7 +56,7 @@ func TestMempool_QueuedConfirmStart(t *testing.T) {
 
 	got := m.QueuedConfirmStart(1)
 	require.NotNil(t, got)
-	require.Equal(t, int64(100), got.ConfirmedAt, "the earliest own receipt wins")
+	require.Equal(t, []byte{200}, got.ExecutorSig, "the first own receipt queued wins")
 	require.Nil(t, m.QueuedConfirmStart(3))
 }
 

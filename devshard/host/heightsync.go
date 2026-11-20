@@ -1,6 +1,7 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"time"
 
@@ -44,7 +45,7 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 			}
 			if hb := tx.GetHeartbeat(); hb != nil {
 				slot := heightsync.SlotForNonce(diff.Nonce, slotsNum)
-				if h.slotIDs[slot] {
+				if h.SlotIDs()[slot] {
 					mine = append(mine, heartbeatTarget{nonce: diff.Nonce, slot: slot, hb: hb})
 				}
 			}
@@ -60,6 +61,9 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 	}
 
 	for _, item := range mine {
+		if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) && !h.CanSignSlot(item.slot) {
+			continue
+		}
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, now)
 		if err := heightsync.SignAck(h.signer, ack); err != nil {
 			logging.Warn("height ack sign failed", "subsystem", "heightsync",
@@ -76,6 +80,13 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 func (h *Host) latestHeader(ctx context.Context) (*blocks.Header, error) {
 	if h.oracle == nil {
 		return nil, ErrNoChainOracle
+	}
+	if types.RequiresMainnetHeightProof(h.sm.ProtocolVersion()) {
+		if oracle, ok := h.oracle.(interface {
+			LatestForProof(context.Context) (*blocks.Header, error)
+		}); ok {
+			return oracle.LatestForProof(ctx)
+		}
 	}
 	return h.oracle.Latest(ctx)
 }
@@ -123,7 +134,7 @@ func (h *Host) hasOwnHeartbeatLocked(diffs []types.Diff) bool {
 			}
 			if hb := tx.GetHeartbeat(); hb != nil {
 				slot := heightsync.SlotForNonce(diff.Nonce, slotsNum)
-				if h.slotIDs[slot] {
+				if h.SlotIDs()[slot] {
 					return true
 				}
 			}
@@ -137,7 +148,7 @@ func (h *Host) receiptWantsOracleLocked(req HostRequest) bool {
 		return false
 	}
 	executorSlot := h.group[req.Nonce%uint64(len(h.group))].SlotID
-	return h.slotIDs[executorSlot]
+	return h.SlotIDs()[executorSlot]
 }
 
 // buildHeightAckLocked produces the ack for one heartbeat addressed to this host.
@@ -201,4 +212,10 @@ func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint6
 		return height, hash
 	}
 	return floor, floorHash
+}
+
+// HeightAckMatchesAnchor checks the producer's reference stamp for this ACK.
+func (h *Host) HeightAckMatchesAnchor(ack *types.MsgHeightAck, height uint64, hash []byte) bool {
+	wantHeight, wantHash := h.referenceStamp(ack.RefNonce+1, height, hash)
+	return ack.ObservedHeight == wantHeight && bytes.Equal(ack.ObservedBlockHash, wantHash)
 }

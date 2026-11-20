@@ -38,8 +38,9 @@ import (
 // serving; escrow-keyed methods also WaitReady so requests block until rebuild
 // finishes or fails.
 type Postgres struct {
-	pool            *pgxpool.Pool
-	connectionGuard *postgresConnectionGuard
+	pool              *pgxpool.Pool
+	connectionGuard   *postgresConnectionGuard
+	peerSessionSecret []byte // private, immutable after startup; never part of storage proof/diagnostics
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
@@ -261,16 +262,27 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 		pool.Close()
 		return nil, err
 	}
+	secretCtx, cancelSecret := context.WithTimeout(ctx, postgresOpTimeout)
+	peerSecret, err := loadPeerSessionSecret(secretCtx, pool)
+	cancelSecret()
+	if err != nil {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), postgresOpTimeout)
+		connectionGuard.close(cleanupCtx)
+		cancelCleanup()
+		pool.Close()
+		return nil, err
+	}
 
 	s := &Postgres{
-		pool:            pool,
-		connectionGuard: connectionGuard,
-		knownEpochs:     make(map[uint64]struct{}),
-		escrowIdx:       make(map[string]uint64),
-		readyCh:         make(chan struct{}),
-		healthReady:     true,
-		healthDone:      make(chan struct{}),
-		fatalErrors:     make(chan error, 1),
+		pool:              pool,
+		connectionGuard:   connectionGuard,
+		peerSessionSecret: peerSecret,
+		knownEpochs:       make(map[uint64]struct{}),
+		escrowIdx:         make(map[string]uint64),
+		readyCh:           make(chan struct{}),
+		healthReady:       true,
+		healthDone:        make(chan struct{}),
+		fatalErrors:       make(chan error, 1),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
@@ -1052,15 +1064,9 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return err
 	}
 
+	// warm_keys_json is kept for the schema only: since v7 the warm-key
+	// history is consensus state carried by the diffs themselves.
 	var warmJSON *string
-	if len(rec.WarmKeyDelta) > 0 {
-		b, err := json.Marshal(rec.WarmKeyDelta)
-		if err != nil {
-			return fmt.Errorf("marshal warm keys: %w", err)
-		}
-		str := string(b)
-		warmJSON = &str
-	}
 
 	ctx, cancel := s.opCtx()
 	defer cancel()
@@ -1150,16 +1156,7 @@ func (s *Postgres) AppendDiffs(escrowID string, diffs []types.DiffRecord) error 
 		if err != nil {
 			return err
 		}
-		var warmJSON *string
-		if len(rec.WarmKeyDelta) > 0 {
-			b, err := json.Marshal(rec.WarmKeyDelta)
-			if err != nil {
-				return fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
-			}
-			str := string(b)
-			warmJSON = &str
-		}
-		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto, warmJSON: warmJSON})
+		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto})
 		sigCount += len(rec.Signatures)
 		if rec.Nonce > maxNonce {
 			maxNonce = rec.Nonce
@@ -1381,7 +1378,7 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx,
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, created_at
 		 FROM devshard_diffs
 		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
 		 ORDER BY nonce`,
@@ -1633,7 +1630,7 @@ func postgresExecInsertSealedInference(ctx context.Context, exec postgresExecer,
 		row.SealedInputLength, row.SealedMaxTokens,
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
-		row.SealedStartedAt, row.SealedConfirmedAt,
+		row.SealedStartedAtHeight, row.SealedConfirmedAtHeight,
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
@@ -1782,7 +1779,7 @@ func (s *Postgres) copySealedInferenceChunk(epochID uint64, escrowID string, row
 				int64(r.SealedInputLength), int64(r.SealedMaxTokens),
 				int64(r.SealedInputTokens), int64(r.SealedOutputTokens),
 				int64(r.SealedReservedCost), int64(r.SealedActualCost),
-				r.SealedStartedAt, r.SealedConfirmedAt,
+				r.SealedStartedAtHeight, r.SealedConfirmedAtHeight,
 			}, nil
 		}),
 	)
@@ -1845,8 +1842,8 @@ func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, r
 		outputTokens[i] = int64(row.SealedOutputTokens)
 		reservedCosts[i] = int64(row.SealedReservedCost)
 		actualCosts[i] = int64(row.SealedActualCost)
-		startedAt[i] = row.SealedStartedAt
-		confirmedAt[i] = row.SealedConfirmedAt
+		startedAt[i] = row.SealedStartedAtHeight
+		confirmedAt[i] = row.SealedConfirmedAtHeight
 	}
 
 	ctx, cancel := s.opCtx()
@@ -1889,7 +1886,7 @@ func (s *Postgres) GetSealedInference(escrowID string, inferenceID uint64) (Infe
 		&out.SealedInputLength, &out.SealedMaxTokens,
 		&out.SealedInputTokens, &out.SealedOutputTokens,
 		&out.SealedReservedCost, &out.SealedActualCost,
-		&out.SealedStartedAt, &out.SealedConfirmedAt,
+		&out.SealedStartedAtHeight, &out.SealedConfirmedAtHeight,
 	); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return InferenceRow{}, false, nil

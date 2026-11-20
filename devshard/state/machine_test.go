@@ -116,7 +116,6 @@ func TestValidateDiff_DoesNotCommit(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})}
 	// Build a correctly signed diff via a throwaway SM so PostStateRoot matches.
 	probe, _ := newTestSM(t, hosts, 10000)
@@ -151,7 +150,6 @@ func TestPreviewLocalBestEffort_DoesNotCommit(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})}
 	vd, err := sm.PreviewLocalBestEffort(1, txs)
 	require.NoError(t, err)
@@ -176,7 +174,6 @@ func TestApplyDiff_StartInference(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -201,7 +198,6 @@ func TestApplyDiff_StartInference_ProtocolVersionMismatch(t *testing.T) {
 		Model:           "llama",
 		InputLength:     100,
 		MaxTokens:       testutil.TestMaxTokens,
-		StartedAt:       1000,
 		ProtocolVersion: "other-version",
 	})})
 	_, err := sm.ApplyDiff(diff)
@@ -215,15 +211,15 @@ func TestApplyDiff_ConfirmStart(t *testing.T) {
 	// Start inference. Executor slot: 1 % 3 = 1
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Confirm start with valid executor receipt.
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -238,15 +234,15 @@ func TestApplyDiff_ConfirmStart_InvalidReceipt(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// ConfirmStart with wrong signer (host[0] instead of host[1]).
-	execSig := testutil.SignExecutorReceipt(t, hosts[0], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[0], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
@@ -259,14 +255,14 @@ func TestApplyDiff_FinishInference(t *testing.T) {
 	// Start + confirm.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -298,14 +294,14 @@ func TestApplyDiff_FinishInference_WrongExecutorSlot(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -328,14 +324,14 @@ func TestApplyDiff_FinishInference_InvalidProposerSig(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -392,6 +388,32 @@ func TestApplyDiff_Validation_SelfValidation(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrSelfValidation)
 }
 
+func TestApplyDiff_Validation_SelfValidation_OtherOwnedSlot(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	// Inference 1: executor = group[1%4].SlotID = 1, owned by signers[0] who also owns slot 0.
+	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err = sm.ApplyDiff(diff)
+	require.ErrorIs(t, err, types.ErrSelfValidation)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint32(0), st.HostStats[1].Validated)
+	require.Equal(t, uint32(0), st.Inferences[1].VotesValid)
+}
+
 func TestApplyDiff_Validation_Invalid_ChallengeVoting(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
@@ -443,7 +465,7 @@ func TestApplyDiff_Timeout_Refused(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -455,6 +477,7 @@ func TestApplyDiff_Timeout_Refused(t *testing.T) {
 		votes = append(votes, v)
 	}
 
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 	})})
@@ -480,8 +503,8 @@ func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
 		{
 			name: "late confirm start",
 			tx: func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx {
-				execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-				return txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000})
+				execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+				return txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig})
 			},
 		},
 		{
@@ -502,7 +525,7 @@ func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
 
 			diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 				InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-				InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+				InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 			})})
 			_, err := sm.ApplyDiff(diff)
 			require.NoError(t, err)
@@ -514,6 +537,7 @@ func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
 				votes = append(votes, v)
 			}
 
+			makeTimeoutDue(t, sm, 1)
 			diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 				InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 			})})
@@ -538,14 +562,14 @@ func TestApplyDiff_Timeout_Execution(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -557,6 +581,7 @@ func TestApplyDiff_Timeout_Execution(t *testing.T) {
 		votes = append(votes, v)
 	}
 
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_EXECUTION, Votes: votes,
 	})})
@@ -578,7 +603,7 @@ func TestApplyDiff_Timeout_WrongReason(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -590,6 +615,7 @@ func TestApplyDiff_Timeout_WrongReason(t *testing.T) {
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_EXECUTION, Votes: votes,
 	})})
@@ -597,9 +623,9 @@ func TestApplyDiff_Timeout_WrongReason(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInvalidTimeoutReason)
 
 	// Confirm start, then reason=refused on started -> fail.
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -610,6 +636,7 @@ func TestApplyDiff_Timeout_WrongReason(t *testing.T) {
 		v.VoterSlot = slot
 		votes2 = append(votes2, v)
 	}
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes2,
 	})})
@@ -626,7 +653,7 @@ func TestApplyDiff_Timeout_InsufficientVotes(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -638,6 +665,7 @@ func TestApplyDiff_Timeout_InsufficientVotes(t *testing.T) {
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 	})})
@@ -662,6 +690,7 @@ func TestApplyDiff_Timeout_AfterFinish(t *testing.T) {
 	}
 
 	nonce := sm.SnapshotState().LatestNonce + 1
+	makeTimeoutDue(t, sm, 1)
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_EXECUTION, Votes: votes,
 	})})
@@ -686,7 +715,7 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	// Start inference. Executor slot = group[1%5].SlotID = 1 (owned by signer0).
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -698,6 +727,7 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	vote.VoterSlot = 4 // signer2's slot
 
 	// Single vote with weight=1 should fail (need >2).
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		Votes: []*types.TimeoutVote{vote},
@@ -709,6 +739,7 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	vote0 := testutil.SignTimeoutVote(t, signers[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
 	vote0.VoterSlot = 0
 
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		Votes: []*types.TimeoutVote{vote, vote0},
@@ -770,14 +801,14 @@ func TestApplyDiff_FinalizeRound_HostTxsStillAccepted(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -808,7 +839,7 @@ func TestApplyDiff_DuplicateTimeout(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -819,6 +850,7 @@ func TestApplyDiff_DuplicateTimeout(t *testing.T) {
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 	})})
@@ -831,6 +863,7 @@ func TestApplyDiff_DuplicateTimeout(t *testing.T) {
 		v.VoterSlot = slot
 		votes2 = append(votes2, v)
 	}
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes2,
 	})})
@@ -843,7 +876,7 @@ func TestApplyDiff_EscrowBalanceCheck(t *testing.T) {
 	sm, user := newTestSM(t, hosts, 10)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InferenceId: 1, InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrRequestExceedsBalance, "a reservation too large for the balance is not the escrow running out of funds")
@@ -858,7 +891,7 @@ func TestApplyLocalPersisted_ReplaysAStartWrittenBeforeTheFloor(t *testing.T) {
 	subFloor := func(inferenceID uint64) []*types.DevshardTx {
 		return []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+			InputLength: 100, MaxTokens: 0,
 		})}
 	}
 
@@ -880,7 +913,7 @@ func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 
 	underFloor := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	})})
 	_, err := sm.ApplyDiff(underFloor)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor)
@@ -892,7 +925,7 @@ func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 	poor, poorUser := newTestSM(t, hosts, 10)
 	poorDiff := testutil.SignDiff(t, poorUser, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	})})
 	_, err = poor.ApplyDiff(poorDiff)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor)
@@ -900,7 +933,7 @@ func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 
 	atFloor := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: MinReservationTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: MinReservationTokens,
 	})})
 	_, err = sm.ApplyDiff(atFloor)
 	require.NoError(t, err, "the floor itself is a legal reservation")
@@ -927,10 +960,10 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 		infID := nonce
 		executorSlotIdx := infID % uint64(len(hosts))
 
-		diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: infID, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: int64(infID) * 1000,
-		})})
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
+		})}))
 		_, err := sm.ApplyDiff(diff)
 		require.NoError(t, err)
 
@@ -948,19 +981,20 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 				votes = append(votes, v)
 			}
 			nonce++
-			diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
+			makeTimeoutDue(t, sm, infID)
+			diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 				InferenceId: infID, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
-			})})
+			})}))
 			_, err = sm.ApplyDiff(diff)
 			require.NoError(t, err)
 			continue
 		}
 
-		execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", infID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, int64(infID)*1000, int64(infID)*1000)
+		execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", infID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 		nonce++
-		diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-			InferenceId: infID, ExecutorSig: execSig, ConfirmedAt: int64(infID) * 1000,
-		})})
+		diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+			InferenceId: infID, ExecutorSig: execSig,
+		})}))
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
 
@@ -971,7 +1005,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 		}
 		finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[executorSlotIdx], finishMsg)
 		nonce++
-		diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinish(finishMsg)})
+		diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, []*types.DevshardTx{txFinish(finishMsg)}))
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
 
@@ -985,7 +1019,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 			valMsg := &types.MsgValidation{InferenceId: infID, ValidatorSlot: validatorSlot, Valid: false, EscrowId: "escrow-1"}
 			valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[validatorSlot], valMsg)
 			nonce++
-			diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+			diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)}))
 			_, err = sm.ApplyDiff(diff)
 			require.NoError(t, err)
 
@@ -1005,7 +1039,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 				votedCount++
 			}
 			nonce++
-			diff = testutil.SignDiff(t, user, "escrow-1", nonce, voteTxs)
+			diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, voteTxs))
 			_, err = sm.ApplyDiff(diff)
 			require.NoError(t, err)
 			continue
@@ -1016,7 +1050,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 			valMsg := &types.MsgValidation{InferenceId: infID, ValidatorSlot: validatorSlot, Valid: false, EscrowId: "escrow-1"}
 			valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[validatorSlot], valMsg)
 			nonce++
-			diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+			diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)}))
 			_, err = sm.ApplyDiff(diff)
 			require.NoError(t, err)
 
@@ -1035,7 +1069,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 				votedCount++
 			}
 			nonce++
-			diff = testutil.SignDiff(t, user, "escrow-1", nonce, voteTxs)
+			diff = testutil.SignDiff(t, user, "escrow-1", nonce, restamp(t, sm, hosts, "escrow-1", nonce, voteTxs))
 			_, err = sm.ApplyDiff(diff)
 			require.NoError(t, err)
 		}
@@ -1074,7 +1108,7 @@ func TestApplyDiff_InferenceIDMustMatchNonce(t *testing.T) {
 	// inference_id=42 at nonce=1 -> rejected.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 42, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInvalidInferenceID)
@@ -1089,7 +1123,7 @@ func TestApplyDiff_DuplicateInferenceID(t *testing.T) {
 	// First start succeeds.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1097,7 +1131,7 @@ func TestApplyDiff_DuplicateInferenceID(t *testing.T) {
 	// Second start with same ID rejected (inference_id=1 != nonce=2).
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt2"), Model: "llama",
-		InputLength: 50, MaxTokens: 25, StartedAt: 2000,
+		InputLength: 50, MaxTokens: 25,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInvalidInferenceID)
@@ -1112,7 +1146,7 @@ func TestApplyDiff_Timeout_DuplicateVoterSlot(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1125,6 +1159,7 @@ func TestApplyDiff_Timeout_DuplicateVoterSlot(t *testing.T) {
 	v2 := testutil.SignTimeoutVote(t, hosts[2], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
 	v2.VoterSlot = 2
 
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: []*types.TimeoutVote{v0a, v0b, v2},
 	})})
@@ -1175,7 +1210,7 @@ func TestSnapshotState_DeepCopy(t *testing.T) {
 	// Start an inference to populate state.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1206,15 +1241,15 @@ func applyStartConfirmFinish(t *testing.T, sm *StateMachine, user *signing.Secp2
 
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: inferenceID, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1350,7 +1385,7 @@ func TestApplyDiff_CostOverflow_StartInference(t *testing.T) {
 	// InputLength + MaxTokens overflows uint64.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: math.MaxUint64, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: math.MaxUint64, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrCostOverflow)
@@ -1358,7 +1393,7 @@ func TestApplyDiff_CostOverflow_StartInference(t *testing.T) {
 	// Multiplication overflows: large input * price.
 	diff = testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: math.MaxUint64 / 2, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: math.MaxUint64 / 2, MaxTokens: testutil.TestMaxTokens,
 	})})
 	// With TokenPrice=1, the mul won't overflow. Use a custom SM with higher price.
 	config := types.SessionConfig{TokenPrice: 3, VoteThreshold: 1}
@@ -1369,7 +1404,7 @@ func TestApplyDiff_CostOverflow_StartInference(t *testing.T) {
 
 	diff = testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: math.MaxUint64 / 2, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: math.MaxUint64 / 2, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err = smHigh.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrCostOverflow)
@@ -1382,7 +1417,7 @@ func TestApplyDiff_AtomicRollback(t *testing.T) {
 	// First: apply a valid start.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1392,7 +1427,7 @@ func TestApplyDiff_AtomicRollback(t *testing.T) {
 	// Diff with two txs: a valid confirm, then an invalid finish (wrong executor slot).
 	// The confirm would succeed, modifying state, but the finish fails.
 	// With atomic rollback, the state should be unchanged.
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 
 	finishMsg := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
@@ -1402,7 +1437,7 @@ func TestApplyDiff_AtomicRollback(t *testing.T) {
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], finishMsg)
 
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
-		txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000}),
+		txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig}),
 		txFinish(finishMsg),
 	})
 	_, err = sm.ApplyDiff(diff)
@@ -1459,7 +1494,6 @@ func TestApplyDiff_FeePerNonce_Deducted(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1486,7 +1520,6 @@ func TestApplyDiff_FeePerNonce_InsufficientBalance_Rollback(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
@@ -1542,7 +1575,6 @@ func TestApplyLocalBestEffort_FeePerNonce_InsufficientBalance_Rollback(t *testin
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   testutil.TestMaxTokens,
-		StartedAt:   1000,
 	})})
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 	require.NotErrorIs(t, err, types.ErrRequestExceedsBalance, "the escrow refused the per-nonce fee, not the reservation")
@@ -1690,32 +1722,32 @@ func TestApplyDiff_Validation_DuplicateAddress(t *testing.T) {
 }
 
 func TestApplyDiff_ValidationVote_MultiSlotWeight(t *testing.T) {
-	// 3 signers: signer[0] owns 2 slots (0,1), signer[1] owns 1 slot (2), signer[2] owns 1 slot (3).
+	// 3 signers: signer[0] owns 1 slot (0), signer[1] owns 1 slot (1), signer[2] owns 2 slots (2,3).
 	// Total 4 slots. VoteThreshold = 4/2 = 2. Need >2 weighted votes to resolve.
 	signers := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	user := testutil.MustGenerateKey(t)
-	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 4/2 = 2
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
-	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[0]).
+	// Inference 1: executor = group[1%4].SlotID = 1 (owned by signer[1]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
 
 	// Challenge.
-	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
-	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Signer[0] votes invalid from slot 0. Weight = 2 (owns slots 0 and 1).
-	voteMsg := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 0, VoteValid: false, EscrowId: "escrow-1"}
-	voteMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], voteMsg)
+	// Signer[2] votes invalid from slot 2. Weight = 2 (owns slots 2 and 3).
+	voteMsg := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2, VoteValid: false, EscrowId: "escrow-1"}
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, signers[2], voteMsg)
 	nonce = sm.SnapshotState().LatestNonce + 1
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(voteMsg)})
 	_, err = sm.ApplyDiff(diff)
@@ -1732,37 +1764,37 @@ func TestApplyDiff_ValidationVote_MultiSlotDedup(t *testing.T) {
 	// 4 signers: signer[0] owns 2 slots (0,1), others own 1 each (2,3,4).
 	// Total 5 slots. VoteThreshold = 5/2 = 2. Need >2 weighted votes.
 	// Signer[0] weight=2, so one vote reaches threshold -- use more signers.
-	// 5 signers: signer[0] owns 2 slots (0,1), others own 1 each (2,3,4,5).
-	// Total 6 slots. VoteThreshold = 6/2 = 3. Signer[0] weight=2, won't resolve alone.
+	// 5 signers: signer[2] owns 2 slots (2,3), others own 1 each (0,1,4,5).
+	// Total 6 slots. VoteThreshold = 6/2 = 3. Signer[2] weight=2, won't resolve alone.
 	signers := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	user := testutil.MustGenerateKey(t)
-	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1, 1, 1})
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2, 1, 1})
 	config := testutil.DefaultConfig(len(group)) // VoteThreshold = 6/2 = 3
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
 
-	// Inference 1: executor = group[1%6].SlotID = 1 (owned by signer[0]).
+	// Inference 1: executor = group[1%6].SlotID = 1 (owned by signer[1]).
 	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
 
-	// Challenge from signer[1] (slot 2).
-	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
-	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
+	// Challenge from signer[0] (slot 0).
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[0], valMsg)
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Signer[0] votes from slot 0 (weight=2). VotesInvalid = 1+2 = 3, not > 3. Still Challenged.
-	vote1 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 0, VoteValid: false, EscrowId: "escrow-1"}
-	vote1.ProposerSig = testutil.SignProposerTx(t, signers[0], vote1)
+	// Signer[2] votes from slot 2 (weight=2). VotesInvalid = 1+2 = 3, not > 3. Still Challenged.
+	vote1 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2, VoteValid: false, EscrowId: "escrow-1"}
+	vote1.ProposerSig = testutil.SignProposerTx(t, signers[2], vote1)
 
-	// Signer[0] votes again from slot 1 (other owned slot) -> must be rejected.
-	vote2 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 1, VoteValid: false, EscrowId: "escrow-1"}
-	vote2.ProposerSig = testutil.SignProposerTx(t, signers[0], vote2)
+	// Signer[2] votes again from slot 3 (other owned slot) -> must be rejected.
+	vote2 := &types.MsgValidationVote{InferenceId: 1, VoterSlot: 3, VoteValid: false, EscrowId: "escrow-1"}
+	vote2.ProposerSig = testutil.SignProposerTx(t, signers[2], vote2)
 
 	nonce = sm.SnapshotState().LatestNonce + 1
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(vote1), txVote(vote2)})
@@ -1789,15 +1821,15 @@ func applyStartConfirmFinishMultiSlot(t *testing.T, sm *StateMachine, user *sign
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, executorSigner, "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, executorSigner, "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: inferenceID, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -1827,7 +1859,7 @@ func TestApplyDiff_PostStateRoot_Valid(t *testing.T) {
 
 	txs := []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})}
 
 	// Compute root from the replica.
@@ -1846,7 +1878,7 @@ func TestApplyDiff_PostStateRoot_Mismatch(t *testing.T) {
 
 	txs := []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})}
 
 	// Sign diff with wrong post_state_root.
@@ -1900,7 +1932,7 @@ func TestApplyDiff_RevealSeed_DeprecatedNoOp(t *testing.T) {
 
 	after := sm.SnapshotState()
 	require.Equal(t, types.PhaseFinalizing, after.Phase)
-	require.Equal(t, before.WarmKeys, after.WarmKeys)
+	require.Equal(t, before.WarmKeyHistory, after.WarmKeyHistory)
 	for slotID, hs := range after.HostStats {
 		require.Zero(t, hs.RequiredValidations, "slot %d required validations must stay zero", slotID)
 		require.Zero(t, hs.CompletedValidations, "slot %d completed validations must stay zero", slotID)
@@ -1986,15 +2018,15 @@ func applyStartConfirmFinish_Setup(t *testing.T, sm *StateMachine, user *signing
 
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: inferenceID, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -2141,15 +2173,15 @@ func TestPhase_FinalizationLeavesValidationCountersZero(t *testing.T) {
 	// Create a finished inference so finalization has existing session data.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
 	// Confirm + finish so the inference reaches StatusFinished.
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -2201,14 +2233,14 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 	// Start + confirm + finish in session A.
 	diff := testutil.SignDiff(t, user, "escrow-A", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err = smA.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-A", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-A", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-A", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = smA.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -2231,14 +2263,14 @@ func TestReplayAttack_CrossEscrow(t *testing.T) {
 
 	diff = testutil.SignDiff(t, user, "escrow-B", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err = smB.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSigB := testutil.SignExecutorReceipt(t, hosts[1], "escrow-B", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSigB := testutil.SignExecutorReceipt(t, hosts[1], "escrow-B", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-B", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSigB, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSigB,
 	})})
 	_, err = smB.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -2256,14 +2288,14 @@ func TestFinishInference_CostCapped(t *testing.T) {
 	// Start: reserved = (100+64)*1 = 164.
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -2474,15 +2506,15 @@ func TestV2_FinalizeDrainDeterministicOrder(t *testing.T) {
 		nonce := inferenceID
 		diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		})})
 		_, err := sm.ApplyDiff(diff)
 		require.NoError(t, err)
 
-		execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+		execSig := testutil.SignExecutorReceipt(t, hosts[executorSlotIdx], "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 		nonce++
 		diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-			InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+			InferenceId: inferenceID, ExecutorSig: execSig,
 		})})
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
@@ -2553,7 +2585,7 @@ func advanceToSettlement(t *testing.T, sm *StateMachine, user *signing.Secp256k1
 	require.Equal(t, types.PhaseSettlement, sm.Phase())
 }
 
-func TestDrainSettle_StartedAutoFinishes(t *testing.T) {
+func TestDrainSettle_UndueStartedRefundsUser(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
@@ -2566,16 +2598,17 @@ func TestDrainSettle_StartedAutoFinishes(t *testing.T) {
 	advanceToSettlement(t, sm, user, len(hosts))
 
 	after := sm.SnapshotState()
-	require.Equal(t, uint64(164), after.HostStats[1].Cost)
-	require.Equal(t, before.Balance, after.Balance)
+	require.Zero(t, after.HostStats[1].Cost)
+	require.Zero(t, after.HostStats[1].Missed)
+	require.Equal(t, before.Balance+164, after.Balance)
 
 	sealed, ok := sm.LookupSealedInference(1)
 	require.True(t, ok)
-	require.Equal(t, types.StatusFinished, sealed.Status)
-	require.Equal(t, uint64(164), sealed.ActualCost)
+	require.Equal(t, types.StatusTimedOut, sealed.Status)
+	require.Zero(t, sealed.ActualCost)
 }
 
-func TestDrainSettle_PendingCreditsHost(t *testing.T) {
+func TestDrainSettle_UnduePendingRefundsUser(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
@@ -2583,7 +2616,7 @@ func TestDrainSettle_PendingCreditsHost(t *testing.T) {
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -2594,14 +2627,14 @@ func TestDrainSettle_PendingCreditsHost(t *testing.T) {
 	advanceToSettlement(t, sm, user, len(hosts))
 
 	after := sm.SnapshotState()
-	require.Equal(t, before.Balance, after.Balance)
-	require.Equal(t, uint64(164), after.HostStats[1].Cost)
+	require.Equal(t, before.Balance+164, after.Balance)
+	require.Zero(t, after.HostStats[1].Cost)
 	require.Equal(t, uint32(0), after.HostStats[1].Missed)
 
 	sealed, ok := sm.LookupSealedInference(1)
 	require.True(t, ok)
-	require.Equal(t, types.StatusFinished, sealed.Status)
-	require.Equal(t, uint64(164), sealed.ActualCost)
+	require.Equal(t, types.StatusTimedOut, sealed.Status)
+	require.Zero(t, sealed.ActualCost)
 }
 
 func TestDrainSettle_ChallengedUnchanged(t *testing.T) {
@@ -2638,7 +2671,7 @@ func TestDrainSettle_ChallengedUnchanged(t *testing.T) {
 // TestDrainSettle_CensoredFinishCreditsHost is the settlement-drain regression
 // for the "free compute" exploit: user sequences start+confirm, censors finish,
 // and finalizes — the host must be credited ReservedCost without WithGrace.
-func TestDrainSettle_CensoredFinishCreditsHost(t *testing.T) {
+func TestDrainSettle_CensoredFinishUndueRefundsUser(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
@@ -2652,8 +2685,8 @@ func TestDrainSettle_CensoredFinishCreditsHost(t *testing.T) {
 	advanceToSettlement(t, sm, user, len(hosts))
 
 	after := sm.SnapshotState()
-	require.Equal(t, uint64(164), after.HostStats[1].Cost)
-	require.Equal(t, before.Balance, after.Balance)
+	require.Zero(t, after.HostStats[1].Cost)
+	require.Equal(t, before.Balance+164, after.Balance)
 }
 
 func TestDrainSettle_MixedDeterministic(t *testing.T) {
@@ -2669,7 +2702,7 @@ func TestDrainSettle_MixedDeterministic(t *testing.T) {
 		// inf 1: pending (executor slot 1).
 		diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		})})
 		_, err := sm.ApplyDiff(diff)
 		require.NoError(t, err)
@@ -2683,14 +2716,14 @@ func TestDrainSettle_MixedDeterministic(t *testing.T) {
 		// inf 4: started (executor slot 4).
 		diff = testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: 4, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		})})
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
 
-		execSig := testutil.SignExecutorReceipt(t, hosts[4], "escrow-1", 4, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+		execSig := testutil.SignExecutorReceipt(t, hosts[4], "escrow-1", 4, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 		diff = testutil.SignDiff(t, user, "escrow-1", 5, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-			InferenceId: 4, ExecutorSig: execSig, ConfirmedAt: 1000,
+			InferenceId: 4, ExecutorSig: execSig,
 		})})
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
@@ -2702,14 +2735,14 @@ func TestDrainSettle_MixedDeterministic(t *testing.T) {
 		// inf 7: finished (executor slot 2).
 		diff = testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{txStart(&types.MsgStartInference{
 			InferenceId: 7, PromptHash: []byte("prompt"), Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		})})
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
 
-		execSig = testutil.SignExecutorReceipt(t, hosts[2], "escrow-1", 7, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+		execSig = testutil.SignExecutorReceipt(t, hosts[2], "escrow-1", 7, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 		diff = testutil.SignDiff(t, user, "escrow-1", 8, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-			InferenceId: 7, ExecutorSig: execSig, ConfirmedAt: 1000,
+			InferenceId: 7, ExecutorSig: execSig,
 		})})
 		_, err = sm.ApplyDiff(diff)
 		require.NoError(t, err)
@@ -2737,8 +2770,8 @@ func TestDrainSettle_MixedDeterministic(t *testing.T) {
 	require.Equal(t, stA.HostStats, stB.HostStats)
 	require.Equal(t, stA.Balance, stB.Balance)
 
-	require.Equal(t, uint64(164), stA.HostStats[1].Cost)
-	require.Equal(t, uint64(164), stA.HostStats[4].Cost)
+	require.Zero(t, stA.HostStats[1].Cost)
+	require.Zero(t, stA.HostStats[4].Cost)
 	require.Equal(t, uint64(120), stA.HostStats[2].Cost)
 
 	var totalCost uint64
@@ -2761,79 +2794,293 @@ func newTestSMWithWarmKey(t *testing.T, hosts []*signing.Secp256k1Signer, balanc
 	return sm, user
 }
 
-// applyStartConfirmWithWarmKey starts an inference and confirms it using a warm key signer.
-// executorIdx is the index in hosts that is the executor (cold key).
+// applyWarmKeyBind applies a diff that carries only a MsgWarmKeyBind.
+func applyWarmKeyBind(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, slot uint32, addr string, grantID uint64) {
+	t.Helper()
+	nonce := sm.LatestNonce() + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.WarmKeyBindTx(slot, addr, grantID)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+}
+
+// applyStartConfirmWithWarmKey starts an inference and confirms it with a warm
+// key signer. executorIdx is the index in hosts that is the executor (cold key).
 func applyStartConfirmWithWarmKey(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, hosts []*signing.Secp256k1Signer, warmSigner *signing.Secp256k1Signer, inferenceID uint64, executorIdx int) {
 	t.Helper()
 	nonce := sm.LatestNonce() + 1
 
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Sign executor receipt with warm key instead of cold key.
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", inferenceID, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
 	nonce++
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: inferenceID, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 }
 
-func TestWarmKey_VerifyConfirmStartDoesNotStoreTheBinding(t *testing.T) {
+// Test flow:
+//  1. Bind a warm key to the executor slot through a diff, then start and confirm an inference signed by it.
+//  2. Assert the confirm applies, the history records the binding from the bind nonce, and the key counts as a
+//     warm key of the escrow.
+func TestWarmKey_ConfirmStartWithBoundWarmKey(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)
-	executorIdx := 1
+	sm, user := newTestSM(t, hosts, 10000)
 
+	applyWarmKeyBind(t, sm, user, 2, warmSigner.Address(), 1)
+	// Nonce 2: inference 2 -> executor slot 2.
+	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 2, 2)
+
+	st := sm.SnapshotState()
+	require.Equal(t, types.StatusStarted, st.Inferences[2].Status)
+	require.Equal(t, []signing.WarmKeyBinding{{Addr: warmSigner.Address(), FromNonce: 1, GrantID: 1}}, st.WarmKeyHistory[2])
+	require.True(t, sm.IsWarmKeyAddress(warmSigner.Address()))
+	require.False(t, sm.IsWarmKeyAddress(hosts[0].Address()))
+}
+
+// Test flow:
+//  1. Configure a grant source that accepts the warm key, but apply no bind.
+//  2. Assert a confirm signed by the key is refused on the apply path: the grant source is a local-admission
+//     fallback, never a consensus input.
+func TestWarmKey_ApplyNeverAsksTheGrantSource(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warmSigner := testutil.MustGenerateKey(t)
+	var calls int
 	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
+		calls++
+		return true, nil
 	}
 	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
 
 	nonce := sm.LatestNonce() + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	require.NoError(t, sm.VerifyConfirmStart(1, 1000, execSig))
-	require.Empty(t, sm.WarmKeys(), "a receipt check must not write a warm key before the diff")
-	rec, ok := sm.GetInference(1)
-	require.True(t, ok)
-	require.Equal(t, types.StatusPending, rec.Status)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	require.NoError(t, sm.VerifyConfirmStart(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig}), "the read-only check may ask the grant source")
+	require.Equal(t, 1, calls)
+	require.Empty(t, sm.WarmKeyHistory(), "a check never binds")
 
 	nonce++
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig,
 	})})
 	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-	require.Equal(t, warmSigner.Address(), sm.WarmKeys()[uint32(executorIdx)])
+	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
+	require.Equal(t, 1, calls, "apply decided from the history alone")
+	require.Equal(t, uint64(1), sm.LatestNonce())
 }
 
-func TestWarmKey_ConfirmStartWithWarmKey(t *testing.T) {
+// Test flow:
+//  1. Give the machine a confirmer that knows one chain-log entry, then apply binds naming a wrong grantee, a
+//     missing id and the right entry; replay the right bind through ApplyLocalPersisted.
+//  2. Assert the wrong ones refuse the diff with ErrWarmKeyUnconfirmed and leave the nonce, the right one
+//     applies, and the persisted replay never calls the confirmer.
+func TestWarmKey_BindConfirmedAgainstChainLog(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	warmSigner := testutil.MustGenerateKey(t)
-	executorIdx := 1 // inference 1 % 3 = 1
-
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
+	warm := testutil.MustGenerateKey(t)
+	grants := testutil.NewWarmKeyGrants()
+	id := grants.Grant(hosts[1].Address(), warm.Address())
+	var calls int
+	confirm := func(cold, warmAddr string, grantID uint64) error {
+		calls++
+		return grants.Confirmer(cold, warmAddr, grantID)
 	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), WithWarmKeyConfirmer(confirm))
+	require.NoError(t, err)
 
-	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 1, executorIdx)
+	stranger := testutil.MustGenerateKey(t)
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.WarmKeyBindTx(1, stranger.Address(), id)}))
+	require.ErrorIs(t, err, types.ErrWarmKeyUnconfirmed, "the entry names another grantee")
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.WarmKeyBindTx(1, warm.Address(), id+5)}))
+	require.ErrorIs(t, err, types.ErrWarmKeyUnconfirmed, "no such entry")
+	require.Equal(t, uint64(0), sm.LatestNonce())
+	require.Empty(t, sm.WarmKeyHistory())
 
-	st := sm.SnapshotState()
-	require.Equal(t, types.StatusStarted, st.Inferences[1].Status)
-	require.Equal(t, warmSigner.Address(), st.WarmKeys[uint32(executorIdx)])
-	require.True(t, sm.IsWarmKeyAddress(warmSigner.Address()))
+	bind := testutil.WarmKeyBindTx(1, warm.Address(), id)
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{bind}))
+	require.NoError(t, err)
+	require.Equal(t, []string{warm.Address()}, sm.WarmKeyHistory().Live(1))
+	require.Equal(t, 3, calls)
+
+	replay, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000), WithWarmKeyConfirmer(confirm))
+	require.NoError(t, err)
+	_, err = replay.ApplyLocalPersisted(1, []*types.DevshardTx{bind})
+	require.NoError(t, err)
+	require.Equal(t, 3, calls, "a diff this node already accepted is not confirmed again")
+	replayRoot, err := replay.ComputeStateRoot()
+	require.NoError(t, err)
+	root, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, root, replayRoot)
+}
+
+// Test flow:
+//  1. Put a confirm signed by a warm key ahead of the bind that introduces it, in one diff, and validate it
+//     the way a host does (ValidateDiff then CommitValidated).
+//  2. Assert the diff applies: entries apply before the other transactions whatever their position.
+func TestWarmKey_EntriesApplyBeforeOtherTransactions(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warm := testutil.MustGenerateKey(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens})}))
+	require.NoError(t, err)
+
+	execSig := testutil.SignExecutorReceipt(t, warm, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	diff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
+		txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig}),
+		testutil.WarmKeyBindTx(1, warm.Address(), 1),
+	})
+	vd, err := sm.ValidateDiff(diff)
+	require.NoError(t, err)
+	require.Empty(t, sm.WarmKeyHistory(), "a trial apply leaves the live state alone")
+	require.True(t, sm.CommitValidated(vd))
+	require.Equal(t, []string{warm.Address()}, sm.WarmKeyHistory().Live(1))
+	rec, ok := sm.GetInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+}
+
+// Test flow:
+//  1. Bind an old key, then a new key on the same slot; finish an inference with the old key inside the window;
+//     revoke the old key; try the old key again.
+//  2. Assert both keys work inside the window, the old key is refused from the revoke nonce on, a fresh machine
+//     replaying the same diffs reaches the same root and history, and a bind through the old grant is refused.
+func TestWarmKey_RotationKeepsOldKeyUntilRevokeAndReplaysAlike(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	oldKey, newKey := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	sm, user := newTestSM(t, hosts, 100000)
+	var diffs []types.Diff
+	apply := func(txs ...*types.DevshardTx) error {
+		diff := testutil.SignDiff(t, user, "escrow-1", sm.LatestNonce()+1, txs)
+		_, err := sm.ApplyDiff(diff)
+		if err == nil {
+			diffs = append(diffs, diff)
+		}
+		return err
+	}
+	finishBy := func(signer *signing.Secp256k1Signer, id uint64) *types.DevshardTx {
+		msg := &types.MsgFinishInference{
+			InferenceId: id, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+			InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1, EscrowId: "escrow-1",
+		}
+		msg.ProposerSig = testutil.SignProposerTx(t, signer, msg)
+		return txFinish(msg)
+	}
+	startConfirm := func(id uint64, signer *signing.Secp256k1Signer) {
+		require.NoError(t, apply(txStart(&types.MsgStartInference{
+			InferenceId: id, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens})))
+		execSig := testutil.SignExecutorReceipt(t, signer, "escrow-1", id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+		require.NoError(t, apply(txConfirm(&types.MsgConfirmStart{InferenceId: id, ExecutorSig: execSig})))
+	}
+
+	require.NoError(t, apply(testutil.WarmKeyBindTx(1, oldKey.Address(), 1))) // nonce 1
+	require.NoError(t, apply(testutil.WarmKeyBindTx(1, newKey.Address(), 2))) // nonce 2
+	require.Equal(t, []string{oldKey.Address(), newKey.Address()}, sm.WarmKeyHistory().Live(1))
+	// Inference 4 -> slot 1: confirmed by the new key, finished by the old one.
+	require.NoError(t, apply())                                                                 // nonce 3
+	startConfirm(4, newKey)                                                                     // nonces 4, 5
+	require.NoError(t, apply(finishBy(oldKey, 4)), "both keys sign inside the rotation window") // nonce 6
+
+	require.ErrorIs(t, apply(testutil.WarmKeyRevokeTx(1, oldKey.Address(), 2)), types.ErrInvalidWarmKeyEntry, "a revoke must name the live binding's grant")
+	require.NoError(t, apply(testutil.WarmKeyRevokeTx(1, oldKey.Address(), 1))) // nonce 7
+	require.Equal(t, []string{newKey.Address()}, sm.WarmKeyHistory().Live(1))
+	require.Equal(t, uint64(7), sm.LatestNonce())
+
+	// Inference 10 -> slot 1 at nonces 10, 11; the old key is refused now.
+	require.NoError(t, apply()) // 8
+	require.NoError(t, apply()) // 9
+	require.NoError(t, apply(txStart(&types.MsgStartInference{
+		InferenceId: 10, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens}))) // 10
+	oldSig := testutil.SignExecutorReceipt(t, oldKey, "escrow-1", 10, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	require.ErrorIs(t, apply(txConfirm(&types.MsgConfirmStart{InferenceId: 10, ExecutorSig: oldSig})), types.ErrInvalidExecutorSig)
+	require.ErrorIs(t, apply(testutil.WarmKeyBindTx(1, oldKey.Address(), 1)), types.ErrInvalidWarmKeyEntry, "the revoked grant cannot bring the key back")
+	require.NoError(t, apply(testutil.WarmKeyBindTx(1, oldKey.Address(), 3)), "a later grant can") // 11
+	newSig := testutil.SignExecutorReceipt(t, oldKey, "escrow-1", 10, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	require.NoError(t, apply(txConfirm(&types.MsgConfirmStart{InferenceId: 10, ExecutorSig: newSig}))) // 12
+
+	// A lagging host replays the same diffs, old-key signatures included,
+	// with no grant source at all.
+	fresh, err := NewStateMachine("escrow-1", sm.Config(), testutil.MakeGroup(hosts), 100000, user.Address(), signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), sm.Config(), testutil.MakeGroup(hosts), 100000))
+	require.NoError(t, err)
+	for _, d := range diffs {
+		_, err := fresh.ApplyDiff(d)
+		require.NoError(t, err, "replay nonce %d", d.Nonce)
+	}
+	want, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	got, err := fresh.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, want, got)
+	require.Equal(t, sm.WarmKeyHistory(), fresh.WarmKeyHistory())
+}
+
+// Test flow:
+//  1. Apply a diff that carries a bind together with a transaction that fails.
+//  2. Assert the bind is undone with the rest of the diff, and the next valid bind applies at the same nonce.
+func TestWarmKey_FailedDiffUndoesItsBind(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warm := testutil.MustGenerateKey(t)
+	sm, user := newTestSM(t, hosts, 10000)
+
+	bad := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(0, warm.Address(), 1),
+		txConfirm(&types.MsgConfirmStart{InferenceId: 99}),
+	})
+	_, err := sm.ApplyDiff(bad)
+	require.ErrorIs(t, err, types.ErrInferenceNotFound)
+	require.Empty(t, sm.WarmKeyHistory())
+	require.Equal(t, uint64(0), sm.LatestNonce())
+
+	applyWarmKeyBind(t, sm, user, 0, warm.Address(), 1)
+	require.Equal(t, []signing.WarmKeyBinding{{Addr: warm.Address(), FromNonce: 1, GrantID: 1}}, sm.WarmKeyHistory()[0])
+}
+
+// Test flow:
+//  1. Try the entries the state machine refuses outright: a slot outside the group, an empty address, the cold
+//     key itself, a zero grant id, a bind of a key already live, and a revoke of a key never bound.
+//  2. Assert each is refused with its error and nothing is written.
+func TestWarmKey_InvalidEntriesRefused(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warm := testutil.MustGenerateKey(t)
+	sm, user := newTestSM(t, hosts, 10000)
+	try := func(tx *types.DevshardTx) error {
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", sm.LatestNonce()+1, []*types.DevshardTx{tx}))
+		return err
+	}
+	require.ErrorIs(t, try(testutil.WarmKeyBindTx(9, warm.Address(), 1)), types.ErrSlotNotInGroup)
+	require.ErrorIs(t, try(testutil.WarmKeyBindTx(0, "", 1)), types.ErrInvalidWarmKeyEntry)
+	require.ErrorIs(t, try(testutil.WarmKeyBindTx(0, hosts[0].Address(), 1)), types.ErrInvalidWarmKeyEntry)
+	require.ErrorIs(t, try(testutil.WarmKeyBindTx(0, warm.Address(), 0)), types.ErrInvalidWarmKeyEntry)
+	require.ErrorIs(t, try(testutil.WarmKeyRevokeTx(0, warm.Address(), 1)), types.ErrInvalidWarmKeyEntry)
+	require.Empty(t, sm.WarmKeyHistory())
+	require.Equal(t, uint64(0), sm.LatestNonce())
+
+	applyWarmKeyBind(t, sm, user, 0, warm.Address(), 1)
+	require.ErrorIs(t, try(testutil.WarmKeyBindTx(0, warm.Address(), 2)), types.ErrInvalidWarmKeyEntry, "already live")
+	require.Len(t, sm.WarmKeyHistory()[0], 1)
 }
 
 // TestRejectFinishProposerSigLocal covers the admission-time check the user
@@ -2860,7 +3107,7 @@ func TestRejectFinishProposerSigLocal(t *testing.T) {
 		require.NoError(t, sm.RejectFinishProposerSigLocal(finishFrom(t, hosts[executorIdx], uint32(executorIdx))))
 	})
 
-	t.Run("stranger rejected when no resolver is configured", func(t *testing.T) {
+	t.Run("stranger rejected when no grant source is configured", func(t *testing.T) {
 		sm, _ := newTestSM(t, hosts, 10000)
 		require.ErrorIs(t, sm.RejectFinishProposerSigLocal(finishFrom(t, stranger, uint32(executorIdx))),
 			types.ErrInvalidProposerSig)
@@ -2872,123 +3119,70 @@ func TestRejectFinishProposerSigLocal(t *testing.T) {
 			types.ErrSlotNotInGroup)
 	})
 
-	t.Run("stranger allowed through when a warm key could still resolve", func(t *testing.T) {
+	t.Run("stranger allowed through when a grant source could still accept it", func(t *testing.T) {
 		var calls int
 		sm, _ := newTestSMWithWarmKey(t, hosts, 10000, func(string, string) (bool, error) {
 			calls++
 			return false, nil
 		})
 		require.NoError(t, sm.RejectFinishProposerSigLocal(finishFrom(t, stranger, uint32(executorIdx))),
-			"undecidable without the bridge, so apply-time verification owns it")
-		require.Zero(t, calls, "admission check must never call the warm key resolver")
+			"undecidable without the grant source, so apply-time verification owns it")
+		require.Zero(t, calls, "admission check must never call the grant source")
 	})
 
-	t.Run("cached warm key decides both ways", func(t *testing.T) {
-		sm, user := newTestSMWithWarmKey(t, hosts, 10000, func(warmAddr, coldAddr string) (bool, error) {
-			return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
+	t.Run("bound warm key accepted, revoked warm key rejected from state", func(t *testing.T) {
+		var calls int
+		sm, user := newTestSMWithWarmKey(t, hosts, 10000, func(string, string) (bool, error) {
+			calls++
+			return true, nil
 		})
-		applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 1, executorIdx)
-		require.Equal(t, warmSigner.Address(), sm.SnapshotState().WarmKeys[uint32(executorIdx)])
-
+		applyWarmKeyBind(t, sm, user, uint32(executorIdx), warmSigner.Address(), 1)
 		require.NoError(t, sm.RejectFinishProposerSigLocal(finishFrom(t, warmSigner, uint32(executorIdx))))
-		require.ErrorIs(t, sm.RejectFinishProposerSigLocal(finishFrom(t, stranger, uint32(executorIdx))),
-			types.ErrInvalidProposerSig)
+
+		nonce := sm.LatestNonce() + 1
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{testutil.WarmKeyRevokeTx(uint32(executorIdx), warmSigner.Address(), 1)}))
+		require.NoError(t, err)
+		require.ErrorIs(t, sm.RejectFinishProposerSigLocal(finishFrom(t, warmSigner, uint32(executorIdx))),
+			types.ErrInvalidProposerSig, "a revoke in the history is final, whatever the grant source would say")
+		require.Zero(t, calls)
 	})
 }
 
-func TestWarmKey_ConfirmStartRejectsUnauthorizedKey(t *testing.T) {
+func TestWarmKey_StateRootChangesWithHistory(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	randomKey := testutil.MustGenerateKey(t)
-
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return false, nil // always reject
+	hostStats := make(map[uint32]*types.HostStats)
+	for i := range hosts {
+		hostStats[uint32(i)] = &types.HostStats{}
 	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
+	inferences := make(map[uint64]*types.InferenceRecord)
 
-	nonce := sm.LatestNonce() + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})})
-	_, err := sm.ApplyDiff(diff)
+	rootNil, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, nil, 0, types.DevshardStateRootAndProtocolVersion)
+	require.NoError(t, err)
+	rootEmpty, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, signing.WarmKeyHistory{1: nil}, 0, types.DevshardStateRootAndProtocolVersion)
+	require.NoError(t, err)
+	bound := signing.WarmKeyHistory{1: {{Addr: "0xwarmaddr", FromNonce: 3, GrantID: 1}}}
+	rootBound, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, bound, 0, types.DevshardStateRootAndProtocolVersion)
+	require.NoError(t, err)
+	revoked := signing.WarmKeyHistory{1: {{Addr: "0xwarmaddr", FromNonce: 3, GrantID: 1, RevokedAtNonce: 9}}}
+	rootRevoked, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, revoked, 0, types.DevshardStateRootAndProtocolVersion)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, randomKey, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
-	})})
-	_, err = sm.ApplyDiff(diff)
-	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
-}
-
-func TestWarmKey_ConfirmStartNoResolver(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	randomKey := testutil.MustGenerateKey(t)
-
-	// No WithWarmKeyResolver -- resolver is nil.
-	sm, user := newTestSM(t, hosts, 10000)
-
-	nonce := sm.LatestNonce() + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})})
-	_, err := sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	execSig := testutil.SignExecutorReceipt(t, randomKey, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
-	})})
-	_, err = sm.ApplyDiff(diff)
-	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
-}
-
-func TestWarmKey_BindingCached(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	warmSigner := testutil.MustGenerateKey(t)
-	executorIdx := 1
-
-	callCount := 0
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		callCount++
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 100000, resolver)
-
-	// First inference: resolver called once, binding stored.
-	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 1, executorIdx)
-	require.Equal(t, 1, callCount, "resolver should be called once for first warm key use")
-
-	// Second inference with same executor slot (4 % 3 = 1).
-	// Need nonce == inferenceID, so advance nonce to 3, then use inference 4.
-	nonce := sm.LatestNonce() + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil) // empty diff nonce 3
-	_, err := sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 4, executorIdx)
-	require.Equal(t, 1, callCount, "resolver should NOT be called again -- binding is cached")
+	require.Equal(t, rootNil, rootEmpty, "nil and empty histories hash alike")
+	require.NotEqual(t, rootEmpty, rootBound, "a binding changes the state root")
+	require.NotEqual(t, rootBound, rootRevoked, "a revoke changes the state root")
 }
 
 func TestWarmKey_FinishInferenceWithWarmKey(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)
-	executorIdx := 1
+	sm, user := newTestSM(t, hosts, 10000)
 
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
+	applyWarmKeyBind(t, sm, user, 2, warmSigner.Address(), 1)
+	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 2, 2)
 
-	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 1, executorIdx)
-
-	// Finish inference signed by warm key.
 	finishMsg := &types.MsgFinishInference{
-		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
-		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
+		InferenceId: 2, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
+		InputTokens: 80, OutputTokens: 40, ExecutorSlot: 2,
 		EscrowId: "escrow-1",
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, warmSigner, finishMsg)
@@ -2999,7 +3193,7 @@ func TestWarmKey_FinishInferenceWithWarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	st := sm.SnapshotState()
-	require.Equal(t, types.StatusFinished, st.Inferences[1].Status)
+	require.Equal(t, types.StatusFinished, st.Inferences[2].Status)
 }
 
 func TestWarmKey_ValidationWithWarmKey(t *testing.T) {
@@ -3008,17 +3202,13 @@ func TestWarmKey_ValidationWithWarmKey(t *testing.T) {
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	warmSigner := testutil.MustGenerateKey(t)
-	validatorIdx := 0 // validator slot 0
+	sm, user := newTestSM(t, hosts, 10000)
 
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[validatorIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
-
-	// Start, confirm, finish with cold keys (executor = slot 1).
+	// Start, confirm, finish with cold keys (executor = slot 1), then bind a
+	// warm key for the validator slot 0 and validate with it.
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	applyWarmKeyBind(t, sm, user, 0, warmSigner.Address(), 1)
 
-	// Validate with warm key for slot 0.
 	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: true, EscrowId: "escrow-1"}
 	valMsg.ProposerSig = testutil.SignProposerTx(t, warmSigner, valMsg)
 
@@ -3034,21 +3224,16 @@ func TestWarmKey_ValidationWithWarmKey(t *testing.T) {
 func TestWarmKey_SeedRevealWithWarmKeyIsIgnored(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)
-	revealerIdx := 0
+	sm, user := newTestSM(t, hosts, 10000)
+	applyWarmKeyBind(t, sm, user, 0, warmSigner.Address(), 1)
+	before := sm.WarmKeyHistory()
 
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[revealerIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
-
-	// Enter finalizing phase.
 	nonce := sm.LatestNonce() + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 	require.Equal(t, types.PhaseFinalizing, sm.Phase())
 
-	// Sign seed reveal with warm key.
 	seedSig, err := warmSigner.Sign([]byte("escrow-1"))
 	require.NoError(t, err)
 	seedMsg := &types.MsgRevealSeed{
@@ -3062,9 +3247,7 @@ func TestWarmKey_SeedRevealWithWarmKeyIsIgnored(t *testing.T) {
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txRevealSeed(seedMsg)})
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
-
-	st := sm.SnapshotState()
-	require.Empty(t, st.WarmKeys, "reveal-seed must not create a warm key binding")
+	require.Equal(t, before, sm.WarmKeyHistory(), "reveal-seed must not touch the history")
 }
 
 func TestWarmKey_TimeoutVoteWithWarmKey(t *testing.T) {
@@ -3076,26 +3259,19 @@ func TestWarmKey_TimeoutVoteWithWarmKey(t *testing.T) {
 	for i := range warmSigners {
 		warmSigners[i] = testutil.MustGenerateKey(t)
 	}
+	sm, user := newTestSM(t, hosts, 10000)
 
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		for i, ws := range warmSigners {
-			if warmAddr == ws.Address() && coldAddr == hosts[i].Address() {
-				return true, nil
-			}
-		}
-		return false, nil
+	var binds []*types.DevshardTx
+	for i, ws := range warmSigners {
+		binds = append(binds, testutil.WarmKeyBindTx(uint32(i), ws.Address(), 1))
 	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
-
 	nonce := sm.LatestNonce() + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, append(binds, txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})})
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens})))
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Build timeout votes signed by warm keys for slots 0, 2, 3.
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
 		v := testutil.SignTimeoutVote(t, warmSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
@@ -3104,6 +3280,7 @@ func TestWarmKey_TimeoutVoteWithWarmKey(t *testing.T) {
 	}
 
 	nonce++
+	makeTimeoutDue(t, sm, 1)
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
 	})})
@@ -3114,235 +3291,33 @@ func TestWarmKey_TimeoutVoteWithWarmKey(t *testing.T) {
 	require.Equal(t, types.StatusTimedOut, st.Inferences[1].Status)
 }
 
-func TestWarmKey_StateRootChangesWithWarmKeys(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	hostStats := make(map[uint32]*types.HostStats)
-	for i := range hosts {
-		hostStats[uint32(i)] = &types.HostStats{}
-	}
-	inferences := make(map[uint64]*types.InferenceRecord)
-
-	rootNil, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, nil, 0, types.DevshardStateRootAndProtocolVersion)
-	require.NoError(t, err)
-
-	rootEmpty, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, map[uint32]string{}, 0, types.DevshardStateRootAndProtocolVersion)
-	require.NoError(t, err)
-
-	rootWithWarm, err := ComputeStateRoot(10000, hostStats, inferences, types.PhaseActive, map[uint32]string{1: "0xwarmaddr"}, 0, types.DevshardStateRootAndProtocolVersion)
-	require.NoError(t, err)
-
-	// nil and empty should produce the same root (both hash sha256(nil)).
-	require.Equal(t, rootNil, rootEmpty, "nil and empty warm keys should produce same root")
-	// Non-empty warm keys must produce a different root.
-	require.NotEqual(t, rootEmpty, rootWithWarm, "warm keys must change state root")
-}
-
-func TestWarmKey_IsWarmKeyAddress(t *testing.T) {
+func TestApplyLocal_ReplayOfBindsMatchesRoot(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)
-	executorIdx := 1
-
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
-
-	// Before any warm key binding.
-	require.False(t, sm.IsWarmKeyAddress(warmSigner.Address()))
-	require.False(t, sm.IsWarmKeyAddress(hosts[0].Address()))
-
-	// Trigger warm key binding via confirm.
-	applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 1, executorIdx)
-
-	require.True(t, sm.IsWarmKeyAddress(warmSigner.Address()))
-	require.False(t, sm.IsWarmKeyAddress(testutil.MustGenerateKey(t).Address()), "unrelated address should be false")
-}
-
-func TestInjectWarmKeys(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	sm, _ := newTestSM(t, hosts, 10000)
-
-	// Inject warm keys.
-	sm.InjectWarmKeys(map[uint32]string{0: "warm-0", 1: "warm-1"})
-	wk := sm.WarmKeys()
-	require.Equal(t, "warm-0", wk[0])
-	require.Equal(t, "warm-1", wk[1])
-
-	// Inject conflicting key for same slot: original preserved.
-	sm.InjectWarmKeys(map[uint32]string{0: "warm-0-different"})
-	wk = sm.WarmKeys()
-	require.Equal(t, "warm-0", wk[0], "original binding should be preserved")
-
-	// Inject for new slot: accepted.
-	sm.InjectWarmKeys(map[uint32]string{2: "warm-2"})
-	wk = sm.WarmKeys()
-	require.Equal(t, "warm-2", wk[2])
-}
-
-func TestApplyLocal_WithInjectedWarmKeys(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	warmSigner := testutil.MustGenerateKey(t)
-	executorIdx := 1
-
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
-	}
-
-	// SM1: apply normally with resolver (warm keys resolved via bridge).
-	sm1, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
-	applyStartConfirmWithWarmKey(t, sm1, user, hosts, warmSigner, 1, executorIdx)
-
-	warmBefore := sm1.WarmKeys()
+	sm1, user := newTestSM(t, hosts, 10000)
+	applyWarmKeyBind(t, sm1, user, 2, warmSigner.Address(), 1)
+	applyStartConfirmWithWarmKey(t, sm1, user, hosts, warmSigner, 2, 2)
 	root1, err := sm1.ComputeStateRoot()
 	require.NoError(t, err)
-	require.NotNil(t, warmBefore)
-	require.Equal(t, warmSigner.Address(), warmBefore[uint32(executorIdx)])
 
-	// SM2: replay with injected warm keys (no resolver).
 	group := testutil.MakeGroup(hosts)
 	config := testutil.DefaultConfig(len(hosts))
 	verifier := signing.NewSecp256k1Verifier()
 	sm2, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
 	require.NoError(t, err)
-
-	// Inject the warm keys that were captured from SM1.
-	sm2.InjectWarmKeys(warmBefore)
-
-	// Replay the same txs via ApplyLocal.
-	startTx := txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})
-	_, err = sm2.ApplyLocal(1, []*types.DevshardTx{startTx})
+	_, err = sm2.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(2, warmSigner.Address(), 1)})
 	require.NoError(t, err)
-
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	confirmTx := txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000})
-	_, err = sm2.ApplyLocal(2, []*types.DevshardTx{confirmTx})
+	_, err = sm2.ApplyLocal(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens})})
+	require.NoError(t, err)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 2, []byte("prompt"), "llama", 100, testutil.TestMaxTokens)
+	_, err = sm2.ApplyLocal(3, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{InferenceId: 2, ExecutorSig: execSig})})
 	require.NoError(t, err)
 
 	root2, err := sm2.ComputeStateRoot()
 	require.NoError(t, err)
-
-	require.Equal(t, root1, root2, "state roots must match after replay with injected warm keys")
-}
-
-func TestApplyDiff_RevealSeed_NoNewWarmKeyBinding(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	warmSigner := testutil.MustGenerateKey(t)
-	revealerIdx := 0
-
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[revealerIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 10000, resolver)
-
-	// Enter finalizing.
-	nonce := sm.LatestNonce() + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
-	_, err := sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	// Sign seed and proposer_sig with the COLD key,
-	// but replace the seed signature with the warm key.
-	// The proposer_sig is cold -> no warm key binding created.
-	seedSig, err := warmSigner.Sign([]byte("escrow-1"))
-	require.NoError(t, err)
-	seedMsg := &types.MsgRevealSeed{
-		SlotId:    0,
-		Signature: seedSig,
-		EscrowId:  "escrow-1",
-	}
-	// Sign proposer with cold key (no ResolveWarmKey trigger).
-	seedMsg.ProposerSig = testutil.SignProposerTx(t, hosts[revealerIdx], seedMsg)
-
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txRevealSeed(seedMsg)})
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	wk := sm.WarmKeys()
-	require.Nil(t, wk, "no warm key binding should exist")
-}
-
-func TestApplyDiff_RevealSeed_PreservesExistingBinding(t *testing.T) {
-	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
-	warmSigner := testutil.MustGenerateKey(t)
-	revealerIdx := 0
-
-	resolver := func(warmAddr, coldAddr string) (bool, error) {
-		return warmAddr == warmSigner.Address() && coldAddr == hosts[revealerIdx].Address(), nil
-	}
-	sm, user := newTestSMWithWarmKey(t, hosts, 100000, resolver)
-
-	// Create warm key binding via ConfirmStart.
-	// inference_id must equal nonce, and inference_id % 3 must = 0 for executor = slot 0.
-	// nonce=3: inference 3 % 3 = 0 -> executor = slot 0 = hosts[revealerIdx].
-	// Burn nonces 1,2 first.
-	nonce := sm.LatestNonce() + 1
-	diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil)
-	_, err := sm.ApplyDiff(diff)
-	require.NoError(t, err)
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, nil)
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 3, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})})
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	// ConfirmStart with warm key -> creates binding for slot 0.
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 3, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 3, ExecutorSig: execSig, ConfirmedAt: 1000,
-	})})
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	// Verify warm key binding exists.
-	wkBefore := sm.WarmKeys()
-	require.Equal(t, warmSigner.Address(), wkBefore[uint32(revealerIdx)])
-
-	// Finish the inference so state is clean.
-	finishMsg := &types.MsgFinishInference{
-		InferenceId: 3, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash, InputTokens: 80,
-		OutputTokens: 40, ExecutorSlot: 0, EscrowId: "escrow-1",
-	}
-	finishMsg.ProposerSig = testutil.SignProposerTx(t, warmSigner, finishMsg)
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinish(finishMsg)})
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	// Finalize.
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	// Reveal seed signed with warm key is ignored, but must not disturb the existing binding.
-	seedSig, err := warmSigner.Sign([]byte("escrow-1"))
-	require.NoError(t, err)
-	seedMsg := &types.MsgRevealSeed{
-		SlotId:    0,
-		Signature: seedSig,
-		EscrowId:  "escrow-1",
-	}
-	seedMsg.ProposerSig = testutil.SignProposerTx(t, warmSigner, seedMsg)
-
-	nonce++
-	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txRevealSeed(seedMsg)})
-	_, err = sm.ApplyDiff(diff)
-	require.NoError(t, err)
-
-	wkAfter := sm.WarmKeys()
-	require.Equal(t, wkBefore, wkAfter, "warm keys should not change during seed reveal")
+	require.Equal(t, root1, root2, "state roots must match after replaying the binds")
 }
 
 func TestApplyDiff_Validation_Invalid_CostUnderflowGuard(t *testing.T) {
@@ -3531,10 +3506,12 @@ func callSettleLiveRecordLocked(t *testing.T, sm *StateMachine, rec *types.Infer
 	t.Helper()
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.settleLiveRecordLocked(rec)
+	due, err := sm.liveTimeoutDueAtDrainLocked(rec, sm.state.LatestNonce+1)
+	require.NoError(t, err)
+	sm.settleLiveRecordLocked(rec, due)
 }
 
-func TestSettleLiveRecordLocked_Started(t *testing.T) {
+func TestSettleLiveRecordLocked_UndueStartedRefunds(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
 	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
@@ -3548,19 +3525,19 @@ func TestSettleLiveRecordLocked_Started(t *testing.T) {
 	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
 
 	after := sm.SnapshotState()
-	require.Equal(t, types.StatusFinished, after.Inferences[1].Status)
-	require.Equal(t, uint64(164), after.Inferences[1].ActualCost)
-	require.Equal(t, uint64(164), after.HostStats[1].Cost)
-	require.Equal(t, before.Balance, after.Balance)
+	require.Equal(t, types.StatusTimedOut, after.Inferences[1].Status)
+	require.Zero(t, after.Inferences[1].ActualCost)
+	require.Zero(t, after.HostStats[1].Cost)
+	require.Equal(t, before.Balance+164, after.Balance)
 }
 
-func TestSettleLiveRecordLocked_Pending(t *testing.T) {
+func TestSettleLiveRecordLocked_UnduePendingRefunds(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 	})})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
@@ -3574,10 +3551,10 @@ func TestSettleLiveRecordLocked_Pending(t *testing.T) {
 	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
 
 	after := sm.SnapshotState()
-	require.Equal(t, types.StatusFinished, after.Inferences[1].Status)
-	require.Equal(t, uint64(164), after.Inferences[1].ActualCost)
-	require.Equal(t, before.Balance, after.Balance)
-	require.Equal(t, uint64(164), after.HostStats[1].Cost)
+	require.Equal(t, types.StatusTimedOut, after.Inferences[1].Status)
+	require.Zero(t, after.Inferences[1].ActualCost)
+	require.Equal(t, before.Balance+164, after.Balance)
+	require.Zero(t, after.HostStats[1].Cost)
 	require.Equal(t, uint32(0), after.HostStats[1].Missed)
 }
 
@@ -3635,7 +3612,7 @@ func TestApplyPersisted_ReplaysAnInferenceWrittenBeforeTheFloor(t *testing.T) {
 	sm, _ := newTestSM(t, hosts, 10000)
 	belowFloor := []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	})}
 
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)
@@ -3653,7 +3630,7 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 
 	replayed, err := sm.ApplyLocalPersisted(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	})})
 	require.NoError(t, err)
 	require.NotEmpty(t, replayed)
@@ -3661,7 +3638,7 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 	// A peer's diff, arriving after the replay that relaxed the check.
 	fromPeer := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	})})
 	_, err = sm.ApplyDiff(fromPeer)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the exemption leaked past the replay that set it")
@@ -3670,7 +3647,195 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 	// compose fails outright rather than dropping it and signing a diff without the work in it.
 	_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	})})
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "a sub-floor reservation must not be composed")
+}
+
+func TestHostStats_Validated_CountsSampledPassesOnly(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 1, 1, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	apply := func(txs ...*types.DevshardTx) error {
+		nonce := sm.SnapshotState().LatestNonce + 1
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, txs))
+		return err
+	}
+	validation := func(id uint64, slot uint32, valid bool) *types.DevshardTx {
+		msg := &types.MsgValidation{InferenceId: id, ValidatorSlot: slot, Valid: valid, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, signers[slot], msg)
+		return txValidation(msg)
+	}
+	vote := func(id uint64, slot uint32, valid bool) *types.DevshardTx {
+		msg := &types.MsgValidationVote{InferenceId: id, VoterSlot: slot, VoteValid: valid, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, signers[slot], msg)
+		return txVote(msg)
+	}
+	status := func(id uint64) types.InferenceStatus { return sm.SnapshotState().Inferences[id].Status }
+
+	type inf struct {
+		id                                       uint64
+		executor                                 uint32
+		others                                   []uint32
+		baseValidated, baseInvalid, baseFinished uint32
+	}
+	start := func() inf {
+		id := sm.SnapshotState().LatestNonce + 1
+		executor := group[id%uint64(len(group))].SlotID
+		var others []uint32
+		for _, sa := range group {
+			if sa.SlotID != executor {
+				others = append(others, sa.SlotID)
+			}
+		}
+		hs := *sm.SnapshotState().HostStats[executor]
+		applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, id)
+		return inf{id: id, executor: executor, others: others, baseValidated: hs.Validated, baseInvalid: hs.Invalid, baseFinished: hs.Finished}
+	}
+	validated := func(i inf) uint32 { return sm.SnapshotState().HostStats[i.executor].Validated - i.baseValidated }
+	invalid := func(i inf) uint32 { return sm.SnapshotState().HostStats[i.executor].Invalid - i.baseInvalid }
+	finished := func(i inf) uint32 { return sm.SnapshotState().HostStats[i.executor].Finished - i.baseFinished }
+
+	a := start()
+	require.Equal(t, uint32(1), finished(a))
+	require.Equal(t, uint32(0), validated(a), "unsampled Finished work must not count as a pass")
+	require.NoError(t, apply(validation(a.id, a.others[0], true)))
+	require.Equal(t, uint32(1), validated(a))
+	require.NoError(t, apply(validation(a.id, a.others[0], true)))
+	require.Equal(t, uint32(1), validated(a))
+	require.NoError(t, apply(validation(a.id, a.others[1], true)))
+	require.Equal(t, uint32(2), validated(a))
+	require.Equal(t, types.StatusFinished, status(a.id))
+
+	b := start()
+	require.NoError(t, apply(validation(b.id, b.others[0], true)))
+	require.Equal(t, uint32(1), validated(b))
+	require.NoError(t, apply(validation(b.id, b.others[1], false)))
+	require.Equal(t, types.StatusChallenged, status(b.id))
+	require.Equal(t, uint32(0), validated(b), "a challenge suspends the phase-1 pass")
+	require.NoError(t, apply(vote(b.id, b.others[2], true), vote(b.id, b.others[3], true)))
+	require.Equal(t, types.StatusValidated, status(b.id))
+	require.Equal(t, uint32(1), validated(b), "Challenged -> Validated is one pass")
+	require.Equal(t, uint32(0), invalid(b))
+
+	c := start()
+	require.NoError(t, apply(validation(c.id, c.others[0], true)))
+	require.NoError(t, apply(validation(c.id, c.others[1], true)))
+	require.Equal(t, uint32(2), validated(c))
+	require.NoError(t, apply(validation(c.id, c.others[2], false)))
+	require.Equal(t, uint32(0), validated(c), "a challenge suspends every phase-1 pass")
+	require.NoError(t, apply(vote(c.id, c.others[3], false)))
+	require.Equal(t, types.StatusChallenged, status(c.id))
+	require.Equal(t, uint32(0), validated(c))
+	require.Equal(t, uint32(0), invalid(c))
+
+	d := start()
+	require.NoError(t, apply(validation(d.id, d.others[0], false)))
+	require.NoError(t, apply(vote(d.id, d.others[1], false), vote(d.id, d.others[2], false), vote(d.id, d.others[3], false)))
+	require.Equal(t, types.StatusInvalidated, status(d.id))
+	require.Equal(t, uint32(0), validated(d))
+	require.Equal(t, uint32(1), invalid(d))
+
+	e := start()
+	require.NoError(t, apply(validation(e.id, e.others[0], true)))
+	require.NoError(t, apply(validation(e.id, e.others[1], false)))
+	require.NoError(t, apply(vote(e.id, e.others[2], false), vote(e.id, e.others[3], false)))
+	require.Equal(t, types.StatusInvalidated, status(e.id))
+	require.Equal(t, uint32(0), validated(e), "a pass credited before invalidation must not survive it")
+	require.Equal(t, uint32(1), invalid(e))
+	require.Equal(t, uint32(1), finished(e), "invalidation does not undo the finish count")
+}
+
+func TestHostStats_Validated_ChallengeSubtractsOnlyThatInference(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 100000)
+	apply := func(txs ...*types.DevshardTx) {
+		nonce := sm.SnapshotState().LatestNonce + 1
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, txs))
+		require.NoError(t, err)
+	}
+	validation := func(id uint64, slot uint32, valid bool) *types.DevshardTx {
+		msg := &types.MsgValidation{InferenceId: id, ValidatorSlot: slot, Valid: valid, EscrowId: "escrow-1"}
+		msg.ProposerSig = testutil.SignProposerTx(t, hosts[slot], msg)
+		return txValidation(msg)
+	}
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	for sm.SnapshotState().LatestNonce < 5 {
+		apply()
+	}
+	applyStartConfirmFinish(t, sm, user, hosts, 6)
+	require.Equal(t, uint32(1), sm.SnapshotState().Inferences[6].ExecutorSlot)
+
+	apply(validation(1, 2, true), validation(1, 3, true))
+	apply(validation(6, 2, true))
+	require.Equal(t, uint32(3), sm.SnapshotState().HostStats[1].Validated)
+
+	apply(validation(6, 4, false))
+	require.Equal(t, types.StatusChallenged, sm.SnapshotState().Inferences[6].Status)
+	require.Equal(t, uint32(2), sm.SnapshotState().HostStats[1].Validated, "only the challenged inference's pass is withdrawn")
+}
+
+func TestHostStats_Validated_MultiSlotValidatorCountsOnce(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 2})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: true, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[2], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)}))
+	require.NoError(t, err)
+
+	st := sm.SnapshotState()
+	require.Equal(t, uint32(2), st.Inferences[1].VotesValid, "vote weight follows slot count")
+	require.Equal(t, uint32(1), st.HostStats[1].Validated, "a pass is one replay, not one per slot")
+}
+
+func TestApplyDiff_ValidationVote_ExecutorAddressCannotVote(t *testing.T) {
+	signers := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{2, 1, 1})
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	applyStartConfirmFinishMultiSlot(t, sm, user, signers, group, 1)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 2, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, signers[1], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)}))
+	require.NoError(t, err)
+
+	for _, slot := range []uint32{0, 1} {
+		vote := &types.MsgValidationVote{InferenceId: 1, VoterSlot: slot, VoteValid: true, EscrowId: "escrow-1"}
+		vote.ProposerSig = testutil.SignProposerTx(t, signers[0], vote)
+		nonce = sm.SnapshotState().LatestNonce + 1
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txVote(vote)}))
+		require.ErrorIs(t, err, types.ErrSelfValidation)
+	}
+	st := sm.SnapshotState()
+	require.Equal(t, types.StatusChallenged, st.Inferences[1].Status)
+	require.Equal(t, uint32(0), st.HostStats[1].Validated)
 }

@@ -186,7 +186,7 @@ func TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest(t *testing.T
 	require.False(t, sseFirstReceiptHasHeightSync(rec2.Body.String()),
 		"responseNonce=2 should Omit without force_height_sync_anchor (K=10, slots=1)")
 
-	txs3 := pipelineInferenceTxs(env.server.Host().MempoolTxs(), testutil.StartTx(3))
+	txs3 := pipelineInferenceTxs(env.server.Host().MempoolTxs(), env.flooredStartTx(3))
 	diff3 := testutil.SignDiff(t, env.userSigner, "escrow-1", 3, txs3)
 	dj3, err := DiffToJSON(diff3)
 	require.NoError(t, err)

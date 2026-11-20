@@ -163,7 +163,6 @@ func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
 	}
 
 	phaseBefore := h.sm.Phase()
-	h.sm.InjectWarmKeys(rec.WarmKeyDelta)
 	root, err := h.sm.ApplyDiff(rec.Diff)
 	if err != nil {
 		return fmt.Errorf("reconcile apply durable nonce %d: %w", rec.Nonce, err)

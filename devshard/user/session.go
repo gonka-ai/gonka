@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -37,6 +38,22 @@ var TimeoutBuffer = 5 * time.Second
 // A successful Send never yields nil without an error; treating nil as
 // success would hide a caller bug on the streaming path.
 var ErrNilHostResponse = errors.New("nil host response")
+
+var ErrHostResponseRejected = errors.New("host response rejected")
+
+type HostResponseRejectedError struct {
+	HostIdx int
+	Nonce   uint64
+	Err     error
+}
+
+func (e *HostResponseRejectedError) Error() string {
+	return fmt.Sprintf("%v: host %d at nonce %d: %v", ErrHostResponseRejected, e.HostIdx, e.Nonce, e.Err)
+}
+
+func (e *HostResponseRejectedError) Unwrap() error { return e.Err }
+
+func (e *HostResponseRejectedError) Is(target error) bool { return target == ErrHostResponseRejected }
 
 // ErrHostNonceAhead is returned when a host reports a nonce the session has
 // not composed. The gateway is the only sequencer, so such a claim is false.
@@ -120,6 +137,15 @@ func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
 		}
 	}
 	return false
+}
+
+func finishAppliedStatus(status types.InferenceStatus) bool {
+	switch status {
+	case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+		return true
+	default:
+		return false
+	}
 }
 
 func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
@@ -236,17 +262,6 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
-type warmCheckKey struct {
-	warm string
-	cold string
-}
-
-type warmCheckResult struct {
-	done    chan struct{}
-	valid   bool
-	retryAt time.Time
-}
-
 type cachedSignatureSigner struct {
 	signature []byte
 	address   string
@@ -255,8 +270,6 @@ type cachedSignatureSigner struct {
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
-	warmCheckMu sync.Mutex
-	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -303,6 +316,9 @@ type Session struct {
 	confirmWait      chan struct{}            // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue    *verifierHostQueue       // per-verifier RPC limiter for timeout votes
 	diffObserver     func(types.Diff)
+	// warmKeySource is the sequencer's view of the chain's warm-key log;
+	// nil means no bind or revoke proposals. See warmkeys.go.
+	warmKeySource bridge.WarmKeyGrantSource
 
 	// sigsTrimmedThrough is the highest nonce whose signatures may be missing
 	// from s.signatures. signaturesAtLocked reads those nonces from the store.
@@ -339,7 +355,10 @@ type Session struct {
 	// finalizeInFlight guards against concurrent Finalize calls. A second
 	// call while the first is still running returns immediately with an error
 	// instead of spawning duplicate catch-up goroutines to the same hosts.
-	finalizeInFlight atomic.Bool
+	finalizeInFlight        atomic.Bool
+	completionStore         InferenceCompletionStore
+	completionDurabilityErr error
+	activeInferenceSends    int
 
 	// Retry settings for signature collection (handles transient host failures during finalize).
 	signatureCollectMaxRetries  int
@@ -396,6 +415,7 @@ type Session struct {
 	// MaybeHeartbeat available for in-process sessions and tests. The gateway
 	// sets it when DEVSHARD_HEIGHTSYNC_HEARTBEAT is not explicitly on.
 	disableHeightSyncHeartbeat bool
+	lastTimeoutFloorRound      time.Time
 	heightSeedLoopOnce         sync.Once
 	heightSeedClosed           bool
 	heightSeedStop             context.CancelFunc
@@ -582,7 +602,6 @@ func NewSession(
 		sm:               sm,
 		signer:           signer,
 		verifier:         verifier,
-		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
 		escrowID:         escrowID,
 		group:            group,
 		addrToSlots:      addrToSlots,
@@ -705,14 +724,26 @@ func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
 // always reaching target. ok is false when the host is further behind than
 // one chunk; catchUpForSend then teaches it the earlier nonces first, outside
 // the lock. Caller must hold s.mu.
-func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool, err error) {
+func (s *Session) inlineCatchUpForRequestLocked(hostIdx int, target uint64, req host.HostRequest) ([]types.Diff, bool, error) {
 	from := s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
 		return nil, false, nil
 	}
-	diffs, err = s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1))
+	v7 := types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	to := min(s.nonce, from+catchUpChunkSize-1)
+	if v7 {
+		to = min(to, target)
+	}
+	diffs, err := s.diffRangeLocked(from, to)
 	if err != nil {
 		return nil, false, err
+	}
+	if v7 {
+		req.Diffs, req.Nonce = diffs, target
+		fit, err := transport.ChatDiffPrefix(req, s.escrowID)
+		if err != nil || fit != len(diffs) {
+			return nil, false, err
+		}
 	}
 	return diffs, true, nil
 }
@@ -1187,7 +1218,6 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 		s.acceptConfirmStartLocked(hostIdx, resp, "receipt", &types.MsgConfirmStart{
 			InferenceId:       inferenceNonce,
 			ExecutorSig:       resp.Receipt,
-			ConfirmedAt:       resp.ConfirmedAt,
 			ObservedHeight:    resp.ObservedHeight,
 			ObservedBlockHash: resp.ObservedBlockHash,
 		})
@@ -1282,10 +1312,10 @@ type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, pers
 // PreviewLocalBestEffort leaves the SM unchanged until AppendDiff succeeds,
 // so persist failure cannot leave sequencer nonce/diffs ahead of durable state.
 func (s *Session) composeDiffLocked(ctx context.Context, extraTxs []*types.DevshardTx) (types.Diff, int, error) {
-	return s.composeDiffLockedInclude(ctx, extraTxs, nil)
+	return s.composeDiffLockedInclude(ctx, extraTxs, nil, host.HostRequest{})
 }
 
-func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, int, error) {
+func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64, req host.HostRequest) (types.Diff, int, error) {
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
 
@@ -1304,13 +1334,36 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
+	heightTx, err := s.sm.BuildMainnetHeightTx(ctx)
+	if err != nil {
+		return types.Diff{}, 0, err
+	}
+	// The authenticated height determines grant activity for this diff. Binds
+	// are applied before proposer work, including a new key's first message.
+	keyEntries := s.warmKeyProposalsAtLocked(nonce, heightTx.GetMainnetHeight())
+	candidates := make([]*types.DevshardTx, 0, 1+len(keyEntries)+len(pending)+len(extraTxs))
+	if heightTx != nil {
+		candidates = append(candidates, heightTx)
+	}
+	candidates = append(candidates, keyEntries...)
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
 
+	hasStart := false
+	for _, tx := range candidates {
+		if tx.GetStartInference() != nil {
+			hasStart = true
+			break
+		}
+	}
+	if !hasStart {
+		if err := s.discardNextCompletionOrphanLocked(nonce); err != nil {
+			return types.Diff{}, 0, err
+		}
+	}
+
 	var diff types.Diff
-	if s.store != nil {
-		warmBefore := s.sm.WarmKeys()
+	if s.store != nil || heightTx != nil {
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -1319,13 +1372,22 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
-		}); err != nil {
-			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		if heightTx != nil {
+			req.Diffs, req.Nonce = []types.Diff{diff}, nonce
+			fit, err := transport.ChatDiffPrefix(req, s.escrowID)
+			if err != nil {
+				return types.Diff{}, 0, err
+			}
+			if fit == 0 {
+				return types.Diff{}, 0, fmt.Errorf("escrow %s nonce %d: %w", s.escrowID, nonce, transport.ErrChatRequestTooLarge)
+			}
+		}
+		if s.store != nil {
+			if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
+				Diff: diff, StateHash: vd.Root,
+			}); err != nil {
+				return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+			}
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
 		// so a retried compose cannot fork on a new UserSig after a durable
@@ -1337,18 +1399,21 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.diffs = append(s.diffs, diff)
 		s.nonce = nonce
 		s.dropDiffPrefixLocked()
-		s.retainPendingLocked(held, vd.Applied)
-		s.maybeSaveSnapshotLocked()
+		s.retainPendingLocked(append(held, vd.Deferred...), vd.Applied)
+		if s.store != nil {
+			s.maybeSaveSnapshotLocked()
+		}
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
 		s.syncLaggingHostsLocked()
 		return diff, hostIdx, nil
 	}
 
-	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
+	postStateRoot, applied, deferred, err := s.sm.ApplyLocalBestEffortDeferred(nonce, candidates)
 	if err != nil {
 		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
 	}
+	held = append(held, deferred...)
 	diff, err = s.signDiff(nonce, applied, postStateRoot)
 	if err != nil {
 		return types.Diff{}, 0, err
@@ -1424,6 +1489,12 @@ func (s *Session) SetChainMaxNonce(maxNonce uint32) {
 	s.chainMaxNonce.Store(maxNonce)
 }
 
+// NonceCapReached reports that the session can compose no more active work,
+// timeout votes included, until finalization.
+func (s *Session) NonceCapReached() bool {
+	return s.nonceCapReached()
+}
+
 func (s *Session) nonceCapReached() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1475,12 +1546,29 @@ func (s *Session) splitPendingForComposeLocked(includePinned []uint64) (candidat
 // deliberately not remembered: freeing their key lets an honest tx with the
 // same tx_type:id be queued on a later response.
 func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
+	s.resolveAppliedCompletionsLocked(applied)
+	affected := make(map[uint64]struct{})
+	for _, tx := range s.pendingTxs {
+		if tx == nil {
+			continue
+		}
+		if id, ok := hostTxInferenceID(tx); ok && (tx.GetFinishInference() != nil || tx.GetConfirmStart() != nil) {
+			affected[id] = struct{}{}
+		}
+	}
 	for _, tx := range applied {
 		if key := devshardTxKey(tx); key != "" {
 			s.appliedTxKeys[key] = struct{}{}
 		}
 		if finish := tx.GetFinishInference(); finish != nil {
 			s.bindAppliedFinishLocked(finish)
+			if s.sm != nil {
+				if rec, ok := s.sm.Inference(finish.InferenceId); ok && finishAppliedStatus(rec.Status) {
+					if outcome := s.nonceStates[finish.InferenceId]; outcome != nil {
+						outcome.finished = true
+					}
+				}
+			}
 		}
 	}
 	if len(s.appliedTxKeys) > maxAppliedTxKeys {
@@ -1491,6 +1579,19 @@ func (s *Session) retainPendingLocked(held, applied []*types.DevshardTx) {
 	for _, tx := range held {
 		if key := devshardTxKey(tx); key != "" {
 			s.pendingTxKeys[key] = struct{}{}
+		}
+	}
+	if s.sm != nil {
+		for nonce := range affected {
+			outcome := s.nonceStates[nonce]
+			if outcome == nil {
+				continue
+			}
+			rec, ok := s.sm.Inference(nonce)
+			outcome.finished = ok && finishAppliedStatus(rec.Status) || s.pendingFinishReadyLocked(nonce)
+			if (!ok || rec.Status == types.StatusPending) && s.pendingConfirmLocked(nonce) == nil {
+				outcome.confirmedAt = 0
+			}
 		}
 	}
 }
@@ -1723,6 +1824,9 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		s.mu.Unlock()
 		s.publishHeightSyncView()
 	}()
+	if s.finalizeInFlight.Load() {
+		return nil, types.ErrSessionFinalizing
+	}
 
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
@@ -1750,7 +1854,6 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		PromptHash:      promptHash,
 		InputLength:     params.InputLength,
 		MaxTokens:       params.MaxTokens,
-		StartedAt:       params.StartedAt,
 		ProtocolVersion: s.sm.ProtocolVersion(),
 	}
 	if h, hash, ok := s.referenceStampLocked(nonce); ok {
@@ -1782,12 +1885,25 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		}
 	}
 
+	if probe {
+		if err := s.discardNextCompletionOrphanLocked(nonce); err != nil {
+			return nil, err
+		}
+	} else {
+		if err := s.registerCompletionLocked(nonce, params); err != nil {
+			return nil, fmt.Errorf("persist inference completion: %w", err)
+		}
+	}
 	// The next Start diff is the composer for a queued receipt and Finish.
 	// Stopping the quiet settle here is what keeps that from becoming its
 	// own nonce while another inference is still arriving.
 	s.stopQuietSettleLocked()
-	diff, composedIdx, err := s.composeDiffLocked(persistCtx, txsForDiff)
+	chat := (&PreparedInference{params: params}).chatRequest(s.heightSyncK == 0)
+	diff, composedIdx, err := s.composeDiffLockedInclude(persistCtx, txsForDiff, nil, chat)
 	if err != nil {
+		if !probe {
+			s.removeUncommittedCompletionLocked(nonce)
+		}
 		s.armQuietSettleLocked()
 		return nil, err
 	}
@@ -1801,7 +1917,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
+	catchUp, inline, err := s.inlineCatchUpForRequestLocked(hostIdx, nonce, chat)
 	if err != nil {
 		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w", hostIdx, nonce, err)
 	}
@@ -1841,14 +1957,36 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 	}
 }
 
+func (p *PreparedInference) chatRequest(legacyHeightSync bool) host.HostRequest {
+	return host.HostRequest{
+		Nonce:                        p.diff.Nonce,
+		ForceHeightSyncAnchor:        p.params.ForceHeightSyncAnchor && legacyHeightSync,
+		Payload:                      p.Payload(),
+		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
+	}
+}
+
 // SendOnly sends a prepared inference to the host and returns the raw response
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	s.mu.Lock()
+	if s.finalizeInFlight.Load() {
+		s.mu.Unlock()
+		return nil, types.ErrSessionFinalizing
+	}
+	s.activeInferenceSends++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.activeInferenceSends--
+		s.mu.Unlock()
+	}()
+	req := p.chatRequest(s.heightSyncK == 0)
 	catchUp := p.catchUp
 	if p.farBehind {
 		var err error
-		catchUp, err = s.catchUpForSend(ctx, p.hostIdx, p.diff.Nonce)
+		catchUp, err = s.catchUpForRequest(ctx, p.hostIdx, p.diff.Nonce, req)
 		if err != nil {
 			return nil, fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
@@ -1856,17 +1994,10 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 	if p.onSend != nil {
 		p.onSend()
 	}
-	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
-	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:                        catchUp,
-		Nonce:                        p.diff.Nonce,
-		ForceHeightSyncAnchor:        legacyForce,
-		HeightSyncEscrow:             s.heightSyncEscrowHints(),
-		Payload:                      p.Payload(),
-		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
-	}, stream, func(partial *host.HostResponse) {
-		s.confirmStartOnReceipt(p.diff.Nonce, partial)
-		if receiptHandler != nil {
+	req.Diffs = catchUp
+	req.HeightSyncEscrow = s.heightSyncEscrowHints()
+	resp, err := s.clients[p.hostIdx].Send(ctx, req, stream, func(partial *host.HostResponse) {
+		if s.confirmStartOnReceipt(p.diff.Nonce, partial) && receiptHandler != nil {
 			receiptHandler()
 		}
 	})
@@ -1880,68 +2011,64 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 // ends. A host that holds an empty stream open can outlast every other nonce on the escrow, and the
 // receipt is only carried to the chain by the next diff: queued late, it can find no diff left to ride,
 // and the nonce stays Pending forever, which is the one state its execution timeout cannot be voted in.
-func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostResponse) {
+func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostResponse) bool {
 	if resp == nil || len(resp.Receipt) == 0 {
-		return
+		return false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.acceptConfirmStartLocked(-1, nil, "receipt", &types.MsgConfirmStart{
+	return s.acceptConfirmStartLocked(-1, nil, "receipt", &types.MsgConfirmStart{
 		InferenceId:       inferenceNonce,
 		ExecutorSig:       resp.Receipt,
-		ConfirmedAt:       resp.ConfirmedAt,
 		ObservedHeight:    resp.ObservedHeight,
 		ObservedBlockHash: resp.ObservedBlockHash,
 	})
 }
 
-// acceptConfirmStartLocked queues msg only when it is the assigned executor's signature over a
-// confirmation time. That is what ends a refusal wait. An unverified confirm, or one with no stamp,
-// is dropped: the chain would either reject it or move the record to Started with no deadline, and
-// neither a refusal nor the execution sweep could then record the miss. A duplicate does not move
-// the stamp, so the queued signature and the deadline stay the same message. Caller holds s.mu.
-func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse, source string, msg *types.MsgConfirmStart) {
+// acceptConfirmStartLocked queues msg only when it is the assigned executor's receipt, stamped with
+// the height-sync floor as of the inference. That is what ends a refusal wait. An unverified confirm
+// is dropped: the chain would reject it, and the refusal is still the vote that can record the miss.
+// A duplicate does not move the local receipt time, so the queued signature and the execution wait
+// stay with the same message. It reports whether msg is an authentic receipt for the inference,
+// queued now, already queued, or already applied. Caller holds s.mu.
+func (s *Session) acceptConfirmStartLocked(hostIdx int, resp *host.HostResponse, source string, msg *types.MsgConfirmStart) bool {
 	if msg == nil || len(msg.ExecutorSig) == 0 {
-		return
-	}
-	if msg.ConfirmedAt <= 0 {
-		logging.Warn("rejected executor receipt", "subsystem", "session",
-			"escrow", s.escrowID, "nonce", msg.InferenceId, "error", "confirmed_at is unset")
-		return
+		return false
 	}
 	rec, ok := s.sm.GetInference(msg.InferenceId)
 	if !ok {
 		logging.Debug("dropped confirm for unknown or sealed inference", "subsystem", "session",
 			"escrow", s.escrowID, "nonce", msg.InferenceId)
-		return
+		return false
 	}
 	if rec.Status != types.StatusPending {
 		logging.Debug("dropped confirm for an inference already started", "subsystem", "session",
 			"escrow", s.escrowID, "nonce", msg.InferenceId, "source", source, "status", rec.Status)
-		return
+		return rec.Status == types.StatusStarted && s.sm.VerifyExecutorReceipt(msg) == nil
 	}
 	// The receipt callback queues a confirm; the final response and the host's
 	// mempool carry the same one again. An identical copy is dropped by the
 	// queue anyway, so skip its signature recovery under s.mu.
 	if queued := s.pendingConfirmLocked(msg.InferenceId); queued != nil && proto.Equal(queued.GetConfirmStart(), msg) {
-		return
+		return true
 	}
 	tx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: msg}}
 	if err := s.sm.CheckEvidence(&rec, tx); err != nil {
 		logging.Warn("rejected executor receipt", "subsystem", "session",
 			"escrow", s.escrowID, "nonce", msg.InferenceId,
 			"tx_hash", types.TxHash(tx), "source", source, "error", err)
-		return
+		return false
 	}
 	s.addPendingFromHostLocked(hostIdx, resp, tx)
 	queued := s.pendingConfirmLocked(msg.InferenceId)
 	if queued == nil || !bytes.Equal(queued.GetConfirmStart().GetExecutorSig(), msg.ExecutorSig) {
-		return
+		return true
 	}
-	if outcome, tracked := s.nonceStates[msg.InferenceId]; tracked {
-		outcome.confirmedAt = queued.GetConfirmStart().GetConfirmedAt()
+	if outcome, tracked := s.nonceStates[msg.InferenceId]; tracked && outcome.confirmedAt == 0 {
+		outcome.confirmedAt = time.Now().Unix()
 	}
 	s.wakeConfirmWaitLocked()
+	return true
 }
 
 // wakeConfirmWaitLocked releases every refusal wait. The receipt may belong to one of them, and a
@@ -2069,7 +2196,62 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	}
 	s.mu.Unlock()
 	s.publishHeightSyncView()
-	return err
+	if err != nil {
+		return &HostResponseRejectedError{HostIdx: hostIdx, Nonce: diff.Nonce, Err: err}
+	}
+	return nil
+}
+
+func (s *Session) finalizeDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
+	err := s.sendDiffRound(ctx, extraTxs, true)
+	if err == nil {
+		return nil
+	}
+	var rejected *HostResponseRejectedError
+	if !errors.As(err, &rejected) || errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
+		return err
+	}
+	logging.Error("finalize: host response rejected, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
+		"host", rejected.HostIdx, "validator", s.group[rejected.HostIdx].ValidatorAddress,
+		"request_nonce", rejected.Nonce, "error", rejected.Err)
+	return nil
+}
+
+func (s *Session) refreshPendingTxsFromHosts(ctx context.Context) error {
+	hosts := s.uniquePhysicalHosts()
+	finClients := s.getFinalizeClients()
+	perHost := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, h := range hosts {
+		wg.Go(func() {
+			perHost[i] = s.refreshPendingTxsFromHost(ctx, h, finClients[h.idx])
+		})
+	}
+	wg.Wait()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return errors.Join(slices.DeleteFunc(perHost, func(err error) bool { return err == nil })...)
+}
+
+func (s *Session) refreshPendingTxsFromHost(ctx context.Context, h physicalHost, client HostClient) error {
+	nonce := s.Nonce()
+	resp, err := client.Send(ctx, host.HostRequest{Nonce: nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
+	if err != nil {
+		logging.Warn("finalize resume: host unreachable, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
+			"host", h.idx, "validator", h.addr, "request_nonce", nonce, "error", err)
+		return nil
+	}
+	err = s.ProcessResponse(h.idx, resp, nonce)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrNilHostResponse) || errors.Is(err, ErrLocalRootUnavailable) {
+		return err
+	}
+	logging.Warn("finalize resume: host response rejected, skipping host", "subsystem", "finalize", "escrow", s.escrowID,
+		"host", h.idx, "validator", h.addr, "request_nonce", nonce, "error", err)
+	return nil
 }
 
 // catchUpChunkSize is the maximum number of diffs sent in a single catch-up
@@ -2133,6 +2315,16 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 		}
 		if len(chunk) == 0 {
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
+		}
+		if types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) {
+			fit, err := transport.ChatDiffPrefix(host.HostRequest{Diffs: chunk, Nonce: chunk[len(chunk)-1].Nonce}, s.escrowID)
+			if err != nil {
+				return err
+			}
+			if fit == 0 {
+				return fmt.Errorf("catch up host %d at nonce %d: %w", hostIdx, from, transport.ErrChatRequestTooLarge)
+			}
+			chunk = chunk[:fit]
 		}
 		chunkNonce := chunk[len(chunk)-1].Nonce
 
@@ -2322,37 +2514,56 @@ func (s *Session) Finalize(ctx context.Context) error {
 		}
 		return nil
 	}
-	if phase == types.PhaseFinalizing {
-		return fmt.Errorf("finalize already in progress (phase=finalizing, nonce=%d)", s.nonce)
-	}
-
-	n := len(s.group)
-
-	logging.Info("finalize started", "subsystem", "finalize", "escrow", s.escrowID,
-		"group_size", n, "current_nonce", s.nonce,
-		"total_slots", s.sm.TotalSlots(), "threshold", threshold)
-
-	finalizeTx := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
-		FinalizeRound: &types.MsgFinalizeRound{},
-	}}
-
-	// Phase A: N diffs collecting remaining txs. First carries MsgFinalizeRound.
-	logging.Info("finalize phase A: collecting reveals", "subsystem", "finalize", "escrow", s.escrowID,
-		"rounds", n)
-	for i := 0; i < n; i++ {
-		var extra []*types.DevshardTx
-		if i == 0 {
-			extra = []*types.DevshardTx{finalizeTx}
-		}
-		if err := s.sendDiffRound(ctx, extra, true); err != nil {
+	if phase != types.PhaseFinalizing {
+		if err := s.guardCompletion(ctx); err != nil {
 			return err
 		}
 	}
 
-	// Phase A+1: drain the last host's reveal.
-	logging.Info("finalize phase A+1: draining last reveal", "subsystem", "finalize", "escrow", s.escrowID)
-	if err := s.sendDiffRound(ctx, nil, true); err != nil {
-		return err
+	n := len(s.group)
+
+	if phase == types.PhaseFinalizing {
+		finalizeNonce := s.sm.FinalizeNonce()
+		if finalizeNonce == 0 {
+			return fmt.Errorf("%w: phase finalizing without finalize nonce (nonce=%d)", ErrLocalStateUnrecoverable, s.Nonce())
+		}
+		logging.Info("finalize resumed", "subsystem", "finalize", "escrow", s.escrowID,
+			"group_size", n, "current_nonce", s.Nonce(), "finalize_nonce", finalizeNonce,
+			"total_slots", s.sm.TotalSlots(), "threshold", threshold)
+		if err := s.refreshPendingTxsFromHosts(ctx); err != nil {
+			return fmt.Errorf("finalize resume: refresh pending txs: %w", err)
+		}
+	} else {
+		logging.Info("finalize started", "subsystem", "finalize", "escrow", s.escrowID,
+			"group_size", n, "current_nonce", s.nonce,
+			"total_slots", s.sm.TotalSlots(), "threshold", threshold)
+
+		finalizeTx := &types.DevshardTx{Tx: &types.DevshardTx_FinalizeRound{
+			FinalizeRound: &types.MsgFinalizeRound{},
+		}}
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("finalize: %w (nonce=%d)", err, s.Nonce())
+		}
+		if err := s.finalizeDiffRound(ctx, []*types.DevshardTx{finalizeTx}); err != nil {
+			return err
+		}
+	}
+
+	logging.Info("finalize phase A: advancing to settlement", "subsystem", "finalize", "escrow", s.escrowID,
+		"finalize_nonce", s.sm.FinalizeNonce(), "current_nonce", s.Nonce())
+	rounds := 0
+	for rounds <= n && s.sm.Phase() == types.PhaseFinalizing {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("finalize: %w (nonce=%d, finalize_nonce=%d)", err, s.Nonce(), s.sm.FinalizeNonce())
+		}
+		if err := s.finalizeDiffRound(ctx, nil); err != nil {
+			return err
+		}
+		rounds++
+	}
+	if s.sm.Phase() != types.PhaseSettlement {
+		return fmt.Errorf("finalize: phase %d after %d rounds, want settlement (nonce=%d, finalize_nonce=%d)",
+			s.sm.Phase(), rounds, s.Nonce(), s.sm.FinalizeNonce())
 	}
 
 	// Phase B: collect signatures with retries.
@@ -2999,49 +3210,18 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 	if err != nil {
 		return "", err
 	}
-	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.warmKeyAuthorizedAt(nonce, recovered, expectedAddr) {
 		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return recovered, nil
 }
 
-func (s *Session) warmKeyAuthorized(warm, cold string) bool {
-	if s.sm.HostSignerBoundAddr(cold, warm) {
-		return true
-	}
-	key := warmCheckKey{warm: warm, cold: cold}
-	for {
-		s.warmCheckMu.Lock()
-		check := s.warmChecks[key]
-		if check != nil {
-			if check.done != nil {
-				done := check.done
-				s.warmCheckMu.Unlock()
-				<-done
-				continue
-			}
-			if check.valid || time.Now().Before(check.retryAt) {
-				valid := check.valid
-				s.warmCheckMu.Unlock()
-				return valid
-			}
-		}
-		check = &warmCheckResult{done: make(chan struct{})}
-		s.warmChecks[key] = check
-		s.warmCheckMu.Unlock()
-
-		valid := s.sm.CheckWarmKey(warm, cold)
-		s.warmCheckMu.Lock()
-		check.valid = valid
-		if !check.valid {
-			check.retryAt = time.Now().Add(30 * time.Second)
-		}
-		close(check.done)
-		check.done = nil
-		accepted := check.valid
-		s.warmCheckMu.Unlock()
-		return accepted
-	}
+// warmKeyAuthorizedAt reports whether warm may sign for cold the state at
+// nonce: a binding in the history that covers that nonce, or a live grant in
+// the grant source for a key the gateway has not bound yet, minus a key whose
+// grant the source has seen end.
+func (s *Session) warmKeyAuthorizedAt(nonce uint64, warm, cold string) bool {
+	return s.sm.HostSignerAllowedAddrAt(cold, warm, nonce)
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
@@ -3069,6 +3249,48 @@ func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReas
 	})
 	if err != nil {
 		return fmt.Errorf("marshal timeout vote content: %w", err)
+	}
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+	}
+	if recovered != expectedAddr && !s.sm.HostSignerAllowed(vote.VoterSlot, recovered) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
+	}
+	if owner := s.sm.SlotAddress(vote.VoterSlot); owner != expectedAddr {
+		return fmt.Errorf("%w: slot %d is owned by %s, not by responder %s",
+			types.ErrInvalidVoteSig, vote.VoterSlot, owner, expectedAddr)
+	}
+	return nil
+}
+
+// errorMissResponseHash is the hash applyErrorMiss binds the votes to: the
+// applied Finish if there is one, else the Finish this miss is submitted with.
+func (s *Session) errorMissResponseHash(inferenceID uint64, finishTx []byte) []byte {
+	if rec, ok := s.sm.GetInference(inferenceID); ok && rec.Status == types.StatusFinished {
+		return rec.ResponseHash
+	}
+	tx := &types.DevshardTx{}
+	if err := proto.Unmarshal(finishTx, tx); err != nil {
+		return nil
+	}
+	if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		return fi.ResponseHash
+	}
+	return nil
+}
+
+// verifyErrorMissVote is verifyTimeoutVote for MsgErrorMiss: applyErrorMiss
+// rejects the whole message on the first bad vote.
+func (s *Session) verifyErrorMissVote(inferenceID uint64, responseHash []byte, vote *types.ErrorMissVote, expectedAddr string) error {
+	voteData, err := types.CanonicalSignedBytes(&types.ErrorMissVoteContent{
+		EscrowId:     s.escrowID,
+		InferenceId:  inferenceID,
+		Accept:       vote.Accept,
+		ResponseHash: responseHash,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal error-miss vote content: %w", err)
 	}
 	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
 	if err != nil {
@@ -3151,9 +3373,42 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	return false
 }
 
+// retryCurrentSignature asks an already caught-up v7 host to rerun its normal
+// signing policy. A transient oracle failure may have withheld its signature
+// on the original Send; reading stored signatures cannot retry that decision.
+// No diff is created, and historical nonces are never re-signed this way.
+func (s *Session) retryCurrentSignature(ctx context.Context, hostIdx int, client HostClient, nonce uint64) error {
+	s.mu.Lock()
+	current := nonce == s.nonce && s.hostSyncNonce[hostIdx] >= nonce &&
+		types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	s.mu.Unlock()
+	if !current {
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, s.signatureCollectHostTimeout)
+	defer cancel()
+	resp, err := client.Send(requestCtx, host.HostRequest{Nonce: nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
+	if err != nil {
+		s.forgetHostState(hostIdx, err)
+		return err
+	}
+	if resp == nil {
+		return ErrNilHostResponse
+	}
+	if resp.Nonce != nonce {
+		return nil
+	}
+	s.mu.Lock()
+	err = s.processResponse(hostIdx, resp, nonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
+}
+
 // CollectSignatures actively polls all hosts to collect signatures for the
 // given nonce. For each host: tries the cheap GET /signatures first, then
-// falls back to sending catch-up diffs. Retries failed hosts with backoff.
+// falls back to catch-up diffs and a current-state signing retry for v7.
+// Retries failed hosts with backoff.
 // Uses per-host timeouts independent of the parent context.
 // Returns the signature status at that nonce after collection. Thread-safe.
 func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, threshold, total uint32) {
@@ -3245,6 +3500,12 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				if err := s.sendCatchUpWith(collectCtx, h.idx, finClients[h.idx]); err != nil {
 					logging.Warn("collect signatures: send catch-up error", "subsystem", "finalize", "escrow", s.escrowID,
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+				}
+				if !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
+					if err := s.retryCurrentSignature(collectCtx, h.idx, finClients[h.idx], nonce); err != nil {
+						logging.Warn("collect signatures: retry signing error", "subsystem", "finalize", "escrow", s.escrowID,
+							"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
+					}
 				}
 
 				if s.hasQuorum(nonce, threshold) {
@@ -3391,7 +3652,7 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 
 func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, error) {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned)
+	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned, host.HostRequest{})
 	if err != nil {
 		s.mu.Unlock()
 		return types.Diff{}, err
@@ -3723,14 +3984,58 @@ func (s *Session) hostParticipantKeyLocked(hostIdx int) string {
 	return strings.TrimSpace(s.group[hostIdx].ValidatorAddress)
 }
 
-// IsNonceFinished returns true if ProcessResponse observed a Finish that closes
-// the nonce's record: one already applied, or one CheckEvidence accepts now.
-// Must be called after ProcessResponse.
+// IsNonceFinished reports the canonical inference status. A raw host mempool
+// advertisement, even a signed Finish, is not proof that it was sequenced.
 func (s *Session) IsNonceFinished(nonce uint64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if o, ok := s.nonceStates[nonce]; ok {
-		return o.finished
+	if s.sm != nil {
+		if rec, ok := s.sm.Inference(nonce); ok {
+			if finishAppliedStatus(rec.Status) {
+				return true
+			}
+			if rec.Status == types.StatusTimedOut {
+				return false
+			}
+		}
+		if s.pendingFinishReadyLocked(nonce) {
+			return true
+		}
+	}
+	if outcome := s.nonceStates[nonce]; outcome != nil {
+		return outcome.finished
+	}
+	return false
+}
+
+// IsNonceCanonicalFinished is the timeout gate. A pending Finish still needs
+// a signed diff and therefore must be published by HandleTimeout.
+func (s *Session) IsNonceCanonicalFinished(nonce uint64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sm == nil {
+		return false
+	}
+	rec, ok := s.sm.Inference(nonce)
+	return ok && finishAppliedStatus(rec.Status)
+}
+
+// pendingFinishReadyLocked reports whether a queued Finish for nonce would
+// apply, behind the queued ConfirmStart when the record is still Pending. It
+// is the check evidenceApplies runs, with the resolver off. Caller holds s.mu.
+func (s *Session) pendingFinishReadyLocked(nonce uint64) bool {
+	if s.sm == nil {
+		return false
+	}
+	rec, ok := s.sm.Inference(nonce)
+	if !ok || rec.Status != types.StatusStarted && rec.Status != types.StatusPending {
+		return false
+	}
+	confirm := s.pendingConfirmLocked(nonce)
+	for _, tx := range s.pendingTxs {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce && s.evidenceApplies(rec, confirm, tx) {
+			return true
+		}
 	}
 	return false
 }
@@ -3772,6 +4077,10 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			logging.Stage(ctx, "timeout_skipped", logFields("reason", "nonce_cap_reached")...)
 			return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "nonce_cap_reached"}, nil
 		}
+		if s.timeoutUnarmed(nonce) {
+			logging.Stage(ctx, "timeout_skipped", logFields("reason", "timeout_not_armed")...)
+			return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "timeout_not_armed"}, nil
+		}
 
 		if reasonLabel == "execution" {
 			// A receipt moves the inference to Started. Publish its pending
@@ -3782,7 +4091,16 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 				return 0, false, TimeoutResult{}, fmt.Errorf("execution timeout inference %d not found", nonce)
 			} else if rec.Status == types.StatusPending {
 				if err := s.SendPendingDiff(ctx); err != nil {
-					return 0, false, TimeoutResult{}, fmt.Errorf("publish receipt before execution timeout: %w", err)
+					if ctx.Err() != nil {
+						return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+					}
+					logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", reasonLabel, "error", err)...)
+				}
+				if !s.nonceStarted(nonce) {
+					// A dropped receipt cannot support an execution timeout. The
+					// refusal path can recover it or refund the still-pending record.
+					reasonLabel = "refused"
+					deadline = sendTime.Add(time.Duration(s.sm.Config().RefusalTimeout)*time.Second + TimeoutBuffer)
 				}
 			}
 		}
@@ -3795,7 +4113,7 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 		// the record and publishes a queued finish so the record can close before
 		// the deadline; the caller then skips the vote.
 		recordClosed := func() bool {
-			if s.nonceClosed(nonce) {
+			if s.nonceClosed(nonce) || s.timeoutDueAtFloor(nonce) {
 				return true
 			}
 			s.mu.Lock()
@@ -3829,6 +4147,17 @@ func (s *Session) WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTim
 			// Applied receipt: the executor now owes a finish. Keep waiting here
 			// for the execution deadline so barrier holders never see this sleep.
 			continue
+		}
+		if s.awaitingFloor(nonce, reason) {
+			if err := s.DriveTimeoutFloor(ctx); err != nil {
+				if ctx.Err() != nil {
+					return 0, false, TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+				}
+				logging.Stage(ctx, "timeout_floor_round_failed", logFields("error", err)...)
+			}
+			if s.awaitingFloor(nonce, reason) {
+				continue
+			}
 		}
 		// A queued confirm (not yet Started) ends the refusal wait; VoteTimeout
 		// reports confirmed_before_vote. Do not treat that as an execution wait.
@@ -3876,14 +4205,6 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 
 	result = TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
 
-	if elapsed, refusalTimeout, unreachable := s.refusalDeadlineUnreachable(reason, payload); unreachable {
-		logging.Stage(ctx, "timeout_skipped", logFields("reason", "refusal_deadline_unreachable",
-			"elapsed_seconds", elapsed, "refusal_timeout_seconds", refusalTimeout)...)
-		result.Outcome = "skipped"
-		result.DetailReason = "refusal_deadline_unreachable"
-		return result, false, fmt.Errorf("inference %d: refusal deadline unreachable", nonce)
-	}
-
 	logging.Stage(ctx, "timeout_started", logFields("reason", result.Reason)...)
 
 	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
@@ -3892,8 +4213,10 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 		s.mu.Unlock()
 		if hasPendingFinish {
 			if err := s.SendPendingDiff(ctx); err != nil {
+				if ctx.Err() != nil {
+					return result, false, ctx.Err()
+				}
 				logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
-				return result, false, fmt.Errorf("publish pending finish before execution timeout: %w", err)
 			}
 			if s.recoveryLanded(nonce, reason) {
 				logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
@@ -3925,6 +4248,10 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 			if record, found := s.sm.GetInference(nonce); found && record.Status == types.StatusTimedOut {
 				result.Applied = true
 			}
+		}
+		if !result.Applied && reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && ctx.Err() == nil && s.nonceStarted(nonce) {
+			logging.Stage(ctx, "timeout_skipped", logFields("reason", "confirmed_before_refusal_applied")...)
+			return TimeoutResult{Outcome: "skipped", DetailReason: "deadline_not_due", Reason: "execution"}, true, nil
 		}
 		if err != nil {
 			result.DetailReason = "timeout_diff_delivery_failed"
@@ -3958,8 +4285,10 @@ func (s *Session) VoteTimeout(ctx context.Context, nonce uint64, sendTime time.T
 		}
 		s.mu.Unlock()
 		if err := s.SendPendingDiff(ctx); err != nil {
+			if ctx.Err() != nil {
+				return result, false, ctx.Err()
+			}
 			logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
-			return result, false, fmt.Errorf("publish timeout recovery: %w", err)
 		}
 		if s.recoveryLanded(nonce, reason) {
 			logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
@@ -4042,38 +4371,86 @@ func (s *Session) recoveryLanded(nonce uint64, reason types.TimeoutReason) bool 
 	}
 }
 
-// refusalDeadlineUnreachable reports whether a refusal vote is already lost. A verifier measures the
-// deadline as its own clock in seconds minus the record's StartedAt, so a stamp in the future — or in
-// the wrong unit — makes every vote a guaranteed reject, and the round is pure waste.
-func (s *Session) refusalDeadlineUnreachable(reason types.TimeoutReason, payload *host.InferencePayload) (elapsed, refusalTimeout int64, unreachable bool) {
-	if reason != types.TimeoutReason_TIMEOUT_REASON_REFUSED || payload == nil {
-		return 0, 0, false
-	}
-	refusalTimeout = s.sm.Config().RefusalTimeout
-	elapsed = time.Now().Unix() - payload.StartedAt
-	return elapsed, refusalTimeout, elapsed < refusalTimeout
-}
-
 func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cfg := s.sm.Config()
-	executionFrom := func(confirmedAt int64) (string, time.Time) {
-		return "execution", time.Unix(confirmedAt, 0).Add(
-			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer,
-		)
+	rec, ok := s.sm.GetInference(nonce)
+	started := ok && rec.Status == types.StatusStarted
+	outcome := s.nonceStates[nonce]
+	if started && outcome != nil && outcome.confirmedAt == 0 {
+		outcome.confirmedAt = time.Now().Unix()
 	}
-	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
-		return executionFrom(outcome.confirmedAt)
+	label, reason := "refused", types.TimeoutReason_TIMEOUT_REASON_REFUSED
+	deadline := sendTime.Add(time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer)
+	if started || outcome != nil && outcome.confirmedAt > 0 && s.pendingConfirmLocked(nonce) != nil {
+		label, reason = "execution", types.TimeoutReason_TIMEOUT_REASON_EXECUTION
+		deadline = time.Now()
+		if outcome != nil && outcome.confirmedAt > 0 {
+			deadline = time.Unix(outcome.confirmedAt, 0).Add(time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer)
+		}
 	}
-	// A receipt recovered through a timeout vote reaches state without a host
-	// response, so the applied record carries the only confirmed_at.
-	if rec, ok := s.sm.GetInference(nonce); ok && rec.Status == types.StatusStarted {
-		return executionFrom(rec.ConfirmedAt)
+	if ok && (reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && rec.Status == types.StatusPending || started) {
+		if remaining, err := s.sm.TimeoutRemaining(nonce, reason); err == nil {
+			deadline = time.Now()
+			if remaining > 0 {
+				deadline = deadline.Add(remaining).Add(TimeoutBuffer)
+			}
+		}
 	}
-	return "refused", sendTime.Add(
-		time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer,
-	)
+	return label, deadline
+}
+
+func (s *Session) timeoutDueAtFloor(nonce uint64) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	if !ok {
+		return false
+	}
+	reason := types.TimeoutReason_TIMEOUT_REASON_REFUSED
+	switch rec.Status {
+	case types.StatusPending:
+	case types.StatusStarted:
+		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
+	default:
+		return false
+	}
+	return s.sm.TimeoutDue(nonce, reason) == nil
+}
+
+func (s *Session) awaitingFloor(nonce uint64, reason types.TimeoutReason) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	if !ok {
+		return false
+	}
+	switch {
+	case rec.Status == types.StatusPending && reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED:
+		s.mu.Lock()
+		confirmed := s.pendingConfirmLocked(nonce) != nil
+		s.mu.Unlock()
+		if confirmed {
+			return false
+		}
+	case rec.Status == types.StatusStarted && reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
+	default:
+		return false
+	}
+	remaining, err := s.sm.TimeoutRemaining(nonce, reason)
+	return err == nil && remaining > 0
+}
+
+func (s *Session) timeoutUnarmed(nonce uint64) bool {
+	rec, ok := s.sm.GetInference(nonce)
+	if !ok {
+		return false
+	}
+	reason := types.TimeoutReason_TIMEOUT_REASON_REFUSED
+	if rec.Status == types.StatusStarted {
+		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
+	} else if rec.Status != types.StatusPending {
+		return false
+	}
+	_, err := s.sm.TimeoutRemaining(nonce, reason)
+	return errors.Is(err, types.ErrTimeoutNotArmed)
 }
 
 func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (TimeoutResult, error) {
@@ -4478,13 +4855,14 @@ func (s *Session) collectTimeoutVotes(
 				return
 			}
 
-			verifierCatchUp, err := s.catchUpDiffsForVerifier(ctx, av.idx)
+			arts := firstTimeoutArtifacts(artifacts)
+			catchUp, err := s.catchUpForVote(ctx, av.idx, diffs, func(catchUp []types.Diff) (bool, error) {
+				return transport.VerifyTimeoutFits(s.escrowID, inferenceID, reason, payload, catchUp)
+			})
 			if err != nil {
 				results <- voteResult{err: fmt.Errorf("catch up verifier: %w", err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			catchUp := mergeTimeoutCatchUpDiffs(verifierCatchUp, diffs)
-			arts := firstTimeoutArtifacts(artifacts)
 
 			rec := inflightVerify{
 				Escrow: s.escrowID,
@@ -4720,12 +5098,14 @@ func (s *Session) CollectErrorMissVotes(
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			verifierCatchUp, err := s.catchUpDiffsForVerifier(ctx, av.idx)
+			catchUp, err := s.catchUpForVote(ctx, av.idx, diffs, func(catchUp []types.Diff) (bool, error) {
+				return transport.VerifyErrorMissFits(s.escrowID, inferenceID, artifacts, catchUp)
+			})
 			if err != nil {
 				results <- voteResult{err: fmt.Errorf("catch up verifier: %w", err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, mergeTimeoutCatchUpDiffs(verifierCatchUp, diffs), artifacts)
+			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, catchUp, artifacts)
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
@@ -4748,8 +5128,9 @@ func (s *Session) CollectErrorMissVotes(
 	seenRecovery := make(map[string]struct{})
 	expected := len(deduped)
 	voteThreshold := s.sm.VoteThreshold()
+	responseHash := s.errorMissResponseHash(inferenceID, artifacts.FinishTx)
 	var accWeight uint32
-	var errors, rejects int
+	var errors, rejects, invalid int
 	for i := 0; i < expected; i++ {
 		res := <-results
 		if res.err != nil {
@@ -4776,6 +5157,14 @@ func (s *Session) CollectErrorMissVotes(
 			}
 			continue
 		}
+		if vErr := s.verifyErrorMissVote(inferenceID, responseHash, res.vote, res.verifierAddr); vErr != nil {
+			invalid++
+			logging.Warn("rejected unverified error-miss vote",
+				"subsystem", "session", "escrow_id", s.escrowID,
+				"inference_id", inferenceID, "responder", res.verifierAddr,
+				"voter_slot", res.vote.VoterSlot, "error", vErr)
+			continue
+		}
 		votes = append(votes, res.vote)
 		addr := s.sm.SlotAddress(res.vote.VoterSlot)
 		accWeight += s.sm.AddressSlotCount(addr)
@@ -4786,7 +5175,7 @@ func (s *Session) CollectErrorMissVotes(
 	}
 
 	logging.Stage(ctx, "timeout_votes_collected",
-		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
+		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "invalid", invalid, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
 	)
 	return votes, recovery, rejectCauses, nil
 }
@@ -4805,6 +5194,37 @@ func (s *Session) catchUpDiffsForVerifier(ctx context.Context, hostIdx int) ([]t
 	target := s.nonce
 	s.mu.Unlock()
 	return s.catchUpForSend(ctx, hostIdx, target)
+}
+
+// catchUpForVote separates the signed diff tail from an otherwise oversized
+// v7 verification request using the existing chat catch-up path.
+func (s *Session) catchUpForVote(ctx context.Context, hostIdx int, extra []types.Diff, fits func([]types.Diff) (bool, error)) ([]types.Diff, error) {
+	tail, err := s.catchUpDiffsForVerifier(ctx, hostIdx)
+	if err != nil {
+		return nil, err
+	}
+	diffs := mergeTimeoutCatchUpDiffs(tail, extra)
+	if !types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) {
+		return diffs, nil
+	}
+	ok, err := fits(diffs)
+	if ok || err != nil {
+		return diffs, err
+	}
+	ok, err = fits(extra)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(tail) == 0 {
+		return nil, transport.ErrVerifyRequestTooLarge
+	}
+	run := s.startHostCatchUp(hostIdx, tail[len(tail)-1].Nonce)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-run.done:
+		return extra, run.err
+	}
 }
 
 // mergeTimeoutCatchUpDiffs prefers the per-verifier catch-up set and appends

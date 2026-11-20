@@ -6,8 +6,10 @@ package nmrpc
 import (
 	"context"
 	"errors"
+	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"common/nodemanager/gen"
 
 	"google.golang.org/grpc/codes"
@@ -30,18 +32,53 @@ func GetBlockHeader(ctx context.Context, oracle blocks.BlockOracle, req *gen.Get
 		h   *blocks.Header
 		err error
 	)
-	if height == 0 {
+	waiter, canWait := oracle.(blocks.HeaderWaiter)
+	switch {
+	case height == 0:
 		h, err = oracle.Latest(ctx)
-	} else {
+	case req.GetWaitMs() > 0 && canWait:
+		h, err = waiter.AtWait(ctx, height, time.Duration(req.GetWaitMs())*time.Millisecond)
+	default:
 		h, err = oracle.At(ctx, height)
 	}
 	if err != nil {
-		return nil, statusFromOracleErr(err)
+		return nil, headerStatus(oracle, err)
 	}
 	if h == nil {
 		return nil, status.Error(codes.NotFound, blocks.ErrHeaderNotFound.Error())
 	}
-	return &gen.GetBlockHeaderResponse{Header: HeaderToProto(h)}, nil
+	resp := &gen.GetBlockHeaderResponse{Header: HeaderToProto(h)}
+	if req.GetIncludeLightBlock() {
+		source, ok := oracle.(lightproof.Source)
+		if !ok {
+			return nil, status.Error(codes.Unimplemented, "block header: light blocks unavailable")
+		}
+		resp.LightBlock, err = source.LightBlockAt(ctx, h.Height)
+		if err != nil {
+			return nil, headerStatus(oracle, err)
+		}
+		if len(resp.LightBlock) == 0 || len(resp.LightBlock) > lightproof.MaxBlockBytes {
+			return nil, status.Error(codes.Internal, "block header: invalid light block size")
+		}
+	}
+	return resp, nil
+}
+
+type verifyingOracle interface {
+	Verifying() bool
+}
+
+func headerStatus(oracle blocks.BlockOracle, err error) error {
+	if errors.Is(err, blocks.ErrHeaderUnverified) {
+		return status.Error(codes.PermissionDenied, err.Error())
+	}
+	if v, ok := oracle.(verifyingOracle); ok && v.Verifying() &&
+		!errors.Is(err, blocks.ErrHeaderNotFound) && !errors.Is(err, blocks.ErrProveNotImplemented) {
+		if _, isStatus := status.FromError(err); !isStatus {
+			return status.Error(codes.Internal, err.Error())
+		}
+	}
+	return statusFromOracleErr(err)
 }
 
 // ProveBlockPath serves NodeManager.ProveBlockPath.

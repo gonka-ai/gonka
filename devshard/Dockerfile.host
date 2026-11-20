@@ -17,6 +17,7 @@ RUN --mount=type=cache,id=go-mod-cache-devshard-host,target=/go/pkg/mod \
 
 COPY devshard/ .
 RUN --mount=type=cache,id=go-build-cache-devshard-host,target=/root/.cache/go-build \
+    --mount=type=cache,id=go-mod-cache-devshard-host,target=/go/pkg/mod \
     CGO_ENABLED=0 go build \
     -ldflags "-X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
     -o /devshard-host ./cmd/devshard-host

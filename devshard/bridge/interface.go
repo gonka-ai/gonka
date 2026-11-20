@@ -19,11 +19,13 @@ type MainnetBridge interface {
 }
 
 type EscrowInfo struct {
-	EscrowID       string
-	Amount         uint64
-	CreatorAddress string
-	AppHash        []byte
-	Slots          []string // host addresses, len == DevshardGroupSize
+	MainnetAnchorHeight int64
+	MainnetAnchorHash   []byte
+	EscrowID            string
+	Amount              uint64
+	CreatorAddress      string
+	AppHash             []byte
+	Slots               []string // host addresses, len == DevshardGroupSize
 	// ModelID is the on-chain model_id from escrow create (host assignment).
 	// Used by the gateway for runtime routing; hosts ignore it at bind.
 	ModelID                   string

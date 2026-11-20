@@ -977,10 +977,16 @@ func TestRemoveNode_UnknownID(t *testing.T) {
 
 func TestRemoveNode_NilCancelInFlightTask(t *testing.T) {
 	broker := NewTestBroker()
-	cmd := NewRegisterNodeCommand(testRegisterNodeConfig("node1", "localhost", 8080, 5000))
-	require.NoError(t, broker.QueueMessage(cmd))
-	resp := <-cmd.Response
-	require.NoError(t, resp.Error)
+	// Registration schedules reconciliation, which may install a cancel
+	// function before the assertion below. Seed an idle node and worker so
+	// this test deterministically exercises removal without an in-flight task.
+	node := createTestNode("node1")
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, mlnodeclient.NewMockClient(), broker)
+	t.Cleanup(worker.Shutdown)
+	require.True(t, broker.nodeWorkGroup.AddWorker(node.Node.Id, worker))
+	broker.mu.Lock()
+	broker.nodes[node.Node.Id] = node
+	broker.mu.Unlock()
 
 	broker.mu.RLock()
 	nws := broker.nodes["node1"]

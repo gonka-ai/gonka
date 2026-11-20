@@ -83,7 +83,7 @@ dev-logs: ## Follow dev overlay logs.
 	docker compose $(DEV_OVERLAY) logs -f
 
 .PHONY: citest-images citest-stack citest-baseline-smoke citest-stack-build list-citest-targets
-.PHONY: citest-validation-lease-race citest-escrow-longpoll citest-timeout-evidence
+.PHONY: citest-validation-lease-race citest-escrow-longpoll citest-block-feed citest-timeout-evidence
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
 .PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat citest-host-ping citest-retired-session-http citest-peerrpc-chat citest-peerrpc-ha-session citest-proxy-h2-idle citest-peerrpc-overlay citest-peerrpc-parity citest-peerrpc-limits citest-mixed-fleet citest-peerrpc-cross-version-compat test-gateway-smoke
 .PHONY: build-baseline-infra fetch-limits-pin build-limits-pin
@@ -194,6 +194,10 @@ citest-timeout-evidence: citest-images ## Refusal and execution timeouts against
 citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference without live escrow fetch (v4-deploy-test-plan §6).
 	$(MAKE) build-devshardd
 	$(CITEST_RPC_RUN) -run '^TestEscrowLongPollWarm' -count=1 -v -timeout 30m
+
+citest-block-feed: citest-images ## Block-change feed: live heights, catch-up, stall, reset, warm-key, bad header.
+	$(MAKE) build-devshardd
+	$(CITEST_RPC_RUN) -run '^TestBlockFeed_' -count=1 -v -timeout 45m
 
 citest-escrow-funding-fallback: citest-images ## Escrow funding fallback: an oversized request moves to another escrow; 503 only once every escrow refuses.
 	$(CITEST_RPC_RUN) -run '^TestGateway(MovesOversizedRequest|ReturnsRetryable503)' -count=1 -v -timeout 30m

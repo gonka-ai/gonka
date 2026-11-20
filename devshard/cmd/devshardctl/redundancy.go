@@ -58,7 +58,7 @@ var (
 
 const emptyStreamBodySampleLimit = 256 * 1024
 
-const longResponseFailureExemption = 280 * time.Second
+const longResponsePerfExemption = 280 * time.Second
 
 var (
 	InterChunkStallLogThreshold = 30 * time.Second
@@ -851,6 +851,7 @@ type inflight struct {
 	model                      string
 	sendTime                   time.Time
 	escalated                  bool
+	endedByGateway             atomic.Bool
 	probe                      bool
 	excludePairwise            bool
 	startedBeforePoCGeneration bool
@@ -1016,6 +1017,18 @@ func (inf *inflight) receiptAt() time.Time {
 		return time.Unix(0, n)
 	}
 	return time.Time{}
+}
+
+// cancelAttempt ends an attempt for the race's own reasons. One still inside
+// its receipt or first-token deadline is marked as ended by the gateway and is
+// not charged to its host; one past it ends as the host's own miss.
+func (e *Redundancy) cancelAttempt(inf *inflight, params user.InferenceParams) {
+	if deadline, ok := e.attemptDeadline(inf, params, time.Now()); !ok || time.Now().Before(deadline) {
+		inf.endedByGateway.Store(true)
+	}
+	if inf.cancel != nil {
+		inf.cancel()
+	}
 }
 
 func (inf *inflight) hasReceipt() bool {
@@ -2875,7 +2888,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		var holderTimer *time.Timer
 		var holderC <-chan time.Time
 		if deferredFailClosed != nil && winner == 0 && !allInflightsDone(attempts) {
-			holder, until := e.liveReceiptHolder(attempts, deferredFailClosed.inf, params)
+			holder, until := e.liveReceiptHolder(attempts, params)
 			if holder == nil {
 				stopTimer(escalationTimer)
 				stopTimer(stallTimer)
@@ -2987,7 +3000,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			// every primary that receipts-in under ReceiptTimeout, i.e. the
 			// majority of a healthy run. Skip and let the loop re-schedule
 			// the correct next trigger.
-			current, stillValid := e.escalationForInflight(trigger.inf, params)
+			current, stillValid := e.escalationForInflight(trigger.inf, params, len(attempts) < e.maxAttempts())
 			if !stillValid || current.stage != trigger.stage || time.Now().Before(current.deadline) {
 				break
 			}
@@ -3017,7 +3030,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				}
 			}
 			if failClosedEscalationStage(trigger.stage) {
-				if holder, _ := e.liveReceiptHolder(attempts, trigger.inf, params); holder != nil {
+				if holder, _ := e.liveReceiptHolder(attempts, params); holder != nil {
 					trigger.inf.escalated = true
 					if deferredFailClosed == nil {
 						deferred := trigger
@@ -3146,8 +3159,9 @@ func (e *Redundancy) nextEscalationTrigger(attempts []*inflight, params user.Inf
 		chosen escalationTrigger
 		ok     bool
 	)
+	canStartAttempt := len(attempts) < e.maxAttempts()
 	for _, inf := range attempts {
-		trigger, candidate := e.escalationForInflight(inf, params)
+		trigger, candidate := e.escalationForInflight(inf, params, canStartAttempt)
 		if !candidate {
 			continue
 		}
@@ -3185,21 +3199,27 @@ func failClosedErrorForStage(stage string) error {
 	return errAllHostsFirstTokenTimeout
 }
 
-// liveReceiptHolder returns a running attempt other than except that holds a
-// receipt and is still inside its first-token budget. While one exists the
-// race is not lost: that host has signed for the work. until is when that
-// budget ends, zero once the holder has a first token.
-func (e *Redundancy) liveReceiptHolder(attempts []*inflight, except *inflight, params user.InferenceParams) (holder *inflight, until time.Time) {
+// receiptHolderFirstTokenPatience is how many first-token budgets a race at
+// its attempt limit waits on an attempt that holds a receipt. The budget is
+// the p95 first-token latency, a cue to start another attempt rather than a
+// verdict that the host failed.
+const receiptHolderFirstTokenPatience = 3
+
+// liveReceiptHolder returns a running attempt that holds a receipt and either
+// streams or is still inside receiptHolderFirstTokenPatience first-token
+// budgets. While one exists the race is not lost: that host has signed for the
+// work. until is when that patience ends, zero once the holder streams.
+func (e *Redundancy) liveReceiptHolder(attempts []*inflight, params user.InferenceParams) (holder *inflight, until time.Time) {
 	now := time.Now()
 	for _, inf := range attempts {
-		if inf == nil || inf == except || inf.probe || !inf.hasReceipt() || inflightDone(inf) {
+		if inf == nil || inf.probe || !inf.hasReceipt() || inflightDone(inf) {
 			continue
 		}
 		if inf.hasFirstToken() {
 			return inf, time.Time{}
 		}
 		start, _ := inf.clockStart(now)
-		if deadline := start.Add(e.firstTokenFallbackDelay(params)); now.Before(deadline) {
+		if deadline := start.Add(receiptHolderFirstTokenPatience * e.firstTokenFallbackDelay(params)); now.Before(deadline) {
 			return inf, deadline
 		}
 	}
@@ -3242,11 +3262,14 @@ func (e *Redundancy) failClosedNoWinner(ctx context.Context, attempts []*infligh
 	return err
 }
 
-func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceParams) (escalationTrigger, bool) {
+// escalationForInflight escalates a suspicious attempt at once only while
+// another attempt can start; at the limit it keeps its receipt and first-token
+// deadlines, which let a held suspicious answer go.
+func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceParams, canStartAttempt bool) (escalationTrigger, bool) {
 	if inf == nil || inf.escalated {
 		return escalationTrigger{}, false
 	}
-	if inf.suspicious {
+	if inf.suspicious && canStartAttempt {
 		return escalationTrigger{
 			inf:      inf,
 			deadline: time.Now(),
@@ -3254,7 +3277,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 			reason:   "suspicious_host",
 		}, true
 	}
-	if inf.probe {
+	if inf.probe && canStartAttempt {
 		return escalationTrigger{
 			inf:      inf,
 			deadline: time.Now(),
@@ -3273,27 +3296,41 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 			reason:   "attempt_failed",
 		}, true
 	}
-	if inf.sendTime.IsZero() {
+	deadline, ok := e.attemptDeadline(inf, params, time.Now())
+	if !ok {
 		return escalationTrigger{}, false
 	}
-	start, _ := inf.clockStart(time.Now())
 	if !inf.hasReceipt() {
 		return escalationTrigger{
 			inf:      inf,
-			deadline: start.Add(receiptTimeoutForInput(params.InputLength)),
+			deadline: deadline,
 			stage:    "receipt_timeout_wait_elapsed",
 			reason:   "receipt_timeout",
 		}, true
 	}
-	if inf.hasFirstToken() {
-		return escalationTrigger{}, false
-	}
 	return escalationTrigger{
 		inf:      inf,
-		deadline: start.Add(e.firstTokenFallbackDelay(params)),
+		deadline: deadline,
 		stage:    "first_token_timeout_wait_elapsed",
 		reason:   "first_token_timeout",
 	}, true
+}
+
+// attemptDeadline is when a sent attempt misses its receipt timeout, or its
+// first-token budget once it holds a receipt. ok is false before the send and
+// once a receipted attempt streams.
+func (e *Redundancy) attemptDeadline(inf *inflight, params user.InferenceParams, now time.Time) (deadline time.Time, ok bool) {
+	if inf.sendTime.IsZero() {
+		return time.Time{}, false
+	}
+	start, _ := inf.clockStart(now)
+	if !inf.hasReceipt() {
+		return start.Add(receiptTimeoutForInput(params.InputLength)), true
+	}
+	if inf.hasFirstToken() {
+		return time.Time{}, false
+	}
+	return start.Add(e.firstTokenFallbackDelay(params)), true
 }
 
 func (e *Redundancy) escalationDelay(stage string, params user.InferenceParams) time.Duration {
@@ -3875,7 +3912,7 @@ func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*
 	bgCtx, _ := ensureRequestLogContext(context.Background())
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 
-	e.waitForPendingLosers(bgCtx, winnerNonce, attempts)
+	e.waitForPendingLosers(bgCtx, winnerNonce, attempts, params)
 
 	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, opts); err != nil {
 		logRequestStage(bgCtx, "background_race_finalize_failed", "escrow", e.devshardID, "error", err)
@@ -3887,7 +3924,7 @@ func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, 
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 
 	winner := inflightByNonce(attempts, winnerNonce)
-	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts)
+	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts, params)
 	if abandonedWinner {
 		e.recordStalledWinnerFailureOnce(winner, params)
 		if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, raceFinishOptions{
@@ -3913,7 +3950,7 @@ func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, 
 	}
 }
 
-func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNonce uint64, attempts []*inflight) bool {
+func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNonce uint64, attempts []*inflight, params user.InferenceParams) bool {
 	pending := pendingInflights(attempts)
 	if len(pending) == 0 {
 		return false
@@ -3956,9 +3993,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 					"host", inf.hostID,
 					"reason", reason,
 				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
+				e.cancelAttempt(inf, params)
 			}
 			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
 				logRequestStage(ctx, "client_timeout_wait_drain_abandoned",
@@ -3981,7 +4016,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 // A transport that ignores cancel is abandoned: finishRaceOutcome must not
 // read resp/err until that attempt's done closes, so a hung host cannot hold
 // pendingRaceCleanup (and finalize) for InferenceTimeout.
-func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint64, attempts []*inflight) {
+func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint64, attempts []*inflight, params user.InferenceParams) {
 	pending := pendingInflights(attempts)
 	if len(pending) == 0 {
 		return
@@ -4017,9 +4052,7 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 					"host", inf.hostID,
 					"reason", "winner_grace_expired",
 				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
+				e.cancelAttempt(inf, params)
 			}
 			if abandoned := joinCanceledInflights(naturalDone, remaining, raceCleanupCancelGrace); abandoned > 0 {
 				logRequestStage(ctx, "speculative_wait_drain_abandoned",
@@ -4090,6 +4123,9 @@ func shouldRunHandleTimeoutOn(inf *inflight, session nonceFinishedChecker, error
 	}
 	if errorMiss {
 		return true
+	}
+	if canonical, ok := session.(interface{ IsNonceCanonicalFinished(uint64) bool }); ok {
+		return !canonical.IsNonceCanonicalFinished(inf.nonce)
 	}
 	return !session.IsNonceFinished(inf.nonce)
 }
@@ -4233,6 +4269,9 @@ func errorMissRunnable(inf *inflight, session *user.Session) bool {
 
 func emptyStreamWithoutWinnerTimeoutSkipReason(inf *inflight, session nonceFinishedChecker) (string, bool) {
 	if session != nil && isEmptyStreamAttempt(inf) && session.IsNonceFinished(inf.nonce) {
+		if canonical, ok := session.(interface{ IsNonceCanonicalFinished(uint64) bool }); ok && !canonical.IsNonceCanonicalFinished(inf.nonce) {
+			return "", false
+		}
 		return "empty_stream_without_non_empty_winner", true
 	}
 	return "", false
@@ -4245,7 +4284,7 @@ func skipEmptyStreamTimeout(inf *inflight, session nonceFinishedChecker, errorMi
 	return emptyStreamWithoutWinnerTimeoutSkipReason(inf, session)
 }
 
-func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
+func longResponsePerfExempt(inf *inflight, session *user.Session) bool {
 	if inf == nil || session == nil || inf.probe || inf.sendTime.IsZero() {
 		return false
 	}
@@ -4255,14 +4294,14 @@ func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
 	if inf.contentSource == "" {
 		return false
 	}
-	return time.Since(inf.sendTime) >= longResponseFailureExemption
+	return time.Since(inf.sendTime) >= longResponsePerfExemption
 }
 
-func (e *Redundancy) longResponseFailureExempt(inf *inflight) bool {
+func (e *Redundancy) longResponsePerfExempt(inf *inflight) bool {
 	if e == nil {
 		return false
 	}
-	return longResponseFailureExempt(inf, e.session)
+	return longResponsePerfExempt(inf, e.session)
 }
 
 func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool {
@@ -4443,7 +4482,7 @@ func inflightFinished(inf *inflight) bool {
 // We gate on receiptTime being set so attempts that never even confirmed
 // receipt fall through to the upstream error/timeout path instead.
 func isEmptyStreamAttempt(inf *inflight) bool {
-	if inf == nil || inf.probe {
+	if inf == nil || inf.probe || inf.endedByGateway.Load() {
 		return false
 	}
 	if !inf.hasReceipt() {
@@ -4504,7 +4543,7 @@ func (e *Redundancy) recordSampleOnce(inf *inflight, params user.InferenceParams
 		errors.Is(inf.processErr, user.ErrLocalRootUnavailable)) {
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	if inf != nil && inf.preludePressure.Load() {
@@ -4735,7 +4774,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		// sample for an OpenAI-style error stream.
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
@@ -4772,7 +4811,7 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 	if inf.contentChunks.Load() == 0 {
 		return
 	}
-	if e.longResponseFailureExempt(inf) {
+	if e.longResponsePerfExempt(inf) {
 		return
 	}
 	if !inf.hasRecordedStall() && (inf.err != nil || inf.processErr != nil) {
@@ -4922,7 +4961,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		// The list is what the protocol still owes a vote, not what the request failed on: a winner whose
 		// answer reached the caller can still leave its nonce open, and an open nonce is owed one either way.
-		if !ok || !e.session.IsNonceFinished(inf.nonce) {
+		if !ok || !e.session.IsNonceCanonicalFinished(inf.nonce) {
 			failed = append(failed, inf)
 		} else {
 			inf.endAttemptSpan()
@@ -5078,17 +5117,6 @@ func (e *Redundancy) voteTimeoutForFailedInflight(ctx context.Context, inf *infl
 	if failStage == "timeout_failed" && deliveredWholeAnswer(inf) {
 		logInferenceWarn(ctx, inf.escrowID, inf.nonce, "served_without_finish", "host", inf.hostID)
 	}
-	if e.longResponseFailureExempt(inf) {
-		logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
-			"host", inf.hostID,
-			"reason", "long_response_after_content",
-			"elapsed_ms", time.Since(inf.sendTime).Milliseconds(),
-			"content_chunks", inf.contentChunks.Load(),
-			"output_bytes", inf.outputBytes.Load(),
-		)
-		e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "long_response_after_content")
-		return
-	}
 	callerOwnsCleanup = e.runOrScheduleHandleTimeout(ctx, inf, params, errorMiss, failStage)
 }
 
@@ -5199,7 +5227,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	if inf.probe {
 		return
 	}
-	if inf.phaseTransitionAborted {
+	if inf.phaseTransitionAborted || inf.endedByGateway.Load() {
 		return
 	}
 	emptyStream := isEmptyStreamAttempt(inf)

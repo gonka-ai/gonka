@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/host"
 	"devshard/types"
@@ -20,34 +19,20 @@ func startedInferenceConfirmedAt(t *testing.T, env *testProxyEnv, confirmedAt ti
 	prepared, err := env.session.PrepareInference(t.Context(), params)
 	require.NoError(t, err)
 	nonce := prepared.Nonce()
-	record, tracked := env.sm.GetInference(nonce)
-	require.True(t, tracked)
-	receipt, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.ExecutorReceiptContent{
-		InferenceId: nonce,
-		PromptHash:  record.PromptHash,
-		Model:       record.Model,
-		InputLength: record.InputLength,
-		MaxTokens:   record.MaxTokens,
-		StartedAt:   record.StartedAt,
-		EscrowId:    "escrow-proxy",
-		ConfirmedAt: confirmedAt.Unix(),
-	})
-	require.NoError(t, err)
-	signature, err := env.verifiers[record.ExecutorSlot].signer.Sign(receipt)
-	require.NoError(t, err)
-	require.NoError(t, env.session.ProcessResponse(prepared.HostIdx(), &host.HostResponse{
-		Nonce: nonce, Receipt: signature, ConfirmedAt: confirmedAt.Unix(),
-	}, nonce))
+	require.NoError(t, env.session.ProcessResponse(prepared.HostIdx(), env.floorReceipt(t, nonce, confirmedAt.Unix()), nonce))
 	require.NoError(t, env.session.SendPendingDiff(t.Context()))
 	started, tracked := env.sm.GetInference(nonce)
 	require.True(t, tracked)
 	require.Equal(t, types.StatusStarted, started.Status, "the fixture must reach the status it is named for")
+	if time.Since(confirmedAt) > time.Minute {
+		env.raiseFloor(t, started.ConfirmedAtHeight+100_000)
+	}
 	return nonce
 }
 
 func newSweepTestGateway(t *testing.T) (*Gateway, *devshardRuntime, *testProxyEnv) {
 	t.Helper()
-	env := setupTestProxy(t, 3, nil, true)
+	env := setupManualFloorProxy(t, 3, nil, true)
 	runtime := &devshardRuntime{id: "escrow-proxy", model: "llama", proxy: env.proxy, session: env.session}
 	runtime.active.Store(true)
 	gateway := NewGateway([]*devshardRuntime{runtime}, NewGatewayLimiter(0, 0), "llama")
@@ -115,7 +100,7 @@ func TestSweepExecutionTimeoutsStaysWithinItsBudget(t *testing.T) {
 //  3. Expect both escrows served: each tick starts one escrow further along, so the first escrow cannot take every tick's budget.
 func TestSweepExecutionTimeoutsStartsOneEscrowFurtherAlongEachTick(t *testing.T) {
 	gateway, firstRuntime, firstEnv := newSweepTestGateway(t)
-	secondEnv := setupTestProxy(t, 3, nil, true)
+	secondEnv := setupManualFloorProxy(t, 3, nil, true)
 	secondRuntime := &devshardRuntime{id: "escrow-second", model: "llama", proxy: secondEnv.proxy, session: secondEnv.session}
 	gateway.mu.Lock()
 	gateway.runtimes[secondRuntime.id] = secondRuntime
@@ -129,6 +114,27 @@ func TestSweepExecutionTimeoutsStartsOneEscrowFurtherAlongEachTick(t *testing.T)
 	gateway.sweepExecutionTimeouts(t.Context(), runtimes, 1)
 
 	require.Equal(t, types.StatusTimedOut, secondEnv.sm.SnapshotState().Inferences[secondNonce].Status, "the second escrow must not wait until the first one runs out of overdue records")
+}
+
+// Test flow:
+//  1. Register an escrow at its active nonce cap with two overdue inferences, and a second escrow with one.
+//  2. Run one sweep with a budget of two that starts at the capped escrow.
+//  3. Expect the second escrow's inference timed out: the capped escrow cannot vote, so it must not spend the tick's budget.
+func TestSweepExecutionTimeoutsSpendsNoBudgetOnAnEscrowAtItsNonceCap(t *testing.T) {
+	gateway, cappedRuntime, cappedEnv := newSweepTestGateway(t)
+	secondEnv := setupManualFloorProxy(t, 3, nil, true)
+	secondRuntime := &devshardRuntime{id: "escrow-second", model: "llama", proxy: secondEnv.proxy, session: secondEnv.session}
+	gateway.mu.Lock()
+	gateway.runtimes[secondRuntime.id] = secondRuntime
+	gateway.mu.Unlock()
+	startedInferenceConfirmedAt(t, cappedEnv, time.Now().Add(-time.Hour))
+	startedInferenceConfirmedAt(t, cappedEnv, time.Now().Add(-time.Hour))
+	cappedEnv.session.SetChainMaxNonce(uint32(cappedEnv.session.Nonce() + types.FinalizeNonceReserve(3)))
+	secondNonce := startedInferenceConfirmedAt(t, secondEnv, time.Now().Add(-time.Hour))
+
+	gateway.sweepExecutionTimeouts(t.Context(), []*devshardRuntime{cappedRuntime, secondRuntime}, 2)
+
+	require.Equal(t, types.StatusTimedOut, secondEnv.sm.SnapshotState().Inferences[secondNonce].Status)
 }
 
 // Test flow:
@@ -158,7 +164,9 @@ func pendingInferenceStartedAt(t *testing.T, env *testProxyEnv, startedAt time.T
 	record, tracked := env.sm.GetInference(nonce)
 	require.True(t, tracked)
 	require.Equal(t, types.StatusPending, record.Status)
-	require.Equal(t, startedAt.Unix(), record.StartedAt)
+	if time.Since(startedAt) > time.Minute {
+		env.raiseFloor(t, record.StartedAtHeight+100_000)
+	}
 	return nonce
 }
 
@@ -303,7 +311,7 @@ func TestSweepExecutionTimeoutsSkipsWhileEveryTimeoutVotePlaceIsTaken(t *testing
 //  2. Let its race vote it and wait for the race cleanup to finish.
 //  3. Expect no payload kept for the sweep: the group judged the refusal, so voting it again would only repeat the same round.
 func TestARaceRefusalTheGroupDeclinedLeavesNothingToSweep(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, false)
+	env := setupManualFloorProxy(t, 3, nil, false)
 	startedAt := time.Now().Add(-time.Hour)
 	nonce, _ := pendingRefusalStartedAt(t, env, startedAt)
 	params := defaultParams()

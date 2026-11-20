@@ -1,7 +1,11 @@
 package mockdapi
 
 import (
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/nmclient"
+	"common/nodemanager/gen"
 	"context"
+	devshardtypes "devshard/types"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,8 +16,6 @@ import (
 	"time"
 
 	"common/chain"
-	"common/chainoracle/blocks"
-	"common/nodemanager/gen"
 	commonobs "common/observability"
 	commonruntimeconfig "common/runtimeconfig"
 	"devshard/chainoracle/blocks/observer"
@@ -37,9 +39,11 @@ type Service struct {
 	cfg            Config
 	paramsSrc      *params.CachedSource
 	paramsSrv      *params.Server
+	chainClient    *chain.Client
 	nodeManager    *nodeManagerServer
 	runtimeFetcher fetcher.SnapshotFetcher
 	blockMock      *observer.Mock
+	blockSource    blocks.BlockOracle
 	admin          *adminface.Client
 	versions       *versionStore
 	hostEvents     *hostEventRing
@@ -112,16 +116,28 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		_ = conn.Close()
 		return nil, err
 	}
+	var blockSource blocks.BlockOracle = blockMock
+	for _, version := range cfg.Versions {
+		if devshardtypes.RequiresMainnetHeightProof(version.Name) {
+			blockSource, err = nmclient.New(gen.NewNodeManagerClient(conn))
+			if err != nil {
+				return nil, err
+			}
+			break
+		}
+	}
 	hostEvents := newHostEventRing()
-	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, blockMock, cfg.OmitBlockRoutes, cfg.MLNodes)
+	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, blockSource, cfg.OmitBlockRoutes, cfg.MLNodes)
 
 	s := &Service{
 		cfg:            cfg,
+		chainClient:    chainClient,
 		paramsSrc:      src,
 		paramsSrv:      paramsSrv,
 		nodeManager:    nodeManager,
 		runtimeFetcher: runtimeFetcher,
 		blockMock:      blockMock,
+		blockSource:    blockSource,
 		admin:          adminClient,
 		versions:       newVersionStore(cfg.Versions),
 		hostEvents:     hostEvents,
@@ -234,7 +250,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	e := echo.New()
 	e.HideBanner = true
 	cosrv.Mount(e.Group(""), cosrv.Config{
-		Blocks:          s.blockMock,
+		Blocks:          s.blockSource,
 		OmitBlocks:      s.cfg.OmitBlockRoutes,
 		VersionProvider: s.versions,
 	})
@@ -251,7 +267,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		BlockHeight: s.cfg.GatewayBlockHeight,
 		EpochIndex:  s.cfg.GatewayEpochIndex,
 	})
-	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents)
+	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents, s.publishWarmKeyLog)
 	s.httpEcho = e
 	e.Server.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {

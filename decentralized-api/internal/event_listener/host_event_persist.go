@@ -184,11 +184,27 @@ func (f *HostEventFeed) commitHeight(ctx context.Context, height int64, epoch ui
 	f.ring.AppendBatch(stored)
 	if f.epochs != nil && f.epochs.src != nil {
 		if idx, _, ok := f.epochs.src.LatestEpoch(); ok && (!f.pruned || idx != f.prunedEpoch) {
+			// Readers must use the store until its new retention boundary has
+			// reached the ring. On failure, boot restores the durable tail before
+			// the next write; do not keep serving the stale ring prefix.
+			f.bootPending.Store(true)
 			if err := f.store.Prune(ctx, idx); err != nil {
 				logging.Warn("host_event_feed: prune", types.EventProcessing, "error", err)
+				f.stalled.Store(true)
+				return false
 			} else {
+				if oldest, empty, gen, err := f.store.Oldest(ctx); err != nil {
+					logging.Warn("host_event_feed: pruned window", types.EventProcessing, "error", err)
+					f.stalled.Store(true)
+					return false
+				} else if empty {
+					f.ring.DropBefore(gen, f.ring.Head()+1)
+				} else {
+					f.ring.DropBefore(gen, oldest)
+				}
 				f.pruned = true
 				f.prunedEpoch = idx
+				f.bootPending.Store(false)
 				if head, err := f.store.Head(ctx); err == nil && head.Seq < seq {
 					if err := f.writeMarker(f.ring.Generation(), head.Seq, head.Height); err != nil {
 						logging.Warn("host_event_feed: head marker after prune", types.EventProcessing, "error", err)

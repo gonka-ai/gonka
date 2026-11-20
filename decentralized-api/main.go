@@ -278,9 +278,9 @@ func main() {
 	}
 	defer hostStore.Close()
 	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
-	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url)
+	chainOracle, err := pserver.NewChainOracle(configManager.GetChainNodeConfig().Url, configManager.SqlDb().GetDb())
 	if err != nil {
-		logging.Error("Failed to create chainoracle", types.Server, "error", err)
+		log.Fatalf("Failed to create chainoracle: %v", err)
 	}
 	listenerOpts := []event_listener.EventListenerOption{
 		event_listener.WithStatsStorage(statsStore),

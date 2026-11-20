@@ -160,6 +160,17 @@ func (c *Cache) Subscribe(ctx context.Context, fromHeight int64) (<-chan *blocks
 	return sub.ch, nil
 }
 
+// LastObservation returns the header and receive time of the same local
+// NewBlock observation. Historical cache writes do not update either value.
+func (c *Cache) LastObservation() (*blocks.Header, time.Time) {
+	if c == nil {
+		return nil, time.Time{}
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return cloneHeader(c.latest), c.LastObservedAt()
+}
+
 // LastObservedAt is when Observe last advanced the tip. Zero means never.
 func (c *Cache) LastObservedAt() time.Time {
 	if c == nil {

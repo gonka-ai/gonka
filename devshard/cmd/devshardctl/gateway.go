@@ -85,9 +85,6 @@ type Gateway struct {
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
-	awaitingParticipantMu        sync.Mutex
-	awaitingParticipant          map[string]struct{}
-	awaitingParticipantRetrying  atomic.Bool
 	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
 	runtimeParamsClose           func()
@@ -434,6 +431,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		ExecutionTimeoutSeconds:    timeoutOverrides.ExecutionTimeoutSeconds,
 		ExtraClientConfig:          extraClient,
 		Heartbeat:                  heartbeatFromDeps(deps),
+		HeaderTimes:                gatewayHeaderTimes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
@@ -444,6 +442,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
 	// inference. The loop waits for router catalog admission before the
 	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
+	if deps.completionStore != nil {
+		session.SetInferenceCompletionStore(deps.completionStore)
+	}
 	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
@@ -501,12 +502,13 @@ func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings Gatew
 		params = g.runtimeParams.BindProvider()
 	}
 	return runtimeBuildDeps{
-		bridge:       g.chainBridge(),
-		chainClient:  g.chainClient,
-		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
-		perf:         perf,
-		params:       params,
-		metrics:      g.metrics,
+		completionStore: g.store,
+		bridge:          g.chainBridge(),
+		chainClient:     g.chainClient,
+		defaultModel:    firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
+		perf:            perf,
+		params:          params,
+		metrics:         g.metrics,
 	}
 }
 
@@ -571,13 +573,11 @@ func validateGatewayHostRoutePrefix(routePrefix string) error {
 	return err
 }
 
-// buildReadOnlyRuntime rehydrates a transient, read-only runtime from local
-// storage without contacting the chain. It is used to serve debug/state
-// endpoints for devshards that are not resident in memory (inactive or
-// settled escrows). The runtime has no host clients and no redundancy: it can
-// answer read queries but must never route inferences. Callers own the
-// returned runtime and must close() it once the response is served.
-func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+// buildReadOnlyRuntime rehydrates a transient runtime from local storage for
+// debug/state queries of non-resident escrows. V7 warm-key verification may
+// read historical chain grants. It has no host clients or redundancy and must
+// never route inferences. Callers close it after serving the response.
+func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTracker, warmKeys bridge.WarmKeyGrantSource) (*devshardRuntime, error) {
 	keyHex := strings.TrimSpace(cfg.PrivateKeyHex)
 	if keyHex == "" && cfg.PrivateKeyEnv != "" {
 		keyHex = strings.TrimSpace(os.Getenv(cfg.PrivateKeyEnv))
@@ -597,6 +597,8 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		PrivateKeyHex: keyHex,
 		EscrowID:      cfg.ID,
 		StoragePath:   cfg.StoragePath,
+		HeaderTimes:   gatewayHeaderTimes(),
+		WarmKeys:      warmKeys,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: rehydrate local session: %w", cfg.ID, err)
@@ -649,14 +651,15 @@ func (g *Gateway) lazyRuntimeConfig(ctx context.Context, id string) (RuntimeConf
 }
 
 // hydrateReadOnlyRuntime builds a transient read-only runtime for a
-// non-resident devshard, serving from local storage only (no chain). Returns
+// non-resident devshard, using local storage and historical grant evidence. Returns
 // (nil, false, nil) when the devshard is unknown to the registry.
 func (g *Gateway) hydrateReadOnlyRuntime(ctx context.Context, id string) (*devshardRuntime, bool, error) {
 	cfg, ok, err := g.lazyRuntimeConfig(ctx, id)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	rt, err := buildReadOnlyRuntime(cfg, g.settings.DefaultModel, g.perf)
+	warmKeys, _ := g.chainBridge().(bridge.WarmKeyGrantSource)
+	rt, err := buildReadOnlyRuntime(cfg, g.settings.DefaultModel, g.perf, warmKeys)
 	if err != nil {
 		return nil, true, err
 	}
@@ -957,6 +960,9 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	if g == nil || rt == nil {
 		return
 	}
+	if rt.session != nil && g.store != nil {
+		rt.session.SetInferenceCompletionStore(g.store)
+	}
 	if rt.proxy != nil {
 		rt.proxy.phaseGate = g.phaseGate
 		rt.proxy.logprobsOptimizationOverride = g.logprobsOptimizationOverride
@@ -1028,7 +1034,6 @@ func (g *Gateway) checkBalances() {
 	g.mu.Unlock()
 	chainMaxNonce := g.chainMaxNonce()
 	shareChainMaxNonce(runtimes, chainMaxNonce)
-	g.startRetryAwaitingParticipants()
 	if !isRotationEnabled {
 		g.releaseEscrowHolds(runtimes, "rotation_disabled")
 		return
@@ -1487,6 +1492,7 @@ func (g *Gateway) Close() error {
 	if g.perfPruner != nil {
 		g.perfPruner.stopAndWait()
 	}
+	g.perf.Close()
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1591,7 +1597,10 @@ func (g *Gateway) handleDebugHeightSync(w http.ResponseWriter, r *http.Request) 
 		}
 		escrows = append(escrows, rt.heightSyncView())
 	}
-	writeJSON(w, map[string]any{"escrows": escrows})
+	writeJSON(w, map[string]any{
+		"escrows":     escrows,
+		"header_time": gatewayHeaderTimeView(),
+	})
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {
@@ -1792,6 +1801,20 @@ func (g *Gateway) serveChatOnEscrow(rt *devshardRuntime, body []byte, cost chatR
 		return nil, false
 	}
 	return capture, true
+}
+
+// rotatesModelLocked reports a model escrow rotation keeps serving, so a gap
+// between a deactivation and its replacement is temporary.
+func (g *Gateway) rotatesModelLocked(model string) bool {
+	if !g.settings.EscrowRotation.Enabled {
+		return false
+	}
+	for _, rotationModel := range g.settings.EscrowRotation.Models {
+		if rotationModel.ModelID == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
@@ -2245,7 +2268,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 			}
 		}
 		if len(matching) == 0 {
-			if isModelListedInLimits(g.settings.ModelLimits, requestModel) {
+			if isModelListedInLimits(g.settings.ModelLimits, requestModel) || g.rotatesModelLocked(requestModel) {
 				return nil, &ModelTemporarilyUnavailableError{Model: requestModel}
 			}
 			return nil, &UnsupportedModelError{Model: requestModel, Supported: supportedModels(candidates)}

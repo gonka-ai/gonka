@@ -38,9 +38,9 @@ func startPendingConfirmForErrorMiss(t *testing.T, session *Session, hosts []*si
 	nonce = prepared.diff.Nonce
 	execIdx = int(nonce % uint64(len(session.clients)))
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: nonce, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: nonce, ExecutorSig: execSig,
 	}}}
 	session.mu.Lock()
 	session.addPendingTx(confirm)

@@ -182,6 +182,8 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
+      # May be set independently of KEY_NAME to exercise warm-key rotation.
+      ACCOUNT_PUBKEY: ""
       DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-32m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
@@ -334,6 +336,7 @@ services:
       DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       DEVSHARD_NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
+      NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
       DEVSHARD_CHAIN_ID: "{{ .ChainID }}"
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
       DEVSHARD_ESCROW_ID: "{{ primaryEscrowID . }}"

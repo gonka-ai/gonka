@@ -425,25 +425,25 @@ func runSealedInferenceBatchInsert(t *testing.T, store Storage) {
 	require.NoError(t, store.CreateSession(defaultParams()))
 
 	rich := InferenceRow{
-		InferenceID:        7,
-		SealedNonce:        11,
-		ObsPresent:         true,
-		SealedStatus:       3,
-		SealedExecutorSlot: 2,
-		SealedVotesValid:   4,
-		SealedVotesInvalid: 1,
-		SealedValidatedBy:  []byte{0x0f, 0xf0},
-		SealedModel:        "llama",
-		SealedPromptHash:   []byte("prompt"),
-		SealedResponseHash: []byte("response"),
-		SealedInputLength:  100,
-		SealedMaxTokens:    50,
-		SealedInputTokens:  10,
-		SealedOutputTokens: 20,
-		SealedReservedCost: 150,
-		SealedActualCost:   30,
-		SealedStartedAt:    1000,
-		SealedConfirmedAt:  2000,
+		InferenceID:             7,
+		SealedNonce:             11,
+		ObsPresent:              true,
+		SealedStatus:            3,
+		SealedExecutorSlot:      2,
+		SealedVotesValid:        4,
+		SealedVotesInvalid:      1,
+		SealedValidatedBy:       []byte{0x0f, 0xf0},
+		SealedModel:             "llama",
+		SealedPromptHash:        []byte("prompt"),
+		SealedResponseHash:      []byte("response"),
+		SealedInputLength:       100,
+		SealedMaxTokens:         50,
+		SealedInputTokens:       10,
+		SealedOutputTokens:      20,
+		SealedReservedCost:      150,
+		SealedActualCost:        30,
+		SealedStartedAtHeight:   1000,
+		SealedConfirmedAtHeight: 2000,
 	}
 	bare := InferenceRow{InferenceID: 8, SealedNonce: 12}
 	require.NoError(t, store.InsertSealedInference("escrow-1", InferenceRow{InferenceID: 8, SealedNonce: 1}))
@@ -608,41 +608,6 @@ func runAddSignature(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Len(t, diffs, 1)
 	require.Equal(t, []byte("host-sig-3"), diffs[0].Signatures[3])
-}
-
-func runWarmKeyDelta(t *testing.T, store Storage) {
-	t.Helper()
-
-	err := store.CreateSession(defaultParams())
-	require.NoError(t, err)
-
-	delta := map[uint32]string{0: "warm-addr-0", 1: "warm-addr-1"}
-	err = store.AppendDiff("escrow-1", types.DiffRecord{
-		Diff: types.Diff{
-			Nonce:   1,
-			UserSig: []byte("sig"),
-		},
-		StateHash:    []byte{0x01},
-		WarmKeyDelta: delta,
-	})
-	require.NoError(t, err)
-
-	// Append a diff without warm keys.
-	err = store.AppendDiff("escrow-1", types.DiffRecord{
-		Diff: types.Diff{
-			Nonce:   2,
-			UserSig: []byte("sig2"),
-		},
-		StateHash: []byte{0x02},
-	})
-	require.NoError(t, err)
-
-	diffs, err := store.GetDiffs("escrow-1", 1, 2)
-	require.NoError(t, err)
-	require.Len(t, diffs, 2)
-
-	require.Equal(t, delta, diffs[0].WarmKeyDelta)
-	require.Nil(t, diffs[1].WarmKeyDelta)
 }
 
 func runMarkSettled(t *testing.T, store Storage) {

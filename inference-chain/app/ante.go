@@ -288,7 +288,10 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 	// Set the AnteHandler for the app
 	app.SetAnteHandler(anteHandler)
 
-	// The post handler records warm-key grants and revokes in the inference
-	// module's warm-key log once the authz messages have executed.
-	app.SetPostHandler(sdk.ChainPostDecorators(NewWarmKeyLogDecorator(app.appCodec, &app.InferenceKeeper)))
+	if !app.warmKeyGrantHooks {
+		// TODO: remove this fallback and post_warm_key_log.go once the minimum
+		// released SDK includes cosmos-sdk#23. It covers transaction MsgGrant,
+		// MsgRevoke and authz MsgExec, but not group/gov or direct keeper writes.
+		app.SetPostHandler(sdk.ChainPostDecorators(NewWarmKeyLogDecorator(app.appCodec, &app.InferenceKeeper)))
+	}
 }

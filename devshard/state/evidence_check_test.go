@@ -28,19 +28,21 @@ func evidenceSM(t *testing.T, resolve WarmKeyResolver) (*StateMachine, []*signin
 	sm, err := NewStateMachine("escrow-1", config, group, 100000, user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000), opts...)
 	require.NoError(t, err)
+	seedFloor(t, sm, 42, []byte("block-42"))
 	return sm, hosts
 }
 
 func evidenceRecord(status types.InferenceStatus) *types.InferenceRecord {
 	return &types.InferenceRecord{
-		Status:       status,
-		ExecutorSlot: 1,
-		PromptHash:   testutil.TestPromptHash[:],
-		Model:        "llama",
-		InputLength:  100,
-		MaxTokens:    testutil.TestMaxTokens,
-		ReservedCost: 1000,
-		StartedAt:    1000,
+		Status:             status,
+		ExecutorSlot:       1,
+		PromptHash:         testutil.TestPromptHash[:],
+		Model:              "llama",
+		InputLength:        100,
+		MaxTokens:          testutil.TestMaxTokens,
+		ReservedCost:       1000,
+		StartedAtHeight:    42,
+		StartedAtBlockHash: []byte("block-42"),
 	}
 }
 
@@ -48,8 +50,7 @@ func evidenceConfirmFor(t *testing.T, signer signing.Signer, escrowID string, id
 	t.Helper()
 	return txConfirm(&types.MsgConfirmStart{
 		InferenceId:       id,
-		ExecutorSig:       testutil.SignExecutorReceipt(t, signer, escrowID, id, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt, 2000, stamp),
-		ConfirmedAt:       2000,
+		ExecutorSig:       testutil.SignExecutorReceipt(t, signer, escrowID, id, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, stamp),
 		ObservedHeight:    stamp.Height,
 		ObservedBlockHash: stamp.Hash,
 	})
@@ -97,10 +98,8 @@ func TestCheckEvidence_Confirm(t *testing.T) {
 	}{
 		"other escrow":       {confirm: evidenceConfirm(t, executor, "escrow-2", rec), rec: rec},
 		"non-executor key":   {confirm: evidenceConfirm(t, hosts[0], "escrow-1", rec), rec: rec},
-		"unsigned":           {confirm: txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: []byte("forged"), ConfirmedAt: 2000}), rec: rec},
+		"unsigned":           {confirm: moved(func(c *types.MsgConfirmStart) { c.ExecutorSig = []byte("forged") }), rec: rec},
 		"other inference id": {confirm: moved(func(c *types.MsgConfirmStart) { c.InferenceId = 2 }), rec: rec},
-		"moved confirmed_at": {confirm: moved(func(c *types.MsgConfirmStart) { c.ConfirmedAt++ }), rec: rec},
-		"moved stamp":        {confirm: moved(func(c *types.MsgConfirmStart) { c.ObservedHeight++ }), rec: rec},
 		"other prompt": {confirm: evidenceConfirm(t, executor, "escrow-1", rec), rec: func() *types.InferenceRecord {
 			r := evidenceRecord(types.StatusPending)
 			r.PromptHash = []byte("other-prompt-hash-000000000000000")
@@ -113,6 +112,10 @@ func TestCheckEvidence_Confirm(t *testing.T) {
 		})
 	}
 
+	t.Run("stamp off the floor", func(t *testing.T) {
+		require.ErrorIs(t, sm.CheckEvidence(rec, moved(func(c *types.MsgConfirmStart) { c.ObservedHeight++ })), types.ErrStampNotFloor)
+		require.ErrorIs(t, sm.CheckEvidence(rec, moved(func(c *types.MsgConfirmStart) { c.ObservedHeight, c.ObservedBlockHash = 0, nil })), types.ErrStampNotFloor)
+	})
 	t.Run("nil record", func(t *testing.T) {
 		require.ErrorIs(t, sm.CheckEvidence(nil, evidenceConfirm(t, executor, "escrow-1", rec)), types.ErrInvalidTransition)
 	})
@@ -195,37 +198,47 @@ func TestCheckEvidence_ConfirmThenFinish(t *testing.T) {
 	})
 }
 
-// A stamp below the height floor at the inference id is signed and well
-// formed, but compose drops it. It must not count as evidence.
+// A receipt stamped anywhere but the floor at its inference id is signed and
+// well formed, but apply rejects it. It must not count as evidence.
 func TestCheckEvidence_StampBelowHeightFloor(t *testing.T) {
 	sm, hosts := evidenceSM(t, nil)
-	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{testutil.StartTx(1)})
+	block42 := []byte("block-42")
+	start := func(id uint64) *types.DevshardTx {
+		tx := testutil.StartTx(id)
+		tx.GetStartInference().ObservedHeight, tx.GetStartInference().ObservedBlockHash = 42, block42
+		return tx
+	}
+	_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{start(1)})
 	require.NoError(t, err)
-	first, ok := sm.Inference(1)
-	require.True(t, ok)
-	seed := evidenceConfirmFor(t, hosts[first.ExecutorSlot], "escrow-1", 1, first, testutil.ReceiptStamp{Height: 80, Hash: []byte("block-80")})
-	_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{seed})
-	require.NoError(t, err)
-	require.Len(t, applied, 1, "a host-signed stamp at 80 raises the floor")
-	_, _, err = sm.ApplyLocalBestEffort(3, []*types.DevshardTx{testutil.StartTx(3)})
-	require.NoError(t, err)
+	seedFloor(t, sm, 80, []byte("block-80"))
+	_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{testutil.StartTx(2)})
+	require.ErrorIs(t, err, types.ErrStampNotFloor, "an unstamped start cannot skip a standing floor")
 
-	rec, ok := sm.Inference(3)
+	rec, ok := sm.Inference(1)
 	require.True(t, ok)
 	executor := hosts[rec.ExecutorSlot]
 
-	low := evidenceConfirmFor(t, executor, "escrow-1", 3, rec, testutil.ReceiptStamp{Height: 50, Hash: []byte("block-50")})
-	require.ErrorIs(t, sm.CheckEvidence(rec, low), heightsync.ErrHeightRegression)
-	_, applied, err = sm.ApplyLocalBestEffort(4, []*types.DevshardTx{low, testutil.StartTx(4)})
-	require.NoError(t, err)
-	require.Len(t, applied, 1, "compose drops the same confirm")
+	for name, stamp := range map[string]testutil.ReceiptStamp{
+		"below": {Height: 30, Hash: []byte("block-30")},
+		"above": {Height: 80, Hash: []byte("block-80")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			off := evidenceConfirmFor(t, executor, "escrow-1", 1, rec, stamp)
+			require.Error(t, sm.CheckEvidence(rec, off))
+			startTx := testutil.StartTx(2)
+			startTx.GetStartInference().ObservedHeight, startTx.GetStartInference().ObservedBlockHash = 80, []byte("block-80")
+			vd, err := sm.PreviewLocalBestEffort(2, []*types.DevshardTx{off, startTx})
+			require.NoError(t, err)
+			require.Len(t, vd.Applied, 1, "compose drops the same confirm")
+		})
+	}
 
-	atFloor := evidenceConfirmFor(t, executor, "escrow-1", 3, rec, testutil.ReceiptStamp{Height: 80, Hash: []byte("block-80")})
+	atFloor := evidenceConfirmFor(t, executor, "escrow-1", 1, rec, testutil.ReceiptStamp{Height: 42, Hash: block42})
 	require.NoError(t, sm.CheckEvidence(rec, atFloor))
 }
 
 // Challenge evidence is never sequenced, so accepting a warm signature must not
-// write WarmKeys: that map is part of the state root.
+// write the history: it is part of the state root.
 func TestCheckEvidence_WarmKeyAcceptedWithoutBinding(t *testing.T) {
 	warm := testutil.MustGenerateKey(t)
 	var resolverCalls int
@@ -243,7 +256,7 @@ func TestCheckEvidence_WarmKeyAcceptedWithoutBinding(t *testing.T) {
 	require.NoError(t, sm.CheckEvidence(pending, evidenceConfirm(t, warm, "escrow-1", pending)))
 	require.NoError(t, sm.CheckEvidence(started, evidenceFinish(t, warm, "escrow-1", 1)))
 	require.Equal(t, 2, resolverCalls)
-	require.Empty(t, sm.WarmKeys())
+	require.Empty(t, sm.WarmKeyHistory())
 	rootAfter, err := sm.ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, rootBefore, rootAfter)
@@ -259,6 +272,10 @@ func TestCheckEvidence_WarmKeyAcceptedWithoutBinding(t *testing.T) {
 	require.Zero(t, resolverCalls)
 }
 
+// Test flow:
+//  1. Bind one warm key to the executor slot through a diff; the grant source also knows a second, rotated key.
+//  2. Assert the bound key passes both checks without the grant source, the rotated key passes only the check
+//     that may ask the grant source, and a key the history revoked is refused even though the source accepts it.
 func TestCheckEvidence_BoundWarmKeyWins(t *testing.T) {
 	bound := testutil.MustGenerateKey(t)
 	rotated := testutil.MustGenerateKey(t)
@@ -267,15 +284,27 @@ func TestCheckEvidence_BoundWarmKeyWins(t *testing.T) {
 		resolverCalls++
 		return warmAddr == bound.Address() || warmAddr == rotated.Address(), nil
 	})
-	require.NoError(t, sm.VerifyFinishProposerSig(evidenceFinish(t, bound, "escrow-1", 1).GetFinishInference()), "sequenced finish binds the warm key")
-	require.Equal(t, map[uint32]string{1: bound.Address()}, sm.WarmKeys())
-	resolverCalls = 0
+	_, err := sm.ApplyLocal(1, []*types.DevshardTx{testutil.WarmKeyBindTx(1, bound.Address(), 1)})
+	require.NoError(t, err)
+	require.Equal(t, []string{bound.Address()}, sm.WarmKeyHistory().Live(1))
 	pending := evidenceRecord(types.StatusPending)
 	started := evidenceRecord(types.StatusStarted)
 
 	require.NoError(t, sm.CheckEvidence(pending, evidenceConfirm(t, bound, "escrow-1", pending)))
+	require.Equal(t, 1, resolverCalls, "a bound key is checked against the grant source for an end")
 	require.NoError(t, sm.CheckEvidenceCached(started, evidenceFinish(t, bound, "escrow-1", 1)))
-	require.ErrorIs(t, sm.CheckEvidence(started, evidenceFinish(t, rotated, "escrow-1", 1)), types.ErrInvalidProposerSig,
-		"a bound slot accepts only its bound warm key, as applyFinish does")
-	require.Zero(t, resolverCalls, "a bound slot never asks the resolver")
+	require.Equal(t, 1, resolverCalls, "the cached check never asks the grant source")
+
+	require.NoError(t, sm.CheckEvidence(started, evidenceFinish(t, rotated, "escrow-1", 1)),
+		"a key the grant source knows passes the check that may ask it, ahead of its bind")
+	require.Equal(t, 2, resolverCalls)
+	require.ErrorIs(t, sm.CheckEvidenceCached(started, evidenceFinish(t, rotated, "escrow-1", 1)), types.ErrInvalidProposerSig,
+		"the cached check decides from the history alone")
+
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{testutil.WarmKeyRevokeTx(1, bound.Address(), 1)})
+	require.NoError(t, err)
+	resolverCalls = 0
+	require.ErrorIs(t, sm.CheckEvidence(started, evidenceFinish(t, bound, "escrow-1", 1)), types.ErrInvalidProposerSig,
+		"a revoke in the history is final, whatever the grant source says")
+	require.Zero(t, resolverCalls)
 }

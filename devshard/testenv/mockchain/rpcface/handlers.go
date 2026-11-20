@@ -1,6 +1,7 @@
 package rpcface
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -37,6 +38,11 @@ func blockHandler(st *store.Store, heightPtr *int64) (*ctypes.ResultBlock, error
 	if height > latest {
 		return nil, fmt.Errorf("height %d must be less than or equal to the current blockchain height %d",
 			height, latest)
+	}
+	if lb, err := st.MainnetLightBlock(context.Background(), height); err == nil {
+		block := cmttypes.MakeBlock(height, nil, nil, nil)
+		block.Header = *lb.Header
+		return &ctypes.ResultBlock{BlockID: lb.Commit.BlockID, Block: block}, nil
 	}
 	block := cmttypes.MakeBlock(height, nil, nil, nil)
 	block.Header.ChainID = st.GetChainID()

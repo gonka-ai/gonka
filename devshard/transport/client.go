@@ -1029,7 +1029,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, TagHeaderPending(err)
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
@@ -1039,7 +1039,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	if err != nil {
 		return nil, nil, fmt.Errorf("decode mempool: %w", err)
 	}
-	return resp.Receipt, mempool, nil
+	return resp.Receipt, mempool, challengeEvidenceError(resp.EvidencePending)
 }
 
 // ChallengeReceiptWires posts the payload and one page of stored wires. The
@@ -1077,7 +1077,7 @@ func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, TagHeaderPending(err)
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
@@ -1087,7 +1087,7 @@ func (c *HTTPClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint
 	if err != nil {
 		return nil, nil, fmt.Errorf("decode mempool: %w", err)
 	}
-	return resp.Receipt, mempool, nil
+	return resp.Receipt, mempool, challengeEvidenceError(resp.EvidencePending)
 }
 
 // ChallengeCatchUp sends one encoded page with a nil payload. The body is one
