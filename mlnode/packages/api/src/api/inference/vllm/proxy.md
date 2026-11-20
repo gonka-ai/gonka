@@ -39,6 +39,7 @@ Port 5000: /*     → vLLM Inference APIs (Backward Compatibility Server)
 
 #### 3. Load Balancing & Health Monitoring
 - **Algorithm**: Least-connections load balancing across vLLM instances
+- **Session affinity**: optional request headers `X-Session-Key` (64 lowercase hex) and `X-Prefix-Hashes` (base64 of up to 512 little-endian 8-byte block hashes) keep a conversation on one instance. Candidates are healthy instances within 4 connections of the least loaded; the order is the longest run of leading hashes already sent to the instance (per-instance LRU, `INFERENCE_PREFIX_INDEX_CAPACITY` entries, default 31250; the same variable sets the per-node index size in dapi's broker, which reads it as a positive integer and otherwise uses 31250), then rendezvous on the key (sha256 of key, 0, port), then fewest connections, then lowest port. A missing or malformed header is ignored; with neither, plain least connections. Only headers are read, the body stays streamed.
 - **Health Checks**: Continuous monitoring of backend health every 5 seconds
 - **Resilience**: Fast 503 responses when backends unavailable
 - **Performance**: 20,000 max connections, HTTP/2 support

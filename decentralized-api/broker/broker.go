@@ -3,11 +3,13 @@ package broker
 import (
 	"common/logging"
 	"context"
+	"crypto/sha256"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -144,6 +146,7 @@ type Broker struct {
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
 	staleApplied         map[string]struct{}
+	prefixCapacity       int
 }
 
 type lockEntry struct {
@@ -236,6 +239,8 @@ func (n *Node) PoCUrlWithVersion(version string) string {
 type NodeWithState struct {
 	Node  Node
 	State NodeState
+	// prefixes is created on the first routed request and dies with the node entry. Guarded by b.mu: read in getLeastBusyNode, written in lockAvailableNode.
+	prefixes *prefixIndex
 }
 
 // AdminState tracks administrative enable/disable status
@@ -381,6 +386,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
+		prefixCapacity:       prefixIndexCapacityFromEnv(),
 	}
 
 	// Initialize NodeWorkGroup
@@ -547,6 +553,12 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	if leastBusyNode != nil {
 		b.mu.Lock()
 		leastBusyNode.State.LockCount++
+		if len(command.PrefixHashes) > 0 {
+			if leastBusyNode.prefixes == nil {
+				leastBusyNode.prefixes = newPrefixIndex(b.prefixCapacity)
+			}
+			leastBusyNode.prefixes.add(command.PrefixHashes)
+		}
 		b.mu.Unlock()
 	}
 	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
@@ -580,28 +592,110 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 		}
 	}
 
+	ranked := command.SessionKey != "" || len(command.PrefixHashes) > 0
 	var leastBusyNode *NodeWithState = nil
+	var candidates []rankedNode
 	for _, node := range b.nodes {
 		if _, shouldSkip := skip[node.Node.Id]; shouldSkip {
 			logging.Info("Node skipped by LockAvailableNode skip list", types.Nodes, "node_id", node.Node.Id)
 			continue
 		}
 		// TODO: log some kind of a reason as to why the node is not available
-		if available, reason := b.nodeAvailable(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
-			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
-				leastBusyNode = node
-			}
-		} else {
+		eligible, reason := b.nodeEligible(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase)
+		if !eligible {
 			logging.Info("Node not available", types.Nodes, "node_id", node.Node.Id, "reason", reason)
+			continue
+		}
+		if reason := nodeCapacityReason(node); reason != "" {
+			logging.Info("Node not available", types.Nodes, "node_id", node.Node.Id, "reason", reason)
+			continue
+		}
+		if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
+			leastBusyNode = node
+		}
+		if ranked {
+			var score uint64
+			if command.SessionKey != "" {
+				score = rendezvousScore(command.SessionKey, node.Node.Id)
+			}
+			candidates = append(candidates, rankedNode{node, node.prefixes.matchedPrefix(command.PrefixHashes), score})
 		}
 	}
 
-	return leastBusyNode
+	if !ranked || leastBusyNode == nil {
+		return leastBusyNode
+	}
+	best := highestRankedWithinLead(candidates, leastBusyNode.State.LockCount+affinityMaxLead)
+	if command.SessionKey == "" && best.matched == 0 {
+		return leastBusyNode
+	}
+	return best.node
+}
+
+// affinityMaxLead is how many locks a key's chosen node may hold above the least busy node. Without
+// it a hot key would fill one node up to MaxConcurrent (500 in shipped configs) while others idle.
+const affinityMaxLead = 8
+
+// maxPrefixHashes is the most hashes a request may carry, a longer list is ignored.
+const maxPrefixHashes = 512
+
+type rankedNode struct {
+	node    *NodeWithState
+	matched int
+	score   uint64
+}
+
+// highestRankedWithinLead returns the best candidate whose lock count is at most maxLockCount: longest matched prefix, then highest score, then fewer locks, then smaller node id.
+// Without a session key every score is 0. The least busy node is always a candidate, so the result is never nil.
+func highestRankedWithinLead(candidates []rankedNode, maxLockCount int) *rankedNode {
+	var best *rankedNode
+	for i := range candidates {
+		c := &candidates[i]
+		if c.node.State.LockCount > maxLockCount {
+			continue
+		}
+		if best == nil || outranks(c, best) {
+			best = c
+		}
+	}
+	return best
+}
+
+func outranks(a, b *rankedNode) bool {
+	if a.matched != b.matched {
+		return a.matched > b.matched
+	}
+	if a.score != b.score {
+		return a.score > b.score
+	}
+	if a.node.State.LockCount != b.node.State.LockCount {
+		return a.node.State.LockCount < b.node.State.LockCount
+	}
+	return a.node.Node.Id < b.node.Node.Id
+}
+
+// rendezvousScore ranks a node for a session key (highest random weight hashing). It is
+// stateless, so the same key ranks the same eligible nodes the same way after a restart.
+func rendezvousScore(sessionKey, nodeID string) uint64 {
+	h := sha256.New()
+	h.Write([]byte(sessionKey))
+	h.Write([]byte{0})
+	h.Write([]byte(nodeID))
+	return binary.BigEndian.Uint64(h.Sum(nil))
 }
 
 type NodeNotAvailableReason = string
 
-func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
+// nodeCapacityReason is empty when the node has a free lock slot.
+func nodeCapacityReason(node *NodeWithState) NodeNotAvailableReason {
+	if node.State.LockCount >= node.Node.MaxConcurrent {
+		return fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
+	}
+	return ""
+}
+
+// nodeEligible reports whether the node can serve the model now, ignoring its lock count.
+func (b *Broker) nodeEligible(node *NodeWithState, neededModel string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
 	servesInferenceDuringValidation := node.State.ServesInferenceDuringValidation()
 	if servesInferenceDuringValidation {
 		logging.Info("nodeAvailable. Node can serve INFERENCE during PoC validation", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus, "PoCValidationInference", node.State.PoCValidationInference)
@@ -621,11 +715,6 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentE
 		return false, fmt.Sprintf("Node is currently reconciling: %s", node.State.ReconcileInfo.Status)
 	}
 	logging.Info("nodeAvailable. Node is not being reconciled, ReconcileInfo == nil", types.Nodes, "nodeId", node.Node.Id)
-
-	if node.State.LockCount >= node.Node.MaxConcurrent {
-		return false, fmt.Sprintf("Node is locked too many times: lockCount=%d, maxConcurrent=%d", node.State.LockCount, node.Node.MaxConcurrent)
-	}
-	logging.Info("nodeAvailable. Node is not locked too many times", types.Nodes, "nodeId", node.Node.Id, "lockCount", node.State.LockCount, "maxConcurrent", node.Node.MaxConcurrent)
 
 	// Check admin state using provided epoch and phase
 	if !node.State.ShouldBeOperational(currentEpoch, currentPhase) {

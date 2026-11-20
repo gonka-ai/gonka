@@ -792,7 +792,11 @@ func TestNodeAvailable_ValidationInferenceCapableNode(t *testing.T) {
 	broker := &Broker{}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			available, reason := broker.nodeAvailable(testCase.node, model, currentEpoch, types.PoCValidatePhase)
+			available, reason := broker.nodeEligible(testCase.node, model, currentEpoch, types.PoCValidatePhase)
+			if available {
+				reason = nodeCapacityReason(testCase.node)
+				available = reason == ""
+			}
 			assert.Equal(t, testCase.wantAvailable, available, "reason: %s", reason)
 		})
 	}

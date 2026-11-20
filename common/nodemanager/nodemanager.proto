@@ -22,6 +22,11 @@ message AcquireMLNodeRequest {
   // Escrow that triggered this acquire (optional). Used by dapi to attribute
   // per-escrow mlnode load for the capacity-fallback divisor.
   string escrow_id               = 3;
+  // Conversation key (optional). Non-empty: dapi prefers the same mlnode for
+  // the same key so vLLM prefix-cache is reused. Empty: least-busy choice.
+  string session_key             = 4;
+  // Chained block hashes of the prompt prefix (optional, at most 512). dapi prefers the node that already served the longest matching prefix.
+  repeated fixed64 prefix_block_hashes = 5;
 }
 
 message AcquireMLNodeResponse {

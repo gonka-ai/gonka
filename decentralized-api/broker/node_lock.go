@@ -27,12 +27,17 @@ func (b *Broker) queueReleaseNode(nodeId string, registrationSeq uint64, outcome
 
 // AcquireMLNode queues a LockAvailableNode command, waits for a node,
 // records it in the lock map, and returns (lockID, inferenceURL, nodeID).
-func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error) {
+func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string, sessionKey string, prefixHashes []uint64) (lockID, endpoint, nodeID string, err error) {
+	if len(prefixHashes) > maxPrefixHashes {
+		prefixHashes = nil
+	}
 	ch := make(chan *Node, 2)
 	err = b.QueueMessage(LockAvailableNode{
-		Model:       model,
-		SkipNodeIDs: skipNodeIDs,
-		Response:    ch,
+		Model:        model,
+		SkipNodeIDs:  skipNodeIDs,
+		SessionKey:   sessionKey,
+		PrefixHashes: prefixHashes,
+		Response:     ch,
 	})
 	if err != nil {
 		return
