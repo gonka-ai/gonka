@@ -21,8 +21,16 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	if direct == nil {
 		direct, _ = o.chain.(lightproof.Source)
 	}
+	now := o.now()
+	o.mu.Lock()
+	preferDirect := now.Before(o.preferDirectProofUntil)
+	o.mu.Unlock()
+	first, second := nm, direct
+	if preferDirect {
+		first, second = direct, nm
+	}
 	var failures []error
-	for i, source := range []lightproof.Source{nm, direct} {
+	for i, source := range []lightproof.Source{first, second} {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
@@ -31,15 +39,31 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 		}
 		attemptCtx := ctx
 		cancel := func() {}
-		if i == 0 && direct != nil {
-			// Leave most of the caller's budget for Comet commit and validator
-			// reads, including when a connected dAPI stalls.
-			attemptCtx, cancel = boundedPrimaryAttempt(ctx)
+		usingNM := (i == 0) != preferDirect
+		if i == 0 && second != nil {
+			if usingNM {
+				attemptCtx, cancel = context.WithTimeout(ctx, primaryAttemptBudget(ctx))
+			} else if deadline, ok := ctx.Deadline(); ok {
+				attemptCtx, cancel = context.WithTimeout(ctx, 2*(time.Until(deadline)/3))
+			}
 		}
 		raw, err := source.LightBlockAt(attemptCtx, height)
 		cancel()
 		if err == nil && len(raw) > 0 && len(raw) <= lightproof.MaxBlockBytes {
+			if usingNM && preferDirect {
+				o.mu.Lock()
+				o.preferDirectProofUntil = time.Time{}
+				o.mu.Unlock()
+			}
 			return raw, nil
+		}
+		if usingNM && direct != nil && ctx.Err() == nil &&
+			(permanentNMSkip(err) || transientNM(err) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, blocks.ErrProveNotImplemented)) {
+			// Bootstrap and validator transitions share a deadline across
+			// many heights. One stalled dAPI is enough to prefer Comet.
+			o.mu.Lock()
+			o.preferDirectProofUntil = now.Add(30 * time.Second)
+			o.mu.Unlock()
 		}
 		if err == nil {
 			err = blocks.ErrHeaderUnverified
@@ -52,12 +76,12 @@ func (o *Oracle) LightBlockAt(ctx context.Context, height int64) ([]byte, error)
 	return nil, errors.Join(failures...)
 }
 
-func boundedPrimaryAttempt(ctx context.Context) (context.Context, context.CancelFunc) {
+func primaryAttemptBudget(ctx context.Context) time.Duration {
 	budget := time.Second
 	if deadline, ok := ctx.Deadline(); ok {
 		budget = min(budget, time.Until(deadline)/3)
 	}
-	return context.WithTimeout(ctx, budget)
+	return budget
 }
 
 func (o *Oracle) directLightHeader(ctx context.Context, height int64) (*blocks.Header, error) {

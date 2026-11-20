@@ -104,8 +104,10 @@ signature domain or operator configuration beyond the v7 admission dependency.
 The NodeManager `GetBlockHeader` RPC has an optional `include_light_block`
 request and a light-block response field. Ordinary hash-only lookups keep
 working with older servers. Requesting evidence from an old or hash-only
-server fails explicitly; v7 cannot downgrade to trusting an unsigned height.
-The producer obtains commits and paginated validator sets from CometBFT.
+server fails explicitly; v7 still requires a signed height. The host's
+configured `NODE_RPC_URL` supplies direct evidence if dAPI cannot serve it.
+CometBFT supplies commits and paginated validator sets. The host checks the
+commit and verifies the evidence against the escrow's pinned checkpoint.
 Historical bootstrap/transition evidence is not limited to the short tip
 cache window. Gateway recovery falls back to full carried-proof journal replay
 if external bootstrap evidence makes a snapshot unavailable; it never trusts

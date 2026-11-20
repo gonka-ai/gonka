@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -30,9 +31,13 @@ import (
 
 type stalledHeightSyncNM struct {
 	gen.UnimplementedNodeManagerServer
+	proofAttempts atomic.Int32
 }
 
-func (stalledHeightSyncNM) GetBlockHeader(ctx context.Context, _ *gen.GetBlockHeaderRequest) (*gen.GetBlockHeaderResponse, error) {
+func (s *stalledHeightSyncNM) GetBlockHeader(ctx context.Context, req *gen.GetBlockHeaderRequest) (*gen.GetBlockHeaderResponse, error) {
+	if req.GetIncludeLightBlock() {
+		s.proofAttempts.Add(1)
+	}
 	<-ctx.Done()
 	return nil, status.FromContextError(ctx.Err()).Err()
 }
@@ -44,7 +49,7 @@ func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 	}{
 		{"unimplemented", &gen.UnimplementedNodeManagerServer{}},
 		{"unavailable", unavailableHeightSyncNM{}},
-		{"stalled", stalledHeightSyncNM{}},
+		{"stalled", &stalledHeightSyncNM{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			unsetHeightSyncSources(t)
@@ -120,7 +125,10 @@ func TestHostHeightProofFallsBackToCometRPC(t *testing.T) {
 			proof, err := seqSM.BuildMainnetHeightTx(ctx)
 			require.NoError(t, err)
 			require.Equal(t, atH.Height, proof.GetMainnetHeight().Height)
-			require.NotEmpty(t, proof.GetMainnetHeight().LightBlocks)
+			require.GreaterOrEqual(t, len(proof.GetMainnetHeight().LightBlocks), 2)
+			if stalled, ok := tc.nm.(*stalledHeightSyncNM); ok {
+				require.Equal(t, int32(1), stalled.proofAttempts.Load(), "one stalled dAPI request per proof")
+			}
 			start := testutil.StartTxVersioned(1, "v7")
 			txs := []*types.DevshardTx{proof, start}
 			root, err := seqSM.ApplyLocal(1, txs)

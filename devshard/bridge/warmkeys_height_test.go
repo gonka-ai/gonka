@@ -201,3 +201,91 @@ func TestWarmKeyResetInvalidatesAnInFlightFullRead(t *testing.T) {
 	close(fetch.release)
 	require.ErrorIs(t, <-done, ErrWarmKeyViewBehind)
 }
+
+func TestWarmKeyCoverageSurvivesJournalCompactionWithQueriesOffline(t *testing.T) {
+	const baseline = int64(100)
+	fetch := &heightWarmFetcher{
+		fakeWarmKeyFetcher: fakeWarmKeyFetcher{logs: map[string][]WarmKeyEntry{}},
+		height:             baseline,
+	}
+	cache := NewWarmKeyLogCopy(fetch, time.Hour)
+	_, err := cache.WarmKeyLogAtHeight("cold", baseline)
+	require.NoError(t, err)
+	fetch.err = fmt.Errorf("direct grant query disabled")
+	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: baseline}})
+
+	at := time.Unix(1200, 456)
+	granted := baseline + 1
+	revoked := granted + warmKeyFeedWindow + 1
+	replacement := revoked + 1
+	for h := granted; h <= replacement+warmKeyFeedWindow+1; h++ {
+		var page []WarmKeyFeedEvent
+		switch h {
+		case granted:
+			page = append(page, WarmKeyFeedEvent{Height: h, Entry: &WarmKeyEntry{
+				Granter: "cold", Grantee: "first", ID: 1, GrantedAtHeight: h, ExpiresAtUnix: at.UnixNano(),
+			}})
+		case revoked:
+			page = append(page, WarmKeyFeedEvent{Height: h, Entry: &WarmKeyEntry{
+				Granter: "cold", Grantee: "first", ID: 1, RevokedAtHeight: h, End: "WARM_KEY_LOG_END_REVOKED",
+			}})
+		case replacement:
+			page = append(page, WarmKeyFeedEvent{Height: h, Entry: &WarmKeyEntry{
+				Granter: "cold", Grantee: "second", ID: 2, GrantedAtHeight: h,
+			}})
+		}
+		cache.ApplyWarmKeyFeedPage(1, append(page, WarmKeyFeedEvent{Height: h}))
+	}
+	for _, tc := range []struct {
+		key    string
+		id     uint64
+		height int64
+		live   bool
+	}{
+		{"first", 1, baseline, false},
+		{"first", 1, granted, true},
+		{"first", 1, revoked - 1, true},
+		{"first", 1, revoked, false},
+		{"second", 2, replacement - 1, false},
+		{"second", 2, replacement + warmKeyFeedWindow + 1, true},
+	} {
+		live, err := CheckWarmKeyAtHeight(cache, "cold", tc.key, tc.id, tc.height, at)
+		require.NoError(t, err)
+		require.Equal(t, tc.live, live, "height %d", tc.height)
+	}
+	require.Equal(t, 1, fetch.count())
+}
+
+func TestWarmKeyReadFinishingAfterCompactionKeepsOnlyLaterFeedChanges(t *testing.T) {
+	stale := WarmKeyEntry{Granter: "cold", Grantee: "stale", ID: 1, GrantedAtHeight: 90}
+	fetch := &heightWarmFetcher{fakeWarmKeyFetcher: fakeWarmKeyFetcher{logs: map[string][]WarmKeyEntry{"cold": {stale}}}, height: 100}
+	cache := NewWarmKeyLogCopy(fetch, time.Hour)
+	_, err := cache.WarmKeyLogAtHeight("cold", 100)
+	require.NoError(t, err)
+
+	authoritative := stale
+	authoritative.Grantee = "authoritative"
+	fetch.set("cold", authoritative)
+	delayed := &delayedWarmKeyFetcher{
+		heightWarmFetcher: heightWarmFetcher{fakeWarmKeyFetcher: fakeWarmKeyFetcher{logs: fetch.logs}, height: 100},
+		entered:           make(chan struct{}), release: make(chan struct{}),
+	}
+	cache.fetch = delayed
+	done := make(chan error, 1)
+	go func() { done <- cache.load("cold", false) }()
+	<-delayed.entered
+	newGrant := WarmKeyEntry{Granter: "cold", Grantee: "new", ID: 2, GrantedAtHeight: 101}
+	cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: 100}, {Height: 101, Entry: &newGrant}, {Height: 101}})
+	for h := int64(102); h <= 101+warmKeyFeedWindow; h++ {
+		cache.ApplyWarmKeyFeedPage(1, []WarmKeyFeedEvent{{Height: h}})
+	}
+	close(delayed.release)
+	require.NoError(t, <-done)
+	at100, err := cache.WarmKeyLogAtHeight("cold", 100)
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]WarmKeyEntry{1: authoritative}, at100)
+	latest, err := cache.WarmKeyLogAtHeight("cold", 101+warmKeyFeedWindow)
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]WarmKeyEntry{1: authoritative, 2: newGrant}, latest)
+	require.Equal(t, 1, delayed.count(), "verified coverage survived the delayed full read")
+}

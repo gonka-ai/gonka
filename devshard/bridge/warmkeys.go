@@ -226,6 +226,7 @@ type granterLog struct {
 	// Events and individual entry fetches never raise this completeness bound.
 	confirmedHeight int64
 	confirmed       map[uint64]WarmKeyEntry
+	coveredHeight   int64
 	// attemptedAt is the start of the last reload, successful or not, so a
 	// failing chain does not turn misses into a reload per request.
 	attemptedAt time.Time
@@ -359,7 +360,11 @@ func (c *WarmKeyLogCopy) apply(e WarmKeyEntry) {
 
 // apply merges an entry without reviving an ended grant. Caller holds c.mu.
 func (g *granterLog) apply(e WarmKeyEntry) {
-	if have, ok := g.entries[e.ID]; ok {
+	mergeWarmKeyEntry(g.entries, e)
+}
+
+func mergeWarmKeyEntry(entries map[uint64]WarmKeyEntry, e WarmKeyEntry) {
+	if have, ok := entries[e.ID]; ok {
 		if e.Ended() && e.GrantedAtHeight == 0 {
 			// End events omit the original grant height and expiration. They
 			// update the end only, not the immutable grant identity/metadata.
@@ -371,7 +376,7 @@ func (g *granterLog) apply(e WarmKeyEntry) {
 			e.RevokedAtHeight, e.End = have.RevokedAtHeight, have.End
 		}
 	}
-	g.entries[e.ID] = e
+	entries[e.ID] = e
 }
 
 func (c *WarmKeyLogCopy) cached(granter string, id uint64) (WarmKeyEntry, bool) {
@@ -493,7 +498,12 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 		g = &granterLog{entries: make(map[uint64]WarmKeyEntry)}
 		c.granters[granter] = g
 	}
+	if height > 0 && g.complete && g.confirmedHeight > height {
+		// A lagging query must not replace a newer full response.
+		return nil
+	}
 	if height > 0 {
+		previous, previousHeight := g.confirmed, g.coveredHeight
 		g.confirmed = make(map[uint64]WarmKeyEntry, len(entries))
 		current := &granterLog{entries: make(map[uint64]WarmKeyEntry, len(entries))}
 		for _, e := range entries {
@@ -512,12 +522,27 @@ func (c *WarmKeyLogCopy) load(granter string, background bool) error {
 			}
 		}
 		g.entries = current.entries
+		g.coveredHeight = height
+		if g.complete && previousHeight > height {
+			// The in-flight read can finish after closed blocks have been
+			// folded. Reapply only their later changes to the new baseline.
+			for _, e := range previous {
+				switch {
+				case e.GrantedAtHeight > height:
+					mergeWarmKeyEntry(g.confirmed, e)
+				case e.RevokedAtHeight > height:
+					mergeWarmKeyEntry(g.confirmed, WarmKeyEntry{Granter: e.Granter, ID: e.ID, Grantee: e.Grantee,
+						RevokedAtHeight: e.RevokedAtHeight, End: e.End})
+				}
+			}
+			g.coveredHeight = previousHeight
+		}
 		g.confirmedHeight = height
 	} else {
 		for _, e := range entries {
 			g.apply(e)
 		}
-		g.confirmedHeight, g.confirmed = 0, nil
+		g.confirmedHeight, g.coveredHeight, g.confirmed = 0, 0, nil
 	}
 	g.complete = true
 	g.loadedAt = c.now()
