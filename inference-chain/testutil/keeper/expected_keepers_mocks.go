@@ -1389,6 +1389,21 @@ func (mr *MockBlsKeeperMockRecorder) GetSigningStatus(ctx, requestID any) *gomoc
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSigningStatus", reflect.TypeOf((*MockBlsKeeper)(nil).GetSigningStatus), ctx, requestID)
 }
 
+// HasExposedPartialSignatures mocks base method.
+func (m *MockBlsKeeper) HasExposedPartialSignatures(ctx types1.Context, requestID []byte) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "HasExposedPartialSignatures", ctx, requestID)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// HasExposedPartialSignatures indicates an expected call of HasExposedPartialSignatures.
+func (mr *MockBlsKeeperMockRecorder) HasExposedPartialSignatures(ctx, requestID any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasExposedPartialSignatures", reflect.TypeOf((*MockBlsKeeper)(nil).HasExposedPartialSignatures), ctx, requestID)
+}
+
 // InitiateKeyGenerationForEpoch mocks base method.
 func (m *MockBlsKeeper) InitiateKeyGenerationForEpoch(ctx types1.Context, epochID uint64, finalizedParticipants []types4.ParticipantWithWeightAndKey) error {
 	m.ctrl.T.Helper()

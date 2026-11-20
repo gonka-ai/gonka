@@ -10,7 +10,6 @@ import (
 	"cosmossdk.io/collections"
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -83,15 +82,15 @@ func (k Keeper) setBridgeWithdrawalPendingRefund(
 	return nil
 }
 
-func (k Keeper) cancelThresholdSigningRequest(ctx sdk.Context, requestID []byte) error {
-	request, err := k.BlsKeeper.GetSigningStatus(ctx, requestID)
+func (k Keeper) ensureBridgeRefundHasNoExposedPartials(ctx sdk.Context, requestID []byte) error {
+	exposed, err := k.BlsKeeper.HasExposedPartialSignatures(ctx, requestID)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to check bridge signing exposure: %w", err)
 	}
-	if request.Status == blstypes.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COMPLETED {
-		return fmt.Errorf("threshold signing already completed")
+	if exposed {
+		return fmt.Errorf("cannot refund bridge operation: partial signatures have been exposed; escrow must remain locked")
 	}
-	return k.BlsKeeper.CancelThresholdSignature(ctx, requestID)
+	return nil
 }
 
 func (k Keeper) refundPendingBridgeMintFromEscrow(ctx sdk.Context, pendingMint *types.MsgRequestBridgeMint) error {
@@ -195,6 +194,9 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 	pendingMint, err := k.BridgeMintRefundsMap.Get(ctx, requestKey)
 	switch {
 	case err == nil:
+		if err := k.ensureBridgeRefundHasNoExposedPartials(sdkCtx, blsRequestID); err != nil {
+			return false, err
+		}
 		if err := k.processAutoRefundMint(sdkCtx, requestKey, pendingMint, reason); err != nil {
 			return false, err
 		}
@@ -206,6 +208,9 @@ func (k Keeper) ProcessAutoRefundForFailedBridgeOperation(ctx context.Context, b
 	pendingWithdrawal, err := k.BridgeWithdrawalRefundsMap.Get(ctx, requestKey)
 	switch {
 	case err == nil:
+		if err := k.ensureBridgeRefundHasNoExposedPartials(sdkCtx, blsRequestID); err != nil {
+			return false, err
+		}
 		if err := k.processAutoRefundWithdrawal(sdkCtx, requestKey, pendingWithdrawal, reason); err != nil {
 			return false, err
 		}
