@@ -94,7 +94,7 @@ func TestV7FirstWarmReceiptAndBindShareDiffWithOfflineGrantQueries(t *testing.T)
 	require.NoError(t, err)
 	entry := bridge.WarmKeyEntry{
 		Granter: cold.Address(), Grantee: warm.Address(), ID: 1, GrantedAtHeight: atH.Height,
-		ExpiresAtUnix: atH.Time.UnixNano(), // inclusive, at the verified time even though wall time has passed it
+		ExpiresAtUnix: atH.Time.Add(time.Second).UnixNano(), // inclusive at the receiver tip, even though wall time has passed it
 	}
 	for _, grants := range []*bridge.WarmKeyLogCopy{gatewayGrants, hostGrants} {
 		grants.ApplyWarmKeyFeedPage(1, []bridge.WarmKeyFeedEvent{{Height: atH.Height, Entry: &entry}, {Height: atH.Height}})
@@ -117,6 +117,7 @@ func TestV7FirstWarmReceiptAndBindShareDiffWithOfflineGrantQueries(t *testing.T)
 	atNext, err := oracle.AdvanceOne()
 	require.NoError(t, err)
 	require.Equal(t, atH.Height+1, atNext.Height)
+	hostGrants.ApplyWarmKeyFeedPage(1, []bridge.WarmKeyFeedEvent{{Height: atNext.Height}})
 	resp, err := receiver.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff}, Nonce: 2})
 	require.NoError(t, err)
 	require.NotEmpty(t, resp.StateSig)

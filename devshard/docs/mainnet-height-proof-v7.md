@@ -112,6 +112,9 @@ Historical bootstrap/transition evidence is not limited to the short tip
 cache window. Gateway recovery falls back to full carried-proof journal replay
 if external bootstrap evidence makes a snapshot unavailable; it never trusts
 unverified snapshot metadata. A journal with a missing prefix still fails closed.
+Before persisting a v7 diff, the sequencer checks that its encoded chat
+request fits the existing transport limit. Catch-up splits contiguous
+diffs by encoded request size when the normal batch would exceed that limit.
 This does not implement the separate Strong envelope dispute
 and escalation machinery described in the height-sync specification.
 

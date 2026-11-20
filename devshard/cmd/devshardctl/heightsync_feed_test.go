@@ -162,12 +162,16 @@ func TestGateway_PollerVerifierSourceCatchUpLiveAndForged(t *testing.T) {
 	t.Cleanup(rpc.Close)
 
 	blockKind := []gen.HostEventKind{gen.HostEventKind_HOST_EVENT_KIND_BLOCK}
-	unchanged := &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: 1, SupportedKinds: blockKind}
+	unchanged := &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: 0, SupportedKinds: blockKind}
 	var current atomic.Pointer[gen.GetHostEventsResponse]
 	current.Store(unchanged)
 	srv := &feedHostEvents{}
-	srv.SetSticky(func(context.Context, *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
-		return current.Load(), nil
+	srv.SetSticky(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		page := current.Load()
+		if req.GetCursor() >= page.GetNextCursor() {
+			return &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: req.GetCursor(), SupportedKinds: blockKind}, nil
+		}
+		return page, nil
 	})
 
 	before := rejectedBlocks(t)
