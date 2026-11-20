@@ -829,6 +829,14 @@ func (p Params) Validate() error {
 	if err := p.CollateralParams.Validate(); err != nil {
 		return err
 	}
+	// A failed confirmation PoC is slashed by this fraction. x/collateral rejects a
+	// fraction outside [0, 1], and the caller only logs that error, so an
+	// out-of-range value would silently turn the penalty off.
+	if p.ConfirmationPocParams != nil && p.ConfirmationPocParams.SlashFraction != nil {
+		if err := validateSlashFraction(p.ConfirmationPocParams.SlashFraction); err != nil {
+			return errors.Wrap(err, "invalid confirmation_poc_params.slash_fraction")
+		}
+	}
 	if err := p.DynamicPricingParams.Validate(); err != nil {
 		return err
 	}
