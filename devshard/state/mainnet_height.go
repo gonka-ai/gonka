@@ -172,6 +172,9 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if err != nil {
 		return err
 	}
+	if err := checkCheckpointLag(cp, latest); err != nil {
+		return err
+	}
 	// Live signers also reconcile the carried proof with their own canonical
 	// oracle. This prevents an old escrow anchor being used for a long-range
 	// fork after its old validator keys have left the trusting period. Replay
@@ -179,7 +182,7 @@ func (sm *StateMachine) CheckMainnetHeightFreshness(ctx context.Context, now tim
 	if err := checkCanonicalCheckpoint(ctx, cp, source, headerTimes); err != nil {
 		return err
 	}
-	return checkCheckpointLag(cp, latest)
+	return nil
 }
 
 func checkCanonicalCheckpoint(ctx context.Context, cp lightproof.Checkpoint, source MainnetHeightSource, headerTimes HeaderTimeSource) error {

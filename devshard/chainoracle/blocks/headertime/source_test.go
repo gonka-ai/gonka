@@ -1282,3 +1282,32 @@ func TestSourceCatchUpBatchTimeoutLetsTheNextJobRun(t *testing.T) {
 	batch.mu.Unlock()
 	require.GreaterOrEqual(t, calls, 2)
 }
+
+type canonicalCountingOracle struct{ *countingOracle }
+
+func (o canonicalCountingOracle) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
+	return o.At(ctx, height)
+}
+
+func (canonicalCountingOracle) LightBlockAt(context.Context, int64) ([]byte, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+
+func TestCanonicalProofLookupUsesAndPopulatesHeaderCache(t *testing.T) {
+	at := time.Now().UTC()
+	first := blocks.HashOnlyHeader(100, at, "gonka", []byte{100})
+	second := blocks.HashOnlyHeader(101, at.Add(time.Second), "gonka", []byte{101})
+	o := canonicalCountingOracle{&countingOracle{headers: map[int64]*blocks.Header{101: second}}}
+	s := New(WithLightBlockSource(o))
+	s.Observe(first, OriginComet, true)
+	s.Observe(second, OriginChain, false)
+	for _, h := range []*blocks.Header{first, second, second} {
+		got, err := s.CanonicalHeaderForProof(t.Context(), h.Height)
+		require.NoError(t, err)
+		require.Equal(t, h.BlockHash, got.BlockHash)
+	}
+	require.Equal(t, int64(1), o.calls.Load())
+	cached, found := s.StoredAt(101)
+	require.True(t, found)
+	require.True(t, cached.Verified)
+}

@@ -20,53 +20,16 @@ const (
 )
 
 // CometHooks reports subscription liveness to failover.Oracle.
-// OnHeader receives each NewBlock header after it is stored in the tip cache.
-// ExtraQueries are optional subscriptions on the NewBlock client. OnEvent receives
-// every delivery, including NewBlock, so warm-key handlers can read it.
+// OnEvent receives the NewBlock delivery, including transaction results.
+// OnHeader receives the header after it is stored in the tip cache.
 type CometHooks struct {
 	OnConnected    func()
 	OnDisconnected func()
 	OnHeader       func(*blocks.Header)
 	OnEvent        func(ctypes.ResultEvent)
-	ExtraQueries   []string
 }
 
 const cometNewBlockQuery = "tm.event='NewBlock'"
-
-// SubscribeQueries is the query list one rpchttp client subscribes. NewBlock
-// is first. Duplicate and empty extras are dropped.
-func SubscribeQueries(hooks CometHooks) []string {
-	qs := []string{cometNewBlockQuery}
-	seen := map[string]bool{cometNewBlockQuery: true}
-	for _, q := range hooks.ExtraQueries {
-		if q == "" || seen[q] {
-			continue
-		}
-		seen[q] = true
-		qs = append(qs, q)
-	}
-	return qs
-}
-
-type cometSubscriber interface {
-	Subscribe(ctx context.Context, subscriber, query string, outCapacity ...int) (<-chan ctypes.ResultEvent, error)
-}
-
-func subscribeComet(ctx context.Context, client cometSubscriber, queries []string) ([]<-chan ctypes.ResultEvent, error) {
-	out := make([]<-chan ctypes.ResultEvent, 0, len(queries))
-	for _, q := range queries {
-		ch, err := client.Subscribe(ctx, cometSubscriberID, q, cometSubBuffer)
-		if err != nil {
-			if q == cometNewBlockQuery {
-				return nil, fmt.Errorf("subscribe %q: %w", q, err)
-			}
-			slog.Warn("height-sync comet: optional subscription refused", "query", q, "err", err)
-			continue
-		}
-		out = append(out, ch)
-	}
-	return out, nil
-}
 
 // StartComet feeds c from CometBFT tm.event='NewBlock' until ctx is cancelled.
 // Same subscription hosts already use; gateway has no other NewBlock listener.
@@ -105,8 +68,7 @@ func runComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks) {
 	}
 }
 
-// handleCometDelivery applies one socket message. A warm-key transaction is
-// left to OnEvent. A NewBlock whose payload is not a block is logged.
+// handleCometDelivery applies the NewBlock event to the hooks and tip cache.
 func handleCometDelivery(result ctypes.ResultEvent, c *Cache, hooks CometHooks) {
 	if hooks.OnEvent != nil {
 		hooks.OnEvent(result)
@@ -139,38 +101,9 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks
 	}
 	defer client.Stop() //nolint:errcheck
 
-	subCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	channels, err := subscribeComet(subCtx, client, SubscribeQueries(hooks))
+	events, err := client.Subscribe(ctx, cometSubscriberID, cometNewBlockQuery, cometSubBuffer)
 	if err != nil {
-		return err
-	}
-	merged := make(chan ctypes.ResultEvent, cometSubBuffer)
-	errCh := make(chan error, 1)
-	for i, ch := range channels {
-		go func(ch <-chan ctypes.ResultEvent, required bool) {
-			for {
-				select {
-				case <-subCtx.Done():
-					return
-				case result, ok := <-ch:
-					if !ok {
-						if required {
-							select {
-							case errCh <- fmt.Errorf("NewBlock subscription closed"):
-							default:
-							}
-						}
-						return
-					}
-					select {
-					case merged <- result:
-					case <-subCtx.Done():
-						return
-					}
-				}
-			}
-		}(ch, i == 0)
+		return fmt.Errorf("subscribe %q: %w", cometNewBlockQuery, err)
 	}
 	if hooks.OnConnected != nil {
 		hooks.OnConnected()
@@ -184,9 +117,10 @@ func consumeComet(ctx context.Context, rpcURL string, c *Cache, hooks CometHooks
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case err := <-errCh:
-			return err
-		case result := <-merged:
+		case result, ok := <-events:
+			if !ok {
+				return fmt.Errorf("NewBlock subscription closed")
+			}
 			handleCometDelivery(result, c, hooks)
 		}
 	}

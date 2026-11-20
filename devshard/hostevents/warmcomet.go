@@ -55,6 +55,23 @@ func WarmKeysFromResult(result ctypes.ResultEvent) []bridge.WarmKeyEntry {
 	}
 }
 
+// WarmKeysFromCometBlock reads successful transaction events followed by
+// finalize-block events from the gateway's existing NewBlock subscription.
+func WarmKeysFromCometBlock(result ctypes.ResultEvent) []bridge.WarmKeyEntry {
+	block, ok := observer.AsEventDataNewBlock(result.Data)
+	if !ok || block.Block == nil {
+		return nil
+	}
+	var entries []bridge.WarmKeyEntry
+	height := block.Block.Height
+	for _, tx := range block.ResultFinalizeBlock.TxResults {
+		if tx != nil && tx.Code == 0 {
+			entries = append(entries, warmKeysFromABCI(tx.Events, height)...)
+		}
+	}
+	return append(entries, warmKeysFromABCI(block.ResultFinalizeBlock.Events, height)...)
+}
+
 func warmKeysFromTx(data cmttypes.EventDataTx) []bridge.WarmKeyEntry {
 	if data.TxResult.Result.Code != 0 {
 		return nil

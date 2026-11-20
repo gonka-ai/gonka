@@ -27,7 +27,9 @@ import (
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
 	cmttypes "github.com/cometbft/cometbft/types"
+	"github.com/gorilla/websocket"
 )
 
 func resetHeightSyncForTest() {
@@ -445,34 +447,77 @@ func TestGatewayDebugHeightSync_HeaderTimeBlockFeedLive(t *testing.T) {
 	require.Equal(t, uint64(0), body.HeaderTime.HighWater)
 }
 
-func TestGatewayCometHooks_WarmQueriesOnTheHeightSocket(t *testing.T) {
+func TestGatewayCometHooks_ReadsWarmChangesOnTheNewBlockSocket(t *testing.T) {
 	warm := bridge.NewWarmKeyLogCopy(nil, time.Hour)
 	_, err := warm.LiveWarmKeys("cold")
 	require.NoError(t, err)
 	p := hostevents.NewPoller(hostevents.PollerConfig{Warm: warm})
+	cache := tipcache.New(time.Hour)
 	var connected atomic.Bool
-	hooks := gatewayCometHooks(func(up bool) { connected.Store(up) }, nil, p)
-	require.Equal(t, hostevents.WarmKeyQueries(), hooks.ExtraQueries)
-	require.Equal(t, append([]string{"tm.event='NewBlock'"}, hostevents.WarmKeyQueries()...), tipcache.SubscribeQueries(hooks))
+	var rejected atomic.Int32
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
 
-	hooks.OnConnected()
+	const newBlockQuery = "tm.event='NewBlock'"
+	grant := func(id string) abci.Event {
+		return abci.Event{Type: "warm_key_granted", Attributes: []abci.EventAttribute{
+			{Key: "granter", Value: "cold"}, {Key: "grantee", Value: "warm"}, {Key: "grant_id", Value: id},
+		}}
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upgrader := websocket.Upgrader{}
+		socket, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer socket.Close()
+		for {
+			var req rpctypes.RPCRequest
+			if err := socket.ReadJSON(&req); err != nil {
+				return
+			}
+			var params struct{ Query string }
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				t.Errorf("read Comet subscription params: %v", err)
+				return
+			}
+			if req.Method != "subscribe" || params.Query != newBlockQuery {
+				rejected.Add(1)
+				if err := socket.WriteJSON(rpctypes.NewRPCErrorResponse(req.ID, -32603, "subscription limit", "")); err != nil {
+					return
+				}
+				continue
+			}
+			event := ctypes.ResultEvent{Query: newBlockQuery, Data: cmttypes.EventDataNewBlock{
+				Block:   &cmttypes.Block{Header: cmttypes.Header{Height: 20, Time: time.Now().UTC(), ChainID: "test"}},
+				BlockID: cmttypes.BlockID{Hash: bytes.Repeat([]byte{20}, 32)},
+				ResultFinalizeBlock: abci.ResponseFinalizeBlock{TxResults: []*abci.ExecTxResult{
+					{Events: []abci.Event{grant("4")}},
+					{Code: 1, Events: []abci.Event{grant("5")}},
+				}},
+			}}
+			if err := socket.WriteJSON(rpctypes.NewRPCSuccessResponse(req.ID, event)); err != nil {
+				return
+			}
+		}
+	}))
+	defer server.Close()
+	hooks := gatewayCometHooks(func(up bool) { connected.Store(up) }, nil, p)
+	require.NoError(t, tipcache.StartCometWithHooks(ctx, server.URL, cache, hooks))
+	require.Eventually(t, func() bool {
+		tip, err := cache.Latest(ctx)
+		return err == nil && tip.Height == 20
+	}, 3*time.Second, 10*time.Millisecond)
 	require.True(t, connected.Load())
-	hooks.OnEvent(ctypes.ResultEvent{Data: cmttypes.EventDataTx{TxResult: abci.TxResult{
-		Height: 20,
-		Result: abci.ExecTxResult{Events: []abci.Event{{
-			Type: "warm_key_granted",
-			Attributes: []abci.EventAttribute{
-				{Key: "granter", Value: "cold"},
-				{Key: "grantee", Value: "warm"},
-				{Key: "grant_id", Value: "4"},
-				{Key: "height", Value: "20"},
-			},
-		}}},
-	}}})
-	e, found, err := warm.WarmKeyEntry("cold", 4)
+	entry, found, err := warm.WarmKeyEntry("cold", 4)
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Equal(t, "warm", e.Grantee)
-	hooks.OnDisconnected()
-	require.False(t, connected.Load())
+	require.Equal(t, "warm", entry.Grantee)
+	require.Equal(t, int64(20), entry.GrantedAtHeight)
+	_, found, err = warm.WarmKeyEntry("cold", 5)
+	require.NoError(t, err)
+	require.False(t, found, "a failed transaction must not introduce grant evidence")
+	require.Zero(t, rejected.Load(), "NewBlock is the only subscription the gateway needs")
+	cancel()
+	require.Eventually(t, func() bool { return !connected.Load() }, 3*time.Second, 10*time.Millisecond)
 }
