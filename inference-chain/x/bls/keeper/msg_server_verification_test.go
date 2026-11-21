@@ -705,3 +705,132 @@ func createTestEpochBLSDataInVerifyingPhase(epochID uint64, numParticipants int)
 
 	return epochData
 }
+
+func TestSubmitVerificationVector_IdentitySlotDealerDowngradedAndComplaintsPersisted(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(462)
+	epochBLSData := types.EpochBLSData{
+		EpochId:                     epochID,
+		ITotalSlots:                 3,
+		TSlotsDegree:                1,
+		DkgPhase:                    types.DKGPhase_DKG_PHASE_VERIFYING,
+		VerifyingPhaseDeadlineBlock: 200,
+		Participants: []types.BLSParticipantInfo{
+			{Address: "verifier0", SlotStartIndex: 0, SlotEndIndex: 0},
+			{Address: "rogueDealer1", SlotStartIndex: 1, SlotEndIndex: 1},
+			{Address: "trapDealer2", SlotStartIndex: 2, SlotEndIndex: 2},
+		},
+		DealerParts: []*types.DealerPartStorage{
+			{DealerAddress: "verifier0", Commitments: [][]byte{g2CommitmentFromScalar(3), g2CommitmentFromScalar(5)}},
+			{
+				DealerAddress: "rogueDealer1",
+				Commitments:   [][]byte{g2CommitmentFromScalar(7), g2CommitmentFromScalar(11)},
+				ParticipantShares: []*types.EncryptedSharesForParticipant{
+					{EncryptedShares: dummyEncryptedShares(1)},
+					{EncryptedShares: dummyEncryptedShares(1)},
+					{EncryptedShares: dummyEncryptedShares(1)},
+				},
+			},
+			{},
+		},
+		VerificationSubmissions: []*types.VerificationVectorSubmission{{}, {}, {}},
+	}
+
+	// Trap dealer 2 has polynomial f(x) = -1 + x, which evaluates to 0 at verifier0's slot 0 (x = 1).
+	var g2Gen bls12381.G2Affine
+	_, _, _, g2Gen = bls12381.Generators()
+	var negG2 bls12381.G2Affine
+	negG2.Neg(&g2Gen)
+	c0 := negG2.Bytes()
+	c1 := g2Gen.Bytes()
+	epochBLSData.DealerParts[2] = &types.DealerPartStorage{
+		DealerAddress: "trapDealer2",
+		Commitments:   [][]byte{c0[:], c1[:]},
+		ParticipantShares: []*types.EncryptedSharesForParticipant{
+			{EncryptedShares: dummyEncryptedShares(1)},
+			{EncryptedShares: dummyEncryptedShares(1)},
+			{EncryptedShares: dummyEncryptedShares(1)},
+		},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	// Simulate Block-7122283 unupgraded verifier sending infinity proof for trapDealer2
+	// alongside a valid complaint against rogueDealer1.
+	infinityG1 := make([]byte, 48)
+	infinityG1[0] = 0xc0
+
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        "verifier0",
+		EpochId:        epochID,
+		DealerValidity: []bool{true, false, true},
+		DealerComplaints: []types.VerificationDealerComplaint{
+			{
+				DealerIndex:             1,
+				DisputedSlotIndex:       0,
+				DisputedCiphertextIndex: 0,
+			},
+		},
+		DealerValidityProofs: []types.DealerValidityProof{
+			{
+				DealerIndex:    2,
+				ProofSignature: infinityG1,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+
+	stored, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	// trapDealer2 is downgraded to false while complaint against rogueDealer1 is preserved!
+	require.Equal(t, []bool{true, false, false}, stored.VerificationSubmissions[0].DealerValidity)
+	require.Len(t, stored.DealerComplaints, 1)
+	require.Equal(t, uint32(1), stored.DealerComplaints[0].DealerIndex)
+	require.Equal(t, uint32(0), stored.DealerComplaints[0].ComplainerIndex)
+}
+
+func TestSubmitVerificationVector_InfinityProofOnHonestDealerRejected(t *testing.T) {
+	k, msgServer, goCtx := setupMsgServerVerification(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(463)
+	epochBLSData := createTestEpochBLSDataInVerifyingPhase(epochID, 3)
+	// Honest dealer 1 has valid non-identity G2 commitments on all slots.
+	epochBLSData.DealerParts[1].DealerAddress = epochBLSData.Participants[1].Address
+	epochBLSData.DealerParts[1].Commitments = [][]byte{g2CommitmentFromScalar(7), g2CommitmentFromScalar(11)}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	participant := epochBLSData.Participants[0]
+	slotCount := int(participant.SlotEndIndex-participant.SlotStartIndex) + 1
+	infinityProof := make([]byte, slotCount*48)
+	for i := 0; i < slotCount; i++ {
+		infinityProof[i*48] = 0xc0
+	}
+
+	// Malicious verifier attempts to send G1 infinity proof for an honest dealer
+	// to cast a complaint-free false vote without risking complainer disqualification.
+	msg := &types.MsgSubmitVerificationVector{
+		Creator:        participant.Address,
+		EpochId:        epochID,
+		DealerValidity: []bool{false, true, false},
+		DealerValidityProofs: []types.DealerValidityProof{
+			{
+				DealerIndex:    1,
+				ProofSignature: infinityProof,
+			},
+		},
+	}
+
+	resp, err := msgServer.SubmitVerificationVector(goCtx, msg)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "invalid proof for dealer 1")
+
+	stored, err := k.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Empty(t, stored.VerificationSubmissions[0].DealerValidity)
+}

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/productscience/inference/x/bls/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +62,28 @@ func TestBLSCryptographicFunctions(t *testing.T) {
 	t.Logf("- Generated %d G2 commitments", len(commitments))
 	t.Logf("- Evaluated polynomial at x=%d", x)
 	t.Logf("- Encrypted %d bytes to %d bytes", len(testData), len(encrypted))
+}
+
+func TestCommitmentKnowledgeProofAgreesWithDealerCommitments(t *testing.T) {
+	polynomial, err := generateNonZeroSlotPolynomial(2, 100)
+	require.NoError(t, err)
+
+	const (
+		chainID        = "gonka-mainnet-1"
+		epochID uint64 = 462
+		creator        = "gonka1dealer"
+	)
+	commitments := make([][]byte, len(polynomial))
+	proofs := make([]types.CommitmentKnowledgeProof, len(polynomial))
+	for i, coefficient := range polynomial {
+		commitment, proof, err := types.BuildCommitmentKnowledgeProof(chainID, epochID, creator, uint32(i), coefficient)
+		require.NoError(t, err)
+		commitments[i] = commitment
+		proofs[i] = proof
+	}
+
+	require.Equal(t, computeG2CommitmentsBlst(polynomial), commitments)
+	require.NoError(t, types.VerifyCommitmentKnowledgeProofs(chainID, epochID, creator, commitments, proofs))
 }
 
 // TestPolynomialGeneration tests polynomial generation with different degrees
@@ -299,7 +322,7 @@ func TestGenerateDealerPart_ValidatesSnapshotKeysUpfront(t *testing.T) {
 			},
 		}
 
-		dealerPart, err := bm.generateDealerPart(7, 2, 1, participants)
+		dealerPart, err := bm.generateDealerPart("gonka-mainnet-1",7, 2, 1, participants)
 		require.NoError(t, err)
 		require.NotNil(t, dealerPart)
 		require.Len(t, dealerPart.Commitments, 2)
@@ -329,7 +352,7 @@ func TestGenerateDealerPart_ValidatesSnapshotKeysUpfront(t *testing.T) {
 			},
 		}
 
-		dealerPart, err := bm.generateDealerPart(8, 2, 1, participants)
+		dealerPart, err := bm.generateDealerPart("gonka-mainnet-1",8, 2, 1, participants)
 		require.Nil(t, dealerPart)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "epoch 8")
@@ -354,7 +377,7 @@ func TestGenerateDealerPart_ValidatesSnapshotKeysUpfront(t *testing.T) {
 			},
 		}
 
-		dealerPart, err := bm.generateDealerPart(9, 2, 1, participants)
+		dealerPart, err := bm.generateDealerPart("gonka-mainnet-1",9, 2, 1, participants)
 		require.Nil(t, dealerPart)
 		require.Error(t, err)
 		require.ErrorContains(t, err, "epoch 9")
@@ -367,4 +390,3 @@ func TestGenerateDealerPart_ValidatesSnapshotKeysUpfront(t *testing.T) {
 		require.False(t, ok)
 	})
 }
-

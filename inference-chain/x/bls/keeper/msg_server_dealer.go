@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/bls/types"
+	blst "github.com/supranational/blst/bindings/go"
 )
 
 // SubmitDealerPart handles the submission of dealer parts during the dealing phase of DKG.
@@ -22,8 +24,9 @@ import (
 func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmitDealerPart) (*types.MsgSubmitDealerPartResponse, error) {
 	ctx := sdk.UnwrapSDKContext(goCtx)
 
-	// Get the epoch BLS data
-	epochBLSData, err := ms.GetEpochBLSData(ctx, msg.EpochId)
+	// Phase, deadline, and participant list live on the base record; avoid
+	// rehydrating every other participant's dealer part on each submission.
+	epochBLSData, err := ms.GetEpochBLSDataBase(ctx, msg.EpochId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get epoch %d BLS data: %w", msg.EpochId, err)
 	}
@@ -51,10 +54,11 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		return nil, fmt.Errorf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochId)
 	}
 
-	// Check if this participant has already submitted their dealer part.
-	// GetEpochBLSData rehydrated DealerParts from sub-keys, so the check
-	// still works against the latest persisted state.
-	if epochBLSData.DealerParts[participantIndex] != nil && epochBLSData.DealerParts[participantIndex].DealerAddress != "" {
+	alreadySubmitted, err := ms.HasSubmittedDealerPart(ctx, msg.EpochId, &epochBLSData, participantIndex)
+	if err != nil {
+		return nil, fmt.Errorf("failed to check dealer part for epoch %d participant %d: %w", msg.EpochId, participantIndex, err)
+	}
+	if alreadySubmitted {
 		return nil, fmt.Errorf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
 	}
 
@@ -75,6 +79,10 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 		if err := validateEncryptedSharesShape(participant, msg.EncryptedSharesForParticipants[i].EncryptedShares); err != nil {
 			return nil, fmt.Errorf("invalid encrypted shares for participant index %d: %w", i, err)
 		}
+	}
+
+	if err := ms.validateDealerCommitmentsAndProofs(ctx, &epochBLSData, msg); err != nil {
+		return nil, err
 	}
 
 	// Create dealer part storage
@@ -112,4 +120,48 @@ func (ms msgServer) SubmitDealerPart(goCtx context.Context, msg *types.MsgSubmit
 	)
 
 	return &types.MsgSubmitDealerPartResponse{}, nil
+}
+
+func (ms msgServer) validateDealerCommitmentsAndProofs(
+	ctx sdk.Context,
+	epochBLSData *types.EpochBLSData,
+	msg *types.MsgSubmitDealerPart,
+) error {
+	commitmentPoints, err := types.VerifyAndDecodeCommitmentKnowledgeProofs(
+		ctx.ChainID(),
+		msg.EpochId,
+		msg.Creator,
+		msg.Commitments,
+		msg.CommitmentProofs,
+	)
+	if err != nil {
+		return fmt.Errorf("invalid commitment knowledge proof: %w", err)
+	}
+
+	// commitmentPoints are already validated to lie in G2 by
+	// VerifyAndDecodeCommitmentKnowledgeProofs, so any linear combination is
+	// also in G2; only the projective identity check is needed per slot.
+	var identityP2 blst.P2
+	scalars := make([]byte, len(commitmentPoints)*32)
+	for slotIndex := uint32(0); slotIndex < epochBLSData.ITotalSlots; slotIndex++ {
+		var x, power fr.Element
+		x.SetUint64(uint64(slotIndex + 1))
+		power.SetOne()
+
+		for i := 0; i < len(commitmentPoints); i++ {
+			powerBytes := power.Bytes()
+			for j := 0; j < 16; j++ {
+				powerBytes[j], powerBytes[31-j] = powerBytes[31-j], powerBytes[j]
+			}
+			copy(scalars[i*32:(i+1)*32], powerBytes[:])
+			power.Mul(&power, &x)
+		}
+
+		slotPubKeyP2 := blst.P2AffinesMult(commitmentPoints, scalars, 255)
+		if slotPubKeyP2.Equals(&identityP2) {
+			return fmt.Errorf("dealer commitment polynomial evaluates to identity at slot %d", slotIndex)
+		}
+	}
+
+	return nil
 }

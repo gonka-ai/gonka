@@ -1,5 +1,6 @@
 // Package v0_2_17 prepares the transitional PREFILL and permanent DECODE recipes,
-// writes the epoch-validation admission caps, and enables the wasm fee group.
+// writes the epoch-validation admission caps, stores the DKG slot quorum, and
+// enables the wasm fee group.
 //
 // Moves flat recipes and dynamic coefficients into PREFILL blocks, adds DECODE
 // templates, and preserves poc_scheme. Pre-v0.2.16 static weight factors remain
@@ -18,6 +19,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -29,9 +31,16 @@ func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
 	k keeper.Keeper,
+	blsKeeper blskeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
+
+		// The DKG quorum fields do not exist on earlier params. Write 1/2,
+		// or the fraction in plan.Info when both fields are present.
+		if err := MigrateDKGQuorum(ctx, blsKeeper, plan.Info); err != nil {
+			return nil, err
+		}
 
 		// Existing chains have no epoch_validation_params field. Write the
 		// admission defaults before the audit so this block reads the governed caps.

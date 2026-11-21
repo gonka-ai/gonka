@@ -12,6 +12,8 @@ var _ sdk.Msg = &MsgSubmitDealerPart{}
 
 const (
 	commitmentCompressedG2Len             = 96
+	commitmentKnowledgeResponseLen        = 32
+	compressedPointInfinityFlag           = 0x40
 	MaxDealerPartCommitmentsCount         = 4096
 	MaxEncryptedSharesParticipantsCount   = 4096
 	MaxEncryptedSharesPerParticipantCount = 16384
@@ -87,6 +89,33 @@ func (m *MsgSubmitDealerPart) ValidateBasic() error {
 			if err := ValidateEncryptedShareCiphertextLen(shareCiphertext); err != nil {
 				return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "encrypted_shares_for_participants[%d].encrypted_shares[%d] %s", i, j, err.Error())
 			}
+		}
+	}
+	if (m.Commitments[0][0] & compressedPointInfinityFlag) != 0 {
+		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "commitments[0] must not be point at infinity")
+	}
+	if len(m.CommitmentProofs) != len(m.Commitments) {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs count %d does not match commitments count %d", len(m.CommitmentProofs), len(m.Commitments))
+	}
+	for i, proof := range m.CommitmentProofs {
+		if len(proof.NoncePoint) != commitmentCompressedG2Len {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].nonce_point must be exactly %d bytes", i, commitmentCompressedG2Len)
+		}
+		nonceAllZero := true
+		for _, b := range proof.NoncePoint {
+			if b != 0 {
+				nonceAllZero = false
+				break
+			}
+		}
+		if nonceAllZero {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].nonce_point must not be all-zero bytes", i)
+		}
+		if (proof.NoncePoint[0] & compressedPointInfinityFlag) != 0 {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].nonce_point must not be point at infinity", i)
+		}
+		if len(proof.Response) != commitmentKnowledgeResponseLen {
+			return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "commitment_proofs[%d].response must be exactly %d bytes", i, commitmentKnowledgeResponseLen)
 		}
 	}
 	return nil

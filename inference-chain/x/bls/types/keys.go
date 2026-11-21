@@ -20,6 +20,7 @@ var (
 	ParamsKey                     = []byte("p_bls")
 	EpochBLSDataPrefix            = []byte("epoch_bls_data")
 	DealerPartPrefix              = []byte("epoch_bls_dealer_part/")
+	DealerPartAttemptsPrefix      = []byte("epoch_bls_dealer_attempts/")
 	VerificationSubmissionPrefix  = []byte("epoch_bls_verification_submission/")
 	DealerComplaintPrefix         = []byte("epoch_bls_dealer_complaint/")
 	ThresholdPartialSigPrefix     = []byte("threshold_partial_sig/")
@@ -65,6 +66,19 @@ func DealerPartEpochPrefix(epochID uint64) []byte {
 	copy(prefix, DealerPartPrefix)
 	binary.BigEndian.PutUint64(prefix[len(DealerPartPrefix):], epochID)
 	prefix[len(DealerPartPrefix)+8] = '/'
+	return prefix
+}
+
+// DealerPartAttemptsEpochPrefix returns the prefix used to track per-participant
+// MsgSubmitDealerPart attempts within a single epoch's dealing phase.
+// Sub-keys use DealerPartSubKey (4-byte big-endian participant index).
+//
+// Full layout: {DealerPartAttemptsPrefix}{epoch_id:uint64 BE}/{participant_index:uint32 BE}.
+func DealerPartAttemptsEpochPrefix(epochID uint64) []byte {
+	prefix := make([]byte, len(DealerPartAttemptsPrefix)+8+1)
+	copy(prefix, DealerPartAttemptsPrefix)
+	binary.BigEndian.PutUint64(prefix[len(DealerPartAttemptsPrefix):], epochID)
+	prefix[len(DealerPartAttemptsPrefix)+8] = '/'
 	return prefix
 }
 

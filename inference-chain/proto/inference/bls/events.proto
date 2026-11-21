@@ -21,6 +21,9 @@ message EventKeyGenerationInitiated {
   
   // participants contains information about all participants in this DKG round
   repeated BLSParticipantInfo participants = 4 [(gogoproto.nullable) = false];
+
+  // chain_id is the source chain identifier for domain-separated dealer proofs
+  string chain_id = 5;
 }
 
 // EventDealerPartSubmitted is emitted when a participant submits their dealer part

@@ -13,6 +13,12 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 	if k.GetAuthority() != req.Authority {
 		return nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", k.GetAuthority(), req.Authority)
 	}
+	// Governance runs this handler without calling ValidateBasic again.
+	// A proposal submitted before these fields existed would otherwise store
+	// the new fields as zero.
+	if err := req.Params.Validate(); err != nil {
+		return nil, err
+	}
 
 	ctx := sdk.UnwrapSDKContext(goCtx)
 	if err := k.SetParams(ctx, req.Params); err != nil {

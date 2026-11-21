@@ -497,6 +497,9 @@ func (bm *BlsManager) decryptShare(encryptedShare []byte) (*fr.Element, error) {
 // Deprecated: use verifyShareAgainstCommitmentsBlst. The gnark-crypto implementation is kept only
 // for legacy/reference purposes and is intended to be removed in a future cleanup.
 func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
+	if share == nil || share.IsZero() {
+		return false, nil
+	}
 	if len(commitments) == 0 {
 		return false, fmt.Errorf("no commitments provided")
 	}
@@ -539,6 +542,9 @@ func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex
 	}
 
 	// Compute g * share (where g is the G2 generator)
+	if expectedCommitment.IsInfinity() {
+		return false, nil
+	}
 	var actualCommitment bls12381.G2Affine
 	_, _, _, g2Gen := bls12381.Generators()
 	actualCommitment.ScalarMultiplication(&g2Gen, share.BigInt(new(big.Int)))
@@ -549,6 +555,9 @@ func (bm *BlsManager) verifyShareAgainstCommitments(share *fr.Element, slotIndex
 
 // verifyShareAgainstCommitmentsBlst verifies a decrypted share against the dealer's polynomial commitments using blst.
 func (bm *BlsManager) verifyShareAgainstCommitmentsBlst(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
+	if share == nil || share.IsZero() {
+		return false, nil
+	}
 	if len(commitments) == 0 {
 		return false, fmt.Errorf("no commitments provided")
 	}
@@ -594,6 +603,9 @@ func (bm *BlsManager) verifyShareAgainstCommitmentsBlst(share *fr.Element, slotI
 
 	// 3. Compute expected commitment using MSM (Polynomial evaluation)
 	expectedCommitment := blst.P2AffinesMult(points, scalars, 255).ToAffine()
+	if !expectedCommitment.KeyValidate() {
+		return false, nil
+	}
 
 	// 4. Compute actual commitment: g * share
 	shareBytes := share.Bytes()
@@ -702,8 +714,14 @@ func (bm *BlsManager) buildDealerValidityProofs(epochID uint64, verificationResu
 		proofSignature, err := bm.computePartialSignatureBlst(proofHash, &VerificationResult{
 			AggregatedShares: dealerShares,
 		})
-		if err != nil {
-			return nil, fmt.Errorf("failed to compute proof signature for dealer %d: %w", dealerIndex, err)
+		// A local signing failure is not evidence that the dealer is at fault:
+		// these shares were already decrypted and accepted. Filing a complaint,
+		// or turning the vote false without one, would blame the verifier.
+		if err != nil || !isValidProofSignaturePayloadBlst(proofSignature, expectedSlots) {
+			if err == nil {
+				err = fmt.Errorf("proof signature is missing or invalid")
+			}
+			return nil, fmt.Errorf("failed to construct dealer validity proof for dealer %d: %w", dealerIndex, err)
 		}
 
 		proofs = append(proofs, types.DealerValidityProof{
@@ -713,6 +731,19 @@ func (bm *BlsManager) buildDealerValidityProofs(epochID uint64, verificationResu
 	}
 
 	return proofs, nil
+}
+
+func isValidProofSignaturePayloadBlst(proofSignature []byte, expectedSlots int) bool {
+	if expectedSlots <= 0 || len(proofSignature) != expectedSlots*48 {
+		return false
+	}
+	for i := 0; i < expectedSlots; i++ {
+		g1 := new(blst.P1Affine).Uncompress(proofSignature[i*48 : (i+1)*48])
+		if g1 == nil || !g1.SigValidate(true) {
+			return false
+		}
+	}
+	return true
 }
 
 // countTrueValues counts the number of true values in a boolean slice

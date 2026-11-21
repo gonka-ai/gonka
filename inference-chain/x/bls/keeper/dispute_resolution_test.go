@@ -226,7 +226,7 @@ func TestAdjudicateComplaints_RecomputeCandidatesAfterFalseComplainerExclusion(t
 		},
 	}
 
-	initialCandidates, err := k.determineValidDealersWithConsensus(&epoch, nil)
+	initialCandidates, err := k.determineValidDealersWithConsensus(&epoch, nil, types.DefaultParams().DKGQuorumSlots)
 	require.NoError(t, err)
 	require.Equal(t, []bool{false, false, false}, initialCandidates)
 
@@ -236,7 +236,7 @@ func TestAdjudicateComplaints_RecomputeCandidatesAfterFalseComplainerExclusion(t
 	require.Contains(t, falseComplainersByDealer, 0)
 	require.Contains(t, falseComplainersByDealer[0], 1)
 
-	recomputedCandidates, err := k.determineValidDealersWithConsensus(&epoch, falseComplainersByDealer)
+	recomputedCandidates, err := k.determineValidDealersWithConsensus(&epoch, falseComplainersByDealer, types.DefaultParams().DKGQuorumSlots)
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, false, false}, recomputedCandidates)
 
@@ -254,9 +254,9 @@ func TestDetermineValidDealersWithConsensus_ExcludedVerifiersAreDealerScoped(t *
 		EpochId:     88,
 		ITotalSlots: 100,
 		Participants: []types.BLSParticipantInfo{
-			{Address: "p0", SlotStartIndex: 0, SlotEndIndex: 9},
-			{Address: "p1", SlotStartIndex: 10, SlotEndIndex: 39},
-			{Address: "p2", SlotStartIndex: 40, SlotEndIndex: 79},
+			{Address: "p0", SlotStartIndex: 0, SlotEndIndex: 19},
+			{Address: "p1", SlotStartIndex: 20, SlotEndIndex: 49},
+			{Address: "p2", SlotStartIndex: 50, SlotEndIndex: 79},
 			{Address: "p3", SlotStartIndex: 80, SlotEndIndex: 99},
 		},
 		DealerParts: []*types.DealerPartStorage{
@@ -273,14 +273,18 @@ func TestDetermineValidDealersWithConsensus_ExcludedVerifiersAreDealerScoped(t *
 		},
 	}
 
-	baseline, err := k.determineValidDealersWithConsensus(&epoch, nil)
+	// This case is the 2/3 boundary: excluding verifier 1 drops dealer 0 from 80 to 50 slots.
+	supermajority := types.DefaultParams()
+	supermajority.DkgQuorumNumerator = 2
+	supermajority.DkgQuorumDenominator = 3
+	baseline, err := k.determineValidDealersWithConsensus(&epoch, nil, supermajority.DKGQuorumSlots)
 	require.NoError(t, err)
 	require.Equal(t, []bool{true, false, true, false}, baseline)
 
 	excludedByDealer := map[int]map[int]struct{}{
 		0: map[int]struct{}{1: {}},
 	}
-	recomputed, err := k.determineValidDealersWithConsensus(&epoch, excludedByDealer)
+	recomputed, err := k.determineValidDealersWithConsensus(&epoch, excludedByDealer, supermajority.DKGQuorumSlots)
 	require.NoError(t, err)
 	require.Equal(t, []bool{false, false, true, false}, recomputed)
 }

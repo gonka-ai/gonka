@@ -61,7 +61,8 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("dealer_validity length %d does not match participants count %d", len(msg.DealerValidity), len(epochBLSData.Participants)))
 	}
 
-	if err := ms.validateDealerValidityProofs(msg, &epochBLSData, participantIndex); err != nil {
+	effectiveValidity, objectiveDealerFaults, err := ms.resolveAndValidateDealerValidityProofs(msg, &epochBLSData, participantIndex)
+	if err != nil {
 		return nil, status.Error(codes.InvalidArgument, err.Error())
 	}
 
@@ -73,33 +74,18 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 		complaintsByDealer[complaint.DealerIndex] = complaint
 	}
 
-	// Persist the verification submission to its own sub-key. Write cost is
-	// bounded by this participant's own DealerValidity payload, independent
-	// of how many other verifiers have landed — the split prevents the
-	// N^2 write-per-byte growth that caused later verifiers to hit
-	// simulated-vs-actual out-of-gas in a full-sized round. The in-memory
-	// epochBLSData is still updated below so the complaint-persistence
-	// loop sees a consistent view of the current submission.
-	submission := &types.VerificationVectorSubmission{
-		DealerValidity: msg.DealerValidity,
-	}
-	if err := ms.SetVerificationSubmission(sdkCtx, msg.EpochId, uint32(participantIndex), submission); err != nil {
-		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to persist verification submission for epoch %d: %v", msg.EpochId, err))
-	}
-	epochBLSData.VerificationSubmissions[participantIndex] = submission
-
-	// Persist complaint evidence alongside verification vote. One complaint per (dealer, complainer).
-	for dealerIndex, dealerValid := range msg.DealerValidity {
+	var complaintsToPersist []types.DealerComplaint
+	for dealerIndex, dealerValid := range effectiveValidity {
 		if dealerValid {
 			continue
 		}
 
 		complaint, hasComplaint := complaintsByDealer[uint32(dealerIndex)]
+		if objectiveDealerFaults[dealerIndex] && !hasComplaint {
+			continue
+		}
+
 		requiresEvidence := false
-		// Defense-in-depth: these shape checks should already hold after SubmitDealerPart +
-		// MsgSubmitDealerPart.ValidateBasic. We re-check persisted epoch state here before
-		// making complaint evidence mandatory, so inconsistent/legacy state does not cause
-		// panics or force evidence requirements for malformed dealer entries.
 		if dealerIndex < len(epochBLSData.DealerParts) {
 			dealerPart := epochBLSData.DealerParts[dealerIndex]
 			expectedCommitmentsCount := int(epochBLSData.TSlotsDegree) + 1
@@ -125,20 +111,29 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 			return nil, status.Error(codes.InvalidArgument, err.Error())
 		}
 
-		// O(1) duplicate check via direct (dealer, complainer) sub-key
-		// lookup, replacing the prior O(N) scan through the inline slice.
 		if ms.HasDealerComplaint(sdkCtx, msg.EpochId, uint32(dealerIndex), uint32(participantIndex)) {
 			return nil, status.Error(codes.AlreadyExists, fmt.Sprintf("complaint already exists for dealer %d by participant %s", dealerIndex, msg.Creator))
 		}
 
-		newComplaint := types.DealerComplaint{
+		complaintsToPersist = append(complaintsToPersist, types.DealerComplaint{
 			DealerIndex:             uint32(dealerIndex),
 			ComplainerIndex:         uint32(participantIndex),
 			DisputedSlotIndex:       complaint.DisputedSlotIndex,
 			DisputedCiphertextIndex: complaint.DisputedCiphertextIndex,
-		}
-		if err := ms.SetDealerComplaint(sdkCtx, msg.EpochId, &newComplaint); err != nil {
-			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to persist dealer complaint (%d,%d): %v", dealerIndex, participantIndex, err))
+		})
+	}
+
+	submission := &types.VerificationVectorSubmission{
+		DealerValidity: effectiveValidity,
+	}
+	if err := ms.SetVerificationSubmission(sdkCtx, msg.EpochId, uint32(participantIndex), submission); err != nil {
+		return nil, status.Error(codes.Internal, fmt.Sprintf("failed to persist verification submission for epoch %d: %v", msg.EpochId, err))
+	}
+	epochBLSData.VerificationSubmissions[participantIndex] = submission
+
+	for i := range complaintsToPersist {
+		if err := ms.SetDealerComplaint(sdkCtx, msg.EpochId, &complaintsToPersist[i]); err != nil {
+			return nil, status.Error(codes.Internal, fmt.Sprintf("failed to persist dealer complaint (%d,%d): %v", complaintsToPersist[i].DealerIndex, participantIndex, err))
 		}
 	}
 
@@ -176,7 +171,11 @@ func (ms msgServer) SubmitVerificationVector(ctx context.Context, msg *types.Msg
 	return &types.MsgSubmitVerificationVectorResponse{}, nil
 }
 
-func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificationVector, epochBLSData *types.EpochBLSData, participantIndex int) error {
+func (ms msgServer) resolveAndValidateDealerValidityProofs(
+	msg *types.MsgSubmitVerificationVector,
+	epochBLSData *types.EpochBLSData,
+	participantIndex int,
+) ([]bool, map[int]bool, error) {
 	trueNonSelfDealerCount := 0
 	selfMarkedTrue := participantIndex >= 0 && participantIndex < len(msg.DealerValidity) && msg.DealerValidity[participantIndex]
 	for dealerIndex, isValid := range msg.DealerValidity {
@@ -192,14 +191,14 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 	}
 	if len(msg.DealerValidityProofs) < trueNonSelfDealerCount || len(msg.DealerValidityProofs) > maxProofCount {
 		if selfMarkedTrue {
-			return fmt.Errorf(
+			return nil, nil, fmt.Errorf(
 				"dealer_validity_proofs count %d is invalid: expected %d (without self proof) or %d (with optional self proof)",
 				len(msg.DealerValidityProofs),
 				trueNonSelfDealerCount,
 				maxProofCount,
 			)
 		}
-		return fmt.Errorf(
+		return nil, nil, fmt.Errorf(
 			"dealer_validity_proofs count %d does not match true non-self dealer count %d",
 			len(msg.DealerValidityProofs),
 			trueNonSelfDealerCount,
@@ -211,25 +210,29 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 	for i := range msg.DealerValidityProofs {
 		proof := &msg.DealerValidityProofs[i]
 		if proof.DealerIndex >= uint32(len(epochBLSData.Participants)) {
-			return fmt.Errorf("dealer_validity_proofs[%d].dealer_index %d out of range", i, proof.DealerIndex)
+			return nil, nil, fmt.Errorf("dealer_validity_proofs[%d].dealer_index %d out of range", i, proof.DealerIndex)
 		}
 		if len(proof.ProofSignature) == 0 {
-			return fmt.Errorf("dealer_validity_proofs[%d].proof_signature must be non-empty", i)
+			return nil, nil, fmt.Errorf("dealer_validity_proofs[%d].proof_signature must be non-empty", i)
 		}
 		dealerIndex := int(proof.DealerIndex)
 		if dealerIndex >= len(msg.DealerValidity) || !msg.DealerValidity[dealerIndex] {
-			return fmt.Errorf("proof provided for dealer %d that is marked false", proof.DealerIndex)
+			return nil, nil, fmt.Errorf("proof provided for dealer %d that is marked false", proof.DealerIndex)
 		}
 		if proofsByDealer[dealerIndex] != nil {
-			return fmt.Errorf("duplicate proof for dealer %d", proof.DealerIndex)
+			return nil, nil, fmt.Errorf("duplicate proof for dealer %d", proof.DealerIndex)
 		}
 		proofsByDealer[dealerIndex] = proof
 	}
 
 	slotIndices, err := participantSlotIndices(epochBLSData, participantIndex)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+
+	effectiveValidity := make([]bool, len(msg.DealerValidity))
+	copy(effectiveValidity, msg.DealerValidity)
+	objectiveDealerFaults := make(map[int]bool)
 
 	// Deterministic iteration: walk dealer_validity by index
 	for dealerIndex, isValid := range msg.DealerValidity {
@@ -242,14 +245,55 @@ func (ms msgServer) validateDealerValidityProofs(msg *types.MsgSubmitVerificatio
 
 		proof := proofsByDealer[dealerIndex]
 		if proof == nil {
-			return fmt.Errorf("missing proof for dealer %d", dealerIndex)
+			return nil, nil, fmt.Errorf("missing proof for dealer %d", dealerIndex)
 		}
+
+		hasValidDealerCommitments, err := hasNonIdentityDealerSlotPublicKeys(epochBLSData, dealerIndex, slotIndices)
+		if err != nil || !hasValidDealerCommitments {
+			// Objective fault in the dealer's own public commitments (e.g., missing commitments
+			// or polynomial root / G2 identity at a verifier slot). Do not revert the verifier's
+			// submission or drop complaints against other dealers; downgrade this dealer vote to false.
+			effectiveValidity[dealerIndex] = false
+			objectiveDealerFaults[dealerIndex] = true
+			continue
+		}
+
 		if err := ms.verifyDealerValidityProof(epochBLSData, dealerIndex, slotIndices, proof.ProofSignature); err != nil {
-			return fmt.Errorf("invalid proof for dealer %d: %w", dealerIndex, err)
+			return nil, nil, fmt.Errorf("invalid proof for dealer %d: %w", dealerIndex, err)
 		}
 	}
 
-	return nil
+	return effectiveValidity, objectiveDealerFaults, nil
+}
+
+func hasNonIdentityDealerSlotPublicKeys(epochBLSData *types.EpochBLSData, dealerIndex int, slotIndices []uint32) (bool, error) {
+	if dealerIndex < 0 || dealerIndex >= len(epochBLSData.Participants) {
+		return false, fmt.Errorf("dealer index %d out of range", dealerIndex)
+	}
+	if dealerIndex >= len(epochBLSData.DealerParts) ||
+		epochBLSData.DealerParts[dealerIndex] == nil ||
+		len(epochBLSData.DealerParts[dealerIndex].Commitments) == 0 {
+		return false, nil
+	}
+
+	slotPublicKeys, err := buildDealerSlotPublicKeysForSlots(
+		epochBLSData.DealerParts[dealerIndex].Commitments,
+		epochBLSData.ITotalSlots,
+		slotIndices,
+	)
+	if err != nil {
+		return false, nil
+	}
+	for _, slotIndex := range slotIndices {
+		if int(slotIndex) >= len(slotPublicKeys) {
+			return false, nil
+		}
+		pk := new(blst.P2Affine).Uncompress(slotPublicKeys[slotIndex])
+		if pk == nil || !pk.KeyValidate() {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func participantSlotIndices(epochBLSData *types.EpochBLSData, participantIndex int) ([]uint32, error) {

@@ -227,8 +227,12 @@ func (k Keeper) PrecomputeSlotPublicKeysBlst(epochBLSData *types.EpochBLSData) (
 		// Perform MSM with blst
 		// 255 bits for BLS12-381 scalar field
 		aggregatedPubKeyP2 := blst.P2AffinesMult(totalCommitmentsAffine, scalars, 255)
+		slotAffine := aggregatedPubKeyP2.ToAffine()
+		if !slotAffine.KeyValidate() {
+			return nil, fmt.Errorf("aggregated slot public key for slot %d is invalid or identity", slotIndex)
+		}
 
-		pkBytes := aggregatedPubKeyP2.ToAffine().Compress()
+		pkBytes := slotAffine.Compress()
 		slotPublicKeys[slotIndex] = pkBytes
 	}
 
