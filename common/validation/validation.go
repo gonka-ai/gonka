@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -171,6 +172,38 @@ var (
 	errReplayStreamNoUsage    = errors.New("validator replay stream carried no usage")
 	errReplayStreamFailed     = errors.New("validator replay stream failed")
 )
+
+// ErrReplayAborted means the validator's own ML node aborted the replay: a
+// choice ended with finish_reason "abort", which vLLM sets on the requests it
+// drops, for example when PoC generation starts. The replay stopped early for
+// a reason that has nothing to do with the executor, so it must not become a
+// vote. Callers should retry the validation later.
+var ErrReplayAborted = errors.New("validator replay aborted by the ML node")
+
+// replayFinishReasonAbort is the finish_reason vLLM sets on an aborted request.
+const replayFinishReasonAbort = "abort"
+
+// replayFinishReasons returns the finish_reason of every replay choice that
+// carries one, in stream order.
+func replayFinishReasons(resp completionapi.CompletionResponse) []string {
+	var reasons []string
+	appendReasons := func(choices []completionapi.Choice) {
+		for _, choice := range choices {
+			if choice.FinishReason != "" {
+				reasons = append(reasons, choice.FinishReason)
+			}
+		}
+	}
+	switch r := resp.(type) {
+	case *completionapi.StreamedCompletionResponse:
+		for _, chunk := range r.Resp.Data {
+			appendReasons(chunk.Choices)
+		}
+	case *completionapi.JsonCompletionResponse:
+		appendReasons(r.Resp.Choices)
+	}
+	return reasons
+}
 
 func replayDataLines(body []byte) ([]string, bool) {
 	var lines []string
@@ -554,6 +587,15 @@ func ExecuteValidationWithPolicy(
 		return nil, err
 	}
 
+	// An aborted replay is cut short by the validator's own ML node, so the
+	// empty-sentinel and token-count checks below would vote against an
+	// executor that did nothing wrong. Defer it instead; a short replay that
+	// ends with "stop" or "length" is still scored as before.
+	finishReasons := replayFinishReasons(responseValidation)
+	if slices.Contains(finishReasons, replayFinishReasonAbort) {
+		return nil, fmt.Errorf("%w: inference %s, finish reasons %v", ErrReplayAborted, inferenceID, finishReasons)
+	}
+
 	if isEmptySentinel && statusCode == http.StatusOK {
 		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
 			"inferenceId", inferenceID)
@@ -573,6 +615,7 @@ func ExecuteValidationWithPolicy(
 				"inferenceId", inferenceID,
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
 				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens,
+				"enforcedTokens", len(enforcedTokens.Tokens), "validationFinishReasons", finishReasons,
 				"suspected_cause", suspectedCause, "resolution", "invalid")
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
 		}
