@@ -19,15 +19,8 @@ ENV GOOS=${GOOS} \
 
 RUN apk add --no-cache make gcc musl-dev git
 
-RUN if [ "$GOARCH" = "arm64" ]; then \
-        wget -O /lib/libwasmvm_muslc.aarch64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.aarch64.a \
-        && echo "27fb13821dbc519119f4f98c30a42cb32429b111b0fdc883686c34a41777488f /lib/libwasmvm_muslc.aarch64.a" | sha256sum -c \
-        && ln -s /lib/libwasmvm_muslc.aarch64.a /lib/libwasmvm_muslc.a; \
-    else \
-        wget -O /lib/libwasmvm_muslc.x86_64.a https://github.com/CosmWasm/wasmvm/releases/download/v2.2.4/libwasmvm_muslc.x86_64.a \
-        && echo "70c989684d2b48ca17bbd55bb694bbb136d75c393c067ef3bdbca31d2b23b578 /lib/libwasmvm_muslc.x86_64.a" | sha256sum -c \
-        && ln -s /lib/libwasmvm_muslc.x86_64.a /lib/libwasmvm_muslc.a; \
-    fi
+COPY scripts/fetch-libwasmvm.sh /tmp/fetch-libwasmvm.sh
+RUN sh /tmp/fetch-libwasmvm.sh
 
 COPY inference-chain/ /app/inference-chain
 COPY common/ /app/common
