@@ -36,8 +36,8 @@ func NewHandlers(c ChainClient) *Handlers {
 
 var _ gen.ServerInterface = (*Handlers)(nil)
 
-// grpcErrorToHTTP maps gRPC status codes to HTTP errors.
-func grpcErrorToHTTP(err error) error {
+// GRPCErrorToHTTP maps gRPC status codes to HTTP errors.
+func GRPCErrorToHTTP(err error) error {
 	if err == nil {
 		return nil
 	}
