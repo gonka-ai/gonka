@@ -257,6 +257,7 @@ func (c *raceCoordinator) judgeMissedDeadlines() {
 				Participant: attempt.participant,
 				Model:       c.request.Model,
 				Verdict:     missedDeadlineVerdict(stage),
+				LaunchedAt:  attempt.launchTime,
 			})
 		}
 	}

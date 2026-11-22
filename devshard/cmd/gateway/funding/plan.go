@@ -47,8 +47,10 @@ type ModelState struct {
 	PendingStandbyCreates int
 	MoneyShort            bool
 	WalletShort           bool
+	SurplusRetiresHeld    bool
 	RequestsBlocked       bool
 	InEpochPoC            bool
+	InConfirmationPoC     bool
 	EpochKnown            bool
 	ServedByNetwork       bool
 	BreakerGated          bool
@@ -87,6 +89,7 @@ type Decision struct {
 	Room          int
 	AmountNeeded  uint64
 	Need          uint64
+	NeedEscrows   int
 	Liquid        uint64
 	Broken        bool
 	Misconfigured bool
@@ -99,6 +102,7 @@ func Plan(state ModelState) Decision {
 	routable := routableEscrows(state.Escrows)
 	decision := Decision{FullCount: fullCount(routable), Misconfigured: misconfigured(state), AmountNeeded: amountNeeded(state)}
 	decision.Need, decision.Liquid = demandNeed(state, decision.Misconfigured), liquidMoney(state, routable)
+	decision.NeedEscrows = needEscrows(state, decision.Need)
 	decision.Shortfalls = Shortfalls{
 		Guard:    guardShortfall(state, decision),
 		Capacity: capacityShortfall(state, decision.Need, decision.Liquid),
@@ -202,11 +206,23 @@ func capacityShortfall(state ModelState, need, liquid uint64) int {
 	if !state.Priced || (!state.MoneyShort && need <= liquid) {
 		return 0
 	}
-	perEscrow := subtractFloor(subtractFloor(state.Amount, state.CreateFee), state.FullCost)
+	perEscrow := capacityPerEscrow(state)
 	if perEscrow == 0 {
 		return 0
 	}
 	return boundedCount(ceilDivide(max(1, subtractFloor(need, liquid)), perEscrow), state)
+}
+
+func needEscrows(state ModelState, need uint64) int {
+	perEscrow := capacityPerEscrow(state)
+	if !state.Priced || perEscrow == 0 {
+		return 0
+	}
+	return boundedCount(ceilDivide(need, perEscrow), state)
+}
+
+func capacityPerEscrow(state ModelState) uint64 {
+	return subtractFloor(subtractFloor(state.Amount, state.CreateFee), state.FullCost)
 }
 
 func spreadShortfall(state ModelState, routable []EscrowState) int {
@@ -216,11 +232,15 @@ func spreadShortfall(state ModelState, routable []EscrowState) int {
 func currentRegulars(state ModelState, routable []EscrowState) []EscrowState {
 	regulars := make([]EscrowState, 0, len(routable))
 	for _, escrow := range routable {
-		if !escrow.Temp && escrow.Label == state.CurrentLabel {
+		if isCurrentRegular(state, escrow) {
 			regulars = append(regulars, escrow)
 		}
 	}
 	return regulars
+}
+
+func isCurrentRegular(state ModelState, escrow EscrowState) bool {
+	return !escrow.Temp && escrow.Label == state.CurrentLabel
 }
 
 func standbyShortfall(state ModelState) int {
@@ -263,7 +283,7 @@ func plannedCreates(state ModelState, shortfalls Shortfalls, regularWanted, coun
 }
 
 func createsAllowed(state ModelState) bool {
-	return !state.RequestsBlocked && !state.InEpochPoC && state.EpochKnown && state.ServedByNetwork && !state.BreakerGated && !state.InBridgeWindow
+	return (!state.RequestsBlocked || state.InConfirmationPoC) && !state.InEpochPoC && state.EpochKnown && state.ServedByNetwork && !state.BreakerGated && !state.InBridgeWindow
 }
 
 func regularReason(index int, shortfalls Shortfalls) Reason {

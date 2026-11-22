@@ -198,6 +198,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_INTER_CHUNK_STALL_MS` | 30 000 | silence after first content before an attempt is stalled |
 | `GATEWAY_ENGINE_LOSER_GRACE_MS` | 600 000 | how long a loser may keep running after the crown |
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
+| `GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST` | 3 | attempts one request may start in all, hedges and retries included; past it no hedge or retry starts, and the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
 | `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
@@ -205,7 +206,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
 | `GATEWAY_TIMEOUT_SWEEP_BUDGET_PER_TICK` | 8 | execution-timeout votes one tick may retry across every escrow, the most overdue first; `0` turns the sweep off |
 | `GATEWAY_TIMEOUT_SWEEP_GRACE_SECONDS` | 120 | how far past its deadline a nonce must be before the sweep claims it from its own race |
-| `DEVSHARD_POC_REQUEST_MODE` | relaxed | `relaxed` keeps serving through proof-of-compute; `off` refuses new requests while the chain blocks them, and the funding planner creates nothing meanwhile; in `relaxed` the planner funds through a confirmation PoC and pauses only for an epoch PoC |
+| `DEVSHARD_POC_REQUEST_MODE` | relaxed | `relaxed` keeps serving through proof-of-compute; `off` refuses new requests while the chain blocks them; in either mode the funding planner funds through a confirmation PoC and pauses only for an epoch PoC |
 | `GATEWAY_HEIGHT_SYNC_ENABLED` | true | whether the escrow's heartbeat cadence runs. Turn it off for a fleet whose hosts do not carry height sync, or every interval logs a heartbeat it could not stamp ([`docs/escrows.md`](escrows.md), "Height sync") |
 | `DEVSHARD_HEIGHTSYNC_HEARTBEAT` | false | whether a quiet escrow composes heartbeat turns; on only for true/1/on. A finished request's leftovers settle either way ([`docs/escrows.md`](escrows.md), "Height sync") |
 | `DEVSHARD_REQUIRE_HEIGHT_SEED` | true | whether a session chases a host-signed tip from the moment it opens and reports `seed_incomplete` when it cannot. It does not refuse requests — see [`docs/escrows.md`](escrows.md), "Height sync". Off in the e2e stand |
@@ -238,7 +239,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
 | `DEVSHARD_RPC_H2_UPGRADE` | on | whether a session's connection to a host first tries HTTP/2 on the origin of the host's inference URL (h2c on `http`, TLS offering ALPN `gonka-rpc/1` on `https`) and drops to Connect over HTTP/1.1 on the same origin when the host does not speak it; `0`, `false`, `no` or `off` stays on HTTP/1.1 |
 | `DEVSHARD_RPC_GRPC` | off | whether that HTTP/2 connection speaks native gRPC instead of Connect; on only for `1`, `true`, `yes` or `on`, and never used over HTTP/1.1 |
-| `DEVSHARD_RPC_MAX_CONNS_PER_PEER` | 2 561 | the most HTTP connections the gateway keeps open to one host; a value that is not a positive integer falls back to the default without a warning |
+| `DEVSHARD_RPC_MAX_CONNS_PER_PEER` | 2 561 | the most HTTP connections the gateway keeps open to one host, of which at most 128 stay idle and the rest close after use; a value that is not a positive integer falls back to the default without a warning |
 | `DEVSHARD_RPC_ENDPOINTS` | unset | not honoured: every peer method uses Connect, and a set value is logged once as ignored |
 | `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS` | 16 | escrow sessions opened at once while the boot publishes the active escrows ("Boot" below) |
 | `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` | half of `GOMAXPROCS`, at least 1 | prompts tokenized at once, after the cache lookup and at the context check; a request that finds every slot taken after the cache lookup is not held but carries the byte estimate instead, while the context check waits for a slot ([`request.md`](request.md), "The prompt token count") |
@@ -252,6 +253,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT` | 0 | the per-model budget of input tokens in flight, scaled by capacity, in tokenizer tokens for a request counted with the model's tokenizer and in byte-estimate tokens otherwise ([`request.md`](request.md), "The prompt token count"); `0` is unlimited |
 | `GATEWAY_MATCH_WAIT_MS` | 2 000 | how long a bound nonce waits for a compatible request before it is burned; `0` burns at once, and 5 000 is the most it accepts |
 | `GATEWAY_MAX_CONSECUTIVE_BURNS` | 2 | nonces one escrow may burn in a row before the next one is sent over a full congestion window; `0` never forces a send ([`routing.md`](routing.md), "The forced send") |
+| `GATEWAY_MAX_BURNS_PER_REQUEST` | 16 | nonces one request may burn across all its attempts; an escrow whose walk to a usable host costs more burns than the request has left is not picked, and past it the next binding burns nothing and sends nothing; the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_DISPATCH_QUEUE_DEPTH` | 1 024 | waiters one escrow's dispatcher holds; past it an unpinned request walks to the next escrow, and when every escrow of the model is full it is refused busy (503); 1 to 65 536, read when an escrow's dispatcher starts |
 | `GATEWAY_FORCE_UPSTREAM_STREAMING` | true | whether a non-streaming request is still streamed from the host and assembled by the gateway ([`request.md`](request.md)) |
 | `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | forces the hosts' logprobs optimization on or off for every inference; unset leaves each host on its own default (`DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED`, on). The admin override `logprobs_optimization` takes precedence, and removing it falls back to this value |
@@ -262,7 +264,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_CAPTURE_MAX_BYTES` | 1 GiB | what the capture directory may hold; nothing deletes capture files, so at the cap capture stops until the directory is emptied |
 | `GATEWAY_PERF_CONSECUTIVE_FAIL_THRESHOLD` | 5 | failures in a row that eject a host from routing ([`capacity.md`](capacity.md)) |
 | `GATEWAY_PERF_FAILURE_RATE_THRESHOLD` / `GATEWAY_PERF_FAILURE_RATE_MIN_VOLUME` | 0.15 / 20 | the failure rate that ejects a host, and the volume it must have seen before the rate counts |
-| `GATEWAY_PERF_EJECTION_BASE_SECONDS` / `GATEWAY_PERF_EJECTION_MAX_SECONDS` | 30 / 600 | how long an ejection lasts, the first time and at most |
+| `GATEWAY_PERF_EJECTION_BASE_SECONDS` / `GATEWAY_PERF_EJECTION_MAX_SECONDS` | 30 / 60 | how long an ejection lasts, the first time and at most; the maximum is at least the base and at least `host_cutoff_max_ms` |
 | `GATEWAY_PERF_MAX_EJECTION_FRACTION` / `GATEWAY_PERF_MIN_AVAILABLE_HOSTS` | 0.5 / 4 | the share of a model's hosts that may be ejected at once, and the number that always stays routable |
 | `GATEWAY_PERF_HOST_STALENESS_SECONDS` | 3 600 | how long an unseen host is remembered before its history and its participant-labelled metric series are dropped |
 
@@ -333,8 +335,8 @@ Always on, with no level knob — a trace that ships off by default is not there
 
 | Line | Carries |
 | --- | --- |
-| `nonce committed` (emitted by `engine/pick.go`, written by `journal/render_race.go`) | request, escrow, nonce, participant, slot, role, and why this attempt started |
-| `attempt finished` (emitted by `engine/report.go`, written by `journal/render_race.go`) | the same identity, the terminal verdict, whether the nonce was finished, whether the host diverged on state, and each deadline its host was narrowed for (`missed_receipt_deadline`, `missed_first_token_deadline`) |
+| `nonce committed` (emitted by `engine/pick.go`, written by `journal/render_race.go`) | request, escrow, nonce, participant, slot, role, why this attempt started, and the two sizes its reserve is made of: `input_bytes` (the body length the host checks as `input_length`) and `max_tokens`; the chain reserves `(input_bytes + max_tokens) × token_price + fee_per_nonce` for the nonce |
+| `attempt finished` (emitted by `engine/report.go`, written by `journal/render_race.go`) | the same identity, the terminal verdict, the host's `usage_tokens` and `usage_prompt_tokens` as its stream reported them (what the chain charges is `(prompt + completion) × token_price`, never more than the reserve), whether the nonce was finished, whether the host diverged on state, and each deadline its host was narrowed for (`missed_receipt_deadline`, `missed_first_token_deadline`) |
 | `served winner finish landed` (emitted by `engine/winner_sample.go`, written by `journal/render_race.go`) | request, escrow, nonce and participant of a winner whose nonce was still open when its stream ended, once its Finish is seen, with `finish_lag_ms` from the attempt's end ([race.md](./race.md), "A served winner's sample waits for its finish") |
 | `nonce stranded` (emitted by `engine/race.go`, written by `journal/render_race.go`) | **Warn** — a committed nonce nobody will answer for; the shape every recurring settlement defect takes |
 
@@ -353,9 +355,10 @@ Three mechanisms withhold work from a host, each on its own trigger, and each is
 | Line | Trigger | Carries |
 | --- | --- | --- |
 | `host withheld from routing` (`perf/tracker.go`) | five failures in a row, or a failure rate from 15% over a volume from 20 | **Warn** — which trigger fired, the rung, the run length, the rate and its volume that tripped it, and how long the withholding lasts |
-| `host back in routing` (`perf/tracker.go`) | first sample after the withholding lapsed | the rung it decayed to |
+| `host back in routing` (`perf/tracker.go`) | first sample after the withholding lapsed, or the epoch boundary cleared it | the rung it decayed to |
 | `host cut off after transport faults` (`limits/reaction.go`) | three cut-off faults in a row — a transport fault, an empty answer that left its nonce open, or a `429`/`503` from a host that carried nothing else of ours for this model when it refused — or one failed half-open probe | **Warn** — which of the two, the backoff depth, and how long the cut-off lasts. The line's name and its `consecutive_transport_faults` reason are what dashboards and log queries match on, so both keep the wording they have whatever the run was made of |
-| `host back after its cut-off` (`limits/reaction.go`) | the probe answered | the backoff depth it decayed to |
+| `host back after its cut-off` (`limits/reaction.go`) | the probe answered, or the epoch boundary closed the cut-off | the backoff depth it decayed to |
+| `host stats reset at epoch` (`app/epoch_reset.go`) | the effective epoch rose | the epoch, the pairs the windows held, how many hosts were withheld and how many cut off |
 | `host denied the crown` (`engine/crown_strikes.go`) | three content-free answers in a row | **Warn** — the strike count. The host keeps drawing nonces and starts a second attempt beside itself, so this is a spend, not only a quality signal |
 | `host crowned again` (`engine/crown_strikes.go`) | one answer with content | — |
 
@@ -369,6 +372,7 @@ One more line belongs to the same family, on the money side rather than the rout
 | --- | --- |
 | `api_key_id` | the client API key the request was made with: the first eight hex characters of the key's SHA-256 (`printf %s "$KEY" \| sha256sum \| cut -c1-8`), `admin` for the admin key, `none` when no configured client key matched (no key or an unknown one). The limiter's refusal line carries it too, so one key's share of the traffic and of the refusals can be read from the log |
 | `escrow` | the escrow the race ran on; absent when no escrow was picked |
+| `input_tokens` / `input_tokens_source` | the gateway's own prompt count and where it came from (`tokenizer_exact`, `tokenizer_sampled` or `bytes_estimate`), so a log answers whether the tokenizer counted a request |
 | `host` / `hosts` | `host` is the crowned attempt's host; with nobody crowned, `hosts` lists every host tried, comma-separated; a race that ran no attempt carries neither |
 | `bytes` | how much actually reached the client, counted at the socket — the strip rewrites events on the way out |
 | `terminated` | whether the SSE terminator went with them; without it a client waits out its own timeout on a reply it already has |
@@ -398,7 +402,7 @@ The record carries no request or response body — capture files exist for that,
 | `regular escrows promoted to temp` | the bridge funded fewer temps than `temp_count` — no room under `max_unsettled`, a model the network does not serve, or a failed create — so the regulars keep serving as temps instead of being retired; `rotation_status.create_error` names the cause (`bridge funded fewer temps than temp_count` for a partial fill) |
 | `escrow parked at its settlement deadline` / `escrow deadline passes unsettled` / `settle margin shorter than two settle windows` / `escrow deadlines read past a stale chain height` | an escrow came within `rotation.settle_margin_blocks` of `settle_by`, the switch block by which its chain epoch must settle, and was parked; a row inside its margin that nothing is allowed to settle, or whose deadline has passed (Error, with `reason`: `settlement_disabled`, `operator_deactivated`, `key_missing`, `deadline_passed`; once per row while it lasts; `settle_by` is left out once the switch block is no longer known, as on `deadline_passed`), a margin shorter than two settle windows at the measured block time, and a chain snapshot older than `chain_snapshot_max_age_seconds` whose deadlines are read at `projected_height` (`height` plus `stale_for_ms` over the measured block time, or one block a second), once per episode |
 | `escrow funding planned` / `funding guarantee broken` / `model amount cannot fund a full escrow` / `escrow budget reached` | the funding planner's decision for a model and the start of each episode. Progress lane, so a backlog may drop them |
-| `nonce burned for nobody` (`journal/render_money.go`) | a committed nonce that will serve nobody, with the escrow and the reason, and under `burned_during_request` the request it was spent during |
+| `nonce burned for nobody` (`journal/render_money.go`) | a committed nonce that will serve nobody, with the escrow and the reason, and under `burned_during_request` the request it was charged to, when there is one |
 | `a host stopped mid-answer: reply served, not cached` (`journal/render_request.go`) | a reply served as an answer never reached a terminal `finish_reason`, so nothing replays it. An answer whose host closed the stream with neither `[DONE]` nor a finished nonce never gets here: it is a failed request, a 502 with an error body when buffered and an error event with no `[DONE]` when streamed (`engine/failure.go`, `ErrAnswerTruncated`). This line names the rest, a reply the host terminated or finished without a terminal reason, and only one the cache would otherwise have stored: with `chat_cache_max_bytes` at 0, for a body past the per-entry bound, or when the client had already left, it still passes unnamed |
 | `escrow stopped burning nonces at its budget` | the escrow now queues callers rather than spending on requests it cannot serve |
 | `escrow warmed` / `escrow warmup voted on its unfinished nonce` | a new escrow's group was taught the escrow, and the probe's own nonce was settled; the vote line is **Warn** when the vote failed, and `catch_up_error` appears only when the catch-up failed |

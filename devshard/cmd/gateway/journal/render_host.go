@@ -29,6 +29,14 @@ func (j *Journal) HostReturned(participant, model string, ejectionCount int) {
 	})
 }
 
+// HostStatsReset renders the epoch boundary clearing every host's performance state.
+func (j *Journal) HostStatsReset(epoch uint64, pairs, withheld, cutOff int) {
+	j.emitLine(KindHostTransition, func(lines logSink) {
+		lines.Info("host stats reset at epoch",
+			logkey.Epoch, epoch, logkey.Pairs, pairs, logkey.Withheld, withheld, logkey.CutOff, cutOff)
+	})
+}
+
 // HostContextLimit renders a host admitting a context length smaller than any before.
 func (j *Journal) HostContextLimit(participant, model string, contextLimit, previousContextLimit uint64) {
 	j.emitLine(KindHostTransition, func(lines logSink) {

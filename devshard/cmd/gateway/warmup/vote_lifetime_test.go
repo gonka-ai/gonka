@@ -16,6 +16,8 @@ type contextPoster struct {
 
 func (p *contextPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *contextPoster) Voteable(uint64) bool { return true }
+
 func (p *contextPoster) SettleTimeout(ctx context.Context, _ engine.TimeoutStep) (engine.TimeoutVote, error) {
 	p.onSettle(ctx)
 	return engine.TimeoutVote{}, ctx.Err()

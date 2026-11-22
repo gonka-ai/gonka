@@ -109,6 +109,8 @@ type stepPoster struct {
 
 func (p *stepPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *stepPoster) Voteable(uint64) bool { return true }
+
 func (p *stepPoster) SettleTimeout(_ context.Context, step engine.TimeoutStep) (engine.TimeoutVote, error) {
 	p.steps = append(p.steps, step)
 	return engine.TimeoutVote{}, nil

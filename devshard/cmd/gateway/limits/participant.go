@@ -40,6 +40,7 @@ type ParticipantLimiter struct {
 	now             func() time.Time
 	jitter          func(time.Duration) time.Duration
 	lastSweep       time.Time
+	resetAt         time.Time
 	narrator        cutoffNarrator
 }
 

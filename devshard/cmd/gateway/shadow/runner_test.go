@@ -77,6 +77,8 @@ type stubPoster struct{ calls atomic.Int64 }
 
 func (p *stubPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *stubPoster) Voteable(uint64) bool { return true }
+
 func (p *stubPoster) SettleTimeout(context.Context, engine.TimeoutStep) (engine.TimeoutVote, error) {
 	p.calls.Add(1)
 	return engine.TimeoutVote{Kind: engine.TimeoutKindRefused}, nil
@@ -467,6 +469,8 @@ type blockingPoster struct {
 }
 
 func (p *blockingPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
+
+func (p *blockingPoster) Voteable(uint64) bool { return true }
 
 func (p *blockingPoster) SettleTimeout(context.Context, engine.TimeoutStep) (engine.TimeoutVote, error) {
 	close(p.entered)

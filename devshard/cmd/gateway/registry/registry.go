@@ -35,6 +35,7 @@ type Deps struct {
 	Closing          escrowObserver
 	Rehydrated       escrowObserver
 	ServedBindings   servedBindingObserver
+	SweptVotes       sweptVoteObserver
 	PeerRPC          peerRPCAdoption
 	Now              func() time.Time
 }
@@ -43,6 +44,8 @@ type peerRPCAdoption interface {
 	BindEscrowHosts(escrowID string, peers []string)
 	ReleaseEscrow(escrowID string)
 }
+
+type sweptVoteObserver func(escrowID, model, participant string, vote SweptVote)
 
 type servedBindingObserver func(escrowID, model, participant string, nonce uint64, verdict user.ServedBinding)
 
@@ -61,6 +64,7 @@ type Registry struct {
 	closingObserver  escrowObserver
 	rehydrated       escrowObserver
 	servedBindings   servedBindingObserver
+	sweptVotes       sweptVoteObserver
 	peerRPC          peerRPCAdoption
 	now              func() time.Time
 
@@ -98,6 +102,7 @@ func New(deps Deps) *Registry {
 		closingObserver:  deps.Closing,
 		rehydrated:       deps.Rehydrated,
 		servedBindings:   deps.ServedBindings,
+		sweptVotes:       deps.SweptVotes,
 		peerRPC:          deps.PeerRPC,
 		now:              deps.Now,
 		draining:         map[*escrowEntry]struct{}{},

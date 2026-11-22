@@ -34,6 +34,7 @@ type routingDeps struct {
 	PeerRPC      *transport.PeerRPCAdoption
 	Ledger       *nonces.Recorder
 	Journal      *journal.Journal
+	Timeouts     timeoutSink
 	Shadow       *shadow.Runner
 	Now          func() time.Time
 }
@@ -56,6 +57,7 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		Closing:          deps.Ledger.EscrowClosing,
 		Rehydrated:       deps.Ledger.EscrowRehydrated,
 		ServedBindings:   servedBindingStrikes(deps.Hosts, deps.Journal, deps.Served, deps.Finishes),
+		SweptVotes:       sweptTimeouts(deps.Timeouts),
 		PeerRPC:          deps.PeerRPC,
 		Now:              deps.Now,
 	}

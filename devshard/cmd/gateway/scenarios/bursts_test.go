@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/funding"
 	"devshard/cmd/gateway/liquidity"
@@ -323,10 +324,11 @@ func TestFiftyWakeupsInFifteenSecondsBuyAtMostTwo(t *testing.T) {
 }
 
 // Test flow:
-//  1. Boot with a guarantee of one and take every participant offline, so every attempt is refused and replaced on the same escrow until the race's attempt limit, one per host, stops it.
+//  1. Boot with a guarantee of one and take every participant offline, so every attempt is refused and replaced on the same escrow until the cap on started attempts per request, one per host, stops it.
 //  2. Send two 264-token requests at once, so their nonces interleave on the escrow's slots, and advance two minutes.
-//  3. Assert neither request was answered 200 and each started exactly four attempts on the seeded escrow, one on each of its hosts, so the reservations each race made are four attempts' worth; log the count against the two attempts a slot is priced for (`money identity` at every step).
+//  3. Assert neither request was answered 200 and each started exactly the capped number of attempts on the seeded escrow, one on each of that many distinct hosts, so the reservations each race made are that many attempts' worth; log the count against the two attempts a slot is priced for (`money identity` at every step).
 func TestRefusedAttemptsReplacedOnOneEscrowStayWithinItsHosts(t *testing.T) {
+	startedAttempts := int(config.Defaults().Engine.MaxStartedAttemptsPerRequest)
 	spec := plannerSpec()
 	spec.model.fullContextSlots = 1
 	spec.behaviours = everyParticipant(4, participantBehaviour{offline: true})
@@ -351,8 +353,8 @@ func TestRefusedAttemptsReplacedOnOneEscrowStayWithinItsHosts(t *testing.T) {
 				return fmt.Errorf("escrow %s: attempts of %d requests, want both requests' attempts", harness.seededIDs[0], len(executorsByRequest))
 			}
 			for _, executors := range executorsByRequest {
-				if len(executors) != 4 || slices.Max(slices.Collect(maps.Values(executors))) != 1 {
-					return fmt.Errorf("a request's attempts per executor slot = %v, want exactly one on each of the escrow's 4 hosts", executors)
+				if len(executors) != startedAttempts || slices.Max(slices.Collect(maps.Values(executors))) != 1 {
+					return fmt.Errorf("a request's attempts per executor slot = %v, want exactly one on each of %d hosts", executors, startedAttempts)
 				}
 			}
 			return nil
@@ -363,38 +365,35 @@ func TestRefusedAttemptsReplacedOnOneEscrowStayWithinItsHosts(t *testing.T) {
 
 // Test flow:
 //  1. Boot with a guarantee of one, one full escrow and one of 1 100, whose 1 000 pays both attempts of one small request (452 each), so routing prefers it as residue, but not a third attempt.
-//  2. Send three small requests at once: a pick that reads the 1 000 before both earlier reservations landed takes it, and its nonce start fails for balance.
-//  3. Advance one minute; assert every request was answered 200, by a retry elsewhere where its start failed, and the nearly empty escrow still serves and was never parked: the planner parks nothing for a failed nonce start (`money identity` at every step).
-//  4. Whether a pick reads the balance before a reservation lands is up to the goroutine scheduler, so boot afresh until a run's start failed for balance and reached the planner as an ignored mark, at most forty runs; assert one did, else the scenario proves nothing.
+//  2. Hold the nearly empty escrow's nonce draws, send three small requests at once and let every one of them pick: each reads the 1 000 before any reservation landed and takes it.
+//  3. Release the draws and advance one minute; assert every request was answered 200, by a retry elsewhere where its start failed, and the nearly empty escrow still serves and was never parked: the planner parks nothing for a failed nonce start (`money identity` at every step).
+//  4. Assert a nonce start failed for balance and reached the planner as an ignored mark, else the scenario proves nothing.
 func TestPicksRacingANearlyEmptyEscrowParkNothing(t *testing.T) {
-	const (
-		requests    = 3
-		maximumRuns = 40
-	)
+	const requests = 3
 	raced := false
-	for run := 0; run < maximumRuns && !raced; run++ {
-		spec := plannerSpec()
-		spec.model.fullContextSlots = 1
-		spec.seeded = []seededEscrow{{amount: 1_000_000, role: regularRole}, {amount: 1_100, role: regularRole}}
-		spec.steps = []harnessStep{
-			sendRequests{promptBytes: 200, maxTokens: 64, count: requests},
-			advance{by: time.Minute},
-			expectThat{label: "the racing picks parked nothing", verify: func(harness *gatewayHarness) error {
-				if err := everyAnswer(requests, http.StatusOK)(harness); err != nil {
-					return err
-				}
-				if row, stored := rowOf(harness, harness.seededIDs[1]); !stored || !row.Active || row.SettlementPending {
-					return fmt.Errorf("nearly empty escrow = %+v, want still serving and never parked", row)
-				}
-				report, found := harness.fundingReport(testModelID)
-				raced = found && report.IgnoredMarks[string(scheduler.ExhaustionInsufficientBalance)] > 0
-				return nil
-			}},
-		}
-		runSteps(t, spec)
+	spec := plannerSpec()
+	spec.model.fullContextSlots = 1
+	spec.seeded = []seededEscrow{{amount: 1_000_000, role: regularRole}, {amount: 1_100, role: regularRole}}
+	spec.steps = []harnessStep{
+		holdNonceDraws{escrowID: seededID(1)},
+		sendRequests{promptBytes: 200, maxTokens: 64, count: requests},
+		releaseNonceDraws{escrowID: seededID(1)},
+		advance{by: time.Minute},
+		expectThat{label: "the racing picks parked nothing", verify: func(harness *gatewayHarness) error {
+			if err := everyAnswer(requests, http.StatusOK)(harness); err != nil {
+				return err
+			}
+			if row, stored := rowOf(harness, harness.seededIDs[1]); !stored || !row.Active || row.SettlementPending {
+				return fmt.Errorf("nearly empty escrow = %+v, want still serving and never parked", row)
+			}
+			report, found := harness.fundingReport(testModelID)
+			raced = found && report.IgnoredMarks[string(scheduler.ExhaustionInsufficientBalance)] > 0
+			return nil
+		}},
 	}
+	runSteps(t, spec)
 	if !raced {
-		t.Fatalf("no run of %d had a nonce start fail for balance on the nearly empty escrow, want one: the scenario proves nothing", maximumRuns)
+		t.Fatalf("no nonce start failed for balance on the nearly empty escrow, want one: the scenario proves nothing")
 	}
 }
 

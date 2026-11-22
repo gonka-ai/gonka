@@ -2,6 +2,7 @@ package registry
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -175,4 +176,96 @@ func TestSweepBeforeFinalizeVotesWithNoRaceGrace(t *testing.T) {
 	}
 	require.Zero(t, held.closeCalls.Load())
 	require.Equal(t, int64(1), parked.closeCalls.Load())
+}
+
+func registryWithBacklogs(t *testing.T, backlogs map[string]int) (*Registry, map[string]*fakeSession) {
+	t.Helper()
+	sessions := make(map[string]*fakeSession, len(backlogs))
+	for id, backlog := range backlogs {
+		session := newFakeSession("participant-" + id)
+		session.sweepBacklog = backlog
+		session.setPhase(types.PhaseActive)
+		sessions[id] = session
+	}
+	registry := New(Deps{ServingSessions: newSessions(sessions).open, Membership: newRecordingMembership(), Now: fixedClock()})
+	registry.ShareChainMaxNonce(1_700)
+	for id := range backlogs {
+		require.NoError(t, registry.Add(context.Background(), id, "qwen"))
+	}
+	return registry, sessions
+}
+
+// Test flow:
+//  1. Build a registry with two active escrows, one with 20 nonces due and one with 3, and sweep with a budget of 8.
+//  2. Assert the small escrow was swept in full and the tick used exactly its budget, so the large one did not take all of it.
+func TestTwoEscrowsShareOneTicksBudget(t *testing.T) {
+	registry, sessions := registryWithBacklogs(t, map[string]int{"1": 20, "2": 3})
+
+	due, applied, failed := registry.SweepExecutionTimeouts(context.Background(), time.Minute, 8)
+
+	require.Equal(t, [3]int{8, 8, 0}, [3]int{due, applied, failed})
+	require.Zero(t, sessions["2"].sweepBacklog, "the small escrow's due nonces were all voted")
+	require.Equal(t, 20-5, sessions["1"].sweepBacklog, "the large escrow took what the small one left")
+}
+
+// Test flow:
+//  1. Build a registry with one active escrow with 20 nonces due and sweep with a budget of 8.
+//  2. Assert the escrow was swept twice, first for half the budget and then for the rest, and the whole budget was used.
+func TestALoneEscrowStillGetsTheWholeBudget(t *testing.T) {
+	registry, sessions := registryWithBacklogs(t, map[string]int{"1": 20})
+
+	due, _, _ := registry.SweepExecutionTimeouts(context.Background(), time.Minute, 8)
+
+	require.Equal(t, 8, due)
+	require.Equal(t, []int{4, 4}, sessions["1"].sweptBudgets)
+}
+
+// Test flow:
+//  1. Build a registry with an active escrow whose sweep names one unvoteable and one failed nonce, with an observer on the registry.
+//  2. Sweep once.
+//  3. Assert the observer heard both with the escrow, its model and the participant that holds the nonce's slot.
+func TestTheSweepNamesWhatItSkippedAndWhatFailed(t *testing.T) {
+	var heard []string
+	session := newFakeSession("participant-a")
+	session.setPhase(types.PhaseActive)
+	session.sweepVotes = []SweptVote{{Nonce: 4, Unvoteable: true}, {Nonce: 5, Detail: "insufficient_votes"}}
+	registry := New(Deps{
+		ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Membership: newRecordingMembership(), Now: fixedClock(),
+		SweptVotes: func(escrowID, model, participant string, vote SweptVote) {
+			heard = append(heard, fmt.Sprint(escrowID, model, participant, vote.Nonce, vote.Unvoteable))
+		},
+	})
+	registry.ShareChainMaxNonce(1_700)
+	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+
+	registry.SweepExecutionTimeouts(context.Background(), time.Minute, 4)
+
+	require.Equal(t, []string{"1qwenparticipant-a4 true", "1qwenparticipant-a5 false"}, heard)
+}
+
+// Test flow:
+//  1. Build a registry with an active escrow whose session lists no slot holders yet and whose sweep names one failed nonce, with an observer on the registry.
+//  2. Sweep once.
+//  3. Assert the sweep returns without a panic, reports its counts and the observer heard nothing, since no participant holds the nonce's slot.
+func TestTheSweepOfAnEscrowWithoutSlotHoldersNamesNothing(t *testing.T) {
+	var heard []string
+	session := newFakeSession()
+	session.setPhase(types.PhaseActive)
+	session.sweepReport = user.SweepReport{Due: 1, Failed: 1}
+	session.sweepVotes = []SweptVote{{Nonce: 5, Detail: "insufficient_votes"}}
+	registry := New(Deps{
+		ServingSessions: newSessions(map[string]*fakeSession{"1": session}).open, Membership: newRecordingMembership(), Now: fixedClock(),
+		SweptVotes: func(escrowID, model, participant string, vote SweptVote) {
+			heard = append(heard, fmt.Sprint(escrowID, model, participant, vote.Nonce))
+		},
+	})
+	registry.ShareChainMaxNonce(1_700)
+	require.NoError(t, registry.Add(context.Background(), "1", "qwen"))
+
+	var due, failed int
+	require.NotPanics(t, func() { due, _, failed = registry.SweepExecutionTimeouts(context.Background(), time.Minute, 4) })
+
+	require.Equal(t, 1, due)
+	require.Equal(t, 1, failed)
+	require.Empty(t, heard)
 }

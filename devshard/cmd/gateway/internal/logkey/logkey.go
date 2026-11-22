@@ -28,6 +28,9 @@ const (
 	FailureRate         = "failure_rate"
 	FailureVolume       = "failure_volume"
 	WithheldForMS       = "withheld_for_ms"
+	Pairs               = "pairs"
+	Withheld            = "withheld"
+	CutOff              = "cut_off"
 
 	SweptDue     = "swept_due"
 	SweptApplied = "swept_applied"
@@ -102,6 +105,8 @@ const (
 	Stream            = "stream"
 	InputTokens       = "input_tokens"
 	InputTokensSource = "input_tokens_source"
+	InputBytes        = "input_bytes"
+	MaxTokens         = "max_tokens"
 	OutputTokens      = "output_tokens"
 	Bytes             = "bytes"
 	Terminated        = "terminated"

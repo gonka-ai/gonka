@@ -48,6 +48,9 @@ type fakeSession struct {
 
 	phase                atomic.Int32
 	sweepReport          user.SweepReport
+	sweepVotes           []SweptVote
+	sweepBacklog         int
+	sweptBudgets         []int
 	onSweep              func()
 	sweptGrace           time.Duration
 	sweptBudget          int
@@ -129,9 +132,11 @@ func (f *fakeSession) SignatureStatus() ([]user.SignatureStatusEntry, uint64, bo
 	return nil, 0, false
 }
 
-func (f *fakeSession) SignedSlots() map[uint64]types.Bitmap128 { return nil }
-func (f *fakeSession) SnapshotState() types.EscrowState        { return f.escrowState }
-func (f *fakeSession) SealedInferences() int                   { return f.sealed }
+func (f *fakeSession) SignedSlots() map[uint64]types.Bitmap128      { return nil }
+func (f *fakeSession) SnapshotState() types.EscrowState             { return f.escrowState }
+func (f *fakeSession) SnapshotStateNoInferences() types.EscrowState { return f.escrowState }
+func (f *fakeSession) SealedInferences() int                        { return f.sealed }
+func (f *fakeSession) VoteThreshold() uint32                        { return f.escrowState.Config.VoteThreshold }
 
 func (f *fakeSession) ProtocolVersion() string { return f.escrowState.StateRootAndProtocolVersion }
 
@@ -181,16 +186,23 @@ func (f *fakeSession) Close() error {
 
 func (f *fakeSession) UserSession() *user.Session { return nil }
 
-func (f *fakeSession) SweepExecutionTimeouts(_ context.Context, grace time.Duration, budget int) user.SweepReport {
+func (f *fakeSession) SweepExecutionTimeouts(_ context.Context, grace time.Duration, budget int) SweepReport {
 	f.sweptGrace, f.sweptBudget = grace, budget
+	f.sweptBudgets = append(f.sweptBudgets, budget)
 	if f.onSweep != nil {
 		f.onSweep()
 	}
-	return f.sweepReport
+	if f.sweepBacklog > 0 {
+		due := min(budget, f.sweepBacklog)
+		f.sweepBacklog -= due
+		return SweepReport{Due: due, Applied: due}
+	}
+	return SweepReport{Due: f.sweepReport.Due, Applied: f.sweepReport.Applied, Failed: f.sweepReport.Failed, Votes: f.sweepVotes}
 }
 
 func (f *fakeSession) SweepBeforeFinalize(ctx context.Context, budget int) (user.SweepReport, error) {
-	return f.SweepExecutionTimeouts(ctx, noRaceGrace, budget), nil
+	f.SweepExecutionTimeouts(ctx, noRaceGrace, budget)
+	return f.sweepReport, nil
 }
 
 func (f *fakeSession) HostDials() []HostDial { return f.dials }

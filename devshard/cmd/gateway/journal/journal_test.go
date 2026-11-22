@@ -11,6 +11,7 @@ import (
 
 	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/scheduler"
@@ -351,7 +352,7 @@ func TestARequestFinishedLineSurvivesAFullProgressBacklogThatDropsARequestThrott
 
 	lines.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "api_key_id", "acf99d94", "stream", false,
-		"input_tokens", uint64(0), "output_tokens", int64(0),
+		"input_tokens", uint64(0), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(0),
 		"outcome", "served", "bytes", int64(0), "terminated", false, "duration_ms", int64(0),
 	}})
 	_, progressDropped, _ := events.Counts()

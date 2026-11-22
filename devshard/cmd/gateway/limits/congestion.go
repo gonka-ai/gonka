@@ -1,5 +1,7 @@
 package limits
 
+import "time"
+
 // dimension names the congestion window a signal blames. See README.md, "What blames which window".
 type dimension string
 
@@ -48,6 +50,11 @@ type Result struct {
 	Verdict     Verdict
 	Carried     TokenCost
 	Pressure    Pressure
+	LaunchedAt  time.Time
+}
+
+func launchedBefore(launchedAt, instant time.Time) bool {
+	return !launchedAt.IsZero() && launchedAt.Before(instant)
 }
 
 // response is the whole of what one verdict means: how hard to narrow, which window to blame, and what the breaker does.

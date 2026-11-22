@@ -13,6 +13,7 @@ import (
 )
 
 type pacedHandler struct {
+	deadline   time.Time
 	steps      []string
 	notReady   bool
 	waitsLeft  int
@@ -37,11 +38,6 @@ func (h *pacedHandler) VoteTimeout(context.Context, uint64, time.Time, *host.Inf
 	return h.voteResult, false, h.voteErr
 }
 
-func (h *pacedHandler) HandleTimeout(context.Context, uint64, time.Time, *host.InferencePayload) (user.TimeoutResult, error) {
-	h.steps = append(h.steps, "handle")
-	return user.TimeoutResult{}, nil
-}
-
 func (h *pacedHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {
 	return user.TimeoutResult{}, nil
 }
@@ -49,7 +45,7 @@ func (h *pacedHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) 
 func (h *pacedHandler) FinishTxFor(uint64) []byte { return nil }
 
 func (h *pacedHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
-	return string(TimeoutKindRefused), time.Time{}
+	return string(TimeoutKindRefused), h.deadline
 }
 
 func pacedStep(handler *pacedHandler, pace func(context.Context) error) (TimeoutVote, error) {
@@ -58,7 +54,7 @@ func pacedStep(handler *pacedHandler, pace func(context.Context) error) (Timeout
 
 // Test flow:
 //  1. Settle a step carrying a pace through a handler that votes at once, with a pace that records its own call.
-//  2. Assert the handler waited for the deadline, then the pace ran, then the vote was cast, and `HandleTimeout` was not used.
+//  2. Assert the handler waited for the deadline, then the pace ran, then the vote was cast.
 func TestAPacedStepWaitsForTheDeadlineThenPacesThenVotes(t *testing.T) {
 	handler := &pacedHandler{voteResult: user.TimeoutResult{Applied: true}}
 	pace := func(context.Context) error {
@@ -77,21 +73,21 @@ func TestAPacedStepWaitsForTheDeadlineThenPacesThenVotes(t *testing.T) {
 }
 
 // Test flow:
-//  1. Settle a paced step through a handler whose first vote says the record is not due, so the wait runs again.
-//  2. Assert the pace ran before each of the two votes, once per vote and never before a wait.
-func TestAPacedStepPacesEveryVoteItCasts(t *testing.T) {
+//  1. Settle a paced step through a handler whose vote says the deadline moved, as a recovered receipt does.
+//  2. Assert the step comes back deferred with no error, and the pace and the vote each ran once with no second wait: the execution window is left to the queue's timer.
+func TestAVoteWhoseDeadlineMovedIsDeferredInsteadOfWaitedOut(t *testing.T) {
 	handler := &pacedHandler{waitsLeft: 1, voteResult: user.TimeoutResult{Applied: true}}
 	pace := func(context.Context) error {
 		handler.steps = append(handler.steps, "pace")
 		return nil
 	}
 
-	_, err := pacedStep(handler, pace)
+	vote, err := pacedStep(handler, pace)
 
-	if err != nil {
-		t.Fatalf("SettleTimeout() = %v, want nil", err)
+	if err != nil || !vote.Deferred {
+		t.Fatalf("SettleTimeout() = %+v, %v, want a deferred vote and no error", vote, err)
 	}
-	if want := []string{"wait", "pace", "vote", "wait", "pace", "vote"}; !slices.Equal(handler.steps, want) {
+	if want := []string{"wait", "pace", "vote"}; !slices.Equal(handler.steps, want) {
 		t.Fatalf("steps = %v, want %v", handler.steps, want)
 	}
 }
@@ -134,9 +130,28 @@ func TestAPacedStepWhosePaceIsInterruptedCastsNoVote(t *testing.T) {
 }
 
 // Test flow:
+//  1. Settle a paced step through a handler whose deadline is still an hour ahead.
+//  2. Assert the step comes back deferred with no error and the handler neither waited, paced nor voted: the queue's timer holds the vote, not a sleep.
+func TestAStepWhoseDeadlineIsStillAheadIsDeferredWithoutWaiting(t *testing.T) {
+	handler := &pacedHandler{deadline: time.Now().Add(time.Hour)}
+
+	vote, err := pacedStep(handler, func(context.Context) error {
+		handler.steps = append(handler.steps, "pace")
+		return nil
+	})
+
+	if err != nil || !vote.Deferred {
+		t.Fatalf("SettleTimeout() = %+v, %v, want a deferred vote and no error", vote, err)
+	}
+	if len(handler.steps) != 0 {
+		t.Fatalf("steps = %v, want none", handler.steps)
+	}
+}
+
+// Test flow:
 //  1. Settle a step carrying no pace through the same handler.
-//  2. Assert the handler's own `HandleTimeout` ran and neither the wait nor the vote was called on its own.
-func TestAStepWithoutAPaceUsesTheHandlersOwnTimeout(t *testing.T) {
+//  2. Assert the handler waited and voted once with no pace between them.
+func TestAStepWithoutAPaceWaitsAndVotesOnce(t *testing.T) {
 	handler := &pacedHandler{}
 
 	_, err := pacedStep(handler, nil)
@@ -144,7 +159,7 @@ func TestAStepWithoutAPaceUsesTheHandlersOwnTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SettleTimeout() = %v, want nil", err)
 	}
-	if want := []string{"handle"}; !slices.Equal(handler.steps, want) {
+	if want := []string{"wait", "vote"}; !slices.Equal(handler.steps, want) {
 		t.Fatalf("steps = %v, want %v", handler.steps, want)
 	}
 }

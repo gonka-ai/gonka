@@ -24,6 +24,20 @@ func (r *Registry) Candidates(model string) []scheduler.Escrow {
 	return candidates
 }
 
+// UnvoteableHosts names the hosts of the model's open escrows whose own nonces no timeout vote can reach.
+func (r *Registry) UnvoteableHosts(model string) map[string]bool {
+	hosts := map[string]bool{}
+	for _, entry := range r.live.Load().byModel[model] {
+		if !entry.accepting() {
+			continue
+		}
+		for _, host := range entry.stream.UnvoteableHosts() {
+			hosts[host] = true
+		}
+	}
+	return hosts
+}
+
 // Routable answers for one escrow what Candidates answers for a model, by id rather than by scanning every model.
 func (r *Registry) Routable(escrowID string) (scheduler.Escrow, bool) {
 	entry, known := r.live.Load().byID[escrowID]

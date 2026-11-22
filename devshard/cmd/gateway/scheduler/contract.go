@@ -17,6 +17,7 @@ type RequestProfile struct {
 	OutputTokens      int
 	Exclude           []string
 	Params            any
+	Burns             *BurnTally
 	// Escalation marks a speculative attempt of a race that already holds Escrow. See routing.md, "Picking an escrow".
 	Escalation bool
 }

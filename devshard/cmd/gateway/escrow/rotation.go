@@ -93,17 +93,25 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 	}
 	room := bridgeRoom(label, models, devshards, commitments)
 	targetOf := func(model ModelConfig) int {
+		wanted := bridgeTarget(model, m.planner.bridgeNeed(model.ModelID))
 		limit, capped := room[model.ModelID]
 		if !capped {
-			return model.TempCount
+			return wanted
 		}
-		return min(model.TempCount, countActive(devshards, model.ModelID, roleTemp, int64(label))+max(limit, 0))
+		return min(wanted, countActive(devshards, model.ModelID, roleTemp, int64(label))+max(limit, 0))
 	}
 	var errs []error
 	for _, fill := range m.fillToLabel(ctx, roleTemp, label, models, targetOf, snapshot, devshards, commitments) {
 		model, created, err := fill.model, fill.created, fill.err
-		if funded := countActive(devshards, model.ModelID, roleTemp, int64(label)) + created; err == nil && funded < model.TempCount {
+		funded := countActive(devshards, model.ModelID, roleTemp, int64(label)) + created
+		if err == nil && funded < model.TempCount {
 			err = fmt.Errorf("%w: %d of %d for %s", errBridgePartialFill, funded, model.TempCount, model.ModelID)
+		}
+		if err != nil && funded >= model.TempCount {
+			if !refusedBeforeBroadcast(err) && !errors.Is(err, errCreateSuppressed) {
+				errs = append(errs, fmt.Errorf("topping up the bridge for %s: %w", model.ModelID, err))
+			}
+			err = nil
 		}
 		if err != nil {
 			// degrade, don't abort: relabel existing regulars as temp so this epoch still has bridge coverage.
@@ -146,6 +154,14 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func bridgeTarget(model ModelConfig, needEscrows int) int {
+	wanted := max(model.TempCount, needEscrows)
+	if model.MaxUnsettled <= 0 {
+		return wanted
+	}
+	return min(wanted, max(model.TempCount, model.MaxUnsettled-model.TargetCount-model.ReserveCount))
 }
 
 func bridgeRoom(label uint64, models []ModelConfig, devshards []store.DevshardRecord, commitments []store.Commitment) map[string]int {

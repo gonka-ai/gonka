@@ -30,3 +30,9 @@ func (r *lookupRefusals) judge(attempt AttemptOutcome, model string) AttemptOutc
 	}
 	return attempt
 }
+
+func (r *lookupRefusals) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	clear(r.consecutive)
+}

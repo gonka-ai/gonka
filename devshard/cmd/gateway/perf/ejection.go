@@ -35,26 +35,31 @@ func newEjectionPolicy(consecutiveFailThreshold int, failureRateThreshold, failu
 	}
 }
 
-func (p ejectionPolicy) evaluate(h *hostPerf, state *ejectionState, now time.Time) {
+func (p ejectionPolicy) evaluate(h *hostPerf, state *ejectionState, now time.Time) (started bool) {
 	if state.ejected(now) {
 		h.resetOutcomeCounters()
-		return
+		return false
 	}
 	rate, volume := h.failureRate(now)
 	consecutiveTripped := h.consecutiveFail >= p.consecutiveFailThreshold
 	rateTripped := volume >= p.failureRateMinVolume && rate >= p.failureRateThreshold
 	if !consecutiveTripped && !rateTripped {
 		state.decayEjectionCount(p.max, now)
-		return
+		return false
 	}
 	reason := ejectionReasonFailureRate
 	if consecutiveTripped {
 		reason = ejectionReasonConsecutiveFailures
 	}
-	state.ejectionCount++
-	state.ejectedUntil = now.Add(min(p.base*time.Duration(state.ejectionCount), p.max))
+	p.eject(state, state.ejectionCount+1, now)
 	state.trigger = ejectionTrigger{reason: reason, consecutiveFailures: h.consecutiveFail, failureRate: rate, failureVolume: volume}
 	h.resetOutcomeCounters()
+	return true
+}
+
+func (p ejectionPolicy) eject(state *ejectionState, rung int, now time.Time) {
+	state.ejectionCount = rung
+	state.ejectedUntil = now.Add(min(p.base*time.Duration(rung), p.max))
 }
 
 func (s *ejectionState) ejected(now time.Time) bool {

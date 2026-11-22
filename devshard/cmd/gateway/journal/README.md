@@ -61,7 +61,7 @@ The `journal` step sits between `escrow sessions` and `nonce accounting` (`app/l
 | Kind | Producer | Ledger | Line |
 | --- | --- | --- | --- |
 | `KindRaceReported` | `nonceAccountedRaces.RecordRace` (`app/observers.go`) | `RecordRace` | none |
-| `KindTimeoutVote` | `nonceAccountedRaces.RecordTimeout` for a race vote; `probeVotes.RecordTimeout` through `RecordProbeTimeout` for a warmup vote (`app/observers.go`) | `RecordTimeout` | `timeout vote failed`, Warn (`render_money.go`): a race vote whose action is `failed` for any reason but `escrow_gone_from_hosts`, which the escrow's own line already reports once. A warmup vote writes none; the warmup writes its own line |
+| `KindTimeoutVote` | `nonceAccountedRaces.RecordTimeout` for a race vote and, through `sweptTimeouts`, for a swept vote; `probeVotes.RecordTimeout` through `RecordProbeTimeout` for a warmup vote (`app/observers.go`) | `RecordTimeout` | `timeout vote cannot pass`, Info (`render_money.go`): a vote whose action is `skipped` for the reason `unvoteable`; `timeout vote failed`, Warn (`render_money.go`): a race or swept vote whose action is `failed` for any reason but `escrow_gone_from_hosts`, which the escrow's own line already reports once. A warmup vote writes none; the warmup writes its own line |
 | `KindNonceBurned` | `tracedDispatches.GhostBurned` (`app/observers.go`) | `RecordGhost` | `nonce burned for nobody`, Warn (`render_money.go`) |
 | `KindBurnBudgetExhausted` | `tracedDispatches.BurnBudgetExhausted` (`app/observers.go`) | none | `escrow stopped burning nonces at its budget`, Warn (`render_money.go`) |
 | `KindDiffComposed` | the diff observer `nonces.Recorder.watchDiffs` installs, through `DiffComposed`, under the session lock | `RecordDiffFacts` | none |
@@ -69,13 +69,13 @@ The `journal` step sits between `escrow sessions` and `nonce accounting` (`app/l
 | `KindNonceStranded` | `raceCoordinator.strand` through `RecordStep` (`engine/race.go`) | none | `nonce stranded`, Warn (`render_race.go`) |
 | `KindHostDiverged` | `raceCoordinator.stateDiverged` through `RecordStep` (`engine/report.go`) | none | `host blocked for state divergence` or `host rewound for state divergence`, Warn (`render_race.go`) |
 | `KindRaceStepUnnamed` | a `RaceStepKind` that `raceStepKind` does not list | none | `race step the journal has no line for`, Error (`render_race.go`) |
-| `KindNonceCommitted` | `raceCoordinator.launch` through `RecordStep` (`engine/pick.go`) | none | `nonce committed`, Info (`render_race.go`) |
+| `KindNonceCommitted` | `raceCoordinator.launch` through `RecordStep` (`engine/pick.go`) | none | `nonce committed`, Info, with the request's `input_bytes` and `max_tokens` (`render_race.go`) |
 | `KindEscalationUnfilled` | `raceCoordinator.reportUnfilledPick` through `RecordStep` (`engine/pick.go`) | none | `escalation unfilled`, Info (`render_race.go`) |
 | `KindAttemptCrowned` | `raceCoordinator.crownWinner` through `RecordStep` (`engine/crown.go`) | none | `attempt crowned`, Info (`render_race.go`) |
 | `KindAttemptFinished` | `raceCoordinator.complete` through `RecordStep` (`engine/report.go`) | none | `attempt finished`, or `attempt finished with no outcome` when the attempt reported nothing, Info (`render_race.go`) |
 | `KindWinnerFinishLanded` | `Engine.decideWinner` through `RecordStep` (`engine/winner_sample.go`) | none | `served winner finish landed`, Info (`render_race.go`), with `finish_lag_ms` from the attempt's end until the gateway saw the finish |
 | `KindReplyNotCached` | `Server.chat` through `ReplyNotCached` (`api/routes.go`) | none | `a host stopped mid-answer: reply served, not cached`, Warn (`render_request.go`) |
-| `KindRequestFinished` | `Server.finishRequest` (`api/finish.go`) and the cache hit in `Server.chat` (`api/routes.go`), through `RequestFinished` | none | `request finished` (`render_request.go`): Info when the request went out clean, Warn with a race or delivery error; a cache hit writes the short shape with `outcome` `cache_hit`, its prompt count as `input_tokens` and where that count came from as `input_tokens_source` |
+| `KindRequestFinished` | `Server.finishRequest` (`api/finish.go`) and the cache hit in `Server.chat` (`api/routes.go`), through `RequestFinished` | none | `request finished` (`render_request.go`): Info when the request went out clean, Warn with a race or delivery error; a cache hit writes the short shape with `outcome` `cache_hit`, its prompt count as `input_tokens` and where that count came from as `input_tokens_source`; a raced request's line carries both too |
 | `KindRequestThrottled` | `Server.chat` through `RequestThrottled` (`api/routes.go`) | none | `gateway limiter turned a request away`, Warn (`render_request.go`) |
 | `KindRequestBodyUnread` | `Server.refuseBody` through `RequestBodyUnread` (`api/body_failure.go`) | none | `request body not received: connection closed`, Warn (`render_request.go`), with the request and the `error` that stopped the read, which carries the client's socket address |
 | `KindHostTransition` | `perf.Tracker`, `limits.ParticipantLimiter`, `engine` crown strikes | none | host withheld and back, capability refusals, cut off and back, crown denied and restored (`render_host.go`): Info, except `host withheld from routing`, `host cut off after transport faults` and `host denied the crown`, which are Warn |
@@ -92,7 +92,7 @@ A key is written only when its subject exists. `request finished` carries `escro
 
 ## Which request a burn and a vote belong to
 
-A burn names the request it was spent during under `burned_during_request`: the request a refused slot was meant for, otherwise the oldest request still waiting in the dispatcher's queue when a drain burned the nonce, or the request whose assignment arrived after it had left. The key is deliberately not `request`, because the nonce served nobody and a search for one request's own lines must not return it. Neither id is ever a metric label. The key is written only when the burn has a request to name. A failed timeout vote names its race's `request`; a warmup vote has none.
+A burn names the request it was charged to under `burned_during_request`: the request a refused slot was meant for, the request a nonce was served for, or the first waiting request that does not exclude a blocked host. A burn charged to no request, such as one on a shadow participant's nonce, names none. The key is deliberately not `request`, because the nonce served nobody and a search for one request's own lines must not return it. Neither id is ever a metric label. The key is written only when the burn has a request to name. A failed timeout vote names its race's `request`; a warmup vote has none.
 
 ## Lifecycle lines outside a race
 

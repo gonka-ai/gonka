@@ -228,10 +228,6 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	participants.SetNarrator(events)
 	capacity := limits.NewCapacity(participants.Available)
 	observer.Subscribe(capacity.Update)
-	observer.Subscribe(func(snapshot chain.PhaseSnapshot) {
-		participants.ObserveModels(contextWindowsOf(snapshot))
-		participants.ObserveWeights(participantWeightsOf(snapshot))
-	})
 	observer.SetNarrator(events)
 	observer.Subscribe((&phaseNarrator{events: events}).observe)
 	gatewayLimiter := limits.NewGatewayLimiter(limits.GatewayConfigFromLimits(configuration.Limits))
@@ -248,6 +244,10 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	hosts.SetNarrator(events)
 	recorder.SetCapability(hostCapabilities(hosts, participants, capacity))
 
+	raceRecorder := metrics.NewRaceRecorder(telemetry, clock, func() time.Duration {
+		return time.Duration(configHolder.Load().Perf.HostStalenessSeconds) * time.Second
+	})
+	raceObserver := nonceAccountedRaces{recorder: raceRecorder, events: events}
 	devshardWork := make(chan struct{}, 1)
 	depletion := &depletionNotice{}
 	finishes := &finishNotice{}
@@ -268,19 +268,17 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		PeerRPC:      adoption,
 		Ledger:       recorder,
 		Journal:      events,
+		Timeouts:     raceObserver,
 		Shadow:       shadowProbes,
 		Now:          clock,
 	})
 	if err != nil {
 		return nil, err
 	}
+	hosts.SetUnvoteableSource(escrows)
 	retention := newSessionRetention(storageDir, configuration.Server.SessionRetentionEpochs, gatewayStore, escrows)
 	observer.Subscribe(func(snapshot chain.PhaseSnapshot) { retention.observe(ctx, snapshot) })
 	observer.Subscribe(func(snapshot chain.PhaseSnapshot) { escrows.ShareChainMaxNonce(snapshot.MaxNonce) })
-	hostStaleness := func() time.Duration {
-		return time.Duration(configHolder.Load().Perf.HostStalenessSeconds) * time.Second
-	}
-	raceRecorder := metrics.NewRaceRecorder(telemetry, clock, hostStaleness)
 	exhaustion := escrowExhaustion{escrows: escrows, router: router}
 	manager, err := escrow.NewManager(escrow.Deps{
 		Tx:          txClient,
@@ -327,7 +325,6 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	}
 
 	sessions := api.NewSessions(escrows)
-	raceObserver := nonceAccountedRaces{recorder: raceRecorder, events: events}
 	probeTimeouts := probeVotes{recorder: raceRecorder, events: events}
 	prober.Settle(sessions.Poster, probeTimeouts, events)
 	prompts := promptTokens(sources.ModelSnapshots, observer)
@@ -363,6 +360,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		return nil, err
 	}
 	finishes.attach(races)
+	subscribeEpochBoundaryReset(observer, participants, hosts, races, events)
 	// One wrapper for both readers, so the gauge reports the scale admission actually applies.
 	modelCapacities := modelCapacity{capacity: capacity, snapshots: observer, config: configHolder, participants: participants}
 	telemetry.Register(

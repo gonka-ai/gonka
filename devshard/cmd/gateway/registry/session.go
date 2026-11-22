@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
+	"devshard/cmd/gateway/quorum"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/heightsync"
 	"devshard/state"
@@ -55,6 +57,8 @@ type EscrowSession interface {
 	SignedSlots() map[uint64]types.Bitmap128
 	SignatureStatus() (entries []user.SignatureStatusEntry, highestQuorum uint64, hasAny bool)
 	SnapshotState() types.EscrowState
+	SnapshotStateNoInferences() types.EscrowState
+	VoteThreshold() uint32
 	AllInferences() map[uint64]types.InferenceRecord
 	Inference(id uint64) (types.InferenceRecord, bool)
 	SealedInference(id uint64) (types.InferenceRecord, bool)
@@ -69,7 +73,7 @@ type EscrowSession interface {
 	FlushSnapshot() error
 	Close() error
 	UserSession() *user.Session
-	SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) user.SweepReport
+	SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) SweepReport
 	SweepBeforeFinalize(ctx context.Context, budget int) (user.SweepReport, error)
 }
 
@@ -81,6 +85,7 @@ type sessionHandle struct {
 	machine         *state.StateMachine
 	finalizing      finalizeLock
 	protocolVersion string
+	sweep           *timeoutSweep
 }
 
 // NewSessionHandle takes the protocol version once. See README.md, "The two session kinds".
@@ -90,6 +95,7 @@ func NewSessionHandle(session *user.Session, machine *state.StateMachine) Escrow
 		machine:         machine,
 		finalizing:      newFinalizeLock(),
 		protocolVersion: machine.SnapshotStateNoInferences().StateRootAndProtocolVersion,
+		sweep:           newTimeoutSweep(),
 	}
 }
 
@@ -101,16 +107,16 @@ func (h sessionHandle) Finalize(ctx context.Context) error {
 	return h.Session.Finalize(ctx)
 }
 
-// SweepExecutionTimeouts steps over an escrow a Finalize holds instead of waiting it out, and votes only while the session is active.
-func (h sessionHandle) SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) user.SweepReport {
+// SweepExecutionTimeouts steps over an escrow a Finalize holds instead of waiting it out, and votes only while the session is active. See README.md, "The execution-timeout sweep".
+func (h sessionHandle) SweepExecutionTimeouts(ctx context.Context, grace time.Duration, budget int) SweepReport {
 	if !h.finalizing.TryLock() {
-		return user.SweepReport{}
+		return SweepReport{}
 	}
 	defer h.finalizing.Unlock()
 	if h.machine.Phase() != types.PhaseActive {
-		return user.SweepReport{}
+		return SweepReport{}
 	}
-	return h.Session.SweepExecutionTimeouts(ctx, grace, budget)
+	return h.sweepDue(ctx, grace, budget, backoffHonoured)
 }
 
 // SweepBeforeFinalize waits out a sweep or Finalize holding the escrow, then votes with no race grace while the session is active.
@@ -122,7 +128,8 @@ func (h sessionHandle) SweepBeforeFinalize(ctx context.Context, budget int) (use
 	if h.machine.Phase() != types.PhaseActive {
 		return user.SweepReport{}, nil
 	}
-	return h.Session.SweepExecutionTimeouts(ctx, noRaceGrace, budget), nil
+	swept := h.sweepDue(ctx, noRaceGrace, budget, backoffIgnored)
+	return user.SweepReport{Due: swept.Due, Applied: swept.Applied, Failed: swept.Failed}, nil
 }
 
 type finalizeLock chan struct{}
@@ -158,9 +165,13 @@ func (l finalizeLock) LockContext(ctx context.Context) error {
 
 func (h sessionHandle) Phase() types.SessionPhase        { return h.machine.Phase() }
 func (h sessionHandle) SnapshotState() types.EscrowState { return h.machine.SnapshotState() }
-func (h sessionHandle) ProtocolVersion() string          { return h.protocolVersion }
-func (h sessionHandle) SealedInferences() int            { return len(h.machine.ExportSealedNonces()) }
-func (h sessionHandle) UserSession() *user.Session       { return h.Session }
+func (h sessionHandle) SnapshotStateNoInferences() types.EscrowState {
+	return h.machine.SnapshotStateNoInferences()
+}
+func (h sessionHandle) VoteThreshold() uint32      { return h.machine.VoteThreshold() }
+func (h sessionHandle) ProtocolVersion() string    { return h.protocolVersion }
+func (h sessionHandle) SealedInferences() int      { return len(h.machine.ExportSealedNonces()) }
+func (h sessionHandle) UserSession() *user.Session { return h.Session }
 
 func (h sessionHandle) LiveInferences() (types.SessionConfig, []types.InferenceRecord) {
 	ids := h.machine.LiveInferenceIDs()
@@ -237,23 +248,37 @@ func (h sessionHandle) ChatBudgets() map[string]ChatBudget {
 }
 
 type nonceStream struct {
-	session      EscrowSession
-	model        string
-	slots        []string
-	participants []string
-	budgets      map[string]ChatBudget
-	now          func() time.Time
+	session         EscrowSession
+	model           string
+	slots           []string
+	participants    []string
+	budgets         map[string]ChatBudget
+	unvoteableHosts []string
+	now             func() time.Time
 }
 
 // newNonceStream is the only way to build one, so the cached group cannot disagree with the session's.
 func newNonceStream(session EscrowSession, model string, now func() time.Time) nonceStream {
-	return nonceStream{
+	stream := nonceStream{
 		session: session, model: model, now: now,
 		slots: session.HostParticipantKeyList(), participants: session.ParticipantKeys(), budgets: session.ChatBudgets(),
 	}
+	stream.unvoteableHosts = stream.unvoteableParticipants(session.SnapshotStateNoInferences().Group, session.VoteThreshold())
+	return stream
+}
+
+func (s nonceStream) unvoteableParticipants(group []types.SlotAssignment, threshold uint32) []string {
+	var hosts []string
+	for slot := range group {
+		if !quorum.Voteable(group, threshold, uint64(slot)) && !slices.Contains(hosts, s.slots[slot]) {
+			hosts = append(hosts, s.slots[slot])
+		}
+	}
+	return hosts
 }
 
 func (s nonceStream) ParticipantKeys() []string  { return s.participants }
+func (s nonceStream) UnvoteableHosts() []string  { return s.unvoteableHosts }
 func (s nonceStream) SlotParticipants() []string { return s.slots }
 func (s nonceStream) GroupSize() int             { return len(s.slots) }
 func (s nonceStream) LatestNonce() uint64        { return s.session.PublishedNonce() }

@@ -35,6 +35,10 @@ const (
 	blockShadow
 )
 
+func (reason blockReason) burns() bool {
+	return reason != blockNone && reason != blockShadow
+}
+
 // ghostFor names the burn each participant-only block earns, as one mapping rather than two switches; blockShadow earns a probe instead, so it has no entry.
 var ghostFor = map[blockReason]GhostKind{
 	blockPoCRequired:     ghostPoC,
@@ -181,11 +185,11 @@ func (a availability) onlyThisHostIsLeft(participant string, participants []stri
 // match is pure and total, and filters by participant rather than slot. See README, "The match decision".
 func match(binding HostBinding, waiting []*waiter, participants []string, avail availability, now time.Time, matchWait time.Duration) Decision {
 	participant := binding.Participant
-	switch reason := avail.participantBlocked(participant); reason {
-	case blockNone:
-	case blockShadow:
+	reason := avail.participantBlocked(participant)
+	if reason == blockShadow {
 		return probe{}
-	default:
+	}
+	if reason.burns() {
 		return burn{kind: ghostFor[reason]}
 	}
 

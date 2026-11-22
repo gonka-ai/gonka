@@ -12,6 +12,7 @@ type Tunables struct {
 	AdmissionQueuePerSlot                  *int64   `json:"admission_queue_per_slot,omitempty"`
 	MatchWaitMS                            *int64   `json:"match_wait_ms,omitempty"`
 	MaxConsecutiveBurns                    *int64   `json:"max_consecutive_burns,omitempty"`
+	MaxBurnsPerRequest                     *int64   `json:"max_burns_per_request,omitempty"`
 	ForceUpstreamStreaming                 *bool    `json:"force_upstream_streaming,omitempty"`
 	LogprobsOptimization                   *bool    `json:"logprobs_optimization,omitempty"`
 	MaxBufferedResponseBytes               *int64   `json:"max_buffered_response_bytes,omitempty"`
@@ -35,6 +36,7 @@ type Tunables struct {
 	EngineLoserGraceMS                     *int64   `json:"engine_loser_grace_ms,omitempty"`
 	EngineMaxConcurrentTimeoutVotes        *int64   `json:"engine_max_concurrent_timeout_votes,omitempty"`
 	EngineHedgeFirstTokenFloorMS           *int64   `json:"engine_hedge_first_token_floor_ms,omitempty"`
+	EngineMaxStartedAttemptsPerRequest     *int64   `json:"engine_max_started_attempts_per_request,omitempty"`
 	PerfEWMAHalfLifeSeconds                *int64   `json:"perf_ewma_halflife_seconds,omitempty"`
 	PerfConsecutiveFailThreshold           *int64   `json:"perf_consecutive_fail_threshold,omitempty"`
 	PerfFailureRateThreshold               *float64 `json:"perf_failure_rate_threshold,omitempty"`

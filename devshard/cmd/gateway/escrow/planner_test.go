@@ -121,7 +121,7 @@ func TestAModelListThatNoLongerParsesDropsTheReports(t *testing.T) {
 // Test flow:
 //  1. Table-driven: build a planning manager with one starved escrow, so two guard creates are wanted, and a snapshot whose raw chain state blocks requests with the case's reason under the case's PoC mode.
 //  2. Plan once.
-//  3. Assert the guard creates the planner decided: two where admission lets requests through or the block is a confirmation PoC, none where admission refuses them or an epoch PoC holds.
+//  3. Assert the guard creates the planner decided: two where admission lets requests through or the block is a confirmation PoC in any mode, none where an epoch PoC holds in any mode.
 func TestPlannerCreatesFollowTheBlockingAdmissionUses(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
@@ -130,7 +130,8 @@ func TestPlannerCreatesFollowTheBlockingAdmissionUses(t *testing.T) {
 		wantCreates uint64
 	}{
 		{name: "relaxed mode in a confirmation PoC", pocMode: config.PoCModeRelaxed, reason: chain.BlockReasonConfirmationPoC, wantCreates: 2},
-		{name: "strict mode in a confirmation PoC", pocMode: config.PoCModeOff, reason: chain.BlockReasonConfirmationPoC},
+		{name: "strict mode in a confirmation PoC", pocMode: config.PoCModeOff, reason: chain.BlockReasonConfirmationPoC, wantCreates: 2},
+		{name: "strict mode in an epoch PoC", pocMode: config.PoCModeOff, reason: chain.BlockReasonPoC},
 		{name: "relaxed mode in an epoch PoC", pocMode: config.PoCModeRelaxed, reason: chain.BlockReasonPoC},
 		{name: "relaxed mode with nothing blocked", pocMode: config.PoCModeRelaxed, reason: chain.BlockReasonNone, wantCreates: 2},
 	} {

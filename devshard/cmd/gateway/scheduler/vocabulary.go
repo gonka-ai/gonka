@@ -2,7 +2,7 @@ package scheduler
 
 // The strings this package puts on the wire, declared once and referenced by name. See routing.md, "Ghost burns".
 
-// Why a nonce was burned instead of served.
+// Why a nonce was burned instead of served, and the request a burn names when it was charged to none.
 const (
 	GhostReasonPoCUnavailable      = "poc_unavailable_host"
 	GhostReasonWindowFull          = "participant_window_full_no_send"
@@ -16,6 +16,7 @@ const (
 	GhostReasonAbsentFromChain     = "participant_absent_from_chain_no_send"
 	GhostReasonProbeNoRequest      = "shadow_probe_no_request"
 	GhostReasonProbeNoRoom         = "shadow_probe_no_room"
+	NoRequestID                    = ""
 )
 
 // ProbeSkip is why a shadow participant's nonce is burned instead of probed; ProbeSkipNone is a probe that can be built. See routing.md, "Shadow participants".

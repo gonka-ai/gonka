@@ -69,6 +69,26 @@ func TestAHostlessRequestIsOurRefusalNotAnUpstreamFailure(t *testing.T) {
 }
 
 // Test flow:
+//  1. Write `scheduler.ErrRequestCapped`, wrapped the way a dispatcher wraps it, through `writeErrorFor`.
+//  2. Assert the response status is 503 and the Retry-After header is "30", not the one second a busy shard gets.
+//  3. Assert the message is the overloaded text a client already knows, not the dispatcher's own.
+func TestARequestThatReachedItsCapIsAnsweredOverloadedAndToldToWaitThirtySeconds(t *testing.T) {
+	recorder := httptest.NewRecorder()
+
+	newErrorsTestServer().writeErrorFor(recorder, fmt.Errorf("escrow e1: reached its cap: %w", scheduler.ErrRequestCapped))
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "30" {
+		t.Fatalf("Retry-After = %q, want 30", got)
+	}
+	if got := detailForError(scheduler.ErrRequestCapped).Message; got != hostsOverloadedMessage {
+		t.Fatalf("message = %q, want %q", got, hostsOverloadedMessage)
+	}
+}
+
+// Test flow:
 //  1. For each capacity-refusal error in `ErrHostsBusy`, `ErrNoEscrowCapacity` and `ErrEscrowBusy`, write it through `writeErrorFor`.
 //  2. Assert every one answers 503, not 429.
 //  3. Assert every one carries a non-empty Retry-After header.

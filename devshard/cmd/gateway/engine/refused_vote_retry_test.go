@@ -22,6 +22,8 @@ type failingPoster struct {
 
 func (p *failingPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *failingPoster) Voteable(uint64) bool { return true }
+
 func (p *failingPoster) SettleTimeout(context.Context, TimeoutStep) (TimeoutVote, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -212,9 +214,9 @@ func TestARetryRoundReportsItsOwnStartedAndFinishedEvents(t *testing.T) {
 	steps := race(unsettledAttempt()).TimeoutPlan()
 	var events []TimeoutEvent
 
-	retries := postTimeouts(context.Background(), poster, steps, false, func(event TimeoutEvent) { events = append(events, event) })
+	pass := postTimeouts(context.Background(), poster, steps, false, func(event TimeoutEvent) { events = append(events, event) })
 
-	require.Len(t, retries, 1, "a failed refused vote is handed back for the next round")
+	require.Len(t, pass.retries, 1, "a failed refused vote is handed back for the next round")
 	require.Len(t, events, 2)
 	require.Equal(t, TimeoutActionStarted, events[0].Action)
 	require.Equal(t, TimeoutActionFailed, events[1].Action)
@@ -255,10 +257,6 @@ type outcomeHandler struct {
 	detail  string
 }
 
-func (h outcomeHandler) HandleTimeout(context.Context, uint64, time.Time, *host.InferencePayload) (user.TimeoutResult, error) {
-	return user.TimeoutResult{Reason: string(TimeoutKindRefused), Outcome: h.outcome, DetailReason: h.detail}, fmt.Errorf("inference 7: %w", user.ErrTimeoutNotApplied)
-}
-
 func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {
 	return user.TimeoutResult{}, nil
 }
@@ -266,11 +264,11 @@ func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (
 func (outcomeHandler) FinishTxFor(uint64) []byte { return nil }
 
 func (outcomeHandler) WaitTimeoutDeadline(context.Context, uint64, time.Time) (types.TimeoutReason, bool, user.TimeoutResult, error) {
-	return types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED, false, user.TimeoutResult{}, nil
+	return types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, user.TimeoutResult{}, nil
 }
 
-func (outcomeHandler) VoteTimeout(context.Context, uint64, time.Time, *host.InferencePayload, types.TimeoutReason) (user.TimeoutResult, bool, error) {
-	return user.TimeoutResult{}, false, nil
+func (h outcomeHandler) VoteTimeout(context.Context, uint64, time.Time, *host.InferencePayload, types.TimeoutReason) (user.TimeoutResult, bool, error) {
+	return user.TimeoutResult{Reason: string(TimeoutKindRefused), Outcome: h.outcome, DetailReason: h.detail}, false, fmt.Errorf("inference 7: %w", user.ErrTimeoutNotApplied)
 }
 
 func (outcomeHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) { return "", time.Time{} }

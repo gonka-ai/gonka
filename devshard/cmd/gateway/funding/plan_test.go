@@ -247,7 +247,7 @@ func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
 			wantCreates: creates(ReasonCapacity),
 		},
 		{
-			name: "nonce-capped escrows retire at once beside an idle starved one",
+			name: "nonce-capped escrows retire at once and an idle starved last regular under the target stays",
 			state: modelWith(func(state *ModelState) {
 				state.Escrows = []EscrowState{
 					nonceCapped(fullEscrow("1", 1_000_000)),
@@ -257,7 +257,7 @@ func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
 				state.Counted = 3
 			}),
 			wantCreates: creates(ReasonGuard, ReasonGuard),
-			wantRetires: []Retire{{EscrowID: "1", Reason: ReasonNonceCap}, {EscrowID: "2", Reason: ReasonNonceCap}, {EscrowID: "3", Reason: ReasonIdleStarved}},
+			wantRetires: []Retire{{EscrowID: "1", Reason: ReasonNonceCap}, {EscrowID: "2", Reason: ReasonNonceCap}},
 		},
 		{
 			name: "a starved escrow idle under ten minutes stays",

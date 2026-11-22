@@ -38,6 +38,8 @@ type modelFunding struct {
 	bucket        funding.Bucket
 	demand        funding.DemandWindow
 	surplusStreak int
+	surplusHold   funding.SurplusHold
+	needEscrows   int
 	broken        bool
 	misconfigured bool
 	budgetReached bool
@@ -116,6 +118,15 @@ func (p *fundingPlanner) idleFor(escrowID string, idle bool, holds uint64, now t
 	return now.Sub(entry.idleSince)
 }
 
+func (p *fundingPlanner) bridgeNeed(model string) int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if current, known := p.models[model]; known {
+		return current.needEscrows
+	}
+	return 0
+}
+
 func (p *fundingPlanner) recordCreate(model string, err error, now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -146,7 +157,7 @@ func (p *fundingPlanner) decide(model string, reading modelReading, scheduled bo
 	}
 	current.bucket.Refill(now, TickInterval)
 	state := reading.state
-	state.WalletShort = current.walletShort
+	state.WalletShort, state.SurplusRetiresHeld = current.walletShort, current.surplusHold.Active()
 	state.DemandPeak, state.DemandWindowFull = current.demand.Peak(), current.demand.Full()
 	state.BucketTokens, state.SurplusStreak, state.ScheduledTick = current.bucket.Available(), current.surplusStreak, scheduled
 	decision := funding.Plan(state)
@@ -154,8 +165,13 @@ func (p *fundingPlanner) decide(model string, reading modelReading, scheduled bo
 		current.walletShort = false
 	}
 	current.bucket.Take(len(decision.Creates))
+	current.needEscrows = decision.NeedEscrows
 	if scheduled {
 		current.surplusStreak = streakAfter(current.surplusStreak, decision.SurplusHeld)
+		current.surplusHold.Elapse()
+	}
+	if decision.Shortfalls.Capacity > 0 {
+		current.surplusHold.Arm()
 	}
 	for _, create := range decision.Creates {
 		current.decisions[FundingDecision{Action: funding.ActionCreate, Reason: create.Reason}]++

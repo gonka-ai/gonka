@@ -23,7 +23,7 @@ func TestAServedRequestWritesItsRecord(t *testing.T) {
 
 	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
-		"input_tokens", uint64(0), "output_tokens", int64(0),
+		"input_tokens", uint64(0), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(0),
 		"outcome", "served", "bytes", int64(response.Body.Len()), "terminated", false, "duration_ms", int64(0),
 	}})
 }
@@ -31,19 +31,20 @@ func TestAServedRequestWritesItsRecord(t *testing.T) {
 // Test flow:
 //  1. Start a harness whose inference outcome is a won race (`benchOutcome`) tied to escrow "7".
 //  2. Send one non-streaming chat completion.
-//  3. Assert the flushed "request finished" line adds the winner's host, token counts, nonce-finished flag and clock-offset facts.
+//  3. Assert the flushed "request finished" line adds the winner's host, token counts and their source, nonce-finished flag and clock-offset facts.
 func TestAServedRequestWithAWinnerWritesTheWinnersFacts(t *testing.T) {
 	logged := logcapture.Install(t)
 	live := newHarness(t)
 	live.inference.outcome = benchOutcome()
 	live.inference.outcome.EscrowID = "7"
+	live.inference.outcome.InputTokensSource = filters.InputTokensTokenizerExact
 
 	response := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
 	live.events.Flush()
 
 	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
-		"input_tokens", uint64(1024), "output_tokens", int64(384), "host", "qqqqqqqq",
+		"input_tokens", uint64(1024), "input_tokens_source", string(filters.InputTokensTokenizerExact), "output_tokens", int64(384), "host", "qqqqqqqq",
 		"outcome", "served", "bytes", int64(response.Body.Len()), "terminated", false, "duration_ms", int64(0),
 		"nonce_finished", false, "host_clock_offset_ms", int64(400), "host_receipt_ms", int64(200),
 	}})
@@ -65,7 +66,7 @@ func TestARaceThatFailedBeforeItsFirstByteWritesItsRecordAtWarn(t *testing.T) {
 
 	logged.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", false,
-		"input_tokens", uint64(0), "output_tokens", int64(0),
+		"input_tokens", uint64(0), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(0),
 		"outcome", "failed_before_first_byte", "bytes", int64(0), "terminated", false, "duration_ms", int64(0),
 		"error", "every attempt failed",
 	}})
@@ -87,7 +88,7 @@ func TestAStreamThatFailedMidAnswerWritesItsRecordAtWarn(t *testing.T) {
 
 	logged.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "api_key_id", callerAnonymous, "escrow", "7", "stream", true,
-		"input_tokens", uint64(0), "output_tokens", int64(0),
+		"input_tokens", uint64(0), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(0),
 		"outcome", "failed_mid_stream", "bytes", int64(response.Body.Len()), "terminated", true, "duration_ms", int64(0),
 		"error", "every attempt failed",
 	}})

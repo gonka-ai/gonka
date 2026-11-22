@@ -24,6 +24,8 @@ func (p *deadlinePoster) VoteDeadline(nonce uint64, _ time.Time) time.Time {
 	return p.settledAt.Add(p.dueIn[nonce])
 }
 
+func (p *deadlinePoster) Voteable(uint64) bool { return true }
+
 func raceOwingTwoDeadlines() RaceOutcome {
 	refused, executed := unsettledAttempt(), unsettledAttempt()
 	refused.Nonce, executed.Nonce = refusedNonce, executedNonce

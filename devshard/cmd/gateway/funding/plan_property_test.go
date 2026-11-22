@@ -152,13 +152,12 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 	expected.shortfalls.Spread = max(0, model.TargetCount-expected.currentRegulars)
 	expected.shortfalls.Standby = max(0, model.ReserveCount-currentStandbys)
 	expected.regularWanted = max(expected.shortfalls.Guard, expected.shortfalls.Capacity, expected.shortfalls.Spread)
-	if model.Priced && model.DemandWindowFull && model.Amount > model.FullCost && expected.regularWanted == 0 {
-		perEscrow := model.Amount - model.FullCost
+	if model.Priced && model.DemandWindowFull && perCreate > 0 && expected.regularWanted == 0 {
 		uncovered := uint64(0)
 		if expected.need > expected.routableFullFree {
 			uncovered = expected.need - expected.routableFullFree
 		}
-		wanted := model.FullContextSlots + int((uncovered+perEscrow-1)/perEscrow)
+		wanted := model.FullContextSlots + int((uncovered+perCreate-1)/perCreate)
 		expected.surplusHeld = expected.currentRegulars > max(model.TargetCount, wanted)
 	}
 	return expected

@@ -148,12 +148,14 @@ type raceCoordinator struct {
 	done   chan struct{}
 	timer  raceTimer
 
-	escrowID     string
-	target       DispatchTarget
-	decision     StartReason
-	budget       int
-	attemptLimit int
-	started      time.Time
+	escrowID      string
+	target        DispatchTarget
+	decision      StartReason
+	budget        int
+	attemptLimit  int
+	attemptCapped bool
+	started       time.Time
+	burns         *scheduler.BurnTally
 
 	attempts []*liveAttempt
 	byNonce  map[uint64]*liveAttempt
@@ -175,6 +177,7 @@ type raceCoordinator struct {
 	pocBypass        bool
 	balanceExhausted bool
 	startErr         error
+	burnCapReached   bool
 
 	retryRuledOut bool
 	reportOnce    sync.Once
@@ -204,8 +207,11 @@ func runRace(clientCtx context.Context, deps raceDeps, request raceRequest) (Rac
 	exit := coordinator.await()
 	if exit == exitComplete {
 		outcome := coordinator.report()
-		if len(outcome.Attempts) == 0 && coordinator.startErr != nil {
+		switch {
+		case len(outcome.Attempts) == 0 && coordinator.startErr != nil:
 			return outcome, coordinator.startErr
+		case !outcome.Succeeded && !outcome.winnerStreamed() && coordinator.refusedByCap():
+			return outcome, scheduler.ErrRequestCapped
 		}
 		return outcome, nil
 	}
@@ -242,6 +248,7 @@ func newCoordinator(clientCtx context.Context, deps raceDeps, request raceReques
 		byNonce:  map[uint64]*liveAttempt{},
 		escrowID: request.Escrow,
 		started:  deps.Now(),
+		burns:    &scheduler.BurnTally{},
 	}
 }
 
@@ -271,6 +278,7 @@ func (c *raceCoordinator) begin() error {
 	nonceScarce := snapshot.RequestsBlocked && !c.pocBypass
 	c.budget = c.deps.Policy.AttemptBudget(target.HostCount(), nonceScarce)
 	c.attemptLimit = c.deps.Policy.AttemptLimit(target.HostCount(), nonceScarce)
+	c.attemptCapped = !nonceScarce && c.deps.Policy.capsStartedAttempts(target.HostCount())
 
 	plan := c.deps.Policy.Decide(c.budget, c.denied(assignment.Host), c.degraded(assignment.Host))
 	c.decision = plan.Reason

@@ -378,7 +378,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTransport, http.RoundTripper) {
 	dialer := httpguard.NewDialer()
 	h1 := &http.Transport{
-		MaxIdleConnsPerHost: maxConns,
+		MaxIdleConnsPerHost: min(maxConns, DefaultRPCMaxIdleConnsPerPeer),
 		MaxConnsPerHost:     maxConns,
 		IdleConnTimeout:     120 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,

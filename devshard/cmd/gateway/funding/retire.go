@@ -41,11 +41,11 @@ func oneRetire(state ModelState, routable []EscrowState, decision Decision) (Ret
 		return Retire{EscrowID: starved[0].ID, Reason: ReasonBudgetPressure}, true
 	}
 	for _, escrow := range starved {
-		if escrow.Money.Idle && escrow.IdleFor >= idleRetireAfter {
+		if escrow.Money.Idle && escrow.IdleFor >= idleRetireAfter && !opensSpreadShortfall(state, routable, escrow) {
 			return Retire{EscrowID: escrow.ID, Reason: ReasonIdleStarved}, true
 		}
 	}
-	if !decision.SurplusHeld || surplusSamplesHeld(state) < surplusSamples {
+	if state.SurplusRetiresHeld || !decision.SurplusHeld || surplusSamplesHeld(state) < surplusSamples {
 		return Retire{}, false
 	}
 	currentStarved := currentRegulars(state, starved)
@@ -93,7 +93,7 @@ func leastFreeFirst(escrows []EscrowState, keep func(EscrowState) bool) []Escrow
 }
 
 func surplusHeld(state ModelState, shortfalls Shortfalls, routable []EscrowState, need uint64) bool {
-	perEscrow := subtractFloor(state.Amount, state.FullCost)
+	perEscrow := capacityPerEscrow(state)
 	if !state.Priced || !state.DemandWindowFull || perEscrow == 0 || regularWant(shortfalls) > 0 {
 		return false
 	}
@@ -107,7 +107,11 @@ func surplusHeld(state ModelState, shortfalls Shortfalls, routable []EscrowState
 	return uint64(len(currentRegulars(state, routable))) > max(uint64(max(state.TargetCount, 0)), wanted)
 }
 
-// keepsLiquid is whether the liquid money still covers the need without the victim's own term, so the capacity rule does not create the victim back.
+func opensSpreadShortfall(state ModelState, routable []EscrowState, victim EscrowState) bool {
+	return isCurrentRegular(state, victim) && len(currentRegulars(state, routable)) <= max(state.TargetCount, 0)
+}
+
 func keepsLiquid(state ModelState, decision Decision, victim EscrowState) bool {
-	return subtractFloor(decision.Liquid, escrowLiquidMoney(state, victim)) >= decision.Need
+	margin := safemath.AddSaturatingUint64(decision.Need, capacityPerEscrow(state))
+	return subtractFloor(decision.Liquid, escrowLiquidMoney(state, victim)) >= margin
 }

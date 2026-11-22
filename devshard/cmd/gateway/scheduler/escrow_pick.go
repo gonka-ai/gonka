@@ -1,9 +1,11 @@
 package scheduler
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
+	"sync"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/internal/safemath"
@@ -15,6 +17,9 @@ const (
 	nonceInFlightMargin      uint64 = 200
 	nonceCeilingPerMaxMargin uint64 = 2
 	unboundedAttemptsToFund         = 2
+	noBurns                         = 0
+	unusableBurns                   = math.MaxInt
+	forcedSendOff            int64  = 0
 )
 
 // avoidReason is why one round of a pick steps over an escrow; only one that could not pay opens the reserves.
@@ -69,31 +74,32 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 			if ceiling != ExhaustionNone {
 				return Escrow{}, noCapacity(ceiling)
 			}
-			return candidate, nil
+			return s.checkPinnedBurnCap(profile, snapshot, candidate, queued)
 		}
 		if retired, ok := s.retiredForEscalation(profile, snapshot.MaxNonce); ok {
 			if belowBalanceFloor(retired, request) {
 				return Escrow{}, pinnedEscrowShort()
 			}
-			return retired, nil
+			return s.checkPinnedBurnCap(profile, snapshot, retired, queued)
 		}
 		return Escrow{}, fmt.Errorf("escrow %q for model %q: %w", profile.Escrow, profile.Model, ErrEscrowGone)
 	}
 	// Read here as well as at dispatch: an escrow whose whole group it refuses can never serve.
 	ranking := escrowRanking{
 		profile: profile, snapshot: snapshot, queued: queued, avoided: avoided,
-		retirement: retirement, request: request, attempts: s.attemptsToFund(),
+		retirement: retirement, request: request, attempts: s.attemptsToFund(), limits: s.burnLimits(),
 		reachable: reachableByTrust(s.participants()),
 		fleet:     s.fleetGates(profile.Model, snapshot),
 		ahead:     s.queuedAhead(candidates),
 	}
 	regular := s.rankCandidates(candidates, ranking, false)
 	picked, admitted, declined := regular.picked, regular.admitted, regular.declined
-	moneyDeclined := regular.moneyDeclined
+	moneyDeclined, pastBurnCap := regular.moneyDeclined, regular.pastBurnCap
 	if picked < 0 && regular.passedOverForHosts == 0 {
 		reserve := s.rankCandidates(candidates, ranking, true)
 		picked, admitted = reserve.picked, admitted+reserve.admitted
 		moneyDeclined = moneyDeclined || reserve.moneyDeclined
+		pastBurnCap = pastBurnCap || reserve.pastBurnCap
 		if reserve.declined != ExhaustionNone {
 			declined = reserve.declined
 		}
@@ -105,6 +111,9 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	if picked < 0 {
 		if moneyDeclined {
 			s.reportMoneyShort(profile.Model, request)
+		}
+		if pastBurnCap {
+			return Escrow{}, refuseCappedAtPick(fmt.Sprintf("model %q", profile.Model), ranking.limits.perRequest)
 		}
 		return Escrow{}, noCapacity(declined)
 	}
@@ -120,6 +129,7 @@ type escrowRanking struct {
 	retirement uint64
 	request    uint64
 	attempts   int
+	limits     burnLimits
 	reachable  func(Escrow) bool
 	fleet      availability
 	ahead      []uint64
@@ -131,20 +141,32 @@ type rankedPick struct {
 	declined           ExhaustionReason
 	passedOverForHosts int
 	moneyDeclined      bool
+	pastBurnCap        bool
+}
+
+type pickRank struct {
+	burns int
+	load  float64
+}
+
+func (rank pickRank) compare(other pickRank) int {
+	return cmp.Or(cmp.Compare(rank.burns, other.burns), cmp.Compare(rank.load, other.load))
 }
 
 type scoreTier struct {
-	bestScore float64
-	tied      []int
+	best pickRank
+	tied []int
 }
 
-func newScoreTier() scoreTier { return scoreTier{bestScore: math.Inf(1)} }
+func newScoreTier() scoreTier {
+	return scoreTier{best: pickRank{burns: math.MaxInt, load: math.Inf(1)}}
+}
 
-func (tier *scoreTier) offer(index int, score float64) {
-	switch {
-	case score < tier.bestScore:
-		tier.bestScore, tier.tied = score, append(tier.tied[:0], index)
-	case score == tier.bestScore:
+func (tier *scoreTier) offer(index int, rank pickRank) {
+	switch order := rank.compare(tier.best); {
+	case order < 0:
+		tier.best, tier.tied = rank, append(tier.tied[:0], index)
+	case order == 0:
 		tier.tied = append(tier.tied, index)
 	}
 }
@@ -186,15 +208,23 @@ func (s *Scheduler) rankCandidates(candidates []Escrow, ranking escrowRanking, r
 			result.passedOverForHosts++
 			continue
 		}
-		forecast := expectedBurns(candidate, ranking.fleet.forEscrow(s.stateBlocked(candidate.ID), s.absentFromChain(candidate.ID), chatBudgetSpent(candidate)), ranking.queued, ranking.ahead[index])
-		score := (float64(candidate.ActiveUsers+forecast) + float64(ranking.ahead[index])) / weight
+		forecast := s.burnsToServe(candidate, ranking.fleet, ranking.queued, ranking.ahead[index], ranking.limits.consecutive)
+		if ranking.limits.refuses(ranking.profile.Burns, forecast) {
+			result.passedOverForHosts++
+			result.pastBurnCap = true
+			continue
+		}
+		rank := pickRank{burns: forecast.burns, load: (float64(candidate.ActiveUsers) + float64(ranking.ahead[index])) / weight}
+		if !forecast.usable {
+			rank.burns = unusableBurns
+		}
 		switch {
 		case !reserveTier && !affordsAttempts(candidate, ranking.request, ranking.attempts):
-			thin.offer(index, score)
+			thin.offer(index, rank)
 		case !reserveTier && !affordsAttempts(candidate, ranking.retirement, ranking.attempts):
-			residue.offer(index, score)
+			residue.offer(index, rank)
 		default:
-			funded.offer(index, score)
+			funded.offer(index, rank)
 		}
 	}
 
@@ -275,22 +305,88 @@ func pinnedEscrowShort() error {
 	return fmt.Errorf("%w: %w: %w", ErrPinnedEscrowShort, ErrNoEscrowCapacity, types.ErrInsufficientBalance)
 }
 
-// expectedBurns is how many nonces this escrow spends on nobody before one binds to a host that can take this request. See routing.md, "Pricing an escrow by the burns it will cost".
-func expectedBurns(candidate Escrow, gates availability, queued *waiter, queuedAhead uint64) int {
+type burnLimits struct {
+	consecutive int64
+	perRequest  int64
+}
+
+func (limits burnLimits) refuses(tally *BurnTally, forecast burnForecast) bool {
+	return forecast.usable && tally.WouldExceed(limits.perRequest, forecast.charged)
+}
+
+func (s *Scheduler) burnLimits() burnLimits {
+	if s.settings == nil {
+		return burnLimits{}
+	}
+	return burnLimits{consecutive: s.maxConsecutiveBurns(), perRequest: s.maxBurnsPerRequest()}
+}
+
+func (s *Scheduler) checkPinnedBurnCap(profile RequestProfile, snapshot chain.PhaseSnapshot, pinned Escrow, queued *waiter) (Escrow, error) {
+	limits := s.burnLimits()
+	if profile.Burns == nil || limits.perRequest <= BurnCapOff {
+		return pinned, nil
+	}
+	forecast := s.burnsToServe(pinned, s.fleetGates(profile.Model, snapshot), queued, s.queuedAheadOf(pinned), limits.consecutive)
+	if limits.refuses(profile.Burns, forecast) {
+		return Escrow{}, refuseCappedAtPick(fmt.Sprintf("escrow %s", pinned.ID), limits.perRequest)
+	}
+	return pinned, nil
+}
+
+func refuseCappedAtPick(subject string, limit int64) error {
+	return fmt.Errorf("%s: the slot that can take the request is more burns away than it has left of its cap of %d burned nonces: %w", subject, limit, ErrRequestCapped)
+}
+
+// burnForecast prices the walk to a group's first slot that can take a request: every burn, and the part of them the drain charges to the request.
+type burnForecast struct {
+	burns   int
+	charged int
+	usable  bool
+}
+
+func (s *Scheduler) burnsToServe(candidate Escrow, fleet availability, queued *waiter, queuedAhead uint64, forceAfter int64) burnForecast {
+	return expectedBurns(candidate, fleet.forEscrow(s.stateBlocked(candidate.ID), s.absentFromChain(candidate.ID), chatBudgetSpent(candidate)), queued, queuedAhead, forceAfter)
+}
+
+func expectedBurns(candidate Escrow, gates availability, queued *waiter, queuedAhead uint64, forceAfter int64) burnForecast {
 	if candidate.Session == nil {
-		return 0
+		return burnForecast{}
 	}
 	slots := candidate.Session.SlotParticipants()
 	if len(slots) == 0 {
-		return 0
+		return burnForecast{}
 	}
 	cursor := int((candidate.Session.LatestNonce() + 1 + queuedAhead) % uint64(len(slots)))
+	var forecast burnForecast
+	run := 0
+	reachable := sync.OnceValue(func() bool {
+		canServe, _, _, _ := servable(queued, slots, gates)
+		return canServe
+	})
 	for step := range slots {
-		if gates.blocks(slots[(cursor+step)%len(slots)], queued) == blockNone {
-			return step
+		slot := slots[(cursor+step)%len(slots)]
+		if gates.shadowMember(slot) {
+			run++
+			continue
+		}
+		reason := gates.blocks(slot, queued)
+		if reason == blockNone {
+			forecast.usable = true
+			return forecast
+		}
+		if forceAfter > forcedSendOff && int64(run) >= forceAfter && gates.servingOverFullWindows().blocks(slot, queued) == blockNone && reachable() {
+			forecast.usable = true
+			return forecast
+		}
+		if reason.burns() {
+			forecast.burns++
+			if !queued.exclude[slot] {
+				forecast.charged++
+			}
+			run++
 		}
 	}
-	return len(slots)
+	return forecast
 }
 
 // unusableWeight holds for a weight no ratio can be taken against. See routing.md, "Picking an escrow".

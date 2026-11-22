@@ -134,6 +134,7 @@ func everyProducer() map[string]func(events *Journal) {
 			events.HostWithheld(perf.Withholding{Participant: hostAlpha, Model: "qwen", Reason: "failure_rate", EjectionCount: 1, ConsecutiveFailures: 1, FailureRate: 0.5, FailureVolume: 20, WithheldFor: time.Minute})
 		},
 		"HostReturned":           func(events *Journal) { events.HostReturned(hostAlpha, "qwen", 1) },
+		"HostStatsReset":         func(events *Journal) { events.HostStatsReset(464, 40, 3, 2) },
 		"HostContextLimit":       func(events *Journal) { events.HostContextLimit(hostAlpha, "qwen", 4096, 8192) },
 		"HostToolsUnsupported":   func(events *Journal) { events.HostToolsUnsupported(hostAlpha, "qwen") },
 		"HostVersionUnsupported": func(events *Journal) { events.HostVersionUnsupported(hostAlpha) },

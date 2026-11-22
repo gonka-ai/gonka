@@ -185,6 +185,8 @@ type duePoster struct {
 
 func (p *duePoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *duePoster) Voteable(uint64) bool { return true }
+
 func (p *duePoster) SettleTimeout(_ context.Context, step TimeoutStep) (TimeoutVote, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

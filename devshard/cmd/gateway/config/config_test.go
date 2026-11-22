@@ -77,12 +77,13 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Perf.FailureRateThreshold", configuration.Perf.FailureRateThreshold, 0.15},
 		{"Perf.FailureRateMinVolume", configuration.Perf.FailureRateMinVolume, 20.0},
 		{"Perf.EjectionBaseSeconds", configuration.Perf.EjectionBaseSeconds, int64(30)},
-		{"Perf.EjectionMaxSeconds", configuration.Perf.EjectionMaxSeconds, int64(600)},
+		{"Perf.EjectionMaxSeconds", configuration.Perf.EjectionMaxSeconds, int64(60)},
 		{"Perf.MaxEjectionFraction", configuration.Perf.MaxEjectionFraction, 0.5},
 		{"Perf.MinAvailableHosts", configuration.Perf.MinAvailableHosts, int64(4)},
 		{"Perf.HostStalenessSeconds", configuration.Perf.HostStalenessSeconds, int64(3_600)},
 		{"Scheduler.MatchWaitMS", configuration.Scheduler.MatchWaitMS, int64(2_000)},
 		{"Scheduler.MaxConsecutiveBurns", configuration.Scheduler.MaxConsecutiveBurns, int64(2)},
+		{"Scheduler.MaxBurnsPerRequest", configuration.Scheduler.MaxBurnsPerRequest, int64(16)},
 		{"Scheduler.DispatchQueueDepth", configuration.Scheduler.DispatchQueueDepth, int64(1_024)},
 		{"Engine.ReceiptTimeoutMS", configuration.Engine.ReceiptTimeoutMS, int64(5_000)},
 		{"Engine.FirstTokenFloorMS", configuration.Engine.FirstTokenFloorMS, int64(6_000)},
@@ -92,6 +93,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Chain.VersionsPollIntervalSeconds", configuration.Chain.VersionsPollIntervalSeconds, int64(15)},
 		{"Engine.LoserGraceMS", configuration.Engine.LoserGraceMS, int64(600_000)},
 		{"Engine.MaxAttemptsPerRequest", configuration.Engine.MaxAttemptsPerRequest, int64(2)},
+		{"Engine.MaxStartedAttemptsPerRequest", configuration.Engine.MaxStartedAttemptsPerRequest, int64(3)},
 		{"Engine.HedgeFirstTokenFloorMS", configuration.Engine.HedgeFirstTokenFloorMS, int64(1_500)},
 		{"Engine.MaxConcurrentTimeoutVotes", configuration.Engine.MaxConcurrentTimeoutVotes, int64(64)},
 		{"TimeoutSweep.BudgetPerTick", configuration.TimeoutSweep.BudgetPerTick, int64(8)},
@@ -240,6 +242,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"scheduler_match_wait_ms above ceiling", func(c *Config) { c.Scheduler.MatchWaitMS = 5_001 }, "scheduler_match_wait_ms"},
 		{"scheduler_max_consecutive_burns negative", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = -1 }, "scheduler_max_consecutive_burns"},
 		{"scheduler_max_consecutive_burns above ceiling", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = 1_001 }, "scheduler_max_consecutive_burns"},
+		{"scheduler_max_burns_per_request negative", func(c *Config) { c.Scheduler.MaxBurnsPerRequest = -1 }, "scheduler_max_burns_per_request"},
+		{"scheduler_max_burns_per_request above ceiling", func(c *Config) { c.Scheduler.MaxBurnsPerRequest = 1_001 }, "scheduler_max_burns_per_request"},
 		{"scheduler_dispatch_queue_depth zero", func(c *Config) { c.Scheduler.DispatchQueueDepth = 0 }, "scheduler_dispatch_queue_depth"},
 		{"scheduler_dispatch_queue_depth above ceiling", func(c *Config) { c.Scheduler.DispatchQueueDepth = 65_537 }, "scheduler_dispatch_queue_depth"},
 		{"engine_receipt_timeout_ms too low", func(c *Config) { c.Engine.ReceiptTimeoutMS = 0 }, "engine_receipt_timeout_ms"},
@@ -248,6 +252,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"engine_loser_grace_ms below inter-chunk stall", func(c *Config) { c.Engine.LoserGraceMS = c.Engine.InterChunkStallMS - 1 }, "engine_loser_grace_ms"},
 		{"engine_hedge_first_token_floor_ms negative", func(c *Config) { c.Engine.HedgeFirstTokenFloorMS = -1 }, "engine_hedge_first_token_floor_ms"},
 		{"engine_max_attempts_per_request negative", func(c *Config) { c.Engine.MaxAttemptsPerRequest = -1 }, "engine_max_attempts_per_request"},
+		{"engine_max_started_attempts_per_request negative", func(c *Config) { c.Engine.MaxStartedAttemptsPerRequest = -1 }, "engine_max_started_attempts_per_request"},
+		{"engine_max_started_attempts_per_request above ceiling", func(c *Config) { c.Engine.MaxStartedAttemptsPerRequest = 1_001 }, "engine_max_started_attempts_per_request"},
 		{"engine_max_concurrent_timeout_votes negative", func(c *Config) { c.Engine.MaxConcurrentTimeoutVotes = -1 }, "engine_max_concurrent_timeout_votes"},
 		{"chain_grpc without a port", func(c *Config) { c.Chain.GRPCEndpoint = "node.example" }, "chain_grpc"},
 		{"chain_grpc as a URL", func(c *Config) { c.Chain.GRPCEndpoint = "http://node.example:9090" }, "chain_grpc"},
@@ -329,7 +335,7 @@ func TestEngineCarriesOnlyTheLiveTunables(t *testing.T) {
 	}
 	want := []string{
 		"ReceiptTimeoutMS", "FirstTokenFloorMS", "FirstTokenCeilingMS", "InterChunkStallMS", "LoserGraceMS",
-		"MaxAttemptsPerRequest", "MaxConcurrentTimeoutVotes", "HedgeFirstTokenFloorMS",
+		"MaxAttemptsPerRequest", "MaxStartedAttemptsPerRequest", "MaxConcurrentTimeoutVotes", "HedgeFirstTokenFloorMS",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Engine fields = %v, want %v", got, want)

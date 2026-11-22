@@ -148,6 +148,41 @@ func TestAVoteStillPostingAtARestartIsNamedAbandoned(t *testing.T) {
 }
 
 // Test flow:
+//  1. Observe the latest nonce, record a race on nonce 6, and record its timeout as `engine.TimeoutActionDeferred`, a vote waiting for its deadline.
+//  2. Save and reload the book.
+//  3. Assert no counter still reads `engine.TimeoutActionDeferred` after the restart.
+//  4. Assert at least one counter now reads `engine.TimeoutActionAbandoned`.
+func TestAVoteDeferredAtARestartIsNamedAbandoned(t *testing.T) {
+	book := newTestBook(t, 4)
+	if err := book.ObserveLatestNonce(testEscrow, 12); err != nil {
+		t.Fatalf("ObserveLatestNonce(): %v", err)
+	}
+	if err := book.RecordRace(testEscrow, []Attempt{{Nonce: 6, Sent: true}}); err != nil {
+		t.Fatalf("RecordRace(): %v", err)
+	}
+	if err := book.RecordTimeout(testEscrow, 6, engine.TimeoutKindRefused, engine.TimeoutActionDeferred, engine.TimeoutReasonNone); err != nil {
+		t.Fatalf("RecordTimeout(): %v", err)
+	}
+
+	restored := saveAndReload(t, book, openTestStore(t))
+
+	abandoned := 0
+	for _, record := range restored.Query(QueryFilter{}) {
+		for _, counter := range record.Counters {
+			if counter.TimeoutAction == engine.TimeoutActionDeferred {
+				t.Fatalf("counter %+v still reads deferred after the restart", counter)
+			}
+			if counter.TimeoutAction == engine.TimeoutActionAbandoned {
+				abandoned++
+			}
+		}
+	}
+	if abandoned == 0 {
+		t.Fatal("the deferred vote the restart cut off was not named abandoned")
+	}
+}
+
+// Test flow:
 //  1. Load a snapshot from a freshly opened, never-written store.
 //  2. Restore it into a new book.
 //  3. Assert the book holds no escrow ids.
