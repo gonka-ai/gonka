@@ -62,7 +62,7 @@ func TestTheLiveLogGaugeFallsOnceForALogDroppedForSizeAndRemovedAgain(t *testing
 	index := newStreamIndex()
 	first := testLog(index, nil, tinyLogLimit)
 	second := testLog(index, nil, testLogLimit)
-	other := newStreamLog(cacheKey{model: "other"}, testLogLimit, nil, index)
+	other := newStreamLog(cacheKey{model: "other"}, testLogLimit, nil, index, testLogGeneration)
 	if _, live := index.stats(); live != 3 {
 		t.Fatalf("live logs = %d, want 3", live)
 	}

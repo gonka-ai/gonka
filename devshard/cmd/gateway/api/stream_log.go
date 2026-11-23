@@ -18,6 +18,8 @@ type streamLog struct {
 	index    *streamIndex
 	escrowID string
 
+	generation uint64
+
 	body      []byte
 	bounds    []int
 	charged   int64
@@ -28,9 +30,9 @@ type streamLog struct {
 	changed   chan struct{}
 }
 
-func newStreamLog(key cacheKey, limit int64, budget *BufferBudget, index *streamIndex) *streamLog {
+func newStreamLog(key cacheKey, limit int64, budget *BufferBudget, index *streamIndex, generation uint64) *streamLog {
 	log := &streamLog{
-		key: key, limit: limit, budget: budget, index: index,
+		key: key, limit: limit, budget: budget, index: index, generation: generation,
 		bounds:    make([]int, 0, expectedStreamEvents),
 		hasSocket: true,
 		changed:   make(chan struct{}),
@@ -142,10 +144,10 @@ type logReader struct {
 	sent int
 }
 
-func (l *streamLog) adopt() (*logReader, bool) {
+func (l *streamLog) adopt(generation uint64) (*logReader, bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.hasSocket || l.reading || l.dropped {
+	if l.hasSocket || l.reading || l.dropped || l.generation != generation {
 		return nil, false
 	}
 	l.reading = true
@@ -201,12 +203,12 @@ func (index *streamIndex) remove(log *streamLog) {
 	index.logs[log.key] = remaining
 }
 
-func (index *streamIndex) adopt(key cacheKey) (*logReader, bool) {
+func (index *streamIndex) adopt(key cacheKey, generation uint64) (*logReader, bool) {
 	index.mu.Lock()
 	candidates := slices.Clone(index.logs[key])
 	index.mu.Unlock()
 	for _, log := range candidates {
-		if reader, adopted := log.adopt(); adopted {
+		if reader, adopted := log.adopt(generation); adopted {
 			index.replays.Add(1)
 			return reader, true
 		}

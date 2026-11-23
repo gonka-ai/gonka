@@ -9,10 +9,13 @@ import (
 	"devshard/cmd/gateway/filters"
 )
 
-const testLogLimit = 1 << 20
+const (
+	testLogLimit      = 1 << 20
+	testLogGeneration = 0
+)
 
 func testLog(index *streamIndex, budget *BufferBudget, limit int64) *streamLog {
-	return newStreamLog(cacheKey{model: "qwen"}, limit, budget, index)
+	return newStreamLog(cacheKey{model: "qwen"}, limit, budget, index, testLogGeneration)
 }
 
 // Test flow:
@@ -33,7 +36,7 @@ func TestALogPastItsLimitIsDroppedAndReturnsItsBudget(t *testing.T) {
 		t.Fatalf("budget holds %d after the log dropped, want 0", budget.Held())
 	}
 	log.detachSocket()
-	if _, adopted := index.adopt(log.key); adopted {
+	if _, adopted := index.adopt(log.key, log.generation); adopted {
 		t.Fatal("a dropped log was adopted")
 	}
 	if _, refusal := log.conclude("7", nil); refusal != cacheRefusedTooLarge {
@@ -50,7 +53,7 @@ func TestAReaderOfALogDroppedMidReplyEndsOnAnErrorEvent(t *testing.T) {
 	log := testLog(index, nil, 16)
 	log.append([]byte("data: 1\n\n"))
 	log.detachSocket()
-	reader, adopted := index.adopt(log.key)
+	reader, adopted := index.adopt(log.key, log.generation)
 	if !adopted {
 		t.Fatal("a detached log was not adopted")
 	}
@@ -109,19 +112,19 @@ func TestALogWithASocketOrAReaderIsNotAdopted(t *testing.T) {
 	log := testLog(index, nil, testLogLimit)
 	log.append([]byte("data: 1\n\n"))
 
-	if _, adopted := index.adopt(log.key); adopted {
+	if _, adopted := index.adopt(log.key, log.generation); adopted {
 		t.Fatal("a log with a live socket was adopted")
 	}
 	log.detachSocket()
-	reader, adopted := index.adopt(log.key)
+	reader, adopted := index.adopt(log.key, log.generation)
 	if !adopted {
 		t.Fatal("a log whose client left was not adopted")
 	}
-	if _, again := index.adopt(log.key); again {
+	if _, again := index.adopt(log.key, log.generation); again {
 		t.Fatal("a log somebody reads was adopted a second time")
 	}
 	reader.release()
-	if _, readopted := index.adopt(log.key); !readopted {
+	if _, readopted := index.adopt(log.key, log.generation); !readopted {
 		t.Fatal("a log whose reader left was not adoptable again")
 	}
 }
@@ -136,7 +139,22 @@ func TestADroppedLogCannotBeAdoptedEvenWhenTheRepeatFoundItBeforeTheDrop(t *test
 	log.append([]byte("data: 2\n\n"))
 	log.detachSocket()
 
-	if _, adopted := log.adopt(); adopted {
+	if _, adopted := log.adopt(log.generation); adopted {
 		t.Fatal("a dropped log was adopted")
+	}
+}
+
+// Test flow:
+//  1. Give a log a detached socket and ask it to adopt with its own generation, then with a later one.
+//  2. Assert the first adoption is granted and the second is refused, because a log begun before a clear is never adopted.
+func TestALogFromBeforeAClearCannotBeAdopted(t *testing.T) {
+	older := testLog(newStreamIndex(), nil, testLogLimit)
+	older.detachSocket()
+
+	if _, adopted := older.adopt(older.generation + 1); adopted {
+		t.Fatal("a log begun before a clear was adopted")
+	}
+	if _, adopted := older.adopt(older.generation); !adopted {
+		t.Fatal("a log of the current generation was refused")
 	}
 }

@@ -241,18 +241,21 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		return
 	}
 
+	directive := requestedCacheDirective(r.Header)
 	var key cacheKey
 	if s.cache != nil {
 		key = cacheKeyFor(r, normalized)
-		if reader, adopted := s.streams.adopt(key); adopted {
-			escrowID, written := serveLog(w, r, requestID, reader)
-			s.finishReplay(requestID, normalized.Model, identity.caller(), escrowID, true, written, prompt)
-			return
-		}
-		if entry, hit := s.cache.get(key, s.now()); hit {
-			written := serveCached(w, requestID, entry)
-			s.finishReplay(requestID, normalized.Model, identity.caller(), entry.escrowID, entry.stream, written, prompt)
-			return
+		if directive.looksUp() {
+			if reader, adopted := s.streams.adopt(key, s.cache.currentGeneration()); adopted {
+				escrowID, written := serveLog(w, r, requestID, reader)
+				s.finishReplay(requestID, normalized.Model, identity.caller(), escrowID, true, written, prompt)
+				return
+			}
+			if entry, hit := s.cache.get(key, s.now()); hit {
+				written := serveCached(w, requestID, entry)
+				s.finishReplay(requestID, normalized.Model, identity.caller(), entry.escrowID, entry.stream, written, prompt)
+				return
+			}
 		}
 	}
 	if refusal != nil {
@@ -280,13 +283,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		return
 	}
 
-	if s.cache == nil {
+	if s.cache == nil || !directive.stores() {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
 		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot, nil)
 		return
 	}
+	generation := s.cache.currentGeneration()
 	if normalized.ClientStream {
-		log := newStreamLog(key, s.cache.entryLimit(), s.buffers, s.streams)
+		log := newStreamLog(key, s.cache.entryLimit(), s.buffers, s.streams, generation)
 		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot, log)
 		return
 	}
@@ -299,8 +303,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.countCacheResult(normalized.Model, recorder.entryRefusal(unstorable, outcome.EscrowID))
 		return
 	}
+	entry, cacheRefusal := entry.attributed(outcome, generation)
 	// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
-	s.offerToCache(key, entry, filters.CacheStorable, requestID, normalized.Model)
+	s.offerToCache(key, entry, cacheRefusal, requestID, normalized.Model)
 }
 
 func (s *Server) offerToCache(key cacheKey, entry cachedResponse, refusal, requestID, model string) {
@@ -396,7 +401,7 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 		}
 		client.discard()
 		if log != nil {
-			s.concludeStream(log, requestID, normalized.Model, outcome.EscrowID, hidden)
+			s.concludeStream(log, requestID, normalized.Model, outcome, hidden)
 		}
 	}()
 	outputTokens := outputTokenBudget(normalized)

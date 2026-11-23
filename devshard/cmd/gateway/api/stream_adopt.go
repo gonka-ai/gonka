@@ -3,6 +3,9 @@ package api
 import (
 	"context"
 	"net/http"
+
+	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 )
 
 func serveLog(w http.ResponseWriter, r *http.Request, requestID string, reader *logReader) (escrowID string, written int64) {
@@ -42,8 +45,11 @@ func pumpLog(ctx context.Context, w http.ResponseWriter, reader *logReader) (wri
 	}
 }
 
-func (s *Server) concludeStream(log *streamLog, requestID, model, escrowID string, unstorable error) {
-	entry, refusal := log.conclude(escrowID, unstorable)
+func (s *Server) concludeStream(log *streamLog, requestID, model string, outcome engine.RaceOutcome, unstorable error) {
+	entry, refusal := log.conclude(outcome.EscrowID, unstorable)
+	if refusal == filters.CacheStorable {
+		entry, refusal = entry.attributed(outcome, log.generation)
+	}
 	s.offerToCache(log.key, entry, refusal, requestID, model)
 	s.streams.remove(log)
 }

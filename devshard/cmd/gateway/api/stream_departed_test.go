@@ -77,7 +77,7 @@ func TestADepartedStreamThatLostBytesEndsOnAnErrorEvenWhenTheRaceSucceeded(t *te
 
 	stream.finishDetached(succeeded())
 
-	reader, adopted := log.adopt()
+	reader, adopted := log.adopt(log.generation)
 	if !adopted {
 		t.Fatal("the log of a departed stream cannot be adopted")
 	}

@@ -64,7 +64,7 @@ func (s *Server) newOutcomeRelay(client *clientStream, log *streamLog, requestID
 	}
 	return &outcomeRelay{settle: func(final engine.RaceOutcome) {
 		client.finishDetached(final)
-		s.concludeStream(log, requestID, model, final.EscrowID, cmp.Or(final.Failure(), client.rewriteFailure()))
+		s.concludeStream(log, requestID, model, final, cmp.Or(final.Failure(), client.rewriteFailure()))
 	}}
 }
 

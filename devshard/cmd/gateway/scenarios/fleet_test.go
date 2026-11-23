@@ -562,10 +562,10 @@ func (c *fleetClient) sendInProcess(ctx context.Context, request host.HostReques
 	return response, nil
 }
 
-// writeStreamedAnswer is the role marker, one content delta and [DONE], as user.InProcessClient writes them.
+// writeStreamedAnswer is the role marker, one content delta that finishes the answer and [DONE], as user.InProcessClient writes them.
 func writeStreamedAnswer(stream io.Writer) {
 	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
-	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"content\":\"stub\"}}]}\n\n")
+	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"content\":\"stub\"},\"finish_reason\":\"stop\"}]}\n\n")
 	fmt.Fprintf(stream, "data: [DONE]\n\n")
 }
 

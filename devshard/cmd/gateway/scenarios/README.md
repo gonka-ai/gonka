@@ -148,6 +148,12 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestAShorterHostsContextRefusalIsRetriedOnALongerHost` | a host running shorter than the model must not refuse a prompt the model takes | the client gets 200 from a longer host, the refused attempt's reservation comes back by the execution timeout and the pinned host defect charges the shorter host a miss |
 | `TestAPromptOverTheModelIsNotRetriedPastAShorterHost` | a prompt the model's length cannot take must not be retried because the first host was shorter | the client gets 400 after one attempt, whose reservation comes back by the execution timeout, and the pinned host defect charges the shorter host a miss |
 
+### Cache — `cache_test.go`
+
+| Test | Why it exists | What it checks |
+| --- | --- | --- |
+| `TestAReplyVotedInvalidIsNotServedFromTheCacheAgain` | a cached reply whose inference validators voted invalid must not keep being served | an identical request is a cache hit after the first, and runs a race again once the invalid votes have reached the session |
+
 ### Data — `data_test.go`
 
 | Test | Why it exists | What it checks |

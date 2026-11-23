@@ -27,9 +27,26 @@ const (
 	cacheRefusedWriteFailed = "write_failed"
 	cacheRefusedRaceFailed  = "race_failed"
 	cacheRefusedNoEscrow    = "no_escrow"
+	cacheRefusedInvalidated = "invalidated"
 )
 
 const cacheResultStored = "stored"
+
+// The Cache-Control request header and the grammar of its value. See README.md, "What the client controls".
+const (
+	cacheControlHeader      = "Cache-Control"
+	directiveListSeparator  = ","
+	directiveValueSeparator = "="
+)
+
+type cacheDirective string
+
+// The Cache-Control request directives the gateway acts on; every other directive is ignored.
+const (
+	cacheDirectiveNone    cacheDirective = ""
+	cacheDirectiveNoCache cacheDirective = "no-cache"
+	cacheDirectiveNoStore cacheDirective = "no-store"
+)
 
 // Why a request was captured. Capture has these two triggers and no others.
 const (
