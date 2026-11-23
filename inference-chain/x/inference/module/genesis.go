@@ -71,12 +71,13 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		panic(err)
 	}
 	for _, elem := range genState.ModelList {
-		if elem.ProposedBy != "genesis" {
+		// An exported genesis carries the stored proposer; keep it.
+		if elem.ProposedBy == "genesis" {
+			elem.ProposedBy = k.GetAuthority()
+		} else if _, err := sdk.AccAddressFromBech32(elem.ProposedBy); err != nil {
 			//nolint:forbidigo // genesis code
-			panic("At genesis all model.ProposedBy are expected to be \"genesis\".")
+			panic(fmt.Sprintf("model %s: ProposedBy must be \"genesis\" or an address: %v", elem.Id, err))
 		}
-
-		elem.ProposedBy = k.GetAuthority()
 		k.SetModel(ctx, &elem)
 	}
 
@@ -88,6 +89,13 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge token metadata from genesis
 		for _, elem := range genState.Bridge.TokenMetadata {
+			if isIBCDenom(elem.ContractAddress) {
+				if err := k.SetIBCTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, *elem); err != nil {
+					//nolint:forbidigo // genesis code
+					panic(err)
+				}
+				continue
+			}
 			k.SetTokenMetadata(ctx, elem.ChainId, elem.ContractAddress, keeper.TokenMetadata{
 				Name:     elem.Name,
 				Symbol:   elem.Symbol,
@@ -97,7 +105,11 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 
 		// Set all bridge trade approved tokens from genesis
 		for _, elem := range genState.Bridge.TradeApprovedTokens {
-			if err := k.SetBridgeTradeApprovedToken(ctx, *elem); err != nil {
+			setApproved := k.SetBridgeTradeApprovedToken
+			if isIBCDenom(elem.ContractAddress) {
+				setApproved = k.SetIBCTradeApprovedToken
+			}
+			if err := setApproved(ctx, *elem); err != nil {
 				//nolint:forbidigo // genesis code
 				panic(err)
 			}
@@ -416,4 +428,9 @@ func getModels(ctx *sdk.Context, k *keeper.Keeper) []types.Model {
 		panic(err)
 	}
 	return models2
+}
+
+// isIBCDenom reports entries stored by the IBC setters: bridge addresses never contain '/'.
+func isIBCDenom(addr string) bool {
+	return strings.Contains(addr, "/")
 }
