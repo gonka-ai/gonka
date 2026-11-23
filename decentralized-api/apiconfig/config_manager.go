@@ -91,6 +91,8 @@ func LoadConfigManagerWithPaths(configPath, sqlitePath, nodeConfigPath string) (
 			return nil, err
 		}
 		logging.Info("Saved static config after initial migration", types.Config)
+	} else if err := removeLegacyKeyringPassword(configPath); err != nil {
+		logging.Warn("Could not remove legacy keyring password from static config", types.Config, "error", err)
 	}
 
 	// Hydrate in-memory dynamic state from DB once
