@@ -135,12 +135,12 @@ func TestARefusalOfAnAttemptLaunchedBeforeTheResetIsNotCounted(t *testing.T) {
 	launchedAfter := clock.now()
 
 	for range int(limiter.cfg.AfterFailures) {
-		limiter.CountRefusalIfIdle("participant-a", "model-a", launchedBefore)
+		limiter.CountRefusal("participant-a", "model-a", launchedBefore)
 	}
 	require.Equal(t, AdmissionOpen, limiter.Admits("participant-a", "model-a"))
 
 	for range int(limiter.cfg.AfterFailures) {
-		limiter.CountRefusalIfIdle("participant-a", "model-a", launchedAfter)
+		limiter.CountRefusal("participant-a", "model-a", launchedAfter)
 	}
 	require.Equal(t, AdmissionCutOff, limiter.Admits("participant-a", "model-a"))
 }

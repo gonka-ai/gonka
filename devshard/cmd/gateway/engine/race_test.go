@@ -494,7 +494,7 @@ func (l *slotLedger) OnResult(result limits.Result) {
 	l.verdicts <- windowMove{participant: result.Participant, verdict: result.Verdict}
 }
 
-func (l *slotLedger) CountRefusalIfIdle(string, string, time.Time) {}
+func (l *slotLedger) CountRefusal(string, string, time.Time) {}
 
 type recordingSink struct {
 	mu      sync.Mutex

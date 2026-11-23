@@ -159,7 +159,7 @@ func admissionLocked(state *hostState, cost TokenCost, now time.Time) Admission 
 	case CutoffOpen:
 		return AdmissionCutOff
 	case CutoffHalfOpen:
-		if state.idle() {
+		if !state.probeInFlight {
 			return AdmissionOpen
 		}
 		return AdmissionCutOff
@@ -202,20 +202,20 @@ func (l *ParticipantLimiter) take(participant, model string, cost TokenCost, ove
 			return nil, refusedBy
 		}
 	}
-	state.probeIfCutOff()
+	ticket := state.probeIfCutOff()
 	state.input.take(max(cost.Input, 0))
 	state.output.take(max(cost.Output, 0))
-	return l.releaseFor(tracked, cost), AdmissionOpen
+	return l.releaseFor(tracked, cost, ticket), AdmissionOpen
 }
 
-func (l *ParticipantLimiter) releaseFor(tracked key, cost TokenCost) func() {
+func (l *ParticipantLimiter) releaseFor(tracked key, cost TokenCost, ticket probeTicket) func() {
 	var once sync.Once
 	return func() {
-		once.Do(func() { l.release(tracked, cost) })
+		once.Do(func() { l.release(tracked, cost, ticket) })
 	}
 }
 
-func (l *ParticipantLimiter) release(tracked key, cost TokenCost) {
+func (l *ParticipantLimiter) release(tracked key, cost TokenCost, ticket probeTicket) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -225,6 +225,7 @@ func (l *ParticipantLimiter) release(tracked key, cost TokenCost) {
 	}
 	state.input.give(max(cost.Input, 0))
 	state.output.give(max(cost.Output, 0))
+	state.endProbe(ticket)
 	state.lastUsed = l.now()
 }
 
