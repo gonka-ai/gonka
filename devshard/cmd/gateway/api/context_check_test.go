@@ -82,7 +82,8 @@ func enableStatsTokenizer(c *config.Config) { c.Server.StatsTokenizerEnabled = t
 
 func pinContextLength(length int64) func(*config.Config) {
 	return func(c *config.Config) {
-		c.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &length}}
+		open := config.ModelAccessOpen
+		mustResolveModels(c, map[string]config.ModelSettings{"qwen": {MaxModelLen: &length, Access: &open}})
 	}
 }
 
@@ -147,7 +148,7 @@ func TestTheCheckRefusesExactlyWhatTheContextCannotHoldWithMaxTokens(t *testing.
 //  3. Assert it is refused 400 with a message naming the context length, max_tokens, the prompt, the total and both ways out.
 //  4. Assert the count was asked for the normalized body of the requested model, and that neither the limiter nor the race was reached, so no nonce exists.
 func TestAPromptAndMaxTokensPastTheContextAreRefusedBeforeTheRace(t *testing.T) {
-	live := newHarness(t, pinContextLength(400_000), func(c *config.Config) { c.Limits.MaxTokensCap = 64_000 })
+	live := newHarness(t, func(c *config.Config) { c.Limits.MaxTokensCap = 64_000 }, pinContextLength(400_000))
 	count := &fakePromptTokens{tokens: 380_000, known: true}
 	live.server.promptTokens = count
 
@@ -361,9 +362,10 @@ func TestTheCheckJudgesByTheTokenizersMinimum(t *testing.T) {
 					normalized := filters.Result{Model: "qwen", Body: body, MaxTokens: maxTokens}
 					for _, length := range []uint64{minimum + chatTemplateMinimumTokens + maxTokens - 1, minimum + chatTemplateMinimumTokens + maxTokens} {
 						pinned := int64(length)
-						limits := config.Limits{ModelLimits: map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}}
+						configuration := config.Defaults()
+						mustResolveModels(&configuration, map[string]config.ModelSettings{"qwen": {MaxModelLen: &pinned}})
 
-						_, err := live.server.checkContext(context.Background(), limits, normalized)
+						_, err := live.server.checkContext(context.Background(), &configuration, normalized)
 
 						if fits := minimum+chatTemplateMinimumTokens+maxTokens <= length; fits != (err == nil) {
 							t.Fatalf("%s, %d bytes, max_tokens %d, context %d: minimum %d, check said %v", name, len(text), maxTokens, length, minimum, err)

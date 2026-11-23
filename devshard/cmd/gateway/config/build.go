@@ -2,14 +2,14 @@ package config
 
 import (
 	"cmp"
-	"maps"
+	"slices"
 	"strings"
 
 	"devshard/cmd/gateway/env"
 )
 
-// Build produces the validated snapshot: Defaults() ← env ← admin overrides, cloning every input map and slice.
-func Build(values env.Values, overrides Overrides) (*Config, error) {
+// Build produces the validated snapshot: Defaults() ← env ← admin overrides, with the active client keys, cloning every input map and slice.
+func Build(values env.Values, overrides Overrides, clientKeys ...string) (*Config, error) {
 	configuration := Defaults()
 
 	// Environment layer.
@@ -17,7 +17,7 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Server.Port, values.Port)
 	overrideIfSet(&configuration.Server.StorageDir, values.StorageDir)
 	if values.APIKeys != nil {
-		configuration.Server.APIKeys = splitCommaSeparated(*values.APIKeys)
+		configuration.Server.EnvAPIKeys = splitCommaSeparated(*values.APIKeys)
 	}
 	overrideIfSet(&configuration.Server.AdminAPIKey, values.AdminAPIKey)
 	overrideIfSet(&configuration.Server.DevshardsJSON, values.DevshardsJSON)
@@ -90,27 +90,19 @@ func Build(values env.Values, overrides Overrides) (*Config, error) {
 	overrideIfSet(&configuration.Limits.HostCutoff.AfterFailures, overrides.HostCutoffAfterFailures)
 	overrideIfSet(&configuration.Limits.HostCutoff.BaseMS, overrides.HostCutoffMS)
 	overrideIfSet(&configuration.Limits.HostCutoff.MaxMS, overrides.HostCutoffMaxMS)
-	if overrides.ModelLimits != nil {
-		configuration.Limits.ModelLimits = maps.Clone(overrides.ModelLimits)
-	}
-	if overrides.ModelAccess != nil {
-		configuration.Limits.ModelAccess = maps.Clone(overrides.ModelAccess)
-	}
+	overrideIfSet(&configuration.Limits.Access, overrides.Access)
+
+	configuration.Server.APIKeys = append(slices.Clone(configuration.Server.EnvAPIKeys), clientKeys...)
 
 	if err := configuration.Validate(); err != nil {
+		return nil, err
+	}
+	if err := resolveModels(&configuration, values.ModelsJSON, overrides.legacyModelSettings(), overrides.Models); err != nil {
 		return nil, err
 	}
 	return &configuration, nil
 }
 
-// overrideIfSet: a nil source leaves the lower layer's value in place.
-func overrideIfSet[T any](target, source *T) {
-	if source != nil {
-		*target = *source
-	}
-}
-
-// splitCommaSeparated trims, drops empties, and always returns a fresh slice (no clone needed).
 func splitCommaSeparated(raw string) []string {
 	parts := strings.Split(raw, ",")
 	cleaned := make([]string, 0, len(parts))
@@ -121,6 +113,13 @@ func splitCommaSeparated(raw string) []string {
 		}
 	}
 	return cleaned
+}
+
+// overrideIfSet: a nil source leaves the lower layer's value in place.
+func overrideIfSet[T any](target, source *T) {
+	if source != nil {
+		*target = *source
+	}
 }
 
 func applyTunables(configuration *Config, tunables env.Tunables) {
@@ -149,7 +148,9 @@ func applyTunables(configuration *Config, tunables env.Tunables) {
 	overrideIfSet(&configuration.Engine.LoserGraceMS, tunables.EngineLoserGraceMS)
 	overrideIfSet(&configuration.Engine.MaxConcurrentTimeoutVotes, tunables.EngineMaxConcurrentTimeoutVotes)
 	overrideIfSet(&configuration.Engine.HedgeFirstTokenFloorMS, tunables.EngineHedgeFirstTokenFloorMS)
+	overrideIfSet(&configuration.Engine.MaxAttemptsPerRequest, tunables.EngineMaxAttemptsPerRequest)
 	overrideIfSet(&configuration.Engine.MaxStartedAttemptsPerRequest, tunables.EngineMaxStartedAttemptsPerRequest)
+	overrideIfSet(&configuration.Stream.DrainTimeoutSeconds, tunables.DrainTimeoutSeconds)
 	overrideIfSet(&configuration.Perf.EWMAHalfLifeSeconds, tunables.PerfEWMAHalfLifeSeconds)
 	overrideIfSet(&configuration.Perf.ConsecutiveFailThreshold, tunables.PerfConsecutiveFailThreshold)
 	overrideIfSet(&configuration.Perf.FailureRateThreshold, tunables.PerfFailureRateThreshold)

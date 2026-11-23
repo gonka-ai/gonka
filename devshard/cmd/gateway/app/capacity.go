@@ -16,7 +16,7 @@ type modelCapacity struct {
 
 func (m modelCapacity) ForModel(model string) limits.ModelCapacity {
 	weights := m.ModelWeights(model)
-	concurrency := m.config.Load().Limits.Concurrency
+	concurrency := m.config.Load().For(model).Limits.Concurrency
 	perWeight := concurrency.RequestsPer10000Weight
 	if m.snapshots.Snapshot().RequestsBlocked {
 		perWeight = concurrency.PoCRequestsPer10000Weight

@@ -216,7 +216,7 @@ func (h *gatewayHarness) observeCreate(created chainCreate) {
 	}
 	snapshot, configuration := running.Observer().Snapshot(), running.Config().Load()
 	model := h.spec.modelByID(created.model)
-	fullCost, _ := scheduler.RequestCost(configuration.Limits.RetirementReserve(model.id, snapshot.Models[model.id].MaxModelLen), snapshot.TokenPrice, snapshot.FeePerNonce)
+	fullCost, _ := scheduler.RequestCost(configuration.For(model.id).Limits.RetirementReserve(snapshot.Models[model.id].MaxModelLen), snapshot.TokenPrice, snapshot.FeePerNonce)
 	candidate := createCandidate{
 		createdID: formatEscrowID(created.escrowID), model: created.model,
 		fullCost:       fullCost * uint64(scheduler.AttemptsToFund(configuration.Engine.MaxAttemptsPerRequest)),

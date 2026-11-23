@@ -63,17 +63,20 @@ func (c ModelCapacity) weightLimited() bool {
 	return c.MaxConcurrentPer10000Weight > 0 && c.BaselineWeight > 0
 }
 
-type ModelOverride struct {
-	MaxConcurrent  *int64
-	MaxInputTokens *int64
-}
-
+// GatewayConfig's ByModel holds each named model's own caps, which replace the network ones for it.
 type GatewayConfig struct {
 	MaxConcurrent         int64
 	MaxInputTokens        int64
 	AcquireWait           time.Duration
 	AdmissionQueuePerSlot int64
-	ModelLimits           map[string]ModelOverride
+	ByModel               map[string]GatewayConfig
+}
+
+func (c GatewayConfig) forModel(model string) GatewayConfig {
+	if own, named := c.ByModel[model]; named {
+		return own
+	}
+	return c
 }
 
 type modelCounter struct {
@@ -182,7 +185,7 @@ func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inpu
 	model = strings.TrimSpace(model)
 
 	l.mu.Lock()
-	acquireWait := l.cfg.AcquireWait
+	acquireWait := l.cfg.forModel(model).AcquireWait
 	admitted := l.admissionFor(model, inputTokens, capacity)
 	counter := l.counterLocked(model)
 	counter.enforced = admitted
@@ -296,13 +299,13 @@ func (l *GatewayLimiter) passQueueHeadLocked(model string) string {
 
 // starvingLocked reports a head passed as often as the ceiling allows, or waiting longer than its share of the admission wait.
 func (l *GatewayLimiter) starvingLocked(head *waiter) bool {
-	patience := l.cfg.AcquireWait / queueHeadPatienceDivisor
+	patience := l.cfg.forModel(head.model).AcquireWait / queueHeadPatienceDivisor
 	return head.passedBy >= maxQueueHeadPasses || !l.now().Before(head.queuedAt.Add(patience))
 }
 
 // queueTooDeepLocked reports a queue this request cannot reach the front of in time. See capacity.md, "The wait budget".
 func (l *GatewayLimiter) queueTooDeepLocked(model string, admitted admission) bool {
-	perSlot := l.cfg.AdmissionQueuePerSlot
+	perSlot := l.cfg.forModel(model).AdmissionQueuePerSlot
 	if perSlot <= 0 || admitted.concurrencyLimit <= 0 {
 		return false
 	}
@@ -322,15 +325,8 @@ func (l *GatewayLimiter) takeLocked(counter *modelCounter, inputTokens int64) {
 
 // admissionFor treats each model's configured maximum as its own budget. See capacity.md, "The gateway limiter".
 func (l *GatewayLimiter) admissionFor(model string, inputTokens int64, capacity ModelCapacity) admission {
-	maxConcurrent, maxInputTokens := l.cfg.MaxConcurrent, l.cfg.MaxInputTokens
-	if override, ok := l.cfg.ModelLimits[model]; ok {
-		if override.MaxConcurrent != nil {
-			maxConcurrent = *override.MaxConcurrent
-		}
-		if override.MaxInputTokens != nil {
-			maxInputTokens = *override.MaxInputTokens
-		}
-	}
+	own := l.cfg.forModel(model)
+	maxConcurrent, maxInputTokens := own.MaxConcurrent, own.MaxInputTokens
 	admitted := admission{requestedTokens: inputTokens}
 	admitted.concurrencyLimit, admitted.concurrencyLimited = effectiveConcurrencyLimit(maxConcurrent, capacity)
 	admitted.noLiveWeight = capacity.weightLimited() && admitted.concurrencyLimit == 0

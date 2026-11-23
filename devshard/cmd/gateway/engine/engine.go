@@ -292,6 +292,7 @@ func (h heldTargets) Target(escrowID string) (DispatchTarget, bool) {
 }
 
 func (e *Engine) raceDeps(settings *config.Config, request Request, registration *raceRegistration) raceDeps {
+	settings = settings.For(request.Model)
 	return raceDeps{
 		Picker:       e.deps.Picker,
 		Targets:      heldTargets{escrows: e.deps.Targets, registration: registration},
@@ -309,7 +310,7 @@ func (e *Engine) raceDeps(settings *config.Config, request Request, registration
 		Timer:        e.deps.Timer,
 		Journal:      e.deps.Journal,
 
-		ModelContextLength: settings.Limits.ContextLength(request.Model, e.deps.Snapshots.Snapshot().Models[request.Model].MaxModelLen),
+		ModelContextLength: settings.Limits.ContextLength(e.deps.Snapshots.Snapshot().Models[request.Model].MaxModelLen),
 
 		Hold: registration.holdEscrow,
 		Report: func(outcome RaceOutcome) {

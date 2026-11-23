@@ -303,9 +303,21 @@ func (o *operations) ResetAccountingEpoch(_ context.Context, epoch uint64) (int,
 }
 
 func (o *operations) Reconfigure(ctx context.Context, overrides config.Overrides) error {
-	next, err := config.Build(o.values, overrides)
+	clientKeys, err := o.store.ActiveAPIKeys(ctx)
 	if err != nil {
 		return err
+	}
+	next, err := config.Build(o.values, overrides, clientKeys...)
+	if err != nil {
+		return err
+	}
+	if err := next.CheckStoredModels(); err != nil {
+		return err
+	}
+	if o.config.Load().CheckClientKeys() == nil {
+		if err := next.CheckClientKeys(); err != nil {
+			return fmt.Errorf("%w: %w", config.ErrInvalid, err)
+		}
 	}
 	if err := o.store.SaveOverrides(ctx, overrides); err != nil {
 		return err

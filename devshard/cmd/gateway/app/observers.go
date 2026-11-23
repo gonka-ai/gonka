@@ -188,9 +188,9 @@ type shadowOutcomes struct {
 
 func (o shadowOutcomes) ShadowProbed(result shadow.Result) {
 	if result.Outcome == shadow.OutcomeServed {
-		o.recorder.ShadowProbeAnswered(result.Participant, result.Outcome, result.Streamed, result.FirstToken, result.Total, result.OutputTokens)
+		o.recorder.ShadowProbeAnswered(result.Participant, result.Model, result.Outcome, result.Streamed, result.FirstToken, result.Total, result.OutputTokens)
 	} else {
-		o.recorder.ShadowProbeUnanswered(result.Participant, result.Outcome)
+		o.recorder.ShadowProbeUnanswered(result.Participant, result.Model, result.Outcome)
 	}
 	o.events.ShadowProbed(result)
 }

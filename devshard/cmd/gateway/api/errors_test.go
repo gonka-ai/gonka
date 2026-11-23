@@ -10,6 +10,7 @@ import (
 
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/scheduler"
@@ -237,5 +238,33 @@ func TestAZeroLiveWeightRejectionCarriesTheHostCutoffBase(t *testing.T) {
 	}
 	if got := recorder.Header().Get("Retry-After"); got != "5" {
 		t.Fatalf("Retry-After = %q, want %q (the default host cutoff base, rounded up to seconds)", got, "5")
+	}
+}
+
+// Test flow:
+//  1. Build a config whose network `host_cutoff_ms` is the default 5000 and whose model-a sets 9000.
+//  2. Write `engine.ErrHostsUnavailable` through `writeErrorForModel` for model-a and for an unnamed model, and through `writeErrorFor`.
+//  3. Assert the Retry-After headers are "9", "5" and "5".
+func TestAHostsUnavailableRetryAfterFollowsTheModelsOwnCutoff(t *testing.T) {
+	cutoff := int64(9000)
+	built, err := config.Build(env.Values{}, config.Overrides{Models: map[string]config.ModelSettings{"model-a": {HostCutoffMS: &cutoff}}})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	server := &Server{config: config.NewHolder(built)}
+
+	for _, expectation := range []struct {
+		model, want string
+	}{{"model-a", "9"}, {"model-b", "5"}} {
+		recorder := httptest.NewRecorder()
+		server.writeErrorForModel(recorder, engine.ErrHostsUnavailable, expectation.model)
+		if got := recorder.Header().Get("Retry-After"); got != expectation.want {
+			t.Fatalf("Retry-After for %s = %q, want %q", expectation.model, got, expectation.want)
+		}
+	}
+	recorder := httptest.NewRecorder()
+	server.writeErrorFor(recorder, engine.ErrHostsUnavailable)
+	if got := recorder.Header().Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After on the network path = %q, want 5", got)
 	}
 }

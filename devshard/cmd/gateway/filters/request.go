@@ -3,7 +3,7 @@ package filters
 // Options carries NormalizeRequest's per-call configuration. See README.md, "Output token limits".
 type Options struct {
 	Admin               bool
-	KeepClientStream    bool
+	KeepClientStream    func(model string) bool
 	DefaultMaxTokens    uint64
 	MaxTokensCap        uint64
 	RoutedModel         string

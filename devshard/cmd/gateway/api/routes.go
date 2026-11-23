@@ -66,6 +66,8 @@ func (s *Server) routes() []route {
 		{pattern: "/v1/admin/devshards/{id}/settle", label: "/v1/admin/devshards/{id}/settle", admin: true, alwaysOn: true, handler: s.handleAdminDevshardSettle},
 		{pattern: "/v1/admin/devshards/{id}/participants", label: "/v1/admin/devshards/{id}/participants", admin: true, alwaysOn: true, handler: s.handleAdminDevshardParticipants},
 		{pattern: "/v1/admin/escrows", label: "/v1/admin/escrows", admin: true, alwaysOn: true, handler: s.handleAdminEscrows},
+		{pattern: "/v1/admin/api-keys", label: "/v1/admin/api-keys", admin: true, alwaysOn: true, handler: s.handleAdminAPIKeys},
+		{pattern: "/v1/admin/api-keys/{id}", label: "/v1/admin/api-keys/{id}", admin: true, alwaysOn: true, handler: s.handleAdminAPIKey},
 		{pattern: "/v1/admin/suspicious-hosts", label: "/v1/admin/suspicious-hosts", admin: true, alwaysOn: true, handler: s.handleAdminSuspiciousHosts},
 		{pattern: "/v1/admin/filters", label: "/v1/admin/filters", admin: true, alwaysOn: true, handler: s.handleAdminFilters},
 		{pattern: "/v1/admin/filters/presets", label: "/v1/admin/filters/presets", admin: true, alwaysOn: true, handler: s.handleAdminFilterPresets},
@@ -197,7 +199,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	configuration := s.config.Load()
 	identity := s.resolveCredentials(r)
 	requestID := s.requestIDs()
-	if !reachesAnyModel(configuration.Limits, identity) {
+	if !reachesAnyModel(configuration, identity) {
 		s.writeErrorFor(w, &AccessDeniedError{Message: "no model is open to this request's credentials"})
 		return
 	}
@@ -209,7 +211,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	}
 	releaseBody := sync.OnceFunc(func() { s.requestBodies.release(int64(len(body))) })
 	defer releaseBody()
-	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration.Limits, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))
+	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))
 	releaseBody()
 	if err != nil {
 		s.capture.filterRejected(r, requestID, body, err)
@@ -220,15 +222,15 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.writeErrorFor(w, tooLargeForHosts(len(normalized.Body)))
 		return
 	}
-	if err := authorizeModel(configuration.Limits, normalized.Model, identity); err != nil {
+	if err := authorizeModel(configuration, normalized.Model, identity); err != nil {
 		s.writeErrorFor(w, err)
 		return
 	}
-	if err := s.routableModel(configuration.Limits, normalized.Model); err != nil {
+	if err := s.routableModel(configuration, normalized.Model); err != nil {
 		s.writeErrorFor(w, err)
 		return
 	}
-	prompt, err := s.checkContext(r.Context(), configuration.Limits, normalized)
+	prompt, err := s.checkContext(r.Context(), configuration, normalized)
 	if err != nil {
 		s.writeErrorFor(w, err)
 		return
@@ -266,7 +268,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 				RequestID: requestID, Model: normalized.Model, APIKeyID: identity.caller(), LimiterReason: label,
 			})
 		}
-		s.writeErrorFor(w, err)
+		s.writeErrorForModel(w, err, normalized.Model)
 		return
 	}
 	slot := newLimiterSlot(func() { s.limiter.ReleaseForModel(normalized.Model, int64(counted.tokens)) })
@@ -280,12 +282,12 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	if s.cache == nil {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization, slot)
+		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot)
 		return
 	}
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
 	defer recorder.releaseBudget()
-	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.Limits.LogprobsOptimization, slot)
+	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
 	if !storable {
@@ -315,7 +317,7 @@ func (s *Server) servedModelVocabulary(model string) int {
 }
 
 // routableModel refuses a model before it can take a limiter slot. See README.md, "The route table".
-func (s *Server) routableModel(configured config.Limits, model string) error {
+func (s *Server) routableModel(configured *config.Config, model string) error {
 	served := s.escrows.Models()
 	if len(served) == 0 {
 		return &ModelUnavailableError{Model: model}
@@ -329,11 +331,11 @@ func (s *Server) routableModel(configured config.Limits, model string) error {
 	return &UnsupportedModelError{Model: model, Supported: served}
 }
 
-func reachesAnyModel(configured config.Limits, identity credentials) bool {
+func reachesAnyModel(configured *config.Config, identity credentials) bool {
 	if identity.admin {
 		return true
 	}
-	for _, access := range configured.ModelAccess {
+	for _, access := range configured.AccessTiers() {
 		if access == config.ModelAccessOpen || (access == config.ModelAccessAPIKey && identity.apiKey) {
 			return true
 		}
@@ -341,14 +343,14 @@ func reachesAnyModel(configured config.Limits, identity credentials) bool {
 	return false
 }
 
-func authorizeModel(configured config.Limits, model string, identity credentials) error {
+func authorizeModel(configured *config.Config, model string, identity credentials) error {
 	if model == "" {
 		return filters.Reject("model is required")
 	}
 	if identity.admin {
 		return nil
 	}
-	switch configured.AccessFor(model) {
+	switch configured.For(model).Limits.Access {
 	case config.ModelAccessOpen:
 		return nil
 	case config.ModelAccessAPIKey:
@@ -398,7 +400,7 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 		}
 		s.finishRequest(requestID, apiKeyID, normalized, outcome, deliveryFailedBeforeFirstByte, client, s.now().Sub(startedAt), err, nil)
 		w.Header().Set(RequestIDHeader, requestID)
-		s.writeErrorFor(w, err)
+		s.writeErrorForModel(w, err, normalized.Model)
 		return outcome, nil
 	}
 	// The authoritative X-Devshard-ID write. See README.md, "Streaming the reply".

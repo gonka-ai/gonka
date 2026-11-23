@@ -68,7 +68,7 @@ func benchServer(b *testing.B, chunks []string) *Server {
 	configuration.Server.StorageDir = b.TempDir()
 	configuration.Server.AdminAPIKey = adminKey
 	configuration.Server.APIKeys = []string{clientKey, "second-key", "third-key"}
-	configuration.Limits.ModelAccess = map[string]string{"qwen": config.ModelAccessOpen}
+	grantAccess(&configuration, map[string]string{"qwen": config.ModelAccessOpen})
 	escrows := &fakeRegistry{
 		models:   []string{"qwen"},
 		sessions: map[string]registry.EscrowSession{},

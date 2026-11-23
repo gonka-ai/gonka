@@ -25,6 +25,7 @@ func TestTheLogprobsOptimizationOverrideReachesTheHostAsSet(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			live := newHarness(t, func(configuration *config.Config) {
 				configuration.Limits.LogprobsOptimization = testCase.setting
+				grantAccess(configuration, map[string]string{"qwen": config.ModelAccessOpen})
 			})
 
 			if recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil); recorder.Code != http.StatusOK {

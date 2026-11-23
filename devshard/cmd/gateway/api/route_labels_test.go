@@ -51,7 +51,7 @@ var (
 	}
 
 	// deliberateDivergences are the only labels allowed to sit outside the devshardctl domain.
-	deliberateDivergences = []string{otherRouteLabel, "/v1/requests/{id}", "/v1/admin/hosts", "/v1/admin/devshards/settle", "/v1/admin/devshards/deactivate", "/v1/admin/filters", "/v1/admin/filters/presets", "/v1/admin/filters/{model}"}
+	deliberateDivergences = []string{otherRouteLabel, "/v1/requests/{id}", "/v1/admin/hosts", "/v1/admin/devshards/settle", "/v1/admin/devshards/deactivate", "/v1/admin/filters", "/v1/admin/filters/presets", "/v1/admin/filters/{model}", "/v1/admin/api-keys", "/v1/admin/api-keys/{id}"}
 )
 
 // Test flow:
@@ -92,6 +92,8 @@ func TestEveryRouteCarriesItsExactMetricLabel(t *testing.T) {
 		"/v1/admin/suspicious-hosts":                 "/v1/admin/suspicious-hosts",
 		"/v1/admin/filters":                          "/v1/admin/filters",
 		"/v1/admin/filters/presets":                  "/v1/admin/filters/presets",
+		"/v1/admin/api-keys":                         "/v1/admin/api-keys",
+		"/v1/admin/api-keys/{id}":                    "/v1/admin/api-keys/{id}",
 		"/v1/admin/filters/{model...}":               "/v1/admin/filters/{model}",
 		"/v1/admin/participants/unquarantine":        "/v1/admin/participants/unquarantine",
 		"/v1/admin/accounting/reset/{epoch}":         "/v1/admin/accounting/reset/{epoch}",

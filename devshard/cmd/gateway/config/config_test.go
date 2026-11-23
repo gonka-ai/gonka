@@ -188,26 +188,8 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"host_cutoff_ms too low", func(c *Config) { c.Limits.HostCutoff.BaseMS = 0 }, "host_cutoff_ms"},
 		{"host_cutoff_max_ms below base", func(c *Config) { c.Limits.HostCutoff.MaxMS = 1 }, "host_cutoff_max_ms"},
 		{"host_cutoff_max_ms above perf ejection horizon", func(c *Config) { c.Limits.HostCutoff.MaxMS = c.Perf.EjectionMaxSeconds*1000 + 1 }, "dominant ejection authority"},
-		{"model_access bad enum", func(c *Config) { c.Limits.ModelAccess = map[string]string{"model-a": "bogus"} }, "model_access"},
+		{"access bad enum", func(c *Config) { c.Limits.Access = "bogus" }, "access"},
 		{"admin_api_key too short to be safe", func(c *Config) { c.Server.AdminAPIKey = "short" }, "admin_api_key"},
-		{"api_key model with no api keys configured", func(c *Config) {
-			c.Limits.ModelAccess = map[string]string{"model-a": ModelAccessAPIKey}
-			c.Server.APIKeys = nil
-		}, "api_keys"},
-		{"model_limits default too low", func(c *Config) {
-			c.Limits.ModelLimits = map[string]ModelLimits{"model-a": {DefaultMaxTokens: 0, MaxTokensCap: 10}}
-		}, "model_limits"},
-		{"model_limits cap too low", func(c *Config) {
-			c.Limits.ModelLimits = map[string]ModelLimits{"model-a": {DefaultMaxTokens: 100, MaxTokensCap: 0}}
-		}, "model_limits"},
-		{"model_limits max_concurrent_requests too low", func(c *Config) {
-			tooFewRequests := int64(0)
-			c.Limits.ModelLimits = map[string]ModelLimits{"model-a": {DefaultMaxTokens: 100, MaxTokensCap: 200, MaxConcurrentRequests: &tooFewRequests}}
-		}, "model_limits"},
-		{"model_limits max_input_tokens_in_flight negative", func(c *Config) {
-			negativeInputTokens := int64(-1)
-			c.Limits.ModelLimits = map[string]ModelLimits{"model-a": {DefaultMaxTokens: 100, MaxTokensCap: 200, MaxInputTokensInFlight: &negativeInputTokens}}
-		}, "model_limits"},
 		{"poc_mode bad enum", func(c *Config) { c.Modes.PoCMode = "bogus" }, "poc_mode"},
 		{"rotation_pre_poc_blocks negative", func(c *Config) { c.Rotation.PrePoCBlocks = -1 }, "rotation_pre_poc_blocks"},
 		{"chat_cache_max_bytes negative", func(c *Config) { c.Cache.ChatCacheMaxBytes = -1 }, "chat_cache_max_bytes"},
@@ -238,12 +220,12 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 			c.NonceAccounting.Enabled = true
 			c.NonceAccounting.Port = 65_536
 		}, "nonce_accounting_port"},
-		{"scheduler_match_wait_ms negative", func(c *Config) { c.Scheduler.MatchWaitMS = -1 }, "scheduler_match_wait_ms"},
-		{"scheduler_match_wait_ms above ceiling", func(c *Config) { c.Scheduler.MatchWaitMS = 5_001 }, "scheduler_match_wait_ms"},
-		{"scheduler_max_consecutive_burns negative", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = -1 }, "scheduler_max_consecutive_burns"},
-		{"scheduler_max_consecutive_burns above ceiling", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = 1_001 }, "scheduler_max_consecutive_burns"},
-		{"scheduler_max_burns_per_request negative", func(c *Config) { c.Scheduler.MaxBurnsPerRequest = -1 }, "scheduler_max_burns_per_request"},
-		{"scheduler_max_burns_per_request above ceiling", func(c *Config) { c.Scheduler.MaxBurnsPerRequest = 1_001 }, "scheduler_max_burns_per_request"},
+		{"match_wait_ms negative", func(c *Config) { c.Scheduler.MatchWaitMS = -1 }, "match_wait_ms"},
+		{"match_wait_ms above ceiling", func(c *Config) { c.Scheduler.MatchWaitMS = 5_001 }, "match_wait_ms"},
+		{"max_consecutive_burns negative", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = -1 }, "max_consecutive_burns"},
+		{"max_consecutive_burns above ceiling", func(c *Config) { c.Scheduler.MaxConsecutiveBurns = 1_001 }, "max_consecutive_burns"},
+		{"max_burns_per_request negative", func(c *Config) { c.Scheduler.MaxBurnsPerRequest = -1 }, "max_burns_per_request"},
+		{"max_burns_per_request above ceiling", func(c *Config) { c.Scheduler.MaxBurnsPerRequest = 1_001 }, "max_burns_per_request"},
 		{"scheduler_dispatch_queue_depth zero", func(c *Config) { c.Scheduler.DispatchQueueDepth = 0 }, "scheduler_dispatch_queue_depth"},
 		{"scheduler_dispatch_queue_depth above ceiling", func(c *Config) { c.Scheduler.DispatchQueueDepth = 65_537 }, "scheduler_dispatch_queue_depth"},
 		{"engine_receipt_timeout_ms too low", func(c *Config) { c.Engine.ReceiptTimeoutMS = 0 }, "engine_receipt_timeout_ms"},
@@ -305,22 +287,9 @@ func TestValidateAcceptsAnUncappedConcurrency(t *testing.T) {
 func TestValidateAcceptsADefaultAboveTheCap(t *testing.T) {
 	configuration := Defaults()
 	configuration.Limits.DefaultMaxTokens = 10_000
-	configuration.Limits.ModelLimits = map[string]ModelLimits{"model-a": {DefaultMaxTokens: 10_000, MaxTokensCap: 4_096}}
+	configuration.Limits.MaxTokensCap = 4_096
 	if err := configuration.Validate(); err != nil {
 		t.Fatalf("Validate() with a default above the cap = %v, want nil", err)
-	}
-}
-
-// Test flow:
-//  1. Build a default config with a model-limits entry that leaves its optional pointer fields nil.
-//  2. Assert `Validate` accepts it.
-func TestValidateAcceptsModelLimitsWithNilOptionalPointers(t *testing.T) {
-	configuration := Defaults()
-	configuration.Limits.ModelLimits = map[string]ModelLimits{
-		"model-a": {DefaultMaxTokens: 1024, MaxTokensCap: 2048},
-	}
-	if err := configuration.Validate(); err != nil {
-		t.Fatalf("Validate() on ModelLimits entry with nil optional pointers: want nil, got %v", err)
 	}
 }
 
@@ -355,66 +324,56 @@ func TestAdminEnabledDistinguishesUnsetFromConfigured(t *testing.T) {
 }
 
 // Test flow:
-//  1. Table-driven: each case builds a `Limits.ModelAccess` policy and asks `AccessFor` about a model that is unconfigured, listed in the policy, or outside an existing policy.
-//  2. Assert `AccessFor` returns the model's own tier when listed and admin-only for any other model, an empty policy included: a deployment starts with no entries, and an open default would hand every model to anonymous callers.
-func TestAccessForFailsClosed(t *testing.T) {
-	tests := []struct {
-		name   string
-		access map[string]string
-		model  string
-		want   string
-	}{
-		{"no policy configured leaves the model admin-only", nil, "model-a", ModelAccessAdminOnly},
-		{"an emptied policy leaves the model admin-only", map[string]string{}, "model-a", ModelAccessAdminOnly},
-		{"model listed in the policy keeps its tier", map[string]string{"model-a": ModelAccessAPIKey}, "model-a", ModelAccessAPIKey},
-		{"model outside an existing policy is admin-only", map[string]string{"model-a": ModelAccessOpen}, "model-b", ModelAccessAdminOnly},
+//  1. Resolve models with one access tier of their own, one empty block and none for a third, over a network access of admin_only.
+//  2. Assert `For(model).Limits.Access` is the model's own tier when set and admin-only for every other model: a deployment starts with no entries, and an open default would hand every model to anonymous callers.
+func TestAccessFailsClosed(t *testing.T) {
+	open, keyed := ModelAccessOpen, ModelAccessAPIKey
+	configuration := Defaults()
+	configuration.Server.APIKeys = []string{"0123456789abcdef"}
+	if err := configuration.ResolveModels(map[string]ModelSettings{"opened": {Access: &open}, "keyed": {Access: &keyed}, "empty": {}}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
 	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := (Limits{ModelAccess: testCase.access}).AccessFor(testCase.model); got != testCase.want {
-				t.Fatalf("AccessFor(%q) = %q, want %q", testCase.model, got, testCase.want)
-			}
-		})
+	for model, want := range map[string]string{"opened": ModelAccessOpen, "keyed": ModelAccessAPIKey, "empty": ModelAccessAdminOnly, "unnamed": ModelAccessAdminOnly} {
+		if got := configuration.For(model).Limits.Access; got != want {
+			t.Errorf("For(%q).Limits.Access = %q, want %q", model, got, want)
+		}
 	}
 }
 
 // Test flow:
-//  1. Ask OpenModels about a policy with two open models listed out of order, an api_key one and an admin_only one, and about an empty policy.
-//  2. Assert it names the two open models sorted, and none for the empty policy, which leaves every model admin-only.
+//  1. Resolve models with two open ones listed out of order, an api_key one and an admin_only one, then ask about a config with no models and one whose network access is open.
+//  2. Assert `OpenModels` names the two open models sorted, none for the empty config, and the all-models marker first for an open network access.
 func TestOpenModelsNamesOnlyTheModelsAnyCallerReaches(t *testing.T) {
-	limits := Limits{ModelAccess: map[string]string{"zeta": ModelAccessOpen, "keyed": ModelAccessAPIKey, "alpha": ModelAccessOpen, "closed": ModelAccessAdminOnly}}
-
-	if got := limits.OpenModels(); !slices.Equal(got, []string{"alpha", "zeta"}) {
+	open, keyed, closed := ModelAccessOpen, ModelAccessAPIKey, ModelAccessAdminOnly
+	configuration := Defaults()
+	configuration.Server.APIKeys = []string{"0123456789abcdef"}
+	if err := configuration.ResolveModels(map[string]ModelSettings{"zeta": {Access: &open}, "keyed": {Access: &keyed}, "alpha": {Access: &open}, "closed": {Access: &closed}}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
+	}
+	if got := configuration.OpenModels(); !slices.Equal(got, []string{"alpha", "zeta"}) {
 		t.Errorf("OpenModels() = %v, want [alpha zeta]", got)
 	}
-	if got := (Limits{}).OpenModels(); len(got) != 0 {
-		t.Errorf("OpenModels() with no policy = %v, want none", got)
+	empty := Defaults()
+	if got := empty.OpenModels(); len(got) != 0 {
+		t.Errorf("OpenModels() with no models = %v, want none", got)
+	}
+	networkOpen := Defaults()
+	networkOpen.Limits.Access = ModelAccessOpen
+	if got := networkOpen.OpenModels(); !slices.Equal(got, []string{AllModels}) {
+		t.Errorf("OpenModels() with an open network access = %v, want [%s]", got, AllModels)
 	}
 }
 
 // Test flow:
-//  1. Table-driven: each case names a model in `ModelAccess`, in `ModelLimits`, in neither, or leaves both maps empty.
-//  2. Assert `Offers` reports true whenever the model is named in either map, and false otherwise.
-func TestOffersReadsBothModelMapsWithoutRequiringEither(t *testing.T) {
-	tests := []struct {
-		name   string
-		access map[string]string
-		limits map[string]ModelLimits
-		model  string
-		want   bool
-	}{
-		{"named in model_access", map[string]string{"model-a": ModelAccessOpen}, nil, "model-a", true},
-		{"named in model_limits", nil, map[string]ModelLimits{"model-a": {}}, "model-a", true},
-		{"named in neither", map[string]string{"model-a": ModelAccessOpen}, map[string]ModelLimits{"model-b": {}}, "model-c", false},
-		{"both maps empty", nil, nil, "model-a", false},
+//  1. Resolve a config naming one model, with an empty block.
+//  2. Assert `Offers` is true for the named model and false for any other.
+func TestOffersNamesTheModelsOfTheModelsSetting(t *testing.T) {
+	configuration := Defaults()
+	if err := configuration.ResolveModels(map[string]ModelSettings{"model-a": {}}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
 	}
-	for _, testCase := range tests {
-		t.Run(testCase.name, func(t *testing.T) {
-			limits := Limits{ModelAccess: testCase.access, ModelLimits: testCase.limits}
-			if got := limits.Offers(testCase.model); got != testCase.want {
-				t.Fatalf("Offers(%q) = %t, want %t", testCase.model, got, testCase.want)
-			}
-		})
+	if !configuration.Offers("model-a") || configuration.Offers("model-b") {
+		t.Fatalf("Offers = %t for model-a and %t for model-b, want true and false", configuration.Offers("model-a"), configuration.Offers("model-b"))
 	}
 }
 
@@ -430,12 +389,11 @@ func TestValidateAcceptsUnsetAdminKey(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case's operator pin in `model_limits` and governance's --max-model-len for the model, call `Limits.ContextLength`.
+//  1. For each table case's operator pin in `max_model_len` and governance's --max-model-len for the model, call `Limits.ContextLength`.
 //  2. Assert governance wins, the operator's pin fills in without a usable governed length, and a model neither names is unknown (0).
 func TestContextLengthTakesGovernanceOverTheOperatorsPin(t *testing.T) {
-	const model = "model-a"
 	pinned := int64(262_144)
-	pinnedLimits := Limits{ModelLimits: map[string]ModelLimits{model: {MaxModelLen: &pinned}}}
+	pinnedLimits := Limits{MaxModelLen: &pinned}
 	testCases := []struct {
 		name     string
 		limits   Limits
@@ -443,7 +401,7 @@ func TestContextLengthTakesGovernanceOverTheOperatorsPin(t *testing.T) {
 		want     uint64
 	}{
 		{name: "governance_over_a_pin", limits: pinnedLimits, governed: 400_000, want: 400_000},
-		{name: "governance_without_a_pin", limits: Limits{ModelLimits: map[string]ModelLimits{model: {}}}, governed: 400_000, want: 400_000},
+		{name: "governance_without_a_pin", limits: Limits{}, governed: 400_000, want: 400_000},
 		{name: "pin_when_governance_names_none", limits: pinnedLimits, want: 262_144},
 		{name: "pin_when_governance_names_past_what_a_window_could_hold", limits: pinnedLimits, governed: MaxContextTokens + 1, want: 262_144},
 		{name: "neither_names_the_model"},
@@ -453,7 +411,7 @@ func TestContextLengthTakesGovernanceOverTheOperatorsPin(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			if got := testCase.limits.ContextLength(model, testCase.governed); got != testCase.want {
+			if got := testCase.limits.ContextLength(testCase.governed); got != testCase.want {
 				t.Fatalf("ContextLength = %d, want %d", got, testCase.want)
 			}
 		})
@@ -461,15 +419,19 @@ func TestContextLengthTakesGovernanceOverTheOperatorsPin(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build limits with a global `max_tokens_cap` and a `model_limits` entry that sets its own cap, one that leaves it 0 and one model with no entry.
-//  2. Ask `Limits.OutputTokenCap` for each model.
-//  3. Assert the entry's own cap wins, and the global cap answers for a 0 and for a missing entry.
-func TestOutputTokenCapTakesTheModelsOwnCapElseTheGlobalOne(t *testing.T) {
+//  1. Resolve models with one that sets its own max_tokens_cap and one with an empty block, over a network cap of 4096.
+//  2. Ask `For(model).Limits.OutputTokenCap` for each model.
+//  3. Assert the model's own cap wins, and the network cap answers for an empty block and for an unnamed model.
+func TestOutputTokenCapTakesTheModelsOwnCapElseTheNetworkOne(t *testing.T) {
 	t.Parallel()
-	limits := Limits{MaxTokensCap: 4096, ModelLimits: map[string]ModelLimits{"capped": {MaxTokensCap: 512}, "inheriting": {}}}
-
+	own := int64(512)
+	configuration := Defaults()
+	configuration.Limits.MaxTokensCap = 4096
+	if err := configuration.ResolveModels(map[string]ModelSettings{"capped": {MaxTokensCap: &own}, "inheriting": {}}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
+	}
 	for model, want := range map[string]uint64{"capped": 512, "inheriting": 4096, "unlisted": 4096} {
-		if got := limits.OutputTokenCap(model); got != want {
+		if got := configuration.For(model).Limits.OutputTokenCap(); got != want {
 			t.Errorf("OutputTokenCap(%q) = %d, want %d", model, got, want)
 		}
 	}

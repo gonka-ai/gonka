@@ -159,7 +159,7 @@ func contextCheckBody(content string, maxTokens int) map[string]any {
 func TestE2E_GatewayRefusesAPromptOverTheContextBeforeANonce(t *testing.T) {
 	env, client := startGatewayEnv(t, pinnedTokenizerEnvOptions(t))
 
-	putSettings(t, client, env.clientURL, map[string]any{"model_limits": map[string]any{
+	putSettings(t, client, env.clientURL, map[string]any{"models": map[string]any{
 		defaultStandModel: map[string]any{
 			"default_max_tokens": 256,
 			"max_tokens_cap":     stubContextLength,

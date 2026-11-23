@@ -59,17 +59,16 @@ func reachableByTrust(participants config.Participants) func(Escrow) bool {
 	}
 }
 
-func markedShadow(shadow []string) func(participant string) bool {
-	if len(shadow) == 0 {
+func shadowedOn(settings *config.Config, model string) func(participant string) bool {
+	if len(settings.For(model).Scheduler.Participants.Shadow) == 0 {
 		return nil
 	}
-	named := namedParticipants(shadow)
-	return func(participant string) bool { return named[participant] }
+	return func(participant string) bool { return settings.ShadowFor(participant, model) }
 }
 
-func (s *Scheduler) participants() config.Participants {
+func (s *Scheduler) settingsInForce() *config.Config {
 	if s.settings == nil {
-		return config.Participants{}
+		return &config.Config{}
 	}
-	return s.settings.Load().Scheduler.Participants
+	return s.settings.Load()
 }

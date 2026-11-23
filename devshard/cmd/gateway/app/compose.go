@@ -74,7 +74,7 @@ func applyContentionProfiles(enabled *bool) {
 		logkey.Subsystem, "gateway", logkey.Used, "DEVSHARD_ENABLE_CONTENTION_PROFILES")
 }
 
-func warnOpenModels(configured config.Limits) {
+func warnOpenModels(configured *config.Config) {
 	if open := configured.OpenModels(); len(open) > 0 {
 		logging.Warn("models are open: any caller reaches them without a key and spends the escrows serving them",
 			logkey.Subsystem, "gateway", logkey.OpenModels, open)
@@ -160,15 +160,11 @@ type gateway struct {
 }
 
 func compose(ctx context.Context, values env.Values, storageDir string, gatewayStore *store.Store, openSessions sessionSources) (*gateway, error) {
-	overrides, err := gatewayStore.LoadOverrides(ctx)
+	configuration, err := bootConfiguration(ctx, values, gatewayStore)
 	if err != nil {
 		return nil, err
 	}
-	configuration, err := config.Build(values, overrides)
-	if err != nil {
-		return nil, err
-	}
-	warnOpenModels(configuration.Limits)
+	warnOpenModels(configuration)
 	configHolder := config.NewHolder(configuration)
 	clock := time.Now
 
@@ -230,15 +226,15 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	observer.Subscribe(capacity.Update)
 	observer.SetNarrator(events)
 	observer.Subscribe((&phaseNarrator{events: events}).observe)
-	gatewayLimiter := limits.NewGatewayLimiter(limits.GatewayConfigFromLimits(configuration.Limits))
+	gatewayLimiter := limits.NewGatewayLimiter(limits.GatewayConfigFromConfig(configuration))
 	buffers := api.NewBufferBudget(configuration.Limits.MaxBufferedResponseBytes)
 	requestBodies := api.NewBufferBudget(configuration.Limits.MaxBufferedRequestBytes)
 	configHolder.Subscribe(func(next *config.Config) {
-		gatewayLimiter.Reconfigure(limits.GatewayConfigFromLimits(next.Limits))
+		gatewayLimiter.Reconfigure(limits.GatewayConfigFromConfig(next))
 		participants.Reconfigure(limits.ParticipantConfigFromConfig(next))
 		buffers.Retune(next.Limits.MaxBufferedResponseBytes)
 		requestBodies.Retune(next.Limits.MaxBufferedRequestBytes)
-		warnOpenModels(next.Limits)
+		warnOpenModels(next)
 	})
 	hosts := perf.NewTracker(configHolder, clock)
 	hosts.SetNarrator(events)

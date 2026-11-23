@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/filters"
@@ -46,11 +47,37 @@ const (
 	maxMatchWaitMS = 5_000
 )
 
-// ErrInvalid marks a configuration the operator got wrong, so the surface answers 400 rather than 502.
-var ErrInvalid = errors.New("invalid configuration")
+// ErrInvalid marks a configuration the operator got wrong, so the surface answers 400 rather than 502; ErrAPIKeyModelWithoutKey marks a model on the api_key tier while no client key is active.
+var (
+	ErrInvalid               = errors.New("invalid configuration")
+	ErrAPIKeyModelWithoutKey = errors.New("access marks a model api_key but no client API key is active, so it is unreachable")
+)
+
+// CheckClientKeys returns ErrAPIKeyModelWithoutKey when a model is on the api_key tier and no client key is active.
+func (c *Config) CheckClientKeys() error {
+	if len(c.Server.APIKeys) > 0 {
+		return nil
+	}
+	if c.Limits.Access == ModelAccessAPIKey {
+		return ErrAPIKeyModelWithoutKey
+	}
+	for _, effective := range c.models {
+		if effective.Limits.Access == ModelAccessAPIKey {
+			return ErrAPIKeyModelWithoutKey
+		}
+	}
+	return nil
+}
 
 // Validate reports every problem at once, naming fields in the admin-API snake_case spelling.
 func (c *Config) Validate() error {
+	if problems := c.problems(); len(problems) > 0 {
+		return fmt.Errorf("%w: %w", ErrInvalid, errors.Join(problems...))
+	}
+	return nil
+}
+
+func (c *Config) problems() []error {
 	var problems []error
 	complain := func(format string, args ...any) {
 		problems = append(problems, fmt.Errorf(format, args...))
@@ -64,11 +91,7 @@ func (c *Config) Validate() error {
 	c.validatePerf(complain)
 	c.validateEngine(complain)
 	c.validateScheduler(complain)
-
-	if len(problems) > 0 {
-		return fmt.Errorf("%w: %w", ErrInvalid, errors.Join(problems...))
-	}
-	return nil
+	return problems
 }
 
 func (c *Config) validateServer(complain func(format string, args ...any)) {
@@ -201,33 +224,21 @@ func (c *Config) validateAccess(complain func(format string, args ...any)) {
 		if len(key) < minAPIKeyLength {
 			complain("api_keys[%d]: must be at least %d characters", index, minAPIKeyLength)
 		}
+		if index < len(c.Server.EnvAPIKeys) {
+			continue
+		}
+		if strings.ContainsFunc(key, unicode.IsSpace) {
+			complain("api_keys[%d]: must not contain whitespace, since no Bearer header can carry it", index)
+		}
+		if c.Server.AdminEnabled() && key == c.Server.AdminAPIKey {
+			complain("api_keys[%d]: must differ from the admin key", index)
+		}
 	}
-	requiresAPIKey := false
-	for model, access := range c.Limits.ModelAccess {
-		if access != ModelAccessOpen && access != ModelAccessAPIKey && access != ModelAccessAdminOnly {
-			complain("model_access[%s]: %q is not open, api_key or admin_only", model, access)
-		}
-		requiresAPIKey = requiresAPIKey || access == ModelAccessAPIKey
+	if c.Limits.Access != ModelAccessOpen && c.Limits.Access != ModelAccessAPIKey && c.Limits.Access != ModelAccessAdminOnly {
+		complain("access: %q is not open, api_key or admin_only", c.Limits.Access)
 	}
-	if requiresAPIKey && len(c.Server.APIKeys) == 0 {
-		complain("api_keys: model_access marks a model api_key but no api keys are configured, so it is unreachable")
-	}
-	for model, limit := range c.Limits.ModelLimits {
-		if limit.DefaultMaxTokens < 1 || limit.MaxTokensCap < 1 {
-			complain("model_limits[%s]: default %d / cap %d invalid", model, limit.DefaultMaxTokens, limit.MaxTokensCap)
-		}
-		if limit.MaxTokensCap > int64(filters.MaxOutputTokens) || limit.DefaultMaxTokens > int64(filters.MaxOutputTokens) {
-			complain("model_limits[%s]: default %d / cap %d must be <= %d", model, limit.DefaultMaxTokens, limit.MaxTokensCap, filters.MaxOutputTokens)
-		}
-		if limit.MaxModelLen != nil && (*limit.MaxModelLen < 1 || *limit.MaxModelLen > MaxContextTokens) {
-			complain("model_limits[%s]: max_model_len %d must be between 1 and %d", model, *limit.MaxModelLen, MaxContextTokens)
-		}
-		if limit.MaxConcurrentRequests != nil && *limit.MaxConcurrentRequests < 1 {
-			complain("model_limits[%s]: max_concurrent_requests %d must be >= 1", model, *limit.MaxConcurrentRequests)
-		}
-		if limit.MaxInputTokensInFlight != nil && *limit.MaxInputTokensInFlight < 0 {
-			complain("model_limits[%s]: max_input_tokens_in_flight %d must be >= 0", model, *limit.MaxInputTokensInFlight)
-		}
+	if pinned := c.Limits.MaxModelLen; pinned != nil && (*pinned < 1 || *pinned > MaxContextTokens) {
+		complain("max_model_len: %d must be between 1 and %d", *pinned, MaxContextTokens)
 	}
 }
 
@@ -370,18 +381,21 @@ func (c *Config) validateEngine(complain func(format string, args ...any)) {
 func (c *Config) validateScheduler(complain func(format string, args ...any)) {
 	// The ceiling is a budget guard: a long grace parks a committed-cost nonce on the chance of a co-arrival.
 	if c.Scheduler.MatchWaitMS < 0 || c.Scheduler.MatchWaitMS > maxMatchWaitMS {
-		complain("scheduler_match_wait_ms: %d must be in [0, %d]", c.Scheduler.MatchWaitMS, maxMatchWaitMS)
+		complain("match_wait_ms: %d must be in [0, %d]", c.Scheduler.MatchWaitMS, maxMatchWaitMS)
 	}
 	if c.Scheduler.MaxConsecutiveBurns < 0 || c.Scheduler.MaxConsecutiveBurns > maxConsecutiveBurns {
-		complain("scheduler_max_consecutive_burns: %d must be in [0, %d]", c.Scheduler.MaxConsecutiveBurns, maxConsecutiveBurns)
+		complain("max_consecutive_burns: %d must be in [0, %d]", c.Scheduler.MaxConsecutiveBurns, maxConsecutiveBurns)
 	}
 	if c.Scheduler.MaxBurnsPerRequest < 0 || c.Scheduler.MaxBurnsPerRequest > maxBurnsPerRequest {
-		complain("scheduler_max_burns_per_request: %d must be in [0, %d]", c.Scheduler.MaxBurnsPerRequest, maxBurnsPerRequest)
+		complain("max_burns_per_request: %d must be in [0, %d]", c.Scheduler.MaxBurnsPerRequest, maxBurnsPerRequest)
 	}
 	if c.Scheduler.DispatchQueueDepth < 1 || c.Scheduler.DispatchQueueDepth > maxDispatchQueueDepth {
 		complain("scheduler_dispatch_queue_depth: %d must be in [1, %d]", c.Scheduler.DispatchQueueDepth, maxDispatchQueueDepth)
 	}
 	c.Scheduler.Participants.validate(complain)
+	if len(c.Scheduler.Participants.Shadow) > 0 && c.Limits.MaxTokensCap < ProbeMinOutputTokens {
+		complain("participants.%s: must be empty while max_tokens_cap %d is below %d, the fewest output tokens a probe asks for", listShadow, c.Limits.MaxTokensCap, ProbeMinOutputTokens)
+	}
 }
 
 func validateRequestWindow(name string, window RequestWindow, complain func(string, ...any)) {

@@ -16,7 +16,10 @@ func TestProbeBoundsReadTheModelsCapAndContextLength(t *testing.T) {
 	pinned := int64(2048)
 	configuration := config.Defaults()
 	configuration.Limits.MaxTokensCap = 4096
-	configuration.Limits.ModelLimits = map[string]config.ModelLimits{"pinned": {MaxTokensCap: 512, MaxModelLen: &pinned}}
+	capped := int64(512)
+	if err := configuration.ResolveModels(map[string]config.ModelSettings{"pinned": {MaxTokensCap: &capped, MaxModelLen: &pinned}}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
+	}
 	snapshot := chain.PhaseSnapshot{Models: map[string]chain.ModelParams{"governed": {MaxModelLen: 8192}}}
 	bounds := probeBounds{configuration: config.NewHolder(&configuration), snapshots: fixedPhase{snapshot}}
 

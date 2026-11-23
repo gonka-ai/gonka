@@ -66,7 +66,7 @@ curl -X PUT -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
 
 A PUT that names no preset changes the model's own preset: `{"filters":{"output_tokens_floor":32}}` on Kimi keeps everything else Kimi's preset does. Name `"preset":"default"` to start from the default instead.
 
-The entry also shows the model's token limits under `limits`, with `"source": "model_limits"` when the model has its own entry in `/v1/admin/settings` and `"global"` when it runs the gateway-wide default and cap (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP` or their settings keys). A filter PUT cannot change them.
+The entry also shows the model's token limits under `limits`, with `"source": "models"` when the model's default or cap differs from the gateway-wide one (set under `models` in `/v1/admin/settings` or `GATEWAY_MODELS_JSON`) and `"global"` when it runs the gateway-wide default and cap (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP` or their settings keys). A filter PUT cannot change them.
 
 A PUT checks that the chain registers the model. An unknown model answers 404 `model_not_on_chain`, and a gateway that has not read the chain's model list yet answers 503 `chain_models_unavailable`. `?allow_off_chain=true` skips the check, for a model that is not registered yet; the answer then carries `on_chain: false`. A setting with `thinking_token_budget` or `empty_answer_counts_tokens` is refused off chain even with the flag, and its audit line carries `engine_crash_risk=true` when the model has no built-in budget. A model that leaves the chain keeps its setting.
 
@@ -89,12 +89,12 @@ Within one setting: a knob the setting sets beats the preset it names; a setting
 | Value | Who decides, highest first | Why |
 | --- | --- | --- |
 | request invariants: `n`, `top_logprobs` ≤ 5, `return_token_ids`, `stop_token_ids` vocabulary, schema and `chat_template_kwargs` bounds, unknown-parameter refusal | the gateway's own rules, then the host, which re-pins the same values | they protect reservation accounting, validation and vLLM; no setting can loosen them |
-| `max_tokens` the client named | `max_tokens_cap` (`model_limits` in `/v1/admin/settings`, else `GATEWAY_MAX_TOKENS_CAP`), then `output_tokens_floor` | the floor raises first and the cap clamps after, so **the cap wins**: it prices the reservation. An admin key skips the cap but not the floor |
-| `max_tokens` the client left out | `default_max_tokens` (`model_limits`, else `GATEWAY_DEFAULT_MAX_TOKENS`), raised to `output_tokens_floor` but never by the floor above the cap | a default below the floor would hand the model the budget the floor exists to prevent; the floor still cannot reserve more than the cap prices. A default set above the cap is the operator's own choice and is kept. An admin key skips the cap here too |
+| `max_tokens` the client named | `max_tokens_cap` (`models.<id>.max_tokens_cap` in `/v1/admin/settings`, else `GATEWAY_MAX_TOKENS_CAP`), then `output_tokens_floor` | the floor raises first and the cap clamps after, so **the cap wins**: it prices the reservation. An admin key skips the cap but not the floor |
+| `max_tokens` the client left out | `default_max_tokens` (`models.<id>.default_max_tokens`, else `GATEWAY_DEFAULT_MAX_TOKENS`), raised to `output_tokens_floor` but never by the floor above the cap | a default below the floor would hand the model the budget the floor exists to prevent; the floor still cannot reserve more than the cap prices. A default set above the cap is the operator's own choice and is kept. An admin key skips the cap here too |
 | `thinking_token_budget` | the model's budget, resolved against the final `max_tokens` | it reads the resolved value: a cap below `force_zero_below` silences thinking on every request that names a budget, and a default below it on every request that names none |
 | sampling ranges | the global bound, then the model's `sampling` limit | a model limit only narrows |
-| who may call the model, whether it is routed | `model_access`, `rotation_models_json`, escrows | filters never open or route a model; a filter refusal (for example `tools: reject`) is answered before the access check, as every filter refusal is |
-| context length | the chain's `--max-model-len`, else `model_limits.max_model_len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
+| who may call the model, whether it is routed | `models.<id>.access`, `rotation_models_json`, escrows | filters never open or route a model; a filter refusal (for example `tools: reject`) is answered before the access check, as every filter refusal is |
+| context length | the chain's `--max-model-len`, else `models.<id>.max_model_len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
 | streaming upstream, logprobs handling | `GATEWAY_FORCE_UPSTREAM_STREAMING`, `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` and their settings keys | independent of filters |
 
 A filter entry lists `warnings` when the settings' limits override its filters — a cap below the floor, a cap below the budget's `force_zero_below`, or a default budget below it — so the conflict is visible where the filters are edited. Neither PUT refuses it: the two are edited separately and either order must be possible.
@@ -114,26 +114,56 @@ To pin a model to exact values across releases, PUT every knob that matters to y
 
 ### A new version of a model
 
-The chain names a new version with a new model id. Every setting is keyed by the exact id — filter settings, built-in bindings, `model_limits`, `model_access` — so nothing carries over: the new id runs the `default` preset and is admin-only until it is configured. Configure it with one PUT that names the preset of the version it replaces, and give it its `model_limits` and `model_access` in `/v1/admin/settings`.
+The chain names a new version with a new model id. Every setting is keyed by the exact id — filter settings, built-in bindings, the `models` block — so nothing carries over: the new id runs the `default` preset and is admin-only until it is configured. Configure it with one PUT that names the preset of the version it replaces, and give it its `models.<id>` block, with its `access`, in `/v1/admin/settings`.
 
 ### Who may call what
 
-`api/routes.go`, `authorizeModel`. Three tiers per model, from `limits.model_access`, which the admin override `model_access` sets:
+`api/routes.go`, `authorizeModel`. Three tiers per model, from `access` under `models.<id>` (or the network `access` for a model with no block of its own):
 
 | Tier | Who |
 | --- | --- |
 | `open` | anyone |
-| `api_key` | a caller presenting one of `DEVSHARD_API_KEYS` |
+| `api_key` | a caller presenting an active client key ("Client API keys" below) |
 | `admin_only` | a caller presenting `DEVSHARD_ADMIN_API_KEY` |
 
 **Two behaviours to know before editing it:**
 
-- A model **not listed** in `model_access` is `admin_only`, an empty map included. A deployment starts with no entries, so until the operator names a model `open` or `api_key` only the admin reaches it, and setting `DEVSHARD_API_KEYS` alone opens nothing. While any model is `open` the gateway logs a warning naming it, at startup and after every admin override, since an open model spends the operator's escrows for any caller.
-- With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path. Without it no one can set `model_access` either, so every model stays admin-only and the gateway serves no client.
+- A model with no `access` of its own and no network `access` is `admin_only`. A deployment starts with no entries, so until the operator names a model `open` or `api_key` only the admin reaches it, and creating a client key alone opens nothing. While any model is `open` the gateway logs a warning naming it, at startup and after every admin override, since an open model spends the operator's escrows for any caller.
+- With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path. Without it no one can set `access` either, so every model stays admin-only and the gateway serves no client.
 
-An admin key satisfies every tier, so admin calls never need a second key. A `PUT` of the settings replaces the whole override set, so a `PUT` that leaves out `model_access` closes every model to clients again; a `POST` changes only the fields it names ("Configuration").
+An admin key satisfies every tier, so admin calls never need a second key. A `PUT` of the settings replaces the whole override set, so a `PUT` that leaves out `models` drops every model's admin block, and a model with no `access` of its own is then reachable only as the network `access` and `GATEWAY_MODELS_JSON` allow; a `POST` changes only the fields it names ("Configuration").
 
-`limits.model_access`, together with `limits.model_limits`, is also the list of models the gateway offers (`config.Limits.Offers`): a model named in either one answers 503 when nothing currently routes to it, and a model named in neither answers 400 while any model is routable — an empty registry answers 503 for every model instead.
+The `models` setting is also the list of models the gateway offers (`config.Config.Offers`): a model named in it answers 503 when nothing currently routes to it, and a model named in it nowhere answers 400 while any model is routable — an empty registry answers 503 for every model instead.
+
+### Per-model settings
+
+Every setting that applies to the whole network can also be set for one model, under `models.<id>` in `/v1/admin/settings`, with the same key as the network setting: `{"max_burns_per_request": 16, "models": {"MiniMaxAI/MiniMax-M2.7": {"max_burns_per_request": 8, "host_cutoff_max_ms": 60000}}}`. A field a model leaves out inherits the network value, and `max_model_len` is the one key only a model has. The same JSON in `GATEWAY_MODELS_JSON` sets them at boot; the admin value wins per model and per field. The whole configuration is validated again with each model's values laid over it, so a model that raises `host_cutoff_max_ms` past its own `perf_ejection_max_seconds` is refused as `models[<id>].host_cutoff_max_ms`. Process-wide keys (the kill switch, the buffers, the funding loop, `engine_max_concurrent_timeout_votes`, `perf_host_staleness_seconds`) are not accepted under `models`: a 400. A stored block for a model `rotation_models_json` no longer lists does not stop the gateway starting, and does not stop a key being created or revoked: the boot logs a warning and the block is ignored. Every settings write is then refused with a 400 naming the model until `{"models": {"<id>": null}}` clears it. `config/README.md` has the key rules.
+
+### Client API keys
+
+Client keys live in the `api_keys` table of `gateway.db`, **in plain text**: the storage directory and every archive of it are as secret as the keys. They are managed through the admin API and apply on the next request, with no restart.
+
+| Call | What it does |
+| --- | --- |
+| `GET /v1/admin/api-keys` | lists every key as `id`, `source`, `label`, `created_at`, `revoked` and `revoked_at`, never a key value |
+| `POST /v1/admin/api-keys` | creates a key from `{"label": "...", "key": "..."}`, both optional; without `key` the gateway generates one; the answer carries the key |
+| `GET /v1/admin/api-keys/{id}` | one key with its value, audit-logged without it; a legacy environment key has no value |
+| `DELETE /v1/admin/api-keys/{id}` | revokes the key; the row stays, and a second revoke answers 200 with the first revoked time |
+
+```
+curl -X POST -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -d '{"label":"billing"}' "$GATEWAY/v1/admin/api-keys"
+{"id":"3f9a1c2e","label":"billing","created_at":"2026-01-02T03:04:05.000000000Z","revoked":false,"key":"sk-..."}
+```
+
+The `id` is the first eight hex characters of the key's SHA-256, the `api_key_id` the request record carries ("The request record"). A create whose `id` exists, revoked or not, answers 409, so an id is never reused. A supplied key shorter than 16 characters, containing whitespace (no `Bearer` header can carry it) or equal to the admin key answers 400. To rotate a key, create the new one and revoke the old one.
+
+An `api_key` model needs an active key. Revoking the last active key while the network `access` or any model's `access` is `api_key` answers 409, and a settings write that leaves such a model with no active key answers 400. A gateway whose database holds no key and whose settings put a model on `api_key` still starts, and logs a warning that an `api_key` model has no active key, so the first key can be created. A settings write is refused only when it creates that state, so the kill switch and every other setting stay writable until a key exists, and the rule binds again once a key does. A stored block for a model `rotation_models_json` no longer lists is ignored, so it never counts as an `api_key` model. A `DEVSHARD_ADMIN_API_KEY` equal to an active client key fails the boot: a client key must differ from the admin key. The `api key created`, `api key read` and `api key revoked` audit lines carry the `api_key_id` and `api_key_label`.
+
+### Legacy inputs
+
+- Legacy `model_limits` (deprecated, removal planned for v7 or v8): the settings key is still accepted and read as `models.<id>` with the same field names; set `models.<id>` instead, which wins field by field, and a boot or a write holding the key logs a warning.
+- Legacy `model_access` (deprecated, removal planned for v7 or v8): the settings key is still read as `models.<id>.access`; set `models.<id>.access` instead, which wins when both name the model, and a boot or a write holding the key logs a warning.
+- Legacy `DEVSHARD_API_KEYS` (deprecated, removal planned for v7 or v8): the variable is still read, comma-separated and each key at least 16 characters, and its keys are active beside the database keys; create them through `POST /v1/admin/api-keys` instead. The list and a read by id show them with `source` `env`, no value and no `created_at`, and they cannot be revoked or created again through the API (409): to remove one, move its clients to a new key, then unset the variable.
 
 ### The kill switch
 
@@ -147,7 +177,7 @@ Three layers, later wins:
 
 1. **Defaults** — `config/defaults.go`, `Defaults()`. The only place a default lives.
 2. **Environment** — read once at boot, in `env/` and nowhere else. `env.Load` returns *what is set* (a nil pointer is unset), so an unset variable can never overwrite a default with a zero.
-3. **Admin overrides** — the fields of `config.Overrides`, written through `/v1/admin/settings`, persisted in the store and reloaded at boot. A `POST` is a patch over the stored overrides (`Overrides.Merged`): a field it names replaces the stored one, a field it sets to `null` is cleared back to the layers below, and every other field stays. A `PUT` is the whole document and replaces the stored one. Writes are applied one at a time, so two operators patching at once cannot lose each other's fields. They take effect without a restart: the config is an immutable snapshot swapped whole, and every reader loads it per request. The `settings written` audit line carries the method, the open models, the kill switch and the three `participants` lists as they stand after the call.
+3. **Admin overrides** — the fields of `config.Overrides`, written through `/v1/admin/settings`, persisted in the store and reloaded at boot. A `POST` is a patch over the stored overrides (`Overrides.Merged`): a field it names replaces the stored one, a field it sets to `null` is cleared back to the layers below, and every other field stays. A `PUT` is the whole document and replaces the stored one. Writes are applied one at a time, so two operators patching at once cannot lose each other's fields. They take effect without a restart: the config is an immutable snapshot swapped whole, and every reader loads it per request. The `settings written` audit line carries the method, the open models, the kill switch and the three `participants` lists as they stand after the call. A `POST` patches `models` per model and per field, and a model set to `null` drops its admin block.
 
 Parse failures are accumulated, so a boot reports **every** misconfigured variable at once rather than one per restart.
 
@@ -199,6 +229,9 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_LOSER_GRACE_MS` | 600 000 | how long a loser may keep running after the crown |
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
 | `GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST` | 3 | attempts one request may start in all, hedges and retries included; past it no hedge or retry starts, and the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
+| `GATEWAY_ENGINE_MAX_ATTEMPTS_PER_REQUEST` | 2 | attempts one request may make at a host group's slots; `0` bounds it only by the group |
+| `GATEWAY_DRAIN_TIMEOUT_SECONDS` | 2 400 | bound on a race after its client leaves; at least 1 200, the streaming hard timeout |
+| `GATEWAY_MODELS_JSON` | unset | per-model overrides of the network settings, `{"<model id>": {"<setting>": value}}`; the admin value wins per model and per field. See "Configuration" |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
 | `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
@@ -233,7 +266,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ("The kill switch" above) |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
-| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; a key shorter than 16 characters is refused, client or admin, and an empty admin key leaves the admin surface unrouted ("Who may call what" above) |
+| `DEVSHARD_ADMIN_API_KEY` | empty | the admin key; a key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ("Who may call what" above); client keys are not set here, bar the legacy variable ("Legacy inputs" above) |
 | `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ("Boot" below) |
 | `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC every chain call falls back to when gRPC is unreachable, queries and transactions alike; the gateway runs with gRPC unreachable as long as `DEVSHARD_CHAIN_RPC` points at a live CometBFT RPC, and a transaction broadcast runs once on the transport the reads selected; an empty RPC endpoint is derived from the gRPC host at the standard port ([`README.md`](../README.md), "Escrow sessions and the chain connection") |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
@@ -411,12 +444,12 @@ The record carries no request or response body — capture files exist for that,
 | `host blocked for state divergence` (`journal/render_race.go`) | the block does not lift while the process runs and no metric exposes it — "why is this host never picked" is answerable only here |
 | `chain snapshot stale` / `chain snapshot recovered` | written on the **edge** only; a failed refresh keeps routing on the previous participants until the last poll that read the epoch and the participants passes `chain_snapshot_max_age_seconds`, after which requests are refused 503. The nonce-ceiling and preserved-set reads fall back within the poll and do not hold that clock back |
 | `chain epoch` / `chain blocked requests` / `chain unblocked requests` | written on the **edge** only: `phaseNarrator` (`app/observers.go`) decides the change and the journal writes it; a snapshot that carries no epoch — a first poll that failed — announces none |
-| `models are open` (`app/compose.go`) | written at boot and after every config change while any `model_access` entry is `open`; `open_models` names the models any caller reaches without a key, each spending the escrows that serve it |
+| `models are open` (`app/compose.go`) | written at boot and after every config change while the network `access` or any model's `access` is `open`; `open_models` names the models any caller reaches without a key, and `*` when the network `access` is open, each spending the escrows that serve it |
 | `admin request failed` / `admin request refused` (`api/errors.go`) | the operator mutation lines are written on the successful path only, so a failed operator action would otherwise be invisible |
 
 `escrow` is always the escrow id as text. The chain carries the id behind `escrow created`, `escrow recovered from commitment` and `settle tx broadcast` as a number, and `escrow/` and `chain/` convert it to text before the journal writes it, because a JSON collector reads a number as a different type from every other line's `escrow`.
 
-Admin lines carry the action and its subject, **never the request body** — an override payload can hold the admin key. An unkeyed call on an operator route is refused 401 and written down: that is the shape an intrusion attempt takes.
+Admin lines carry the action and its subject, **never a request body and never a key value**. An unkeyed call on an operator route is refused 401 and written down: that is the shape an intrusion attempt takes.
 
 ## Metrics
 
@@ -616,6 +649,7 @@ How each escrow reaches its hosts is in two series: `devshard_gateway_escrow_ses
 | one escrow's protocol state | `GET /devshard/{id}/v1/state` |
 | what happened to one request's nonces | `GET /v1/requests/{id}` |
 | hosts the gateway distrusts | `GET /v1/admin/suspicious-hosts` |
+| the client API keys, without their values | `GET /v1/admin/api-keys` |
 | which filters each model runs, and where they come from | `GET /v1/admin/filters` |
 | why one host is or is not taking work | `GET /v1/admin/hosts` |
 
@@ -643,7 +677,7 @@ An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, be
 | every request 429 | `limiter_queue_depth` and `effective_max_concurrent_requests` — the weight model may have scaled capacity to almost nothing after an epoch switch |
 | every request 503 with no model listed | the chain snapshot is stale, or the escrow set is empty — check `chain_snapshot_healthy` and `/v1/admin/devshards` |
 | 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: non-streaming replies are holding the whole budget |
-| a model returns 401 to every caller but the admin | no `model_access` entry names it — set it through the `model_access` override |
+| a model returns 401 to every caller but the admin | the model has no `access` — set it under `models.<id>.access` |
 | the admin surface 404s | `DEVSHARD_ADMIN_API_KEY` is unset |
 | burns climbing | `ghost_nonces_burned_total` by reason — see [accounting.md](./accounting.md) |
 | prompts past a model's context reach hosts | the log line `prompt tokenizer could not be loaded`, `prompt tokenizer pin could not be read`, `model has no tokenizer the gateway reads` or `prompt tokenizer parse panicked` for the model, or no context length for it — see "The context check" |
@@ -671,7 +705,7 @@ A request's `stop_token_ids` are checked against the vocabulary the chain pins f
 
 ## The context check
 
-A chat request whose prompt and `max_tokens` its model's context cannot hold is refused with a 400, `invalid_request_error` / `context_length_exceeded`, before any nonce exists; the route's status series counts it, and it is not captured. The prompt is counted with the `tokenizer.json` of the Hugging Face repo and commit the epoch's model snapshot pins (`app/prompt_tokens.go`), so a gateway with a chain needs egress to `huggingface.co` for the check, as for `stop_token_ids`. Each served model's file, up to 20 MB today, is fetched once per pinned commit, in the background, on the first request for the model; until it loads, and for a model whose commit ships no `tokenizer.json` the gateway reads (Kimi-K2.6 ships a tiktoken model), requests go to a host unchecked. A failed fetch is retried after 10 minutes; when the pin moved and the new file fails to load, the model is unchecked until it loads, rather than counted with the previous file. The log reads `prompt tokenizer loaded` on a load, `model has no tokenizer the gateway reads` for a pin that is not checked, `prompt tokenizer parse panicked` (an error, also not checked until the pin moves) for a file whose parse panicked, `prompt tokenizer could not be loaded` on a failed fetch, and `prompt tokenizer pin could not be read` when the chain query fails, in which case a tokenizer already loaded keeps counting. The context length is the `--max-model-len` governance registers, else `model_limits[m].max_model_len`; a model with neither is not checked. See [request.md](./request.md), "Step 6 in detail".
+A chat request whose prompt and `max_tokens` its model's context cannot hold is refused with a 400, `invalid_request_error` / `context_length_exceeded`, before any nonce exists; the route's status series counts it, and it is not captured. The prompt is counted with the `tokenizer.json` of the Hugging Face repo and commit the epoch's model snapshot pins (`app/prompt_tokens.go`), so a gateway with a chain needs egress to `huggingface.co` for the check, as for `stop_token_ids`. Each served model's file, up to 20 MB today, is fetched once per pinned commit, in the background, on the first request for the model; until it loads, and for a model whose commit ships no `tokenizer.json` the gateway reads (Kimi-K2.6 ships a tiktoken model), requests go to a host unchecked. A failed fetch is retried after 10 minutes; when the pin moved and the new file fails to load, the model is unchecked until it loads, rather than counted with the previous file. The log reads `prompt tokenizer loaded` on a load, `model has no tokenizer the gateway reads` for a pin that is not checked, `prompt tokenizer parse panicked` (an error, also not checked until the pin moves) for a file whose parse panicked, `prompt tokenizer could not be loaded` on a failed fetch, and `prompt tokenizer pin could not be read` when the chain query fails, in which case a tokenizer already loaded keeps counting. The context length is the `--max-model-len` governance registers, else `models.<m>.max_model_len`; a model with neither is not checked. See [request.md](./request.md), "Step 6 in detail".
 
 ## Where to change what
 
@@ -715,7 +749,7 @@ What a rollback reads depends on what the newer release wrote into the storage d
 
 ## Backup and restore
 
-The storage directory (`DEVSHARD_STORAGE_DIR`, mounted from `DEVSHARD_STORAGE_HOST_DIR`) holds everything the gateway remembers: `gateway.db` (escrow rows, create commitments, admin overrides), `accounting.db` (the nonce ledger) and one `escrow-<id>/` directory per escrow session. The three describe the same escrows at the same moment, so they are archived together and restored together: a `gateway.db` older than the session directories beside it lacks the rows of escrows those sessions serve, and session directories older than the rows hold nonces the hosts have moved past. No command takes a backup for you; this is the manual procedure.
+The storage directory (`DEVSHARD_STORAGE_DIR`, mounted from `DEVSHARD_STORAGE_HOST_DIR`) holds everything the gateway remembers: `gateway.db` (escrow rows, create commitments, admin overrides, client API keys), `accounting.db` (the nonce ledger) and one `escrow-<id>/` directory per escrow session. The three describe the same escrows at the same moment, so they are archived together and restored together: a `gateway.db` older than the session directories beside it lacks the rows of escrows those sessions serve, and session directories older than the rows hold nonces the hosts have moved past. No command takes a backup for you; this is the manual procedure.
 
 1. **Stop routing.** Turn on the kill switch ("The kill switch") through the admin settings: `curl -X POST -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -d '{"disabled": true}' "$GATEWAY/v1/admin/settings"`. Clients are refused from then on; the admin and recovery surfaces stay up.
 2. **Wait for the drain.** `devshard_gateway_inflight_requests` reaches 0 once the last client has its answer, and `devshard_gateway_owed_timeout_votes` reaches 0 once every vote the races owe is posted, which can take as long as the protocol's own deadline, half an hour after a host confirmed the work ([race.md](./race.md), "The timeout-vote queue").
@@ -736,7 +770,7 @@ The gateway reads none of devshardctl's state: its own store starts empty ([`rul
 1. Stop new work on devshardctl (its kill switch), and let its in-flight requests finish.
 2. Settle every escrow it holds, or let it drain and settle them, and wait until it reports no open create commitment and no settle-pending escrow.
 3. Copy the session directory of every escrow still worth serving and import each through `POST /v1/admin/devshards/import`, naming the variable that holds its key; an escrow with nothing left to serve is settled in step 2 instead.
-4. Set `model_access` through the settings override before opening the gateway to clients: every model starts admin-only ("Who may call what").
+4. Create the client keys with `POST /v1/admin/api-keys` and set `access` for each model under `models` in the settings before opening the gateway to clients: every model starts admin-only, and a model on the `api_key` tier answers no one until a key exists ("Who may call what", "Client API keys").
 
 An escrow the chain already reports settled is never published: a seeded one has its session refused at open and its row deleted ("Boot", step 5), and importing one fails with `bridge.ErrEscrowSettled`, its row left for the next publication to delete. An escrow that settles on chain while it serves is parked by the escrow check that finds it settled, and the settle path then drops it without a second broadcast.
 
@@ -754,19 +788,21 @@ curl -X POST "$GATEWAY/v1/admin/settings" -H "Authorization: Bearer $ADMIN_KEY" 
 
 - **`trust`** narrows **which participants this gateway routes client traffic to**. When it is non-empty only its members, and the `unthrottled` ones, are routed to; when it is empty everybody is, except the `shadow` members.
 - **`unthrottled`** names participants whose congestion window and ejection the gateway declines to apply, and admits them whether or not `trust` names them. See routing.md, "Unthrottled participants".
-- **`shadow`** names participants that receive inference probes and never client traffic. A probe repeats a client request the gateway has queued, with `max_tokens` and `min_tokens` both set to one value drawn per probe from 256 to the least of 1024, the model's output cap and the context room the prompt leaves, so the shadow host receives that client's prompt; it is sent to the host in place of the ghost burn its nonce would otherwise be, so the probe rate follows the shadow host's share of an escrow's slots, and a probe is the operator's cost: billed like the burn it replaces plus the tokens it reserves, never charged to the client it repeats. A grammar-constrained request, or one that carries tools, is repeated with no `min_tokens`; a request with under 256 tokens of room is burned as `shadow_probe_no_room`; with no live request queued it is burned as `shadow_probe_no_request`. Nothing throttles or limits a shadow host: its congestion window, cut-off and ejection do not apply to a probe. A shadow host absent from the escrow's session, owing proof-of-compute or with diverged escrow state is burned as before, because a probe cannot be served there. See routing.md, "Shadow participants".
+- **`shadow`** names participants that receive inference probes and never client traffic. A probe repeats a client request the gateway has queued, with `max_tokens` and `min_tokens` both set to one value drawn per probe from 256 to the least of 1024, the model's output cap and the context room the prompt leaves, so the shadow host receives that client's prompt; it is sent to the host in place of the ghost burn its nonce would otherwise be, so the probe rate follows the shadow host's share of an escrow's slots, and a probe is the operator's cost: billed like the burn it replaces plus the tokens it reserves, never charged to the client it repeats. A grammar-constrained request, or one that carries tools, is repeated with no `min_tokens`; a request with under 256 tokens of room, or one whose body does not decode, is passed over for the next queued request, and when none can be repeated the shadow host's nonce is held uncommitted and asked again after a second or when a request is queued, never burned. Nothing throttles or limits a shadow host: its congestion window, cut-off and ejection do not apply to a probe. A shadow host absent from the escrow's session, owing proof-of-compute or with diverged escrow state is burned, as every host in that state is, because a probe cannot be served there. See routing.md, "Shadow participants".
 
 **An empty `trust` with a non-empty `shadow` routes clients to everybody except the shadow members.** That is also how an operator keeps one participant out of routing without naming everybody else.
 
 A `POST` merges inside `participants`, one sub-key at a time: a sub-key it names replaces the stored one, a sub-key it sets to `null` is cleared, and an omitted sub-key stays. `{"participants": null}` clears all three. A `PUT` replaces the stored overrides document whole, so a `PUT` that does not resend `participants` drops it.
 
-**That makes the lists one `PUT` away from being cleared.** A dropped `trust` fails open: the gateway routes to everybody again without refusing anything, and a dropped `shadow` makes the shadow hosts routable. The same is true of a fresh or lost store. Read the lists back either way: the `settings written` audit line carries `participants_trust`, `participants_shadow` and `participants_unthrottled` as they stand after the call.
+**One model can run its own lists.** `models.<id>.participants` takes the same three sub-keys, and a list a model names is the model's list: the network list does not apply to that model and is never joined to it, and a model that names none runs the network's. `{"participants": {"shadow": ["gonka1a"]}, "models": {"qwen": {"participants": {"shadow": []}}}}` shadows `gonka1a` on every model but `qwen`, and `{"models": {"qwen": {"participants": {"shadow": ["gonka1b"]}}}}` shadows `gonka1b` on `qwen` alone and nobody else there. A `POST` merges `models.<id>.participants` one sub-key at a time, like the network lists. The checks below run on each model's effective lists, so a model list that shadows a participant the model's effective `trust` names is refused as `models[<id>].participants.shadow`. `GET /v1/admin/state` shows under `participants` the network lists and, for each model with a block, the lists that model runs under.
 
-An entry must look like an address. The shape is checked when the settings document is built, so a short host label pasted from a log or a Grafana `host=` tag is refused at the settings call rather than narrowing dispatch to nobody. A participant named in both `shadow` and `trust`, or in both `shadow` and `unthrottled`, is refused with an error naming it; `trust` and `unthrottled` may name the same participant.
+**That makes the lists one `PUT` away from being cleared.** A dropped `trust` fails open: the gateway routes to everybody again without refusing anything, and a dropped `shadow` makes the shadow hosts routable. The same is true of a fresh or lost store. Read the lists back either way: the `settings written` audit line carries `participants_trust`, `participants_shadow` and `participants_unthrottled` as they stand after the call, and `participants_by_model` with each model's effective lists.
+
+An entry must look like an address. The shape is checked when the settings document is built, so a short host label pasted from a log or a Grafana `host=` tag is refused at the settings call rather than narrowing dispatch to nobody. A participant named in both `shadow` and `trust`, or in both `shadow` and `unthrottled`, is refused with an error naming it; `trust` and `unthrottled` may name the same participant. A non-empty `shadow` is also refused, for the network and for each `models.<id>`, while the effective `max_tokens_cap` is below 256: no probe can be built there.
 
 The lists restrain nothing but routing. Host pings, catch-up, finalize, the retirement flush, the timeout sweep and the warmup prober all address the group the chain gave the escrow. See routing.md, "Paths that ignore the routing lists, by design".
 
-**Deciding whether to promote a shadow host.** Each probe ends in one `shadow probe served` or `shadow probe failed` line and in `devshard_gateway_shadow_probes_total{participant,outcome}`. A served probe also records `devshard_gateway_shadow_probe_first_token_seconds{participant}` (only when a byte streamed), `devshard_gateway_shadow_probe_duration_seconds{participant}` and `devshard_gateway_shadow_probe_output_tokens_total{participant}`. Compare them with the same participant's `devshard_gateway_participant_*` families before moving the participant from `shadow` to `trust`. A failed probe is voted as a timeout like any nonce no reply finished. The nonce is recorded in the ledger under the terminal `shadow_probe`, so it lands on neither side of a serving ratio (accounting.md, "Four rules that keep a finding honest").
+**Deciding whether to promote a shadow host.** Each probe ends in one `shadow probe served` or `shadow probe failed` line and in `devshard_gateway_shadow_probes_total{participant,model,outcome}`. A served probe also records `devshard_gateway_shadow_probe_first_token_seconds{participant,model}` (only when a byte streamed), `devshard_gateway_shadow_probe_duration_seconds{participant,model}` and `devshard_gateway_shadow_probe_output_tokens_total{participant,model}`. Compare them with the same participant's `devshard_gateway_participant_*` families before moving the participant from `shadow` to `trust`. A failed probe is voted as a timeout like any nonce no reply finished. The nonce is recorded in the ledger under the terminal `shadow_probe`, so it lands on neither side of a serving ratio (accounting.md, "Four rules that keep a finding honest").
 
 ## Settling an escrow that is still busy
 

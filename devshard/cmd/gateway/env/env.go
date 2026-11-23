@@ -43,6 +43,8 @@ type Values struct {
 
 	PoCMode *string
 
+	ModelsJSON *string
+
 	DispatchQueueDepth *int64
 
 	ChatCacheMaxBytes *int64
@@ -90,6 +92,7 @@ const (
 	LogFormatText = "text"
 
 	AllowPrivateAddressesVariable = "DEVSHARD_ALLOW_PRIVATE_ADDRESSES"
+	APIKeysVariable               = "DEVSHARD_API_KEYS"
 )
 
 // ErrPrivateKeyMissing marks a devshard whose signing key the environment does not hold.
@@ -238,7 +241,8 @@ func Load() (Values, error) {
 
 	readLenientInt("DEVSHARD_PORT", 1, &values.Port)
 	readString("DEVSHARD_STORAGE_DIR", &values.StorageDir)
-	readString("DEVSHARD_API_KEYS", &values.APIKeys)
+	// Deprecated: DEVSHARD_API_KEYS is the legacy source of client keys, replaced by /v1/admin/api-keys; removal is planned for v7 or v8.
+	readString(APIKeysVariable, &values.APIKeys)
 	readString("DEVSHARD_ADMIN_API_KEY", &values.AdminAPIKey)
 	readString("DEVSHARDS_JSON", &values.DevshardsJSON)
 	readLenientInt("DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS", 1, &values.MaxConcurrentRuntimeBuilds)
@@ -282,6 +286,7 @@ func Load() (Values, error) {
 	readLenientBool("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED", &values.RotationSettlementEnabled)
 	readLenientBool("DEVSHARD_ESCROW_ROTATION_PREVIOUS_EPOCH_SETTLEMENT_ENABLED", &values.RotationPreviousEpochSettlementEnabled)
 	readString("DEVSHARD_ESCROW_ROTATION_MODELS_JSON", &values.RotationModelsJSON)
+	readString("GATEWAY_MODELS_JSON", &values.ModelsJSON)
 	readStrictInt("GATEWAY_MATCH_WAIT_MS", &values.MatchWaitMS)
 	readStrictInt("GATEWAY_MAX_CONSECUTIVE_BURNS", &values.MaxConsecutiveBurns)
 	readStrictInt("GATEWAY_MAX_BURNS_PER_REQUEST", &values.MaxBurnsPerRequest)
@@ -352,6 +357,8 @@ func Load() (Values, error) {
 	readStrictInt("GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES", &values.EngineMaxConcurrentTimeoutVotes)
 	readStrictInt("GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS", &values.EngineHedgeFirstTokenFloorMS)
 	readStrictInt("GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST", &values.EngineMaxStartedAttemptsPerRequest)
+	readStrictInt("GATEWAY_ENGINE_MAX_ATTEMPTS_PER_REQUEST", &values.EngineMaxAttemptsPerRequest)
+	readStrictInt("GATEWAY_DRAIN_TIMEOUT_SECONDS", &values.DrainTimeoutSeconds)
 
 	readLenientBool("DEVSHARD_ENABLE_CONTENTION_PROFILES", &values.ContentionProfiles)
 

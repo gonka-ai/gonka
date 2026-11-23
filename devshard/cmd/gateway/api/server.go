@@ -74,6 +74,8 @@ type ControlStore interface {
 	Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error)
 	LoadOverrides(ctx context.Context) (config.Overrides, error)
 	LoadRotationStatuses(ctx context.Context) ([]store.RotationStatus, error)
+	ListAPIKeys(ctx context.Context) ([]store.APIKeyRecord, error)
+	APIKey(ctx context.Context, id string) (store.APIKeyRecord, bool, error)
 }
 
 // CreateEscrowRequest names the variable holding the signing key, never the key. See operations.md, "What is exposed".
@@ -123,6 +125,8 @@ type Operations interface {
 	Settle(ctx context.Context, escrowID string, force bool) (chain.SettleEscrowResult, error)
 	Unquarantine(ctx context.Context, participantKey string) error
 	Reconfigure(ctx context.Context, overrides config.Overrides) error
+	CreateAPIKey(ctx context.Context, record store.APIKeyRecord) error
+	RevokeAPIKey(ctx context.Context, id string, revokedAt time.Time) error
 	ResetAccountingEpoch(ctx context.Context, epoch uint64) (cleared int, err error)
 }
 

@@ -13,8 +13,6 @@ import (
 
 func fullScale() ModelCapacity { return ModelCapacity{ScaleFactor: 1} }
 
-func int64Ptr(v int64) *int64 { return &v }
-
 // Test flow:
 //  1. Create a limiter with MaxConcurrent 2.
 //  2. Acquire for modelA twice in a row.
@@ -337,8 +335,8 @@ func TestAcquireForModel_PerModelOverride(t *testing.T) {
 	limiter := NewGatewayLimiter(GatewayConfig{
 		MaxConcurrent: 10,
 		AcquireWait:   30 * time.Millisecond,
-		ModelLimits: map[string]ModelOverride{
-			"tight-model": {MaxConcurrent: int64Ptr(1)},
+		ByModel: map[string]GatewayConfig{
+			"tight-model": {MaxConcurrent: 1, AcquireWait: 30 * time.Millisecond},
 		},
 	})
 

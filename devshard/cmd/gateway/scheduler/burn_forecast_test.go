@@ -387,7 +387,7 @@ func TestAnAllShadowGroupPricedAtZeroBurnsNeverOutranksAGroupThatServes(t *testi
 	scheduler.settings = holder
 	scheduler.limiter.(*fakeLimiter).block("burning-0")
 	shadowGates := forecastGates()
-	shadowGates.shadowed = markedShadow(configuration.Scheduler.Participants.Shadow)
+	shadowGates.shadowed = shadowedOn(&configuration, modelA)
 	shadowed := forecastEscrow(1, "shadow-0", "shadow-1")
 	if got := expectedBurns(shadowed, shadowGates, newWaiter(RequestProfile{Model: modelA}, time.Time{}), 0, 0).burns; got != 0 {
 		t.Fatalf("expectedBurns over an all-shadow group = %d, want 0", got)

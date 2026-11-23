@@ -14,12 +14,19 @@ import (
 )
 
 type recordingProber struct {
-	mu       sync.Mutex
-	requests []ProbeRequest
-	triggers []any
-	profiles []*RequestProfile
-	refuse   bool
-	skipWith ProbeSkip
+	mu         sync.Mutex
+	requests   []ProbeRequest
+	triggers   []any
+	profiles   []*RequestProfile
+	refuse     bool
+	skipWith   ProbeSkip
+	skipParams any
+}
+
+func (p *recordingProber) skip(skip ProbeSkip) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.skipWith = skip
 }
 
 func (p *recordingProber) Params(request *RequestProfile, startedAt int64) (any, ProbeSkip) {
@@ -31,7 +38,7 @@ func (p *recordingProber) Params(request *RequestProfile, startedAt int64) (any,
 	}
 	p.triggers = append(p.triggers, params)
 	p.profiles = append(p.profiles, request)
-	if p.skipWith != ProbeSkipNone {
+	if p.skipWith != ProbeSkipNone && (p.skipParams == nil || p.skipParams == params) {
 		return nil, p.skipWith
 	}
 	return [2]any{params, startedAt}, ProbeSkipNone
@@ -104,20 +111,46 @@ func TestShadowHostsNonceIsSpentOnAProbeNotAGhost(t *testing.T) {
 	}
 }
 
+func noReply(t *testing.T, queued *waiter) {
+	t.Helper()
+	select {
+	case result := <-queued.replyCh:
+		t.Fatalf("reply = %+v, want none while the shadow host's nonce is held", result)
+	default:
+	}
+}
+
 // Test flow:
-//  1. Build a harness where `hostB` is shadowed and no prober is wired.
-//  2. Submit one request and await its reply.
-//  3. Assert the request is served by `hostA` and the shadowed nonce was burned as a ghost outside the trust list, so a shadow host is never routed client traffic.
-func TestShadowHostWithoutAProberBurnsAsOutsideTheTrustList(t *testing.T) {
-	test := newHarness(t, harnessConfig{shadowed: shadowing(hostB)})
+//  1. Build a harness where `hostB` is shadowed and no prober is wired, and submit one request.
+//  2. Assert the drain arms a timer of `shadowHold`, nothing is committed, no ghost line is written, no probe is sent and the request is not answered: the nonce is held.
+//  3. Stop shadowing `hostB`, advance the clock and fire the timer.
+//  4. Assert the same nonce 1 now serves the request on `hostB` and still no ghost line was written.
+func TestShadowHostWithoutAProberHoldsItsNonce(t *testing.T) {
+	var shadowed atomic.Bool
+	shadowed.Store(true)
+	test := newHarness(t, harnessConfig{shadowed: func(participant string) bool { return shadowed.Load() && participant == hostB }})
 
 	queued := test.submit(t, test.clock.Now())
 
-	wantAssignment(t, awaitReply(t, queued), hostA, 2)
-	test.dispatcher.stop()
+	if delay := test.clock.awaitArmed(t); delay != shadowHold {
+		t.Fatalf("hold timer = %v, want %v", delay, shadowHold)
+	}
+	noReply(t, queued)
+	if _, _, commits := test.session.report(); len(commits) != 0 {
+		t.Fatalf("commits = %+v, want none: the nonce stays uncommitted", commits)
+	}
+	if holds, _ := test.observer.counts(); holds != 1 {
+		t.Fatalf("recorded holds = %d, want 1", holds)
+	}
 
-	if burns := test.observer.burns(); len(burns) != 1 || burns[0] != ghostUntrusted.reason() {
-		t.Fatalf("ghost burns = %v, want exactly one %q", burns, ghostUntrusted.reason())
+	shadowed.Store(false)
+	test.clock.advance(shadowHold)
+	test.clock.fireTimer()
+
+	wantAssignment(t, awaitReply(t, queued), hostB, 1)
+	test.dispatcher.stop()
+	if burns := test.observer.burns(); len(burns) != 0 {
+		t.Fatalf("ghost burns = %v, want none", burns)
 	}
 }
 
@@ -351,32 +384,63 @@ func TestProbeLeavesTheClientsCommitUnchanged(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each skip a prober can answer, build a harness with `hostB` shadowed and a prober that refuses to build the probe for it.
-//  2. Submit one request and await its reply.
-//  3. Assert the request still lands on `hostA`, the shadow nonce is burned under the skip's own reason, and nothing is probed.
-func TestSkippedProbeIsBurnedUnderItsOwnReason(t *testing.T) {
-	cases := map[string]struct {
-		skip   ProbeSkip
-		reason string
-	}{
-		"no request": {ProbeSkipNoRequest, GhostReasonProbeNoRequest},
-		"no room":    {ProbeSkipNoRoom, GhostReasonProbeNoRoom},
-	}
-	for name, tc := range cases {
+//  1. For each skip a prober can answer, build a harness with `hostB` shadowed and a prober that refuses to build the probe, and submit one request.
+//  2. Assert the drain arms a timer of `shadowHold`, nothing is committed, probed or burned and the request is not answered.
+//  3. Let the prober build the probe, advance the clock and fire the timer.
+//  4. Assert nonce 1 is committed as a probe of `hostB` built from the request, the request is served by `hostA` at nonce 2, and no ghost line was written at any point.
+func TestAProbeThatCannotBeBuiltHoldsTheNonceUntilItCan(t *testing.T) {
+	for name, skip := range map[string]ProbeSkip{"no request": ProbeSkipNoRequest, "no room": ProbeSkipNoRoom} {
 		t.Run(name, func(t *testing.T) {
-			prober := &recordingProber{skipWith: tc.skip}
+			prober := &recordingProber{skipWith: skip}
 			test := newHarness(t, harnessConfig{shadowed: shadowing(hostB), prober: prober})
 
-			wantAssignment(t, awaitReply(t, test.submit(t, test.clock.Now())), hostA, 2)
-			test.dispatcher.stop()
+			queued := test.submit(t, test.clock.Now())
 
-			if burns := test.observer.burns(); len(burns) != 1 || burns[0] != tc.reason {
-				t.Errorf("ghost burns = %v, want exactly one %q", burns, tc.reason)
+			if delay := test.clock.awaitArmed(t); delay != shadowHold {
+				t.Fatalf("hold timer = %v, want %v", delay, shadowHold)
 			}
-			if probes := prober.probed(); len(probes) != 0 {
-				t.Errorf("probes = %+v, want none for a skipped probe", probes)
+			noReply(t, queued)
+			if _, _, commits := test.session.report(); len(commits) != 0 || len(prober.probed()) != 0 {
+				t.Fatalf("commits = %+v, probes = %+v, want neither while the probe cannot be built", commits, prober.probed())
+			}
+
+			prober.skip(ProbeSkipNone)
+			test.clock.advance(shadowHold)
+			test.clock.fireTimer()
+
+			wantAssignment(t, awaitReply(t, queued), hostA, 2)
+			test.dispatcher.stop()
+			_, _, commits := test.session.report()
+			if len(commits) != 2 || commits[0].ghost || commits[0].participant != hostB || len(prober.probed()) != 1 {
+				t.Errorf("commits = %+v, probes = %d, want a probe of %s, then the served nonce", commits, len(prober.probed()), hostB)
+			}
+			if burns := test.observer.burns(); len(burns) != 0 {
+				t.Errorf("ghost burns = %v, want none", burns)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Build a harness with `hostB` shadowed and a prober that cannot build a probe from the request named "unbuildable", and submit that request and then a request named "fine".
+//  2. Await the first request's reply.
+//  3. Assert the probe was built from the second request, so the first does not hold the shadow host's nonce, nothing was burned and no hold was recorded.
+func TestAnUnbuildableHeadRequestDoesNotHoldTheShadowNonce(t *testing.T) {
+	prober := &recordingProber{skipWith: ProbeSkipNoRoom, skipParams: "unbuildable"}
+	test := newHarness(t, harnessConfig{shadowed: shadowing(hostB), prober: prober})
+
+	head := test.submitCosting(t, RequestProfile{Model: modelA, Params: "unbuildable"}, test.clock.Now())
+	test.submitCosting(t, RequestProfile{Model: modelA, Params: "fine"}, test.clock.Now())
+
+	wantAssignment(t, awaitReply(t, head), hostA, 2)
+	test.dispatcher.stop()
+
+	_, _, commits := test.session.report()
+	if len(commits) < 1 || commits[0].ghost || commits[0].participant != hostB || commits[0].params != any([2]any{"fine", test.clock.Now().Unix()}) {
+		t.Fatalf("commits = %+v, want the first a probe of %s built from the second request", commits, hostB)
+	}
+	if holds, _ := test.observer.counts(); len(test.observer.burns()) != 0 || holds != 0 {
+		t.Fatalf("ghost burns = %v, holds = %d, want none of either", test.observer.burns(), holds)
 	}
 }
 
@@ -399,23 +463,23 @@ func TestShadowDecisionRepeatsTheOldestLiveRequest(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a dispatcher whose only queued request is abandoned, with a recording prober.
+//  1. Build a dispatcher whose only queued request is abandoned, with a recording prober and a fixed clock.
 //  2. Ask for the shadow decision.
-//  3. Assert the prober was handed no request and the decision is the burn for a probe with no request to repeat.
-func TestShadowDecisionWithoutALiveRequestBurnsAsNoRequest(t *testing.T) {
+//  3. Assert the prober was never asked and the decision is a hold until `shadowHold` from now, not a burn.
+func TestShadowDecisionWithoutALiveRequestHolds(t *testing.T) {
 	t.Parallel()
 	prober := &recordingProber{skipWith: ProbeSkipNoRequest}
 	gone := newWaiter(RequestProfile{Params: "payload"}, time.Time{})
 	gone.abandoned.Store(true)
-	queue := &dispatcher{dispatcherDeps: dispatcherDeps{shadow: prober, now: time.Now}, waiting: []*waiter{gone}}
+	queue := &dispatcher{dispatcherDeps: dispatcherDeps{shadow: prober, now: func() time.Time { return baseTime }}, waiting: []*waiter{gone}}
 
 	decision := queue.shadowDecision()
 
-	if triggers := prober.triggered(); len(triggers) != 1 || triggers[0] != nil {
-		t.Errorf("triggers = %v, want a single nil request", triggers)
+	if triggers := prober.triggered(); len(triggers) != 0 {
+		t.Errorf("triggers = %v, want the prober never asked", triggers)
 	}
-	if burned, isBurn := decision.(burn); !isBurn || burned.kind != ghostProbeNoRequest {
-		t.Errorf("decision = %#v, want a burn of kind ghostProbeNoRequest", decision)
+	if held, isHold := decision.(hold); !isHold || !held.until.Equal(baseTime.Add(shadowHold)) {
+		t.Errorf("decision = %#v, want a hold until %v", decision, baseTime.Add(shadowHold))
 	}
 }
 

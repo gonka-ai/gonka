@@ -187,7 +187,7 @@ Denied kwargs keys are removed, not refused: the thinking rules write keys such 
 
 `thinking_token_budget` and `empty_answer_counts_tokens` are the two knobs a mistake turns against the hosts: the budget field crashes vLLM `EngineCore` on models that lack it (Qwen3-Instruct-2507), and the exemption lets a host's own usage report win the race with an empty answer (`docs/race.md`, "Crown denial"). `Profile.RequiresRegisteredModel` reports them, and the admin API accepts them only for a model the chain registers, never through `allow_off_chain`.
 
-How filters rank against `model_limits`, the environment and the host, and what a release that changes a preset does to stored settings: [`docs/operations.md`](../docs/operations.md), "Which setting wins" and "When a release changes the presets". The profile's `output_tokens_floor` also raises the default output budget a request leaves unnamed.
+How filters rank against the per-model limits under `models`, the environment and the host, and what a release that changes a preset does to stored settings: [`docs/operations.md`](../docs/operations.md), "Which setting wins" and "When a release changes the presets". The profile's `output_tokens_floor` also raises the default output budget a request leaves unnamed.
 
 `ThinkingDisposition` is the closed set of ways a profile handles `thinking`/`enable_thinking`: normalise in place (the default), mirror into `chat_template_kwargs`, strip entirely, or force thinking on.
 

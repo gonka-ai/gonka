@@ -232,7 +232,7 @@ func TestKeepingTheClientStreamSendsWhatTheClientAsked(t *testing.T) {
 			t.Parallel()
 
 			result, err := NormalizeRequest([]byte(testCase.body), Options{
-				KeepClientStream: true,
+				KeepClientStream: func(string) bool { return true },
 				DefaultMaxTokens: 3072,
 				MaxTokensCap:     4096,
 				RoutedModel:      "model-a",
@@ -258,7 +258,7 @@ func TestKeepingTheClientStreamLeavesAnUnaskedRequestAlone(t *testing.T) {
 	t.Parallel()
 
 	result, err := NormalizeRequest([]byte(`{"model":"model-a","messages":[{"role":"user","content":"hi"}]}`), Options{
-		KeepClientStream: true,
+		KeepClientStream: func(string) bool { return true },
 		DefaultMaxTokens: 3072,
 		MaxTokensCap:     4096,
 		RoutedModel:      "model-a",

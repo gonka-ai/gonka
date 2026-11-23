@@ -351,13 +351,14 @@ func TestAdminFiltersRejectsBadAllowOffChain(t *testing.T) {
 }
 
 // Test flow:
-//  1. Give Qwen model_limits in the settings and register it on chain with a governed context length.
+//  1. Give Qwen its limits under `models` in the settings and register it on chain with a governed context length.
 //  2. GET its filter entry, and PUT a body that tries to set limits.
 //  3. Assert the entry shows the settings' limits marked read-only, and the PUT is a 400.
 func TestAdminFilterEntryShowsLimitsReadOnly(t *testing.T) {
 	live := newFiltersHarness(t)
 	live.swapConfig(func(next *config.Config) {
-		next.Limits.ModelLimits = map[string]config.ModelLimits{filtersQwenModel: {DefaultMaxTokens: 1000, MaxTokensCap: 2000}}
+		defaultTokens, tokenCap := int64(1000), int64(2000)
+		mustResolveModels(next, map[string]config.ModelSettings{filtersQwenModel: {DefaultMaxTokens: &defaultTokens, MaxTokensCap: &tokenCap}})
 	})
 	live.snapshots.snapshot.Models[filtersQwenModel] = chain.ModelParams{MaxModelLen: 32768}
 
@@ -367,7 +368,7 @@ func TestAdminFilterEntryShowsLimitsReadOnly(t *testing.T) {
 	limits := decodeInto[struct {
 		Limits map[string]any `json:"limits"`
 	}](t, recorder).Limits
-	want := map[string]any{"default_max_tokens": float64(1000), "max_tokens_cap": float64(2000), "max_model_len": float64(32768), "source": "model_limits"}
+	want := map[string]any{"default_max_tokens": float64(1000), "max_tokens_cap": float64(2000), "max_model_len": float64(32768), "source": "models"}
 	for key, value := range want {
 		if limits[key] != value {
 			t.Errorf("limits[%s] = %v, want %v (limits %v)", key, limits[key], value, limits)
@@ -422,7 +423,8 @@ func TestAdminFilterEntryShowsAnUnreadableRow(t *testing.T) {
 func TestAdminFilterEntryWarnsWhenSettingsLimitsOverrideFilters(t *testing.T) {
 	live := newFiltersHarness(t)
 	live.swapConfig(func(next *config.Config) {
-		next.Limits.ModelLimits = map[string]config.ModelLimits{filtersKimiModel: {DefaultMaxTokens: 8, MaxTokensCap: 8}}
+		eight := int64(8)
+		mustResolveModels(next, map[string]config.ModelSettings{filtersKimiModel: {DefaultMaxTokens: &eight, MaxTokensCap: &eight}})
 	})
 
 	entry := decodeInto[filterEntryResponse](t, live.request(t, http.MethodGet, filtersRoutePath+filtersKimiModel, "", adminHeaders()))

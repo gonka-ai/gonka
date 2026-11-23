@@ -248,8 +248,9 @@ func (m *Manager) narratePlanFailed(err error) {
 }
 
 func newModelPricing(modelID string, snapshot chain.PhaseSnapshot, configuration *config.Config) modelPricing {
+	configuration = configuration.For(modelID)
 	return modelPricing{
-		reserveTokens: configuration.Limits.RetirementReserve(modelID, snapshot.Models[modelID].MaxModelLen),
+		reserveTokens: configuration.Limits.RetirementReserve(snapshot.Models[modelID].MaxModelLen),
 		attempts:      uint64(scheduler.AttemptsToFund(configuration.Engine.MaxAttemptsPerRequest)),
 	}
 }

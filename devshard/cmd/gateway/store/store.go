@@ -120,6 +120,13 @@ var migrations = []string{
 		prompt BLOB NOT NULL,
 		PRIMARY KEY (escrow_id, nonce)
 	);`,
+	`CREATE TABLE IF NOT EXISTS api_keys (
+		id TEXT PRIMARY KEY,
+		key TEXT NOT NULL,
+		label TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL,
+		revoked_at TEXT NOT NULL DEFAULT ''
+	);`,
 }
 
 // ErrLegacyDatabase reports a gateway.db this gateway did not create, and legacyOnlyTables are the tables that prove it; both are kept out of the migrations block. See README.md, "The devshardctl-database guard".

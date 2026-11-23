@@ -120,7 +120,7 @@ func expectPlannerCreatesWithinBucket(label, model string) expectThat {
 func (h *gatewayHarness) fullEscrows(model string) int {
 	running := h.currentGateway()
 	snapshot, configuration := running.Observer().Snapshot(), running.Config().Load()
-	fullCost, _ := scheduler.RequestCost(configuration.Limits.RetirementReserve(model, snapshot.Models[model].MaxModelLen), snapshot.TokenPrice, snapshot.FeePerNonce)
+	fullCost, _ := scheduler.RequestCost(configuration.For(model).Limits.RetirementReserve(snapshot.Models[model].MaxModelLen), snapshot.TokenPrice, snapshot.FeePerNonce)
 	slot := fullCost * uint64(scheduler.AttemptsToFund(configuration.Engine.MaxAttemptsPerRequest))
 	full := 0
 	for _, row := range h.rows() {

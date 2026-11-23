@@ -50,6 +50,11 @@ func (p Participants) validate(complain func(format string, args ...any)) {
 	}
 }
 
+// ShadowFor reports whether participant is probed only, never routed client traffic, on model: the model's own shadow list, else the network one.
+func (c *Config) ShadowFor(participant, model string) bool {
+	return namesParticipant(c.For(model).Scheduler.Participants.Shadow, participant)
+}
+
 func namesParticipant(entries []string, participant string) bool {
 	return slices.ContainsFunc(entries, func(entry string) bool {
 		return strings.TrimSpace(entry) == strings.TrimSpace(participant)

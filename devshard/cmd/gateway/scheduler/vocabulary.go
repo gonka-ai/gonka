@@ -14,12 +14,10 @@ const (
 	GhostReasonAbandoned           = "request_abandoned_before_dispatch"
 	GhostReasonPrepareFailed       = "nonce_spent_on_failed_prepare"
 	GhostReasonAbsentFromChain     = "participant_absent_from_chain_no_send"
-	GhostReasonProbeNoRequest      = "shadow_probe_no_request"
-	GhostReasonProbeNoRoom         = "shadow_probe_no_room"
 	NoRequestID                    = ""
 )
 
-// ProbeSkip is why a shadow participant's nonce is burned instead of probed; ProbeSkipNone is a probe that can be built. See routing.md, "Shadow participants".
+// ProbeSkip is why a shadow participant's nonce is held instead of probed; ProbeSkipNone is a probe that can be built. See routing.md, "Shadow participants".
 type ProbeSkip int
 
 const (

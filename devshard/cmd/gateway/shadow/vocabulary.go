@@ -1,5 +1,7 @@
 package shadow
 
+import "devshard/cmd/gateway/config"
+
 // How a probe ended; the wire strings of the metric and the journal line.
 const (
 	OutcomeServed = "served"
@@ -8,7 +10,7 @@ const (
 
 // The probe asks for a random number of output tokens in [ProbeMinOutputTokens, min(ProbeMaxOutputTokens, the model's output cap, the context room)], drawn per probe; the rest is how it is built, bounded and read. See README.md.
 const (
-	ProbeMinOutputTokens = 256
+	ProbeMinOutputTokens = config.ProbeMinOutputTokens
 	ProbeMaxOutputTokens = 1024
 	maxCaptureBytes      = 64 << 10
 	dataPrefix           = "data:"

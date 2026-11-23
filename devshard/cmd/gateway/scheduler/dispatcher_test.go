@@ -390,7 +390,11 @@ type harnessConfig struct {
 	balance             uint64
 	feePerNonce         uint64
 	retirementReserve   uint64
+	model               string
+	settings            *config.Config
 }
+
+func (cfg harnessConfig) modelOrDefault() string { return cmp.Or(cfg.model, modelA) }
 
 type harness struct {
 	dispatcher *dispatcher
@@ -437,7 +441,7 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 
 	dispatcher := newDispatcher(dispatcherDeps{
 		escrowID:   escrowA,
-		model:      modelA,
+		model:      cfg.modelOrDefault(),
 		shadow:     cfg.prober,
 		session:    session,
 		snapshots:  snapshots,
@@ -450,7 +454,7 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		},
 		observer:            observer,
 		now:                 clock.Now,
-		matchWait:           matchWaitWindow,
+		matchWait:           func() time.Duration { return matchWaitWindow },
 		maxConsecutiveBurns: burnLimit.Load,
 		maxBurnsPerRequest:  burnCap.Load,
 		retirementReserve:   func() uint64 { return cfg.retirementReserve },
@@ -478,6 +482,10 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 }
 
 func (cfg harnessConfig) predicates(snapshot chain.PhaseSnapshot) availability {
+	shadowed := cfg.shadowed
+	if cfg.settings != nil {
+		shadowed = shadowedOn(cfg.settings, cfg.modelOrDefault())
+	}
 	return availability{
 		pocRequired: func(participant string) bool {
 			return snapshot.RequestsBlocked || (cfg.pocRequired != nil && cfg.pocRequired(participant))
@@ -500,7 +508,7 @@ func (cfg harnessConfig) predicates(snapshot chain.PhaseSnapshot) availability {
 		unthrottled: func(participant string) bool {
 			return cfg.unthrottled != nil && cfg.unthrottled(participant)
 		},
-		shadowed: cfg.shadowed,
+		shadowed: shadowed,
 	}
 }
 

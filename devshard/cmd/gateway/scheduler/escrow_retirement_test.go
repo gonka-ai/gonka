@@ -68,11 +68,13 @@ const (
 	fullContextReserve = 4 * fullContextTokens
 )
 
-// pinContextLength makes the operator pin modelA's context length, the way model_limits does.
+// pinContextLength makes the operator pin modelA's context length, the way the models setting does.
 func pinContextLength(scheduler *Scheduler) {
 	settings := *scheduler.settings.Load()
 	contextLength := int64(fullContextTokens)
-	settings.Limits.ModelLimits = map[string]config.ModelLimits{modelA: {MaxModelLen: &contextLength}}
+	if err := settings.ResolveModels(map[string]config.ModelSettings{modelA: {MaxModelLen: &contextLength}}); err != nil {
+		panic(err)
+	}
 	scheduler.settings.Swap(&settings)
 }
 

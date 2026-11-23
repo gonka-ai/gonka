@@ -360,13 +360,13 @@ func TestANonceSpentOnAFailedPrepareIsChargedToItsRequest(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build an eight-host group whose first slot from the cursor is a shadow host with no probe room and whose next one is ejected, with a cap of one burn and a prober that refuses every probe.
+//  1. Build an eight-host group whose first slot from the cursor is a shadow host whose probe the prober refuses and whose next one is ejected, with a cap of one burn.
 //  2. Submit a request and await its reply.
 //  3. Assert the shadow host's burned nonce neither counted against the cap nor was answered overloaded, and the request was served after the ejected host's one burn.
 func TestABurnOnAShadowHostIsNotCountedAgainstTheCap(t *testing.T) {
 	group := groupOf(burnCapGroupSize)
 	test := newHarness(t, harnessConfig{
-		slots: group, shadowed: burnedSlots(group, 1), prober: &recordingProber{skipWith: ProbeSkipNoRoom}, maxBurnsPerRequest: 1,
+		slots: group, shadowed: burnedSlots(group, 1), prober: &recordingProber{refuse: true}, maxBurnsPerRequest: 1,
 		ejected: func(participant string) bool { return participant == group[firstBurnSlot+1] },
 	})
 	tally := &BurnTally{}
@@ -376,7 +376,7 @@ func TestABurnOnAShadowHostIsNotCountedAgainstTheCap(t *testing.T) {
 	test.dispatcher.stop()
 
 	wantAssignment(t, reply, group[firstBurnSlot+2], firstBurnSlot+2)
-	require.Equal(t, []string{GhostReasonProbeNoRoom, GhostReasonEjected}, test.observer.burns())
+	require.Equal(t, []string{GhostReasonUntrusted, GhostReasonEjected}, test.observer.burns())
 	require.True(t, tally.Reached(1), "only the ejected host's burn is counted")
 	require.False(t, tally.Reached(2))
 }

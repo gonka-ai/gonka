@@ -19,7 +19,7 @@ func TestAnEscrowIsFullExactlyWhenItHoldsWhatRoutingPricesAFullContextRaceAt(t *
 	models, err := rotationModels(configuration.Rotation)
 	require.NoError(t, err)
 	snapshot := planningSnapshot()
-	reserve := configuration.Limits.RetirementReserve("qwen", snapshot.Models["qwen"].MaxModelLen)
+	reserve := configuration.For("qwen").Limits.RetirementReserve(snapshot.Models["qwen"].MaxModelLen)
 	oneRequest, priced := scheduler.RequestCost(reserve, snapshot.TokenPrice, snapshot.FeePerNonce)
 	require.True(t, priced)
 	slot := oneRequest * uint64(scheduler.AttemptsToFund(configuration.Engine.MaxAttemptsPerRequest))

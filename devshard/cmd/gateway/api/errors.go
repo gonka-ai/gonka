@@ -15,6 +15,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
@@ -23,6 +24,7 @@ import (
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/store"
 	"devshard/logging"
 	"devshard/transport"
 	"devshard/types"
@@ -42,6 +44,12 @@ var (
 	ErrUnknownDevshard = errors.New("unknown devshard")
 
 	ErrUnknownParticipant = errors.New("unknown participant")
+
+	ErrUnknownAPIKey = errors.New("unknown API key")
+
+	ErrLastAPIKey = errors.New("the last active API key cannot be revoked while a model is api_key")
+
+	ErrEnvAPIKey = errors.New("an API key set through " + env.APIKeysVariable + " cannot be created or revoked here")
 
 	ErrPrivateKeyEnvRequired = errors.New("private_key_env is required; a raw private_key is not accepted")
 
@@ -190,9 +198,9 @@ func statusForError(err error) int {
 		return http.StatusServiceUnavailable
 	case errors.Is(err, ErrPrivateKeyEnvRequired), errors.Is(err, ErrInvalidEscrowID), errors.Is(err, config.ErrInvalid), errors.Is(err, escrow.ErrAmountBelowFloor):
 		return http.StatusBadRequest
-	case errors.Is(err, ErrDevshardNotActivatable):
+	case errors.Is(err, ErrDevshardNotActivatable), errors.Is(err, store.ErrAPIKeyIDTaken), errors.Is(err, ErrLastAPIKey), errors.Is(err, ErrEnvAPIKey):
 		return http.StatusConflict
-	case errors.Is(err, ErrUnknownDevshard), errors.Is(err, ErrUnknownParticipant):
+	case errors.Is(err, ErrUnknownDevshard), errors.Is(err, ErrUnknownParticipant), errors.Is(err, ErrUnknownAPIKey):
 		return http.StatusNotFound
 	case errors.Is(err, escrow.ErrEscrowPruned), errors.Is(err, escrow.ErrEscrowSettledOnChain):
 		return http.StatusGone
@@ -289,8 +297,16 @@ func shardHasNoRoom(err error) bool {
 		errors.Is(err, ErrRequestBodiesFull)
 }
 
-// Retry-After is rounded up: a zero would tell a client to retry immediately, which a queue timeout does not mean.
 func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
+	s.writeErrorUnder(w, err, s.config.Load())
+}
+
+func (s *Server) writeErrorForModel(w http.ResponseWriter, err error, model string) {
+	s.writeErrorUnder(w, err, s.config.Load().For(model))
+}
+
+// Retry-After is rounded up: a zero would tell a client to retry immediately, which a queue timeout does not mean.
+func (s *Server) writeErrorUnder(w http.ResponseWriter, err error, configuration *config.Config) {
 	throttled, ours := rateLimited(err)
 	switch {
 	case ours && throttled.RetryAfter > 0:
@@ -301,7 +317,7 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 	case modelUnavailable(err), outOfFunds(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(escrow.TickInterval.Seconds()), 10))
 	case hostsUnavailable(err), noLiveWeight(err):
-		baseMS := s.config.Load().Limits.HostCutoff.BaseMS
+		baseMS := configuration.Limits.HostCutoff.BaseMS
 		seconds := int64(math.Ceil(float64(baseMS) / float64(time.Second.Milliseconds())))
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	case requestCapped(err):

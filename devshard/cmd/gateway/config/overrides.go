@@ -12,22 +12,24 @@ import (
 // Overrides is the admin-tunable subset of Config, merged over env by Build; a nil field is not overridden.
 type Overrides struct {
 	env.Tunables
-	Participants                    *ParticipantOverrides  `json:"participants,omitempty"`
-	FallbackMaxModelLen             *int64                 `json:"fallback_max_model_len,omitempty"`
-	HostInputWindowMinRequests      *int64                 `json:"host_input_window_min_requests,omitempty"`
-	HostInputWindowInitialRequests  *int64                 `json:"host_input_window_initial_requests,omitempty"`
-	HostOutputWindowMinRequests     *int64                 `json:"host_output_window_min_requests,omitempty"`
-	HostOutputWindowInitialRequests *int64                 `json:"host_output_window_initial_requests,omitempty"`
-	IOAIMDBetaSoft                  *float64               `json:"io_aimd_beta_soft,omitempty"`
-	IOAIMDBetaHard                  *float64               `json:"io_aimd_beta_hard,omitempty"`
-	IOAIMDBetaSevere                *float64               `json:"io_aimd_beta_severe,omitempty"`
-	IOAIMDBetaCross                 *float64               `json:"io_aimd_beta_cross,omitempty"`
-	HostCongestionSlack             *float64               `json:"host_congestion_slack,omitempty"`
-	HostCutoffAfterFailures         *int64                 `json:"host_cutoff_after_failures,omitempty"`
-	HostCutoffMS                    *int64                 `json:"host_cutoff_ms,omitempty"`
-	HostCutoffMaxMS                 *int64                 `json:"host_cutoff_max_ms,omitempty"`
-	ModelLimits                     map[string]ModelLimits `json:"model_limits,omitempty"`
-	ModelAccess                     map[string]string      `json:"model_access,omitempty"`
+	Participants                    *ParticipantOverrides        `json:"participants,omitempty"`
+	FallbackMaxModelLen             *int64                       `json:"fallback_max_model_len,omitempty"`
+	HostInputWindowMinRequests      *int64                       `json:"host_input_window_min_requests,omitempty"`
+	HostInputWindowInitialRequests  *int64                       `json:"host_input_window_initial_requests,omitempty"`
+	HostOutputWindowMinRequests     *int64                       `json:"host_output_window_min_requests,omitempty"`
+	HostOutputWindowInitialRequests *int64                       `json:"host_output_window_initial_requests,omitempty"`
+	IOAIMDBetaSoft                  *float64                     `json:"io_aimd_beta_soft,omitempty"`
+	IOAIMDBetaHard                  *float64                     `json:"io_aimd_beta_hard,omitempty"`
+	IOAIMDBetaSevere                *float64                     `json:"io_aimd_beta_severe,omitempty"`
+	IOAIMDBetaCross                 *float64                     `json:"io_aimd_beta_cross,omitempty"`
+	HostCongestionSlack             *float64                     `json:"host_congestion_slack,omitempty"`
+	HostCutoffAfterFailures         *int64                       `json:"host_cutoff_after_failures,omitempty"`
+	HostCutoffMS                    *int64                       `json:"host_cutoff_ms,omitempty"`
+	HostCutoffMaxMS                 *int64                       `json:"host_cutoff_max_ms,omitempty"`
+	Access                          *string                      `json:"access,omitempty"`
+	Models                          map[string]ModelSettings     `json:"models,omitempty"`
+	ModelLimits                     map[string]LegacyModelLimits `json:"model_limits,omitempty"`
+	ModelAccess                     LegacyModelAccess            `json:"model_access,omitempty"`
 }
 
 // ParticipantOverrides is the settings key `participants`; a nil list is not overridden.

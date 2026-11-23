@@ -56,7 +56,7 @@ func TestE2E_GatewayRejectsAnUnsupportedParameterWithoutSpendingANonce(t *testin
 //  6. Assert the host received the requested budget unclamped.
 func TestE2E_GatewayCapsOutputTokensUntilTheAdminKeyLiftsIt(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{hostEnvOverrides: testutil.EchoingHosts(e2eHostCount)})
-	putSettings(t, client, env.clientURL, map[string]any{"model_access": map[string]string{"stub-model": "open"}})
+	putSettings(t, client, env.clientURL, map[string]any{"models": map[string]any{"stub-model": map[string]string{"access": "open"}}})
 
 	const requested = 8192
 	body := testutil.ChatCompletionBody("output token cap", false)

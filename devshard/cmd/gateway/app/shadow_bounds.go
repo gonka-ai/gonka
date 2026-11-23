@@ -11,9 +11,9 @@ type probeBounds struct {
 }
 
 func (b probeBounds) Of(model string) shadow.ModelBounds {
-	limits := b.configuration.Load().Limits
+	limits := b.configuration.Load().For(model).Limits
 	return shadow.ModelBounds{
-		OutputCap:     limits.OutputTokenCap(model),
-		ContextLength: limits.ContextLength(model, b.snapshots.Snapshot().Models[model].MaxModelLen),
+		OutputCap:     limits.OutputTokenCap(),
+		ContextLength: limits.ContextLength(b.snapshots.Snapshot().Models[model].MaxModelLen),
 	}
 }
