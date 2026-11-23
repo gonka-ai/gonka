@@ -192,3 +192,29 @@ func TestGenesis_TradeApprovedTokensRoundTrip(t *testing.T) {
 	require.Equal(t, exported.Bridge.TokenMetadata, again.Bridge.TokenMetadata)
 	require.True(t, k2.HasBridgeTradeApprovedToken(ctx2, "kava_2222-10", "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"))
 }
+
+func TestGenesis_ModelsRoundTrip(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	mocks.StubForInitGenesis(ctx)
+	genesisState := mocks.StubGenesisState()
+	genesisState.ModelList = []types.Model{{ProposedBy: "genesis", Id: "model-1", UnitsOfComputePerToken: 10,
+		HfRepo: "repo1", HfCommit: "commit1", VRam: 16, ThroughputPerNonce: 100,
+		ValidationThreshold: &types.Decimal{Value: 99, Exponent: -2}}}
+	inference.InitGenesis(ctx, k, genesisState)
+	// MsgRegisterModel stores the proposal's proposed_by, not the authority.
+	k.SetModel(ctx, &types.Model{ProposedBy: testutil.Creator, Id: "model-2", UnitsOfComputePerToken: 10,
+		HfRepo: "repo2", HfCommit: "commit2", VRam: 16, ThroughputPerNonce: 100,
+		ValidationThreshold: &types.Decimal{Value: 99, Exponent: -2}})
+	exported := inference.ExportGenesis(ctx, k)
+	require.Len(t, exported.ModelList, 2)
+
+	k2, ctx2, mocks2 := keepertest.InferenceKeeperReturningMocks(t)
+	mocks2.StubForInitGenesis(ctx2)
+	imported := mocks2.StubGenesisState()
+	imported.ModelList = exported.ModelList
+	inference.InitGenesis(ctx2, k2, imported)
+	again := inference.ExportGenesis(ctx2, k2).ModelList
+	require.ElementsMatch(t, exported.ModelList, again)
+	require.ElementsMatch(t, []string{k.GetAuthority(), testutil.Creator},
+		[]string{again[0].ProposedBy, again[1].ProposedBy})
+}

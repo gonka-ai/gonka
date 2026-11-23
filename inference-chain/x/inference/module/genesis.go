@@ -71,12 +71,13 @@ func InitGenesis(ctx sdk.Context, k keeper.Keeper, genState types.GenesisState) 
 		panic(err)
 	}
 	for _, elem := range genState.ModelList {
-		if elem.ProposedBy != "genesis" {
+		// An exported genesis carries the stored proposer; keep it.
+		if elem.ProposedBy == "genesis" {
+			elem.ProposedBy = k.GetAuthority()
+		} else if _, err := sdk.AccAddressFromBech32(elem.ProposedBy); err != nil {
 			//nolint:forbidigo // genesis code
-			panic("At genesis all model.ProposedBy are expected to be \"genesis\".")
+			panic(fmt.Sprintf("model %s: ProposedBy must be \"genesis\" or an address: %v", elem.Id, err))
 		}
-
-		elem.ProposedBy = k.GetAuthority()
 		k.SetModel(ctx, &elem)
 	}
 
