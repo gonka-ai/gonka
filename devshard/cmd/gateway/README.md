@@ -75,6 +75,7 @@ Each package has a `README.md` that states what the package owns, its contract w
 | [`nonces/`](./nonces/README.md) | what feeds that ledger: live events, chain diffs, the sweep |
 | [`journal/`](./journal/README.md) | one ordered path for race, request and ledger events to their log line or ledger fact |
 | [`warmup/`](./warmup/README.md) | teaching a newly published escrow to its own group |
+| [`shadow/`](./shadow/README.md) | probing the participants that serve no client |
 | [`heights/`](./heights/README.md) | carrying mainnet height into the escrow's log: the courier, and the optional follower |
 | [`hostping/`](./hostping/README.md) | pinging the live escrows' hosts for reachability and clock drift |
 | [`store/`](./store/README.md) | control-plane state in SQLite |

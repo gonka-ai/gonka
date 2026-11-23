@@ -8,13 +8,22 @@ const (
 	GhostReasonWindowFull          = "participant_window_full_no_send"
 	GhostReasonCutOff              = "participant_cut_off_no_send"
 	GhostReasonEjected             = "participant_ejected_no_send"
-	GhostReasonOutsideAllowlist    = "participant_outside_allowlist"
+	GhostReasonUntrusted           = "participant_untrusted"
 	GhostReasonStateDiverged       = "participant_state_diverged_no_send"
 	GhostReasonNoCompatibleRequest = "no_compatible_request_after_stale"
 	GhostReasonAbandoned           = "request_abandoned_before_dispatch"
 	GhostReasonPrepareFailed       = "nonce_spent_on_failed_prepare"
 	GhostReasonAbsentFromChain     = "participant_absent_from_chain_no_send"
 	NoRequestID                    = ""
+)
+
+// ProbeSkip is why a shadow participant's nonce is held instead of probed; ProbeSkipNone is a probe that can be built. See routing.md, "Shadow participants".
+type ProbeSkip int
+
+const (
+	ProbeSkipNone ProbeSkip = iota
+	ProbeSkipNoRequest
+	ProbeSkipNoRoom
 )
 
 // ExhaustionReason is why routing will no longer pick an escrow, reported to the lifecycle that replaces it; ExhaustionNone is an escrow it may still pick, and the fallback nonce ceiling is never reported, so it never leaves this package. See routing.md, "Picking an escrow".

@@ -33,6 +33,7 @@ import (
 	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/shadow"
 	"devshard/cmd/gateway/store"
 	"devshard/cmd/gateway/warmup"
 	"devshard/logging"
@@ -246,6 +247,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	devshardWork := make(chan struct{}, 1)
 	depletion := &depletionNotice{}
 	finishes := &finishNotice{}
+	shadowProbes := shadow.New(clock, probeBounds{configuration: configHolder, snapshots: observer})
 	escrows, router, prober, err := newRouting(routingDeps{
 		Sessions:     sources.Serving,
 		ReadOnly:     sources.ReadOnly,
@@ -262,6 +264,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		PeerRPC:      adoption,
 		Ledger:       recorder,
 		Journal:      events,
+		Shadow:       shadowProbes,
 		Timeouts:     raceObserver,
 		Now:          clock,
 	})
@@ -318,8 +321,20 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	}
 
 	sessions := api.NewSessions(escrows)
-	prober.Settle(sessions.Poster, probeVotes{recorder: raceRecorder, events: events}, events)
+	probeTimeouts := probeVotes{recorder: raceRecorder, events: events}
+	prober.Settle(sessions.Poster, probeTimeouts, events)
+	prompts := promptTokens(sources.ModelSnapshots, observer)
 	e2e := env.LoadE2E()
+	shadowProbes.Bind(shadow.Binding{
+		Escrows:  escrows,
+		Lifetime: ctx,
+		Voter:    warmup.Voter{Posters: sessions.Poster, Timeouts: probeTimeouts, Pace: warmup.NewVotePacer(clock, warmup.SleepFor)},
+		Probes:   events,
+		Outcomes: shadowOutcomes{recorder: metrics.NewShadowProbeRecorder(telemetry), events: events},
+		HardTimeout: func() time.Duration {
+			return engine.PolicyFor(configHolder.Load().Engine, engine.E2EOverrides{HardTimeout: e2e.StreamingHardTimeout}).HardTimeoutOrDefault()
+		},
+	})
 	races, err := engine.NewEngine(engine.Deps{
 		Picker:     router,
 		Targets:    sessions,
@@ -402,7 +417,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		Now:          clock,
 
 		StopTokenVocabulary:     stopTokenVocabulary(sources.ModelSnapshots, observer),
-		PromptTokens:            promptTokens(sources.ModelSnapshots, observer),
+		PromptTokens:            prompts,
 		StatsTokenizerFallbacks: metrics.NewStatsTokenizerRecorder(telemetry),
 		RequestBodies:           requestBodies,
 	})

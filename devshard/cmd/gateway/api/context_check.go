@@ -11,7 +11,7 @@ import (
 
 // See docs/request.md, "Step 6 in detail: the context check".
 const (
-	chatTemplateMinimumTokens = 4
+	chatTemplateMinimumTokens = filters.ChatTemplateMinimumTokens
 )
 
 // ContextLengthError is a request whose prompt and max_tokens a host's context cannot hold together, which the host would refuse.

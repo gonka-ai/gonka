@@ -98,7 +98,7 @@ func (p deadlinePlan) hardTimeout() time.Time {
 				consider(attempt.Completed.Add(p.Policy.LoserGrace))
 			}
 		case !attempt.LaunchTime.IsZero():
-			consider(attempt.LaunchTime.Add(p.Policy.hardTimeout()))
+			consider(attempt.LaunchTime.Add(p.Policy.HardTimeoutOrDefault()))
 		}
 	}
 	return earliest
@@ -283,7 +283,7 @@ func (c *raceCoordinator) cancelAll() {
 		if attempt.done {
 			continue
 		}
-		if !attempt.launchTime.IsZero() && !now.Before(attempt.launchTime.Add(c.deps.Policy.hardTimeout())) {
+		if !attempt.launchTime.IsZero() && !now.Before(attempt.launchTime.Add(c.deps.Policy.HardTimeoutOrDefault())) {
 			attempt.backstopped = true
 		}
 		attempt.cancel()

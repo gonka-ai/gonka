@@ -88,7 +88,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	ranking := escrowRanking{
 		profile: profile, snapshot: snapshot, queued: queued, avoided: avoided,
 		retirement: retirement, request: request, attempts: s.attemptsToFund(profile.Model), limits: s.burnLimits(profile.Model),
-		reachable: reachableByAllowlist(s.participantAllowlist(profile.Model), s.unthrottledParticipants(profile.Model)),
+		reachable: reachableByTrust(s.participants(profile.Model)),
 		fleet:     s.fleetGates(profile.Model, snapshot),
 		ahead:     s.queuedAhead(candidates),
 	}
@@ -106,7 +106,7 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	}
 
 	if admitted == 0 && len(candidates) > 0 {
-		return Escrow{}, ErrAllowlistUnreachable
+		return Escrow{}, ErrTrustUnreachable
 	}
 	if picked < 0 {
 		if moneyDeclined {
@@ -372,7 +372,7 @@ func expectedBurns(candidate Escrow, gates availability, queued *waiter, queuedA
 			return forecast
 		}
 		forecast.burns++
-		if !queued.exclude[slot] {
+		if !queued.exclude[slot] && !gates.shadowMember(slot) {
 			forecast.charged++
 		}
 	}

@@ -12,8 +12,7 @@ import (
 // Overrides is the admin-tunable subset of Config, merged over env by Build; a nil field is not overridden.
 type Overrides struct {
 	env.Tunables
-	ParticipantAllowlist            *[]string                    `json:"participant_allowlist,omitempty"`
-	UnthrottledParticipants         *[]string                    `json:"unthrottled_participants,omitempty"`
+	Participants                    *ParticipantOverrides        `json:"participants,omitempty"`
 	FallbackMaxModelLen             *int64                       `json:"fallback_max_model_len,omitempty"`
 	HostInputWindowMinRequests      *int64                       `json:"host_input_window_min_requests,omitempty"`
 	HostInputWindowInitialRequests  *int64                       `json:"host_input_window_initial_requests,omitempty"`
@@ -31,6 +30,13 @@ type Overrides struct {
 	Models                          map[string]ModelSettings     `json:"models,omitempty"`
 	ModelLimits                     map[string]LegacyModelLimits `json:"model_limits,omitempty"`
 	ModelAccess                     LegacyModelAccess            `json:"model_access,omitempty"`
+}
+
+// ParticipantOverrides is the settings key `participants`; a nil list is not overridden.
+type ParticipantOverrides struct {
+	Trust       *[]string `json:"trust,omitempty"`
+	Shadow      *[]string `json:"shadow,omitempty"`
+	Unthrottled *[]string `json:"unthrottled,omitempty"`
 }
 
 // ParseOverrides rejects unknown fields: a typo in an admin PUT must be reported, never silently ignored.

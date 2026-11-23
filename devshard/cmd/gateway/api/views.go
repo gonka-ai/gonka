@@ -64,7 +64,8 @@ func filterOptions(configuration *config.Config, admin bool, stopTokenVocabulary
 }
 
 type participantLists struct {
-	Allowlist   []string `json:"allowlist"`
+	Trust       []string `json:"trust"`
+	Shadow      []string `json:"shadow"`
 	Unthrottled []string `json:"unthrottled"`
 }
 
@@ -74,17 +75,18 @@ type participantsInForce struct {
 }
 
 func participantViews(configuration *config.Config) participantsInForce {
-	view := participantsInForce{Network: listsOf(configuration), Models: map[string]participantLists{}}
+	view := participantsInForce{Network: listsOf(configuration.Scheduler.Participants), Models: map[string]participantLists{}}
 	for _, model := range configuration.ModelNames() {
-		view.Models[model] = listsOf(configuration.For(model))
+		view.Models[model] = listsOf(configuration.For(model).Scheduler.Participants)
 	}
 	return view
 }
 
-func listsOf(configuration *config.Config) participantLists {
+func listsOf(participants config.Participants) participantLists {
 	return participantLists{
-		Allowlist:   append([]string{}, configuration.Scheduler.ParticipantAllowlist...),
-		Unthrottled: append([]string{}, configuration.Scheduler.UnthrottledParticipants...),
+		Trust:       append([]string{}, participants.Trust...),
+		Shadow:      append([]string{}, participants.Shadow...),
+		Unthrottled: append([]string{}, participants.Unthrottled...),
 	}
 }
 

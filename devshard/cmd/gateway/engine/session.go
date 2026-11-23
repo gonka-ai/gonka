@@ -11,6 +11,11 @@ import (
 	"devshard/user"
 )
 
+const (
+	pacedCanceledOutcome = "skipped"
+	pacedCanceledDetail  = "context_canceled"
+)
+
 // timeoutHandler is the session's protocol-timeout entry point; *user.Session satisfies it.
 type timeoutHandler interface {
 	HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (user.TimeoutResult, error)
@@ -77,6 +82,11 @@ func (s *SessionTimeouts) settle(ctx context.Context, step TimeoutStep) (result 
 	reason, ready, skipped, err := s.handler.WaitTimeoutDeadline(ctx, step.Nonce, step.StartedAt)
 	if !ready {
 		return skipped, false, err
+	}
+	if step.Pace != nil {
+		if err := step.Pace(ctx); err != nil {
+			return user.TimeoutResult{Outcome: pacedCanceledOutcome, DetailReason: pacedCanceledDetail}, false, err
+		}
 	}
 	result, needsWait, err := s.handler.VoteTimeout(ctx, step.Nonce, step.StartedAt, s.payload, reason)
 	return result, needsWait, err

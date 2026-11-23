@@ -27,6 +27,7 @@ type dispatchObserver interface {
 // dispatcherDeps wires one escrow's actor. See README, "Where the nonce, the slot and the hold are taken".
 type dispatcherDeps struct {
 	escrowID            string
+	model               string
 	sessionID           uint64
 	session             session
 	snapshots           snapshotSource
@@ -35,6 +36,7 @@ type dispatcherDeps struct {
 	holdEscrow          func() (func(), bool)
 	escalationHold      func() (func(), bool)
 	observer            dispatchObserver
+	shadow              ShadowProber
 	now                 func() time.Time
 	matchWait           func() time.Duration
 	maxConsecutiveBurns func() int64
@@ -207,7 +209,7 @@ func (d *dispatcher) failAdvance(decision Decision, taken reservation, err error
 	switch decision.(type) {
 	case serve:
 		d.giveBack(taken)
-	case burn:
+	case burn, probe:
 		taken.releaseHold()
 	}
 	if errors.Is(err, types.ErrInsufficientBalance) && d.onExhausted != nil && d.escrowIsSpent() {
@@ -308,12 +310,14 @@ func intentFor(decision Decision) NonceIntent {
 		return NonceIntent{Commit: true, Params: outcome.waiter.profile.Params}
 	case burn:
 		return NonceIntent{Commit: true, Ghost: true}
+	case probe:
+		return NonceIntent{Commit: true, Params: outcome.params}
 	default:
 		return NonceIntent{}
 	}
 }
 
-// freeze memoises the ladder for the drain; a predicate nobody set is left nil, so "no allowlist" stays distinct from one that refuses everybody.
+// freeze memoises the ladder for the drain; a predicate nobody set is left nil, so "no trust list" stays distinct from one that refuses everybody.
 func freeze(live availability, hosts int) availability {
 	live.frozen = make(map[string]blockReason, hosts)
 	return live

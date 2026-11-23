@@ -66,11 +66,16 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			}
 			offered.taken.hostSlot = release
 		case burn:
+		case probe:
+			offered.decision = d.shadowDecision()
+			if _, holding := offered.decision.(hold); holding {
+				return NonceIntent{}
+			}
 		default:
 			return intentFor(offered.decision)
 		}
 		if _, burning := offered.decision.(burn); burning {
-			offered.chargedWaiter = d.burnedFor(binding.Participant, refusedWaiter)
+			offered.chargedWaiter = d.burnedFor(binding.Participant, refusedWaiter, gates)
 			if charged := offered.chargedWaiter; charged != nil && charged.profile.Burns.Reached(requestBurnCap) {
 				offered.decision = overloaded{waiter: charged}
 				return NonceIntent{}
@@ -141,6 +146,12 @@ func (d *dispatcher) drain() (time.Time, bool) {
 			chargeBurn(offered.chargedWaiter)
 			d.recordGhost(burned)
 			offered.taken.releaseHold()
+			d.burnsInARow++
+			if d.spendBurnBudget(&burnBudget) {
+				return time.Time{}, false
+			}
+		case probe:
+			d.sendProbe(outcome, offered.taken, prepared)
 			d.burnsInARow++
 			if d.spendBurnBudget(&burnBudget) {
 				return time.Time{}, false
@@ -235,7 +246,10 @@ func (d *dispatcher) dropAbandoned() {
 	d.keepWaiting(func(queued *waiter) bool { return !queued.abandoned.Load() })
 }
 
-func (d *dispatcher) burnedFor(participant string, refused *waiter) *waiter {
+func (d *dispatcher) burnedFor(participant string, refused *waiter, gates availability) *waiter {
+	if gates.shadowMember(participant) {
+		return nil
+	}
 	if refused != nil {
 		return refused
 	}

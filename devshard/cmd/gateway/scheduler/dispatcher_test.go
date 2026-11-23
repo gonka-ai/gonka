@@ -373,6 +373,8 @@ type harnessConfig struct {
 	ejected             func(string) bool
 	stateBlocked        func(string) bool
 	unthrottled         func(string) bool
+	shadowed            func(string) bool
+	prober              ShadowProber
 	afterDecide         func(HostBinding)
 	failWith            error
 	failAfterDecide     error
@@ -435,6 +437,8 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 
 	dispatcher := newDispatcher(dispatcherDeps{
 		escrowID:   escrowA,
+		model:      modelA,
+		shadow:     cfg.prober,
 		session:    session,
 		snapshots:  snapshots,
 		predicates: cfg.predicates,
@@ -496,6 +500,7 @@ func (cfg harnessConfig) predicates(snapshot chain.PhaseSnapshot) availability {
 		unthrottled: func(participant string) bool {
 			return cfg.unthrottled != nil && cfg.unthrottled(participant)
 		},
+		shadowed: cfg.shadowed,
 	}
 }
 

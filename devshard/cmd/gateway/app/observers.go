@@ -11,6 +11,7 @@ import (
 	"devshard/cmd/gateway/nonces"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/shadow"
 )
 
 // tracedDispatches counts dispatch events and hands the ones worth a line or a ledger fact to the journal. See README.md, "Two readers of one fact".
@@ -178,4 +179,18 @@ func journalCounts(events *journal.Journal) func() metrics.JournalCounts {
 		moneyRefused, progressDropped, lateEvents := events.Counts()
 		return metrics.JournalCounts{MoneyRefused: moneyRefused, ProgressDropped: progressDropped, LateEvents: lateEvents}
 	}
+}
+
+type shadowOutcomes struct {
+	recorder *metrics.ShadowProbeRecorder
+	events   *journal.Journal
+}
+
+func (o shadowOutcomes) ShadowProbed(result shadow.Result) {
+	if result.Outcome == shadow.OutcomeServed {
+		o.recorder.ShadowProbeAnswered(result.Participant, result.Model, result.Outcome, result.Streamed, result.FirstToken, result.Total, result.OutputTokens)
+	} else {
+		o.recorder.ShadowProbeUnanswered(result.Participant, result.Model, result.Outcome)
+	}
+	o.events.ShadowProbed(result)
 }

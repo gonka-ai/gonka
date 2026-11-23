@@ -8,7 +8,7 @@ const (
 	ghostWindowFull
 	ghostCutOff
 	ghostEjected
-	ghostNotAllowed
+	ghostUntrusted
 	ghostStateDiverged
 	ghostExclude
 	ghostAbandoned
@@ -26,8 +26,8 @@ func (k GhostKind) reason() string {
 		return GhostReasonCutOff
 	case ghostEjected:
 		return GhostReasonEjected
-	case ghostNotAllowed:
-		return GhostReasonOutsideAllowlist
+	case ghostUntrusted:
+		return GhostReasonUntrusted
 	case ghostStateDiverged:
 		return GhostReasonStateDiverged
 	case ghostExclude:

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -323,6 +324,64 @@ func TestANonceSpentOnAFailedPrepareIsChargedToItsRequest(t *testing.T) {
 
 	require.Error(t, reply.err)
 	require.True(t, tally.Reached(1), "the spent nonce must be counted")
+}
+
+// Test flow:
+//  1. Build an eight-host group whose first slot from the cursor is a shadow host whose probe the prober refuses and whose next one is ejected, with a cap of one burn.
+//  2. Submit a request and await its reply.
+//  3. Assert the shadow host's burned nonce neither counted against the cap nor was answered overloaded, and the request was served after the ejected host's one burn.
+func TestABurnOnAShadowHostIsNotCountedAgainstTheCap(t *testing.T) {
+	group := groupOf(burnCapGroupSize)
+	test := newHarness(t, harnessConfig{
+		slots: group, shadowed: burnedSlots(group, 1), prober: &recordingProber{refuse: true}, maxBurnsPerRequest: 1,
+		ejected: func(participant string) bool { return participant == group[firstBurnSlot+1] },
+	})
+	tally := &BurnTally{}
+
+	queued := test.submitCosting(t, RequestProfile{Model: modelA, Params: "payload", Burns: tally}, test.clock.Now())
+	reply := awaitReply(t, queued)
+	test.dispatcher.stop()
+
+	wantAssignment(t, reply, group[firstBurnSlot+2], firstBurnSlot+2)
+	require.Equal(t, []string{GhostReasonUntrusted, GhostReasonEjected}, test.observer.burns())
+	require.True(t, tally.Reached(1), "only the ejected host's burn is counted")
+	require.False(t, tally.Reached(2))
+}
+
+// Test flow:
+//  1. Build an eight-host group whose first slot from the cursor is a shadow host and whose next one is ejected, with a cap of one burn.
+//  2. Price the escrow with `expectedBurns` over the same gates the drain reads, for a request that excludes nobody.
+//  3. Assert the estimate counts both slots as nonces spent but charges the request only the ejected host's burn, so a cap of one still leaves the escrow pickable.
+func TestTheForecastDoesNotChargeARequestForAShadowSlot(t *testing.T) {
+	group := groupOf(burnCapGroupSize)
+	gates := openAvailability()
+	gates.shadowed = shadowing(group[firstBurnSlot])
+	gates.ejected = func(participant string) bool { return participant == group[firstBurnSlot+1] }
+	escrow := Escrow{ID: escrowA, Model: modelA, Session: &fakeSession{slots: group}}
+
+	forecast := expectedBurns(escrow, gates, newWaiter(RequestProfile{Model: modelA}, time.Time{}), 0, 0)
+
+	require.Equal(t, burnForecast{burns: 2, charged: 1, usable: true}, forecast)
+}
+
+// Test flow:
+//  1. Build an eight-host group whose first slot from the cursor is a shadow host whose escrow state diverged, with a cap of one burn.
+//  2. Submit a request carrying a tally and await its reply.
+//  3. Assert the shadow host's nonce was burned for the diverged state, the request was served on the next host, and the tally stayed at zero: a shadow host's burn is nobody's.
+func TestABurnOnADivergedShadowHostIsNotChargedToARequest(t *testing.T) {
+	group := groupOf(burnCapGroupSize)
+	test := newHarness(t, harnessConfig{
+		slots: group, shadowed: burnedSlots(group, 1), prober: &recordingProber{}, maxBurnsPerRequest: 1,
+		stateBlocked: func(participant string) bool { return participant == group[firstBurnSlot] },
+	})
+	tally := &BurnTally{}
+
+	reply := awaitReply(t, test.submitCosting(t, RequestProfile{Model: modelA, Params: "payload", Burns: tally}, test.clock.Now()))
+	test.dispatcher.stop()
+
+	wantAssignment(t, reply, group[firstBurnSlot+1], firstBurnSlot+1)
+	require.Equal(t, []string{GhostReasonStateDiverged}, test.observer.burns())
+	require.False(t, tally.Reached(1), "a shadow host's burn is charged to no request")
 }
 
 // Test flow:

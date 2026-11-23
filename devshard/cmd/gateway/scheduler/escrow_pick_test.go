@@ -897,11 +897,11 @@ func TestTheRetirementPriceIsTheModelsContextAndNeverLessThanOneCappedAnswer(t *
 	}
 }
 
-// schedulerWithAllowlist wires the settings the picker reads, which the plain constructor leaves nil.
-func schedulerWithAllowlist(t *testing.T, allowlist []string, groups map[string][]string) *Scheduler {
+// schedulerWithTrust wires the settings the picker reads, which the plain constructor leaves nil.
+func schedulerWithTrust(t *testing.T, trust []string, groups map[string][]string) *Scheduler {
 	t.Helper()
 	configuration := config.Defaults()
-	configuration.Scheduler.ParticipantAllowlist = allowlist
+	configuration.Scheduler.Participants.Trust = trust
 	holder := &config.Holder{}
 	holder.Swap(&configuration)
 
@@ -926,11 +926,11 @@ func schedulerWithAllowlist(t *testing.T, allowlist []string, groups map[string]
 }
 
 // Test flow:
-//  1. Build a scheduler with an allowlist naming one participant, and two escrows: one whose group holds nobody allowed, one whose group is that one allowed participant.
+//  1. Build a scheduler with a trust list naming one participant, and two escrows: one whose group holds nobody allowed, one whose group is that one allowed participant.
 //  2. Pick an escrow.
 //  3. Assert the escrow with an allowed participant is picked, since the disallowed one is never a candidate at all.
 func TestPickEscrowSkipsAnEscrowHoldingNoAllowedParticipant(t *testing.T) {
-	scheduler := schedulerWithAllowlist(t, []string{"allowed"}, map[string][]string{
+	scheduler := schedulerWithTrust(t, []string{"allowed"}, map[string][]string{
 		"crowded": {"someone-else", "another"},
 		"lonely":  {"allowed"},
 	})
@@ -945,31 +945,31 @@ func TestPickEscrowSkipsAnEscrowHoldingNoAllowedParticipant(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a scheduler with an allowlist naming a participant no escrow's group holds.
+//  1. Build a scheduler with a trust list naming a participant no escrow's group holds.
 //  2. Pick an escrow.
-//  3. Assert the pick fails with `ErrAllowlistUnreachable`.
-func TestPickEscrowReportsAnAllowlistNoEscrowCanReach(t *testing.T) {
-	scheduler := schedulerWithAllowlist(t, []string{"nobody-holds-this"}, map[string][]string{
+//  3. Assert the pick fails with `ErrTrustUnreachable`.
+func TestPickEscrowReportsATrustListNoEscrowCanReach(t *testing.T) {
+	scheduler := schedulerWithTrust(t, []string{"nobody-holds-this"}, map[string][]string{
 		"one": {"someone-else"},
 		"two": {"another"},
 	})
 
 	_, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
 
-	if !errors.Is(err, ErrAllowlistUnreachable) {
-		t.Fatalf("pickEscrow() = %v, want ErrAllowlistUnreachable", err)
+	if !errors.Is(err, ErrTrustUnreachable) {
+		t.Fatalf("pickEscrow() = %v, want ErrTrustUnreachable", err)
 	}
 }
 
 // Test flow:
-//  1. Build a scheduler with no allowlist configured.
+//  1. Build a scheduler with no trust list configured.
 //  2. Pick an escrow.
 //  3. Assert the pick succeeds.
-func TestPickEscrowIgnoresTheAllowlistWhenItIsEmpty(t *testing.T) {
-	scheduler := schedulerWithAllowlist(t, nil, map[string][]string{"one": {"anybody"}})
+func TestPickEscrowIgnoresTheTrustListWhenItIsEmpty(t *testing.T) {
+	scheduler := schedulerWithTrust(t, nil, map[string][]string{"one": {"anybody"}})
 
 	if _, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{}); err != nil {
-		t.Fatalf("pickEscrow() with no allowlist: %v", err)
+		t.Fatalf("pickEscrow() with no trust list: %v", err)
 	}
 }
 
@@ -1108,11 +1108,11 @@ func TestARegularPassedOverForItsHostsDoesNotOpenTheReserve(t *testing.T) {
 }
 
 // Test flow:
-//  1. Configure an allowlist that rules out the regular escrow's whole group but admits the reserve's.
+//  1. Configure a trust list that rules out the regular escrow's whole group but admits the reserve's.
 //  2. Pick an escrow.
-//  3. Assert the pick reports the allowlist as unreachable rather than taking the reserve: an operator's host restriction is not a regular failing for money.
-func TestAnAllowlistThatRulesOutTheRegularsDoesNotOpenTheReserve(t *testing.T) {
-	scheduler := schedulerWithAllowlist(t, []string{"allowed"}, map[string][]string{
+//  3. Assert the pick reports the trust list as unreachable rather than taking the reserve: an operator's host restriction is not a regular failing for money.
+func TestATrustListThatRulesOutTheRegularsDoesNotOpenTheReserve(t *testing.T) {
+	scheduler := schedulerWithTrust(t, []string{"allowed"}, map[string][]string{
 		"regular": {"someone-else"},
 		"reserve": {"allowed"},
 	})
@@ -1124,8 +1124,8 @@ func TestAnAllowlistThatRulesOutTheRegularsDoesNotOpenTheReserve(t *testing.T) {
 
 	picked, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
 
-	if !errors.Is(err, ErrAllowlistUnreachable) {
-		t.Fatalf("pickEscrow() = %q, %v; want ErrAllowlistUnreachable", picked.ID, err)
+	if !errors.Is(err, ErrTrustUnreachable) {
+		t.Fatalf("pickEscrow() = %q, %v; want ErrTrustUnreachable", picked.ID, err)
 	}
 }
 

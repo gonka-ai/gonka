@@ -37,6 +37,7 @@ func (s *Scheduler) dispatcherFor(escrow Escrow) (*dispatcher, error) {
 	if !live || target.sessionID != escrow.SessionID {
 		target = newDispatcher(dispatcherDeps{
 			escrowID:            escrow.ID,
+			model:               escrow.Model,
 			sessionID:           escrow.SessionID,
 			session:             escrow.Session,
 			snapshots:           s.snapshots,
@@ -45,6 +46,7 @@ func (s *Scheduler) dispatcherFor(escrow Escrow) (*dispatcher, error) {
 			holdEscrow:          escrow.Hold,
 			escalationHold:      escrow.EscalationHold,
 			observer:            s.observer,
+			shadow:              s.shadow,
 			now:                 s.now,
 			matchWait:           func() time.Duration { return s.matchWait(escrow.Model) },
 			maxConsecutiveBurns: func() int64 { return s.maxConsecutiveBurns(escrow.Model) },

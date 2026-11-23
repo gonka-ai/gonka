@@ -13,7 +13,7 @@ var (
 
 	ErrRequestCapped = errors.New("request reached its cap of burned nonces or attempts")
 
-	ErrAllowlistUnreachable = errors.New("no escrow holds an allowed participant")
+	ErrTrustUnreachable = errors.New("no escrow holds an allowed participant")
 
 	ErrNoEscrowCapacity = errors.New("no escrow capacity")
 

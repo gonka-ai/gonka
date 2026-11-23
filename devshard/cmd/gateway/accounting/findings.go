@@ -56,9 +56,10 @@ type Finding struct {
 // Nonces that never reached the host are excluded from every rate: a burn is this gateway's own decision.
 func findingsFor(record ParticipantRecord) []Finding {
 	counted := countedOf(record)
-	delivered := without(record.Dispositions[DispositionFinishedUsed]+
-		record.Dispositions[DispositionFinishedUnused]+
-		record.Dispositions[DispositionFinishedUsageUnknown], counted.deliveredWarmup)
+	finished := record.Dispositions[DispositionFinishedUsed] +
+		record.Dispositions[DispositionFinishedUnused] +
+		record.Dispositions[DispositionFinishedUsageUnknown]
+	delivered := without(finished, counted.deliveredProbes)
 	refused := without(record.Dispositions[DispositionUnfinishedRefused], counted.refusedOffRecord)
 	unfinished := without(record.Dispositions[DispositionUnfinishedExecution], counted.unfinishedOffRecord)
 	reached := delivered + refused + unfinished
@@ -73,7 +74,7 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingExecutionTimeouts))
 	add(ratio(refused, reached, refusalWarning, refusalCritical,
 		FindingRefusals))
-	add(ratio(without(record.Dispositions[DispositionFinishedUnused], counted.unusedWarmup), delivered,
+	add(ratio(without(record.Dispositions[DispositionFinishedUnused], counted.unusedProbes), delivered,
 		unusedAnswerWarning, neverCritical, FindingUnusedAnswers))
 	add(ratio(counted.throttledGhosts, record.Assigned, gatewayThrottleWarning, neverCritical,
 		FindingGatewayThrottled))
@@ -97,7 +98,8 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingSlowDecode))
 	add(ratio(counted.logprobsDecoded, delivered, decodedLogprobsWarning, decodedLogprobsCritical,
 		FindingDecodedLogprobs))
-	add(ratio(counted.clockDrifted, delivered+record.Dispositions[DispositionUnfinishedExecution], clockDriftWarning, neverCritical,
+	// The host signs a probe's receipt like any other, so a probe is on both sides of the drift rate.
+	add(ratio(counted.clockDrifted, finished+record.Dispositions[DispositionUnfinishedExecution], clockDriftWarning, neverCritical,
 		FindingClockDrift))
 
 	if total := counted.failedWithoutAnswer; total > 0 && reached >= findingMinimumVolume {
@@ -122,8 +124,8 @@ func findingsFor(record ParticipantRecord) []Finding {
 
 // Every sum a rate below is measured from, so a participant's counters are walked once rather than per finding.
 type countedNonces struct {
-	deliveredWarmup        uint64
-	unusedWarmup           uint64
+	deliveredProbes        uint64
+	unusedProbes           uint64
 	refusedOffRecord       uint64
 	unfinishedOffRecord    uint64
 	deliveredOutsidePoC    uint64
@@ -142,7 +144,7 @@ func countedOf(record ParticipantRecord) countedNonces {
 	var counted countedNonces
 	for _, counter := range record.Counters {
 		key, count := counter.CounterKey, counter.Count
-		if key.LogprobsDecoded {
+		if key.LogprobsDecoded && !servedNoUser(key) {
 			counted.logprobsDecoded += count
 		}
 		if key.ClockDrifted {
@@ -159,15 +161,15 @@ func countedOf(record ParticipantRecord) countedNonces {
 				counted.slowDecodesOutsidePoC += count
 			}
 		}
-		if failedWithoutAnswer(key) {
+		if failedWithoutAnswer(key) && !servedNoUser(key) {
 			counted.failedWithoutAnswer += count
 		}
 		switch key.Disposition {
 		case DispositionFinishedUsed, DispositionFinishedUnused, DispositionFinishedUsageUnknown:
 			if servedNoUser(key) {
-				counted.deliveredWarmup += count
+				counted.deliveredProbes += count
 				if key.Disposition == DispositionFinishedUnused {
-					counted.unusedWarmup += count
+					counted.unusedProbes += count
 				}
 			}
 			if outsidePoC(key) {
@@ -242,9 +244,10 @@ func failedWithoutAnswer(key CounterKey) bool {
 
 func outsidePoC(key CounterKey) bool { return key.Phase != PhasePoC }
 
-func servedNoUser(key CounterKey) bool { return key.Terminal == TerminalWarmupProbe }
+func servedNoUser(key CounterKey) bool {
+	return key.Terminal == TerminalWarmupProbe || key.Terminal == TerminalShadowProbe
+}
 
-// A warmup probe is the gateway's own request, so it leaves every rate whatever it ended as.
 func offRecord(key CounterKey) bool { return excused(key) || servedNoUser(key) }
 
 // A failure the host did not cause. Slowness that drove the client away is measured by its own findings.

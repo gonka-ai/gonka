@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/cmd/gateway/shadow"
 	"devshard/cmd/gateway/warmup"
 	"devshard/transport"
 )
@@ -33,6 +34,7 @@ type routingDeps struct {
 	PeerRPC      *transport.PeerRPCAdoption
 	Ledger       *nonces.Recorder
 	Journal      *journal.Journal
+	Shadow       *shadow.Runner
 	Timeouts     timeoutSink
 	Now          func() time.Time
 }
@@ -80,11 +82,19 @@ func newRouting(deps routingDeps) (*registry.Registry, *scheduler.Scheduler, *wa
 		OnEscrowExhausted: escrows.Exhausted,
 		OnReserveTaken:    escrows.ReserveTaken,
 		OnMoneyShort:      deps.Depletion.OnMoneyShort,
+		Shadow:            shadowProber(deps.Shadow),
 	})
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	return escrows, router, prober, nil
+}
+
+func shadowProber(runner *shadow.Runner) scheduler.ShadowProber {
+	if runner == nil {
+		return nil
+	}
+	return runner
 }
 
 // escrowExhaustion reads the scheduler's verdict on a live escrow no request reached, for the escrow manager's tick.

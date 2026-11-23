@@ -37,6 +37,7 @@ graph TD
         NON["nonces"]
         ACC["accounting"]
         WRM["warmup"]
+        SHD["shadow"]
     end
     subgraph plumbing["plumbing"]
         CFG["config"]
@@ -62,6 +63,9 @@ graph TD
     NON --> ENG
     NON --> CHN
     WRM --> REG
+    SHD --> REG
+    SHD --> SCH
+    SHD --> WRM
     CFG --> ENV
     API --> CFG
     MET --> LIM
@@ -74,7 +78,7 @@ graph TD
 
 `filters` depends on no layer package: it is pure, and its behaviour is pinned byte-for-byte against goldens. `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.
 
-The graph shows the layer packages, so the composition root, `app`, is not on it: `app` imports every box above and `app/compose.go` wires them, and the four adapters that hand one event to two readers — a race outcome to the metrics recorder and the nonce ledger, a warmup's vote to that same recorder without a race's line, a burn to its log line, its metric and the ledger, a phase poll to a line only when something changed — live in `app/observers.go` rather than in a layer package. See the root [`app/README.md`](../app/README.md), "Two readers of one fact".
+The graph shows the layer packages, so the composition root, `app`, is not on it: `app` imports every box above and `app/compose.go` wires them, and the five adapters that hand one event to two readers — a race outcome to the metrics recorder and the nonce ledger, a warmup's vote to that same recorder without a race's line, a burn to its log line, its metric and the ledger, a shadow probe's result to its metric and its log line, a phase poll to a line only when something changed — live in `app/observers.go` rather than in a layer package. See the root [`app/README.md`](../app/README.md), "Two readers of one fact".
 
 ## Every import
 
@@ -82,7 +86,7 @@ The non-test imports between gateway packages, as `go list -f '{{.ImportPath}} {
 
 - `accounting` imports `engine`, `filters`, `scheduler`
 - `api` imports `chain`, `config`, `engine`, `escrow`, `filters`, `internal/logkey`, `internal/safemath`, `internal/strictjson`, `journal`, `limits`, `perf`, `registry`, `scheduler`, `store`, `tokenizer`
-- `app` imports `accounting`, `api`, `chain`, `config`, `engine`, `env`, `escrow`, `filters`, `heights`, `hostping`, `internal/logkey`, `internal/strictjson`, `journal`, `limits`, `metrics`, `nonces`, `perf`, `registry`, `scheduler`, `store`, `tokenizer`, `warmup`
+- `app` imports `accounting`, `api`, `chain`, `config`, `engine`, `env`, `escrow`, `filters`, `heights`, `hostping`, `internal/logkey`, `internal/strictjson`, `journal`, `limits`, `metrics`, `nonces`, `perf`, `registry`, `scheduler`, `shadow`, `store`, `tokenizer`, `warmup`
 - `chain` imports `internal/safemath`, `internal/strictjson`
 - `config` imports `chain`, `env`, `filters`
 - `engine` imports `chain`, `config`, `filters`, `internal/strictjson`, `limits`, `perf`, `scheduler`
@@ -98,7 +102,7 @@ The non-test imports between gateway packages, as `go list -f '{{.ImportPath}} {
 - `internal/safemath` imports no gateway package
 - `internal/strictjson` imports no gateway package
 - `internal/tokensource` imports no gateway package
-- `journal` imports `accounting`, `chain`, `engine`, `internal/logkey`, `perf`, `scheduler`, `store`
+- `journal` imports `accounting`, `chain`, `engine`, `internal/logkey`, `perf`, `scheduler`, `shadow`, `store`
 - `limits` imports `chain`, `config`, `internal/safemath`
 - `liquidity` imports `internal/safemath`
 - `metrics` imports `chain`, `engine`, `limits`, `perf`, `registry`, `store`
@@ -106,6 +110,7 @@ The non-test imports between gateway packages, as `go list -f '{{.ImportPath}} {
 - `perf` imports `config`
 - `registry` imports `chain`, `scheduler`
 - `scheduler` imports `chain`, `config`, `internal/tokensource`, `limits`
+- `shadow` imports `accounting`, `registry`, `scheduler`, `warmup`
 - `store` imports `config`, `internal/tokensource`
 - `tokenizer` imports `internal/logkey`
 - `warmup` imports `accounting`, `chain`, `config`, `engine`, `registry`

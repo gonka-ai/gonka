@@ -37,27 +37,27 @@ func gatewayParticipants(t *testing.T, client *http.Client, clientURL string) []
 
 // Test flow:
 //  1. Start the default three-host gateway environment.
-//  2. Narrow the allowlist to two of the three participants.
+//  2. Narrow the trust list to two of the three participants.
 //  3. Send nine completions and assert the allowed two served some of them.
-//  4. Assert the excluded slot burned its nonces under participant_outside_allowlist rather than routing or losing them.
-func TestE2E_GatewayBurnsTheNoncesOfAHostOutsideTheAllowlist(t *testing.T) {
+//  4. Assert the excluded slot burned its nonces under participant_untrusted rather than routing or losing them.
+func TestE2E_GatewayBurnsTheNoncesOfAHostOutsideTheTrustList(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
 	participants := gatewayParticipants(t, client, env.clientURL)
-	putSettings(t, client, env.clientURL, map[string]any{"participant_allowlist": participants[:2]})
+	putSettings(t, client, env.clientURL, map[string]any{"participants": map[string]any{"trust": participants[:2]}})
 
 	served := 0
 	for request := range 9 {
 		if response := testutil.SendCompletionRaw(t, client, env.clientURL,
-			fmt.Sprintf("allowlisted %d", request), testutil.AdminAPIKey); response.StatusCode == http.StatusOK {
+			fmt.Sprintf("trusted %d", request), testutil.AdminAPIKey); response.StatusCode == http.StatusOK {
 			served++
 		}
 	}
 	if served == 0 {
-		t.Fatal("an allowlist of two of three hosts served nothing at all")
+		t.Fatal("a trust list of two of three hosts served nothing at all")
 	}
 
-	burned := awaitGhostBurns(t, client, env.statsURL, "participant_outside_allowlist", 60*time.Second)
+	burned := awaitGhostBurns(t, client, env.statsURL, "participant_untrusted", 60*time.Second)
 	if burned == 0 {
 		t.Error("no nonce was burned for the excluded host: its slot either kept routing or lost its nonces silently")
 	}
@@ -65,17 +65,17 @@ func TestE2E_GatewayBurnsTheNoncesOfAHostOutsideTheAllowlist(t *testing.T) {
 
 // Test flow:
 //  1. Start the default three-host gateway environment.
-//  2. Narrow the allowlist to a single host, then clear it again.
+//  2. Narrow the trust list to a single host, then clear it again.
 //  3. Assert the group serves once more, without a restart.
-func TestE2E_GatewayKeepsServingWhenTheAllowlistIsPutBack(t *testing.T) {
+func TestE2E_GatewayKeepsServingWhenTheTrustListIsPutBack(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
 	participants := gatewayParticipants(t, client, env.clientURL)
-	putSettings(t, client, env.clientURL, map[string]any{"participant_allowlist": participants[:1]})
-	putSettings(t, client, env.clientURL, map[string]any{"participant_allowlist": []string{}})
+	putSettings(t, client, env.clientURL, map[string]any{"participants": map[string]any{"trust": participants[:1]}})
+	putSettings(t, client, env.clientURL, map[string]any{"participants": map[string]any{"trust": []string{}}})
 
 	testutil.RequireOpenAINonStreamingCompletion(t,
-		testutil.SendCompletionRaw(t, client, env.clientURL, "allowlist lifted", testutil.AdminAPIKey))
+		testutil.SendCompletionRaw(t, client, env.clientURL, "trust list lifted", testutil.AdminAPIKey))
 }
 
 // Test flow:

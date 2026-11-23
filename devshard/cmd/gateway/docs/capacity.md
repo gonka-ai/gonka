@@ -231,7 +231,7 @@ A retired escrow stays in `Snapshot` until that count reaches zero, reporting `d
 
 `perf.Tracker` answers two questions in O(1) with no lock: **is this participant withheld from routing** (`Ejected`), and **did the detector want it out at all** (`Degraded`). They differ only by the pool-wide cap, and each has exactly one job.
 
-**`Ejected` is a routing gate.** It is one of the scheduler's seven host gates — outside the allowlist, proof-of-compute-required, windows full, cut off, ejected, state-blocked and excluded by this waiter — so a host it names receives no request while the gate holds, unless `scheduler_unthrottled_participants` names it (routing.md, "Unthrottled participants").
+**`Ejected` is a routing gate.** It is one of the scheduler's seven host gates — outside the trust list, proof-of-compute-required, windows full, cut off, ejected, state-blocked and excluded by this waiter — so a host it names receives no request while the gate holds, unless `participants.unthrottled` names it (routing.md, "Unthrottled participants").
 
 **`Degraded` is why the gate is not the whole story.** The cap below refuses to honour an ejection once too many of a model's hosts are failing at once, which is exactly the moment the gate stops protecting anything: those hosts stay in rotation. `Degraded` reports the verdict *before* the cap, and the race reads it for one decision — a primary the detector wanted out starts its second attempt immediately, under `primary_degraded`, rather than waiting out the receipt or first-token deadline. That hedge is bounded by the attempt budget, so a correlated outage costs at most one extra attempt per request and never an unbounded retry storm.
 
@@ -320,7 +320,7 @@ Settlement credits each slot with `assigned_nonces - protocol_misses` completed 
 | what the ledger folds | where it comes from |
 |---|---|
 | escrow membership, its latest nonce, and what the chain recorded per slot | a ten-second sweep of the published escrow set: `Snapshot` names the escrows, each session's `SnapshotState` carries the slot group, the latest nonce, and `HostStats` |
-| a burned nonce and its reason | `tracedDispatches.GhostBurned`, which carries the nonce and one of ten reasons (`scheduler/vocabulary.go`) |
+| a burned nonce and its reason | `tracedDispatches.GhostBurned`, which carries the nonce and one of twelve reasons (`scheduler/vocabulary.go`) |
 | every attempt of one race | `nonceAccountedRaces.RecordRace`: per attempt the nonce, whether it was sent, whether the protocol finished it, and whether the client got its answer |
 | a timeout's kind, action and reason | `nonceAccountedRaces.RecordTimeout` |
 
@@ -340,4 +340,4 @@ The session's own view — a Finish in the mempool that would apply — never fi
 
 **What the ledger cannot see.** A nonce is invisible to it between commitment and the end of the race that spent it, because a race reports only when it ends. Those nonces fall into `unobserved` alongside genuinely protocol-only ones, so that number is a floor on protocol overhead rather than a measurement of it; a baseline that grows while traffic is steady is the signal worth watching. `pending` is the separate case of a nonce seen unfinished whose timeout has not settled, and `overcounted` — classified beyond what the chain assigned — should never be anything but zero.
 
-The gateway's vocabulary is richer where its facts are. Ten ghost reasons, not five: `participant_ejected_no_send`, `participant_outside_allowlist`, `participant_state_diverged_no_send`, `participant_absent_from_chain_no_send`, `request_abandoned_before_dispatch` and `nonce_spent_on_failed_prepare` are first-class rather than an unknown reason, and a host that had no room (`participant_window_full_no_send`) is told apart from one this gateway had already stopped sending to (`participant_cut_off_no_send`), because the two call for opposite answers.
+The gateway's vocabulary is richer where its facts are. Ten ghost reasons, not five: `participant_ejected_no_send`, `participant_untrusted`, `participant_state_diverged_no_send`, `participant_absent_from_chain_no_send`, `request_abandoned_before_dispatch`, and `nonce_spent_on_failed_prepare` are first-class rather than an unknown reason, and a host that had no room (`participant_window_full_no_send`) is told apart from one this gateway had already stopped sending to (`participant_cut_off_no_send`), because the two call for opposite answers.

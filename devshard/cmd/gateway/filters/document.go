@@ -9,13 +9,15 @@ import (
 	"devshard"
 )
 
-// The bounds are in README.md, "Structural bounds before the decode"; PromptBytesPerToken is in capacity.md, "The balance floor".
+// The bounds are in README.md, "Structural bounds before the decode"; PromptBytesPerToken is in capacity.md, "The balance floor"; ChatTemplateMinimumTokens is the fewest tokens a chat template adds to a prompt, in request.md, "Step 6 in detail".
 const (
 	MaxNestingDepth = 32
 
 	MaxBodyBytes = 10 << 20
 
 	PromptBytesPerToken = 4
+
+	ChatTemplateMinimumTokens = 4
 
 	MaxStructuralNodes = 250_000
 )

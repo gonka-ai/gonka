@@ -28,6 +28,7 @@ const (
 	KindFundingTransition
 	KindWinnerFinishLanded
 	KindRaceStepUnnamed
+	KindShadowProbe
 	kindCount
 )
 
@@ -56,6 +57,7 @@ var kindNames = [kindCount]string{
 	KindFundingTransition:   "funding_transition",
 	KindWinnerFinishLanded:  "winner_finish_landed",
 	KindRaceStepUnnamed:     "race_step_unnamed",
+	KindShadowProbe:         "shadow_probe",
 }
 
 func (k Kind) String() string {

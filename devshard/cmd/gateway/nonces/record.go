@@ -36,7 +36,7 @@ func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
 	}
 	attempts := make([]accounting.Attempt, 0, len(outcome.Attempts))
 	for _, attempt := range outcome.Attempts {
-		attempts = append(attempts, accounting.Attempt{
+		line := accounting.Attempt{
 			Nonce:             attempt.Nonce,
 			RequestID:         outcome.RequestID,
 			OutputTokens:      attempt.OutputTokens(),
@@ -46,31 +46,14 @@ func (n *Recorder) RecordRace(outcome engine.RaceOutcome) {
 			Usage:             usageOf(outcome, attempt),
 			Terminal:          terminalFor(outcome, attempt),
 			Phase:             phase,
-			SlowReceipt:       slowReceipt(attempt),
-			SlowChunk:         attempt.MaxChunkGap > accounting.SlowChunkGap,
-			ClockDrifted:      clockDrifted(attempt),
-			SlowDecode:        engine.TimePerOutputToken(attempt) > accounting.SlowDecode,
 			LogprobsDecoded:   attempt.LogprobsDecoded,
 
 			InputTokens:       outcome.InputTokens,
 			InputTokensSource: outcome.InputTokensSource,
-		})
+		}
+		attempts = append(attempts, line.WithTiming(attempt))
 	}
 	n.reportFact(n.service.Book.RecordRace(outcome.EscrowID, attempts))
-}
-
-// slowReceipt needs both stamps: a missing receipt is a refusal already counted, not a second failure.
-func slowReceipt(attempt engine.AttemptOutcome) bool {
-	if attempt.SendTime.IsZero() || attempt.ReceiptTime.IsZero() {
-		return false
-	}
-	return attempt.ReceiptTime.Sub(attempt.SendTime) > accounting.SlowReceipt
-}
-
-// clockDrifted reads the offset in either direction; both directions break a deadline. See README.md.
-func clockDrifted(attempt engine.AttemptOutcome) bool {
-	offset, measured := engine.ClockOffset(attempt)
-	return measured && (offset > accounting.ClockDrift || offset < -accounting.ClockDrift)
 }
 
 func (n *Recorder) RecordTimeout(event engine.TimeoutEvent) {

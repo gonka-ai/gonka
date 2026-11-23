@@ -192,13 +192,19 @@ type Engine struct {
 
 // Scheduler groups nonce-holding tuning; MatchWaitMS of 0 burns an unmatched nonce immediately, MaxConsecutiveBurns of 0 never forces a send and MaxBurnsPerRequest of 0 never caps a request. See routing.md, "The forced send" and "The burn cap of a request".
 type Scheduler struct {
-	MatchWaitMS             int64
-	MaxConsecutiveBurns     int64
-	MaxBurnsPerRequest      int64
-	DispatchQueueDepth      int64
-	WarmNewEscrows          bool
-	ParticipantAllowlist    []string
-	UnthrottledParticipants []string
+	MatchWaitMS         int64
+	MaxConsecutiveBurns int64
+	MaxBurnsPerRequest  int64
+	DispatchQueueDepth  int64
+	WarmNewEscrows      bool
+	Participants        Participants
+}
+
+// Participants are the three routing lists of one gateway; an empty Trust routes to everybody but Shadow. See ../docs/runbook.md, "The participants setting".
+type Participants struct {
+	Trust       []string
+	Shadow      []string
+	Unthrottled []string
 }
 
 // TimeoutSweep bounds the retry of execution timeouts no race is left to post; a zero BudgetPerTick turns the sweep off.
@@ -233,9 +239,11 @@ type Config struct {
 	staleModels []string
 }
 
-// PoCMode values are what Modes.PoCMode accepts, ModelAccess values what Limits.Access accepts, and NoContextLength is a model whose length neither governance nor the operator names, and AllModels stands for every model in the open-model list.
+// PoCMode values are what Modes.PoCMode accepts, ModelAccess values what Limits.Access accepts, NoContextLength is a model whose length neither governance nor the operator names, AllModels stands for every model in the open-model list, and ProbeMinOutputTokens is the fewest output tokens a shadow probe asks for.
 const (
 	NoContextLength = chain.NoMaxModelLen
+
+	ProbeMinOutputTokens = 256
 
 	PoCModeOff     = env.PoCModeOff
 	PoCModeRelaxed = env.PoCModeRelaxed

@@ -11,6 +11,7 @@ import (
 
 const (
 	jsonTagSeparator = ","
+	participantsKey  = "participants"
 	modelsKey        = "models"
 	jsonNull         = "null"
 )
@@ -27,6 +28,12 @@ func (o Overrides) Merged(patch []byte) (Overrides, error) {
 	}
 	merged := o
 	replaceNamedFields(reflect.ValueOf(&merged).Elem(), reflect.ValueOf(changes), named)
+	if changes.Participants != nil {
+		merged.Participants, err = o.Participants.merged(*changes.Participants, named[participantsKey])
+		if err != nil {
+			return Overrides{}, err
+		}
+	}
 	if changes.Models != nil {
 		merged.Models, err = mergedModels(o.Models, named[modelsKey])
 		if err != nil {
@@ -59,10 +66,31 @@ func mergedModels(stored map[string]ModelSettings, patch json.RawMessage) (map[s
 			return nil, fmt.Errorf("parsing models[%s] patch: %w", model, err)
 		}
 		settings := merged[model]
+		storedParticipants := settings.Participants
 		replaceNamedFields(reflect.ValueOf(&settings).Elem(), reflect.ValueOf(changes), fields)
+		if changes.Participants != nil {
+			participants, err := storedParticipants.merged(*changes.Participants, fields[participantsKey])
+			if err != nil {
+				return nil, fmt.Errorf("models[%s]: %w", model, err)
+			}
+			settings.Participants = participants
+		}
 		merged[model] = settings
 	}
 	return merged, nil
+}
+
+func (p *ParticipantOverrides) merged(changes ParticipantOverrides, patch json.RawMessage) (*ParticipantOverrides, error) {
+	var named map[string]json.RawMessage
+	if err := json.Unmarshal(patch, &named); err != nil {
+		return nil, fmt.Errorf("parsing participants patch: %w", err)
+	}
+	var merged ParticipantOverrides
+	if p != nil {
+		merged = *p
+	}
+	replaceNamedFields(reflect.ValueOf(&merged).Elem(), reflect.ValueOf(changes), named)
+	return &merged, nil
 }
 
 func replaceNamedFields(target, source reflect.Value, named map[string]json.RawMessage) {

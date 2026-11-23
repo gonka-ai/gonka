@@ -78,8 +78,9 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		logkey.Method, r.Method,
 		logkey.OpenModels, inForce.OpenModels(),
 		logkey.GatewayDisabled, inForce.Modes.Disabled,
-		logkey.ParticipantAllowlist, inForce.Scheduler.ParticipantAllowlist,
-		logkey.UnthrottledParticipants, inForce.Scheduler.UnthrottledParticipants,
+		logkey.ParticipantsTrust, inForce.Scheduler.Participants.Trust,
+		logkey.ParticipantsShadow, inForce.Scheduler.Participants.Shadow,
+		logkey.ParticipantsUnthrottled, inForce.Scheduler.Participants.Unthrottled,
 		logkey.ParticipantsByModel, participantViews(inForce).Models,
 	)
 	writeJSON(w, http.StatusOK, overrides)

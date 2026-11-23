@@ -238,18 +238,18 @@ func TestRunInferenceStampsDispositionOnEveryAttemptSpan(t *testing.T) {
 // recorded its outcome, while still reporting the race duration rather than
 // the timeout duration.
 func TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T) {
-	zeroReceiptTimeout(t)
 	oldBuffer := user.TimeoutBuffer
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
-	env := setupLiveFloorProxy(t, 3, nil, true)
-	env.killables[1].Kill()
+	env := setupManualFloorProxy(t, 3, nil, true)
+	env.killables[int((env.session.Nonce()+1)%3)].Kill()
 	rec := withAttemptSpanRecorder(t)
 
 	ctx, req := observability.StartGatewayRequest(context.Background())
 	var buf bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(ctx, defaultParams(), &buf, nil))
+	env.raiseFloor(t, 100_000)
 
 	var timedOut sdktrace.ReadOnlySpan
 	require.Eventually(t, func() bool {

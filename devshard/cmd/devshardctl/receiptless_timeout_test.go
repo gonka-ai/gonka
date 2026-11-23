@@ -244,7 +244,7 @@ func (c *numericCompletionClient) VerifyErrorMiss(context.Context, uint64, []typ
 func TestCompletionRestartReconcilesBeforeSettlement(t *testing.T) { completionRestartFixture(t) }
 
 func TestLongContentWithCanonicalFinishChargesActualCost(t *testing.T) {
-	env := setupLiveFloorProxy(t, 3, nil, true)
+	env := setupManualFloorProxy(t, 3, nil, true)
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	defer store.Close()

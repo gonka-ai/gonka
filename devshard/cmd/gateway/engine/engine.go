@@ -207,9 +207,7 @@ func (e *Engine) Stop() {
 }
 
 func (e *Engine) policy(settings config.Engine) EscalationPolicy {
-	policy := EscalationPolicyFromConfig(settings)
-	policy.HardTimeout = e.deps.E2E.HardTimeout
-	return policy
+	return PolicyFor(settings, e.deps.E2E)
 }
 
 // admit registers a race before it starts, returning nil once the engine is stopped. See race.md, "Stop".

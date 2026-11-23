@@ -1,6 +1,10 @@
 package scheduler
 
-import "testing"
+import (
+	"testing"
+
+	"devshard/cmd/gateway/config"
+)
 
 // laddered builds an `availability` with every gate open unless `closed` shuts one.
 func laddered(closed func(*availability)) availability {
@@ -47,14 +51,14 @@ func TestUnthrottledCrossesEjection(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a `laddered` availability where `hostB` is allowlisted and `hostA` is unthrottled.
+//  1. Build a `laddered` availability where `hostB` is trusted and `hostA` is unthrottled.
 //  2. Ask whether `hostA` is blocked and assert the reason is `blockNone`.
 //  3. Ask whether `hostB` is blocked and assert the reason is `blockNone`.
-//  4. Ask whether an unlisted stranger is blocked and assert the reason is `blockNotAllowed`.
-func TestUnthrottledIsAdmittedOutsideTheAllowlist(t *testing.T) {
+//  4. Ask whether an unlisted stranger is blocked and assert the reason is `blockUntrusted`.
+func TestUnthrottledIsAdmittedOutsideTheTrustList(t *testing.T) {
 	t.Parallel()
 	gates := laddered(func(gates *availability) {
-		gates.notAllowed = refusedByAllowlist([]string{hostB}, []string{hostA})
+		gates.untrusted = refusedByTrust([]string{hostB}, []string{hostA})
 		gates.unthrottled = waivesThrottling([]string{hostA})
 	})
 
@@ -62,10 +66,10 @@ func TestUnthrottledIsAdmittedOutsideTheAllowlist(t *testing.T) {
 		t.Errorf("unthrottled host: reason = %v, want blockNone", reason)
 	}
 	if reason := gates.participantBlocked(hostB); reason != blockNone {
-		t.Errorf("allowlisted host: reason = %v, want blockNone", reason)
+		t.Errorf("trusted host: reason = %v, want blockNone", reason)
 	}
-	if reason := gates.participantBlocked("stranger"); reason != blockNotAllowed {
-		t.Errorf("stranger: reason = %v, want blockNotAllowed", reason)
+	if reason := gates.participantBlocked("stranger"); reason != blockUntrusted {
+		t.Errorf("stranger: reason = %v, want blockUntrusted", reason)
 	}
 }
 
@@ -111,12 +115,12 @@ func TestUnthrottledStopsAtTheGatesThatProtectTheNonce(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a reachability check with a fake allowlist naming nobody and `hostA` marked unthrottled.
+//  1. Build a reachability check with a fake trust list naming nobody and `hostA` marked unthrottled.
 //  2. Assert an escrow whose slots and participants are `hostA` is reachable.
 //  3. Assert an escrow held by a stranger is not.
 func TestEscrowHoldingOnlyAnUnthrottledParticipantIsReachable(t *testing.T) {
 	t.Parallel()
-	reachable := reachableByAllowlist([]string{"nobody-holds-this"}, []string{hostA})
+	reachable := reachableByTrust(config.Participants{Trust: []string{"nobody-holds-this"}, Unthrottled: []string{hostA}})
 
 	if !reachable(Escrow{Session: &fakeSession{slots: soleHost, participants: soleHost}}) {
 		t.Error("an escrow whose group holds an unthrottled participant must stay reachable")

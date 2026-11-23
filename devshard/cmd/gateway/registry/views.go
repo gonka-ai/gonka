@@ -166,6 +166,11 @@ func (r *Registry) HoldSettlement(escrowID string) (EscrowSession, func(), bool)
 	return r.holdUnclosed(escrowID, func(entry *escrowEntry) *atomic.Int64 { return &entry.settlementHolds })
 }
 
+// HoldForVote keeps a published or draining escrow's session open and busy for a timeout vote a caller waits on, without counting it as a request. See README.md, "The published set and its readers".
+func (r *Registry) HoldForVote(escrowID string) (EscrowSession, func(), bool) {
+	return r.holdForSweep(escrowID)
+}
+
 // holdForSweep keeps a published or draining escrow's session open and busy for a timeout vote without counting it as a request. See README.md, "The published set and its readers".
 func (r *Registry) holdForSweep(escrowID string) (EscrowSession, func(), bool) {
 	return r.holdUnclosed(escrowID, func(entry *escrowEntry) *atomic.Int64 { return &entry.sweepHolds })

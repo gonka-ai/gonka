@@ -65,8 +65,9 @@ func modelSettingsWith(t *testing.T, index int, pointerType reflect.Type, choice
 		value.Elem().SetString(string(rune('a' + choice)))
 	case reflect.Bool:
 		value.Elem().SetBool(choice == 1)
-	case reflect.Slice:
-		value.Elem().Set(reflect.ValueOf([]string{"gonka1" + strings.Repeat(string(rune('a'+choice)), minAddressDataLength)}))
+	case reflect.Struct:
+		lists := value.Interface().(*ParticipantOverrides)
+		lists.Shadow = &[]string{"gonka1" + strings.Repeat(string(rune('a'+choice)), minAddressDataLength)}
 	default:
 		t.Fatalf("no value for a setting of kind %s", value.Elem().Kind())
 	}
@@ -309,49 +310,5 @@ func TestAStoredBlockForAModelLeftOutOfRotationBootsButIsRefusedOnWrite(t *testi
 	clean, err := Build(env.Values{}, cleanOverrides)
 	if err != nil || clean.CheckStoredModels() != nil {
 		t.Errorf("Build() with no stale block = %v, CheckStoredModels = %v, want nil", err, clean.CheckStoredModels())
-	}
-}
-
-// Test flow:
-//  1. Resolve a network with an allowlist and an unthrottled list over a model that sets its own allowlist, one that sets an empty one and one that names neither.
-//  2. Read each model's lists through `For`.
-//  3. Assert a set list replaces the network's, an empty one clears it, an unnamed list inherits it, and the model's slice is a copy of the settings' slice.
-func TestAModelsParticipantListsReplaceTheNetworkOnes(t *testing.T) {
-	t.Parallel()
-	configuration := Defaults()
-	configuration.Scheduler.ParticipantAllowlist = []string{"gonka1netwrk"}
-	configuration.Scheduler.UnthrottledParticipants = []string{"gonka1fastone"}
-	own, none := []string{"gonka1ownlist"}, []string{}
-	if err := configuration.ResolveModels(map[string]ModelSettings{"owner": {ParticipantAllowlist: &own}, "clearer": {ParticipantAllowlist: &none}, "plain": {}}); err != nil {
-		t.Fatalf("ResolveModels() = %v", err)
-	}
-	own[0] = "mutated"
-
-	if got := configuration.For("owner").Scheduler.ParticipantAllowlist; len(got) != 1 || got[0] != "gonka1ownlist" {
-		t.Errorf("owner allowlist = %v, want its own copy [gonka1own]", got)
-	}
-	if got := configuration.For("clearer").Scheduler.ParticipantAllowlist; len(got) != 0 {
-		t.Errorf("clearer allowlist = %v, want it cleared", got)
-	}
-	if got := configuration.For("plain").Scheduler.ParticipantAllowlist; len(got) != 1 || got[0] != "gonka1netwrk" {
-		t.Errorf("plain allowlist = %v, want the network [gonka1net]", got)
-	}
-	if got := configuration.For("owner").Scheduler.UnthrottledParticipants; len(got) != 1 || got[0] != "gonka1fastone" {
-		t.Errorf("owner unthrottled = %v, want the network [gonka1fast]", got)
-	}
-}
-
-// Test flow:
-//  1. Resolve a model whose allowlist names a blank entry after a good one.
-//  2. Assert the build is refused as `ErrInvalid` and the problem names the model and the entry's index.
-func TestAModelsParticipantListEntriesAreValidated(t *testing.T) {
-	t.Parallel()
-	configuration := Defaults()
-	bad := []string{"gonka1scskt", "  "}
-
-	err := configuration.ResolveModels(map[string]ModelSettings{"owner": {ParticipantAllowlist: &bad}})
-
-	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "models[owner].participant_allowlist[1]") {
-		t.Fatalf("ResolveModels() = %v, want ErrInvalid naming models[owner].participant_allowlist[1]", err)
 	}
 }

@@ -63,11 +63,19 @@ type E2EOverrides struct {
 	HardTimeout time.Duration
 }
 
-func (p EscalationPolicy) hardTimeout() time.Duration {
+// HardTimeoutOrDefault is how long an attempt may live: the stand's override when one is set, else the streaming backstop.
+func (p EscalationPolicy) HardTimeoutOrDefault() time.Duration {
 	if p.HardTimeout > 0 {
 		return p.HardTimeout
 	}
 	return streamingHardTimeout
+}
+
+// PolicyFor is the policy a request runs under: the operator's engine settings and the stand's overrides.
+func PolicyFor(settings config.Engine, overrides E2EOverrides) EscalationPolicy {
+	policy := EscalationPolicyFromConfig(settings)
+	policy.HardTimeout = overrides.HardTimeout
+	return policy
 }
 
 func EscalationPolicyFromConfig(engine config.Engine) EscalationPolicy {

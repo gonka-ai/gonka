@@ -74,11 +74,8 @@ func Build(values env.Values, overrides Overrides, clientKeys ...string) (*Confi
 
 	// Admin-override layer (wins over env).
 	applyTunables(&configuration, overrides.Tunables)
-	if overrides.ParticipantAllowlist != nil {
-		configuration.Scheduler.ParticipantAllowlist = slices.Clone(*overrides.ParticipantAllowlist)
-	}
-	if overrides.UnthrottledParticipants != nil {
-		configuration.Scheduler.UnthrottledParticipants = slices.Clone(*overrides.UnthrottledParticipants)
+	if overrides.Participants != nil {
+		applyParticipants(&configuration.Scheduler.Participants, *overrides.Participants)
 	}
 	overrideIfSet(&configuration.Limits.FallbackMaxModelLen, overrides.FallbackMaxModelLen)
 	overrideIfSet(&configuration.Limits.HostWindows.Input.MinRequests, overrides.HostInputWindowMinRequests)

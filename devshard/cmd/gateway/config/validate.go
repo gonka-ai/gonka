@@ -392,15 +392,9 @@ func (c *Config) validateScheduler(complain func(format string, args ...any)) {
 	if c.Scheduler.DispatchQueueDepth < 1 || c.Scheduler.DispatchQueueDepth > maxDispatchQueueDepth {
 		complain("scheduler_dispatch_queue_depth: %d must be in [1, %d]", c.Scheduler.DispatchQueueDepth, maxDispatchQueueDepth)
 	}
-	for index, participant := range c.Scheduler.ParticipantAllowlist {
-		if problem := participantEntryProblem(participant); problem != "" {
-			complain("participant_allowlist[%d]: %s", index, problem)
-		}
-	}
-	for index, participant := range c.Scheduler.UnthrottledParticipants {
-		if problem := participantEntryProblem(participant); problem != "" {
-			complain("unthrottled_participants[%d]: %s", index, problem)
-		}
+	c.Scheduler.Participants.validate(complain)
+	if len(c.Scheduler.Participants.Shadow) > 0 && c.Limits.MaxTokensCap < ProbeMinOutputTokens {
+		complain("participants.%s: must be empty while max_tokens_cap %d is below %d, the fewest output tokens a probe asks for", listShadow, c.Limits.MaxTokensCap, ProbeMinOutputTokens)
 	}
 }
 

@@ -39,11 +39,12 @@ Most of `compose` is a straight line. Six places are not:
 
 ## Two readers of one fact
 
-Four small adapters exist because two subsystems want the same event for different reasons, and neither belongs inside the other:
+Five small adapters exist because two subsystems want the same event for different reasons, and neither belongs inside the other:
 
 - **`nonceAccountedRaces`** hands one race outcome to both readers of it. The metrics recorder asks how the fleet performed and is called on the spot; the ledger asks where each nonce went and receives the outcome through the [`journal`](../journal/), so the response path never takes the ledger's lock. The engine knows about neither. The warmup votes through the same poster the race uses and is counted by the same recorder, through `probeVotes`.
 - **`tracedDispatches`** counts dispatch events on the spot and hands a burn, a tripped burn budget and a nonce spent on a host its request excluded to the [`journal`](../journal/), which writes their lines and the burn's ledger fact; the excluded-host serve has no counter, so its line is its only record. It wraps rather than living inside [`metrics`](../metrics/) because counting and narrating are different jobs, and it keeps the scheduler free of a logger. A burned nonce is logged with its nonce and *never labelled with it* — a counter keyed by nonce would grow without end.
 - **`probeVotes`** counts a warmup's timeout vote like a race vote and hands it to the journal as a probe vote: it reaches the ledger without the race's `timeout vote failed` line, because the warmup writes its own.
+- **`shadowOutcomes`** hands a shadow probe's result to the shadow metrics recorder, which counts it and times the first token and the whole probe, and to the [`journal`](../journal/), which writes the `shadow probe served` or `shadow probe failed` line. The [`shadow`](../shadow/) package knows about neither.
 - **`phaseNarrator`** turns the observer's five-second poll into a chain change only when something an operator cares about actually moved — the epoch or its phase, or requests blocked or unblocked — and hands that change to the [`journal`](../journal/), which writes the line. Subscribing the journal without it would write the same snapshot twelve times a minute.
 
 ## Relaxed mode, in one place

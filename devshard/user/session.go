@@ -4762,6 +4762,9 @@ func (s *Session) sleepRefusal(ctx context.Context, nonce uint64, sendTime time.
 		if !nextHeartbeat.IsZero() && nextHeartbeat.Before(wake) {
 			wake = nextHeartbeat
 		}
+		if poll := time.Now().Add(timeoutClosePollInterval); closed != nil && timeoutClosePollInterval > 0 && poll.Before(wake) {
+			wake = poll
+		}
 		timer := time.NewTimer(time.Until(wake))
 		select {
 		case <-ctx.Done():
@@ -4779,11 +4782,11 @@ func (s *Session) sleepRefusal(ctx context.Context, nonce uint64, sendTime time.
 }
 
 // TimeoutHeartbeatInterval controls how often timeout_waiting logs are emitted.
-var TimeoutHeartbeatInterval = time.Minute
+var TimeoutHeartbeatInterval = 10 * time.Minute
 
 // timeoutClosePollInterval is how often a deadline wait rechecks whether the
 // record has already closed. Zero disables the recheck.
-var timeoutClosePollInterval = 250 * time.Millisecond
+var timeoutClosePollInterval = 5 * time.Second
 
 // sleepUntilDeadlineWithHeartbeat waits until deadline and returns true. It
 // returns false when ctx ends first. done, when set, is polled; once it

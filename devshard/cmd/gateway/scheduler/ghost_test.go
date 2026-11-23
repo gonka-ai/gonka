@@ -35,7 +35,7 @@ func TestGhostKindReason(t *testing.T) {
 //  4. Assert no two kinds share the same reason string.
 func TestEveryGhostKindNamesItselfDistinctly(t *testing.T) {
 	kinds := []GhostKind{
-		ghostPoC, ghostWindowFull, ghostCutOff, ghostEjected, ghostNotAllowed,
+		ghostPoC, ghostWindowFull, ghostCutOff, ghostEjected, ghostUntrusted,
 		ghostStateDiverged, ghostExclude, ghostAbandoned, ghostAbsentFromChain,
 	}
 	seen := make(map[string]GhostKind, len(kinds))

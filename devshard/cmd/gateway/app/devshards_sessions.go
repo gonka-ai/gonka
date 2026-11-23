@@ -132,6 +132,7 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 			Escrow:                     onChain,
 			StoragePath:                storagePath,
 			RoutePrefix:                escrowRoutePrefix(record, routePrefix),
+			RequestAdmission:           labelOnlyAdmission{},
 			RefusalTimeoutSeconds:      sessionTimeouts.RefusalTimeoutSeconds,
 			ExecutionTimeoutSeconds:    sessionTimeouts.ExecutionTimeoutSeconds,
 			RequireHeightSeed:          heightSettings.Enabled && heightSettings.RequireSeed,
