@@ -275,10 +275,7 @@ When every bound door is dead or dropped, `WaitReady` / `Send` fail immediately
 jittered backoff (50 ms → 5 s), same idea as the CometBFT WS listener, except
 `errNoAttachDoor` stays at `BackoffMin` and does not `Close` the `PeerConn`.
 
-HTTP/1.1 keepalive is a **pool**, not one multiplexed connection. N concurrent RPCs need N
-TCP connections; a 30-minute `Chat` holds one for its whole life. `MaxIdleConnsPerHost`
-must rise to cover concurrent chats plus gossip, queries, and `Watch`. That is the cost of
-phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on the same port past nginx.
+HTTP/1.1 keepalive is a **pool**, not one multiplexed connection. N concurrent RPCs need N TCP connections; a 30-minute `Chat` holds one for its whole life. `MaxConnsPerHost` must cover concurrent chats plus gossip, queries, and `Watch`; `MaxIdleConnsPerHost` is `min(MaxConnsPerHost, DefaultRPCMaxIdleConnsPerPeer)` (128), so a burst's extra connections close instead of waiting out `IdleConnTimeout`. That is the cost of phases 1–5 on this path. Phase 6 removes it by carrying HTTP/2 on the same port past nginx.
 
 ### HA: one token, several children
 

@@ -92,7 +92,8 @@ func startSnapshotProfiler(ctx context.Context, opts RunnerConfig, cfg *config.F
 				return
 			}
 			result := ProfileSnapshotResult{Kind: j.kind, Target: j.target, Snapshot: j.index, StartAfter: j.snapshot.StartAfter, StartedAt: time.Now().UTC()}
-			sampleCtx, sampleCancel := context.WithTimeout(child, 15*time.Second)
+			// The gateway heap took longer than 15 s at 32 rps; a snapshot is not urgent.
+			sampleCtx, sampleCancel := context.WithTimeout(child, 60*time.Second)
 			defer sampleCancel()
 			endpoint, suffix := "heap", "heap.pprof"
 			if j.kind == "goroutine" {

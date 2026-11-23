@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "structured_outputs: exactly one of json/regex/choice/grammar/json_object/structural_tag must be set (got 0)",
+  "status": "rejected"
+}

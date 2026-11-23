@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -140,7 +141,7 @@ func TestChatClient_GzipBombStopsInflating(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	client := rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL, chatClientOptions()...)
+	client := rpcpbconnect.NewSessionServiceClient(srv.Client(), srv.URL, chatClientOptions(0)...)
 	stream, err := client.Chat(context.Background(), connect.NewRequest(&rpcpb.SignedEnvelope{}))
 	if err == nil {
 		require.False(t, stream.Receive())
@@ -178,4 +179,51 @@ func (c *countReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	c.n += n
 	return n, err
+}
+
+type silentChatHandler struct {
+	rpcpbconnect.UnimplementedSessionServiceHandler
+}
+
+func (silentChatHandler) Chat(context.Context, *connect.Request[rpcpb.SignedEnvelope], *connect.ServerStream[rpcpb.ChatFrame]) error {
+	return nil
+}
+
+func chatEnvelopeCompressed(t *testing.T, compressMinBytes, payloadBytes int) bool {
+	t.Helper()
+	var firstEnvelopeFlags atomic.Int32
+	var bodySeen atomic.Bool
+	path, handler := rpcpbconnect.NewSessionServiceHandler(silentChatHandler{})
+	mux := http.NewServeMux()
+	mux.Handle(path, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, err := io.ReadAll(request.Body)
+		if err == nil && len(body) > 0 {
+			firstEnvelopeFlags.Store(int32(body[0]))
+			bodySeen.Store(true)
+		}
+		request.Body = io.NopCloser(bytes.NewReader(body))
+		handler.ServeHTTP(writer, request)
+	}))
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	client := rpcpbconnect.NewSessionServiceClient(server.Client(), server.URL, chatClientOptions(compressMinBytes)...)
+	stream, err := client.Chat(context.Background(), connect.NewRequest(&rpcpb.SignedEnvelope{Payload: bytes.Repeat([]byte("prompt "), payloadBytes/7)}))
+	require.NoError(t, err)
+	for stream.Receive() {
+	}
+	require.NoError(t, stream.Err())
+	require.NoError(t, stream.Close())
+	require.True(t, bodySeen.Load(), "the server never read the request envelope")
+	return firstEnvelopeFlags.Load()&1 == 1
+}
+
+// Test flow:
+//  1. Send a Chat request through chatClientOptions with a 4 KiB threshold and a 2 KiB and an 8 KiB payload, and with no threshold and a 2 KiB payload.
+//  2. Read the compression flag of the request's first envelope on the server.
+//  3. Assert only the payload past the threshold is gzipped, and that no threshold keeps gzipping every request as before.
+func TestChatClientCompressesOnlyPastTheThreshold(t *testing.T) {
+	require.False(t, chatEnvelopeCompressed(t, 4<<10, 2<<10), "a 2 KiB request under a 4 KiB threshold must go uncompressed")
+	require.True(t, chatEnvelopeCompressed(t, 4<<10, 8<<10), "an 8 KiB request past a 4 KiB threshold must be gzipped")
+	require.True(t, chatEnvelopeCompressed(t, 0, 2<<10), "with no threshold every request is gzipped")
 }
