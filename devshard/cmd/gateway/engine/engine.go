@@ -39,7 +39,7 @@ type hostTracker interface {
 // hostWindows is satisfied by *limits.ParticipantLimiter; neither Acquire nor a release is on it. See rules.md, "5. The slot and the escrow hold are taken with the nonce, and given back after the vote".
 type hostWindows interface {
 	OnResult(result limits.Result)
-	CountRefusalIfIdle(participant, model string, launchedAt time.Time)
+	CountRefusal(participant, model string, launchedAt time.Time)
 }
 
 type raceMetrics interface {

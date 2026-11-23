@@ -89,11 +89,13 @@ func (l *ParticipantLimiter) OnResult(result Result) {
 	if by := settings.Factors.narrowingFor(narrowingTier, blamed); by.moves() {
 		l.narrowLocked(state, by)
 	}
-	l.applyBreakerLocked(state, answer.breaker, result.Participant, result.Model, now)
+	if !launchedBefore(result.LaunchedAt, state.openedAt) {
+		l.applyBreakerLocked(state, answer.breaker, result.Participant, result.Model, now)
+	}
 }
 
-// CountRefusalIfIdle counts a refusal towards the cut-off when the host carries nothing else of ours for this model and the attempt was launched after the last reset. See README.md, "What blames which window".
-func (l *ParticipantLimiter) CountRefusalIfIdle(participant, model string, launchedAt time.Time) {
+// CountRefusal counts a refusal towards the cut-off when the host carries nothing else of ours for this model, or when the attempt is the half-open probe; one launched before the reset or before the cut-off opened counts for nothing. See README.md, "What blames which window".
+func (l *ParticipantLimiter) CountRefusal(participant, model string, launchedAt time.Time) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -104,7 +106,7 @@ func (l *ParticipantLimiter) CountRefusalIfIdle(participant, model string, launc
 	state := l.stateLocked(key{participant: participant, model: model})
 	now := l.now()
 	state.lastUsed = now
-	if !state.idle() {
+	if launchedBefore(launchedAt, state.openedAt) || (!state.idle() && !state.halfOpen) {
 		return
 	}
 	l.applyBreakerLocked(state, breakerCounts, participant, model, now)
@@ -137,7 +139,7 @@ func (l *ParticipantLimiter) applyBreakerLocked(state *hostState, effect breaker
 			return
 		}
 		capped := min(time.Duration(float64(settings.BaseOpen)*math.Pow(cutoffBackoffMultiplier, float64(state.backoffCount))), settings.MaxOpen)
-		reason := state.openBreaker(now.Add(capped+l.jitter(capped)), capped < settings.MaxOpen)
+		reason := state.openBreaker(now, now.Add(capped+l.jitter(capped)), capped < settings.MaxOpen)
 		if l.narrator != nil {
 			l.narrator.HostCutOff(participant, model, reason, state.backoffCount, state.openUntil.Sub(now))
 		}

@@ -266,7 +266,7 @@ func TestOverloadFloorsWindowAtTheMinimum(t *testing.T) {
 
 // Test flow:
 //  1. Repeat ten times: acquire and release a request, then post an Overload verdict for it once the host is idle.
-//  2. Assert the cutoff never opens, since `OnResult` leaves counting a race-end overload to `CountRefusalIfIdle`.
+//  2. Assert the cutoff never opens, since `OnResult` leaves counting a race-end overload to `CountRefusal`.
 func TestAnOverloadReportedAtRaceEndNeverTripsCutoff(t *testing.T) {
 	t.Parallel()
 	l := newTestLimiter(testConfig(), fixedNow(testEpoch))
@@ -276,19 +276,19 @@ func TestAnOverloadReportedAtRaceEndNeverTripsCutoff(t *testing.T) {
 	}
 
 	if admission := l.Admits("p", "m"); admission == AdmissionCutOff {
-		t.Fatal("Admits() after repeated Overload results on an idle host = cut_off, want the cut-off closed: OnResult leaves the count to CountRefusalIfIdle")
+		t.Fatal("Admits() after repeated Overload results on an idle host = cut_off, want the cut-off closed: OnResult leaves the count to CountRefusal")
 	}
 }
 
 // Test flow:
-//  1. Repeat three times: acquire and release a request, then call `CountRefusalIfIdle` while the host carries nothing else.
+//  1. Repeat three times: acquire and release a request, then call `CountRefusal` while the host carries nothing else.
 //  2. Assert the cutoff opens, since a host refusing while idle for this model is broken, not busy.
 func TestRefusalsFromAnIdleHostOpenTheCutoff(t *testing.T) {
 	t.Parallel()
 	l := newTestLimiter(testConfig(), fixedNow(testEpoch))
 	for range 3 {
 		l.acquiredAndReleased(t, "p", "m")
-		l.CountRefusalIfIdle("p", "m", time.Time{})
+		l.CountRefusal("p", "m", time.Time{})
 	}
 
 	if admission := l.Admits("p", "m"); admission != AdmissionCutOff {
@@ -298,7 +298,7 @@ func TestRefusalsFromAnIdleHostOpenTheCutoff(t *testing.T) {
 
 // Test flow:
 //  1. Acquire one request and keep it in flight.
-//  2. Repeat three times: acquire and release another request, then call `CountRefusalIfIdle`.
+//  2. Repeat three times: acquire and release another request, then call `CountRefusal`.
 //  3. Assert the cutoff stays closed, since a host busy with other work is busy, not broken.
 func TestRefusalsWhileTheHostCarriesOtherWorkLeaveTheCutoffClosed(t *testing.T) {
 	t.Parallel()
@@ -306,7 +306,7 @@ func TestRefusalsWhileTheHostCarriesOtherWorkLeaveTheCutoffClosed(t *testing.T) 
 	l.acquired(t, "p", "m")
 	for range 3 {
 		l.acquiredAndReleased(t, "p", "m")
-		l.CountRefusalIfIdle("p", "m", time.Time{})
+		l.CountRefusal("p", "m", time.Time{})
 	}
 
 	if admission := l.Admits("p", "m"); admission == AdmissionCutOff {
@@ -333,7 +333,7 @@ func TestAnOverloadDoesNotClearTheTransportFaultStreak(t *testing.T) {
 
 // Test flow:
 //  1. Mark the pair half-open and acquire/release its one probe.
-//  2. Call `CountRefusalIfIdle` for that probe.
+//  2. Call `CountRefusal` for that probe.
 //  3. Assert the cutoff reopens, since a half-open probe gets exactly one try.
 func TestARefusalOnAHalfOpenProbeReopensTheCutoff(t *testing.T) {
 	t.Parallel()
@@ -341,7 +341,7 @@ func TestARefusalOnAHalfOpenProbeReopensTheCutoff(t *testing.T) {
 	l.markHalfOpen("p", "m")
 	l.acquiredAndReleased(t, "p", "m")
 
-	l.CountRefusalIfIdle("p", "m", time.Time{})
+	l.CountRefusal("p", "m", time.Time{})
 
 	if admission := l.Admits("p", "m"); admission != AdmissionCutOff {
 		t.Fatalf("Admits() after the half-open probe was refused = %s, want cut_off: a probe gets exactly one try", admission)
@@ -349,13 +349,13 @@ func TestARefusalOnAHalfOpenProbeReopensTheCutoff(t *testing.T) {
 }
 
 // Test flow:
-//  1. Call `CountRefusalIfIdle` three times for a participant that was never acquired.
+//  1. Call `CountRefusal` three times for a participant that was never acquired.
 //  2. Assert the cutoff opens for it, since a pair swept between release and refusal must still be tracked as idle.
 func TestARefusalFromAHostNeverSeenCreatesItsState(t *testing.T) {
 	t.Parallel()
 	l := newTestLimiter(testConfig(), fixedNow(testEpoch))
 	for range 3 {
-		l.CountRefusalIfIdle("never-acquired", "m", time.Time{})
+		l.CountRefusal("never-acquired", "m", time.Time{})
 	}
 
 	if admission := l.Admits("never-acquired", "m"); admission != AdmissionCutOff {
@@ -1660,7 +1660,7 @@ func TestAdmitsReadsWhileAttemptsAndCutOffsWrite(t *testing.T) {
 				case 7:
 					limiter.answered(host, "m", UpstreamFault)
 				case 19:
-					limiter.CountRefusalIfIdle(host, "m", time.Time{})
+					limiter.CountRefusal(host, "m", time.Time{})
 				case 41:
 					limiter.ClearQuarantine(host)
 				}

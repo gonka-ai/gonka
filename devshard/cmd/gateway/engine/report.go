@@ -271,7 +271,7 @@ func (c *raceCoordinator) attemptRecord(attempt *liveAttempt) AttemptOutcome {
 
 func (c *raceCoordinator) countRefusal(attempt *liveAttempt) {
 	if verdict, moves := c.raceFacts().Verdict(c.attemptRecord(attempt)); moves && verdict == limits.Overload {
-		c.deps.Limiter.CountRefusalIfIdle(attempt.participant, c.request.Model, attempt.launchTime)
+		c.deps.Limiter.CountRefusal(attempt.participant, c.request.Model, attempt.launchTime)
 	}
 }
 
