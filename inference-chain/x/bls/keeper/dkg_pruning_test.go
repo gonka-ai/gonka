@@ -141,3 +141,31 @@ func TestPruneDKGSubKeys_NoOpBelowThreeEpochs(t *testing.T) {
 	_, found := k.getDKGSubKeysPrunedEpoch(ctx)
 	require.False(t, found)
 }
+
+// An unsigned E+1 (FAILED, or COMPLETED like mainnet epoch 463) keeps E until
+// DKG for E+3 starts: a bridge request made while E+1 is effective may be
+// signed with the last signed epoch E.
+func TestPruneDKGSubKeys_UnsignedNextEpochKeepsSignedEpoch(t *testing.T) {
+	for _, phase := range []types.DKGPhase{types.DKGPhase_DKG_PHASE_FAILED, types.DKGPhase_DKG_PHASE_COMPLETED} {
+		t.Run(phase.String(), func(t *testing.T) {
+			k, ctx := setupBlsKeeperForRetryTests(t)
+			for e := uint64(30); e <= 32; e++ {
+				seedDKGEpochForPruningTests(t, k, ctx, e, 3)
+			}
+			unsigned, err := k.GetEpochBLSData(ctx, 31)
+			require.NoError(t, err)
+			unsigned.DkgPhase = phase
+			require.NoError(t, k.SetEpochBLSData(ctx, unsigned))
+
+			for i := 0; i < 3; i++ {
+				require.NoError(t, k.PruneDKGSubKeys(ctx))
+			}
+			requireDKGSubKeys(t, k, ctx, 30, true)
+
+			seedDKGEpochForPruningTests(t, k, ctx, 33, 3)
+			require.NoError(t, k.PruneDKGSubKeys(ctx))
+			requireDKGSubKeys(t, k, ctx, 30, false)
+			requireDKGSubKeys(t, k, ctx, 31, true)
+		})
+	}
+}

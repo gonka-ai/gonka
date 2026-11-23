@@ -26,6 +26,9 @@ const DKGSubKeyPruningMaxEpochsPerBlock = 1
 //     of PoC validation in epoch N-1, so E is no longer the effective epoch
 //     (no new signing request can name it) and E+1's DKG, whose group key
 //     E's validators sign, is over;
+//   - E+1's DKG is SIGNED, or DKG for E+3 has been initiated: a bridge
+//     request may fall back to E while E+1 has no key, and dAPI then
+//     rebuilds E's shares from the dealer parts on chain;
 //   - no threshold signing request for E is still pending. dAPI recovers
 //     its slot shares from E's dealer parts (GetOrRecoverVerificationResult)
 //     to sign such a request after a restart, and a request stays pending
@@ -53,6 +56,9 @@ func (k Keeper) PruneDKGSubKeys(ctx sdk.Context) error {
 		if next+2 > latest {
 			return nil
 		}
+		if next+3 > latest && !k.epochDKGSigned(ctx, next+1) {
+			return nil
+		}
 		pending, err := k.hasPendingSigningRequestForEpoch(ctx, next)
 		if err != nil {
 			return err
@@ -73,6 +79,20 @@ func (k Keeper) PruneDKGSubKeys(ctx sdk.Context) error {
 		next++
 	}
 	return nil
+}
+
+// epochDKGSigned reads only the base record: GetEpochBLSData would load
+// every dealer part of the epoch.
+func (k Keeper) epochDKGSigned(ctx sdk.Context, epochID uint64) bool {
+	value := k.epochBLSDataStore(ctx).Get(sdk.Uint64ToBigEndian(epochID))
+	if value == nil {
+		return false
+	}
+	var data types.EpochBLSData
+	if err := k.cdc.Unmarshal(value, &data); err != nil {
+		return false
+	}
+	return data.DkgPhase == types.DKGPhase_DKG_PHASE_SIGNED
 }
 
 func (k Keeper) epochBLSDataStore(ctx sdk.Context) prefix.Store {
