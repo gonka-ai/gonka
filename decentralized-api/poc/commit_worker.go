@@ -30,6 +30,14 @@ const (
 	distributionRetryInterval = 30 * time.Second
 	storeCommitQueryTimeout   = 2 * time.Second
 	feeTreeRefreshTimeout     = 3 * time.Second
+	// heightPollInterval is how often run() looks for a new block. The
+	// interval ticker alone (poc_commit_interval_seconds, 5 s by default) is
+	// out of phase with the chain's ~5.7 s blocks, so a commit can leave late
+	// in a block and land a block later. Near the exchange deadline that costs
+	// the stage a block: the commit sent at deadline-1 expires, or the one sent
+	// at deadline-2 lands in the deadline block ahead of the fresher commit,
+	// which then fails as a second commit in that block.
+	heightPollInterval = 250 * time.Millisecond
 )
 
 type commitState struct {
@@ -65,8 +73,10 @@ type CommitWorker struct {
 	participantAddress string
 
 	interval time.Duration
-	stop     chan struct{}
-	done     chan struct{}
+	// heightPoll overrides heightPollInterval in tests; zero means the default.
+	heightPoll time.Duration
+	stop       chan struct{}
+	done       chan struct{}
 
 	mu                sync.Mutex
 	currentPocHeight  int64
@@ -154,15 +164,42 @@ func (w *CommitWorker) run() {
 	defer close(w.done)
 	ticker := time.NewTicker(w.interval)
 	defer ticker.Stop()
+	poll := w.heightPoll
+	if poll <= 0 {
+		poll = heightPollInterval
+	}
+	heightTicker := time.NewTicker(poll)
+	defer heightTicker.Stop()
 
+	var lastHeight int64
 	for {
 		select {
 		case <-ticker.C:
+			if height := w.observedHeight(); height > lastHeight {
+				lastHeight = height
+			}
 			w.tick()
+		case <-heightTicker.C:
+			// Commit right after a new block is seen rather than on the next
+			// interval tick; see heightPollInterval. Two workers process block
+			// events, so the tracker can briefly go back a height: only a
+			// higher height is a new block.
+			if height := w.observedHeight(); height > lastHeight {
+				lastHeight = height
+				w.tick()
+			}
 		case <-w.stop:
 			return
 		}
 	}
+}
+
+func (w *CommitWorker) observedHeight() int64 {
+	epochState := w.tracker.GetCurrentEpochState()
+	if epochState == nil {
+		return 0
+	}
+	return epochState.CurrentBlock.Height
 }
 
 func (w *CommitWorker) tick() {
@@ -392,6 +429,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, deadline uint64) {
 		if stageStore.Store == nil {
 			continue
 		}
+		flushBeforeCommit(stageStore, pocHeight)
 		count, rootHash := stageStore.Store.GetFlushedRoot()
 		if count == 0 || rootHash == nil {
 			continue
@@ -544,6 +582,21 @@ func (w *CommitWorker) submitCommit(pocHeight int64, timeoutHeight uint64, entri
 		"pocHeight", pocHeight, "models", len(entries), "height", height, "timeoutHeight", timeoutHeight)
 }
 
+// flushBeforeCommit writes what the ML nodes delivered since the last
+// periodic flush. A commit reports only flushed artifacts, and the periodic
+// flush runs on its own ticker, up to one interval behind; without this the
+// stage's last commit leaves those artifacts out of the count. If the flush
+// fails, the commit carries the last flushed root, as before.
+func flushBeforeCommit(stageStore artifacts.StageModelStore, pocHeight int64) {
+	if stageStore.Store == nil {
+		return
+	}
+	if err := stageStore.Store.Flush(); err != nil {
+		logging.Warn("CommitWorker: flush before commit failed", types.PoC,
+			"pocHeight", pocHeight, "modelId", stageStore.ModelID, "error", err)
+	}
+}
+
 func inFinalCommitWindow(height int64, deadline uint64) bool {
 	return height > 0 && uint64(height) < deadline && deadline-uint64(height) <= 3
 }
@@ -616,6 +669,14 @@ func (w *CommitWorker) maybeSubmitChallengeCommit(epochState *chainphase.EpochSt
 
 	if !finalWindow && height > 0 && height == w.lastChallengeBroadcastHeight {
 		return
+	}
+
+	// Only stores of an active stage take new artifacts; stores opened just
+	// for serving have nothing to flush.
+	if liveStores, err := w.store.GetStoresForStage(pocHeight); err == nil {
+		for _, stageStore := range liveStores {
+			flushBeforeCommit(stageStore, pocHeight)
+		}
 	}
 
 	entries := make([]*types.PoCV2CommitEntry, 0, len(stageStores))
