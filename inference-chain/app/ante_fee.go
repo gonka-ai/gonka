@@ -339,7 +339,7 @@ func (d FeeGroupRepeatedLenDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, sim
 // gas price read from on-chain FeeParams. It respects the bypass flag set by
 // NetworkDutyFeeBypassDecorator. This checker runs inside DeductFeeDecorator
 // during both CheckTx and DeliverTx.
-func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper) ante.TxFeeChecker {
+func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper, blsKeeper BLSMembershipKeeper) ante.TxFeeChecker {
 	return func(ctx sdk.Context, tx sdk.Tx) (sdk.Coins, int64, error) {
 		// If bypass flag is set, allow zero fees but preserve priority
 		// set by the bypass decorator.
@@ -375,7 +375,7 @@ func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper) ante.TxFeeCh
 			// transaction. In either case, exempt only its authorized duties;
 			// otherwise this would undo the bypass decorator's authorization check.
 			price = fp.EnabledPayingPrice(inners, func(msg sdk.Msg) bool {
-				return isAuthorizedNetworkDuty(ctx, msg, inferenceKeeper)
+				return isAuthorizedNetworkDuty(ctx, msg, inferenceKeeper, blsKeeper)
 			})
 		}
 

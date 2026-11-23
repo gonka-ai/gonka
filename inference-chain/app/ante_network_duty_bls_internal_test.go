@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/stretchr/testify/require"
 
 	blstypes "github.com/productscience/inference/x/bls/types"
@@ -100,4 +101,23 @@ func TestBLSDutyWaiver_RequiresMembership(t *testing.T) {
 		"a read error withholds the waiver")
 	require.True(t, isAuthorizedNetworkDuty(ctx, &inferencetypes.MsgSubmitSeed{Creator: actor.String()}, ik, nil),
 		"non-BLS duties keep the registration predicate")
+}
+
+// Final fee pricing exempts a BLS duty only for a DKG member.
+func TestBLSDutyPricing_RequiresMembership(t *testing.T) {
+	actor := dutyActor()
+	ik, ctx := registeredInactiveDutyKeeper(t, actor)
+	params, err := ik.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = inferencetypes.DefaultFeeParams()
+	params.FeeParams.Groups = append(params.FeeParams.Groups, &inferencetypes.FeeGroup{Name: inferencetypes.FeeGroupBLS, MinGasPrice: 10})
+	params.FeeParams.EnabledFeeGroups = []string{inferencetypes.FeeGroupBLS}
+	require.NoError(t, ik.SetParams(ctx, params))
+
+	tx := testFeeTx{msgs: []sdk.Msg{&blstypes.MsgSubmitDealerPart{Creator: actor.String(), EpochId: 10}}, gas: 100_000}
+	member := &fakeBLSMembership{members: map[uint64][]string{10: {actor.String()}}}
+	_, _, err = GonkaFeeChecker(ik, member)(ctx, tx)
+	require.NoError(t, err, "member's duty is priced at zero")
+	_, _, err = GonkaFeeChecker(ik, &fakeBLSMembership{members: map[uint64][]string{10: {}}})(ctx, tx)
+	require.ErrorIs(t, err, sdkerrors.ErrInsufficientFee, "non-member pays")
 }

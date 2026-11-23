@@ -87,7 +87,7 @@ func TestGonkaFeeChecker_DutyAuthorization(t *testing.T) {
 					tx := testFeeTx{msgs: msgs, fee: tc.fee, gas: 100_000}
 					decorator := NetworkDutyFeeBypassDecorator{InferenceKeeper: ik, GasCap: 1_000_000}
 					_, err = decorator.AnteHandle(ctx, tx, false, func(ctx sdk.Context, tx sdk.Tx, _ bool) (sdk.Context, error) {
-						fees, _, feeErr := GonkaFeeChecker(ik)(ctx, tx)
+						fees, _, feeErr := GonkaFeeChecker(ik, nil)(ctx, tx)
 						if !tc.wantError && feeErr == nil {
 							require.Equal(t, tc.fee.String(), fees.String())
 						}

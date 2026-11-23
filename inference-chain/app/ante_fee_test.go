@@ -625,7 +625,7 @@ func TestIsNetworkDuty_ExemptTypeAloneIsNotEnough(t *testing.T) {
 
 func TestGonkaFeeChecker_SufficientFee(t *testing.T) {
 	// nil keeper = 0 min gas price = any fee accepted
-	checker := GonkaFeeChecker(nil)
+	checker := GonkaFeeChecker(nil, nil)
 
 	tx := testFeeTx{
 		msgs: []sdk.Msg{&banktypes.MsgSend{}},
@@ -641,7 +641,7 @@ func TestGonkaFeeChecker_SufficientFee(t *testing.T) {
 }
 
 func TestGonkaFeeChecker_BypassFlag(t *testing.T) {
-	checker := GonkaFeeChecker(nil)
+	checker := GonkaFeeChecker(nil, nil)
 
 	// Zero fee tx with bypass flag: should pass
 	tx := testFeeTx{
@@ -657,7 +657,7 @@ func TestGonkaFeeChecker_BypassFlag(t *testing.T) {
 }
 
 func TestGonkaFeeChecker_BypassPreservesPriority(t *testing.T) {
-	checker := GonkaFeeChecker(nil)
+	checker := GonkaFeeChecker(nil, nil)
 
 	tx := testFeeTx{
 		msgs: []sdk.Msg{&banktypes.MsgSend{}},
@@ -675,7 +675,7 @@ func TestGonkaFeeChecker_BypassPreservesPriority(t *testing.T) {
 }
 
 func TestGonkaFeeChecker_Priority(t *testing.T) {
-	checker := GonkaFeeChecker(nil)
+	checker := GonkaFeeChecker(nil, nil)
 
 	// Higher fee = higher priority
 	tx := testFeeTx{
@@ -755,7 +755,7 @@ func TestGonkaFeeChecker_GroupPolarity(t *testing.T) {
 }
 
 func TestGonkaFeeChecker_MsgExecWithoutCodecRejected(t *testing.T) {
-	checker := GonkaFeeChecker(nil)
+	checker := GonkaFeeChecker(nil, nil)
 	tx := testFeeTx{
 		msgs: []sdk.Msg{&authztypes.MsgExec{Grantee: "cosmos1test"}},
 		fee:  sdk.Coins{},
@@ -785,7 +785,7 @@ func TestGonkaFeeChecker_NestedMsgExecPaysInner(t *testing.T) {
 	inner := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}})
 	outer := authztypes.NewMsgExec(grantee, []sdk.Msg{&inner})
 
-	checker := GonkaFeeChecker(&k)
+	checker := GonkaFeeChecker(&k, nil)
 	tx := testFeeTx{
 		msgs: []sdk.Msg{&outer},
 		fee:  sdk.Coins{},
@@ -804,7 +804,7 @@ func TestGonkaFeeChecker_EmptyMsgExecRejected(t *testing.T) {
 	ir := k.Codec().(codec.ProtoCodecMarshaler).InterfaceRegistry()
 	authztypes.RegisterInterfaces(ir)
 
-	checker := GonkaFeeChecker(&k)
+	checker := GonkaFeeChecker(&k, nil)
 	tx := testFeeTx{
 		msgs: []sdk.Msg{&authztypes.MsgExec{Grantee: "cosmos1test"}},
 		fee:  sdk.Coins{},
@@ -832,7 +832,7 @@ func TestGonkaFeeChecker_OneLevelMsgExecPaysInner(t *testing.T) {
 
 	grantee := sdk.AccAddress("granteeaddr________")
 	exec := authztypes.NewMsgExec(grantee, []sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}})
-	checker := GonkaFeeChecker(&k)
+	checker := GonkaFeeChecker(&k, nil)
 	tx := testFeeTx{
 		msgs: []sdk.Msg{&exec},
 		fee:  sdk.Coins{},
