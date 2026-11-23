@@ -231,26 +231,8 @@ func (am AppModule) fallbackActiveParticipantsFromCurrentEpoch(ctx context.Conte
 			continue
 		}
 
-		if !liveSet[addr] {
-			am.LogWarn("EpochFallback: skipping participant removed from current epoch group", types.PoC,
-				"participant", addr)
-			continue
-		}
-		if am.wasExcludedInEpoch(ctx, rootData.EpochIndex, addr) {
-			am.LogWarn("EpochFallback: skipping participant excluded during current epoch", types.PoC,
-				"participant", addr, "epochIndex", rootData.EpochIndex)
-			continue
-		}
-
-		participant, found := am.keeper.GetParticipant(ctx, addr)
-		if !found {
-			am.LogError("EpochFallback: participant record not found", types.PoC, "participant", addr)
-			continue
-		}
-		if participant.Status == types.ParticipantStatus_INVALID ||
-			participant.Status == types.ParticipantStatus_INACTIVE {
-			am.LogWarn("EpochFallback: skipping participant with non-carryable status", types.PoC,
-				"participant", addr, "status", participant.Status)
+		participant, carryable := am.carryableParticipant(ctx, rootData.EpochIndex, addr, liveSet)
+		if !carryable {
 			continue
 		}
 		if participant.ValidatorKey == "" {

@@ -2513,9 +2513,11 @@ type ParticipantAccessParams struct {
 	// (submit PoC batches or validations). Checked at tx submission time.
 	BlockedParticipantAddresses []string `protobuf:"bytes,2,rep,name=blocked_participant_addresses,json=blockedParticipantAddresses,proto3" json:"blocked_participant_addresses,omitempty"`
 	// use_participant_allowlist enables epoch-formation filtering by allowlist. Default false.
-	// When true, only addresses in the KVStore allowlist are included in epoch formation.
+	// When true, fresh PoC and preserved carry-over include only addresses in the KVStore allowlist.
+	// Emergency fallback (no fresh PoC node survives, or no participant has positive final weight) may carry otherwise eligible current-epoch
+	// participants regardless of the allowlist, so the allowlist alone cannot halt epoch formation.
 	UseParticipantAllowlist bool `protobuf:"varint,3,opt,name=use_participant_allowlist,json=useParticipantAllowlist,proto3" json:"use_participant_allowlist,omitempty"`
-	// participant_allowlist_until_block_height: allowlist is enforced while current_height < this value.
+	// participant_allowlist_until_block_height: allowlist is enforced for an epoch while its PoC start height < this value.
 	// Set to 0 to disable cutoff (allowlist stays active as long as use_participant_allowlist=true).
 	ParticipantAllowlistUntilBlockHeight int64 `protobuf:"varint,4,opt,name=participant_allowlist_until_block_height,json=participantAllowlistUntilBlockHeight,proto3" json:"participant_allowlist_until_block_height,omitempty"`
 }
