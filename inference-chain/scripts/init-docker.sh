@@ -210,6 +210,11 @@ echo "Applying configuration at container start"
 
 # Configuration ---------------------------------------------------------------
 # TODO: move to INIT_ONLY
+# app.toml from a pre-0.55 binary has no block-executor, and `config set app` rejects it.
+if ! grep -q '^block-executor' "$STATE_DIR/config/app.toml"; then
+  printf 'block-executor = "sequential"\n' > /tmp/block-executor.toml
+  run "$APP_NAME" patch-toml "$STATE_DIR/config/app.toml" /tmp/block-executor.toml
+fi
 kv app minimum-gas-prices "0${COIN_DENOM}"
 kv client chain-id "$CHAIN_ID"
 kv client keyring-backend "$KEYRING_BACKEND"
