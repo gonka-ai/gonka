@@ -623,6 +623,12 @@ func (am AppModule) PreservedParticipantsFromCurrentEpoch(ctx context.Context, u
 		if !carryable {
 			continue
 		}
+		if !am.keeper.IsParticipantAllowed(ctx, upcomingEpoch.PocStartBlockHeight, participantAddress) {
+			am.LogInfo("PreservedParticipantsFromCurrentEpoch: participant not in allowlist, skipping", types.PoC,
+				"participant", participantAddress,
+				"upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight)
+			continue
+		}
 
 		// Build per-model MlNodes arrays with Models populated
 		var models []string

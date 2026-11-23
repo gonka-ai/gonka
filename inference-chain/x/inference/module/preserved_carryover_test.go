@@ -221,3 +221,110 @@ func TestEpochFormationDoesNotReactivateExcludedPreservedParticipant(t *testing.
 		})
 	}
 }
+
+func enableParticipantAllowlist(t *testing.T, f formationRecoveryFixture, untilHeight int64, allowed ...string) {
+	t.Helper()
+	params, err := f.keeper.GetParams(f.ctx)
+	require.NoError(t, err)
+	params.ParticipantAccessParams.UseParticipantAllowlist = true
+	params.ParticipantAccessParams.ParticipantAllowlistUntilBlockHeight = untilHeight
+	require.NoError(t, f.keeper.SetParams(f.ctx, params))
+	for _, address := range allowed {
+		require.NoError(t, f.keeper.ParticipantAllowListSet.Set(f.ctx, mustAccAddr(t, address)))
+	}
+}
+
+func TestPreservedCarryoverHonorsParticipantAllowlist(t *testing.T) {
+	cases := []struct {
+		name        string
+		enabled     bool
+		allowlisted bool
+		untilOffset int64
+		wantCarry   bool
+	}{
+		{name: "allowlisted", enabled: true, allowlisted: true, wantCarry: true},
+		{name: "removed from allowlist", enabled: true},
+		{name: "cutoff after poc start still applies", enabled: true, untilOffset: 25},
+		{name: "cutoff at poc start", enabled: true, untilOffset: -1, wantCarry: true},
+		{name: "allowlist disabled", wantCarry: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPreservedCarryoverFixture(t)
+			f.ctx = f.ctx.WithBlockHeight(250)
+			f.addFreshPoC(t, 100)
+			if tc.enabled {
+				until := int64(0)
+				switch {
+				case tc.untilOffset > 0:
+					until = f.upcomingEpoch.PocStartBlockHeight + tc.untilOffset
+				case tc.untilOffset < 0:
+					until = f.upcomingEpoch.PocStartBlockHeight
+				}
+				allowed := []string{f.newcomer, f.delegator}
+				if tc.allowlisted {
+					allowed = append(allowed, f.veteran)
+				}
+				enableParticipantAllowlist(t, f, until, allowed...)
+			}
+
+			preserved := f.module.PreservedParticipantsFromCurrentEpoch(f.ctx, f.upcomingEpoch)
+			computed := f.module.computeNewWeights(f.ctx, f.upcomingEpoch)
+			require.NotNil(t, findByIndex(computed.participants, f.newcomer))
+			if tc.wantCarry {
+				require.Len(t, preserved, 1)
+				require.Equal(t, f.veteran, preserved[0].Index)
+				require.NotNil(t, findByIndex(computed.participants, f.veteran))
+			} else {
+				require.Empty(t, preserved)
+				require.Nil(t, findByIndex(computed.participants, f.veteran))
+			}
+
+			fallback := f.module.fallbackActiveParticipantsFromCurrentEpoch(f.ctx, f.upcomingEpoch)
+			require.NotNil(t, findByIndex(fallback, f.veteran), "fallback keeps liveness independent of the allowlist")
+		})
+	}
+}
+
+func TestEpochFormationDropsPreservedParticipantRemovedFromAllowlist(t *testing.T) {
+	f := newPreservedCarryoverFixture(t)
+	f.addFreshPoC(t, 100)
+	enableParticipantAllowlist(t, f, 0, f.newcomer, f.delegator)
+
+	require.NoError(t, f.module.onEndOfPoCValidationStage(f.ctx, 250, 1_000))
+	_, usedFallback := fallbackEventReason(f.ctx)
+	require.False(t, usedFallback, "fresh PoC must exercise the normal formation path")
+	stored, found := f.keeper.GetActiveParticipants(f.ctx, f.upcomingEpoch.Index)
+	require.True(t, found)
+	require.Len(t, stored.Participants, 1)
+	require.Equal(t, f.newcomer, stored.Participants[0].Index)
+	root, found := f.keeper.GetEpochGroupData(f.ctx, f.upcomingEpoch.Index, "")
+	require.True(t, found)
+	for _, weight := range root.ValidationWeights {
+		require.NotEqual(t, f.veteran, weight.MemberAddress)
+	}
+}
+
+func TestOnEndOfPoCValidationStage_FallbackIgnoresAllowlist(t *testing.T) {
+	for _, withSnapshot := range []bool{false, true} {
+		name := "no snapshot"
+		if withSnapshot {
+			name = "preserved snapshot"
+		}
+		t.Run(name, func(t *testing.T) {
+			f := newFormationRecoveryFixture(t, noopCollateralKeeper{}, 0, 2)
+			if withSnapshot {
+				f = newPreservedCarryoverFixture(t)
+			}
+			enableParticipantAllowlist(t, f, 0)
+
+			require.NoError(t, f.module.onEndOfPoCValidationStage(f.ctx, 250, 1_000))
+			reason, found := fallbackEventReason(f.ctx)
+			require.True(t, found)
+			require.Equal(t, "no_fresh_poc_node", reason)
+			stored, found := f.keeper.GetActiveParticipants(f.ctx, f.upcomingEpoch.Index)
+			require.True(t, found)
+			require.NotNil(t, findByIndex(stored.Participants, f.veteran))
+		})
+	}
+}
