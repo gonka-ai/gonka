@@ -1,15 +1,10 @@
 package engine
 
 import (
-	"bytes"
-	"encoding/json"
-	"strings"
 	"sync/atomic"
 
-	"common/completionapi"
+	"devshard/gatewayprotocol/streamevidence"
 )
-
-const maxMissProofBytes = 64 * 1024
 
 const (
 	heldFinishUntaken int32 = iota
@@ -23,6 +18,7 @@ type MissProof struct {
 	Complete        bool
 	Truncated       bool
 
+	finishTx        []byte
 	releaseFinish   func()
 	finishOwnership atomic.Int32
 }
@@ -79,7 +75,7 @@ func (r *errorStreamRetainer) retain(events []byte) {
 	if r == nil || r.released || r.truncated || len(events) == 0 {
 		return
 	}
-	for _, line := range eventDataLines(events) {
+	for _, line := range streamevidence.DataLines(events) {
 		held := len(line) + 1
 		if r.bytesHeld+held > r.maxBytes {
 			r.truncated = true
@@ -87,7 +83,7 @@ func (r *errorStreamRetainer) retain(events []byte) {
 		}
 		r.lines = append(r.lines, line)
 		r.bytesHeld += held
-		if strings.TrimSpace(strings.TrimPrefix(line, completionapi.DataPrefix)) == "[DONE]" {
+		if streamevidence.IsDoneLine(line) {
 			r.complete = true
 		}
 	}
@@ -110,29 +106,12 @@ func (r *errorStreamRetainer) proof() (MissProof, bool) {
 	if r == nil || len(r.lines) == 0 {
 		return MissProof{}, false
 	}
-	payload, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: r.lines})
+	payload, err := streamevidence.Payload(r.lines)
 	if err != nil {
 		return MissProof{}, false
 	}
-	if _, isError := completionapi.IsTerminalErrorResponse(payload); !isError {
+	if !streamevidence.ProvesErrorMiss(payload) {
 		return MissProof{}, false
 	}
 	return MissProof{ResponsePayload: payload, Complete: r.complete, Truncated: r.truncated}, true
-}
-
-func eventDataLines(events []byte) []string {
-	var lines []string
-	for raw := range bytes.SplitSeq(events, []byte("\n")) {
-		line := strings.TrimRight(string(raw), "\r")
-		if !strings.HasPrefix(line, completionapi.DataPrefix) || isDevshardEnvelopeLine(line) {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
-
-func isDevshardEnvelopeLine(line string) bool {
-	data := strings.TrimPrefix(line, completionapi.DataPrefix)
-	return strings.Contains(data, `"devshard_receipt"`) || strings.Contains(data, `"devshard_meta"`)
 }

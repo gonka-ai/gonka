@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"devshard/accounting"
+	"devshard/gatewayprotocol/probe"
+	"devshard/gatewayprotocol/streamevidence"
+	"devshard/gatewayprotocol/timeoutclaim"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/observability"
@@ -26,8 +29,6 @@ import (
 	"devshard/types"
 	"devshard/user"
 	"go.opentelemetry.io/otel/trace"
-
-	"common/completionapi"
 )
 
 // errEmptyStream marks an attempt that completed successfully at the transport
@@ -205,13 +206,9 @@ func sseChunkErrorPayload(p []byte) (sseErrorDetails, []byte, bool) {
 	if len(p) == 0 {
 		return sseErrorDetails{}, nil, false
 	}
-	for _, line := range bytes.Split(p, []byte("\n")) {
-		line = bytes.TrimRight(line, "\r")
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		payload := bytes.TrimSpace(line[len("data:"):])
-		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+	for line := range bytes.SplitSeq(p, []byte("\n")) {
+		payload, ok := sseEventData(line)
+		if !ok {
 			continue
 		}
 		var evt struct {
@@ -1445,7 +1442,6 @@ const (
 	defaultMaxClassifyPartial            = 1 << 20   // 1 MiB per attempt
 	defaultMaxClassifyPartialParticipant = 10 << 20  // 10 MiB per participant
 	defaultMaxClassifyPartialGlobal      = 100 << 20 // 100 MiB process-wide
-	defaultMaxErrorStreamBytes           = 1 << 20   // 1 MiB per error attempt
 	defaultMaxPendingPreludeBytes        = 1 << 20
 	defaultMaxPendingPreludeParticipant  = 10 << 20
 	defaultMaxPendingPreludeGlobal       = 100 << 20
@@ -1460,7 +1456,6 @@ var (
 	maxClassifyPartial                  = defaultMaxClassifyPartial
 	maxClassifyPartialParticipant int64 = defaultMaxClassifyPartialParticipant
 	maxClassifyPartialGlobal      int64 = defaultMaxClassifyPartialGlobal
-	maxErrorStreamBytes                 = defaultMaxErrorStreamBytes
 	maxPendingPreludeBytes              = defaultMaxPendingPreludeBytes
 	maxPendingPreludeParticipant  int64 = defaultMaxPendingPreludeParticipant
 	maxPendingPreludeGlobal       int64 = defaultMaxPendingPreludeGlobal
@@ -1475,7 +1470,6 @@ func configureClassifyCapsFromEnv() {
 	maxClassifyPartial = int(readInt64Env("GATEWAY_CLASSIFY_MAX_ATTEMPT_BYTES", int64(defaultMaxClassifyPartial)))
 	maxClassifyPartialParticipant = readInt64Env("GATEWAY_CLASSIFY_MAX_PARTICIPANT_BYTES", defaultMaxClassifyPartialParticipant)
 	maxClassifyPartialGlobal = readInt64Env("GATEWAY_CLASSIFY_MAX_GLOBAL_BYTES", defaultMaxClassifyPartialGlobal)
-	maxErrorStreamBytes = int(readInt64Env("GATEWAY_ERROR_STREAM_MAX_ATTEMPT_BYTES", int64(defaultMaxErrorStreamBytes)))
 	maxPendingPreludeBytes = int(readInt64Env("GATEWAY_PENDING_PRELUDE_MAX_ATTEMPT_BYTES", int64(defaultMaxPendingPreludeBytes)))
 	maxPendingPreludeParticipant = readInt64Env("GATEWAY_PENDING_PRELUDE_MAX_PARTICIPANT_BYTES", defaultMaxPendingPreludeParticipant)
 	maxPendingPreludeGlobal = readInt64Env("GATEWAY_PENDING_PRELUDE_MAX_GLOBAL_BYTES", defaultMaxPendingPreludeGlobal)
@@ -1545,7 +1539,7 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 	return parseable
 }
 
-// classifyParseable records the attempt's first content or error, marks the race on a trusted deterministic rejection, and reports whether the buffer carried content or a non-retriable error.
+// classifyParseable records the attempt's first content and first error, marks the race on a trusted deterministic rejection, and reports whether the buffer carried content or a non-retriable error.
 func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
 	if len(parseable) == 0 {
 		return false, false
@@ -1561,7 +1555,8 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 		if rw.inf.contentSource == "" {
 			rw.inf.contentSource = scan.ContentSource
 		}
-	} else if details, ok := sseChunkErrorDetails(parseable); ok {
+	}
+	if details, ok := sseChunkErrorDetails(parseable); ok {
 		src := "error"
 		if details.Type != "" {
 			src = "error." + details.Type
@@ -2010,7 +2005,7 @@ func (rw *raceWriter) retainErrorStreamLines(parseable []byte) {
 	if inf == nil || inf.errorStreamTruncated {
 		return
 	}
-	rw.appendErrorStreamLines(ssePayloadDataLines(parseable))
+	rw.appendErrorStreamLines(streamevidence.DataLines(parseable))
 }
 
 func (rw *raceWriter) clearErrorStreamRetention() {
@@ -2020,6 +2015,8 @@ func (rw *raceWriter) clearErrorStreamRetention() {
 	}
 	inf.releaseErrorStreamRetention()
 }
+
+var maxErrorStreamBytes = streamevidence.MaxRetainedBytes
 
 func (rw *raceWriter) appendErrorStreamLines(lines []string) {
 	inf := rw.inf
@@ -2040,7 +2037,7 @@ func (rw *raceWriter) appendErrorStreamLines(lines []string) {
 		}
 		inf.errorStreamLines = append(inf.errorStreamLines, line)
 		inf.errorStreamBytes += n
-		if strings.TrimSpace(strings.TrimPrefix(line, "data: ")) == "[DONE]" {
+		if streamevidence.IsDoneLine(line) {
 			inf.errorStreamComplete = true
 		}
 	}
@@ -2113,29 +2110,6 @@ func (inf *inflight) releaseErrorStreamRetention() {
 	inf.errorStreamTruncated = false
 }
 
-func ssePayloadDataLines(p []byte) []string {
-	if len(p) == 0 {
-		return nil
-	}
-	var lines []string
-	for raw := range bytes.SplitSeq(p, []byte("\n")) {
-		line := strings.TrimRight(string(raw), "\r")
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		if isDevshardProtocolDataLine(line) {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	return lines
-}
-
-func isDevshardProtocolDataLine(line string) bool {
-	data := strings.TrimPrefix(line, "data: ")
-	return strings.Contains(data, `"devshard_receipt"`) || strings.Contains(data, `"devshard_meta"`)
-}
-
 func errorMissRejectLabel(inf *inflight) string {
 	if inf == nil {
 		return "drift"
@@ -2153,42 +2127,37 @@ func errorMissArtifacts(inf *inflight, session *user.Session) (finishTx, respons
 	if inf == nil {
 		return nil, nil
 	}
+	var replyFinishTx []byte
 	if inf.resp != nil {
-		finishTx = user.MarshalFinishTx(inf.resp.Mempool, inf.nonce)
+		replyFinishTx = user.MarshalFinishTx(inf.resp.Mempool, inf.nonce)
 	}
-	if len(finishTx) == 0 && session != nil {
-		finishTx = session.FinishTxFor(inf.nonce)
+	var queued timeoutclaim.FinishSource
+	if session != nil {
+		queued = session
 	}
+	finishTx = timeoutclaim.FinishTx(replyFinishTx, inf.nonce, queued)
 	if len(inf.errorStreamLines) > 0 {
-		responsePayload, _ = json.Marshal(completionapi.SerializedStreamedResponse{Events: inf.errorStreamLines})
+		responsePayload, _ = streamevidence.Payload(inf.errorStreamLines)
 	}
 	return finishTx, responsePayload
 }
 
-func (e *Redundancy) inferenceTimeoutPayload(params user.InferenceParams) *host.InferencePayload {
-	return &host.InferencePayload{
-		Prompt:      params.Prompt,
-		Model:       params.Model,
-		InputLength: params.InputLength,
-		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
-	}
+func timeoutVotePayload(session *user.Session, nonce uint64, prompt []byte, startedAt int64) *host.InferencePayload {
+	return timeoutclaim.Payload(session.StateMachine().GetInference, nonce, prompt, startedAt)
 }
 
 func (e *Redundancy) runHandleTimeout(ctx context.Context, inf *inflight, params user.InferenceParams, errorMiss bool) (user.TimeoutResult, error) {
+	var finishTx, responsePayload []byte
 	if errorMiss {
-		finishTx, responsePayload := errorMissArtifacts(inf, e.session)
-		if len(finishTx) > 0 {
-			return e.session.HandleErrorMiss(ctx, inf.nonce, finishTx, responsePayload)
-		}
+		finishTx, responsePayload = errorMissArtifacts(inf, e.session)
 	}
-	return e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, e.inferenceTimeoutPayload(params))
+	return timeoutclaim.Resolve(ctx, e.session, inf.nonce, inf.sendTime, timeoutVotePayload(e.session, inf.nonce, params.Prompt, params.StartedAt), finishTx, responsePayload)
 }
 
 // runVoteTimeout votes an already-due protocol timeout without sleeping. When
 // needsWait is true the caller must wait off the drain barrier and retry.
 func (e *Redundancy) runVoteTimeout(ctx context.Context, inf *inflight, params user.InferenceParams, reason types.TimeoutReason) (result user.TimeoutResult, needsWait bool, err error) {
-	return e.session.VoteTimeout(ctx, inf.nonce, inf.sendTime, e.inferenceTimeoutPayload(params), reason)
+	return e.session.VoteTimeout(ctx, inf.nonce, inf.sendTime, timeoutVotePayload(e.session, inf.nonce, params.Prompt, params.StartedAt), reason)
 }
 
 func (rw *raceWriter) Flush() {
@@ -2422,7 +2391,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	}
 	logInferenceStage(ctx, inf.escrowID, inf.nonce, "prepared", "host", inf.hostID)
 	if inf.probe {
-		logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_prepared", "host", inf.hostID, "max_tokens", pocProbeMaxTokens, "poc_reason", currentPoCPhaseReason())
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_prepared", "host", inf.hostID, "max_tokens", probe.MaxTokens, "poc_reason", currentPoCPhaseReason())
 	}
 	// Stamp sendTime synchronously, BEFORE spawning the send goroutine, so
 	// that awaitRace's first iteration is guaranteed to see a non-zero
@@ -4106,14 +4075,10 @@ func inflightStillSending(inf *inflight) bool {
 	return inf != nil && inf.done != nil && !inflightDone(inf)
 }
 
-// shouldRunHandleTimeout reports whether HandleTimeout should be invoked for a
+// shouldRunHandleTimeoutOn reports whether HandleTimeout should be invoked for a
 // failed attempt. Some empty-stream attempts still post MsgFinishInference, but
 // others can fail before that finish marker exists, so the protocol outcome is
 // the only safe gate for timeout voting.
-func shouldRunHandleTimeout(inf *inflight, session *user.Session) bool {
-	return shouldRunHandleTimeoutOn(inf, session, errorMissRunnable(inf, session))
-}
-
 func shouldRunHandleTimeoutOn(inf *inflight, session nonceFinishedChecker, errorMiss bool) bool {
 	if inf == nil || session == nil {
 		return false
@@ -4178,18 +4143,14 @@ func (e *Redundancy) scheduleDeadlineHandleTimeout(
 	)
 	e.recordGatewayTimeoutAction(inf, params, kind, "scheduled", "deadline_not_due")
 	if reasonLabel == "refused" {
-		e.rememberRefusalPayload(inf.nonce, e.inferenceTimeoutPayload(params))
+		e.rememberRefusalPayload(inf.nonce, timeoutVotePayload(e.session, inf.nonce, params.Prompt, params.StartedAt))
 	}
 
-	unpinFinish := errorMissEnabledFor(inf)
 	e.raceCleanupWG.Add(1)
 	go func() {
 		defer e.raceCleanupWG.Done()
 		defer inf.endAttemptSpan()
 		defer inf.releaseErrorStreamRetention()
-		if unpinFinish {
-			defer e.session.UnpinPendingFinish(inf.nonce)
-		}
 
 		waitCtx := e.raceCleanupRoot()
 		for {
@@ -4252,19 +4213,21 @@ func errorMissEnabledFor(inf *inflight) bool {
 	return inf != nil && inf.errorTerminal
 }
 
-// errorMissRunnable is true when a terminal OpenAI error envelope was observed
-// AND the gateway holds a signed MsgFinishInference. Verifiers reject with
-// no_finish_tx if that artifact is missing. An SSE body that ends at EOF
-// after [DONE] with no devshard_meta Finish is not a miss: HandleTimeout waits
-// for the ordinary refusal/execution deadline instead. Stream chunks themselves
-// are not host-signed.
-func errorMissRunnable(inf *inflight, session *user.Session) bool {
+// errorMissOutcome reports, from one read of the attempt, whether a terminal
+// OpenAI error envelope was observed AND the gateway holds a signed
+// MsgFinishInference (hasFinish), and whether the retained stream also proves
+// the error (claimable). Verifiers reject with no_finish_tx if the Finish is
+// missing. An SSE body that ends at EOF after [DONE] with no devshard_meta
+// Finish is not a miss: HandleTimeout waits for the ordinary refusal/execution
+// deadline instead. Stream chunks themselves are not host-signed.
+func errorMissOutcome(inf *inflight, session *user.Session) (hasFinish, claimable bool) {
 	if inflightStillSending(inf) || !errorMissEnabledFor(inf) {
 		// Finish bytes live on resp; do not read them while SendOnly may still write.
-		return false
+		return false, false
 	}
-	finishTx, _ := errorMissArtifacts(inf, session)
-	return len(finishTx) > 0
+	finishTx, responsePayload := errorMissArtifacts(inf, session)
+	hasFinish = len(finishTx) > 0
+	return hasFinish, hasFinish && streamevidence.ProvesErrorMiss(responsePayload)
 }
 
 func emptyStreamWithoutWinnerTimeoutSkipReason(inf *inflight, session nonceFinishedChecker) (string, bool) {
@@ -5068,13 +5031,14 @@ func (e *Redundancy) voteTimeoutForFailedInflight(ctx context.Context, inf *infl
 		return
 	}
 	callerOwnsCleanup := true
+	finishPinned := errorMissEnabledFor(inf)
 	defer func() {
 		if !callerOwnsCleanup {
 			return
 		}
 		inf.endAttemptSpan()
 		inf.releaseErrorStreamRetention()
-		if errorMissEnabledFor(inf) {
+		if finishPinned {
 			e.session.UnpinPendingFinish(inf.nonce)
 		}
 	}()
@@ -5082,11 +5046,17 @@ func (e *Redundancy) voteTimeoutForFailedInflight(ctx context.Context, inf *infl
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
 		return
 	}
-	errorMiss := errorMissRunnable(inf, e.session)
+	errorMissHasFinish, errorMiss := errorMissOutcome(inf, e.session)
 	kind := timeoutKindForInflight(inf, errorMiss)
 	if errorMissEnabledFor(inf) && !errorMiss {
+		skipReason := "no_finish_artifact"
+		if errorMissHasFinish {
+			skipReason = "no_error_proof"
+		}
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "error_miss_skipped",
-			"host", inf.hostID, "reason", "no_finish_artifact")
+			"host", inf.hostID, "reason", skipReason)
+		e.session.UnpinPendingFinish(inf.nonce)
+		finishPinned = false
 	}
 	if inf.phaseTransitionAborted {
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
@@ -5282,25 +5252,15 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	}
 }
 
-func probeParams(params user.InferenceParams) user.InferenceParams {
-	params.Prompt = pocProbePromptBody
-	params.InputLength = uint64(len(pocProbePromptBody))
-	params.MaxTokens = pocProbeMaxTokens
-	return params
-}
-
 // ghostProbeParams returns the params for a synthetic probe that is not
 // tied to any user request. The model is taken from the escrow
 // registration (passed into NewRedundancy) so the host receives a
 // well-formed inference for the configured model.
 func ghostProbeParams(model string) user.InferenceParams {
-	return probeParams(user.InferenceParams{
-		Model: model,
-		// Seconds, like every other StartedAt: a verifier measures the refusal deadline as
-		// now-in-seconds minus this, and a millisecond stamp makes that difference permanently
-		// negative, so the deadline never passes and the timeout is rejected every time.
-		StartedAt: time.Now().Unix(),
-	})
+	// Seconds, like every other StartedAt: a verifier measures the refusal deadline as
+	// now-in-seconds minus this, and a millisecond stamp makes that difference permanently
+	// negative, so the deadline never passes and the timeout is rejected every time.
+	return probe.Params(model, time.Now().Unix(), pocProbePromptBody)
 }
 
 // runGhostProbe spends a nonce the picker must consume but no user request should ride: the host is

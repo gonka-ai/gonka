@@ -1,10 +1,16 @@
 package engine
 
 import (
+	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"common/completionapi"
+
+	"devshard/gatewayprotocol/streamevidence"
 )
 
 // Test flow:
@@ -110,5 +116,50 @@ func TestTheProofHashesToWhatTheVerifierRecomputes(t *testing.T) {
 	}
 	if _, isError := completionapi.IsTerminalErrorResponse(proof.ResponsePayload); !isError {
 		t.Fatal("the verifier must read the payload as a terminal error")
+	}
+}
+
+// Test flow:
+//  1. Read the shared terminal-error fixture `long_error_stream.sse` from `gatewayprotocol/streamevidence/testdata`: about 100 KiB of 255-byte content lines, then an error line and `[DONE]`.
+//  2. Take the fixture's evidence lines, keep the leading ones whose bytes plus one separator each fit in `streamevidence.MaxRetainedBytes`, and assert the error line is not among them.
+//  3. Classify the fixture one event at a time with an attempt's SSE classifier, as the engine builds it, and flush it.
+//  4. Assert the classifier holds no miss proof, since the retained lines carry no error, and that it retained exactly those leading lines, marked truncated and not complete.
+func TestALongErrorStreamStopsAtTheSharedEvidenceCap(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "gatewayprotocol", "streamevidence", "testdata", "long_error_stream.sse"))
+	if err != nil {
+		t.Fatalf("reading fixture: %v", err)
+	}
+	lines := streamevidence.DataLines(fixture)
+	var want []string
+	heldBytes := 0
+	for _, line := range lines {
+		heldBytes += len(line) + 1
+		if heldBytes > streamevidence.MaxRetainedBytes {
+			break
+		}
+		want = append(want, line)
+	}
+	if len(want) >= len(lines)-1 {
+		t.Fatalf("the fixture's error line must lie past the cap: %d of %d lines fit", len(want), len(lines))
+	}
+	classifier := newSSEClassifier(testBudget(1<<20, 1<<20, 1<<20), testParticipant, false, nil)
+
+	for _, event := range bytes.SplitAfter(fixture, []byte("\n\n")) {
+		classifier.Classify(event)
+	}
+	classifier.Flush()
+
+	if proof, held := classifier.missProof(); held {
+		t.Fatalf("missProof() held %d bytes, want nothing: the retained lines carry no error", len(proof.ResponsePayload))
+	}
+	retained := classifier.retained
+	if !slices.Equal(retained.lines, want) {
+		t.Fatalf("retained %d lines, want the first %d of %d", len(retained.lines), len(want), len(lines))
+	}
+	if !retained.truncated {
+		t.Error("the stream outgrew the cap, so the evidence is truncated")
+	}
+	if retained.complete {
+		t.Error("[DONE] lies past the cap, so the evidence is not complete")
 	}
 }

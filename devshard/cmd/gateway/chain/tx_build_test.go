@@ -4,14 +4,11 @@ import (
 	"bytes"
 	"testing"
 
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-
+	"devshard/gatewayprotocol/settlement"
+	"devshard/gatewayprotocol/settlementwire"
 	"devshard/signing"
 )
 
-// Fixed message-encoder inputs; must match the values chain_txgold_test.go used
-// to generate testdata/txgold/{create_msg,settle_msg_full,
-// settle_msg_empty_optional,settlement_host_stats,slot_signature}.b64.
 const (
 	fixedCreator = "gonka1creator0000000000000000000000000"
 	fixedSettler = "gonka1settler0000000000000000000000000"
@@ -19,17 +16,17 @@ const (
 	fixedAmount  = uint64(1_000_000)
 )
 
-func fixedSettlementFull() SettlementInput {
-	return SettlementInput{
+func fixedSettlementFull() settlement.Message {
+	return settlement.Message{
 		EscrowID:  123,
 		StateRoot: []byte("fixed-state-root-32-bytes-long!"),
 		Nonce:     456,
 		RestHash:  []byte("fixed-rest-hash-bytes"),
-		HostStats: []SettlementHostStat{
+		HostStats: []settlement.HostStat{
 			{SlotID: 1, Missed: 2, Invalid: 3, Cost: 400, RequiredValidations: 5, CompletedValidations: 6},
 			{SlotID: 7, Missed: 8, Invalid: 9, Cost: 1000, RequiredValidations: 11, CompletedValidations: 12},
 		},
-		SlotSigs: []SettlementSlotSig{
+		SlotSignatures: []settlement.SlotSignature{
 			{SlotID: 1, Signature: []byte("fixed-signature-one")},
 			{SlotID: 7, Signature: []byte("fixed-signature-two")},
 		},
@@ -38,42 +35,12 @@ func fixedSettlementFull() SettlementInput {
 	}
 }
 
-func fixedSettlementEmptyOptional() SettlementInput {
-	return SettlementInput{
-		EscrowID:  124,
-		StateRoot: []byte("fixed-state-root-32-bytes-long!"),
-		Nonce:     456,
-		RestHash:  []byte("fixed-rest-hash-bytes"),
-		Fees:      789,
-		Version:   "v1.2.3",
-	}
-}
-
 // Test flow:
-//  1. Marshal a settlement host-stats message and a slot-signature message directly.
-//  2. Encode a create-escrow message and two settle-escrow messages (full and empty-optional) via the message encoders.
-//  3. For each encoded case, load its golden fixture and assert the bytes match exactly.
+//  1. Encode a create-escrow message via the message encoder.
+//  2. Load its golden fixture and assert the bytes match exactly.
 func TestMessageEncodersMatchGoldens(t *testing.T) {
-	hostStats, err := (&inferencetypes.DevshardSettlementHostStats{
-		SlotId: 42, Missed: 3, Invalid: 1, Cost: 555, RequiredValidations: 10, CompletedValidations: 9,
-	}).Marshal()
-	if err != nil {
-		t.Fatalf("marshal host stats: %v", err)
-	}
-	slotSignature, err := (&inferencetypes.DevshardSlotSignature{
-		SlotId: 42, Signature: []byte("standalone-fixed-signature"),
-	}).Marshal()
-	if err != nil {
-		t.Fatalf("marshal slot signature: %v", err)
-	}
 	createMsg := mustEncode(t, func() ([]byte, error) {
 		return encodeMsgCreateDevshardEscrow(fixedCreator, fixedAmount, fixedModelID)
-	})
-	settleFull := mustEncode(t, func() ([]byte, error) {
-		return encodeMsgSettleDevshardEscrow(fixedSettler, fixedSettlementFull())
-	})
-	settleEmptyOptional := mustEncode(t, func() ([]byte, error) {
-		return encodeMsgSettleDevshardEscrow(fixedSettler, fixedSettlementEmptyOptional())
 	})
 
 	cases := []struct {
@@ -81,10 +48,6 @@ func TestMessageEncodersMatchGoldens(t *testing.T) {
 		got  []byte
 	}{
 		{"create_msg", createMsg},
-		{"settle_msg_full", settleFull},
-		{"settle_msg_empty_optional", settleEmptyOptional},
-		{"settlement_host_stats", hostStats},
-		{"slot_signature", slotSignature},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -244,7 +207,7 @@ func TestBuildSettleEscrowTxStructural(t *testing.T) {
 	}
 
 	wantMsg := mustEncode(t, func() ([]byte, error) {
-		return encodeMsgSettleDevshardEscrow(fixedSettler, input)
+		return settlementwire.Marshal(fixedSettler, input)
 	})
 	wantBody := encodeUnorderedTxBody(encodeAny(settleEscrowMsgTypeURL, wantMsg), fixedTTL)
 	if !bytes.Equal(bodyBytes, wantBody) {

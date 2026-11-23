@@ -1,5 +1,7 @@
 package engine
 
+import "devshard/gatewayprotocol/streamevidence"
+
 // sseClassifier joins one attempt's bounded reassembly to the SSE verdicts. See race.md, "Classification and reassembly".
 type sseClassifier struct {
 	emptyAnswerCountsTokens bool
@@ -13,7 +15,7 @@ func newSSEClassifier(budget *carryBudget, participant string, emptyAnswerCounts
 		emptyAnswerCountsTokens: emptyAnswerCountsTokens,
 		carry:                   newCarryBuffer(budget, participant),
 		overflow:                overflow,
-		retained:                newErrorStreamRetainer(maxMissProofBytes),
+		retained:                newErrorStreamRetainer(streamevidence.MaxRetainedBytes),
 	}
 }
 

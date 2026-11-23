@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -21,7 +22,7 @@ import (
 type fakeTxClient struct {
 	createEscrowFn  func(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, modelID string, onPrepared func(string) error) (chain.CreateEscrowResult, error)
 	getTxEscrowIDFn func(ctx context.Context, txHash string) (uint64, bool, error)
-	settleEscrowFn  func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error)
+	settleEscrowFn  func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error)
 	getEscrowFn     func(ctx context.Context, escrowID string) (chain.EscrowInfo, bool, error)
 	txCommittedFn   func(txHash string) (bool, error)
 	settleTxHash    string
@@ -34,7 +35,7 @@ func (f *fakeTxClient) CreateEscrow(ctx context.Context, signer *signing.Secp256
 	return f.createEscrowFn(ctx, signer, amount, modelID, onPrepared)
 }
 
-func (f *fakeTxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput, onPrepared func(string) error) (chain.SettleEscrowResult, error) {
+func (f *fakeTxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message, onPrepared func(string) error) (chain.SettleEscrowResult, error) {
 	if f.calls != nil {
 		f.calls.record("SettleEscrow")
 	}

@@ -6,6 +6,8 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -13,6 +15,7 @@ import (
 
 	"common/completionapi"
 
+	"devshard/gatewayprotocol/streamevidence"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/types"
@@ -40,13 +43,14 @@ type staticFinishedSession struct {
 
 func (s *staticFinishedSession) IsNonceFinished(uint64) bool { return s.finished }
 
-func TestErrorMissRunnable_RequiresSignedFinish(t *testing.T) {
+func TestErrorMissOutcome_RequiresSignedFinish(t *testing.T) {
 	unfinished := &staticFinishedSession{finished: false}
 	finished := &staticFinishedSession{finished: true}
 
 	noArtifact := &inflight{nonce: 7, errorSource: "error.InternalServerError", errorTerminal: true}
 	require.True(t, errorMissEnabledFor(noArtifact))
-	require.False(t, errorMissRunnable(noArtifact, nil), "EOF without Finish is not a miss")
+	hasFinish, _ := errorMissOutcome(noArtifact, nil)
+	require.False(t, hasFinish, "EOF without Finish is not a miss")
 	require.True(t, shouldRunHandleTimeoutOn(noArtifact, unfinished, false), "ordinary timeout still runs")
 	require.False(t, shouldRunHandleTimeoutOn(noArtifact, finished, false), "finished nonce without Finish still skips")
 
@@ -60,7 +64,8 @@ func TestErrorMissRunnable_RequiresSignedFinish(t *testing.T) {
 			},
 		},
 	}
-	require.True(t, errorMissRunnable(withFinish, nil))
+	hasFinish, _ = errorMissOutcome(withFinish, nil)
+	require.True(t, hasFinish)
 	require.True(t, shouldRunHandleTimeoutOn(withFinish, finished, true), "miss still runs after the nonce finished")
 
 	happy := &inflight{
@@ -71,11 +76,12 @@ func TestErrorMissRunnable_RequiresSignedFinish(t *testing.T) {
 			},
 		},
 	}
-	require.False(t, errorMissRunnable(happy, nil), "a signed Finish without a terminal error is not a miss")
+	hasFinish, _ = errorMissOutcome(happy, nil)
+	require.False(t, hasFinish, "a signed Finish without a terminal error is not a miss")
 }
 
 func TestShouldRunHandleTimeout_NilGuards(t *testing.T) {
-	require.False(t, shouldRunHandleTimeout(nil, nil))
+	require.False(t, shouldRunHandleTimeoutOn(nil, nil, true))
 	require.False(t, shouldRunHandleTimeoutOn(&inflight{probe: true, errorSource: "error.x"}, &staticFinishedSession{}, true))
 }
 
@@ -214,6 +220,41 @@ func TestRaceWriter_ErrorStreamCappedAndTruncated(t *testing.T) {
 	require.Less(t, inf.errorStreamBytes, 150+len(auditErrLine))
 }
 
+// Test flow:
+//  1. Read the shared terminal-error fixture `long_error_stream.sse` from `gatewayprotocol/streamevidence/testdata`: about 100 KiB of 255-byte content lines, then an error line and `[DONE]`.
+//  2. Take the fixture's evidence lines, keep the leading ones whose bytes plus one separator each fit in `streamevidence.MaxRetainedBytes`, and assert the error line is not among them.
+//  3. Write the fixture one event at a time through a race writer of an error attempt, with the evidence cap at `streamevidence.MaxRetainedBytes`, and flush it.
+//  4. Assert the attempt retained exactly those leading lines, is marked truncated and not complete, and labels a rejected claim as truncated.
+func TestRaceWriter_LongErrorStreamStopsAtTheSharedEvidenceCap(t *testing.T) {
+	fixture, err := os.ReadFile(filepath.Join("..", "..", "gatewayprotocol", "streamevidence", "testdata", "long_error_stream.sse"))
+	require.NoError(t, err)
+	lines := streamevidence.DataLines(fixture)
+	var want []string
+	heldBytes := 0
+	for _, line := range lines {
+		heldBytes += len(line) + 1
+		if heldBytes > streamevidence.MaxRetainedBytes {
+			break
+		}
+		want = append(want, line)
+	}
+	require.Less(t, len(want), len(lines)-1, "the fixture's error line must lie past the cap")
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rw, inf := newErrorRaceWriter(t, newRaceGroup(ctx, ctx, "escrow-x", &sink), 1)
+
+	for _, event := range bytes.SplitAfter(fixture, []byte("\n\n")) {
+		_, err = rw.Write(event)
+		require.NoError(t, err)
+	}
+	rw.flushClassify()
+
+	require.Equal(t, want, inf.errorStreamLines)
+	require.True(t, inf.errorStreamTruncated)
+	require.False(t, inf.errorStreamComplete)
+	require.Equal(t, "truncated", errorMissRejectLabel(inf))
+}
+
 func TestRaceWriter_CancelledErrorAttemptIsPrefixNotDrift(t *testing.T) {
 	ctx := context.Background()
 	var sink bytes.Buffer
@@ -259,7 +300,7 @@ func TestSsePayloadDataLines_SkipsProtocolEnvelopes(t *testing.T) {
 		"data: {\"error\":{\"code\":500,\"message\":\"x\",\"type\":\"InternalServerError\"}}\n\n" +
 		"data: {\"devshard_meta\":{}}\n\n" +
 		"data: [DONE]\n\n")
-	got := ssePayloadDataLines(raw)
+	got := streamevidence.DataLines(raw)
 	require.Equal(t, []string{
 		`data: {"error":{"code":500,"message":"x","type":"InternalServerError"}}`,
 		`data: [DONE]`,

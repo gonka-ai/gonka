@@ -105,7 +105,7 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 		return nil, err
 	}
 	inferenceID := prepared.Nonce()
-	return hostReply{reply: reply, releaseFinish: sync.OnceFunc(func() {
+	return hostReply{reply: reply, nonce: inferenceID, releaseFinish: sync.OnceFunc(func() {
 		t.session.UnpinPendingFinish(inferenceID)
 		t.session.ArmQuietSettle()
 	})}, err
@@ -118,6 +118,7 @@ func divergedState(err error) bool {
 
 type hostReply struct {
 	reply         *host.HostResponse
+	nonce         uint64
 	releaseFinish func()
 }
 
@@ -128,3 +129,5 @@ func (r hostReply) Confirmed() bool { return r.reply.ConfirmedAt > 0 }
 func (r hostReply) ConfirmedAt() int64 { return r.reply.ConfirmedAt }
 
 func (r hostReply) ReleaseFinish() { r.releaseFinish() }
+
+func (r hostReply) FinishTx() []byte { return user.MarshalFinishTx(r.reply.Mempool, r.nonce) }

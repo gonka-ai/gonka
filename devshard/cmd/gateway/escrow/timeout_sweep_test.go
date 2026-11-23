@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -169,9 +170,9 @@ func settlingManager(t *testing.T, sweeper *recordingSweeper, budget int64) (*Ma
 	testStore.devshards[record.EscrowID] = record
 	log := &callLog{}
 	sweeper.settleLog = log
-	settlementSource := &fakeSettlementSource{calls: log, buildInput: chain.SettlementInput{EscrowID: 2}}
+	settlementSource := &fakeSettlementSource{calls: log, buildInput: settlement.Message{EscrowID: 2}}
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
 	}

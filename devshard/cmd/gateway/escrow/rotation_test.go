@@ -12,6 +12,7 @@ import (
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -462,7 +463,7 @@ func TestPrepareBridgeSettlementEnabledSettlesRegularsBeforeRetiring(t *testing.
 	txClient := &fakeTxClient{
 		createEscrowFn: succeedingCreateEscrowFn(500),
 		calls:          log,
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
 	}

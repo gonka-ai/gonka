@@ -8,7 +8,7 @@ Every read from the network and every transaction the gateway signs passes throu
 
 - **The transaction client** (`txclient.go`, `tx_build.go`, `protoencode.go`, `grpc.go`) — build, sign, broadcast, confirm. A transaction is not assumed to have landed because it was accepted.
 - **The phase observer** (`observer.go`, `observer_fetch.go`, `observer_preservation.go`, `observer_publish.go`, `observer_health.go`, `snapshot.go`) — polls the network's public API and publishes an immutable `PhaseSnapshot`: the epoch, its phase, which participants are preserved through proof-of-compute, the host weights the capacity model scales by, and the context window governance gives each model.
-- **Escrow queries and settlement encoding** (`escrow_query.go`, `settlement.go`).
+- **Escrow queries and the busy sentinel** (`escrow_query.go`, `settlement.go`). The settle message and its encoding live in [`devshard/gatewayprotocol`](../../../gatewayprotocol/README.md).
 - **Protocol versions** (`versions.go`) — the gateway serves exactly one, fixed at build time.
 
 ## Boundaries
@@ -131,7 +131,11 @@ A non-zero `CheckTx` code from `Broadcast` is `ErrTxRejected`: the node refused 
 
 ### How a message is encoded
 
-The two escrow messages are marshalled by the types generated from the chain's own `.proto`, so their wire layout tracks the chain by construction. Hand-laying those fields puts a money transaction's layout in a third place, edited in lockstep with the proto, or the settlement mis-encodes silently. `Marshal` cannot fail for these two messages — neither carries an `Any` nor a custom type — and the error is returned rather than dropped so a future field cannot make it silent.
+The two escrow messages are marshalled by the types generated from the chain's own `.proto`, so their wire layout tracks the chain by construction. The create message is marshalled here. The settle message is a `settlement.Message` that [`devshard/gatewayprotocol/settlementwire`](../../../gatewayprotocol/settlementwire/README.md) maps onto `MsgSettleDevshardEscrow` and marshals, and `tx_build.go` wraps its bytes. Hand-laying those fields puts a money transaction's layout in a third place, edited in lockstep with the proto, or the settlement mis-encodes silently.
+
+`Marshal` cannot fail for these two messages — neither carries an `Any` nor a custom type — and the error is returned rather than dropped so a future field cannot make it silent.
+
+The goldens under `testdata/txgold` hold the bytes of the create message and of each hand-encoded piece below for the fixed inputs the tests repeat; the settle message's goldens are in `settlementwire`. No generator writes them, so a golden changes only by hand and with a reason.
 
 Everything around the message is hand-encoded in `protoencode.go`: the `Any` wrapper, the secp256k1 pubkey, the `Fee`, a `SignerInfo` with a single `SIGN_MODE_DIRECT` mode, the `AuthInfo`, the `SignDoc` that gets hashed and signed, and the broadcastable `TxRaw`. The body is an unordered `TxBody` — field 1 the message, field 4 `unordered=true`, field 5 the `timeout_timestamp`. The tx hash is the upper-hex SHA-256 of the tx bytes, which is what lets it be recorded before the broadcast and compared against the hash the node returns.
 

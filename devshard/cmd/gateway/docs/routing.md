@@ -210,7 +210,7 @@ Two details in that order are load-bearing. The hold deadline is anchored on the
 
 ### Ghost burns
 
-A ghost commits a real inference into the escrow's local diff and never sends it to a host. It takes the escrow's in-flight hold to do so, exactly as a served commit does, and gives it back as soon as the nonce is committed: a burn spends money, so a retirement landing mid-commit is barred the same way. The prompt is a fixed placeholder and `MaxTokens` is the smallest reservation the state machine accepts, `state.MinReservationTokens` (`registry/session.go`, `ghostMaxTokens`): a burned nonce stays pending and is paid its whole reservation at settlement, so every token reserved past the floor is paid for nothing.
+A ghost commits a real inference into the escrow's local diff and never sends it to a host. It takes the escrow's in-flight hold to do so, exactly as a served commit does, and gives it back as soon as the nonce is committed: a burn spends money, so a retirement landing mid-commit is barred the same way. The prompt is a fixed placeholder and `MaxTokens` is the smallest reservation the state machine accepts, `state.MinReservationTokens` (`registry/session.go`, through `probe.MaxTokens` in [`devshard/gatewayprotocol/probe`](../../../gatewayprotocol/probe/README.md)): a burned nonce stays pending and is paid its whole reservation at settlement, so every token reserved past the floor is paid for nothing.
 
 | Kind | Recorded reason | Cause |
 |---|---|---|

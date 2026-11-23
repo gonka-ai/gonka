@@ -9,17 +9,16 @@ import (
 
 	"devshard/cmd/gateway/quorum"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayprotocol/probe"
 	"devshard/heightsync"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
 )
 
-const ghostMaxTokens = uint64(state.MinReservationTokens)
-
 // See README.md, "Nonces and ghost burns".
 var (
-	ghostPrompt = fmt.Appendf(nil, `{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, ghostMaxTokens)
+	ghostPrompt = fmt.Appendf(nil, `{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, probe.MaxTokens)
 
 	errNonceDeclined = errors.New("nonce declined")
 )
@@ -327,11 +326,5 @@ func (s nonceStream) Advance(decide func(scheduler.HostBinding) scheduler.NonceI
 
 // StartedAt is seconds, not milliseconds, or the refusal deadline goes negative. See host/timeout.go, VerifyRefusedTimeout.
 func (s nonceStream) ghostParams() user.InferenceParams {
-	return user.InferenceParams{
-		Model:       s.model,
-		Prompt:      ghostPrompt,
-		InputLength: uint64(len(ghostPrompt)),
-		MaxTokens:   ghostMaxTokens,
-		StartedAt:   s.now().Unix(),
-	}
+	return probe.Params(s.model, s.now().Unix(), ghostPrompt)
 }

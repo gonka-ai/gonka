@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/quorum"
+	"devshard/gatewayprotocol/timeoutclaim"
 	"devshard/host"
 	"devshard/state"
 	"devshard/types"
@@ -18,8 +19,8 @@ const (
 
 // timeoutHandler is the session's protocol-timeout entry point; *user.Session satisfies it.
 type timeoutHandler interface {
+	timeoutclaim.FinishSource
 	HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (user.TimeoutResult, error)
-	FinishTxFor(inferenceID uint64) []byte
 	TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time)
 	WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTime time.Time) (reason types.TimeoutReason, ready bool, skipped user.TimeoutResult, err error)
 	VoteTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload, reason types.TimeoutReason) (result user.TimeoutResult, needsWait bool, err error)
@@ -71,7 +72,7 @@ func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (
 
 func (s *SessionTimeouts) settle(ctx context.Context, step TimeoutStep) (result user.TimeoutResult, deferred bool, err error) {
 	if step.Kind == SettleByMissClaim && step.Proof != nil {
-		if finishTx := s.handler.FinishTxFor(step.Nonce); len(finishTx) > 0 {
+		if finishTx := timeoutclaim.FinishTx(step.Proof.finishTx, step.Nonce, s.handler); timeoutclaim.ClaimsMiss(finishTx) {
 			result, err = s.handler.HandleErrorMiss(ctx, step.Nonce, finishTx, step.Proof.ResponsePayload)
 			return result, false, err
 		}

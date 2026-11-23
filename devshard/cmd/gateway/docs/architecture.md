@@ -76,7 +76,7 @@ graph TD
     STO --> CFG
 ```
 
-`filters` depends on no layer package: it is pure, and its behaviour is pinned byte-for-byte against goldens. `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.
+`filters` depends on no layer package: it is pure, and its behaviour is pinned byte-for-byte against goldens. The rules a host, a verifier or the chain would judge differently between this gateway and `devshardctl`, such as the settle message and its root, are not in a layer package either: `devshard/gatewayprotocol` holds them once, `api`, `chain`, `engine`, `escrow`, `registry` and `warmup` call it, and hosts never link it ([`gatewayprotocol/README.md`](../../../gatewayprotocol/README.md)). `env` is read once at startup and never again. Everything else reads an immutable `config` snapshot that is swapped whole on reconfiguration.
 
 The graph shows the layer packages, so the composition root, `app`, is not on it: `app` imports every box above and `app/compose.go` wires them, and the five adapters that hand one event to two readers — a race outcome to the metrics recorder and the nonce ledger, a warmup's vote to that same recorder without a race's line, a burn to its log line, its metric and the ledger, a shadow probe's result to its metric and its log line, a phase poll to a line only when something changed — live in `app/observers.go` rather than in a layer package. See the root [`app/README.md`](../app/README.md), "Two readers of one fact".
 
@@ -183,7 +183,7 @@ Three places, each with its own guard:
 
 | Risk | Guard |
 | --- | --- |
-| a committed nonce nobody settles | the race's drain barrier: shutdown waits, within its grace period, for the owed votes that fall due inside it; a refusal vote due later is kept in the store with its prompt and posted by the next boot ([race.md](./race.md), "Owed refusal votes across a restart") |
+| a committed nonce nobody settles | the race's drain barrier: shutdown posts the votes already due when it begins and waits for them within its grace period; a refusal vote not yet due is kept in the store with its prompt and posted by the next boot, and any other is left to the next boot's sweep ([race.md](./race.md), "Stop" and "Owed refusal votes across a restart") |
 | an escrow that pays for work it did not receive | [`accounting`](../accounting/) cross-checks its own counts against the chain's |
 | a reply held in memory until the process dies | a per-request cap, a process-wide ceiling, and folding as chunks arrive |
 

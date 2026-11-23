@@ -34,6 +34,8 @@ type Response interface {
 	ConfirmedAt() int64
 	// ReleaseFinish lets the host's Finish for this nonce into a diff again; the session holds it from the moment the reply lands.
 	ReleaseFinish()
+	// FinishTx is the host's Finish for this nonce as its reply carried it; nil when the reply carried none.
+	FinishTx() []byte
 }
 
 // chunkFacts is what one SSE chunk carried. See README, "Classification and reassembly".
@@ -212,6 +214,7 @@ func holdFinishForClaim(response Response, outcome *AttemptOutcome) {
 	}
 	if outcome.claimsMiss() {
 		outcome.MissProof.releaseFinish = response.ReleaseFinish
+		outcome.MissProof.finishTx = response.FinishTx()
 		return
 	}
 	response.ReleaseFinish()

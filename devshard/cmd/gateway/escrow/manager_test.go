@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -294,7 +295,7 @@ func TestASlowSettlementDoesNotHoldTheTick(t *testing.T) {
 	cfg.Rotation.SettlementEnabled = true
 	release := make(chan struct{})
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, _ *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, _ *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			<-release
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},

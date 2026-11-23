@@ -13,8 +13,8 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
+	"devshard/gatewayprotocol/probe"
 	"devshard/host"
-	"devshard/state"
 	"devshard/user"
 )
 
@@ -22,10 +22,9 @@ const (
 	probeTimeout   = 2 * time.Minute
 	catchUpTimeout = 2 * time.Minute
 	budget         = 20 * time.Minute
-	probeMaxTokens = uint64(state.MinReservationTokens)
 )
 
-var probePrompt = fmt.Appendf(nil, `{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, probeMaxTokens)
+var probePrompt = fmt.Appendf(nil, `{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, probe.MaxTokens)
 
 // Posters resolves the vote poster for one escrow and the params its nonce committed.
 type Posters func(escrowID string, params any) (engine.TimeoutPoster, bool)
@@ -169,13 +168,7 @@ func catchUpAllHosts(ctx context.Context, session registry.EscrowSession) error 
 }
 
 func probeParams(model string, startedAt int64) user.InferenceParams {
-	return user.InferenceParams{
-		Model:       model,
-		Prompt:      probePrompt,
-		InputLength: uint64(len(probePrompt)),
-		MaxTokens:   probeMaxTokens,
-		StartedAt:   startedAt,
-	}
+	return probe.Params(model, startedAt, probePrompt)
 }
 
 func dispatchProbe(ctx context.Context, session registry.EscrowSession, params user.InferenceParams, nonceCommitted func()) (uint64, bool, error) {

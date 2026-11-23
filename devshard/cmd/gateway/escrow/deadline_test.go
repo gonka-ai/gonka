@@ -14,6 +14,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -680,7 +681,7 @@ func TestRetireOnlyParksUnderPreviousEpochSettlement(t *testing.T) {
 	configuration := previousEpochSettlementConfig("")
 	manager := &Manager{
 		narrator: silentNarrator{},
-		tx: &fakeTxClient{settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		tx: &fakeTxClient{settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be called at retirement under previous-epoch settlement alone")
 			return chain.SettleEscrowResult{}, nil
 		}},

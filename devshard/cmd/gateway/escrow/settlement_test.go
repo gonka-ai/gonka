@@ -12,6 +12,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -47,7 +48,7 @@ type fakeSettlementSource struct {
 	retireErr   error
 	finalizeErr error
 	buildErr    error
-	buildInput  chain.SettlementInput
+	buildInput  settlement.Message
 	calls       *callLog
 }
 
@@ -87,12 +88,12 @@ func (f *fakeSettlementSource) Finalize(ctx context.Context, escrowID string) er
 	return f.finalizeErr
 }
 
-func (f *fakeSettlementSource) BuildSettlement(ctx context.Context, escrowID string) (chain.SettlementInput, error) {
+func (f *fakeSettlementSource) BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error) {
 	if f.calls != nil {
 		f.calls.record("BuildSettlement")
 	}
 	if f.buildErr != nil {
-		return chain.SettlementInput{}, f.buildErr
+		return settlement.Message{}, f.buildErr
 	}
 	return f.buildInput, nil
 }
@@ -164,11 +165,11 @@ func TestSettleHappyPathOrderAndClearsPendingOnSuccess(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 	log := &callLog{}
 	testStore.calls = log
-	settlementSource := &fakeSettlementSource{busy: false, calls: log, buildInput: chain.SettlementInput{EscrowID: 2}}
+	settlementSource := &fakeSettlementSource{busy: false, calls: log, buildInput: settlement.Message{EscrowID: 2}}
 	txClient := &fakeTxClient{
 		calls:        log,
 		settleTxHash: "SETTLE-TX",
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
 	}
@@ -214,7 +215,7 @@ func TestSettleBroadcastFailureLeavesSettlementPendingSet(t *testing.T) {
 	settlementSource := &fakeSettlementSource{busy: false}
 	broadcastErr := errors.New("broadcast rejected")
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{}, broadcastErr
 		},
 	}
@@ -251,7 +252,7 @@ func TestRetireSettlementDisabledSkipsChainAndParksEscrow(t *testing.T) {
 	record := store.DevshardRecord{EscrowID: "4", PrivateKeyEnv: "MODEL_A_KEY", Model: "model-a", Active: true}
 	testStore.devshards[record.EscrowID] = record
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be called when the settlement toggle is off")
 			return chain.SettleEscrowResult{}, nil
 		},
@@ -283,7 +284,7 @@ func TestRetireSettlementEnabledHappyPathSettlesThenDeletes(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 	settlementSource := &fakeSettlementSource{busy: false}
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
 	}
@@ -316,7 +317,7 @@ func TestRetireSettlementEnabledBusyLeavesDevshardRegistered(t *testing.T) {
 	testStore.devshards[record.EscrowID] = record
 	settlementSource := &fakeSettlementSource{busy: true}
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be called while busy")
 			return chain.SettleEscrowResult{}, nil
 		},
@@ -360,7 +361,7 @@ func TestSettleDedupesConcurrentCallsForSameEscrow(t *testing.T) {
 	log := &callLog{}
 	txClient := &fakeTxClient{
 		calls: log,
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			close(entered)
 			<-release
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
@@ -412,7 +413,7 @@ func TestSettleRefusesNonceCommitsOnceTheSettlementIsBroadcast(t *testing.T) {
 	routing := &fakeSettlementSource{}
 	committedDuringBroadcast := true
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			committedDuringBroadcast = routing.commit()
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
@@ -447,7 +448,7 @@ func TestDedupedSettleLeavesTheRowForTheCallerThatIsReallySettling(t *testing.T)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			close(entered)
 			<-release
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
@@ -495,7 +496,7 @@ func parkedRecord(escrowID string) store.DevshardRecord {
 
 func settlingTxClient() *fakeTxClient {
 	return &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
 	}
@@ -695,7 +696,7 @@ func TestSettlePendingIsNoOpWhileSettlementDisabled(t *testing.T) {
 	record := parkedRecord("11")
 	testStore.devshards[record.EscrowID] = record
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be called while the settlement toggle is off")
 			return chain.SettleEscrowResult{}, nil
 		},
@@ -726,7 +727,7 @@ func TestSettlePendingIgnoresInactiveEscrowWithoutPendingMarker(t *testing.T) {
 	record := store.DevshardRecord{EscrowID: "12", PrivateKeyEnv: "MODEL_A_KEY", Model: "model-a", Active: false, SettlementPending: false}
 	testStore.devshards[record.EscrowID] = record
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow called for an escrow that was never marked settlement-pending")
 			return chain.SettleEscrowResult{}, nil
 		},
@@ -796,7 +797,7 @@ func TestASettleThatNeverLandedIsRetried(t *testing.T) {
 	txClient := &fakeTxClient{
 		settleTxHash:  "FRESH-TX",
 		txCommittedFn: func(string) (bool, error) { return false, chain.ErrTxNotFound },
-		settleEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			return chain.SettleEscrowResult{EscrowID: input.EscrowID}, nil
 		},
 	}
@@ -920,7 +921,7 @@ func prunedTxClient(t *testing.T) *fakeTxClient {
 	t.Helper()
 	return &fakeTxClient{
 		getEscrowFn: func(context.Context, string) (chain.EscrowInfo, bool, error) { return chain.EscrowInfo{}, false, nil },
-		settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be broadcast for an escrow the chain no longer holds")
 			return chain.SettleEscrowResult{}, nil
 		},
@@ -1013,7 +1014,7 @@ func TestSettleKeepsAnEscrowTheChainCannotHavePrunedYet(t *testing.T) {
 			broadcasts := 0
 			tx := &fakeTxClient{
 				getEscrowFn: func(context.Context, string) (chain.EscrowInfo, bool, error) { return chain.EscrowInfo{}, false, nil },
-				settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
+				settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, settlement.Message) (chain.SettleEscrowResult, error) {
 					broadcasts++
 					return chain.SettleEscrowResult{}, errors.New("escrow not found")
 				},
@@ -1091,7 +1092,7 @@ func TestRetireParksAModelThatTurnsSettlementOff(t *testing.T) {
 	record := store.DevshardRecord{EscrowID: "33", PrivateKeyEnv: "MODEL_A_KEY", Model: "model-a", Active: true}
 	testStore.devshards[record.EscrowID] = record
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow must not be called for a model that turns settlement off")
 			return chain.SettleEscrowResult{}, nil
 		},
@@ -1121,7 +1122,7 @@ func TestSettlePendingSkipsARowGoneFromChain(t *testing.T) {
 	record.GoneFromChain = true
 	testStore.devshards[record.EscrowID] = record
 	txClient := &fakeTxClient{
-		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 			t.Fatal("SettleEscrow called for an escrow the chain no longer holds")
 			return chain.SettleEscrowResult{}, nil
 		},

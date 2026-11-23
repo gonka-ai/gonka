@@ -15,6 +15,7 @@ import (
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -349,7 +350,7 @@ func TestASettledRetirementIsNarratedFromParkToDrop(t *testing.T) {
 	testStore := newFakeStore()
 	record := store.DevshardRecord{EscrowID: "5", PrivateKeyEnv: "MODEL_A_KEY", Model: "model-a", Active: true}
 	testStore.devshards[record.EscrowID] = record
-	txClient := &fakeTxClient{settleEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, input chain.SettlementInput) (chain.SettleEscrowResult, error) {
+	txClient := &fakeTxClient{settleEscrowFn: func(_ context.Context, _ *signing.Secp256k1Signer, input settlement.Message) (chain.SettleEscrowResult, error) {
 		return chain.SettleEscrowResult{EscrowID: input.EscrowID, TxHash: "SETTLE-TX", Settler: "gonka1settler"}, nil
 	}}
 	narrator := &recordingLifecycleNarrator{}

@@ -9,6 +9,7 @@ import (
 
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -26,7 +27,7 @@ func broadcastFailingManager(t *testing.T, record store.DevshardRecord, broadcas
 	broadcasts := 0
 	txClient := &fakeTxClient{
 		settleTxHash: checkTxRejectedSettleHash,
-		settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, chain.SettlementInput) (chain.SettleEscrowResult, error) {
+		settleEscrowFn: func(context.Context, *signing.Secp256k1Signer, settlement.Message) (chain.SettleEscrowResult, error) {
 			broadcasts++
 			return chain.SettleEscrowResult{}, broadcastErr
 		},
@@ -36,7 +37,7 @@ func broadcastFailingManager(t *testing.T, record store.DevshardRecord, broadcas
 		tx:               txClient,
 		store:            testStore,
 		signer:           &fakeSignerSource{signer: testSigner(t)},
-		settlementSource: &fakeSettlementSource{buildInput: chain.SettlementInput{EscrowID: 7}},
+		settlementSource: &fakeSettlementSource{buildInput: settlement.Message{EscrowID: 7}},
 		now:              time.Now,
 	}, testStore, &broadcasts
 }

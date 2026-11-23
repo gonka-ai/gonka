@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/internal/safemath"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -188,7 +189,7 @@ func (c *TxClient) createCost(amount uint64) uint64 {
 }
 
 // SettleEscrow builds, signs, broadcasts and confirms a MsgSettleDevshardEscrow tx; unlike CreateEscrow it waits for the commit. See README.md, "Transaction encoding".
-func (c *TxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Signer, input SettlementInput, onPrepared func(txHash string) error) (SettleEscrowResult, error) {
+func (c *TxClient) SettleEscrow(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message, onPrepared func(txHash string) error) (SettleEscrowResult, error) {
 	if signer == nil {
 		return SettleEscrowResult{}, fmt.Errorf("signer is required")
 	}
