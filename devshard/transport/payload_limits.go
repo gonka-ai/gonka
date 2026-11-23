@@ -16,14 +16,57 @@ import (
 // holds at most host.ChallengePageMaxNonces.
 const MaxDecodedDiffs = host.ChallengePageMaxNonces
 
+// CatchUpMaxDiffs bounds owner chat and the verify RPCs: one catch-up chunk
+// plus the target diff.
+const CatchUpMaxDiffs = host.CatchUpChunkSize + 1
+
+// DiffLimits bound one request that carries diffs.
+type DiffLimits struct {
+	Diffs int
+	types.DecodeLimits
+}
+
+var (
+	// PageLimits fit a full challenge page (ChallengeReceipt).
+	PageLimits = DiffLimits{Diffs: MaxDecodedDiffs, DecodeLimits: types.PageDecodeLimits}
+	// CatchUpLimits scale the page budgets down to CatchUpMaxDiffs.
+	CatchUpLimits = DiffLimits{
+		Diffs:        CatchUpMaxDiffs,
+		DecodeLimits: types.PageDecodeLimits.Scaled(CatchUpMaxDiffs, MaxDecodedDiffs),
+	}
+)
+
+func (l DiffLimits) tooManyDiffs() error {
+	return fmt.Errorf("%w: more than %d diffs", types.ErrDecodeLimit, l.Diffs)
+}
+
+// countDiffsJSON checks decoded JSON diffs against lim before their txs are
+// unmarshalled.
+func countDiffsJSON(djs []DiffJSON, lim DiffLimits) error {
+	if len(djs) > lim.Diffs {
+		return lim.tooManyDiffs()
+	}
+	count := types.TxCount{Limits: lim.DecodeLimits}
+	for i, dj := range djs {
+		err := count.AddDiffContent(dj.Txs)
+		if errors.Is(err, types.ErrDecodeLimit) {
+			return fmt.Errorf("%w across diffs", err)
+		}
+		if err != nil {
+			return fmt.Errorf("decode diff %d: %w", i, err)
+		}
+	}
+	return nil
+}
+
 var diffTxsField = (&rpcpb.Diff{}).ProtoReflect().Descriptor().Fields().ByName("txs").Number()
 
 // CheckDiffsPayload counts the Diff messages in field diffsField of an encoded
-// request, and the txs and tx entries inside them, before proto.Unmarshal
-// allocates them. Txs in txFields draw on the same budget.
-func CheckDiffsPayload(b []byte, diffsField protowire.Number, txFields ...protowire.Number) error {
+// request, and the txs and tx entries inside them, against lim before
+// proto.Unmarshal allocates them. Txs in txFields draw on the same budget.
+func CheckDiffsPayload(b []byte, lim DiffLimits, diffsField protowire.Number, txFields ...protowire.Number) error {
 	diffs := 0
-	var count types.TxCount
+	count := types.TxCount{Limits: lim.DecodeLimits}
 	err := walkFields(b, func(num protowire.Number, v []byte) error {
 		if slices.Contains(txFields, num) {
 			return limitOnly(count.AddTx(v))
@@ -31,8 +74,8 @@ func CheckDiffsPayload(b []byte, diffsField protowire.Number, txFields ...protow
 		if num != diffsField {
 			return nil
 		}
-		if diffs++; diffs > MaxDecodedDiffs {
-			return fmt.Errorf("%w: more than %d diffs", types.ErrDecodeLimit, MaxDecodedDiffs)
+		if diffs++; diffs > lim.Diffs {
+			return lim.tooManyDiffs()
 		}
 		return walkFields(v, func(num protowire.Number, v []byte) error {
 			if num != diffTxsField {

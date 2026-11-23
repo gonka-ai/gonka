@@ -600,7 +600,7 @@ func TestChallengeCatchUpPageIsGzipped(t *testing.T) {
 			require.Len(t, core.req.Diffs, 1)
 			require.Equal(t, transport.DiffWireTxs(wire.Nonce, world.stored), core.req.Diffs[0].Txs)
 
-			decoded, err := transport.DiffsFromJSON(core.req.Diffs)
+			decoded, err := transport.DiffsFromJSON(core.req.Diffs, transport.PageLimits)
 			require.NoError(t, err)
 			require.Len(t, decoded, 1)
 			require.Equal(t, world.root(t, world.diff), world.root(t, decoded[0]))

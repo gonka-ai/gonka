@@ -19,7 +19,7 @@ func TestSessionHandler_RefusesOverCountDiffsBeforeDecode(t *testing.T) {
 			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyTimeoutRequest{Diffs: diffs})), env.token))
 		return err
 	}
-	tooMany := make([]*rpcpb.Diff, transport.MaxDecodedDiffs+1)
+	tooMany := make([]*rpcpb.Diff, transport.CatchUpMaxDiffs+1)
 	for i := range tooMany {
 		tooMany[i] = &rpcpb.Diff{}
 	}
@@ -27,7 +27,7 @@ func TestSessionHandler_RefusesOverCountDiffsBeforeDecode(t *testing.T) {
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "decode limit")
 
-	bomb := bytes.Repeat([]byte{0x12, 0x00}, 65537) // empty txs
+	bomb := bytes.Repeat([]byte{0x12, 0x00}, transport.CatchUpLimits.Txs+1) // empty txs
 	err = call([]*rpcpb.Diff{{Nonce: 1, Txs: bomb}})
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
 	require.Contains(t, err.Error(), "decode limit")
@@ -35,9 +35,23 @@ func TestSessionHandler_RefusesOverCountDiffsBeforeDecode(t *testing.T) {
 	_, err = env.session.VerifyErrorMiss(context.Background(), withSession(
 		connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.VerifyErrorMissRequest{Diffs: tooMany})), env.token))
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
-	_, err = env.session.ChallengeReceipt(context.Background(), withSession(
-		connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{Diffs: tooMany})), env.token))
+
+	// ChallengeReceipt keeps the page limits.
+	receipt := func(diffs []*rpcpb.Diff) error {
+		_, err := env.session.ChallengeReceipt(context.Background(), withSession(
+			connect.NewRequest(env.signedEnvelope(t, "escrow-1", &rpcpb.ChallengeReceiptRequest{Diffs: diffs})), env.token))
+		return err
+	}
+	page := make([]*rpcpb.Diff, transport.MaxDecodedDiffs+1)
+	for i := range page {
+		page[i] = &rpcpb.Diff{}
+	}
+	err = receipt(page)
 	require.Equal(t, connect.CodeInvalidArgument, connect.CodeOf(err))
+	require.Contains(t, err.Error(), "decode limit")
+	if err := receipt(tooMany); err != nil {
+		require.NotContains(t, err.Error(), "decode limit")
+	}
 
 	require.NoError(t, call(tooMany[:1]))
 }

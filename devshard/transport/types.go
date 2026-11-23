@@ -162,23 +162,13 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 	})
 }
 
-// DiffsFromJSON decodes a challenge / verify diffs list.
-func DiffsFromJSON(djs []DiffJSON) ([]types.Diff, error) {
+// DiffsFromJSON decodes a challenge / verify diffs list within lim.
+func DiffsFromJSON(djs []DiffJSON, lim DiffLimits) ([]types.Diff, error) {
 	if len(djs) == 0 {
 		return nil, nil
 	}
-	if len(djs) > MaxDecodedDiffs {
-		return nil, fmt.Errorf("%w: more than %d diffs", types.ErrDecodeLimit, MaxDecodedDiffs)
-	}
-	var count types.TxCount
-	for i, dj := range djs {
-		err := count.AddDiffContent(dj.Txs)
-		if errors.Is(err, types.ErrDecodeLimit) {
-			return nil, fmt.Errorf("%w across diffs", err)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("decode diff %d: %w", i, err)
-		}
+	if err := countDiffsJSON(djs, lim); err != nil {
+		return nil, err
 	}
 	diffs := make([]types.Diff, 0, len(djs))
 	for i, dj := range djs {
@@ -214,6 +204,9 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 
 // HostRequestFromJSON converts an InferenceRequest back to HostRequest.
 func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
+	if err := countDiffsJSON(ir.Diffs, CatchUpLimits); err != nil {
+		return host.HostRequest{}, err
+	}
 	diffs := make([]types.Diff, len(ir.Diffs))
 	for i, dj := range ir.Diffs {
 		d, err := DiffFromJSON(dj)

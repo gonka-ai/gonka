@@ -21,6 +21,22 @@ const MaxDecodedTxEntries = 1 << 20
 
 var ErrDecodeLimit = errors.New("decode limit")
 
+// DecodeLimits are the tx and entry budgets of one peer message. The zero
+// value means PageDecodeLimits.
+type DecodeLimits struct {
+	Txs     int
+	Entries int
+}
+
+// PageDecodeLimits fit a full challenge page.
+var PageDecodeLimits = DecodeLimits{Txs: MaxDecodedTxs, Entries: MaxDecodedTxEntries}
+
+// Scaled returns l for a message of diffs diffs instead of pageDiffs.
+func (l DecodeLimits) Scaled(diffs, pageDiffs int) DecodeLimits {
+	scale := func(n int) int { return (n*diffs + pageDiffs - 1) / pageDiffs }
+	return DecodeLimits{Txs: scale(l.Txs), Entries: scale(l.Entries)}
+}
+
 // DiffWire is one diff with its transactions still encoded. Txs is a
 // DiffContent encoding: the stored txs_proto has no nonce field, the wire
 // form has one. DecodeDiffWire ignores the nonce inside Txs and uses Nonce.
@@ -58,6 +74,14 @@ func DecodeDiffWire(w DiffWire) (Diff, error) {
 type TxCount struct {
 	Txs     int
 	Entries int
+	Limits  DecodeLimits
+}
+
+func (c *TxCount) limits() DecodeLimits {
+	if c.Limits == (DecodeLimits{}) {
+		return PageDecodeLimits
+	}
+	return c.Limits
 }
 
 // txEntryFields maps a DevshardTx field to the repeated field of the message
@@ -80,22 +104,29 @@ func (c *TxCount) AddDiffContent(b []byte) error {
 	})
 }
 
-// AddTx counts one DevshardTx encoding.
+// AddTx counts one DevshardTx encoding. A single votes or sync_vector list
+// holds one entry per slot, so it is refused above MaxGroupSize.
 func (c *TxCount) AddTx(b []byte) error {
-	if c.Txs++; c.Txs > MaxDecodedTxs {
-		return fmt.Errorf("%w: more than %d txs", ErrDecodeLimit, MaxDecodedTxs)
+	lim := c.limits()
+	if c.Txs++; c.Txs > lim.Txs {
+		return fmt.Errorf("%w: more than %d txs", ErrDecodeLimit, lim.Txs)
 	}
+	// A message field repeated on the wire is merged, its lists appended.
+	perList := map[protowire.Number]int{}
 	return eachField(b, func(num protowire.Number, v []byte) error {
 		inner, ok := txEntryFields[num]
 		if !ok {
 			return nil
 		}
-		return eachField(v, func(num protowire.Number, _ []byte) error {
-			if num != inner {
+		return eachField(v, func(n protowire.Number, _ []byte) error {
+			if n != inner {
 				return nil
 			}
-			if c.Entries++; c.Entries > MaxDecodedTxEntries {
-				return fmt.Errorf("%w: more than %d vote or sync_vector entries in txs", ErrDecodeLimit, MaxDecodedTxEntries)
+			if perList[num]++; perList[num] > MaxGroupSize {
+				return fmt.Errorf("%w: more than %d entries in one vote or sync_vector list", ErrDecodeLimit, MaxGroupSize)
+			}
+			if c.Entries++; c.Entries > lim.Entries {
+				return fmt.Errorf("%w: more than %d vote or sync_vector entries in txs", ErrDecodeLimit, lim.Entries)
 			}
 			return nil
 		})

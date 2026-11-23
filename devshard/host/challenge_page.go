@@ -16,6 +16,9 @@ const (
 	// ChallengeDiffWireOverhead is the allowance, per diff, for the nonce,
 	// user signature, post-state root, and proto tags on top of txs_proto.
 	ChallengeDiffWireOverhead = 128
+	// CatchUpChunkSize is the most diffs a gateway sends a host in one
+	// catch-up, chat or verify request.
+	CatchUpChunkSize = 200
 )
 
 // PackChallengePage returns how many leading sizes form one challenge page.

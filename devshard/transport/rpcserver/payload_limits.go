@@ -24,8 +24,8 @@ var (
 
 // checkDiffsPayload and checkTxsPayload run before unmarshalPayload, so an
 // over-count request is refused before its objects are allocated.
-func checkDiffsPayload(payload []byte, field protowire.Number, txFields ...protowire.Number) error {
-	if err := transport.CheckDiffsPayload(payload, field, txFields...); err != nil {
+func checkDiffsPayload(payload []byte, lim transport.DiffLimits, field protowire.Number, txFields ...protowire.Number) error {
+	if err := transport.CheckDiffsPayload(payload, lim, field, txFields...); err != nil {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	return nil

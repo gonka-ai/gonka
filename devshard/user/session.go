@@ -2230,7 +2230,7 @@ func (s *Session) refreshPendingTxsFromHost(ctx context.Context, h physicalHost,
 // request. Large sessions can accumulate hundreds of diffs; sending them all
 // at once risks timeouts and oversized request bodies. Chunking lets the host
 // replay state incrementally and the proxy bail out early if any chunk fails.
-const catchUpChunkSize = 200
+const catchUpChunkSize = host.CatchUpChunkSize
 
 // catchUpChunkTimeout is the per-chunk timeout for sendCatchUp. Each chunk
 // of 200 diffs gets its own deadline so large catch-ups (thousands of diffs)

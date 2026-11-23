@@ -78,6 +78,41 @@ func TestTxCountNestedEntries(t *testing.T) {
 	require.Len(t, d.Txs[0].GetTimeoutInference().Votes, MaxGroupSize)
 }
 
+func TestTxCountPerListCap(t *testing.T) {
+	var c TxCount
+	require.NoError(t, c.AddTx(voteTx(MaxGroupSize)))
+	require.ErrorIs(t, c.AddTx(voteTx(MaxGroupSize+1)), ErrDecodeLimit)
+
+	sync := func(n int) []byte { // heartbeat.sync_vector
+		return protowire.AppendBytes([]byte{0x52}, bytes.Repeat([]byte{0x32, 0x00}, n))
+	}
+	miss := func(n int) []byte { // error_miss.votes
+		return protowire.AppendBytes([]byte{0x72}, bytes.Repeat([]byte{0x12, 0x00}, n))
+	}
+	for _, tx := range []func(int) []byte{sync, miss} {
+		c = TxCount{}
+		require.NoError(t, c.AddTx(tx(MaxGroupSize)))
+		require.ErrorIs(t, c.AddTx(tx(MaxGroupSize+1)), ErrDecodeLimit)
+	}
+
+	// The same message field twice in one tx is merged into one list.
+	half := voteTx(MaxGroupSize/2 + 1)
+	c = TxCount{}
+	require.ErrorIs(t, c.AddTx(append(append([]byte{}, half...), half...)), ErrDecodeLimit)
+}
+
+func TestDecodeLimitsScaled(t *testing.T) {
+	require.Equal(t, DecodeLimits{Txs: 1608, Entries: 201 * MaxGroupSize}, PageDecodeLimits.Scaled(201, 8192))
+	require.Equal(t, PageDecodeLimits, PageDecodeLimits.Scaled(8192, 8192))
+
+	c := TxCount{Limits: DecodeLimits{Txs: 2, Entries: 3}}
+	require.NoError(t, c.AddDiffContent(diffOf(voteTx(2))))
+	require.ErrorIs(t, c.AddDiffContent(diffOf(voteTx(2))), ErrDecodeLimit)
+	c = TxCount{Limits: DecodeLimits{Txs: 2, Entries: 3}}
+	require.NoError(t, c.AddDiffContent(emptyTxs(2)))
+	require.ErrorIs(t, c.AddDiffContent(emptyTxs(1)), ErrDecodeLimit)
+}
+
 func TestTxEntryFieldsMatchProto(t *testing.T) {
 	tx := (&DevshardTx{}).ProtoReflect().Descriptor().Fields()
 	want := map[protowire.Number]protowire.Number{}
