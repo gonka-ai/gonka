@@ -9,6 +9,7 @@ import (
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/metrics"
 	"devshard/cmd/gateway/nonces"
+	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 )
 
@@ -130,6 +131,26 @@ func (r nonceAccountedRaces) RecordTimeout(event engine.TimeoutEvent) {
 // RecordClassifyOverflow passes straight through: an overflowing classifier says nothing about a nonce.
 func (r nonceAccountedRaces) RecordClassifyOverflow(participant, model string) {
 	r.recorder.RecordClassifyOverflow(participant, model)
+}
+
+type timeoutSink interface {
+	RecordTimeout(event engine.TimeoutEvent)
+}
+
+func sweptTimeouts(sink timeoutSink) func(escrowID, model, participant string, vote registry.SweptVote) {
+	if sink == nil {
+		return nil
+	}
+	return func(escrowID, model, participant string, vote registry.SweptVote) {
+		event := engine.TimeoutEvent{
+			EscrowID: escrowID, Model: model, Participant: participant, Nonce: vote.Nonce, Kind: engine.TimeoutKindExecution,
+			Action: engine.TimeoutActionSkipped, Reason: engine.TimeoutReasonUnvoteable,
+		}
+		if !vote.Unvoteable {
+			event.Action, event.Reason = engine.TimeoutOutcome(engine.TimeoutVote{Detail: vote.Detail}, vote.Err, false)
+		}
+		sink.RecordTimeout(event)
+	}
 }
 
 // probeVotes counts a warmup vote like a race vote and hands it to the ledger without a race vote's line. See README.md, "Two readers of one fact".

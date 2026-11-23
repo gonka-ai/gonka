@@ -284,6 +284,7 @@ func Load() (Values, error) {
 	readString("DEVSHARD_ESCROW_ROTATION_MODELS_JSON", &values.RotationModelsJSON)
 	readStrictInt("GATEWAY_MATCH_WAIT_MS", &values.MatchWaitMS)
 	readStrictInt("GATEWAY_MAX_CONSECUTIVE_BURNS", &values.MaxConsecutiveBurns)
+	readStrictInt("GATEWAY_MAX_BURNS_PER_REQUEST", &values.MaxBurnsPerRequest)
 	readStrictInt("GATEWAY_DISPATCH_QUEUE_DEPTH", &values.DispatchQueueDepth)
 	readStrictBool("GATEWAY_FORCE_UPSTREAM_STREAMING", &values.ForceUpstreamStreaming)
 	readStrictBool("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", &values.LogprobsOptimization)
@@ -350,6 +351,7 @@ func Load() (Values, error) {
 	readStrictInt("GATEWAY_ENGINE_LOSER_GRACE_MS", &values.EngineLoserGraceMS)
 	readStrictInt("GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES", &values.EngineMaxConcurrentTimeoutVotes)
 	readStrictInt("GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS", &values.EngineHedgeFirstTokenFloorMS)
+	readStrictInt("GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST", &values.EngineMaxStartedAttemptsPerRequest)
 
 	readLenientBool("DEVSHARD_ENABLE_CONTENTION_PROFILES", &values.ContentionProfiles)
 

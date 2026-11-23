@@ -33,6 +33,7 @@ func (c *raceCoordinator) requestProfile(params any) scheduler.RequestProfile {
 		OutputTokens:      int(c.request.OutputTokens),
 		Exclude:           c.excluded,
 		Params:            params,
+		Burns:             c.burns,
 	}
 }
 
@@ -93,12 +94,29 @@ func (c *raceCoordinator) applyPick(result pickedHost) {
 	case err != nil:
 		c.reportUnfilledPick(err)
 		c.startErr, c.moreImmediate = err, 0
+		c.burnCapReached = c.burnCapReached || errors.Is(err, scheduler.ErrRequestCapped)
 	case c.cancelled || c.retryRuledOut:
 		c.strand(assignment, RoleSpeculative)
 	default:
 		c.launch(assignment, RoleSpeculative, c.pickReason)
 	}
 	c.startNextImmediate()
+}
+
+func (c *raceCoordinator) refusedByCap() bool {
+	if c.retryRuledOut {
+		return false
+	}
+	plan := c.plan()
+	if c.burnCapReached {
+		return !slices.ContainsFunc(plan.Attempts, func(attempt EscalationAttempt) bool { return attempt.answered() })
+	}
+	if !c.attemptCapped || len(c.attempts) < c.attemptLimit {
+		return false
+	}
+	plan.Limit = c.target.HostCount()
+	_, wanted := plan.escalation(c.deps.Now())
+	return wanted
 }
 
 // reportUnfilledPick traces an escalation that reached no attempt; only the race itself cancels a pick, and that is no refusal.
@@ -163,6 +181,7 @@ func (c *raceCoordinator) launch(assignment scheduler.Assignment, role AttemptRo
 	c.traceStep(RaceStep{
 		Kind: RaceStepNonceCommitted, RequestID: c.request.RequestID, EscrowID: assignment.Escrow, Nonce: nonce,
 		Participant: attempt.participant, Slot: attempt.hostIdx, Role: role, Reason: string(startReason),
+		InputBytes: c.request.InputBytes, MaxTokens: c.request.OutputTokens,
 	})
 
 	go runAttempt(attemptCtx, AttemptSpec{

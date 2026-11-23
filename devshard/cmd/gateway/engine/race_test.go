@@ -32,6 +32,7 @@ type stubPicker struct {
 	profiles []scheduler.RequestProfile
 	hold     chan struct{}
 	parked   chan struct{}
+	refusal  error
 }
 
 func (p *stubPicker) Pick(ctx context.Context, profile scheduler.RequestProfile) (scheduler.Assignment, error) {
@@ -46,6 +47,9 @@ func (p *stubPicker) Pick(ctx context.Context, profile scheduler.RequestProfile)
 	hold, parked := p.hold, p.parked
 	p.mu.Unlock()
 
+	if hold == nil && p.refusal != nil {
+		return scheduler.Assignment{}, p.refusal
+	}
 	if hold == nil {
 		return scheduler.Assignment{}, scheduler.ErrNoAvailableHost
 	}
@@ -312,6 +316,14 @@ func (markerClassifier) Classify(chunk []byte) chunkFacts {
 			ErrorMessage:      vllmContextTotalMessage,
 			CapabilityRefused: true,
 		}
+	case bytes.Contains(chunk, []byte("unprocessable-request")):
+		return chunkFacts{
+			Error:        true,
+			ErrorSource:  "error.UnprocessableEntityError",
+			ErrorCode:    "422",
+			ErrorType:    "UnprocessableEntityError",
+			ErrorMessage: "unprocessable",
+		}
 	case bytes.Contains(chunk, []byte("malformed-request")):
 		return chunkFacts{
 			Error:        true,
@@ -482,7 +494,7 @@ func (l *slotLedger) OnResult(result limits.Result) {
 	l.verdicts <- windowMove{participant: result.Participant, verdict: result.Verdict}
 }
 
-func (l *slotLedger) CountRefusalIfIdle(string, string) {}
+func (l *slotLedger) CountRefusalIfIdle(string, string, time.Time) {}
 
 type recordingSink struct {
 	mu      sync.Mutex

@@ -129,6 +129,10 @@ type changeParticipants struct {
 
 type moveChain struct{ move func(*fakeChain) }
 
+type holdNonceDraws struct{ escrowID func(*gatewayHarness) string }
+
+type releaseNonceDraws struct{ escrowID func(*gatewayHarness) string }
+
 // restartGateway shuts the gateway down and composes it again on the same store directory, chain and hosts; work the shutdown abandoned dies with the process.
 type restartGateway struct {
 	whileDown expectThat
@@ -582,6 +586,14 @@ func (step changeParticipants) apply(harness *gatewayHarness) {
 }
 
 func (step moveChain) apply(harness *gatewayHarness) { step.move(harness.chain) }
+
+func (step holdNonceDraws) apply(harness *gatewayHarness) {
+	harness.fleet.holdNonceDraws(step.escrowID(harness))
+}
+
+func (step releaseNonceDraws) apply(harness *gatewayHarness) {
+	harness.fleet.releaseNonceDraws(step.escrowID(harness))
+}
 
 func (step restartGateway) apply(harness *gatewayHarness) {
 	harness.replacedEngines = append(harness.replacedEngines, harness.currentGateway().Races())

@@ -15,7 +15,8 @@ func renderRaceStep(lines logSink, step *engine.RaceStep) {
 	case engine.RaceStepNonceCommitted:
 		lines.Info("nonce committed",
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Nonce, step.Nonce,
-			logkey.Host, logkey.ShortHost(step.Participant), logkey.Slot, step.Slot, logkey.Role, string(step.Role), logkey.Reason, step.Reason)
+			logkey.Host, logkey.ShortHost(step.Participant), logkey.Slot, step.Slot, logkey.Role, string(step.Role), logkey.Reason, step.Reason,
+			logkey.InputBytes, step.InputBytes, logkey.MaxTokens, step.MaxTokens)
 	case engine.RaceStepEscalationUnfilled:
 		lines.Info("escalation unfilled",
 			logkey.Request, step.RequestID, logkey.Escrow, step.EscrowID, logkey.Reason, step.Reason,
@@ -98,9 +99,6 @@ func appendEmptyAnswerFields(fields []any, outcome *engine.AttemptOutcome) []any
 	if outcome.FinishReason != "" {
 		fields = append(fields, logkey.FinishReason, outcome.FinishReason)
 	}
-	if outcome.UsagePromptTokens > 0 {
-		fields = append(fields, logkey.UsagePromptTokens, outcome.UsagePromptTokens)
-	}
 	if outcome.LogprobTokens > 0 {
 		fields = append(fields, logkey.LogprobTokens, outcome.LogprobTokens)
 	}
@@ -114,6 +112,9 @@ func appendAttemptDeliveryFields(fields []any, outcome *engine.AttemptOutcome) [
 		logkey.StreamChunks, outcome.StreamChunks,
 		logkey.OutputBytes, outcome.OutputBytes,
 		logkey.UsageTokens, outcome.UsageCompletionTokens)
+	if outcome.UsagePromptTokens > 0 {
+		fields = append(fields, logkey.UsagePromptTokens, outcome.UsagePromptTokens)
+	}
 	if outcome.MaxChunkGap > 0 {
 		fields = append(fields,
 			logkey.MaxGapMS, outcome.MaxChunkGap.Milliseconds(),

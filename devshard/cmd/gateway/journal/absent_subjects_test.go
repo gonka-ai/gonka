@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/scheduler"
 )
@@ -35,7 +36,7 @@ func TestARequestThatReachedNoEscrowNamesNoEscrowAndNoHost(t *testing.T) {
 
 	lines.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
 		"request", "request-1", "model", "qwen", "api_key_id", "acf99d94", "stream", true,
-		"input_tokens", uint64(0), "output_tokens", int64(0),
+		"input_tokens", uint64(0), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(0),
 		"outcome", "failed_before_first_byte", "bytes", int64(0), "terminated", false, "duration_ms", int64(1000),
 		"error", "every attempt failed",
 	}})
@@ -64,7 +65,7 @@ func TestARequestNobodyWonNamesEveryHostItTried(t *testing.T) {
 
 	lines.RequireLine(t, logcapture.Entry{Level: "warn", Msg: "request finished", Fields: []any{
 		"request", "request-2", "model", "qwen", "api_key_id", "acf99d94", "escrow", "escrow-1", "stream", true,
-		"input_tokens", uint64(12), "output_tokens", int64(0), "hosts", "aaaaaaaa,bbbbbbbb",
+		"input_tokens", uint64(12), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(0), "hosts", "aaaaaaaa,bbbbbbbb",
 		"outcome", "failed_before_first_byte", "bytes", int64(0), "terminated", false, "duration_ms", int64(2000),
 		"error", "every attempt failed",
 	}})
@@ -92,7 +93,7 @@ func TestARequestWithAWinnerNamesOnlyTheWinner(t *testing.T) {
 
 	lines.RequireLine(t, logcapture.Entry{Level: "info", Msg: "request finished", Fields: []any{
 		"request", "request-3", "model", "qwen", "api_key_id", "acf99d94", "escrow", "escrow-1", "stream", true,
-		"input_tokens", uint64(12), "output_tokens", int64(40), "host", "bbbbbbbb",
+		"input_tokens", uint64(12), "input_tokens_source", string(filters.InputTokensBytesEstimate), "output_tokens", int64(40), "host", "bbbbbbbb",
 		"outcome", "served", "bytes", int64(512), "terminated", true, "duration_ms", int64(3000),
 		"nonce_finished", true,
 	}})

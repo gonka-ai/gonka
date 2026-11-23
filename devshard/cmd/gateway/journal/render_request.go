@@ -1,16 +1,18 @@
 package journal
 
 import (
+	"cmp"
 	"strings"
 	"unicode/utf8"
 
 	"devshard/cmd/gateway/engine"
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
 )
 
 // See ../docs/observability.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
 const (
-	loggedFieldSlots    = 34
+	loggedFieldSlots    = 36
 	MaxLoggedErrorBytes = 256
 
 	cacheHitOutcome = "cache_hit"
@@ -21,7 +23,7 @@ func renderRequestFinished(lines logSink, line *RequestLine) {
 	if line.CacheHit {
 		lines.Info("request finished", logkey.Request, line.RequestID, logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID,
 			logkey.Escrow, line.EscrowID, logkey.Stream, line.ClientStream, logkey.InputTokens, line.Outcome.InputTokens,
-			logkey.InputTokensSource, string(line.Outcome.InputTokensSource), logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes)
+			logkey.InputTokensSource, string(cmp.Or(line.Outcome.InputTokensSource, filters.InputTokensBytesEstimate)), logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes)
 		return
 	}
 	fields := requestFinishedFields(line)
@@ -57,6 +59,7 @@ func requestFinishedFields(line *RequestLine) []any {
 	fields = append(fields,
 		logkey.Stream, line.ClientStream,
 		logkey.InputTokens, line.Outcome.InputTokens,
+		logkey.InputTokensSource, string(cmp.Or(line.Outcome.InputTokensSource, filters.InputTokensBytesEstimate)),
 		logkey.OutputTokens, winnerOutputTokens(line.Outcome),
 	)
 	fields = appendHosts(fields, line.Outcome)

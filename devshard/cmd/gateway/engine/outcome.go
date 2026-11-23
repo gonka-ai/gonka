@@ -58,6 +58,7 @@ type AttemptOutcome struct {
 	Suspicious  bool
 
 	StartedAt    time.Time
+	LaunchedAt   time.Time
 	SendTime     time.Time
 	ReceiptTime  time.Time
 	FirstToken   time.Time

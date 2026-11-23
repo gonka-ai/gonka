@@ -7,7 +7,7 @@ import (
 	"devshard/types"
 )
 
-// The backstops, the large-prompt receipt doubling, the attempts a hedged start launches and the measured first-token curve. See README, "Escalation and the deadline ladder" and "Backstops are not tunable".
+// The backstops, the large-prompt receipt doubling, the attempts a hedged start launches, the started-attempt cap that never caps and the measured first-token curve. See README, "Escalation and the deadline ladder" and "Backstops are not tunable".
 const (
 	streamingHardTimeout = min(20*time.Minute, types.DefaultExecutionTimeoutSeconds*time.Second-time.Minute)
 	schedulerPickTimeout = 2 * time.Minute
@@ -16,6 +16,8 @@ const (
 	receiptTimeoutLargePromptMultiplier = 2
 
 	hedgedStartAttempts = 2
+
+	StartedAttemptCapOff = 0
 
 	firstTokenBaseSeconds      = 1.7
 	firstTokenPerTokenSeconds  = 3e-5
@@ -51,6 +53,7 @@ type EscalationPolicy struct {
 	InterChunkStall       time.Duration
 	LoserGrace            time.Duration
 	MaxAttemptsPerRequest int
+	MaxStartedAttempts    int
 	HardTimeout           time.Duration
 	HedgeFirstTokenFloor  time.Duration
 }
@@ -75,6 +78,7 @@ func EscalationPolicyFromConfig(engine config.Engine) EscalationPolicy {
 		InterChunkStall:       time.Duration(engine.InterChunkStallMS) * time.Millisecond,
 		LoserGrace:            time.Duration(engine.LoserGraceMS) * time.Millisecond,
 		MaxAttemptsPerRequest: int(engine.MaxAttemptsPerRequest),
+		MaxStartedAttempts:    int(engine.MaxStartedAttemptsPerRequest),
 		HedgeFirstTokenFloor:  time.Duration(engine.HedgeFirstTokenFloorMS) * time.Millisecond,
 	}
 }
@@ -161,7 +165,14 @@ func (p EscalationPolicy) AttemptLimit(hostCount int, nonceScarce bool) int {
 	if hostCount < 1 || nonceScarce {
 		return 1
 	}
+	if p.capsStartedAttempts(hostCount) {
+		return p.MaxStartedAttempts
+	}
 	return hostCount
+}
+
+func (p EscalationPolicy) capsStartedAttempts(hostCount int) bool {
+	return p.MaxStartedAttempts > StartedAttemptCapOff && p.MaxStartedAttempts < hostCount
 }
 
 func (p EscalationPolicy) NextEscalation(now time.Time, attempts []EscalationAttempt, request EscalationRequest) (ArmedEscalation, bool) {

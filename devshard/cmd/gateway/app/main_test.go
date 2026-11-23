@@ -1222,6 +1222,7 @@ func (s weightlessSession) HostParticipantKeyList() []string { return s.particip
 func (s weightlessSession) Nonce() uint64                    { return 1 }
 func (s weightlessSession) PublishedNonce() uint64           { return 1 }
 func (s weightlessSession) Phase() types.SessionPhase        { return types.PhaseActive }
+func (s weightlessSession) VoteThreshold() uint32            { return 0 }
 func (s weightlessSession) SettlementSignatures(uint64) (map[uint32][]byte, error) {
 	return nil, nil
 }
@@ -1234,6 +1235,7 @@ func (s weightlessSession) SignatureStatus() ([]user.SignatureStatusEntry, uint6
 
 func (s weightlessSession) SignedSlots() map[uint64]types.Bitmap128         { return nil }
 func (s weightlessSession) SnapshotState() types.EscrowState                { return types.EscrowState{} }
+func (s weightlessSession) SnapshotStateNoInferences() types.EscrowState    { return types.EscrowState{} }
 func (s weightlessSession) SealedInferences() int                           { return 0 }
 func (s weightlessSession) SetChainMaxNonce(uint32)                         {}
 func (s weightlessSession) ArmQuietSettle()                                 {}
@@ -1242,8 +1244,8 @@ func (s weightlessSession) Finalize(context.Context) error                  { re
 func (s weightlessSession) FlushSnapshot() error                            { return nil }
 func (s weightlessSession) Close() error                                    { return nil }
 func (s weightlessSession) UserSession() *user.Session                      { return nil }
-func (s weightlessSession) SweepExecutionTimeouts(context.Context, time.Duration, int) user.SweepReport {
-	return user.SweepReport{}
+func (s weightlessSession) SweepExecutionTimeouts(context.Context, time.Duration, int) registry.SweepReport {
+	return registry.SweepReport{}
 }
 
 func (s weightlessSession) SweepBeforeFinalize(context.Context, int) (user.SweepReport, error) {

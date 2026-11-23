@@ -103,6 +103,7 @@ const (
 	TimeoutActionStarted   TimeoutAction = "started"
 	TimeoutActionCompleted TimeoutAction = "completed"
 	TimeoutActionFailed    TimeoutAction = "failed"
+	TimeoutActionDeferred  TimeoutAction = "deferred"
 	TimeoutActionAbandoned TimeoutAction = "abandoned_by_restart"
 
 	TimeoutReasonUnset           TimeoutReason = ""
@@ -115,6 +116,15 @@ const (
 	TimeoutReasonCollectionError TimeoutReason = "timeout_collection_error"
 	TimeoutReasonNotApplied      TimeoutReason = "timeout_not_applied"
 	TimeoutReasonEscrowGone      TimeoutReason = "escrow_gone_from_hosts"
+	TimeoutReasonUnvoteable      TimeoutReason = "unvoteable"
+)
+
+type voteFollowUp int
+
+const (
+	followUpNone voteFollowUp = iota
+	followUpRetry
+	followUpDeferred
 )
 
 // How an attempt ended, as the ledger, the metrics and the logs all name it.

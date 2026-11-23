@@ -37,10 +37,27 @@ func (w *Prober) settleUnfinishedProbe(ctx context.Context, escrowID, model stri
 		})
 		return
 	}
+	if !poster.Voteable(nonce) {
+		unvoteable := event
+		unvoteable.Action, unvoteable.Reason = engine.TimeoutActionSkipped, engine.TimeoutReasonUnvoteable
+		w.recordTimeout(unvoteable)
+		if w.narrator != nil {
+			w.narrator.WarmupVoted(escrowID, nonce, unvoteable.Action, unvoteable.Reason)
+		}
+		return
+	}
 	w.recordTimeout(event)
 
 	posted := event
-	vote, err := poster.SettleTimeout(ctx, engine.TimeoutStep{Nonce: nonce, StartedAt: time.Unix(params.StartedAt, 0)})
+	step := engine.TimeoutStep{Nonce: nonce, StartedAt: time.Unix(params.StartedAt, 0)}
+	vote, err := poster.SettleTimeout(ctx, step)
+	for vote.Deferred {
+		if err = waitUntil(ctx, poster.VoteDeadline(nonce, step.StartedAt)); err != nil {
+			vote = engine.TimeoutVote{}
+			break
+		}
+		vote, err = poster.SettleTimeout(ctx, step)
+	}
 	posted.Action, posted.Reason = engine.TimeoutOutcome(vote, err, false)
 	w.recordTimeout(posted)
 
@@ -52,5 +69,16 @@ func (w *Prober) settleUnfinishedProbe(ctx context.Context, escrowID, model stri
 func (w *Prober) recordTimeout(event engine.TimeoutEvent) {
 	if w.timeouts != nil {
 		w.timeouts.RecordTimeout(event)
+	}
+}
+
+func waitUntil(ctx context.Context, deadline time.Time) error {
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
 	}
 }

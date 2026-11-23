@@ -242,28 +242,23 @@ func TestRelaxedConfirmationPoCFundsTheShortfallOnceAndStops(t *testing.T) {
 
 // Test flow:
 //  1. Before boot, turn confirmation PoC on with poc_mode off, so admission blocks requests; seed one starved escrow and a reserve count of one.
-//  2. Advance two minutes and assert nothing was created and the escrow still serves.
-//  3. Turn confirmation PoC off, advance one minute, and assert the guarantee and the standby were funded with planner reasons (`create reason` at every step).
-func TestStrictConfirmationPoCBlocksEveryPlannerCreate(t *testing.T) {
+//  2. Advance two minutes and assert the snapshot shows requests blocked by the confirmation PoC.
+//  3. Assert the planner funded the guarantee and the standby with planner reasons (`create reason` at every step) and the escrow still serves.
+func TestStrictConfirmationPoCStillFundsTheShortfall(t *testing.T) {
 	spec := plannerSpec()
 	spec.model.reserveCount = 1
 	spec.environment = map[string]string{"DEVSHARD_POC_REQUEST_MODE": config.PoCModeOff}
 	spec.seeded = repeatSeeded(1, 20_000, regularRole)
 	spec.steps = []harnessStep{
 		advance{by: 2 * time.Minute},
-		expectThat{label: "nothing while blocked", verify: func(harness *gatewayHarness) error {
-			if creates := harness.chain.createsOf(testModelID); len(creates) != 0 {
-				return fmt.Errorf("%d creates while confirmation PoC blocked requests, want 0", len(creates))
+		expectThat{label: "funded while requests are blocked", verify: func(harness *gatewayHarness) error {
+			if snapshot := harness.currentGateway().Observer().Snapshot(); !snapshot.RequestsBlocked || snapshot.BlockReason != chain.BlockReasonConfirmationPoC {
+				return fmt.Errorf("snapshot RequestsBlocked %v with reason %q, want blocked by the confirmation PoC", snapshot.RequestsBlocked, snapshot.BlockReason)
+			}
+			if guards, standbys := harness.createdWithReason(testModelID, string(funding.ReasonGuard)), harness.createdWithReason(testModelID, string(funding.ReasonStandby)); guards == 0 || standbys == 0 {
+				return fmt.Errorf("%d guard and %d standby creates inside the confirmation PoC, want both", guards, standbys)
 			}
 			return seededServing(harness)
-		}},
-		moveChain{move: func(blockchain *fakeChain) { blockchain.setConfirmationPoC(false) }},
-		advance{by: time.Minute},
-		expectThat{label: "funded once unblocked", verify: func(harness *gatewayHarness) error {
-			if guards, standbys := harness.createdWithReason(testModelID, string(funding.ReasonGuard)), harness.createdWithReason(testModelID, string(funding.ReasonStandby)); guards == 0 || standbys == 0 {
-				return fmt.Errorf("%d guard and %d standby creates after unblocking, want both", guards, standbys)
-			}
-			return nil
 		}},
 	}
 	runStepsWith(t, spec, func(blockchain *fakeChain) { blockchain.setConfirmationPoC(true) })

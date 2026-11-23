@@ -57,6 +57,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_INTER_CHUNK_STALL_MS` | 30 000 | silence after first content before an attempt is stalled |
 | `GATEWAY_ENGINE_LOSER_GRACE_MS` | 600 000 | how long a loser may keep running after the crown |
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
+| `GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST` | 3 | attempts one request may start in all, hedges and retries included; past it no hedge or retry starts, and the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
 | `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
@@ -64,7 +65,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
 | `GATEWAY_TIMEOUT_SWEEP_BUDGET_PER_TICK` | 8 | execution-timeout votes one tick may retry across every escrow, the most overdue first; `0` turns the sweep off |
 | `GATEWAY_TIMEOUT_SWEEP_GRACE_SECONDS` | 120 | how far past its deadline a nonce must be before the sweep claims it from its own race |
-| `DEVSHARD_POC_REQUEST_MODE` | relaxed | `relaxed` keeps serving through proof-of-compute; `off` refuses new requests while the chain blocks them, and the funding planner creates nothing meanwhile; in `relaxed` the planner funds through a confirmation PoC and pauses only for an epoch PoC |
+| `DEVSHARD_POC_REQUEST_MODE` | relaxed | `relaxed` keeps serving through proof-of-compute; `off` refuses new requests while the chain blocks them; in either mode the funding planner funds through a confirmation PoC and pauses only for an epoch PoC |
 | `GATEWAY_HEIGHT_SYNC_ENABLED` | true | whether the escrow's heartbeat cadence runs. Turn it off for a fleet whose hosts do not carry height sync, or every interval logs a heartbeat it could not stamp ([`docs/escrows.md`](escrows.md), "Height sync") |
 | `DEVSHARD_HEIGHTSYNC_HEARTBEAT` | false | whether a quiet escrow composes heartbeat turns; on only for true/1/on. A finished request's leftovers settle either way ([`docs/escrows.md`](escrows.md), "Height sync") |
 | `DEVSHARD_REQUIRE_HEIGHT_SEED` | true | whether a session chases a host-signed tip from the moment it opens and reports `seed_incomplete` when it cannot. It does not refuse requests — see [`docs/escrows.md`](escrows.md), "Height sync". Off in the e2e stand |
@@ -97,7 +98,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
 | `DEVSHARD_RPC_H2_UPGRADE` | on | whether a session's connection to a host first tries HTTP/2 on the origin of the host's inference URL (h2c on `http`, TLS offering ALPN `gonka-rpc/1` on `https`) and drops to Connect over HTTP/1.1 on the same origin when the host does not speak it; `0`, `false`, `no` or `off` stays on HTTP/1.1 |
 | `DEVSHARD_RPC_GRPC` | off | whether that HTTP/2 connection speaks native gRPC instead of Connect; on only for `1`, `true`, `yes` or `on`, and never used over HTTP/1.1 |
-| `DEVSHARD_RPC_MAX_CONNS_PER_PEER` | 2 561 | the most HTTP connections the gateway keeps open to one host; a value that is not a positive integer falls back to the default without a warning |
+| `DEVSHARD_RPC_MAX_CONNS_PER_PEER` | 2 561 | the most HTTP connections the gateway keeps open to one host, of which at most 128 stay idle and the rest close after use; a value that is not a positive integer falls back to the default without a warning |
 | `DEVSHARD_RPC_ENDPOINTS` | unset | not honoured: every peer method uses Connect, and a set value is logged once as ignored |
 | `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS` | 16 | escrow sessions opened at once while the boot publishes the active escrows ([operations.md](./operations.md), "Boot") |
 | `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` | half of `GOMAXPROCS`, at least 1 | prompts tokenized at once, after the cache lookup and at the context check; a request that finds every slot taken after the cache lookup is not held but carries the byte estimate instead, while the context check waits for a slot ([`request.md`](request.md), "The prompt token count") |
@@ -111,6 +112,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT` | 0 | the per-model budget of input tokens in flight, scaled by capacity, in tokenizer tokens for a request counted with the model's tokenizer and in byte-estimate tokens otherwise ([`request.md`](request.md), "The prompt token count"); `0` is unlimited |
 | `GATEWAY_MATCH_WAIT_MS` | 2 000 | how long a bound nonce waits for a compatible request before it is burned; `0` burns at once, and 5 000 is the most it accepts |
 | `GATEWAY_MAX_CONSECUTIVE_BURNS` | 2 | nonces one escrow may burn in a row before the next one is sent over a full congestion window; `0` never forces a send ([`routing.md`](routing.md), "The forced send") |
+| `GATEWAY_MAX_BURNS_PER_REQUEST` | 16 | nonces one request may burn across all its attempts; an escrow whose walk to a usable host costs more burns than the request has left is not picked, and past it the next binding burns nothing and sends nothing; the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_DISPATCH_QUEUE_DEPTH` | 1 024 | waiters one escrow's dispatcher holds; past it an unpinned request walks to the next escrow, and when every escrow of the model is full it is refused busy (503); 1 to 65 536, read when an escrow's dispatcher starts |
 | `GATEWAY_FORCE_UPSTREAM_STREAMING` | true | whether a non-streaming request is still streamed from the host and assembled by the gateway ([`request.md`](request.md)) |
 | `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` | unset | forces the hosts' logprobs optimization on or off for every inference; unset leaves each host on its own default (`DEVSHARD_LOGPROBS_OPTIMIZATION_ENABLED`, on). The admin override `logprobs_optimization` takes precedence, and removing it falls back to this value |
@@ -121,7 +123,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `GATEWAY_CAPTURE_MAX_BYTES` | 1 GiB | what the capture directory may hold; nothing deletes capture files, so at the cap capture stops until the directory is emptied |
 | `GATEWAY_PERF_CONSECUTIVE_FAIL_THRESHOLD` | 5 | failures in a row that eject a host from routing ([`capacity.md`](capacity.md)) |
 | `GATEWAY_PERF_FAILURE_RATE_THRESHOLD` / `GATEWAY_PERF_FAILURE_RATE_MIN_VOLUME` | 0.15 / 20 | the failure rate that ejects a host, and the volume it must have seen before the rate counts |
-| `GATEWAY_PERF_EJECTION_BASE_SECONDS` / `GATEWAY_PERF_EJECTION_MAX_SECONDS` | 30 / 600 | how long an ejection lasts, the first time and at most |
+| `GATEWAY_PERF_EJECTION_BASE_SECONDS` / `GATEWAY_PERF_EJECTION_MAX_SECONDS` | 30 / 60 | how long an ejection lasts, the first time and at most; the maximum is at least the base and at least `host_cutoff_max_ms` |
 | `GATEWAY_PERF_MAX_EJECTION_FRACTION` / `GATEWAY_PERF_MIN_AVAILABLE_HOSTS` | 0.5 / 4 | the share of a model's hosts that may be ejected at once, and the number that always stays routable |
 | `GATEWAY_PERF_HOST_STALENESS_SECONDS` | 3 600 | how long an unseen host is remembered before its history and its participant-labelled metric series are dropped |
 

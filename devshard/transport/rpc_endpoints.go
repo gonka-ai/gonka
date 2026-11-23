@@ -26,12 +26,15 @@ const (
 	EndpointPayload          = "payload"
 )
 
-// DefaultRPCMaxConnsPerPeer is MaxIdleConnsPerHost / MaxConnsPerHost on a
-// PeerConn. Matches DefaultRPCMaxStreams so concurrent Chats are not
-// queued behind the HTTP/1.1 pool, and so EffectiveMaxStreams is not
-// clamped below the chat cap. Advertised max_streams is still
-// min(MaxStreams, MaxConns) if either env is lowered.
+// DefaultRPCMaxConnsPerPeer is MaxConnsPerHost on a PeerConn. Matches
+// DefaultRPCMaxStreams so concurrent Chats are not queued behind the
+// HTTP/1.1 pool, and so EffectiveMaxStreams is not clamped below the chat
+// cap. Advertised max_streams is still min(MaxStreams, MaxConns) if either
+// env is lowered.
 const DefaultRPCMaxConnsPerPeer = int(DefaultRPCMaxStreams)
+
+// DefaultRPCMaxIdleConnsPerPeer bounds the idle connections a PeerConn keeps per host; a burst's extra sockets close instead of waiting out IdleConnTimeout.
+const DefaultRPCMaxIdleConnsPerPeer = 128
 
 // HostRPCEscrowID is the URL escrow for Watch and live-session Attach
 // renewals. It is not a real escrow: the path keeps /sessions/:id/rpc/ so

@@ -14,16 +14,19 @@ import (
 
 // Tracker's mu guards the host map and the rebuild scratch it reuses. See capacity.md, "Outlier ejection".
 type Tracker struct {
-	mu            sync.Mutex
-	config        *config.Holder
-	hosts         map[hostKey]*hostState
-	liveEjections []liveEjection
-	capability    *capabilityTracker
-	inflight      *inflightGauge
-	now           func() time.Time
-	narrator      hostNarrator
-	lastSweep     time.Time
-	view          atomic.Pointer[map[hostKey]ejectionView]
+	mu               sync.Mutex
+	config           *config.Holder
+	hosts            map[hostKey]*hostState
+	liveEjections    []liveEjection
+	capability       *capabilityTracker
+	inflight         *inflightGauge
+	now              func() time.Time
+	narrator         hostNarrator
+	lastSweep        time.Time
+	resetAt          time.Time
+	rungMemory       map[hostKey]ejectionState
+	unvoteableSource UnvoteableSource
+	view             atomic.Pointer[map[hostKey]ejectionView]
 }
 
 // ejectionView is what a routing decision asks of one host: the capped verdict and the raw one.
@@ -110,6 +113,7 @@ func (t *Tracker) RecordServedMismatch(participant, model string) {
 	t.RecordSample(Sample{ParticipantKey: participant, Model: model, Responsive: false})
 }
 
+// RecordSample drops a sample whose attempt launched before the last ResetHostStats; a sample with no launch time counts on arrival.
 func (t *Tracker) RecordSample(s Sample) {
 	now := t.now()
 	perf := t.config.Load().Perf
@@ -118,10 +122,16 @@ func (t *Tracker) RecordSample(s Sample) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	if s.launchedBefore(t.resetAt) {
+		return
+	}
 	host := t.ensureHostLocked(key, perf)
 	host.perf.recordSample(s, now)
 	ejectedUntilBefore := host.ejection.ejectedUntil
-	newEjectionPolicyFromPerf(perf).evaluate(&host.perf, &host.ejection, now)
+	policy := newEjectionPolicyFromPerf(perf)
+	if policy.evaluate(&host.perf, &host.ejection, now) {
+		t.resumeRungLocked(key, &host.ejection, policy, now)
+	}
 
 	staleness := time.Duration(perf.HostStalenessSeconds) * time.Second
 	evicted := t.evictStaleLocked(now, staleness)
@@ -194,6 +204,29 @@ func (t *Tracker) rebuildEjectedViewLocked(now time.Time, perf config.Perf) {
 		rank++
 	}
 	t.view.Store(&view)
+}
+
+// ResetHostStats forgets every host's history as a restart would and reports how many hosts were withheld; the one thing it keeps is each host's ejection rung, which a host that is unvoteable for its model when it is next ejected resumes at the rung above, after the healing time that has passed. See README.md, "Every restart starts clean".
+func (t *Tracker) ResetHostStats() (withheld int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.rememberRungsLocked()
+	for key, host := range t.hosts {
+		if !host.ejection.wasWithheld {
+			continue
+		}
+		withheld++
+		if t.narrator != nil {
+			t.narrator.HostReturned(key.participant, key.model, host.ejection.ejectionCount)
+		}
+	}
+	t.resetAt = t.now()
+	t.hosts = make(map[hostKey]*hostState)
+	t.liveEjections = t.liveEjections[:0]
+	empty := make(map[hostKey]ejectionView)
+	t.view.Store(&empty)
+	return withheld
 }
 
 func (t *Tracker) ensureHostLocked(key hostKey, perf config.Perf) *hostState {

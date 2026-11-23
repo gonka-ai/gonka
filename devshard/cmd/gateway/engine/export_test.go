@@ -8,6 +8,11 @@ import (
 	"devshard/cmd/gateway/scheduler"
 )
 
+const (
+	tracedInputBytes uint64 = 524_288
+	tracedMaxTokens  uint64 = 4_096
+)
+
 // tracedCoordinator is a paused coordinator on escrow-1 that reports to events, for the Trace hooks below.
 func tracedCoordinator(events raceJournal, attempts ...*liveAttempt) *raceCoordinator {
 	fixture := newRaceFixture(settledPolicy(), 4)
@@ -27,7 +32,7 @@ func widestFinishedOutcome() AttemptOutcome {
 		Completed:    testEpoch.Add(9 * time.Second),
 
 		ContentChunks: 412, StreamChunks: 415, OutputBytes: 61_440,
-		UsageCompletionTokens: 512, HostTerminated: true,
+		UsageCompletionTokens: 512, UsagePromptTokens: 2_048, HostTerminated: true,
 		MaxChunkGap: 1200 * time.Millisecond, MaxChunkGapAt: 310,
 		MeanChunkGap:   21 * time.Millisecond,
 		UpstreamStatus: 502, UpstreamBody: "upstream is down",
@@ -54,6 +59,7 @@ func awaitTracedAttemptDone(t *testing.T, events <-chan AttemptEvent) {
 func TraceNonceCommitted(t *testing.T, events raceJournal) {
 	t.Helper()
 	coordinator := tracedCoordinator(events)
+	coordinator.request.InputBytes, coordinator.request.OutputTokens = tracedInputBytes, tracedMaxTokens
 	coordinator.launch(scheduler.Assignment{
 		Escrow: "escrow-1",
 		Host:   "host-2",

@@ -26,6 +26,8 @@ type RaceStep struct {
 	Slot          int
 	Role          AttemptRole
 	Reason        string
+	InputBytes    uint64
+	MaxTokens     uint64
 	Attempts      int
 	Err           error
 	Rewound       bool

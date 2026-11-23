@@ -6,7 +6,7 @@ import (
 	"time"
 )
 
-// Decision is match's total outcome for one nonce: exactly one of serve, burn, hold, or decline. See rules.md, "1. A committed nonce is always settled".
+// Decision is match's total outcome for one nonce: exactly one of serve, burn, hold, decline or overloaded. See rules.md, "1. A committed nonce is always settled".
 type Decision interface{ isDecision() }
 
 type serve struct {
@@ -18,13 +18,16 @@ type burn struct{ kind GhostKind }
 // hold leaves the bound nonce uncommitted until then, giving a compatible waiter a chance. See README, "The match decision".
 type hold struct{ until time.Time }
 
+type overloaded struct{ waiter *waiter }
+
 // decline gives the nonce back uncommitted: with no live waiter, a burn would name a reason that never happened.
 type decline struct{}
 
-func (serve) isDecision()   {}
-func (burn) isDecision()    {}
-func (hold) isDecision()    {}
-func (decline) isDecision() {}
+func (serve) isDecision()      {}
+func (burn) isDecision()       {}
+func (hold) isDecision()       {}
+func (decline) isDecision()    {}
+func (overloaded) isDecision() {}
 
 // waiter is one request queued on an escrow's dispatcher; handoff guards bound and orders deliver against abandon. See routing.md, "The per-escrow dispatcher".
 type waiter struct {

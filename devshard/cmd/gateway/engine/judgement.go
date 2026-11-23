@@ -123,6 +123,7 @@ func (o RaceOutcome) Sample(a AttemptOutcome) (perf.Sample, SampleExemption) {
 		FirstContent:   a.FirstContentDelay(),
 
 		TimePerOutputToken: TimePerOutputToken(a),
+		LaunchedAt:         a.LaunchedAt,
 	}, SampleRecorded
 }
 

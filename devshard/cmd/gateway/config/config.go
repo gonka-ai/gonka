@@ -189,20 +189,22 @@ type HostPing struct {
 
 // Engine groups race-escalation tuning. See race.md, "Tunables and backstops".
 type Engine struct {
-	ReceiptTimeoutMS          int64
-	FirstTokenFloorMS         int64
-	FirstTokenCeilingMS       int64
-	InterChunkStallMS         int64
-	LoserGraceMS              int64
-	MaxAttemptsPerRequest     int64
-	MaxConcurrentTimeoutVotes int64
-	HedgeFirstTokenFloorMS    int64
+	ReceiptTimeoutMS             int64
+	FirstTokenFloorMS            int64
+	FirstTokenCeilingMS          int64
+	InterChunkStallMS            int64
+	LoserGraceMS                 int64
+	MaxAttemptsPerRequest        int64
+	MaxStartedAttemptsPerRequest int64
+	MaxConcurrentTimeoutVotes    int64
+	HedgeFirstTokenFloorMS       int64
 }
 
-// Scheduler groups nonce-holding tuning; MatchWaitMS of 0 burns an unmatched nonce immediately, and MaxConsecutiveBurns of 0 never forces a send. See routing.md, "The forced send".
+// Scheduler groups nonce-holding tuning; MatchWaitMS of 0 burns an unmatched nonce immediately, MaxConsecutiveBurns of 0 never forces a send and MaxBurnsPerRequest of 0 never caps a request. See routing.md, "The forced send" and "The burn cap of a request".
 type Scheduler struct {
 	MatchWaitMS             int64
 	MaxConsecutiveBurns     int64
+	MaxBurnsPerRequest      int64
 	DispatchQueueDepth      int64
 	WarmNewEscrows          bool
 	ParticipantAllowlist    []string

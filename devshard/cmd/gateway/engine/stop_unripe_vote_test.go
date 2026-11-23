@@ -36,6 +36,8 @@ func (p *frozenFloorPoster) VoteDeadline(uint64, time.Time) time.Time {
 	return postAtOnce
 }
 
+func (p *frozenFloorPoster) Voteable(uint64) bool { return true }
+
 func (p *frozenFloorPoster) SettleTimeout(ctx context.Context, _ TimeoutStep) (TimeoutVote, error) {
 	p.posts.Add(1)
 	p.waits <- struct{}{}
@@ -155,6 +157,8 @@ type releasablePoster struct {
 }
 
 func (p *releasablePoster) VoteDeadline(uint64, time.Time) time.Time { return postAtOnce }
+
+func (p *releasablePoster) Voteable(uint64) bool { return true }
 
 func (p *releasablePoster) SettleTimeout(ctx context.Context, _ TimeoutStep) (TimeoutVote, error) {
 	close(p.started)

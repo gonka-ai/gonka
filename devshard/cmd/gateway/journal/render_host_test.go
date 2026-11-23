@@ -72,6 +72,13 @@ func TestHostTransitionsRenderTheLinesTheirProducersNarrate(t *testing.T) {
 			}},
 		},
 		{
+			name:    "the epoch boundary clears every host's performance state",
+			produce: func(events *Journal) { events.HostStatsReset(464, 40, 3, 2) },
+			want: logcapture.Entry{Level: "info", Msg: "host stats reset at epoch", Fields: []any{
+				"epoch", uint64(464), "pairs", 40, "withheld", 3, "cut_off", 2,
+			}},
+		},
+		{
 			name:    "a half-open probe answers",
 			produce: func(events *Journal) { events.HostCutOffLifted(hostAlpha, "qwen", 0) },
 			want: logcapture.Entry{Level: "info", Msg: "host back after its cut-off", Fields: []any{

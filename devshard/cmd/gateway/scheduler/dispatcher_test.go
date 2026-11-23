@@ -337,13 +337,18 @@ type fakeSnapshots struct {
 	mu       sync.Mutex
 	snapshot chain.PhaseSnapshot
 	calls    int
+	onFetch  func(call int)
 }
 
 func (f *fakeSnapshots) Snapshot() chain.PhaseSnapshot {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.calls++
-	return f.snapshot
+	call, snapshot, onFetch := f.calls, f.snapshot, f.onFetch
+	f.mu.Unlock()
+	if onFetch != nil {
+		onFetch(call)
+	}
+	return snapshot
 }
 
 func (f *fakeSnapshots) set(snapshot chain.PhaseSnapshot) {
@@ -364,6 +369,7 @@ type harnessConfig struct {
 	windowFull          func(string) bool
 	cutOff              func(string) bool
 	maxConsecutiveBurns int64
+	maxBurnsPerRequest  int64
 	ejected             func(string) bool
 	stateBlocked        func(string) bool
 	unthrottled         func(string) bool
@@ -393,6 +399,7 @@ type harness struct {
 	limiter    *fakeLimiter
 	exhausted  *atomic.Pointer[string]
 	burnLimit  *atomic.Int64
+	burnCap    *atomic.Int64
 }
 
 func newHarness(t *testing.T, cfg harnessConfig) *harness {
@@ -423,38 +430,14 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 	var exhausted atomic.Pointer[string]
 	burnLimit := &atomic.Int64{}
 	burnLimit.Store(cfg.maxConsecutiveBurns)
-
-	predicates := func(snapshot chain.PhaseSnapshot) availability {
-		return availability{
-			pocRequired: func(participant string) bool {
-				return snapshot.RequestsBlocked || (cfg.pocRequired != nil && cfg.pocRequired(participant))
-			},
-			congested: func(participant string) blockReason {
-				switch {
-				case cfg.cutOff != nil && cfg.cutOff(participant):
-					return blockCutOff
-				case cfg.windowFull != nil && cfg.windowFull(participant):
-					return blockWindowFull
-				}
-				return blockNone
-			},
-			ejected: func(participant string) bool {
-				return cfg.ejected != nil && cfg.ejected(participant)
-			},
-			stateBlocked: func(participant string) bool {
-				return cfg.stateBlocked != nil && cfg.stateBlocked(participant)
-			},
-			unthrottled: func(participant string) bool {
-				return cfg.unthrottled != nil && cfg.unthrottled(participant)
-			},
-		}
-	}
+	burnCap := &atomic.Int64{}
+	burnCap.Store(cfg.maxBurnsPerRequest)
 
 	dispatcher := newDispatcher(dispatcherDeps{
 		escrowID:   escrowA,
 		session:    session,
 		snapshots:  snapshots,
-		predicates: predicates,
+		predicates: cfg.predicates,
 		acquireSlot: func(participant string, cost limits.TokenCost, overFullWindow bool) (func(), limits.Admission) {
 			if overFullWindow {
 				return limiter.Overdraft(participant, modelA, cost)
@@ -465,6 +448,7 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		now:                 clock.Now,
 		matchWait:           matchWaitWindow,
 		maxConsecutiveBurns: burnLimit.Load,
+		maxBurnsPerRequest:  burnCap.Load,
 		retirementReserve:   func() uint64 { return cfg.retirementReserve },
 		newTimer:            clock.newTimer,
 		submitBuffer:        cmp.Or(cfg.submitBuffer, int(config.Defaults().Scheduler.DispatchQueueDepth)),
@@ -485,6 +469,33 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		snapshots:  snapshots,
 		limiter:    limiter,
 		burnLimit:  burnLimit,
+		burnCap:    burnCap,
+	}
+}
+
+func (cfg harnessConfig) predicates(snapshot chain.PhaseSnapshot) availability {
+	return availability{
+		pocRequired: func(participant string) bool {
+			return snapshot.RequestsBlocked || (cfg.pocRequired != nil && cfg.pocRequired(participant))
+		},
+		congested: func(participant string) blockReason {
+			switch {
+			case cfg.cutOff != nil && cfg.cutOff(participant):
+				return blockCutOff
+			case cfg.windowFull != nil && cfg.windowFull(participant):
+				return blockWindowFull
+			}
+			return blockNone
+		},
+		ejected: func(participant string) bool {
+			return cfg.ejected != nil && cfg.ejected(participant)
+		},
+		stateBlocked: func(participant string) bool {
+			return cfg.stateBlocked != nil && cfg.stateBlocked(participant)
+		},
+		unthrottled: func(participant string) bool {
+			return cfg.unthrottled != nil && cfg.unthrottled(participant)
+		},
 	}
 }
 
@@ -1187,19 +1198,18 @@ func TestFreezeLeavesAnOmittedOptionalPredicateMissing(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a default harness and submit "request-7" stale, excluding `hostB`, the host nonce 1 binds.
+//  1. Build a harness whose `hostB`, the host nonce 1 binds, is ejected, and submit "request-7".
 //  2. Await the reply and assert it lands on `hostA` at nonce 2.
-//  3. Assert the burn was recorded during "request-7", the drain that burned nonce 1.
-func TestABurnNamesTheRequestItsDrainWasServing(t *testing.T) {
-	test := newHarness(t, harnessConfig{})
-	stale := test.clock.Now().Add(-2 * matchWaitWindow)
+//  3. Assert the burn was recorded during "request-7", the request nonce 1 was decided for.
+func TestABurnNamesTheRequestItsNonceWasDecidedFor(t *testing.T) {
+	test := newHarness(t, harnessConfig{ejected: func(participant string) bool { return participant == hostB }})
 
-	queued := test.submitAs(t, "request-7", stale, hostB)
+	queued := test.submitAs(t, "request-7", test.clock.Now())
 
 	wantAssignment(t, awaitReply(t, queued), hostA, 2)
 	test.dispatcher.stop()
 	if got := test.observer.burnRequests(); !slices.Equal(got, []string{"request-7"}) {
-		t.Fatalf("burned during = %v, want the request the drain was serving", got)
+		t.Fatalf("burned during = %v, want the request the nonce was decided for", got)
 	}
 }
 
@@ -1234,14 +1244,15 @@ func TestAWaiterThatLeavesBeforeItsServeBindsDoesNotStallTheQueue(t *testing.T) 
 // Test flow:
 //  1. Submit "request-lost", abandoned right after its nonce is decided, then submit and await "request-next".
 //  2. Assert "request-next" lands on `hostA` at nonce 2.
-//  3. Assert the burn was recorded during "request-lost", the request that left, not the one served next.
+//  3. Assert the burn was recorded during "request-lost", the request that left, not the one served next, and charged to its tally.
 func TestAnAbandonedAssignmentNamesTheRequestThatLeft(t *testing.T) {
 	var abandonOnce sync.Once
 	var lost *waiter
 	test := newHarness(t, harnessConfig{afterDecide: func(HostBinding) {
 		abandonOnce.Do(func() { lost.abandoned.Store(true) })
 	}})
-	lost = newWaiter(RequestProfile{RequestID: "request-lost", Model: modelA}, test.clock.Now())
+	lostTally := &BurnTally{}
+	lost = newWaiter(RequestProfile{RequestID: "request-lost", Model: modelA, Burns: lostTally}, test.clock.Now())
 	if outcome := test.dispatcher.submitWaiter(lost); outcome != submitAccepted {
 		t.Fatalf("submitWaiter on a running dispatcher = %v, want submitAccepted", outcome)
 	}
@@ -1251,6 +1262,9 @@ func TestAnAbandonedAssignmentNamesTheRequestThatLeft(t *testing.T) {
 	wantAssignment(t, awaitReply(t, next), hostA, 2)
 	if got := test.observer.burnRequests(); !slices.Equal(got, []string{"request-lost"}) {
 		t.Fatalf("burned during = %v, want the request that left before its nonce reached it", got)
+	}
+	if !lostTally.Reached(1) {
+		t.Fatal("the nonce spent on the request that left was not charged to it")
 	}
 }
 
@@ -1274,23 +1288,22 @@ func TestAThrottledBurnNamesTheRequestItsSlotWasMeantFor(t *testing.T) {
 }
 
 // Test flow:
-//  1. Submit "request-head" excluding `hostB`, abandoned mid-decide, then submit "request-middle" and "request-tail" also excluding `hostB`, all stale, before starting the dispatcher.
-//  2. Start the dispatcher and await "request-middle" and "request-tail", landing on `hostA` at nonces 2 and 4.
+//  1. Build a harness whose `hostB` is ejected and whose ejection check abandons "request-head" the first time it runs, after the drain's sweep and before the burn's waiter is chosen.
+//  2. Submit "request-head", "request-middle" and "request-tail" before starting the dispatcher, then start it and await "request-middle" and "request-tail", landing on `hostA` at nonces 2 and 4.
 //  3. Assert "request-head" never gets a reply.
-//  4. Assert the recorded burns name "request-middle" then "request-tail", the oldest live waiter each time, skipping the abandoned head.
-func TestABurnSkipsAnAbandonedWaiterAndNamesTheOldestLiveOne(t *testing.T) {
+//  4. Assert the recorded burns name "request-middle" then "request-tail", the burns decided for each, skipping the head that left.
+func TestABurnSkipsAWaiterThatLeftWhileItWasDecided(t *testing.T) {
 	var abandonOnce sync.Once
 	var head *waiter
-	test := newHarness(t, harnessConfig{holdStart: true, afterDecide: func(HostBinding) {
-		abandonOnce.Do(func() { head.abandoned.Store(true) })
+	test := newHarness(t, harnessConfig{holdStart: true, ejected: func(participant string) bool {
+		if participant == hostB {
+			abandonOnce.Do(func() { head.abandoned.Store(true) })
+		}
+		return participant == hostB
 	}})
-	stale := test.clock.Now().Add(-2 * matchWaitWindow)
-	head = newWaiter(RequestProfile{RequestID: "request-head", Model: modelA, Exclude: []string{hostB}}, stale)
-	if outcome := test.dispatcher.submitWaiter(head); outcome != submitAccepted {
-		t.Fatalf("submitWaiter on a running dispatcher = %v, want submitAccepted", outcome)
-	}
-	middle := test.submitAs(t, "request-middle", stale, hostB)
-	tail := test.submitAs(t, "request-tail", stale, hostB)
+	head = test.submitAs(t, "request-head", test.clock.Now())
+	middle := test.submitAs(t, "request-middle", test.clock.Now())
+	tail := test.submitAs(t, "request-tail", test.clock.Now())
 
 	test.dispatcher.start()
 
@@ -1299,7 +1312,7 @@ func TestABurnSkipsAnAbandonedWaiterAndNamesTheOldestLiveOne(t *testing.T) {
 	test.dispatcher.stop()
 	wantNoReply(t, head)
 	if got := test.observer.burnRequests(); !slices.Equal(got, []string{"request-middle", "request-tail"}) {
-		t.Fatalf("burned during = %v, want each burn charged to the oldest live waiter, skipping the abandoned head", got)
+		t.Fatalf("burned during = %v, want each burn charged to the waiter it was decided for, skipping the abandoned head", got)
 	}
 }
 

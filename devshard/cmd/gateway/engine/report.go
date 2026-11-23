@@ -262,6 +262,7 @@ func (c *raceCoordinator) attemptRecord(attempt *liveAttempt) AttemptOutcome {
 		record = c.unreportedOutcome(attempt)
 	}
 	record.StartedAt = c.started
+	record.LaunchedAt = attempt.launchTime
 	record.NonceFinished = attempt.nonceFinished
 	record.PhaseTransitionAborted = c.phaseAborted(attempt, record)
 	record.Terminal = c.racedTerminal(attempt, record)
@@ -270,7 +271,7 @@ func (c *raceCoordinator) attemptRecord(attempt *liveAttempt) AttemptOutcome {
 
 func (c *raceCoordinator) countRefusal(attempt *liveAttempt) {
 	if verdict, moves := c.raceFacts().Verdict(c.attemptRecord(attempt)); moves && verdict == limits.Overload {
-		c.deps.Limiter.CountRefusalIfIdle(attempt.participant, c.request.Model)
+		c.deps.Limiter.CountRefusalIfIdle(attempt.participant, c.request.Model, attempt.launchTime)
 	}
 }
 

@@ -34,6 +34,27 @@ func TestAFailedTimeoutVoteIsLogged(t *testing.T) {
 
 // Test flow:
 //  1. Install a `logcapture` recorder and build a journal.
+//  2. Record a skipped timeout vote whose reason is `TimeoutReasonUnvoteable`.
+//  3. Flush the journal.
+//  4. Assert the logged "timeout vote cannot pass" line names the nonce, host and kind, so each such nonce is reported.
+func TestAnUnvoteableTimeoutIsNamedInTheLog(t *testing.T) {
+	logged := logcapture.Install(t)
+	events := newJournal(t, Settings{})
+
+	events.RecordTimeout(engine.TimeoutEvent{
+		EscrowID: "7", Participant: "gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Model: "qwen",
+		Nonce: 42, Kind: engine.TimeoutKindExecution, Action: engine.TimeoutActionSkipped, Reason: engine.TimeoutReasonUnvoteable,
+	})
+	events.Flush()
+
+	logged.RequireLine(t, logcapture.Entry{Level: "info", Msg: "timeout vote cannot pass", Fields: []any{
+		"escrow", "7", "nonce", uint64(42), "host", "aaaaaaaa", "model", "qwen",
+		"kind", "execution", "reason", "unvoteable",
+	}})
+}
+
+// Test flow:
+//  1. Install a `logcapture` recorder and build a journal.
 //  2. Record a failed timeout vote whose reason is `TimeoutReasonEscrowGone`.
 //  3. Flush the journal.
 //  4. Assert nothing was logged, since the escrow's own transition line already covers it.

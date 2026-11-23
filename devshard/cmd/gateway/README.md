@@ -63,6 +63,7 @@ Each package has a `README.md` that states what the package owns, its contract w
 | [`scheduler/`](./scheduler/README.md) | which escrow, which host, which nonce — and burning the nonces nobody can serve |
 | [`engine/`](./engine/README.md) | the speculative race: attempts, escalation, crowning, streaming, and the votes the losers owe |
 | [`registry/`](./registry/README.md) | the live escrow set and the sessions that dispatch on it |
+| [`quorum/`](./quorum/README.md) | which timeout votes can pass: the arithmetic the vote queue and the sweep share |
 | [`escrow/`](./escrow/README.md) | escrow creation, rotation, depletion, settlement, retirement, crash recovery |
 | [`liquidity/`](./liquidity/README.md) | one escrow's money by class — free, returning, late, stuck — and whether it is full, starved or idle |
 | [`funding/`](./funding/README.md) | one model's planned creates and retires from its money, demand, budget and rate |

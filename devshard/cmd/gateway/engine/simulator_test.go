@@ -258,6 +258,8 @@ func newSimPoster() *simPoster {
 
 func (p *simPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *simPoster) Voteable(uint64) bool { return true }
+
 func (p *simPoster) SettleTimeout(_ context.Context, step TimeoutStep) (TimeoutVote, error) {
 	p.entered <- step.Nonce
 	if p.release != nil {

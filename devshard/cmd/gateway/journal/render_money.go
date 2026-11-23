@@ -19,7 +19,7 @@ func renderBurn(lines logSink, escrowID string, burned scheduler.Burn) {
 		fields = append(fields, logkey.Nonce, burned.Nonce)
 	}
 	fields = append(fields, logkey.Host, logkey.ShortHost(burned.Participant), logkey.Reason, burned.Reason)
-	if burned.RequestID != "" {
+	if burned.RequestID != scheduler.NoRequestID {
 		fields = append(fields, logkey.BurnedDuringRequest, burned.RequestID)
 	}
 	lines.Warn("nonce burned for nobody", fields...)
@@ -31,18 +31,23 @@ func renderBurnBudgetExhausted(lines logSink, escrowID string) {
 
 // renderTimeoutVote reports a vote that never reached the chain, naming its request when it has one. See race.md, "Timeout votes".
 func renderTimeoutVote(lines logSink, vote *engine.TimeoutEvent) {
-	if vote.Action != engine.TimeoutActionFailed || vote.Reason == engine.TimeoutReasonEscrowGone {
-		return
+	switch {
+	case vote.Action == engine.TimeoutActionSkipped && vote.Reason == engine.TimeoutReasonUnvoteable:
+		lines.Info("timeout vote cannot pass", timeoutVoteFields(vote)...)
+	case vote.Action == engine.TimeoutActionFailed && vote.Reason != engine.TimeoutReasonEscrowGone:
+		lines.Warn("timeout vote failed", timeoutVoteFields(vote)...)
 	}
+}
+
+func timeoutVoteFields(vote *engine.TimeoutEvent) []any {
 	fields := make([]any, 0, timeoutVoteFieldSlots)
 	if vote.RequestID != "" {
 		fields = append(fields, logkey.Request, vote.RequestID)
 	}
-	fields = append(fields,
+	return append(fields,
 		logkey.Escrow, vote.EscrowID, logkey.Nonce, vote.Nonce,
 		logkey.Host, logkey.ShortHost(vote.Participant), logkey.Model, vote.Model,
 		logkey.Kind, string(vote.Kind), logkey.Reason, string(vote.Reason))
-	lines.Warn("timeout vote failed", fields...)
 }
 
 // renderProbeRefused names the warmup nonce the ledger refused; nothing else records it.

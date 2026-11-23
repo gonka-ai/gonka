@@ -231,6 +231,7 @@ type schedulerHarness struct {
 	snapshots *fakeSnapshots
 	observer  *recordingObserver
 	clock     *testClock
+	settings  *config.Holder
 }
 
 func newSchedulerHarness(t *testing.T, cfg schedulerConfig) *schedulerHarness {
@@ -269,7 +270,9 @@ func newSchedulerHarness(t *testing.T, cfg schedulerConfig) *schedulerHarness {
 
 	limiter := newFakeLimiter()
 	limiter.window = cfg.hostWindow
+	holder := config.NewHolder(&settings)
 	test := &schedulerHarness{
+		settings:  holder,
 		escrows:   escrows,
 		holds:     holds,
 		weights:   weights,
@@ -292,7 +295,7 @@ func newSchedulerHarness(t *testing.T, cfg schedulerConfig) *schedulerHarness {
 		Limiter:           test.limiter,
 		Perf:              health,
 		Snapshots:         test.snapshots,
-		Config:            config.NewHolder(&settings),
+		Config:            holder,
 		Observer:          test.observer,
 		Now:               test.clock.Now,
 		OnEscrowExhausted: test.exhausted.record,

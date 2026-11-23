@@ -11,6 +11,8 @@ var (
 
 	ErrHostsBusy = errors.New("all hosts are at capacity")
 
+	ErrRequestCapped = errors.New("request reached its cap of burned nonces or attempts")
+
 	ErrAllowlistUnreachable = errors.New("no escrow holds an allowed participant")
 
 	ErrNoEscrowCapacity = errors.New("no escrow capacity")

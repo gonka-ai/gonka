@@ -16,6 +16,7 @@ import (
 type TimeoutPoster interface {
 	SettleTimeout(ctx context.Context, step TimeoutStep) (TimeoutVote, error)
 	VoteDeadline(nonce uint64, startedAt time.Time) time.Time
+	Voteable(nonce uint64) bool
 }
 
 type TimeoutVote struct {
@@ -24,6 +25,7 @@ type TimeoutVote struct {
 	Unjudged      bool
 	VerifyRejects []string
 	Completeness  MissProofCompleteness
+	Deferred      bool
 }
 
 type TimeoutEvent struct {
@@ -137,9 +139,25 @@ func (o RaceOutcome) TimeoutPlan() []TimeoutStep {
 	return steps
 }
 
-// settleSteps reports a posted vote's started event before the post and its result after, and returns the refused votes worth a retry. See README, "Timeout votes".
-func settleSteps(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) []TimeoutStep {
-	var retries []TimeoutStep
+type votePass struct {
+	retries  []TimeoutStep
+	deferred []TimeoutStep
+}
+
+func (p *votePass) take(step TimeoutStep, place voteFollowUp) {
+	switch place {
+	case followUpRetry:
+		p.retries = append(p.retries, step)
+	case followUpDeferred:
+		p.deferred = append(p.deferred, step)
+	}
+}
+
+func (p *votePass) pending() []TimeoutStep { return slices.Concat(p.retries, p.deferred) }
+
+// settleSteps reports a posted vote's started event before the post and its result after, and returns the votes left to retry or defer. See README, "Timeout votes".
+func settleSteps(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) votePass {
+	var pass votePass
 	for _, step := range steps {
 		// A started event for a vote nobody attempts reads as a hung settle when no completion follows.
 		if !step.Post || poster == nil {
@@ -151,11 +169,9 @@ func settleSteps(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep,
 			report(skipped)
 			continue
 		}
-		if postTimeout(ctx, poster, step, escrowMissing, report) {
-			retries = append(retries, step)
-		}
+		pass.take(step, postTimeout(ctx, poster, step, escrowMissing, report))
 	}
-	return retries
+	return pass
 }
 
 var postAtOnce time.Time
@@ -206,26 +222,39 @@ func afterAll(count int, done func()) func() {
 	}
 }
 
-func postTimeouts(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) []TimeoutStep {
-	var retries []TimeoutStep
+func postTimeouts(ctx context.Context, poster TimeoutPoster, steps []TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) votePass {
+	var pass votePass
 	for _, step := range steps {
-		if postTimeout(ctx, poster, step, escrowMissing, report) {
-			retries = append(retries, step)
-		}
+		pass.take(step, postTimeout(ctx, poster, step, escrowMissing, report))
 	}
-	return retries
+	return pass
 }
 
-func postTimeout(ctx context.Context, poster TimeoutPoster, step TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) bool {
+func postTimeout(ctx context.Context, poster TimeoutPoster, step TimeoutStep, escrowMissing bool, report func(TimeoutEvent)) voteFollowUp {
+	if !poster.Voteable(step.Nonce) {
+		unvoteable := step.Event
+		unvoteable.Action, unvoteable.Reason = TimeoutActionSkipped, TimeoutReasonUnvoteable
+		report(unvoteable)
+		return followUpNone
+	}
 	report(step.Event)
 	vote, err := poster.SettleTimeout(ctx, step)
+	if vote.Deferred {
+		deferred := step.Event
+		deferred.Action = TimeoutActionDeferred
+		report(deferred)
+		return followUpDeferred
+	}
 	posted := step.Event
 	posted.Kind = timeoutVoteKind(vote.Kind, posted.Kind)
 	posted.Action, posted.Reason = TimeoutOutcome(vote, err, escrowMissing)
 	posted.VerifyRejects, posted.Completeness = vote.VerifyRejects, vote.Completeness
 	report(posted)
-	return step.Event.Kind == TimeoutKindRefused && posted.Kind == TimeoutKindRefused &&
-		posted.Action == TimeoutActionFailed && !escrowMissing && (vote.Unjudged || !errors.Is(err, user.ErrTimeoutNotApplied))
+	if step.Event.Kind == TimeoutKindRefused && posted.Kind == TimeoutKindRefused &&
+		posted.Action == TimeoutActionFailed && !escrowMissing && (vote.Unjudged || !errors.Is(err, user.ErrTimeoutNotApplied)) {
+		return followUpRetry
+	}
+	return followUpNone
 }
 
 // TimeoutOutcome classifies what a posted vote came back as, preferring the handler's own detail. See README, "Timeout votes".

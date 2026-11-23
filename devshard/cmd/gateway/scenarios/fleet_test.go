@@ -83,8 +83,15 @@ type indexedEscrowSession interface {
 // fleetSessionHandle stops the escrow's cadence and marks its session closed when the gateway closes it.
 type fleetSessionHandle struct {
 	indexedEscrowSession
+	escrowID    string
+	fleet       *hostFleet
 	closed      func()
 	stopCadence func()
+}
+
+func (handle fleetSessionHandle) PrepareInferenceFn(chooser user.ParamsForHost) (*user.PreparedInference, error) {
+	handle.fleet.awaitNonceDraws(handle.escrowID)
+	return handle.indexedEscrowSession.PrepareInferenceFn(chooser)
 }
 
 func (handle fleetSessionHandle) Close() error {
@@ -175,6 +182,9 @@ type hostFleet struct {
 
 	sendsMu sync.Mutex
 	sends   map[string]int
+
+	drawGatesMu sync.Mutex
+	drawGates   map[string]chan struct{}
 }
 
 func newHostFleet(t *testing.T, blockchain *fakeChain, creator *signing.Secp256k1Signer, participants []*signing.Secp256k1Signer, validationRate uint32) *hostFleet {
@@ -185,6 +195,7 @@ func newHostFleet(t *testing.T, blockchain *fakeChain, creator *signing.Secp256k
 		escrows:    map[string]*fleetEscrow{},
 		released:   make(chan struct{}),
 		sends:      map[string]int{},
+		drawGates:  map[string]chan struct{}{},
 	}
 	for _, participant := range participants {
 		fleet.signers[participant.Address()] = participant
@@ -217,6 +228,34 @@ func (f *hostFleet) changeBehaviour(indexes []int, change func(*participantBehav
 }
 
 func (f *hostFleet) release() { f.releaseOnce.Do(func() { close(f.released) }) }
+
+func (f *hostFleet) holdNonceDraws(escrowID string) {
+	f.drawGatesMu.Lock()
+	defer f.drawGatesMu.Unlock()
+	f.drawGates[escrowID] = make(chan struct{})
+}
+
+func (f *hostFleet) releaseNonceDraws(escrowID string) {
+	f.drawGatesMu.Lock()
+	defer f.drawGatesMu.Unlock()
+	if gate, held := f.drawGates[escrowID]; held {
+		close(gate)
+		delete(f.drawGates, escrowID)
+	}
+}
+
+func (f *hostFleet) awaitNonceDraws(escrowID string) {
+	f.drawGatesMu.Lock()
+	gate := f.drawGates[escrowID]
+	f.drawGatesMu.Unlock()
+	if gate == nil {
+		return
+	}
+	select {
+	case <-gate:
+	case <-f.released:
+	}
+}
 
 // serving opens a session as servingSessions does, with a drain cadence standing in for production's heartbeat.
 func (f *hostFleet) serving(_ context.Context, escrowID string) (registry.EscrowSession, error) {
@@ -280,7 +319,7 @@ func (f *hostFleet) open(escrowID string, withCadence bool) (registry.EscrowSess
 		built.open = false
 		return nil, fmt.Errorf("the session handle of %s offers no record reads", escrowID)
 	}
-	return fleetSessionHandle{indexedEscrowSession: handle, closed: closed, stopCadence: stopCadence}, nil
+	return fleetSessionHandle{indexedEscrowSession: handle, escrowID: escrowID, fleet: f, closed: closed, stopCadence: stopCadence}, nil
 }
 
 // startDrainCadence models composeHeartbeatSpan's drain of queued host txs and, on an armedFloor spec, runs the session's heartbeat every 24 s as production does; the harness sends the queued txs every 24 s in one diff.

@@ -31,6 +31,7 @@ import (
 // The Retry-After a shard without room answers with, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
 const (
 	noHostRetryAfter       = time.Second
+	requestCapRetryAfter   = 30 * time.Second
 	maxHostExcerptBytes    = 512
 	noHostExcerpt          = ""
 	invalidUTF8Replacement = ""
@@ -179,7 +180,7 @@ func statusForError(err error) int {
 	if _, ours := rateLimited(err); ours {
 		return http.StatusTooManyRequests
 	}
-	if shardHasNoRoom(err) {
+	if shardHasNoRoom(err) || requestCapped(err) {
 		return http.StatusServiceUnavailable
 	}
 	switch {
@@ -276,6 +277,10 @@ func hostsUnavailable(err error) bool {
 	return errors.Is(err, engine.ErrHostsUnavailable)
 }
 
+func requestCapped(err error) bool {
+	return errors.Is(err, scheduler.ErrRequestCapped)
+}
+
 func shardHasNoRoom(err error) bool {
 	return errors.Is(err, scheduler.ErrHostsBusy) ||
 		errors.Is(err, scheduler.ErrNoEscrowCapacity) ||
@@ -299,6 +304,8 @@ func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {
 		baseMS := s.config.Load().Limits.HostCutoff.BaseMS
 		seconds := int64(math.Ceil(float64(baseMS) / float64(time.Second.Milliseconds())))
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	case requestCapped(err):
+		w.Header().Set("Retry-After", strconv.FormatInt(int64(requestCapRetryAfter.Seconds()), 10))
 	case ours, shardHasNoRoom(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(noHostRetryAfter.Seconds()), 10))
 	}
@@ -309,6 +316,9 @@ func detailForError(err error) errorDetail {
 	var tooLong *ContextLengthError
 	if errors.As(err, &tooLong) {
 		return errorDetail{Message: err.Error(), Type: errorTypeInvalidRequest, Code: errorCodeContextLengthExceeded}
+	}
+	if requestCapped(err) {
+		return errorDetail{Message: hostsOverloadedMessage}
 	}
 	var hostErr *engine.HostApplicationError
 	if errors.As(err, &hostErr) {

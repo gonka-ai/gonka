@@ -215,6 +215,76 @@ func TestForcedStreamingIsOnByDefaultAndTurnedOffWithoutARedeploy(t *testing.T) 
 }
 
 // Test flow:
+//  1. Table-driven: each case configures the per-request burn cap from nothing, from the environment, from a runtime override, from a runtime override winning over the environment, or turned off entirely.
+//  2. For each case, build a config.
+//  3. Assert the scheduler's per-request burn cap matches the case's expectation.
+func TestThePerRequestBurnCapIsReachableWithoutARedeploy(t *testing.T) {
+	tests := []struct {
+		name      string
+		values    env.Values
+		overrides Overrides
+		want      int64
+	}{
+		{name: "nothing configured", want: Defaults().Scheduler.MaxBurnsPerRequest},
+		{name: "set by env", values: env.Values{Tunables: env.Tunables{MaxBurnsPerRequest: int64Pointer(5)}}, want: 5},
+		{name: "set at runtime", overrides: Overrides{Tunables: env.Tunables{MaxBurnsPerRequest: int64Pointer(5)}}, want: 5},
+		{
+			name:      "runtime wins over env",
+			values:    env.Values{Tunables: env.Tunables{MaxBurnsPerRequest: int64Pointer(5)}},
+			overrides: Overrides{Tunables: env.Tunables{MaxBurnsPerRequest: int64Pointer(12)}},
+			want:      12,
+		},
+		{name: "turned off at runtime", overrides: Overrides{Tunables: env.Tunables{MaxBurnsPerRequest: int64Pointer(0)}}, want: 0},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			configuration, err := Build(testCase.values, testCase.overrides)
+			if err != nil {
+				t.Fatalf("Build(): %v", err)
+			}
+			if got := configuration.Scheduler.MaxBurnsPerRequest; got != testCase.want {
+				t.Errorf("scheduler_max_burns_per_request = %d, want %d", got, testCase.want)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Table-driven: each case configures the per-request cap on started attempts from nothing, from the environment, from a runtime override, from a runtime override winning over the environment, or turned off entirely.
+//  2. For each case, build a config.
+//  3. Assert the engine's cap on started attempts matches the case's expectation.
+func TestThePerRequestAttemptCapIsReachableWithoutARedeploy(t *testing.T) {
+	tests := []struct {
+		name      string
+		values    env.Values
+		overrides Overrides
+		want      int64
+	}{
+		{name: "nothing configured", want: 3},
+		{name: "set by env", values: env.Values{Tunables: env.Tunables{EngineMaxStartedAttemptsPerRequest: int64Pointer(5)}}, want: 5},
+		{name: "set at runtime", overrides: Overrides{Tunables: env.Tunables{EngineMaxStartedAttemptsPerRequest: int64Pointer(5)}}, want: 5},
+		{
+			name:      "runtime wins over env",
+			values:    env.Values{Tunables: env.Tunables{EngineMaxStartedAttemptsPerRequest: int64Pointer(5)}},
+			overrides: Overrides{Tunables: env.Tunables{EngineMaxStartedAttemptsPerRequest: int64Pointer(12)}},
+			want:      12,
+		},
+		{name: "turned off at runtime", overrides: Overrides{Tunables: env.Tunables{EngineMaxStartedAttemptsPerRequest: int64Pointer(0)}}, want: 0},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			configuration, err := Build(testCase.values, testCase.overrides)
+			if err != nil {
+				t.Fatalf("Build(): %v", err)
+			}
+			if got := configuration.Engine.MaxStartedAttemptsPerRequest; got != testCase.want {
+				t.Errorf("engine_max_started_attempts_per_request = %d, want %d", got, testCase.want)
+			}
+		})
+	}
+}
+
+// Test flow:
 //  1. Table-driven: each case configures the max-consecutive-burns run length from nothing, from the environment, from a runtime override, from a runtime override winning over the environment, or turned off entirely.
 //  2. For each case, build a config.
 //  3. Assert the scheduler's burn-run length matches the case's expectation.
@@ -261,7 +331,7 @@ func TestEjectionThresholdsAreReachableWithoutARedeploy(t *testing.T) {
 		wantRate      float64
 		wantMaxSecond int64
 	}{
-		{name: "nothing configured", wantRate: 0.15, wantMaxSecond: 600},
+		{name: "nothing configured", wantRate: 0.15, wantMaxSecond: 60},
 		{
 			name:          "set by env",
 			values:        env.Values{Tunables: env.Tunables{PerfFailureRateThreshold: float64Pointer(0.5), PerfEjectionMaxSeconds: int64Pointer(180)}},

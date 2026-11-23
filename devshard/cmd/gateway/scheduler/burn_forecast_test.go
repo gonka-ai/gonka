@@ -84,12 +84,29 @@ func TestTheForecastCountsTheNoncesBetweenTheCursorAndAUsableHost(t *testing.T) 
 			t.Parallel()
 			queued := newWaiter(RequestProfile{Model: modelA, Exclude: testCase.excluded}, time.Time{})
 
-			got := expectedBurns(forecastEscrow(testCase.latestNonce, group...), forecastGates(testCase.blocked...), queued, testCase.queuedAhead)
+			got := expectedBurns(forecastEscrow(testCase.latestNonce, group...), forecastGates(testCase.blocked...), queued, testCase.queuedAhead, 0).burns
 
 			if got != testCase.want {
 				t.Fatalf("expectedBurns = %v, want %v", got, testCase.want)
 			}
 		})
+	}
+}
+
+// Test flow:
+//  1. Build a four-host group walked from `host-0` where `host-0` and `host-1` are blocked, the request excludes `host-1` and `host-2`, and `host-3` is usable.
+//  2. Call `expectedBurns` for that request.
+//  3. Assert the walk prices three burns and charges the request one, since a burn on a host the request excluded is never its own.
+func TestTheForecastChargesTheRequestOnlyTheBurnsOnHostsItDidNotExclude(t *testing.T) {
+	t.Parallel()
+
+	group := []string{"host-0", "host-1", "host-2", "host-3"}
+	queued := newWaiter(RequestProfile{Model: modelA, Exclude: []string{"host-1", "host-2"}}, time.Time{})
+
+	got := expectedBurns(forecastEscrow(3, group...), forecastGates("host-0", "host-1"), queued, 0, 0)
+
+	if want := (burnForecast{burns: 3, charged: 1, usable: true}); got != want {
+		t.Fatalf("expectedBurns = %+v, want %+v", got, want)
 	}
 }
 
@@ -102,10 +119,10 @@ func TestTheForecastIsNeutralWithoutAGroupToWalk(t *testing.T) {
 	t.Parallel()
 	queued := newWaiter(RequestProfile{Model: modelA}, time.Time{})
 
-	if got := expectedBurns(Escrow{ID: "no-session"}, forecastGates(), queued, 0); got != 0 {
+	if got := expectedBurns(Escrow{ID: "no-session"}, forecastGates(), queued, 0, 0).burns; got != 0 {
 		t.Fatalf("expectedBurns without a session = %v, want 0", got)
 	}
-	if got := expectedBurns(forecastEscrow(3), forecastGates(), queued, 0); got != 0 {
+	if got := expectedBurns(forecastEscrow(3), forecastGates(), queued, 0, 0).burns; got != 0 {
 		t.Fatalf("expectedBurns over an empty group = %v, want 0", got)
 	}
 }
@@ -160,41 +177,53 @@ func TestAnEscrowWhoseWholeGroupIsBusyIsStillPicked(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a scheduler with a "burning" candidate whose group forces two burns to reach a usable host, and a "loaded" candidate carrying the table case's active-user count.
+//  1. Build a scheduler with a "burning" candidate whose group forces two burns to reach a usable host and a "loaded" candidate with no burns and the table case's active-user count.
 //  2. Pick an escrow.
-//  3. Assert the picked escrow matches the case: burning is chosen when two burns cost less than three in-flight requests, loaded when they cost more than one.
-func TestABurnCostsTheSameAsARequestAlreadyInFlight(t *testing.T) {
+//  3. Assert the escrow without burns is chosen whatever its load, since load only breaks a tie between equal burns.
+func TestFewerBurnsOutrankALighterLoad(t *testing.T) {
 	t.Parallel()
 
-	testCases := []struct {
-		name              string
-		loadedActiveUsers int
-		want              string
-	}{
-		{name: "two burns are cheaper than three requests in flight", loadedActiveUsers: 3, want: "burning"},
-		{name: "two burns are dearer than one request in flight", loadedActiveUsers: 1, want: "loaded"},
+	for _, loadedActiveUsers := range []int{1, 3, 50} {
+		scheduler, _, _ := newScheduler(
+			candidate{id: "burning", activeUsers: 0, weight: 10, latestNonce: 3, slots: []string{"burning-0", "burning-1", "burning-2", "burning-3"}},
+			candidate{id: "loaded", activeUsers: loadedActiveUsers, weight: 10, latestNonce: 3, slots: []string{"loaded-0", "loaded-1"}},
+		)
+		limiter := scheduler.limiter.(*fakeLimiter)
+		limiter.block("burning-0")
+		limiter.block("burning-1")
+
+		picked, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
+
+		if err != nil {
+			t.Fatalf("pickEscrow: %v", err)
+		}
+		if picked.ID != "loaded" {
+			t.Fatalf("with %d requests in flight picked %q, want loaded", loadedActiveUsers, picked.ID)
+		}
 	}
+}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			t.Parallel()
-			scheduler, _, _ := newScheduler(
-				candidate{id: "burning", activeUsers: 0, weight: 10, latestNonce: 3, slots: []string{"burning-0", "burning-1", "burning-2", "burning-3"}},
-				candidate{id: "loaded", activeUsers: testCase.loadedActiveUsers, weight: 10, latestNonce: 3, slots: []string{"loaded-0", "loaded-1"}},
-			)
-			limiter := scheduler.limiter.(*fakeLimiter)
-			limiter.block("burning-0")
-			limiter.block("burning-1")
+// Test flow:
+//  1. Build a scheduler with two candidates whose next nonce is one burn away from a usable host, one carrying three requests in flight and one carrying none.
+//  2. Pick an escrow.
+//  3. Assert the lighter escrow is chosen, because equal burns leave the load to decide.
+func TestEqualBurnsLeaveTheChoiceToTheLoad(t *testing.T) {
+	t.Parallel()
+	scheduler, _, _ := newScheduler(
+		candidate{id: "busy", activeUsers: 3, weight: 10, latestNonce: 3, slots: []string{"busy-0", "busy-1"}},
+		candidate{id: "idle", activeUsers: 0, weight: 10, latestNonce: 3, slots: []string{"idle-0", "idle-1"}},
+	)
+	limiter := scheduler.limiter.(*fakeLimiter)
+	limiter.block("busy-0")
+	limiter.block("idle-0")
 
-			picked, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
+	picked, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
 
-			if err != nil {
-				t.Fatalf("pickEscrow: %v", err)
-			}
-			if picked.ID != testCase.want {
-				t.Fatalf("picked %q, want %q", picked.ID, testCase.want)
-			}
-		})
+	if err != nil {
+		t.Fatalf("pickEscrow: %v", err)
+	}
+	if picked.ID != "idle" {
+		t.Fatalf("picked %q, want the lighter escrow", picked.ID)
 	}
 }
 
@@ -332,5 +361,42 @@ func TestQueuedWaitersCountAsLoadAnEscrowCarries(t *testing.T) {
 	}
 	if picked.ID != "busy" {
 		t.Fatalf("picked %q, want the escrow with one request in flight over the one with five queued", picked.ID)
+	}
+}
+
+// Test flow:
+//  1. Build "unusable", whose group is one cut-off host, and "usable", whose cursor meets two blocked hosts before an open one.
+//  2. Check the forecast prices "unusable" lower than "usable" and reports it has no host that can take the request.
+//  3. Pick an escrow.
+//  4. Assert "usable" is picked, because an escrow with no usable slot ranks behind every escrow that has one.
+func TestAnEscrowWithNoUsableSlotRanksBehindOneThatServes(t *testing.T) {
+	t.Parallel()
+	scheduler, escrows, _ := newScheduler(
+		candidate{id: "unusable", weight: 10, latestNonce: 3, slots: []string{"cut-off-3"}},
+		candidate{id: "usable", weight: 10, latestNonce: 2, slots: []string{"blocked-0", "blocked-1", "open-2"}},
+	)
+	for _, escrow := range escrows.byModel[modelA] {
+		session := escrow.Session.(*fakeSession)
+		session.participants = session.slots
+	}
+	limiter := scheduler.limiter.(*fakeLimiter)
+	limiter.cutOffHost("cut-off-3")
+	limiter.block("blocked-0")
+	limiter.block("blocked-1")
+	fleet := scheduler.fleetGates(modelA, chain.PhaseSnapshot{})
+	queued := newWaiter(RequestProfile{Model: modelA}, time.Time{})
+	unusable := scheduler.burnsToServe(escrows.byModel[modelA][0], fleet, queued, 0, 0)
+	usable := scheduler.burnsToServe(escrows.byModel[modelA][1], fleet, queued, 0, 0)
+	if unusable.usable || !usable.usable || unusable.burns >= usable.burns {
+		t.Fatalf("forecast unusable=(%d,%v) usable=(%d,%v), want the unusable group priced lower and not serving", unusable.burns, unusable.usable, usable.burns, usable.usable)
+	}
+
+	picked, err := pickWith(scheduler, RequestProfile{Model: modelA}, chain.PhaseSnapshot{})
+
+	if err != nil {
+		t.Fatalf("pickEscrow: %v", err)
+	}
+	if picked.ID != "usable" {
+		t.Fatalf("picked %q, want the escrow that can serve over the one with no usable slot", picked.ID)
 	}
 }

@@ -3,6 +3,8 @@ package warmup
 import (
 	"context"
 	"errors"
+	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -12,15 +14,23 @@ import (
 )
 
 type stubPoster struct {
-	vote  engine.TimeoutKind
-	err   error
-	calls int
+	unvoteable bool
+	vote       engine.TimeoutKind
+	err        error
+	calls      int
+	deferrals  int
 }
 
 func (p *stubPoster) VoteDeadline(uint64, time.Time) time.Time { return time.Time{} }
 
+func (p *stubPoster) Voteable(uint64) bool { return !p.unvoteable }
+
 func (p *stubPoster) SettleTimeout(context.Context, engine.TimeoutStep) (engine.TimeoutVote, error) {
 	p.calls++
+	if p.deferrals > 0 {
+		p.deferrals--
+		return engine.TimeoutVote{Deferred: true}, nil
+	}
 	return engine.TimeoutVote{Kind: p.vote}, p.err
 }
 
@@ -51,6 +61,49 @@ func unfinishedWarmup(poster *stubPoster, timeouts *spyTimeouts, resolved, ackno
 		catchUp: func(context.Context, registry.EscrowSession) error { return nil },
 		stop:    make(chan struct{}),
 		now:     warmupClock(),
+	}
+}
+
+// Test flow:
+//  1. Build a refused warmup whose probe fails and whose poster calls the nonce unvoteable, as a host holding half the slots would.
+//  2. Warm one escrow.
+//  3. Assert no vote was posted and the one recorded event is skipped with the reason `TimeoutReasonUnvoteable`.
+//  4. Assert the narrator was told the nonce ended skipped as unvoteable.
+func TestAWarmupProbeNoRoundCanApplyIsReportedNotVoted(t *testing.T) {
+	poster := &stubPoster{vote: "refused", unvoteable: true}
+	timeouts := &spyTimeouts{}
+	narrator := &recordingWarmupNarrator{}
+	prober := refusedWarmup(poster, timeouts, true)
+	prober.SetNarrator(narrator)
+
+	prober.warm("escrow-1", "model-a")
+
+	if poster.calls != 0 {
+		t.Fatalf("SettleTimeout calls = %d, want none", poster.calls)
+	}
+	if len(timeouts.events) != 1 || timeouts.events[0].Action != engine.TimeoutActionSkipped || timeouts.events[0].Reason != engine.TimeoutReasonUnvoteable {
+		t.Fatalf("events = %+v, want one skipped event named unvoteable", timeouts.events)
+	}
+	if want := fmt.Sprintf("voted escrow-1 nonce 7 %s %s", engine.TimeoutActionSkipped, engine.TimeoutReasonUnvoteable); !slices.Contains(narrator.calls, want) {
+		t.Fatalf("narrator calls = %v, want %q", narrator.calls, want)
+	}
+}
+
+// Test flow:
+//  1. Build a refused warmup whose probe fails and whose poster defers its first vote because the deadline moved.
+//  2. Warm one escrow.
+//  3. Assert the vote was settled again after the deferral, and the recorded outcome is the second round's completed vote, not the deferral read as a success.
+func TestAWarmupVoteTheDeadlineMovedOnIsSettledAgainNotLost(t *testing.T) {
+	poster := &stubPoster{vote: "execution", deferrals: 1}
+	timeouts := &spyTimeouts{}
+
+	refusedWarmup(poster, timeouts, true).warm("escrow-1", "model-a")
+
+	if poster.calls != 2 {
+		t.Fatalf("SettleTimeout calls = %d, want the deferred round and the voting round", poster.calls)
+	}
+	if last := timeouts.events[len(timeouts.events)-1]; last.Action != engine.TimeoutActionCompleted {
+		t.Fatalf("last event action = %q, want %q", last.Action, engine.TimeoutActionCompleted)
 	}
 }
 

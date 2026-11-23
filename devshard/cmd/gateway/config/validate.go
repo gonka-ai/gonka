@@ -30,8 +30,10 @@ const (
 
 	maxMinClientReadBytesPerSecond = 1 << 30
 
-	maxConsecutiveBurns   = 1_000
-	maxDispatchQueueDepth = 65_536
+	maxConsecutiveBurns          = 1_000
+	maxBurnsPerRequest           = 1_000
+	maxStartedAttemptsPerRequest = 1_000
+	maxDispatchQueueDepth        = 65_536
 
 	maxSnapshotAgeSeconds          = 86_400
 	maxVersionsPollIntervalSeconds = 86_400
@@ -360,6 +362,9 @@ func (c *Config) validateEngine(complain func(format string, args ...any)) {
 	if c.Engine.MaxAttemptsPerRequest < 0 {
 		complain("engine_max_attempts_per_request: %d must be >= 0 (0 = bounded only by the host group)", c.Engine.MaxAttemptsPerRequest)
 	}
+	if c.Engine.MaxStartedAttemptsPerRequest < 0 || c.Engine.MaxStartedAttemptsPerRequest > maxStartedAttemptsPerRequest {
+		complain("engine_max_started_attempts_per_request: %d must be in [0, %d]", c.Engine.MaxStartedAttemptsPerRequest, maxStartedAttemptsPerRequest)
+	}
 }
 
 func (c *Config) validateScheduler(complain func(format string, args ...any)) {
@@ -369,6 +374,9 @@ func (c *Config) validateScheduler(complain func(format string, args ...any)) {
 	}
 	if c.Scheduler.MaxConsecutiveBurns < 0 || c.Scheduler.MaxConsecutiveBurns > maxConsecutiveBurns {
 		complain("scheduler_max_consecutive_burns: %d must be in [0, %d]", c.Scheduler.MaxConsecutiveBurns, maxConsecutiveBurns)
+	}
+	if c.Scheduler.MaxBurnsPerRequest < 0 || c.Scheduler.MaxBurnsPerRequest > maxBurnsPerRequest {
+		complain("scheduler_max_burns_per_request: %d must be in [0, %d]", c.Scheduler.MaxBurnsPerRequest, maxBurnsPerRequest)
 	}
 	if c.Scheduler.DispatchQueueDepth < 1 || c.Scheduler.DispatchQueueDepth > maxDispatchQueueDepth {
 		complain("scheduler_dispatch_queue_depth: %d must be in [1, %d]", c.Scheduler.DispatchQueueDepth, maxDispatchQueueDepth)

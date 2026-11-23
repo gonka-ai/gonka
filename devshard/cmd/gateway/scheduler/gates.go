@@ -94,6 +94,10 @@ func (s *Scheduler) maxConsecutiveBurns() int64 {
 	return s.settings.Load().Scheduler.MaxConsecutiveBurns
 }
 
+func (s *Scheduler) maxBurnsPerRequest() int64 {
+	return s.settings.Load().Scheduler.MaxBurnsPerRequest
+}
+
 // requestReserve prices this one request the way the chain will charge it. See capacity.md, "The balance floor".
 func requestReserve(profile RequestProfile) uint64 {
 	return uint64(max(profile.InputBytes, 0)) + uint64(max(profile.OutputTokens, 0))

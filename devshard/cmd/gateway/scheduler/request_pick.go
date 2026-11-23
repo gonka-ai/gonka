@@ -66,6 +66,8 @@ func (s *Scheduler) pickPastEmptyEscrows(ctx context.Context, profile RequestPro
 		switch {
 		case err == nil:
 			return assignment, routedTo, nil
+		case errors.Is(err, ErrRequestCapped):
+			return Assignment{}, "", err
 		case routedTo == "":
 			return Assignment{}, "", outOfFundsAfter(refused, emptied)
 		case !outOfFunds(err):
@@ -154,6 +156,10 @@ func (s *Scheduler) claimPastFullQueues(ctx context.Context, profile RequestProf
 		refused = next
 	}
 	return refusedFirst, nil, ErrEscrowBusy
+}
+
+func (s *Scheduler) queuedAheadOf(candidate Escrow) uint64 {
+	return s.queuedAhead([]Escrow{candidate})[0]
 }
 
 // queuedAhead estimates how far each candidate's cursor will have moved before this request draws a nonce. See routing.md, "Pricing an escrow by the burns it will cost".
