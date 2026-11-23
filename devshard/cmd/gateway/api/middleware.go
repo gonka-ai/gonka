@@ -133,9 +133,17 @@ func (s *Server) compareKeys(authorization string) credentials {
 	clientDigest, apiKey := gates.client.match(authorization)
 	identity := credentials{admin: gates.admin.authenticate(authorization), apiKey: apiKey}
 	if apiKey {
-		identity.apiKeyID = hex.EncodeToString(clientDigest[:apiKeyIDBytes])
+		identity.apiKeyID = idOfDigest(clientDigest)
 	}
 	return identity
+}
+
+func idOfAPIKey(key string) string {
+	return idOfDigest(sha256.Sum256([]byte(key)))
+}
+
+func idOfDigest(digest [sha256.Size]byte) string {
+	return hex.EncodeToString(digest[:apiKeyIDBytes])
 }
 
 func (c credentials) caller() string {

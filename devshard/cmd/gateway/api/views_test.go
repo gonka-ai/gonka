@@ -43,8 +43,8 @@ func TestAdminStateSpellsStorageRowsInSnakeCase(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each case, varying ForceUpstreamStreaming across on and rolled back, build filter options from that config.
-//  2. Assert KeepClientStream is the opposite of ForceUpstreamStreaming in each case.
+//  1. For each case, varying ForceUpstreamStreaming across on and rolled back, build filter options from that config, with one model that sets the opposite.
+//  2. Assert KeepClientStream is the opposite of ForceUpstreamStreaming for an unnamed model, and the opposite of the model's own setting for the named one.
 func TestTheForcedStreamingSwitchReachesTheFilters(t *testing.T) {
 	tests := []struct {
 		name                 string
@@ -56,10 +56,17 @@ func TestTheForcedStreamingSwitchReachesTheFilters(t *testing.T) {
 	}
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
-			options := filterOptions(config.Limits{ForceUpstreamStreaming: testCase.forceUpstream}, false, nil, nil)
+			configuration := config.Defaults()
+			configuration.Limits.ForceUpstreamStreaming = testCase.forceUpstream
+			opposite := !testCase.forceUpstream
+			mustResolveModels(&configuration, map[string]config.ModelSettings{"opposite": {ForceUpstreamStreaming: &opposite}})
+			options := filterOptions(&configuration, false, nil, nil)
 
-			if options.KeepClientStream != testCase.wantKeepClientStream {
-				t.Errorf("KeepClientStream = %v, want %v", options.KeepClientStream, testCase.wantKeepClientStream)
+			if got := options.KeepClientStream("unnamed"); got != testCase.wantKeepClientStream {
+				t.Errorf("KeepClientStream(unnamed) = %v, want %v", got, testCase.wantKeepClientStream)
+			}
+			if got := options.KeepClientStream("opposite"); got == testCase.wantKeepClientStream {
+				t.Errorf("KeepClientStream(opposite) = %v, want the opposite of the network's %v", got, testCase.wantKeepClientStream)
 			}
 		})
 	}

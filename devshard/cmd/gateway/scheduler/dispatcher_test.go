@@ -446,7 +446,7 @@ func newHarness(t *testing.T, cfg harnessConfig) *harness {
 		},
 		observer:            observer,
 		now:                 clock.Now,
-		matchWait:           matchWaitWindow,
+		matchWait:           func() time.Duration { return matchWaitWindow },
 		maxConsecutiveBurns: burnLimit.Load,
 		maxBurnsPerRequest:  burnCap.Load,
 		retirementReserve:   func() uint64 { return cfg.retirementReserve },

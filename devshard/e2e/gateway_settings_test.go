@@ -56,23 +56,26 @@ func TestE2E_GatewayAppliesANewLimitWithoutARestart(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the three-host environment with an API key configured.
+//  1. Start the three-host environment and create a client API key through the admin API.
 //  2. Put the served model behind that key through the settings route.
 //  3. Assert an unauthenticated completion is answered 401.
 //  4. Assert the same completion with the key is served.
 func TestE2E_GatewayLocksAModelBehindAKeyAtRuntime(t *testing.T) {
-	env, client := startGatewayEnv(t, e2eEnvOptions{
-		gatewayEnvOverrides: map[string]string{"DEVSHARD_API_KEYS": testutil.AdminAPIKey},
-	})
+	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
-	putSettings(t, client, env.clientURL, map[string]any{"model_access": map[string]string{"stub-model": "api_key"}})
+	created := testutil.PostJSONRaw(t, client, env.clientURL+"/v1/admin/api-keys", map[string]any{"label": "e2e"}, testutil.AdminAPIKey)
+	if created.StatusCode != http.StatusOK {
+		t.Fatalf("creating a client key = %d %s", created.StatusCode, created.Body)
+	}
+	clientKey, _ := created.JSON["key"].(string)
+	putSettings(t, client, env.clientURL, map[string]any{"models": map[string]any{"stub-model": map[string]string{"access": "api_key"}}})
 
 	anonymous := testutil.SendCompletionRaw(t, client, env.clientURL, "no key", "")
 	if anonymous.StatusCode != http.StatusUnauthorized {
 		t.Errorf("an unauthenticated request = %d %s, want 401", anonymous.StatusCode, anonymous.Body)
 	}
 	testutil.RequireOpenAINonStreamingCompletion(t,
-		testutil.SendCompletionRaw(t, client, env.clientURL, "with key", testutil.AdminAPIKey))
+		testutil.SendCompletionRaw(t, client, env.clientURL, "with key", clientKey))
 }
 
 // Test flow:
@@ -84,7 +87,7 @@ func TestE2E_GatewayRefusesASettingThatWouldStrandAModel(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
 	refused := testutil.PostJSONRaw(t, client, env.clientURL+"/v1/admin/settings",
-		map[string]any{"model_access": map[string]string{"stub-model": "api_key"}}, testutil.AdminAPIKey)
+		map[string]any{"models": map[string]any{"stub-model": map[string]string{"access": "api_key"}}}, testutil.AdminAPIKey)
 	if refused.StatusCode != http.StatusBadRequest {
 		t.Errorf("stranding a model = %d %s, want 400", refused.StatusCode, refused.Body)
 	}
@@ -94,16 +97,16 @@ func TestE2E_GatewayRefusesASettingThatWouldStrandAModel(t *testing.T) {
 
 // Test flow:
 //  1. Start the default three-host gateway environment.
-//  2. Set an access map naming only some other model.
+//  2. Give only some other model an access tier.
 //  3. Assert the served model, now unlisted, answers 401 to an unauthenticated request.
-func TestE2E_GatewayClosesModelsLeftOutOfTheAccessMap(t *testing.T) {
+func TestE2E_GatewayClosesModelsWithNoAccessTier(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{})
 
-	putSettings(t, client, env.clientURL, map[string]any{"model_access": map[string]string{"some-other-model": "open"}})
+	putSettings(t, client, env.clientURL, map[string]any{"models": map[string]any{"some-other-model": map[string]string{"access": "open"}}})
 
 	anonymous := testutil.SendCompletionRaw(t, client, env.clientURL, "unlisted model", "")
 	if anonymous.StatusCode != http.StatusUnauthorized {
-		t.Errorf("a model left out of the access map answered %d %s, want 401", anonymous.StatusCode, anonymous.Body)
+		t.Errorf("a model with no access tier of its own answered %d %s, want 401", anonymous.StatusCode, anonymous.Body)
 	}
 }
 

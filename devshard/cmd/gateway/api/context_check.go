@@ -78,12 +78,12 @@ type requestPrompt struct {
 	counted   bool
 }
 
-func (s *Server) checkContext(ctx context.Context, configured config.Limits, normalized filters.Result) (requestPrompt, error) {
+func (s *Server) checkContext(ctx context.Context, configuration *config.Config, normalized filters.Result) (requestPrompt, error) {
 	prompt := requestPrompt{bodyBytes: len(normalized.Body)}
 	if s.promptTokens == nil {
 		return prompt, nil
 	}
-	contextLength := configured.ContextLength(normalized.Model, s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
+	contextLength := configuration.For(normalized.Model).Limits.ContextLength(s.snapshots.Snapshot().Models[normalized.Model].MaxModelLen)
 	if contextLength == config.NoContextLength && !s.statsTokenizerEnabled {
 		return prompt, nil
 	}

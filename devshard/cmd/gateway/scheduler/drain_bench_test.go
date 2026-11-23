@@ -116,7 +116,7 @@ func newDrainBench(cfg drainBenchConfig) *drainBench {
 		predicates:  scheduler.predicates(escrow),
 		acquireSlot: scheduler.acquireSlot(escrow),
 		now:         scheduler.now,
-		matchWait:   matchWaitWindow,
+		matchWait:   func() time.Duration { return matchWaitWindow },
 	})
 
 	queued := make([]*waiter, 0, cfg.waiters)

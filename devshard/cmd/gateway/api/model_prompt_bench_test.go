@@ -526,7 +526,8 @@ func benchModelServer(b *testing.B, model benchModel) *Server {
 	server := benchServer(b, benchChunks(48, 24))
 	next := *server.config.Load()
 	pinned := model.context
-	next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
+	open := config.ModelAccessOpen
+	mustResolveModels(&next, map[string]config.ModelSettings{"qwen": {MaxModelLen: &pinned, Access: &open}})
 	server.config.Swap(&next)
 	server.promptTokens = model.prompts()
 	server.statsTokenizerEnabled = readStatsTokenizerSetting(b)
@@ -790,19 +791,19 @@ func BenchmarkModelPromptStep(b *testing.B) {
 		server := benchModelServer(b, model)
 		configuration := server.config.Load()
 		for _, name := range names {
-			normalized, err := filters.NormalizeRequest([]byte(bodies[name]), filterOptions(configuration.Limits, false, server.servedModelVocabulary, server.modelFilters.Profiles()))
+			normalized, err := filters.NormalizeRequest([]byte(bodies[name]), filterOptions(configuration, false, server.servedModelVocabulary, server.modelFilters.Profiles()))
 			if err != nil {
 				b.Fatal(err)
 			}
 			b.Run(model.name+"/"+name, func(b *testing.B) {
 				refused := 0.0
-				if benchContextStep(server, configuration.Limits, normalized) != nil {
+				if benchContextStep(server, configuration, normalized) != nil {
 					refused = 1
 				}
 				b.ReportAllocs()
 				started := processCPU()
 				for b.Loop() {
-					_ = benchContextStep(server, configuration.Limits, normalized)
+					_ = benchContextStep(server, configuration, normalized)
 				}
 				b.ReportMetric(float64(processCPU()-started)/float64(b.N), "cpu-ns/op")
 				b.ReportMetric(refused, "refused")
@@ -811,7 +812,7 @@ func BenchmarkModelPromptStep(b *testing.B) {
 	}
 }
 
-func benchContextStep(server *Server, configured config.Limits, normalized filters.Result) error {
+func benchContextStep(server *Server, configured *config.Config, normalized filters.Result) error {
 	prompt, err := server.checkContext(context.Background(), configured, normalized)
 	if err == nil {
 		server.countPrompt(normalized.Model, prompt)

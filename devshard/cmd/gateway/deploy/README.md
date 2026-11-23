@@ -38,10 +38,15 @@ These variables have no working default:
 | Variable | What it is |
 | --- | --- |
 | `DEVSHARD_CHAIN_RPC`, `DEVSHARD_CHAIN_GRPC`, `DEVSHARD_CHAIN_ID`, `DEVSHARD_PUBLIC_API` | the chain the gateway reads and broadcasts to. A wrong `DEVSHARD_CHAIN_ID` invalidates every transaction it signs. The gateway runs with `DEVSHARD_CHAIN_GRPC` unreachable as long as `DEVSHARD_CHAIN_RPC` points at a live CometBFT RPC |
-| `DEVSHARD_API_KEYS` | the keys clients present, each at least 16 characters, for the models the `model_access` admin override marks `api_key` |
-| `DEVSHARD_ADMIN_API_KEY` | the admin key. Empty disables the admin routes entirely, including creating escrows and setting `model_access` |
+| `DEVSHARD_ADMIN_API_KEY` | the admin key. Empty disables the admin routes entirely, including creating escrows, setting `access` and creating client keys |
 
-A fresh gateway serves no client until the operator names a model in the `model_access` override: a model the override does not name answers only the admin key ([`docs/operations.md`](../docs/operations.md), "Who may call what").
+Client keys are not an environment setting, bar the legacy variable below: after the first start, create each with `POST /v1/admin/api-keys` for the models whose `access` under `models` (or the network `access`) is `api_key`. A fresh gateway serves no client until the operator sets `access` for a model under `models` and, for an `api_key` model, creates a key: a model with no `access` of its own answers only the admin key ([`docs/operations.md`](../docs/operations.md), "Who may call what", "Client API keys").
+
+## Legacy inputs
+
+- Legacy `DEVSHARD_API_KEYS` (deprecated, removal planned for v7 or v8): the variable is still read, comma-separated and each key at least 16 characters, and its keys are active beside the database keys; create them through `POST /v1/admin/api-keys` instead. The list and a read by id show them with `source` `env`, no value and no `created_at`, and they cannot be revoked or created again through the API (409): to remove one, move its clients to a new key, then unset the variable.
+- Legacy `model_limits` (deprecated, removal planned for v7 or v8): the settings key is still accepted and read as `models.<id>` with the same field names; set `models.<id>` instead, which wins field by field, and a boot or a write holding the key logs a warning.
+- Legacy `model_access` (deprecated, removal planned for v7 or v8): the settings key is still read as `models.<id>.access`; set `models.<id>.access` instead, which wins when both name the model, and a boot or a write holding the key logs a warning.
 
 ## Signing keys are named, never pasted
 

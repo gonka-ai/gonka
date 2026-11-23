@@ -317,7 +317,7 @@ func TestTheAdminFlagStillReachesTheRequestFilters(t *testing.T) {
 func TestAClientAPIKeyOpensAnAPIKeyGatedModel(t *testing.T) {
 	live := newHarness(t)
 	live.swapConfig(func(next *config.Config) {
-		next.Limits.ModelAccess = map[string]string{"qwen": config.ModelAccessAPIKey}
+		grantAccess(next, map[string]string{"qwen": config.ModelAccessAPIKey})
 	})
 	anonymous := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
 	if anonymous.Code != http.StatusUnauthorized {
@@ -337,7 +337,7 @@ func TestAClientAPIKeyOpensAnAPIKeyGatedModel(t *testing.T) {
 func TestAnAdminOnlyModelRefusesAClientKey(t *testing.T) {
 	live := newHarness(t)
 	live.swapConfig(func(next *config.Config) {
-		next.Limits.ModelAccess = map[string]string{"other": config.ModelAccessOpen}
+		grantAccess(next, map[string]string{"other": config.ModelAccessOpen})
 	})
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody,
 		map[string]string{"Authorization": "Bearer " + clientKey})

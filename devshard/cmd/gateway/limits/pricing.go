@@ -39,7 +39,7 @@ type WindowPricing struct {
 	OutputTokensByModel       map[string]int64
 }
 
-// ParticipantConfig's IdleEviction of zero keeps every pair for the life of the process.
+// ParticipantConfig's IdleEviction of zero keeps every pair for the life of the process; ByModel holds each named model's full configuration.
 type ParticipantConfig struct {
 	Pricing       WindowPricing
 	Factors       CongestionFactors
@@ -48,6 +48,14 @@ type ParticipantConfig struct {
 	BaseOpen      time.Duration
 	MaxOpen       time.Duration
 	IdleEviction  time.Duration
+	ByModel       map[string]ParticipantConfig
+}
+
+func (c ParticipantConfig) forModel(model string) ParticipantConfig {
+	if own, named := c.ByModel[model]; named {
+		return own
+	}
+	return c
 }
 
 func boundsIn(requests RequestBounds, requestTokens int64) WindowBounds {
@@ -67,7 +75,7 @@ func namedOr(named map[string]int64, model string, fallback int64) int64 {
 
 // windowsForLocked prices one host's model.
 func (l *ParticipantLimiter) windowsForLocked(participant, model string) ModelWindows {
-	pricing := l.cfg.Pricing
+	pricing := l.cfg.forModel(model).Pricing
 	contextTokens := namedOr(l.reportedContext, model, namedOr(pricing.ContextTokensByModel, model, namedOr(l.observedContext, model, pricing.FallbackContextTokens)))
 	outputTokens := namedOr(pricing.OutputTokensByModel, model, pricing.FallbackOutputTokens)
 	concurrency := earnedConcurrency(pricing.ConcurrencyPer10000Weight, l.observedWeights[model][participant])

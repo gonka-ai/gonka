@@ -30,39 +30,36 @@ func TestGatewayConfigFromLimits_MapsFieldsFromDefaults(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a `config.Limits` with per-model overrides: modelA sets MaxConcurrentRequests, modelB sets nothing.
-//  2. Map it through `GatewayConfigFromLimits`.
-//  3. Assert modelA's mapped override carries MaxConcurrent=7 and a nil MaxInputTokens.
-//  4. Assert modelB's mapped override has both fields nil.
-func TestGatewayConfigFromLimits_MapsPerModelOverrides(t *testing.T) {
+//  1. Resolve a config whose network sets admission caps and wait, and a model that overrides its concurrency cap and wait.
+//  2. Map it through `GatewayConfigFromConfig`.
+//  3. Assert the network caps are the network values, the named model carries its own cap and wait, and every field it leaves alone is the network's.
+func TestGatewayConfigFromConfig_MapsPerModelCaps(t *testing.T) {
 	t.Parallel()
-	maxConcurrent := int64(7)
-	limits := config.Limits{
-		ModelLimits: map[string]config.ModelLimits{
-			"modelA": {MaxConcurrentRequests: &maxConcurrent},
-			"modelB": {},
-		},
+	maxConcurrent, queueWaitMS := int64(7), int64(1_500)
+	configuration := config.Defaults()
+	configuration.Limits.Concurrency.MaxRequests = 40
+	configuration.Limits.MaxInputTokensInFlight = 9_000
+	configuration.Limits.AdmissionQueueWaitMS = 20_000
+	if err := configuration.ResolveModels(map[string]config.ModelSettings{
+		"modelA": {MaxConcurrentRequests: &maxConcurrent, AdmissionQueueWaitMS: &queueWaitMS},
+	}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
 	}
 
-	got := GatewayConfigFromLimits(limits)
+	got := GatewayConfigFromConfig(&configuration)
 
-	overrideA, ok := got.ModelLimits["modelA"]
-	if !ok {
-		t.Fatal(`ModelLimits["modelA"] missing, want an entry`)
+	if got.MaxConcurrent != 40 || got.AcquireWait != 20*time.Second {
+		t.Errorf("network caps = %d / %v, want 40 / 20s", got.MaxConcurrent, got.AcquireWait)
 	}
-	if overrideA.MaxConcurrent == nil || *overrideA.MaxConcurrent != 7 {
-		t.Errorf("ModelLimits[modelA].MaxConcurrent = %v, want 7", overrideA.MaxConcurrent)
+	own := got.ByModel["modelA"]
+	if own.MaxConcurrent != 7 || own.AcquireWait != 1_500*time.Millisecond {
+		t.Errorf("ByModel[modelA] caps = %d / %v, want 7 / 1.5s", own.MaxConcurrent, own.AcquireWait)
 	}
-	if overrideA.MaxInputTokens != nil {
-		t.Errorf("ModelLimits[modelA].MaxInputTokens = %v, want nil (not configured)", overrideA.MaxInputTokens)
+	if own.MaxInputTokens != 9_000 {
+		t.Errorf("ByModel[modelA].MaxInputTokens = %d, want the network 9000", own.MaxInputTokens)
 	}
-
-	overrideB, ok := got.ModelLimits["modelB"]
-	if !ok {
-		t.Fatal(`ModelLimits["modelB"] missing, want an entry`)
-	}
-	if overrideB.MaxConcurrent != nil || overrideB.MaxInputTokens != nil {
-		t.Errorf("ModelLimits[modelB] = %+v, want both nil (no overrides configured)", overrideB)
+	if _, named := got.ByModel["modelB"]; named {
+		t.Error("ByModel names modelB, which carries no settings")
 	}
 }
 
@@ -123,35 +120,36 @@ func TestParticipantConfigFromLimits_MapsFieldsFromDefaults(t *testing.T) {
 }
 
 // Test flow:
-//  1. Configure distinct input and output host windows and a named model with its own context length and token cap.
-//  2. Map the configuration through `ParticipantConfigFromLimits`.
-//  3. Assert the input and output pricing bounds each keep their own configured values, not shared.
-//  4. Assert the model's context and output token limits are taken from its own settings.
-func TestParticipantConfigFromLimits_PricesEachWindowFromItsOwnSetting(t *testing.T) {
+//  1. Configure distinct input and output host windows, and a named model with its own context length, token cap and input window.
+//  2. Map the configuration through `ParticipantConfigFromConfig`.
+//  3. Assert the network pricing keeps the input and output bounds, not shared.
+//  4. Assert the model's own pricing carries its pinned context length, its own output cap as the fallback, and its own window.
+func TestParticipantConfigFromConfig_PricesEachModelFromItsOwnSettings(t *testing.T) {
 	t.Parallel()
-	configured := config.Defaults().Limits
-	configured.HostWindows.Input = config.RequestWindow{MinRequests: 1, InitialRequests: 2}
-	configured.HostWindows.Output = config.RequestWindow{MinRequests: 3, InitialRequests: 6}
-	namedContext := int64(32_768)
-	configured.ModelLimits = map[string]config.ModelLimits{
-		"model-a": {DefaultMaxTokens: 512, MaxTokensCap: 1_024, MaxModelLen: &namedContext},
+	namedContext, namedCap, namedInitial := int64(32_768), int64(1_024), int64(4)
+	configuration := config.Defaults()
+	configuration.Limits.HostWindows.Input = config.RequestWindow{MinRequests: 1, InitialRequests: 2}
+	configuration.Limits.HostWindows.Output = config.RequestWindow{MinRequests: 3, InitialRequests: 6}
+	if err := configuration.ResolveModels(map[string]config.ModelSettings{
+		"model-a": {MaxModelLen: &namedContext, MaxTokensCap: &namedCap, HostInputWindowInitialRequests: &namedInitial},
+	}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
 	}
 
-	got := ParticipantConfigFromLimits(configured)
+	got := ParticipantConfigFromConfig(&configuration)
 
-	if got.Pricing.Input != (RequestBounds{Min: 1, Initial: 2}) {
-		t.Errorf("Pricing.Input = %+v, want {Min:1 Initial:2}: prefill counts the requests the operator allowed it", got.Pricing.Input)
+	if got.Pricing.Input != (RequestBounds{Min: 1, Initial: 2}) || got.Pricing.Output != (RequestBounds{Min: 3, Initial: 6}) {
+		t.Errorf("network pricing = %+v / %+v, want {1 2} and {3 6}: prefill and decode have their own request counts", got.Pricing.Input, got.Pricing.Output)
 	}
-	if got.Pricing.Output != (RequestBounds{Min: 3, Initial: 6}) {
-		t.Errorf("Pricing.Output = %+v, want {Min:3 Initial:6}: decode has its own request counts", got.Pricing.Output)
+	own := got.ByModel["model-a"].Pricing
+	if own.ContextTokensByModel["model-a"] != namedContext {
+		t.Errorf("ByModel[model-a] context = %d, want %d: a model's own context length is what its prefill window counts in", own.ContextTokensByModel["model-a"], namedContext)
 	}
-	if got.Pricing.ContextTokensByModel["model-a"] != namedContext {
-		t.Errorf("ContextTokensByModel[model-a] = %d, want %d: a model's own context length is what its prefill window counts in",
-			got.Pricing.ContextTokensByModel["model-a"], namedContext)
+	if own.FallbackOutputTokens != namedCap {
+		t.Errorf("ByModel[model-a] output tokens = %d, want %d: a model's own output cap is what its decode window counts in", own.FallbackOutputTokens, namedCap)
 	}
-	if got.Pricing.OutputTokensByModel["model-a"] != 1_024 {
-		t.Errorf("OutputTokensByModel[model-a] = %d, want 1024: a model's own output cap is what its decode window counts in",
-			got.Pricing.OutputTokensByModel["model-a"])
+	if own.Input != (RequestBounds{Min: 1, Initial: namedInitial}) {
+		t.Errorf("ByModel[model-a].Input = %+v, want {Min:1 Initial:%d}", own.Input, namedInitial)
 	}
 }
 

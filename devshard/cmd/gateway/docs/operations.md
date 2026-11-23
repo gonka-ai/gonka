@@ -39,22 +39,48 @@ The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting 
 
 ### Who may call what
 
-`api/routes.go`, `authorizeModel`. Three tiers per model, from `limits.model_access`, which the admin override `model_access` sets:
+`api/routes.go`, `authorizeModel`. Three tiers per model, from `access` under `models.<id>` (or the network `access` for a model with no block of its own):
 
 | Tier | Who |
 | --- | --- |
 | `open` | anyone |
-| `api_key` | a caller presenting one of `DEVSHARD_API_KEYS` |
+| `api_key` | a caller presenting an active client key ("Client API keys" below) |
 | `admin_only` | a caller presenting `DEVSHARD_ADMIN_API_KEY` |
 
 **Two behaviours to know before editing it:**
 
-- A model **not listed** in `model_access` is `admin_only`, an empty map included. A deployment starts with no entries, so until the operator names a model `open` or `api_key` only the admin reaches it, and setting `DEVSHARD_API_KEYS` alone opens nothing. While any model is `open` the gateway logs a warning naming it, at startup and after every admin override, since an open model spends the operator's escrows for any caller.
-- With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path. Without it no one can set `model_access` either, so every model stays admin-only and the gateway serves no client.
+- A model with no `access` of its own and no network `access` is `admin_only`. A deployment starts with no entries, so until the operator names a model `open` or `api_key` only the admin reaches it, and creating a client key alone opens nothing. While any model is `open` the gateway logs a warning naming it, at startup and after every admin override, since an open model spends the operator's escrows for any caller.
+- With `DEVSHARD_ADMIN_API_KEY` unset the whole admin surface answers **404, not 401** — the routes do not exist rather than rejecting the caller. A "route not found" on `/v1/admin/…` usually means the key is missing, not the path. Without it no one can set `access` or create a client key either, so every model stays admin-only and the gateway serves no client.
 
-An admin key satisfies every tier, so admin calls never need a second key. A `PUT` of the settings replaces the whole override set, so a `PUT` that leaves out `model_access` closes every model to clients again; a `POST` changes only the fields it names ([configuration.md](./configuration.md), "The three layers").
+An admin key satisfies every tier, so admin calls never need a second key. A `PUT` of the settings replaces the whole override set, so a `PUT` that leaves out `models` drops every model's admin block, and a model with no `access` of its own is then reachable only as the network `access` and `GATEWAY_MODELS_JSON` allow; a `POST` changes only the fields it names ([configuration.md](./configuration.md), "The three layers").
 
-`limits.model_access`, together with `limits.model_limits`, is also the list of models the gateway offers (`config.Limits.Offers`): a model named in either one answers 503 when nothing currently routes to it, and a model named in neither answers 400 while any model is routable — an empty registry answers 503 for every model instead.
+The `models` setting is also the list of models the gateway offers (`config.Config.Offers`): a model named in it answers 503 when nothing currently routes to it, and a model named in it nowhere answers 400 while any model is routable — an empty registry answers 503 for every model instead.
+
+### Client API keys
+
+Client keys live in the `api_keys` table of `gateway.db`, **in plain text**: the storage directory and every archive of it are as secret as the keys. They are managed through the admin API and apply on the next request, with no restart.
+
+| Call | What it does |
+| --- | --- |
+| `GET /v1/admin/api-keys` | lists every key as `id`, `source`, `label`, `created_at`, `revoked` and `revoked_at`, never a key value |
+| `POST /v1/admin/api-keys` | creates a key from `{"label": "...", "key": "..."}`, both optional; without `key` the gateway generates one; the answer carries the key |
+| `GET /v1/admin/api-keys/{id}` | one key with its value, audit-logged without it; a legacy environment key has no value |
+| `DELETE /v1/admin/api-keys/{id}` | revokes the key; the row stays, and a second revoke answers 200 with the first revoked time |
+
+```
+curl -X POST -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -d '{"label":"billing"}' "$GATEWAY/v1/admin/api-keys"
+{"id":"3f9a1c2e","source":"database","label":"billing","created_at":"2026-01-02T03:04:05.000000000Z","revoked":false,"key":"sk-..."}
+```
+
+The `id` is the first eight hex characters of the key's SHA-256, the `api_key_id` the request record carries ([observability.md](./observability.md), "The request record"). A create whose `id` exists, revoked or not, answers 409, so an id is never reused. A supplied key shorter than 16 characters, containing whitespace (no `Bearer` header can carry it) or equal to the admin key answers 400. To rotate a key, create the new one and revoke the old one.
+
+An `api_key` model needs an active key. Revoking the last active key while the network `access` or any model's `access` is `api_key` answers 409, and a settings write that leaves such a model with no active key answers 400. A gateway whose database holds no key and whose settings put a model on `api_key` still starts, and logs a warning that an `api_key` model has no active key, so the first key can be created. A settings write is refused only when it creates that state, so the kill switch and every other setting stay writable until a key exists, and the rule binds again once a key does. A stored block for a model `rotation_models_json` no longer lists is ignored, so it never counts as an `api_key` model. A `DEVSHARD_ADMIN_API_KEY` equal to an active database client key fails the boot: a database client key must differ from the admin key. The `api key created`, `api key read` and `api key revoked` audit lines carry the `api_key_id` and `api_key_label`.
+
+### Legacy inputs
+
+- Legacy `model_limits` (deprecated, removal planned for v7 or v8): the settings key is still accepted and read as `models.<id>` with the same field names; set `models.<id>` instead, which wins field by field, and a boot or a write holding the key logs a warning.
+- Legacy `model_access` (deprecated, removal planned for v7 or v8): the settings key is still read as `models.<id>.access`; set `models.<id>.access` instead, which wins when both name the model, and a boot or a write holding the key logs a warning.
+- Legacy `DEVSHARD_API_KEYS` (deprecated, removal planned for v7 or v8): the variable is still read, comma-separated and each key at least 16 characters, and its keys are active beside the database keys; create them through `POST /v1/admin/api-keys` instead. The list and a read by id show them with `source` `env`, no value and no `created_at`, and they cannot be revoked or created again through the API (409): to remove one, move its clients to a new key, then unset the variable.
 
 ### The kill switch
 

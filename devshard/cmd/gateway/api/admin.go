@@ -30,11 +30,12 @@ func (s *Server) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"version":   s.version,
-		"devshards": devshardViews(records),
-		"rotation":  rotationViews(statuses),
-		"overrides": overrides,
-		"status":    s.status(s.routableEscrows()),
+		"version":      s.version,
+		"devshards":    devshardViews(records),
+		"rotation":     rotationViews(statuses),
+		"overrides":    overrides,
+		"participants": participantViews(s.config.Load()),
+		"status":       s.status(s.routableEscrows()),
 	})
 }
 
@@ -69,13 +70,17 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		s.writeErrorFor(w, err)
 		return
 	}
+	if written, err := config.ParseOverrides(body); err == nil {
+		written.WarnLegacyKeys()
+	}
 	inForce := s.config.Load()
 	auditAdmin("settings written",
 		logkey.Method, r.Method,
-		logkey.OpenModels, inForce.Limits.OpenModels(),
+		logkey.OpenModels, inForce.OpenModels(),
 		logkey.GatewayDisabled, inForce.Modes.Disabled,
 		logkey.ParticipantAllowlist, inForce.Scheduler.ParticipantAllowlist,
 		logkey.UnthrottledParticipants, inForce.Scheduler.UnthrottledParticipants,
+		logkey.ParticipantsByModel, participantViews(inForce).Models,
 	)
 	writeJSON(w, http.StatusOK, overrides)
 }
@@ -94,7 +99,7 @@ func (s *Server) settingsToApply(r *http.Request, body []byte) (overrides config
 	return overrides, parseErr, nil
 }
 
-// auditAdmin carries the action and its subject, never the body: an override payload can hold the admin key.
+// auditAdmin carries the action and its subject, never a request body and never a key value.
 func auditAdmin(action string, fields ...any) {
 	logging.Info("admin: "+action, fields...)
 }

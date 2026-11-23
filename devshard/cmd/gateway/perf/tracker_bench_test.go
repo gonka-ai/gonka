@@ -81,7 +81,7 @@ func BenchmarkTrackerRebuildEjectedView(b *testing.B) {
 
 	b.ReportAllocs()
 	for b.Loop() {
-		tracker.rebuildEjectedViewLocked(testEpoch, perf)
+		tracker.rebuildEjectedViewLocked(testEpoch, tracker.config.Load())
 	}
 }
 

@@ -12,6 +12,10 @@ Three layers, later wins:
 
 Parse failures are accumulated, so a boot reports **every** misconfigured variable at once rather than one per restart.
 
+## Per-model settings
+
+Every setting that applies to the whole network can also be set for one model, under `models.<id>` in `/v1/admin/settings`, with the same key as the network setting: `{"max_burns_per_request": 16, "models": {"MiniMaxAI/MiniMax-M2.7": {"max_burns_per_request": 8, "host_cutoff_max_ms": 60000}}}`. A field a model leaves out inherits the network value, and `max_model_len` is the one key only a model has. The same JSON in `GATEWAY_MODELS_JSON` sets them at boot; the admin value wins per model and per field. The whole configuration is validated again with each model's values laid over it, so a model that raises `host_cutoff_max_ms` past its own `perf_ejection_max_seconds` is refused as `models[<id>].host_cutoff_max_ms`. Process-wide keys (the kill switch, the buffers, the funding loop, `engine_max_concurrent_timeout_votes`, `perf_host_staleness_seconds`) are not accepted under `models`: a 400. A stored block for a model `rotation_models_json` no longer lists does not stop the gateway starting: the boot logs a warning and the block is ignored. Every settings write is then refused with a 400 naming the model until `{"models": {"<id>": null}}` clears it. [`config/README.md`](../config/README.md), "Per-model settings", has the key rules.
+
 ## Variable names
 
 Each variable is read under one name only. `DEVSHARD_CHAIN_GRPC` and `DEVSHARD_CHAIN_RPC` fall back to `NODE_GRPC_URL` and `NODE_RPC_URL`.
@@ -42,6 +46,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` | 64 KiB/s | the slowest average a client may read one reply at, after a 30-second allowance, before its write fails; between 1 B/s and 1 GiB/s ([`api/README.md`](../api/README.md), "Streaming the reply") |
 | `DEVSHARD_CHAT_CACHE_MAX_BYTES` | 256 MiB | the response cache |
 | `GATEWAY_DEFAULT_MAX_TOKENS` / `GATEWAY_MAX_TOKENS_CAP` | from `filters` | the output budget a request gets and may ask for |
+| `GATEWAY_MODELS_JSON` | empty | the per-model settings the environment layer sets, a JSON object keyed by model id ("Per-model settings" above) |
 | `DEVSHARD_ESCROW_ROTATION_ENABLED` | false | whether the epoch bridge creates and retires escrows |
 | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | false | whether retirement settles or only parks; a model's own `settlement_enabled` in the models JSON overrides it |
 | `DEVSHARD_ESCROW_ROTATION_PREVIOUS_EPOCH_SETTLEMENT_ENABLED` | false | settles parked and deadline escrows once their chain epoch is over, never inside it; a model's own `previous_epoch_settlement_enabled` in the models JSON overrides it |
@@ -57,6 +62,8 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ENGINE_INTER_CHUNK_STALL_MS` | 30 000 | silence after first content before an attempt is stalled |
 | `GATEWAY_ENGINE_LOSER_GRACE_MS` | 600 000 | how long a loser may keep running after the crown |
 | `GATEWAY_ENGINE_HEDGE_FIRST_TOKEN_FLOOR_MS` | 1 500 | lower bound on the slow-start hedge that starts a second attempt before the judged deadline; `0` turns it off |
+| `GATEWAY_ENGINE_MAX_ATTEMPTS_PER_REQUEST` | 2 | unfinished attempts one request may hold at once; `0` bounds it only by the host group ([race.md](./race.md), "Tunables and backstops") |
+| `GATEWAY_DRAIN_TIMEOUT_SECONDS` | 2 400 | how long a race may run after its client leaves; at least 1 200 ([race.md](./race.md), "Tunables and backstops") |
 | `GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST` | 3 | attempts one request may start in all, hedges and retries included; past it no hedge or retry starts, and the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
 | `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
@@ -92,7 +99,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ([operations.md](./operations.md), "The kill switch") |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
-| `DEVSHARD_API_KEYS` / `DEVSHARD_ADMIN_API_KEY` | empty / empty | the client keys an `api_key` model accepts and the admin key; a key shorter than 16 characters is refused, client or admin, and an empty admin key leaves the admin surface unrouted ([operations.md](./operations.md), "Who may call what") |
+| `DEVSHARD_ADMIN_API_KEY` | empty | the admin key; a key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ([operations.md](./operations.md), "Who may call what"); client keys are not set here, bar the legacy variable ([operations.md](./operations.md), "Legacy inputs") |
 | `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ([operations.md](./operations.md), "Boot") |
 | `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC every chain call falls back to when gRPC is unreachable, queries and transactions alike; the gateway runs with gRPC unreachable as long as `DEVSHARD_CHAIN_RPC` points at a live CometBFT RPC, and a transaction broadcast runs once on the transport the reads selected; an empty RPC endpoint is derived from the gRPC host at the standard port ([`app/README.md`](../app/README.md), "Escrow sessions and the chain connection") |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
@@ -167,7 +174,7 @@ curl -X PUT -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" \
 
 A PUT that names no preset changes the model's own preset: `{"filters":{"output_tokens_floor":32}}` on Kimi keeps everything else Kimi's preset does. Name `"preset":"default"` to start from the default instead.
 
-The entry also shows the model's token limits under `limits`, with `"source": "model_limits"` when the model has its own entry in `/v1/admin/settings` and `"global"` when it runs the gateway-wide default and cap (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP` or their settings keys). A filter PUT cannot change them.
+The entry also shows the model's token limits under `limits`, with `"source": "models"` when the model's default or cap differs from the gateway-wide one (set under `models` in `/v1/admin/settings` or `GATEWAY_MODELS_JSON`) and `"global"` when it runs the gateway-wide default and cap (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP` or their settings keys). A filter PUT cannot change them.
 
 A PUT checks that the chain registers the model. An unknown model answers 404 `model_not_on_chain`, and a gateway that has not read the chain's model list yet answers 503 `chain_models_unavailable`. `?allow_off_chain=true` skips the check, for a model that is not registered yet; the answer then carries `on_chain: false`. A setting with `thinking_token_budget` or `empty_answer_counts_tokens` is refused off chain even with the flag, and its audit line carries `engine_crash_risk=true` when the model has no built-in budget. A model that leaves the chain keeps its setting.
 
@@ -190,12 +197,12 @@ Within one setting: a knob the setting sets beats the preset it names; a setting
 | Value | Who decides, highest first | Why |
 | --- | --- | --- |
 | request invariants: `n`, `top_logprobs` ≤ 5, `return_token_ids`, `stop_token_ids` vocabulary, schema and `chat_template_kwargs` bounds, unknown-parameter refusal | the gateway's own rules, then the host, which re-pins the same values | they protect reservation accounting, validation and vLLM; no setting can loosen them |
-| `max_tokens` the client named | `max_tokens_cap` (`model_limits` in `/v1/admin/settings`, else `GATEWAY_MAX_TOKENS_CAP`), then `output_tokens_floor` | the floor raises first and the cap clamps after, so **the cap wins**: it prices the reservation. An admin key skips the cap but not the floor |
-| `max_tokens` the client left out | `default_max_tokens` (`model_limits`, else `GATEWAY_DEFAULT_MAX_TOKENS`), raised to `output_tokens_floor` but never by the floor above the cap | a default below the floor would hand the model the budget the floor exists to prevent; the floor still cannot reserve more than the cap prices. A default set above the cap is the operator's own choice and is kept. An admin key skips the cap here too |
+| `max_tokens` the client named | `max_tokens_cap` (the model's own under `models`, else `GATEWAY_MAX_TOKENS_CAP`), then `output_tokens_floor` | the floor raises first and the cap clamps after, so **the cap wins**: it prices the reservation. An admin key skips the cap but not the floor |
+| `max_tokens` the client left out | `default_max_tokens` (the model's own under `models`, else `GATEWAY_DEFAULT_MAX_TOKENS`), raised to `output_tokens_floor` but never by the floor above the cap | a default below the floor would hand the model the budget the floor exists to prevent; the floor still cannot reserve more than the cap prices. A default set above the cap is the operator's own choice and is kept. An admin key skips the cap here too |
 | `thinking_token_budget` | the model's budget, resolved against the final `max_tokens` | it reads the resolved value: a cap below `force_zero_below` silences thinking on every request that names a budget, and a default below it on every request that names none |
 | sampling ranges | the global bound, then the model's `sampling` limit | a model limit only narrows |
-| who may call the model, whether it is routed | `model_access`, `rotation_models_json`, escrows | filters never open or route a model; a filter refusal (for example `tools: reject`) is answered before the access check, as every filter refusal is |
-| context length | the chain's `--max-model-len`, else `model_limits.max_model_len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
+| who may call the model, whether it is routed | `access` (the model's own under `models`, else the network one), `rotation_models_json`, escrows | filters never open or route a model; a filter refusal (for example `tools: reject`) is answered before the access check, as every filter refusal is |
+| context length | the chain's `--max-model-len`, else `models.<id>.max_model_len` | filters do not read it; a host refuses an over-long request and the engine retries elsewhere |
 | streaming upstream, logprobs handling | `GATEWAY_FORCE_UPSTREAM_STREAMING`, `GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE` and their settings keys | independent of filters |
 
 A filter entry lists `warnings` when the settings' limits override its filters — a cap below the floor, a cap below the budget's `force_zero_below`, or a default budget below it — so the conflict is visible where the filters are edited. Neither PUT refuses it: the two are edited separately and either order must be possible.
@@ -215,7 +222,7 @@ To pin a model to exact values across releases, PUT every knob that matters to y
 
 ### A new version of a model
 
-The chain names a new version with a new model id. Every setting is keyed by the exact id — filter settings, built-in bindings, `model_limits`, `model_access` — so nothing carries over: the new id runs the `default` preset and is admin-only until it is configured. Configure it with one PUT that names the preset of the version it replaces, and give it its `model_limits` and `model_access` in `/v1/admin/settings`.
+The chain names a new version with a new model id. Every setting is keyed by the exact id — filter settings, built-in bindings, `models` — so nothing carries over: the new id runs the `default` preset and is admin-only until it is configured. Configure it with one PUT that names the preset of the version it replaces, and give it its own block under `models` in `/v1/admin/settings`.
 
 ## Where to change what
 

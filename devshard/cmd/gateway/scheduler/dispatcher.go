@@ -36,7 +36,7 @@ type dispatcherDeps struct {
 	escalationHold      func() (func(), bool)
 	observer            dispatchObserver
 	now                 func() time.Time
-	matchWait           time.Duration
+	matchWait           func() time.Duration
 	maxConsecutiveBurns func() int64
 	maxBurnsPerRequest  func() int64
 	retirementReserve   func() uint64
@@ -81,6 +81,9 @@ func newDispatcher(deps dispatcherDeps) *dispatcher {
 	}
 	if deps.holdEscrow == nil {
 		deps.holdEscrow = func() (func(), bool) { return nil, true }
+	}
+	if deps.matchWait == nil {
+		deps.matchWait = func() time.Duration { return 0 }
 	}
 	if deps.maxConsecutiveBurns == nil {
 		deps.maxConsecutiveBurns = func() int64 { return 0 }

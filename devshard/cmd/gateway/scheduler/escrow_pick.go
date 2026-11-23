@@ -87,8 +87,8 @@ func (s *Scheduler) pickEscrow(profile RequestProfile, snapshot chain.PhaseSnaps
 	// Read here as well as at dispatch: an escrow whose whole group it refuses can never serve.
 	ranking := escrowRanking{
 		profile: profile, snapshot: snapshot, queued: queued, avoided: avoided,
-		retirement: retirement, request: request, attempts: s.attemptsToFund(), limits: s.burnLimits(),
-		reachable: reachableByAllowlist(s.participantAllowlist(), s.unthrottledParticipants()),
+		retirement: retirement, request: request, attempts: s.attemptsToFund(profile.Model), limits: s.burnLimits(profile.Model),
+		reachable: reachableByAllowlist(s.participantAllowlist(profile.Model), s.unthrottledParticipants(profile.Model)),
 		fleet:     s.fleetGates(profile.Model, snapshot),
 		ahead:     s.queuedAhead(candidates),
 	}
@@ -253,11 +253,11 @@ func AttemptsToFund(configured int64) int {
 	return unboundedAttemptsToFund
 }
 
-func (s *Scheduler) attemptsToFund() int {
+func (s *Scheduler) attemptsToFund(model string) int {
 	if s.settings == nil {
 		return unboundedAttemptsToFund
 	}
-	return AttemptsToFund(s.settings.Load().Engine.MaxAttemptsPerRequest)
+	return AttemptsToFund(s.settings.Load().For(model).Engine.MaxAttemptsPerRequest)
 }
 
 func (s *Scheduler) reportReserveTaken(escrowID string) {
@@ -314,15 +314,15 @@ func (limits burnLimits) refuses(tally *BurnTally, forecast burnForecast) bool {
 	return forecast.usable && tally.WouldExceed(limits.perRequest, forecast.charged)
 }
 
-func (s *Scheduler) burnLimits() burnLimits {
+func (s *Scheduler) burnLimits(model string) burnLimits {
 	if s.settings == nil {
 		return burnLimits{}
 	}
-	return burnLimits{consecutive: s.maxConsecutiveBurns(), perRequest: s.maxBurnsPerRequest()}
+	return burnLimits{consecutive: s.maxConsecutiveBurns(model), perRequest: s.maxBurnsPerRequest(model)}
 }
 
 func (s *Scheduler) checkPinnedBurnCap(profile RequestProfile, snapshot chain.PhaseSnapshot, pinned Escrow, queued *waiter) (Escrow, error) {
-	limits := s.burnLimits()
+	limits := s.burnLimits(profile.Model)
 	if profile.Burns == nil || limits.perRequest <= BurnCapOff {
 		return pinned, nil
 	}

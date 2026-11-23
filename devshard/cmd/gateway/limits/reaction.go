@@ -76,16 +76,17 @@ func (l *ParticipantLimiter) OnResult(result Result) {
 	state := l.stateLocked(key{participant: result.Participant, model: result.Model})
 	now := l.now()
 	state.lastUsed = now
+	settings := l.cfg.forModel(result.Model)
 
 	narrowingTier, blamed := answer.tier, answer.dimension
 	if narrowingTier == tierNone && result.Verdict == Success {
-		if congested := result.Pressure.congestedDimension(l.cfg.Slack); congested != dimensionNone {
+		if congested := result.Pressure.congestedDimension(settings.Slack); congested != dimensionNone {
 			narrowingTier, blamed = tierSoft, congested
 		} else {
 			l.growLocked(state, result.Carried)
 		}
 	}
-	if by := l.cfg.Factors.narrowingFor(narrowingTier, blamed); by.moves() {
+	if by := settings.Factors.narrowingFor(narrowingTier, blamed); by.moves() {
 		l.narrowLocked(state, by)
 	}
 	l.applyBreakerLocked(state, answer.breaker, result.Participant, result.Model, now)
@@ -131,11 +132,12 @@ func (l *ParticipantLimiter) applyBreakerLocked(state *hostState, effect breaker
 			l.narrator.HostCutOffLifted(participant, model, state.backoffCount)
 		}
 	case breakerCounts:
-		if !state.recordCutoffFault(now, int(l.cfg.AfterFailures)) {
+		settings := l.cfg.forModel(model)
+		if !state.recordCutoffFault(now, int(settings.AfterFailures)) {
 			return
 		}
-		capped := min(time.Duration(float64(l.cfg.BaseOpen)*math.Pow(cutoffBackoffMultiplier, float64(state.backoffCount))), l.cfg.MaxOpen)
-		reason := state.openBreaker(now.Add(capped+l.jitter(capped)), capped < l.cfg.MaxOpen)
+		capped := min(time.Duration(float64(settings.BaseOpen)*math.Pow(cutoffBackoffMultiplier, float64(state.backoffCount))), settings.MaxOpen)
+		reason := state.openBreaker(now.Add(capped+l.jitter(capped)), capped < settings.MaxOpen)
 		if l.narrator != nil {
 			l.narrator.HostCutOff(participant, model, reason, state.backoffCount, state.openUntil.Sub(now))
 		}

@@ -55,16 +55,16 @@ func reachableByAllowlist(allowlist, unthrottled []string) func(Escrow) bool {
 	}
 }
 
-func (s *Scheduler) participantAllowlist() []string {
+func (s *Scheduler) participantAllowlist(model string) []string {
 	if s.settings == nil {
 		return nil
 	}
-	return s.settings.Load().Scheduler.ParticipantAllowlist
+	return s.settings.Load().For(model).Scheduler.ParticipantAllowlist
 }
 
-func (s *Scheduler) unthrottledParticipants() []string {
+func (s *Scheduler) unthrottledParticipants(model string) []string {
 	if s.settings == nil {
 		return nil
 	}
-	return s.settings.Load().Scheduler.UnthrottledParticipants
+	return s.settings.Load().For(model).Scheduler.UnthrottledParticipants
 }

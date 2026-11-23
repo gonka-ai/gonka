@@ -84,7 +84,7 @@ func releasedChannel() chan struct{} {
 //  2. Send them at once with no credential.
 //  3. Assert every request was refused for its credential with not one byte of its body read and no limiter slot taken.
 func TestCredentialLessBodiesAreRefusedUnreadWhenNoModelIsOpen(t *testing.T) {
-	live := liveWithRealTelemetry(t, func(c *config.Config) { c.Limits.ModelAccess = map[string]string{} })
+	live := liveWithRealTelemetry(t, func(c *config.Config) { grantAccess(c, map[string]string{}) })
 	body := chatBodyOfBytes("qwen", 1<<20)
 	bodies := make([]*heldBody, concurrentCallers)
 	for index := range bodies {
@@ -202,7 +202,7 @@ func TestOnlyACallerWhoseCredentialReachesNoModelIsRefusedBeforeItsBodyIsRead(t 
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			live := newHarness(t, func(c *config.Config) { c.Limits.ModelAccess = testCase.access })
+			live := newHarness(t, func(c *config.Config) { grantAccess(c, testCase.access) })
 			body := newHeldBody(chatBody, make(chan struct{}, 1), releasedChannel())
 			recorder := httptest.NewRecorder()
 			request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", body)

@@ -1,5 +1,7 @@
 package scheduler
 
+import "time"
+
 // Stop shuts every escrow's actor down and is safe to call more than once.
 func (s *Scheduler) Stop() {
 	s.registryMu.Lock()
@@ -44,9 +46,9 @@ func (s *Scheduler) dispatcherFor(escrow Escrow) (*dispatcher, error) {
 			escalationHold:      escrow.EscalationHold,
 			observer:            s.observer,
 			now:                 s.now,
-			matchWait:           s.matchWait(),
-			maxConsecutiveBurns: s.maxConsecutiveBurns,
-			maxBurnsPerRequest:  s.maxBurnsPerRequest,
+			matchWait:           func() time.Duration { return s.matchWait(escrow.Model) },
+			maxConsecutiveBurns: func() int64 { return s.maxConsecutiveBurns(escrow.Model) },
+			maxBurnsPerRequest:  func() int64 { return s.maxBurnsPerRequest(escrow.Model) },
 			retirementReserve:   s.retirementReserveFor(escrow),
 			newTimer:            s.newTimer,
 			retire:              s.retire,

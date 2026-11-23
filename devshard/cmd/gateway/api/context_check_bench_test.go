@@ -61,7 +61,8 @@ func BenchmarkChatPromptCount(b *testing.B) {
 			b.Run(size.name+"/"+name, func(b *testing.B) {
 				server := benchServer(b, benchChunks(48, 24))
 				next := *server.config.Load()
-				next.Limits.ModelLimits = map[string]config.ModelLimits{"qwen": {MaxModelLen: &pinned}}
+				open := config.ModelAccessOpen
+				mustResolveModels(&next, map[string]config.ModelSettings{"qwen": {MaxModelLen: &pinned, Access: &open}})
 				server.config.Swap(&next)
 				server.promptTokens = estimator
 				server.statsTokenizerEnabled = true

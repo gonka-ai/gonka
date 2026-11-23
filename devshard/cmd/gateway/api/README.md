@@ -71,7 +71,7 @@ Each `route` is one registered pattern. An empty label means the route is not in
 
 `handleDevshardChat` pins the race to one escrow, and refuses a pin the gateway no longer routes to as an unknown devshard (`ErrUnknownDevshard`, 404).
 
-`routableModel` refuses an unroutable model before it can take a limiter slot or an input-token budget, and fails closed on an empty registry. A model the operator offers — named in `limits.model_access` or `limits.model_limits`, via `config.Limits.Offers` — answers the same `ModelUnavailableError` as an empty registry when nothing currently routes to it; a model nobody offers answers `UnsupportedModelError` instead.
+`routableModel` refuses an unroutable model before it can take a limiter slot or an input-token budget, and fails closed on an empty registry. A model the operator offers — named in `models`, via `config.Config.Offers` — answers the same `ModelUnavailableError` as an empty registry when nothing currently routes to it; a model nobody offers answers `UnsupportedModelError` instead.
 
 ## What the boundary hands the engine
 
@@ -183,7 +183,9 @@ These keys are fixed: an escrow is `id` in `/v1/status`, `/v1/admin/state` and t
 
 ## The operator and recovery surface
 
-`auditAdmin` records an operator action that changed state the gateway serves or settles from. It carries the action and its subject, never the body: an override payload can hold the admin key.
+`auditAdmin` records an operator action that changed state the gateway serves or settles from. It carries the action and its subject, never a request body and never a key value.
+
+`admin_api_keys.go` serves the client-key routes ([`docs/operations.md`](../docs/operations.md), "Client API keys"). A create and a revoke take `settingsWrites` as a settings write does, so the row and the config swap agree; a read does not. `idOfAPIKey` and `idOfDigest` are the one formula for a key's id, in the answers and in `credentials.caller`.
 
 `badRequestUnlessOversized` keeps an ingest-cap rejection at 413 while every other decode failure is treated as the client's malformed body.
 

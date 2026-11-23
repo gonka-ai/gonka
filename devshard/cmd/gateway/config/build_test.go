@@ -57,17 +57,28 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a config from an `APIKeys` environment value listing keys separated by commas with extra whitespace and an empty entry.
-//  2. Assert the built server's API keys are the three keys, trimmed and with the blank entry dropped.
-func TestBuildSplitsAPIKeys(t *testing.T) {
-	values := env.Values{APIKeys: stringPointer("first-client-key, second-client-key ,,third-client-key")}
-	configuration, err := Build(values, Overrides{})
+//  1. Build a config with two client keys passed as the active keys, then overwrite the caller's slice.
+//  2. Assert the built server's API keys are the two keys as passed, so the snapshot does not alias the caller's slice.
+//  3. Build a config with no keys and assert the server has none, with no error even though a model is `api_key`.
+func TestBuildTakesTheActiveClientKeys(t *testing.T) {
+	passed := []string{"first-client-key-0001", "second-client-key-002"}
+	configuration, err := Build(env.Values{}, Overrides{}, passed...)
 	if err != nil {
 		t.Fatalf("Build(): %v", err)
 	}
+	passed[0] = "overwritten-by-the-caller"
 	keys := configuration.Server.APIKeys
-	if len(keys) != 3 || keys[0] != "first-client-key" || keys[1] != "second-client-key" || keys[2] != "third-client-key" {
-		t.Fatalf("Server.APIKeys = %v, want three trimmed keys", keys)
+	if len(keys) != 2 || keys[0] != "first-client-key-0001" || keys[1] != "second-client-key-002" {
+		t.Fatalf("Server.APIKeys = %v, want the two keys as passed", keys)
+	}
+
+	overrides := Overrides{Models: map[string]ModelSettings{"model-a": {Access: stringPointer(ModelAccessAPIKey)}}}
+	keyless, err := Build(env.Values{}, overrides)
+	if err != nil {
+		t.Fatalf("Build() with an api_key model and no keys: %v, want nil so a gateway with no keys boots", err)
+	}
+	if len(keyless.Server.APIKeys) != 0 {
+		t.Fatalf("Server.APIKeys = %v, want none", keyless.Server.APIKeys)
 	}
 }
 
@@ -83,28 +94,27 @@ func TestBuildRejectsInvalidMergedConfig(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build a config from an override whose `ModelLimits` map has one entry.
-//  2. Mutate the source map's existing entry and add a new one.
-//  3. Assert the built config's model limits are unaffected by either mutation, since `Build` clones the map rather than aliasing it.
-func TestBuildClonesOverridesModelLimits(t *testing.T) {
-	sourceModelLimits := map[string]ModelLimits{
-		"model-a": {DefaultMaxTokens: 100, MaxTokensCap: 200},
-	}
-	overrides := Overrides{ModelLimits: sourceModelLimits}
+//  1. Build a config from an override whose `models` map has one entry that pins max_model_len.
+//  2. Mutate the source map's entry, the pinned value behind its pointer, and add a new model.
+//  3. Assert the built config's per-model settings are unaffected by any of these, since `Build` copies what it resolves rather than aliasing it.
+func TestBuildCopiesOverridesModels(t *testing.T) {
+	pinned := int64(100)
+	source := map[string]ModelSettings{"model-a": {MaxModelLen: &pinned}}
 
-	configuration, err := Build(env.Values{}, overrides)
+	configuration, err := Build(env.Values{}, Overrides{Models: source})
 	if err != nil {
 		t.Fatalf("Build(): %v", err)
 	}
 
-	sourceModelLimits["model-a"] = ModelLimits{DefaultMaxTokens: 999, MaxTokensCap: 999}
-	sourceModelLimits["model-b"] = ModelLimits{DefaultMaxTokens: 1, MaxTokensCap: 2}
+	pinned = 999
+	source["model-a"] = ModelSettings{}
+	source["model-b"] = ModelSettings{}
 
-	if got := configuration.Limits.ModelLimits["model-a"].DefaultMaxTokens; got != 100 {
-		t.Fatalf("Limits.ModelLimits[model-a].DefaultMaxTokens = %d, want untouched 100 after mutating the source map (map was aliased, not cloned)", got)
+	if got := configuration.For("model-a").Limits.MaxModelLen; got == nil || *got != 100 {
+		t.Fatalf("For(model-a).Limits.MaxModelLen = %v, want untouched 100 after mutating the source (it was aliased, not copied)", got)
 	}
-	if _, present := configuration.Limits.ModelLimits["model-b"]; present {
-		t.Fatal("Limits.ModelLimits gained a key added to the source map after Build — map was aliased, not cloned")
+	if configuration.Offers("model-b") {
+		t.Fatal("the built config gained a model added to the source map after Build: the map was aliased")
 	}
 }
 
@@ -127,8 +137,8 @@ func TestBuildAcceptsTheShippedEnvTemplate(t *testing.T) {
 
 // templateSecrets substitutes the templates' placeholder keys so parsing them is not judged as a real secret.
 var templateSecrets = map[string]string{
-	"DEVSHARD_API_KEYS":      "sk-template-placeholder",
 	"DEVSHARD_ADMIN_API_KEY": "sk-admin-template-placeholder",
+	"DEVSHARD_API_KEYS":      "sk-template-placeholder",
 }
 
 func buildFromTemplate(t *testing.T, deployedEnvTemplate string) {
@@ -243,7 +253,7 @@ func TestThePerRequestBurnCapIsReachableWithoutARedeploy(t *testing.T) {
 				t.Fatalf("Build(): %v", err)
 			}
 			if got := configuration.Scheduler.MaxBurnsPerRequest; got != testCase.want {
-				t.Errorf("scheduler_max_burns_per_request = %d, want %d", got, testCase.want)
+				t.Errorf("max_burns_per_request = %d, want %d", got, testCase.want)
 			}
 		})
 	}
@@ -313,7 +323,7 @@ func TestTheBurnRunIsReachableWithoutARedeploy(t *testing.T) {
 				t.Fatalf("Build(): %v", err)
 			}
 			if got := configuration.Scheduler.MaxConsecutiveBurns; got != testCase.want {
-				t.Errorf("scheduler_max_consecutive_burns = %d, want %d", got, testCase.want)
+				t.Errorf("max_consecutive_burns = %d, want %d", got, testCase.want)
 			}
 		})
 	}

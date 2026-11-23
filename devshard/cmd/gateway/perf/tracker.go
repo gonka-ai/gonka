@@ -116,7 +116,8 @@ func (t *Tracker) RecordServedMismatch(participant, model string) {
 // RecordSample drops a sample whose attempt launched before the last ResetHostStats; a sample with no launch time counts on arrival.
 func (t *Tracker) RecordSample(s Sample) {
 	now := t.now()
-	perf := t.config.Load().Perf
+	settings := t.config.Load()
+	perf := settings.For(s.Model).Perf
 	key := hostKey{participant: s.ParticipantKey, model: s.Model}
 
 	t.mu.Lock()
@@ -133,10 +134,10 @@ func (t *Tracker) RecordSample(s Sample) {
 		t.resumeRungLocked(key, &host.ejection, policy, now)
 	}
 
-	staleness := time.Duration(perf.HostStalenessSeconds) * time.Second
+	staleness := time.Duration(settings.Perf.HostStalenessSeconds) * time.Second
 	evicted := t.evictStaleLocked(now, staleness)
 	if evicted || host.ejection.ejectedUntil != ejectedUntilBefore {
-		t.rebuildEjectedViewLocked(now, perf)
+		t.rebuildEjectedViewLocked(now, settings)
 	}
 	t.narrateEjectionTransition(key, host, now, ejectedUntilBefore)
 }
@@ -169,7 +170,7 @@ func (t *Tracker) narrateEjectionTransition(key hostKey, host *hostState, now, e
 }
 
 // rebuildEjectedViewLocked republishes both verdicts as one map: every live ejection is degraded, and the per-model cap decides which of them routing actually withholds.
-func (t *Tracker) rebuildEjectedViewLocked(now time.Time, perf config.Perf) {
+func (t *Tracker) rebuildEjectedViewLocked(now time.Time, settings *config.Config) {
 	live := t.liveEjections[:0]
 	knownByModel := make(map[string]int, len(t.hosts))
 	for key, host := range t.hosts {
@@ -194,7 +195,7 @@ func (t *Tracker) rebuildEjectedViewLocked(now time.Time, perf config.Perf) {
 	allowed, rank := 0, 0
 	for index, ejection := range live {
 		if index == 0 || ejection.key.model != live[index-1].key.model {
-			allowed, rank = maxEjectable(perf, knownByModel[ejection.key.model]), 0
+			allowed, rank = maxEjectable(settings.For(ejection.key.model).Perf, knownByModel[ejection.key.model]), 0
 		}
 		entry := ejectionView{degradedUntil: ejection.ejectedUntil}
 		if rank < allowed {

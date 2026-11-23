@@ -36,7 +36,9 @@ type Tunables struct {
 	EngineLoserGraceMS                     *int64   `json:"engine_loser_grace_ms,omitempty"`
 	EngineMaxConcurrentTimeoutVotes        *int64   `json:"engine_max_concurrent_timeout_votes,omitempty"`
 	EngineHedgeFirstTokenFloorMS           *int64   `json:"engine_hedge_first_token_floor_ms,omitempty"`
+	EngineMaxAttemptsPerRequest            *int64   `json:"engine_max_attempts_per_request,omitempty"`
 	EngineMaxStartedAttemptsPerRequest     *int64   `json:"engine_max_started_attempts_per_request,omitempty"`
+	DrainTimeoutSeconds                    *int64   `json:"drain_timeout_seconds,omitempty"`
 	PerfEWMAHalfLifeSeconds                *int64   `json:"perf_ewma_halflife_seconds,omitempty"`
 	PerfConsecutiveFailThreshold           *int64   `json:"perf_consecutive_fail_threshold,omitempty"`
 	PerfFailureRateThreshold               *float64 `json:"perf_failure_rate_threshold,omitempty"`

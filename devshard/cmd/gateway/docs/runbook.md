@@ -18,7 +18,7 @@ export ADMIN_KEY=<the value of DEVSHARD_ADMIN_API_KEY>
 | every request 429 | `limiter_queue_depth` and `effective_max_concurrent_requests` — the weight model may have scaled capacity to almost nothing after an epoch switch |
 | every request 503 with no model listed | the chain snapshot is stale, or the escrow set is empty — check `chain_snapshot_healthy` and `/v1/admin/devshards` |
 | 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: non-streaming replies are holding the whole budget |
-| a model returns 401 to every caller but the admin | no `model_access` entry names it — set it through the `model_access` override |
+| a model returns 401 to every caller but the admin | neither the model nor the network names an `access` for it — set `access` under `models.<id>`; on an `api_key` model, a caller whose key is not an active client key is refused too, so list them with `GET /v1/admin/api-keys` |
 | the admin surface 404s | `DEVSHARD_ADMIN_API_KEY` is unset |
 | burns climbing | `ghost_nonces_burned_total` by reason — see [accounting.md](./accounting.md) |
 | prompts past a model's context reach hosts | the log line `prompt tokenizer could not be loaded`, `prompt tokenizer pin could not be read`, `model has no tokenizer the gateway reads` or `prompt tokenizer parse panicked` for the model, or no context length for it — see [operations.md](./operations.md), "The context check" |
@@ -58,7 +58,7 @@ To roll back, set `GATEWAY_IMAGE` to the previous tag and repeat step 2. Before 
 
 ## Backup and restore
 
-The storage directory (`DEVSHARD_STORAGE_DIR`, mounted from `DEVSHARD_STORAGE_HOST_DIR`) holds everything the gateway remembers: `gateway.db` (escrow rows, create commitments, admin overrides), `accounting.db` (the nonce ledger) and one `escrow-<id>/` directory per escrow session. The three describe the same escrows at the same moment, so they are archived together and restored together: a `gateway.db` older than the session directories beside it lacks the rows of escrows those sessions serve, and session directories older than the rows hold nonces the hosts have moved past. No command takes a backup for you; this is the manual procedure.
+The storage directory (`DEVSHARD_STORAGE_DIR`, mounted from `DEVSHARD_STORAGE_HOST_DIR`) holds everything the gateway remembers: `gateway.db` (escrow rows, create commitments, admin overrides, client API keys), `accounting.db` (the nonce ledger) and one `escrow-<id>/` directory per escrow session. The three describe the same escrows at the same moment, so they are archived together and restored together: a `gateway.db` older than the session directories beside it lacks the rows of escrows those sessions serve, and session directories older than the rows hold nonces the hosts have moved past. No command takes a backup for you; this is the manual procedure.
 
 1. **Stop routing.** Turn on the kill switch ([operations.md](./operations.md), "The kill switch") through the admin settings: `curl -X POST -H "Authorization: Bearer $ADMIN_KEY" -d '{"disabled": true}' "$GATEWAY/v1/admin/settings"`. Clients are refused from then on; the admin and recovery surfaces stay up.
 2. **Wait for the drain.** `devshard_gateway_inflight_requests` reaches 0 once the last client has its answer, and `devshard_gateway_owed_timeout_votes` reaches 0 once every vote the races owe is posted, which can take as long as the protocol's own deadline, half an hour after a host confirmed the work ([race.md](./race.md), "The timeout-vote queue").
@@ -74,9 +74,9 @@ To restore, stop the container, replace the contents of the storage directory wi
 
 ## The two routing lists
 
-`participant_allowlist` narrows **which participants this gateway routes to**. `unthrottled_participants` names participants whose congestion window and ejection it declines to apply, and admits them whether or not the allowlist names them. Both are set through `/v1/admin/settings`, by `PUT` or `POST`, and nowhere else: there is no env value and no default behind them.
+`participant_allowlist` narrows **which participants this gateway routes to**. `unthrottled_participants` names participants whose congestion window and ejection it declines to apply, and admits them whether or not the allowlist names them. Both are set through `/v1/admin/settings`, by `PUT` or `POST`, and nowhere else: there is no env value and no default behind them. Either can also be set for one model under `models.<id>`: the model's list replaces the network list for that model alone, and an empty list clears it for that model. `GET /v1/admin/state` shows the lists each model runs under in `participants`.
 
-**That makes them one `PUT` away from being cleared.** A `PUT` replaces the stored overrides document whole, so a `PUT` that does not resend a list drops it, and a dropped narrowing fails open: the gateway routes to everybody again without refusing anything. The same is true of a fresh or lost store. A `POST` leaves a list it does not name in place. Read the lists back either way: the `settings written` audit line carries `participant_allowlist` and `unthrottled_participants` as they stand after the call.
+**That makes them one `PUT` away from being cleared.** A `PUT` replaces the stored overrides document whole, so a `PUT` that does not resend a list drops it, and a dropped narrowing fails open: the gateway routes to everybody again without refusing anything. The same is true of a fresh or lost store. A `POST` leaves a list it does not name in place. Read the lists back either way: the `settings written` audit line carries `participant_allowlist` and `unthrottled_participants` as they stand after the call, and each model's effective lists under `participants_by_model`.
 
 An entry must look like an address. The shape is checked when the settings document is built, so a short host label pasted from a log or a Grafana `host=` tag is refused at the settings call rather than narrowing dispatch to nobody.
 

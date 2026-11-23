@@ -7,21 +7,22 @@ import (
 )
 
 // Test flow:
-//  1. Build an `Overrides` value with every field populated, including per-model limits with both `MaxConcurrentRequests` and `MaxInputTokensInFlight` pointers set.
+//  1. Build an `Overrides` value with every field populated, including a model block with `MaxConcurrentRequests` and `MaxInputTokensInFlight` set.
 //  2. Encode it via `EncodeOverrides` and decode it back via `ParseOverrides`.
 //  3. Assert every top-level and per-model field round-trips, including both per-model pointer fields, and that fields never set decode back to nil.
 func TestOverridesJSONRoundTrip(t *testing.T) {
 	maxTokens := int64(2048)
 	disabled := true
+	access, modelDefaultMaxTokens := "api_key", int64(1024)
 	modelMaxConcurrentRequests := int64(64)
 	modelMaxInputTokensInFlight := int64(8192)
 	original := Overrides{
-		Tunables:    env.Tunables{DefaultMaxTokens: &maxTokens, Disabled: &disabled},
-		ModelAccess: map[string]string{"model-a": "api_key"},
-		ModelLimits: map[string]ModelLimits{
+		Tunables: env.Tunables{DefaultMaxTokens: &maxTokens, Disabled: &disabled},
+		Access:   &access,
+		Models: map[string]ModelSettings{
 			"model-a": {
-				DefaultMaxTokens:       1024,
-				MaxTokensCap:           2048,
+				DefaultMaxTokens:       &modelDefaultMaxTokens,
+				MaxTokensCap:           &maxTokens,
 				MaxConcurrentRequests:  &modelMaxConcurrentRequests,
 				MaxInputTokensInFlight: &modelMaxInputTokensInFlight,
 			},
@@ -42,19 +43,19 @@ func TestOverridesJSONRoundTrip(t *testing.T) {
 	if decoded.MaxTokensCap != nil {
 		t.Fatalf("MaxTokensCap = %v, want nil (never set)", *decoded.MaxTokensCap)
 	}
-	if decoded.ModelAccess["model-a"] != "api_key" {
-		t.Fatalf("ModelAccess = %v, want model-a→api_key", decoded.ModelAccess)
+	if decoded.Access == nil || *decoded.Access != "api_key" {
+		t.Fatalf("Access = %v, want api_key", decoded.Access)
 	}
-	if decoded.ModelLimits["model-a"].MaxTokensCap != 2048 {
-		t.Fatalf("ModelLimits = %v, want model-a cap 2048", decoded.ModelLimits)
+	if got := decoded.Models["model-a"].MaxTokensCap; got == nil || *got != 2048 {
+		t.Fatalf("Models = %v, want model-a cap 2048", decoded.Models)
 	}
-	decodedMaxConcurrentRequests := decoded.ModelLimits["model-a"].MaxConcurrentRequests
+	decodedMaxConcurrentRequests := decoded.Models["model-a"].MaxConcurrentRequests
 	if decodedMaxConcurrentRequests == nil || *decodedMaxConcurrentRequests != 64 {
-		t.Fatalf("ModelLimits[model-a].MaxConcurrentRequests = %v, want 64", decodedMaxConcurrentRequests)
+		t.Fatalf("Models[model-a].MaxConcurrentRequests = %v, want 64", decodedMaxConcurrentRequests)
 	}
-	decodedMaxInputTokensInFlight := decoded.ModelLimits["model-a"].MaxInputTokensInFlight
+	decodedMaxInputTokensInFlight := decoded.Models["model-a"].MaxInputTokensInFlight
 	if decodedMaxInputTokensInFlight == nil || *decodedMaxInputTokensInFlight != 8192 {
-		t.Fatalf("ModelLimits[model-a].MaxInputTokensInFlight = %v, want 8192", decodedMaxInputTokensInFlight)
+		t.Fatalf("Models[model-a].MaxInputTokensInFlight = %v, want 8192", decodedMaxInputTokensInFlight)
 	}
 }
 
@@ -76,7 +77,7 @@ func TestParseOverridesOfEmptyObjectIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseOverrides(empty): %v", err)
 	}
-	if decoded.DefaultMaxTokens != nil || decoded.Disabled != nil || len(decoded.ModelAccess) != 0 {
+	if decoded.DefaultMaxTokens != nil || decoded.Disabled != nil || decoded.Access != nil {
 		t.Fatalf("ParseOverrides(empty) = %+v, want zero value", decoded)
 	}
 }

@@ -21,7 +21,7 @@ const (
 
 func twoCallerKeys(configuration *config.Config) {
 	configuration.Server.APIKeys = []string{firstCallerKey, secondCallerKey}
-	configuration.Limits.ModelAccess = map[string]string{"qwen": config.ModelAccessAPIKey}
+	grantAccess(configuration, map[string]string{"qwen": config.ModelAccessAPIKey})
 }
 
 func distinctChatBody(index int) string {

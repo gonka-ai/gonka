@@ -101,7 +101,7 @@ func (m *Manager) creationFloor(modelID string, snapshot chain.PhaseSnapshot) (u
 	if snapshot.TokenPrice == 0 {
 		return 0, false
 	}
-	reserve := m.config.Load().Limits.RetirementReserve(modelID, snapshot.Models[modelID].MaxModelLen)
+	reserve := m.config.Load().For(modelID).Limits.RetirementReserve(snapshot.Models[modelID].MaxModelLen)
 	cost, priced := scheduler.RequestCost(reserve, snapshot.TokenPrice, snapshot.FeePerNonce)
 	floor := cost + snapshot.CreateDevshardFee
 	if !priced || floor < cost {

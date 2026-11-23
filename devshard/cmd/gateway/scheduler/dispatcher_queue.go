@@ -50,7 +50,7 @@ func (d *dispatcher) drain() (time.Time, bool) {
 		if forcingDue {
 			gates = avail.servingOverFullWindows()
 		}
-		offered.decision = match(binding, d.waiting, participants, gates, d.now(), d.matchWait)
+		offered.decision = match(binding, d.waiting, participants, gates, d.now(), d.matchWait())
 		switch decided := offered.decision.(type) {
 		case serve:
 			cost := slotCost(decided.waiter.profile)

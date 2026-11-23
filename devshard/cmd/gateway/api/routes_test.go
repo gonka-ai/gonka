@@ -51,13 +51,13 @@ func TestAnUnroutableModelIsRejectedBeforeTheLimiterAndTheRace(t *testing.T) {
 }
 
 // Test flow:
-//  1. Configure `limits.model_access` to offer a model nothing routes to.
+//  1. Configure `models.<id>.access` to offer a model nothing routes to.
 //  2. POST a chat completion for that model.
 //  3. Assert the response is 503 with Retry-After set to the escrow tick interval, not the 400 an unlisted model gets.
 //  4. Assert no limiter slots or races were consumed.
 func TestAModelOfferedThroughAccessAnswersUnavailableWithTheEscrowTick(t *testing.T) {
 	live := newHarness(t, func(configuration *config.Config) {
-		configuration.Limits.ModelAccess = map[string]string{"offered-model": config.ModelAccessOpen}
+		grantAccess(configuration, map[string]string{"offered-model": config.ModelAccessOpen})
 	})
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions",
 		`{"model":"offered-model","messages":[{"role":"user","content":"hi"}]}`, nil)
@@ -78,18 +78,18 @@ func TestAModelOfferedThroughAccessAnswersUnavailableWithTheEscrowTick(t *testin
 }
 
 // Test flow:
-//  1. Configure `limits.model_limits` alone to offer a model nothing routes to.
+//  1. Configure `models.<id>` with no access alone to offer a model nothing routes to.
 //  2. POST, as the admin, a chat completion for that model: without an access entry it is admin-only.
 //  3. Assert the response is 503 with Retry-After set to the escrow tick interval.
-func TestAModelOfferedOnlyThroughModelLimitsAnswersUnavailable(t *testing.T) {
+func TestAModelOfferedOnlyThroughAModelsBlockAnswersUnavailable(t *testing.T) {
 	live := newHarness(t, func(configuration *config.Config) {
-		configuration.Limits.ModelLimits = map[string]config.ModelLimits{"offered-model": {}}
+		mustResolveModels(configuration, map[string]config.ModelSettings{"offered-model": {}})
 	})
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions",
 		`{"model":"offered-model","messages":[{"role":"user","content":"hi"}]}`, adminHeaders())
 
 	if recorder.Code != http.StatusServiceUnavailable {
-		t.Fatalf("status: got %d (%s), want 503 — model_limits alone still offers the model", recorder.Code, recorder.Body.String())
+		t.Fatalf("status: got %d (%s), want 503 — a models block alone still offers the model", recorder.Code, recorder.Body.String())
 	}
 	want := strconv.Itoa(int(escrow.TickInterval.Seconds()))
 	if got := recorder.Header().Get("Retry-After"); got != want {
@@ -98,7 +98,7 @@ func TestAModelOfferedOnlyThroughModelLimitsAnswersUnavailable(t *testing.T) {
 }
 
 // Test flow:
-//  1. Clear `limits.model_access`, as every deployment starts, with API keys configured.
+//  1. Clear `models`, as every deployment starts, with API keys configured.
 //  2. POST a chat completion for the served model without credentials, and with a client API key.
 //  3. Assert each is refused 401 before any limiter slot or race: a model no entry opens is admin-only.
 func TestAModelNoAccessEntryOpensIsRefusedToAnonymousAndAPIKeyCallers(t *testing.T) {
@@ -110,7 +110,7 @@ func TestAModelNoAccessEntryOpensIsRefusedToAnonymousAndAPIKeyCallers(t *testing
 		{"api key", map[string]string{"Authorization": "Bearer " + clientKey}},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
-			live := newHarness(t, func(configuration *config.Config) { configuration.Limits.ModelAccess = nil })
+			live := newHarness(t, func(configuration *config.Config) { grantAccess(configuration, nil) })
 
 			recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, testCase.headers)
 
@@ -128,11 +128,11 @@ func TestAModelNoAccessEntryOpensIsRefusedToAnonymousAndAPIKeyCallers(t *testing
 }
 
 // Test flow:
-//  1. Clear `limits.model_access`, as every deployment starts.
+//  1. Clear `models`, as every deployment starts.
 //  2. POST a chat completion for the served model with the admin key.
 //  3. Assert it is served and races once: the admin reaches every model, listed or not.
 func TestTheAdminReachesAModelNoAccessEntryOpens(t *testing.T) {
-	live := newHarness(t, func(configuration *config.Config) { configuration.Limits.ModelAccess = nil })
+	live := newHarness(t, func(configuration *config.Config) { grantAccess(configuration, nil) })
 
 	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, adminHeaders())
 

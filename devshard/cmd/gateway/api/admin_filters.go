@@ -215,15 +215,16 @@ func (s *Server) storedOrBuiltInEntry(model string, records map[string]ModelFilt
 }
 
 func (s *Server) modelLimitsFor(model string, governedMaxModelLen uint64) modelLimitsView {
-	configured := s.config.Load().Limits
+	loaded := s.config.Load()
+	network, configured := loaded.Limits, loaded.For(model).Limits
 	view := modelLimitsView{
 		DefaultMaxTokens: configured.DefaultMaxTokens,
 		MaxTokensCap:     configured.MaxTokensCap,
-		MaxModelLen:      configured.ContextLength(model, governedMaxModelLen),
+		MaxModelLen:      configured.ContextLength(governedMaxModelLen),
 		Source:           limitsSourceGlobal,
 	}
-	if override, overridden := configured.ModelLimits[model]; overridden {
-		view.DefaultMaxTokens, view.MaxTokensCap, view.Source = override.DefaultMaxTokens, override.MaxTokensCap, limitsSourceModel
+	if configured.DefaultMaxTokens != network.DefaultMaxTokens || configured.MaxTokensCap != network.MaxTokensCap {
+		view.Source = limitsSourceModel
 	}
 	return view
 }

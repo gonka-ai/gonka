@@ -20,7 +20,7 @@ func TestAnEscrowHoldingTheFullContextSlotServesAFullContextRequest(t *testing.T
 	reserve := probe.retirementReserve(modelA, snapshot)
 	oneRequest, priced := RequestCost(reserve, tokenPrice, 0)
 	require.True(t, priced)
-	slot := oneRequest * uint64(probe.attemptsToFund())
+	slot := oneRequest * uint64(probe.attemptsToFund(modelA))
 	profile := RequestProfile{Model: modelA, InputBytes: int(reserve)}
 
 	for _, testCase := range []struct {
@@ -61,9 +61,9 @@ func TestAFullEscrowRefusesARequestCostingMoreThanItsSlot(t *testing.T) {
 	reserve := probe.retirementReserve(modelA, snapshot)
 	oneRequest, priced := RequestCost(reserve, tokenPrice, 0)
 	require.True(t, priced)
-	scheduler, _, _ := plannerScheduler(candidate{id: "full", weight: 1, latestNonce: 1, balance: oneRequest * uint64(probe.attemptsToFund()), tokenPrice: tokenPrice})
+	scheduler, _, _ := plannerScheduler(candidate{id: "full", weight: 1, latestNonce: 1, balance: oneRequest * uint64(probe.attemptsToFund(modelA)), tokenPrice: tokenPrice})
 
-	_, err := pickWith(scheduler, RequestProfile{Model: modelA, InputBytes: int(reserve) * (probe.attemptsToFund() + 1)}, snapshot)
+	_, err := pickWith(scheduler, RequestProfile{Model: modelA, InputBytes: int(reserve) * (probe.attemptsToFund(modelA) + 1)}, snapshot)
 
 	require.ErrorIs(t, err, ErrNoEscrowCapacity)
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)

@@ -115,7 +115,7 @@ Failures are recorded per model in `rotation_status` (`stage`, `epoch`, `create_
 
 A depleted escrow is worse than a dead one: its in-flight count is low precisely because every request fails, so the load score **prefers** it. `OnBalanceExhausted` marks it (no I/O — the request path never reaches the chain), and the next tick drains the marks (`escrow/planned_lifecycle.go`, `drainPlannedMarks`). A nonce-cap mark retires the escrow through `retire`. A balance mark is dropped and counted in `devshard_gateway_planner_ignored_marks_total`, and the escrow keeps serving what it can pay. `markSpent` marks a serving escrow no request reached, by the same rule.
 
-If the operator still offers a model no escrow can serve (`limits.model_access` or `limits.model_limits` names it), `api/routes.go`'s `routableModel` answers `503` with `Retry-After` for that model, rather than the `400` a model nobody offers gets. Both reach only a caller the model's access tier admits; anyone else is refused `401` first.
+If the operator still offers a model no escrow can serve (`models` names it), `api/routes.go`'s `routableModel` answers `503` with `Retry-After` for that model, rather than the `400` a model nobody offers gets. Both reach only a caller the model's access tier admits; anyone else is refused `401` first.
 
 ## The reserve
 

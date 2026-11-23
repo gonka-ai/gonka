@@ -55,8 +55,15 @@ const (
 )
 
 type (
+	apiKeySource string
 	filterSource string
 	limitsSource string
+)
+
+// Where a client API key comes from.
+const (
+	apiKeySourceDatabase apiKeySource = "database"
+	apiKeySourceEnv      apiKeySource = "env"
 )
 
 // Where a model filter entry's profile comes from, and where its read-only limits come from.
@@ -65,7 +72,7 @@ const (
 	filterSourceBuiltIn    filterSource = "built_in"
 	filterSourceDefault    filterSource = "default"
 	filterSourceUnreadable filterSource = "unreadable"
-	limitsSourceModel      limitsSource = "model_limits"
+	limitsSourceModel      limitsSource = "models"
 	limitsSourceGlobal     limitsSource = "global"
 )
 

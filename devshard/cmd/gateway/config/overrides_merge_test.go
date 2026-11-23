@@ -7,27 +7,27 @@ import (
 )
 
 // Test flow:
-//  1. Start from stored overrides that open a model, switch the gateway off and pin a request cap.
+//  1. Start from stored overrides that open the network access, switch the gateway off and pin a request cap.
 //  2. Merge a patch naming only a new request cap, then one setting the kill switch to null.
-//  3. Assert the first keeps model_access and disabled and takes the new cap, and the second clears disabled alone: a partial write changes only what it names.
+//  3. Assert the first keeps access and disabled and takes the new cap, and the second clears disabled alone: a partial write changes only what it names.
 func TestMergingAPatchChangesOnlyWhatItNames(t *testing.T) {
-	disabled, capBefore := true, int64(100)
-	stored := Overrides{Tunables: env.Tunables{Disabled: &disabled, MaxConcurrentRequests: &capBefore}, ModelAccess: map[string]string{"model-a": ModelAccessOpen}}
+	disabled, capBefore, open := true, int64(100), ModelAccessOpen
+	stored := Overrides{Tunables: env.Tunables{Disabled: &disabled, MaxConcurrentRequests: &capBefore}, Access: &open}
 
 	merged, err := stored.Merged([]byte(`{"max_concurrent_requests":250}`))
 	if err != nil {
 		t.Fatalf("Merged() = %v, want nil", err)
 	}
-	if merged.ModelAccess["model-a"] != ModelAccessOpen || merged.Disabled == nil || !*merged.Disabled || *merged.MaxConcurrentRequests != 250 {
-		t.Fatalf("merged = access %v disabled %v cap %v, want the access and the kill switch kept and the cap 250", merged.ModelAccess, merged.Disabled, *merged.MaxConcurrentRequests)
+	if merged.Access == nil || *merged.Access != ModelAccessOpen || merged.Disabled == nil || !*merged.Disabled || *merged.MaxConcurrentRequests != 250 {
+		t.Fatalf("merged = access %v disabled %v cap %v, want the access and the kill switch kept and the cap 250", merged.Access, merged.Disabled, *merged.MaxConcurrentRequests)
 	}
 
 	cleared, err := merged.Merged([]byte(`{"disabled":null}`))
 	if err != nil {
 		t.Fatalf("Merged() with null = %v, want nil", err)
 	}
-	if cleared.Disabled != nil || cleared.ModelAccess["model-a"] != ModelAccessOpen || *cleared.MaxConcurrentRequests != 250 {
-		t.Fatalf("cleared = disabled %v access %v cap %v, want only disabled cleared", cleared.Disabled, cleared.ModelAccess, cleared.MaxConcurrentRequests)
+	if cleared.Disabled != nil || cleared.Access == nil || *cleared.Access != ModelAccessOpen || *cleared.MaxConcurrentRequests != 250 {
+		t.Fatalf("cleared = disabled %v access %v cap %v, want only disabled cleared", cleared.Disabled, cleared.Access, cleared.MaxConcurrentRequests)
 	}
 }
 

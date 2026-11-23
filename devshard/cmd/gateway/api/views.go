@@ -50,39 +50,60 @@ type modelTopProvider struct {
 	IsModerated         bool   `json:"is_moderated"`
 }
 
-// filterOptions expresses forcing as its opposite, so an Options built without it keeps forcing.
-func filterOptions(limits config.Limits, admin bool, stopTokenVocabulary func(model string) int, profiles *filters.ProfileSet) filters.Options {
+// filterOptions expresses forcing as its opposite, so an Options built without it keeps forcing; the model-dependent knobs are read from the model's own configuration.
+func filterOptions(configuration *config.Config, admin bool, stopTokenVocabulary func(model string) int, profiles *filters.ProfileSet) filters.Options {
 	return filters.Options{
 		Profiles:            profiles,
 		Admin:               admin,
-		KeepClientStream:    !limits.ForceUpstreamStreaming,
-		DefaultMaxTokens:    uint64(limits.DefaultMaxTokens),
-		MaxTokensCap:        uint64(limits.MaxTokensCap),
-		ModelTokenLimits:    modelTokenLimits(limits.ModelLimits),
+		KeepClientStream:    func(model string) bool { return !configuration.For(model).Limits.ForceUpstreamStreaming },
+		DefaultMaxTokens:    uint64(configuration.Limits.DefaultMaxTokens),
+		MaxTokensCap:        uint64(configuration.Limits.MaxTokensCap),
+		ModelTokenLimits:    modelTokenLimits(configuration),
 		StopTokenVocabulary: stopTokenVocabulary,
 	}
 }
 
-// modelTokenLimits stays nil without overrides, so such a deployment allocates nothing on the request path.
-func modelTokenLimits(overrides map[string]config.ModelLimits) func(string) (uint64, uint64) {
-	if len(overrides) == 0 {
+type participantLists struct {
+	Allowlist   []string `json:"allowlist"`
+	Unthrottled []string `json:"unthrottled"`
+}
+
+type participantsInForce struct {
+	Network participantLists            `json:"network"`
+	Models  map[string]participantLists `json:"models"`
+}
+
+func participantViews(configuration *config.Config) participantsInForce {
+	view := participantsInForce{Network: listsOf(configuration), Models: map[string]participantLists{}}
+	for _, model := range configuration.ModelNames() {
+		view.Models[model] = listsOf(configuration.For(model))
+	}
+	return view
+}
+
+func listsOf(configuration *config.Config) participantLists {
+	return participantLists{
+		Allowlist:   append([]string{}, configuration.Scheduler.ParticipantAllowlist...),
+		Unthrottled: append([]string{}, configuration.Scheduler.UnthrottledParticipants...),
+	}
+}
+
+func modelTokenLimits(configuration *config.Config) func(string) (uint64, uint64) {
+	if !configuration.HasModels() {
 		return nil
 	}
 	return func(model string) (uint64, uint64) {
-		override := overrides[model]
-		return uint64(override.DefaultMaxTokens), uint64(override.MaxTokensCap)
+		limits := configuration.For(model).Limits
+		return uint64(limits.DefaultMaxTokens), uint64(limits.MaxTokensCap)
 	}
 }
 
 func (s *Server) modelList(models []string) modelListResponse {
-	limits := s.config.Load().Limits
+	configuration := s.config.Load()
 	created := s.now().Unix()
 	data := make([]modelDescriptor, 0, len(models))
 	for _, model := range models {
-		tokenCap := uint64(limits.MaxTokensCap)
-		if perModel, ok := limits.ModelLimits[model]; ok && perModel.MaxTokensCap > 0 {
-			tokenCap = uint64(perModel.MaxTokensCap)
-		}
+		tokenCap := uint64(max(configuration.For(model).Limits.MaxTokensCap, 0))
 		data = append(data, modelDescriptor{
 			ID:                  model,
 			Object:              "model",

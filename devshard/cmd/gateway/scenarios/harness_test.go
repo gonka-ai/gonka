@@ -292,10 +292,11 @@ func printCapturedLogTail(t *testing.T, logged *logcapture.Recorder) {
 	}
 }
 
-func openModelAccess(models []modelSpec) map[string]string {
-	access := make(map[string]string, len(models))
+func openModelAccess(models []modelSpec) map[string]config.ModelSettings {
+	open := config.ModelAccessOpen
+	access := make(map[string]config.ModelSettings, len(models))
 	for _, model := range models {
-		access[model.id] = config.ModelAccessOpen
+		access[model.id] = config.ModelSettings{Access: &open}
 	}
 	return access
 }
@@ -374,7 +375,7 @@ func (h *gatewayHarness) start() {
 	if err != nil {
 		h.t.Fatalf("store.Open() = %v, want nil", err)
 	}
-	if err := gatewayStore.SaveOverrides(context.Background(), config.Overrides{ModelAccess: openModelAccess(h.spec.allModels())}); err != nil {
+	if err := gatewayStore.SaveOverrides(context.Background(), config.Overrides{Models: openModelAccess(h.spec.allModels())}); err != nil {
 		h.t.Fatalf("SaveOverrides() = %v, want nil", err)
 	}
 	for index, escrowID := range h.seededIDs {
@@ -621,11 +622,14 @@ func (step reconfigureModel) apply(harness *gatewayHarness) {
 	reconfigureModels{}.apply(harness)
 }
 
-// reconfigure swaps the running configuration as an operator override would; scalar fields only, the copy shares maps.
+// reconfigure swaps the running configuration as an operator override would; scalar fields only, the copy shares maps, and the models are resolved again over the changed network values as a rebuild does.
 func (h *gatewayHarness) reconfigure(change func(*config.Config)) {
 	running := h.currentGateway()
 	next := *running.Config().Load()
 	change(&next)
+	if err := next.ResolveModels(openModelAccess(h.spec.allModels())); err != nil {
+		h.t.Fatalf("ResolveModels() = %v, want nil", err)
+	}
 	running.Config().Swap(&next)
 }
 

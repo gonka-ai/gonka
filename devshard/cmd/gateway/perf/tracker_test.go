@@ -555,3 +555,27 @@ func decodeP75Of(tracker *Tracker, participant string) (time.Duration, bool) {
 	}
 	return 0, false
 }
+
+// Test flow:
+//  1. Build a tracker whose network consecutive-failure threshold is 3 and whose model-b sets its own threshold of 2, with the max-ejection cap disabled.
+//  2. Drive participant-a to two consecutive failures on model-a and on model-b.
+//  3. Assert it is ejected on model-b only: each sample is judged under its own model's settings.
+func TestTrackerJudgesASampleUnderItsModelsOwnThreshold(t *testing.T) {
+	configuration := config.Defaults()
+	configuration.Perf = noCap(testPerf())
+	own := int64(2)
+	if err := configuration.ResolveModels(map[string]config.ModelSettings{"model-b": {PerfConsecutiveFailThreshold: &own}}); err != nil {
+		t.Fatalf("ResolveModels() = %v", err)
+	}
+	tracker := NewTracker(config.NewHolder(&configuration), fixedNow(testEpoch))
+
+	failAllConsecutive(tracker, "participant-a", "model-a", own)
+	failAllConsecutive(tracker, "participant-a", "model-b", own)
+
+	if tracker.Ejected("participant-a", "model-a") {
+		t.Error("participant-a is ejected on model-a after 2 failures under the network threshold of 3")
+	}
+	if !tracker.Ejected("participant-a", "model-b") {
+		t.Error("participant-a is not ejected on model-b after 2 failures under its own threshold of 2")
+	}
+}
