@@ -208,7 +208,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; `0` sets no static cap and lets the weight model decide alone |
 | `GATEWAY_ADMISSION_QUEUE_WAIT_MS` | 300000 | how long a request waits for a slot before 429 |
 | `GATEWAY_ADMISSION_QUEUE_PER_SLOT` | 4 | how deep the queue is allowed to grow per slot |
-| `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** non-streaming reply being assembled, at once |
+| `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** reply being assembled or recorded for the response cache, at once, including each live stream log until its race ends |
 | `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` | 128 MiB | **every** chat body being read and normalised, at once; a body past it is answered 503; at least 10 MiB ([`request.md`](request.md), "Order of operations") |
 | `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` | 64 KiB/s | the slowest average a client may read one reply at, after a 30-second allowance, before its write fails; between 1 B/s and 1 GiB/s ([`api/README.md`](../api/README.md), "Streaming the reply") |
 | `DEVSHARD_CHAT_CACHE_MAX_BYTES` | 256 MiB | the response cache |
@@ -453,7 +453,7 @@ Admin lines carry the action and its subject, **never a request body and never a
 
 ## Metrics
 
-`/metrics`, Prometheus: 97 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
+`/metrics`, Prometheus: 99 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
 
 | Question | Series |
 | --- | --- |
@@ -467,7 +467,7 @@ Admin lines carry the action and its subject, **never a request body and never a
 | is the shard behind on the votes it owes | `devshard_gateway_owed_timeout_votes`, against `engine_max_concurrent_timeout_votes` ([race.md](./race.md), "The timeout-vote queue"); `devshard_gateway_owed_vote_writes_lost_total` by `cause` (`shed`, `write_failed`), the saves and deletes of owed votes the store lost ([`store/README.md`](../store/README.md), "Owed refusal votes") |
 | is the chain view healthy | `devshard_gateway_chain_snapshot_healthy`, `devshard_gateway_chain_snapshot_age_seconds`, `devshard_gateway_chain_epoch_phase`, `devshard_gateway_chain_requests_blocked` |
 | is the escrow funding planner deciding sensibly | `devshard_gateway_escrow_money{model,class}`, `devshard_gateway_escrow_count{model,state}`, `devshard_gateway_planner_decisions_total{model,action,reason}` `devshard_gateway_funding_guarantee{model}` (below zero the guarantee is short), `devshard_gateway_planner_ignored_marks_total{model,reason}` (depletion marks the planner dropped; a rising `balance_floor` count is routing reporting what the planner already plans for) and `devshard_gateway_escrow_deadline_unsettled_total{model,reason}` (escrows narrated unsettled at or past their settle margin: `settlement_disabled`, `operator_deactivated`, `key_missing`, `deadline_passed`; any `deadline_passed` is money lost); the journal lines `escrow funding planned`, `escrow starved`, `funding guarantee broken` say why. |
-| is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_capture_bytes_held` |
+| is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_stream_logs`, `devshard_gateway_capture_bytes_held` |
 | are the request records keeping up | `devshard_gateway_accounting_rows_written_total`, `devshard_gateway_accounting_rows_lost_total`, `devshard_gateway_accounting_retention_sweeps_failed_total` |
 | is the journal keeping up | `devshard_gateway_journal_money_refused_total`, `devshard_gateway_journal_progress_dropped_total`, `devshard_gateway_journal_late_events_total` |
 | is the nonce ledger losing facts | `devshard_gateway_nonce_ledger_unknown_escrow_facts_total`: facts about an escrow the ledger does not hold — one its sweep has not opened yet, which a published escrow's wake keeps to the first sweep's latency, or one its retention pruned |
@@ -532,6 +532,7 @@ The families no question above needs, with the help text each one exports.
 | `devshard_gateway_participant_receipt_seconds` | Time from inference send until receipt confirmation by participant and model. |
 | `devshard_gateway_participant_total_attempt_seconds` | Total inference attempt time by participant and model. |
 | `devshard_gateway_served_bindings_total` | Total served streams checked against the Finish their host signed, by verdict. |
+| `devshard_gateway_stream_log_replays_total` | Repeated streamed requests that took over a live stream log, counted when the takeover starts. Like a cache hit it runs no race; it is not counted in the cache hits. |
 
 ### Metric changes
 
@@ -676,7 +677,7 @@ An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, be
 | --- | --- |
 | every request 429 | `limiter_queue_depth` and `effective_max_concurrent_requests` — the weight model may have scaled capacity to almost nothing after an epoch switch |
 | every request 503 with no model listed | the chain snapshot is stale, or the escrow set is empty — check `chain_snapshot_healthy` and `/v1/admin/devshards` |
-| 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: non-streaming replies are holding the whole budget |
+| 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: replies being assembled or recorded are holding the whole budget; `stream_logs` says how many live stream logs are among them |
 | a model returns 401 to every caller but the admin | the model has no `access` — set it under `models.<id>.access` |
 | the admin surface 404s | `DEVSHARD_ADMIN_API_KEY` is unset |
 | burns climbing | `ghost_nonces_burned_total` by reason — see [accounting.md](./accounting.md) |

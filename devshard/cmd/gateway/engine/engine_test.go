@@ -493,7 +493,7 @@ func TestOutcomeFailureNamesWhatTheClientLost(t *testing.T) {
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			got := testCase.outcome.failure()
+			got := testCase.outcome.Failure()
 
 			var hostErr *HostApplicationError
 			if errors.As(testCase.want, &hostErr) {

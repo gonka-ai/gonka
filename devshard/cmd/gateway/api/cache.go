@@ -286,17 +286,23 @@ func (w *cacheRecorder) cannotBuildEntry(unstorable error, escrowID string) bool
 }
 
 func (w *cacheRecorder) entryRefusal(unstorable error, escrowID string) string {
-	var refusedByHostBody hostBodyRefusedError
 	switch {
 	case w.overflowed:
 		return cacheRefusedTooLarge
 	case w.writeErr != nil:
 		return cacheRefusedWriteFailed
+	}
+	return replayRefusal(unstorable, w.body.Len(), escrowID)
+}
+
+func replayRefusal(unstorable error, bodyBytes int, escrowID string) string {
+	var refusedByHostBody hostBodyRefusedError
+	switch {
 	case errors.As(unstorable, &refusedByHostBody):
 		return refusedByHostBody.refusal
 	case unstorable != nil:
 		return cacheRefusedRaceFailed
-	case w.body.Len() == 0:
+	case bodyBytes == 0:
 		return filters.CacheRefusedEmptyBody
 	case strings.TrimSpace(escrowID) == "":
 		return cacheRefusedNoEscrow

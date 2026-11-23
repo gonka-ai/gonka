@@ -10,6 +10,9 @@ const (
 	RequestIDHeader = "X-Request-Id"
 )
 
+// The content type of a streamed reply.
+const contentTypeEventStream = "text/event-stream"
+
 // How a finished request was delivered. A stream commits 200 on its first byte, so this is the only
 // place that tells a reply the client can retry from one it cannot.
 const (

@@ -258,6 +258,7 @@ type Server struct {
 	requestIDs   func() string
 	buffers      *BufferBudget
 	cache        *responseCache
+	streams      *streamIndex
 	capture      *requestCapture
 
 	stopTokenVocabulary     func(model string) int
@@ -339,6 +340,7 @@ func New(deps Deps) (*Server, error) {
 	}
 	configuration := deps.Config.Load()
 	server.cache = newResponseCache(configuration.Cache.ChatCacheMaxBytes)
+	server.streams = newStreamIndex()
 	server.promptCounts = newPromptCountGate(configuration.Server.MaxConcurrentPromptCounts)
 	server.statsTokenizerEnabled = configuration.Server.StatsTokenizerEnabled
 	capture, err := newRequestCapture(configuration.Capture, deps.StorageDir, server.now)
@@ -381,3 +383,6 @@ func (s *Server) CaptureStats() (written, refused, failed, held int64) { return 
 
 // CacheStats reports the response cache's own account of itself, for the metrics collector.
 func (s *Server) CacheStats() (hits, misses, entries, bytes int64) { return s.cache.stats() }
+
+// StreamLogStats reports the live stream logs' own account of themselves, for the metrics collector.
+func (s *Server) StreamLogStats() (replays, live int64) { return s.streams.stats() }
