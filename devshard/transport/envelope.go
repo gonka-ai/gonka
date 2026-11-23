@@ -2,12 +2,15 @@ package transport
 
 import (
 	"bytes"
+	stdjson "encoding/json"
 	"fmt"
 
 	json "github.com/goccy/go-json"
 	"google.golang.org/protobuf/proto"
 
 	"devshard/heightsync"
+	"devshard/internal/jsonshape"
+	"devshard/logging"
 	"devshard/types"
 )
 
@@ -172,8 +175,8 @@ func UnwrapInferenceResponseBody(raw []byte) (UnwrappedInferenceResponse, error)
 		if err := rejectDeprecatedJSONEnvelopeKeys(raw); err != nil {
 			return UnwrappedInferenceResponse{}, err
 		}
-		var resp InferenceResponse
-		if err := json.Unmarshal(raw, &resp); err != nil {
+		resp, err := decodeInferenceResponseJSON(raw)
+		if err != nil {
 			return UnwrappedInferenceResponse{}, fmt.Errorf("decode legacy inference response json: %w", err)
 		}
 		return UnwrappedInferenceResponse{
@@ -191,8 +194,8 @@ func UnwrapInferenceResponseBody(raw []byte) (UnwrappedInferenceResponse, error)
 	if len(env.InferenceResponseJson) == 0 {
 		return UnwrappedInferenceResponse{}, fmt.Errorf("inference_response_json is empty")
 	}
-	var resp InferenceResponse
-	if err := json.Unmarshal(env.InferenceResponseJson, &resp); err != nil {
+	resp, err := decodeInferenceResponseJSON(env.InferenceResponseJson)
+	if err != nil {
 		return UnwrappedInferenceResponse{}, fmt.Errorf("decode inference response json: %w", err)
 	}
 	return UnwrappedInferenceResponse{
@@ -217,12 +220,34 @@ func isLikelyJSONObject(raw []byte) bool {
 	return false
 }
 
-func rejectDeprecatedJSONEnvelopeKeys(raw []byte) error {
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &top); err != nil {
-		return nil
+func decodeInferenceResponseJSON(raw []byte) (InferenceResponse, error) {
+	var response InferenceResponse
+	if !stdjson.Valid(raw) {
+		return response, fmt.Errorf("invalid inference response JSON")
 	}
-	if _, ok := top["message"]; ok {
+	var shapeErr error
+	jsonshape.Object(raw, func(key, value []byte) bool {
+		if jsonshape.KeyEqualFold(key, "mempool") {
+			_, shapeErr = jsonshape.Check(value, jsonshape.Limits{RootMembers: maxResponseMempoolEntries})
+		}
+		return shapeErr == nil
+	})
+	if shapeErr != nil {
+		logging.Warn("inference_response_mempool_shape_rejected", "subsystem", "transport", "error", shapeErr)
+		stripped, _, err := jsonshape.Rewrite(raw, func(key []byte, depth int) (string, bool) {
+			return "", depth == 1 && jsonshape.KeyEqualFold(key, "mempool")
+		})
+		if err != nil {
+			return response, err
+		}
+		raw = stripped
+	}
+	err := stdjson.Unmarshal(raw, &response)
+	return response, err
+}
+
+func rejectDeprecatedJSONEnvelopeKeys(raw []byte) error {
+	if stdjson.Valid(raw) && jsonshape.Field(raw, "message") != nil {
 		return fmt.Errorf("deprecated JSON inference envelope (top-level \"message\") is not supported; use protobuf InferenceRequestEnvelope / InferenceResponseEnvelope")
 	}
 	return nil

@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	stdjson "encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/jsonshape"
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
@@ -82,6 +84,8 @@ const DefaultMaxSSEStreamBytes int64 = 256 << 20
 // Oversize aborts after at most DefaultMaxSSEEventBytes + this much unread
 // data in the reader buffer (not the full attacker payload).
 const sseReaderBufferSize = 64 << 10
+
+const maxResponseMempoolEntries = 1 << 16
 
 // DefaultHeightSeedTimeout is the per-attempt bound for POST /height-sync.
 // QueryTimeout (30s) is far too long for a hung seed peer: one silent TCP
@@ -613,8 +617,8 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 	if err != nil {
 		return nil, err
 	}
-	var respJSON InferenceResponse
-	if err := json.Unmarshal(respBody, &respJSON); err != nil {
+	respJSON, err := decodeInferenceResponseJSON(respBody)
+	if err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 	return HostResponseFromJSON(respJSON)
@@ -824,14 +828,26 @@ func (c *HTTPClient) handleSSELine(
 		forward("data")
 		return
 	}
-	var envelope map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
-		// Not JSON -- forward as-is.
+	raw := []byte(data)
+	if !stdjson.Valid(raw) {
 		forward("data")
 		return
 	}
+	var receiptRaw, heightSyncRaw, metaRaw []byte
+	jsonshape.Object(raw, func(key, value []byte) bool {
+		switch {
+		case jsonshape.KeyEqual(key, "devshard_receipt"):
+			receiptRaw = value
+		case jsonshape.KeyEqual(key, "height_sync"):
+			heightSyncRaw = value
+		case jsonshape.KeyEqual(key, "devshard_meta"):
+			metaRaw = value
+		}
+		return true
+	})
 
-	if raw, key, ok := c.protocolEnvelope(envelope, "receipt"); ok {
+	if raw := receiptRaw; raw != nil {
+		const key = "devshard_receipt"
 		*sawTerminator = true
 		var receipt DevshardReceiptEvent
 		if err := json.Unmarshal(raw, &receipt); err != nil {
@@ -863,7 +879,7 @@ func (c *HTTPClient) handleSSELine(
 			result.ObservedHeight = receipt.ObservedHeight
 			result.ObservedBlockHash = receipt.ObservedBlockHash
 		}
-		if rawHS, ok := envelope["height_sync"]; ok && string(rawHS) != "null" {
+		if rawHS := heightSyncRaw; rawHS != nil && !bytes.Equal(rawHS, []byte("null")) {
 			var hs heightsync.HeightSyncSection
 			if err := json.Unmarshal(rawHS, &hs); err == nil {
 				hs.Direction = "response"
@@ -880,18 +896,28 @@ func (c *HTTPClient) handleSSELine(
 		return
 	}
 
-	if raw, key, ok := c.protocolEnvelope(envelope, "meta"); ok {
+	if raw := metaRaw; raw != nil {
+		const key = "devshard_meta"
 		if sawMeta != nil {
 			*sawMeta = true
 		}
 		received.MarkComplete()
-		var meta DevshardMetaEvent
-		if err := json.Unmarshal(raw, &meta); err != nil {
+		mempool := jsonshape.FieldFold(raw, "mempool")
+		if _, err := jsonshape.Check(mempool, jsonshape.Limits{RootMembers: maxResponseMempoolEntries}); err != nil {
+			logging.Warn("sse_meta_shape_rejected", "subsystem", "transport", "escrow", c.escrowID, "error", err)
+			return
+		}
+		var encoded [][]byte
+		if len(mempool) == 0 {
+			result.Mempool = nil
+			return
+		}
+		if err := stdjson.Unmarshal(mempool, &encoded); err != nil {
 			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
 		} else {
-			txs, txErr := DevshardTxsFromBytes(meta.Mempool)
+			txs, txErr := DevshardTxsFromBytes(encoded)
 			if txErr != nil {
-				logging.Warn("sse_meta_tx_decode_failed", "subsystem", "transport", "escrow", c.escrowID, "mempool_len", len(meta.Mempool), "error", txErr)
+				logging.Warn("sse_meta_tx_decode_failed", "subsystem", "transport", "escrow", c.escrowID, "mempool_len", len(encoded), "error", txErr)
 			} else {
 				result.Mempool = txs
 			}
@@ -901,16 +927,6 @@ func (c *HTTPClient) handleSSELine(
 
 	// Inference data line -- forward to callback.
 	forward("data")
-}
-
-func (c *HTTPClient) protocolEnvelope(envelope map[string]json.RawMessage, suffix string) (json.RawMessage, string, bool) {
-	keys := []string{"devshard_" + suffix}
-	for _, key := range keys {
-		if raw, ok := envelope[key]; ok {
-			return raw, key, true
-		}
-	}
-	return nil, "", false
 }
 
 func writeSSELine(w io.Writer, line string) error {

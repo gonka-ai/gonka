@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -335,23 +336,24 @@ func TestAggregateSSEStream_EmitsNullLogprobsWhenNoneArrived(t *testing.T) {
 func TestDecodeChoiceForFold_SkipsLogprobsWhenNotRequested(t *testing.T) {
 	chRaw := json.RawMessage(`{"index":0,"delta":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[{"token":"Hi","logprob":-0.1},{"token":"Hey","logprob":-1.5}]}]},"finish_reason":null}`)
 
-	without, lpDrop, err := decodeChoiceForFold(chRaw, clientResponseIntent{})
+	without, lpDrop, err := newCompletionFolder(clientResponseIntent{}).decodeChoiceForFold(chRaw)
 	require.NoError(t, err)
 	_, hasLP := without["logprobs"]
 	require.False(t, hasLP, "F11: logprobs must not be unmarshaled for no-logprob clients")
 	require.Empty(t, lpDrop)
 	require.Equal(t, "Hi", without["delta"].(map[string]any)["content"])
 
-	with, lpRaw, err := decodeChoiceForFold(chRaw, clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true})
+	with, lpRaw, err := newCompletionFolder(clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true}).decodeChoiceForFold(chRaw)
 	require.NoError(t, err)
 	_, hasLP = with["logprobs"]
 	require.False(t, hasLP, "logprobs stay as raw sidecar, not in the choice map")
 	content, extras, err := parseLogprobsContentRaw(lpRaw)
 	require.NoError(t, err)
 	require.Empty(t, extras)
-	require.Len(t, content, 1)
+	entries := slices.Collect(content)
+	require.Len(t, entries, 1)
 	var entry map[string]any
-	require.NoError(t, json.Unmarshal(content[0], &entry))
+	require.NoError(t, json.Unmarshal(entries[0], &entry))
 	require.Len(t, entry["top_logprobs"].([]any), 2)
 }
 
@@ -948,7 +950,9 @@ func TestAggregateSSEStream_StripsNestedInternalFields(t *testing.T) {
 	require.Equal(t, "x", lp[0].(map[string]any)["token"])
 	require.Equal(t, float64(1), resp["ext"].(map[string]any)["keep"])
 	// Same bytes the old whole-body pass produced, minus nothing a client may see.
-	require.Equal(t, string(filterClientInternalFields(got, intent)), string(got))
+	filtered, err := filterClientInternalFields(got, intent)
+	require.NoError(t, err)
+	require.Equal(t, string(filtered), string(got))
 }
 
 func TestAggregateSSEStream_StripsInternalFieldsFromHostError(t *testing.T) {
@@ -962,7 +966,7 @@ func TestAggregateSSEStream_StripsInternalFieldsFromHostError(t *testing.T) {
 // key is re-encoded.
 func TestStripInternalFieldsRaw_CleanEntryUntouched(t *testing.T) {
 	entry := json.RawMessage(`{"token":"token_idsX","logprob":-0.1234567890123,"top_logprobs":[]}`)
-	got, err := stripInternalFieldsRaw(entry, internalStrippedFields)
+	got, err := rewriteLogprobEntry(entry, false, internalStrippedFields)
 	require.NoError(t, err)
 	require.Equal(t, string(entry), string(got))
 }

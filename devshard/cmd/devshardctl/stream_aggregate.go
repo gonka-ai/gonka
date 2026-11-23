@@ -4,13 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"iter"
 	"log"
 	"sort"
 	"strings"
 	"sync/atomic"
 
+	"devshard/internal/jsonshape"
 	"devshard/transport"
 )
 
@@ -30,6 +33,12 @@ var aggregateDroppedToolCallFanoutTotal atomic.Uint64
 // aggregateDroppedExtrasFanoutTotal counts top-level / choice-extra keys ignored
 // once the corresponding extras map is at aggregateMaxExtrasKeys.
 var aggregateDroppedExtrasFanoutTotal atomic.Uint64
+
+var aggregateDroppedMessageFanoutTotal atomic.Uint64
+
+var aggregateDroppedToolCallFieldFanoutTotal atomic.Uint64
+
+var aggregateRejectedShapeTotal atomic.Uint64
 
 const (
 	noResponseDataJSON = `{"error":{"message":"no response data"}}`
@@ -51,6 +60,18 @@ const (
 	aggregateMaxChoices            = 8
 	aggregateMaxToolCallsPerChoice = 64
 	aggregateMaxExtrasKeys         = 64
+	aggregateMaxMessageKeys        = 64
+	aggregateMaxToolCallFieldKeys  = 16
+
+	aggregateMaxObjectMembers   = 256
+	aggregateMaxChoicesPerEvent = 64
+	aggregateMaxValueNodes      = 4096
+	aggregateMaxEventNodes      = 16384
+	aggregateMaxLogprobEntries  = 1 << 19
+
+	aggregateEntryOverheadBytes = 64
+	aggregateNodeOverheadBytes  = 32
+	aggregateMaxStructureBytes  = 256 << 10
 )
 
 // sseErrorKeyMarker is quoted so it matches the two payload shapes
@@ -101,7 +122,7 @@ func aggregateSSEStream(raw []byte, intent clientResponseIntent) []byte {
 		return aggregateFromPayloads(events, intent)
 	}
 	if trimmed := bytes.TrimSpace(raw); len(trimmed) > 0 && trimmed[0] == '{' {
-		return aggregateFromPayloads([][]byte{trimmed}, intent)
+		return aggregateFromPayloads(func(yield func([]byte) bool) { yield(trimmed) }, intent)
 	}
 	return out
 }
@@ -135,9 +156,10 @@ func aggregateSSEStreamReader(r io.Reader, intent clientResponseIntent) []byte {
 	folder := newCompletionFolder(intent)
 	defer folder.close()
 	var (
-		first []byte
-		count int
-		event []byte
+		first             []byte
+		count             int
+		firstIsCompletion bool
+		event             []byte
 	)
 	ingestEvent := func() []byte {
 		data := bytes.TrimSpace(event)
@@ -146,8 +168,19 @@ func aggregateSSEStreamReader(r io.Reader, intent clientResponseIntent) []byte {
 			return nil
 		}
 		count++
-		if count == 1 {
-			first = append([]byte(nil), data...)
+		switch count {
+		case 1:
+			if firstIsCompletion = isChatCompletionMessagePayload(data); firstIsCompletion {
+				first = append([]byte(nil), data...)
+				return nil
+			}
+		case 2:
+			if firstIsCompletion {
+				if out, early := folder.ingest(first); early {
+					return out
+				}
+				first = nil
+			}
 		}
 		if out, early := folder.ingest(data); early {
 			return out
@@ -183,9 +216,7 @@ func aggregateSSEStreamReader(r io.Reader, intent clientResponseIntent) []byte {
 		}
 		return []byte(noResponseDataJSON)
 	}
-	// Host errors already early-returned from ingest; only bare chat.completion
-	// messages need a post-scan passthrough (ingest folds them as chunks).
-	if count == 1 && isChatCompletionMessagePayload(first) {
+	if count == 1 && firstIsCompletion {
 		if readErr != nil {
 			log.Printf("aggregate_sse: read failed after single payload (max_line_bytes=%d): %v", maxLine, readErr)
 		}
@@ -205,67 +236,89 @@ func aggregateSSEStreamReader(r io.Reader, intent clientResponseIntent) []byte {
 	return []byte(noResponseDataJSON)
 }
 
-func aggregateFromPayloads(payloads [][]byte, intent clientResponseIntent) []byte {
-	if len(payloads) == 0 {
-		return []byte(noResponseDataJSON)
-	}
-
-	if len(payloads) == 1 {
-		p := payloads[0]
-		if isHostErrorPayload(p) || isChatCompletionMessagePayload(p) {
-			return filterPassthroughPayload(p, intent)
+func aggregateFromPayloads(payloads iter.Seq[[]byte], intent clientResponseIntent) []byte {
+	folder := newCompletionFolder(intent)
+	defer folder.close()
+	var first []byte
+	count := 0
+	for p := range payloads {
+		count++
+		if count == 1 {
+			first = p
+			continue
 		}
-	}
-
-	out, ok := foldCompletionChunks(payloads, intent)
-	if !ok {
-		if isAggregateFoldTooLargePayload(out) {
+		if count == 2 {
+			if out, early := folder.ingest(first); early {
+				return out
+			}
+		}
+		if out, early := folder.ingest(p); early {
 			return out
 		}
-		return []byte(noResponseDataJSON)
 	}
-	return out
+	if count == 1 {
+		if isChatCompletionMessagePayload(first) || isHostErrorPayload(first) {
+			return filterPassthroughPayload(first, intent)
+		}
+		if out, early := folder.ingest(first); early {
+			return out
+		}
+	}
+	if out, ok := folder.result(); ok {
+		return out
+	}
+	return []byte(noResponseDataJSON)
 }
 
 func filterPassthroughPayload(p []byte, intent clientResponseIntent) []byte {
-	if !containsAnyInternalField(p) {
+	if !containsAnyInternalField(p) && !bytes.Contains(p, []byte(`\u`)) {
 		return append([]byte(nil), p...)
 	}
-	return filterClientInternalFields(p, intent)
+	filtered, err := filterClientInternalFields(p, intent)
+	if err == nil {
+		_, err = jsonshape.Check(filtered, jsonshape.Limits{ObjectMembers: aggregateMaxObjectMembers})
+	}
+	if err != nil {
+		log.Printf("aggregate_fold: passthrough payload shape rejected: %v", err)
+		(*completionFolder)(nil).shapeError(err)
+		return []byte(aggregateFoldTooLargeJSON)
+	}
+	return bytes.Clone(filtered)
 }
 
-func payloadsFromEventsEnvelope(raw []byte) ([][]byte, bool) {
-	var generic map[string]json.RawMessage
-	if err := json.Unmarshal(bytes.TrimSpace(raw), &generic); err != nil {
+func payloadsFromEventsEnvelope(raw []byte) (iter.Seq[[]byte], bool) {
+	if !json.Valid(raw) {
 		return nil, false
 	}
-	eventsRaw, exists := generic["events"]
-	if !exists {
+	events := jsonshape.Field(raw, "events")
+	if len(events) == 0 || (events[0] != '[' && !bytes.Equal(events, []byte("null"))) {
 		return nil, false
 	}
-	var events []string
-	if err := json.Unmarshal(eventsRaw, &events); err != nil {
+	valid := true
+	jsonshape.Array(events, func(raw []byte) bool {
+		valid = raw[0] == '"' || bytes.Equal(raw, []byte("null"))
+		return valid
+	})
+	if !valid {
 		return nil, false
 	}
-	out := make([][]byte, 0, len(events))
-	for _, event := range events {
-		line := strings.TrimRight(event, "\r\n")
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		data := line
-		if strings.HasPrefix(line, "data:") {
-			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		}
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-		out = append(out, []byte(data))
-	}
-	if len(out) == 0 {
-		return nil, true
-	}
-	return out, true
+	return func(yield func([]byte) bool) {
+		jsonshape.Array(events, func(raw []byte) bool {
+			if len(raw) <= 2 || raw[0] != '"' {
+				return true
+			}
+			var line string
+			if json.Unmarshal(raw, &line) != nil {
+				return true
+			}
+			line = strings.TrimRight(line, "\r\n")
+			if strings.HasPrefix(line, "data:") {
+				line = strings.TrimPrefix(line, "data:")
+			}
+			line = strings.TrimSpace(line)
+			return line == "" || line == "[DONE]" || yield([]byte(line))
+		})
+	}, true
 }
 
 func isHostErrorPayload(p []byte) bool {
@@ -279,32 +332,30 @@ func isHostErrorPayload(p []byte) bool {
 }
 
 func isChatCompletionMessagePayload(p []byte) bool {
-	var probe struct {
-		Object  string `json:"object"`
-		Choices []struct {
-			Message *json.RawMessage `json:"message"`
-			Delta   *json.RawMessage `json:"delta"`
-		} `json:"choices"`
-	}
-	if err := json.Unmarshal(p, &probe); err != nil || len(probe.Choices) == 0 {
+	if !bytes.Contains(p, []byte(`"message"`)) && !bytes.Contains(p, []byte(`\u`)) {
 		return false
 	}
-	hasMessage := false
-	for _, c := range probe.Choices {
-		if c.Message != nil {
-			hasMessage = true
-		}
-		if c.Delta != nil {
+	if !json.Valid(p) {
+		return false
+	}
+	if raw := jsonshape.FieldFold(p, "object"); len(raw) > 0 {
+		var object string
+		if json.Unmarshal(raw, &object) != nil || (object != "" && object != "chat.completion") {
 			return false
 		}
 	}
-	if !hasMessage {
-		return false
-	}
-	if probe.Object == "" || probe.Object == "chat.completion" {
+	hasMessage, hasDelta := false, false
+	jsonshape.Array(jsonshape.FieldFold(p, "choices"), func(raw []byte) bool {
+		if v := jsonshape.FieldFold(raw, "message"); len(v) > 0 && !bytes.Equal(v, []byte("null")) {
+			hasMessage = true
+		}
+		if v := jsonshape.FieldFold(raw, "delta"); len(v) > 0 && !bytes.Equal(v, []byte("null")) {
+			hasDelta = true
+			return false
+		}
 		return true
-	}
-	return false
+	})
+	return hasMessage && !hasDelta
 }
 
 type aggToolCall struct {
@@ -332,11 +383,12 @@ type aggChoice struct {
 // and logprobs entry across all choices draws on the same two ceilings, so
 // fan-out cannot multiply the budget (R4).
 type foldBudget struct {
-	ramBytes  int64 // text + tool args + extras + in-mem logprobs
-	diskBytes int64 // logprobs spilled to the spool dir
-	ramLimit  int64
-	diskLimit int64
-	spoolDir  string
+	ramBytes       int64 // text + tool args + extras + in-mem logprobs
+	diskBytes      int64 // logprobs spilled to the spool dir
+	structureBytes int64
+	ramLimit       int64
+	diskLimit      int64
+	spoolDir       string
 }
 
 type completionFolder struct {
@@ -349,11 +401,116 @@ type completionFolder struct {
 	haveUsage  bool
 	sawUsable  bool
 	firstError []byte
+	eventNodes int
 	// once-per-fold warn flags so hostile fan-out does not spam logs
-	warnedChoiceFanout   bool
-	warnedToolCallFanout bool
-	warnedExtrasFanout   bool
-	warnedFoldTooLarge   bool
+	warnedChoiceFanout        bool
+	warnedToolCallFanout      bool
+	warnedExtrasFanout        bool
+	warnedMessageFanout       bool
+	warnedToolCallFieldFanout bool
+	warnedShape               bool
+	warnedFoldTooLarge        bool
+}
+
+type entryLimit struct {
+	max                  int
+	reserved             map[string]struct{}
+	reservedOffBudgetRAM bool
+	onDrop               func(*completionFolder)
+}
+
+var (
+	topEntryLimit = entryLimit{
+		max:                  aggregateMaxExtrasKeys,
+		reserved:             foldReservedTopKeys,
+		reservedOffBudgetRAM: true,
+		onDrop:               (*completionFolder).noteDroppedExtrasFanout,
+	}
+	extrasEntryLimit = entryLimit{
+		max:    aggregateMaxExtrasKeys,
+		onDrop: (*completionFolder).noteDroppedExtrasFanout,
+	}
+	messageEntryLimit = entryLimit{
+		max:      aggregateMaxMessageKeys,
+		reserved: foldReservedMessageKeys,
+		onDrop:   (*completionFolder).noteDroppedMessageFanout,
+	}
+	toolCallEntryLimit = entryLimit{
+		max:      aggregateMaxToolCallFieldKeys - 2,
+		reserved: map[string]struct{}{"id": {}, "type": {}},
+		onDrop:   (*completionFolder).noteDroppedToolCallFieldFanout,
+	}
+	toolFunctionEntryLimit = entryLimit{
+		max:      aggregateMaxToolCallFieldKeys - 1,
+		reserved: map[string]struct{}{"name": {}},
+		onDrop:   (*completionFolder).noteDroppedToolCallFieldFanout,
+	}
+)
+
+var foldEventShapeLimits = jsonshape.Limits{
+	ObjectMembers:   aggregateMaxObjectMembers,
+	RootKeyElements: map[string]int{"choices": aggregateMaxChoicesPerEvent},
+}
+
+func hostEventWithinLimits(data []byte) bool {
+	if _, err := jsonshape.Check(data, foldEventShapeLimits); err != nil {
+		return false
+	}
+	total := 0
+	ok := true
+	count := func(raw []byte) bool {
+		st, err := jsonshape.Check(raw, jsonshape.Limits{Nodes: aggregateMaxValueNodes})
+		total += st.Nodes
+		ok = err == nil && total <= aggregateMaxEventNodes
+		return ok
+	}
+	internal := func(key []byte) bool {
+		for _, name := range internalStrippedFields {
+			if jsonshape.KeyEqual(key, name) {
+				return true
+			}
+		}
+		return false
+	}
+	jsonshape.Object(data, func(key, value []byte) bool {
+		switch {
+		case internal(key):
+			return true
+		case jsonshape.KeyEqual(key, "choices"):
+			jsonshape.Array(value, func(choice []byte) bool {
+				jsonshape.Object(choice, func(k, v []byte) bool {
+					if internal(k) || jsonshape.KeyEqual(k, "logprobs") {
+						return true
+					}
+					if jsonshape.KeyEqual(k, "delta") || jsonshape.KeyEqual(k, "message") {
+						filtered, err := foldMessageValue(v, true)
+						if err != nil {
+							ok = false
+							return false
+						}
+						v = filtered
+					}
+					return count(v)
+				})
+				return ok
+			})
+			return ok
+		}
+		return count(value)
+	})
+	return ok
+}
+
+var foldReservedMessageKeys = map[string]struct{}{
+	"role":              {},
+	"name":              {},
+	"content":           {},
+	"reasoning":         {},
+	"reasoning_content": {},
+	"refusal":           {},
+	"function_call":     {},
+	"audio":             {},
+	"annotations":       {},
 }
 
 func newCompletionFolder(intent clientResponseIntent) *completionFolder {
@@ -384,17 +541,6 @@ func (f *completionFolder) close() {
 	}
 }
 
-func foldCompletionChunks(payloads [][]byte, intent clientResponseIntent) ([]byte, bool) {
-	f := newCompletionFolder(intent)
-	defer f.close()
-	for _, p := range payloads {
-		if out, early := f.ingest(p); early {
-			return out, true
-		}
-	}
-	return f.result()
-}
-
 func (f *completionFolder) noteDroppedChoiceFanout() {
 	aggregateDroppedChoiceFanoutTotal.Add(1)
 	if f == nil || f.warnedChoiceFanout {
@@ -422,8 +568,173 @@ func (f *completionFolder) noteDroppedExtrasFanout() {
 	log.Printf("aggregate_fold: extras fan-out cap hit (max_extras_keys=%d)", aggregateMaxExtrasKeys)
 }
 
+func (f *completionFolder) noteDroppedMessageFanout() {
+	aggregateDroppedMessageFanoutTotal.Add(1)
+	if f == nil || f.warnedMessageFanout {
+		return
+	}
+	f.warnedMessageFanout = true
+	log.Printf("aggregate_fold: message fan-out cap hit (max_message_keys=%d)", aggregateMaxMessageKeys)
+}
+
+func (f *completionFolder) noteDroppedToolCallFieldFanout() {
+	aggregateDroppedToolCallFieldFanoutTotal.Add(1)
+	if f == nil || f.warnedToolCallFieldFanout {
+		return
+	}
+	f.warnedToolCallFieldFanout = true
+	log.Printf("aggregate_fold: tool_call field fan-out cap hit (max_tool_call_field_keys=%d)", aggregateMaxToolCallFieldKeys)
+}
+
+func (f *completionFolder) shapeError(err error) error {
+	aggregateRejectedShapeTotal.Add(1)
+	if f != nil && !f.warnedShape {
+		f.warnedShape = true
+		log.Printf("aggregate_fold: payload shape rejected: %v", err)
+	}
+	return fmt.Errorf("%w: %w", ErrAggregateFoldTooLarge, err)
+}
+
+func (f *completionFolder) checkShape(raw []byte, l jsonshape.Limits) error {
+	if _, err := jsonshape.Check(raw, l); err != nil {
+		return f.shapeError(err)
+	}
+	return nil
+}
+
+func (f *completionFolder) decodeValue(raw json.RawMessage) (any, error) {
+	st, err := jsonshape.Check(raw, jsonshape.Limits{Nodes: aggregateMaxValueNodes})
+	if err != nil {
+		return nil, f.shapeError(err)
+	}
+	f.eventNodes += st.Nodes
+	if f.eventNodes > aggregateMaxEventNodes {
+		return nil, f.shapeError(fmt.Errorf("%w: event total %d", jsonshape.ErrNodes, f.eventNodes))
+	}
+	var v any
+	if err := json.Unmarshal(raw, &v); err != nil {
+		return nil, nil
+	}
+	return v, nil
+}
+
+func (f *completionFolder) decodeNonNull(raw json.RawMessage) (any, bool, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, false, nil
+	}
+	val, err := f.decodeValue(trimmed)
+	if err != nil {
+		return nil, false, err
+	}
+	return val, val != nil, nil
+}
+
+func (f *completionFolder) admitEntry(m map[string]any, k string, lim entryLimit) bool {
+	if _, exists := m[k]; exists {
+		return false
+	}
+	if _, reserved := lim.reserved[k]; reserved {
+		return true
+	}
+	n := len(m)
+	for key := range lim.reserved {
+		if _, exists := m[key]; exists {
+			n--
+		}
+	}
+	if n >= lim.max {
+		lim.onDrop(f)
+		return false
+	}
+	return true
+}
+
+func (f *completionFolder) storeEntry(m map[string]any, k string, v any, lim entryLimit) error {
+	total := int64(len(k)) + aggregateEntryOverheadBytes + decodedCost(v)
+	text := valueBytes(v)
+	if _, reserved := lim.reserved[k]; reserved && lim.reservedOffBudgetRAM {
+		text = 0
+	}
+	if err := f.chargeRAM(text); err != nil {
+		return err
+	}
+	if err := f.chargeStructure(total - text); err != nil {
+		return err
+	}
+	m[k] = v
+	return nil
+}
+
+func (f *completionFolder) putEntry(m map[string]any, k string, v any, lim entryLimit) error {
+	if !f.admitEntry(m, k, lim) {
+		return nil
+	}
+	return f.storeEntry(m, k, v, lim)
+}
+
+func (f *completionFolder) replaceValue(dst *any, value any) error {
+	cost := decodedCost(value)
+	if *dst != nil {
+		cost -= decodedCost(*dst)
+	}
+	if cost < 0 {
+		f.structureBytes += cost
+	} else if err := f.chargeStructure(cost); err != nil {
+		return err
+	}
+	*dst = value
+	return nil
+}
+
+func valueBytes(v any) int64 {
+	switch t := v.(type) {
+	case string:
+		return int64(len(t))
+	case json.RawMessage:
+		return int64(len(t))
+	case map[string]any:
+		var n int64
+		for k, e := range t {
+			n += int64(len(k)) + valueBytes(e)
+		}
+		return n
+	case []any:
+		var n int64
+		for _, e := range t {
+			n += valueBytes(e)
+		}
+		return n
+	default:
+		return 1
+	}
+}
+
+func decodedCost(v any) int64 {
+	switch t := v.(type) {
+	case string:
+		return aggregateNodeOverheadBytes + int64(len(t))
+	case json.RawMessage:
+		return aggregateNodeOverheadBytes + int64(len(t))
+	case map[string]any:
+		c := int64(aggregateNodeOverheadBytes)
+		for k, e := range t {
+			c += aggregateEntryOverheadBytes + int64(len(k)) + decodedCost(e)
+		}
+		return c
+	case []any:
+		c := int64(aggregateNodeOverheadBytes)
+		for _, e := range t {
+			c += decodedCost(e)
+		}
+		return c
+	default:
+		return aggregateNodeOverheadBytes
+	}
+}
+
 func (f *completionFolder) foldTooLargeResult() []byte {
-	if f != nil && !f.warnedFoldTooLarge {
+	if f != nil && !f.warnedShape && !f.warnedFoldTooLarge {
 		f.warnedFoldTooLarge = true
 		log.Printf("aggregate_fold: size budget exceeded ram_limit=%d disk_limit=%d", f.ramLimit, f.diskLimit)
 	}
@@ -444,11 +755,21 @@ func (f *completionFolder) ingest(p []byte) (out []byte, early bool) {
 		}
 		if f.firstError == nil {
 			f.firstError = filterPassthroughPayload(p, f.intent)
+			if isAggregateFoldTooLargePayload(f.firstError) {
+				return f.firstError, true
+			}
+			if err := f.chargeStructure(int64(len(f.firstError))); err != nil {
+				return f.foldTooLargeResult(), true
+			}
 		}
 		return nil, false
 	}
 	if normalized, replaced := replaceNonFiniteNumbers(p); replaced {
 		p = normalized
+	}
+	f.eventNodes = 0
+	if err := f.checkShape(p, foldEventShapeLimits); err != nil {
+		return f.foldTooLargeResult(), true
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(p, &raw); err != nil {
@@ -459,16 +780,30 @@ func (f *completionFolder) ingest(p []byte) (out []byte, early bool) {
 		return f.foldTooLargeResult(), true
 	}
 
+	sawUsage := false
 	if u, ok := raw["usage"]; ok {
-		if usageVal, ok := decodeNonNullJSON(u); ok {
-			f.usage = usageVal
+		usageVal, ok, err := f.decodeNonNull(u)
+		if err != nil {
+			return f.foldTooLargeResult(), true
+		}
+		if ok {
+			if err := f.replaceValue(&f.usage, usageVal); err != nil {
+				return f.foldTooLargeResult(), true
+			}
 			f.haveUsage = true
+			sawUsage = true
 		}
 	}
 
-	choiceRaws, ok := decodeChoiceRawSlice(raw["choices"])
+	choiceRaws, ok, err := f.decodeChoiceRawSlice(raw["choices"])
+	if err != nil {
+		return f.foldTooLargeResult(), true
+	}
 	for _, chRaw := range choiceRaws {
-		ch, lpRaw, err := decodeChoiceForFold(chRaw, f.intent)
+		ch, lpRaw, err := f.decodeChoiceForFold(chRaw)
+		if errors.Is(err, ErrAggregateFoldTooLarge) {
+			return f.foldTooLargeResult(), true
+		}
 		if err != nil || ch == nil {
 			continue
 		}
@@ -508,11 +843,15 @@ func (f *completionFolder) ingest(p []byte) (out []byte, early bool) {
 			}
 		}
 		if fr, ok := ch["finish_reason"]; ok && fr != nil {
-			ac.finishReason = fr
+			if err := f.replaceValue(&ac.finishReason, fr); err != nil {
+				return f.foldTooLargeResult(), true
+			}
 			ac.hasFinish = true
 		}
 		if sr, ok := ch["stop_reason"]; ok && sr != nil {
-			ac.stopReason = sr
+			if err := f.replaceValue(&ac.stopReason, sr); err != nil {
+				return f.foldTooLargeResult(), true
+			}
 			ac.hasStop = true
 		}
 		for k, v := range ch {
@@ -523,25 +862,13 @@ func (f *completionFolder) ingest(p []byte) (out []byte, early bool) {
 			if isStrippedKey(k, f.strip) || v == nil {
 				continue
 			}
-			if _, exists := ac.extras[k]; exists {
-				continue
-			}
-			if len(ac.extras) >= aggregateMaxExtrasKeys {
-				f.noteDroppedExtrasFanout()
-				continue
-			}
-			if err := f.chargeRAM(estimateFoldValueBytes(v)); err != nil {
+			if err := f.putEntry(ac.extras, k, v, extrasEntryLimit); err != nil {
 				return f.foldTooLargeResult(), true
 			}
-			ac.extras[k] = v
 		}
 	}
-	if ok && len(choiceRaws) == 0 {
-		if u, has := raw["usage"]; has {
-			if _, ok := decodeNonNullJSON(u); ok {
-				f.sawUsable = true
-			}
-		}
+	if ok && len(choiceRaws) == 0 && sawUsage {
+		f.sawUsable = true
 	}
 	return nil, false
 }
@@ -558,6 +885,17 @@ func (b *foldBudget) chargeRAM(delta int64) error {
 		return fmt.Errorf("%w: fold ram %d+%d > %d", ErrAggregateFoldTooLarge, b.ramBytes, delta, b.ramLimit)
 	}
 	b.ramBytes += delta
+	return nil
+}
+
+func (b *foldBudget) chargeStructure(delta int64) error {
+	if delta <= 0 {
+		return nil
+	}
+	if b.structureBytes+delta > aggregateMaxStructureBytes {
+		return fmt.Errorf("%w: fold structure %d+%d > %d", ErrAggregateFoldTooLarge, b.structureBytes, delta, aggregateMaxStructureBytes)
+	}
+	b.structureBytes += delta
 	return nil
 }
 
@@ -580,23 +918,6 @@ func (b *foldBudget) moveToDisk(n int64) error {
 	}
 	b.ramBytes -= n
 	return nil
-}
-
-func estimateFoldValueBytes(v any) int64 {
-	switch t := v.(type) {
-	case string:
-		return int64(len(t))
-	case []byte:
-		return int64(len(t))
-	case json.RawMessage:
-		return int64(len(t))
-	default:
-		b, err := json.Marshal(v)
-		if err != nil {
-			return 64
-		}
-		return int64(len(b))
-	}
 }
 
 func (f *completionFolder) result() ([]byte, bool) {
@@ -690,6 +1011,9 @@ func hasTerminalFinishReason(choices map[int]*aggChoice) bool {
 func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.RawMessage) error {
 	content, extras, err := parseLogprobsContentRaw(lpRaw)
 	if err != nil {
+		if errors.Is(err, jsonshape.ErrLimit) {
+			return f.shapeError(err)
+		}
 		return nil // ignore malformed logprobs object
 	}
 	// The store charges the shared budget itself: RAM while it fits, spool
@@ -703,13 +1027,15 @@ func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.Ra
 	}
 	lpOut, _ := ac.extras["logprobs"].(map[string]any)
 	if lpOut == nil {
-		if len(ac.extras) >= aggregateMaxExtrasKeys {
-			f.noteDroppedExtrasFanout()
+		if !f.admitEntry(ac.extras, "logprobs", extrasEntryLimit) {
 			return nil
 		}
 		lpOut = map[string]any{}
-		ac.extras["logprobs"] = lpOut
+		if err := f.storeEntry(ac.extras, "logprobs", lpOut, extrasEntryLimit); err != nil {
+			return err
+		}
 	}
+	emptyTop := !f.intent.keepTopLogprobs
 	for k, v := range extras {
 		if k == "logprob" || k == "token_ids" || k == "prompt_logprobs" || k == "prompt_token_ids" {
 			continue
@@ -718,21 +1044,20 @@ func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.Ra
 		if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 			continue
 		}
-		if _, exists := lpOut[k]; exists {
+		if !f.admitEntry(lpOut, k, extrasEntryLimit) {
 			continue
 		}
-		if len(lpOut) >= aggregateMaxExtrasKeys {
-			f.noteDroppedExtrasFanout()
-			continue
+		filtered := []byte("[]")
+		if !emptyTop || k != "top_logprobs" {
+			rewritten, err := rewriteLogprobEntry(trimmed, emptyTop, f.strip)
+			if err != nil {
+				return err
+			}
+			filtered = rewritten
 		}
-		val, ok := decodeNonNullJSON(trimmed)
-		if !ok {
-			continue
-		}
-		if err := f.chargeRAM(estimateFoldValueBytes(val)); err != nil {
+		if err := f.storeEntry(lpOut, k, json.RawMessage(bytes.Clone(filtered)), extrasEntryLimit); err != nil {
 			return err
 		}
-		lpOut[k] = val
 	}
 	return nil
 }
@@ -766,66 +1091,49 @@ func (f *completionFolder) mergeTopLevelRawFirstWriter(src map[string]json.RawMe
 		if isStrippedKey(k, f.strip) {
 			continue
 		}
-		if _, exists := dst[k]; exists {
+		if !f.admitEntry(dst, k, topEntryLimit) {
 			continue
 		}
-		_, reserved := foldReservedTopKeys[k]
-		if !reserved && nonReservedTopKeyCount(dst) >= aggregateMaxExtrasKeys {
-			f.noteDroppedExtrasFanout()
-			continue
+		val, ok, err := f.decodeNonNull(v)
+		if err != nil {
+			return err
 		}
-		val, ok := decodeNonNullJSON(v)
 		if !ok {
 			continue
 		}
-		if !reserved {
-			if err := f.chargeRAM(estimateFoldValueBytes(val)); err != nil {
-				return err
-			}
+		if err := f.storeEntry(dst, k, val, topEntryLimit); err != nil {
+			return err
 		}
-		dst[k] = val
 	}
 	return nil
 }
 
-func nonReservedTopKeyCount(dst map[string]any) int {
-	n := 0
-	for k := range dst {
-		if _, reserved := foldReservedTopKeys[k]; !reserved {
-			n++
-		}
-	}
-	return n
-}
-
-func decodeNonNullJSON(raw json.RawMessage) (any, bool) {
+func (f *completionFolder) decodeChoiceRawSlice(raw json.RawMessage) ([]json.RawMessage, bool, error) {
 	trimmed := bytes.TrimSpace(raw)
 	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, false
-	}
-	var val any
-	if err := json.Unmarshal(trimmed, &val); err != nil || val == nil {
-		return nil, false
-	}
-	return val, true
-}
-
-func decodeChoiceRawSlice(raw json.RawMessage) ([]json.RawMessage, bool) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, true
+		return nil, true, nil
 	}
 	var out []json.RawMessage
 	if err := json.Unmarshal(trimmed, &out); err != nil {
-		return nil, false
+		return nil, false, nil
 	}
-	return out, true
+	if len(out) > aggregateMaxChoicesPerEvent {
+		return nil, false, f.shapeError(fmt.Errorf("%w: %d choices", jsonshape.ErrRootKeyElements, len(out)))
+	}
+	return out, true, nil
+}
+
+func foldMessageValue(value []byte, keepLogprobs bool) ([]byte, error) {
+	if !containsAnyInternalField(value) && !bytes.Contains(value, []byte(`\u`)) {
+		return value, nil
+	}
+	return filterClientInternalFields(value, clientResponseIntent{keepLogprobs: keepLogprobs, keepTopLogprobs: true})
 }
 
 // decodeChoiceForFold expands one choices[] element. When !keepLogprobs, the
 // logprobs member is discarded (F11). When keepLogprobs, logprobs are returned
 // as raw JSON so content entries can be stored as NDJSON without map trees (R4).
-func decodeChoiceForFold(chRaw json.RawMessage, intent clientResponseIntent) (map[string]any, json.RawMessage, error) {
+func (f *completionFolder) decodeChoiceForFold(chRaw json.RawMessage) (map[string]any, json.RawMessage, error) {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(chRaw, &raw); err != nil {
 		return nil, nil, err
@@ -834,16 +1142,24 @@ func decodeChoiceForFold(chRaw json.RawMessage, intent clientResponseIntent) (ma
 	out := make(map[string]any, len(raw))
 	for k, v := range raw {
 		if k == "logprobs" {
-			if intent.keepLogprobs {
-				// Aliases the caller's payload; consumed within this ingest
-				// (the store copies the bytes it keeps), so no copy is needed.
+			if f.intent.keepLogprobs {
 				lpRaw = v
 			}
 			continue
 		}
-		var val any
-		if err := json.Unmarshal(v, &val); err != nil {
+		if isStrippedKey(k, f.strip) {
 			continue
+		}
+		if k == "delta" || k == "message" {
+			filtered, err := foldMessageValue(v, f.intent.keepLogprobs)
+			if err != nil {
+				return nil, nil, f.shapeError(err)
+			}
+			v = filtered
+		}
+		val, err := f.decodeValue(v)
+		if err != nil {
+			return nil, nil, err
 		}
 		out[k] = val
 	}
@@ -876,11 +1192,8 @@ func (f *completionFolder) mergeMessageFragment(ac *aggChoice, frag map[string]a
 		if v == nil {
 			continue
 		}
-		if _, exists := ac.msg[k]; !exists {
-			if err := f.chargeRAM(estimateFoldValueBytes(v)); err != nil {
-				return err
-			}
-			ac.msg[k] = v
+		if err := f.putEntry(ac.msg, k, v, messageEntryLimit); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -893,13 +1206,8 @@ func (f *completionFolder) appendMessageText(ac *aggChoice, key string, v any) e
 	s, ok := v.(string)
 	if !ok {
 		// Non-string payload for a normally-textual key: first-writer-wins.
-		if _, exists := ac.msg[key]; !exists {
-			if b := ac.text[key]; b == nil || b.Len() == 0 {
-				if err := f.chargeRAM(estimateFoldValueBytes(v)); err != nil {
-					return err
-				}
-				ac.msg[key] = v
-			}
+		if b := ac.text[key]; b == nil || b.Len() == 0 {
+			return f.putEntry(ac.msg, key, v, messageEntryLimit)
 		}
 		return nil
 	}
@@ -936,7 +1244,7 @@ func (f *completionFolder) mergeToolCallMap(ac *aggChoice, tc map[string]any) er
 	for k, v := range tc {
 		switch k {
 		case "index":
-			existing.fields["index"] = idx
+			continue
 		case "function":
 			fn, _ := v.(map[string]any)
 			if fn == nil {
@@ -960,13 +1268,6 @@ func (f *completionFolder) mergeToolCallMap(ac *aggChoice, tc map[string]any) er
 							}
 							existing.args.WriteString(s)
 						}
-					} else if fv != nil {
-						if _, exists := existing.fn[fk]; !exists {
-							if err := f.chargeRAM(estimateFoldValueBytes(fv)); err != nil {
-								return err
-							}
-							existing.fn[fk] = fv
-						}
 					}
 					continue
 				}
@@ -976,11 +1277,8 @@ func (f *completionFolder) mergeToolCallMap(ac *aggChoice, tc map[string]any) er
 				if s, ok := fv.(string); ok && s == "" {
 					continue
 				}
-				if _, exists := existing.fn[fk]; !exists {
-					if err := f.chargeRAM(estimateFoldValueBytes(fv)); err != nil {
-						return err
-					}
-					existing.fn[fk] = fv
+				if err := f.putEntry(existing.fn, fk, fv, toolFunctionEntryLimit); err != nil {
+					return err
 				}
 			}
 		default:
@@ -990,11 +1288,8 @@ func (f *completionFolder) mergeToolCallMap(ac *aggChoice, tc map[string]any) er
 			if s, ok := v.(string); ok && s == "" {
 				continue
 			}
-			if _, exists := existing.fields[k]; !exists {
-				if err := f.chargeRAM(estimateFoldValueBytes(v)); err != nil {
-					return err
-				}
-				existing.fields[k] = v
+			if err := f.putEntry(existing.fields, k, v, toolCallEntryLimit); err != nil {
+				return err
 			}
 		}
 	}
@@ -1034,7 +1329,7 @@ func buildChoice(ac *aggChoice) (map[string]any, error) {
 		"index":   ac.index,
 		"message": msg,
 	}
-	entries, err := ac.lp.contentRawMessages()
+	entries, err := ac.lp.contentRawArray()
 	if err != nil {
 		return nil, err
 	}

@@ -34,7 +34,8 @@ func parseSSEChunks(t *testing.T, raw string) []map[string]any {
 func TestFilterClientInternalFields_KeepsLogprobsWhenRequested(t *testing.T) {
 	payload := []byte(`{"prompt_token_ids":[1,2],"choices":[{"message":{"content":"Hi"},"token_ids":[3,4],"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[{"token":"Hi","logprob":-0.1}]}]}}]}`)
 
-	filtered := filterClientInternalFields(payload, clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true})
+	filtered, err := filterClientInternalFields(payload, clientResponseIntent{keepLogprobs: true, keepTopLogprobs: true})
+	require.NoError(t, err)
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[{"token":"Hi","logprob":-0.1}]}]}}]}`, string(filtered))
 }
@@ -43,7 +44,8 @@ func TestFilterClientInternalFields_KeepsLogprobsWhenRequested(t *testing.T) {
 func TestFilterClientInternalFields_EmptiesTopLogprobsWhenNotRequested(t *testing.T) {
 	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[{"token":"Hi","logprob":-0.1}]}]}}]}`)
 
-	filtered := filterClientInternalFields(payload, clientResponseIntent{keepLogprobs: true, keepTopLogprobs: false})
+	filtered, err := filterClientInternalFields(payload, clientResponseIntent{keepLogprobs: true, keepTopLogprobs: false})
+	require.NoError(t, err)
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[]}]}}]}`, string(filtered))
 }
@@ -53,7 +55,8 @@ func TestFilterClientInternalFields_EmptiesTopLogprobsWhenNotRequested(t *testin
 func TestFilterClientInternalFields_StripsLogprobsByDefault(t *testing.T) {
 	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[{"token":"Hi","logprob":-0.1}]}]}}]}`)
 
-	filtered := filterClientInternalFields(payload, clientResponseIntent{})
+	filtered, err := filterClientInternalFields(payload, clientResponseIntent{})
+	require.NoError(t, err)
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }

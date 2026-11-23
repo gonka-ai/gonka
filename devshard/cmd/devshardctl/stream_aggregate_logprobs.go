@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"iter"
 
+	"devshard/internal/jsonshape"
 	"devshard/spool"
 )
 
@@ -17,7 +20,6 @@ import (
 // to the request-wide foldBudget.
 type logprobStore struct {
 	mem     bytes.Buffer
-	emit    []byte // spilled bytes read back at emit time; alive until close
 	file    *spool.File
 	nMem    int64
 	nDisk   int64
@@ -25,23 +27,17 @@ type logprobStore struct {
 	spilled bool
 }
 
-func (s *logprobStore) appendEntries(entries []json.RawMessage, emptyTop bool, strip []string, b *foldBudget) error {
-	for _, entry := range entries {
-		raw := bytes.TrimSpace(entry)
-		if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
+func (s *logprobStore) appendEntries(entries iter.Seq[[]byte], emptyTop bool, strip []string, b *foldBudget) error {
+	for raw := range entries {
+		if bytes.Equal(raw, []byte("null")) {
 			continue
 		}
-		stripped, err := stripInternalFieldsRaw(raw, strip)
+		if s.entries >= aggregateMaxLogprobEntries {
+			return fmt.Errorf("%w: logprobs entries > %d", ErrAggregateFoldTooLarge, aggregateMaxLogprobEntries)
+		}
+		raw, err := rewriteLogprobEntry(raw, emptyTop, strip)
 		if err != nil {
 			return err
-		}
-		raw = stripped
-		if emptyTop {
-			rewritten, err := emptyTopLogprobsRaw(raw)
-			if err != nil {
-				return err
-			}
-			raw = rewritten
 		}
 		if err := s.appendRaw(raw, b); err != nil {
 			return err
@@ -142,47 +138,29 @@ func (s *logprobStore) spill(b *foldBudget) error {
 	return nil
 }
 
-// contentRawMessages returns logprobs.content entries as sub-slices of the
-// store's own bytes: no per-entry copy and no map[string]any rehydration. The
-// results alias store memory and stay valid until close.
-func (s *logprobStore) contentRawMessages() ([]json.RawMessage, error) {
+func (s *logprobStore) contentRawArray() (json.RawMessage, error) {
 	if s == nil || s.entries == 0 {
 		return nil, nil
 	}
-	data := s.mem.Bytes()
+	encoded := make(json.RawMessage, s.nMem+s.nDisk+1)
 	if s.spilled {
 		r, err := s.file.Reader()
 		if err != nil {
 			return nil, err
 		}
-		buf := bytes.NewBuffer(make([]byte, 0, s.nDisk))
-		if _, err := buf.ReadFrom(r); err != nil {
+		if _, err := io.ReadFull(r, encoded[1:]); err != nil {
 			return nil, err
 		}
-		s.emit = buf.Bytes()
-		data = s.emit
+	} else {
+		copy(encoded[1:], s.mem.Bytes())
 	}
-	return splitNDJSON(data, s.entries), nil
-}
-
-func splitNDJSON(data []byte, hint int) []json.RawMessage {
-	out := make([]json.RawMessage, 0, hint)
-	for len(data) > 0 {
-		var line []byte
-		if i := bytes.IndexByte(data, '\n'); i >= 0 {
-			line = data[:i]
-			data = data[i+1:]
-		} else {
-			line = data
-			data = nil
+	encoded[0], encoded[len(encoded)-1] = '[', ']'
+	for i := 1; i < len(encoded)-1; i++ {
+		if encoded[i] == '\n' {
+			encoded[i] = ','
 		}
-		line = bytes.TrimSpace(line)
-		if len(line) == 0 {
-			continue
-		}
-		out = append(out, json.RawMessage(line))
 	}
-	return out
+	return encoded, nil
 }
 
 func (s *logprobStore) close() {
@@ -194,7 +172,6 @@ func (s *logprobStore) close() {
 		s.file = nil
 	}
 	s.mem = bytes.Buffer{}
-	s.emit = nil
 	s.nMem = 0
 }
 
@@ -208,104 +185,59 @@ func (s *logprobStore) corruptForTest() error {
 
 var topLogprobsKeyMarker = []byte(`"top_logprobs"`)
 
-// stripInternalFieldsRaw removes the client-stripped keys from one raw entry.
-// Entries are stored raw, so this is the only place their nested keys are
-// seen before emit; the tree is decoded only when a stripped key's quoted
-// name occurs in the bytes at all, which honest entries never carry.
-func stripInternalFieldsRaw(entry json.RawMessage, strip []string) (json.RawMessage, error) {
-	found := false
-	for _, k := range strip {
-		if bytes.Contains(entry, []byte(`"`+k+`"`)) {
-			found = true
-			break
+func rewriteLogprobEntry(entry []byte, emptyTop bool, strip []string) ([]byte, error) {
+	found := bytes.Contains(entry, []byte(`\u`)) || (emptyTop && bytes.Contains(entry, topLogprobsKeyMarker))
+	if !found {
+		for _, name := range strip {
+			if bytes.Contains(entry, []byte(`"`+name+`"`)) {
+				found = true
+				break
+			}
 		}
 	}
 	if !found {
 		return entry, nil
 	}
-	var v any
-	if err := json.Unmarshal(entry, &v); err != nil {
-		return entry, nil
-	}
-	if !stripClientInternalFields(v, strip) {
-		return entry, nil
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return entry, err
-	}
-	return b, nil
-}
-
-var emptyJSONArray = json.RawMessage(`[]`)
-
-// emptyTopLogprobsRaw blanks top_logprobs on one content entry for clients that
-// asked for logprobs but not top_logprobs. The common shape (top_logprobs only
-// at the entry root) is rewritten from a shallow map of raw members, so the
-// nested alternatives are never decoded; anything unusual falls back to the
-// full tree walk.
-func emptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
-	if !bytes.Contains(entry, topLogprobsKeyMarker) {
-		return entry, nil
-	}
-	var shallow map[string]json.RawMessage
-	if err := json.Unmarshal(entry, &shallow); err != nil {
-		return entry, nil
-	}
-	if _, ok := shallow["top_logprobs"]; !ok {
-		return deepEmptyTopLogprobsRaw(entry)
-	}
-	for k, v := range shallow {
-		if k != "top_logprobs" && bytes.Contains(v, topLogprobsKeyMarker) {
-			return deepEmptyTopLogprobsRaw(entry)
-		}
-	}
-	shallow["top_logprobs"] = emptyJSONArray
-	b, err := json.Marshal(shallow)
-	if err != nil {
-		return entry, err
-	}
-	return b, nil
-}
-
-func deepEmptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
-	var v any
-	if err := json.Unmarshal(entry, &v); err != nil {
-		return entry, nil
-	}
-	if !emptyTopLogprobs(v) {
-		return entry, nil
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return entry, err
-	}
-	return b, nil
-}
-
-// parseLogprobsContentRaw extracts choices[].logprobs.content as raw JSON
-// values without expanding each entry into map[string]any.
-func parseLogprobsContentRaw(lpRaw json.RawMessage) (content []json.RawMessage, extras map[string]json.RawMessage, err error) {
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(bytes.TrimSpace(lpRaw), &raw); err != nil {
-		return nil, nil, err
-	}
-	if c, ok := raw["content"]; ok {
-		trimmed := bytes.TrimSpace(c)
-		if len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null")) {
-			if err := json.Unmarshal(trimmed, &content); err != nil {
-				return nil, nil, err
+	out, _, err := jsonshape.Rewrite(entry, func(key []byte, _ int) (string, bool) {
+		for _, name := range strip {
+			if jsonshape.KeyEqual(key, name) {
+				return "", true
 			}
 		}
-	}
-	for k, v := range raw {
-		if k == "content" {
-			continue
+		if emptyTop && jsonshape.KeyEqual(key, "top_logprobs") {
+			return "[]", true
 		}
-		if extras == nil {
-			extras = make(map[string]json.RawMessage, len(raw)-1)
-		}
-		extras[k] = v
+		return "", false
+	})
+	if err != nil {
+		aggregateRejectedShapeTotal.Add(1)
+		return nil, fmt.Errorf("%w: logprobs entry: %w", ErrAggregateFoldTooLarge, err)
 	}
-	return content, extras, nil
+	return out, nil
+}
+
+func parseLogprobsContentRaw(lpRaw json.RawMessage) (iter.Seq[[]byte], map[string]json.RawMessage, error) {
+	if _, err := jsonshape.Check(lpRaw, jsonshape.Limits{RootMembers: aggregateMaxObjectMembers}); err != nil {
+		return nil, nil, err
+	}
+	content := jsonshape.Field(lpRaw, "content")
+	if len(content) > 0 && content[0] != '[' && !bytes.Equal(content, []byte("null")) {
+		return func(func([]byte) bool) {}, nil, nil
+	}
+	var extras map[string]json.RawMessage
+	jsonshape.Object(lpRaw, func(key, raw []byte) bool {
+		if !jsonshape.KeyEqual(key, "content") {
+			if extras == nil {
+				extras = make(map[string]json.RawMessage)
+			}
+			name := string(key)
+			if bytes.ContainsRune(key, '\\') {
+				quoted := append(append([]byte{'"'}, key...), '"')
+				_ = json.Unmarshal(quoted, &name)
+			}
+			extras[name] = raw
+		}
+		return true
+	})
+	return func(yield func([]byte) bool) { jsonshape.Array(content, yield) }, extras, nil
 }

@@ -307,6 +307,7 @@ type deferredWriter struct {
 	requestID      string
 	clientFlag     *cancelFlag
 	clientIntent   clientResponseIntent
+	shapeErr       error
 	started        bool
 	bytesWritten   int64
 	sawDone        bool
@@ -333,6 +334,16 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.logDisconnectOnce(err, "write")
 		return 0, err
 	}
+	if d.shapeErr != nil {
+		return len(p), nil
+	}
+	rewritten, shapeErr := rewriteStreamingPayloadChecked(p, d.clientIntent)
+	if shapeErr != nil {
+		d.shapeErr = shapeErr
+		if !d.started {
+			return len(p), nil
+		}
+	}
 	if !d.started {
 		if d.requestID != "" {
 			// Emit before WriteHeader so nginx sees it and the aiohttp
@@ -347,7 +358,6 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	rewritten := rewriteStreamingPayload(p, d.clientIntent)
 	if bytes.Contains(rewritten, sseDoneMarker) {
 		d.sawDone = true
 	}
@@ -368,7 +378,9 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 }
 
 func (d *deferredWriter) Flush() {
-	d.flush("mid_stream")
+	if d.started || d.shapeErr == nil {
+		d.flush("mid_stream")
+	}
 }
 
 // flush performs the Flush, records any error, and emits a single
@@ -436,6 +448,10 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 		)
 		return
 	}
+	if dw.shapeErr != nil {
+		p.finishShapeRejectedStream(r.Context(), w, dw, started)
+		return
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			logRequestStage(r.Context(), "proxy_stream_terminated", "escrow", p.escrowID, "error", err, "bytes_written", dw.bytesWritten, "elapsed_ms", time.Since(started).Milliseconds())
@@ -452,6 +468,10 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 				if _, werr := fmt.Fprint(dw, "data: [DONE]\n\n"); werr != nil {
 					doneWriteErr = werr
 					logRequestStage(r.Context(), "proxy_done_write_failed", "escrow", p.escrowID, "error", werr)
+				}
+				if dw.shapeErr != nil {
+					p.finishShapeRejectedStream(r.Context(), w, dw, started)
+					return
 				}
 				finalErr := dw.flush("host_error_final")
 				logProxyResponseFinished(r.Context(), p.escrowID, "host_error", dw, finalErr, doneWriteErr, started)
@@ -537,14 +557,14 @@ func writeJSONPayload(w http.ResponseWriter, statusCode int, payload []byte) {
 func jsonErrorPayloadDetails(payload []byte) (sseErrorDetails, bool) {
 	var evt struct {
 		Error *struct {
-			Type    string `json:"type"`
-			Code    any    `json:"code"`
-			Message string `json:"message"`
+			Type    string          `json:"type"`
+			Code    json.RawMessage `json:"code"`
+			Message string          `json:"message"`
 		} `json:"error"`
-		Object  string `json:"object"`
-		Type    string `json:"type"`
-		Code    any    `json:"code"`
-		Message string `json:"message"`
+		Object  string          `json:"object"`
+		Type    string          `json:"type"`
+		Code    json.RawMessage `json:"code"`
+		Message string          `json:"message"`
 	}
 	if err := json.Unmarshal(payload, &evt); err != nil {
 		return sseErrorDetails{}, false
@@ -552,26 +572,56 @@ func jsonErrorPayloadDetails(payload []byte) (sseErrorDetails, bool) {
 	if evt.Error != nil {
 		details := sseErrorDetails{
 			Type:    evt.Error.Type,
-			Code:    fmt.Sprint(evt.Error.Code),
+			Code:    errorCodeString(evt.Error.Code),
 			Message: evt.Error.Message,
-		}
-		if evt.Error.Code == nil {
-			details.Code = ""
 		}
 		return details, true
 	}
 	if evt.Object == "error" && evt.Message != "" {
 		details := sseErrorDetails{
 			Type:    evt.Type,
-			Code:    fmt.Sprint(evt.Code),
+			Code:    errorCodeString(evt.Code),
 			Message: evt.Message,
-		}
-		if evt.Code == nil {
-			details.Code = ""
 		}
 		return details, true
 	}
 	return sseErrorDetails{}, false
+}
+
+func (p *Proxy) finishShapeRejectedStream(ctx context.Context, w http.ResponseWriter, dw *deferredWriter, started time.Time) {
+	logRequestStage(ctx, "proxy_stream_shape_rejected", "escrow", p.escrowID, "error", dw.shapeErr)
+	if !dw.started {
+		writeGatewayError(w, ErrAggregateFoldTooLarge)
+		return
+	}
+	var writeErr error
+	if !dw.sawDone {
+		var n int
+		n, writeErr = fmt.Fprintf(w, "data: %s\n\n", aggregateFoldTooLargeJSON)
+		dw.bytesWritten += int64(n)
+	}
+	finalErr := dw.flush("shape_error_final")
+	logProxyResponseFinished(ctx, p.escrowID, "error", dw, finalErr, writeErr, started)
+}
+
+func errorCodeString(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	switch raw[0] {
+	case '"':
+		var code string
+		_ = json.Unmarshal(raw, &code)
+		return code
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+		var code float64
+		if json.Unmarshal(raw, &code) == nil {
+			return fmt.Sprint(code)
+		}
+	case 't', 'f':
+		return string(raw)
+	}
+	return ""
 }
 
 // logProxyResponseFinished is the authoritative "request left the building"
