@@ -1,0 +1,118 @@
+package funding
+
+import (
+	"cmp"
+	"slices"
+	"time"
+
+	"devshard/cmd/gateway/internal/safemath"
+)
+
+const (
+	idleRetireAfter = 10 * time.Minute
+	surplusSamples  = 3
+)
+
+func plannedRetires(state ModelState, routable []EscrowState, decision Decision) []Retire {
+	retires := nonceCapRetires(state.Escrows)
+	if !state.Priced || state.InBridgeWindow {
+		return retires
+	}
+	if retire, planned := oneRetire(state, routable, decision); planned {
+		retires = append(retires, retire)
+	}
+	return retires
+}
+
+func nonceCapRetires(escrows []EscrowState) []Retire {
+	var retires []Retire
+	for _, escrow := range escrows {
+		if escrow.NonceCapReached {
+			retires = append(retires, Retire{EscrowID: escrow.ID, Reason: ReasonNonceCap})
+		}
+	}
+	slices.SortFunc(retires, func(left, right Retire) int { return cmp.Compare(left.EscrowID, right.EscrowID) })
+	return retires
+}
+
+func oneRetire(state ModelState, routable []EscrowState, decision Decision) (Retire, bool) {
+	starved := leastFreeFirst(routable, func(escrow EscrowState) bool { return escrow.Money.Starved && !escrow.Unread })
+	if budgetPressed(state, decision) && len(starved) > 0 {
+		return Retire{EscrowID: starved[0].ID, Reason: ReasonBudgetPressure}, true
+	}
+	for _, escrow := range starved {
+		if escrow.Money.Idle && escrow.IdleFor >= idleRetireAfter && !opensSpreadShortfall(state, routable, escrow) {
+			return Retire{EscrowID: escrow.ID, Reason: ReasonIdleStarved}, true
+		}
+	}
+	if state.SurplusRetiresHeld || !decision.SurplusHeld || surplusSamplesHeld(state) < surplusSamples {
+		return Retire{}, false
+	}
+	current := currentRegulars(state, routable)
+	currentStarved := leastFreeFirst(current, func(escrow EscrowState) bool { return escrow.Money.Starved && !escrow.Unread })
+	if len(currentStarved) > 0 && decision.FullCount > state.FullContextSlots {
+		if !keepsLiquid(state, decision, currentStarved[0]) {
+			return Retire{}, false
+		}
+		return Retire{EscrowID: currentStarved[0].ID, Reason: ReasonSurplus}, true
+	}
+	currentFull := leastFreeFirst(current, func(escrow EscrowState) bool { return escrow.Money.Full && !escrow.Unread })
+	if len(currentFull) > 0 && decision.FullCount >= state.FullContextSlots+2 && keepsLiquid(state, decision, currentFull[0]) {
+		return Retire{EscrowID: currentFull[0].ID, Reason: ReasonSurplus}, true
+	}
+	return Retire{}, false
+}
+
+func budgetDeficit(state ModelState, decision Decision) int {
+	return regularWant(decision.Shortfalls) - decision.Room
+}
+
+func budgetPressed(state ModelState, decision Decision) bool {
+	parking := max(state.Parking, 0)
+	walletPressed := state.WalletShort && regularWant(decision.Shortfalls) > 0 && parking == 0
+	return budgetDeficit(state, decision) > parking || walletPressed
+}
+
+func surplusSamplesHeld(state ModelState) int {
+	if state.ScheduledTick {
+		return state.SurplusStreak + 1
+	}
+	return state.SurplusStreak
+}
+
+func leastFreeFirst(escrows []EscrowState, keep func(EscrowState) bool) []EscrowState {
+	kept := make([]EscrowState, 0, len(escrows))
+	for _, escrow := range escrows {
+		if keep(escrow) {
+			kept = append(kept, escrow)
+		}
+	}
+	slices.SortFunc(kept, func(left, right EscrowState) int {
+		return cmp.Or(cmp.Compare(left.Money.Free, right.Money.Free), cmp.Compare(left.ID, right.ID))
+	})
+	return kept
+}
+
+func surplusHeld(state ModelState, shortfalls Shortfalls, routable []EscrowState, need uint64) bool {
+	perEscrow := capacityPerEscrow(state)
+	if !state.Priced || !state.DemandWindowFull || perEscrow == 0 || regularWant(shortfalls) > 0 {
+		return false
+	}
+	var fullFree uint64
+	for _, escrow := range routable {
+		if escrow.Money.Full {
+			fullFree = safemath.AddSaturatingUint64(fullFree, atModelPrice(state, escrow, escrow.Money.Free))
+		}
+	}
+	wanted := safemath.AddSaturatingUint64(uint64(max(state.FullContextSlots, 0)), ceilDivide(subtractFloor(need, fullFree), perEscrow))
+	return uint64(len(currentRegulars(state, routable))) > max(uint64(max(state.TargetCount, 0)), wanted)
+}
+
+func opensSpreadShortfall(state ModelState, routable []EscrowState, victim EscrowState) bool {
+	return isCurrentRegular(state, victim) && len(currentRegulars(state, routable)) <= max(state.TargetCount, 0)
+}
+
+func keepsLiquid(state ModelState, decision Decision, victim EscrowState) bool {
+	margin := safemath.AddSaturatingUint64(decision.Need, capacityPerEscrow(state))
+	return subtractFloor(decision.Liquid, escrowLiquidMoney(state, victim)) >= margin
+}

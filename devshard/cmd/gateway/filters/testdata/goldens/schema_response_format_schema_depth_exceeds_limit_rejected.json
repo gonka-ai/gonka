@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "response_format.json_schema.schema: nesting depth exceeded: limit 16",
+  "status": "rejected"
+}

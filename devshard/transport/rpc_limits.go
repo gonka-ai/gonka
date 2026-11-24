@@ -83,7 +83,7 @@ type ChannelLimitConfig struct {
 	// min(MaxStreamsTotal, DefaultRPCMaxChatsTotal). Watch does not spend it.
 	MaxChatsTotal uint32
 	// MaxConns is this process's HTTP/1.1 PeerConn pool
-	// (MaxIdleConnsPerHost / MaxConnsPerHost). Zero means
+	// (MaxConnsPerHost). Zero means
 	// DefaultRPCMaxConnsPerPeer / DEVSHARD_RPC_MAX_CONNS_PER_PEER.
 	// Advertised and enforced max_streams is min(MaxStreams, MaxConns).
 	MaxConns int

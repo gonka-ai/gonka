@@ -3,7 +3,7 @@ package transport
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
+	"fmt"
 
 	"devshard/host"
 	"devshard/types"
@@ -11,7 +11,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-var ErrChatRequestTooLarge = errors.New("encoded chat request exceeds the host body limit")
+var ErrChatRequestTooLarge = fmt.Errorf("encoded chat request exceeds the host body limit: %w", ErrHostRequestTooLarge)
 
 // ChatDiffPrefix returns the largest prefix that fits in a default chat
 // request. It sizes the actual JSON wire fields, including base64 inflation,
@@ -32,7 +32,8 @@ func ChatDiffPrefix(req host.HostRequest, escrowID string) (int, error) {
 		return 0, err
 	}
 	size := int64(len(body) + len(prompt) + len(escrowID) + envelopeOverhead)
-	if size > DefaultMaxBodySize {
+	room := MaxHostRequestBytes - PromptWireBytes(len(prompt))
+	if size > DefaultMaxBodySize || room < 0 {
 		return 0, ErrChatRequestTooLarge
 	}
 	for i, diff := range diffs {
@@ -46,7 +47,8 @@ func ChatDiffPrefix(req host.HostRequest, escrowID string) (int, error) {
 		if i > 0 {
 			size++ // comma between diffs
 		}
-		if size > DefaultMaxBodySize {
+		room -= diffWireBytes(diff)
+		if size > DefaultMaxBodySize || room < 0 {
 			return i, nil
 		}
 	}

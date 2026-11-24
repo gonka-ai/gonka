@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "response_format.json_schema.schema: node count exceeded: limit 128",
+  "status": "rejected"
+}
