@@ -15,6 +15,11 @@ const (
 	// DefaultValidationRate is used when the escrow carries no rate. It is not
 	// the chain default: inference-chain DefaultDevshardValidationRate is 1000.
 	DefaultValidationRate uint32 = 5000
+	// DefaultRefusalTimeoutSeconds is how long a host may hold an inference before verifiers vote to refuse it.
+	DefaultRefusalTimeoutSeconds = 60
+	// DefaultExecutionTimeoutSeconds is how long the chain still settles an inference. Work held past it
+	// can no longer be paid for, so callers bound their own waits by it.
+	DefaultExecutionTimeoutSeconds = 32 * 60
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -50,8 +55,8 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 // by config mismatches (e.g. different ValidationRate values).
 func DefaultSessionConfig(groupSize int) SessionConfig {
 	return NormalizeSessionConfig(SessionConfig{
-		RefusalTimeout:    60,
-		ExecutionTimeout:  32 * 60,
+		RefusalTimeout:    DefaultRefusalTimeoutSeconds,
+		ExecutionTimeout:  DefaultExecutionTimeoutSeconds,
 		TokenPrice:        1,
 		CreateDevshardFee: 10_000,
 		FeePerNonce:       1_000,

@@ -1753,7 +1753,7 @@
     "to": "now"
   },
   "timezone": "",
-  "title": "Gonka Gateway Observability",
+  "title": "Gonka devshardctl Observability",
   "uid": "gonka-gateway-observability",
   "version": 17,
   "weekStart": ""

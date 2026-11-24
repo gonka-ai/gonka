@@ -76,6 +76,11 @@ func setupArmedSession(t *testing.T, numHosts int, balance uint64, grace uint64,
 
 func armedSessionFor(t *testing.T, group []types.SlotAssignment, signers []*signing.Secp256k1Signer, config types.SessionConfig, balance, grace uint64, opts ...SessionOption) (*Session, *signing.Secp256k1Signer, *floorRig) {
 	t.Helper()
+	return armedSessionWithSM(t, group, signers, config, balance, grace, nil, opts...)
+}
+
+func armedSessionWithSM(t *testing.T, group []types.SlotAssignment, signers []*signing.Secp256k1Signer, config types.SessionConfig, balance, grace uint64, smOpts []state.SMOption, opts ...SessionOption) (*Session, *signing.Secp256k1Signer, *floorRig) {
+	t.Helper()
 	rig := &floorRig{}
 	rig.height.Store(100)
 	rig.clock.Store(time.Now().UnixNano())
@@ -92,13 +97,13 @@ func armedSessionFor(t *testing.T, group []types.SlotAssignment, signers []*sign
 				break
 			}
 		}
-		sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier, smOpts...)
 		h, err := host.NewHost(sm, slotSigner, stub.NewInferenceEngine(), "escrow-1", group, nil,
 			host.WithGrace(grace), host.WithChainOracle(oracles[i]))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
-	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, balance, user.Address(), verifier, smOpts...)
 	all := append([]SessionOption{
 		WithHeightSyncCadence(10, uint64(len(group))),
 		WithHeartbeatClock(func() time.Time { return time.Unix(0, rig.clock.Load()) }),

@@ -116,7 +116,8 @@ type PeerConnConfig struct {
 	H2PingTimeout time.Duration
 	// GRPC uses connect.WithGRPC while the live origin is HTTP/2. The
 	// HTTP/1.1 fallback stays Connect. Ignored when H2URL is empty.
-	GRPC bool
+	GRPC                 bool
+	ChatCompressMinBytes int
 }
 
 func (c PeerConnConfig) version() string {
@@ -377,7 +378,7 @@ func NewPeerConn(cfg PeerConnConfig) *PeerConn {
 func newPeerConnTransports(cfg PeerConnConfig, maxConns int) (*originSwitchTransport, http.RoundTripper) {
 	dialer := httpguard.NewDialer()
 	h1 := &http.Transport{
-		MaxIdleConnsPerHost: maxConns,
+		MaxIdleConnsPerHost: min(maxConns, DefaultRPCMaxIdleConnsPerPeer),
 		MaxConnsPerHost:     maxConns,
 		IdleConnTimeout:     120 * time.Second,
 		TLSHandshakeTimeout: 10 * time.Second,

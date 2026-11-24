@@ -1,0 +1,13 @@
+{
+  "routed_model": "MiniMaxAI/MiniMax-M2.7",
+  "admin": false,
+  "default_max_tokens": 3072,
+  "max_tokens_cap": 4096,
+  "body": {
+    "messages": [
+      {"role": "user", "content": "hi"},
+      {"role": "assistant", "content": null, "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "get_weather", "arguments": "{}"}}]},
+      {"role": "tool", "tool_call_id": "call_1", "content": "plain result"}
+    ]
+  }
+}

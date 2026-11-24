@@ -238,7 +238,6 @@ func TestRunInferenceStampsDispositionOnEveryAttemptSpan(t *testing.T) {
 // recorded its outcome, while still reporting the race duration rather than
 // the timeout duration.
 func TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T) {
-	zeroReceiptTimeout(t)
 	oldBuffer := user.TimeoutBuffer
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
