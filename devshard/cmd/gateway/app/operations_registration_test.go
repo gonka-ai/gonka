@@ -14,7 +14,7 @@ type staleRepublishPass struct {
 	rows    []store.DevshardRecord
 }
 
-func registryWithRacingPass(t *testing.T, records *store.Store) (*registry.Registry, *staleRepublishPass) {
+func registryWithRacingPass(t *testing.T, records store.Store) (*registry.Registry, *staleRepublishPass) {
 	t.Helper()
 	pass := &staleRepublishPass{}
 	var escrows *registry.Registry

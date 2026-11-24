@@ -75,6 +75,18 @@ func resolveStorageDir(explicit *string) (string, error) {
 	return filepath.Join(homeDir, ".cache", "gonka-gateway"), nil
 }
 
+// prepareStorageDir resolves the directory the sessions and nonce accounting live in and creates it.
+func prepareStorageDir(explicit *string) (string, error) {
+	storageDir, err := resolveStorageDir(explicit)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(storageDir, storageDirectoryMode); err != nil {
+		return "", fmt.Errorf("creating storage dir: %w", err)
+	}
+	return storageDir, nil
+}
+
 // sessionSources is a parameter so the transport an escrow is served over is chosen once, at compose.
 type sessionSources func(endpoints config.Chain, heightSettings config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) (chainSources, error)
 

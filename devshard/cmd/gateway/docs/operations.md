@@ -58,7 +58,7 @@ The `models` setting is also the list of models the gateway offers (`config.Conf
 
 ### Client API keys
 
-Client keys live in the `api_keys` table of `gateway.db`, **in plain text**: the storage directory and every archive of it are as secret as the keys. They are managed through the admin API and apply on the next request, with no restart.
+Client keys live in the `api_keys` table of the control-plane store, `gateway.db` in `sqlite` mode and the gateway's own database in `postgres` mode, **in plain text**: the storage directory or database and every archive and backup of it are as secret as the keys. They are managed through the admin API and apply on the next request, with no restart.
 
 | Call | What it does |
 | --- | --- |
@@ -72,7 +72,7 @@ curl -X POST -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -d '{"label":"bi
 {"id":"3f9a1c2e","source":"database","label":"billing","created_at":"2026-01-02T03:04:05.000000000Z","revoked":false,"key":"sk-..."}
 ```
 
-The `id` is the first eight hex characters of the key's SHA-256, the `api_key_id` the request record carries ([observability.md](./observability.md), "The request record"). A create whose `id` exists, revoked or not, answers 409, so an id is never reused. A supplied key shorter than 16 characters, containing whitespace (no `Bearer` header can carry it) or equal to the admin key answers 400. To rotate a key, create the new one and revoke the old one.
+The `id` is the first eight hex characters of the key's SHA-256, the `api_key_id` the request record carries ([observability.md](./observability.md), "The request record"). A create whose `id` exists, revoked or not, answers 409, so an id is never reused. A supplied key shorter than 16 characters, containing whitespace (no `Bearer` header can carry it) or a NUL character, equal to the admin key, or a label with a NUL character answers 400. To rotate a key, create the new one and revoke the old one.
 
 An `api_key` model needs an active key. Revoking the last active key while the network `access` or any model's `access` is `api_key` answers 409, and a settings write that leaves such a model with no active key answers 400. A gateway whose database holds no key and whose settings put a model on `api_key` still starts, and logs a warning that an `api_key` model has no active key, so the first key can be created. A settings write is refused only when it creates that state, so the kill switch and every other setting stay writable until a key exists, and the rule binds again once a key does. A stored block for a model `rotation_models_json` no longer lists is ignored, so it never counts as an `api_key` model. A `DEVSHARD_ADMIN_API_KEY` equal to an active database client key fails the boot: a database client key must differ from the admin key. The `api key created`, `api key read` and `api key revoked` audit lines carry the `api_key_id` and `api_key_label`.
 
@@ -143,9 +143,31 @@ The pass leaves alone a directory with no `epoch_<N>.db` (a session still openin
 
 The pass stops with the gateway. A value below the hosts' horizon is raised to it with a warning; `0` turns the pass off.
 
+## The completion journal
+
+Every serving escrow session writes each started nonce to the store's `inference_completions` table before the nonce is composed and sent, and deletes the entry once the nonce finishes or times out; a read-only session never dispatches and keeps no journal. While an entry is unresolved, the session refuses `Finalize` with `user.ErrInferenceCompletionPending`: settlement reads that as busy and defers the escrow to a later tick without counting a tick failure, and `/devshard/{id}/v1/finalize` answers 503 with a `Retry-After` of one tick. The execution timeout resolves a nonce nobody answered, after which the next tick settles the escrow; an ordinary settle is deferred that way for as long as the entry lasts. A forced settle, the deadline settle inside the settle margin or an operator's `force=true`, finalizes without waiting on the journal: the registry detaches the journal from the escrow's session for that finalize, so a started nonce still unresolved is paid to its executors like any open record, and the settlement deadline is never missed for the sake of the execution timeout. A finalize that landed clears the escrow's journal rows, so a restart does not read them again, and after a forced finalize the journal is attached again. The nonces a forced settle finalized past are narrated and counted: the line `escrow settled past unresolved nonces` carries the escrow, `unresolved` (how many) and `nonces` (which), and `devshard_gateway_escrow_settled_unresolved_nonces_total` adds how many; a nonce counts when its journal entry has a record in the session that is still pending or started, not finished, challenged, validated, invalidated or timed out; an entry with no record in the session is not counted, the nonces are read as the forced finalize begins, and the line is silent when none was. A journal that cannot be read or cleared around a forced finalize is logged as `completion journal unavailable around finalize` with the escrow and the error, and the nonces that read would have named go uncounted. A failed forced finalize leaves the journal attached and its rows in place, and the next forced attempt counts them; once the finalize has landed, a repeated forced settle clears leftover rows without counting them again. Attaching the journal switches that escrow's session SQLite to `synchronous=FULL` through `RequireDurableCommits`; if that fails, the escrow refuses every new inference and every `Finalize` stays pending, so an ordinary settle defers it on every tick until its session is reopened, while a forced settle detaches the journal and finalizes. An entry survives a restart and gates `Finalize` in the new process, because the journal lives in the control-plane store, SQLite or Postgres.
+
 ## One process per escrow set
 
-The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. The Postgres settings (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PG_CONNECT_TIMEOUT`) are not read; when any is set the gateway logs `legacy Postgres settings are ignored` at boot, naming them (`env.LegacyPostgresVariablesSet`).
+The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. Pointing two gateways at one Postgres database does not change that: nothing yet elects a leader, so the rule stands.
+
+### Storing state in Postgres
+
+`DEVSHARD_STORAGE_MODE` selects the control-plane store: unset or `sqlite` keeps `gateway.db` under `DEVSHARD_STORAGE_DIR`, `postgres` uses a database of its own, and any other value, `hybrid` and `auto` included, is refused at boot. Switching modes is an operator action: each store starts from its own data and nothing is copied between them.
+
+In `postgres` mode `GATEWAY_INSTANCE_ID` (a stable name for this process, written to the boot log) and `PGHOST` are required; the connection comes from the libpq `PG*` variables, with `PG_CONNECT_TIMEOUT`, `PG_OPERATION_TIMEOUT` and `PG_POOL_MAX_CONNS` as for the hosts. With several hosts in `PGHOST` the connect timeout per host is capped at `PG_OPERATION_TIMEOUT` divided by the number of hosts plus one, so a host that never answers leaves the next host and the statement room inside one operation; the cap counts one address per host name, and on a slow link raise `PG_OPERATION_TIMEOUT` so the first host can still finish connecting.
+
+Boot refuses, with no SQLite fallback:
+
+- a host that is not loopback or a unix socket reached without TLS (`sslmode` `require`, `verify-ca` or `verify-full`; `require` does not check the certificate, so prefer `verify-full` with `PGSSLROOTCERT`);
+- a server with `fsync` off; every connection pins `synchronous_commit` on, so that setting cannot weaken a commit;
+- a database that holds tables and no `gateway_database_marker`, so give the gateway a database nobody else uses.
+
+The client API keys, the settings document with its `models` block and legacy keys, and every other control-plane table live in Postgres in this mode; a key created, listed or revoked through the admin API reads and writes the Postgres table. Sessions and nonce accounting stay in SQLite under `DEVSHARD_STORAGE_DIR` in both modes.
+
+Connect directly or through a session-level pooler: the pool uses prepared statements and startup parameters, which transaction pooling breaks.
+
+While the mode is `sqlite`, any `PG*` variable that is set is ignored and named in the boot log ([observability.md](./observability.md), "Lines that mean something happened").
 
 ## Outbound dependencies
 

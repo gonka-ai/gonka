@@ -150,6 +150,14 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestAShorterHostsContextRefusalIsRetriedOnALongerHost` | a host running shorter than the model must not refuse a prompt the model takes | the client gets 200 from a longer host, the refused attempt's reservation comes back by the execution timeout and the pinned host defect charges the shorter host a miss |
 | `TestAPromptOverTheModelIsNotRetriedPastAShorterHost` | a prompt the model's length cannot take must not be retried because the first host was shorter | the client gets 400 after one attempt, whose reservation comes back by the execution timeout, and the pinned host defect charges the shorter host a miss |
 
+### Completion journal — `journal_test.go`
+
+| Test | Why it exists | What it checks |
+| --- | --- | --- |
+| `TestAStartedNonceDefersSettlementUntilItsTimeoutResolvesIt` | a stalled host leaves a started nonce journaled while the escrow retires | Finalize is refused as pending and busy, the tick logs no failure, and the escrow settles with an empty journal once the execution timeout resolves the nonce |
+| `TestAJournalEntrySurvivesARestartAndStillGatesFinalize` | a gateway restart with a started, unresolved nonce | the journal entry survives and still gates Finalize until the timeout resolves it, then the escrow settles |
+| `TestAForcedSettleFinalizesThroughAPendingJournalEntry` | the deadline forces the settle of an escrow with a started nonce still journaled | an ordinary Finalize is refused as pending, then the forced settle finalizes inside the margin without waiting for the execution timeout, clears the escrow's journal and logs `escrow settled past unresolved nonces` |
+
 ### Data — `data_test.go`
 
 | Test | Why it exists | What it checks |

@@ -30,6 +30,7 @@ import (
 	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -528,9 +529,9 @@ func TestLoadSimulation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveStorageDir() = %v, want nil", err)
 	}
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		t.Fatalf("store.Open() = %v, want nil", err)
+		t.Fatalf("sqlite.Open() = %v, want nil", err)
 	}
 	open := config.ModelAccessOpen
 	if err := gatewayStore.SaveOverrides(t.Context(), config.Overrides{Models: map[string]config.ModelSettings{loadSimulationModel: {Access: &open}}}); err != nil {

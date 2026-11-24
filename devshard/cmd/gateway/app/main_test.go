@@ -34,6 +34,7 @@ import (
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 	"devshard/heightsync"
 	"devshard/transport"
 	"devshard/types"
@@ -163,9 +164,9 @@ func TestComposeReadsThePublicAPIThroughTheSourcesClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveStorageDir() = %v, want nil", err)
 	}
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		t.Fatalf("store.Open() = %v, want nil", err)
+		t.Fatalf("sqlite.Open() = %v, want nil", err)
 	}
 	client := &http.Client{}
 	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
@@ -206,10 +207,15 @@ func composedGatewayReading(t *testing.T, reader chain.Reader) *gateway {
 	if err != nil {
 		t.Fatalf("resolving storage dir: %v", err)
 	}
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
 		t.Fatalf("opening store: %v", err)
 	}
+	return composedGatewayOver(t, values, storageDir, gatewayStore, reader)
+}
+
+func composedGatewayOver(t *testing.T, values env.Values, storageDir string, gatewayStore store.Store, reader chain.Reader) *gateway {
+	t.Helper()
 	composed, err := compose(context.Background(), values, storageDir, gatewayStore, sessionsReading(gatewayStore, storageDir, reader))
 	if err != nil {
 		gatewayStore.Close()
@@ -376,7 +382,7 @@ func TestARacePutsAnAccountingRowInTheStoreTheGatewayOpened(t *testing.T) {
 	}
 }
 
-func waitForAccountingRow(t *testing.T, records *store.Store, requestID string) store.RequestRecord {
+func waitForAccountingRow(t *testing.T, records store.Store, requestID string) store.RequestRecord {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -461,6 +467,7 @@ func TestEveryOwnerCollectorIsRegisteredOnTheGatewaysRegistry(t *testing.T) {
 		{name: "journal", collector: metrics.NewJournalCollector(nil)},
 		{name: "nonce ledger", collector: metrics.NewNonceLedgerCollector(nil)},
 		{name: "funding", collector: metrics.NewFundingCollector(nil, nil)},
+		{name: "settle", collector: metrics.NewSettleCollector(nil)},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -1027,9 +1034,9 @@ func TestWaitForReportsNothingWhenTheDrainFinishesInTime(t *testing.T) {
 	assertSame(t, "drained components", sequence, []string{"races"})
 }
 
-func openedStore(t *testing.T) *store.Store {
+func openedStore(t *testing.T) store.Store {
 	t.Helper()
-	records, err := store.Open(t.TempDir())
+	records, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open(): %v", err)
 	}
@@ -1053,7 +1060,7 @@ func servingRegistry(t *testing.T) *registry.Registry {
 	return escrows
 }
 
-func storedDevshard(t *testing.T, records *store.Store, escrowID string) store.DevshardRecord {
+func storedDevshard(t *testing.T, records store.Store, escrowID string) store.DevshardRecord {
 	t.Helper()
 	record, err := findDevshard(context.Background(), records, escrowID)
 	if err != nil {
@@ -1608,7 +1615,7 @@ func TestTheComposedParticipantLimiterNarratesACutOffThroughTheJournal(t *testin
 //  3. Rebuild the tracker from the same store and assert the pin survived the restart.
 //  4. Remove the host, rebuild again, and assert the unpin survived too.
 func TestSuspiciousHostsAreWrittenThroughToTheStoreTheEngineReadsFrom(t *testing.T) {
-	records, err := store.Open(t.TempDir())
+	records, err := sqlite.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("Open(): %v", err)
 	}

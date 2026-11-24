@@ -236,6 +236,10 @@ func (source *recordingSettlementSource) Finalize(ctx context.Context, escrowID 
 	return source.fakeSettlementSource.Finalize(ctx, escrowID)
 }
 
+func (source *recordingSettlementSource) FinalizeForced(ctx context.Context, escrowID string) ([]uint64, error) {
+	return nil, source.Finalize(ctx, escrowID)
+}
+
 func (source *recordingSettlementSource) IsBusy(escrowID string) bool {
 	source.mu.Lock()
 	source.busyAskedOf = append(source.busyAskedOf, escrowID)

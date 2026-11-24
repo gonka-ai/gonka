@@ -16,6 +16,7 @@ import (
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
 func sendTime() time.Time { return time.Unix(1700000000, 0).UTC() }
@@ -256,9 +257,9 @@ func TestTheLookupStaysAvailableWhileTheGatewayIsDisabled(t *testing.T) {
 func wedgedLedger(t *testing.T) (*store.Ledger, func()) {
 	t.Helper()
 	storageDir := t.TempDir()
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	ledger, err := gatewayStore.NewLedger(
 		store.Retention{MaxAge: time.Hour, MaxRows: 100},

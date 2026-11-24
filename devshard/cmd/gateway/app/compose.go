@@ -56,7 +56,6 @@ const (
 func Main() {
 	observability.InstallLogger(env.LogFormat())
 	applyDialGuard()
-	warnIgnoredLegacyStore()
 	if err := serve(); err != nil {
 		logging.Error("gateway exited", logkey.Error, err)
 		os.Exit(1)
@@ -78,13 +77,6 @@ func warnOpenModels(configured *config.Config) {
 	if open := configured.OpenModels(); len(open) > 0 {
 		logging.Warn("models are open: any caller reaches them without a key and spends the escrows serving them",
 			logkey.Subsystem, "gateway", logkey.OpenModels, open)
-	}
-}
-
-func warnIgnoredLegacyStore() {
-	if ignored := env.LegacyPostgresVariablesSet(); len(ignored) > 0 {
-		logging.Warn("legacy Postgres settings are ignored: the gateway keeps its own store and runs as one process per escrow set",
-			logkey.Subsystem, "gateway", logkey.IgnoredVariables, ignored)
 	}
 }
 
@@ -113,17 +105,20 @@ func run(ctx context.Context) error {
 		return err
 	}
 	applyContentionProfiles(values.ContentionProfiles)
-	storageDir, err := resolveStorageDir(values.StorageDir)
+	choice, err := chooseStore(values.StorageDir)
 	if err != nil {
 		return err
 	}
-	values.StorageDir = &storageDir
-
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := choice.open(ctx)
 	if err != nil {
 		return err
 	}
-	gateway, err := compose(ctx, values, storageDir, gatewayStore, chainBackedSessions(gatewayStore, storageDir))
+	sessionStorageDir, err := prepareStorageDir(values.StorageDir)
+	if err != nil {
+		return errors.Join(err, gatewayStore.Close())
+	}
+	values.StorageDir = &sessionStorageDir
+	gateway, err := compose(ctx, values, sessionStorageDir, gatewayStore, chainBackedSessions(gatewayStore, sessionStorageDir))
 	if err != nil {
 		return errors.Join(err, gatewayStore.Close())
 	}
@@ -132,7 +127,7 @@ func run(ctx context.Context) error {
 
 type gateway struct {
 	config       *config.Holder
-	store        *store.Store
+	store        store.Store
 	observer     *chain.PhaseObserver
 	escrows      *registry.Registry
 	manager      *escrow.Manager
@@ -159,7 +154,7 @@ type gateway struct {
 	bootSteps    func(g *gateway, ctx, backgroundCtx context.Context, settings *config.Config, started *bootState) []bootStep
 }
 
-func compose(ctx context.Context, values env.Values, storageDir string, gatewayStore *store.Store, openSessions sessionSources) (*gateway, error) {
+func compose(ctx context.Context, values env.Values, storageDir string, gatewayStore store.Store, openSessions sessionSources) (*gateway, error) {
 	configuration, err := bootConfiguration(ctx, values, gatewayStore)
 	if err != nil {
 		return nil, err
@@ -249,7 +244,8 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	finishes := &finishNotice{}
 	shadowProbes := shadow.New(clock, probeBounds{configuration: configHolder, snapshots: observer})
 	escrows, router, prober, err := newRouting(routingDeps{
-		Sessions:     sources.Serving,
+		Sessions:     journaledSessions(sources.Serving, gatewayStore),
+		Completions:  gatewayStore,
 		ReadOnly:     sources.ReadOnly,
 		Capacity:     capacity,
 		Participants: participants,
@@ -382,6 +378,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		metrics.NewJournalCollector(journalCounts(events)),
 		metrics.NewNonceLedgerCollector(recorder.UnknownEscrowFacts),
 		metrics.NewFundingCollector(fundingModels(manager), deadlineCounts(manager)),
+		metrics.NewSettleCollector(manager.SettledUnresolvedNonces),
 	)
 
 	server, err := api.New(api.Deps{

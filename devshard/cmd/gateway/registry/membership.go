@@ -27,6 +27,7 @@ type escrowNarrator interface {
 	DrainingEscrowClosed(escrowID string, closeErr error)
 	RetirementPendingFlushed(escrowID string, pending int, err error)
 	SettlementUnverifiable(escrowID string, nonce uint64, unverifiable error)
+	CompletionJournalFailed(escrowID string, err error)
 }
 
 // slotCounts counts each participant's slots: one holding several repeats in the per-slot key list.

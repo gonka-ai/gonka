@@ -45,6 +45,8 @@ Three mechanisms withhold work from a host, each on its own trigger, and each is
 
 One more line belongs to the same family, on the money side rather than the routing one: `execution timeouts swept` (`escrow/manager.go`), written by the escrow tick only when the sweep found nonces to re-vote, carrying how many were due, applied and failed. Silence means nothing was owed.
 
+A second money-side line, `escrow settled past unresolved nonces` (**Warn**, `escrow/settlement.go`), is written when a forced settle finalized while started nonces were still unresolved in the completion journal: the escrow, `unresolved` (how many) and `nonces` (which). Each of those nonces was paid to its executors without waiting for its execution timeout; the line is not written when none was unresolved, and an ordinary settle never writes it, because it defers instead ([operations.md](./operations.md), "The completion journal").
+
 ### The request record
 
 `request finished` (`journal/render_request.go`), one line per completed race: Info when it went out clean, Warn when it did not. It answers what a finished request can no longer be asked:
@@ -93,6 +95,9 @@ The record carries no request or response body — capture files exist for that,
 | `chain snapshot stale` / `chain snapshot recovered` | written on the **edge** only; a failed refresh keeps routing on the previous participants until the last poll that read the epoch and the participants passes `chain_snapshot_max_age_seconds`, after which requests are refused 503. The nonce-ceiling and preserved-set reads fall back within the poll and do not hold that clock back |
 | `chain epoch` / `chain blocked requests` / `chain unblocked requests` | written on the **edge** only: `phaseNarrator` (`app/observers.go`) decides the change and the journal writes it; a snapshot that carries no epoch — a first poll that failed — announces none |
 | `models are open` (`app/compose.go`) | written at boot and after every config change while the network `access` or any model's `access` is `open`; `open_models` names the models any caller reaches without a key (`*` first when the network `access` is open), each spending the escrows that serve it |
+| `the gateway store is Postgres` (`app/store_factory.go`) | written at boot in `postgres` mode, with `storage_mode` and the `instance_id` that names this process; the SQLite store writes no such line |
+| `Postgres settings are ignored: the gateway store is SQLite unless DEVSHARD_STORAGE_MODE is postgres` (`app/store_factory.go`) | **Warn**, at boot in `sqlite` mode only; `ignored_variables` names the `PG*` variables that are set and have no effect |
+| `the Postgres schema is newer than this build knows; an older binary is running on it` (`store/postgres/postgres.go`) | **Warn**, at boot; `schema_version` is what the database holds and `supported_schema_version` what this build applies; the older binary keeps running on it ([runbook.md](./runbook.md), "Release and rollback") |
 | `admin request failed` / `admin request refused` (`api/errors.go`) | the operator mutation lines are written on the successful path only, so a failed operator action would otherwise be invisible |
 
 `escrow` is always the escrow id as text. The chain carries the id behind `escrow created`, `escrow recovered from commitment` and `settle tx broadcast` as a number, and `escrow/` and `chain/` convert it to text before the journal writes it, because a JSON collector reads a number as a different type from every other line's `escrow`.
@@ -194,6 +199,7 @@ What to watch:
 | `devshard_gateway_planner_decisions_total{model,action,reason}` | creates and retires track demand; a steady stream of `capacity` creates with a flat `max_unsettled` is churn against the budget |
 | `devshard_gateway_planner_ignored_marks_total{model,reason}` | balance marks dropped by design; a rising `balance_floor` count is routing reporting what the planner already plans for |
 | `devshard_gateway_escrow_deadline_unsettled_total{model,reason}` | 0; any `deadline_passed` is money lost |
+| `devshard_gateway_escrow_settled_unresolved_nonces_total` | 0 while no forced settle meets a started nonce; a rise is nonces paid at settlement without their execution timeout, and `escrow settled past unresolved nonces` names them |
 
 ## Tracing
 
