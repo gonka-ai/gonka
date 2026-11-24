@@ -315,7 +315,9 @@ Escrow membership must reach this layer: without it `EscrowWeight` returns zero 
 
 ## Nonce dispositions
 
-Settlement credits each slot with `assigned_nonces - protocol_misses` completed inferences, whatever GNK those nonces paid. Three gateway behaviours break that count: policy burns nonces without sending work, a sent request can go unfinished while its timeout never applies, and overscheduling turns one client request into several completed inferences. The nonce ledger exists to say which of those happened and how often. Its events are the facts the gateway already produces, and each carries several of the moments a finer vocabulary would report one by one.
+Settlement counts completed inferences per slot. For numeric v7 and later the chain uses the signed `HostStats.Assigned - HostStats.Missed`. Each accepted `MsgStartInference` counts once, including a ghost burn that commits a start. Heartbeats and other service diffs without a start contribute zero. Earlier protocols and named tags such as `dev` use the slot's share of all nonces minus its misses. The gateway ledger's `assigned_nonces` still measures that share for every version.
+
+The ledger records which starts the gateway sent, how their timeouts resolved, and when several attempts served the same client request. These events explain differences between the chain's count and the answers clients received.
 
 | what the ledger folds | where it comes from |
 |---|---|
