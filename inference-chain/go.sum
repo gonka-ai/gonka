@@ -336,8 +336,6 @@ github.com/cockroachdb/redact v1.1.8/go.mod h1:GceHHpJ0rMDpYARL5In88Alq/xMBUtVlz
 github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb h1:3bCgBvB8PbJVMX1ouCcSIxvsqKPYM7gs72o0zC76n9g=
 github.com/cockroachdb/tokenbucket v0.0.0-20250429170803-42689b6311bb/go.mod h1:7nc4anLGjupUW/PeY5qiNYsdNXj7zopG+eqsS7To5IQ=
 github.com/codahale/hdrhistogram v0.0.0-20161010025455-3a0bb77429bd/go.mod h1:sE/e/2PUdi/liOCUjSTXgM1o87ZssimdTWN964YiIeI=
-github.com/cometbft/cometbft v0.40.0 h1:0+zc7FlcnonFfMwzhyDCd5vK/fHZqz0RfRyTCxZsFPU=
-github.com/cometbft/cometbft v0.40.0/go.mod h1:3z+Aq3BSkwNKw+Z40yPUTxtSRIpQa0w2PyCwyaxxHeU=
 github.com/cometbft/cometbft-db v1.0.4 h1:cezb8yx/ZWcF124wqUtAFjAuDksS1y1yXedvtprUFxs=
 github.com/cometbft/cometbft-db v1.0.4/go.mod h1:M+BtHAGU2XLrpUxo3Nn1nOCcnVCiLM9yx5OuT0u5SCA=
 github.com/consensys/gnark-crypto v0.18.1 h1:RyLV6UhPRoYYzaFnPQA4qK3DyuDgkTgskDdoGqFt3fI=
@@ -629,6 +627,8 @@ github.com/golangci/revgrep v0.5.3 h1:3tL7c1XBMtWHHqVpS5ChmiAAoe4PF/d5+ULzV9sLAz
 github.com/golangci/revgrep v0.5.3/go.mod h1:U4R/s9dlXZsg8uJmaR1GrloUr14D7qDl8gi2iPXJH8k=
 github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed h1:IURFTjxeTfNFP0hTEi1YKjB/ub8zkpaOqFFMApi2EAs=
 github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed/go.mod h1:XLXN8bNw4CGRPaqgl3bv/lhz7bsGPh4/xSaMTbo2vkQ=
+github.com/gonka-ai/cometbft v0.40.0-gonka.1 h1:NVbFsmynsvVlF+lzVvHvPJU0xDoQgvSyT6R2kEybOMY=
+github.com/gonka-ai/cometbft v0.40.0-gonka.1/go.mod h1:3z+Aq3BSkwNKw+Z40yPUTxtSRIpQa0w2PyCwyaxxHeU=
 github.com/gonka-ai/cosmos-sdk v0.55.0-ps1 h1:L7e2mnxY8Eu5waJQKpvvPvhdUqO3n4BAbOBs47twEJg=
 github.com/gonka-ai/cosmos-sdk v0.55.0-ps1/go.mod h1:8MFfvZlTiGYYd+1OxOCYUTQpL18aYlsg1GKUga2JFPI=
 github.com/gonka-ai/cosmos-sdk/store/v2 v2.0.0-ps1 h1:1waEmr3Iy+ZYtYPKOdrnMSZHP0cIUYkAZ/QhM6bvzLw=
