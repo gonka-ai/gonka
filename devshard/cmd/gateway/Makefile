@@ -7,7 +7,7 @@
 
 .PHONY: help require-version build test test-race test-junit cover lint verify image release clean
 
-GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway-v4
+GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
 GATEWAY_TAGS ?=
 GATEWAY_STAGE_TAG ?= stage
 PLATFORM ?= linux/amd64
