@@ -17,10 +17,8 @@ import (
 	"devshard/user"
 )
 
-// otherRouteLabel is the single label every unmatched path folds into. See observability.md, "Cardinality rules".
 const otherRouteLabel = "other"
 
-// route is one registered pattern; an empty label leaves it uninstrumented. See README.md, "The route table".
 type route struct {
 	pattern  string
 	label    string
@@ -44,7 +42,6 @@ func (s *Server) routes() []route {
 		{pattern: "/devshard/{id}/v1/status", label: "/devshard/{id}/v1/status", handler: s.handleDevshardStatus},
 		{pattern: "/devshard/{id}/v1/finalize", label: "/devshard/{id}/v1/finalize", admin: true, alwaysOn: true, handler: s.handleDevshardFinalize},
 
-		// Recovery surface: admin and alwaysOn. See operations.md, "What is exposed".
 		{pattern: "/devshard/{id}/v1/state", label: "/devshard/{id}/v1/state", admin: true, alwaysOn: true, handler: s.handleDevshardState},
 		{pattern: "/devshard/{id}/v1/debug/state", label: "/devshard/{id}/v1/debug/state", admin: true, alwaysOn: true, handler: s.handleDevshardDebugState},
 		{pattern: "/devshard/{id}/v1/debug/inferences", label: "/devshard/{id}/v1/debug/inferences", admin: true, alwaysOn: true, handler: s.handleDevshardDebugInferences},
@@ -55,9 +52,7 @@ func (s *Server) routes() []route {
 		{pattern: "/v1/admin/state", label: "/v1/admin/state", admin: true, alwaysOn: true, handler: s.handleAdminState},
 		{pattern: "/v1/admin/settings", label: "/v1/admin/settings", admin: true, alwaysOn: true, handler: s.handleAdminSettings},
 		{pattern: "/v1/admin/devshards", label: "/v1/admin/devshards", admin: true, alwaysOn: true, handler: s.handleAdminDevshards},
-		// The templated label is deliberate: a label of its own would split the panel that reads the series.
 		{pattern: "/v1/admin/devshards/import", label: "/v1/admin/devshards/{id}", admin: true, alwaysOn: true, handler: s.handleAdminDevshardImport},
-		// A literal beats the {id} template, and escrow ids are numeric, so this shadows no escrow.
 		{pattern: "/v1/admin/devshards/settle", label: "/v1/admin/devshards/settle", admin: true, alwaysOn: true, handler: s.handleAdminDevshardsSettleBatch},
 		{pattern: "/v1/admin/devshards/deactivate", label: "/v1/admin/devshards/deactivate", admin: true, alwaysOn: true, handler: s.handleAdminDevshardsDeactivateBatch},
 		{pattern: "/v1/admin/devshards/{id}", label: "/v1/admin/devshards/{id}", admin: true, alwaysOn: true, handler: s.handleAdminDevshardDelete},
@@ -179,7 +174,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	s.chat(w, r, "")
 }
 
-// handleDevshardChat pins the race to one escrow, refusing a pin it no longer routes to. See operations.md, "What is exposed".
 func (s *Server) handleDevshardChat(w http.ResponseWriter, r *http.Request) {
 	if !allowMethods(w, r, http.MethodPost) {
 		return
@@ -273,7 +267,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	}
 	slot := newLimiterSlot(func() { s.limiter.ReleaseForModel(normalized.Model, int64(counted.tokens)) })
 	defer slot.done()
-	// The limiter can hold a request for minutes: a block that began meanwhile refuses it before any nonce is spent.
 	afterWait := s.config.Load()
 	if refusal := admission(s.snapshots.Snapshot(), afterWait.Modes, s.now(), afterWait.Chain.SnapshotMaxAgeSeconds); refusal != nil {
 		s.writeErrorFor(w, refusal)
@@ -281,20 +274,18 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	}
 
 	if s.cache == nil {
-		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot)
+		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model), slot)
 		return
 	}
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
 	defer recorder.releaseBudget()
-	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot)
+	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model), slot)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
 	if !storable {
 		s.countCacheResult(normalized.Model, recorder.entryRefusal(unstorable, outcome.EscrowID))
 		return
 	}
-	// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
 	cacheRefusal := s.cache.put(key, entry, s.now())
 	s.countCacheResult(normalized.Model, cacheRefusal)
 	if cacheRefusal == filters.CacheRefusedUnfinished {
@@ -316,7 +307,6 @@ func (s *Server) servedModelVocabulary(model string) int {
 	return s.stopTokenVocabulary(model)
 }
 
-// routableModel refuses a model before it can take a limiter slot. See README.md, "The route table".
 func (s *Server) routableModel(configured *config.Config, model string) error {
 	served := s.escrows.Models()
 	if len(served) == 0 {
@@ -363,8 +353,7 @@ func authorizeModel(configured *config.Config, model string, identity credential
 	}
 }
 
-// race returns the outcome and the failure the reply's status could not carry. See README.md, "Streaming the reply".
-func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool, slot *limiterSlot) (engine.RaceOutcome, error) {
+func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyID string, normalized filters.Result, prompt promptCount, escrowPin string, configuration *config.Config, slot *limiterSlot) (engine.RaceOutcome, error) {
 	startedAt := s.now()
 	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, prompt.tokens, s.buffers)
 	defer client.discard()
@@ -389,7 +378,8 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 			InputLength:                  uint64(len(normalized.Body)),
 			MaxTokens:                    outputTokens,
 			StartedAt:                    s.now().Unix(),
-			LogprobsOptimizationOverride: logprobsOptimization,
+			LogprobsOptimizationOverride: configuration.Limits.LogprobsOptimization,
+			ChatFrames:                   newChatFrameSchedule(configuration.ChatFrames),
 		},
 	}, client)
 	if err != nil {
@@ -403,11 +393,9 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 		s.writeErrorForModel(w, err, normalized.Model)
 		return outcome, nil
 	}
-	// The authoritative X-Devshard-ID write. See README.md, "Streaming the reply".
 	if outcome.EscrowID != "" {
 		client.Header().Set(EscrowHeader, outcome.EscrowID)
 	}
-	// Returned, not just logged, so the cache refuses a body that stops mid-answer.
 	closeErr := client.Close()
 	delivery := deliveryServed
 	if closeErr != nil {

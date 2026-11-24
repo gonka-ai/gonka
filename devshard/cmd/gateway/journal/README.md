@@ -144,3 +144,13 @@ Lifecycle packages — `engine`, `scheduler`, `registry`, `escrow`, `perf`, `lim
 
 - [`nonces/README.md`](../nonces/README.md) — the ledger sink.
 - [`docs/operations.md`](../docs/operations.md), "Shutdown" and "Metrics".
+
+## Chat frame observations
+
+`api.Sessions` passes each dispatch response to `ChatFramesChecked` through its consumer-side narrator. `KindChatFramesChecked` uses the bounded progress lane, since it emits once per observed peer RPC stream and owns no money obligation. `chat_frames.go` renders counts at info level and the first signature failure at warning level. Unsigned legacy streams report zero verified signatures without a warning. These observations have no ledger effect and no feedback to routing or the response.
+
+## Delivery helpers
+
+In `journal.go`, `gatewayLog` delegates to `devshard/logging` so `internal/logcapture` observes its lines. `emit` admits without waiting; `emitLine` assigns an out-of-race lifecycle line to the lane selected by its kind. Only `run` reaches the ledger, preserving accepted-event order. `takeBatch` waits for queued work or an unreported drop and swaps the queue so producers can append during delivery. `finishBatch` releases lane capacity after delivery, bounding everything accepted but not yet delivered. `deliver` is the single sink boundary. `Kind.onMoneyLane` in `vocabulary.go` selects the kinds refused only at the money ceiling.
+
+`keys_test.go` reads string constants directly from `internal/logkey/vocabulary.go`. Its `everyProducer` table supplies each producer’s widest input; reflection ensures every line-producing exported method is represented. Only `methodsThatWriteNoLine` are exempt.

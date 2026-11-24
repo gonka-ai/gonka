@@ -234,3 +234,7 @@ The chain names a new version with a new model id. Every setting is keyed by the
 | a route or its auth tier | `api/routes.go`, `routes()` |
 | what shuts down when | `app/lifecycle.go`, `shutdownOrder` |
 | a metric or its labels | `metrics/` |
+
+## Peer RPC frame scheduling
+
+`GATEWAY_CHAT_FRAME_EVENTS` selects 1–64 events per signature, default 5. `GATEWAY_CHAT_FRAME_SEPARATE` selects per-event flushing, default false. Both are strict environment-only settings; the gateway refuses malformed values or out-of-range counts at startup. See [operations.md](./operations.md), "Peer RPC Chat frame signatures", for the transport and compatibility contract.

@@ -1,5 +1,4 @@
-// Package env is the single place the gateway reads environment variables. Load returns what is SET
-// (nil pointer = unset); defaults belong to config, except LogFormat's. See README.md.
+// Package env reads environment variables as optional values; defaults belong to config except LogFormat; see README.md.
 package env
 
 import (
@@ -80,10 +79,12 @@ type Values struct {
 
 	ChainVersionsPollIntervalSeconds *int64
 
+	ChatFrameEvents   *int64
+	ChatFrameSeparate *bool
+
 	ContentionProfiles *bool
 }
 
-// See README.md, "The values it names".
 const (
 	PoCModeOff     = "off"
 	PoCModeRelaxed = "relaxed"
@@ -241,7 +242,6 @@ func Load() (Values, error) {
 
 	readLenientInt("DEVSHARD_PORT", 1, &values.Port)
 	readString("DEVSHARD_STORAGE_DIR", &values.StorageDir)
-	// Deprecated: DEVSHARD_API_KEYS is the legacy source of client keys, replaced by /v1/admin/api-keys; removal is planned for v7 or v8.
 	readString(APIKeysVariable, &values.APIKeys)
 	readString("DEVSHARD_ADMIN_API_KEY", &values.AdminAPIKey)
 	readString("DEVSHARDS_JSON", &values.DevshardsJSON)
@@ -291,6 +291,8 @@ func Load() (Values, error) {
 	readStrictInt("GATEWAY_MAX_CONSECUTIVE_BURNS", &values.MaxConsecutiveBurns)
 	readStrictInt("GATEWAY_MAX_BURNS_PER_REQUEST", &values.MaxBurnsPerRequest)
 	readStrictInt("GATEWAY_DISPATCH_QUEUE_DEPTH", &values.DispatchQueueDepth)
+	readStrictInt("GATEWAY_CHAT_FRAME_EVENTS", &values.ChatFrameEvents)
+	readStrictBool("GATEWAY_CHAT_FRAME_SEPARATE", &values.ChatFrameSeparate)
 	readStrictBool("GATEWAY_FORCE_UPSTREAM_STREAMING", &values.ForceUpstreamStreaming)
 	readStrictBool("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", &values.LogprobsOptimization)
 	readStrictInt("GATEWAY_MAX_BUFFERED_RESPONSE_BYTES", &values.MaxBufferedResponseBytes)

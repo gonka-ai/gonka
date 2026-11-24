@@ -81,6 +81,7 @@ CI uploads this report as `devshard-e2e-junit-report` and publishes it as the
   application, recovery, and finalization.
 - `runtime_config_test.go`: chain-backed runtime configuration wiring.
 - `containers_test.go`: Docker network/container setup and restart helpers.
+- `gateway_chat_frames_test.go`: joined and separate signed-frame schedules through the new gateway and real peer RPC hosts, with journal verification assertions.
 - `testutil/`: HTTP clients, request helpers, assertions, and env defaults.
 
 ## Notes

@@ -11,8 +11,9 @@ import (
 // Build produces the validated snapshot: Defaults() ← env ← admin overrides, with the active client keys, cloning every input map and slice.
 func Build(values env.Values, overrides Overrides, clientKeys ...string) (*Config, error) {
 	configuration := Defaults()
+	overrideIfSet(&configuration.ChatFrames.Events, values.ChatFrameEvents)
+	overrideIfSet(&configuration.ChatFrames.Separate, values.ChatFrameSeparate)
 
-	// Environment layer.
 	applyTunables(&configuration, values.Tunables)
 	overrideIfSet(&configuration.Server.Port, values.Port)
 	overrideIfSet(&configuration.Server.StorageDir, values.StorageDir)
@@ -72,7 +73,6 @@ func Build(values env.Values, overrides Overrides, clientKeys ...string) (*Confi
 	overrideIfSet(&configuration.HostPing.TimeoutMS, values.HostPingTimeoutMS)
 	overrideIfSet(&configuration.HostPing.Concurrency, values.HostPingConcurrency)
 
-	// Admin-override layer (wins over env).
 	applyTunables(&configuration, overrides.Tunables)
 	if overrides.Participants != nil {
 		applyParticipants(&configuration.Scheduler.Participants, *overrides.Participants)
@@ -115,7 +115,6 @@ func splitCommaSeparated(raw string) []string {
 	return cleaned
 }
 
-// overrideIfSet: a nil source leaves the lower layer's value in place.
 func overrideIfSet[T any](target, source *T) {
 	if source != nil {
 		*target = *source

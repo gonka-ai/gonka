@@ -228,3 +228,13 @@ Every reply offered to the cache is counted in `devshard_gateway_cache_results_t
 
 - [`docs/request.md`](../docs/request.md) — one request from the socket to the settled nonce.
 - [`docs/operations.md`](../docs/operations.md) — every route and every knob.
+
+## Chat frame schedules and checks
+
+Each client request carries a fresh `host.ChatFrameSchedule` from the same configuration snapshot as its model limits. The default joins five SSE events per signed peer RPC frame; separate mode flushes every event and signs every N events. Client JSON cannot override this operator setting. The shared session and transport perform verification. `Sessions.WithChatFrameNarrator` binds the dispatch adapter to the journal, which receives the returned frame counts and first verification failure even when the response arrives beside a transport error. Verification does not change response application, the error returned to the race, host performance or challenge voting. HTTP inference has no frame headers and reports no frame observation.
+
+## Dispatch and route invariants
+
+`dispatch.go` declares the consumer interfaces `escrows`, satisfied by the registry, and `dispatchSession`, satisfied by the live session. A draining escrow remains available to a race that already committed its nonce; applying a response preserves a concurrent transport error so that failure cannot hide a diverged state.
+
+In `routes.go`, the standalone accounting row is admin-only because it has no caller to authorize against, and recovery routes remain admin-only and always on. Literal route patterns take precedence over `{id}`; escrow ids are numeric, so named routes shadow no escrow. Admission is rechecked after the limiter, since a request may have waited while a chain block began. With caching disabled there is no stored outcome; otherwise the race's hidden failure prevents replay of an incomplete answer. `race` owns the authoritative `X-Devshard-ID` response header.

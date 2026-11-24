@@ -29,7 +29,13 @@ const (
 	KindWinnerFinishLanded
 	KindRaceStepUnnamed
 	KindShadowProbe
+	KindChatFramesChecked
 	kindCount
+
+	noChatFrameFailure        = ""
+	noChatFrames              = 0
+	chatFrameSignatureInvalid = "chat_frame_signature_invalid"
+	chatFramesChecked         = "chat frames checked"
 )
 
 var kindNames = [kindCount]string{
@@ -58,6 +64,7 @@ var kindNames = [kindCount]string{
 	KindWinnerFinishLanded:  "winner_finish_landed",
 	KindRaceStepUnnamed:     "race_step_unnamed",
 	KindShadowProbe:         "shadow_probe",
+	KindChatFramesChecked:   "chat_frames_checked",
 }
 
 func (k Kind) String() string {
@@ -67,7 +74,6 @@ func (k Kind) String() string {
 	return kindNames[k]
 }
 
-// onMoneyLane reports a kind refused only past the money ceiling. See README.md, "Two lanes".
 func (k Kind) onMoneyLane() bool {
 	switch k {
 	case KindRaceReported, KindTimeoutVote, KindNonceBurned, KindBurnBudgetExhausted, KindDiffComposed,
