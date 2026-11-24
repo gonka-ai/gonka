@@ -214,10 +214,19 @@ func TestSession_ProposesBindsAndRevokesFromTheGrantSource(t *testing.T) {
 	session, coldKeys, warmKeys := setupWarmKeySession(t, 3)
 	grants := session.warmKeySource.(*testutil.WarmKeyGrants)
 	ctx := context.Background()
+	// A synced host lets the session discard old diffs. Observe every commit
+	// so the assertions count proposals across the entire rotation.
+	var composed []types.Diff
+	session.SetDiffObserver(func(diff types.Diff) { composed = append(composed, diff) })
+	entries := func() ([]*types.MsgWarmKeyBind, []*types.MsgWarmKeyRevoke) {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		return warmKeyEntriesIn(composed)
+	}
 
 	_, err := session.SendInference(ctx, defaultParams)
 	require.NoError(t, err)
-	binds, revokes := warmKeyEntriesIn(session.Diffs())
+	binds, revokes := entries()
 	require.Len(t, binds, 3, "the first diff binds every live grant of the group")
 	require.Empty(t, revokes)
 	for _, b := range binds {
@@ -229,7 +238,7 @@ func TestSession_ProposesBindsAndRevokesFromTheGrantSource(t *testing.T) {
 	id := grants.Grant(coldKeys[0].Address(), second.Address())
 	_, err = session.SendInference(ctx, defaultParams)
 	require.NoError(t, err)
-	binds, _ = warmKeyEntriesIn(session.Diffs())
+	binds, _ = entries()
 	require.Len(t, binds, 4)
 	require.Equal(t, uint32(0), binds[3].SlotId)
 	require.Equal(t, second.Address(), binds[3].Address)
@@ -243,7 +252,7 @@ func TestSession_ProposesBindsAndRevokesFromTheGrantSource(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		_, _ = session.SendInference(ctx, defaultParams)
 	}
-	_, revokes = warmKeyEntriesIn(session.Diffs())
+	_, revokes = entries()
 	require.Len(t, revokes, 1)
 	require.Equal(t, uint32(1), revokes[0].SlotId)
 	require.Equal(t, warmKeys[1].Address(), revokes[0].Address)
