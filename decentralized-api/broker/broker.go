@@ -1198,6 +1198,8 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		}
 		currentNode.State.cancelInFlightTask = cancel
 		stateForCmd := currentNode.State
+		// getCommandForState reads the epoch maps after b.mu is released.
+		cloneEpochMaps(&stateForCmd)
 		modelsForCmd := currentNode.Node.Models
 
 		worker, exists := b.nodeWorkGroup.GetWorker(id)

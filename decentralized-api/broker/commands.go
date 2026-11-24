@@ -90,11 +90,7 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			stateCopy.ReconcileInfo = &reconcileInfoCopy
 		}
 
-		// Deep copy the epoch maps: the epoch writers (UpdateNodeEpochData and others)
-		// assign into them under b.mu, while callers read their copy without it.
-		stateCopy.EpochModels = maps.Clone(nodeWithState.State.EpochModels)
-		stateCopy.EpochMLNodes = maps.Clone(nodeWithState.State.EpochMLNodes)
-		stateCopy.PreservedModels = maps.Clone(nodeWithState.State.PreservedModels)
+		cloneEpochMaps(&stateCopy)
 
 		nodeCopy.RegistrationSeq = nodeWithState.State.RegistrationSeq
 
@@ -105,6 +101,16 @@ func (c GetNodesCommand) Execute(b *Broker) {
 	}
 	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))
 	c.Response <- nodeResponses
+}
+
+// cloneEpochMaps gives a NodeState copy its own EpochModels, EpochMLNodes and
+// PreservedModels. The epoch writers (UpdateNodeEpochData and others) assign
+// into the live maps under b.mu, so a copy that is read after b.mu is released
+// must not share them. Call it while holding b.mu. A nil map stays nil.
+func cloneEpochMaps(s *NodeState) {
+	s.EpochModels = maps.Clone(s.EpochModels)
+	s.EpochMLNodes = maps.Clone(s.EpochMLNodes)
+	s.PreservedModels = maps.Clone(s.PreservedModels)
 }
 
 type InferenceResult interface {
