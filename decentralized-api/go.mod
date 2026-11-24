@@ -420,6 +420,7 @@ require (
 replace (
 	common => ../common
 	github.com/CosmWasm/wasmd => github.com/gonka-ai/wasmd v0.70.5-gonka.1
+	github.com/cometbft/cometbft => github.com/gonka-ai/cometbft v0.40.0-gonka.1
 	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.55.0-ps1
 	github.com/cosmos/cosmos-sdk/store/v2 => github.com/gonka-ai/cosmos-sdk/store/v2 v2.0.0-ps1
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
