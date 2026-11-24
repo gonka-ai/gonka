@@ -2,6 +2,7 @@ mock-dapi:
     MOCK_DAPI_HOST_ADDRS: versiond-0=versiond-0,versiond-1=versiond-1,versiond-2=versiond-2
     MOCK_ML_NODE_HOSTS: mock-openai-0=versiond-0,mock-openai-1=versiond-2
 versiond-2:
+    ACCOUNT_PUBKEY: ""
     CHAIN_ID: gonka-test
     DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
     DEVSHARD_DISABLE_PERIODIC_SNAPSHOTS: "false"
