@@ -16,6 +16,7 @@ import (
 	"devshard/testenv/mockchain/txexec"
 	"devshard/testenv/mockchain/txledger"
 
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/cosmos/gogoproto/proto"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
@@ -72,6 +73,27 @@ func settleWireMessageZeroScalars() settlement.Message {
 	}
 }
 
+func settleWireMessageValidatedFinished() settlement.Message {
+	return settlement.Message{
+		EscrowID:  126,
+		StateRoot: []byte("fixed-state-root-32-bytes-long!"),
+		Nonce:     456,
+		RestHash:  []byte("fixed-rest-hash-bytes"),
+		HostStats: []settlement.HostStat{
+			{SlotID: 1, Missed: 2, Invalid: 3, Cost: 400, RequiredValidations: 5, CompletedValidations: 6, Validated: 4, Finished: 9},
+			{SlotID: 7, Missed: 8, Invalid: 9, Cost: 1000, RequiredValidations: 11, CompletedValidations: 12},
+			{SlotID: 8, Missed: 1, Invalid: 1, Cost: 50, RequiredValidations: 2, CompletedValidations: 2, Validated: 3},
+			{SlotID: 9, Missed: 1, Invalid: 1, Cost: 60, RequiredValidations: 2, CompletedValidations: 2, Finished: 300},
+		},
+		SlotSignatures: []settlement.SlotSignature{
+			{SlotID: 1, Signature: []byte("fixed-signature-one")},
+			{SlotID: 7, Signature: []byte("fixed-signature-two")},
+		},
+		Fees:    789,
+		Version: "v1.2.3",
+	}
+}
+
 func settlementJSONFromMessage(message settlement.Message) SettlementJSON {
 	hostStats := make([]HostStatsJSON, 0, len(message.HostStats))
 	for _, hostStat := range message.HostStats {
@@ -100,21 +122,24 @@ func decodeSettleMessage(t *testing.T, messageBytes []byte) *inferencetypes.MsgS
 	return &message
 }
 
-func decodeBroadcastSettleMessage(t *testing.T, txBytes []byte) *inferencetypes.MsgSettleDevshardEscrow {
+func broadcastSettleMessageBytes(t *testing.T, txBytes []byte) []byte {
 	t.Helper()
-	messages, err := txexec.DecodeTxMessages(txBytes)
-	require.NoError(t, err)
-	require.Len(t, messages, 1)
-	require.NotNil(t, messages[0].Settle, "broadcast tx carries no MsgSettleDevshardEscrow")
-	return messages[0].Settle
+	var raw txtypes.TxRaw
+	require.NoError(t, proto.Unmarshal(txBytes, &raw))
+	var body txtypes.TxBody
+	require.NoError(t, proto.Unmarshal(raw.BodyBytes, &body))
+	require.Len(t, body.Messages, 1)
+	require.Equal(t, txexec.SettleEscrowMsgTypeURL, body.Messages[0].TypeUrl)
+	return body.Messages[0].Value
 }
 
 // Test flow:
 //  1. Start the in-process mock chain with a tx ledger and a `common/chain/tx` manager over it, signing with a fixed key.
-//  2. For the full message, the one with empty host stats and signatures, and the one whose slot 0 and counters are zero, put its escrow on the mock chain.
+//  2. For the full message, the one with empty host stats and signatures, the one whose slot 0 and counters are zero, and the one whose host stats carry non-zero and zero validated and finished counts, put its escrow on the mock chain.
 //  3. Send the message as devshardctl does: settlement JSON, `settleParamsFromJSON`, `Manager.SettleDevshardEscrow`.
-//  4. Read the broadcast tx from the ledger and decode TxRaw, TxBody and the single Any into `MsgSettleDevshardEscrow`.
-//  5. Marshal the same message with `settlementwire.Marshal` for the same settler, decode it, and assert both decoded messages are equal.
+//  4. Read the broadcast tx from the ledger and take the bytes of the single `MsgSettleDevshardEscrow` in its body.
+//  5. Marshal the same message with `settlementwire.Marshal` for the same settler and assert the decoded messages are equal.
+//  6. For every message with no zero counter of fields 1 to 6 or slot id and with fees and a version set, assert the two byte strings are equal, so fields the generated type does not know cannot differ unseen.
 func TestSettleDevshardEscrowDecodesToSettlementWireMessage(t *testing.T) {
 	chainStore := seed.Defaults()
 	rpcService, err := rpcface.NewService(chainStore, rpcface.Config{BlockInterval: time.Hour})
@@ -135,12 +160,14 @@ func TestSettleDevshardEscrowDecodesToSettlementWireMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	cases := []struct {
-		name    string
-		message settlement.Message
+		name           string
+		message        settlement.Message
+		wantEqualBytes bool
 	}{
-		{"full", settleWireMessageFull()},
-		{"empty_optional", settleWireMessageEmptyOptional()},
-		{"zero_scalars", settleWireMessageZeroScalars()},
+		{"full", settleWireMessageFull(), true},
+		{"empty_optional", settleWireMessageEmptyOptional(), true},
+		{"zero_scalars", settleWireMessageZeroScalars(), false},
+		{"validated_finished", settleWireMessageValidatedFinished(), true},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -151,11 +178,14 @@ func TestSettleDevshardEscrowDecodesToSettlementWireMessage(t *testing.T) {
 			require.NoError(t, err)
 			storedTx, found := ledger.Get(result.TxHash)
 			require.True(t, found, "broadcast tx %s not in the ledger", result.TxHash)
-			broadcastMessage := decodeBroadcastSettleMessage(t, storedTx.Raw)
+			broadcastBytes := broadcastSettleMessageBytes(t, storedTx.Raw)
 
 			wireBytes, err := settlementwire.Marshal(signer.Address(), testCase.message)
 			require.NoError(t, err)
-			require.Equal(t, decodeSettleMessage(t, wireBytes), broadcastMessage)
+			require.Equal(t, decodeSettleMessage(t, wireBytes), decodeSettleMessage(t, broadcastBytes))
+			if testCase.wantEqualBytes {
+				require.Equal(t, broadcastBytes, wireBytes)
+			}
 		})
 	}
 }

@@ -15,11 +15,11 @@
 
 ## The retention bound
 
-`MaxRetainedBytes` is 64 KiB. A retainer counts each kept line as its bytes plus one separator. It stops at the first line that does not fit and marks the stream truncated.
+`MaxRetainedBytes` is 1 MiB. A retainer counts each kept line as its bytes plus one separator. It stops at the first line that does not fit and marks the stream truncated.
 
 A verifier needs the whole stream. It hashes the payload and compares the hash with the response hash or the served hash in the executor's signed Finish, and the executor hashed its whole body (`devshard/host/timeout.go`, `VerifyErrorMiss`). A truncated prefix serializes to other bytes. Every verifier rejects it as `hash_mismatch`, the claim gathers no votes, and the executor is paid for its error. So the bound decides which error streams can be claimed at all. Two gateways with different bounds pay the same host differently for the same stream, which is why the bound is a protocol value and lives here. No verifier-side limit sits near it: the verify request is read up to 10 MiB.
 
-The bound is 64 KiB rather than larger because it is paid on the success path too. Both gateways retain the lines of every non-probe streamed attempt from its first read until the attempt shows no error, so every long successful stream holds up to the bound while it streams. `devshard/cmd/gateway` charges retention to no budget, so its worst case is the bound times the attempts in flight. devshardctl charges it to its participant and global classify budgets, which it shares with classify reassembly. The cost of 64 KiB is that an error following more than 64 KiB of streamed data lines cannot be claimed by either gateway.
+The bound is 1 MiB rather than larger because it is paid on the success path too. Both gateways retain the lines of every non-probe streamed attempt from its first read until the attempt shows no error, so every long successful stream holds up to the bound while it streams. `devshard/cmd/gateway` charges retention to no budget, so its worst case is the bound times the attempts in flight. devshardctl charges it to its participant and global classify budgets, which it shares with classify reassembly, so about ten long successful streams in flight to one participant fill its 10 MiB budget and about a hundred in all fill its 100 MiB global budget. The cost of 1 MiB is that an error following more than 1 MiB of streamed data lines cannot be claimed by either gateway.
 
 Each gateway may stop below the bound when its own memory budget refuses: devshardctl when its participant or global classify budget is full, `devshard/cmd/gateway` when its reassembly budget drops bytes. Without that pressure both keep the same prefix of the same stream. When the retained prefix holds no error line, `ProvesErrorMiss` fails on it and neither gateway posts a claim.
 
@@ -33,7 +33,7 @@ The retainer: what a gateway does when the bound is hit, and the memory budget i
 
 ## The long error stream
 
-`testdata/long_error_stream.sse` is about 100 KiB of content lines of 255 bytes each, then an error line and `[DONE]`. Counted with their separators the first 256 lines fill `MaxRetainedBytes` exactly, so a retainer that counts without the separator, or stops at a full bound rather than past it, keeps a different number. Each gateway's own test feeds it through its retainer and checks that it keeps exactly those 256 lines and marks the stream truncated. The claim tests of both gateways and the table of `TestProvesErrorMissOnlyForEvidenceThatCarriesAnError` take their verdict over the lines the retainer keeps, which carry no error, so none of them expects a claim for it.
+`testdata/long_error_stream.sse` is 4200 content lines of 255 bytes each, about 1 MiB, then an error line and `[DONE]`. Counted with their separators the first 4096 lines fill `MaxRetainedBytes` exactly, so a retainer that counts without the separator, or stops at a full bound rather than past it, keeps a different number. Each gateway's own test feeds it through its retainer and checks that it keeps exactly those 4096 lines and marks the stream truncated. The claim tests of both gateways and the table of `TestProvesErrorMissOnlyForEvidenceThatCarriesAnError` take their verdict over the lines the retainer keeps, which carry no error, so none of them expects a claim for it.
 
 ## The error stream shapes
 

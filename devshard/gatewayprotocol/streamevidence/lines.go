@@ -9,7 +9,7 @@ import (
 )
 
 // MaxRetainedBytes bounds the evidence a gateway retains of one attempt, each kept line counted as its bytes plus one separator.
-const MaxRetainedBytes = 64 << 10
+const MaxRetainedBytes = 1 << 20
 
 // DataLines returns the evidence lines of a read of SSE events: its data lines with a trailing carriage return trimmed, without the devshard receipt and meta envelopes.
 func DataLines(events []byte) []string {

@@ -10,7 +10,7 @@ A protocol change is made here, once. Each package's README says how the two gat
 | --- | --- | --- |
 | [`probe`](./probe/README.md) | the token budget of a probe: its reservation and its declared input length | `devshard/state`, `devshard/user`, standard library |
 | [`settlement`](./settlement/README.md) | the settle message, the slot order of its lists, the signatures it posts, the settlement root | `devshard/state`, `devshard/types`, standard library |
-| [`settlementwire`](./settlementwire/README.md) | the mapping from the settle message to `MsgSettleDevshardEscrow` and its marshalling | `settlement`, `github.com/productscience/inference/x/inference/types`, standard library |
+| [`settlementwire`](./settlementwire/README.md) | the mapping from the settle message to `MsgSettleDevshardEscrow` and its marshalling | `settlement`, `github.com/productscience/inference/x/inference/types`, `google.golang.org/protobuf/encoding/protowire`, standard library |
 | [`streamevidence`](./streamevidence/README.md) | which lines of an error stream are evidence, the `[DONE]` test, the error-miss payload they serialize into, the most of them a gateway retains, and whether that payload proves the error | `common/completionapi`, standard library |
 | [`timeoutclaim`](./timeoutclaim/README.md) | the choice between an error-miss claim and a timeout vote, the Finish a claim carries, and the timeout vote's payload | `devshard/host`, `devshard/types`, `devshard/user`, standard library |
 

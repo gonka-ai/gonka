@@ -2,7 +2,7 @@
 
 ## What it owns
 
-- `Message`, `HostStat` and `SlotSignature`: the settle payload with its binary fields decoded, one field for each field of `MsgSettleDevshardEscrow` apart from the settler, which the signer supplies. `HostStat` also carries `Validated` and `Finished`, the counters of fields 7 and 8 of a host-stats entry that devshardctl posts and that `state` puts in the root; the chain type in this module has no such fields, so `settlementwire` does not map them.
+- `Message`, `HostStat` and `SlotSignature`: the settle payload with its binary fields decoded, one field for each field of `MsgSettleDevshardEscrow` apart from the settler, which the signer supplies. `HostStat` also carries `Validated` and `Finished`, the counters of fields 7 and 8 of a host-stats entry that `state` puts in the root. The chain type in this module has no such fields, so `settlementwire` writes them itself.
 - `Root`: the settlement state root, `state.ComputeHostStatsHash` over the payload's host stats followed by `state.ComputeStateRootFromRestHash` in `types.PhaseSettlement` with the payload's rest hash, fees and version. It hashes the host stats exactly as given and never filters them, so a caller gets the root of the map it passed.
 - `PresentStats`: a copy of a host-stats map without its nil entries.
 - `HostStatsBySlot` and `SignaturesBySlot`: the two lists of the message in ascending slot order. `HostStatsBySlot` expects every entry to be non-nil.

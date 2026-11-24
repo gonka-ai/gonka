@@ -18,7 +18,7 @@ func layerImports() map[string][]string {
 	return map[string][]string{
 		"probe":          {"devshard/state", "devshard/user"},
 		"settlement":     {"devshard/state", "devshard/types"},
-		"settlementwire": {"devshard/gatewayprotocol/settlement", "github.com/productscience/inference/x/inference/types"},
+		"settlementwire": {"devshard/gatewayprotocol/settlement", "github.com/productscience/inference/x/inference/types", "google.golang.org/protobuf/encoding/protowire"},
 		"streamevidence": {"common/completionapi"},
 		"timeoutclaim":   {"devshard/host", "devshard/types", "devshard/user"},
 	}

@@ -12,7 +12,7 @@ Code is protocol when a host, a verifier or the chain would reject, pay differen
 
 Two consequences follow.
 
-- The settle wire encoding is not protocol by the test. devshardctl encodes its settle message through `common/chain/tx`, which writes zero-valued fields; `devshard/cmd/gateway` marshals the chain's generated type, which omits them. The chain decodes both to the same message. `settlementwire` is still shared because it owns the mapping from the settle message onto `MsgSettleDevshardEscrow`; devshardctl builds its settle transaction through `common/chain/tx`, which `devshardd` links too, and a devshardctl test pins the message that `settleParamsFromJSON` and `common/chain/tx` build from a settlement JSON to the same decoded chain message `settlementwire` marshals.
+- The settle wire layout is protocol only where the chain judges it. A zero-valued field written or omitted decodes to the same message, so `devshard/cmd/gateway` marshals the chain's generated type, which omits zeros, while devshardctl encodes through `common/chain/tx`, which writes them. Fields 7 and 8 of a host-stats entry are protocol: the chain rebuilds the settlement root from them, and the generated type stops at field 6. Their encoding exists twice, in `common/chain/tx` and in `settlementwire`, because `gatewayprotocol` may not import runtime code. `settlementwire` is still shared because it owns the mapping from the settle message onto `MsgSettleDevshardEscrow`; devshardctl builds its settle transaction through `common/chain/tx`, which `devshardd` links too, and a devshardctl test pins the message that `settleParamsFromJSON` and `common/chain/tx` build from a settlement JSON to the same decoded chain message `settlementwire` marshals, and to the same bytes when no host-stats counter of fields 1 to 6, no slot id and no slot-signature slot id is zero and the fees and version are set.
 - Content that is already decided in a shared package gets no package here. The timeout reason a host sees is chosen in `devshard/user`, and the state-root mismatch errors are defined in `devshard/types` and `devshard/state`. The probe's token floor is `state.MinReservationTokens`, enforced by the host's state machine; what lives here is only how a probe applies it, in `probe`.
 
 ## 2. Module location
@@ -38,7 +38,7 @@ It does not own escrow-id parsing, signature collection, narration of a settleme
 
 ### 3.2 `settlementwire`
 
-Owns `Marshal(settler, message)`: the mapping from `settlement.Message` onto `MsgSettleDevshardEscrow` and its marshalling through the chain's generated type. It does not own the transaction envelope, signing or broadcasting, which stay in `devshard/cmd/gateway/chain` and `common/chain/tx`, nor the create-escrow message. It is the only package in the tree allowed to import chain types.
+Owns `Marshal(settler, message)`: the mapping from `settlement.Message` onto `MsgSettleDevshardEscrow` and its marshalling through the chain's generated type, plus host-stats fields 7 and 8, which that type lacks. It does not own the transaction envelope, signing or broadcasting, which stay in `devshard/cmd/gateway/chain` and `common/chain/tx`, nor the create-escrow message. It is the only package in the tree allowed to import chain types.
 
 ### 3.3 `timeoutclaim`
 
@@ -62,7 +62,7 @@ It does not own the retainer: what a gateway does when the bound is hit, the mem
 | --- | --- |
 | `probe` | `devshard/state`, `devshard/user`, standard library |
 | `settlement` | `devshard/state`, `devshard/types`, standard library |
-| `settlementwire` | `settlement`, `github.com/productscience/inference/x/inference/types`, standard library |
+| `settlementwire` | `settlement`, `github.com/productscience/inference/x/inference/types`, `google.golang.org/protobuf/encoding/protowire`, standard library |
 | `streamevidence` | `common/completionapi`, standard library |
 | `timeoutclaim` | `devshard/host`, `devshard/types`, `devshard/user`, standard library |
 

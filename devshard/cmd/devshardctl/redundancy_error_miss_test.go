@@ -221,7 +221,7 @@ func TestRaceWriter_ErrorStreamCappedAndTruncated(t *testing.T) {
 }
 
 // Test flow:
-//  1. Read the shared terminal-error fixture `long_error_stream.sse` from `gatewayprotocol/streamevidence/testdata`: about 100 KiB of 255-byte content lines, then an error line and `[DONE]`.
+//  1. Read the shared terminal-error fixture `long_error_stream.sse` from `gatewayprotocol/streamevidence/testdata`: 4200 255-byte content lines, about 1 MiB, then an error line and `[DONE]`.
 //  2. Take the fixture's evidence lines, keep the leading ones whose bytes plus one separator each fit in `streamevidence.MaxRetainedBytes`, and assert the error line is not among them.
 //  3. Write the fixture one event at a time through a race writer of an error attempt, with the evidence cap at `streamevidence.MaxRetainedBytes`, and flush it.
 //  4. Assert the attempt retained exactly those leading lines, is marked truncated and not complete, and labels a rejected claim as truncated.
