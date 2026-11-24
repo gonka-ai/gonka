@@ -3,6 +3,7 @@ package streamevidence
 
 import (
 	"bytes"
+	"encoding/json"
 	"strings"
 
 	"common/completionapi"
@@ -29,7 +30,17 @@ func IsDoneLine(line string) bool {
 	return strings.TrimSpace(strings.TrimPrefix(line, completionapi.DataPrefix)) == doneMarker
 }
 
+// isEnvelopeLine reports whether the data line is a JSON object with a top-level receipt or meta key, as the transport client decodes them; the cheap check only skips decoding lines that cannot spell such a key, literally or escaped.
 func isEnvelopeLine(line string) bool {
 	data := strings.TrimPrefix(line, completionapi.DataPrefix)
-	return strings.Contains(data, quotedReceiptKey) || strings.Contains(data, quotedMetaKey)
+	if !strings.Contains(data, envelopeKeyPrefix) && !strings.Contains(data, `\u`) {
+		return false
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal([]byte(data), &object) != nil {
+		return false
+	}
+	_, isReceipt := object[receiptKey]
+	_, isMeta := object[metaKey]
+	return isReceipt || isMeta
 }
