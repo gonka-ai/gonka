@@ -6,6 +6,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"time"
 
@@ -166,11 +167,20 @@ func keepHealthyInference(
 }
 
 func selectInferenceModel(worker *NodeWorker) (*types.Model, error) {
-	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
+	// worker.node is the live *NodeWithState from b.nodes, and the epoch writers
+	// assign into these maps under b.mu: copy them under the lock. Nothing waits
+	// for a worker while holding b.mu, so taking the read lock here is safe.
+	worker.broker.mu.RLock()
+	epochMLNodes := maps.Clone(worker.node.State.EpochMLNodes)
+	epochModels := maps.Clone(worker.node.State.EpochModels)
+	nodeModels := worker.node.Node.Models
+	worker.broker.mu.RUnlock()
+
+	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(epochMLNodes, nodeModels)
 	if !ok || expectedModelID == "" {
 		return nil, errors.New("no epoch models available for this node")
 	}
-	if model, exists := worker.node.State.EpochModels[expectedModelID]; exists {
+	if model, exists := epochModels[expectedModelID]; exists {
 		return &model, nil
 	}
 

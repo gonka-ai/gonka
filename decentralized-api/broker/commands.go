@@ -4,6 +4,7 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
+	"maps"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -89,6 +90,8 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			stateCopy.ReconcileInfo = &reconcileInfoCopy
 		}
 
+		cloneEpochMaps(&stateCopy)
+
 		nodeCopy.RegistrationSeq = nodeWithState.State.RegistrationSeq
 
 		nodeResponses = append(nodeResponses, NodeResponse{
@@ -98,6 +101,16 @@ func (c GetNodesCommand) Execute(b *Broker) {
 	}
 	logging.Debug("Got nodes", types.Nodes, "size", len(nodeResponses))
 	c.Response <- nodeResponses
+}
+
+// cloneEpochMaps gives a NodeState copy its own EpochModels, EpochMLNodes and
+// PreservedModels. The epoch writers (UpdateNodeEpochData and others) assign
+// into the live maps under b.mu, so a copy that is read after b.mu is released
+// must not share them. Call it while holding b.mu. A nil map stays nil.
+func cloneEpochMaps(s *NodeState) {
+	s.EpochModels = maps.Clone(s.EpochModels)
+	s.EpochMLNodes = maps.Clone(s.EpochMLNodes)
+	s.PreservedModels = maps.Clone(s.PreservedModels)
 }
 
 type InferenceResult interface {
