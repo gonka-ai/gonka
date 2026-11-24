@@ -74,6 +74,7 @@ type SettleDevshardEscrowResult struct {
 
 // HostStats mirrors settlement host statistics for MsgSettleDevshardEscrow encoding.
 type HostStats struct {
+	Assigned             uint64
 	SlotID               uint32
 	Missed               int32
 	Invalid              int32

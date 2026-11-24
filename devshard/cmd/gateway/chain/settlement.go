@@ -24,6 +24,9 @@ type SettlementHostStat struct {
 	Cost                 uint64
 	RequiredValidations  uint32
 	CompletedValidations uint32
+	Validated            uint32
+	Finished             uint32
+	Assigned             uint64
 }
 
 // SettlementSlotSig is one slot's settlement signature, already decoded.

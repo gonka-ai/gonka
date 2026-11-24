@@ -14,6 +14,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
+	"github.com/productscience/inference/devshardversion"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -71,6 +72,26 @@ func devshardAssignedUpperBoundForSlot(latestNonce, slotCount uint64, slotID uin
 		return 0, nil
 	}
 	return 1 + (latestNonce-firstAssignedNonce)/slotCount, nil
+}
+
+// devshardAssignedForSettlement resolves the versioned accounting input. A v7
+// zero is a genuine zero, never a request to fall back to nonce accounting.
+// The routing-derived value remains an upper bound, not the reported workload.
+func devshardAssignedForSettlement(version string, nonce, slots uint64, hs *types.DevshardSettlementHostStats) (uint64, error) {
+	upper, err := devshardAssignedUpperBoundForSlot(nonce, slots, hs.SlotId)
+	if err != nil {
+		return 0, err
+	}
+	if !devshardversion.UsesAssignedCount(version) {
+		if hs.Assigned != 0 {
+			return 0, fmt.Errorf("assigned count requires devshard v7 or later")
+		}
+		return upper, nil
+	}
+	if hs.Assigned > upper {
+		return 0, fmt.Errorf("slot %d assigned count %d exceeds routing upper bound %d", hs.SlotId, hs.Assigned, upper)
+	}
+	return hs.Assigned, nil
 }
 
 // WarmKeyChecker returns true if grantee has an authz grant from granter.
@@ -185,7 +206,7 @@ func VerifyDevshardSettlement(escrow types.DevshardEscrow, msg *types.MsgSettleD
 			return fmt.Errorf("duplicate host_stats slot_id %d", hs.SlotId)
 		}
 		seenStatSlots[hs.SlotId] = true
-		assignedToSlot, err := devshardAssignedUpperBoundForSlot(msg.Nonce, slotCount, hs.SlotId)
+		assignedToSlot, err := devshardAssignedForSettlement(msg.StateRootAndProtocolVersion, msg.Nonce, slotCount, hs)
 		if err != nil {
 			return err
 		}
@@ -234,6 +255,9 @@ func ComputeDevshardHostStatsHash(hostStats []*types.DevshardSettlementHostStats
 			Cost:                 hs.Cost,
 			RequiredValidations:  hs.RequiredValidations,
 			CompletedValidations: hs.CompletedValidations,
+			Validated:            hs.Validated,
+			Finished:             hs.Finished,
+			Assigned:             hs.Assigned,
 		}
 	}
 	slices.SortStableFunc(entries, func(a, b *types.DevshardHostStatsProto) int {

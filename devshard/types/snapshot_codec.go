@@ -36,6 +36,7 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 			CompletedValidations: stats.CompletedValidations,
 			Validated:            stats.Validated,
 			Finished:             stats.Finished,
+			Assigned:             stats.Assigned,
 		}
 	}
 
@@ -115,6 +116,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 			CompletedValidations: stats.CompletedValidations,
 			Validated:            stats.Validated,
 			Finished:             stats.Finished,
+			Assigned:             stats.Assigned,
 		}
 	}
 

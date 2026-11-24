@@ -10,9 +10,9 @@ import (
 func TestEncodeSettlementHostStats_RoundTrip(t *testing.T) {
 	in := HostStats{
 		SlotID: 3, Missed: 1, Invalid: 2, Cost: 4_000,
-		RequiredValidations: 5, CompletedValidations: 6, Validated: 7, Finished: 8,
+		RequiredValidations: 5, CompletedValidations: 6, Validated: 7, Finished: 8, Assigned: 9,
 	}
-	want := map[protowire.Number]uint64{1: 3, 2: 1, 3: 2, 4: 4_000, 5: 5, 6: 6, 7: 7, 8: 8}
+	want := map[protowire.Number]uint64{1: 3, 2: 1, 3: 2, 4: 4_000, 5: 5, 6: 6, 7: 7, 8: 8, 9: 9}
 	require.Equal(t, want, varintFields(t, encodeSettlementHostStats(in)))
 }
 
@@ -50,6 +50,7 @@ func TestEncodeSettlementHostStats_ValidatedOmittedWhenZero(t *testing.T) {
 	withZero := encodeSettlementHostStats(HostStats{SlotID: 1, Cost: 10})
 	require.NotContains(t, fieldNumbers(withZero), protowire.Number(7))
 	require.NotContains(t, fieldNumbers(withZero), protowire.Number(8))
+	require.NotContains(t, fieldNumbers(withZero), protowire.Number(9))
 
 	withPasses := encodeSettlementHostStats(HostStats{SlotID: 1, Cost: 10, Validated: 2, Finished: 3})
 	require.Contains(t, fieldNumbers(withPasses), protowire.Number(7))

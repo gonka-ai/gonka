@@ -28,6 +28,9 @@ func encodeMsgSettleDevshardEscrow(settler string, input SettlementInput) ([]byt
 			Cost:                 hostStat.Cost,
 			RequiredValidations:  hostStat.RequiredValidations,
 			CompletedValidations: hostStat.CompletedValidations,
+			Validated:            hostStat.Validated,
+			Finished:             hostStat.Finished,
+			Assigned:             hostStat.Assigned,
 		})
 	}
 	signatures := make([]*inferencetypes.DevshardSlotSignature, 0, len(input.SlotSigs))

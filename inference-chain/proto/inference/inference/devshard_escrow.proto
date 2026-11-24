@@ -43,6 +43,10 @@ message DevshardSettlementHostStats {
   uint64 cost = 4;
   uint32 required_validations = 5;
   uint32 completed_validations = 6;
+  uint32 validated = 7;
+  uint32 finished = 8;
+  // Cumulative accepted starts, including misses; numeric v7+ only.
+  uint64 assigned = 9;
 }
 
 message DevshardSlotSignature {

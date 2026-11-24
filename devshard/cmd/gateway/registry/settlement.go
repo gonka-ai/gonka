@@ -163,6 +163,9 @@ func settlementHostStats(perSlot map[uint32]*types.HostStats) []chain.Settlement
 			Cost:                 hostStats.Cost,
 			RequiredValidations:  hostStats.RequiredValidations,
 			CompletedValidations: hostStats.CompletedValidations,
+			Validated:            hostStats.Validated,
+			Finished:             hostStats.Finished,
+			Assigned:             hostStats.Assigned,
 		})
 	}
 	return stats

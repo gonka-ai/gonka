@@ -1,31 +1,30 @@
 # What a settlement would record, before settling
 
-A settlement submits `MsgSettleDevshardEscrow`, and the part of it that concerns a host is one `host_stats` entry per slot: `slot_id`, `missed`, `invalid`, `cost`, `required_validations`, `completed_validations`, `validated`, `finished`.
+A settlement submits `MsgSettleDevshardEscrow`, and the part of it that concerns a host is one `host_stats` entry per slot: `slot_id`, `missed`, `invalid`, `cost`, `required_validations`, `completed_validations`, `validated`, `finished`, and (v7+) `assigned`.
 
-Every one of those numbers except `cost` is already visible while the escrow is live, per participant and per slot, at
+Both gateway binaries expose participant accounting at these endpoints.
 
 ```
 GET /api/v1/epochs/{epoch}/participants
 GET /api/v1/epochs/{epoch}/participants/{participant}
 ```
 
-So the question "what happens if we enable settlement" does not need settlement enabled to answer.
-
 ## Where each number comes from
 
-| settlement field | field in the record | source |
+| Settlement field | `devshardctl` participant record | `cmd/gateway` participant record |
 |---|---|---|
-| `missed` | `protocol_misses` | the escrow's own host statistics |
-| `invalid` | `protocol_invalid` | the escrow's own host statistics |
-| `required_validations` | `required_validations` | the escrow's own host statistics |
-| `completed_validations` | `completed_validations` | the escrow's own host statistics |
-| `validated` | `protocol_validated` | the escrow's own host statistics |
-| `finished` | `protocol_finished` | the escrow's own host statistics |
-| `cost` | — | tracked internally, deliberately not published |
+| `missed` | `protocol_misses` | `protocol_misses` |
+| `invalid` | `protocol_invalid` | `protocol_invalid` |
+| `required_validations` | `required_validations` | `required_validations` |
+| `completed_validations` | `completed_validations` | `completed_validations` |
+| `validated` | `protocol_validated` | — |
+| `finished` | `protocol_finished` | — |
+| `cost` | — | `chain_cost` |
+| `assigned` (v7+) | — | — |
 
-These are not the gateway's opinion. `missed` moves when an applied timeout lands on the executor slot, `invalid` when a validator's verdict does, `validated` when a sampled replay of the slot's inference passes, back down when it is challenged, and up again if the challenge is voted down; all three are read back from the state machine on every committed diff that carries one, and re-read in full on each phase change. They are the same numbers the settlement transaction will carry.
+The new gateway exposes the raw per-slot host statistics through its admin endpoint `GET /devshard/{id}/v1/debug/state`. Its participant field `assigned_nonces` measures the slot's share of all nonces. The settlement field `assigned` counts accepted inference starts.
 
-`cost` is the host's reward for the inferences it served. It is accumulated in the state machine but not surfaced here: the question this view answers is who a settlement would penalise, not what it would pay.
+The state machine records a miss when a timeout applies to the executor slot and an invalid inference when a validator's verdict applies. A successful sampled replay increases `validated`, a challenge can decrease it, and a rejected challenge restores it. The host's reward for serving inferences accumulates in `cost`.
 
 ## Reading it against our own count
 
@@ -45,3 +44,5 @@ Drift between the two is normal while an escrow is live and converges on its own
 - `clock_drift` — the host's signed receipt stamps a deadline the chain measures from, so a drifted clock can get a nonce voted timed out while the answer is still being written. Expect `protocol_misses` to follow.
 
 Both are visible per host long before a settlement records the consequence.
+
+The signed v7 count is also available in snapshots and settlement JSON. [v7 Assigned accounting](./v7-assigned-accounting.md)

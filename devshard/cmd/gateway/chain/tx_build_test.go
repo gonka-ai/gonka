@@ -38,6 +38,26 @@ func fixedSettlementFull() SettlementInput {
 	}
 }
 
+func TestEncodeSettlementPreservesV7WorkCounts(t *testing.T) {
+	input := fixedSettlementFull()
+	input.Version = "v7"
+	input.HostStats[0].Assigned = 1 << 33
+	input.HostStats[0].Finished = 7
+	input.HostStats[0].Validated = 5
+	body, err := encodeMsgSettleDevshardEscrow(fixedSettler, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var message inferencetypes.MsgSettleDevshardEscrow
+	if err := message.Unmarshal(body); err != nil {
+		t.Fatal(err)
+	}
+	got := message.HostStats[0]
+	if got.Assigned != 1<<33 || got.Finished != 7 || got.Validated != 5 {
+		t.Fatalf("work counts lost in settlement: %+v", got)
+	}
+}
+
 func fixedSettlementEmptyOptional() SettlementInput {
 	return SettlementInput{
 		EscrowID:  124,

@@ -97,8 +97,12 @@ func TestBuildSettlementUsesTheResidentSessionWithoutRehydrating(t *testing.T) {
 //  4. Assert fees, version, state root, and rest hash are all populated as expected.
 func TestBuildSettlementOrdersHostStatsAndSignaturesBySlot(t *testing.T) {
 	t.Parallel()
+	session := settleableSession(9)
+	session.escrowState.StateRootAndProtocolVersion = "v7"
+	stats := session.escrowState.HostStats[2]
+	stats.Assigned, stats.Finished, stats.Validated = 8, 6, 5
 	registry := New(Deps{
-		ReadOnlySessions: newSessions(map[string]*fakeSession{"5": settleableSession(9)}).open,
+		ReadOnlySessions: newSessions(map[string]*fakeSession{"5": session}).open,
 		Now:              fixedClock(),
 	})
 
@@ -108,7 +112,7 @@ func TestBuildSettlementOrdersHostStatsAndSignaturesBySlot(t *testing.T) {
 	}
 	wantStats := []chain.SettlementHostStat{
 		{SlotID: 0, Invalid: 4, Cost: 10},
-		{SlotID: 2, Missed: 1, Cost: 30, RequiredValidations: 3, CompletedValidations: 2},
+		{SlotID: 2, Missed: 1, Cost: 30, RequiredValidations: 3, CompletedValidations: 2, Assigned: 8, Finished: 6, Validated: 5},
 	}
 	if !reflect.DeepEqual(input.HostStats, wantStats) {
 		t.Errorf("host stats = %+v, want %+v (slot order, nil entries dropped)", input.HostStats, wantStats)
@@ -123,7 +127,7 @@ func TestBuildSettlementOrdersHostStatsAndSignaturesBySlot(t *testing.T) {
 	if got, want := input.Fees, uint64(11); got != want {
 		t.Errorf("fees = %d, want %d", got, want)
 	}
-	if got, want := input.Version, "v2"; got != want {
+	if got, want := input.Version, "v7"; got != want {
 		t.Errorf("version = %q, want %q", got, want)
 	}
 	if len(input.StateRoot) == 0 || len(input.RestHash) == 0 {
