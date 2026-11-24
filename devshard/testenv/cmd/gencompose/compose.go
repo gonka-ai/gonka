@@ -196,7 +196,7 @@ services:
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
       # May be set independently of KEY_NAME to exercise warm-key rotation.
-      ACCOUNT_PUBKEY: ""
+      ACCOUNT_PUBKEY: {{ hostEnv . "ACCOUNT_PUBKEY" "\"\"" }}
       DEVSHARD_VALIDATION_LEASE_TTL: {{ hostEnv . "DEVSHARD_VALIDATION_LEASE_TTL" "${DEVSHARD_VALIDATION_LEASE_TTL:-32m}" }}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: {{ hostEnv . "DEVSHARD_VALIDATION_RETRY_INTERVAL" "${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}" }}
       DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: {{ hostEnv . "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE" "${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}" }}
@@ -683,6 +683,7 @@ func gatewayDevshardsJSON(cfg *config.File) (string, error) {
 // overridableHostEnv lists the versiond keys rendered through hostEnv, so a
 // host's env replaces their default instead of adding a second key.
 var overridableHostEnv = map[string]bool{
+	"ACCOUNT_PUBKEY":                                  true,
 	"DEVSHARD_VALIDATION_LEASE_TTL":                   true,
 	"DEVSHARD_VALIDATION_RETRY_INTERVAL":              true,
 	"DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE": true,
