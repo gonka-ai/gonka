@@ -39,6 +39,7 @@ import (
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // Version is the build's version; package main copies its stamped Version here before Main runs.
@@ -169,9 +170,9 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	clock := time.Now
 
 	boot := newBootBudget(int(configuration.Server.MaxConcurrentRuntimeBuilds))
-	routePrefix, _, err := devshardpkg.ResolveRoutePrefix(devshardpkg.VersionedRoutePrefix(Version))
+	routePrefix, _, err := devshardpkg.ResolveRoutePrefix(devshardpkg.DefaultRoutePrefix())
 	if err != nil {
-		return nil, fmt.Errorf("resolving host route prefix from version %q: %w", Version, err)
+		return nil, fmt.Errorf("resolving host route prefix from devshard protocol version %q: %w", types.EffectiveStateRootAndProtocolVersion, err)
 	}
 
 	telemetry := metrics.New()

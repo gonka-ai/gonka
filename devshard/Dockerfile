@@ -1,6 +1,7 @@
 FROM golang:1.25.9-alpine3.23 AS devshardctl-builder
 
 ARG DEVSHARD_VERSION=dev
+ARG GATEWAY_VERSION=dev
 
 RUN apk add --no-cache git
 
@@ -24,11 +25,11 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     -ldflags "-X main.Version=${DEVSHARD_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
     -o /devshardctl ./cmd/devshardctl
 
-# gateway: pure Go like devshardctl; the version stamp is hashed into every settlement payload.
+# gateway: pure Go like devshardctl; DEVSHARD_VERSION is the protocol version hashed into every settlement payload, GATEWAY_VERSION is the gateway's own release version.
 RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
     CGO_ENABLED=0 go build \
-    -ldflags "-X main.Version=${DEVSHARD_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
+    -ldflags "-X main.Version=${GATEWAY_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
     -o /gateway ./cmd/gateway
 
 # Testenv / gateway-only image (no CGO devshardd build).

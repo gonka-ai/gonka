@@ -8,10 +8,10 @@ A nonce costs the escrow money from the moment it is committed, whether or not a
 
 All commands run from `devshard/cmd/gateway`. You need Go 1.25.9 or later; linting needs golangci-lint v2.15 or later; images need Docker.
 
-Build the binary into `devshard/bin/gateway`. `GATEWAY_VERSION` is required because it is hashed into every settlement the gateway signs ([`CONTRIBUTING.md`](./CONTRIBUTING.md), "Before you push"):
+Build the binary into `devshard/bin/gateway`. `GATEWAY_VERSION` (the gateway's own release version) and `DEVSHARD_PROTOCOL_VERSION` (the devshard protocol version on chain) are both required; the protocol version is hashed into every settlement the gateway signs ([`CONTRIBUTING.md`](./CONTRIBUTING.md), "Before you push"):
 
 ```bash
-make build GATEWAY_VERSION=<version>
+make build GATEWAY_VERSION=<version> DEVSHARD_PROTOCOL_VERSION=<protocol-version>
 ```
 
 Test:
@@ -26,7 +26,7 @@ go test ./registry -run '^TestADrainedEscrow' -race -count=1 -v  # one test
 Run the compose stack, which joins the node's `join_default` network and answers on `127.0.0.1:18080`:
 
 ```bash
-make image GATEWAY_VERSION=<version>   # builds ghcr.io/gonka-ai/devshard-gateway-v4:stage locally
+make image GATEWAY_VERSION=<version> DEVSHARD_PROTOCOL_VERSION=<protocol-version>   # builds ghcr.io/gonka-ai/devshard-gateway-v4:stage locally
 cd deploy
 cp config.devshard-gateway.env.template config.devshard-gateway.env
 $EDITOR config.devshard-gateway.env    # chain endpoints, API keys, admin key

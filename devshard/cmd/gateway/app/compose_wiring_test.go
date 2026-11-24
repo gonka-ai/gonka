@@ -6,8 +6,13 @@ import (
 	"testing"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/perf"
+	"devshard/cmd/gateway/store"
+	"devshard/transport"
+	"devshard/types"
+	"devshard/user"
 )
 
 // Test flow:
@@ -45,5 +50,49 @@ func TestTheShutdownStepsEndTheRequestsTheServerStarted(t *testing.T) {
 
 	if !errors.Is(requestCtx.Err(), context.Canceled) {
 		t.Fatalf("request context error = %v, want context.Canceled", requestCtx.Err())
+	}
+}
+
+// Test flow:
+//  1. Set the gateway's own Version to a value that is not the devshard protocol version.
+//  2. Compose a gateway over a session source that records the host route prefix it is handed.
+//  3. Assert the prefix is /devshard/ plus the protocol version, not the gateway Version.
+func TestTheHostRoutePrefixComesFromTheProtocolVersionNotTheGatewayVersion(t *testing.T) {
+	gatewayEnvironment(t)
+	previous := Version
+	Version = "gateway-" + types.EffectiveStateRootAndProtocolVersion + "-own"
+	t.Cleanup(func() { Version = previous })
+	values, err := env.Load()
+	if err != nil {
+		t.Fatalf("loading environment: %v", err)
+	}
+	storageDir, err := resolveStorageDir(values.StorageDir)
+	if err != nil {
+		t.Fatalf("resolving storage dir: %v", err)
+	}
+	gatewayStore, err := store.Open(storageDir)
+	if err != nil {
+		t.Fatalf("opening store: %v", err)
+	}
+	var gotPrefix string
+	inner := sessionsReading(gatewayStore, storageDir, chainWithoutADial{})
+	recording := func(endpoints config.Chain, heights config.HeightSync, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) (chainSources, error) {
+		gotPrefix = routePrefix
+		return inner(endpoints, heights, routePrefix, adoption, steps)
+	}
+	composed, err := compose(context.Background(), values, storageDir, gatewayStore, recording)
+	if err != nil {
+		gatewayStore.Close()
+		t.Fatalf("compose(): %v", err)
+	}
+	t.Cleanup(func() {
+		if err := composed.shutdown(shutdownGracePeriod); err != nil {
+			t.Errorf("shutdown(): %v", err)
+		}
+	})
+
+	want := "/devshard/" + types.EffectiveStateRootAndProtocolVersion
+	if gotPrefix != want {
+		t.Fatalf("host route prefix = %q with Version %q, want %q", gotPrefix, Version, want)
 	}
 }

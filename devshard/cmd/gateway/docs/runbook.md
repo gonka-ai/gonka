@@ -28,14 +28,14 @@ To reproduce an escrow lifecycle problem (create, drain, timeout votes, settle, 
 
 ## Release and rollback
 
-A release is an image. `make release` builds it for `linux/amd64` (`PLATFORM`) and pushes it as `$(GATEWAY_IMAGE):<tag>` for every tag in `GATEWAY_TAGS`. It refuses to run without `GATEWAY_VERSION`, which is stamped into every settlement ([`CONTRIBUTING.md`](../CONTRIBUTING.md), "Before you push"), and without `GATEWAY_TAGS`.
+A release is an image. `make release` builds it for `linux/amd64` (`PLATFORM`) and pushes it as `$(GATEWAY_IMAGE):<tag>` for every tag in `GATEWAY_TAGS`. It refuses to run without `GATEWAY_VERSION` (the gateway's release version), `DEVSHARD_PROTOCOL_VERSION` (the protocol version on chain, stamped into every settlement; [`CONTRIBUTING.md`](../CONTRIBUTING.md), "Before you push") and `GATEWAY_TAGS`. The image carries `org.opencontainers.image.revision` (the commit, with `-dirty` when the work tree differs from HEAD), `org.opencontainers.image.version` (the protocol version) and `org.opencontainers.image.source` labels.
 
 To release and deploy:
 
 1. Build and push the image from `devshard/cmd/gateway`:
 
    ```bash
-   make release GATEWAY_VERSION=<version> GATEWAY_TAGS='<tag> <tag>-latest'
+   make release GATEWAY_VERSION=<version> DEVSHARD_PROTOCOL_VERSION=<protocol-version> GATEWAY_TAGS='<tag> <tag>-latest'
    ```
 
 2. Point the stack at the new tag and recreate the container from the `deploy` directory. `GATEWAY_IMAGE` is a full image reference with its tag:
@@ -54,7 +54,7 @@ To roll back, set `GATEWAY_IMAGE` to the previous tag and repeat step 2. Before 
 
 - **`gateway.db`** is versioned by `schema_version`, one row per applied entry of `migrations` (`store/store.go`, `migrate`). The list is append-only, so a release reads every store a release with a list no longer than its own wrote, and migrates it up at `Open`. An older release opening a store a newer one migrated applies nothing and does not refuse it: the tables and columns it knows are all still there, and every column a later entry adds carries a default, so the rows it inserts stay valid. A rollback across a migration that is not a plain added table or column is not covered by this; read the entries the newer release added before rolling back over them.
 - **`accounting.db`** carries the ledger's `accounting.SchemaVersion` and is read only by a release with the same number (`accounting/sqlload.go`, `Store.Load`). Across a change of that number the ledger starts without its stored counters, logs `nonce accounting started without its stored counters`, and replaces the stored tables on its next write. That loses the ledger's history, never money: the ledger is observation, and settlement reads the escrow sessions ([accounting.md](./accounting.md), "Storage").
-- **The escrow sessions** (`escrow-<id>/epoch_<N>.db`; [operations.md](./operations.md), "Session storage") are written by the devshard libraries the release is built with, and a gateway release runs only with the devshard release of the same version.
+- **The escrow sessions** (`escrow-<id>/epoch_<N>.db`; [operations.md](./operations.md), "Session storage") are written by the devshard libraries the release is built with, and a gateway release runs only with the devshard release of the same `DEVSHARD_PROTOCOL_VERSION`.
 
 ## Backup and restore
 

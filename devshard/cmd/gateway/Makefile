@@ -1,9 +1,13 @@
 # Everything the gateway builds, tests and ships. Run from this directory.
 #
-# GATEWAY_VERSION is stamped into devshard/types.buildStateRootProtocolVersion, which is hashed into the
-# state-root preimage and written into every settlement payload. A binary built without it falls back to
-# the plain-`go build` default and signs settlements the network computes differently, so every target
-# that produces a binary passes it -- including the images -- and refuses to run without it.
+# GATEWAY_VERSION is the gateway's own release version, stamped into main.Version.
+# DEVSHARD_PROTOCOL_VERSION is the devshard protocol version on chain, stamped into
+# devshard/types.buildStateRootProtocolVersion, which is hashed into the state-root preimage and written
+# into every settlement payload. The two can differ. A binary built without the protocol version falls back
+# to the plain-`go build` default and signs settlements the network computes differently, so every target
+# that produces a binary passes both -- including the images -- and refuses to run without them.
+# Every image is labelled with the commit it was built from (`-dirty` when the work tree differs from
+# HEAD), the protocol version and the source repository.
 
 .PHONY: help require-version build test test-race test-junit cover lint verify image release clean
 
@@ -19,8 +23,17 @@ REPO_ROOT := ../../..
 DOCKERFILE := devshard/Dockerfile
 IMAGE_TARGET := gateway-runtime
 
+COMMIT ?= $(shell git -C $(REPO_ROOT) rev-parse HEAD)$(shell git -C $(REPO_ROOT) diff --quiet HEAD || echo -dirty)
+COMMIT := $(COMMIT)
+IMAGE_BUILD_ARGS = \
+	--build-arg GATEWAY_VERSION=$(GATEWAY_VERSION) \
+	--build-arg DEVSHARD_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
+	--label org.opencontainers.image.revision=$(COMMIT) \
+	--label org.opencontainers.image.version=$(DEVSHARD_PROTOCOL_VERSION) \
+	--label org.opencontainers.image.source=https://github.com/gonka-ai/gonka
+
 BINARY ?= $(MODULE_DIR)/bin/gateway
-LDFLAGS := -X main.Version=$(GATEWAY_VERSION) -X devshard/types.buildStateRootProtocolVersion=$(GATEWAY_VERSION)
+LDFLAGS := -X main.Version=$(GATEWAY_VERSION) -X devshard/types.buildStateRootProtocolVersion=$(DEVSHARD_PROTOCOL_VERSION)
 
 GOTESTSUM ?= gotest.tools/gotestsum@v1.13.0
 TEST_FORMAT ?= testname
@@ -41,11 +54,14 @@ help:
 	@echo "image        build $(GATEWAY_IMAGE):$(GATEWAY_STAGE_TAG) into the local daemon"
 	@echo "release      build and push $(GATEWAY_IMAGE) for every tag in GATEWAY_TAGS"
 
-# Required rather than defaulted: a binary stamped with a version nobody chose signs settlements no host
-# accepts.
+# Required rather than defaulted: a binary stamped with a protocol version nobody chose signs settlements no host accepts, and one without a gateway version reports no chosen release.
 require-version:
 	@if [ -z "$(strip $(GATEWAY_VERSION))" ]; then \
-		echo "GATEWAY_VERSION is required, e.g. GATEWAY_VERSION=v6" >&2; \
+		echo "GATEWAY_VERSION is required, e.g. GATEWAY_VERSION=4.0.1" >&2; \
+		exit 1; \
+	fi
+	@if [ -z "$(strip $(DEVSHARD_PROTOCOL_VERSION))" ]; then \
+		echo "DEVSHARD_PROTOCOL_VERSION is required, e.g. DEVSHARD_PROTOCOL_VERSION=v6" >&2; \
 		exit 1; \
 	fi
 
@@ -74,7 +90,7 @@ verify: test-race lint
 image: require-version
 	DOCKER_BUILDKIT=1 docker build \
 		--target $(IMAGE_TARGET) \
-		--build-arg DEVSHARD_VERSION=$(GATEWAY_VERSION) \
+		$(IMAGE_BUILD_ARGS) \
 		-t $(GATEWAY_IMAGE):$(GATEWAY_STAGE_TAG) \
 		-f $(REPO_ROOT)/$(DOCKERFILE) \
 		--load \
@@ -90,7 +106,7 @@ release: require-version
 	docker buildx build \
 		--platform $(PLATFORM) \
 		--target $(IMAGE_TARGET) \
-		--build-arg DEVSHARD_VERSION=$(GATEWAY_VERSION) \
+		$(IMAGE_BUILD_ARGS) \
 		$(foreach tag,$(strip $(GATEWAY_TAGS)),-t $(GATEWAY_IMAGE):$(tag)) \
 		-f $(REPO_ROOT)/$(DOCKERFILE) \
 		--push \

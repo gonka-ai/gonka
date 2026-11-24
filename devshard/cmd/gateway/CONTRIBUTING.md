@@ -28,7 +28,7 @@ go test ./journal -run '^$' -bench . -benchmem
 
 `-count=1` makes every run execute: a cached `ok` says nothing about a race or ordering bug that shows only on some runs.
 
-Build binaries with `make build GATEWAY_VERSION=…` or `make image GATEWAY_VERSION=…`, never a plain `go build -o`; both refuse to run without the version. `GATEWAY_VERSION` is stamped into `devshard/types.buildStateRootProtocolVersion`, which is hashed into every settlement, so an unstamped binary signs settlements the network computes differently. `make clean` removes the binary, `coverage.out` and `junit-report.xml`.
+Build binaries with `make build GATEWAY_VERSION=… DEVSHARD_PROTOCOL_VERSION=…` or `make image GATEWAY_VERSION=… DEVSHARD_PROTOCOL_VERSION=…`, never a plain `go build -o`; both refuse to run without both versions. `GATEWAY_VERSION` is the gateway's own release version, stamped into `main.Version`. `DEVSHARD_PROTOCOL_VERSION` is the devshard protocol version on chain, stamped into `devshard/types.buildStateRootProtocolVersion`, which is hashed into every settlement, so an unstamped binary signs settlements the network computes differently. `make clean` removes the binary, `coverage.out` and `junit-report.xml`.
 
 A `//nolint:<linter> // reason` is a last resort and carries its reason; `nolintlint` refuses one without.
 
