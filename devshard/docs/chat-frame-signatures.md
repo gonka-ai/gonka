@@ -1,0 +1,11 @@
+# Signed Chat frames
+
+The peer RPC Chat stream carries one continuous gzip member. `ChatFrame.sig` is a raw 64-byte secp256k1 R||S signature outside that member; `stream_bytes` names the uncompressed prefix it covers. The signed `ChatFrameSignatureContent` binds the escrow, inference, signature sequence, prefix hash and prefix length under `devshard.chatframe.v1`. The prefix hash is seeded with the domain, escrow, inference and committed prompt hash. Neither the SSE response nor the inference state transition changes.
+
+Only the executor whose payload passed verification signs. Catch-up and Finalize streams remain unsigned. HTTP inference has no Chat frame header and remains unsigned. Old protobuf readers ignore the additional fields, and old hosts ignore the optional `chat_frames` request field.
+
+`host.ChatFrameSchedule` selects the schedule per inference. A nil schedule or `every: 0` selects five events; positive values are capped at 64. The default joins events into one flush and signs every flush. `separate: true` flushes each event and signs every N events. Events before the first output leave immediately; the first content, reasoning, tool call, error or `[DONE]` leaves and is signed immediately. The receipt, a forced byte-limit flush and the closing tail are signed too. A prefix is never signed twice. A 16 KiB pending-byte limit bounds buffering even without an event boundary.
+
+The shared RPC reader verifies signatures while inflating the stream. Signatures must have exactly 64 bytes before entering the queue, cover strictly increasing byte counts and have at most 64 pending entries. The verifier narrows recovered public-key candidates using successive signatures, then checks the signer against the executor's cold or bound warm key at stream completion. It does not perform chain lookups while tokens are flowing. Unsigned streams are accepted for compatibility. Verification results are returned through `HostResponse.ChatFrames`; a signature failure does not change the response error or cast a challenge.
+
+The protocol and shared-client support are independent of the gateway executable. Gateway configuration, journal reporting and request wiring belong in `cmd/gateway` and are delivered separately. Signature evidence in challenges and a dynamically changing event schedule are outside this interface.
