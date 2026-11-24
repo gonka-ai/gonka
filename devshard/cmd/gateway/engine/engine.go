@@ -117,6 +117,7 @@ type Engine struct {
 	lookups        *lookupRefusals
 	settles        *settleQueue
 	heldWinners    *heldWinners
+	finishWakes    *finishWakes
 	stopping       context.Context
 	cancelStopping context.CancelFunc
 
@@ -155,6 +156,7 @@ func NewEngine(deps Deps) (*Engine, error) {
 		lookups:        newLookupRefusals(),
 		settles:        newSettleQueue(clock),
 		heldWinners:    newHeldWinners(),
+		finishWakes:    newFinishWakes(),
 		stopping:       stopping,
 		cancelStopping: cancelStopping,
 	}, nil
@@ -421,6 +423,7 @@ func (e *Engine) queueVotes(outcome RaceOutcome, poster TimeoutPoster, registrat
 	task := settleTask{
 		deadline: deadline,
 		wake:     e.stopping,
+		recheck:  e.finishWakes.subscriber(outcome.EscrowID, openVoteNonces(steps, poster)),
 		post: func() {
 			// A vote not yet due at Stop is left owed in the store or to the next boot's sweep.
 			if e.stopping.Err() != nil && unripe() {

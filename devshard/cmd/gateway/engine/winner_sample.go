@@ -35,8 +35,9 @@ func (h *heldWinners) take(key heldWinnerKey) (heldWinner, bool) {
 	return winner, held
 }
 
-// OnFinishApplied decides the served winner held for this nonce's finish as finished. See race.md, "A served winner's sample waits for its finish".
+// OnFinishApplied decides the served winner held for this nonce's finish as finished and lets a vote held for it go. See race.md, "A served winner's sample waits for its finish".
 func (e *Engine) OnFinishApplied(escrowID string, nonce uint64) {
+	e.finishWakes.wake(escrowID, nonce)
 	if winner, held := e.heldWinners.take(heldWinnerKey{escrowID: escrowID, nonce: nonce}); held {
 		e.decideWinner(winner, true)
 	}

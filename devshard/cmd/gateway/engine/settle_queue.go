@@ -14,6 +14,7 @@ type settleTask struct {
 	deadline func() time.Time
 	post     func()
 	wake     context.Context
+	recheck func(func()) func()
 }
 
 func (t settleTask) woken() bool { return t.wake != nil && t.wake.Err() != nil }
@@ -41,22 +42,47 @@ func (q *settleQueue) Add(task settleTask, limit int) {
 }
 
 func (q *settleQueue) arm(task settleTask, limit int) {
-	delay := max(task.deadline().Sub(q.now()), firesAtOnce)
-	if task.wake == nil {
+	if task.wake == nil && task.recheck == nil {
+		delay := max(task.deadline().Sub(q.now()), firesAtOnce)
 		q.after(delay, func() { q.fire(task, limit) })
 		return
 	}
-	var fired atomic.Bool
+	var (
+		mu     sync.Mutex
+		fired  bool
+		timer  *time.Timer
+		undoes []func()
+	)
+	// The first of the timer, the wake and a recheck fires; the others are dropped so they stop holding the task.
 	fireOnce := func() {
-		if fired.CompareAndSwap(false, true) {
-			q.fire(task, limit)
+		mu.Lock()
+		if fired {
+			mu.Unlock()
+			return
 		}
+		fired = true
+		stop, undo := timer, undoes
+		mu.Unlock()
+		if stop != nil {
+			stop.Stop()
+		}
+		for _, drop := range undo {
+			drop()
+		}
+		q.fire(task, limit)
 	}
-	unregister := context.AfterFunc(task.wake, fireOnce)
-	q.after(delay, func() {
-		unregister()
-		fireOnce()
-	})
+	mu.Lock()
+	defer mu.Unlock()
+	if task.wake != nil {
+		unregister := context.AfterFunc(task.wake, fireOnce)
+		undoes = append(undoes, func() { unregister() })
+	}
+	// Subscribed before the deadline is read, so a finish landing in between is not missed.
+	if task.recheck != nil {
+		undoes = append(undoes, task.recheck(fireOnce))
+	}
+	delay := max(task.deadline().Sub(q.now()), firesAtOnce)
+	timer = q.after(delay, fireOnce)
 }
 
 // fire asks the deadline again before taking a place.
