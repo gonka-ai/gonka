@@ -101,7 +101,7 @@ Admin lines carry the action and its subject, **never a request body and never a
 
 ## Metrics
 
-`/metrics`, Prometheus: 97 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
+`/metrics`, Prometheus: 99 gateway families beside the Go runtime and process collectors. One of them is the nonce ledger's, the facts it dropped for an escrow it does not hold; everything else it knows is served by its own JSON API (see [accounting.md](./accounting.md)). Grouped by the question they answer:
 
 | Question | Series |
 | --- | --- |
@@ -115,7 +115,7 @@ Admin lines carry the action and its subject, **never a request body and never a
 | is the shard behind on the votes it owes | `devshard_gateway_owed_timeout_votes`, against `engine_max_concurrent_timeout_votes` ([race.md](./race.md), "The timeout-vote queue"); `devshard_gateway_owed_vote_writes_lost_total` by `cause` (`shed`, `write_failed`), the saves and deletes of owed votes the store lost ([`store/README.md`](../store/README.md), "Owed refusal votes") |
 | is the chain view healthy | `devshard_gateway_chain_snapshot_healthy`, `devshard_gateway_chain_snapshot_age_seconds`, `devshard_gateway_chain_epoch_phase`, `devshard_gateway_chain_requests_blocked` |
 | is the escrow funding planner deciding sensibly | `devshard_gateway_escrow_money{model,class}`, `devshard_gateway_escrow_count{model,state}`, `devshard_gateway_planner_decisions_total{model,action,reason}` `devshard_gateway_funding_guarantee{model}` (below zero the guarantee is short), `devshard_gateway_planner_ignored_marks_total{model,reason}` (depletion marks the planner dropped; a rising `balance_floor` count is routing reporting what the planner already plans for) and `devshard_gateway_escrow_deadline_unsettled_total{model,reason}` (escrows narrated unsettled at or past their settle margin: `settlement_disabled`, `operator_deactivated`, `key_missing`, `deadline_passed`; any `deadline_passed` is money lost); the journal lines `escrow funding planned`, `escrow starved`, `funding guarantee broken` say why. |
-| is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_capture_bytes_held` |
+| is memory bounded | `devshard_gateway_buffered_response_bytes`, `devshard_gateway_cache_bytes`, `devshard_gateway_stream_logs`, `devshard_gateway_capture_bytes_held` |
 | are the request records keeping up | `devshard_gateway_accounting_rows_written_total`, `devshard_gateway_accounting_rows_lost_total`, `devshard_gateway_accounting_retention_sweeps_failed_total` |
 | is the journal keeping up | `devshard_gateway_journal_money_refused_total`, `devshard_gateway_journal_progress_dropped_total`, `devshard_gateway_journal_late_events_total` |
 | is the nonce ledger losing facts | `devshard_gateway_nonce_ledger_unknown_escrow_facts_total`: facts about an escrow the ledger does not hold — one its sweep has not opened yet, which a published escrow's wake keeps to the first sweep's latency, or one its retention pruned |
@@ -180,6 +180,7 @@ The families no question above needs, with the help text each one exports.
 | `devshard_gateway_participant_receipt_seconds` | Time from inference send until receipt confirmation by participant and model. |
 | `devshard_gateway_participant_total_attempt_seconds` | Total inference attempt time by participant and model. |
 | `devshard_gateway_served_bindings_total` | Total served streams checked against the Finish their host signed, by verdict. |
+| `devshard_gateway_stream_log_replays_total` | Repeated streamed requests that took over a live stream log, counted when the takeover starts. Like a cache hit it runs no race; it is not counted in the cache hits. |
 
 ### Watching the funding planner
 

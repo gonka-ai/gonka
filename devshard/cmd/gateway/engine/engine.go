@@ -88,7 +88,7 @@ type Deps struct {
 	E2E E2EOverrides
 }
 
-// Request is one client request as a race sees it; OnEscrow fires at the last moment a header can still be set, and Run calls OnFinished exactly once, after the race's last report.
+// Request is one client request as a race sees it; OnEscrow fires at the last moment a header can still be set, OnOutcome receives the final outcome of a race that ran, once, and Run calls OnFinished exactly once, after the race's last report.
 type Request struct {
 	RequestID               string
 	Model                   string
@@ -104,6 +104,7 @@ type Request struct {
 	Params any
 
 	OnEscrow   func(escrowID string)
+	OnOutcome  func(outcome RaceOutcome)
 	OnFinished func()
 }
 
@@ -181,7 +182,7 @@ func (e *Engine) Run(ctx context.Context, request Request, client io.Writer) (Ra
 	if err != nil {
 		return outcome, err
 	}
-	return outcome, outcome.failure()
+	return outcome, outcome.Failure()
 }
 
 func finishOnce(finished func()) func() {
@@ -315,6 +316,9 @@ func (e *Engine) raceDeps(settings *config.Config, request Request, registration
 		Hold: registration.holdEscrow,
 		Report: func(outcome RaceOutcome) {
 			e.record(outcome, request.Params, registration)
+			if request.OnOutcome != nil {
+				request.OnOutcome(outcome)
+			}
 			request.OnFinished()
 		},
 	}
