@@ -48,3 +48,24 @@ func TestSignaturesBySlotListsAscendingSlots(t *testing.T) {
 		t.Fatalf("signatures = %+v, want %+v", signatures, want)
 	}
 }
+
+// Test flow:
+//  1. For each field of `types.HostStats`, found by reflection, build host stats on one slot with only that field non-zero.
+//  2. Call `HostStatsBySlot` on it.
+//  3. Assert the entry differs from the one mapped from all-zero host stats, so a counter the mapping does not carry fails here.
+func TestHostStatsBySlotCarriesEveryHostStatsField(t *testing.T) {
+	const slotID = 4
+	empty := HostStatsBySlot(map[uint32]*types.HostStats{slotID: {}})
+	fields := reflect.TypeFor[types.HostStats]()
+
+	for index := range fields.NumField() {
+		hostStats := &types.HostStats{}
+		reflect.ValueOf(hostStats).Elem().Field(index).SetUint(1)
+
+		stats := HostStatsBySlot(map[uint32]*types.HostStats{slotID: hostStats})
+
+		if reflect.DeepEqual(stats, empty) {
+			t.Errorf("the mapping drops types.HostStats.%s", fields.Field(index).Name)
+		}
+	}
+}

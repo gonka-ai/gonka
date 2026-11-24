@@ -2,9 +2,12 @@ package testutil
 
 import "strings"
 
+const contentLineBytes = 255
+
 // LongErrorStream returns an SSE error stream whose error lies past a retention bound: 255-byte content events until the data lines, each counted as its bytes plus one separator, exceed retainedBytes, then a terminal error event and `[DONE]`.
 func LongErrorStream(retainedBytes int) []byte {
-	content := `data: {"choices":[{"delta":{"content":"` + strings.Repeat("x", 211) + `"}}]}`
+	const opening, closing = `data: {"choices":[{"delta":{"content":"`, `"}}]}`
+	content := opening + strings.Repeat("x", contentLineBytes-len(opening)-len(closing)) + closing
 	var stream strings.Builder
 	for held := 0; held <= retainedBytes; held += len(content) + 1 {
 		stream.WriteString(content + "\n\n")

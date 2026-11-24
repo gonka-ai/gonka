@@ -190,3 +190,29 @@ func varintFields(t *testing.T, entry []byte) map[protowire.Number]uint64 {
 	}
 	return fields
 }
+
+// Test flow:
+//  1. For each field of `settlement.HostStat`, found by reflection, build a message whose one host-stats entry has only that field non-zero.
+//  2. Marshal it.
+//  3. Assert the bytes differ from those of the message whose entry is all zero, so a field the encoder does not write fails here.
+func TestMarshalWritesEveryHostStatField(t *testing.T) {
+	empty, err := Marshal(fixedSettler, settlement.Message{HostStats: []settlement.HostStat{{}}})
+	if err != nil {
+		t.Fatalf("Marshal() of an all-zero entry: %v", err)
+	}
+	fields := reflect.TypeFor[settlement.HostStat]()
+
+	for index := range fields.NumField() {
+		hostStat := settlement.HostStat{}
+		reflect.ValueOf(&hostStat).Elem().Field(index).SetUint(1)
+
+		encoded, err := Marshal(fixedSettler, settlement.Message{HostStats: []settlement.HostStat{hostStat}})
+
+		if err != nil {
+			t.Fatalf("Marshal() with %s set: %v", fields.Field(index).Name, err)
+		}
+		if bytes.Equal(encoded, empty) {
+			t.Errorf("the encoder drops settlement.HostStat.%s", fields.Field(index).Name)
+		}
+	}
+}
