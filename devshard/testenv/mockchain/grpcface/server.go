@@ -9,6 +9,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 
@@ -35,7 +36,7 @@ func (d Deps) ledger() *txledger.Ledger {
 }
 
 // Register mounts inference Query + cmtservice on srv. When deps.RPC is set, also
-// registers auth Query and tx Service.
+// registers auth and bank Query and tx Service.
 func Register(srv *grpc.Server, deps Deps) {
 	if deps.Store == nil {
 		panic("mockchain grpc: nil store")
@@ -46,6 +47,7 @@ func Register(srv *grpc.Server, deps Deps) {
 	if deps.RPC != nil {
 		ledger := deps.ledger()
 		authtypes.RegisterQueryServer(srv, newAuthServer(deps.Store))
+		banktypes.RegisterQueryServer(srv, &BankServer{})
 		txtypes.RegisterServiceServer(srv, newTxServer(deps.Store, deps.RPC, ledger))
 	}
 }

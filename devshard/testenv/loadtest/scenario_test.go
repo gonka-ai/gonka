@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"devshard/testenv/config"
 )
 
 func TestScenario_LogTail(t *testing.T) {
@@ -208,4 +210,134 @@ func TestLoadProfile_Timeout(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "timeout", profile.Profile)
 	require.True(t, profile.Hang)
+}
+
+func TestScenario_GatewayDriver(t *testing.T) {
+	for _, testCase := range []struct {
+		driver  string
+		isValid bool
+	}{
+		{driver: "", isValid: true},
+		{driver: "devshardctl", isValid: true},
+		{driver: "gateway", isValid: true},
+		{driver: "nginx", isValid: false},
+	} {
+		t.Run(testCase.driver, func(t *testing.T) {
+			scenario := testScenario()
+			scenario.Topology.Gateway = config.GatewayDriver(testCase.driver)
+
+			err := scenario.Validate()
+
+			if testCase.isValid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, "topology.gateway")
+			}
+		})
+	}
+}
+
+// Test flow:
+// 1. Start from a valid scenario with streaming on, per-host env, ML node bindings, cases, the new quarantines, per-model settlement and a request mix.
+// 2. Check it validates, so the old stream ban is gone.
+// 3. Break one new field at a time and expect the named validation error.
+func TestScenario_ChunkAFieldsValidation(t *testing.T) {
+	valid := func() Scenario {
+		s := mixScenario()
+		s.Topology.Participants = 3
+		s.Workload.Request.Stream = true
+		s.Workload.Request.Timeout = "90s"
+		s.Topology.Hosts = []TopologyHost{{ID: "versiond-3", Env: map[string]string{"DEVSHARD_RPC_MSGS_PER_MIN": "3000"}}}
+		s.Topology.MockML.Nodes[0].Host = "versiond-0"
+		s.Topology.MockML.Nodes[1].Host = "versiond-3"
+		s.Cases = []Case{{ID: "host-over-peer-chat-budget", KnownBug: "#1988"}}
+		s.Gateway.ParticipantThrottle = GatewayParticipantThrottle{EmptyStreamQuarantine: "45s", StalledWinnerQuarantine: "45s"}
+		enabled := false
+		s.Gateway.EscrowRotation = GatewayEscrowRotation{Enabled: true, PrePoCBlocks: 10, TempCount: 1, TargetCount: 1, Amount: 1, PrivateKeyEnv: "KEY",
+			Models: []GatewayRotationModel{{Model: "model-b", SettlementEnabled: &enabled}, {Model: "model-a"}}}
+		return s
+	}
+	base := valid()
+	require.NoError(t, base.Validate())
+	require.Equal(t, []string{"model-a", "model-b"}, base.RequestModels())
+	require.Equal(t, 90*time.Second, base.RequestTimeout())
+	require.Equal(t, 30*time.Second, testScenario().RequestTimeout())
+	require.Equal(t, []string{"test-model"}, testScenario().RequestModels())
+	for _, tc := range []struct {
+		name   string
+		change func(*Scenario)
+		want   string
+	}{
+		{"host outside topology", func(s *Scenario) { s.Topology.Hosts[0].ID = "versiond-4" }, "topology.hosts[0]: id"},
+		{"host without participants", func(s *Scenario) { s.Topology.Participants = 0 }, "topology.hosts[0]: id"},
+		{"duplicate host", func(s *Scenario) { s.Topology.Hosts = append(s.Topology.Hosts, s.Topology.Hosts[0]) }, "duplicate id"},
+		{"env name", func(s *Scenario) { s.Topology.Hosts[0].Env["BAD-NAME"] = "1" }, "invalid variable name"},
+		{"node host", func(s *Scenario) { s.Topology.MockML.Nodes[0].Host = "mock-chain" }, "mock_ml.nodes[0].host"},
+		{"empty case id", func(s *Scenario) { s.Cases = append(s.Cases, Case{}) }, "cases[1]"},
+		{"duplicate case", func(s *Scenario) { s.Cases = append(s.Cases, Case{ID: "host-over-peer-chat-budget"}) }, "cases[1]"},
+		{"empty stream quarantine", func(s *Scenario) { s.Gateway.ParticipantThrottle.EmptyStreamQuarantine = "0s" }, "empty_stream_quarantine"},
+		{"stalled winner quarantine", func(s *Scenario) { s.Gateway.ParticipantThrottle.StalledWinnerQuarantine = "soon" }, "stalled_winner_quarantine"},
+		{"rotation model empty", func(s *Scenario) { s.Gateway.EscrowRotation.Models[0].Model = "" }, "escrow_rotation.models[0]"},
+		{"rotation model duplicate", func(s *Scenario) { s.Gateway.EscrowRotation.Models[1].Model = "model-b" }, "escrow_rotation.models[1]"},
+		{"rotation models without rotation", func(s *Scenario) { s.Gateway.EscrowRotation.Enabled = false }, "requires gateway.escrow_rotation.enabled"},
+		{"timeout", func(s *Scenario) { s.Workload.Request.Timeout = "0s" }, "request.timeout"},
+		{"stream ratio", func(s *Scenario) { s.Workload.Request.Mix.StreamRatio = 1.5 }, "stream_ratio"},
+		{"logprobs ratio", func(s *Scenario) { s.Workload.Request.Mix.LogprobsRatio = -0.1 }, "logprobs_ratio"},
+		{"top logprobs", func(s *Scenario) { s.Workload.Request.Mix.TopLogprobs = 21 }, "top_logprobs"},
+		{"max tokens value", func(s *Scenario) { s.Workload.Request.Mix.MaxTokens[0].Value = 0 }, "mix.max_tokens[0]"},
+		{"max tokens weight", func(s *Scenario) { s.Workload.Request.Mix.MaxTokens[1].Weight = 0 }, "mix.max_tokens[1]"},
+		{"temperature", func(s *Scenario) { s.Workload.Request.Mix.Temperature[0].Value = 3 }, "mix.temperature[0]"},
+		{"prompt empty", func(s *Scenario) { s.Workload.Request.Mix.Prompts[0].Value = nil }, "mix.prompts[0]"},
+		{"prompt role", func(s *Scenario) { s.Workload.Request.Mix.Prompts[1].Value[0].Role = "" }, "mix.prompts[1]"},
+		{"model duplicate", func(s *Scenario) { s.Workload.Request.Mix.Models[1].Value = "model-a" }, "mix.models[1]"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := valid()
+			tc.change(&s)
+			require.ErrorContains(t, s.Validate(), tc.want)
+		})
+	}
+}
+
+// Test flow:
+// 1. Parse a YAML scenario fragment that uses every new chunk A field.
+// 2. Check the fields decode into the scenario types, including nested event params and weighted prompts.
+func TestScenario_ChunkAFieldsYAML(t *testing.T) {
+	var scenario Scenario
+	require.NoError(t, yaml.Unmarshal([]byte(`
+cases:
+  - {id: host-under-poc-challenge, title: PoC challenge, known_bug: "#1823"}
+topology:
+  hosts:
+    - id: versiond-5
+      env: {DEVSHARD_RPC_MSGS_PER_MIN: "3000"}
+  mock_ml:
+    nodes:
+      - {name: mock-openai-5, profile: fast, host: versiond-5}
+workload:
+  request:
+    timeout: 2m
+    mix:
+      stream_ratio: 0.5
+      max_tokens: [{value: 32, weight: 40}, {value: 2048, weight: 5}]
+      temperature: [{value: 0, weight: 1}]
+      prompts:
+        - value: [{role: user, content: hi}]
+          weight: 1
+      models: [{value: model-a, weight: 7}]
+  events:
+    - {id: c1, case: receipt-then-empty-stream, action: ml_fault, target: mock-openai-5, at: 2m, until: 3m, params: {patch: {empty_stream: true}}}
+gateway:
+  participant_throttle: {empty_stream_quarantine: 45s, stalled_winner_quarantine: 45s}
+  escrow_rotation:
+    models: [{model: model-b, settlement_enabled: false}]
+`), &scenario))
+	require.Equal(t, "#1823", scenario.Cases[0].KnownBug)
+	require.Equal(t, "3000", scenario.Topology.Hosts[0].Env["DEVSHARD_RPC_MSGS_PER_MIN"])
+	require.Equal(t, "versiond-5", scenario.Topology.MockML.Nodes[0].Host)
+	require.Equal(t, 2048, scenario.Workload.Request.Mix.MaxTokens[1].Value)
+	require.Equal(t, "hi", scenario.Workload.Request.Mix.Prompts[0].Value[0].Content)
+	require.Equal(t, map[string]any{"empty_stream": true}, scenario.Workload.Events[0].Params["patch"])
+	require.Equal(t, "45s", scenario.Gateway.ParticipantThrottle.StalledWinnerQuarantine)
+	require.False(t, *scenario.Gateway.EscrowRotation.Models[0].SettlementEnabled)
 }

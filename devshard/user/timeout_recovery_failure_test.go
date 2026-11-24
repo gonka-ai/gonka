@@ -34,9 +34,19 @@ func (c *failedRecoverySendClient) VerifyTimeout(ctx context.Context, id uint64,
 	return c.mockTimeoutVerifier.VerifyTimeout(ctx, id, reason, p, diffs, art)
 }
 
+const recoveryFailurePollInterval = 20 * time.Millisecond
+
+func pollClosedRecordEvery(t *testing.T, interval time.Duration) {
+	t.Helper()
+	previous := timeoutClosePollInterval
+	timeoutClosePollInterval = interval
+	t.Cleanup(func() { timeoutClosePollInterval = previous })
+}
+
 func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 	for _, scenario := range []string{"queued_receipt", "queued_invalid_finish", "recovered_receipt"} {
 		t.Run(scenario, func(t *testing.T) {
+			pollClosedRecordEvery(t, recoveryFailurePollInterval)
 			session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 			params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 			prepared, err := session.PrepareInference(context.Background(), params)
@@ -79,6 +89,7 @@ func TestHandleTimeoutContinuesAfterRecoverySendFailure(t *testing.T) {
 }
 
 func TestHandleTimeoutRefusalVoteRaceContinuesAsExecution(t *testing.T) {
+	pollClosedRecordEvery(t, recoveryFailurePollInterval)
 	session, signers, _, rig := setupArmedSession(t, 3, 100000, 10)
 	params := InferenceParams{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 	prepared, err := session.PrepareInference(context.Background(), params)

@@ -199,7 +199,8 @@ func (q *SettlementQuorum) Validate(ctx context.Context, query SettlementGrantQu
 
 func (q *SettlementQuorum) collect(ctx context.Context, missing map[uint32]string) {
 	s := q.session
-	clients := s.getFinalizeClients()
+	clients, release := s.getFinalizeClients()
+	defer release()
 	queried := make(map[string]bool)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
