@@ -180,6 +180,7 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | Test | Why it exists | What it checks |
 | --- | --- | --- |
 | `TestTheBridgeWindowOpensOverAStarvedFleet` | the bridge must cover the window even when the regulars are starved | one temp serves, the regulars leave after the full fill and a full-context request is answered |
+| `TestAStarvedBridgeRefillsAndServesWithoutChangingTempCount` | active but starved temps must not prevent bridge refill | one funded temp is added, the old temp survives, and a request larger than its balance succeeds |
 | `TestAStandbyShortfallInsideTheWindowIsRepairedAfterIt` | the bridge window defers the standby, it does not forget it | no standby is created in the window; exactly one is created after the switch, with the reason standby, serving as a reserve labelled with the new epoch |
 | `TestALateSetNewValidatorsLosesNoEscrow` | a long PoC must not push an escrow past its deadline | the bridge temp of chain epoch 7 under label 8, which no regular can retire once the chain refuses creates, settles inside the margin while the effective epoch is still 8, and the run crosses into epoch 9 |
 | `TestRelaxedConfirmationPoCFundsTheShortfallOnceAndStops` | relaxed mode serves through a confirmation PoC, so the planner must fund what those requests need | over six ticks inside the PoC the planner creates the two guard escrows and the standby, stops once the shortfall is filled, and retires nothing |

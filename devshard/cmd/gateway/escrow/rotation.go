@@ -94,6 +94,7 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 	room := bridgeRoom(label, models, devshards, commitments)
 	targetOf := func(model ModelConfig) int {
 		wanted := bridgeTarget(model, m.planner.bridgeNeed(model.ModelID))
+		wanted = m.bridgeRefillTarget(model, wanted, snapshot, devshards, commitments)
 		limit, capped := room[model.ModelID]
 		if !capped {
 			return wanted
@@ -103,6 +104,9 @@ func (m *Manager) prepareBridge(ctx context.Context, snapshot chain.PhaseSnapsho
 	var errs []error
 	for _, fill := range m.fillToLabel(ctx, roleTemp, label, models, targetOf, snapshot, devshards, commitments) {
 		model, created, err := fill.model, fill.created, fill.err
+		if m.funds != nil {
+			m.planner.recordBridgeCreates(model.ModelID, created, m.now())
+		}
 		funded := countActive(devshards, model.ModelID, roleTemp, int64(label)) + created
 		if err == nil && funded < model.TempCount {
 			err = fmt.Errorf("%w: %d of %d for %s", errBridgePartialFill, funded, model.TempCount, model.ModelID)
