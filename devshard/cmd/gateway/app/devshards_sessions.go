@@ -23,6 +23,7 @@ import (
 	"devshard/cmd/gateway/store"
 	"devshard/logging"
 	"devshard/runtimeparams"
+	"devshard/state"
 	"devshard/transport"
 	"devshard/user"
 )
@@ -50,9 +51,10 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			return chainSources{}, errors.Join(err, follower.Close())
 		}
 		escrowBridge := bridge.NewGRPCBridge(chainClient)
+		headerTimes := heights.NewHeaderTimes(follower, chainClient)
 		return chainSources{
-			Serving:    servingSessions(records, storageDir, escrowBridge, heightSettings, follower, governance, routePrefix, adoption, steps),
-			ReadOnly:   readOnlySessions(records, storageDir),
+			Serving:    servingSessions(records, storageDir, escrowBridge, heightSettings, follower, headerTimes, governance, routePrefix, adoption, steps),
+			ReadOnly:   readOnlySessions(records, storageDir, headerTimes),
 			Reader:     grpcChain,
 			Transport:  grpcChain,
 			Heights:    follower,
@@ -109,7 +111,7 @@ func sessionInputs(ctx context.Context, records devshardLookup, storageDir, escr
 }
 
 // The bridge is one object for the process. See README.md, "Escrow sessions and the chain connection".
-func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, governance *runtimeParams, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) registry.SessionFactory {
+func servingSessions(records devshardLookup, storageDir string, escrowBridge bridge.MainnetBridge, heightSettings config.HeightSync, follower *heights.Oracle, headerTimes state.HeaderTimeSource, governance *runtimeParams, routePrefix string, adoption *transport.PeerRPCAdoption, steps user.StepTimer) registry.SessionFactory {
 	return func(ctx context.Context, escrowID string) (registry.EscrowSession, error) {
 		record, keyHex, storagePath, err := sessionInputs(ctx, records, storageDir, escrowID)
 		if err != nil {
@@ -141,6 +143,7 @@ func servingSessions(records devshardLookup, storageDir string, escrowBridge bri
 			Heartbeat:                  governance.Heartbeat(),
 			QuietSettleDelay:           time.Duration(heightSettings.QuietSettleDelayMS) * time.Millisecond,
 			StepTimer:                  steps,
+			HeaderTimes:                headerTimes,
 		})
 		if err != nil {
 			return nil, err
@@ -159,7 +162,7 @@ func escrowRoutePrefix(record store.DevshardRecord, gatewayPrefix string) string
 	return gatewayPrefix
 }
 
-func readOnlySessions(records devshardLookup, storageDir string) registry.SessionFactory {
+func readOnlySessions(records devshardLookup, storageDir string, headerTimes state.HeaderTimeSource) registry.SessionFactory {
 	return func(ctx context.Context, escrowID string) (registry.EscrowSession, error) {
 		_, keyHex, storagePath, err := sessionInputs(ctx, records, storageDir, escrowID)
 		if err != nil {
@@ -169,6 +172,7 @@ func readOnlySessions(records devshardLookup, storageDir string) registry.Sessio
 			PrivateKeyHex: keyHex,
 			EscrowID:      escrowID,
 			StoragePath:   storagePath,
+			HeaderTimes:   headerTimes,
 		})
 		if err != nil {
 			return nil, err

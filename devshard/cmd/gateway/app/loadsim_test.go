@@ -550,7 +550,7 @@ func TestLoadSimulation(t *testing.T) {
 	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   fleet.serving,
-			ReadOnly:  readOnlySessions(gatewayStore, storageDir),
+			ReadOnly:  readOnlySessions(gatewayStore, storageDir, nil),
 			Reader:    chainServingModels{models: map[string]chain.ModelParams{loadSimulationModel: {ContextWindow: 32768, MaxModelLen: 32768}}},
 			Transport: chainWithoutADial{},
 		}, nil
