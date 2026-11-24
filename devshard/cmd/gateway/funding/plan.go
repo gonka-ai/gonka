@@ -28,6 +28,7 @@ type EscrowState struct {
 type ModelState struct {
 	Escrows               []EscrowState
 	Counted               int
+	ActiveTemps           int
 	TargetCount           int
 	TempCount             int
 	ReserveCount          int
@@ -103,12 +104,7 @@ func Plan(state ModelState) Decision {
 	decision := Decision{FullCount: fullCount(routable), Misconfigured: misconfigured(state), AmountNeeded: amountNeeded(state)}
 	decision.Need, decision.Liquid = demandNeed(state, decision.Misconfigured), liquidMoney(state, routable)
 	decision.NeedEscrows = needEscrows(state, decision.Need)
-	decision.Shortfalls = Shortfalls{
-		Guard:    guardShortfall(state, decision),
-		Capacity: capacityShortfall(state, decision.Need, decision.Liquid),
-		Spread:   spreadShortfall(state, routable),
-		Standby:  standbyShortfall(state),
-	}
+	decision.Shortfalls = shortfalls(state, decision, routable)
 	decision.Room = state.MaxUnsettled - state.Counted - bridgeReservation(state)
 	regularWanted := max(0, regularWant(decision.Shortfalls)-state.PendingRegularCreates)
 	wanted := regularWanted + max(0, decision.Shortfalls.Standby-state.PendingStandbyCreates)
@@ -195,6 +191,14 @@ func atModelPrice(state ModelState, escrow EscrowState, amount uint64) uint64 {
 	return scaledBy(amount, state.FullCost, escrow.FullCost)
 }
 
+func shortfalls(state ModelState, decision Decision, routable []EscrowState) Shortfalls {
+	guard, capacity := guardShortfall(state, decision), capacityShortfall(state, decision.Need, decision.Liquid)
+	if state.InBridgeWindow {
+		return Shortfalls{Guard: min(guard, max(0, state.TempCount-decision.FullCount)), Capacity: capacity}
+	}
+	return Shortfalls{Guard: guard, Capacity: capacity, Spread: spreadShortfall(state, routable), Standby: standbyShortfall(state)}
+}
+
 func guardShortfall(state ModelState, decision Decision) int {
 	if !state.Priced || decision.Misconfigured {
 		return 0
@@ -254,10 +258,17 @@ func standbyShortfall(state ModelState) int {
 }
 
 func bridgeReservation(state ModelState) int {
-	if state.NearBridgeWindow && !state.InBridgeWindow {
+	switch {
+	case state.InBridgeWindow:
+		return max(0, countTemps(state)+state.TargetCount+state.ReserveCount-state.Counted)
+	case state.NearBridgeWindow:
 		return state.TempCount
 	}
 	return 0
+}
+
+func countTemps(state ModelState) int {
+	return state.ActiveTemps + state.PendingRegularCreates
 }
 
 func boundedCount(count uint64, state ModelState) int {
@@ -283,7 +294,7 @@ func plannedCreates(state ModelState, shortfalls Shortfalls, regularWanted, coun
 }
 
 func createsAllowed(state ModelState) bool {
-	return (!state.RequestsBlocked || state.InConfirmationPoC) && !state.InEpochPoC && state.EpochKnown && state.ServedByNetwork && !state.BreakerGated && !state.InBridgeWindow
+	return (!state.RequestsBlocked || state.InConfirmationPoC) && (!state.InEpochPoC || state.InBridgeWindow) && state.EpochKnown && state.ServedByNetwork && !state.BreakerGated
 }
 
 func regularReason(index int, shortfalls Shortfalls) Reason {
