@@ -314,6 +314,8 @@ jobs:
           python3 deploy/join/updater-rollback_test.py
       - name: Check that every host a service resolves is published on a shared network
         run: deploy/join/compose-contract_test.sh
+      - name: Check the MLNode node-config presets
+        run: python3 deploy/join/node-config-presets_test.py
 
   test-devshard-host-cutover:
     runs-on: ubuntu-latest

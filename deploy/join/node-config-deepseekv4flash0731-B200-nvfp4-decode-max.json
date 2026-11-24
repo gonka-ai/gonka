@@ -7,6 +7,10 @@
     "max_concurrent": 500,
     "models": {
       "deepseek-ai/DeepSeek-V4-Flash-0731": {
+        "model_override": {
+          "hf_repo": "MJPansa/DeepSeek-V4-Flash-0731-NVFP4",
+          "hf_commit": "64d64cd89bc63a66aa46506da89d7821f7491c62"
+        },
         "args": [
           "--scheduling-policy", "priority",
           "--max-num-seqs", "2048",
