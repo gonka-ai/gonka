@@ -4,6 +4,7 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
+	"maps"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -88,6 +89,12 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			reconcileInfoCopy := *nodeWithState.State.ReconcileInfo
 			stateCopy.ReconcileInfo = &reconcileInfoCopy
 		}
+
+		// Deep copy the epoch maps: the epoch writers (UpdateNodeEpochData and others)
+		// assign into them under b.mu, while callers read their copy without it.
+		stateCopy.EpochModels = maps.Clone(nodeWithState.State.EpochModels)
+		stateCopy.EpochMLNodes = maps.Clone(nodeWithState.State.EpochMLNodes)
+		stateCopy.PreservedModels = maps.Clone(nodeWithState.State.PreservedModels)
 
 		nodeCopy.RegistrationSeq = nodeWithState.State.RegistrationSeq
 
