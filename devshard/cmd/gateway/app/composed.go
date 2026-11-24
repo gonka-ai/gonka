@@ -106,6 +106,9 @@ func (composed *Composed) Races() *engine.Engine { return composed.gateway.races
 // Nonces is the nonce ledger's recorder, nil when nonce accounting is off.
 func (composed *Composed) Nonces() *nonces.Recorder { return composed.gateway.nonces }
 
+// DiffJournal is what the nonce ledger hands every composed diff to: the journal, and the response cache's verdict watch.
+func (composed *Composed) DiffJournal() nonces.DiffJournal { return composed.gateway.diffJournal() }
+
 // Journal is the journal every producer narrates through.
 func (composed *Composed) Journal() *journal.Journal { return composed.gateway.events }
 

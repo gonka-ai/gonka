@@ -413,7 +413,7 @@ func (h *gatewayHarness) boot(gatewayStore *store.Store) {
 			continue
 		}
 		if step.Name == "nonce ledger" {
-			composed.Nonces().StartSweeping(background, composed.Escrows(), composed.Journal())
+			composed.Nonces().StartSweeping(background, composed.Escrows(), composed.DiffJournal())
 			continue
 		}
 		if step.Name == "escrow lifecycle" {

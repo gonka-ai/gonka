@@ -89,7 +89,7 @@ func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config
 			started.unopenedEscrows = unopened
 			return err
 		}},
-		{name: "nonce ledger", start: func() error { g.nonces.Start(backgroundCtx, g.escrows, g.events); return nil }},
+		{name: "nonce ledger", start: func() error { g.nonces.Start(backgroundCtx, g.escrows, g.diffJournal()); return nil }},
 		{name: "owed refusal votes", start: func() error { return g.replayOwedVotes(ctx) }},
 		{name: "escrow lifecycle", start: func() error { g.manager.Start(backgroundCtx); return nil }},
 		{name: "devshard write republish", start: func() error {

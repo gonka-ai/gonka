@@ -140,6 +140,7 @@ type gateway struct {
 	races        *engine.Engine
 	owedVotes    *api.OwedVotes
 	finishes     *finishNotice
+	replies      cachedReplies
 	limiter      *limits.GatewayLimiter
 	participants *limits.ParticipantLimiter
 	telemetry    *metrics.Metrics
@@ -427,6 +428,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	// Registered after the server, which owns both sinks. See README.md, "Wiring order, and the knots in it".
 	telemetry.Register(metrics.NewCaptureCollector(server))
 	telemetry.Register(metrics.NewCacheCollector(server))
+	observer.Subscribe(server.ObservePhase)
 	httpServer, endRequests := server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port))
 
 	built = true
@@ -440,6 +442,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		races:        races,
 		owedVotes:    owedVotes,
 		finishes:     finishes,
+		replies:      server,
 		limiter:      gatewayLimiter,
 		participants: participants,
 		telemetry:    telemetry,
