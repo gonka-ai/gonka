@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"sync"
 
 	"connectrpc.com/connect"
 )
@@ -66,9 +67,17 @@ func WithGzipReadCap(maxBytes int) connect.HandlerOption {
 	return connect.WithCompression(gzipEncoding, dec, comp)
 }
 
+// gzipClientOptions holds one option per read cap: connect builds a pool per
+// option, so reusing it shares the gzip writers across every client.
+var gzipClientOptions sync.Map
+
 // withGzipReadCap is WithGzipReadCap for clients. WithCompression is a
 // HandlerOption; clients register the same pool with WithAcceptCompression.
 func withGzipReadCap(maxBytes int) connect.ClientOption {
+	if option, ok := gzipClientOptions.Load(maxBytes); ok {
+		return option.(connect.ClientOption)
+	}
 	dec, comp := gzipReadCapConstructors(maxBytes)
-	return connect.WithAcceptCompression(gzipEncoding, dec, comp)
+	option, _ := gzipClientOptions.LoadOrStore(maxBytes, connect.WithAcceptCompression(gzipEncoding, dec, comp))
+	return option.(connect.ClientOption)
 }

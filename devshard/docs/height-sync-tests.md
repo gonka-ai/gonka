@@ -177,6 +177,7 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestObservedHeightNow_CacheEmpty` / `FreshTip` / `NoHeightSync` | `client_heightsync_test.go` | Courier user's `ObservedHeightNow()` returns `(0, false)` on cold cache and `(H, true)` when a fresh tip exists. |
 | ✅ `TestHTTPClient_SeedHeightSync_RecordsOrigin` | `client_heightsync_test.go` | Optional seed RPC populates the peer-tip cache before the first inference. |
 | ✅ `TestHTTPClient_Send_HeightSync_ProtobufRequestAndAudit` | `client_heightsync_test.go` | Outbound Anchor on a sync-turn nonce hits the wire and the audit ring. |
+| ✅ `TestHTTPClient_HeightSyncWithoutAuditStillCountsAnchors` | `client_heightsync_test.go` | Without `HeightSyncAudit` the client keeps no ring and still counts outbound request and inbound response anchors. |
 | ✅ `TestHTTPClient_Send_CourierLazyAnchorMarksPropagated` | `client_heightsync_test.go` | Successful send updates `last_propagated` so the next nonce omits. |
 | ✅ `TestHTTPClient_ParseSSE_InboundHeightSyncAudit` | `client_heightsync_test.go` | Inbound SSE response attestations land in the user audit ring. |
 | ✅ `TestClient_ResponseAnchor_VerifiesOriginSignature` | `client_heightsync_test.go` | User verifies host's `sender_signature` before caching. |

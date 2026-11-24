@@ -438,6 +438,7 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, clientOracle)
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
+	cc.HeightSyncAudit = true
 	cc.HeightSyncLogOracle = clientLogOracle
 	for _, f := range tweak {
 		if f != nil {
@@ -486,6 +487,7 @@ func (st *fourHostStack) newHTTPSession(t *testing.T) *user.Session {
 	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, st.Oracle)
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
+	cc.HeightSyncAudit = true
 	cc.HeightSyncLogOracle = st.Oracle
 	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()
@@ -613,6 +615,7 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 1, st.Oracle)
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
+	cc.HeightSyncAudit = true
 	cc.HeightSyncLogOracle = st.Oracle
 	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()
@@ -2151,6 +2154,7 @@ func setupFourHostHTTPHeightSyncWithToggleableClient(t *testing.T, hostOracles [
 	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, clientOracle)
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
+	cc.HeightSyncAudit = true
 	cc.HeightSyncLogOracle = clientOracle
 	cc.AllowRetiredHTTPSession = true
 	cc.RPCEndpoints = echoHTTPEndpoints()

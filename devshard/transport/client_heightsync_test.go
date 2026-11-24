@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v4"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
@@ -64,6 +65,7 @@ func setupClientTestEnvWithHeightSync(t *testing.T) (*HTTPClient, *httptest.Serv
 	cfg := allowRetiredHTTP(DefaultClientConfig())
 	cfg.RoutePrefix = testRoutePrefix
 	cfg.HeightSync = clientSched
+	cfg.HeightSyncAudit = true
 	cfg.HeightSyncLogOracle = or
 	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
 	return client, ts, userSigner, or
@@ -104,6 +106,58 @@ func TestHTTPClient_Send_HeightSync_ProtobufRequestAndAudit(t *testing.T) {
 	}
 	require.True(t, foundReq, "expected outbound user anchor in audit ring")
 	require.True(t, foundResp, "expected inbound host anchor from SSE in audit ring")
+}
+
+func anchorCounterTotal(t *testing.T, name, direction string) float64 {
+	t.Helper()
+	families, err := prometheus.DefaultGatherer.Gather()
+	require.NoError(t, err)
+	total := 0.0
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "direction" && label.GetValue() == direction {
+					total += metric.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return total
+}
+
+// Test flow:
+//  1. Register the anchor metrics and build a height-sync client with the audit option off.
+//  2. Send one inference request and read the outbound and inbound anchor counters before and after.
+//  3. Assert the client keeps no audit ring and the request-direction outbound and response-direction inbound counters still rose by one.
+func TestHTTPClient_HeightSyncWithoutAuditStillCountsAnchors(t *testing.T) {
+	require.NoError(t, heightsync.RegisterAnchorMetrics(nil))
+	withAudit, ts, userSigner, _ := setupClientTestEnvWithHeightSync(t)
+	cfg := withAudit.config
+	cfg.HeightSyncAudit = false
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
+	outboundBefore := anchorCounterTotal(t, heightsync.MetricOutboundAnchorsTotal, "request")
+	inboundBefore := anchorCounterTotal(t, heightsync.MetricInboundAnchorsTotal, "response")
+
+	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := client.Send(context.Background(), host.HostRequest{
+		Diffs: []types.Diff{diff},
+		Nonce: 1,
+		Payload: &host.InferencePayload{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   testutil.TestMaxTokens,
+			StartedAt:   1000,
+		},
+	}, nil, nil)
+	require.NoError(t, err)
+
+	require.Nil(t, client.HeightSyncAuditRing())
+	require.Equal(t, outboundBefore+1, anchorCounterTotal(t, heightsync.MetricOutboundAnchorsTotal, "request"))
+	require.Equal(t, inboundBefore+1, anchorCounterTotal(t, heightsync.MetricInboundAnchorsTotal, "response"))
 }
 
 func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
@@ -206,6 +260,7 @@ func TestHTTPClient_ParseSSE_InboundHeightSyncAudit(t *testing.T) {
 	client := &HTTPClient{
 		config:          cfg,
 		baseURL:         "http://executor-host",
+		heightSync:      heightsync.MustNewAnchorSchedulerFromOracle(10, 1, &heightSyncTestOracle{hdr: &blocks.Header{Height: 42, ChainID: "test-chain", BlockHash: []byte{0x01}}}),
 		heightSyncAudit: heightsync.NewAuditRing(4),
 	}
 	sse := `data: {"devshard_receipt":{"state_sig":"c2ln","state_hash":"aGFzaA==","nonce":1,"receipt":"cmVjZWlwdA==","confirmed_at":1000},"height_sync":{"proof_type":"height-anchor-v1","mainnet_height":99,"mainnet_block_hash_hex":"aabb","timestamp_unix_ms":1,"direction":"response"}}` + "\n\n"

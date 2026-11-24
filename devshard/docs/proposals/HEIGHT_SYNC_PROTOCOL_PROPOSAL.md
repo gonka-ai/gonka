@@ -2221,7 +2221,9 @@ func (s *transport.Server)    HeightSyncAuditRing() *heightsync.AuditRing
 ```
 
 Used by dispute / finalization consumers that need verbatim
-attestations and per-peer history.
+attestations and per-peer history. The client ring exists only when
+`ClientConfig.HeightSyncAudit` is set, which tests do; otherwise
+`HTTPClient.HeightSyncAuditRing()` returns nil.
 
 ---
 

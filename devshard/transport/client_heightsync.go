@@ -110,7 +110,7 @@ func (c *HTTPClient) markHeightSyncPropagated(sec *heightsync.HeightSyncSection)
 	c.heightSyncPeerTips.MarkPropagated(c.baseURL, uint64(sec.MainnetHeight))
 }
 
-// HeightSyncAuditRing returns the audit ring when height sync is enabled, or nil.
+// HeightSyncAuditRing returns the audit ring when ClientConfig.HeightSyncAudit is set, or nil.
 func (c *HTTPClient) HeightSyncAuditRing() *heightsync.AuditRing {
 	return c.heightSyncAudit
 }
@@ -250,7 +250,7 @@ func (c *HTTPClient) logEmitUserHeightSync(sec *heightsync.HeightSyncSection, no
 }
 
 func (c *HTTPClient) recordUserOutboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string) {
-	if c.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+	if c.heightSync == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
 		return
 	}
 	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
@@ -258,17 +258,19 @@ func (c *HTTPClient) recordUserOutboundAnchorIfAnchor(hs *heightsync.HeightSyncS
 		logging.Debug("heightsync: skip audit record", heightsync.LogFieldSubsystem, "heightsync", "error", err.Error())
 		return
 	}
-	c.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:                c.signer.Address(),
-		Direction:             "request",
-		MainnetHeight:         hs.MainnetHeight,
-		MainnetBlockHash:      raw,
-		ObservedAtUnixMs:      time.Now().UnixMilli(),
-		SourceMessage:         source,
-		Trust:                 heightsync.TrustOracle,
-		OriginatorSenderID:    strings.TrimSpace(hs.OriginatorSenderID),
-		OriginatorTimestampMs: hs.OriginatorTimestampMs,
-	})
+	if c.heightSyncAudit != nil {
+		c.heightSyncAudit.Append(heightsync.AnchorAttestation{
+			PeerID:                c.signer.Address(),
+			Direction:             "request",
+			MainnetHeight:         hs.MainnetHeight,
+			MainnetBlockHash:      raw,
+			ObservedAtUnixMs:      time.Now().UnixMilli(),
+			SourceMessage:         source,
+			Trust:                 heightsync.TrustOracle,
+			OriginatorSenderID:    strings.TrimSpace(hs.OriginatorSenderID),
+			OriginatorTimestampMs: hs.OriginatorTimestampMs,
+		})
+	}
 	heightsync.IncOutboundAnchor("request", c.escrowID, c.signer.Address())
 }
 
@@ -314,7 +316,7 @@ func (c *HTTPClient) logPeerHeightSyncFromSSE(hs *heightsync.HeightSyncSection, 
 }
 
 func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, source string, originBlobAvailable bool) {
-	if c.heightSyncAudit == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
+	if c.heightSync == nil || hs == nil || !heightsync.IsAnchorSection(hs) {
 		return
 	}
 	raw, err := decodeMainnetBlockHashHex(hs.MainnetBlockHashHex)
@@ -332,18 +334,20 @@ func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSe
 		}
 	}
 	trust := heightsync.InboundTrust(hs, oracleHdr)
-	c.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:                    c.baseURL,
-		Direction:                 "response",
-		MainnetHeight:             hs.MainnetHeight,
-		MainnetBlockHash:          raw,
-		ObservedAtUnixMs:          time.Now().UnixMilli(),
-		SourceMessage:             source,
-		Trust:                     trust,
-		OriginatorSenderID:        strings.TrimSpace(hs.OriginatorSenderID),
-		OriginatorTimestampMs:     hs.OriginatorTimestampMs,
-		OriginSignedBlobAvailable: originBlobAvailable,
-	})
+	if c.heightSyncAudit != nil {
+		c.heightSyncAudit.Append(heightsync.AnchorAttestation{
+			PeerID:                    c.baseURL,
+			Direction:                 "response",
+			MainnetHeight:             hs.MainnetHeight,
+			MainnetBlockHash:          raw,
+			ObservedAtUnixMs:          time.Now().UnixMilli(),
+			SourceMessage:             source,
+			Trust:                     trust,
+			OriginatorSenderID:        strings.TrimSpace(hs.OriginatorSenderID),
+			OriginatorTimestampMs:     hs.OriginatorTimestampMs,
+			OriginSignedBlobAvailable: originBlobAvailable,
+		})
+	}
 	heightsync.IncInboundAnchor("response", string(trust), c.escrowID)
 }
 

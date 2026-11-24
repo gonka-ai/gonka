@@ -136,6 +136,9 @@ type ClientConfig struct {
 
 	// HeightSync enables outbound Anchor sections on inference POST bodies (protobuf envelope).
 	HeightSync *heightsync.AnchorScheduler
+	// HeightSyncAudit keeps the in-memory anchor ring that HeightSyncAuditRing returns. Tests only: production
+	// never reads it, and it costs memory per client.
+	HeightSyncAudit bool
 	// HeightSyncLogOracle optional Latest() for debug logs (local height vs peer).
 	HeightSyncLogOracle blocks.BlockOracle
 	// HeightSyncPeerTips shares observed peer tips across multiple HTTP clients
@@ -423,7 +426,7 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		heightSyncVerifier:  signing.NewSecp256k1Verifier(),
 		oneShot:             &oneShotHooks{},
 	}
-	if cfg.HeightSync != nil {
+	if cfg.HeightSync != nil && cfg.HeightSyncAudit {
 		hc.heightSyncAudit = heightsync.NewAuditRing(0)
 	}
 	if cfg.HeightSyncPeerTips != nil {
