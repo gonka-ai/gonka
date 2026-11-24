@@ -6,6 +6,8 @@ import (
 	"devshard/gatewayprotocol/streamevidence"
 )
 
+const maxMissProofBytes = 64 * 1024
+
 const (
 	heldFinishUntaken int32 = iota
 	heldFinishTaken

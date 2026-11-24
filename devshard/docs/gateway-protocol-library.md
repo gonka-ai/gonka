@@ -52,9 +52,9 @@ The token budget of a probe: `MaxTokens` and `Params`. devshardctl's probes, `de
 
 ### 3.5 `streamevidence`
 
-Which lines of an error stream are evidence, the `[DONE]` test, the payload they serialize into, the most evidence a gateway retains of one attempt and whether the payload proves the error. A verifier hashes the payload and compares it with the Finish transaction's hashes, so a line kept or dropped differently by one gateway turns an accepted claim into a rejected one, and a stream cut by the bound is never accepted. The package README gives the bound and the reason for its value ("The retention bound").
+Which lines of an error stream are evidence, the `[DONE]` test, the payload they serialize into and whether the payload proves the error. A verifier hashes the payload and compares it with the Finish transaction's hashes, so a line kept or dropped differently by one gateway turns an accepted claim into a rejected one.
 
-It does not own the retainer: what a gateway does when the bound is hit, the memory budget it charges retained lines to, and how they are released. Each gateway keeps its own retainer and may stop below the bound when that budget refuses (devshardctl's participant or global classify budget, `devshard/cmd/gateway`'s reassembly budget). Which error events count as terminal stays in each gateway too.
+It does not own the retainer or how much it holds: each gateway sets its own bound (the package README says why), decides what happens when it is hit and releases the lines. devshardctl charges retained lines to its participant and global classify budgets; `devshard/cmd/gateway` charges them to no budget and stops retaining when its reassembly budget drops bytes. Which error events count as terminal stays in each gateway too.
 
 ## 4. Allowed imports and the guard
 

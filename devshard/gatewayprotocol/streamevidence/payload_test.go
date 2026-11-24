@@ -6,7 +6,11 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"devshard/internal/testutil"
 )
+
+const retainedBytesInTest = 1 << 20
 
 // Test flow:
 //  1. Read the terminal-error SSE fixture `testdata/newlineless_final_error.sse`, whose only line is an error event with no final newline.
@@ -48,13 +52,14 @@ func TestPayloadKeepsTheLinesVerbatimInOrder(t *testing.T) {
 }
 
 // Test flow:
-//  1. List the error stream fixtures `testdata/*.sse` and assert the table below names each of them once.
-//  2. For each table case, read the fixture, take the leading `DataLines` that fit in `MaxRetainedBytes` as a gateway retains them, and serialize them with `Payload`.
+//  1. List the error stream fixtures `testdata/*.sse` and assert the table below names each of them once, besides its generated long error stream.
+//  2. For each table case, read the fixture or build the long error stream past `retainedBytesInTest`, take the leading `DataLines` that fit in `retainedBytesInTest` as a gateway retains them, and serialize them with `Payload`.
 //  3. Assert `ProvesErrorMiss` of the payload matches whether a verifier reads an error in it.
 //  4. Assert `ProvesErrorMiss` refuses an empty payload.
 func TestProvesErrorMissOnlyForEvidenceThatCarriesAnError(t *testing.T) {
 	testCases := []struct {
 		fixture    string
+		generated  []byte
 		wantProves bool
 	}{
 		{fixture: "error_envelope_done.sse", wantProves: true},
@@ -64,7 +69,7 @@ func TestProvesErrorMissOnlyForEvidenceThatCarriesAnError(t *testing.T) {
 		{fixture: "object_error.sse", wantProves: true},
 		{fixture: "error_without_space.sse", wantProves: false},
 		{fixture: "error_as_string.sse", wantProves: false},
-		{fixture: "long_error_stream.sse", wantProves: false},
+		{generated: testutil.LongErrorStream(retainedBytesInTest), wantProves: false},
 	}
 	paths, err := filepath.Glob(filepath.Join("testdata", "*.sse"))
 	if err != nil {
@@ -76,7 +81,9 @@ func TestProvesErrorMissOnlyForEvidenceThatCarriesAnError(t *testing.T) {
 	}
 	tableFixtures := make([]string, 0, len(testCases))
 	for _, testCase := range testCases {
-		tableFixtures = append(tableFixtures, testCase.fixture)
+		if testCase.generated == nil {
+			tableFixtures = append(tableFixtures, testCase.fixture)
+		}
 	}
 	slices.Sort(tableFixtures)
 	if !slices.Equal(fixtures, tableFixtures) {
@@ -84,17 +91,24 @@ func TestProvesErrorMissOnlyForEvidenceThatCarriesAnError(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		events, err := os.ReadFile(filepath.Join("testdata", testCase.fixture))
-		if err != nil {
-			t.Fatalf("reading fixture: %v", err)
+		name := testCase.fixture
+		events := testCase.generated
+		if events == nil {
+			var err error
+			events, err = os.ReadFile(filepath.Join("testdata", testCase.fixture))
+			if err != nil {
+				t.Fatalf("reading fixture: %v", err)
+			}
+		} else {
+			name = "generated_long_error_stream"
 		}
 		payload, err := Payload(retainedLines(DataLines(events)))
 		if err != nil {
-			t.Fatalf("Payload(%s): %v", testCase.fixture, err)
+			t.Fatalf("Payload(%s): %v", name, err)
 		}
 
 		if proves := ProvesErrorMiss(payload); proves != testCase.wantProves {
-			t.Errorf("ProvesErrorMiss(%s) = %v, want %v", testCase.fixture, proves, testCase.wantProves)
+			t.Errorf("ProvesErrorMiss(%s) = %v, want %v", name, proves, testCase.wantProves)
 		}
 	}
 	if ProvesErrorMiss(nil) {
@@ -107,7 +121,7 @@ func retainedLines(lines []string) []string {
 	heldBytes := 0
 	for _, line := range lines {
 		heldBytes += len(line) + 1
-		if heldBytes > MaxRetainedBytes {
+		if heldBytes > retainedBytesInTest {
 			break
 		}
 		kept = append(kept, line)

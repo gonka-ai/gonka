@@ -6,8 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -221,19 +219,18 @@ func TestRaceWriter_ErrorStreamCappedAndTruncated(t *testing.T) {
 }
 
 // Test flow:
-//  1. Read the shared terminal-error fixture `long_error_stream.sse` from `gatewayprotocol/streamevidence/testdata`: 4200 255-byte content lines, about 1 MiB, then an error line and `[DONE]`.
-//  2. Take the fixture's evidence lines, keep the leading ones whose bytes plus one separator each fit in `streamevidence.MaxRetainedBytes`, and assert the error line is not among them.
-//  3. Write the fixture one event at a time through a race writer of an error attempt, with the evidence cap at `streamevidence.MaxRetainedBytes`, and flush it.
+//  1. Build a terminal-error stream with `testutil.LongErrorStream` past `maxErrorStreamBytes`: 255-byte content lines, then an error line and `[DONE]`.
+//  2. Take the stream's evidence lines, keep the leading ones whose bytes plus one separator each fit in `maxErrorStreamBytes`, and assert the error line is not among them.
+//  3. Write the stream one event at a time through a race writer of an error attempt, with the evidence cap at `maxErrorStreamBytes`, and flush it.
 //  4. Assert the attempt retained exactly those leading lines, is marked truncated and not complete, and labels a rejected claim as truncated.
-func TestRaceWriter_LongErrorStreamStopsAtTheSharedEvidenceCap(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "gatewayprotocol", "streamevidence", "testdata", "long_error_stream.sse"))
-	require.NoError(t, err)
+func TestRaceWriter_LongErrorStreamStopsAtTheErrorStreamBound(t *testing.T) {
+	fixture := testutil.LongErrorStream(maxErrorStreamBytes)
 	lines := streamevidence.DataLines(fixture)
 	var want []string
 	heldBytes := 0
 	for _, line := range lines {
 		heldBytes += len(line) + 1
-		if heldBytes > streamevidence.MaxRetainedBytes {
+		if heldBytes > maxErrorStreamBytes {
 			break
 		}
 		want = append(want, line)
@@ -244,7 +241,7 @@ func TestRaceWriter_LongErrorStreamStopsAtTheSharedEvidenceCap(t *testing.T) {
 	rw, inf := newErrorRaceWriter(t, newRaceGroup(ctx, ctx, "escrow-x", &sink), 1)
 
 	for _, event := range bytes.SplitAfter(fixture, []byte("\n\n")) {
-		_, err = rw.Write(event)
+		_, err := rw.Write(event)
 		require.NoError(t, err)
 	}
 	rw.flushClassify()

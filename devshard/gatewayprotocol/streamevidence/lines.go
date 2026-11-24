@@ -1,4 +1,4 @@
-// Package streamevidence holds which lines of an error stream are evidence, how many of them a gateway retains, and how they serialize into the payload a verifier rehashes. See README.md.
+// Package streamevidence holds which lines of an error stream are evidence and how they serialize into the payload a verifier rehashes. See README.md.
 package streamevidence
 
 import (
@@ -7,9 +7,6 @@ import (
 
 	"common/completionapi"
 )
-
-// MaxRetainedBytes bounds the evidence a gateway retains of one attempt, each kept line counted as its bytes plus one separator.
-const MaxRetainedBytes = 1 << 20
 
 // DataLines returns the evidence lines of a read of SSE events: its data lines with a trailing carriage return trimmed, without the devshard receipt and meta envelopes.
 func DataLines(events []byte) []string {

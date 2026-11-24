@@ -3,14 +3,13 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
 	"common/completionapi"
 
 	"devshard/gatewayprotocol/streamevidence"
+	"devshard/internal/testutil"
 )
 
 // Test flow:
@@ -120,21 +119,18 @@ func TestTheProofHashesToWhatTheVerifierRecomputes(t *testing.T) {
 }
 
 // Test flow:
-//  1. Read the shared terminal-error fixture `long_error_stream.sse` from `gatewayprotocol/streamevidence/testdata`: 4200 255-byte content lines, about 1 MiB, then an error line and `[DONE]`.
-//  2. Take the fixture's evidence lines, keep the leading ones whose bytes plus one separator each fit in `streamevidence.MaxRetainedBytes`, and assert the error line is not among them.
-//  3. Classify the fixture one event at a time with an attempt's SSE classifier, as the engine builds it, and flush it.
+//  1. Build a terminal-error stream with `testutil.LongErrorStream` past `maxMissProofBytes`: 255-byte content lines, then an error line and `[DONE]`.
+//  2. Take the stream's evidence lines, keep the leading ones whose bytes plus one separator each fit in `maxMissProofBytes`, and assert the error line is not among them.
+//  3. Classify the stream one event at a time with an attempt's SSE classifier, as the engine builds it, and flush it.
 //  4. Assert the classifier holds no miss proof, since the retained lines carry no error, and that it retained exactly those leading lines, marked truncated and not complete.
-func TestALongErrorStreamStopsAtTheSharedEvidenceCap(t *testing.T) {
-	fixture, err := os.ReadFile(filepath.Join("..", "..", "..", "gatewayprotocol", "streamevidence", "testdata", "long_error_stream.sse"))
-	if err != nil {
-		t.Fatalf("reading fixture: %v", err)
-	}
+func TestALongErrorStreamStopsAtTheMissProofBound(t *testing.T) {
+	fixture := testutil.LongErrorStream(maxMissProofBytes)
 	lines := streamevidence.DataLines(fixture)
 	var want []string
 	heldBytes := 0
 	for _, line := range lines {
 		heldBytes += len(line) + 1
-		if heldBytes > streamevidence.MaxRetainedBytes {
+		if heldBytes > maxMissProofBytes {
 			break
 		}
 		want = append(want, line)

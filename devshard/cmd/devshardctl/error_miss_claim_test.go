@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,7 +20,7 @@ import (
 const errorStreamFixtures = "../../gatewayprotocol/streamevidence/testdata"
 
 // Test flow:
-//  1. For each error stream fixture in `gatewayprotocol/streamevidence/testdata`, ask `streamevidence.ProvesErrorMiss` whether the payload of the leading evidence lines that fit in `streamevidence.MaxRetainedBytes` proves the error.
+//  1. For each error stream fixture in `gatewayprotocol/streamevidence/testdata` and for a long error stream built with `testutil.LongErrorStream` past `maxErrorStreamBytes`, ask `streamevidence.ProvesErrorMiss` whether the payload of the leading evidence lines that fit in `maxErrorStreamBytes` proves the error.
 //  2. Write the fixture through a fresh `raceWriter` once as one read per SSE event and once as two reads split inside its error event, then flush the final event.
 //  3. End the send and give the attempt a Finish in its response mempool.
 //  4. Assert the `claimable` result of `errorMissOutcome` is true exactly when the shared rule proves it over those retained lines.
@@ -26,10 +28,15 @@ func TestErrorMissClaimableFollowsTheSharedEvidenceRule(t *testing.T) {
 	paths, err := filepath.Glob(filepath.Join(errorStreamFixtures, "*.sse"))
 	require.NoError(t, err)
 	require.NotEmpty(t, paths)
-
+	streams := map[string][]byte{"generated_long_error_stream": testutil.LongErrorStream(maxErrorStreamBytes)}
 	for _, path := range paths {
 		stream, err := os.ReadFile(path)
 		require.NoError(t, err)
+		streams[filepath.Base(path)] = stream
+	}
+
+	for _, name := range slices.Sorted(maps.Keys(streams)) {
+		stream := streams[name]
 		payload, err := streamevidence.Payload(retainedLines(streamevidence.DataLines(stream)))
 		require.NoError(t, err)
 		wantClaim := streamevidence.ProvesErrorMiss(payload)
@@ -41,7 +48,7 @@ func TestErrorMissClaimableFollowsTheSharedEvidenceRule(t *testing.T) {
 			{name: "one_read_per_event", reads: readsOnePerEvent(stream)},
 			{name: "error_event_split_across_reads", reads: readsSplitInsideTheErrorEvent(t, stream)},
 		} {
-			t.Run(filepath.Base(path)+"/"+delivery.name, func(t *testing.T) {
+			t.Run(name+"/"+delivery.name, func(t *testing.T) {
 				attempt := streamAttemptToItsFinish(t, delivery.reads)
 
 				_, claimable := errorMissOutcome(attempt, nil)
@@ -110,7 +117,7 @@ func retainedLines(lines []string) []string {
 	heldBytes := 0
 	for _, line := range lines {
 		heldBytes += len(line) + 1
-		if heldBytes > streamevidence.MaxRetainedBytes {
+		if heldBytes > maxErrorStreamBytes {
 			break
 		}
 		kept = append(kept, line)
