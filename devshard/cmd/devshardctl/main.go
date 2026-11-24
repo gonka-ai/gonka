@@ -19,12 +19,12 @@ import (
 	"common/httpguard"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/profiling"
 	"devshard/runtimeparams"
 	"devshard/state"
-	"devshard/types"
 	"devshard/user"
 )
 
@@ -67,28 +67,6 @@ type HostStatsJSON struct {
 	CompletedValidations uint32 `json:"completed_validations,omitempty"`
 	Validated            uint32 `json:"validated,omitempty"`
 	Finished             uint32 `json:"finished,omitempty"`
-}
-
-func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
-	entry := HostStatsJSON{
-		SlotID:  slot,
-		Missed:  hs.Missed,
-		Invalid: hs.Invalid,
-		Cost:    hs.Cost,
-	}
-	if hs.RequiredValidations != 0 {
-		entry.RequiredValidations = hs.RequiredValidations
-	}
-	if hs.CompletedValidations != 0 {
-		entry.CompletedValidations = hs.CompletedValidations
-	}
-	if hs.Validated != 0 {
-		entry.Validated = hs.Validated
-	}
-	if hs.Finished != 0 {
-		entry.Finished = hs.Finished
-	}
-	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -896,20 +874,19 @@ func readBoolEnv(name string, fallback bool) bool {
 }
 
 func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
-	hsHash, err := state.ComputeHostStatsHash(p.HostStats)
+	root, err := settlement.Root(*p)
 	if err != nil {
 		return SettlementJSON{}, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.StateRootAndProtocolVersion)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
-	for slot, hs := range p.HostStats {
-		stats = append(stats, hostStatsJSONFromDomain(slot, hs))
+	for _, hostStat := range settlement.HostStatsBySlot(p.HostStats) {
+		stats = append(stats, HostStatsJSON(hostStat))
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))
-	for slot, sig := range p.Signatures {
-		sigs = append(sigs, SlotSignatureJSON{SlotID: slot, Signature: base64.StdEncoding.EncodeToString(sig)})
+	for _, signature := range settlement.SignaturesBySlot(p.Signatures) {
+		sigs = append(sigs, SlotSignatureJSON{SlotID: signature.SlotID, Signature: base64.StdEncoding.EncodeToString(signature.Signature)})
 	}
 
 	return SettlementJSON{

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/gatewayprotocol/timeoutclaim"
 	"devshard/host"
 	"devshard/types"
 )
@@ -250,10 +251,8 @@ func TestSweepExecutionTimeoutsRetriesAPendingRefusalTheGroupCouldNotJudge(t *te
 
 func pendingRefusalStartedAt(t *testing.T, env *testProxyEnv, startedAt time.Time) (uint64, *host.InferencePayload) {
 	t.Helper()
-	params := defaultParams()
-	params.StartedAt = startedAt.Unix()
 	nonce := pendingInferenceStartedAt(t, env, startedAt)
-	return nonce, env.proxy.redundancy.inferenceTimeoutPayload(params)
+	return nonce, timeoutclaim.Payload(env.sm.GetInference, nonce, defaultParams().Prompt, defaultParams().StartedAt)
 }
 
 // Test flow:

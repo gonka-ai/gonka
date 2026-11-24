@@ -41,8 +41,7 @@ type sseChunkScan struct {
 }
 
 // scanSSEChunk reads a chunk once and answers both questions the write path asks of it. The error shape
-// is not among them: it shares no field with these, and it is only ever consulted when no content was
-// found, so it stays its own scan.
+// is not among them: it shares no field with these, so it stays its own scan.
 func scanSSEChunk(p []byte) sseChunkScan {
 	var scan sseChunkScan
 	if len(p) == 0 {

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/internal/leakcheck"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/state"
@@ -30,7 +30,7 @@ func TestMain(m *testing.M) {
 type settlementSource interface {
 	IsBusy(escrowID string) bool
 	Finalize(ctx context.Context, escrowID string) error
-	BuildSettlement(ctx context.Context, escrowID string) (chain.SettlementInput, error)
+	BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error)
 }
 
 var (

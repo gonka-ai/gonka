@@ -7,6 +7,8 @@ import (
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
+	"devshard/gatewayprotocol/settlement"
+	"devshard/gatewayprotocol/settlementwire"
 	"devshard/signing"
 )
 
@@ -15,39 +17,6 @@ const compactSignatureLength = 64
 // The escrow messages are marshalled by the chain's own generated types, so their wire layout tracks the chain by construction. See README.md, "How a message is encoded".
 func encodeMsgCreateDevshardEscrow(creator string, amount uint64, modelID string) ([]byte, error) {
 	message := &inferencetypes.MsgCreateDevshardEscrow{Creator: creator, Amount: amount, ModelId: modelID}
-	return message.Marshal()
-}
-
-func encodeMsgSettleDevshardEscrow(settler string, input SettlementInput) ([]byte, error) {
-	hostStats := make([]*inferencetypes.DevshardSettlementHostStats, 0, len(input.HostStats))
-	for _, hostStat := range input.HostStats {
-		hostStats = append(hostStats, &inferencetypes.DevshardSettlementHostStats{
-			SlotId:               hostStat.SlotID,
-			Missed:               hostStat.Missed,
-			Invalid:              hostStat.Invalid,
-			Cost:                 hostStat.Cost,
-			RequiredValidations:  hostStat.RequiredValidations,
-			CompletedValidations: hostStat.CompletedValidations,
-		})
-	}
-	signatures := make([]*inferencetypes.DevshardSlotSignature, 0, len(input.SlotSigs))
-	for _, slotSig := range input.SlotSigs {
-		signatures = append(signatures, &inferencetypes.DevshardSlotSignature{
-			SlotId:    uint32(slotSig.SlotID),
-			Signature: slotSig.Signature,
-		})
-	}
-	message := &inferencetypes.MsgSettleDevshardEscrow{
-		Settler:                     settler,
-		EscrowId:                    input.EscrowID,
-		StateRoot:                   input.StateRoot,
-		Nonce:                       input.Nonce,
-		RestHash:                    input.RestHash,
-		HostStats:                   hostStats,
-		Signatures:                  signatures,
-		Fees:                        input.Fees,
-		StateRootAndProtocolVersion: input.Version,
-	}
 	return message.Marshal()
 }
 
@@ -103,8 +72,8 @@ func buildCreateEscrowTx(parameters txSigning, amount uint64, modelID string) ([
 	})
 }
 
-func buildSettleEscrowTx(parameters txSigning, settler string, input SettlementInput) ([]byte, error) {
+func buildSettleEscrowTx(parameters txSigning, settler string, input settlement.Message) ([]byte, error) {
 	return parameters.signMessage(actionSettleEscrow, settleEscrowMsgTypeURL, func() ([]byte, error) {
-		return encodeMsgSettleDevshardEscrow(settler, input)
+		return settlementwire.Marshal(settler, input)
 	})
 }

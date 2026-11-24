@@ -7,6 +7,7 @@ import (
 
 	"common/completionapi"
 
+	"devshard/gatewayprotocol/streamevidence"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -43,7 +44,7 @@ func TestErrorMissProofRehashesOnlyWhenTheExecutorForwardsWhatItStored(t *testin
 		t.Run(testCase.name, func(t *testing.T) {
 			wire, committedHash := executorAnswer(t, testCase.forwardStoredResponse)
 
-			_, responsePayload := errorMissArtifacts(&inflight{errorStreamLines: ssePayloadDataLines(wire)}, nil)
+			_, responsePayload := errorMissArtifacts(&inflight{errorStreamLines: streamevidence.DataLines(wire)}, nil)
 			require.NotEmpty(t, responsePayload, "the gateway rebuilt no payload from the wire")
 
 			stateMachine, hosts := errorMissStateMachine(t)

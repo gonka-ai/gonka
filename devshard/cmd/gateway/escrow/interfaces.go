@@ -7,6 +7,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 	"devshard/types"
 )
@@ -14,7 +15,7 @@ import (
 // Satisfied by *chain.TxClient. See README.md, "What this package expects of others".
 type escrowTxClient interface {
 	CreateEscrow(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, modelID string, onPrepared func(txHash string) error) (chain.CreateEscrowResult, error)
-	SettleEscrow(ctx context.Context, signer *signing.Secp256k1Signer, input chain.SettlementInput, onPrepared func(txHash string) error) (chain.SettleEscrowResult, error)
+	SettleEscrow(ctx context.Context, signer *signing.Secp256k1Signer, input settlement.Message, onPrepared func(txHash string) error) (chain.SettleEscrowResult, error)
 	TxCommitted(ctx context.Context, txHash string) (bool, error)
 	GetTxEscrowID(ctx context.Context, txHash string) (escrowID uint64, found bool, err error)
 	GetEscrow(ctx context.Context, escrowID string) (chain.EscrowInfo, bool, error)
@@ -72,7 +73,7 @@ type SettlementSource interface {
 	Retire(escrowID string) error // synchronous: no nonce can be committed on the escrow after it returns
 	IsBusy(escrowID string) bool
 	Finalize(ctx context.Context, escrowID string) error // idempotent: no-op if already finalized
-	BuildSettlement(ctx context.Context, escrowID string) (chain.SettlementInput, error)
+	BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error)
 }
 
 // nonceCapRetirer is a SettlementSource whose Retire for a nonce cap still lets the escrow's running races escalate on it while it stays busy. See ../docs/routing.md, "Picking an escrow".

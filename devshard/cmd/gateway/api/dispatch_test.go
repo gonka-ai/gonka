@@ -808,3 +808,36 @@ func TestSendReportsAnUnavailableLocalRootAsTheGatewaysOwnFault(t *testing.T) {
 		t.Fatalf("Send = %v, want ErrLocalRootUnavailable and not ErrStateRootDivergence", err)
 	}
 }
+
+// Test flow:
+//  1. Send a prepared nonce through a `recordingSession` whose reply carries a Finish for another nonce and one for the sent nonce.
+//  2. Read the response's `FinishTx`, then send again with a reply carrying only the other nonce's Finish.
+//  3. Assert the first is the sent nonce's Finish marshalled from the reply's mempool, and the second is nil.
+func TestAResponseCarriesTheFinishItsReplyCarriedForItsNonce(t *testing.T) {
+	t.Parallel()
+	session, _ := newLiveSession(t)
+	prepared := prepareNonce(t, session)
+	finishFor := func(nonce uint64) *types.DevshardTx {
+		return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: nonce, EscrowId: liveEscrowID}}}
+	}
+	other := finishFor(prepared.Nonce() + 1)
+	reply := &host.HostResponse{Mempool: []*types.DevshardTx{other, finishFor(prepared.Nonce())}}
+
+	response, err := escrowTarget{session: &recordingSession{reply: reply}}.Send(context.Background(), prepared, io.Discard, nil)
+	if err != nil {
+		t.Fatalf("Send = %v, want nil", err)
+	}
+	withoutOwn, err := escrowTarget{session: &recordingSession{reply: &host.HostResponse{Mempool: []*types.DevshardTx{other}}}}.Send(context.Background(), prepared, io.Discard, nil)
+	if err != nil {
+		t.Fatalf("Send = %v, want nil", err)
+	}
+
+	if got, want := response.FinishTx(), user.MarshalFinishTx(reply.Mempool, prepared.Nonce()); len(want) == 0 || !bytes.Equal(got, want) {
+		t.Errorf("FinishTx = %x, want the sent nonce's Finish %x", got, want)
+	}
+	if got := withoutOwn.FinishTx(); got != nil {
+		t.Errorf("FinishTx = %x, want nil for a reply without the sent nonce's Finish", got)
+	}
+	response.ReleaseFinish()
+	withoutOwn.ReleaseFinish()
+}

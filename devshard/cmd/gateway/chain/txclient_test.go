@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 )
 
@@ -187,10 +188,10 @@ func TestSettleEscrowValidatesInput(t *testing.T) {
 	testCases := []struct {
 		name   string
 		signer *signing.Secp256k1Signer
-		input  SettlementInput
+		input  settlement.Message
 	}{
 		{name: "nil_signer", input: fixedSettlementFull()},
-		{name: "zero_escrow_id", signer: validSigner, input: SettlementInput{}},
+		{name: "zero_escrow_id", signer: validSigner, input: settlement.Message{}},
 	}
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {

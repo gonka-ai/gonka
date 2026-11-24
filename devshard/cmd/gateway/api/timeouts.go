@@ -6,8 +6,8 @@ import (
 
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/registry"
+	"devshard/gatewayprotocol/timeoutclaim"
 	"devshard/host"
-	"devshard/types"
 	"devshard/user"
 )
 
@@ -37,11 +37,7 @@ func (v escrowVotes) SettleTimeout(ctx context.Context, step engine.TimeoutStep)
 }
 
 func (v escrowVotes) payload(nonce uint64) *host.InferencePayload {
-	record, committed := v.session.Inference(nonce)
-	if !committed {
-		return nil
-	}
-	return timeoutPayload(record, v.prompt, v.startedAt)
+	return timeoutclaim.Payload(v.session.Inference, nonce, v.prompt, v.startedAt)
 }
 
 // VoteDeadline reads the escrow's own deadline for this nonce, which is what the settle queue holds it by.
@@ -52,15 +48,4 @@ func (v escrowVotes) VoteDeadline(nonce uint64, startedAt time.Time) time.Time {
 // Voteable reads the escrow's own group, so a nonce is judged by the slots of the escrow it was spent on.
 func (v escrowVotes) Voteable(nonce uint64) bool {
 	return engine.NewSessionTimeouts(v.session.UserSession(), nil).Voteable(nonce)
-}
-
-// timeoutPayload rebuilds what the host was asked for, reading every field but the prompt and the dispatch stamp back from the record.
-func timeoutPayload(record types.InferenceRecord, prompt []byte, startedAt int64) *host.InferencePayload {
-	return &host.InferencePayload{
-		Prompt:      prompt,
-		Model:       record.Model,
-		InputLength: record.InputLength,
-		MaxTokens:   record.MaxTokens,
-		StartedAt:   startedAt,
-	}
 }

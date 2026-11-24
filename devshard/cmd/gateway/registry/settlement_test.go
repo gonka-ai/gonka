@@ -7,8 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/escrow"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/types"
 )
 
@@ -106,19 +106,19 @@ func TestBuildSettlementOrdersHostStatsAndSignaturesBySlot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildSettlement = %v, want nil", err)
 	}
-	wantStats := []chain.SettlementHostStat{
+	wantStats := []settlement.HostStat{
 		{SlotID: 0, Invalid: 4, Cost: 10},
 		{SlotID: 2, Missed: 1, Cost: 30, RequiredValidations: 3, CompletedValidations: 2},
 	}
 	if !reflect.DeepEqual(input.HostStats, wantStats) {
 		t.Errorf("host stats = %+v, want %+v (slot order, nil entries dropped)", input.HostStats, wantStats)
 	}
-	wantSigs := []chain.SettlementSlotSig{
+	wantSigs := []settlement.SlotSignature{
 		{SlotID: 0, Signature: []byte("sig-0")},
 		{SlotID: 2, Signature: []byte("sig-2")},
 	}
-	if !reflect.DeepEqual(input.SlotSigs, wantSigs) {
-		t.Errorf("slot signatures = %+v, want %+v", input.SlotSigs, wantSigs)
+	if !reflect.DeepEqual(input.SlotSignatures, wantSigs) {
+		t.Errorf("slot signatures = %+v, want %+v", input.SlotSignatures, wantSigs)
 	}
 	if got, want := input.Fees, uint64(11); got != want {
 		t.Errorf("fees = %d, want %d", got, want)
@@ -467,13 +467,13 @@ func TestBuildSettlementSignsWithTheCheckedSettlementSignatures(t *testing.T) {
 		name           string
 		checked        map[uint32][]byte
 		shortfall      error
-		wantSigs       []chain.SettlementSlotSig
+		wantSigs       []settlement.SlotSignature
 		wantNarrations int
 	}{
 		{name: "checked signatures", checked: map[uint32][]byte{1: []byte("checked-1"), 0: []byte("checked-0")},
-			wantSigs: []chain.SettlementSlotSig{{SlotID: 0, Signature: []byte("checked-0")}, {SlotID: 1, Signature: []byte("checked-1")}}},
+			wantSigs: []settlement.SlotSignature{{SlotID: 0, Signature: []byte("checked-0")}, {SlotID: 1, Signature: []byte("checked-1")}}},
 		{name: "short of quorum", shortfall: errors.New("insufficient signatures: 1/2 weight"),
-			wantSigs:       []chain.SettlementSlotSig{{SlotID: 0, Signature: []byte("sig-0")}, {SlotID: 2, Signature: []byte("sig-2")}},
+			wantSigs:       []settlement.SlotSignature{{SlotID: 0, Signature: []byte("sig-0")}, {SlotID: 2, Signature: []byte("sig-2")}},
 			wantNarrations: 1},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -487,8 +487,60 @@ func TestBuildSettlementSignsWithTheCheckedSettlementSignatures(t *testing.T) {
 			if err != nil {
 				t.Fatalf("BuildSettlement = %v, want nil", err)
 			}
-			if !reflect.DeepEqual(input.SlotSigs, testCase.wantSigs) {
-				t.Fatalf("slot signatures = %v, want %v", input.SlotSigs, testCase.wantSigs)
+			if !reflect.DeepEqual(input.SlotSignatures, testCase.wantSigs) {
+				t.Fatalf("slot signatures = %v, want %v", input.SlotSignatures, testCase.wantSigs)
+			}
+			if recorded := narrator.recorded(); len(recorded) != testCase.wantNarrations {
+				t.Fatalf("narrated %v, want %d unverifiable lines", recorded, testCase.wantNarrations)
+			}
+		})
+	}
+}
+
+// Test flow:
+//  1. Build a registry around a settleable session of a 3-slot escrow whose re-check falls short of quorum, holding signatures for all 3 slots; then one holding 2.
+//  2. Call `BuildSettlement` for each.
+//  3. Assert the payload carries the 3 held signatures in slot order and the shortfall is narrated once.
+//  4. Assert the 2-signature escrow yields an error wrapping the shortfall and no payload: the chain counts one vote per slot entry and needs 3.
+func TestBuildSettlementPostsTheHeldSignaturesOnlyAtTheChainQuorum(t *testing.T) {
+	t.Parallel()
+	shortfall := errors.New("insufficient valid signatures: 0/3 weight")
+	for _, testCase := range []struct {
+		name           string
+		held           map[uint32][]byte
+		wantSigs       []settlement.SlotSignature
+		wantNarrations int
+		wantRefusal    bool
+	}{
+		{name: "held quorum", held: map[uint32][]byte{2: []byte("sig-2"), 0: []byte("sig-0"), 1: []byte("sig-1")},
+			wantSigs:       []settlement.SlotSignature{{SlotID: 0, Signature: []byte("sig-0")}, {SlotID: 1, Signature: []byte("sig-1")}, {SlotID: 2, Signature: []byte("sig-2")}},
+			wantNarrations: 1},
+		{name: "held short", held: map[uint32][]byte{2: []byte("sig-2"), 0: []byte("sig-0")}, wantRefusal: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			session := settleableSession(9)
+			session.escrowState.Group = []types.SlotAssignment{
+				{SlotID: 0, ValidatorAddress: "gonka1aaa"},
+				{SlotID: 1, ValidatorAddress: "gonka1bbb"},
+				{SlotID: 2, ValidatorAddress: "gonka1ccc"},
+			}
+			session.signatures[9], session.settlementShortfall = testCase.held, shortfall
+			narrator := &recordingEscrowNarrator{}
+			registry := New(Deps{ReadOnlySessions: newSessions(map[string]*fakeSession{"5": session}).open, Narrator: narrator, Now: fixedClock()})
+
+			input, err := registry.BuildSettlement(context.Background(), "5")
+
+			if testCase.wantRefusal {
+				if !errors.Is(err, shortfall) || input.SlotSignatures != nil {
+					t.Fatalf("BuildSettlement = %+v, %v; want no payload and an error wrapping %v", input, err, shortfall)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("BuildSettlement = %v, want nil", err)
+			}
+			if !reflect.DeepEqual(input.SlotSignatures, testCase.wantSigs) {
+				t.Fatalf("slot signatures = %v, want %v", input.SlotSignatures, testCase.wantSigs)
 			}
 			if recorded := narrator.recorded(); len(recorded) != testCase.wantNarrations {
 				t.Fatalf("narrated %v, want %d unverifiable lines", recorded, testCase.wantNarrations)

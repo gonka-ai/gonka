@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/scheduler"
+	"devshard/gatewayprotocol/probe"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -213,7 +214,7 @@ func TestGhostParamsCarryTheEscrowModelAndTheInjectedClock(t *testing.T) {
 		Model:       "kimi",
 		Prompt:      ghostPrompt,
 		InputLength: uint64(len(ghostPrompt)),
-		MaxTokens:   ghostMaxTokens,
+		MaxTokens:   probe.MaxTokens,
 		StartedAt:   fixedClock()().Unix(),
 	}
 	if !reflect.DeepEqual(params, want) {
@@ -239,8 +240,8 @@ func TestSessionHandleReportsThePhaseOfItsOwnStateMachine(t *testing.T) {
 
 // Test flow:
 //  1. Parse the ghost prompt's JSON body.
-//  2. Assert its max_tokens field matches the ghostMaxTokens reservation.
-//  3. Assert ghostMaxTokens is at or above `state.MinReservationTokens`, the floor the state machine refuses below.
+//  2. Assert its max_tokens field matches the `probe.MaxTokens` reservation.
+//  3. Assert `probe.MaxTokens` is at or above `state.MinReservationTokens`, the floor the state machine refuses below.
 func TestGhostPromptAgreesWithItsReservation(t *testing.T) {
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`
@@ -248,11 +249,11 @@ func TestGhostPromptAgreesWithItsReservation(t *testing.T) {
 	if err := json.Unmarshal(ghostPrompt, &body); err != nil {
 		t.Fatalf("parsing ghostPrompt: %v", err)
 	}
-	if body.MaxTokens != ghostMaxTokens {
-		t.Errorf("ghostPrompt max_tokens = %d, reservation = %d", body.MaxTokens, ghostMaxTokens)
+	if body.MaxTokens != probe.MaxTokens {
+		t.Errorf("ghostPrompt max_tokens = %d, reservation = %d", body.MaxTokens, probe.MaxTokens)
 	}
-	if ghostMaxTokens < state.MinReservationTokens {
-		t.Errorf("ghostMaxTokens = %d, below the floor %d the state machine refuses", ghostMaxTokens, state.MinReservationTokens)
+	if probe.MaxTokens < state.MinReservationTokens {
+		t.Errorf("probe.MaxTokens = %d, below the floor %d the state machine refuses", probe.MaxTokens, state.MinReservationTokens)
 	}
 }
 
