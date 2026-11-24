@@ -33,11 +33,12 @@ const (
 	cutoffReasonProbeFailed       = "half_open_probe_failed"
 )
 
-// Which cap turned a request away, as the metric label and the log field name it.
+// Why a request was turned away or left before it was admitted, as the metric label and the log field name it.
 const (
 	RejectionConcurrentRequests = "concurrent_requests"
 	RejectionInputTokens        = "input_tokens"
 	RejectionQueueDepth         = "queue_depth"
 	RejectionNoLiveWeight       = "no_live_weight"
+	RejectionClientGone         = "client_gone"
 	RejectionUnnamed            = "unnamed"
 )

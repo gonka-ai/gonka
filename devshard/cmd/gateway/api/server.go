@@ -357,7 +357,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // HTTPServer sets neither ReadTimeout nor WriteTimeout, which would cut an SSE stream, and returns the cancel of every request context, which Shutdown alone never calls. See README.md, "Reading a body" and "Streaming the reply".
 func (s *Server) HTTPServer(address string) (*http.Server, context.CancelFunc) {
-	requests, cancelRequests := context.WithCancel(context.Background())
+	requests, cancelRequests := context.WithCancelCause(context.Background())
 	return &http.Server{
 		Addr:              address,
 		Handler:           s.handler,
@@ -365,7 +365,7 @@ func (s *Server) HTTPServer(address string) (*http.Server, context.CancelFunc) {
 		IdleTimeout:       idleConnectionTimeout,
 		MaxHeaderBytes:    maxRequestHeaderBytes,
 		BaseContext:       func(net.Listener) context.Context { return requests },
-	}, cancelRequests
+	}, func() { cancelRequests(errGatewayStopping) }
 }
 
 func randomRequestID() string {

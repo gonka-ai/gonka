@@ -65,11 +65,11 @@ func (m *hostsMaxNonce) MaxNonce() uint32 { return m.Load() }
 
 type diffOnlyVoter struct {
 	acceptingVoter
-	active *atomic.Bool
+	strippingPayloads *atomic.Bool
 }
 
 func (v diffOnlyVoter) Send(ctx context.Context, request host.HostRequest, stream io.Writer, receipt func(*host.HostResponse)) (*host.HostResponse, error) {
-	if v.active.Load() {
+	if v.strippingPayloads.Load() {
 		request.Payload = nil
 	}
 	return v.acceptingVoter.Send(ctx, request, stream, receipt)
@@ -80,7 +80,7 @@ func escrowAtTheHostsActiveCap(t *testing.T) (longResponseEscrow, uint32) {
 	maxNonce := &hostsMaxNonce{}
 	var diffOnly atomic.Bool
 	escrow := newVotingEscrow(t, func(voter acceptingVoter) user.HostClient {
-		return diffOnlyVoter{acceptingVoter: voter, active: &diffOnly}
+		return diffOnlyVoter{acceptingVoter: voter, strippingPayloads: &diffOnly}
 	}, host.WithMaxNonceProvider(maxNonce))
 	diffOnly.Store(true)
 	startedConfirmedAt(t, escrow, time.Now().Add(-2*time.Hour).Unix(), true)
@@ -193,7 +193,7 @@ func TestAHeldDrainingSettlementBeforeTheChainMaxNonceIsKnownWaitsInsteadOfPassi
 //  1. Build the escrow at the hosts' active cap, publish it with Add, and never share the chain's max_nonce.
 //  2. Run the routine execution-timeout sweep with a minute of race grace.
 //  3. Assert it swept nothing and left the nonce at the hosts' active cap.
-//  4. Share the chain's max_nonce and sweep again; assert the due timeout is counted and the nonce stays at the cap.
+//  4. Share the chain's max_nonce and sweep again; assert nothing is counted and the nonce stays at the cap.
 func TestTheRoutineTimeoutSweepBeforeTheChainMaxNonceIsKnownWaitsInsteadOfPassingTheHostsCap(t *testing.T) {
 	escrow, maxNonce := escrowAtTheHostsActiveCap(t)
 	require.NoError(t, escrow.registry.Add(context.Background(), longResponseEscrowID, "llama"))
@@ -205,8 +205,25 @@ func TestTheRoutineTimeoutSweepBeforeTheChainMaxNonceIsKnownWaitsInsteadOfPassin
 
 	escrow.registry.ShareChainMaxNonce(uint64(maxNonce))
 	due, _, _ = escrow.registry.SweepExecutionTimeouts(context.Background(), time.Minute, 16)
-	require.Equal(t, 1, due)
+	require.Equal(t, 0, due)
 	require.LessOrEqual(t, escrow.session.Nonce(), activeCap, "the routine sweep wrote diffs past the hosts' active cap")
+}
+
+// Test flow:
+//  1. Build the escrow at the hosts' active cap, publish it with Add, and share the chain's max_nonce.
+//  2. Run the routine execution-timeout sweep with a minute of race grace.
+//  3. Assert the escrow reports its nonce cap reached and the sweep counted nothing, applied nothing and left the nonce at the cap.
+func TestTheRoutineTimeoutSweepSkipsAnEscrowAtItsNonceCap(t *testing.T) {
+	escrow, maxNonce := escrowAtTheHostsActiveCap(t)
+	require.NoError(t, escrow.registry.Add(context.Background(), longResponseEscrowID, "llama"))
+	escrow.registry.ShareChainMaxNonce(uint64(maxNonce))
+	nonce := escrow.session.Nonce()
+	require.True(t, escrow.session.NonceCapReached(), "the escrow must sit at its nonce cap")
+
+	due, applied, failed := escrow.registry.SweepExecutionTimeouts(context.Background(), time.Minute, 16)
+
+	require.Equal(t, [3]int{0, 0, 0}, [3]int{due, applied, failed})
+	require.Equal(t, nonce, escrow.session.Nonce())
 }
 
 type sharingDuringAdd struct {
@@ -240,14 +257,14 @@ func addRacingTheFirstShare(t *testing.T) (longResponseEscrow, uint32) {
 // Test flow:
 //  1. Build the escrow at the hosts' active cap and Add it through a session that shares the chain's max_nonce for the first time while Add opens it, after Add read the registry's value and before it publishes.
 //  2. Run the routine execution-timeout sweep with a minute of race grace.
-//  3. Assert the due timeout is counted and the nonce stays at the hosts' active cap.
+//  3. Assert nothing is counted as due and the nonce stays at the hosts' active cap.
 func TestTheRoutineTimeoutSweepAfterAnAddRacingTheFirstShareStaysUnderTheHostsCap(t *testing.T) {
 	escrow, maxNonce := addRacingTheFirstShare(t)
 	activeCap := types.MaxActiveNonce(maxNonce, len(escrow.signers))
 
 	due, _, _ := escrow.registry.SweepExecutionTimeouts(context.Background(), time.Minute, 16)
 
-	require.Equal(t, 1, due)
+	require.Equal(t, 0, due)
 	require.LessOrEqual(t, escrow.session.Nonce(), activeCap, "the routine sweep wrote diffs past the hosts' active cap")
 }
 

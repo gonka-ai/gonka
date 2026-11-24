@@ -12,9 +12,11 @@ import (
 	"devshard/user"
 )
 
+// The session's own words for a skip: the shared package exports no constant for any of them.
 const (
-	pacedCanceledOutcome = "skipped"
-	pacedCanceledDetail  = "context_canceled"
+	sessionOutcomeSkipped    = "skipped"
+	sessionDetailNonceClosed = "nonce_closed"
+	pacedCanceledDetail      = "context_canceled"
 )
 
 // timeoutHandler is the session's protocol-timeout entry point; *user.Session satisfies it.
@@ -22,6 +24,7 @@ type timeoutHandler interface {
 	timeoutclaim.FinishSource
 	HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (user.TimeoutResult, error)
 	TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time)
+	IsNonceCanonicalFinished(nonce uint64) bool
 	WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTime time.Time) (reason types.TimeoutReason, ready bool, skipped user.TimeoutResult, err error)
 	VoteTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload, reason types.TimeoutReason) (result user.TimeoutResult, needsWait bool, err error)
 }
@@ -51,8 +54,11 @@ func (s *SessionTimeouts) VoteDeadline(nonce uint64, startedAt time.Time) time.T
 	return deadline
 }
 
-// SettleTimeout reads the handler's own record of whether the vote landed: the error alone cannot tell. A vote whose deadline is still ahead comes back deferred instead of waited out. See README, "Timeout votes".
+// SettleTimeout reads the handler's own record of whether the vote landed: the error alone cannot tell. A vote whose nonce had its Finish applied while it waited is not sent, and one whose deadline is still ahead comes back deferred instead of waited out. See README, "Timeout votes".
 func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (TimeoutVote, error) {
+	if step.Kind == SettleByVote && s.handler.IsNonceCanonicalFinished(step.Nonce) {
+		return TimeoutVote{Completeness: step.Proof.completeness()}, user.ErrNonceFinishedWhileWaiting
+	}
 	result, deferred, err := s.settle(ctx, step)
 	if deferred {
 		return TimeoutVote{Deferred: true}, nil
@@ -60,6 +66,7 @@ func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (
 	vote := TimeoutVote{
 		Kind:          TimeoutKind(result.Reason),
 		Detail:        result.DetailReason,
+		Skipped:       result.Outcome == sessionOutcomeSkipped,
 		Unjudged:      result.Outcome == user.TimeoutOutcomeVoteCollectionFailed,
 		VerifyRejects: result.VerifyRejects,
 		Completeness:  step.Proof.completeness(),
@@ -86,7 +93,7 @@ func (s *SessionTimeouts) settle(ctx context.Context, step TimeoutStep) (result 
 	}
 	if step.Pace != nil {
 		if err := step.Pace(ctx); err != nil {
-			return user.TimeoutResult{Outcome: pacedCanceledOutcome, DetailReason: pacedCanceledDetail}, false, err
+			return user.TimeoutResult{Outcome: sessionOutcomeSkipped, DetailReason: pacedCanceledDetail}, false, err
 		}
 	}
 	result, needsWait, err := s.handler.VoteTimeout(ctx, step.Nonce, step.StartedAt, s.payload, reason)

@@ -22,6 +22,7 @@ type TimeoutPoster interface {
 type TimeoutVote struct {
 	Kind          TimeoutKind
 	Detail        string
+	Skipped       bool
 	Unjudged      bool
 	VerifyRejects []string
 	Completeness  MissProofCompleteness
@@ -79,7 +80,7 @@ func timeoutVoteKind(vote, fallback TimeoutKind) TimeoutKind {
 }
 
 func (o RaceOutcome) nonceSettled(a AttemptOutcome) bool {
-	return a.NonceFinished && !a.emptyStream() && !a.errorStream()
+	return a.FinishApplied && !a.emptyStream() && !a.errorStream()
 }
 
 // timeoutSkipReason names every skip; a diverged escrow state is deliberately not one. See race.md, "Timeout votes".
@@ -90,12 +91,10 @@ func (o RaceOutcome) timeoutSkipReason(a AttemptOutcome) (TimeoutReason, bool) {
 	switch {
 	case a.PhaseTransitionAborted:
 		return TimeoutReasonPhaseAborted, true
-	case a.emptyStream() && a.NonceFinished:
+	case a.emptyStream() && a.FinishApplied:
 		return TimeoutReasonEmptyStream, true
-	case a.NonceFinished:
+	case a.FinishApplied:
 		return TimeoutReasonNonceFinished, true
-	case o.longResponseExempt(a):
-		return TimeoutReasonLongResponse, true
 	}
 	return TimeoutReasonUnset, false
 }
@@ -271,8 +270,17 @@ func TimeoutOutcome(vote TimeoutVote, err error, escrowMissing bool) (action Tim
 		return TimeoutActionFailed, TimeoutReasonEscrowGone
 	case err != nil:
 		return TimeoutActionFailed, firstNamed(vote.Detail, TimeoutReasonCollectionError)
+	case vote.Skipped:
+		return TimeoutActionSkipped, skippedReason(vote.Detail)
 	}
 	return TimeoutActionCompleted, TimeoutReasonNone
+}
+
+func skippedReason(detail string) TimeoutReason {
+	if detail == sessionDetailNonceClosed {
+		return TimeoutReasonNonceFinished
+	}
+	return firstNamed(detail, TimeoutReasonNonceFinished)
 }
 
 func firstNamed(detail string, fallback TimeoutReason) TimeoutReason {
