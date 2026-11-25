@@ -870,7 +870,7 @@ request-time round-trip through the escrow fetch path.
   appends an event.
 - mock-chain can fault the `DevshardEscrow` query
   (`POST /testenv/escrow-query-fault`) to simulate the request-time escrow
-  fetch path being down.
+  fetch path being down; `{absent:true}` instead answers `found=false` for every escrow, as a node behind the create height does.
 
 **How:** `TestEscrowLongPollWarmWithoutInferenceNode`
 

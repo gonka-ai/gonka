@@ -1,0 +1,8 @@
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant"}}]}
+
+data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}
+
+data: {"error":{"code":500,"message":"boom","type":"InternalServerError"}}
+
+data: [DONE]
+

@@ -47,6 +47,8 @@ assertions:
     http_status: 200
     terminal_outcome: completed
     error_rate: 0
+    # A VM stall of a few seconds fills max_in_flight and drops a burst; 0.5% still fails drops that last.
+    dropped_rate: 0.005
   devshard:
     no_orphaned_work: true
     max_ghost_rate: 0.02

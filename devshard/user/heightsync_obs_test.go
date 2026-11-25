@@ -221,3 +221,71 @@ func TestSnapshotHeightSync_DoesNotSealAnchors(t *testing.T) {
 	session.mu.Unlock()
 	require.Zero(t, session.anchors.OpenLen(), "producer ObserveTip seals")
 }
+
+// Test flow:
+//  1. Wire height sync on a session and hold its lock, as a nonce commit does.
+//  2. Publish the view from a hot path while the lock is held.
+//  3. Assert the publish returns without waiting for the lock, and the view reaches the cache once the lock is released: the escrow's dispatcher hands out its next nonce instead of queueing for the lock a second time.
+func TestPublishHeightSyncViewOffPath_DoesNotWaitForTheSessionLock(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	session.TestingOnlySetHeightSyncMinPublish(20 * time.Millisecond)
+	session.SetHeightSyncPeerTips(transport.NewHeightSyncPeerTips())
+
+	session.mu.Lock()
+	session.overlap.Total = 7
+	published := make(chan struct{})
+	go func() {
+		session.publishHeightSyncViewOffPath()
+		close(published)
+	}()
+	select {
+	case <-published:
+	case <-time.After(5 * time.Second):
+		session.mu.Unlock()
+		t.Fatal("the hot-path publish waited for the session lock")
+	}
+	session.mu.Unlock()
+
+	require.Eventually(t, func() bool {
+		return session.CachedHeightSyncView().Overlap.Total == 7
+	}, 2*time.Second, 5*time.Millisecond, "the trailing flush publishes the view the hot path left dirty")
+}
+
+// Test flow:
+//  1. Wire height sync, hold the session lock, and start a forced publish; wait until it holds the publish lock and has cleared the stale mark, so it waits on the session lock inside its snapshot.
+//  2. Mark the view stale from a hot path while that publish holds the publish lock, so the hot path cannot arm a flush itself.
+//  3. Release the session lock, let the publish finish, and assert it armed the trailing flush: a view marked stale during a publish is never left without one.
+func TestPublishHeightSyncView_AStaleMarkDuringAPublishArmsTheFlush(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	t.Cleanup(func() { _ = session.Close() })
+	session.TestingOnlySetHeightSyncMinPublish(time.Hour)
+	session.SetHeightSyncPeerTips(transport.NewHeightSyncPeerTips())
+	session.heightSyncPublishMu.Lock()
+	if session.heightSyncFlush != nil {
+		session.heightSyncFlush.Stop()
+		session.heightSyncFlush = nil
+	}
+	session.heightSyncPublishMu.Unlock()
+
+	session.mu.Lock()
+	published := make(chan struct{})
+	go func() {
+		session.publishHeightSyncViewForce()
+		close(published)
+	}()
+	require.Eventually(t, func() bool {
+		if session.heightSyncPublishMu.TryLock() {
+			session.heightSyncPublishMu.Unlock()
+			return false
+		}
+		return !session.heightSyncDirty.Load()
+	}, 5*time.Second, time.Millisecond, "precondition: the publish holds the publish lock and has cleared the stale mark for its snapshot")
+	session.publishHeightSyncViewOffPath()
+	session.mu.Unlock()
+	<-published
+
+	session.heightSyncPublishMu.Lock()
+	defer session.heightSyncPublishMu.Unlock()
+	require.True(t, session.heightSyncDirty.Load(), "precondition: the view is still marked stale")
+	require.NotNil(t, session.heightSyncFlush, "the publish left a stale view with no trailing flush")
+}

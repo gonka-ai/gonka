@@ -1,0 +1,74 @@
+version: "2"
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    # Resource leaks and silently swallowed failures.
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - errorlint
+    - nilerr
+    - nilnesserr
+    - durationcheck
+    - fatcontext
+    - copyloopvar
+    - makezero
+    - reassign
+    - recvcheck
+    # Conventions the package already follows; enabled so they stay that way.
+    - errname
+    - gochecknoinits
+    - misspell
+    - dupword
+    - godot
+    - nolintlint
+    - usestdlibvars
+    - usetesting
+    # Correctness and dead weight the compiler does not see.
+    - gocritic
+    - unconvert
+    - prealloc
+    - intrange
+    - modernize
+    - revive
+  settings:
+    govet:
+      # Dead scaffolding a test writes and never reads, which reads as coverage it does not have.
+      enable:
+        - unusedwrite
+    revive:
+      rules:
+        - name: var-naming
+        - name: receiver-naming
+        - name: import-shadowing
+    errcheck:
+      # Cleanup calls whose error nothing can act on.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.DB).Close
+        - (io.Closer).Close
+        - io.Copy
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck]
+      # gofumpt reads a dotless first segment as stdlib, so it wants common/... beside "context".
+      # gci owns import grouping here; gofumpt is kept for everything else it formats.
+      - path: .
+        linters: [gofumpt]
+
+formatters:
+  enable:
+    - gci
+    - gofumpt
+  settings:
+    gofumpt:
+      module-path: devshard
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(devshard)

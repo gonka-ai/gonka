@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/gatewayprotocol/probe"
 	"devshard/user"
 
 	"github.com/stretchr/testify/require"
@@ -110,13 +111,13 @@ func TestWarmupProbeDeclaresItsTokenBudget(t *testing.T) {
 
 	warmEscrowHosts(context.Background(), warmupTestDeps(sender, nil), 0)
 
-	require.Equal(t, []uint64{pocProbeMaxTokens}, sender.maxTokens,
+	require.Equal(t, []uint64{probe.MaxTokens}, sender.maxTokens,
 		"the probe declares the PoC probe budget")
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`
 	}
 	require.NoError(t, json.Unmarshal(pocProbePromptBody, &body))
-	require.Equal(t, pocProbeMaxTokens, body.MaxTokens,
+	require.Equal(t, probe.MaxTokens, body.MaxTokens,
 		"the prompt the host validates carries the same budget as the declared params")
 }
 

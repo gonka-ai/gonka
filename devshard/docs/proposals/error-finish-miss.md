@@ -58,7 +58,7 @@ Consequences on the gateway:
 | Path | Behaviour | Where |
 | --- | --- | --- |
 | Serve to client | `hostApplicationError`, HTTP 500. Not a success. | `redundancy.go:3817` |
-| Miss vote | **Skipped** — nonce is finished | `shouldRunHandleTimeout`, `redundancy.go:3212` |
+| Miss vote | **Skipped** — nonce is finished | `shouldRunHandleTimeoutOn`, `redundancy.go` |
 | Host perf scoring | **Skipped** — explicit TODO exemption | `recordPostContentWinnerFailureOnce`, `redundancy.go:3610` |
 | Chain state | `StatusFinished`, `HostStats.Cost += ActualCost` | `applyFinishInference`, `state/machine.go:1194` |
 | Validation | Eligible but only rate-sampled; if sampled → `InvalidInferenceResult` (no logprobs) | `collectValidationJobs`, `host/host.go:1160` |
@@ -250,7 +250,7 @@ work:
    - `HostStats.Cost += ActualCost` — this is the settlement payout accumulator
    - status becomes `StatusFinished`
 
-`HostStats.Cost` is what settlement pays the executor (`chain_tx_encode.go`). If
+`HostStats.Cost` is what settlement pays the executor (`common/chain/tx/encode.go`). If
 `MsgErrorMiss` then only flipped status to timed-out and incremented
 `Missed`, the host would be **paid and marked missed** for the same inference,
 and the client would keep paying `ActualCost`.
@@ -328,7 +328,7 @@ its pre-finish value.
 | Not validated | `collectValidationJobs` only samples `rec.Status == StatusFinished` (`host/host.go:1160`); `StatusTimedOut` is skipped. |
 | Not counted as finished | Status is `StatusTimedOut`; cost unwound above. |
 | Sealing | `StatusTimedOut` is already in `sealEligibleStatus` and `terminalAutoSealStatus` (`state/seal.go:256`, `:268`). |
-| Settlement | `HostStats.Missed` is already serialized to chain (`chain_tx_encode.go:89`, `state.proto` field 2). |
+| Settlement | `HostStats.Missed` is already serialized to chain (`common/chain/tx/encode.go:86`, `state.proto` field 2). |
 | Late validation votes | `applyValidation` / `applyValidationVote` status gates already reject or no-op post-terminal records. |
 | State root | Vote content is not part of the root, so `ErrorMissVoteContent.response_hash` moves no hash. New sessions get different roots only because they carry a new protocol tag (see rollout), which is inherent to shipping under a new approved name. |
 
@@ -680,14 +680,14 @@ tokens are not an escape hatch.
 
 All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
 
-1. **Let the path run.** `shouldRunHandleTimeout` returns false for any finished
+1. **Let the path run.** `shouldRunHandleTimeoutOn` returns false for any finished
    nonce. Exception: run when `errorMissEnabledFor(inf)` (`errorTerminal`) even
    if the nonce finished. `runHandleTimeout(errorMiss)` calls `HandleErrorMiss`,
    not `HandleTimeout`.
 2. **Keep reading the SSE body through `devshard_meta`.** After a terminal
    error envelope (and `[DONE]`), `parseSSEResponse` must not stop. The host
    still emits `devshard_meta` with the signed Finish. Stopping at the error
-   leaves `inf.resp.Mempool` empty, `errorMissRunnable` false, and the path
+   leaves `inf.resp.Mempool` empty, `errorMissOutcome` reports no Finish, and the path
    never votes. OpenAI `data:` chunks are unsigned; only
    `MsgFinishInference.ProposerSig` over `sha256(stored body)` is evidence.
 3. **No Finish → no miss.** If the stream ends at EOF with no signed Finish,

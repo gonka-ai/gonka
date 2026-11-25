@@ -23,6 +23,7 @@ import (
 
 	json "github.com/goccy/go-json"
 
+	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/jsonshape"
@@ -40,6 +41,21 @@ import (
 )
 
 var sharedTransports sync.Map // baseURL -> *http.Transport
+
+// upstreamRequestFaults are the errors a host reports for a diff it could not apply. See race.md, "The outcome".
+var upstreamRequestFaults = []error{
+	bridge.ErrEscrowNotFound,
+	types.ErrInvalidNonce,
+	types.ErrNonceLimitExceeded,
+	types.ErrInsufficientBalance,
+	types.ErrSessionFinalizing,
+	types.ErrPromptHashMismatch,
+	types.ErrPayloadMismatch,
+	types.ErrPostStateRootMismatch,
+	types.ErrStateHashMismatch,
+	types.ErrEscrowIDMismatch,
+	types.ErrInvalidInferenceID,
+}
 
 func getTransport(baseURL string) *http.Transport {
 	if t, ok := sharedTransports.Load(baseURL); ok {
@@ -73,8 +89,7 @@ func transportAddress(baseURL string) string {
 	return strings.TrimSpace(baseURL)
 }
 
-// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event read by the gateway transport client.
-// A host that does not stream writes its whole response, forced logprobs included, as one line, so an event may be as large as the largest body served.
+// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event read by the transport client.
 const DefaultMaxSSEEventBytes = MaxJSONResponseBytes
 
 // DefaultMaxSSEStreamBytes caps what one inference stream may decode to.
@@ -146,7 +161,8 @@ type ClientConfig struct {
 	// DEVSHARD_RPC_MAX_CONNS_PER_PEER or DefaultRPCMaxConnsPerPeer.
 	RPCMaxConnsPerPeer int
 	// RPCAdoption is the gateway adoption tracker. Nil on hosts.
-	RPCAdoption *PeerRPCAdoption
+	RPCAdoption          *PeerRPCAdoption
+	ChatCompressMinBytes int
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -256,6 +272,20 @@ func IsUpstreamEscrowNotFound(err error) bool {
 	}
 	return ue.StatusCode == http.StatusInternalServerError &&
 		strings.Contains(ue.Body, "escrow not found")
+}
+
+// IsUpstreamRequestFault reports a 5xx that blames what the gateway sent rather than the host, which must not be penalised for it.
+func IsUpstreamRequestFault(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) || ue.StatusCode < http.StatusInternalServerError {
+		return false
+	}
+	for _, fault := range upstreamRequestFaults {
+		if strings.Contains(ue.Body, fault.Error()) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsSessionNotFound reports a host that does not hold the escrow at all, as
@@ -621,7 +651,18 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
-	return HostResponseFromJSON(respJSON)
+	response, err := HostResponseFromJSON(respJSON)
+	if err != nil {
+		return nil, err
+	}
+	// An unacknowledged attempt is a refused one to everything downstream, so a host that answers JSON
+	// is read as never having started: its timeout is voted as a refusal against a record the chain
+	// already advanced, and every verifier rejects that. The SSE path fires on devshard_receipt; here
+	// the whole response is the acknowledgement.
+	if receiptHandler != nil {
+		receiptHandler(response)
+	}
+	return response, nil
 }
 
 // parseSSEResponse reads an SSE stream and extracts protocol receipt/meta events.

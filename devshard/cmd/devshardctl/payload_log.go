@@ -195,7 +195,7 @@ func collectFailureResponseBody(inf *inflight) ([]byte, bool) {
 		return []byte(upstream.Body), false
 	}
 	if len(inf.errorBodySample) > 0 {
-		// Holds one complete SSE error event, appended once and never capped.
+		// Holds the read that carried the first SSE error event, appended once and never capped.
 		return append([]byte(nil), inf.errorBodySample...), false
 	}
 	if inf.emptyResponseBodySample != "" {
