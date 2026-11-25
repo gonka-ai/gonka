@@ -39,7 +39,7 @@ func (o *PhaseObserver) chainReadContext(ctx context.Context) (context.Context, 
 }
 
 func (o *PhaseObserver) fetchEpochInfo(ctx context.Context) (epochInfo, error) {
-	return readPublicAPIOrChain(ctx, o, o.fetchEpochInfoFromAPI, o.fallbackEpochInfo)
+	return readWithFallback(ctx, o, o.fetchEpochInfoFromAPI, o.fallbackEpochInfo)
 }
 
 func (o *PhaseObserver) fallbackEpochInfo(ctx context.Context) (epochInfo, error) {
@@ -59,7 +59,7 @@ func (o *PhaseObserver) fetchEpochInfoFromAPI(ctx context.Context) (epochInfo, e
 }
 
 func (o *PhaseObserver) fetchParticipants(ctx context.Context) (chainCurrentParticipantsResponse, error) {
-	return readPublicAPIOrChain(ctx, o, o.fetchParticipantsFromAPI, o.fallbackParticipants)
+	return readWithFallback(ctx, o, o.fetchParticipantsFromAPI, o.fallbackParticipants)
 }
 
 func (o *PhaseObserver) fallbackParticipants(ctx context.Context) (chainCurrentParticipantsResponse, error) {
@@ -74,15 +74,18 @@ func (o *PhaseObserver) fetchParticipantsFromAPI(ctx context.Context) (chainCurr
 	return decodeParticipants(body)
 }
 
-func readPublicAPIOrChain[T any](ctx context.Context, o *PhaseObserver, fromAPI, fromChain func(context.Context) (T, error)) (T, error) {
-	var zero T
+func readWithFallback[T any](ctx context.Context, o *PhaseObserver, fromAPI, fromChain func(context.Context) (T, error)) (T, error) {
 	if o.fallback == nil {
 		return fromAPI(ctx)
 	}
-	if o.publicAPIThrottled() {
-		if payload, err := readChain(ctx, o, fromChain); err == nil {
+	var chainErr error
+	chainAsked := o.publicAPIThrottled()
+	if chainAsked {
+		payload, err := readChain(ctx, o, fromChain)
+		if err == nil {
 			return payload, nil
 		}
+		chainErr = err
 		o.publicAPIBackoffUntil = time.Time{}
 	}
 	payload, apiErr := fromAPI(ctx)
@@ -92,11 +95,14 @@ func readPublicAPIOrChain[T any](ctx context.Context, o *PhaseObserver, fromAPI,
 	if isPublicAPIThrottle(apiErr) {
 		o.publicAPIBackoffUntil = o.now().Add(publicAPIThrottleBackoff)
 	}
-	payload, chainErr := readChain(ctx, o, fromChain)
-	if chainErr != nil {
-		return zero, fmt.Errorf("public API: %w; chain fallback: %w", apiErr, chainErr)
+	if !chainAsked {
+		payload, chainErr = readChain(ctx, o, fromChain)
+		if chainErr == nil {
+			return payload, nil
+		}
 	}
-	return payload, nil
+	var none T
+	return none, fmt.Errorf("public API: %w; chain fallback: %w", apiErr, chainErr)
 }
 
 func readChain[T any](ctx context.Context, o *PhaseObserver, read func(context.Context) (T, error)) (T, error) {

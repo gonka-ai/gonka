@@ -9,7 +9,6 @@ const (
 	participantsCacheMaxAge      = 10 * time.Minute
 	participantsUnverifiedMaxAge = time.Minute
 	participantsRefetchNow       = time.Duration(0)
-	effectiveEpochUnknown        = uint64(0)
 )
 
 type participantsCache struct {
@@ -37,20 +36,20 @@ func (c *participantsCache) store(payload chainCurrentParticipantsResponse, epoc
 }
 
 func participantsEpoch(epoch epochInfo) uint64 {
-	if epoch.EffectiveEpochIndex == effectiveEpochUnknown {
+	if epoch.EffectiveEpochIndex == EpochIndexUnknown {
 		return epoch.EpochIndex
 	}
 	return epoch.EffectiveEpochIndex
 }
 
-func (o *PhaseObserver) participantsFor(ctx context.Context, effectiveEpoch uint64) (chainCurrentParticipantsResponse, error) {
-	if o.participants.holds(effectiveEpoch, o.now()) {
+func (o *PhaseObserver) participantsFor(ctx context.Context, epoch uint64) (chainCurrentParticipantsResponse, error) {
+	if o.participants.holds(epoch, o.now()) {
 		return o.participants.payload, nil
 	}
 	payload, err := o.fetchParticipants(ctx)
 	if err != nil {
 		return chainCurrentParticipantsResponse{}, err
 	}
-	o.participants.store(payload, effectiveEpoch, o.now())
+	o.participants.store(payload, epoch, o.now())
 	return payload, nil
 }

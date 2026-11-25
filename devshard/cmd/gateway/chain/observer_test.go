@@ -145,6 +145,18 @@ func (s *phaseObserverStub) preservedHitCount() int {
 	return s.preservedHits
 }
 
+func (s *phaseObserverStub) epochHitCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.epochHits
+}
+
+func (s *phaseObserverStub) participantsHitCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.participantsHits
+}
+
 func (s *phaseObserverStub) maxNonceHitCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -259,7 +271,11 @@ func observerPreservedSnapshot(anchorHeight int64) *PreservedNodes {
 // gateway with no chain access, and refresh is driven directly by the tests, never via Start.
 func newPoCPhaseObserver(t *testing.T, server *httptest.Server, chainReader Reader) *PhaseObserver {
 	t.Helper()
-	clock := newFakeClock(time.Unix(100, 0))
+	return newClockedObserver(t, server, chainReader, newFakeClock(time.Unix(100, 0)))
+}
+
+func newClockedObserver(t *testing.T, server *httptest.Server, chainReader Reader, clock *fakeClock) *PhaseObserver {
+	t.Helper()
 	cfg := ObserverConfig{
 		PublicAPIBaseURL: server.URL,
 		PollInterval:     time.Hour,
