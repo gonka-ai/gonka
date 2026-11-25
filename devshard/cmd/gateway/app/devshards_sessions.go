@@ -51,7 +51,7 @@ func chainBackedSessions(records devshardLookup, storageDir string) sessionSourc
 			return chainSources{}, errors.Join(err, follower.Close())
 		}
 		escrowBridge := bridge.NewGRPCBridge(chainClient)
-		headerTimes := heights.NewHeaderTimes(follower, chainClient)
+		headerTimes := heights.NewHeaderTimes(follower, chainClient, heights.CommitVerifiedOracle(endpoints.GRPCEndpoint, endpoints.RPCEndpoint))
 		return chainSources{
 			Serving:    servingSessions(records, storageDir, escrowBridge, heightSettings, follower, headerTimes, governance, routePrefix, adoption, steps),
 			ReadOnly:   readOnlySessions(records, storageDir, headerTimes),

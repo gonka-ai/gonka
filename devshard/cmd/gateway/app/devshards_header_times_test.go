@@ -2,13 +2,19 @@ package app
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"common/chainoracle/blocks"
 
 	"devshard/bridge"
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/heights"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -44,6 +50,36 @@ func (times *recordedBlockTimes) askedFor(height uint64) bool {
 	times.mu.Lock()
 	defer times.mu.Unlock()
 	return slices.Contains(times.asked, height)
+}
+
+type healthyRPCOracle struct {
+	blocks.BlockOracle
+	hash  []byte
+	mu    sync.Mutex
+	asked []uint64
+}
+
+func (rpc *healthyRPCOracle) AtWait(_ context.Context, height int64, _ time.Duration) (*blocks.Header, error) {
+	rpc.mu.Lock()
+	rpc.asked = append(rpc.asked, uint64(height))
+	rpc.mu.Unlock()
+	return &blocks.Header{Height: height, BlockHash: rpc.hash, Time: time.UnixMilli(height * headerTimeBlockMs)}, nil
+}
+
+func (rpc *healthyRPCOracle) askedFor(height uint64) bool {
+	rpc.mu.Lock()
+	defer rpc.mu.Unlock()
+	return slices.Contains(rpc.asked, height)
+}
+
+type downGRPCOracle struct {
+	blocks.BlockOracle
+	calls atomic.Int64
+}
+
+func (grpc *downGRPCOracle) HeaderAtWait(context.Context, int64, time.Duration) (*blocks.Header, error) {
+	grpc.calls.Add(1)
+	return nil, errors.New("chain grpc is unavailable")
 }
 
 type headerTimeFixture struct {
@@ -197,5 +233,52 @@ func TestAReadOnlySessionRaisesTheFloorThroughItsHeaderTimeSource(t *testing.T) 
 	}
 	if !times.askedFor(headerTimeFloorHeight) {
 		t.Fatalf("the read-only session never asked its source for height %d", headerTimeFloorHeight)
+	}
+}
+
+// Test flow:
+//  1. Open a serving session over a header time source whose RPC oracle is healthy and whose gRPC oracle always fails, then raise the floor with a host ack.
+//  2. Close it and reopen the serving session over a fresh source built the same way, as a restarted gateway would, and raise the floor to the next height.
+//  3. Close that and open a read-only session over a third fresh source, and raise the floor once more.
+//  4. Assert each session holds the height it raised, each source asked its own RPC oracle for that height, and the gRPC oracle was never called.
+func TestSessionsOpenAndReopenWithChainGRPCDownAndRPCHealthy(t *testing.T) {
+	fixture := newHeaderTimeFixture(t)
+	hash := []byte{0xaa}
+	grpc := &downGRPCOracle{}
+	raiseFloorAndCheck := func(machine *state.StateMachine, rpc *healthyRPCOracle, height uint64) {
+		t.Helper()
+		fixture.raiseFloor(t, machine, height, hash)
+		floor, _, known := machine.HeightSyncFloorAsOf(machine.LatestNonce() + 1)
+		if !known || floor != height {
+			t.Fatalf("floor = %d, known = %v, want %d", floor, known, height)
+		}
+		if !rpc.askedFor(height) {
+			t.Fatalf("the source never asked the RPC oracle for height %d", height)
+		}
+	}
+	firstRPC := &healthyRPCOracle{hash: hash}
+	first := fixture.openServing(t, heights.NewHeaderTimes(&heights.Oracle{BlockOracle: grpc}, nil, firstRPC))
+	raiseFloorAndCheck(first.StateMachine(), firstRPC, headerTimeFloorHeight)
+	if err := first.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+
+	secondRPC := &healthyRPCOracle{hash: hash}
+	second := fixture.openServing(t, heights.NewHeaderTimes(&heights.Oracle{BlockOracle: grpc}, nil, secondRPC))
+	raiseFloorAndCheck(second.StateMachine(), secondRPC, headerTimeFloorHeight+1)
+	if err := second.Close(); err != nil {
+		t.Fatalf("Close() = %v, want nil", err)
+	}
+
+	thirdRPC := &healthyRPCOracle{hash: hash}
+	readOnly, err := readOnlySessions(fixture.rows, fixture.storageRoot, heights.NewHeaderTimes(&heights.Oracle{BlockOracle: grpc}, nil, thirdRPC))(context.Background(), headerTimeEscrowID)
+	if err != nil {
+		t.Fatalf("read-only session open = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = readOnly.Close() })
+	raiseFloorAndCheck(readOnly.UserSession().StateMachine(), thirdRPC, headerTimeFloorHeight+2)
+
+	if calls := grpc.calls.Load(); calls != 0 {
+		t.Fatalf("the gRPC oracle was called %d times, want 0", calls)
 	}
 }
