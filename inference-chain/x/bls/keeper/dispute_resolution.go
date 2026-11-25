@@ -166,6 +166,9 @@ func (k Keeper) verifyDealerComplaintResponse(epochBLSData *types.EpochBLSData, 
 
 	share := &fr.Element{}
 	share.SetBytes(complaint.ResponseShareBytes)
+	if share.IsZero() {
+		return false, nil
+	}
 	validShare, err := k.verifyShareAgainstCommitmentsBlst(share, slotIndex, dealerPart.Commitments)
 	if err != nil {
 		return false, nil
@@ -259,6 +262,9 @@ func (r *deterministicSeedReader) Read(p []byte) (int, error) {
 }
 
 func (k Keeper) verifyShareAgainstCommitmentsBlst(share *fr.Element, slotIndex uint32, commitments [][]byte) (bool, error) {
+	if share == nil || share.IsZero() {
+		return false, nil
+	}
 	if len(commitments) == 0 {
 		return false, fmt.Errorf("no commitments provided")
 	}
@@ -294,6 +300,9 @@ func (k Keeper) verifyShareAgainstCommitmentsBlst(share *fr.Element, slotIndex u
 	}
 
 	expectedCommitment := blst.P2AffinesMult(points, scalars, 255).ToAffine()
+	if !expectedCommitment.KeyValidate() {
+		return false, nil
+	}
 	shareBytes := share.Bytes()
 	for i := 0; i < 16; i++ {
 		shareBytes[i], shareBytes[31-i] = shareBytes[31-i], shareBytes[i]

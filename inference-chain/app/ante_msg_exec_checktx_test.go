@@ -5,8 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"cosmossdk.io/math"
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
@@ -16,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/app"
+	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -437,4 +440,111 @@ func TestPocVoterEligibility_AuthorizedMsgExecMixedModelMatchesDirect(t *testing
 	_, onlyBExec := signCheckTx(t, f, []sdk.Msg{&execOnlyB}, f.grantee, f.granteeKey)
 	require.NotEqual(t, uint32(0), onlyBExec.Code)
 	require.Contains(t, onlyBExec.Log, "signer has no voting power for any submitted model in stage snapshot")
+}
+
+func TestBlsDealerAttemptCap_RealAppCheckTxAndFinalizeBlock(t *testing.T) {
+	f := setupMsgExecCheckTx(t, true)
+
+	const epochID = uint64(42)
+	writeCtx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	require.NoError(t, f.testApp.BlsKeeper.SetEpochBLSData(writeCtx, blstypes.EpochBLSData{
+		EpochId:                   epochID,
+		ITotalSlots:               2,
+		TSlotsDegree:              1,
+		DkgPhase:                  blstypes.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: f.testApp.LastBlockHeight() + 10,
+		Participants: []blstypes.BLSParticipantInfo{
+			{
+				Address:          f.granter.String(),
+				PercentageWeight: math.LegacyNewDec(100),
+				SlotStartIndex:   0,
+				SlotEndIndex:     1,
+			},
+		},
+	}))
+	_, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+		Height: f.testApp.LastBlockHeight() + 1,
+		Time:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	// Polynomial f(x) = -2 + x has valid Schnorr proofs and non-zero constant
+	// term, but evaluates to 0 at slot 1 (x = 2), so SubmitDealerPart rejects.
+	var c0, c1 fr.Element
+	c0.SetUint64(2)
+	c0.Neg(&c0)
+	c1.SetOne()
+	commit0, proof0, err := blstypes.BuildCommitmentKnowledgeProof(TallyTestChainID, epochID, f.granter.String(), 0, &c0)
+	require.NoError(t, err)
+	commit1, proof1, err := blstypes.BuildCommitmentKnowledgeProof(TallyTestChainID, epochID, f.granter.String(), 1, &c1)
+	require.NoError(t, err)
+	share := make([]byte, blstypes.HonestEncryptedShareCiphertextLen)
+	share[0] = 0x04
+	trapMsg := &blstypes.MsgSubmitDealerPart{
+		Creator:          f.granter.String(),
+		EpochId:          epochID,
+		Commitments:      [][]byte{commit0, commit1},
+		CommitmentProofs: []blstypes.CommitmentKnowledgeProof{proof0, proof1},
+		EncryptedSharesForParticipants: []blstypes.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{share, share}},
+		},
+	}
+
+	signWithSeq := func(seq uint64) []byte {
+		acc := f.testApp.AccountKeeper.GetAccount(f.testApp.NewContext(true), f.granter)
+		require.NotNil(t, acc)
+		tx, genErr := simtestutil.GenSignedMockTx(
+			rand.New(rand.NewSource(int64(seq+1))),
+			f.testApp.TxConfig(),
+			[]sdk.Msg{trapMsg},
+			sdk.NewCoins(),
+			2_000_000,
+			TallyTestChainID,
+			[]uint64{acc.GetAccountNumber()},
+			[]uint64{seq},
+			f.granterKey,
+		)
+		require.NoError(t, genErr)
+		bz, encErr := f.testApp.TxConfig().TxEncoder()(tx)
+		require.NoError(t, encErr)
+		return bz
+	}
+
+	baseSeq := f.testApp.AccountKeeper.GetAccount(f.testApp.NewContext(true), f.granter).GetSequence()
+	txs := [][]byte{
+		signWithSeq(baseSeq),
+		signWithSeq(baseSeq + 1),
+		signWithSeq(baseSeq + 2),
+		signWithSeq(baseSeq + 3),
+	}
+
+	// All 4 signed txs stuffed into one block: #1..#3 fail inside SubmitDealerPart
+	// (slot root) while committing their ante attempt count; #4 is stopped in ante.
+	finResp, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+		Height: f.testApp.LastBlockHeight() + 1,
+		Time:   time.Now().UTC(),
+		Txs:    txs,
+	})
+	require.NoError(t, err)
+	require.Len(t, finResp.TxResults, 4)
+	for i := 0; i < 3; i++ {
+		require.NotEqual(t, uint32(0), finResp.TxResults[i].Code)
+		require.Contains(t, finResp.TxResults[i].Log, "evaluates to identity at slot 1")
+	}
+	require.NotEqual(t, uint32(0), finResp.TxResults[3].Code)
+	require.Contains(t, finResp.TxResults[3].Log, "max dealer part attempts")
+
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	// Subsequent CheckTx is also rejected before mempool admission.
+	_, checkResp := signCheckTx(t, f, []sdk.Msg{trapMsg}, f.granter, f.granterKey)
+	require.NotEqual(t, uint32(0), checkResp.Code)
+	require.Contains(t, checkResp.Log, "max dealer part attempts")
 }

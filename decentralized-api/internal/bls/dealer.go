@@ -90,6 +90,15 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 		return fmt.Errorf("failed to parse t_slots_degree: %w", err)
 	}
 
+	var chainID string
+	if chainIDStrs, ok := event.Result.Events["inference.bls.EventKeyGenerationInitiated.chain_id"]; ok && len(chainIDStrs) > 0 {
+		unquotedChainID, err := utils.UnquoteEventValue(chainIDStrs[0])
+		if err != nil {
+			return fmt.Errorf("failed to unquote chain_id: %w", err)
+		}
+		chainID = unquotedChainID
+	}
+
 	logging.Debug("Processing DKG key generation initiated", inferenceTypes.BLS,
 		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "dealer", bm.cosmosClient.GetAddress())
 
@@ -118,7 +127,7 @@ func (bm *BlsManager) ProcessKeyGenerationInitiated(event *chainevents.JSONRPCRe
 		"epochID", epochID, "participantCount", len(participants))
 
 	// Generate dealer part
-	dealerPart, err := bm.generateDealerPart(epochID, uint32(totalSlots), uint32(tDegree), participants)
+	dealerPart, err := bm.generateDealerPart(chainID, epochID, uint32(totalSlots), uint32(tDegree), participants)
 	if err != nil {
 		return fmt.Errorf("failed to generate dealer part: %w", err)
 	}
@@ -190,7 +199,7 @@ func (bm *BlsManager) parseParticipantsFromEvent(event *chainevents.JSONRPCRespo
 }
 
 // generateDealerPart generates the dealer's contribution to the DKG
-func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uint32, participants []ParticipantInfo) (*types.MsgSubmitDealerPart, error) {
+func (bm *BlsManager) generateDealerPart(chainID string, epochID uint64, totalSlots, tDegree uint32, participants []ParticipantInfo) (*types.MsgSubmitDealerPart, error) {
 	logging.Debug("Generating dealer part", inferenceTypes.BLS,
 		"epochID", epochID, "totalSlots", totalSlots, "tDegree", tDegree, "participantCount", len(participants))
 
@@ -213,14 +222,24 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 		allowedPubKeysByParticipant[i] = allowedPubKeys
 	}
 
-	// Generate secret BLS polynomial Poly_k(x) of degree tDegree
-	polynomial, err := generateRandomPolynomial(tDegree)
+	// Generate secret BLS polynomial Poly_k(x) of degree tDegree with non-zero constant term and non-zero slot shares
+	polynomial, err := generateNonZeroSlotPolynomial(tDegree, totalSlots)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate random polynomial: %w", err)
 	}
 
-	// Compute public commitments to coefficients (C_kj = g * a_kj, G2 points)
-	commitments := computeG2CommitmentsBlst(polynomial)
+	// Compute public commitments and a domain-separated Schnorr proof for every coefficient.
+	dealerAddress := bm.cosmosClient.GetAddress()
+	commitments := make([][]byte, len(polynomial))
+	commitmentProofs := make([]types.CommitmentKnowledgeProof, len(polynomial))
+	for i, coefficient := range polynomial {
+		commitment, proof, err := types.BuildCommitmentKnowledgeProof(chainID, epochID, dealerAddress, uint32(i), coefficient)
+		if err != nil {
+			return nil, fmt.Errorf("failed to build commitment knowledge proof %d: %w", i, err)
+		}
+		commitments[i] = commitment
+		commitmentProofs[i] = proof
+	}
 
 	// Create encrypted shares for participants using deterministic array indexing.
 	encryptedSharesForParticipants := make([]types.EncryptedSharesForParticipant, len(participants))
@@ -286,9 +305,10 @@ func (bm *BlsManager) generateDealerPart(epochID uint64, totalSlots, tDegree uin
 	}
 
 	dealerPart := &types.MsgSubmitDealerPart{
-		Creator:                        bm.cosmosClient.GetAddress(),
+		Creator:                        dealerAddress,
 		EpochId:                        epochID,
 		Commitments:                    commitments,
+		CommitmentProofs:               commitmentProofs,
 		EncryptedSharesForParticipants: encryptedSharesForParticipants,
 	}
 
@@ -314,6 +334,30 @@ func generateRandomPolynomial(degree uint32) ([]*fr.Element, error) {
 		coefficients[i] = coeff
 	}
 	return coefficients, nil
+}
+
+func generateNonZeroSlotPolynomial(degree, totalSlots uint32) ([]*fr.Element, error) {
+	const maxAttempts = 16
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		polynomial, err := generateRandomPolynomial(degree)
+		if err != nil {
+			return nil, err
+		}
+		if len(polynomial) == 0 || polynomial[0] == nil || polynomial[0].IsZero() {
+			continue
+		}
+		hasZeroSlot := false
+		for slotIndex := uint32(0); slotIndex < totalSlots; slotIndex++ {
+			if evaluatePolynomial(polynomial, slotIndex+1).IsZero() {
+				hasZeroSlot = true
+				break
+			}
+		}
+		if !hasZeroSlot {
+			return polynomial, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to sample polynomial without zero constant or slot shares after %d attempts", maxAttempts)
 }
 
 // computeG2Commitments computes G2 commitments for polynomial coefficients

@@ -876,23 +876,29 @@ func TestBLSKeyGeneration_EndToEndOffCurveRegression(t *testing.T) {
 
 		// Generate polynomial commitments and submit dealer parts for all participants.
 		commitmentCount := int(epochData.TSlotsDegree) + 1
-		_, _, _, g2Gen := bls12381.Generators()
 		dealerCoeffs := make([][]fr.Element, len(epochData.Participants))
 		totalCoeffs := make([]fr.Element, commitmentCount)
 
 		for dealerIdx, dealer := range epochData.Participants {
 			dealerCoeffs[dealerIdx] = make([]fr.Element, commitmentCount)
 			commitments := make([][]byte, commitmentCount)
+			commitmentProofs := make([]blstypes.CommitmentKnowledgeProof, commitmentCount)
 			for cIdx := 0; cIdx < commitmentCount; cIdx++ {
 				var coeff fr.Element
 				coeff.SetUint64(seedOffset + uint64(dealerIdx*commitmentCount+cIdx+1))
 				dealerCoeffs[dealerIdx][cIdx] = coeff
 				totalCoeffs[cIdx].Add(&totalCoeffs[cIdx], &coeff)
 
-				var g2Point bls12381.G2Affine
-				g2Point.ScalarMultiplication(&g2Gen, coeff.BigInt(new(big.Int)))
-				g2Bytes := g2Point.Bytes()
-				commitments[cIdx] = g2Bytes[:]
+				commitmentBytes, proof, err := blstypes.BuildCommitmentKnowledgeProof(
+					ctx.ChainID(),
+					epochID,
+					dealer.Address,
+					uint32(cIdx),
+					&coeff,
+				)
+				require.NoError(t, err)
+				commitments[cIdx] = commitmentBytes
+				commitmentProofs[cIdx] = proof
 			}
 
 			encryptedShares := make([]blstypes.EncryptedSharesForParticipant, len(epochData.Participants))
@@ -918,6 +924,7 @@ func TestBLSKeyGeneration_EndToEndOffCurveRegression(t *testing.T) {
 				EpochId:                        epochID,
 				Commitments:                    commitments,
 				EncryptedSharesForParticipants: encryptedShares,
+				CommitmentProofs:               commitmentProofs,
 			})
 			require.NoError(t, err)
 		}

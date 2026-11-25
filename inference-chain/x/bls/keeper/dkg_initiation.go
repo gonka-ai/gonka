@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"sort"
 
@@ -9,6 +10,7 @@ import (
 	"cosmossdk.io/store/prefix"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 
 	"github.com/productscience/inference/x/bls/types"
 )
@@ -19,6 +21,13 @@ import (
 func (k Keeper) dealerPartsStore(ctx sdk.Context, epochID uint64) prefix.Store {
 	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
 	return prefix.NewStore(store, types.DealerPartEpochPrefix(epochID))
+}
+
+// dealerPartAttemptsStore returns a prefix.Store scoped to per-participant
+// MsgSubmitDealerPart attempt counters for a single epoch.
+func (k Keeper) dealerPartAttemptsStore(ctx sdk.Context, epochID uint64) prefix.Store {
+	store := runtime.KVStoreAdapter(k.storeService.OpenKVStore(ctx))
+	return prefix.NewStore(store, types.DealerPartAttemptsEpochPrefix(epochID))
 }
 
 // verificationSubmissionsStore returns a prefix.Store scoped to all
@@ -141,6 +150,9 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 	}
 
 	// Store the EpochBLSData
+	if err := k.DeleteDealerPartAttemptsForEpoch(ctx, epochID); err != nil {
+		return fmt.Errorf("failed to clear dealer attempts for epoch %d: %w", epochID, err)
+	}
 	if err := k.SetEpochBLSData(ctx, epochBLSData); err != nil {
 		return fmt.Errorf("failed to store epoch %d BLS data: %w", epochID, err)
 	}
@@ -154,6 +166,7 @@ func (k Keeper) InitiateKeyGenerationForEpoch(ctx sdk.Context, epochID uint64, f
 		ITotalSlots:  iTotalSlots,
 		TSlotsDegree: tSlotsDegree,
 		Participants: blsParticipants,
+		ChainId:      ctx.ChainID(),
 	}
 
 	if err := ctx.EventManager().EmitTypedEvent(&event); err != nil {
@@ -467,6 +480,146 @@ func (k Keeper) DeleteDealerPartsForEpoch(ctx sdk.Context, epochID uint64) error
 
 	for _, key := range keysToDelete {
 		dealerStore.Delete(key)
+	}
+	return k.DeleteDealerPartAttemptsForEpoch(ctx, epochID)
+}
+
+// GetEpochBLSDataBase reads the epoch metadata record without rehydrating
+// dealer parts, verification submissions, or complaints.
+func (k Keeper) GetEpochBLSDataBase(ctx sdk.Context, epochID uint64) (types.EpochBLSData, error) {
+	store := k.storeService.OpenKVStore(ctx)
+	value, err := store.Get(types.EpochBLSDataKey(epochID))
+	if err != nil {
+		return types.EpochBLSData{}, err
+	}
+	if value == nil {
+		return types.EpochBLSData{}, types.ErrEpochBLSDataNotFound
+	}
+
+	var epochBLSData types.EpochBLSData
+	if err := k.cdc.Unmarshal(value, &epochBLSData); err != nil {
+		return types.EpochBLSData{}, err
+	}
+	return epochBLSData, nil
+}
+
+// HasSubmittedDealerPart reports whether participantIndex already has a stored
+// dealer part in epochID (either inline on a pre-split record or under its sub-key).
+func (k Keeper) HasSubmittedDealerPart(ctx sdk.Context, epochID uint64, epochBLSData *types.EpochBLSData, participantIndex int) (bool, error) {
+	if epochBLSData != nil && participantIndex >= 0 && participantIndex < len(epochBLSData.DealerParts) {
+		inline := epochBLSData.DealerParts[participantIndex]
+		if inline != nil && inline.DealerAddress != "" {
+			return true, nil
+		}
+	}
+	stored, err := k.GetDealerPart(ctx, epochID, uint32(participantIndex))
+	if err != nil {
+		return false, err
+	}
+	return stored != nil && stored.DealerAddress != "", nil
+}
+
+// GetDealerPartAttempts returns the recorded MsgSubmitDealerPart attempt count
+// for participantIndex in epochID.
+func (k Keeper) GetDealerPartAttempts(ctx sdk.Context, epochID uint64, participantIndex uint32) (uint32, error) {
+	bz := k.dealerPartAttemptsStore(ctx, epochID).Get(types.DealerPartSubKey(participantIndex))
+	if len(bz) == 0 {
+		return 0, nil
+	}
+	if len(bz) != 4 {
+		return 0, fmt.Errorf("invalid dealer part attempts value length %d", len(bz))
+	}
+	return binary.BigEndian.Uint32(bz), nil
+}
+
+// SetDealerPartAttempts writes the MsgSubmitDealerPart attempt count for
+// participantIndex in epochID.
+func (k Keeper) SetDealerPartAttempts(ctx sdk.Context, epochID uint64, participantIndex uint32, attempts uint32) {
+	var buf [4]byte
+	binary.BigEndian.PutUint32(buf[:], attempts)
+	k.dealerPartAttemptsStore(ctx, epochID).Set(types.DealerPartSubKey(participantIndex), buf[:])
+}
+
+// DeleteDealerPartAttemptsForEpoch clears all per-participant dealer attempt
+// counters for epochID once dealing ends or DKG state is reset.
+func (k Keeper) DeleteDealerPartAttemptsForEpoch(ctx sdk.Context, epochID uint64) error {
+	attemptsStore := k.dealerPartAttemptsStore(ctx, epochID)
+	it := attemptsStore.Iterator(nil, nil)
+
+	var keysToDelete [][]byte
+	for ; it.Valid(); it.Next() {
+		keysToDelete = append(keysToDelete, append([]byte(nil), it.Key()...))
+	}
+	it.Close()
+
+	for _, key := range keysToDelete {
+		attemptsStore.Delete(key)
+	}
+	return nil
+}
+
+// CheckAndRecordDealerPartAttempt enforces cheap dealing preconditions and the
+// governed per-participant attempt cap before heavy BLS verification runs.
+// When recordAttempt is true, the participant's attempt counter for msg.EpochId
+// is incremented in the current context's store branch.
+func (k Keeper) CheckAndRecordDealerPartAttempt(ctx sdk.Context, msg *types.MsgSubmitDealerPart, recordAttempt bool) error {
+	if msg == nil {
+		return sdkerrors.ErrInvalidRequest.Wrap("dealer part message is nil")
+	}
+
+	epochBLSData, err := k.GetEpochBLSDataBase(ctx, msg.EpochId)
+	if err != nil {
+		return sdkerrors.ErrInvalidRequest.Wrapf("failed to get epoch %d BLS data: %v", msg.EpochId, err)
+	}
+	if epochBLSData.DkgPhase != types.DKGPhase_DKG_PHASE_DEALING {
+		return sdkerrors.ErrInvalidRequest.Wrapf("DKG for epoch %d is not in dealing phase (current phase: %s)", msg.EpochId, epochBLSData.DkgPhase.String())
+	}
+	if ctx.BlockHeight() > epochBLSData.DealingPhaseDeadlineBlock {
+		return sdkerrors.ErrInvalidRequest.Wrapf("dealing phase deadline has passed for epoch %d", msg.EpochId)
+	}
+
+	participantIndex := -1
+	for i, participant := range epochBLSData.Participants {
+		if participant.Address == msg.Creator {
+			participantIndex = i
+			break
+		}
+	}
+	if participantIndex == -1 {
+		return sdkerrors.ErrUnauthorized.Wrapf("creator %s is not a participant in epoch %d", msg.Creator, msg.EpochId)
+	}
+
+	alreadySubmitted, err := k.HasSubmittedDealerPart(ctx, msg.EpochId, &epochBLSData, participantIndex)
+	if err != nil {
+		return sdkerrors.ErrInvalidRequest.Wrapf("failed to check dealer part for epoch %d participant %d: %v", msg.EpochId, participantIndex, err)
+	}
+	if alreadySubmitted {
+		return sdkerrors.ErrInvalidRequest.Wrapf("participant %s has already submitted dealer part for epoch %d", msg.Creator, msg.EpochId)
+	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return sdkerrors.ErrInvalidRequest.Wrapf("failed to get BLS params: %v", err)
+	}
+	if params.MaxDealerAttemptsPerEpoch == 0 {
+		return sdkerrors.ErrInvalidRequest.Wrap("max_dealer_attempts_per_epoch is not set")
+	}
+
+	attempts, err := k.GetDealerPartAttempts(ctx, msg.EpochId, uint32(participantIndex))
+	if err != nil {
+		return sdkerrors.ErrInvalidRequest.Wrap(err.Error())
+	}
+	if attempts >= params.MaxDealerAttemptsPerEpoch {
+		return sdkerrors.ErrInvalidRequest.Wrapf(
+			"participant %s has reached max dealer part attempts (%d) for epoch %d",
+			msg.Creator,
+			params.MaxDealerAttemptsPerEpoch,
+			msg.EpochId,
+		)
+	}
+
+	if recordAttempt {
+		k.SetDealerPartAttempts(ctx, msg.EpochId, uint32(participantIndex), attempts+1)
 	}
 	return nil
 }

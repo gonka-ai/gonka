@@ -455,3 +455,35 @@ func TestRecomputeAggregatedSharesFromConsensusValidDealers_MismatchNoChange(t *
 	blsManager.recomputeAggregatedSharesFromConsensusValidDealers(result)
 	assert.Equal(t, before, result.AggregatedShares[0].String())
 }
+
+func TestVerifyShareAgainstCommitmentsBlst_RejectsZeroShareRootTrap(t *testing.T) {
+	blsManager := NewBlsManager(createMockCosmosClient())
+
+	// f(x) = -1 + x evaluates to 0 at slot 0 (x = 1).
+	var negOne, one, zero fr.Element
+	one.SetOne()
+	negOne.Neg(&one)
+	commitments := computeG2CommitmentsBlst([]*fr.Element{&negOne, &one})
+
+	valid, err := blsManager.verifyShareAgainstCommitmentsBlst(&zero, 0, commitments)
+	assert.NoError(t, err)
+	assert.False(t, valid, "zero share at polynomial root must be rejected")
+
+	// A zero share cannot be signed as a valid proof. That is a local failure,
+	// not dealer-fault evidence, so the ballot is aborted unchanged.
+	result := &VerificationResult{
+		EpochID:          462,
+		ParticipantIndex: 0,
+		SlotRange:        [2]uint32{0, 0},
+		DealerValidity:   []bool{true, true},
+		DealerShares: [][]fr.Element{
+			{one},
+			{zero},
+		},
+	}
+	proofs, err := blsManager.buildDealerValidityProofs(462, result)
+	assert.Nil(t, proofs)
+	assert.ErrorContains(t, err, "failed to construct dealer validity proof for dealer 1")
+	assert.Equal(t, []bool{true, true}, result.DealerValidity)
+	assert.Empty(t, result.ComplaintEvidence)
+}

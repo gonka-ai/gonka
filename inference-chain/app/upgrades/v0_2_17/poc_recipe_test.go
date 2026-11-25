@@ -6,6 +6,7 @@ import (
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	keepertest "github.com/productscience/inference/testutil/keeper"
+	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +42,7 @@ func TestUpgradeFreezesActiveEpochRecipe(t *testing.T) {
 			require.NoError(t, err)
 			require.False(t, found)
 
-			handler := CreateUpgradeHandler(module.NewManager(), module.NewConfigurator(nil, nil, nil), k)
+			handler := CreateUpgradeHandler(module.NewManager(), module.NewConfigurator(nil, nil, nil), k, k.BlsKeeper.(blskeeper.Keeper))
 			_, err = handler(ctx, upgradetypes.Plan{Name: UpgradeName}, module.VersionMap{"capability": 1})
 			require.NoError(t, err)
 			recipe, found, err := k.GetEpochPocRecipe(ctx, 5)

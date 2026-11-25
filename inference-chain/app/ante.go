@@ -42,6 +42,7 @@ type HandlerOptions struct {
 	TXCounterStoreService corestoretypes.KVStoreService
 	CircuitKeeper         *circuitkeeper.Keeper
 	InferenceKeeper       *inferencemodulekeeper.Keeper
+	BlsKeeper             BlsDealerAttemptKeeper
 	Codec                 codec.Codec
 	AuthzKeeper           AuthzAuthorizationKeeper
 }
@@ -382,6 +383,9 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// Bridge early-reject after sig verification: group membership / bridge-state
 		// reads must not run on unauthenticated txs.
 		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
+		// Per-(epoch, participant) attempt ceiling on MsgSubmitDealerPart before
+		// handler crypto runs; ante state commits even if SubmitDealerPart rejects.
+		NewBlsDealerAttemptDecorator(options.BlsKeeper, options.Codec, options.AuthzKeeper),
 		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
@@ -406,6 +410,7 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 			NodeConfig:            &nodeConfig,
 			WasmKeeper:            &app.WasmKeeper,
 			InferenceKeeper:       &app.InferenceKeeper,
+			BlsKeeper:             &app.BlsKeeper,
 			Codec:                 app.appCodec,
 			AuthzKeeper:           &app.AuthzKeeper,
 			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),

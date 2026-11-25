@@ -57,6 +57,17 @@ message MsgUpdateParams {
 // MsgUpdateParams message.
 message MsgUpdateParamsResponse {}
 
+// CommitmentKnowledgeProof is a Schnorr proof that the dealer knows the scalar
+// behind one polynomial commitment: R = k·G and z = k + c·a, with
+// c = H(domain, chain_id, epoch, dealer, index, commitment, R).
+message CommitmentKnowledgeProof {
+  // nonce_point is the compressed G2 point R = k·G (96 bytes)
+  bytes nonce_point = 1;
+
+  // response is the 32-byte big-endian scalar z = k + c·a
+  bytes response = 2;
+}
+
 // MsgSubmitDealerPart is the message for submitting dealer parts during the dealing phase
 message MsgSubmitDealerPart {
   option (cosmos.msg.v1.signer) = "creator";
@@ -74,6 +85,10 @@ message MsgSubmitDealerPart {
   // encrypted_shares_for_participants contains encrypted shares for all participants in order
   // Index i = shares for EpochBLSData.participants[i]
   repeated EncryptedSharesForParticipant encrypted_shares_for_participants = 4 [(gogoproto.nullable) = false];
+
+  // commitment_proofs proves knowledge of the scalar behind each commitment.
+  // Index i proves commitments[i].
+  repeated CommitmentKnowledgeProof commitment_proofs = 5 [(gogoproto.nullable) = false];
 }
 
 // MsgSubmitDealerPartResponse defines the response structure for executing a
