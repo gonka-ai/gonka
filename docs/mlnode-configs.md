@@ -29,7 +29,7 @@ These values apply to PREFILL work, including when it runs on a `decode-max` pre
 
 - GLM-5.3-Flash: 16 on 8×H100 (8 with `decode-max`), 16 on H200, 32 on B200/B300
   (16 with `decode-max`). A batch of 64 crashes the model.
-- DeepSeek-V4-Flash: 16 on 4×H100; 64 with the NVFP4 `prefill-max` preset.
+- DeepSeek-V4-Flash: 16 on 4×H100.
 - MiniMax-M2.7 `prefill-max`: 96 on B200/B300; 32 on H100/H200.
 - Other configurations: 32.
 
