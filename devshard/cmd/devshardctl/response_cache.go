@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
-	"devshard/internal/jsonshape"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -319,14 +318,11 @@ type choiceCompletion struct {
 	seen     map[string]struct{}
 	finished map[string]struct{}
 	sawError bool
-	overflow bool
 	done     bool
 }
 
 func (s *choiceCompletion) reason() string {
 	switch {
-	case s.overflow:
-		return "incomplete"
 	case len(s.seen) == 0 && s.sawError:
 		return ""
 	case len(s.seen) == 0:
@@ -390,37 +386,30 @@ func (s *choiceCompletion) ingest(payload []byte) {
 	if normalized, replaced := replaceNonFiniteNumbers(payload); replaced {
 		payload = normalized
 	}
-	if !json.Valid(payload) || s.overflow {
+	var event struct {
+		Choices []struct {
+			Index        json.RawMessage `json:"index"`
+			FinishReason json.RawMessage `json:"finish_reason"`
+			StopReason   json.RawMessage `json:"stop_reason"`
+		} `json:"choices"`
+	}
+	if err := json.Unmarshal(payload, &event); err != nil {
 		return
 	}
-	jsonshape.Array(jsonshape.FieldFold(payload, "choices"), func(choice []byte) bool {
-		if !jsonshape.IsObject(choice) && !bytes.Equal(choice, []byte("null")) {
-			return true
-		}
-		rawIndex := jsonshape.FieldFold(choice, "index")
-		if len(rawIndex) > 128 {
-			s.overflow = true
-			return false
-		}
-		index := string(rawIndex)
+	if s.seen == nil {
+		s.seen = make(map[string]struct{})
+		s.finished = make(map[string]struct{})
+	}
+	for _, choice := range event.Choices {
+		index := string(bytes.TrimSpace(choice.Index))
 		if index == "" {
 			index = "0"
 		}
-		if s.seen == nil {
-			s.seen = make(map[string]struct{})
-			s.finished = make(map[string]struct{})
-		}
-		if _, exists := s.seen[index]; !exists && len(s.seen) >= aggregateMaxChoicesPerEvent {
-			s.overflow = true
-			return false
-		}
 		s.seen[index] = struct{}{}
-		stop := jsonshape.FieldFold(choice, "stop_reason")
-		if terminalString(jsonshape.FieldFold(choice, "finish_reason")) || terminalString(stop) || jsonNumber(stop) {
+		if terminalString(choice.FinishReason) || terminalString(choice.StopReason) || jsonNumber(choice.StopReason) {
 			s.finished[index] = struct{}{}
 		}
-		return true
-	})
+	}
 }
 
 // finish_reason is terminal only as a non-empty string; stop_reason may also be

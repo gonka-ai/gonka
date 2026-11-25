@@ -211,7 +211,40 @@ func sseChunkErrorPayload(p []byte) (sseErrorDetails, []byte, bool) {
 		if !ok {
 			continue
 		}
-		if details, found := jsonErrorPayloadDetails(payload); found {
+		var evt struct {
+			Error *struct {
+				Type    string `json:"type"`
+				Code    any    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+			Object  string `json:"object"`
+			Type    string `json:"type"`
+			Code    any    `json:"code"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal(payload, &evt); err != nil {
+			continue
+		}
+		if evt.Error != nil {
+			details := sseErrorDetails{
+				Type:    evt.Error.Type,
+				Code:    fmt.Sprint(evt.Error.Code),
+				Message: evt.Error.Message,
+			}
+			if evt.Error.Code == nil {
+				details.Code = ""
+			}
+			return details, append([]byte(nil), payload...), true
+		}
+		if evt.Object == "error" && evt.Message != "" {
+			details := sseErrorDetails{
+				Type:    evt.Type,
+				Code:    fmt.Sprint(evt.Code),
+				Message: evt.Message,
+			}
+			if evt.Code == nil {
+				details.Code = ""
+			}
 			return details, append([]byte(nil), payload...), true
 		}
 	}
@@ -884,7 +917,6 @@ type inflight struct {
 	pendingBuf []byte
 
 	pendingReserved         int
-	pendingShapeRejected    atomic.Bool
 	preludeOverflow         atomic.Bool
 	preludePressure         atomic.Bool
 	pendingOwner            atomic.Int32
@@ -1518,9 +1550,6 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 	// One pass answers both: a chunk carries a couple of tokens, so judging only the first would miss an
 	// answer that merely opens with a numeric one, and asking twice would decode the same event twice.
 	scan := scanSSEChunk(parseable)
-	if scan.RejectedShape && rw.rejectPendingShape() {
-		return false, false
-	}
 	if !rw.inf.logprobsDecoded && scan.LogprobsFound {
 		rw.inf.logprobsDecoded = scan.LogprobsDecoded
 	}
@@ -1553,24 +1582,6 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 	return hasContent, hasError
 }
 
-func (rw *raceWriter) rejectPendingShape() bool {
-	rg, inf := rw.group, rw.inf
-	rg.mu.Lock()
-	if rg.winner == rw.nonce {
-		rg.mu.Unlock()
-		return false
-	}
-	inf.pendingShapeRejected.Store(true)
-	delete(rg.holdCandidates, rw.nonce)
-	rg.mu.Unlock()
-
-	inf.releasePendingBuf()
-	rw.dropClassify()
-	rw.clearErrorStreamRetention()
-	logInferenceStage(rg.logCtx, inf.escrowID, rw.nonce, "pending_response_shape_rejected", "host", inf.hostID)
-	return true
-}
-
 // flushClassify classifies a newline-less final SSE event left in classifyPartial
 // once the stream ends, so a truncated tail isn't misread as empty_stream.
 func (rw *raceWriter) flushClassify() {
@@ -1589,9 +1600,6 @@ func (rw *raceWriter) flushClassify() {
 		rw.inf.usageComplTokens.Store(tokens)
 	}
 	hasContent, hasError := rw.classifyParseable(rw.inf.classifyPartial)
-	if rw.inf.pendingShapeRejected.Load() {
-		return
-	}
 	rw.retainErrorStreamLines(rw.inf.classifyPartial)
 	rw.dropClassify()
 	if hasContent || hasError {
@@ -1748,7 +1756,7 @@ func (inf *inflight) meanChunkGap() time.Duration {
 }
 
 func (rw *raceWriter) Write(p []byte) (int, error) {
-	if rw.inf.preludeOverflow.Load() || rw.inf.pendingShapeRejected.Load() {
+	if rw.inf.preludeOverflow.Load() {
 		return len(p), nil
 	}
 	now := time.Now()
@@ -1782,9 +1790,6 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	if !rw.inf.probe {
 		parseable := rw.takeParseable(p)
 		chunkHasContent, chunkHasError = rw.classifyParseable(parseable)
-		if rw.inf.pendingShapeRejected.Load() {
-			return len(p), nil
-		}
 		rw.retainErrorStreamLines(parseable)
 		// Track completion_tokens so isModelBurnEmpty can tell stripped-
 		// content empties from no-tokens-generated empties.
@@ -2055,8 +2060,7 @@ func releasePendingBufs(attempts []*inflight) {
 }
 
 func (inf *inflight) pendingBufPromotable() bool {
-	return inf != nil && inf.suspicious && !inf.preludeOverflow.Load() &&
-		!inf.pendingShapeRejected.Load() && inf.contentChunks.Load() > 0
+	return inf != nil && inf.suspicious && !inf.preludeOverflow.Load() && inf.contentChunks.Load() > 0
 }
 
 func (inf *inflight) releasePendingBufUnlessPromotable() {
@@ -2436,16 +2440,6 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		inf.markEnded(time.Now())
-		streamEmpty := false
-		if inf.err == nil && !inf.preludeOverflow.Load() {
-			streamEmpty = rw.flushClassifyAndCheckEmpty()
-		}
-		if inf.pendingShapeRejected.Load() && inf.err == nil {
-			if e.session != nil && bindsReceivedStream(inf) {
-				e.session.BindReceivedStream(inf.nonce, inf.resp.ReceivedResponseHashes)
-			}
-			inf.err = ErrAggregateFoldTooLarge
-		}
 		if inf.preludeOverflow.Load() {
 			inf.err = errPendingPreludeTooLarge
 			if inf.preludePressure.Load() {
@@ -2488,7 +2482,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		// stream_bytes_read > 0 but output_chunks == 0 because only devshard
 		// receipt/meta events were parsed and no inference data was forwarded to
 		// the race writer.
-		if streamEmpty {
+		if rw.flushClassifyAndCheckEmpty() {
 			responseBodySample, responseSampleTruncated := bodySampleForLog(inf.pendingBuf, emptyStreamBodySampleLimit)
 			inf.emptyResponseBodySample = responseBodySample
 			inf.emptyResponseBodySampleTruncated = responseSampleTruncated
@@ -4278,8 +4272,7 @@ func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool
 	if inf == nil {
 		return false
 	}
-	return !inf.pendingShapeRejected.Load() && inf.resp != nil && inf.resp.ConfirmedAt > 0 &&
-		!isEmptyStreamAttempt(inf) && session != nil && session.IsNonceFinished(inf.nonce)
+	return inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isEmptyStreamAttempt(inf) && session != nil && session.IsNonceFinished(inf.nonce)
 }
 
 // deliveredWholeAnswer reports an attempt whose answer reached the caller intact: it returned, carried
@@ -4304,8 +4297,7 @@ func isDiscardedOverflowAttempt(inf *inflight) bool {
 }
 
 func isFailedStreamAttempt(inf *inflight) bool {
-	return (inf != nil && inf.pendingShapeRejected.Load()) ||
-		isDiscardedOverflowAttempt(inf) || isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
+	return isDiscardedOverflowAttempt(inf) || isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
 }
 
 func (e *Redundancy) markPhaseTransitionAbort(inf *inflight) bool {
@@ -4424,11 +4416,6 @@ func clientVisibleAllAttemptsFailedError(attempts []*inflight, winnerNonce uint6
 	if undeclared := undeclaredVersionErrorFromAttempts(attempts); undeclared != nil {
 		return undeclared
 	}
-	for _, inf := range attempts {
-		if inf != nil && !inf.probe && !inflightStillSending(inf) && errors.Is(inf.err, ErrAggregateFoldTooLarge) {
-			return ErrAggregateFoldTooLarge
-		}
-	}
 	return nil
 }
 
@@ -4459,7 +4446,7 @@ func inflightFinished(inf *inflight) bool {
 // We gate on receiptTime being set so attempts that never even confirmed
 // receipt fall through to the upstream error/timeout path instead.
 func isEmptyStreamAttempt(inf *inflight) bool {
-	if inf == nil || inf.probe || inf.endedByGateway.Load() || inf.pendingShapeRejected.Load() {
+	if inf == nil || inf.probe || inf.endedByGateway.Load() {
 		return false
 	}
 	if !inf.hasReceipt() {

@@ -4,17 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"sync/atomic"
 
 	"common/completionapi"
-	"devshard/internal/jsonshape"
 )
-
-var streamingDroppedShapeTotal atomic.Uint64
-
-var streamingEventShapeLimits = foldEventShapeLimits
 
 // clientResponseIntent is what the client asked for in fields a host answers with regardless; zero keeps nothing.
 type clientResponseIntent struct {
@@ -76,7 +69,7 @@ type rewriteMessage struct {
 }
 
 type rewriteLogprobs struct {
-	Content json.RawMessage `json:"content"`
+	Content []rewriteLogprob `json:"content"`
 }
 
 type rewriteLogprob struct {
@@ -95,25 +88,13 @@ type rewriteLogprob struct {
 // chat.completion.chunk events for the client. The synthetic role chunk exists
 // only in that streaming rewrite.
 func rewriteStreamingPayload(p []byte, intent clientResponseIntent) []byte {
-	out, _ := rewriteStreamingPayloadChecked(p, intent)
-	return out
-}
-
-func rewriteStreamingPayloadChecked(p []byte, intent clientResponseIntent) ([]byte, error) {
-	var shapeErr error
-	needsCompletionRewrite := bytes.Contains(p, []byte(`"message"`))
-	needsInternalFieldsFilter := containsAnyInternalField(p) || bytes.Contains(p, []byte(`\u`))
+	needsCompletionRewrite := bytes.Contains(p, []byte(`data: {`)) && bytes.Contains(p, []byte(`"message"`))
+	needsInternalFieldsFilter := containsAnyInternalField(p)
 	needsUsageStrip := !intent.keepUsage && bytes.Contains(p, []byte(`"usage"`))
-
-	if bytes.Count(p, []byte("\n\n")) <= 1 && !needsCompletionRewrite && !needsInternalFieldsFilter && !needsUsageStrip {
-		payload, ok := sseEventData(bytes.TrimRight(p, "\r\n"))
-		if !ok || payload[0] != '{' {
-			return p, nil
-		}
-		if _, err := jsonshape.Check(payload, streamingEventShapeLimits); err == nil {
-			return p, nil
-		}
+	if !needsCompletionRewrite && !needsInternalFieldsFilter && !needsUsageStrip {
+		return p
 	}
+
 	var out bytes.Buffer
 	changed := false
 	for _, eventChunk := range bytes.SplitAfter(p, []byte("\n\n")) {
@@ -125,42 +106,29 @@ func rewriteStreamingPayloadChecked(p []byte, intent clientResponseIntent) ([]by
 			out.Write(eventChunk)
 			continue
 		}
-		payload, ok := sseEventData(event)
-		if !ok || payload[0] != '{' {
+		if bytes.Equal(event, []byte("data: [DONE]")) || !bytes.HasPrefix(event, []byte("data: {")) {
 			out.Write(eventChunk)
 			continue
 		}
-		if _, err := jsonshape.Check(payload, streamingEventShapeLimits); err != nil {
-			streamingDroppedShapeTotal.Add(1)
-			shapeErr = fmt.Errorf("%w: %w", ErrAggregateFoldTooLarge, err)
-			changed = true
-			break
-		}
-		if needsCompletionRewrite && bytes.Contains(payload, []byte(`"message"`)) {
-			rewritten, err := rewriteStreamingDataEvent(payload, intent)
-			if err != nil {
-				streamingDroppedShapeTotal.Add(1)
-				shapeErr = err
-				changed = true
-				break
+		payload := bytes.TrimSpace(event[len("data: "):])
+		if bytes.Contains(payload, []byte(`"message"`)) {
+			completion := payload
+			if !intent.keepUsage {
+				if stripped, ok := stripUsageChunk(payload); ok {
+					if stripped == nil {
+						changed = true
+						continue
+					}
+					completion = stripped
+				}
 			}
-			if rewritten != nil {
+			if rewritten, ok := rewriteStreamingDataEvent(completion, intent); ok {
 				changed = true
 				out.Write(rewritten)
 				continue
 			}
 		}
-		if !needsInternalFieldsFilter && !needsUsageStrip {
-			out.Write(eventChunk)
-			continue
-		}
-		filtered, err := filterClientEvent(payload, intent)
-		if err != nil {
-			streamingDroppedShapeTotal.Add(1)
-			shapeErr = err
-			changed = true
-			break
-		}
+		filtered := filterClientEvent(payload, intent)
 		if filtered == nil {
 			changed = true
 			continue
@@ -173,35 +141,18 @@ func rewriteStreamingPayloadChecked(p []byte, intent clientResponseIntent) ([]by
 		out.Write(eventChunk)
 	}
 	if !changed {
-		return p, nil
+		return p
 	}
-	return out.Bytes(), shapeErr
+	return out.Bytes()
 }
 
-func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]byte, error) {
-	if _, err := jsonshape.Check(payload, foldEventShapeLimits); err != nil {
-		return nil, fmt.Errorf("%w: %w", ErrAggregateFoldTooLarge, err)
-	}
-	if !json.Valid(payload) {
-		return nil, nil
-	}
-	choicesWithinLimit := true
-	jsonshape.Object(payload, func(key, value []byte) bool {
-		if jsonshape.KeyEqualFold(key, "choices") {
-			_, err := jsonshape.Check(value, jsonshape.Limits{RootMembers: aggregateMaxChoicesPerEvent})
-			choicesWithinLimit = err == nil
-		}
-		return choicesWithinLimit
-	})
-	if !choicesWithinLimit {
-		return nil, ErrAggregateFoldTooLarge
-	}
+func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]byte, bool) {
 	var resp streamingRewritePayload
 	if err := json.Unmarshal(payload, &resp); err != nil {
-		return nil, nil
+		return nil, false
 	}
 	if len(resp.Choices) == 0 {
-		return nil, nil
+		return nil, false
 	}
 	convertible := false
 	for _, choice := range resp.Choices {
@@ -211,10 +162,9 @@ func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]b
 		}
 	}
 	if !convertible {
-		return nil, nil
+		return nil, false
 	}
 
-	maxOutput := 4*len(payload) + (8 << 20)
 	var out bytes.Buffer
 	for _, choice := range resp.Choices {
 		if choice.Message == nil {
@@ -224,68 +174,20 @@ func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]b
 			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"role": role}, nil, nil, nil)
 		}
 
+		tokens := []rewriteLogprob(nil)
 		if choice.Logprobs != nil {
-			tokens := choice.Logprobs.Content
-			repeatedBytes := len(resp.ID) + len(resp.Model) + len(resp.SystemFingerprint)
-			stop := bytes.TrimSpace(choice.StopReason)
-			if !bytes.Equal(stop, []byte("null")) {
-				repeatedBytes += len(stop)
+			tokens = choice.Logprobs.Content
+		}
+		if len(tokens) > 0 {
+			for i, token := range tokens {
+				delta := map[string]any{"content": token.Token}
+				var finish *string
+				if i == len(tokens)-1 {
+					finish = choice.FinishReason
+				}
+				writeStreamingChunkEvent(&out, resp, choice.Index, delta, finish, choice.StopReason, reconstructChunkLogprobs(token, intent))
 			}
-			if repeatedBytes > 0 {
-				limit := (maxOutput - out.Len()) / repeatedBytes
-				if limit <= 0 {
-					return nil, ErrAggregateFoldTooLarge
-				}
-				if _, err := jsonshape.Check(tokens, jsonshape.Limits{RootMembers: limit}); err != nil {
-					return nil, fmt.Errorf("%w: %w", ErrAggregateFoldTooLarge, err)
-				}
-			}
-			var previous rewriteLogprob
-			hasToken := false
-			var tokenErr error
-			jsonshape.Array(tokens, func(raw []byte) bool {
-				if hasToken {
-					writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"content": previous.Token}, nil, choice.StopReason, reconstructChunkLogprobs(previous, intent))
-				}
-				previous = rewriteLogprob{}
-				if intent.keepLogprobs {
-					_, err := jsonshape.Check(raw, jsonshape.Limits{Nodes: aggregateMaxValueNodes})
-					if err != nil {
-						tokenErr = fmt.Errorf("%w: %w", ErrAggregateFoldTooLarge, err)
-						return false
-					}
-					if err := json.Unmarshal(raw, &previous); err != nil {
-						tokenErr = err
-						return false
-					}
-					for _, top := range previous.TopLogprobs {
-						stripClientInternalFields(top, internalStrippedFields)
-					}
-				} else if rawToken := jsonshape.FieldFold(raw, "token"); len(rawToken) > 0 {
-					if err := json.Unmarshal(rawToken, &previous.Token); err != nil {
-						tokenErr = err
-						return false
-					}
-				}
-				hasToken = true
-				if out.Len() > maxOutput {
-					tokenErr = ErrAggregateFoldTooLarge
-				}
-				return tokenErr == nil
-			})
-			if tokenErr != nil {
-				if errors.Is(tokenErr, ErrAggregateFoldTooLarge) {
-					return nil, tokenErr
-				}
-				return nil, nil
-			}
-			if hasToken {
-				writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"content": previous.Token}, choice.FinishReason, choice.StopReason, reconstructChunkLogprobs(previous, intent))
-				if out.Len() > maxOutput {
-					return nil, ErrAggregateFoldTooLarge
-				}
-				continue
-			}
+			continue
 		}
 
 		if choice.Message.Content != "" {
@@ -297,7 +199,7 @@ func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]b
 	}
 
 	trimmedUsage := bytes.TrimSpace(resp.Usage)
-	if intent.keepUsage && len(trimmedUsage) > 0 && !bytes.Equal(trimmedUsage, []byte("null")) {
+	if len(trimmedUsage) > 0 && !bytes.Equal(trimmedUsage, []byte("null")) {
 		evt := map[string]any{
 			"id":      resp.ID,
 			"object":  "chat.completion.chunk",
@@ -314,10 +216,7 @@ func rewriteStreamingDataEvent(payload []byte, intent clientResponseIntent) ([]b
 			fmt.Fprintf(&out, "data: %s\n\n", b)
 		}
 	}
-	if out.Len() > maxOutput {
-		return nil, ErrAggregateFoldTooLarge
-	}
-	return out.Bytes(), nil
+	return out.Bytes(), true
 }
 
 func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, index int, delta map[string]any, finishReason *string, stopReason json.RawMessage, logprobs any) {
@@ -389,6 +288,57 @@ func (intent clientResponseIntent) strippedFields() []string {
 	return fields
 }
 
+// emptyTopLogprobs blanks every top_logprobs array, OpenAI's shape for logprobs without alternatives.
+func emptyTopLogprobs(v any) bool {
+	switch typed := v.(type) {
+	case map[string]any:
+		changed := false
+		if existing, ok := typed["top_logprobs"]; ok {
+			if arr, isArr := existing.([]any); !isArr || len(arr) > 0 {
+				typed["top_logprobs"] = []any{}
+				changed = true
+			}
+		}
+		for _, child := range typed {
+			if emptyTopLogprobs(child) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, child := range typed {
+			if emptyTopLogprobs(child) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
+}
+
+// stripUsageChunk returns nil when the event goes entirely: a chunk left with no choices is one a
+// client that never asked for usage cannot read.
+func stripUsageChunk(payload []byte) ([]byte, bool) {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return payload, false
+	}
+	if _, carries := decoded["usage"]; !carries {
+		return payload, false
+	}
+	delete(decoded, "usage")
+	if choices, _ := decoded["choices"].([]any); len(choices) == 0 {
+		return nil, true
+	}
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return payload, false
+	}
+	return out, true
+}
+
 func containsAnyInternalField(p []byte) bool {
 	return bytes.Contains(p, []byte(`"logprob`)) ||
 		bytes.Contains(p, []byte(`"token_ids"`)) ||
@@ -396,50 +346,54 @@ func containsAnyInternalField(p []byte) bool {
 		bytes.Contains(p, []byte(`"prompt_token_ids"`))
 }
 
-func filterClientInternalFields(payload []byte, intent clientResponseIntent) ([]byte, error) {
-	out, _, err := rewriteClientFields(payload, intent, false)
-	return out, err
-}
-
-func filterClientEvent(payload []byte, intent clientResponseIntent) ([]byte, error) {
-	out, hadUsage, err := rewriteClientFields(payload, intent, !intent.keepUsage)
+func filterClientInternalFields(payload []byte, intent clientResponseIntent) []byte {
+	var v any
+	if err := json.Unmarshal(payload, &v); err != nil {
+		return payload
+	}
+	if !stripClientFields(v, intent) {
+		return payload
+	}
+	out, err := json.Marshal(v)
 	if err != nil {
-		return nil, err
+		return payload
 	}
-	if hadUsage {
-		choices := bytes.TrimSpace(jsonshape.Field(out, "choices"))
-		if len(choices) < 2 || choices[0] != '[' || len(bytes.TrimSpace(choices[1:len(choices)-1])) == 0 {
-			return nil, nil
-		}
-	}
-	return out, nil
+	return out
 }
 
-func rewriteClientFields(payload []byte, intent clientResponseIntent, stripUsage bool) ([]byte, bool, error) {
-	fields := intent.strippedFields()
-	hadUsage := false
-	out, _, err := jsonshape.Rewrite(payload, func(key []byte, depth int) (string, bool) {
-		if stripUsage && depth == 1 && jsonshape.KeyEqual(key, "usage") {
-			hadUsage = true
-			return "", true
-		}
-		for _, name := range fields {
-			if jsonshape.KeyEqual(key, name) {
-				return "", true
-			}
-		}
-		if intent.keepLogprobs && !intent.keepTopLogprobs && jsonshape.KeyEqual(key, "top_logprobs") {
-			return "[]", true
-		}
-		return "", false
-	})
-	switch {
-	case errors.Is(err, jsonshape.ErrInvalid):
-		return payload, false, nil
-	case err != nil:
-		return nil, false, fmt.Errorf("%w: %w", ErrAggregateFoldTooLarge, err)
+// filterClientEvent is stripUsageChunk and filterClientInternalFields over one decode; nil drops the event.
+func filterClientEvent(payload []byte, intent clientResponseIntent) []byte {
+	var decoded map[string]any
+	if err := json.Unmarshal(payload, &decoded); err != nil {
+		return payload
 	}
-	return out, hadUsage, nil
+	changed := false
+	if _, carries := decoded["usage"]; carries && !intent.keepUsage {
+		delete(decoded, "usage")
+		if choices, _ := decoded["choices"].([]any); len(choices) == 0 {
+			return nil
+		}
+		changed = true
+	}
+	if stripClientFields(decoded, intent) {
+		changed = true
+	}
+	if !changed {
+		return payload
+	}
+	out, err := json.Marshal(decoded)
+	if err != nil {
+		return payload
+	}
+	return out
+}
+
+func stripClientFields(document any, intent clientResponseIntent) bool {
+	changed := stripClientInternalFields(document, intent.strippedFields())
+	if intent.keepLogprobs && !intent.keepTopLogprobs && emptyTopLogprobs(document) {
+		changed = true
+	}
+	return changed
 }
 
 func stripClientInternalFields(v any, fields []string) bool {

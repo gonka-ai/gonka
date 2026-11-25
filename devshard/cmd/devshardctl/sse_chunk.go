@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"devshard/internal/jsonshape"
+	"common/completionapi"
 )
 
 // sseChunkMessage is the half of a choice that can carry something a client renders, in both the
@@ -16,10 +16,19 @@ type sseChunkMessage struct {
 	ToolCalls        json.RawMessage `json:"tool_calls"`
 }
 
-type sseChunkChoice struct {
-	FinishReason string          `json:"finish_reason"`
-	Delta        sseChunkMessage `json:"delta"`
-	Message      sseChunkMessage `json:"message"`
+// sseChunkEvent is every field the classifier reads from one event, so a chunk is decoded once rather
+// than once per question asked of it. Logprobs keeps completionapi's type for its UnmarshalJSON, which
+// normalizes the chat `content` and completions `tokens` shapes the way the validator normalizes them.
+type sseChunkEvent struct {
+	Choices []struct {
+		FinishReason string                       `json:"finish_reason"`
+		Delta        sseChunkMessage              `json:"delta"`
+		Message      sseChunkMessage              `json:"message"`
+		Logprobs     completionapi.ChoiceLogprobs `json:"logprobs"`
+	} `json:"choices"`
+	Usage struct {
+		CompletionTokens int `json:"completion_tokens"`
+	} `json:"usage"`
 }
 
 // sseChunkScan is what one pass over a chunk answers. The scan keeps walking after it has a content
@@ -27,7 +36,6 @@ type sseChunkChoice struct {
 type sseChunkScan struct {
 	ContentSource   string
 	HasContent      bool
-	RejectedShape   bool
 	LogprobsFound   bool
 	LogprobsDecoded bool
 }
@@ -44,48 +52,24 @@ func scanSSEChunk(p []byte) sseChunkScan {
 		if !ok {
 			continue
 		}
-		if !json.Valid(data) {
+		var event sseChunkEvent
+		if err := json.Unmarshal(data, &event); err != nil {
 			continue
 		}
-		if !hostEventWithinLimits(data) {
-			scan.RejectedShape = true
-			continue
-		}
-		var choices, usage []byte
-		jsonshape.Object(data, func(key, value []byte) bool {
-			switch {
-			case jsonshape.KeyEqualFold(key, "choices"):
-				choices = value
-			case jsonshape.KeyEqualFold(key, "usage"):
-				usage = value
-			}
-			return true
-		})
-		jsonshape.Array(choices, func(raw []byte) bool {
-			if !jsonshape.IsObject(raw) || len(raw) == 2 {
-				return true
-			}
-			var choice sseChunkChoice
-			if err := json.Unmarshal(raw, &choice); err != nil {
-				return true
-			}
+		for _, choice := range event.Choices {
 			if !scan.HasContent {
 				if source, found := choiceContentSource(choice.Delta, "delta"); found {
 					scan.ContentSource, scan.HasContent = source, true
 				} else if source, found := choiceContentSource(choice.Message, "message"); found {
 					scan.ContentSource, scan.HasContent = source, true
-				} else if choice.FinishReason == "stop" {
-					var tokens int
-					if json.Unmarshal(jsonshape.FieldFold(usage, "completion_tokens"), &tokens) == nil && tokens > 0 {
-						scan.ContentSource, scan.HasContent = "message.empty_stop_completion_tokens", true
-					}
+				} else if choice.FinishReason == "stop" && event.Usage.CompletionTokens > 0 {
+					scan.ContentSource, scan.HasContent = "message.empty_stop_completion_tokens", true
 				}
 			}
 			if !scan.LogprobsDecoded {
-				judgeLogprobs(jsonshape.FieldFold(raw, "logprobs"), &scan)
+				judgeLogprobs(choice.Logprobs, &scan)
 			}
-			return !scan.HasContent || !scan.LogprobsDecoded
-		})
+		}
 	}
 	return scan
 }
@@ -110,46 +94,20 @@ func choiceContentSource(message sseChunkMessage, shape string) (string, bool) {
 // replays the inference from these ids; text cannot be replayed, so it votes the answer invalid and the
 // host loses the reward. Every token and every alternative is inspected, because the validator rejects
 // on the first one of either it cannot replay.
-func judgeLogprobs(logprobs []byte, scan *sseChunkScan) {
-	if len(logprobs) == 0 {
-		return
-	}
-	check := func(raw []byte) bool {
-		var token string
-		if len(raw) > 0 && json.Unmarshal(raw, &token) != nil {
-			return false
-		}
+func judgeLogprobs(logprobs completionapi.ChoiceLogprobs, scan *sseChunkScan) {
+	for _, token := range logprobs.Content {
 		scan.LogprobsFound = true
-		scan.LogprobsDecoded = !isTokenID(token)
-		return !scan.LogprobsDecoded
-	}
-	if content := jsonshape.Field(logprobs, "content"); len(content) > 0 {
-		jsonshape.Array(content, func(token []byte) bool {
-			if !check(jsonshape.FieldFold(token, "token")) {
-				return false
-			}
-			jsonshape.Array(jsonshape.FieldFold(token, "top_logprobs"), func(alt []byte) bool {
-				return check(jsonshape.FieldFold(alt, "token"))
-			})
-			return !scan.LogprobsDecoded
-		})
-		return
-	}
-	jsonshape.Array(jsonshape.FieldFold(logprobs, "tokens"), check)
-	if !scan.LogprobsFound || scan.LogprobsDecoded {
-		return
-	}
-	jsonshape.Array(jsonshape.FieldFold(logprobs, "top_logprobs"), func(alts []byte) bool {
-		jsonshape.Object(alts, func(key, _ []byte) bool {
-			var token string
-			quoted := append(append([]byte{'"'}, key...), '"')
-			if json.Unmarshal(quoted, &token) == nil && !isTokenID(token) {
+		if !isTokenID(token.Token) {
+			scan.LogprobsDecoded = true
+			return
+		}
+		for _, alternative := range token.TopLogprobs {
+			if !isTokenID(alternative.Token) {
 				scan.LogprobsDecoded = true
+				return
 			}
-			return !scan.LogprobsDecoded
-		})
-		return !scan.LogprobsDecoded
-	})
+		}
+	}
 }
 
 // sseChunkHasContent reports whether the given bytes contain at least one SSE data event carrying a
