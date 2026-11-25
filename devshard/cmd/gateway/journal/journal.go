@@ -13,7 +13,6 @@ import (
 	"devshard/types"
 )
 
-// See README.md, "Order and the locks it takes".
 const (
 	defaultMoneyCeiling    = 100_000
 	defaultProgressBacklog = 8_192
@@ -72,7 +71,6 @@ type Journal struct {
 	lateEvents      uint64
 }
 
-// gatewayLog writes through devshard/logging, so internal/logcapture sees every line.
 type gatewayLog struct{}
 
 func (gatewayLog) Info(msg string, keyvals ...any)  { logging.Info(msg, keyvals...) }
@@ -221,7 +219,6 @@ func raceStepKind(kind engine.RaceStepKind) Kind {
 	}
 }
 
-// emit admits one event to its lane and never waits. See README.md, "Two lanes".
 func (j *Journal) emit(entry queuedEvent) {
 	j.mu.Lock()
 	switch moneyLane := entry.kind.onMoneyLane(); {
@@ -252,12 +249,10 @@ func (j *Journal) emit(entry queuedEvent) {
 	j.mu.Unlock()
 }
 
-// emitLine queues a lifecycle line written outside a race; its kind picks the lane. See README.md, "Lifecycle lines outside a race".
 func (j *Journal) emitLine(kind Kind, render func(lines logSink)) {
 	j.emit(queuedEvent{kind: kind, render: render})
 }
 
-// run is the only goroutine that reaches the ledger, so the ledger sees events in the order they were accepted.
 func (j *Journal) run() {
 	defer close(j.done)
 	for {
@@ -280,7 +275,6 @@ func (j *Journal) run() {
 	}
 }
 
-// takeBatch waits for events or an unwritten drop and swaps the queue out, so producers keep appending while a batch is delivered.
 func (j *Journal) takeBatch() (batch []queuedEvent, skipped uint64, open bool) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -295,7 +289,6 @@ func (j *Journal) takeBatch() (batch []queuedEvent, skipped uint64, open bool) {
 	return batch, skipped, true
 }
 
-// finishBatch releases the batch from its lanes only now, so a lane bounds what is accepted and not yet delivered.
 func (j *Journal) finishBatch(batch []queuedEvent, moneyEvents int, skipped uint64) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -309,7 +302,6 @@ func (j *Journal) finishBatch(batch []queuedEvent, moneyEvents int, skipped uint
 	j.drained.Broadcast()
 }
 
-// deliver is the one place an event reaches a sink. See README.md, "Kinds".
 func (j *Journal) deliver(entry *queuedEvent) {
 	switch entry.kind {
 	case KindRaceReported:
@@ -351,7 +343,7 @@ func (j *Journal) deliver(entry *queuedEvent) {
 		renderRequestBodyUnread(j.lines, entry.request)
 	case KindReplyNotCached:
 		renderReplyNotCached(j.lines, entry.request)
-	case KindHostTransition, KindExcludedHostServed, KindForcedSend, KindEscrowTransition, KindChainTransition, KindFundingTransition, KindShadowProbe:
+	case KindHostTransition, KindExcludedHostServed, KindForcedSend, KindEscrowTransition, KindChainTransition, KindFundingTransition, KindShadowProbe, KindChatFramesChecked:
 		entry.render(j.lines)
 	}
 }

@@ -1,8 +1,10 @@
-// Package logkey is the gateway's log vocabulary: every key a log line may carry, declared once and
-// referenced by name, so a rename reaches every emitter through the compiler.
+// Package logkey declares the gateway log keys once so renames reach every emitter through the compiler.
 package logkey
 
 const (
+	hostLabelLength     = 8
+	ChatFrames          = "chat_frames"
+	ChatFramesSigned    = "chat_frames_signed"
 	Request             = "request"
 	Escrow              = "escrow"
 	Nonce               = "nonce"
@@ -39,29 +41,20 @@ const (
 	ContextLimit         = "context_limit"
 	PreviousContextLimit = "previous_context_limit"
 
-	ParticipantsTrust       = "participants_trust"
-	ParticipantsShadow      = "participants_shadow"
-	ParticipantsUnthrottled = "participants_unthrottled"
-	ParticipantsByModel     = "participants_by_model"
-)
-
-const (
-	ReceiptTimeoutMS       = "receipt_timeout_ms"
-	FirstTokenFloorMS      = "first_token_floor_ms"
-	FirstTokenCeilingMS    = "first_token_ceiling_ms"
-	InterChunkStallMS      = "inter_chunk_stall_ms"
-	LoserGraceMS           = "loser_grace_ms"
-	HedgeFirstTokenFloorMS = "hedge_first_token_floor_ms"
-	MaxAttemptsPerRequest  = "max_attempts_per_request"
-)
-
-// Which deadlines an attempt's host was narrowed for.
-const (
+	ParticipantsTrust        = "participants_trust"
+	ParticipantsShadow       = "participants_shadow"
+	ParticipantsUnthrottled  = "participants_unthrottled"
+	ParticipantsByModel      = "participants_by_model"
+	ReceiptTimeoutMS         = "receipt_timeout_ms"
+	FirstTokenFloorMS        = "first_token_floor_ms"
+	FirstTokenCeilingMS      = "first_token_ceiling_ms"
+	InterChunkStallMS        = "inter_chunk_stall_ms"
+	LoserGraceMS             = "loser_grace_ms"
+	HedgeFirstTokenFloorMS   = "hedge_first_token_floor_ms"
+	MaxAttemptsPerRequest    = "max_attempts_per_request"
 	MissedReceiptDeadline    = "missed_receipt_deadline"
 	MissedFirstTokenDeadline = "missed_first_token_deadline"
 )
-
-const hostLabelLength = 8
 
 func ShortHost(address string) string {
 	if len(address) <= hostLabelLength {
@@ -70,7 +63,6 @@ func ShortHost(address string) string {
 	return address[len(address)-hostLabelLength:]
 }
 
-// What an attempt delivered and how long each stage took.
 const (
 	Terminal          = "terminal"
 	NonceFinished     = "nonce_finished"
@@ -98,10 +90,6 @@ const (
 	FirstContentMS    = "first_content_ms"
 	AttemptMS         = "attempt_ms"
 	FinishLagMS       = "finish_lag_ms"
-)
-
-// What the client asked for and what it got.
-const (
 	APIKeyID          = "api_key_id"
 	APIKeyLabel       = "api_key_label"
 	Stream            = "stream"
@@ -118,78 +106,62 @@ const (
 	Served            = "served"
 	HostClockOffsetMS = "host_clock_offset_ms"
 	HostReceiptMS     = "host_receipt_ms"
-)
-
-// The chain and the escrow set behind the request.
-const (
-	Epoch           = "epoch"
-	Height          = "height"
-	ProjectedHeight = "projected_height"
-	StaleForMS      = "stale_for_ms"
-	SwitchHeight    = "switch_height"
-	Phase           = "phase"
-	Tx              = "tx"
-	Settler         = "settler"
-	Created         = "created"
-	Retired         = "retired"
-	Promoted        = "promoted"
-	Recorded        = "recorded"
-	Used            = "used"
-	OpenModels      = "open_models"
-	Tokenizer       = "tokenizer"
-	GatewayDisabled = "gateway_disabled"
-	InFlight        = "in_flight"
-	Preset          = "preset"
-	AllowOffChain   = "allow_off_chain"
-	EngineCrashRisk = "engine_crash_risk"
-	Attempts        = "attempts"
-	EscrowBuilders  = "escrow_builders"
-	Have            = "have"
-	Need            = "need"
-	Creates         = "creates"
-	Retires         = "retires"
-	Reasons         = "reasons"
-	Free            = "free"
-	MoneyShort      = "money_short"
-	Liquid          = "liquid"
-	FullCount       = "full_count"
-	Want            = "want"
-	Amount          = "amount"
-	Counted         = "counted"
-	MaxUnsettled    = "max_unsettled"
-	ChainEpoch      = "chain_epoch"
-	SettleBy        = "settle_by"
-	MarginBlocks    = "margin_blocks"
-	BlockTimeMS     = "block_time_ms"
-	SettleWindowsMS = "settle_windows_ms"
-	Configured      = "configured"
-	Removed         = "removed"
-)
-
-// Process and transport.
-const (
-	Port             = "port"
-	Addr             = "addr"
-	StorageDir       = "storage_dir"
-	Version          = "version"
-	RoutePrefix      = "route_prefix"
-	Subsystem        = "subsystem"
-	IgnoredVariables = "ignored_variables"
-	Route            = "route"
-	Method           = "method"
-	Status           = "status"
+	Epoch             = "epoch"
+	Height            = "height"
+	ProjectedHeight   = "projected_height"
+	StaleForMS        = "stale_for_ms"
+	SwitchHeight      = "switch_height"
+	Phase             = "phase"
+	Tx                = "tx"
+	Settler           = "settler"
+	Created           = "created"
+	Retired           = "retired"
+	Promoted          = "promoted"
+	Recorded          = "recorded"
+	Used              = "used"
+	OpenModels        = "open_models"
+	Tokenizer         = "tokenizer"
+	GatewayDisabled   = "gateway_disabled"
+	InFlight          = "in_flight"
+	Preset            = "preset"
+	AllowOffChain     = "allow_off_chain"
+	EngineCrashRisk   = "engine_crash_risk"
+	Attempts          = "attempts"
+	EscrowBuilders    = "escrow_builders"
+	Have              = "have"
+	Need              = "need"
+	Creates           = "creates"
+	Retires           = "retires"
+	Reasons           = "reasons"
+	Free              = "free"
+	MoneyShort        = "money_short"
+	Liquid            = "liquid"
+	FullCount         = "full_count"
+	Want              = "want"
+	Amount            = "amount"
+	Counted           = "counted"
+	MaxUnsettled      = "max_unsettled"
+	ChainEpoch        = "chain_epoch"
+	SettleBy          = "settle_by"
+	MarginBlocks      = "margin_blocks"
+	BlockTimeMS       = "block_time_ms"
+	SettleWindowsMS   = "settle_windows_ms"
+	Configured        = "configured"
+	Removed           = "removed"
+	Port              = "port"
+	Addr              = "addr"
+	StorageDir        = "storage_dir"
+	Version           = "version"
+	RoutePrefix       = "route_prefix"
+	Subsystem         = "subsystem"
+	IgnoredVariables  = "ignored_variables"
+	Route             = "route"
+	Method            = "method"
+	Status            = "status"
 
 	SkippedLines = "skipped_lines"
-)
-
-// Which sources the height follower came up on. See ../../heights/README.md.
-const (
-	NodeManager = "node_manager"
-	DirectChain = "direct_chain"
-	CometRPC    = "comet_rpc"
-)
-
-// Which feed answers for the chain's operational governance. See ../../runtime_params.go.
-const (
+	NodeManager  = "node_manager"
+	DirectChain  = "direct_chain"
+	CometRPC     = "comet_rpc"
 	ParamsSource = "params_source"
 )

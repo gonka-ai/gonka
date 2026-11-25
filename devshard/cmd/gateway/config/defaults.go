@@ -7,7 +7,6 @@ import (
 	"devshard/cmd/gateway/filters"
 )
 
-// fallbackMaxModelLen prices a model no context length has been named for, and processorsPerPromptCount leaves half the processors to requests that are not counting. See capacity.md, "The participant limiter: IOCW", and request.md, "The prompt token count".
 const (
 	fallbackMaxModelLen      = 1_000_000
 	processorsPerPromptCount = 2
@@ -92,6 +91,7 @@ func Defaults() Config {
 			SampleRate: 0.01,
 			MaxBytes:   1 << 30,
 		},
+		ChatFrames: ChatFrames{Events: 5},
 		Stream: Stream{
 			DrainTimeoutSeconds:         2_400,
 			ClassifyMaxAttemptBytes:     1 << 20,

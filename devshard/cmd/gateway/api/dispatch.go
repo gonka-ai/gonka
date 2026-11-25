@@ -16,14 +16,16 @@ import (
 	"devshard/user"
 )
 
-// escrows is satisfied by *registry.Registry. See rules.md, "4. Routing and settlement read the escrow set asymmetrically".
 type escrows interface {
 	AcquireCommitted(escrowID string) (registry.EscrowSession, func(), bool)
 	SettlementSession(escrowID string) (registry.EscrowSession, bool)
 }
 
 // Sessions adapts the live escrows to the engine's two outbound boundaries: the dispatch target and the vote poster.
-type Sessions struct{ escrows escrows }
+type Sessions struct {
+	escrows    escrows
+	chatFrames chatFrameNarrator
+}
 
 func NewSessions(escrows escrows) Sessions { return Sessions{escrows: escrows} }
 
@@ -33,10 +35,9 @@ func (s Sessions) Target(escrowID string) (engine.DispatchTarget, func(), bool) 
 	if !held {
 		return nil, nil, false
 	}
-	return escrowTarget{session: session.UserSession()}, release, true
+	return escrowTarget{session: session.UserSession(), escrowID: escrowID, chatFrames: s.chatFrames}, release, true
 }
 
-// dispatchSession is one escrow's session as a race spends it; *user.Session satisfies it.
 type dispatchSession interface {
 	CatchUpBeforeSend(ctx context.Context, prepared *user.PreparedInference) error
 	SendOnly(ctx context.Context, prepared *user.PreparedInference, stream io.Writer, onReceipt func()) (*host.HostResponse, error)
@@ -51,7 +52,11 @@ type dispatchSession interface {
 	RewindHostCatchUp(hostIdx int, cause string) bool
 }
 
-type escrowTarget struct{ session dispatchSession }
+type escrowTarget struct {
+	session    dispatchSession
+	escrowID   string
+	chatFrames chatFrameNarrator
+}
 
 var _ engine.DispatchTarget = escrowTarget{}
 
@@ -85,11 +90,10 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 	if err != nil {
 		return nil, err
 	}
-	// stream is handed on unwrapped: the transport type-asserts http.Flusher on it to flush each SSE line.
 	reply, err := registry.SendRecovering(ctx, t.session, prepared, stream, onReceipt)
 	if reply != nil {
+		t.reportChatFrames(prepared, reply.ChatFrames)
 		t.session.PinPendingFinish(prepared.Nonce())
-		// Applies for a reply that arrived beside an error too, and keeps both: a failed send must not hide a diverged state. See rules.md.
 		if applyErr := t.session.ProcessResponse(prepared.HostIdx(), reply, prepared.Nonce()); applyErr != nil {
 			err = errors.Join(err, applyErr)
 		}
@@ -111,7 +115,6 @@ func (t escrowTarget) Send(ctx context.Context, nonce scheduler.Prepared, stream
 	})}, err
 }
 
-// divergedState reads a rejected post state root from either side of the wire: the host's diff or the local hash.
 func divergedState(err error) bool {
 	return state.IsPostStateRootMismatchError(err) || errors.Is(err, types.ErrStateHashMismatch)
 }

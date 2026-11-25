@@ -11,13 +11,12 @@ import (
 	"testing"
 )
 
-// declared reads this package's own constants, so the vocabulary has exactly one definition.
 func declared(t *testing.T) map[string]string {
 	t.Helper()
 	set := token.NewFileSet()
-	parsed, err := parser.ParseFile(set, "logkey.go", nil, 0)
+	parsed, err := parser.ParseFile(set, "vocabulary.go", nil, 0)
 	if err != nil {
-		t.Fatalf("parse logkey.go: %v", err)
+		t.Fatalf("parse vocabulary.go: %v", err)
 	}
 	names := map[string]string{}
 	for _, decl := range parsed.Decls {
@@ -58,8 +57,6 @@ func gatewayFiles(t *testing.T) []string {
 	return paths
 }
 
-// keyLiterals returns the string literals sitting in key position of a key/value run: keys and
-// values alternate, so only the even offsets from start are keys.
 func keyLiterals(args []ast.Expr, start int) []*ast.BasicLit {
 	var keys []*ast.BasicLit
 	for i := start; i < len(args); i += 2 {
@@ -70,7 +67,6 @@ func keyLiterals(args []ast.Expr, start int) []*ast.BasicLit {
 	return keys
 }
 
-// anyElement reports []any in both spellings the parser hands back: as the alias or as the written-out empty interface.
 func anyElement(element ast.Expr) bool {
 	if name, isIdent := element.(*ast.Ident); isIdent {
 		return name.Name == "any"
@@ -79,7 +75,6 @@ func anyElement(element ast.Expr) bool {
 	return isInterface && iface.Methods.NumFields() == 0
 }
 
-// loggedKeys finds every key the gateway puts on a log line, in each of the three shapes it builds them in.
 func loggedKeys(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	set := token.NewFileSet()
@@ -128,7 +123,7 @@ func loggedKeys(t *testing.T) map[string]map[string]bool {
 }
 
 // Test flow:
-//  1. Parse logkey.go for its declared string constants.
+//  1. Parse vocabulary.go for its declared string constants.
 //  2. Scan every non-test gateway source file for the log keys it puts on a line.
 //  3. Assert every logged key found is among the declared constants, reporting each undeclared key's location.
 func TestEveryLoggedKeyIsDeclared(t *testing.T) {
@@ -149,7 +144,7 @@ func TestEveryLoggedKeyIsDeclared(t *testing.T) {
 }
 
 // Test flow:
-//  1. Parse logkey.go for its declared string constants.
+//  1. Parse vocabulary.go for its declared string constants.
 //  2. Assert every declared value is lowercase and non-empty.
 func TestKeysAreLowercase(t *testing.T) {
 	t.Parallel()

@@ -168,3 +168,12 @@ The context check refuses, before any nonce exists, a chat request whose prompt 
 Each served model's file, up to 64 MiB (`tokenizer/library.go`, `maxTokenizerBytes`), is fetched once per pinned commit, in the background, on the first request for the model; until it loads, and for a model whose commit ships no `tokenizer.json` the gateway reads (Kimi-K2.6 ships a tiktoken model), requests go to a host unchecked. A failed fetch is retried after 10 minutes; when the pin moved and the new file fails to load, the model is unchecked until it loads, rather than counted with the previous file.
 
 The log reads `prompt tokenizer loaded` on a load, `model has no tokenizer the gateway reads` for a pin that is not checked, `prompt tokenizer parse panicked` (an error, also not checked until the pin moves) for a file whose parse panicked, `prompt tokenizer could not be loaded` on a failed fetch, and `prompt tokenizer pin could not be read` when the chain query fails, in which case a tokenizer already loaded keeps counting.
+
+## Peer RPC Chat frame signatures
+
+| Variable | Default | Meaning |
+| --- | --- | --- |
+| `GATEWAY_CHAT_FRAME_EVENTS` | `5` | SSE events per signature after the first output; integer from 1 through 64 inclusive. |
+| `GATEWAY_CHAT_FRAME_SEPARATE` | `false` | Flush each event individually while signing every N events; false joins N events into one signed flush. |
+
+These strict environment-only settings take effect at startup. The first output, receipt and final tail are delivered without waiting for a full group. The settings travel in the host request envelope, not the client prompt. Hosts predating signed frames ignore them and remain compatible. HTTP inference remains unsigned; these settings apply to peer RPC Chat. Frame verification failures are journal observations only and do not reject the response or cast a challenge.

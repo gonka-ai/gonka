@@ -21,18 +21,17 @@ import (
 	"devshard/cmd/gateway/perf"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/shadow"
+	"devshard/host"
 	"devshard/types"
 )
 
-// methodsThatWriteNoLine are the exported methods that write no line of their own.
 var methodsThatWriteNoLine = []string{"Close", "Counts", "Flush"}
 
-// declaredKeys reads internal/logkey's string constants, so the vocabulary keeps one definition.
 func declaredKeys(t *testing.T) map[string]bool {
 	t.Helper()
-	parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "internal", "logkey", "logkey.go"), nil, 0)
+	parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join("..", "internal", "logkey", "vocabulary.go"), nil, 0)
 	if err != nil {
-		t.Fatalf("parse logkey.go: %v", err)
+		t.Fatalf("parse vocabulary.go: %v", err)
 	}
 	keys := map[string]bool{}
 	for _, declaration := range parsed.Decls {
@@ -54,7 +53,6 @@ func declaredKeys(t *testing.T) map[string]bool {
 	return keys
 }
 
-// everyProducer drives each producer method with its widest input, so every key a line can carry is written once.
 func everyProducer() map[string]func(events *Journal) {
 	failure := errors.New("sample failure")
 	sent := time.Date(2026, 9, 13, 12, 0, 0, 0, time.UTC)
@@ -132,6 +130,9 @@ func everyProducer() map[string]func(events *Journal) {
 		},
 		"HostWithheld": func(events *Journal) {
 			events.HostWithheld(perf.Withholding{Participant: hostAlpha, Model: "qwen", Reason: "failure_rate", EjectionCount: 1, ConsecutiveFailures: 1, FailureRate: 0.5, FailureVolume: 20, WithheldFor: time.Minute})
+		},
+		"ChatFramesChecked": func(events *Journal) {
+			events.ChatFramesChecked("7", hostAlpha, 4, host.ChatFrameCheck{Frames: 3, Signed: 2, Invalid: "bad signature"})
 		},
 		"HostReturned":           func(events *Journal) { events.HostReturned(hostAlpha, "qwen", 1) },
 		"HostStatsReset":         func(events *Journal) { events.HostStatsReset(464, 40, 3, 2) },

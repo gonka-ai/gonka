@@ -236,3 +236,7 @@ An escrow row in `GET /v1/admin/state` and `GET /v1/admin/devshards` carries, be
 | `suspicious` | whether an operator pinned it |
 
 `backoff_count` is the answer to "was this host cut off once or eleven times": it is what makes the next cut-off a minute long instead of five seconds. `degraded` beside a false `ejected` means the pool-wide cap is withholding the withholding, because too many of that model's hosts are failing at once.
+
+## Chat frame verification
+
+The dispatch adapter reports `chat_frames` (frames received) and `chat_frames_signed` (signatures verified and authorized) through the journal. `chat frames checked` is an info line for signed or legacy unsigned streams; `chat_frame_signature_invalid` is a warning carrying the first failure in `error`. Both carry `escrow`, `nonce` and `host`. No line is emitted without a frame observation. These use the bounded progress lane and may be dropped under journal pressure; they are diagnostics, not a durable audit. Frame checks change no request result, routing score, settlement or challenge decision.

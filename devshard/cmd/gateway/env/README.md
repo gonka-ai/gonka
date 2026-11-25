@@ -33,3 +33,9 @@ One typed table: name, type, and nothing else.
 ## Which names are read
 
 Each variable is read under one name only: `DEVSHARD_*`, `DEVSHARDS_JSON` or `GATEWAY_*`. `PrivateKey` reads exactly the variable an escrow record names. See [`docs/configuration.md`](../docs/configuration.md), "Variable names", for which variables are lenient, the defaults that shape a first deployment, and the variables that are not read.
+
+## Chat frame variables
+
+`GATEWAY_CHAT_FRAME_EVENTS` is a strict integer and `GATEWAY_CHAT_FRAME_SEPARATE` is a strict boolean. An unset or empty value leaves the default to `config`; malformed values join the other boot errors. `config` enforces the event count range before any request is dispatched.
+
+`DEVSHARD_API_KEYS` remains the deprecated legacy client-key source, replaced by `/v1/admin/api-keys`; removal is planned for v7 or v8.

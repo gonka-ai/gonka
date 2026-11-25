@@ -79,6 +79,9 @@ func (c *Config) Validate() error {
 
 func (c *Config) problems() []error {
 	var problems []error
+	if err := c.ChatFrames.validate(); err != nil {
+		problems = append(problems, err)
+	}
 	complain := func(format string, args ...any) {
 		problems = append(problems, fmt.Errorf(format, args...))
 	}
@@ -120,7 +123,6 @@ func (c *Config) validateChain(complain func(format string, args ...any)) {
 		}
 	}
 	checkBaseURL("public_api", c.Chain.PublicAPIBaseURL)
-	// A gRPC target is host:port with no scheme, so the URL check above would pass anything.
 	if _, _, err := net.SplitHostPort(c.Chain.GRPCEndpoint); err != nil {
 		complain("chain_grpc: %q is not host:port", c.Chain.GRPCEndpoint)
 	}
@@ -347,7 +349,6 @@ func (c *Config) validateEngine(complain func(format string, args ...any)) {
 	if c.Engine.InterChunkStallMS > maxEngineTimingMS {
 		complain("engine_inter_chunk_stall_ms: %d must be <= %d", c.Engine.InterChunkStallMS, maxEngineTimingMS)
 	}
-	// A grace under the stall window kills losers that are merely between chunks.
 	if c.Engine.LoserGraceMS < c.Engine.InterChunkStallMS {
 		complain("engine_loser_grace_ms: %d must be >= engine_inter_chunk_stall_ms %d", c.Engine.LoserGraceMS, c.Engine.InterChunkStallMS)
 	}
@@ -379,7 +380,6 @@ func (c *Config) validateEngine(complain func(format string, args ...any)) {
 }
 
 func (c *Config) validateScheduler(complain func(format string, args ...any)) {
-	// The ceiling is a budget guard: a long grace parks a committed-cost nonce on the chance of a co-arrival.
 	if c.Scheduler.MatchWaitMS < 0 || c.Scheduler.MatchWaitMS > maxMatchWaitMS {
 		complain("match_wait_ms: %d must be in [0, %d]", c.Scheduler.MatchWaitMS, maxMatchWaitMS)
 	}
@@ -413,7 +413,6 @@ func validateRequestWindow(name string, window RequestWindow, complain func(stri
 	}
 }
 
-// participantEntryProblem refuses a short host label, which matches no participant. See ../docs/operations.md.
 func participantEntryProblem(participant string) string {
 	entry := strings.TrimSpace(participant)
 	if entry == "" {

@@ -63,7 +63,6 @@ func Main() {
 	}
 }
 
-// applyContentionProfiles samples lock contention and blocking for /debug/pprof when the operator asks. See ../docs/operations.md.
 func applyContentionProfiles(enabled *bool) {
 	if enabled == nil || !*enabled {
 		return
@@ -98,7 +97,6 @@ func applyDialGuard() {
 	}
 }
 
-// serve owns the signal context so releasing it survives a panic; os.Exit skips a defer left in main.
 func serve() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -320,7 +318,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		return nil, err
 	}
 
-	sessions := api.NewSessions(escrows)
+	sessions := api.NewSessions(escrows).WithChatFrameNarrator(events)
 	probeTimeouts := probeVotes{recorder: raceRecorder, events: events}
 	prober.Settle(sessions.Poster, probeTimeouts, events)
 	prompts := promptTokens(sources.ModelSnapshots, observer)
@@ -357,7 +355,6 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	}
 	finishes.attach(races)
 	subscribeEpochBoundaryReset(observer, participants, hosts, races, events)
-	// One wrapper for both readers, so the gauge reports the scale admission actually applies.
 	modelCapacities := modelCapacity{capacity: capacity, snapshots: observer, config: configHolder, participants: participants}
 	telemetry.Register(
 		metrics.NewLimitsCollector(metrics.LimitsSources{
@@ -424,7 +421,6 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	if err != nil {
 		return nil, err
 	}
-	// Registered after the server, which owns both sinks. See README.md, "Wiring order, and the knots in it".
 	telemetry.Register(metrics.NewCaptureCollector(server))
 	telemetry.Register(metrics.NewCacheCollector(server))
 	httpServer, endRequests := server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port))

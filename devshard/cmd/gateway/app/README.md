@@ -98,3 +98,7 @@ Boot has a matching budget: the concurrent-build limit and the idle connection p
 ## The harness surface
 
 `composed.go` exports what the [`scenarios`](../scenarios/) harness needs: compose the real gateway over a fake chain and in-process hosts (`Compose`, `Sources`), boot it one step at a time inside a `testing/synctest` bubble (`BootSteps`, `BootStep`), read its parts (`Handler`, `Config`, `Store`, `Observer`, `Escrows`, `Manager`, `Races`, `Nonces`, `Journal`, `Telemetry`), act as the operator (`Deactivate`, `Settle`) and stop it (`Shutdown`, `ShutdownGracePeriod`). Nothing in the binary calls it. It holds adapters only: a change of behaviour belongs in the file the adapter reaches, never here.
+
+## Process wiring invariants
+
+`compose.go` applies requested contention profiles before serving. `serve` owns the signal context so it is released even on panic; a defer in `Main` would be skipped by `os.Exit`. The admission reader and capacity gauge share one wrapper so both use the same scale. Sink cleanup is registered after the server that owns both sinks.

@@ -87,3 +87,12 @@ Readers call `Load` on every use and get a shared, immutable pointer. Reconfigur
 
 `Overrides` is the admin-tunable subset that the store persists and `Build` merges over the environment layer; a nil field means "not overridden". A setting both layers can set lives once in `env.Tunables`, embedded in `env.Values` and `Overrides` and merged by `applyTunables` for each layer; its JSON keys stay at the top level. `ParseOverrides` rejects unknown fields, because a typo in an admin `PUT` must be reported rather than silently ignored. `ParseStoredOverrides` is the read-back path and accepts them, because the file on disk may name a knob this build does not have: a knob it does not have costs the operator that knob, never the boot. `Merged` merges inside `models` per model and per field, and a model set to `null` drops its admin block (the block `GATEWAY_MODELS_JSON` gives it stays); it merges inside `participants` per sub-key, and `Participants.validate` refuses a participant in both `shadow` and a list that routes client traffic to it. See [`docs/runbook.md`](../docs/runbook.md), "The participants setting".
 
+## Chat frames
+
+`ChatFrames` holds the peer RPC event schedule. `Events` defaults to 5 and must be between 1 and 64 inclusive; `Separate` defaults to false. `GATEWAY_CHAT_FRAME_EVENTS` and `GATEWAY_CHAT_FRAME_SEPARATE` are strict, environment-only settings read at boot. Invalid counts fail configuration validation instead of being truncated or wrapped. The configuration snapshot owns values, and each request gets its own schedule. No admin override or per-model setting is exposed.
+
+## Construction and validation invariants
+
+`build.go` applies environment values before admin overrides; `overrideIfSet` preserves the lower layer for a nil source. In `defaults.go`, `fallbackMaxModelLen` prices an unnamed context length and `processorsPerPromptCount` leaves half the processors available for requests that are not counting tokens.
+
+`validate.go` checks gRPC targets separately from URLs because a target is a host and port without a scheme. Drain grace cannot be shorter than the stall window, which would kill a loser between chunks; its ceiling limits the committed-cost nonce held for a possible co-arrival. `participantEntryProblem` refuses shortened host labels because they identify no participant.

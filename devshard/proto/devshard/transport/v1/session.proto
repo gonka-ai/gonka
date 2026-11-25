@@ -32,6 +32,13 @@ message InferenceRequest {
 
 message ChatFrame {
   bytes chunk = 1; // opaque gzip-stream bytes, sync-flushed per event
+  // sig is the executor's 64-byte R||S signature over
+  // ChatFrameSignatureContent, outside the gzip body. Empty on a frame the
+  // schedule does not sign and on hosts that predate signed frames.
+  bytes  sig          = 2;
+  // stream_bytes is how many uncompressed bytes of the stream sig covers:
+  // everything up to the end of this frame. Set only with sig.
+  uint64 stream_bytes = 3;
 }
 
 message HeightSyncSection {

@@ -1,5 +1,4 @@
-// Package config owns the gateway's immutable configuration snapshot: defaults ← environment ← admin
-// overrides, never mutated after Build. See README.md.
+// Package config owns immutable snapshots built from defaults, environment and admin overrides; see README.md.
 package config
 
 import (
@@ -225,6 +224,7 @@ type Config struct {
 	Accounting Accounting
 	Capture    Capture
 	Stream     Stream
+	ChatFrames ChatFrames
 	Perf       Perf
 	HostPing   HostPing
 	HeightSync HeightSync
