@@ -1710,6 +1710,10 @@ func (m *HostManager) serveGetPayload(ctx context.Context, escrowID string, grou
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonMissingInferenceID, nil)
 		return nil, echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
 	}
+	if !validPayloadInferenceID(in.InferenceID) {
+		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonInvalidInferenceID, nil)
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "invalid inference_id")
+	}
 
 	if payloadFaultMatches(m.payloadFaultStatus, m.payloadFaultAddr, in.ValidatorAddress) {
 		emit(observability.LevelWarn, "testenv payload fault", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, nil,
@@ -1893,6 +1897,13 @@ func (m *HostManager) authenticatePayloadAuth(ctx context.Context, group []types
 	}
 	if requestAge < -maxFuture {
 		return 0, observability.ReasonTimestampInFuture, echo.NewHTTPError(http.StatusBadRequest, "request timestamp in the future")
+	}
+
+	if !validPayloadAddress(in.ValidatorAddress) {
+		return 0, observability.ReasonNotGroupMember, echo.NewHTTPError(http.StatusUnauthorized, "not a group member")
+	}
+	if !validPayloadSignature(in.Signature) {
+		return 0, observability.ReasonInvalidSignature, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
 	}
 
 	granterAddress, err := m.findGranterInGroup(in.ValidatorAddress, group)
