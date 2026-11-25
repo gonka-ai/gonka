@@ -628,6 +628,38 @@ func TestV2ValidatedCallback_AbstainsOnNanSteps(t *testing.T) {
 	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
 }
 
+// An abstaining ML node still answered, so its job must not count as lost or be re-dispatched.
+func TestV2ValidatedCallback_RecordsTheVerdictEvenWhenAbstaining(t *testing.T) {
+	poc.Verdicts.BeginStage(100)
+	t.Cleanup(func() { poc.Verdicts.EndStage(100) })
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	server := NewServer(mockRecorder, newMLNodeTestBroker(t, types.PoCValidatePhase, testModelA))
+
+	body, err := json.Marshal(map[string]any{
+		"block_hash":      "abc",
+		"block_height":    100,
+		"public_key":      "02b463f7f42e5f4f1d2d0bb1c4b9f8d2c3b1a09c72fbc5d0b8d4c53b37f6f2a540",
+		"node_id":         3,
+		"n_total":         5,
+		"n_mismatch":      0,
+		"n_nan_steps":     2,
+		"mismatch_nonces": []int{},
+		"p_value":         1.0,
+		"fraud_detected":  false,
+	})
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v2/poc-batches/model-a/validated", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, 1, poc.Verdicts.Stats(100).Answered)
+	mockRecorder.AssertNotCalled(t, "SubmitPocValidationsV2", mock.Anything)
+}
+
 func TestV3ValidatedCallbackUsesPathModelID(t *testing.T) {
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.

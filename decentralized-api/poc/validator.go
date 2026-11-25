@@ -57,6 +57,8 @@ type OffChainValidator struct {
 	// guard is the optional DAPI-only early-share guard. A nil guard is a no-op.
 	guard         *EarlyShareGuard
 	artifactStore *artifacts.ManagedArtifactStore
+	// verdicts follows dispatched jobs until their /validated callback. Nil disables it.
+	verdicts *VerdictTracker
 }
 
 // ValidationConfig contains configuration for off-chain validation.
@@ -66,6 +68,11 @@ type ValidationConfig struct {
 	MaxRetries         int
 	RetryBackoff       time.Duration
 	PhaseCheckInterval time.Duration
+	// VerdictTimeout is how long a dispatched job may wait for its /validated
+	// callback before it is sent once to another node. Zero turns re-dispatch off;
+	// the per-stage counts are still logged.
+	VerdictTimeout       time.Duration
+	VerdictCheckInterval time.Duration
 }
 
 // DefaultValidationConfig returns the default configuration.
@@ -76,6 +83,11 @@ func DefaultValidationConfig() ValidationConfig {
 		MaxRetries:         25,
 		RetryBackoff:       3 * time.Second,
 		PhaseCheckInterval: 3 * time.Second,
+		// An ML node works through its validation jobs in a queue, and with
+		// validation_slots = 0 every validator checks every commit, so a busy node
+		// can take minutes. The validation window is about 22 minutes.
+		VerdictTimeout:       10 * time.Minute,
+		VerdictCheckInterval: 15 * time.Second,
 	}
 }
 
@@ -191,6 +203,7 @@ func NewOffChainValidator(
 		config:           config,
 		guard:            guard,
 		artifactStore:    artifactStore,
+		verdicts:         Verdicts,
 	}
 }
 
@@ -573,6 +586,10 @@ func (v *OffChainValidator) executeValidation(
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight, challenge)
+
+	if v.verdicts != nil && v.verdicts.BeginStage(pocStageStartBlockHeight) {
+		go v.watchVerdicts(pocStageStartBlockHeight, challenge)
+	}
 
 	numWorkers := v.config.WorkerCount
 	if numWorkers > len(workItems) {
@@ -1052,6 +1069,10 @@ func (v *OffChainValidator) dispatchToMLNode(
 	if err == nil {
 		logging.Debug("OffChainValidator: sent to ML node", types.PoC,
 			"participant", work.address, "node", node.Node.Host)
+		if v.verdicts != nil {
+			dc := dispatchContext{nodes: nodes, startHash: pocStartBlockHash, params: pocParams}
+			v.verdicts.Sent(pocHeight, *work, dc, node.Node.NodeNum, node.Node.Host, time.Now())
+		}
 		return validateDispatched
 	}
 

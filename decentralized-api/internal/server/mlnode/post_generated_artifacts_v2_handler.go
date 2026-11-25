@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"common/logging"
 	"common/utils"
@@ -227,6 +228,13 @@ func (s *Server) postValidatedArtifacts(ctx echo.Context, scheme types.PocScheme
 	if _, ok := recipe.GetModelConfig(modelID); !ok {
 		return echo.NewHTTPError(http.StatusBadRequest, "model missing from stage recipe")
 	}
+
+	// An abstaining node still answered: the job must not be re-dispatched.
+	nodeNum := uint64(0)
+	if body.NodeId > 0 {
+		nodeNum = uint64(body.NodeId)
+	}
+	poc.Verdicts.Answered(body.BlockHeight, address, modelID, nodeNum, time.Now())
 
 	if body.ShouldAbstain() {
 		logging.Warn("ValidatedArtifactsV2-callback. Abstaining, validator-side incomplete result", types.PoC,
