@@ -146,6 +146,115 @@ func TestFeeParamsValidate(t *testing.T) {
 	require.Equal(t, uint64(0), fp.Groups[0].Msgs[0].Base.PeriodLength, "Validate must not rewrite governance message contents")
 }
 
+// ChargeStoreCommitGas reads every StoreCommit rule. ChargeExtraGas and
+// ChargeStaticGas read only the first rule for a type_url, and only StoreCommit
+// and SubmitNewParticipant charge static gas. Validate rejects trees where a
+// configured rule would never be charged.
+func TestFeeParamsValidate_RejectsRulesNoChargePathReads(t *testing.T) {
+	hdURL := sdk.MsgTypeURL(&types.MsgSubmitHardwareDiff{})
+	submitURL := sdk.MsgTypeURL(&types.MsgSubmitNewParticipant{})
+	validationsURL := sdk.MsgTypeURL(&types.MsgSubmitPocValidationsV2{})
+	const secondRule = "more than one rule for type_url"
+	const staticOnly = "static is only supported on StoreCommit and SubmitNewParticipant"
+
+	prependEpochRule := func(rule *types.MsgGasRule) *types.FeeParams {
+		fp := types.DefaultFeeParams()
+		epoch := fp.GroupByName(types.FeeGroupEpoch)
+		epoch.Msgs = append([]*types.MsgGasRule{rule}, epoch.Msgs...)
+		return fp
+	}
+
+	cases := []struct {
+		name string
+		tree func() *types.FeeParams
+		want string
+	}{
+		{
+			// ChargeExtraGas reads the static rule and skips stored_bytes.
+			name: "static rule ahead of the HardwareDiff stored_bytes rule",
+			tree: func() *types.FeeParams {
+				return prependEpochRule(&types.MsgGasRule{
+					TypeUrl: hdURL,
+					Func:    &types.MsgGasRule_Static{Static: &types.StaticParams{Gas: 1}},
+				})
+			},
+			want: staticOnly,
+		},
+		{
+			name: "func-less rule ahead of the HardwareDiff stored_bytes rule",
+			tree: func() *types.FeeParams {
+				return prependEpochRule(&types.MsgGasRule{TypeUrl: hdURL})
+			},
+			want: secondRule,
+		},
+		{
+			// The ante pass reads the func-less rule and skips the per-item charge.
+			name: "func-less rule ahead of a repeated_len rule",
+			tree: func() *types.FeeParams {
+				fp := types.DefaultFeeParams()
+				epoch := fp.GroupByName(types.FeeGroupEpoch)
+				epoch.Msgs = append(epoch.Msgs,
+					&types.MsgGasRule{TypeUrl: validationsURL},
+					&types.MsgGasRule{
+						TypeUrl: validationsURL,
+						Func: &types.MsgGasRule_RepeatedLen{
+							RepeatedLen: &types.RepeatedLenParams{GasPerUnit: 10, Field: "validations"},
+						},
+					})
+				return fp
+			},
+			want: secondRule,
+		},
+		{
+			// ChargeStaticGas reads the func-less rule and skips the creation charge.
+			name: "func-less rule ahead of the SubmitNewParticipant static rule",
+			tree: func() *types.FeeParams {
+				fp := types.DefaultFeeParams()
+				fp.Groups = append(fp.Groups, &types.FeeGroup{
+					Name:        types.FeeGroupOnboarding,
+					MinGasPrice: 1,
+					Msgs: []*types.MsgGasRule{
+						{TypeUrl: submitURL},
+						{
+							TypeUrl: submitURL,
+							Func:    &types.MsgGasRule_Static{Static: &types.StaticParams{Gas: types.NewParticipantGas}},
+						},
+					},
+				})
+				return fp
+			},
+			want: secondRule,
+		},
+		{
+			// No handler charges static gas for a bridge exchange.
+			name: "static rule on a message no handler charges",
+			tree: func() *types.FeeParams {
+				fp := types.DefaultFeeParams()
+				fp.Groups = append(fp.Groups, &types.FeeGroup{
+					Name:        types.FeeGroupBridge,
+					MinGasPrice: 1,
+					Msgs: []*types.MsgGasRule{{
+						TypeUrl: sdk.MsgTypeURL(&types.MsgBridgeExchange{}),
+						Func:    &types.MsgGasRule_Static{Static: &types.StaticParams{Gas: 1_000_000}},
+					}},
+				})
+				return fp
+			},
+			want: staticOnly,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			require.ErrorContains(t, tc.tree().Validate(), tc.want)
+		})
+	}
+
+	// StoreCommit keeps its stored_delta and static rules.
+	fp := types.DefaultFeeParams()
+	appendStoreCommitStatic(fp, types.StoreCommitGasPerNewKey)
+	require.NoError(t, fp.Validate())
+}
+
 func TestRepeatedFieldLen(t *testing.T) {
 	msg := &types.MsgSubmitPocValidationsV2{
 		Validations: []*types.PoCValidationEntryV2{{}, {}},
