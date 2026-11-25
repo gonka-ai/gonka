@@ -70,17 +70,23 @@ func fieldSet(fields []string) map[string]struct{} {
 	return set
 }
 
-// stripResponseBody removes the hidden fields at any depth; a malformed body passes through unchanged.
+// stripResponseBody removes the hidden fields at any depth; a malformed body passes through unchanged, and one past the response shape limits is replaced.
 func stripResponseBody(body []byte, intent LogprobIntent, promptTokens uint64) []byte {
 	filtered, _, outcome := stripInternalFields(body, intent, promptTokens)
-	if outcome != stripRewritten {
-		return body
+	switch {
+	case outcome == stripRewritten:
+		return filtered
+	case outcome == stripMalformed && responseShapeExceeded(body):
+		return TruncatedResponseBody
 	}
-	return filtered
+	return body
 }
 
 // decodePayload stays on the standard library: goccy errors past float64 range, failing this open. See README.md, "Which JSON decoder, and why".
 func decodePayload(payload []byte) (decoded any, normalized, ok bool) {
+	if responseShapeExceeded(payload) {
+		return nil, false, false
+	}
 	if value, parsed := decodeJSONValue(payload); parsed {
 		return value, false, true
 	}

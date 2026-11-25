@@ -80,6 +80,7 @@ func (f *BodyFolder) fold(event []byte) {
 	}
 	decoded, parsed := decodeStreamedEvent(payload)
 	if !parsed {
+		f.truncated = f.truncated || responseShapeExceeded(payload)
 		return
 	}
 	if name, isString := decoded["object"].(string); isString && name == completionObject {

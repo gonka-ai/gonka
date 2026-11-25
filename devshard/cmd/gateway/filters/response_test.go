@@ -550,9 +550,9 @@ func TestADeeplyNestedResponseCannotCrashTheProcess(t *testing.T) {
 
 // Test flow:
 //  1. Strip a shallow body carrying logprobs and assert the field is removed.
-//  2. Strip a body nested 100,000 levels deep, past the decoder's depth limit, also carrying logprobs.
-//  3. Assert the deep body still contains logprobs, since past the limit the body is unparseable and passes through whole.
-func TestPastTheDepthLimitTheStripIsBypassed(t *testing.T) {
+//  2. Strip a body nested 100,000 levels deep, past the response shape depth limit, also carrying logprobs.
+//  3. Assert the deep body is replaced by the truncation body rather than passed through with its logprobs.
+func TestPastTheDepthLimitTheBodyIsReplaced(t *testing.T) {
 	shallow := []byte(`{"logprobs":1,"a":[[]]}`)
 	if strings.Contains(string(stripResponseBody(shallow, LogprobIntent{}, 0)), "logprobs") {
 		t.Fatal("a shallow body kept its internal field")
@@ -560,8 +560,8 @@ func TestPastTheDepthLimitTheStripIsBypassed(t *testing.T) {
 
 	deep := []byte(`{"logprobs":1,"a":` + strings.Repeat("[", 100_000) + strings.Repeat("]", 100_000) + `}`)
 
-	if !strings.Contains(string(stripResponseBody(deep, LogprobIntent{}, 0)), "logprobs") {
-		t.Fatal("the deep body was stripped after all -- then this test, and the bypass it documents, are stale")
+	if got := stripResponseBody(deep, LogprobIntent{}, 0); !bytes.Equal(got, TruncatedResponseBody) {
+		t.Fatalf("stripResponseBody(deep) = %.80q, want TruncatedResponseBody", got)
 	}
 }
 

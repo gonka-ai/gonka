@@ -291,6 +291,19 @@ An explicit `null` counts as present for the disallowed-field check. Inside `too
 
 Content is accepted as a non-blank string, or as a non-empty array of `{type: "text", text}` parts. `isEmptyContent` reports a blank string or a zero-length parts array; anything else, `nil` included, is not empty — a missing field is a different failure from an empty one.
 
+## Response shape limits
+
+Every host payload the gateway decodes into a tree — a rewritten event, a folded or assembled chunk, a whole stripped body — is first scanned by `devshard/internal/jsonshape` (`response_shape.go`, `responseShapeExceeded`), which counts without allocating. The byte caps bound how much a host may send, not what decoding it costs: a few bytes per element of an array of empty objects become a map each. The scan holds the decode to a shape:
+
+| Limit | Value | Applies to |
+| --- | --- | --- |
+| nesting depth | 128 (`jsonshape.MaxDepth`) | every payload |
+| members of one object | 256 (`maxResponseObjectMembers`) | every payload |
+| elements of the root `choices` | 256 (`maxIndexedElements`, the fold's own choice limit) | every payload |
+| nodes in one payload | 65,536 (`maxStreamedChunkNodes`) | a streamed chunk; a whole `chat.completion` is exempt, because its logprobs legitimately run to a node per token and alternative |
+
+A payload past a limit is refused, never forwarded on the strength of a decode that was skipped: the stream rewrite reports it malformed, the fold and the assembler answer `TruncatedResponseBody`, and `stripResponseBody` replaces the body with `TruncatedResponseBody` instead of passing it through with its internal fields. An event the byte-level strip handles without decoding (`stripWithoutDecoding`) is not decoded, so it costs no tree and is not scanned.
+
 ## Response stripping
 
 `LogprobIntent` is what the client's own request asked for, read before the cap can narrow it. Without it the strip cannot tell a client who asked for logprobs from one who did not, and would answer both by removing them. `logprobs: true` without alternatives keeps `top_logprobs` as a present-but-empty array, which is OpenAI's shape for that ask. The served hosts never send that shape, though: a host forwards logprobs only when both `logprobs` and a positive `top_logprobs` were asked (`completionapi.LogprobsAsked`, read by the host's response processor), so a client asking `logprobs: true` alone gets no logprobs at all, and the empty-array path serves only a host that sends logprobs it was not asked to.

@@ -59,7 +59,8 @@ func assembleSSEBody(body []byte) []byte {
 		}
 		decoded, parsed := decodeStreamedEvent(payload)
 		if !parsed {
-			return false
+			truncated = truncated || responseShapeExceeded(payload)
+			return truncated
 		}
 		if name, isString := decoded["object"].(string); isString && name == completionObject {
 			if merged == nil {
