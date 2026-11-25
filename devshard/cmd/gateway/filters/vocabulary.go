@@ -2,6 +2,12 @@ package filters
 
 import "devshard/cmd/gateway/internal/tokensource"
 
+// The response fields the shape limits read before a payload is decoded. See README.md, "Response shape limits".
+const (
+	choicesField = "choices"
+	objectField  = "object"
+)
+
 // The strings a cacheability answer puts into the record, one per reason a reply may not be stored.
 const (
 	CacheStorable          = ""

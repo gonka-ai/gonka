@@ -26,7 +26,7 @@ Everything a client sends is normalised here before it reaches a host, and every
 - **The gateway forces `stream: true` upstream** even when the client did not ask for it, so both sides of this package are always in play.
 - **Three fields are never returned to anyone**: `token_ids`, `prompt_token_ids`, `prompt_logprobs`. Three more are returned only if asked: `logprob`, `logprobs`, `top_logprobs`.
 - **The strip list is derived, not written twice.** A field added to what is stripped cannot be left out of what is always stripped — the failure that exposes `top_logprobs`.
-- **A malformed body passes through unchanged rather than being dropped**, except where a host writes `NaN`/`Infinity` as barewords, which are normalised so the body is inspectable at all.
+- **A malformed body passes through unchanged rather than being dropped**, except where a host writes `NaN`/`Infinity` as barewords, which are normalised so the body is inspectable at all, and except a body past the response shape limits, which is replaced ("Response shape limits").
 
 ## The request pipeline
 
@@ -86,7 +86,7 @@ The package uses two: `encoding/json` from the standard library, and `github.com
 | `stripInternalFields`, `decodeStreamedEvent`, `completionAsChunks` | standard library | goccy parses a number token even into a `json.RawMessage` and errors past the float64 range. That fails the strip open — a body carrying `1e999` would keep every internal field — and fails the chunk conversion on a `created` out of range. |
 | `Document.Marshal`, `DecodeUpstreamError`, `jsonMarshaledSize` | goccy | Neither the error text nor the range behaviour is load-bearing here, and `Marshal` sorts map keys, so the normalised body is deterministic. |
 
-Every goccy decode of bytes a host or a client sent goes through `internal/strictjson`, which hands goccy only what `encoding/json.Valid` accepts; what an operator configures, such as the admin overrides and the rotation models, is decoded directly. `transport` cannot import it, so its two decodes of a chat reply, the SSE envelope (`HTTPClient.handleSSELine`) and the JSON body (`HTTPClient.Send`), run `encoding/json.Valid` themselves; both are reached only from a chat send, which host binaries never make: they reach `HTTPClient` through peer and executor clients with no `Send`. On some malformed input goccy reads past its buffer and panics, intermittently and more often under concurrency; the attempt classifier decodes every event of every attempt, so one malformed line from a host would otherwise be able to take the gateway down.
+Every goccy decode of bytes a host or a client sent goes through `internal/strictjson`, which hands goccy only what `encoding/json.Valid` accepts; what an operator configures, such as the admin overrides and the rotation models, is decoded directly. `transport` cannot import it, so its two reads of a chat reply run `encoding/json.Valid` themselves: the SSE envelope (`HTTPClient.handleSSELine`) is read field by field through `devshard/internal/jsonshape` and only the receipt, height-sync section and mempool are decoded, and the JSON body (`HTTPClient.Send`) is decoded by the standard library after its mempool is checked against `maxResponseMempoolEntries` (`decodeInferenceResponseJSON`); both are reached only from a chat send, which host binaries never make: they reach `HTTPClient` through peer and executor clients with no `Send`. On some malformed input goccy reads past its buffer and panics, intermittently and more often under concurrency; the attempt classifier decodes every event of every attempt, so one malformed line from a host would otherwise be able to take the gateway down.
 
 Every decode that matters uses `UseNumber`, so a number survives as its literal rather than as a float64.
 
@@ -300,9 +300,10 @@ Every host payload the gateway decodes into a tree — a rewritten event, a fold
 | nesting depth | 128 (`jsonshape.MaxDepth`) | every payload |
 | members of one object | 256 (`maxResponseObjectMembers`) | every payload |
 | elements of the root `choices` | 256 (`maxIndexedElements`, the fold's own choice limit) | every payload |
-| nodes in one payload | 65,536 (`maxStreamedChunkNodes`) | a streamed chunk; a whole `chat.completion` is exempt, because its logprobs legitimately run to a node per token and alternative |
+| nodes in one payload | 65,536 (`maxStreamedChunkNodes`) | a streamed chunk |
+| nodes in one payload | the larger of 65,536 and one per 4 bytes (`minCompletionBytesPerNode`) | a whole `chat.completion`, named so under the exact key `object`, whose logprobs legitimately run to a node per token and alternative |
 
-A payload past a limit is refused, never forwarded on the strength of a decode that was skipped: the stream rewrite reports it malformed, the fold and the assembler answer `TruncatedResponseBody`, and `stripResponseBody` replaces the body with `TruncatedResponseBody` instead of passing it through with its internal fields. An event the byte-level strip handles without decoding (`stripWithoutDecoding`) is not decoded, so it costs no tree and is not scanned.
+The completion limit scales with the body because a completion's logprobs cost several bytes a node, while the payloads that amplify — arrays of empty arrays or objects — cost two or three; a key that differs only in case does not count, because the decode reads `object` exactly. A payload past a limit is refused, never forwarded on the strength of a decode that was skipped: the stream rewrite reports it malformed, the fold and the assembler answer `TruncatedResponseBody`, and `stripResponseBody` replaces the body with `TruncatedResponseBody` instead of passing it through with its internal fields. An event the byte-level strip handles without decoding (`stripWithoutDecoding`) is not decoded, so it costs no tree and is not scanned.
 
 ## Response stripping
 

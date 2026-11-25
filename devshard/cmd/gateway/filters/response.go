@@ -46,6 +46,16 @@ const (
 	stripMalformed stripOutcome = iota
 	stripUnchanged
 	stripRewritten
+	stripShapeExceeded
+)
+
+// decodeOutcome separates a payload past the response shape limits from one that does not parse.
+type decodeOutcome int
+
+const (
+	decodeParsed decodeOutcome = iota
+	decodeMalformed
+	decodeShapeExceeded
 )
 
 // LogprobIntent is what the client asked for; the host pins both logprob fields on before the engine reads them. See README.md, "Response stripping".
@@ -70,33 +80,34 @@ func fieldSet(fields []string) map[string]struct{} {
 	return set
 }
 
-// stripResponseBody removes the hidden fields at any depth; a malformed body passes through unchanged, and one past the response shape limits is replaced.
 func stripResponseBody(body []byte, intent LogprobIntent, promptTokens uint64) []byte {
 	filtered, _, outcome := stripInternalFields(body, intent, promptTokens)
-	switch {
-	case outcome == stripRewritten:
+	switch outcome {
+	case stripRewritten:
 		return filtered
-	case outcome == stripMalformed && responseShapeExceeded(body):
+	case stripShapeExceeded:
 		return TruncatedResponseBody
 	}
 	return body
 }
 
 // decodePayload stays on the standard library: goccy errors past float64 range, failing this open. See README.md, "Which JSON decoder, and why".
-func decodePayload(payload []byte) (decoded any, normalized, ok bool) {
+func decodePayload(payload []byte) (decoded any, normalized bool, outcome decodeOutcome) {
 	if responseShapeExceeded(payload) {
-		return nil, false, false
+		return nil, false, decodeShapeExceeded
 	}
 	if value, parsed := decodeJSONValue(payload); parsed {
-		return value, false, true
+		return value, false, decodeParsed
 	}
 	// A backend writes NaN/Infinity as barewords; without this nothing can inspect or forward the body.
 	rewritten, replaced := ReplaceNonFiniteNumbers(payload)
 	if !replaced {
-		return nil, false, false
+		return nil, false, decodeMalformed
 	}
-	value, parsed := decodeJSONValue(rewritten)
-	return value, true, parsed
+	if value, parsed := decodeJSONValue(rewritten); parsed {
+		return value, true, decodeParsed
+	}
+	return nil, true, decodeMalformed
 }
 
 func decodeJSONValue(payload []byte) (any, bool) {
@@ -120,8 +131,11 @@ func stripDecodedFields(decoded any, intent LogprobIntent) bool {
 
 // stripInternalFields hands back what it decoded so a caller can ask the payload a further question without decoding it a second time.
 func stripInternalFields(payload []byte, intent LogprobIntent, promptTokens uint64) ([]byte, any, stripOutcome) {
-	decoded, normalized, ok := decodePayload(payload)
-	if !ok {
+	decoded, normalized, outcome := decodePayload(payload)
+	switch outcome {
+	case decodeShapeExceeded:
+		return nil, nil, stripShapeExceeded
+	case decodeMalformed:
 		return nil, nil, stripMalformed
 	}
 	stripped := stripDecodedFields(decoded, intent)

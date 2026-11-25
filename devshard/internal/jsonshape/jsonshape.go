@@ -1,3 +1,4 @@
+// Package jsonshape measures and reads JSON without decoding it; it assumes input encoding/json.Valid accepts.
 package jsonshape
 
 import (
@@ -6,27 +7,35 @@ import (
 	"fmt"
 )
 
-const MaxDepth = 128
+const (
+	// MaxDepth is the nesting every Check refuses past, whatever the Limits.
+	MaxDepth = 128
+	// Unlimited is the Limits value that sets no bound.
+	Unlimited = 0
 
-var (
-	ErrInvalid         = errors.New("invalid json")
-	ErrLimit           = errors.New("json shape exceeds limit")
-	ErrTooDeep         = fmt.Errorf("%w: nesting deeper than %d", ErrLimit, MaxDepth)
-	ErrRootMembers     = fmt.Errorf("%w: root members", ErrLimit)
-	ErrRootKeyElements = fmt.Errorf("%w: root key elements", ErrLimit)
-	ErrObjectMembers   = fmt.Errorf("%w: object members", ErrLimit)
-	ErrArrayElements   = fmt.Errorf("%w: array elements", ErrLimit)
-	ErrNodes           = fmt.Errorf("%w: nodes", ErrLimit)
+	notFound = -1
 )
 
+// ErrLimit is wrapped by every error Check returns.
+var ErrLimit = errors.New("json shape exceeds limit")
+
+var (
+	errTooDeep         = fmt.Errorf("%w: nesting deeper than %d", ErrLimit, MaxDepth)
+	errRootMembers     = fmt.Errorf("%w: root members", ErrLimit)
+	errRootKeyElements = fmt.Errorf("%w: root key elements", ErrLimit)
+	errObjectMembers   = fmt.Errorf("%w: object members", ErrLimit)
+	errNodes           = fmt.Errorf("%w: nodes", ErrLimit)
+)
+
+// Limits bounds what Check accepts; a field left at Unlimited sets no bound.
 type Limits struct {
 	RootMembers     int
 	RootKeyElements map[string]int
 	ObjectMembers   int
-	ArrayElements   int
 	Nodes           int
 }
 
+// Stats is what Check counted before it stopped.
 type Stats struct {
 	RootMembers      int
 	MaxObjectMembers int
@@ -67,15 +76,12 @@ var byteClass = func() [256]uint8 {
 	return t
 }()
 
+// Check scans raw once without allocating and returns an error wrapping ErrLimit at the first bound it passes.
 func Check(raw []byte, l Limits) (Stats, error) {
 	var s scanner
 	s.limits = l
 	err := s.run(raw)
 	return s.st, err
-}
-
-func Measure(raw []byte) (Stats, error) {
-	return Check(raw, Limits{})
 }
 
 type scanner struct {
@@ -116,7 +122,7 @@ func (s *scanner) run(raw []byte) error {
 			}
 		case classQuote:
 			end := skipString(raw, i+1)
-			if end < 0 {
+			if end == notFound {
 				return nil
 			}
 			if s.depth > 0 && s.stack[s.depth-1].expectKey {
@@ -149,7 +155,7 @@ func (s *scanner) value() error {
 }
 
 func (s *scanner) open(object bool) error {
-	limit := 0
+	limit := Unlimited
 	if !object && s.depth == 1 && s.stack[0].object && s.limits.RootKeyElements != nil {
 		limit = s.rootKeyLimit()
 	}
@@ -157,7 +163,7 @@ func (s *scanner) open(object bool) error {
 		return err
 	}
 	if s.depth == MaxDepth {
-		return ErrTooDeep
+		return errTooDeep
 	}
 	s.stack[s.depth] = frame{object: object, expectKey: object, limit: limit}
 	s.depth++
@@ -173,11 +179,11 @@ func (s *scanner) rootKeyLimit() int {
 		return s.limits.RootKeyElements[string(key)]
 	}
 	for name, limit := range s.limits.RootKeyElements {
-		if limit > 0 && KeyEqual(key, name) {
+		if limit > Unlimited && KeyEqual(key, name) {
 			return limit
 		}
 	}
-	return 0
+	return Unlimited
 }
 
 func (s *scanner) comma() error {
@@ -191,8 +197,8 @@ func (s *scanner) comma() error {
 		return err
 	}
 	s.st.Nodes++
-	if s.limits.Nodes > 0 && s.st.Nodes > s.limits.Nodes {
-		return ErrNodes
+	if s.limits.Nodes > Unlimited && s.st.Nodes > s.limits.Nodes {
+		return errNodes
 	}
 	return nil
 }
@@ -207,8 +213,8 @@ func (s *scanner) mark(f *frame) error {
 		return err
 	}
 	s.st.Nodes++
-	if s.limits.Nodes > 0 && s.st.Nodes > s.limits.Nodes {
-		return ErrNodes
+	if s.limits.Nodes > Unlimited && s.st.Nodes > s.limits.Nodes {
+		return errNodes
 	}
 	return nil
 }
@@ -228,14 +234,12 @@ func (s *scanner) limitMembers(f *frame) error {
 		s.st.MaxArrayElements = n
 	}
 	switch {
-	case root && l.RootMembers > 0 && n > l.RootMembers:
-		return ErrRootMembers
-	case f.limit > 0 && n > f.limit:
-		return ErrRootKeyElements
-	case f.object && l.ObjectMembers > 0 && n > l.ObjectMembers:
-		return ErrObjectMembers
-	case !f.object && l.ArrayElements > 0 && n > l.ArrayElements:
-		return ErrArrayElements
+	case root && l.RootMembers > Unlimited && n > l.RootMembers:
+		return errRootMembers
+	case f.limit > Unlimited && n > f.limit:
+		return errRootKeyElements
+	case f.object && l.ObjectMembers > Unlimited && n > l.ObjectMembers:
+		return errObjectMembers
 	}
 	return nil
 }
@@ -244,7 +248,7 @@ func skipString(raw []byte, i int) int {
 	for i < len(raw) {
 		j := bytes.IndexByte(raw[i:], '"')
 		if j < 0 {
-			return -1
+			return notFound
 		}
 		end := i + j
 		backslashes := 0
@@ -256,5 +260,5 @@ func skipString(raw []byte, i int) int {
 		}
 		i = end + 1
 	}
-	return -1
+	return notFound
 }

@@ -9,32 +9,26 @@ import (
 
 // See README.md, "Response shape limits".
 const (
-	maxResponseObjectMembers = 256
-	maxStreamedChunkNodes    = 1 << 16
-
-	choicesField = "choices"
-	objectField  = "object"
+	maxResponseObjectMembers  = 256
+	maxStreamedChunkNodes     = 1 << 16
+	minCompletionBytesPerNode = 4
 )
 
 var (
 	completionObjectJSON = []byte(`"` + completionObject + `"`)
-
-	streamedChunkShapeLimits = jsonshape.Limits{
-		ObjectMembers:   maxResponseObjectMembers,
-		RootKeyElements: map[string]int{choicesField: maxIndexedElements},
-		Nodes:           maxStreamedChunkNodes,
-	}
-	completionShapeLimits = jsonshape.Limits{
-		ObjectMembers:   maxResponseObjectMembers,
-		RootKeyElements: map[string]int{choicesField: maxIndexedElements},
-	}
+	choicesElementLimits = map[string]int{choicesField: maxIndexedElements}
 )
 
 func responseShapeLimits(payload []byte) jsonshape.Limits {
-	if bytes.Equal(jsonshape.FieldFold(payload, objectField), completionObjectJSON) {
-		return completionShapeLimits
+	limits := jsonshape.Limits{
+		ObjectMembers:   maxResponseObjectMembers,
+		RootKeyElements: choicesElementLimits,
+		Nodes:           maxStreamedChunkNodes,
 	}
-	return streamedChunkShapeLimits
+	if bytes.Equal(jsonshape.Field(payload, objectField), completionObjectJSON) {
+		limits.Nodes = max(maxStreamedChunkNodes, len(payload)/minCompletionBytesPerNode)
+	}
+	return limits
 }
 
 func responseShapeExceeded(payload []byte) bool {

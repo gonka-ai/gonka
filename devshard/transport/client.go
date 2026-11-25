@@ -100,7 +100,15 @@ const DefaultMaxSSEStreamBytes int64 = 256 << 20
 // data in the reader buffer (not the full attacker payload).
 const sseReaderBufferSize = 64 << 10
 
+// maxResponseMempoolEntries caps the mempool a host reply may carry before it is decoded.
 const maxResponseMempoolEntries = 1 << 16
+
+const (
+	sseReceiptField    = "devshard_receipt"
+	sseMetaField       = "devshard_meta"
+	sseHeightSyncField = "height_sync"
+	mempoolField       = "mempool"
+)
 
 // DefaultHeightSeedTimeout is the per-attempt bound for POST /height-sync.
 // QueryTimeout (30s) is far too long for a hung seed peer: one silent TCP
@@ -877,21 +885,21 @@ func (c *HTTPClient) handleSSELine(
 	var receiptRaw, heightSyncRaw, metaRaw []byte
 	jsonshape.Object(raw, func(key, value []byte) bool {
 		switch {
-		case jsonshape.KeyEqual(key, "devshard_receipt"):
+		case jsonshape.KeyEqual(key, sseReceiptField):
 			receiptRaw = value
-		case jsonshape.KeyEqual(key, "height_sync"):
+		case jsonshape.KeyEqual(key, sseHeightSyncField):
 			heightSyncRaw = value
-		case jsonshape.KeyEqual(key, "devshard_meta"):
+		case jsonshape.KeyEqual(key, sseMetaField):
 			metaRaw = value
 		}
 		return true
 	})
 
-	if raw := receiptRaw; raw != nil {
-		const key = "devshard_receipt"
+	if receiptRaw != nil {
+		const key = sseReceiptField
 		*sawTerminator = true
 		var receipt DevshardReceiptEvent
-		if err := json.Unmarshal(raw, &receipt); err != nil {
+		if err := json.Unmarshal(receiptRaw, &receipt); err != nil {
 			logging.Warn("sse_receipt_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
 		} else {
 			hostLabel := c.config.ParticipantKey
@@ -920,9 +928,9 @@ func (c *HTTPClient) handleSSELine(
 			result.ObservedHeight = receipt.ObservedHeight
 			result.ObservedBlockHash = receipt.ObservedBlockHash
 		}
-		if rawHS := heightSyncRaw; rawHS != nil && !bytes.Equal(rawHS, []byte("null")) {
+		if heightSyncRaw != nil && !bytes.Equal(heightSyncRaw, []byte("null")) {
 			var hs heightsync.HeightSyncSection
-			if err := json.Unmarshal(rawHS, &hs); err == nil {
+			if err := json.Unmarshal(heightSyncRaw, &hs); err == nil {
 				hs.Direction = "response"
 				c.ingestResponseHeightSync(&hs, result.Nonce, "SSE devshard_receipt line")
 				result.HasEnvelope = true
@@ -937,15 +945,19 @@ func (c *HTTPClient) handleSSELine(
 		return
 	}
 
-	if raw := metaRaw; raw != nil {
-		const key = "devshard_meta"
+	if metaRaw != nil {
+		const key = sseMetaField
 		if sawMeta != nil {
 			*sawMeta = true
 		}
 		received.MarkComplete()
-		mempool := jsonshape.FieldFold(raw, "mempool")
+		if !jsonshape.IsObject(metaRaw) && !bytes.Equal(bytes.TrimSpace(metaRaw), []byte("null")) {
+			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", "meta is not an object")
+			return
+		}
+		mempool := jsonshape.FieldFold(metaRaw, mempoolField)
 		if _, err := jsonshape.Check(mempool, jsonshape.Limits{RootMembers: maxResponseMempoolEntries}); err != nil {
-			logging.Warn("sse_meta_shape_rejected", "subsystem", "transport", "escrow", c.escrowID, "error", err)
+			logging.Warn("sse_meta_shape_rejected", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
 			return
 		}
 		var encoded [][]byte

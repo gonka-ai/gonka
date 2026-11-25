@@ -3,9 +3,6 @@ package jsonshape
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,21 +26,6 @@ func referenceMembers(t testing.TB, raw []byte) ([]member, bool) {
 		var value json.RawMessage
 		require.NoError(t, dec.Decode(&value))
 		out = append(out, member{key: keyTok.(string), value: value})
-	}
-	return out, true
-}
-
-func referenceElements(t testing.TB, raw []byte) ([][]byte, bool) {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	tok, err := dec.Token()
-	if err != nil || tok != json.Delim('[') {
-		return nil, false
-	}
-	var out [][]byte
-	for dec.More() {
-		var value json.RawMessage
-		require.NoError(t, dec.Decode(&value))
-		out = append(out, value)
 	}
 	return out, true
 }
@@ -80,98 +62,6 @@ func checkObjectAndField(t *testing.T, raw []byte) {
 	require.Equal(t, string(folded.Usage), string(FieldFold(raw, "usage")), "%q", raw)
 }
 
-func checkArray(t *testing.T, raw []byte) {
-	if !json.Valid(raw) {
-		return
-	}
-	want, ok := referenceElements(t, raw)
-	if !ok {
-		return
-	}
-	var got [][]byte
-	Array(raw, func(value []byte) bool {
-		got = append(got, value)
-		return true
-	})
-	require.Len(t, got, len(want), "%q", raw)
-	for i := range want {
-		require.Equal(t, string(want[i]), string(got[i]))
-	}
-}
-
-var rewriteStripped = []string{"token_ids", "a"}
-
-func testTransform(key []byte, depth int) (string, bool) {
-	if depth == 1 && KeyEqual(key, "usage") {
-		return "", true
-	}
-	for _, name := range rewriteStripped {
-		if KeyEqual(key, name) {
-			return "", true
-		}
-	}
-	if KeyEqual(key, "top_logprobs") {
-		return "[]", true
-	}
-	return "", false
-}
-
-func referenceTransform(v any, depth int) any {
-	switch t := v.(type) {
-	case map[string]any:
-		for k, child := range t {
-			switch {
-			case depth == 1 && k == "usage":
-				delete(t, k)
-			case k == "token_ids" || k == "a":
-				delete(t, k)
-			case k == "top_logprobs":
-				t[k] = []any{}
-			default:
-				t[k] = referenceTransform(child, depth+1)
-			}
-		}
-		return t
-	case []any:
-		for i, child := range t {
-			t[i] = referenceTransform(child, depth+1)
-		}
-		return t
-	}
-	return v
-}
-
-func decodeNumbers(t testing.TB, raw []byte) any {
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-	var v any
-	require.NoError(t, dec.Decode(&v))
-	_, err := dec.Token()
-	require.ErrorIs(t, err, io.EOF)
-	return v
-}
-
-func checkRewrite(t *testing.T, raw []byte) {
-	out, changed, err := Rewrite(raw, testTransform)
-	if !json.Valid(raw) {
-		require.ErrorIs(t, err, ErrInvalid)
-		require.False(t, changed)
-		return
-	}
-	if st, mErr := Measure(raw); mErr != nil {
-		require.ErrorIs(t, err, ErrTooDeep)
-		require.Greater(t, st.Depth, MaxDepth-1)
-		return
-	}
-	require.NoError(t, err)
-	require.Truef(t, json.Valid(out), "rewrite of %q produced invalid %q", raw, out)
-	want := referenceTransform(decodeNumbers(t, raw), 1)
-	require.Equalf(t, want, decodeNumbers(t, out), "rewrite of %q gave %q", raw, out)
-	if !changed {
-		require.Equal(t, string(raw), string(out))
-	}
-}
-
 var rawSeeds = []string{
 	`{}`,
 	`[]`,
@@ -197,37 +87,31 @@ var rawSeeds = []string{
 	`{"a":[{"a":{"a":1}}]}`,
 }
 
+// Test flow:
+//  1. Walk each seed with Object, and read every member with Field and two with FieldFold.
+//  2. Assert the members, and each field's raw value, equal what encoding/json reads from the same bytes.
 func TestRawHelpersMatchEncodingJSON(t *testing.T) {
 	for _, s := range rawSeeds {
 		raw := []byte(s)
 		checkObjectAndField(t, raw)
-		checkArray(t, raw)
-		checkRewrite(t, raw)
 	}
 }
 
-func TestRewriteFailsClosed(t *testing.T) {
-	_, _, err := Rewrite([]byte(`{"token_ids":[1],`), testTransform)
-	require.ErrorIs(t, err, ErrInvalid)
-	deep := strings.Repeat(`{"x":`, MaxDepth+1) + `{"token_ids":1}` + strings.Repeat(`}`, MaxDepth+1)
-	out, changed, err := Rewrite([]byte(deep), testTransform)
-	require.ErrorIs(t, err, ErrTooDeep)
-	require.True(t, errors.Is(err, ErrLimit))
-	require.False(t, changed)
-	require.Equal(t, deep, string(out))
-}
-
+// Test flow:
+//  1. Fuzz the same comparison from the seeds.
+//  2. Assert Object, Field and FieldFold agree with encoding/json on every valid input.
 func FuzzRawHelpersMatchEncodingJSON(f *testing.F) {
 	for _, s := range rawSeeds {
 		f.Add([]byte(s))
 	}
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		checkObjectAndField(t, raw)
-		checkArray(t, raw)
-		checkRewrite(t, raw)
 	})
 }
 
+// Test flow:
+//  1. Compare a one-megabyte key with `choices` without regard to case, and find `choices` after it with FieldFold.
+//  2. Assert neither allocates.
 func TestKeyEqualFoldLongKeyDoesNotAllocate(t *testing.T) {
 	key := bytes.Repeat([]byte("k"), 1<<20)
 	raw := []byte(`{"` + string(key) + `":1,"choices":[]}`)

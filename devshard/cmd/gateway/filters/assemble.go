@@ -57,10 +57,13 @@ func assembleSSEBody(body []byte) []byte {
 		if len(payload) == 0 || bytes.Equal(payload, sseDoneMarker) {
 			return false
 		}
-		decoded, parsed := decodeStreamedEvent(payload)
-		if !parsed {
-			truncated = truncated || responseShapeExceeded(payload)
-			return truncated
+		decoded, outcome := decodeStreamedEvent(payload)
+		switch outcome {
+		case decodeShapeExceeded:
+			truncated = true
+			return true
+		case decodeMalformed:
+			return false
 		}
 		if name, isString := decoded["object"].(string); isString && name == completionObject {
 			if merged == nil {
@@ -87,13 +90,16 @@ func assembleSSEBody(body []byte) []byte {
 	}
 }
 
-func decodeStreamedEvent(payload []byte) (map[string]any, bool) {
-	decoded, _, ok := decodePayload(payload)
-	if !ok {
-		return nil, false
+func decodeStreamedEvent(payload []byte) (map[string]any, decodeOutcome) {
+	decoded, _, outcome := decodePayload(payload)
+	if outcome != decodeParsed {
+		return nil, outcome
 	}
 	object, isObject := decoded.(map[string]any)
-	return object, isObject
+	if !isObject {
+		return nil, decodeMalformed
+	}
+	return object, decodeParsed
 }
 
 // encodeCompletion turns each choice's accumulated delta into its message, ordered by index.

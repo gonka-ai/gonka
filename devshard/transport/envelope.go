@@ -220,6 +220,10 @@ func isLikelyJSONObject(raw []byte) bool {
 	return false
 }
 
+type ignoredJSONValue struct{}
+
+func (*ignoredJSONValue) UnmarshalJSON([]byte) error { return nil }
+
 func decodeInferenceResponseJSON(raw []byte) (InferenceResponse, error) {
 	var response InferenceResponse
 	if !stdjson.Valid(raw) {
@@ -227,27 +231,30 @@ func decodeInferenceResponseJSON(raw []byte) (InferenceResponse, error) {
 	}
 	var shapeErr error
 	jsonshape.Object(raw, func(key, value []byte) bool {
-		if jsonshape.KeyEqualFold(key, "mempool") {
+		if jsonshape.KeyEqualFold(key, mempoolField) {
 			_, shapeErr = jsonshape.Check(value, jsonshape.Limits{RootMembers: maxResponseMempoolEntries})
 		}
 		return shapeErr == nil
 	})
-	if shapeErr != nil {
-		logging.Warn("inference_response_mempool_shape_rejected", "subsystem", "transport", "error", shapeErr)
-		stripped, _, err := jsonshape.Rewrite(raw, func(key []byte, depth int) (string, bool) {
-			return "", depth == 1 && jsonshape.KeyEqualFold(key, "mempool")
-		})
-		if err != nil {
-			return response, err
-		}
-		raw = stripped
+	if shapeErr == nil {
+		err := stdjson.Unmarshal(raw, &response)
+		return response, err
 	}
-	err := stdjson.Unmarshal(raw, &response)
-	return response, err
+	logging.Warn("inference_response_mempool_shape_rejected", "subsystem", "transport", "error", shapeErr)
+	var withoutMempool struct {
+		InferenceResponse
+		Mempool ignoredJSONValue `json:"mempool"`
+	}
+	err := stdjson.Unmarshal(raw, &withoutMempool)
+	return withoutMempool.InferenceResponse, err
 }
 
 func rejectDeprecatedJSONEnvelopeKeys(raw []byte) error {
-	if stdjson.Valid(raw) && jsonshape.Field(raw, "message") != nil {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil
+	}
+	if _, ok := top["message"]; ok {
 		return fmt.Errorf("deprecated JSON inference envelope (top-level \"message\") is not supported; use protobuf InferenceRequestEnvelope / InferenceResponseEnvelope")
 	}
 	return nil

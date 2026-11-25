@@ -12,6 +12,9 @@ import (
 	"devshard/host"
 )
 
+// Test flow:
+//  1. Parse an SSE line whose object carries 257 `devshard_`-prefixed keys and no protocol envelope.
+//  2. Assert it is forwarded to the client as data rather than read as an envelope.
 func TestParseSSE_WideEnvelopeCandidateIsForwardedAsData(t *testing.T) {
 	keys := make([]string, 0, 256+1)
 	for i := 0; i <= 256; i++ {
@@ -27,6 +30,9 @@ func TestParseSSE_WideEnvelopeCandidateIsForwardedAsData(t *testing.T) {
 	require.Contains(t, forwarded.String(), `"devshard_k0":""`)
 }
 
+// Test flow:
+//  1. Parse a receipt line padded with 256 extra members, and the same line made invalid by a malformed member.
+//  2. Assert the padded receipt is read and not forwarded, and the invalid one is forwarded as data without a receipt.
 func TestParseSSE_ReceiptProjectionHandlesPaddingAndRejectsMalformedJSON(t *testing.T) {
 	var padding strings.Builder
 	for i := 0; i < 256; i++ {
@@ -58,10 +64,31 @@ func TestParseSSE_ReceiptProjectionHandlesPaddingAndRejectsMalformedJSON(t *test
 	}
 }
 
+// Test flow:
+//  1. Decode a JSON inference response whose mempool is one entry past the limit, under a key differing only in case, and one at the limit.
+//  2. Assert the response past the limit decodes with no mempool and the rest of its fields, and the one at the limit keeps its mempool.
 func TestDecodeInferenceResponseJSON_OversizedMempoolIsDropped(t *testing.T) {
-	entries := strings.TrimSuffix(strings.Repeat(`"",`, maxResponseMempoolEntries+1), ",")
-	resp, err := decodeInferenceResponseJSON([]byte(`{"mempool":[` + entries + `],"nonce":7}`))
+	entries := func(count int) string {
+		return strings.TrimSuffix(strings.Repeat(`"",`, count), ",")
+	}
+	past, err := decodeInferenceResponseJSON([]byte(`{"MEMPOOL":[` + entries(maxResponseMempoolEntries+1) + `],"nonce":7}`))
 	require.NoError(t, err)
-	require.Empty(t, resp.Mempool)
-	require.EqualValues(t, 7, resp.Nonce)
+	require.Empty(t, past.Mempool)
+	require.EqualValues(t, 7, past.Nonce)
+
+	within, err := decodeInferenceResponseJSON([]byte(`{"mempool":[` + entries(maxResponseMempoolEntries) + `],"nonce":7}`))
+	require.NoError(t, err)
+	require.Len(t, within.Mempool, maxResponseMempoolEntries)
+}
+
+// Test flow:
+//  1. Check bodies with a top-level `message` that encoding/json accepts and that only the lenient decoder accepts, and bodies without one.
+//  2. Assert every body with a top-level `message` the lenient decoder reads is rejected, as before the response limits, and the rest pass.
+func TestRejectDeprecatedJSONEnvelopeKeysKeepsItsVerdicts(t *testing.T) {
+	for _, body := range []string{`{"message":"x"}`, `{"message":null}`, `{"message":01}`} {
+		require.Errorf(t, rejectDeprecatedJSONEnvelopeKeys([]byte(body)), "%s", body)
+	}
+	for _, body := range []string{`{"Message":"x"}`, `{"x":{"message":1}}`, `["message"]`, `not json`} {
+		require.NoErrorf(t, rejectDeprecatedJSONEnvelopeKeys([]byte(body)), "%s", body)
+	}
 }
