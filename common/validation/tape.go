@@ -87,11 +87,9 @@ type TapeSignals struct {
 // logprobs, so it grows as 1/T: an honest answer at temperature 0.1 has a
 // median largest gap of 12.7 and up to 48 against 1.3 and 4.5 at temperature
 // 1. And between nodes that render a prompt or apply a grammar differently a
-// few positions sit tens of units off while the share stays where it is. On a
-// mainnet validator in shadow (1010 DeepSeek answers the logprob comparison
-// passed, 13-16.11.2026) a bound of 7 on the gap failed 34 % of them; the
-// share alone fails 2.9 %, a third of which is one participant at 13.6 % of
-// positions.
+// few positions sit tens of units off while the share stays where it is. Over
+// 1010 DeepSeek answers the logprob comparison passed, a bound of 7 on the
+// gap failed 34 %; the share alone fails 2.9 %.
 type TapeThresholds struct {
 	FlipRate float64
 }
@@ -104,9 +102,8 @@ type TapeThresholds struct {
 // RTX 3090 0.3-1.2 %. FlipRate is the honest share with two points for nodes
 // that were not measured.
 //
-// GLM-5.3-Flash stands higher: on mainnet its 8xH200 executors are 7.5-8.3 %
-// off the winner for a B300 validator on the same image (3977 answers), the
-// B300 ones 2.1-2.3 % (11357 answers).
+// GLM-5.3-Flash stands higher: its 8xH200 executors are 7.5-8.3 % off the
+// winner for a B300 validator on the same image, the B300 ones 2.1-2.3 %.
 //
 // At DeepSeek's 0.08 on the logprob comparison's replay an answer under
 // another seed is 20 % off the winner, and three answers in four are flagged.
