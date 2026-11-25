@@ -81,6 +81,95 @@ func TestTheBridgeWindowOpensOverAStarvedFleet(t *testing.T) {
 	runSteps(t, spec)
 }
 
+func drainedBridgeSpec() testSpec {
+	spec := defaultSpec()
+	spec.model.amount, spec.model.maxUnsettled = 80_000, 16
+	spec.behaviours = everyParticipant(4, participantBehaviour{inputTokens: 5000})
+	return spec
+}
+
+const drainRounds, drainRequestsPerRound = 8, 8
+
+func drainTheBridge() []harnessStep {
+	steps := make([]harnessStep, 0, 2*drainRounds+1)
+	for range drainRounds {
+		steps = append(steps, sendRequests{promptBytes: 19_900, maxTokens: 64, count: drainRequestsPerRound, sequential: true}, advance{by: escrow.TickInterval})
+	}
+	return append(steps, sendRequests{promptBytes: 30_000, maxTokens: 64, count: 1, sequential: true})
+}
+
+func expectTheDrainedBridgeRefilled() expectThat {
+	return expectThat{label: "the planner refilled the drained bridge with temps", verify: func(harness *gatewayHarness) error {
+		if err := everyAnswer(drainRounds*drainRequestsPerRound+1, http.StatusOK)(harness); err != nil {
+			return err
+		}
+		lines := createLinesOf(harness.loggedEntries())
+		refills := 0
+		for _, escrowID := range createdWithRole(harness, tempRole) {
+			row, stored := rowOf(harness, escrowID)
+			if !stored || row.RotationEpoch != 8 {
+				return fmt.Errorf("temp %s row %+v (stored %t), want label 8", escrowID, row, stored)
+			}
+			if reason := lines[escrowID].reason; reason == string(funding.ReasonGuard) || reason == string(funding.ReasonCapacity) {
+				refills++
+			}
+		}
+		if refills == 0 {
+			return fmt.Errorf("no temp created for guard or capacity, want the planner to refill the drained bridge")
+		}
+		return nil
+	}}
+}
+
+// Test flow:
+//  1. Boot one regular holding 1 000 000 on a temp_count-1 model whose new escrows hold 80 000 and whose hosts bill 5000 input tokens a request.
+//  2. Advance thirty seconds, move into the bridge window and advance one minute: the bridge funds its temps and retires the regular.
+//  3. Send eight requests a tick for eight ticks, more than the bridge's temps can pay, then a full-context request.
+//  4. Assert every request was answered 200, the planner created at least one temp labelled 8 for guard or capacity, every planner create kept to the bucket, and it created no regular inside the window (`create reason`, `unsettled budget` at every step).
+func TestADrainedBridgeIsRefilledInsideTheWindow(t *testing.T) {
+	spec := drainedBridgeSpec()
+	spec.seeded = []seededEscrow{{amount: 1_000_000, role: regularRole}}
+	var regularsBefore int
+	spec.steps = append([]harnessStep{
+		advance{by: 30 * time.Second},
+		moveChain{move: func(blockchain *fakeChain) { blockchain.moveToHeight(1900) }},
+		advance{by: time.Minute},
+		expectThat{label: "precondition: temps serve the window and the regular left", verify: func(harness *gatewayHarness) error {
+			regularsBefore = len(createdWithRole(harness, regularRole))
+			if temps, regulars := rowsOfRole(harness, tempRole, true), rowsOfRole(harness, regularRole, true); temps == 0 || regulars != 0 {
+				return fmt.Errorf("%d serving temps and %d serving regulars, want temps and no regular", temps, regulars)
+			}
+			return nil
+		}},
+	}, drainTheBridge()...)
+	spec.steps = append(spec.steps, expectTheDrainedBridgeRefilled(), expectPlannerCreatesWithinBucket("refills within the bucket", testModelID), expectThat{label: "no regular created inside the window", verify: func(harness *gatewayHarness) error {
+		if regulars := len(createdWithRole(harness, regularRole)); regulars != regularsBefore {
+			return fmt.Errorf("%d regulars created, %d before the window, want none inside it", regulars, regularsBefore)
+		}
+		return nil
+	}})
+	runSteps(t, spec)
+}
+
+// Test flow:
+//  1. Boot inside the bridge window, in an epoch PoC that relaxed poc_mode serves through, with one temp of 80 000 labelled 8 whose hosts bill 5000 input tokens a request.
+//  2. Advance one minute, then send eight requests a tick for eight ticks, more than the bridge's temps can pay, then a full-context request.
+//  3. Assert every request was answered 200, the planner created at least one temp labelled 8 for guard or capacity, every planner create kept to the bucket, and no regular was created.
+func TestADrainedBridgeIsRefilledThroughARelaxedEpochPoC(t *testing.T) {
+	spec := drainedBridgeSpec()
+	spec.seeded = []seededEscrow{{amount: 80_000, role: tempRole}}
+	spec.epoch = chainEpoch{latest: 8, effective: 7, blockHeight: 2050, pocStart: 2000, setNewValidators: 2100, phase: chain.EpochPhasePoCGenerate}
+	spec.environment = map[string]string{"DEVSHARD_POC_REQUEST_MODE": config.PoCModeRelaxed}
+	spec.steps = append([]harnessStep{advance{by: time.Minute}}, drainTheBridge()...)
+	spec.steps = append(spec.steps, expectTheDrainedBridgeRefilled(), expectPlannerCreatesWithinBucket("refills within the bucket", testModelID), expectThat{label: "no regular created", verify: func(harness *gatewayHarness) error {
+		if regulars := len(createdWithRole(harness, regularRole)); regulars != 0 {
+			return fmt.Errorf("%d regulars created inside the window, want 0", regulars)
+		}
+		return nil
+	}})
+	runSteps(t, spec)
+}
+
 // Test flow:
 //  1. Boot with a guarantee of one, a regular and a full standby.
 //  2. Move into the bridge window and advance one minute: the bridge funds a temp and retires the regular and the standby.
@@ -265,43 +354,44 @@ func TestStrictConfirmationPoCStillFundsTheShortfall(t *testing.T) {
 }
 
 // Test flow:
-//  1. Table-driven: boot with one starved escrow, so the guarantee is short, either inside PoC (latest 8, effective 7) with the switch 450 blocks ahead, outside the bridge window, or before PoC with the switch 200 blocks ahead, inside the bridge window with requests open.
-//  2. Assert the snapshot shows exactly the one gate of the case: an epoch PoC, or the bridge window.
-//  3. Send three small requests and advance two minutes; assert the planner created nothing (the bridge's own temp is not the planner's).
+//  1. Table-driven: boot inside an epoch PoC (latest 8, effective 7) with one starved escrow, so the guarantee is short: either a regular with the switch 450 blocks ahead, outside the bridge window, in relaxed poc_mode, or a temp labelled 8 with the switch 50 blocks ahead, inside the bridge window, in poc_mode off.
+//  2. Assert the snapshot shows the epoch PoC and exactly the one gate of the case: the PoC itself outside the window with requests let through, or requests blocked inside the window.
+//  3. Send three small requests and advance two minutes; assert the planner created nothing.
 //  4. Reach set_new_validators, advance thirty seconds, and assert the guarantee was funded.
 func TestMoneyShortDuringPoCCreatesNothing(t *testing.T) {
 	for _, testCase := range []struct {
-		name        string
-		epoch       chainEpoch
-		blocked     bool
-		toTheSwitch []harnessStep
+		name       string
+		epoch      chainEpoch
+		pocMode    string
+		seededRole store.Role
+		inWindow   bool
 	}{
 		{
-			name:        "an epoch PoC outside the bridge window",
-			epoch:       chainEpoch{latest: 8, effective: 7, blockHeight: 2050, pocStart: 2000, setNewValidators: 2500, phase: chain.EpochPhasePoCGenerate},
-			blocked:     true,
-			toTheSwitch: []harnessStep{moveChain{move: func(blockchain *fakeChain) { blockchain.setNewValidators(3000, 3100) }}},
+			name:       "an epoch PoC outside the bridge window",
+			epoch:      chainEpoch{latest: 8, effective: 7, blockHeight: 2050, pocStart: 2000, setNewValidators: 2500, phase: chain.EpochPhasePoCGenerate},
+			pocMode:    config.PoCModeRelaxed,
+			seededRole: regularRole,
 		},
 		{
-			name:  "inside the bridge window with requests open",
-			epoch: chainEpoch{latest: 7, effective: 7, blockHeight: 1900, pocStart: 2000, setNewValidators: 2100, phase: chain.EpochPhaseInference},
-			toTheSwitch: []harnessStep{
-				moveChain{move: func(blockchain *fakeChain) { blockchain.startPoC() }},
-				advance{by: escrow.TickInterval},
-				moveChain{move: func(blockchain *fakeChain) { blockchain.setNewValidators(3000, 3100) }},
-			},
+			name:       "requests blocked by an epoch PoC inside the bridge window",
+			epoch:      chainEpoch{latest: 8, effective: 7, blockHeight: 2050, pocStart: 2000, setNewValidators: 2100, phase: chain.EpochPhasePoCGenerate},
+			pocMode:    config.PoCModeOff,
+			seededRole: tempRole,
+			inWindow:   true,
 		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			spec := plannerSpec()
 			spec.epoch = testCase.epoch
-			spec.seeded = repeatSeeded(1, 20_000, regularRole)
-			spec.steps = slices.Concat([]harnessStep{
+			spec.environment = map[string]string{"DEVSHARD_POC_REQUEST_MODE": testCase.pocMode}
+			spec.seeded = repeatSeeded(1, 20_000, testCase.seededRole)
+			spec.steps = []harnessStep{
 				expectThat{label: "precondition: exactly the case's gate holds", verify: func(harness *gatewayHarness) error {
-					snapshot := harness.currentGateway().Observer().Snapshot()
+					snapshot, configuration := harness.currentGateway().Observer().Snapshot(), harness.currentGateway().Config().Load()
 					blocksToSwitch := snapshot.EpochSwitchBlockHeight - snapshot.BlockHeight
-					if inWindow := blocksToSwitch >= 0 && blocksToSwitch <= harness.currentGateway().Config().Load().Rotation.PrePoCBlocks; snapshot.RequestsBlocked != testCase.blocked || inWindow == testCase.blocked {
-						return fmt.Errorf("snapshot RequestsBlocked %v, in the bridge window %v (%d blocks to the switch), want blocked %v and in the window %v", snapshot.RequestsBlocked, inWindow, blocksToSwitch, testCase.blocked, !testCase.blocked)
+					inWindow, requestsBlocked := blocksToSwitch >= 0 && blocksToSwitch <= configuration.Rotation.PrePoCBlocks, configuration.Modes.BlocksRequests(snapshot)
+					if snapshot.BlockReason != chain.BlockReasonPoC || inWindow != testCase.inWindow || requestsBlocked != (testCase.pocMode == config.PoCModeOff) {
+						return fmt.Errorf("block reason %q, in the bridge window %v (%d blocks to the switch), requests blocked %v in poc_mode %s, want an epoch PoC, in the window %v and requests blocked only in poc_mode off", snapshot.BlockReason, inWindow, blocksToSwitch, requestsBlocked, testCase.pocMode, testCase.inWindow)
 					}
 					return nil
 				}},
@@ -309,11 +399,11 @@ func TestMoneyShortDuringPoCCreatesNothing(t *testing.T) {
 				advance{by: 2 * time.Minute},
 				expectThat{label: "nothing planned behind the gate", verify: func(harness *gatewayHarness) error {
 					if planned := harness.plannerCreateTimes(testModelID); len(planned) != 0 {
-						return fmt.Errorf("plannerCreateTimes(%s) = %d creates behind the gate, want 0 (the bridge's own temp is not the planner's)", testModelID, len(planned))
+						return fmt.Errorf("plannerCreateTimes(%s) = %d creates behind the gate, want 0", testModelID, len(planned))
 					}
 					return nil
 				}},
-			}, testCase.toTheSwitch, []harnessStep{
+				moveChain{move: func(blockchain *fakeChain) { blockchain.setNewValidators(3000, 3100) }},
 				advance{by: 30 * time.Second},
 				expectThat{label: "funded once the gate lifted", verify: func(harness *gatewayHarness) error {
 					if guards := harness.createdWithReason(testModelID, string(funding.ReasonGuard)); guards == 0 {
@@ -321,7 +411,7 @@ func TestMoneyShortDuringPoCCreatesNothing(t *testing.T) {
 					}
 					return nil
 				}},
-			})
+			}
 			runSteps(t, spec)
 		})
 	}

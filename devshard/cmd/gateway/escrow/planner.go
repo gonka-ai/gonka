@@ -142,6 +142,9 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 			if !goneFromChain(row) {
 				reading.state.Counted++
 			}
+			if row.Active && row.RotationRole == roleTemp {
+				reading.state.ActiveTemps++
+			}
 			m.readRow(&reading, row, pricing, sweepGrace, now)
 		}
 	}
@@ -156,10 +159,11 @@ func (m *Manager) readModel(model ModelConfig, rows []store.DevshardRecord, comm
 }
 
 func (reading *modelReading) countPendingCreate(role store.Role) {
+	plannedRole := plannedCreateRole(reading.state.InBridgeWindow)
 	switch role {
 	case RoleReserve:
 		reading.state.PendingStandbyCreates++
-	case roleRegular:
+	case plannedRole:
 		reading.state.PendingRegularCreates++
 	}
 }

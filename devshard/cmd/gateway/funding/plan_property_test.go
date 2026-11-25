@@ -44,7 +44,7 @@ func randomModelState(random *rand.Rand) ModelState {
 		SurplusStreak: random.IntN(4), ScheduledTick: random.IntN(2) == 0, Parking: random.IntN(3), MoneyShort: random.IntN(3) == 0, WalletShort: random.IntN(4) == 0,
 		RequestsBlocked: random.IntN(6) == 0, InEpochPoC: random.IntN(6) == 0, EpochKnown: random.IntN(8) != 0, ServedByNetwork: random.IntN(8) != 0,
 		BreakerGated: random.IntN(6) == 0, InBridgeWindow: random.IntN(6) == 0, NearBridgeWindow: random.IntN(4) == 0,
-		CurrentLabel: 7, BucketTokens: random.IntN(3),
+		CurrentLabel: 7, BucketTokens: random.IntN(3), PendingRegularCreates: random.IntN(3), ActiveTemps: random.IntN(4),
 	}
 }
 
@@ -74,7 +74,7 @@ func randomSurplusState(random *rand.Rand) ModelState {
 		Priced: true, DemandPeak: random.Uint64N(200_001), DemandWindowFull: true,
 		SurplusStreak: 2 + random.IntN(2), ScheduledTick: random.IntN(2) == 0, Parking: random.IntN(2),
 		EpochKnown: true, ServedByNetwork: true, InBridgeWindow: random.IntN(6) == 0, NearBridgeWindow: random.IntN(4) == 0,
-		CurrentLabel: 7, BucketTokens: random.IntN(3),
+		CurrentLabel: 7, BucketTokens: random.IntN(3), ActiveTemps: random.IntN(3),
 	}
 }
 
@@ -87,6 +87,10 @@ func expectedRoom(model ModelState) int {
 	room := model.MaxUnsettled - model.Counted
 	if model.NearBridgeWindow && !model.InBridgeWindow {
 		room -= model.TempCount
+	}
+	if model.InBridgeWindow {
+		nextEpoch := model.ActiveTemps + model.PendingRegularCreates + model.TargetCount + model.ReserveCount
+		room -= max(0, nextEpoch-model.Counted)
 	}
 	return room
 }
@@ -151,6 +155,10 @@ func computeExpectedPlan(model ModelState) expectedPlan {
 	}
 	expected.shortfalls.Spread = max(0, model.TargetCount-expected.currentRegulars)
 	expected.shortfalls.Standby = max(0, model.ReserveCount-currentStandbys)
+	if model.InBridgeWindow {
+		expected.shortfalls.Guard = min(expected.shortfalls.Guard, max(0, model.TempCount-expected.fullEscrows))
+		expected.shortfalls.Spread, expected.shortfalls.Standby = 0, 0
+	}
 	expected.regularWanted = max(expected.shortfalls.Guard, expected.shortfalls.Capacity, expected.shortfalls.Spread)
 	if model.Priced && model.DemandWindowFull && perCreate > 0 && expected.regularWanted == 0 {
 		uncovered := uint64(0)
@@ -180,7 +188,7 @@ func checkPlanProperties(t *testing.T, random *rand.Rand, model ModelState, wher
 	t.Helper()
 	decision := Plan(model)
 	expected := computeExpectedPlan(model)
-	allowed := !model.RequestsBlocked && !model.InEpochPoC && model.EpochKnown && !model.BreakerGated && model.ServedByNetwork && !model.InBridgeWindow
+	allowed := !model.RequestsBlocked && (!model.InEpochPoC || model.InBridgeWindow) && model.EpochKnown && !model.BreakerGated && model.ServedByNetwork
 
 	require.Equal(t, expected.room, decision.Room, "%s: room", where)
 	require.Equal(t, expected.fullEscrows, decision.FullCount, "%s: full count", where)
@@ -192,14 +200,14 @@ func checkPlanProperties(t *testing.T, random *rand.Rand, model ModelState, wher
 	require.LessOrEqual(t, len(decision.Creates), max(expected.room, 0), "%s: creates over the room", where)
 	require.LessOrEqual(t, len(decision.Creates), model.BucketTokens, "%s: creates over the bucket", where)
 	if allowed {
-		require.Len(t, decision.Creates, min(expected.regularWanted+expected.shortfalls.Standby, max(expected.room, 0), max(model.BucketTokens, 0)), "%s: creates not sized by the shortfalls, room and bucket", where)
+		require.Len(t, decision.Creates, min(max(0, expected.regularWanted-model.PendingRegularCreates)+expected.shortfalls.Standby, max(expected.room, 0), max(model.BucketTokens, 0)), "%s: creates not sized by the shortfalls, open commitments, room and bucket", where)
 	} else {
 		require.Empty(t, decision.Creates, "%s: a create while it is not allowed", where)
 	}
 	if expected.shortfalls == (Shortfalls{}) {
 		require.Empty(t, decision.Creates, "%s: a create with no shortfall", where)
 	}
-	require.Equal(t, regularCreates(decision.Creates) < expected.shortfalls.Guard || (model.WalletShort && expected.shortfalls.Guard > 0), decision.Broken, "%s: broken", where)
+	require.Equal(t, regularCreates(decision.Creates)+model.PendingRegularCreates < expected.shortfalls.Guard || (model.WalletShort && expected.shortfalls.Guard > 0), decision.Broken, "%s: broken", where)
 	for _, create := range decision.Creates {
 		switch create.Reason {
 		case ReasonGuard:
@@ -270,9 +278,9 @@ func escrowByID(escrows []EscrowState, escrowID string) EscrowState {
 }
 
 // Test flow:
-//  1. For sixteen fixed seeds, generate five hundred random model states each.
+//  1. For sixteen fixed seeds, generate five hundred random model states each, some with regular creates still open.
 //  2. Plan every state, and plan it again with its escrows shuffled.
-//  3. Assert every property of the design against terms computed apart from Plan: room, full count, misconfiguration, shortfalls and surplus as the README formulas give them; creates within the room and the bucket and, when allowed, exactly the shortfalls bounded by both; none while blocked, without an epoch, while the breaker is gated, the model is not served or inside the bridge window; none when every shortfall is zero; broken exactly when regular creates fall below the guard; every create reason true of the state; at most one planned retire; surplus only after three scheduled samples, never beside a wanted regular create, only of a current-label regular escrow and never below K of them, and of a starved escrow only above K full; budget pressure only past the parking escrows or for a short wallet with nothing parking, and only of a starved escrow; no planned retire inside the bridge window; the need and liquid money the decision carries; a planned retire never takes the full count below K and removes a full escrow only with two spares; standby money never moves the decision; the same input gives the same decision in any escrow order.
+//  3. Assert every property of the design against terms computed apart from Plan: room, full count, misconfiguration, shortfalls and surplus as the README formulas give them; creates within the room and the bucket and, when allowed, exactly the shortfalls less the open regular creates, bounded by both; none while blocked, in an epoch PoC outside the bridge window, without an epoch, while the breaker is gated or the model is not served; none when every shortfall is zero; broken exactly when regular creates, planned and open, fall below the guard; every create reason true of the state; at most one planned retire; surplus only after three scheduled samples, never beside a wanted regular create, only of a current-label regular escrow and never below K of them, and of a starved escrow only above K full; budget pressure only past the parking escrows or for a short wallet with nothing parking, and only of a starved escrow; no planned retire inside the bridge window; the need and liquid money the decision carries; a planned retire never takes the full count below K and removes a full escrow only with two spares; standby money never moves the decision; the same input gives the same decision in any escrow order.
 func TestPlanKeepsEveryPropertyOverRandomModelStates(t *testing.T) {
 	t.Parallel()
 	surplusRetires := 0
