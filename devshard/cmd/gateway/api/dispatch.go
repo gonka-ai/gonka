@@ -46,6 +46,7 @@ type dispatchSession interface {
 	UnpinPendingFinish(inferenceID uint64)
 	ArmQuietSettle()
 	IsNonceFinished(nonce uint64) bool
+	IsNonceCanonicalFinished(nonce uint64) bool
 	HostParticipantKeyList() []string
 	HostLabel(hostIdx int) string
 	RewindHostCatchUp(hostIdx int, cause string) bool
@@ -62,6 +63,10 @@ func (t escrowTarget) RewindHostCatchUp(hostIdx int, cause string) bool {
 	return t.session.RewindHostCatchUp(hostIdx, cause)
 }
 func (t escrowTarget) NonceFinished(nonce uint64) bool { return t.session.IsNonceFinished(nonce) }
+
+func (t escrowTarget) NonceCanonicalFinished(nonce uint64) bool {
+	return t.session.IsNonceCanonicalFinished(nonce)
+}
 
 func (t escrowTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared, onFault func()) error {
 	prepared, err := preparedInference(nonce)

@@ -13,9 +13,11 @@ The protocol lives in the session (`user/heartbeat.go`, `user/heightsync_seed.go
 
 - **`NewOracle`** — the gateway's own follower of mainnet, over node-manager, the chain RPC feed and a direct gRPC read, behind a failover and a tip cache. `nil` when it is off or has nothing to follow, and it owns a live subscription, so shutdown closes it.
 
+- **`NewHeaderTimes`** — the block-time source every session measures timeouts on. With a Comet RPC it verifies commits; without one, or when the verifier cannot be built, it reads block times from the follower, or from a direct chain read when there is no follower, and logs that they are not signature-verified. `nil` when there is neither, and the session then has no block time to measure a timeout against.
+
 ## What it does not own
 
-**The follower is not what the gateway stamps from.** The scheduler's height source is `NewPeerTipOracleSource` over the same peer-tip cache the clients ingest host anchors into — the gateway carries what the hosts told it. The follower goes to `HeightSyncLogOracle`, which is the trust label on a carried tip: how far the gateway's own reading sits from the one it is passing on. It cannot become the escrow's time, because a sequencer-composed stamp never raises the floor `F` and never counts toward a turnover, and the heartbeat's own stamp is read from the log's floor (`referenceStampLocked`), not from any oracle.
+**The follower is not what the gateway stamps from.** The scheduler's height source is `NewPeerTipOracleSource` over the same peer-tip cache the clients ingest host anchors into — the gateway carries what the hosts told it. The follower goes to `HeightSyncLogOracle`, which is the trust label on a carried tip: how far the gateway's own reading sits from the one it is passing on. It cannot become the escrow's stamp, because a sequencer-composed stamp never raises the floor `F` and never counts toward a turnover, and the heartbeat's own stamp is read from the log's floor (`referenceStampLocked`), not from any oracle.
 
 ## Boundaries
 

@@ -31,6 +31,8 @@ type DispatchTarget interface {
 	HostCount() int
 	HostLabel(hostIdx int) string
 	NonceFinished(nonce uint64) bool
+	// NonceCanonicalFinished is the timeout gate: a Finish still queued does not count. See README, "Timeout votes".
+	NonceCanonicalFinished(nonce uint64) bool
 	RewindHostCatchUp(hostIdx int, cause string) bool
 }
 
@@ -128,6 +130,7 @@ type liveAttempt struct {
 	stalled       bool
 	backstopped   bool
 	nonceFinished bool
+	finishApplied bool
 	inInference   bool
 
 	receiptDeadline    deadlineJudgement
@@ -395,16 +398,23 @@ func (c *raceCoordinator) release() bool {
 	return true
 }
 
-func (attempt *liveAttempt) finishWith(event AttemptEvent, nonceFinished bool) {
-	attempt.markDone(event.At, nonceFinished)
+type nonceFinish struct{ queued, applied bool }
+
+func readNonceFinish(target DispatchTarget, nonce uint64) nonceFinish {
+	queued := target.NonceFinished(nonce)
+	return nonceFinish{queued: queued, applied: queued && target.NonceCanonicalFinished(nonce)}
+}
+
+func (attempt *liveAttempt) finishWith(event AttemptEvent, finish nonceFinish) {
+	attempt.markDone(event.At, finish)
 	attempt.outcome, attempt.lifecycle = event.Outcome, event.Lifecycle
 }
 
-func (attempt *liveAttempt) abandon(at time.Time, nonceFinished bool) {
-	attempt.markDone(at, nonceFinished)
+func (attempt *liveAttempt) abandon(at time.Time, finish nonceFinish) {
+	attempt.markDone(at, finish)
 	attempt.abandoned = true
 }
 
-func (attempt *liveAttempt) markDone(at time.Time, nonceFinished bool) {
-	attempt.done, attempt.completed, attempt.nonceFinished = true, at, nonceFinished
+func (attempt *liveAttempt) markDone(at time.Time, finish nonceFinish) {
+	attempt.done, attempt.completed, attempt.nonceFinished, attempt.finishApplied = true, at, finish.queued, finish.applied
 }

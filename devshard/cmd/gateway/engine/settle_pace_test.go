@@ -44,6 +44,8 @@ func (h *pacedHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) 
 
 func (h *pacedHandler) FinishTxFor(uint64) []byte { return nil }
 
+func (h *pacedHandler) IsNonceCanonicalFinished(uint64) bool { return false }
+
 func (h *pacedHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
 	return string(TimeoutKindRefused), h.deadline
 }

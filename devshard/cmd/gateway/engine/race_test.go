@@ -124,6 +124,7 @@ type hostScript struct {
 	confirmed   bool
 	finished    bool
 	finishLater bool
+	queuedOnly  bool
 	err         error
 	catchUpHeld bool
 	catchUp     *catchUpScript
@@ -268,6 +269,13 @@ func (t *scriptedTarget) NonceFinished(nonce uint64) bool {
 	finished := script.finished
 	script.finished = finished || script.finishLater
 	return finished
+}
+
+func (t *scriptedTarget) NonceCanonicalFinished(nonce uint64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	script := t.scripts[nonce]
+	return script != nil && script.finished && !script.queuedOnly
 }
 
 func (t *scriptedTarget) finish(nonce uint64) {
@@ -633,6 +641,50 @@ func waitForValue[T any](t *testing.T, values <-chan T, what string) T {
 
 func contentChunk(nonce uint64) string {
 	return fmt.Sprintf("data: {\"content\":\"%d\"}\n\n", nonce)
+}
+
+// Test flow:
+//  1. Start a race with one host scripted to win with content while its Finish is queued but not applied.
+//  2. Release it and read the reported outcome.
+//  3. Assert the winner's attempt carries a finished nonce and no applied Finish.
+//  4. Assert the outcome's timeout plan still posts a vote for that nonce.
+func TestARaceReportsAQueuedFinishAsNotAppliedAndStillPlansItsVote(t *testing.T) {
+	fixture := newRaceFixture(racePolicy(1), 4)
+	arrive := make(chan uint64, 1)
+	release := make(chan struct{})
+	fixture.host(20, 0, "host-0", &hostScript{
+		arrive:     arrive,
+		release:    release,
+		receipt:    true,
+		chunks:     []string{contentChunk(20)},
+		confirmed:  true,
+		finished:   true,
+		queuedOnly: true,
+	})
+	outcomes := make(chan RaceOutcome, 1)
+	go func() {
+		outcome, err := fixture.run(context.Background())
+		if err != nil {
+			t.Error(err)
+		}
+		outcomes <- outcome
+	}()
+
+	<-arrive
+	close(release)
+	reported := <-fixture.reported
+	<-outcomes
+
+	if len(reported.Attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(reported.Attempts))
+	}
+	attempt := reported.Attempts[0]
+	if !attempt.NonceFinished || attempt.FinishApplied {
+		t.Fatalf("nonce finished = %v, finish applied = %v, want true and false", attempt.NonceFinished, attempt.FinishApplied)
+	}
+	if plan := reported.TimeoutPlan(); len(plan) != 1 || !plan[0].Post {
+		t.Fatalf("plan = %+v, want one posted vote for the queued Finish", plan)
+	}
 }
 
 // Test flow:
@@ -1642,6 +1694,52 @@ func pausedCoordinatorForClient(clientCtx context.Context, fixture *raceFixture,
 
 func stalledFixtureCoordinator(policy EscalationPolicy, attempts ...*liveAttempt) *raceCoordinator {
 	return pausedCoordinator(newRaceFixture(policy, 1), 1, attempts...)
+}
+
+// Test flow:
+//  1. Start a paused coordinator in relaxed mode with two attempts that began before the observer saw generation and ended as receipted streams with no content, no error and no Finish.
+//  2. For each table snapshot (the confirmation-PoC grace period the observer still reports, and generation once the observer has polled it), assemble the outcome and read the failure the client would get.
+//  3. Assert the grace-period snapshot leaves both attempts unmarked as phase-aborted and the client's failure is `ErrEmptyStream`.
+//  4. Assert the generation snapshot marks both attempts phase-aborted and the client's failure is `ErrPoCTookTheHosts`.
+func TestInterruptedAttemptsBeforeTheObserverSeesGenerationAnswerAsAnEmptyStream(t *testing.T) {
+	cases := []struct {
+		name        string
+		snapshot    chain.PhaseSnapshot
+		wantAborted bool
+		wantFailure error
+	}{
+		{name: "the observer still reports the grace period", snapshot: chain.PhaseSnapshot{RequestsBlocked: true, ConfirmationPoCPhase: chain.ConfirmationPoCGracePeriod}, wantFailure: ErrEmptyStream},
+		{name: "the observer reports generation", snapshot: chain.PhaseSnapshot{RequestsBlocked: true, ConfirmationPoCPhase: chain.ConfirmationPoCGeneration}, wantAborted: true, wantFailure: ErrPoCTookTheHosts},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			fixture := newRaceFixture(settledPolicy(), 2)
+			fixture.deps.Snapshots = stubSnapshots{snapshot: testCase.snapshot}
+			fixture.deps.Modes = config.Modes{PoCMode: config.PoCModeRelaxed}
+			interrupted := func(nonce uint64, participant string) *liveAttempt {
+				return &liveAttempt{
+					nonce: nonce, participant: participant, done: true, inInference: true,
+					sendTime: testEpoch, completed: testEpoch.Add(time.Second),
+					outcome: &AttemptOutcome{
+						Nonce: nonce, Participant: participant, Terminal: TerminalEmptyStream,
+						SendTime: testEpoch, ReceiptTime: testEpoch.Add(100 * time.Millisecond), Completed: testEpoch.Add(time.Second),
+					},
+				}
+			}
+			coordinator := pausedCoordinator(fixture, 2, interrupted(610, "host-0"), interrupted(611, "host-1"))
+
+			outcome := coordinator.outcome()
+
+			for _, attempt := range outcome.Attempts {
+				if attempt.PhaseTransitionAborted != testCase.wantAborted {
+					t.Errorf("attempt %d phase aborted = %v, want %v", attempt.Nonce, attempt.PhaseTransitionAborted, testCase.wantAborted)
+				}
+			}
+			if got := outcome.failure(); !errors.Is(got, testCase.wantFailure) {
+				t.Errorf("failure = %v, want %v", got, testCase.wantFailure)
+			}
+		})
+	}
 }
 
 // Test flow:
@@ -2844,6 +2942,7 @@ func TestAnUnreportedAttemptStaysInTheOutcome(t *testing.T) {
 		nonce:         558,
 		done:          true,
 		nonceFinished: true,
+		finishApplied: true,
 		outcome:       &AttemptOutcome{Nonce: 558, Terminal: TerminalLost, ContentChunks: 2, SendTime: base},
 	}
 

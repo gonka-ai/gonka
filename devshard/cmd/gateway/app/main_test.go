@@ -133,7 +133,7 @@ func sessionsReading(records devshardLookup, storageDir string, reader chain.Rea
 			Serving: func(context.Context, string) (registry.EscrowSession, error) {
 				return nil, errNoChainDialed
 			},
-			ReadOnly:  readOnlySessions(records, storageDir),
+			ReadOnly:  readOnlySessions(records, storageDir, nil),
 			Reader:    reader,
 			Transport: chainWithoutADial{},
 		}, nil
@@ -171,7 +171,7 @@ func TestComposeReadsThePublicAPIThroughTheSourcesClient(t *testing.T) {
 	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   func(context.Context, string) (registry.EscrowSession, error) { return nil, errNoChainDialed },
-			ReadOnly:  readOnlySessions(gatewayStore, storageDir),
+			ReadOnly:  readOnlySessions(gatewayStore, storageDir, nil),
 			Reader:    chainWithoutADial{},
 			Transport: chainWithoutADial{},
 			PublicAPI: client,
