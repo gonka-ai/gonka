@@ -27,13 +27,12 @@ var KnownChainIDs = []string{DefaultChainID, ChainIDTestnet, ChainIDTestenv}
 
 // Config holds fee, gas, and tx polling defaults.
 type Config struct {
-	ChainID        string
-	FeeDenom       string
-	FeeAmount      uint64
-	GasLimit       uint64
-	PollInterval   time.Duration
-	PollTimeout    time.Duration
-	BroadcastSlots chan struct{}
+	ChainID      string
+	FeeDenom     string
+	FeeAmount    uint64
+	GasLimit     uint64
+	PollInterval time.Duration
+	PollTimeout  time.Duration
 }
 
 func (c Config) withDefaults() Config {
