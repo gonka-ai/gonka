@@ -14,7 +14,7 @@ type settleTask struct {
 	deadline func() time.Time
 	post     func()
 	wake     context.Context
-	recheck func(func()) func()
+	recheck  func(func()) func()
 }
 
 func (t settleTask) woken() bool { return t.wake != nil && t.wake.Err() != nil }
