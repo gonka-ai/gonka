@@ -52,6 +52,24 @@ func TestEpochValidationDefaultsStayDistinct(t *testing.T) {
 	require.NoError(t, missingFloor.Validate())
 }
 
+// release/v0.2.17-testnet-1 and -2 stored max_validations_per_signer_per_stage
+// as field 3. Those bytes must not be read as the acceptance floor.
+func TestEpochValidationParams_TestnetFieldThreeIsNotTheFloor(t *testing.T) {
+	// rows 256, per message 128, max_validations_per_signer_per_stage 256
+	stored := []byte{0x08, 0x80, 0x02, 0x10, 0x80, 0x01, 0x18, 0x80, 0x02}
+	var p EpochValidationParams
+	require.NoError(t, p.Unmarshal(stored))
+	require.Equal(t, 256, p.PositiveDistributionRowLimit())
+	require.Equal(t, 128, p.ValidationsPerMessageLimit())
+	require.Equal(t, int64(0), p.MinEpochAcceptanceWeight)
+	require.Equal(t, DefaultMinEpochAcceptanceWeight, p.EpochAcceptanceWeightFloor())
+
+	// The floor is field 4.
+	bz, err := DefaultEpochValidationParams().Marshal()
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x08, 0x80, 0x02, 0x10, 0x80, 0x01, 0x20, 0x01}, bz)
+}
+
 func TestCanonicalMLNodeWeightEntries_DropsZerosAndRejectsEmptyShape(t *testing.T) {
 	original := []*MLNodeDistributionEntry{{
 		ModelId: "model-a",
