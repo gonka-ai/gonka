@@ -182,10 +182,11 @@ Facts the race observes about the escrow but must not act on travel in `Lifecycl
 - `HostApplicationError` — an upstream refusal that is the response: the host answered, and the API answers it in its own words under the status `HTTPStatus` chooses (`api/errors.go`, `statusForError` and `detailForError`). A host names the status only for a fault in the request a client can correct (400, 413, 422; a non-numeric code with a `BadRequest` type is 400); its 429 and 503 are 503, the shard short of capacity rather than the caller over a quota; everything else, 401, 403 and 404 included, is 502, because those describe the gateway's signature, the host's own rules or a model the gateway already found served, never the client. `hostError` prefers the crowned attempt's refusal, because a host chosen to answer is the one whose answer the client asked for, and after it a trusted host's refusal or rejection of the request that rules out a retry (race.md, "Escalation").
 - `StatusForError` maps a host application error to the status `HTTPStatus` chooses, `ErrHostsUnavailable` to 503, and an upstream throttle or unavailability to 429.
 
-Two sentinels classify one attempt rather than the request (`attempt.go`):
+Three sentinels classify one attempt rather than the request (`attempt.go`):
 
 - `ErrStateRootDivergence` — the host's post state root diverges from the gateway's; the race branches on it without reading error text.
 - `ErrLocalRootUnavailable` — the gateway's own store failed to give a post state root, where the host did nothing wrong.
+- `ErrLocalCatchUpRead` — the gateway's own store failed to give the diffs a host's catch-up needs, before anything was sent to the host.
 
 ## Read next
 

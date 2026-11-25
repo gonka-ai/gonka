@@ -18,6 +18,7 @@ const maxUpstreamBodyLogged = 256
 var (
 	ErrStateRootDivergence  = errors.New("post state root divergence")
 	ErrLocalRootUnavailable = errors.New("local post state root unavailable")
+	ErrLocalCatchUpRead     = errors.New("local catch-up read failed")
 )
 
 // dispatcher is the engine's only route to a host; an adapter over devshard/user.Session satisfies it. See race.md, "Deadlines".

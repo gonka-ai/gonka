@@ -127,6 +127,7 @@ type hostScript struct {
 	err         error
 	catchUpHeld bool
 	catchUp     *catchUpScript
+	catchUpErr  error
 }
 
 // catchUpScript holds an attempt in its catch-up: it reports the host unreachable once fault closes and fails once fail closes.
@@ -169,6 +170,8 @@ func (t *scriptedTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared, 
 		return ctx.Err()
 	case script.catchUp != nil:
 		return script.catchUp.run(ctx, nonce.Nonce(), onFault)
+	case script.catchUpErr != nil:
+		return script.catchUpErr
 	}
 	return nil
 }
@@ -2972,6 +2975,27 @@ func TestAWinnerServedToAWaitingClientStaysUserVisible(t *testing.T) {
 		if got := reported.Labels(attempt).Visibility; got != VisibilityWinner {
 			t.Fatalf("winner visibility = %q, want %q", got, VisibilityWinner)
 		}
+	}
+}
+
+// Test flow:
+//  1. Start a race with a single host whose catch-up fails with `ErrLocalCatchUpRead`, the gateway's own store failing it before the send.
+//  2. Run the race to completion.
+//  3. Assert the attempt is flagged a local fault and exempt from the host's sample.
+func TestRunRaceExemptsTheHostWhenTheLocalCatchUpReadFails(t *testing.T) {
+	fixture := newRaceFixture(settledPolicy(), 1)
+	fixture.host(80, 0, "host-0", &hostScript{catchUpErr: fmt.Errorf("catch up: %w", ErrLocalCatchUpRead)})
+
+	if _, err := fixture.run(context.Background()); err != nil {
+		t.Fatalf("runRace error = %v", err)
+	}
+	reported := <-fixture.reported
+	attempt := reported.Attempts[0]
+	if !attempt.LocalFault {
+		t.Fatalf("LocalFault = false, want true")
+	}
+	if _, exemption := reported.Sample(attempt); exemption != ExemptLocalFault {
+		t.Fatalf("Sample exemption = %v, want ExemptLocalFault", exemption)
 	}
 }
 

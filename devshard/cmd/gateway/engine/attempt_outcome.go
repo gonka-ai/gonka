@@ -17,7 +17,7 @@ func (s *attemptState) classify(ctx context.Context, spec AttemptSpec, err error
 		s.lifecycle.EscrowMissing = transport.IsUpstreamEscrowNotFound(err)
 		s.stateDivergent = errors.Is(err, ErrStateRootDivergence)
 		s.hostAbsent = errors.Is(err, user.ErrHostAbsentFromChain)
-		s.localFault = errors.Is(err, ErrLocalRootUnavailable) || s.hostAbsent
+		s.localFault = errors.Is(err, ErrLocalRootUnavailable) || errors.Is(err, ErrLocalCatchUpRead) || s.hostAbsent
 		s.upstreamStatus, s.upstreamBody = upstreamRefusal(err)
 		s.terminal = classifyDispatchError(ctx, err)
 		s.capability = capabilityOfDispatchError(err)
