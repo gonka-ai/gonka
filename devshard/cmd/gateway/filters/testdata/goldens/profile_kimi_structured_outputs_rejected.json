@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "structured_outputs: not supported on this model — use response_format instead",
+  "status": "rejected"
+}

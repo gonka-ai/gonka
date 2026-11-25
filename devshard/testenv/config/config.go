@@ -100,6 +100,8 @@ type EpochGroupBinding struct {
 	ModelID             string `yaml:"model_id"`
 	ValidationThreshold int64  `yaml:"validation_threshold_value"`
 	ValidationExponent  int32  `yaml:"validation_threshold_exponent"`
+	HfRepo              string `yaml:"hf_repo"`
+	HfCommit            string `yaml:"hf_commit"`
 }
 
 // MockChainCfg is the listen addresses of cmd/mockchain.
@@ -135,6 +137,13 @@ type MockOpenAINodeCfg struct {
 	Hang          bool    `yaml:"hang,omitempty"`
 	FailureRate   float64 `yaml:"failure_rate,omitempty"`
 	HTTPStatus    int     `yaml:"http_status,omitempty"`
+	// TTFTP99 and TokenIntervalP99 switch the delays to seeded lognormal draws.
+	TTFTP99          string `yaml:"ttft_p99,omitempty"`
+	TokenIntervalP99 string `yaml:"token_interval_p99,omitempty"`
+	JitterSeed       uint64 `yaml:"jitter_seed,omitempty"`
+	// Host binds this node to one host ID (HostCfg.ID) in mock-dapi, so only
+	// that host acquires it. Empty keeps the node in the shared pool.
+	Host string `yaml:"host,omitempty"`
 }
 
 // VersiondCfg holds versiond supervisor defaults for compose.
@@ -160,10 +169,34 @@ type VersiondRouterCfg struct {
 
 // DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
 type DevshardctlCfg struct {
-	Host      string `yaml:"host"`
-	Port      int    `yaml:"port"`
-	StatsPort int    `yaml:"stats_port"`
-	IP        string `yaml:"ip"`
+	Host      string        `yaml:"host"`
+	Port      int           `yaml:"port"`
+	StatsPort int           `yaml:"stats_port"`
+	IP        string        `yaml:"ip"`
+	Driver    GatewayDriver `yaml:"driver,omitempty"`
+}
+
+// GatewayDriver names the binary the gateway service runs; empty means devshardctl.
+type GatewayDriver string
+
+const (
+	GatewayDriverDevshardctl GatewayDriver = "devshardctl"
+	GatewayDriverGateway     GatewayDriver = "gateway"
+)
+
+// Validate accepts the empty driver as devshardctl.
+func (d GatewayDriver) Validate() error {
+	switch d {
+	case "", GatewayDriverDevshardctl, GatewayDriverGateway:
+		return nil
+	default:
+		return fmt.Errorf("gateway driver %q must be %q or %q", d, GatewayDriverDevshardctl, GatewayDriverGateway)
+	}
+}
+
+// IsGateway reports whether the service runs cmd/gateway instead of devshardctl.
+func (d GatewayDriver) IsGateway() bool {
+	return d == GatewayDriverGateway
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
@@ -198,6 +231,8 @@ type HostCfg struct {
 	// so identity count and router-pool membership follow this field rather
 	// than roster position. Empty keeps the 2-of-N default below.
 	KeyName string `yaml:"key_name"`
+	// Env adds or replaces environment variables of this host's container.
+	Env map[string]string `yaml:"env,omitempty"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -251,10 +286,10 @@ const (
 	// proxy-router. Peer RPC (HTTP/2 preface) and JSON (HTTP/1.1) share it,
 	// as they share join's :80/:443. With the overlay on, pooled hosts'
 	// InferenceUrl is ProxyOverlayURL; without it, DefaultEscrowSlotURL.
-	DefaultProxyService = "proxy"
-	DefaultProxyPort    = 8080
-	ProxyOverlayURL     = "http://proxy:8080"
-	ProxyOverlayEnv     = "TESTENV_PROXY_OVERLAY"
+	DefaultProxyService     = "proxy"
+	DefaultProxyPort        = 8080
+	ProxyOverlayURL         = "http://proxy:8080"
+	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
 	DefaultDevshardctlHost  = "devshardctl"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
@@ -733,11 +768,18 @@ func (c *File) Validate() error {
 	if strings.TrimSpace(c.User.Address) == "" || strings.TrimSpace(c.User.PrivateKeyHex) == "" {
 		return errors.New("user key and address must be set (run gencompose)")
 	}
+	if err := c.Devshardctl.Driver.Validate(); err != nil {
+		return fmt.Errorf("devshardctl.driver: %w", err)
+	}
 	if c.Versiond.Mode == VersiondModeMulti && !c.Postgres.Enabled {
 		return errors.New("versiond.mode multi requires postgres.enabled: true (shared payload/session store for multiple versiond hosts)")
 	}
 	if c.Versiond.Mode == VersiondModeSingle && c.Postgres.Enabled {
 		return errors.New("versiond.mode single must use postgres.enabled: false (file payload fallback); use mode multi for shared Postgres")
+	}
+	hostIDs := make(map[string]bool, len(c.Hosts))
+	for _, h := range c.Hosts {
+		hostIDs[h.ID] = true
 	}
 	seenMLNodes := make(map[string]struct{}, len(c.MockOpenAI.Nodes))
 	for i, node := range c.MockOpenAI.Nodes {
@@ -755,6 +797,9 @@ func (c *File) Validate() error {
 		}
 		if node.HTTPStatus != 0 && (node.HTTPStatus < 400 || node.HTTPStatus > 599) {
 			return fmt.Errorf("mock_openai.nodes[%d] http_status must be between 400 and 599", i)
+		}
+		if node.Host != "" && !hostIDs[node.Host] {
+			return fmt.Errorf("mock_openai.nodes[%d].host %q is not a configured host", i, node.Host)
 		}
 		seenMLNodes[node.Name] = struct{}{}
 	}

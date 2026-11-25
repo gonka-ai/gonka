@@ -6,14 +6,12 @@ import (
 	"strings"
 	"sync"
 
-	"devshard/state"
+	"devshard/gatewayprotocol/probe"
 )
 
 const (
 	pocRequestModeOff     = "off"
 	pocRequestModeRelaxed = "relaxed"
-
-	pocProbeMaxTokens = uint64(state.MinReservationTokens)
 )
 
 var (
@@ -24,7 +22,7 @@ var (
 	currentPoCGeneration      bool
 	currentPoCPreservedLoaded bool
 	currentPoCPreservedModels = map[string]map[string]struct{}{}
-	pocProbePromptBody        = []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, pocProbeMaxTokens))
+	pocProbePromptBody        = []byte(fmt.Sprintf(`{"messages":[{"role":"user","content":"."}],"max_tokens":%d}`, probe.MaxTokens))
 )
 
 func ConfigurePoCRequestMode(raw string) {

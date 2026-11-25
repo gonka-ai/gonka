@@ -65,9 +65,8 @@ func TestGRPCChainTxClient_CreateDevshardEscrow_MockChain(t *testing.T) {
 	require.Equal(t, result.EscrowID, resp.Escrow.Id)
 }
 
-func startGRPCWithTx(t *testing.T, st *store.Store, rpcSvc *rpcface.Service) (grpc.ClientConnInterface, func()) {
+func startGRPCWithTx(t *testing.T, st *store.Store, rpcSvc *rpcface.Service, ledger *txledger.Ledger) (grpc.ClientConnInterface, func()) {
 	t.Helper()
-	ledger := txledger.New()
 	grpcSrv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{
 		Store:  st,
 		RPC:    rpcSvc,
@@ -88,7 +87,7 @@ func TestGRPCChainTxClient_SettleDevshardEscrow_MockChain(t *testing.T) {
 	st := seed.Defaults()
 	rpcSvc, err := rpcface.NewService(st, rpcface.Config{BlockInterval: time.Hour})
 	require.NoError(t, err)
-	conn, cleanup := startGRPCWithTx(t, st, rpcSvc)
+	conn, cleanup := startGRPCWithTx(t, st, rpcSvc, txledger.New())
 	t.Cleanup(cleanup)
 
 	txMgr, err := chaintx.New(conn, chaintx.Config{

@@ -1,0 +1,4 @@
+data: {"error":{"code":500,"message":"boom","type":"InternalServerError"}}
+
+data: [DONE]
+

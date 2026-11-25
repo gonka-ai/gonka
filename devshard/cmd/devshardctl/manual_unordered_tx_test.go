@@ -9,9 +9,21 @@ import (
 	"testing"
 	"time"
 
+	"devshard/gatewayprotocol/settlement"
+	"devshard/gatewayprotocol/settlementwire"
 	"devshard/signing"
 )
 
+const (
+	settleEscrowMessageTypeURL = "/inference.inference.MsgSettleDevshardEscrow"
+	secp256k1PublicKeyTypeURL  = "/cosmos.crypto.secp256k1.PubKey"
+	signModeDirect             = 1
+)
+
+// Test flow:
+//  1. Skip unless MANUAL_SETTLEMENT_FILE, MANUAL_PRIVATE_KEY and MANUAL_BROADCAST_FILE are set.
+//  2. Read the settlement JSON and the signer, chain id, account number, fee and gas limit from the environment.
+//  3. Build the unordered settle tx around the `settlementwire` message and write it as a BroadcastTx JSON payload.
 func TestManualBuildUnorderedSettleTx(t *testing.T) {
 	settlementPath := os.Getenv("MANUAL_SETTLEMENT_FILE")
 	privateKey := os.Getenv("MANUAL_PRIVATE_KEY")
@@ -24,8 +36,8 @@ func TestManualBuildUnorderedSettleTx(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read settlement: %v", err)
 	}
-	var settlement SettlementJSON
-	if err := json.Unmarshal(settlementData, &settlement); err != nil {
+	var settlementJSON SettlementJSON
+	if err := json.Unmarshal(settlementData, &settlementJSON); err != nil {
 		t.Fatalf("parse settlement: %v", err)
 	}
 
@@ -55,7 +67,7 @@ func TestManualBuildUnorderedSettleTx(t *testing.T) {
 		feeDenom,
 		feeAmount,
 		gasLimit,
-		settlement,
+		settlementJSON,
 		time.Now().UTC().Add(10*time.Minute),
 	)
 	if err != nil {
@@ -75,23 +87,64 @@ func TestManualBuildUnorderedSettleTx(t *testing.T) {
 	}
 }
 
-func buildManualUnorderedSettleTx(signer *signing.Secp256k1Signer, chainID string, accountNumber uint64, feeDenom string, feeAmount, gasLimit uint64, settlement SettlementJSON, timeout time.Time) ([]byte, error) {
-	msg, err := encodeMsgSettleDevshardEscrow(signer.Address(), settlement)
+func buildManualUnorderedSettleTx(signer *signing.Secp256k1Signer, chainID string, accountNumber uint64, feeDenom string, feeAmount, gasLimit uint64, settlementJSON SettlementJSON, timeout time.Time) ([]byte, error) {
+	message, err := settlementMessageFromJSON(settlementJSON)
 	if err != nil {
 		return nil, err
 	}
-	bodyBytes := encodeManualUnorderedTxBody(encodeAny(settleEscrowMsgTypeURL, msg), timeout)
-	pubKey := encodeAny(secp256k1PubKeyTypeURL, encodeSecp256k1PubKey(signer.CompressedPublicKeyBytes()))
-	authInfoBytes := encodeAuthInfo(pubKey, 0, feeDenom, feeAmount, gasLimit)
+	messageBytes, err := settlementwire.Marshal(signer.Address(), message)
+	if err != nil {
+		return nil, err
+	}
+	bodyBytes := encodeManualUnorderedTxBody(encodeAny(settleEscrowMessageTypeURL, messageBytes), timeout)
+	publicKey := encodeAny(secp256k1PublicKeyTypeURL, encodeSecp256k1PublicKey(signer.CompressedPublicKeyBytes()))
+	authInfoBytes := encodeAuthInfo(publicKey, 0, feeDenom, feeAmount, gasLimit)
 	signDoc := encodeSignDoc(bodyBytes, authInfoBytes, chainID, accountNumber)
-	sig, err := signer.Sign(signDoc)
+	signature, err := signer.Sign(signDoc)
 	if err != nil {
 		return nil, err
 	}
-	if len(sig) < 64 {
-		return nil, fmt.Errorf("invalid signature length %d", len(sig))
+	if len(signature) < 64 {
+		return nil, fmt.Errorf("invalid signature length %d", len(signature))
 	}
-	return encodeTxRaw(bodyBytes, authInfoBytes, sig[:64]), nil
+	return encodeTxRaw(bodyBytes, authInfoBytes, signature[:64]), nil
+}
+
+func settlementMessageFromJSON(settlementJSON SettlementJSON) (settlement.Message, error) {
+	stateRoot, err := decodeBase64Field(settlementJSON.StateRoot, "state_root")
+	if err != nil {
+		return settlement.Message{}, err
+	}
+	restHash, err := decodeBase64Field(settlementJSON.RestHash, "rest_hash")
+	if err != nil {
+		return settlement.Message{}, err
+	}
+	escrowID, err := parseEscrowIDString(settlementJSON.EscrowID)
+	if err != nil {
+		return settlement.Message{}, err
+	}
+	hostStats := make([]settlement.HostStat, 0, len(settlementJSON.HostStats))
+	for _, hostStat := range settlementJSON.HostStats {
+		hostStats = append(hostStats, settlement.HostStat(hostStat))
+	}
+	slotSignatures := make([]settlement.SlotSignature, 0, len(settlementJSON.Signatures))
+	for _, slotSignature := range settlementJSON.Signatures {
+		signature, err := decodeBase64Field(slotSignature.Signature, fmt.Sprintf("signature slot %d", slotSignature.SlotID))
+		if err != nil {
+			return settlement.Message{}, err
+		}
+		slotSignatures = append(slotSignatures, settlement.SlotSignature{SlotID: slotSignature.SlotID, Signature: signature})
+	}
+	return settlement.Message{
+		EscrowID:       escrowID,
+		StateRoot:      stateRoot,
+		Nonce:          settlementJSON.Nonce,
+		RestHash:       restHash,
+		HostStats:      hostStats,
+		SlotSignatures: slotSignatures,
+		Fees:           settlementJSON.Fees,
+		Version:        settlementJSON.StateRootAndProtocolVersion,
+	}, nil
 }
 
 func parseRequiredUintEnv(name string) (uint64, error) {
@@ -121,4 +174,84 @@ func encodeManualTimestamp(ts time.Time) []byte {
 		out = appendVarintField(out, 2, uint64(nanos))
 	}
 	return out
+}
+
+func encodeSecp256k1PublicKey(key []byte) []byte {
+	var out []byte
+	out = appendBytesField(out, 1, key)
+	return out
+}
+
+func encodeAny(typeURL string, value []byte) []byte {
+	var out []byte
+	out = appendBytesField(out, 1, []byte(typeURL))
+	out = appendBytesField(out, 2, value)
+	return out
+}
+
+func encodeAuthInfo(publicKeyAny []byte, sequence uint64, feeDenom string, feeAmount uint64, gasLimit uint64) []byte {
+	signerInfo := encodeSignerInfo(publicKeyAny, sequence)
+	fee := encodeFee(feeDenom, feeAmount, gasLimit)
+	var out []byte
+	out = appendBytesField(out, 1, signerInfo)
+	out = appendBytesField(out, 2, fee)
+	return out
+}
+
+func encodeSignerInfo(publicKeyAny []byte, sequence uint64) []byte {
+	var single []byte
+	single = appendVarintField(single, 1, signModeDirect)
+	var modeInfo []byte
+	modeInfo = appendBytesField(modeInfo, 1, single)
+	var out []byte
+	out = appendBytesField(out, 1, publicKeyAny)
+	out = appendBytesField(out, 2, modeInfo)
+	out = appendVarintField(out, 3, sequence)
+	return out
+}
+
+func encodeFee(denom string, amount uint64, gasLimit uint64) []byte {
+	var coin []byte
+	coin = appendBytesField(coin, 1, []byte(denom))
+	coin = appendBytesField(coin, 2, []byte(strconv.FormatUint(amount, 10)))
+	var out []byte
+	out = appendBytesField(out, 1, coin)
+	out = appendVarintField(out, 2, gasLimit)
+	return out
+}
+
+func encodeSignDoc(bodyBytes []byte, authInfoBytes []byte, chainID string, accountNumber uint64) []byte {
+	var out []byte
+	out = appendBytesField(out, 1, bodyBytes)
+	out = appendBytesField(out, 2, authInfoBytes)
+	out = appendBytesField(out, 3, []byte(chainID))
+	out = appendVarintField(out, 4, accountNumber)
+	return out
+}
+
+func encodeTxRaw(bodyBytes []byte, authInfoBytes []byte, signature []byte) []byte {
+	var out []byte
+	out = appendBytesField(out, 1, bodyBytes)
+	out = appendBytesField(out, 2, authInfoBytes)
+	out = appendBytesField(out, 3, signature)
+	return out
+}
+
+func appendVarintField(destination []byte, fieldNumber int, value uint64) []byte {
+	destination = appendVarint(destination, uint64(fieldNumber<<3))
+	return appendVarint(destination, value)
+}
+
+func appendBytesField(destination []byte, fieldNumber int, value []byte) []byte {
+	destination = appendVarint(destination, uint64(fieldNumber<<3|2))
+	destination = appendVarint(destination, uint64(len(value)))
+	return append(destination, value...)
+}
+
+func appendVarint(destination []byte, value uint64) []byte {
+	for value >= 0x80 {
+		destination = append(destination, byte(value)|0x80)
+		value >>= 7
+	}
+	return append(destination, byte(value))
 }

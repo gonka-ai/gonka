@@ -58,6 +58,34 @@ func (s *Session) publishHeightSyncView() {
 	s.publishHeightSyncViewOpt(false)
 }
 
+func (s *Session) publishHeightSyncViewOffPath() {
+	if s == nil || !s.heightSyncWired.Load() {
+		return
+	}
+	s.heightSyncDirty.Store(true)
+	if !s.heightSyncPublishMu.TryLock() {
+		return
+	}
+	defer s.heightSyncPublishMu.Unlock()
+	s.armHeightSyncFlushLocked(s.heightSyncPublishInterval())
+}
+
+func (s *Session) unlockHeightSyncPublish() {
+	s.heightSyncPublishMu.Unlock()
+	if s.heightSyncDirty.Load() && s.heightSyncPublishMu.TryLock() {
+		s.armHeightSyncFlushLocked(s.heightSyncPublishInterval())
+		s.heightSyncPublishMu.Unlock()
+	}
+}
+
+func (s *Session) heightSyncPublishInterval() time.Duration {
+	configured := s.heightSyncMinPublishNs.Load()
+	if configured == 0 {
+		return heightSyncDefaultMinPublish
+	}
+	return max(time.Duration(configured), 0)
+}
+
 func (s *Session) publishHeightSyncViewForce() {
 	if s == nil || !s.heightSyncWired.Load() {
 		return
@@ -75,17 +103,13 @@ func (s *Session) publishHeightSyncViewOpt(force bool) {
 	}
 
 	s.heightSyncPublishMu.Lock()
-	defer s.heightSyncPublishMu.Unlock()
+	defer s.unlockHeightSyncPublish()
 
 	if !force {
 		if !s.heightSyncDirty.Load() {
 			return
 		}
-		minNs := s.heightSyncMinPublishNs.Load()
-		if minNs == 0 {
-			minNs = heightSyncDefaultMinPublish.Nanoseconds()
-		}
-		if minNs > 0 {
+		if minNs := s.heightSyncPublishInterval().Nanoseconds(); minNs > 0 {
 			now := time.Now().UnixNano()
 			if last := s.heightSyncLastPubNs.Load(); last > 0 && now-last < minNs {
 				// Coalesced. Arm the trailing edge so the newest state reaches
@@ -116,9 +140,6 @@ func (s *Session) publishHeightSyncViewOpt(force bool) {
 		if s.heightSyncView.CompareAndSwap(cur, next) {
 			s.heightSyncLastPubNs.Store(time.Now().UnixNano())
 			s.heightSyncPubCount.Add(1)
-			// A mutation that landed during SnapshotHeightSync has already
-			// re-marked dirty, so the next call (or the trailing timer) picks
-			// it up. Nothing to do here.
 			return
 		}
 	}
