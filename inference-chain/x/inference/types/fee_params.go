@@ -97,6 +97,11 @@ func (fp *FeeParams) Validate() error {
 	groupNames := make(map[string]struct{}, len(fp.Groups))
 	seenRuleFuncs := make(map[string]struct{})
 	seenPeriodBase := make(map[string]struct{})
+	// ChargeStoreCommitGas reads every StoreCommit rule. ChargeExtraGas and
+	// ChargeStaticGas read only the first rule for a type_url
+	// (RuleForTypeURL), so any other type_url keeps a single rule.
+	storeCommitURL := sdk.MsgTypeURL(&MsgPoCV2StoreCommit{})
+	seenTypeURL := make(map[string]struct{})
 	for i, g := range fp.Groups {
 		if g == nil {
 			return fmt.Errorf("groups[%d] is nil", i)
@@ -133,6 +138,12 @@ func (fp *FeeParams) Validate() error {
 				return fmt.Errorf("duplicate fee func %q for type_url %q", funcKind, rule.TypeUrl)
 			}
 			seenRuleFuncs[ruleKey] = struct{}{}
+			if rule.TypeUrl != storeCommitURL {
+				if _, dup := seenTypeURL[rule.TypeUrl]; dup {
+					return fmt.Errorf("groups[%q].msgs[%d]: more than one rule for type_url %q; only StoreCommit reads more than one", g.Name, j, rule.TypeUrl)
+				}
+				seenTypeURL[rule.TypeUrl] = struct{}{}
+			}
 			if rule.Base != nil {
 				if _, dup := seenPeriodBase[rule.TypeUrl]; dup {
 					return fmt.Errorf("duplicate period base for type_url %q", rule.TypeUrl)
@@ -303,6 +314,7 @@ func ExtraGasForStoredBytes(deltaBytes, gasPerUnit uint64, unit string) uint64 {
 func validateMsgGasRuleFunc(rule *MsgGasRule) error {
 	storeCommitURL := sdk.MsgTypeURL(&MsgPoCV2StoreCommit{})
 	hdURL := sdk.MsgTypeURL(&MsgSubmitHardwareDiff{})
+	newParticipantURL := sdk.MsgTypeURL(&MsgSubmitNewParticipant{})
 
 	switch f := rule.GetFunc().(type) {
 	case nil:
@@ -359,6 +371,11 @@ func validateMsgGasRuleFunc(rule *MsgGasRule) error {
 	case *MsgGasRule_Static:
 		if f.Static == nil {
 			return fmt.Errorf("static is nil")
+		}
+		// Only ChargeStoreCommitGas and the SubmitNewParticipant handler
+		// (ChargeStaticGas) read static gas.
+		if rule.TypeUrl != storeCommitURL && rule.TypeUrl != newParticipantURL {
+			return fmt.Errorf("static is only supported on StoreCommit and SubmitNewParticipant")
 		}
 		if f.Static.Gas > MaxPeriodBaseGas {
 			return fmt.Errorf("static.gas %d exceeds safety limit of %d", f.Static.Gas, MaxPeriodBaseGas)
@@ -596,6 +613,8 @@ func (fp *FeeParams) RulesForTypeURL(typeURL string) (*FeeGroup, []*MsgGasRule) 
 }
 
 // RuleForTypeURL returns the group and the first msg rule for typeURL, or (nil, nil).
+// Validate allows a second rule only for StoreCommit, which reads all of them
+// through RulesForTypeURL.
 func (fp *FeeParams) RuleForTypeURL(typeURL string) (*FeeGroup, *MsgGasRule) {
 	group, rules := fp.RulesForTypeURL(typeURL)
 	if len(rules) == 0 {
