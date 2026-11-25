@@ -1,11 +1,6 @@
 # Inference lifecycle and state-leaning design
 
-Design-decisions summary. The corresponding implementation plans live
-in the two companion documents and are not repeated here:
-
-- [remove-reveal-seed.md](./remove-reveal-seed.md) — RevealSeed removal.
-- [inferences-pruning.md](./inferences-pruning.md) — in-memory and
-  state-root pruning of inference records.
+Design-decisions summary for two changes: the removal of RevealSeed, and the in-memory and state-root pruning of inference records.
 
 These changes share one underlying observation: once the commit-reveal
 phase is gone, the chain no longer needs devshard to keep inference
@@ -64,8 +59,7 @@ zero, keeping the wire format bit-identical with
 - Host-local **validation observability** (outside the state root, exposed
   on `GET /devshard/stats/shards/{escrow_id}` — prefer the versionless path;
   legacy `/devshard/{version}/stats/shards/...` is rewritten internally) is
-  populated when signed diffs are applied; see
-  [validation-observability-diff-apply.md](./validation-observability-diff-apply.md).
+  populated when signed diffs are applied.
 
 ## 2. Drop inference records from RAM and state
 
@@ -308,14 +302,7 @@ Without `MsgErrorMiss`, the record stays `StatusFinished`. The client
 was shown the host error, the executor was credited `ActualCost`, and
 the record is eligible for validation.
 
-The gateway starts a miss only when the attempt saw that terminal
-error (`errorTerminal`) and it holds a signed `MsgFinishInference`.
-A retriable capability error does not set `errorTerminal`. An error
-stream with no finish artifact is logged as `error_miss_skipped`
-(`no_finish_artifact`) and is not a miss; if the nonce is still open,
-the ordinary timeout path runs instead. A probe, a phase-transition
-abort, or an escrow-state block also skips the vote. Content before
-the error does not by itself suppress the miss.
+The gateway starts a miss only when the attempt saw that terminal error (`errorTerminal`), it holds a signed `MsgFinishInference`, and the payload it would send proves the error (`streamevidence.ProvesErrorMiss` in `devshard/gatewayprotocol/streamevidence`, the rule `VerifyErrorMiss` applies and both gateways share). A retriable capability error does not set `errorTerminal`. An error stream with no finish artifact is logged as `error_miss_skipped` (`no_finish_artifact`), and one whose payload does not prove the error as `error_miss_skipped` (`no_error_proof`); in both cases the hold on the attempt's Finish is released at once. Neither is a miss; if the nonce is still open, the ordinary timeout path runs instead. A probe, a phase-transition abort, or an escrow-state block also skips the vote. Content before the error does not by itself suppress the miss.
 
 `VerifyErrorMiss` is local. It accepts only when the record exists and
 is `StatusStarted` or `StatusFinished`, the finish matches the

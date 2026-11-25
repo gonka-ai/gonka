@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/gatewayprotocol/timeoutclaim"
 	"devshard/host"
 	"devshard/types"
 )
@@ -122,7 +123,7 @@ func TestSweepExecutionTimeoutsStartsOneEscrowFurtherAlongEachTick(t *testing.T)
 //  3. Expect the second escrow's inference timed out: the capped escrow cannot vote, so it must not spend the tick's budget.
 func TestSweepExecutionTimeoutsSpendsNoBudgetOnAnEscrowAtItsNonceCap(t *testing.T) {
 	gateway, cappedRuntime, cappedEnv := newSweepTestGateway(t)
-	secondEnv := setupTestProxy(t, 3, nil, true)
+	secondEnv := setupManualFloorProxy(t, 3, nil, true)
 	secondRuntime := &devshardRuntime{id: "escrow-second", model: "llama", proxy: secondEnv.proxy, session: secondEnv.session}
 	gateway.mu.Lock()
 	gateway.runtimes[secondRuntime.id] = secondRuntime
@@ -250,10 +251,8 @@ func TestSweepExecutionTimeoutsRetriesAPendingRefusalTheGroupCouldNotJudge(t *te
 
 func pendingRefusalStartedAt(t *testing.T, env *testProxyEnv, startedAt time.Time) (uint64, *host.InferencePayload) {
 	t.Helper()
-	params := defaultParams()
-	params.StartedAt = startedAt.Unix()
 	nonce := pendingInferenceStartedAt(t, env, startedAt)
-	return nonce, env.proxy.redundancy.inferenceTimeoutPayload(params)
+	return nonce, timeoutclaim.Payload(env.sm.GetInference, nonce, defaultParams().Prompt, defaultParams().StartedAt)
 }
 
 // Test flow:

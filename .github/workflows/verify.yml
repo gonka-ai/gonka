@@ -521,6 +521,22 @@ jobs:
       - name: Run devshardd lifecycle tests with race detector
         run: go test -race ./cmd/devshardd
 
+      - name: Run gateway tests with race detector
+        # Scenarios run without -race in the Run Tests steps below.
+        run: |
+          packages=$(go list ./cmd/gateway/... | grep -v '/scenarios$')
+          go test -race -count=1 -timeout 30m $packages
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.15.0
+          install-only: true
+
+      - name: Lint gateway
+        working-directory: ./devshard/cmd/gateway
+        run: golangci-lint run --timeout 15m ./...
+
       - name: Run Tests (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: make test
@@ -646,6 +662,20 @@ jobs:
           load: true
           cache-from: type=gha,version=2,scope=devshard-e2e-devshardctl
           cache-to: type=gha,version=2,scope=devshard-e2e-devshardctl,mode=max
+
+      - name: Build E2E Gateway Image
+        uses: docker/build-push-action@v6
+        timeout-minutes: 30
+        with:
+          builder: ${{ steps.e2e-buildx.outputs.name }}
+          context: .
+          file: devshard/Dockerfile
+          target: gateway-runtime
+          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
+          tags: devshard-gateway:local
+          load: true
+          cache-from: type=gha,version=2,scope=devshard-e2e-gateway
+          cache-to: type=gha,version=2,scope=devshard-e2e-gateway,mode=max
 
       - name: Cache E2E Go modules and build outputs
         uses: actions/cache@v4

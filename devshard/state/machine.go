@@ -2114,11 +2114,14 @@ func (sm *StateMachine) HostSignerAllowed(slotID uint32, recovered string) bool 
 	sm.mu.RLock()
 	cached := sm.hostSignerCachedLocked(slotID, recovered)
 	expected, inGroup := sm.slotToAddress[slotID]
+	_, bound := sm.state.WarmKeys[slotID]
 	sm.mu.RUnlock()
 	if cached {
 		return true
 	}
-	if !inGroup {
+	// A bound slot accepts only its warm key on apply; asking the chain here
+	// would admit a second granted key that apply then rejects.
+	if !inGroup || bound {
 		return false
 	}
 	return sm.CheckWarmKey(recovered, expected)
