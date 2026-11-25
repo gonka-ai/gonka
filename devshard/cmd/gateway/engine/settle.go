@@ -210,9 +210,8 @@ func earliestDue(steps []TimeoutStep, poster TimeoutPoster) time.Time {
 }
 
 func voteDue(step TimeoutStep, poster TimeoutPoster) time.Time {
-	// A miss claim has no protocol deadline; one held for the execution window is lost on a restart.
-	// One deferred for want of a Finish waits for the vote's deadline and checks for the Finish again.
-	if !step.Post || poster == nil || step.Kind == SettleByMissClaim && !step.deferred {
+	// A miss claim has no protocol deadline. See ../docs/race.md, "Error misses".
+	if !step.Post || poster == nil || (step.Kind == SettleByMissClaim && !step.deferred) {
 		return postAtOnce
 	}
 	return poster.VoteDeadline(step.Nonce, step.StartedAt)

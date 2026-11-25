@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// missPoster answers as SessionTimeouts does: a claim with a Finish posts, anything else is deferred until its deadline.
 type missPoster struct {
 	now       func() time.Time
 	due       time.Time
@@ -51,7 +50,6 @@ func TestAMissClaimIsPostedAtOnce(t *testing.T) {
 	races.settle(raceEndingIn(attemptEndingInError(missProof())), nil, registration)
 	awaitScheduled(t, harness, 1)
 	delay := harness.scheduledDelays()[0]
-	t.Logf("miss claim scheduled after %v", delay)
 	require.Zero(t, delay, "a miss claim waits on no deadline")
 	harness.fire(0)
 	awaitReleased(t, registration)
@@ -59,6 +57,22 @@ func TestAMissClaimIsPostedAtOnce(t *testing.T) {
 	owed, _ := book.snapshot()
 	require.Equal(t, []SettleKind{SettleByMissClaim}, poster.posted)
 	require.Empty(t, owed)
+}
+
+// Test flow:
+//  1. Settle a race ending in a signed error through a poster whose vote deadline is 32 minutes ahead.
+//  2. Stop the engine before the queue's timer fires.
+//  3. Assert the claim was posted as a miss claim and the race's registration is released.
+func TestAMissClaimIsPostedWhenStopArrivesBeforeItsTimer(t *testing.T) {
+	races, harness, _ := bookedEngine(t, nil, nil)
+	poster := &missPoster{now: harness.now, due: harness.now().Add(32 * time.Minute), hasFinish: true}
+	races.deps.Timeouts = func(string, any) (TimeoutPoster, bool) { return poster, true }
+	registration := races.admit()
+	races.settle(raceEndingIn(attemptEndingInError(missProof())), nil, registration)
+	awaitScheduled(t, harness, 1)
+	stopWithin(t, races, "miss claim due at once")
+	require.Equal(t, []SettleKind{SettleByMissClaim}, poster.posted)
+	require.True(t, registration.released.Load())
 }
 
 // Test flow:
@@ -75,7 +89,6 @@ func TestAMissClaimWithoutFinishWaitsForItsDeadline(t *testing.T) {
 	harness.fire(0)
 	awaitScheduled(t, harness, 2)
 	delays := harness.scheduledDelays()
-	t.Logf("delays=%v deferred=%d", delays, poster.deferred)
 	require.Equal(t, 32*time.Minute, delays[1], "the fallback vote waits for its deadline")
 	require.Equal(t, 1, poster.deferred)
 	require.False(t, registration.released.Load())
