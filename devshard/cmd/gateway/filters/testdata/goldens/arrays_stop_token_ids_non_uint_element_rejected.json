@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "invalid stop_token_ids: model vocabulary size unknown",
+  "status": "rejected"
+}

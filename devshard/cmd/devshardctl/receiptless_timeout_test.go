@@ -186,8 +186,8 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	cancel()
 	require.ErrorIs(t, session.Finalize(canceled), user.ErrInferenceCompletionPending)
 	require.Equal(t, types.PhaseActive, sm.Phase())
+	require.NoError(t, session.Close())
 	require.NoError(t, journal.Close())
-	require.NoError(t, db.Close())
 	db, err = storage.NewSQLite(sessionPath)
 	require.NoError(t, err)
 	defer db.Close()
@@ -196,6 +196,7 @@ func completionRestartFixture(t *testing.T) (*state.SettlementPayload, []types.S
 	defer journal.Close()
 	recovered, recoveredSM, err := user.RecoverSession(db, creator, verifier, escrowID, testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
+	defer func() { require.NoError(t, recovered.Close()) }()
 	recovered.SetInferenceCompletionStore(journal)
 	for _, voter := range voters {
 		voter.accept = true
@@ -243,7 +244,7 @@ func (c *numericCompletionClient) VerifyErrorMiss(context.Context, uint64, []typ
 func TestCompletionRestartReconcilesBeforeSettlement(t *testing.T) { completionRestartFixture(t) }
 
 func TestLongContentWithCanonicalFinishChargesActualCost(t *testing.T) {
-	env := setupLiveFloorProxy(t, 3, nil, true)
+	env := setupManualFloorProxy(t, 3, nil, true)
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	defer store.Close()

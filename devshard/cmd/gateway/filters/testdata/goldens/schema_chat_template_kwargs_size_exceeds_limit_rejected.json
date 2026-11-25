@@ -1,0 +1,5 @@
+{
+  "http_status": 400,
+  "message": "chat_template_kwargs: serialized size exceeded: limit 16384 bytes",
+  "status": "rejected"
+}

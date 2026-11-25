@@ -347,6 +347,14 @@ write into an HTTP 500. Conflicting bytes remain a hard error (real fork).
 
 See [proposals/ha-diff-persist-consistency.md](./proposals/ha-diff-persist-consistency.md).
 
+### Host Signatures Are Written Off The Session Lock
+
+Decision: a session keeps each host signature in memory and queues its `AddSignature` for a background writer (`user/signature_writer.go`). Past 4096 queued writes the caller writes its own before returning. A read of a nonce below the in-memory trim, and `Close`, wait for the queue to reach the store first.
+
+Why: the session lock serialises an escrow's dispatch, and a synchronous signature write held it for a disk round trip on every response.
+
+Consequence: a crash loses the signatures still queued; recovery asks the hosts for them again. A read of a trimmed nonce waits out the whole queue under the session lock.
+
 ### Legacy Migration Is Resumable
 
 Decision: `MigrateLegacySQLite` is idempotent at the migration layer; live

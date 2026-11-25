@@ -55,6 +55,29 @@ type timeoutVoteFixture struct {
 	id      uint64
 }
 
+func sendUnreceiptedAtSlotOne(t *testing.T, session *Session, rig *floorRig, slots int) uint64 {
+	t.Helper()
+	ctx := context.Background()
+	for (session.Nonce()+1)%uint64(slots) != 1 {
+		_, err := session.sendPendingDiff(ctx, nil, nil)
+		require.NoError(t, err)
+	}
+	id := session.Nonce() + 1
+	for i, c := range session.clients {
+		session.clients[i] = noReceiptClient{c}
+	}
+	_, err := session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	session.mu.Lock()
+	session.clearPendingTxs()
+	session.mu.Unlock()
+	rig.raise(t, session, 100_000)
+	return id
+}
+
 func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 	t.Helper()
 
@@ -71,27 +94,8 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 		VoteThreshold:    uint32(len(group)) / 2, // 7/2 = 3, need >3
 	}
 	session, _, rig := armedSessionFor(t, group, signers, config, 100000, 100)
-	ctx := context.Background()
-	for (session.Nonce()+1)%uint64(len(group)) != 1 {
-		_, err := session.sendPendingDiff(ctx, nil, nil)
-		require.NoError(t, err)
-	}
-
-	id := session.Nonce() + 1
-	for i, c := range session.clients {
-		session.clients[i] = noReceiptClient{c}
-	}
-	_, err := session.SendInference(ctx, InferenceParams{
-		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})
-	require.NoError(t, err)
+	id := sendUnreceiptedAtSlotOne(t, session, rig, len(group))
 	userSM := session.StateMachine()
-	session.mu.Lock()
-	session.clearPendingTxs()
-	session.mu.Unlock()
-	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
-	rig.raise(t, session, 100_000)
 	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
 
 	return &timeoutVoteFixture{session: session, userSM: userSM, signers: signers, group: group, config: config, id: id}
@@ -468,4 +472,61 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	require.NoError(t, err)
 	require.True(t, session.HasSufficientTimeoutVotes(votes),
 		"cached warm bindings must verify without reaching the resolver")
+}
+
+// Test flow:
+//  1. Arm a session, send an inference that executor slot 1 never receipts, and raise the floor past its refusal deadline.
+//  2. Bind slot 4 to warm1 and have it vote with warm2, a second key its cold address also granted.
+//  3. Collect the timeout votes; Apply rejects that vote and with it the whole message, so the collector must drop it.
+//  4. Expect the honest quorum to be kept and Apply to time the inference out.
+func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *testing.T) {
+	const n = 5
+	coldKeys := makeKeys(t, n)
+	warm1 := makeKeys(t, n)
+	warm2 := makeKeys(t, n)
+	granted := make(map[string]string, 2*n)
+	for i := range coldKeys {
+		granted[warm1[i].Address()] = coldKeys[i].Address()
+		granted[warm2[i].Address()] = coldKeys[i].Address()
+	}
+	resolver := state.WarmKeyResolver(func(warmAddr, coldAddr string) (bool, error) {
+		return granted[warmAddr] == coldAddr, nil
+	})
+
+	group := testutil.MakeGroup(coldKeys)
+	config := testutil.DefaultConfig(n)
+	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
+	session, _, rig := armedSessionWithSM(t, group, coldKeys, config, 100000, 100, smOpts)
+	userSM := session.StateMachine()
+
+	ctx := context.Background()
+	id := sendUnreceiptedAtSlotOne(t, session, rig, n)
+	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
+	userSM.InjectWarmKeys(map[uint32]string{4: warm1[4].Address()})
+
+	honest := func(i int) TimeoutVerifier {
+		return &delayedVerifier{
+			inner: &mockTimeoutVerifier{accept: true, signer: coldKeys[i], group: group, slotIdx: i},
+			delay: 50 * time.Millisecond,
+		}
+	}
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, id, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+		&host.InferencePayload{
+			Prompt: testutil.TestPrompt, Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		}, map[int]TimeoutVerifier{
+			0: honest(0), 2: honest(2), 3: honest(3),
+			4: &mockTimeoutVerifier{accept: true, signer: warm2[4], group: group, slotIdx: 4},
+		}, nil)
+	require.NoError(t, err)
+	for _, v := range votes {
+		require.NotEqual(t, uint32(4), v.VoterSlot, "the warm2 vote must not be collected")
+	}
+	require.True(t, session.HasSufficientTimeoutVotes(votes))
+
+	before := userSM.SnapshotState()
+	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(id, votes)})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, types.StatusTimedOut, userSM.SnapshotState().Inferences[id].Status)
 }

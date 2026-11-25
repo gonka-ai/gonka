@@ -1149,7 +1149,7 @@ parent_admitted_count() {
 }
 
 wait_parent_admission() {
-    local slot=$1 deadline route address state missing
+    local slot=$1 deadline route address state missing=
     parent_proxy_active || return 0
     require_parent_diagnostic
     address=$(slot_front_ip "$slot") || return 1
@@ -1306,7 +1306,7 @@ slot_member_admitted() {
 }
 
 verify_versiond_member() {
-    local container=$1 reserve=$2 addresses route encoded_route slot missing deadline=$((SECONDS + wait_timeout))
+    local container=$1 reserve=$2 addresses route encoded_route slot missing='' deadline=$((SECONDS + wait_timeout))
     shift 2
     addresses=$("$docker_bin" inspect --format '{{json .NetworkSettings.Networks}}' "$container" |
         jq -er '[.[].IPAddress | select(. != "")] | unique | join(",") | select(length > 0)') || fail "cannot find the addresses of versiond member $container"
@@ -1343,7 +1343,7 @@ verify_versiond_member() {
 }
 
 wait_version() {
-    local route=$1 deadline missing slot ready parent_ready
+    local route=$1 deadline missing='' slot ready parent_ready
     case $route in
         '' | *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
             fail "version '$route' cannot be represented as a routed path segment"
@@ -1490,7 +1490,7 @@ require_ready_reserve() {
 # has lost its cache, which is a failure.
 wait_slot_routes() {
     local slot=$1 deadline=$((SECONDS + wait_timeout))
-    local route missing reason declared_status
+    local route missing='' reason='' declared_status
     while ((SECONDS < deadline)); do
         missing=
         reason=
@@ -1546,7 +1546,7 @@ wait_slot_routes() {
 # A restored generation serves what it served before: every route it
 # declares that a peer serves too must be ready on it again.
 wait_restored_routes() {
-    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing routes
+    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing='' routes
     while ((SECONDS < deadline)); do
         missing=
         routes=$(slot_catalog_routes "$slot") || routes=

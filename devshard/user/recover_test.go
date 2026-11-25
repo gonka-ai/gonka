@@ -100,8 +100,18 @@ func setupRecoverableSession(
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
+	flushSignatureWriter(session)
 
 	return group, hosts, user
+}
+
+func flushSignatureWriter(s *Session) {
+	s.mu.Lock()
+	writer := s.signatureWriter
+	s.mu.Unlock()
+	if writer != nil {
+		writer.flush()
+	}
 }
 
 func TestRecoverSession_HappyPath(t *testing.T) {
@@ -127,8 +137,10 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	// Recover.
 	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
+	t.Cleanup(func() { flushSignatureWriter(session) })
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
+	require.Equal(t, uint64(numInferences+1), session.racesFromNonce, "every recovered nonce belongs to a previous process, so none has a race to wait for")
 
 	// Verify can send nonce 6.
 	ctx := context.Background()
@@ -1007,6 +1019,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	ctx := context.Background()
 	firstTurn := session.Nonce() + 1
 
@@ -1019,7 +1032,9 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
+	session.mu.Lock()
 	session.clients[targetHostIdx] = targetClient
+	session.mu.Unlock()
 
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.True(t, targetClient.Dropped(),
@@ -1062,8 +1077,8 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
-	session.clients[targetHostIdx] = restartedTarget
 	session.mu.Lock()
+	session.clients[targetHostIdx] = restartedTarget
 	session.hostSyncNonce[targetHostIdx] = floor
 	session.mu.Unlock()
 
