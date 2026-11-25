@@ -82,6 +82,10 @@ func (g *GRPCChain) participantsPayload(ctx context.Context) (chainCurrentPartic
 
 func participantsPayloadFromActive(active *inferencetypes.ActiveParticipants) chainCurrentParticipantsResponse {
 	var payload chainCurrentParticipantsResponse
+	if active.GetEpochId() != EpochIndexUnknown {
+		epochID := jsonUint64(active.GetEpochId())
+		payload.ActiveParticipants.EpochID = &epochID
+	}
 	for _, participant := range active.GetParticipants() {
 		if participant == nil {
 			continue

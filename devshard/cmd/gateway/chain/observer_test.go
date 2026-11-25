@@ -38,6 +38,8 @@ type phaseObserverStub struct {
 	modelsErr          error
 	versionsStatus     int
 	versionsBody       string
+	epochHits          int
+	participantsHits   int
 }
 
 func newPhaseObserverStub() *phaseObserverStub {
@@ -54,9 +56,11 @@ func (s *phaseObserverStub) handler() http.HandlerFunc {
 		defer s.mu.Unlock()
 		switch r.URL.Path {
 		case "/v1/epochs/latest":
+			s.epochHits++
 			w.WriteHeader(s.epochStatus)
 			w.Write([]byte(s.epochBody))
 		case "/v1/epochs/current/participants":
+			s.participantsHits++
 			w.WriteHeader(s.participantsStatus)
 			w.Write([]byte(s.participantsBody))
 		case "/v1/versions":
@@ -139,6 +143,18 @@ func (s *phaseObserverStub) preservedHitCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.preservedHits
+}
+
+func (s *phaseObserverStub) epochHitCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.epochHits
+}
+
+func (s *phaseObserverStub) participantsHitCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.participantsHits
 }
 
 func (s *phaseObserverStub) maxNonceHitCount() int {
@@ -255,7 +271,11 @@ func observerPreservedSnapshot(anchorHeight int64) *PreservedNodes {
 // gateway with no chain access, and refresh is driven directly by the tests, never via Start.
 func newPoCPhaseObserver(t *testing.T, server *httptest.Server, chainReader Reader) *PhaseObserver {
 	t.Helper()
-	clock := newFakeClock(time.Unix(100, 0))
+	return newClockedObserver(t, server, chainReader, newFakeClock(time.Unix(100, 0)))
+}
+
+func newClockedObserver(t *testing.T, server *httptest.Server, chainReader Reader, clock *fakeClock) *PhaseObserver {
+	t.Helper()
 	cfg := ObserverConfig{
 		PublicAPIBaseURL: server.URL,
 		PollInterval:     time.Hour,
@@ -646,7 +666,7 @@ func TestPhaseObserver_CarriesEveryParticipantDerivedFieldForward(t *testing.T) 
 
 // Test flow:
 //  1. Refresh once against a healthy stub and capture the resulting snapshot as the known-good baseline.
-//  2. Advance the epoch body to a new block height while making the participants endpoint return HTTP 500, then refresh again.
+//  2. Advance the epoch body to a new block height in the next epoch while making the participants endpoint return HTTP 500, then refresh again.
 //  3. Assert LastError is now set while BlockHeight still reflects the epoch fetch that succeeded.
 //  4. Assert CurrentWeights and InferenceURLs stayed at their stale, known-good values.
 func TestPhaseObserver_ParticipantsFetchErrorKeepsPreviousWeightsWithLastError(t *testing.T) {
@@ -672,7 +692,7 @@ func TestPhaseObserver_ParticipantsFetchErrorKeepsPreviousWeightsWithLastError(t
 		t.Fatalf("precondition: LastError = %q, want empty", good.LastError)
 	}
 
-	stub.setEpoch(http.StatusOK, observerEpochJSON(43, 4, EpochPhaseInference))
+	stub.setEpoch(http.StatusOK, observerEpochJSON(43, 5, EpochPhaseInference))
 	stub.setParticipants(http.StatusInternalServerError, "")
 	observer.refresh(context.Background())
 	after := observer.Snapshot()

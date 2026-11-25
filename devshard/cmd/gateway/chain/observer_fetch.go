@@ -93,7 +93,7 @@ func deriveEffectiveEpochIndex(payload chainEpochInfoResponse) uint64 {
 	switchHeight := int64(payload.EpochStages.SetNewValidators)
 	switch {
 	case latest == 0 || height <= 0 || pocStart <= 0 || switchHeight <= 0:
-		return 0
+		return EpochIndexUnknown
 	case height >= pocStart && height < switchHeight:
 		return latest - 1
 	}

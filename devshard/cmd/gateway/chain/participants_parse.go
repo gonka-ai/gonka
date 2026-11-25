@@ -30,6 +30,7 @@ type chainCurrentParticipantsResponse struct {
 }
 type chainActiveParticipantsGroup struct {
 	Participants []chainActiveParticipant `json:"participants"`
+	EpochID      *jsonUint64              `json:"epoch_id,omitempty"`
 }
 type chainActiveParticipant struct {
 	Index        string              `json:"index"`
