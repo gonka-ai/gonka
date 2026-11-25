@@ -22,11 +22,14 @@ func (m *Manager) applyPlan(ctx context.Context, model ModelConfig, snapshot cha
 		}
 	}
 	for _, create := range decision.Creates {
-		role := roleRegular
-		if create.Standby {
+		role, label := plannedCreateRole(inBridgeWindow), snapshot.EpochIndex
+		switch {
+		case create.Standby:
 			role = RoleReserve
+		case inBridgeWindow:
+			label = bridgeLabel(snapshot)
 		}
-		_, err := m.createFor(ctx, model, role, snapshot.EpochIndex, createReason(create.Reason), snapshot)
+		_, err := m.createFor(ctx, model, role, label, createReason(create.Reason), snapshot)
 		m.planner.recordCreate(model.ModelID, err, m.now())
 		if err == nil {
 			m.breaker.reset(model.ModelID, roleRegular)
@@ -42,6 +45,13 @@ func (m *Manager) applyPlan(ctx context.Context, model ModelConfig, snapshot cha
 		errs = append(errs, m.retireBridgedTemps(ctx, snapshot, model, rows))
 	}
 	return errors.Join(errs...)
+}
+
+func plannedCreateRole(inBridgeWindow bool) store.Role {
+	if inBridgeWindow {
+		return roleTemp
+	}
+	return roleRegular
 }
 
 func (m *Manager) retireBridgedTemps(ctx context.Context, snapshot chain.PhaseSnapshot, model ModelConfig, rows []store.DevshardRecord) error {
