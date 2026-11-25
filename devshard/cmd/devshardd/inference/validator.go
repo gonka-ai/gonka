@@ -72,7 +72,7 @@ type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte
 // similarity pass threshold (long-poll snapshot first, chain fallback).
 // vocabularySizes bounds enforced token ids by the model's vocab before the replay reaches the ML node.
 // voteFalseOnFetchFailure converts executor-attributable payload failures into
-// Valid:false instead of abandoning the attempt. tapeMode is TapeShadow,
+// Valid:false instead of abandoning the attempt. tapeMode is TapeVote, TapeShadow,
 // TapeEnforce or TapeOff.
 func NewValidator(
 	br bridge.MainnetBridge,

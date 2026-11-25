@@ -149,11 +149,11 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_SHUTDOWN_GRACE: %w", err)
 	}
 
-	tapeMode := envOr("DEVSHARD_TAPE_VALIDATION", inference.TapeShadow)
+	tapeMode := envOr("DEVSHARD_TAPE_VALIDATION", inference.TapeVote)
 	switch tapeMode {
-	case inference.TapeShadow, inference.TapeEnforce, inference.TapeOff:
+	case inference.TapeVote, inference.TapeShadow, inference.TapeEnforce, inference.TapeOff:
 	default:
-		return runtimeConfig{}, fmt.Errorf("DEVSHARD_TAPE_VALIDATION: unknown mode %q (shadow, enforce, off)", tapeMode)
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_TAPE_VALIDATION: unknown mode %q (vote, shadow, enforce, off)", tapeMode)
 	}
 
 	return runtimeConfig{

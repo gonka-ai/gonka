@@ -178,7 +178,8 @@ func TestLoadRuntimeConfig_TapeValidationMode(t *testing.T) {
 		env, want string
 		wantErr   bool
 	}{
-		{env: "", want: "shadow"},
+		{env: "", want: "vote"},
+		{env: "vote", want: "vote"},
 		{env: "shadow", want: "shadow"},
 		{env: "enforce", want: "enforce"},
 		{env: "off", want: "off"},

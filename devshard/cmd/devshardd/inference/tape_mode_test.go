@@ -21,27 +21,34 @@ func (processedChainParams) LogprobsMode() string { return "processed_logprobs" 
 // An inference whose logprobs the replay reproduces, so the logprob comparison
 // passes it, with one rival token at every position: close to the answer's
 // token the noise of the seed often prefers it, far below it never does.
+// replay, when set, is what the engine answers the replay with in place of
+// the stored logprobs.
 type tapeModeEngine struct {
 	model   string
 	stored  []byte
+	replay  []byte
 	replays int
 }
 
-func newTapeModeEngine(rival float64) *tapeModeEngine {
+func tapeModeAnswer(own, rival float64) []byte {
 	positions := make([]interface{}, 64)
 	for i := range positions {
 		alternatives := []interface{}{
-			map[string]interface{}{"token": "5", "logprob": -0.5},
+			map[string]interface{}{"token": "5", "logprob": own},
 			map[string]interface{}{"token": "6", "logprob": rival},
 		}
-		positions[i] = map[string]interface{}{"token": "5", "logprob": -0.5, "top_logprobs": alternatives}
+		positions[i] = map[string]interface{}{"token": "5", "logprob": own, "top_logprobs": alternatives}
 	}
-	stored, _ := json.Marshal(map[string]interface{}{"id": "test", "object": "chat.completion",
+	answer, _ := json.Marshal(map[string]interface{}{"id": "test", "object": "chat.completion",
 		"choices": []interface{}{map[string]interface{}{"index": 0, "finish_reason": "length",
 			"message":  map[string]interface{}{"role": "assistant", "content": "x"},
 			"logprobs": map[string]interface{}{"content": positions}}},
 		"usage": map[string]interface{}{"prompt_tokens": 3, "completion_tokens": 64, "total_tokens": 67}})
-	return &tapeModeEngine{model: "Qwen/Qwen3-0.6B", stored: stored}
+	return answer
+}
+
+func newTapeModeEngine(rival float64) *tapeModeEngine {
+	return &tapeModeEngine{model: "Qwen/Qwen3-0.6B", stored: tapeModeAnswer(-0.5, rival)}
 }
 
 func (e *tapeModeEngine) fetch(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
@@ -54,7 +61,11 @@ func (e *tapeModeEngine) executeML(_ context.Context, _, _ string, body []byte) 
 		return &http.Response{StatusCode: http.StatusInternalServerError, Body: io.NopCloser(bytes.NewReader(nil))}, nil
 	}
 	e.replays++
-	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(e.stored))}, nil
+	replay := e.stored
+	if e.replay != nil {
+		replay = e.replay
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(replay))}, nil
 }
 
 func tapeModeValidator(mode string, engine *tapeModeEngine) (*Validator, devshardpkg.ValidateRequest) {
@@ -71,6 +82,44 @@ const (
 	offTheTape = -0.6
 	onTheTape  = -30
 )
+
+// The tape casts the vote both ways: an answer off it is voted invalid though
+// the logprob comparison passed it, an answer on it valid though the
+// comparison rejected the logprobs the executor stored.
+func TestValidator_TapeVoteCastsTheVote(t *testing.T) {
+	engine := newTapeModeEngine(offTheTape)
+	v, req := tapeModeValidator(TapeVote, engine)
+	verdict, err := v.Validate(context.Background(), req)
+	require.NoError(t, err)
+	require.False(t, verdict.Valid)
+	require.Equal(t, "tape_fail", verdict.Reason)
+	require.Equal(t, 1, engine.replays)
+
+	for mode, valid := range map[string]bool{TapeShadow: false, TapeVote: true} {
+		rejected := &tapeModeEngine{model: "Qwen/Qwen3-0.6B", stored: tapeModeAnswer(-9, -0.001), replay: tapeModeAnswer(-0.5, onTheTape)}
+		v, req = tapeModeValidator(mode, rejected)
+		verdict, err = v.Validate(context.Background(), req)
+		require.NoError(t, err)
+		require.Equal(t, valid, verdict.Valid, mode)
+		require.Empty(t, verdict.Reason, mode)
+	}
+}
+
+// What the tape cannot judge keeps the vote of the logprob comparison.
+func TestValidator_TapeVoteKeepsTheVoteOfWhatItCannotJudge(t *testing.T) {
+	engine := newTapeModeEngine(offTheTape)
+	engine.model = "other/model"
+	v, req := tapeModeValidator(TapeVote, engine)
+	verdict, err := v.Validate(context.Background(), req)
+	require.NoError(t, err)
+	require.True(t, verdict.Valid)
+
+	rejected := &tapeModeEngine{model: "other/model", stored: tapeModeAnswer(-9, -0.001), replay: tapeModeAnswer(-0.5, onTheTape)}
+	v, req = tapeModeValidator(TapeVote, rejected)
+	verdict, err = v.Validate(context.Background(), req)
+	require.NoError(t, err)
+	require.False(t, verdict.Valid)
+}
 
 // In shadow the logprob comparison casts the vote; the tape is read from the
 // comparison's own replay, so the ML node gets that one call.

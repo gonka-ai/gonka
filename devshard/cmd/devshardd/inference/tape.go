@@ -11,6 +11,9 @@ import (
 
 // How the tape of an answer takes part in a validation (DEVSHARD_TAPE_VALIDATION).
 const (
+	// TapeVote: the tape casts the vote; an answer it cannot judge keeps the
+	// logprob comparison's.
+	TapeVote = "vote"
 	// TapeShadow: the logprob comparison votes, the tape is logged beside it.
 	TapeShadow = "shadow"
 	// TapeEnforce: an answer off its tape is voted invalid as well.
@@ -20,23 +23,24 @@ const (
 )
 
 // judgeTape scores the answer on its tape from the replay the logprob
-// comparison made, which costs the ML node nothing, and logs what it finds.
+// comparison made, which costs the ML node nothing, and logs what it finds
+// beside the comparison's verdict. In TapeVote the tape's verdict is the vote.
 // In TapeEnforce a verdict that the comparison left valid turns invalid when
-// the answer is off the tape. Nothing else it does reaches the vote: an answer
-// it cannot judge keeps the comparison's.
+// the answer is off the tape. An answer the tape cannot judge keeps the
+// comparison's vote in every mode.
 func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID string, promptPayload, responsePayload []byte,
 	result commonvalidation.ValidationResult, verdict *devshardpkg.ValidateResult) {
-	if v.tapeMode != TapeShadow && v.tapeMode != TapeEnforce {
+	if v.tapeMode != TapeVote && v.tapeMode != TapeShadow && v.tapeMode != TapeEnforce {
 		return
 	}
 	fields := []any{"subsystem", "validation", "inferenceId", inferenceID, "executor", req.ExecutorAddress,
-		"model", req.Model, "mode", v.tapeMode, "voted", verdict.Valid}
+		"model", req.Model, "mode", v.tapeMode, "comparison", verdict.Valid}
 	outcome, valid := "pass", true
 	defer func() {
 		if r := recover(); r != nil {
 			fields = append(fields, "tape", "error", "cause", fmt.Sprintf("panic: %v", r))
 		}
-		logging.Info("tape validation", fields...)
+		logging.Info("tape validation", append(fields, "voted", verdict.Valid)...)
 	}()
 
 	tape, err := commonvalidation.TapeOfReplay(inferenceID, promptPayload, responsePayload,
@@ -85,9 +89,11 @@ func (v *Validator) judgeTape(req devshardpkg.ValidateRequest, inferenceID strin
 	}
 	fields = append(fields, "tape", outcome, "tape_valid", valid, "agree", valid == verdict.Valid)
 	fields = append(fields, details...)
-	if v.tapeMode == TapeEnforce && verdict.Valid && !valid {
-		verdict.Valid = false
-		verdict.Reason = "tape_" + outcome
-		verdict.Details = details
+	if v.tapeMode == TapeVote && verdict.Valid != valid || v.tapeMode == TapeEnforce && verdict.Valid && !valid {
+		verdict.Valid = valid
+		if !valid {
+			verdict.Reason = "tape_" + outcome
+			verdict.Details = details
+		}
 	}
 }
