@@ -104,6 +104,10 @@ type TapeThresholds struct {
 // RTX 3090 0.3-1.2 %. FlipRate is the honest share with two points for nodes
 // that were not measured.
 //
+// GLM-5.3-Flash stands higher: on mainnet its 8xH200 executors are 7.5-8.3 %
+// off the winner for a B300 validator on the same image (3977 answers), the
+// B300 ones 2.1-2.3 % (11357 answers).
+//
 // At DeepSeek's 0.08 on the logprob comparison's replay an answer under
 // another seed is 20 % off the winner, and three answers in four are flagged.
 // An answer of a checkpoint with half the experts pruned is 18 % off the
@@ -111,7 +115,7 @@ type TapeThresholds struct {
 var tapeThresholds = map[string]TapeThresholds{
 	"deepseek-ai/DeepSeek-V4-Flash-0731": {FlipRate: 0.08},
 	"MiniMaxAI/MiniMax-M2.7":             {FlipRate: 0.08},
-	"zai-org/GLM-5.3-Flash":              {FlipRate: 0.06},
+	"zai-org/GLM-5.3-Flash":              {FlipRate: 0.09},
 	"Qwen/Qwen3-0.6B":                    {FlipRate: 0.02},
 	"Qwen/Qwen3-4B-Instruct-2507":        {FlipRate: 0.02},
 	"Qwen/Qwen2.5-1.5B-Instruct":         {FlipRate: 0.02},
