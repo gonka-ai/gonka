@@ -79,8 +79,7 @@ func guardConfirmationCleanupRemoval() error {
 
 // PruneConfirmationPoC deletes completed confirmation-trigger rows across
 // later blocks. One PocPruningMax budget covers validations, store commits,
-// weight distributions, and signer counters. The upgrade handler does not
-// call this.
+// and weight distributions. The upgrade handler does not call this.
 func (k Keeper) PruneConfirmationPoC(ctx context.Context, currentEpochIndex int64) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
