@@ -359,9 +359,9 @@ func (am AppModule) handleConfirmationPoCPhaseTransitions(
 	if event.Phase == types.ConfirmationPoCPhase_CONFIRMATION_POC_COMPLETED {
 		completionHeight := event.GetValidationEnd(epochParams) + 1
 		if blockHeight >= completionHeight+epochParams.SetNewValidatorsDelay {
-			// Clean up validation snapshot. Validation rows, commits,
-			// distributions, and signer counters stay until the bounded
-			// confirmation cleanup walks this trigger.
+			// Clean up validation snapshot. Validation rows, commits, and
+			// distributions stay until the bounded confirmation cleanup
+			// walks this trigger.
 			am.keeper.DeletePoCValidationSnapshot(ctx, event.TriggerHeight)
 
 			err := am.keeper.ClearActiveConfirmationPoCEvent(ctx)

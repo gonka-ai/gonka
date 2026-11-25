@@ -107,7 +107,7 @@ margin = s_best − s_claimed          where s_k = cos(q, c_k)
 | τ, DeepSeek-V4-Flash | 0.027 |
 | τ, GLM-5.3-Flash | 0.017 |
 | `p_mismatch` | 0.1 |
-| α (`p_value_threshold`) | 0.05 |
+| α (`p_value_threshold`) | 0.01 |
 | `seq_len` / `max_tokens` | 256 / 256 |
 
 τ is set per model because the size of honest boundary flips depends on the architecture. For scale: on this codebook, a random direction in 256 dimensions has a median gap of about 0.024 between its best and second-best score.
@@ -205,7 +205,7 @@ A core deliverable of this project was re-building PoC as a **CUDA-graph-based a
 | Topic | August (v0.20 prototype) | Now (v0.30, `gonka-poc` 0.2.x) |
 | --- | --- | --- |
 | Codebook | points derived from the block | 16 fixed points in 256-dim, frozen file pinned by SHA-256 |
-| Verdict | share of mismatching steps vs ≈11.98% | per-nonce margin > τ, then binomial test (p_mismatch 0.1, α 0.05) |
+| Verdict | share of mismatching steps vs ≈11.98% | per-nonce margin > τ, then binomial test (p_mismatch 0.1, α 0.01) |
 | Threshold | one value | τ per model on chain |
 | Pre-snap vector | recorded per token as a fallback | optional (`poc_vector_artifacts`), evidence only |
 | Execution | separate PoC loop in CUDA graphs | PoC nonces are engine requests: shared scheduler, KV cache and graphs |
