@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	defaultChainPhasePollInterval = 10 * time.Second
-	versionsCacheTTL              = 5 * time.Minute
-	participantsCacheMaxAge       = 10 * time.Minute
-	participantsUnverifiedMaxAge  = time.Minute
-	publicAPIRateLimitBackoff     = 5 * time.Minute
-	chainQueryTimeout             = 5 * time.Second
+	defaultChainPhasePollInterval = 5 * time.Second
+
+	// versionsTTLPollMultiplier scales the poll interval into how long a
+	// /v1/versions fetch stays fresh, so entries survive a couple of missed polls
+	// but never outlive the poller's cadence.
+	versionsTTLPollMultiplier = 3
 
 	epochPhaseInference           = "Inference"
 	epochPhasePoCGenerate         = "PoCGenerate"
@@ -55,7 +55,6 @@ type ChainPhaseSnapshot struct {
 
 	pocStartBlockHeight          int64
 	epochSwitchBlockHeight       int64
-	effectiveEpochIndex          uint64
 	confirmationPoCTriggerHeight int64
 }
 
@@ -92,16 +91,8 @@ type ChainPhaseGate struct {
 	// escrow-scoped host-ping set.
 	inferenceURLs map[string]string
 
-	participants          *chainCurrentParticipantsResponse
-	participantsEpoch     uint64
-	participantsMaxAge    time.Duration
-	participantsFetchedAt time.Time
-	publicAPIBackoffUntil time.Time
-
-	lifeCtx    context.Context
-	lifeCancel context.CancelFunc
-	stopCh     chan struct{}
-	doneCh     chan struct{}
+	stopCh chan struct{}
+	doneCh chan struct{}
 }
 
 type phaseGateStoreQuery interface {
@@ -140,7 +131,6 @@ type chainCurrentParticipantsResponse struct {
 
 type chainActiveParticipantsGroup struct {
 	Participants []chainActiveParticipant `json:"participants"`
-	EpochID      *jsonUint64              `json:"epoch_id,omitempty"`
 }
 
 type chainActiveParticipant struct {
@@ -278,7 +268,6 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 		pollInterval = defaultChainPhasePollInterval
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	lifeCtx, lifeCancel := context.WithCancel(context.Background())
 	endpoint := ""
 	participantsEndpoint := ""
 	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
@@ -291,9 +280,7 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
-		versions:                      NewVersionsCache(client, versionsCacheTTL),
-		lifeCtx:                       lifeCtx,
-		lifeCancel:                    lifeCancel,
+		versions:                      NewVersionsCache(client, versionsTTLPollMultiplier*pollInterval),
 		stopCh:                        make(chan struct{}),
 		doneCh:                        make(chan struct{}),
 	}
@@ -333,7 +320,7 @@ func (g *ChainPhaseGate) Start() {
 			<-g.stopCh
 			cancel()
 		}()
-		go g.versions.Run(ctx, versionsRetryInterval)
+		go g.versions.Run(ctx, g.pollInterval)
 	}
 	go g.run()
 }
@@ -348,9 +335,6 @@ func (g *ChainPhaseGate) Stop() {
 	default:
 	}
 	close(g.stopCh)
-	if g.lifeCancel != nil {
-		g.lifeCancel()
-	}
 	<-g.doneCh
 	setPoCPhaseState(false, "")
 	g.restoreDefaultSpeculativeAttempts()
@@ -448,16 +432,11 @@ func (g *ChainPhaseGate) refresh() {
 	// Combine the fetches so we never double-poll the chain.
 	needPreservedFetch := active && relaxedPoCModeEnabled() && shouldRefreshPoCPreservedParticipants(previous, snapshot)
 	if needPreservedFetch || capacityState != nil {
-		var state *participantsState
-		payload, perr := g.currentParticipantsPayload(snapshot)
-		if perr == nil {
-			state, perr = g.participantsStateFromPayload(
-				payload,
-				active,
-				preservedSnapshotAnchor(snapshot),
-				allowAllParticipantsUntilSnapshot(snapshot),
-			)
-		}
+		state, perr := g.fetchParticipantsState(
+			active,
+			preservedSnapshotAnchor(snapshot),
+			allowAllParticipantsUntilSnapshot(snapshot),
+		)
 		if perr != nil {
 			g.recordError(perr)
 			g.logPreservedParticipantFetchFailure(snapshot, perr)
@@ -476,8 +455,8 @@ func (g *ChainPhaseGate) refresh() {
 					capacityState.SetHostWeightViews(curWeights, state.fullWeights, curWeightsByModel, state.fullWeightsByModel)
 					capacityState.SetPoCPreserved(preserved)
 				}
-				setPoCPreservedParticipantsByModel(preservedByModel)
 				if needPreservedFetch {
+					setPoCPreservedParticipantsByModel(preservedByModel)
 					g.logPreservedParticipantsLoaded(snapshot, preserved, state.excluded)
 				}
 			} else {
@@ -508,9 +487,6 @@ func (g *ChainPhaseGate) refresh() {
 	if !active {
 		setPoCPreservedParticipantsByModel(nil)
 	}
-	if g.versions != nil {
-		g.versions.SetActive(active && relaxedPoCModeEnabled())
-	}
 
 	if capacityState != nil && scaleHook != nil {
 		scaleHook(capacityState.ScaleFactorAcrossModels())
@@ -522,13 +498,6 @@ func (g *ChainPhaseGate) refresh() {
 }
 
 func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
-	if g.publicAPIBackingOff() {
-		payload, err := g.fetchEpochInfoFromChain()
-		if err == nil {
-			return payload, nil
-		}
-		g.endPublicAPIBackoff(err)
-	}
 	payload, apiErr := g.fetchEpochInfoFromAPI()
 	if apiErr == nil {
 		return payload, nil
@@ -552,7 +521,6 @@ func (g *ChainPhaseGate) fetchEpochInfoFromAPI() (*chainEpochInfoResponse, error
 
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		g.notePublicAPIStatus(resp.StatusCode)
 		return nil, fmt.Errorf("epoch info status %d", resp.StatusCode)
 	}
 
@@ -568,9 +536,7 @@ func (g *ChainPhaseGate) fetchEpochInfoFromChain() (*chainEpochInfoResponse, err
 	if qc == nil {
 		return nil, fmt.Errorf("inference query client is unavailable")
 	}
-	ctx, cancel := g.chainQueryContext()
-	defer cancel()
-	resp, err := qc.EpochInfo(ctx, &inferencetypes.QueryEpochInfoRequest{})
+	resp, err := qc.EpochInfo(context.Background(), &inferencetypes.QueryEpochInfoRequest{})
 	if err != nil {
 		return nil, err
 	}
@@ -650,92 +616,16 @@ func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, er
 }
 
 func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshotAnchor int64, allowAllWhenSnapshotMissing bool) (*participantsState, error) {
-	payload, err := g.fetchParticipantsPayload()
-	if err != nil {
-		return nil, err
-	}
-	return g.participantsStateFromPayload(payload, pocActive, expectedSnapshotAnchor, allowAllWhenSnapshotMissing)
-}
-
-func (g *ChainPhaseGate) fetchParticipantsPayload() (*chainCurrentParticipantsResponse, error) {
-	if g.publicAPIBackingOff() {
-		if payload, err := g.fetchParticipantsFromChain(); err == nil {
-			return payload, nil
+	payload, apiErr := g.fetchParticipantsFromAPI()
+	if apiErr != nil {
+		var chainErr error
+		payload, chainErr = g.fetchParticipantsFromChain()
+		if chainErr != nil {
+			return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
 		}
 	}
-	payload, apiErr := g.fetchParticipantsFromAPI()
-	if apiErr == nil {
-		return payload, nil
-	}
-	payload, chainErr := g.fetchParticipantsFromChain()
-	if chainErr != nil {
-		return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
-	}
-	return payload, nil
-}
 
-func (g *ChainPhaseGate) currentParticipantsPayload(snapshot ChainPhaseSnapshot) (*chainCurrentParticipantsResponse, error) {
-	want := snapshot.effectiveEpochIndex
-	if g.participants != nil && g.participantsEpoch == want &&
-		time.Since(g.participantsFetchedAt) < g.participantsMaxAge {
-		return g.participants, nil
-	}
-	payload, err := g.fetchParticipantsPayload()
-	if err != nil {
-		return nil, err
-	}
-	g.participants = payload
-	g.participantsEpoch = want
-	g.participantsFetchedAt = time.Now()
-	switch id := payload.ActiveParticipants.EpochID; {
-	case id == nil:
-		g.participantsMaxAge = participantsUnverifiedMaxAge
-	case uint64(*id) < want:
-		g.participantsMaxAge = 0
-	default:
-		g.participantsMaxAge = participantsCacheMaxAge
-	}
-	return payload, nil
-}
-
-func (g *ChainPhaseGate) chainQueryContext() (context.Context, context.CancelFunc) {
-	base := g.lifeCtx
-	if base == nil {
-		base = context.Background()
-	}
-	return context.WithTimeout(base, chainQueryTimeout)
-}
-
-func (g *ChainPhaseGate) publicAPIBackingOff() bool {
-	if g.chainQueryClient() == nil {
-		return false
-	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	return time.Now().Before(g.publicAPIBackoffUntil)
-}
-
-func (g *ChainPhaseGate) endPublicAPIBackoff(err error) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.publicAPIBackoffUntil = time.Time{}
-	log.Printf("chain phase gate: chain query failed during public API backoff, returning to public API error=%v", err)
-}
-
-func (g *ChainPhaseGate) notePublicAPIStatus(status int) {
-	if status != http.StatusTooManyRequests && status != http.StatusServiceUnavailable {
-		return
-	}
-	if g.chainQueryClient() == nil {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if time.Now().Before(g.publicAPIBackoffUntil) {
-		return
-	}
-	g.publicAPIBackoffUntil = time.Now().Add(publicAPIRateLimitBackoff)
-	log.Printf("chain phase gate: public API returned %d, polling chain directly for %s", status, publicAPIRateLimitBackoff)
+	return g.participantsStateFromPayload(payload, pocActive, expectedSnapshotAnchor, allowAllWhenSnapshotMissing)
 }
 
 func (g *ChainPhaseGate) fetchParticipantsFromAPI() (*chainCurrentParticipantsResponse, error) {
@@ -750,7 +640,6 @@ func (g *ChainPhaseGate) fetchParticipantsFromAPI() (*chainCurrentParticipantsRe
 
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		g.notePublicAPIStatus(resp.StatusCode)
 		return nil, fmt.Errorf("current participants status %d", resp.StatusCode)
 	}
 
@@ -767,16 +656,14 @@ func (g *ChainPhaseGate) fetchParticipantsFromChain() (*chainCurrentParticipants
 	if qc == nil || sq == nil {
 		return nil, fmt.Errorf("chain participant query clients are unavailable")
 	}
-	ctx, cancel := g.chainQueryContext()
-	defer cancel()
-	current, err := qc.GetCurrentEpoch(ctx, &inferencetypes.QueryGetCurrentEpochRequest{})
+	current, err := qc.GetCurrentEpoch(context.Background(), &inferencetypes.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		return nil, err
 	}
 	if current == nil {
 		return nil, fmt.Errorf("current epoch response is nil")
 	}
-	result, err := sq.ABCIQuery(ctx, &cmtservice.ABCIQueryRequest{
+	result, err := sq.ABCIQuery(context.Background(), &cmtservice.ABCIQueryRequest{
 		Path: "store/inference/key",
 		Data: inferencetypes.ActiveParticipantsFullKey(current.Epoch),
 	})
@@ -805,8 +692,6 @@ func activeParticipantsPayload(active *inferencetypes.ActiveParticipants) *chain
 	if active == nil {
 		return payload
 	}
-	epochID := jsonUint64(active.EpochId)
-	payload.ActiveParticipants.EpochID = &epochID
 	payload.ActiveParticipants.Participants = make([]chainActiveParticipant, 0, len(active.Participants))
 	for _, participant := range active.Participants {
 		if participant == nil {
@@ -957,9 +842,7 @@ func (g *ChainPhaseGate) fetchPreservedSnapshotState(expectedAnchor int64) (*pre
 	if qc == nil {
 		return nil, preservedSnapshotUnavailable, nil
 	}
-	ctx, cancel := g.chainQueryContext()
-	defer cancel()
-	resp, err := qc.PreservedNodesSnapshot(ctx, &inferencetypes.QueryPreservedNodesSnapshotRequest{})
+	resp, err := qc.PreservedNodesSnapshot(context.Background(), &inferencetypes.QueryPreservedNodesSnapshotRequest{})
 	if err != nil {
 		return nil, preservedSnapshotUnavailable, err
 	}
@@ -1274,7 +1157,6 @@ func deriveChainPhaseSnapshot(resp *chainEpochInfoResponse) ChainPhaseSnapshot {
 		LastUpdatedAt:          time.Now().UTC(),
 		pocStartBlockHeight:    int64(resp.LatestEpoch.PocStartBlockHeight),
 		epochSwitchBlockHeight: deriveEpochSwitchBlockHeight(resp),
-		effectiveEpochIndex:    deriveEffectiveEpochIndex(resp),
 	}
 
 	if resp.ActiveConfirmationPoC != nil {
@@ -1302,18 +1184,6 @@ func deriveEpochSwitchBlockHeight(resp *chainEpochInfoResponse) int64 {
 		return int64(resp.EpochStages.NextPoCStart)
 	}
 	return int64(resp.LatestEpoch.PocStartBlockHeight)
-}
-
-func deriveEffectiveEpochIndex(resp *chainEpochInfoResponse) uint64 {
-	if resp == nil {
-		return 0
-	}
-	latest := uint64(resp.LatestEpoch.Index)
-	setNewValidators := int64(resp.EpochStages.SetNewValidators)
-	if latest == 0 || setNewValidators <= 0 || int64(resp.BlockHeight) >= setNewValidators {
-		return latest
-	}
-	return latest - 1
 }
 
 func deriveEpochPhase(resp *chainEpochInfoResponse) string {

@@ -51,6 +51,9 @@ type PhaseObserver struct {
 	now                  func() time.Time
 	versions             *VersionsCache
 
+	participants          participantsCache
+	publicAPIBackoffUntil time.Time
+
 	current  atomic.Pointer[PhaseSnapshot]
 	health   snapshotHealth
 	narrator healthNarrator
@@ -201,7 +204,7 @@ func (o *PhaseObserver) refresh(ctx context.Context) {
 		}
 	}
 
-	participantsPayload, err := o.fetchParticipants(ctx)
+	participantsPayload, err := o.participantsFor(ctx, participantsEpoch(epoch))
 	if err != nil {
 		o.publishWithPreviousParticipants(snapshot, previous, fmt.Sprintf("fetch participants: %v", err))
 		return
@@ -272,7 +275,7 @@ func (o *PhaseObserver) getBody(ctx context.Context, path string) ([]byte, error
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("%s status %d", path, resp.StatusCode)
+		return nil, &publicAPIStatusError{path: path, status: resp.StatusCode}
 	}
 	return io.ReadAll(resp.Body)
 }

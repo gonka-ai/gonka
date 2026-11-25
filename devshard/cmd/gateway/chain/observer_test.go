@@ -38,6 +38,8 @@ type phaseObserverStub struct {
 	modelsErr          error
 	versionsStatus     int
 	versionsBody       string
+	epochHits          int
+	participantsHits   int
 }
 
 func newPhaseObserverStub() *phaseObserverStub {
@@ -54,9 +56,11 @@ func (s *phaseObserverStub) handler() http.HandlerFunc {
 		defer s.mu.Unlock()
 		switch r.URL.Path {
 		case "/v1/epochs/latest":
+			s.epochHits++
 			w.WriteHeader(s.epochStatus)
 			w.Write([]byte(s.epochBody))
 		case "/v1/epochs/current/participants":
+			s.participantsHits++
 			w.WriteHeader(s.participantsStatus)
 			w.Write([]byte(s.participantsBody))
 		case "/v1/versions":
@@ -646,7 +650,7 @@ func TestPhaseObserver_CarriesEveryParticipantDerivedFieldForward(t *testing.T) 
 
 // Test flow:
 //  1. Refresh once against a healthy stub and capture the resulting snapshot as the known-good baseline.
-//  2. Advance the epoch body to a new block height while making the participants endpoint return HTTP 500, then refresh again.
+//  2. Advance the epoch body to a new block height in the next epoch while making the participants endpoint return HTTP 500, then refresh again.
 //  3. Assert LastError is now set while BlockHeight still reflects the epoch fetch that succeeded.
 //  4. Assert CurrentWeights and InferenceURLs stayed at their stale, known-good values.
 func TestPhaseObserver_ParticipantsFetchErrorKeepsPreviousWeightsWithLastError(t *testing.T) {
@@ -672,7 +676,7 @@ func TestPhaseObserver_ParticipantsFetchErrorKeepsPreviousWeightsWithLastError(t
 		t.Fatalf("precondition: LastError = %q, want empty", good.LastError)
 	}
 
-	stub.setEpoch(http.StatusOK, observerEpochJSON(43, 4, EpochPhaseInference))
+	stub.setEpoch(http.StatusOK, observerEpochJSON(43, 5, EpochPhaseInference))
 	stub.setParticipants(http.StatusInternalServerError, "")
 	observer.refresh(context.Background())
 	after := observer.Snapshot()
