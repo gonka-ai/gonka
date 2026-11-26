@@ -161,11 +161,12 @@ type appliedReply struct {
 
 // recordingSession records the order of the calls a dispatch makes and what each was handed.
 type recordingSession struct {
-	calls    []string
-	sent     *user.PreparedInference
-	stream   io.Writer
-	receipts int
-	applied  appliedReply
+	calls         []string
+	appliedNonces map[uint64]bool
+	sent          *user.PreparedInference
+	stream        io.Writer
+	receipts      int
+	applied       appliedReply
 
 	caughtUp *user.PreparedInference
 
@@ -207,7 +208,10 @@ func (s *recordingSession) UnpinPendingFinish(uint64) {
 	s.calls = append(s.calls, "UnpinPendingFinish")
 }
 
-func (s *recordingSession) IsNonceFinished(uint64) bool        { return true }
+func (s *recordingSession) IsNonceFinished(uint64) bool { return true }
+func (s *recordingSession) IsNonceCanonicalFinished(nonce uint64) bool {
+	return s.appliedNonces[nonce]
+}
 func (s *recordingSession) HostParticipantKeyList() []string   { return []string{"hostA", "hostB"} }
 func (s *recordingSession) RewindHostCatchUp(int, string) bool { return true }
 
@@ -596,6 +600,21 @@ func (h *flushingHost) executorProof(nonce uint64) ([]byte, int64, *types.MsgFin
 	}
 	finish.ProposerSig = testutil.SignProposerTx(h.t, executor, finish)
 	return receipt, confirmedAt, finish
+}
+
+// Test flow:
+//  1. Build an `escrowTarget` over a session that reports every nonce as finished and only nonce 4 as canonically finished.
+//  2. Ask the target whether nonces 3 and 4 are canonically finished.
+//  3. Assert nonce 3 answers false, so the timeout gate does not read the queued Finish, and nonce 4 answers true.
+func TestTheTargetsTimeoutGateReadsTheCanonicalFinish(t *testing.T) {
+	target := escrowTarget{session: &recordingSession{appliedNonces: map[uint64]bool{4: true}}}
+
+	if target.NonceCanonicalFinished(3) {
+		t.Error("NonceCanonicalFinished(3) = true for a nonce with only a queued Finish, want false")
+	}
+	if !target.NonceCanonicalFinished(4) {
+		t.Error("NonceCanonicalFinished(4) = false for a nonce with an applied Finish, want true")
+	}
 }
 
 // Test flow:

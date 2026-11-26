@@ -44,6 +44,8 @@ func (h *pacedHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) 
 
 func (h *pacedHandler) FinishTxFor(uint64) []byte { return nil }
 
+func (h *pacedHandler) IsNonceCanonicalFinished(uint64) bool { return false }
+
 func (h *pacedHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
 	return string(TimeoutKindRefused), h.deadline
 }
@@ -128,8 +130,8 @@ func TestAPacedStepWhosePaceIsInterruptedCastsNoVote(t *testing.T) {
 	if !errors.Is(err, interrupted) {
 		t.Fatalf("SettleTimeout() = %v, want %v", err, interrupted)
 	}
-	if _, reason := TimeoutOutcome(vote, err, false); reason != TimeoutReason(pacedCanceledDetail) {
-		t.Fatalf("TimeoutOutcome() reason = %q, want %q", reason, pacedCanceledDetail)
+	if _, reason := TimeoutOutcome(vote, err, false); reason != TimeoutReason(sessionDetailContextCanceled) {
+		t.Fatalf("TimeoutOutcome() reason = %q, want %q", reason, sessionDetailContextCanceled)
 	}
 	if want := []string{"wait"}; !slices.Equal(handler.steps, want) {
 		t.Fatalf("steps = %v, want %v", handler.steps, want)

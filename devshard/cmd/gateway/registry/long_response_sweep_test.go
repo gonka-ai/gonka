@@ -143,11 +143,11 @@ func startedConfirmedAt(t *testing.T, escrow longResponseEscrow, confirmedAt int
 
 // Test flow:
 //  1. Publish a real escrow session whose three hosts sign accepting timeout votes, and start one inference whose executor confirmed it two hours ago and never finished; share the chain's max_nonce.
-//  2. Judge that attempt as a race would: it streamed content for 281 seconds, stalled and never finished; assert the race posts no vote for it, skipping it as a long response.
+//  2. Judge that attempt as a race would: it streamed content for 281 seconds, stalled and never finished; assert the race plans a vote for it.
 //  3. Assert the nonce still holds its whole reservation.
-//  4. Run the registry's execution-timeout sweep; assert it finds the nonce due and applies the vote.
+//  4. Run the registry's execution-timeout sweep, as the backstop for a vote the race failed to land; assert it finds the nonce due and applies the vote.
 //  5. Assert the record timed out and its reservation is back in the balance.
-func TestALongResponseTheRaceDoesNotVoteOnIsReturnedByTheSweep(t *testing.T) {
+func TestALongResponseWithoutAFinishIsVotedByTheRaceAndBackstoppedByTheSweep(t *testing.T) {
 	escrow := publishLongResponseEscrow(t)
 	escrow.registry.ShareChainMaxNonce(1_700)
 	nonce := startedTwoHoursAgo(t, escrow)
@@ -167,8 +167,7 @@ func TestALongResponseTheRaceDoesNotVoteOnIsReturnedByTheSweep(t *testing.T) {
 
 	plan := outcome.TimeoutPlan()
 	require.Len(t, plan, 1)
-	require.False(t, plan[0].Post, "the race must not vote on a long response that streamed content")
-	require.Equal(t, engine.TimeoutReasonLongResponse, plan[0].Event.Reason)
+	require.True(t, plan[0].Post, "the race must vote on a long response that never finished")
 	record, tracked := escrow.machine.GetInference(nonce)
 	require.True(t, tracked)
 	balanceWhileHeld := escrow.machine.Balance()
