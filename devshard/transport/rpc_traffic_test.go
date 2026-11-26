@@ -514,6 +514,7 @@ func TestRPCStatsLabelsFoldUnknown(t *testing.T) {
 		rpcpbconnect.SessionServiceVerifyErrorMissProcedure,
 		rpcpbconnect.SessionServiceChallengeReceiptProcedure,
 		rpcpbconnect.SessionServiceGetDiffsProcedure,
+		rpcpbconnect.SessionServiceGetSnapshotProcedure,
 		rpcpbconnect.SessionServiceGetMempoolProcedure,
 		rpcpbconnect.SessionServiceGetStateProcedure,
 		rpcpbconnect.SessionServiceGetSignaturesProcedure,

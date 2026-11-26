@@ -12,6 +12,7 @@ import (
 	"devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
+	"devshard/host"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
@@ -204,6 +205,52 @@ func (h *SessionHandler) GetDiffs(ctx context.Context, req *connect.Request[rpcp
 		out[i] = &rpcpb.DiffRecord{Diff: pb, StateHash: rec.StateHash}
 	}
 	return connect.NewResponse(&rpcpb.GetDiffsResponse{Records: out}), nil
+}
+
+func (h *SessionHandler) GetSnapshot(ctx context.Context, req *connect.Request[rpcpb.GetSnapshotRequest]) (*connect.Response[rpcpb.GetSnapshotResponse], error) {
+	if req == nil || req.Msg == nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("nil request"))
+	}
+	_, _, srv, err := h.resolve(ctx, "rpc_get_snapshot")
+	if err != nil {
+		return nil, err
+	}
+	type snapshotCore interface {
+		ServeGetSnapshot(maxNonce uint64) (*host.PeerSnapshot, error)
+	}
+	core, ok := srv.(snapshotCore)
+	if !ok {
+		return nil, unimplementedCore()
+	}
+	snap, err := core.ServeGetSnapshot(req.Msg.GetMaxNonce())
+	if err != nil {
+		return nil, mapCoreError(err)
+	}
+	if snap == nil || snap.AnchorDiff == nil {
+		return nil, connect.NewError(connect.CodeNotFound, storage.ErrSnapshotNotFound)
+	}
+	anchorPB, err := transport.DiffToProto(*snap.AnchorDiff)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInternal, errors.New("encode snapshot anchor diff failed"))
+	}
+	var floorPB *rpcpb.Diff
+	if snap.FloorRefDiff != nil {
+		floorPB, err = transport.DiffToProto(*snap.FloorRefDiff)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeInternal, errors.New("encode snapshot floor diff failed"))
+		}
+	}
+	sigs := snap.Signatures
+	if sigs == nil {
+		sigs = map[uint32][]byte{}
+	}
+	return connect.NewResponse(&rpcpb.GetSnapshotResponse{
+		Nonce:        snap.Nonce,
+		Snapshot:     snap.Snapshot,
+		AnchorDiff:   anchorPB,
+		FloorRefDiff: floorPB,
+		Signatures:   sigs,
+	}), nil
 }
 
 func (h *SessionHandler) GetState(ctx context.Context, req *connect.Request[rpcpb.GetStateRequest]) (*connect.Response[rpcpb.GetStateResponse], error) {
@@ -547,14 +594,17 @@ func mapCoreError(err error) error {
 			transport.DevshardErrorHeaderPending,
 		)
 	}
-	if errors.Is(err, transport.ErrNoStorage) || errors.Is(err, transport.ErrHeightSyncSeedDisabled) {
+	if errors.Is(err, transport.ErrNoStorage) ||
+		errors.Is(err, transport.ErrHeightSyncSeedDisabled) ||
+		errors.Is(err, storage.ErrSnapshotNotFound) {
 		return connect.NewError(connect.CodeNotFound, err)
 	}
 	if errors.Is(err, transport.ErrInvalidRequesterSlot) ||
 		errors.Is(err, transport.ErrGossipMissingStateSig) ||
 		errors.Is(err, transport.ErrGossipInvalidSlot) ||
 		errors.Is(err, transport.ErrGossipInvalidStateHash) ||
-		errors.Is(err, transport.ErrGossipInvalidStateSig) {
+		errors.Is(err, transport.ErrGossipInvalidStateSig) ||
+		errors.Is(err, storage.ErrDiffPageLimit) {
 		return connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if errors.Is(err, transport.ErrRequesterSlotMismatch) {

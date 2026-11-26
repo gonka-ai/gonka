@@ -584,6 +584,7 @@ func (s *Server) SetPeerClients(peers map[int]HostPeerClient) {
 	s.peers.setClients(peers)
 	if s.host != nil {
 		s.host.SetRepairProbe(s.RepairProbe)
+		s.host.SetCatchUpSource(s.catchUpPeerClient)
 	}
 }
 
@@ -1159,4 +1160,57 @@ func (s *Server) ServeGetMempool(ctx context.Context) ([]*types.DevshardTx, erro
 	}
 	s.host.EnqueueDueValidations()
 	return s.host.MempoolTxs(), nil
+}
+
+// ServeGetSnapshot is the transport-neutral core behind SessionService.GetSnapshot
+// and the HTTP test-harness GET .../snapshot endpoint.
+func (s *Server) ServeGetSnapshot(maxNonce uint64) (*host.PeerSnapshot, error) {
+	if s.store == nil {
+		return nil, ErrNoStorage
+	}
+	return s.host.ServeGetSnapshot(maxNonce)
+}
+
+func (s *Server) HandleGetSnapshot(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "get_snapshot")
+	defer finish(&err)
+	_ = op
+
+	var maxNonce uint64
+	if raw := c.QueryParam("max_nonce"); raw != "" {
+		parsed, pErr := strconv.ParseUint(raw, 10, 64)
+		if pErr != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid 'max_nonce' parameter")
+		}
+		maxNonce = parsed
+	}
+	snap, err := s.ServeGetSnapshot(maxNonce)
+	if err != nil {
+		if errors.Is(err, ErrNoStorage) || errors.Is(err, storage.ErrSnapshotNotFound) {
+			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+		}
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	if snap == nil || snap.AnchorDiff == nil {
+		return echo.NewHTTPError(http.StatusNotFound, storage.ErrSnapshotNotFound.Error())
+	}
+	anchorJSON, err := DiffToJSON(*snap.AnchorDiff)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("encode snapshot anchor diff: %v", err))
+	}
+	var floorJSON *DiffJSON
+	if snap.FloorRefDiff != nil {
+		dj, fErr := DiffToJSON(*snap.FloorRefDiff)
+		if fErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("encode snapshot floor diff: %v", fErr))
+		}
+		floorJSON = &dj
+	}
+	return writeJSON(c, http.StatusOK, SnapshotJSON{
+		Nonce:        snap.Nonce,
+		Snapshot:     snap.Snapshot,
+		AnchorDiff:   &anchorJSON,
+		FloorRefDiff: floorJSON,
+		Signatures:   snap.Signatures,
+	})
 }

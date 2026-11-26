@@ -22,7 +22,7 @@
     acl is_attach path_end /devshard.transport.v1.PeerAuthService/Attach
     acl is_watch path_end /devshard.transport.v1.PeerAuthService/Watch
     acl is_chat path_end /devshard.transport.v1.SessionService/Chat
-    acl is_diffs path_end /devshard.transport.v1.SessionService/GetDiffs
+    acl is_diffs path_end /devshard.transport.v1.SessionService/GetDiffs /devshard.transport.v1.SessionService/GetSnapshot
     acl is_mempool path_end /devshard.transport.v1.SessionService/GetMempool
     acl is_signatures path_end /devshard.transport.v1.SessionService/GetSignatures
     acl is_gossip path_end /devshard.transport.v1.GossipService/Nonce /devshard.transport.v1.GossipService/Txs

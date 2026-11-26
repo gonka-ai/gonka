@@ -202,6 +202,10 @@ type Host struct {
 	repairInFlight  atomic.Bool
 	closeReady      *heightsync.CloseReady
 
+	catchUpMu           sync.Mutex
+	catchUpSource       PeerCatchUpSource
+	pendingCatchUpDiffs []types.Diff
+
 	// finishObs is host-local observability: Finish nonce and wall clock when
 	// this host applied MsgFinishInference. Used when validation later finds
 	// the live record gone (sealed/drained). Not part of consensus.
@@ -666,11 +670,44 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		return nil, devshard.ErrRequestsDisabled
 	}
 
+	var caughtUpDiffs []types.Diff
+	if len(h.pendingCatchUpDiffs) > 0 {
+		caughtUpDiffs = h.pendingCatchUpDiffs
+		h.pendingCatchUpDiffs = nil
+	}
+	hasCatchUp := h.catchUpSource != nil || (len(req.Diffs) == 0 && h.store != nil)
+	if _, _, needCatchUp := requestCatchUpTargets(h.sm.LatestNonce(), req); hasCatchUp && needCatchUp {
+		h.mu.Unlock()
+		moreDiffs, catchUpErr := h.CatchUpForRequest(ctx, req)
+		if errors.Is(catchUpErr, types.ErrNonceLimitExceeded) {
+			return nil, catchUpErr
+		}
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		if catchUpErr != nil {
+			logging.Debug("peer catch-up incomplete before HandleRequest",
+				"subsystem", "host",
+				"escrow_id", h.escrowID,
+				"nonce", req.Nonce,
+				"error", catchUpErr)
+		}
+		h.mu.Lock()
+		if len(h.pendingCatchUpDiffs) > 0 {
+			caughtUpDiffs = append(caughtUpDiffs, h.pendingCatchUpDiffs...)
+			h.pendingCatchUpDiffs = nil
+		}
+		caughtUpDiffs = append(caughtUpDiffs, moreDiffs...)
+	}
+
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
 	diffsApplied := len(req.Diffs) > 0
 	if diffsApplied {
 		lastAppliedTxs = req.Diffs[len(req.Diffs)-1].Txs
+	} else if len(caughtUpDiffs) > 0 {
+		lastAppliedTxs = caughtUpDiffs[len(caughtUpDiffs)-1].Txs
+		diffsApplied = true
 	}
 	newlyApplied, err := h.applyDiffsAwaitingHeadersLocked(ctx, req.Diffs)
 	if err != nil {
@@ -687,15 +724,22 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		return nil, err
 	}
 
-	needOracle := h.oracleNeededLocked(req, newlyApplied)
+	effectiveApplied := newlyApplied
+	if len(caughtUpDiffs) > 0 {
+		effectiveApplied = make([]types.Diff, 0, len(caughtUpDiffs)+len(newlyApplied))
+		effectiveApplied = append(effectiveApplied, caughtUpDiffs...)
+		effectiveApplied = append(effectiveApplied, newlyApplied...)
+	}
+
+	needOracle := h.oracleNeededLocked(req, effectiveApplied)
 	h.mu.Unlock()
 	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
 	h.mu.Lock()
 
 	// (a2) Answer heartbeats addressed to this host's slot (spec §10.4).
 	// Acks go into the mempool of this response; they are never a general stamp.
-	h.maybeAckHeartbeatsLocked(newlyApplied, hdr, hdrErr)
-	h.noteCloseReadyLocked(newlyApplied, hdr, hdrErr)
+	h.maybeAckHeartbeatsLocked(effectiveApplied, hdr, hdrErr)
+	h.noteCloseReadyLocked(effectiveApplied, hdr, hdrErr)
 
 	// (b) Sign executor receipt (sync, under mutex).
 	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req, hdr, hdrErr, appliedNonce(newlyApplied, req.Nonce))
@@ -727,6 +771,10 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	h.mu.Unlock()
+
+	if req.Payload == nil {
+		h.recoverStartedFinishes(ctx)
+	}
 
 	if body := h.resolveStoredResponse(ctx, &receiptOutcome); body != nil {
 		cachedBody = body
@@ -1150,10 +1198,14 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 }
 
 func (h *Host) newExecuteRequest(inferenceID uint64, rec types.InferenceRecord, payload *InferencePayload) *devshard.ExecuteRequest {
+	var prompt []byte
+	if payload != nil {
+		prompt = payload.Prompt
+	}
 	return &devshard.ExecuteRequest{
 		InferenceID: inferenceID,
 		Model:       rec.Model,
-		Prompt:      payload.Prompt,
+		Prompt:      prompt,
 		PromptHash:  rec.PromptHash,
 		InputLength: rec.InputLength,
 		MaxTokens:   rec.MaxTokens,
