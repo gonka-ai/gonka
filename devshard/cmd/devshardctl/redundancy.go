@@ -2862,6 +2862,17 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if holder == nil {
 				stopTimer(escalationTimer)
 				stopTimer(stallTimer)
+				if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
+					if err := race.promoteFallbackWinner(fallback); err != nil {
+						e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+							e.finishRaceWhenPendingDone(ctx, attempts, params, decision, fallback.nonce, raceFinishOptions{clientGone: clientFlag})
+						})
+						return err
+					}
+					winner = fallback.nonce
+					deferredFailClosed = nil
+					continue
+				}
 				logInferenceStage(settleCtx, deferredFailClosed.inf.escrowID, deferredFailClosed.inf.nonce, "escalation_fail_closed_resumed",
 					"host", deferredFailClosed.inf.hostID,
 					"stage", deferredFailClosed.stage,
@@ -3019,6 +3030,18 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				}
 				if winnerHardTimeoutTimer != nil {
 					stopTimer(winnerHardTimeoutTimer)
+				}
+				if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
+					if err := race.promoteFallbackWinner(fallback); err != nil {
+						e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+							e.finishRaceWhenPendingDone(ctx, attempts, params, decision, fallback.nonce, raceFinishOptions{clientGone: clientFlag})
+						})
+						return err
+					}
+					trigger.inf.escalated = true
+					logInferenceStage(settleCtx, fallback.escrowID, fallback.nonce, "suspicious_winner_released",
+						"host", fallback.hostID, "stage", trigger.stage, "pending", len(pendingInflights(attempts)))
+					break
 				}
 				return e.failClosedNoWinner(settleCtx, attempts, params, decision, trigger, clientFlag)
 			}
