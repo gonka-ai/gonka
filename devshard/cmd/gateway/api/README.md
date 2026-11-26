@@ -222,7 +222,7 @@ Eviction drops entries in map order: with a per-caller key and an hour's TTL the
 
 **A hit is served while proof-of-compute blocks requests.** `chat` runs admission first and keeps its refusal; a refusal that is proof-of-compute alone lets the lookup run, a hit is served, and a miss gets the same refusal. Every other refusal is written before the lookup. See [`docs/rules.md`](../docs/rules.md), "Refused mechanisms".
 
-Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
+Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`, `unconfirmed_rejection` for a rejection of the request fewer than two trusted hosts made, which another host might have served) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
 
 ## Read next
 

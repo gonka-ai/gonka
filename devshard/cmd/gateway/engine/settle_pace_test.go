@@ -38,9 +38,11 @@ func (h *pacedHandler) VoteTimeout(context.Context, uint64, time.Time, *host.Inf
 	return h.voteResult, false, h.voteErr
 }
 
-func (h *pacedHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {
+func (h *pacedHandler) HandleErrorMissWithSibling(context.Context, uint64, []byte, []byte, uint64) (user.TimeoutResult, error) {
 	return user.TimeoutResult{}, nil
 }
+
+func (h *pacedHandler) ServedSibling(uint64, uint64) bool { return false }
 
 func (h *pacedHandler) FinishTxFor(uint64) []byte { return nil }
 

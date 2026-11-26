@@ -774,14 +774,15 @@ func TestSimulatorContextLengthRejectionReachesTheClientWithoutAnotherAttempt(t 
 }
 
 // Test flow:
-//  1. Start a two-host simulator and script host-0 to reject the request body with a malformed-tool-call error while host-1 could otherwise answer.
-//  2. Run the race and assert the returned error is host-0's own rejection payload.
-//  3. Assert the scheduler was picked only once, since every host would reject the same body.
-//  4. Settle the race and assert the rejected nonce still got its vote posted.
-func TestSimulatorRequestRejectionReachesTheClientWithoutAnotherAttempt(t *testing.T) {
-	sim := newSimulator(t, speculativePolicy(2), 2, qwenModel)
+//  1. Start a three-host simulator and script host-0 and host-1 to reject the request body with a malformed-tool-call error while host-2 could otherwise answer.
+//  2. Run the race and assert the returned error is the hosts' own rejection payload.
+//  3. Assert the scheduler was picked twice: the second rejection confirms the first, so host-2 is not asked.
+//  4. Settle the race and assert both rejected nonces got their votes posted.
+func TestSimulatorConfirmedRequestRejectionReachesTheClientWithoutAThirdAttempt(t *testing.T) {
+	sim := newSimulator(t, speculativePolicy(2), 3, qwenModel)
 	sim.host(10, 0, "host-0", &hostScript{receipt: true, chunks: []string{"data: " + malformedToolCallRejection + "\n\n"}})
-	sim.host(11, 1, "host-1", &hostScript{
+	sim.host(11, 1, "host-1", &hostScript{receipt: true, chunks: []string{"data: " + malformedToolCallRejection + "\n\n"}})
+	sim.host(12, 2, "host-2", &hostScript{
 		receipt: true, chunks: []string{contentEvent("hi")},
 		confirmed: true, finished: true,
 	})
@@ -796,12 +797,12 @@ func TestSimulatorRequestRejectionReachesTheClientWithoutAnotherAttempt(t *testi
 	sim.picker.mu.Lock()
 	picks := len(sim.picker.profiles)
 	sim.picker.mu.Unlock()
-	if picks != 1 {
-		t.Fatalf("Pick calls = %d, want 1: every host would reject the same body", picks)
+	if picks != 2 {
+		t.Fatalf("Pick calls = %d, want 2: the second rejection confirms the first", picks)
 	}
 	sim.settleAll()
-	if posted := sim.poster.settled(); len(posted) != 1 || posted[0] != 10 {
-		t.Fatalf("votes posted = %v, want [10]", posted)
+	if posted := sim.poster.settled(); len(posted) != 2 {
+		t.Fatalf("votes posted = %v, want the two rejected nonces", posted)
 	}
 }
 

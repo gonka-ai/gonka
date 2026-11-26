@@ -11,7 +11,11 @@ import (
 
 var versionNotFound = regexp.MustCompile(`version "[^"]*" not found`)
 
-const contextEstimateMargin = 2
+// See race.md, "Escalation".
+const (
+	contextEstimateMargin  = 2
+	requestRejectionQuorum = 2
+)
 
 type CapabilitySignal struct {
 	ToolsUnsupported   bool
@@ -85,13 +89,50 @@ func rulesOutRetry(attempt AttemptOutcome, modelContextLength, estimatedTokens u
 	return answersForEveryHost(attempt) && !CapabilityOf(attempt).servableElsewhere(modelContextLength, estimatedTokens)
 }
 
-// answersForEveryHost reports a trusted host's answer the race takes as every host's: a refusal that is not Retriable, or a rejection of the request itself.
-func answersForEveryHost(attempt AttemptOutcome) bool {
-	if attempt.Suspicious {
+func (c *raceCoordinator) retryRuledOutBy(attempt *liveAttempt) bool {
+	outcome := *attempt.outcome
+	if !rulesOutRetry(outcome, c.deps.ModelContextLength, c.request.InputTokensFromBytes+c.request.OutputTokens) {
 		return false
 	}
+	if refusesForEveryHost(outcome) {
+		return true
+	}
+	if c.requestRejections == nil {
+		c.requestRejections = requestRejections{}
+	}
+	c.requestRejections.add(outcome)
+	return c.requestRejections.confirmed()
+}
+
+// UnconfirmedRequestRejection reports a race that failed on a rejection of the request fewer than requestRejectionQuorum trusted participants made. See race.md, "Escalation".
+func (o RaceOutcome) UnconfirmedRequestRejection() bool {
+	rejections := requestRejections{}
+	for _, attempt := range o.Attempts {
+		rejections.add(attempt)
+	}
+	return !o.Succeeded && len(rejections) > 0 && !rejections.confirmed()
+}
+
+type requestRejections map[string]struct{}
+
+func (r requestRejections) add(attempt AttemptOutcome) {
+	if !attempt.Suspicious && rejectsRequest(attempt) {
+		r[attempt.Participant] = struct{}{}
+	}
+}
+
+func (r requestRejections) confirmed() bool {
+	return len(r) >= requestRejectionQuorum
+}
+
+// answersForEveryHost reports a trusted host's answer that, alone or once confirmed, the race takes as every host's: a refusal that is not Retriable, or a rejection of the request itself.
+func answersForEveryHost(attempt AttemptOutcome) bool {
+	return !attempt.Suspicious && (refusesForEveryHost(attempt) || rejectsRequest(attempt))
+}
+
+func refusesForEveryHost(attempt AttemptOutcome) bool {
 	refusal := CapabilityOf(attempt)
-	return (refusal.Refused() && !refusal.Retriable()) || rejectsRequest(attempt)
+	return refusal.Refused() && !refusal.Retriable()
 }
 
 // rejectsRequest reports an error event from an attempt that streamed no content, with a structured 400 that filters reads as about the request, not the host. See ../filters/README.md, "Cacheability".

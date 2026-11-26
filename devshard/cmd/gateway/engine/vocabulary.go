@@ -117,6 +117,7 @@ const (
 	TimeoutReasonNotApplied      TimeoutReason = "timeout_not_applied"
 	TimeoutReasonEscrowGone      TimeoutReason = "escrow_gone_from_hosts"
 	TimeoutReasonUnvoteable      TimeoutReason = "unvoteable"
+	TimeoutReasonClientFault     TimeoutReason = "unbilled_client_fault"
 )
 
 type voteFollowUp int

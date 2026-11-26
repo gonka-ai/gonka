@@ -85,10 +85,11 @@ message VerifyTimeoutResponse {
 }
 
 message VerifyErrorMissRequest {
-  uint64        inference_id     = 1;
-  repeated Diff diffs             = 2;
-  bytes         finish_tx        = 3;
-  bytes         response_payload = 4;
+  uint64        inference_id         = 1;
+  repeated Diff diffs                 = 2;
+  bytes         finish_tx            = 3;
+  bytes         response_payload     = 4;
+  uint64        sibling_inference_id = 5;
 }
 
 message VerifyErrorMissResponse {

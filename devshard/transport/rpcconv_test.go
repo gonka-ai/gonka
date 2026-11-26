@@ -59,10 +59,11 @@ func TestVerifyTimeout_ProtoRoundTrip(t *testing.T) {
 
 func TestVerifyErrorMiss_ProtoRoundTrip(t *testing.T) {
 	in := VerifyErrorMissRequest{
-		InferenceID:     4,
-		Diffs:           []DiffJSON{{Nonce: 2, Txs: []byte{1}, UserSig: []byte{2}}},
-		FinishTx:        []byte{3, 4},
-		ResponsePayload: []byte("err"),
+		InferenceID:        4,
+		Diffs:              []DiffJSON{{Nonce: 2, Txs: []byte{1}, UserSig: []byte{2}}},
+		FinishTx:           []byte{3, 4},
+		ResponsePayload:    []byte("err"),
+		SiblingInferenceID: 9,
 	}
 	require.Equal(t, in, VerifyErrorMissRequestFromProto(VerifyErrorMissRequestToProto(in)))
 	resp := &VerifyErrorMissResponse{Accept: false, RejectCause: "no_finish_tx", Mempool: [][]byte{{5}}}

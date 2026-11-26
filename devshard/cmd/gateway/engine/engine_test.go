@@ -20,11 +20,13 @@ import (
 var errVoteCause = errors.New("collect timeout votes")
 
 type scriptedTimeoutHandler struct {
-	result    user.TimeoutResult
-	err       error
-	calls     int
-	missCalls int
-	finishTx  []byte
+	result         user.TimeoutResult
+	err            error
+	calls          int
+	missCalls      int
+	finishTx       []byte
+	servedSiblings map[uint64]bool
+	claimedSibling uint64
 }
 
 func (h *scriptedTimeoutHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
@@ -42,9 +44,14 @@ func (h *scriptedTimeoutHandler) VoteTimeout(context.Context, uint64, time.Time,
 	return h.result, false, h.err
 }
 
-func (h *scriptedTimeoutHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {
+func (h *scriptedTimeoutHandler) HandleErrorMissWithSibling(_ context.Context, _ uint64, _, _ []byte, sibling uint64) (user.TimeoutResult, error) {
 	h.missCalls++
+	h.claimedSibling = sibling
 	return h.result, h.err
+}
+
+func (h *scriptedTimeoutHandler) ServedSibling(_, sibling uint64) bool {
+	return h.servedSiblings[sibling]
 }
 
 // Test flow:

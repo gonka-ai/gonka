@@ -179,8 +179,9 @@ type raceCoordinator struct {
 	startErr         error
 	burnCapReached   bool
 
-	retryRuledOut bool
-	reportOnce    sync.Once
+	retryRuledOut     bool
+	requestRejections requestRejections
+	reportOnce        sync.Once
 }
 
 // raceExit is why await stopped; only exitComplete means the race is over.

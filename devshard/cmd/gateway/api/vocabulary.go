@@ -24,6 +24,8 @@ const (
 	cacheRefusedWriteFailed = "write_failed"
 	cacheRefusedRaceFailed  = "race_failed"
 	cacheRefusedNoEscrow    = "no_escrow"
+
+	cacheRefusedUnconfirmedRejection = "unconfirmed_rejection"
 )
 
 const cacheResultStored = "stored"

@@ -759,13 +759,14 @@ func (x *VerifyTimeoutResponse) GetRejectCause() string {
 }
 
 type VerifyErrorMissRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	InferenceId     uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	Diffs           []*Diff                `protobuf:"bytes,2,rep,name=diffs,proto3" json:"diffs,omitempty"`
-	FinishTx        []byte                 `protobuf:"bytes,3,opt,name=finish_tx,json=finishTx,proto3" json:"finish_tx,omitempty"`
-	ResponsePayload []byte                 `protobuf:"bytes,4,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId        uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Diffs              []*Diff                `protobuf:"bytes,2,rep,name=diffs,proto3" json:"diffs,omitempty"`
+	FinishTx           []byte                 `protobuf:"bytes,3,opt,name=finish_tx,json=finishTx,proto3" json:"finish_tx,omitempty"`
+	ResponsePayload    []byte                 `protobuf:"bytes,4,opt,name=response_payload,json=responsePayload,proto3" json:"response_payload,omitempty"`
+	SiblingInferenceId uint64                 `protobuf:"varint,5,opt,name=sibling_inference_id,json=siblingInferenceId,proto3" json:"sibling_inference_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *VerifyErrorMissRequest) Reset() {
@@ -824,6 +825,13 @@ func (x *VerifyErrorMissRequest) GetResponsePayload() []byte {
 		return x.ResponsePayload
 	}
 	return nil
+}
+
+func (x *VerifyErrorMissRequest) GetSiblingInferenceId() uint64 {
+	if x != nil {
+		return x.SiblingInferenceId
+	}
+	return 0
 }
 
 type VerifyErrorMissResponse struct {
@@ -1487,12 +1495,13 @@ const file_devshard_transport_v1_session_proto_rawDesc = "" +
 	"\n" +
 	"voter_slot\x18\x03 \x01(\rR\tvoterSlot\x12\x18\n" +
 	"\amempool\x18\x04 \x03(\fR\amempool\x12!\n" +
-	"\freject_cause\x18\x05 \x01(\tR\vrejectCause\"\xb6\x01\n" +
+	"\freject_cause\x18\x05 \x01(\tR\vrejectCause\"\xe8\x01\n" +
 	"\x16VerifyErrorMissRequest\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x121\n" +
 	"\x05diffs\x18\x02 \x03(\v2\x1b.devshard.transport.v1.DiffR\x05diffs\x12\x1b\n" +
 	"\tfinish_tx\x18\x03 \x01(\fR\bfinishTx\x12)\n" +
-	"\x10response_payload\x18\x04 \x01(\fR\x0fresponsePayload\"\xab\x01\n" +
+	"\x10response_payload\x18\x04 \x01(\fR\x0fresponsePayload\x120\n" +
+	"\x14sibling_inference_id\x18\x05 \x01(\x04R\x12siblingInferenceId\"\xab\x01\n" +
 	"\x17VerifyErrorMissResponse\x12\x16\n" +
 	"\x06accept\x18\x01 \x01(\bR\x06accept\x12\x1c\n" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12\x1d\n" +

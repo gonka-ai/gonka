@@ -858,3 +858,51 @@ func TestARefusalByTheHostsOwnBodyIsCountedUnderItsOwnReason(t *testing.T) {
 		t.Fatalf("entryRefusal(failed race) = %q, want %q", got, cacheRefusedRaceFailed)
 	}
 }
+
+const requestRejectionPayload = `{"error":{"code":400,"message":"tool call arguments are not valid JSON","type":"BadRequestError"}}`
+
+func rejectedBy(participants ...string) engine.RaceOutcome {
+	outcome := engine.RaceOutcome{EscrowID: "7"}
+	for _, participant := range participants {
+		outcome.Attempts = append(outcome.Attempts, engine.AttemptOutcome{
+			Participant:  participant,
+			Terminal:     engine.TerminalErrorStream,
+			ErrorSource:  "error",
+			ErrorCode:    "400",
+			ErrorType:    "BadRequestError",
+			ErrorMessage: "tool call arguments are not valid JSON",
+			ErrorPayload: requestRejectionPayload,
+		})
+	}
+	return outcome
+}
+
+// Test flow:
+//  1. Fail the race with a host's 400 rejection of the request, made by one trusted host, and send the same chat twice.
+//  2. Do the same with the rejection made by two distinct trusted hosts, from another caller.
+//  3. Assert the single rejection ran two races and was counted as `unconfirmed_rejection`, and the confirmed one ran once.
+func TestARejectionOnlyOneHostMadeIsNotCached(t *testing.T) {
+	live := newHarness(t)
+	failRaceWithHostError(live, http.StatusBadRequest, "tool call arguments are not valid JSON")
+
+	live.inference.outcome = rejectedBy("host-a")
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a"))
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-a"))
+	unconfirmedRaces := live.inference.runs.Load()
+
+	live.inference.outcome = rejectedBy("host-a", "host-b")
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-b"))
+	live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, callerHeaders("caller-b"))
+
+	if unconfirmedRaces != 2 {
+		t.Fatalf("races for a single rejection = %d, want 2: it is not replayed", unconfirmedRaces)
+	}
+	if got := live.inference.runs.Load() - unconfirmedRaces; got != 1 {
+		t.Fatalf("races for a confirmed rejection = %d, want 1: it is replayed", got)
+	}
+	live.cached.mu.Lock()
+	defer live.cached.mu.Unlock()
+	if !slices.Contains(live.cached.results, "qwen/"+cacheRefusedUnconfirmedRejection) {
+		t.Fatalf("CacheResult calls = %v, want one counted as %s", live.cached.results, cacheRefusedUnconfirmedRejection)
+	}
+}

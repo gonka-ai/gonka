@@ -108,7 +108,7 @@ var (
 			{Stage: StagePostLimits, Apply: clampFloat(penaltyMin, penaltyMax)},
 			{Stage: StagePostLimits, Apply: forceZeroPenalty()},
 		}},
-		{Name: "logit_bias", Rules: []StagedRule{
+		{Name: logitBiasField, Rules: []StagedRule{
 			{Stage: StagePostLimits, Apply: requireTokenIDKeys()},
 			{Stage: StagePostLimits, Apply: validFloatMap(logitBiasMinValue, logitBiasMaxValue, logitBiasMaxEntries)},
 		}},
