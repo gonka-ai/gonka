@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"common/chainoracle/blocks/nmrpc"
 	"common/nodemanager/gen"
 
@@ -79,6 +80,26 @@ func (l *Lookup) Prove(ctx context.Context, path string, height int64) (*blocks.
 		return nil, blocks.ErrHeaderNotFound
 	}
 	return p, nil
+}
+
+// LightBlockAt never treats an old server's hash-only answer as a proof.
+// The consumer verifies these untrusted bytes against its pinned checkpoint.
+func (l *Lookup) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {
+	if l == nil || l.client == nil || height <= 0 {
+		return nil, blocks.ErrHeaderNotFound
+	}
+	resp, err := l.client.GetBlockHeader(ctx, &gen.GetBlockHeaderRequest{Height: height, IncludeLightBlock: true})
+	if err != nil {
+		return nil, mapHeaderErr(err)
+	}
+	raw := resp.GetLightBlock()
+	if len(raw) == 0 {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	if len(raw) > lightproof.MaxBlockBytes {
+		return nil, fmt.Errorf("%w: oversized light block", blocks.ErrHeaderUnverified)
+	}
+	return raw, nil
 }
 
 func (l *Lookup) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {

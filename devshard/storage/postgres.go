@@ -38,8 +38,9 @@ import (
 // serving; escrow-keyed methods also WaitReady so requests block until rebuild
 // finishes or fails.
 type Postgres struct {
-	pool            *pgxpool.Pool
-	connectionGuard *postgresConnectionGuard
+	pool              *pgxpool.Pool
+	connectionGuard   *postgresConnectionGuard
+	peerSessionSecret []byte // private, immutable after startup; never part of storage proof/diagnostics
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
@@ -261,16 +262,27 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 		pool.Close()
 		return nil, err
 	}
+	secretCtx, cancelSecret := context.WithTimeout(ctx, postgresOpTimeout)
+	peerSecret, err := loadPeerSessionSecret(secretCtx, pool)
+	cancelSecret()
+	if err != nil {
+		cleanupCtx, cancelCleanup := context.WithTimeout(context.Background(), postgresOpTimeout)
+		connectionGuard.close(cleanupCtx)
+		cancelCleanup()
+		pool.Close()
+		return nil, err
+	}
 
 	s := &Postgres{
-		pool:            pool,
-		connectionGuard: connectionGuard,
-		knownEpochs:     make(map[uint64]struct{}),
-		escrowIdx:       make(map[string]uint64),
-		readyCh:         make(chan struct{}),
-		healthReady:     true,
-		healthDone:      make(chan struct{}),
-		fatalErrors:     make(chan error, 1),
+		pool:              pool,
+		connectionGuard:   connectionGuard,
+		peerSessionSecret: peerSecret,
+		knownEpochs:       make(map[uint64]struct{}),
+		escrowIdx:         make(map[string]uint64),
+		readyCh:           make(chan struct{}),
+		healthReady:       true,
+		healthDone:        make(chan struct{}),
+		fatalErrors:       make(chan error, 1),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
@@ -1042,6 +1054,9 @@ func (s *Postgres) ListActiveSessions() ([]ActiveSession, error) {
 }
 
 func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
+	if rec.HostAdmitted {
+		return s.AppendDiffBatch(context.Background(), escrowID, []types.DiffRecord{rec})
+	}
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {
 		return err
@@ -1052,15 +1067,9 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return err
 	}
 
+	// warm_keys_json is kept for the schema only: since v7 the warm-key
+	// history is consensus state carried by the diffs themselves.
 	var warmJSON *string
-	if len(rec.WarmKeyDelta) > 0 {
-		b, err := json.Marshal(rec.WarmKeyDelta)
-		if err != nil {
-			return fmt.Errorf("marshal warm keys: %w", err)
-		}
-		str := string(b)
-		warmJSON = &str
-	}
 
 	ctx, cancel := s.opCtx()
 	defer cancel()
@@ -1150,16 +1159,7 @@ func (s *Postgres) AppendDiffs(escrowID string, diffs []types.DiffRecord) error 
 		if err != nil {
 			return err
 		}
-		var warmJSON *string
-		if len(rec.WarmKeyDelta) > 0 {
-			b, err := json.Marshal(rec.WarmKeyDelta)
-			if err != nil {
-				return fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
-			}
-			str := string(b)
-			warmJSON = &str
-		}
-		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto, warmJSON: warmJSON})
+		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto})
 		sigCount += len(rec.Signatures)
 		if rec.Nonce > maxNonce {
 			maxNonce = rec.Nonce
@@ -1326,7 +1326,7 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	defer cancel()
 	row := s.pool.QueryRow(ctx,
 		`SELECT escrow_id, version, creator_addr, config_json, group_json,
-		        initial_balance, latest_nonce, last_finalized, status
+		        initial_balance, latest_nonce, last_finalized, status, host_admission_nonce
 		 FROM devshard_sessions
 		 WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
@@ -1336,7 +1336,7 @@ func (s *Postgres) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	var configJSON, groupJSON string
 	scanErr := row.Scan(
 		&meta.EscrowID, &version, &meta.CreatorAddr, &configJSON, &groupJSON,
-		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status,
+		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status, &meta.HostAdmissionNonce,
 	)
 	if scanErr != nil {
 		if errors.Is(scanErr, pgx.ErrNoRows) {
@@ -1381,7 +1381,7 @@ func (s *Postgres) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types
 	defer tx.Rollback(ctx)
 
 	rows, err := tx.Query(ctx,
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, created_at
 		 FROM devshard_diffs
 		 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce >= $3 AND nonce <= $4
 		 ORDER BY nonce`,

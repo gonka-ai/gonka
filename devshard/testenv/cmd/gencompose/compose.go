@@ -195,6 +195,8 @@ services:
       # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
       # keep their own key. Other keys remain in the shared keyring.
       KEY_NAME: {{ versiondKeyName $ . }}
+      # May be set independently of KEY_NAME to exercise warm-key rotation.
+      ACCOUNT_PUBKEY: {{ hostEnv . "ACCOUNT_PUBKEY" "\"\"" }}
       DEVSHARD_VALIDATION_LEASE_TTL: {{ hostEnv . "DEVSHARD_VALIDATION_LEASE_TTL" "${DEVSHARD_VALIDATION_LEASE_TTL:-32m}" }}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: {{ hostEnv . "DEVSHARD_VALIDATION_RETRY_INTERVAL" "${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}" }}
       DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: {{ hostEnv . "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE" "${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}" }}
@@ -372,6 +374,7 @@ services:
       DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       DEVSHARD_NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
+      NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
       DEVSHARD_CHAIN_ID: "{{ .ChainID }}"
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
       DEVSHARD_ESCROW_ID: "{{ primaryEscrowID . }}"
@@ -681,6 +684,7 @@ func gatewayDevshardsJSON(cfg *config.File) (string, error) {
 // overridableHostEnv lists the versiond keys rendered through hostEnv, so a
 // host's env replaces their default instead of adding a second key.
 var overridableHostEnv = map[string]bool{
+	"ACCOUNT_PUBKEY":                                  true,
 	"DEVSHARD_VALIDATION_LEASE_TTL":                   true,
 	"DEVSHARD_VALIDATION_RETRY_INTERVAL":              true,
 	"DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE": true,

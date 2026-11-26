@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"common/chain"
+	chaintx "common/chain/tx"
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/types"
@@ -800,12 +801,11 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_key_loaded escrow=%s settler=%s key_env=%q", id, signer.Address(), privateKeyEnv)
-	// Re-run Finalize when not yet in settlement, or when already settled but
-	// missing quorum (e.g. snapshot-only recovery left PhaseSettlement with
-	// empty in-memory signatures). Finalize's PhaseSettlement guard collects
-	// missing signatures and is a no-op when quorum is already present.
 	phase := rt.proxy.sm.Phase()
-	needFinalize := phase != types.PhaseSettlement || !rt.session.HasQuorumAt(rt.session.Nonce())
+	v7 := types.RequiresMainnetHeightProof(rt.proxy.sm.ProtocolVersion())
+	// A frozen v7 state collects against submission eligibility below. Its
+	// historical quorum can include a signer that has since lost its grant.
+	needFinalize := phase != types.PhaseSettlement || !v7 && !rt.session.HasQuorumAt(rt.session.Nonce())
 	if needFinalize {
 		unlockFinalize := g.lockFinalize(id)
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle phase=%s", id, sessionPhaseLabel(phase))
@@ -814,19 +814,17 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 			return rt.session.Finalize(ctx)
 		}()
 		if finalizeErr != nil {
-			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, finalizeErr.Error())
-			return nil, g.settleTerminalErr(id, finalizeErr)
+			if !v7 || rt.proxy.sm.Phase() != types.PhaseSettlement || ctx.Err() != nil {
+				log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, finalizeErr.Error())
+				return nil, g.settleTerminalErr(id, finalizeErr)
+			}
+			log.Printf("devshard_settle_rebuild_quorum escrow=%s after_finalize_error=%q", id, finalizeErr.Error())
 		}
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	} else {
-		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
+		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=frozen_state", id, sessionPhaseLabel(phase))
 	}
 	g.accounting.Finalize(id)
-	settlement, err := rt.proxy.settlementJSON()
-	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=settlement_json error=%q", id, err.Error())
-		return nil, err
-	}
 	g.mu.Lock()
 	settings := g.settings
 	g.mu.Unlock()
@@ -835,14 +833,20 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		log.Printf("devshard_settle_failed escrow=%s stage=tx_client error=%q", id, err.Error())
 		return nil, err
 	}
-	params, err := settleParamsFromJSON(settlement)
-	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=settlement_encode error=%q", id, err.Error())
-		return nil, err
+	var result *chaintx.SettleDevshardEscrowResult
+	if v7 {
+		result, err = g.submitV7Settlement(ctx, rt, txMgr, signer)
+	} else {
+		settlement, buildErr := rt.proxy.settlementJSON()
+		if buildErr != nil {
+			return nil, buildErr
+		}
+		params, encodeErr := settleParamsFromJSON(settlement)
+		if encodeErr != nil {
+			return nil, encodeErr
+		}
+		result, err = txMgr.SettleDevshardEscrow(ctx, signer, params)
 	}
-	log.Printf("devshard_settle_broadcast_start escrow=%s chain_id_override=%q gas_limit=%d fee_denom=%q fee_amount=%d",
-		id, req.ChainID, req.GasLimit, req.FeeDenom, req.FeeAmount)
-	result, err := txMgr.SettleDevshardEscrow(ctx, signer, params)
 	if err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=broadcast_or_confirm error=%q", id, err.Error())
 		return nil, g.settleTerminalErr(id, err)

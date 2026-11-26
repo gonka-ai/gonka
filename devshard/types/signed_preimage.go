@@ -18,16 +18,27 @@ const (
 	DomainMsgValidationVote = "devshard.validationvote.v1"
 	DomainTimeoutVote       = "devshard.timeoutvote.v1"
 	DomainErrorMissVote     = "devshard.errormissvote.v1"
+	DomainWarmKeyRevoke     = "devshard.warmkeyrevoke.v1"
 )
 
 // signedPreimageDomain is the prefix CanonicalSignedBytes adds. Empty means the
 // preimage is the deterministic proto encoding alone (the message's field
 // layout must then be unique among other empty-domain signed types).
 var signedPreimageDomain = map[protoreflect.FullName]string{
-	"devshard.v1.MsgValidation":        DomainMsgValidation,
-	"devshard.v1.MsgValidationVote":    DomainMsgValidationVote,
-	"devshard.v1.TimeoutVoteContent":   DomainTimeoutVote,
-	"devshard.v1.ErrorMissVoteContent": DomainErrorMissVote,
+	"devshard.v1.MsgValidation":              DomainMsgValidation,
+	"devshard.v1.MsgValidationVote":          DomainMsgValidationVote,
+	"devshard.v1.TimeoutVoteContent":         DomainTimeoutVote,
+	"devshard.v1.ErrorMissVoteContent":       DomainErrorMissVote,
+	"devshard.v1.WarmKeyRevokeAuthorization": DomainWarmKeyRevoke,
+}
+
+// WarmKeyRevokeSignBytes authorizes revocation of one binding in one escrow.
+// The creator cannot revoke a still-live participant key without this consent.
+func WarmKeyRevokeSignBytes(escrowID string, msg *MsgWarmKeyRevoke) ([]byte, error) {
+	if msg == nil {
+		return nil, fmt.Errorf("nil warm-key revoke")
+	}
+	return CanonicalSignedBytes(&WarmKeyRevokeAuthorization{EscrowId: escrowID, SlotId: msg.SlotId, Address: msg.Address, GrantId: msg.GrantId})
 }
 
 // SignedPreimageDomain is the domain tag CanonicalSignedBytes prefixes, or "".

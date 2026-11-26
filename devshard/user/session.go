@@ -19,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -277,17 +278,6 @@ type InferenceParams struct {
 	LogprobsOptimizationOverride *bool
 }
 
-type warmCheckKey struct {
-	warm string
-	cold string
-}
-
-type warmCheckResult struct {
-	done    chan struct{}
-	valid   bool
-	retryAt time.Time
-}
-
 type cachedSignatureSigner struct {
 	signature []byte
 	address   string
@@ -296,8 +286,6 @@ type cachedSignatureSigner struct {
 // Session manages the user side of the devshard protocol.
 type Session struct {
 	mu          sync.Mutex
-	warmCheckMu sync.Mutex
-	warmChecks  map[warmCheckKey]*warmCheckResult
 	sm          *state.StateMachine
 	signer      signing.Signer
 	verifier    signing.Verifier
@@ -348,6 +336,9 @@ type Session struct {
 	confirmWait      chan struct{}              // closed when a receipt is queued, so a refusal wait can stop
 	verifierQueue    *verifierHostQueue         // per-verifier RPC limiter for timeout votes
 	diffObserver     func(types.Diff)
+	// warmKeySource is the sequencer's view of the chain's warm-key log;
+	// nil means no bind or revoke proposals. See warmkeys.go.
+	warmKeySource bridge.WarmKeyGrantSource
 
 	signatureWriter *signatureWriter
 	stepTimer       atomic.Pointer[StepTimer]
@@ -635,7 +626,6 @@ func NewSession(
 		sm:               sm,
 		signer:           signer,
 		verifier:         verifier,
-		warmChecks:       make(map[warmCheckKey]*warmCheckResult),
 		escrowID:         escrowID,
 		group:            group,
 		addrToSlots:      addrToSlots,
@@ -754,27 +744,36 @@ func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
 	return s.diffRangeLocked(s.hostSyncNonce[hostIdx]+1, s.nonce)
 }
 
-// inlineCatchUpLocked returns the catch-up a request carrying target attaches
+// inlineCatchUpForRequestLocked returns the catch-up a request carrying target attaches
 // for hostIdx: at most one catchUpChunkSize chunk from the host's cursor,
 // always reaching target. ok is false when the host is further behind than
 // one chunk; catchUpForSend then teaches it the earlier nonces first, outside
 // the lock. A cursor already past target, moved by another request's catch-up,
 // gets target's diff alone: the host signs a receipt only for a nonce its
 // request carries, and has applied the rest. Caller must hold s.mu.
-func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool, err error) {
-	if s.hostSyncNonce[hostIdx] >= target {
-		if diffs, err = s.diffRangeLocked(target, target); err != nil {
-			return nil, false, err
-		}
-		return diffs, true, nil
-	}
+func (s *Session) inlineCatchUpForRequestLocked(hostIdx int, target uint64, req host.HostRequest) ([]types.Diff, bool, error) {
 	from := s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
 		return nil, false, nil
 	}
-	diffs, err = s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1))
+	v7 := types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	to := min(s.nonce, from+catchUpChunkSize-1)
+	if v7 {
+		to = min(to, target)
+	}
+	if s.hostSyncNonce[hostIdx] >= target {
+		from, to = target, target
+	}
+	diffs, err := s.diffRangeLocked(from, to)
 	if err != nil {
 		return nil, false, err
+	}
+	if v7 {
+		req.Diffs, req.Nonce = diffs, target
+		fit, err := transport.ChatDiffPrefix(req, s.escrowID)
+		if err != nil || fit != len(diffs) {
+			return nil, false, err
+		}
 	}
 	return diffs, true, nil
 }
@@ -1199,6 +1198,12 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	return s.processResponseWithSyncCap(hostIdx, resp, inferenceNonce, syncCap)
 }
 
+// isCurrentFinalStateLocked identifies the frozen v7 tuple whose warm
+// attestations need the issuer's stored slot labels. Caller holds s.mu.
+func (s *Session) isCurrentFinalStateLocked(nonce uint64) bool {
+	return nonce == s.nonce && types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) && s.sm.Phase() == types.PhaseSettlement
+}
+
 // processResponseWithSyncCap is processResponse with an optional hostSyncNonce
 // ceiling. syncCap 0 means no ceiling. Catch-up passes its chunk's last nonce
 // for a response without a state hash: that resp.Nonce is unchecked, so it
@@ -1238,15 +1243,18 @@ func (s *Session) processResponseWithSyncCap(hostIdx int, resp *host.HostRespons
 			return fmt.Errorf("host %d: %w", hostIdx, err)
 		}
 
-		// Store for all slots owned by this validator address.
-		if _, ok := s.signatures[resp.Nonce]; !ok {
-			s.signatures[resp.Nonce] = make(map[uint32][]byte)
-		}
-		cached := cachedSignatureSigner{signature: bytes.Clone(resp.StateSig), address: signer}
-		for _, slot := range s.addrToSlots[expectedAddr] {
-			s.recordSignatureLocked(resp.Nonce, slot, resp.StateSig)
-			s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
-			s.persistSignatureLocked(resp.Nonce, slot, resp.StateSig)
+		// A terminal warm attestation may authorize only another participant
+		// served by this endpoint. The wire response has no slot labels; even
+		// a valid historical signature cannot identify the newly issued vote.
+		// Collection retrieves its slot-indexed stored form instead. A cold
+		// signature already identifies the participant without a grant lookup.
+		if !s.isCurrentFinalStateLocked(resp.Nonce) || signer == expectedAddr {
+			cached := cachedSignatureSigner{signature: bytes.Clone(resp.StateSig), address: signer}
+			for _, slot := range s.addrToSlots[expectedAddr] {
+				s.recordSignatureLocked(resp.Nonce, slot, resp.StateSig)
+				s.rememberSignatureSignerLocked(resp.Nonce, slot, cached)
+				s.persistSignatureLocked(resp.Nonce, slot, resp.StateSig)
+			}
 		}
 	}
 
@@ -1377,10 +1385,10 @@ type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, pers
 // PreviewLocalBestEffort leaves the SM unchanged until AppendDiff succeeds,
 // so persist failure cannot leave sequencer nonce/diffs ahead of durable state.
 func (s *Session) composeDiffLocked(ctx context.Context, extraTxs []*types.DevshardTx) (types.Diff, int, error) {
-	return s.composeDiffLockedInclude(ctx, extraTxs, nil)
+	return s.composeDiffLockedInclude(ctx, extraTxs, nil, host.HostRequest{})
 }
 
-func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, int, error) {
+func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64, req host.HostRequest) (types.Diff, int, error) {
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
 
@@ -1399,7 +1407,18 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		return txPriority(pending[i]) < txPriority(pending[j])
 	})
 
-	candidates := make([]*types.DevshardTx, 0, len(pending)+len(extraTxs))
+	heightTx, err := s.sm.BuildMainnetHeightTx(ctx)
+	if err != nil {
+		return types.Diff{}, 0, err
+	}
+	// The authenticated height determines grant activity for this diff. Binds
+	// are applied before proposer work, including a new key's first message.
+	keyEntries := s.warmKeyProposalsAtLocked(nonce, heightTx.GetMainnetHeight())
+	candidates := make([]*types.DevshardTx, 0, 1+len(keyEntries)+len(pending)+len(extraTxs))
+	if heightTx != nil {
+		candidates = append(candidates, heightTx)
+	}
+	candidates = append(candidates, keyEntries...)
 	candidates = append(candidates, pending...)
 	candidates = append(candidates, extraTxs...)
 
@@ -1417,8 +1436,7 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 	}
 
 	var diff types.Diff
-	if s.store != nil {
-		warmBefore := s.sm.WarmKeys()
+	if s.store != nil || heightTx != nil {
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -1427,13 +1445,22 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
-		}); err != nil {
-			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		if heightTx != nil {
+			req.Diffs, req.Nonce = []types.Diff{diff}, nonce
+			fit, err := transport.ChatDiffPrefix(req, s.escrowID)
+			if err != nil {
+				return types.Diff{}, 0, err
+			}
+			if fit == 0 {
+				return types.Diff{}, 0, fmt.Errorf("escrow %s nonce %d: %w", s.escrowID, nonce, transport.ErrChatRequestTooLarge)
+			}
+		}
+		if s.store != nil {
+			if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
+				Diff: diff, StateHash: vd.Root,
+			}); err != nil {
+				return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+			}
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
 		// so a retried compose cannot fork on a new UserSig after a durable
@@ -1446,7 +1473,9 @@ func (s *Session) composeDiffLockedInclude(ctx context.Context, extraTxs []*type
 		s.setNonceLocked(nonce)
 		s.dropDiffPrefixLocked()
 		s.retainPendingLocked(append(held, vd.Deferred...), vd.Applied)
-		s.maybeSaveSnapshotLocked()
+		if s.store != nil {
+			s.maybeSaveSnapshotLocked()
+		}
 		s.observeTurnLocked(diff)
 		s.diffObserver(diff)
 		s.syncLaggingHostsLocked()
@@ -1947,7 +1976,8 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	// Stopping the quiet settle here is what keeps that from becoming its
 	// own nonce while another inference is still arriving.
 	s.stopQuietSettleLocked()
-	diff, composedIdx, err := s.composeDiffLocked(persistCtx, txsForDiff)
+	chat := (&PreparedInference{params: params}).chatRequest(s.heightSyncK == 0)
+	diff, composedIdx, err := s.composeDiffLockedInclude(persistCtx, txsForDiff, nil, chat)
 	if err != nil {
 		if !probe {
 			s.removeUncommittedCompletionLocked(nonce)
@@ -1965,7 +1995,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
+	catchUp, inline, err := s.inlineCatchUpForRequestLocked(hostIdx, nonce, chat)
 	if err != nil {
 		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w: %w", hostIdx, nonce, ErrPreparedAfterCommit, err)
 	}
@@ -2005,6 +2035,15 @@ func (p *PreparedInference) Payload() *host.InferencePayload {
 	}
 }
 
+func (p *PreparedInference) chatRequest(legacyHeightSync bool) host.HostRequest {
+	return host.HostRequest{
+		Nonce:                        p.diff.Nonce,
+		ForceHeightSyncAnchor:        p.params.ForceHeightSyncAnchor && legacyHeightSync,
+		Payload:                      p.Payload(),
+		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
+	}
+}
+
 // CatchUpBeforeSend leaves p carrying at most one chunk of catch-up, teaching
 // a far-behind host the earlier nonces first. SendOnly runs it itself; a caller
 // that times the host from its send runs it before, since the wait is the
@@ -2014,7 +2053,7 @@ func (s *Session) CatchUpBeforeSend(ctx context.Context, p *PreparedInference) e
 		return nil
 	}
 	if p.farBehind {
-		catchUp, err := s.catchUpForSendWith(ctx, p.hostIdx, p.diff.Nonce, p.onCatchUpFault)
+		catchUp, err := s.catchUpForRequest(ctx, p.hostIdx, p.diff.Nonce, p.chatRequest(s.heightSyncK == 0), p.onCatchUpFault)
 		if err != nil {
 			return fmt.Errorf("catch up host %d before nonce %d: %w", p.hostIdx, p.diff.Nonce, err)
 		}
@@ -2052,15 +2091,10 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 	if p.onSend != nil {
 		p.onSend()
 	}
-	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
-	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs:                        catchUp,
-		Nonce:                        p.diff.Nonce,
-		ForceHeightSyncAnchor:        legacyForce,
-		HeightSyncEscrow:             s.heightSyncEscrowHints(),
-		Payload:                      p.Payload(),
-		LogprobsOptimizationOverride: p.params.LogprobsOptimizationOverride,
-	}, stream, func(partial *host.HostResponse) {
+	req := p.chatRequest(s.heightSyncK == 0)
+	req.Diffs = catchUp
+	req.HeightSyncEscrow = s.heightSyncEscrowHints()
+	resp, err := s.clients[p.hostIdx].Send(ctx, req, stream, func(partial *host.HostResponse) {
 		s.advanceCursorOnReceipt(p.hostIdx, partial)
 		if s.confirmStartOnReceipt(p.diff.Nonce, partial) && receiptHandler != nil {
 			receiptHandler()
@@ -2400,7 +2434,7 @@ func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchU
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if drained, ok, err := s.inlineCatchUpLocked(hostIdx, targetNonce); err == nil && ok {
+	if drained, ok, err := s.inlineCatchUpForRequestLocked(hostIdx, targetNonce, host.HostRequest{}); err == nil && ok {
 		return drained
 	}
 	return catchUp
@@ -2460,6 +2494,16 @@ func (s *Session) sendCatchUpThrough(ctx context.Context, hostIdx int, client Ho
 			return fmt.Errorf("catch-up chunk %d to host %d: no diffs from nonce %d", chunkNum, hostIdx, from)
 		}
 		chunk = chunk[:transport.DiffsWithinWireBytes(chunk, catchUpChunkWireBytes)]
+		if types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) {
+			fit, err := transport.ChatDiffPrefix(host.HostRequest{Diffs: chunk, Nonce: chunk[len(chunk)-1].Nonce}, s.escrowID)
+			if err != nil {
+				return err
+			}
+			if fit == 0 {
+				return fmt.Errorf("catch up host %d at nonce %d: %w", hostIdx, from, transport.ErrChatRequestTooLarge)
+			}
+			chunk = chunk[:fit]
+		}
 		chunkNonce := chunk[len(chunk)-1].Nonce
 
 		logging.Info("catch-up chunk", "subsystem", "finalize", "escrow", s.escrowID,
@@ -3416,49 +3460,18 @@ func (s *Session) verifiedStateSignatureAddress(nonce uint64, postRoot, signatur
 	if err != nil {
 		return "", err
 	}
-	if recovered != expectedAddr && !s.warmKeyAuthorized(recovered, expectedAddr) {
+	if recovered != expectedAddr && !s.warmKeyAuthorizedAt(nonce, recovered, expectedAddr) {
 		return "", fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
 	}
 	return recovered, nil
 }
 
-func (s *Session) warmKeyAuthorized(warm, cold string) bool {
-	if s.sm.HostSignerBoundAddr(cold, warm) {
-		return true
-	}
-	key := warmCheckKey{warm: warm, cold: cold}
-	for {
-		s.warmCheckMu.Lock()
-		check := s.warmChecks[key]
-		if check != nil {
-			if check.done != nil {
-				done := check.done
-				s.warmCheckMu.Unlock()
-				<-done
-				continue
-			}
-			if check.valid || time.Now().Before(check.retryAt) {
-				valid := check.valid
-				s.warmCheckMu.Unlock()
-				return valid
-			}
-		}
-		check = &warmCheckResult{done: make(chan struct{})}
-		s.warmChecks[key] = check
-		s.warmCheckMu.Unlock()
-
-		valid := s.sm.CheckWarmKey(warm, cold)
-		s.warmCheckMu.Lock()
-		check.valid = valid
-		if !check.valid {
-			check.retryAt = time.Now().Add(30 * time.Second)
-		}
-		close(check.done)
-		check.done = nil
-		accepted := check.valid
-		s.warmCheckMu.Unlock()
-		return accepted
-	}
+// warmKeyAuthorizedAt reports whether warm may sign for cold the state at
+// nonce: a binding in the history that covers that nonce, or a live grant in
+// the grant source for a key the gateway has not bound yet, minus a key whose
+// grant the source has seen end.
+func (s *Session) warmKeyAuthorizedAt(nonce uint64, warm, cold string) bool {
+	return s.sm.HostSignerAllowedAddrAt(cold, warm, nonce)
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
@@ -3605,15 +3618,57 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 	return false
 }
 
+// retryCurrentSignature asks an already caught-up v7 host to rerun its normal
+// signing policy. A transient oracle failure may have withheld its signature
+// on the original Send; reading stored signatures cannot retry that decision.
+// No diff is created, and historical nonces are never re-signed this way.
+func (s *Session) retryCurrentSignature(ctx context.Context, hostIdx int, client HostClient, nonce uint64) error {
+	s.mu.Lock()
+	current := nonce == s.nonce && s.hostSyncNonce[hostIdx] >= nonce &&
+		types.RequiresMainnetHeightProof(s.sm.ProtocolVersion())
+	s.mu.Unlock()
+	if !current {
+		return nil
+	}
+	requestCtx, cancel := context.WithTimeout(ctx, s.signatureCollectHostTimeout)
+	defer cancel()
+	resp, err := client.Send(requestCtx, host.HostRequest{Nonce: nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
+	if err != nil {
+		s.forgetHostState(hostIdx, err)
+		return err
+	}
+	if resp == nil {
+		return ErrNilHostResponse
+	}
+	if resp.Nonce != nonce {
+		return nil
+	}
+	s.mu.Lock()
+	err = s.processResponse(hostIdx, resp, nonce)
+	final := s.isCurrentFinalStateLocked(nonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	if err == nil && final {
+		// Triggering attestation and retrieving its indexed result are separate
+		// operations. Never relabel the unindexed warm signature for hostIdx.
+		s.fetchSignature(requestCtx, hostIdx, nonce, client)
+	}
+	return err
+}
+
 // CollectSignatures actively polls all hosts to collect signatures for the
 // given nonce. For each host: tries the cheap GET /signatures first, then
-// falls back to sending catch-up diffs. Retries failed hosts with backoff.
+// falls back to catch-up diffs and a current-state signing retry for v7.
+// Retries failed hosts with backoff.
 // Uses per-host timeouts independent of the parent context.
 // Returns the signature status at that nonce after collection. Thread-safe.
 func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, threshold, total uint32) {
 	total = s.sm.TotalSlots()
 	threshold = s.sm.QuorumThreshold()
 	n := len(s.group)
+	s.mu.Lock()
+	final := s.isCurrentFinalStateLocked(nonce)
+	s.mu.Unlock()
 
 	logging.Info("collecting signatures", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", nonce, "hosts", n, "threshold", threshold)
@@ -3702,6 +3757,19 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
 					if errors.Is(err, ErrHostAbsentFromChain) {
 						return
+					}
+				}
+				if final && !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
+					// Catch-up can issue the final attestation too. Its response
+					// is unindexed, so read the stored labels before retrying Send.
+					fetchCtx, fetchCancel := context.WithTimeout(collectCtx, s.signatureCollectHostTimeout)
+					s.fetchSignature(fetchCtx, h.idx, nonce, finClients[h.idx])
+					fetchCancel()
+				}
+				if !s.hostSigned(nonce, h.addr) && collectCtx.Err() == nil {
+					if err := s.retryCurrentSignature(collectCtx, h.idx, finClients[h.idx], nonce); err != nil {
+						logging.Warn("collect signatures: retry signing error", "subsystem", "finalize", "escrow", s.escrowID,
+							"nonce", nonce, "host", h.idx, "attempt", attempt, "error", err)
 					}
 				}
 
@@ -3849,7 +3917,7 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 
 func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.DevshardTx, includePinned []uint64) (types.Diff, error) {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned)
+	diff, hostIdx, err := s.composeDiffLockedInclude(ctx, extraTxs, includePinned, host.HostRequest{})
 	if err != nil {
 		s.mu.Unlock()
 		return types.Diff{}, err
@@ -5057,13 +5125,14 @@ func (s *Session) collectTimeoutVotes(
 				return
 			}
 
-			verifierCatchUp, err := s.catchUpDiffsForVerifier(ctx, av.idx)
+			arts := firstTimeoutArtifacts(artifacts)
+			catchUp, err := s.catchUpForVote(ctx, av.idx, diffs, func(catchUp []types.Diff) (bool, error) {
+				return transport.VerifyTimeoutFits(s.escrowID, inferenceID, reason, payload, catchUp)
+			})
 			if err != nil {
 				results <- voteResult{err: fmt.Errorf("catch up verifier: %w", err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			catchUp := mergeTimeoutCatchUpDiffs(verifierCatchUp, diffs)
-			arts := firstTimeoutArtifacts(artifacts)
 
 			rec := inflightVerify{
 				Escrow: s.escrowID,
@@ -5299,12 +5368,14 @@ func (s *Session) CollectErrorMissVotes(
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			verifierCatchUp, err := s.catchUpDiffsForVerifier(ctx, av.idx)
+			catchUp, err := s.catchUpForVote(ctx, av.idx, diffs, func(catchUp []types.Diff) (bool, error) {
+				return transport.VerifyErrorMissFits(s.escrowID, inferenceID, artifacts, catchUp)
+			})
 			if err != nil {
 				results <- voteResult{err: fmt.Errorf("catch up verifier: %w", err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
-			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, mergeTimeoutCatchUpDiffs(verifierCatchUp, diffs), artifacts)
+			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, catchUp, artifacts)
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
@@ -5393,6 +5464,37 @@ func (s *Session) catchUpDiffsForVerifier(ctx context.Context, hostIdx int) ([]t
 	target := s.nonce
 	s.mu.Unlock()
 	return s.catchUpForSend(ctx, hostIdx, target)
+}
+
+// catchUpForVote separates the signed diff tail from an otherwise oversized
+// v7 verification request using the existing chat catch-up path.
+func (s *Session) catchUpForVote(ctx context.Context, hostIdx int, extra []types.Diff, fits func([]types.Diff) (bool, error)) ([]types.Diff, error) {
+	tail, err := s.catchUpDiffsForVerifier(ctx, hostIdx)
+	if err != nil {
+		return nil, err
+	}
+	diffs := mergeTimeoutCatchUpDiffs(tail, extra)
+	if !types.RequiresMainnetHeightProof(s.sm.ProtocolVersion()) {
+		return diffs, nil
+	}
+	ok, err := fits(diffs)
+	if ok || err != nil {
+		return diffs, err
+	}
+	ok, err = fits(extra)
+	if err != nil {
+		return nil, err
+	}
+	if !ok || len(tail) == 0 {
+		return nil, transport.ErrVerifyRequestTooLarge
+	}
+	run := s.startHostCatchUp(hostIdx, tail[len(tail)-1].Nonce)
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-run.done:
+		return extra, run.err
+	}
 }
 
 // mergeTimeoutCatchUpDiffs prefers the per-verifier catch-up set and appends

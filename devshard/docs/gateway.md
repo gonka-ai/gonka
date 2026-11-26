@@ -22,6 +22,11 @@ All settings can be passed as flags or environment variables. Flags take precede
 | `DEVSHARD_CHAIN_RPC` (Optional) | `http://localhost:26657` | CometBFT RPC URL used as a fallback when gRPC is unreachable |
 | `DEVSHARD_PUBLIC_API` (Optional) | `http://localhost:9000` | Public API URL for epoch/PoC phase and participants (cached). Set to `none` or `disabled` to query the chain directly |
 | `DEVSHARD_PARAMS_SOURCE` (Optional) | `adaptive` | Set to `chain` to poll runtime params from the blockchain; otherwise, queries the `api` container (NodeManager gRPC port `:9400`) with chain fallback |
+| `NODE_MANAGER_ADDR` (Optional) | unset | Trusted dapi. When set, a grant from it makes `VerifyWarmKey` accept the key, and if Comet seed failed the gateway asks it for the latest height and stores that header as trusted. When unset, dapi is never contacted. The header-time map is optional and is not filled from dapi unless this URL is set. Warm keys fall back to `WarmKeyLog`. |
+
+`NODE_MANAGER_ADDR` is not required. Omit it and the gateway never dials dapi: no `GetHostEvents`, no `GetBlockHeader`, and the header-time map is not filled from dapi. Comet may still fill the map when a chain RPC is set. Timeouts can look up a missing height on demand; the map does not have to be pre-filled.
+
+When the URL is set, that dapi is trusted. The operator must point it at a dapi they trust with authorization data and, if Comet is down at boot, with block times. The first poll is latest-first: Comet `Trusted()` when that works, otherwise dapi `GetBlockHeader(0)`. `GetHostEvents` then starts after that height. It never sends `after_height = 0`, which would replay the oldest retained events. Admin `GET /v1/debug/heightsync` includes `header_time` (`high_water`, `tip_height`, `tip_origin`, `tip_verified`, `block_feed_live`).
 
 ### Other settings
 
@@ -624,6 +629,13 @@ After all inferences are done:
 
 1. POST to `/v1/admin/devshards/{id}/settle` with `Authorization: Bearer $DEVSHARD_ADMIN_API_KEY` and a signing key such as `{"private_key_env":"DEVSHARD_PRIVATE_KEY"}`.
 2. The gateway locally deactivates the devshard, runs finalization if needed, collects host signatures, and broadcasts `MsgSettleDevshardEscrow` on-chain.
+
+On-chain scoring of that payload (how `host_stats` become SPRT passes) is
+selected by the settlement protocol version tag, not by the gateway.
+`DevshardEscrowParams.apply_sampled_pass_count` is **off** by default and
+ignored for DERIVED versions; governance can turn it on for SAMPLED names
+with `MsgUpdateParams`. See
+[upgrade.md Settlement pass_count](./upgrade.md#settlement-pass_count).
 
 The proxy holds the session open until finalization. Once finalized, the session cannot accept new inferences.
 

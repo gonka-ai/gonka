@@ -123,11 +123,16 @@ func (g *Gossip) SetRecovery(fetcher DiffFetcher, updater StateUpdater) {
 // AfterRequest is called after a successful host request.
 // It propagates the nonce+stateHash to K random peers.
 func (g *Gossip) AfterRequest(ctx context.Context, nonce uint64, stateHash, stateSig []byte) {
+	g.AfterRequestFrom(ctx, nonce, stateHash, stateSig, g.slotID)
+}
+
+// AfterRequestFrom propagates a signature with its current authorized slot.
+func (g *Gossip) AfterRequestFrom(ctx context.Context, nonce uint64, stateHash, stateSig []byte, senderSlot uint32) {
 	g.mu.Lock()
 	g.seen[nonce] = &nonceRecord{
 		stateHash: stateHash,
 		stateSig:  stateSig,
-		slotID:    g.slotID,
+		slotID:    senderSlot,
 		seenAt:    time.Now(),
 	}
 	if nonce > g.highestSeen {
@@ -138,7 +143,7 @@ func (g *Gossip) AfterRequest(ctx context.Context, nonce uint64, stateHash, stat
 	peers := g.pickPeers()
 	g.mu.Unlock()
 
-	g.sendNonceToPeers(ctx, peers, nonce, stateHash, stateSig, g.slotID)
+	g.sendNonceToPeers(ctx, peers, nonce, stateHash, stateSig, senderSlot)
 }
 
 // OnNonceReceived handles incoming nonce notifications from peers.

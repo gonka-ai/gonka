@@ -443,7 +443,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier,
 		testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000), smOpts...)
 	require.NoError(t, err)
-	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier, WithWarmKeyGrantSource(warmGrants(warmKeys, coldKeys)))
 	require.NoError(t, err)
 
 	ctx := context.Background()
@@ -451,7 +451,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 		_, err = session.SendInference(ctx, defaultParams)
 		require.NoError(t, err)
 	}
-	require.Len(t, userSM.WarmKeys(), 3, "warm bindings cached by the applied receipts")
+	require.Len(t, userSM.WarmKeyHistory(), 3, "warm bindings proposed by the sequencer from the grant source")
 
 	resolverFails = true
 
@@ -474,12 +474,9 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 		"cached warm bindings must verify without reaching the resolver")
 }
 
-// Test flow:
-//  1. Arm a session, send an inference that executor slot 1 never receipts, and raise the floor past its refusal deadline.
-//  2. Bind slot 4 to warm1 and have it vote with warm2, a second key its cold address also granted.
-//  3. Collect the timeout votes; Apply rejects that vote and with it the whole message, so the collector must drop it.
-//  4. Expect the honest quorum to be kept and Apply to time the inference out.
-func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *testing.T) {
+// Slot 4 rotates from warm1 to a second live grant. The gateway must bind
+// warm2 in the diff carrying its vote, so the honest quorum applies.
+func TestCollectTimeoutVotes_SecondGrantedWarmKeyBindsWithTheVote(t *testing.T) {
 	const n = 5
 	coldKeys := makeKeys(t, n)
 	warm1 := makeKeys(t, n)
@@ -496,13 +493,15 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 	group := testutil.MakeGroup(coldKeys)
 	config := testutil.DefaultConfig(n)
 	smOpts := []state.SMOption{state.WithWarmKeyResolver(resolver)}
-	session, _, rig := armedSessionWithSM(t, group, coldKeys, config, 100000, 100, smOpts)
+	grants := testutil.NewWarmKeyGrants()
+	grants.Grant(coldKeys[4].Address(), warm1[4].Address())
+	session, _, rig := armedSessionWithSM(t, group, coldKeys, config, 100000, 100, smOpts, WithWarmKeyGrantSource(grants))
 	userSM := session.StateMachine()
 
 	ctx := context.Background()
 	id := sendUnreceiptedAtSlotOne(t, session, rig, n)
 	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[id].Status)
-	userSM.InjectWarmKeys(map[uint32]string{4: warm1[4].Address()})
+	grants.Grant(coldKeys[4].Address(), warm2[4].Address())
 
 	honest := func(i int) TimeoutVerifier {
 		return &delayedVerifier{
@@ -519,14 +518,17 @@ func TestCollectTimeoutVotes_SecondGrantedWarmKeyDoesNotDiscardHonestQuorum(t *t
 			4: &mockTimeoutVerifier{accept: true, signer: warm2[4], group: group, slotIdx: 4},
 		}, nil)
 	require.NoError(t, err)
+	var secondKeyCounted bool
 	for _, v := range votes {
-		require.NotEqual(t, uint32(4), v.VoterSlot, "the warm2 vote must not be collected")
+		secondKeyCounted = secondKeyCounted || v.VoterSlot == 4
 	}
+	require.True(t, secondKeyCounted)
 	require.True(t, session.HasSufficientTimeoutVotes(votes))
 
-	before := userSM.SnapshotState()
-	_, applied, err := userSM.ApplyLocalBestEffort(before.LatestNonce+1, []*types.DevshardTx{timeoutTxFor(id, votes)})
+	_, applied, err := userSM.ApplyLocalBestEffort(userSM.LatestNonce()+1, []*types.DevshardTx{
+		testutil.WarmKeyBindTx(4, warm2[4].Address(), 2), timeoutTxFor(id, votes),
+	})
 	require.NoError(t, err)
-	require.Len(t, applied, 1)
+	require.Len(t, applied, 2)
 	require.Equal(t, types.StatusTimedOut, userSM.SnapshotState().Inferences[id].Status)
 }

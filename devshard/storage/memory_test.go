@@ -74,10 +74,6 @@ func TestMemory_AddSignature(t *testing.T) {
 	runAddSignature(t, NewMemory())
 }
 
-func TestMemory_WarmKeyDelta(t *testing.T) {
-	runWarmKeyDelta(t, NewMemory())
-}
-
 func TestMemory_MarkSettled(t *testing.T) {
 	runMarkSettled(t, NewMemory())
 }

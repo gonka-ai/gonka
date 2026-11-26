@@ -20,7 +20,7 @@ func TestReceiptlessRestartSettlementChainVerifier(t *testing.T) {
 	require.NoError(t, err)
 	msg := &chainTypes.MsgSettleDevshardEscrow{Settler: creator, EscrowId: 42, StateRoot: params.StateRoot, Nonce: params.Nonce, RestHash: params.RestHash, Fees: params.Fees, StateRootAndProtocolVersion: payload.StateRootAndProtocolVersion}
 	for _, hs := range params.HostStats {
-		msg.HostStats = append(msg.HostStats, &chainTypes.DevshardSettlementHostStats{SlotId: hs.SlotID, Missed: uint32(hs.Missed), Invalid: uint32(hs.Invalid), Cost: hs.Cost, RequiredValidations: uint32(hs.RequiredValidations), CompletedValidations: uint32(hs.CompletedValidations)})
+		msg.HostStats = append(msg.HostStats, &chainTypes.DevshardSettlementHostStats{SlotId: hs.SlotID, Missed: uint32(hs.Missed), Invalid: uint32(hs.Invalid), Cost: hs.Cost, RequiredValidations: uint32(hs.RequiredValidations), CompletedValidations: uint32(hs.CompletedValidations), Validated: uint32(hs.Validated), Finished: uint32(hs.Finished)})
 	}
 	for _, sig := range params.Signatures {
 		msg.Signatures = append(msg.Signatures, &chainTypes.DevshardSlotSignature{SlotId: sig.SlotID, Signature: sig.Signature})

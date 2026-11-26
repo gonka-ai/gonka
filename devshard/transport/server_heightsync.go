@@ -349,13 +349,10 @@ func (s *Server) logOutboundHeightSync(sec *heightsync.HeightSyncSection, nonce 
 	}
 	prefix := heightSyncHashPrefix(sec.MainnetBlockHashHex)
 	var localH int64
-	if s.heightSyncLogOracle != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		hdr, err := s.heightSyncLogOracle.Latest(ctx)
-		cancel()
-		if err == nil && hdr != nil {
-			localH = hdr.Height
-		}
+	if oracle, ok := s.heightSyncLogOracle.(interface {
+		StaleDetails() (bool, int64, int64, bool)
+	}); ok {
+		_, _, localH, _ = oracle.StaleDetails()
 	}
 	delta := sec.MainnetHeight - localH
 	logging.Debug("heightsync: emit",
@@ -588,13 +585,61 @@ func (s *Server) recordEnvelopeBinding(req host.HostRequest, sec *heightsync.Hei
 	s.heightSyncMarks.AppendAll(marks)
 }
 
-func (s *Server) recordEnvelopeBindingResponse(nonce uint64, sec *heightsync.HeightSyncSection) {
+func responseHeightAcks(sec *heightsync.HeightSyncSection, signed, pending []*types.DevshardTx, slots map[uint32]bool) map[*types.DevshardTx]struct{} {
+	paired := make(map[*types.DevshardTx]struct{}, len(signed))
+	for _, tx := range signed {
+		paired[tx] = struct{}{}
+	}
+	height, hash, ok := heightsync.SectionObserved(sec)
+	if ok {
+		for _, tx := range pending {
+			ack := tx.GetHeightAck()
+			if ack != nil && slots[ack.SlotId] && ack.ObservedHeight == height && bytes.Equal(ack.ObservedBlockHash, hash) {
+				paired[tx] = struct{}{}
+			}
+		}
+	}
+	return paired
+}
+
+// Keep the host's acknowledgments paired with the anchor that was already
+// sent. A concurrent acknowledgment stays queued for a subsequent response.
+// Relayed acknowledgments belong to another slot and carry no binding here.
+func retainAnchoredResponseAcks(txs []*types.DevshardTx, anchored map[*types.DevshardTx]struct{}, slots map[uint32]bool) []*types.DevshardTx {
+	kept := txs[:0]
+	for _, tx := range txs {
+		if ack := tx.GetHeightAck(); ack != nil && slots[ack.SlotId] {
+			if _, paired := anchored[tx]; !paired {
+				continue
+			}
+		}
+		kept = append(kept, tx)
+	}
+	return kept
+}
+
+func (s *Server) responseAnchorCompatibleWithAcks(sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) bool {
+	height, hash, ok := heightsync.SectionObserved(sec)
+	if !heightsync.IsAnchorSection(sec) || !ok {
+		return true
+	}
+	for _, tx := range txs {
+		ack := tx.GetHeightAck()
+		if ack != nil && heightsync.StampPresent(ack.ObservedBlockHash) &&
+			!s.host.HeightAckMatchesAnchor(ack, height, hash) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *Server) recordEnvelopeBindingResponse(nonce uint64, sec *heightsync.HeightSyncSection, txs []*types.DevshardTx) {
 	if s == nil || s.heightSyncMarks == nil || sec == nil {
 		return
 	}
 	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
 		Nonce: nonce,
-		Txs:   s.host.MempoolTxs(),
+		Txs:   txs,
 		Sec:   sec,
 	}, heightsync.DefaultHeartbeatConfig())
 	s.heightSyncMarks.AppendAll(marks)

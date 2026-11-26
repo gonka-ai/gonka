@@ -146,6 +146,6 @@ func settlementUnverifiable(payload state.SettlementPayload, snapshot types.Escr
 	if len(snapshot.Group) == 0 {
 		return nil
 	}
-	_, err := state.VerifySettlement(payload, snapshot.Group, signing.NewSecp256k1Verifier(), snapshot.WarmKeys)
+	_, err := state.VerifySettlement(payload, snapshot.Group, signing.NewSecp256k1Verifier(), snapshot.WarmKeyHistory)
 	return err
 }

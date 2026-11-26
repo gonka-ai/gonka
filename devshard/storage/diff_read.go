@@ -1,9 +1,6 @@
 package storage
 
 import (
-	"encoding/json"
-	"fmt"
-
 	"devshard/types"
 )
 
@@ -21,12 +18,11 @@ func readDiffRecords(rows diffScanner) ([]types.DiffRecord, error) {
 	for rows.Next() {
 		var nonce uint64
 		var txsProto, userSig, postStateRoot, stateHash []byte
-		var warmJSON *string
 		var createdAt int64
-		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &warmJSON, &createdAt); err != nil {
+		if err := rows.Scan(&nonce, &txsProto, &userSig, &postStateRoot, &stateHash, &createdAt); err != nil {
 			return nil, err
 		}
-		rec, err := diffRecordFromStored(nonce, txsProto, userSig, postStateRoot, stateHash, warmJSON, createdAt)
+		rec, err := diffRecordFromStored(nonce, txsProto, userSig, postStateRoot, stateHash, createdAt)
 		if err != nil {
 			return nil, err
 		}
@@ -35,7 +31,7 @@ func readDiffRecords(rows diffScanner) ([]types.DiffRecord, error) {
 	return recs, rows.Err()
 }
 
-func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateHash []byte, warmJSON *string, createdAt int64) (types.DiffRecord, error) {
+func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateHash []byte, createdAt int64) (types.DiffRecord, error) {
 	txs, err := unmarshalTxs(txsProto)
 	if err != nil {
 		return types.DiffRecord{}, err
@@ -49,13 +45,6 @@ func diffRecordFromStored(nonce uint64, txsProto, userSig, postStateRoot, stateH
 		},
 		StateHash: stateHash,
 		CreatedAt: createdAt,
-	}
-	if warmJSON != nil {
-		wk := make(map[uint32]string)
-		if err := json.Unmarshal([]byte(*warmJSON), &wk); err != nil {
-			return types.DiffRecord{}, fmt.Errorf("unmarshal warm keys: %w", err)
-		}
-		rec.WarmKeyDelta = wk
 	}
 	return rec, nil
 }

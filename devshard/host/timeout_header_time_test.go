@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"common/chainoracle/blocks"
+	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
@@ -66,6 +67,33 @@ func (c *headerChain) Subscribe(context.Context, int64) (<-chan *blocks.Header, 
 	return nil, errFakeOracleNotImpl
 }
 
+func TestPendingEvidenceDefersAtRecentlyObservedProofTip(t *testing.T) {
+	chain := newHeaderChain()
+	now := time.Now()
+	chain.add(100, []byte{1}, now)
+	oracle := failover.New(nil, nil, chain)
+	h := &Host{oracle: oracle}
+	old, err := oracle.Latest(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(100), old.Height)
+
+	stampHash := make([]byte, 32)
+	stampHash[0] = 2
+	chain.add(104, stampHash, now)
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId: 1, ObservedHeight: 104, ObservedBlockHash: stampHash,
+	}}}
+	reason := types.TimeoutReason_TIMEOUT_REASON_UNSPECIFIED
+	require.False(t, h.PendingEvidenceDeferrable(reason, finish))
+	latest, err := oracle.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(104), latest.Height)
+	old, err = oracle.Latest(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, int64(100), old.Height, "ordinary chain RPC cache still holds the old height")
+	require.True(t, h.PendingEvidenceDeferrable(reason, finish), "known proof tip makes the pending evidence plausible")
+}
+
 func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -87,7 +115,7 @@ func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 			chain.add(100, hash, anchorAt)
 			sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
 				testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-				state.WithHeaderTimes(headertime.New(chain)))
+				state.WithHeaderTimes(headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))))
 			require.NoError(t, err)
 			h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
 			require.NoError(t, err)
@@ -149,7 +177,7 @@ func TestApplyWaitsForAFloorBlockTheLocalChainIsAboutToSee(t *testing.T) {
 	chain := newHeaderChain()
 	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-		state.WithHeaderTimes(headertime.New(chain)))
+		state.WithHeaderTimes(headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))))
 	require.NoError(t, err)
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
 	require.NoError(t, err)
@@ -198,7 +226,7 @@ func TestExecutionVoteDefersOnAFinishWhoseBlockIsAboutToLand(t *testing.T) {
 	chain.add(200, floorHash, anchorAt.Add(time.Hour))
 	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-		state.WithHeaderTimes(headertime.New(chain)))
+		state.WithHeaderTimes(headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))))
 	require.NoError(t, err)
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
 	require.NoError(t, err)

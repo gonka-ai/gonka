@@ -296,6 +296,8 @@ func TestAdaptive_BootUnimplemented_StartsChain(t *testing.T) {
 	cleanupAdaptive(t, cancel, p)
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
+	// Selecting the chain starts its runner; its first snapshot arrives later.
+	waitForHeight(t, p, 100)
 	assert.Equal(t, int64(100), p.Snapshot().ParamsBlockHeight)
 }
 
@@ -322,16 +324,18 @@ func TestAdaptive_FailbackAfterDapiUpgrade(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cfg := adaptiveTestConfig(t, clock, client, fetcher)
+	cfg.Chain.Clock = realClock{}
 	p, err := NewAdaptive(ctx, cfg)
 	require.NoError(t, err)
 	cleanupAdaptive(t, cancel, p)
 
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
 
+	armed := clock.waitTimerArmed(t, cfg.GRPCReprobe, 0)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
+	waitCalls(t, client, 2)
+	clock.waitTimerArmed(t, cfg.GRPCReprobe, armed)
 	clock.Advance(cfg.GRPCReprobe)
-	time.Sleep(20 * time.Millisecond)
 
 	waitActiveSource(t, p, SourceActiveGRPC, 3*time.Second)
 	waitForHeight(t, p, 50)
@@ -535,9 +539,14 @@ func TestAdaptive_OnEpochChange_FiresOnceOnChainTransition(t *testing.T) {
 	waitActiveSource(t, p, SourceActiveChain, 2*time.Second)
 	waitChainHeight(t, p, 100)
 
+	clock.waitTimerArmed(t, cfg.Chain.RefreshInterval, 0)
 	clock.Advance(cfg.Chain.RefreshInterval)
-	time.Sleep(30 * time.Millisecond)
 	waitChainHeight(t, p, 200)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(transitions) > 0
+	}, time.Second, time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()

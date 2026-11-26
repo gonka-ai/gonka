@@ -150,6 +150,8 @@ type Storage interface {
 // EscrowCacheInfo is chain escrow metadata cached ahead of session bind.
 // No runtime/versiond tag — version is stamped only at CreateSession.
 type EscrowCacheInfo struct {
+	MainnetAnchorHeight       int64    `json:"mainnet_anchor_height,omitempty"`
+	MainnetAnchorHash         []byte   `json:"mainnet_anchor_hash,omitempty"`
 	EscrowID                  string   `json:"escrow_id"`
 	Amount                    uint64   `json:"amount"`
 	CreatorAddress            string   `json:"creator_address"`
@@ -207,6 +209,10 @@ type CreateSessionParams struct {
 
 // SessionMeta holds session metadata without live state.
 type SessionMeta struct {
+	// HostAdmissionNonce is the contiguous prefix accepted under the live
+	// warm-key admission policy. A journal/snapshot alone is not this proof.
+	HostAdmissionNonce uint64
+
 	EscrowID       string
 	EpochID        uint64
 	Version        string // versiond runtime bind tag; must match peer hosts' boundVersion

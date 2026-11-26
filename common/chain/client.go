@@ -47,6 +47,8 @@ type InferenceClient interface {
 	GetAllModelPerTokenPrices(context.Context, *inferencetypes.QueryGetAllModelPerTokenPricesRequest, ...grpc.CallOption) (*inferencetypes.QueryGetAllModelPerTokenPricesResponse, error)
 	GetAllModelCapacities(context.Context, *inferencetypes.QueryGetAllModelCapacitiesRequest, ...grpc.CallOption) (*inferencetypes.QueryGetAllModelCapacitiesResponse, error)
 	PreservedNodesSnapshot(context.Context, *inferencetypes.QueryPreservedNodesSnapshotRequest, ...grpc.CallOption) (*inferencetypes.QueryPreservedNodesSnapshotResponse, error)
+	WarmKeyEntry(context.Context, *inferencetypes.QueryWarmKeyEntryRequest, ...grpc.CallOption) (*inferencetypes.QueryWarmKeyEntryResponse, error)
+	WarmKeyLog(context.Context, *inferencetypes.QueryWarmKeyLogRequest, ...grpc.CallOption) (*inferencetypes.QueryWarmKeyLogResponse, error)
 }
 
 // Client provides blockchain queries via gRPC.

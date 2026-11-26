@@ -2,6 +2,9 @@ package grpcface
 
 import (
 	"context"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
+	"strconv"
 
 	p2p "github.com/cometbft/cometbft/proto/tendermint/p2p"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -96,6 +99,28 @@ func (s *InferenceServer) GranteesByMessageType(_ context.Context, req *inferenc
 	return &inferencetypes.QueryGranteesByMessageTypeResponse{Grantees: out}, nil
 }
 
+func (s *InferenceServer) WarmKeyLog(ctx context.Context, req *inferencetypes.QueryWarmKeyLogRequest) (*inferencetypes.QueryWarmKeyLogResponse, error) {
+	if req.GetGranter() == "" {
+		return nil, status.Error(codes.InvalidArgument, "invalid granter address")
+	}
+	entries, height := s.store.GetWarmKeyLogWithHeight(req.GetGranter())
+	if err := grpc.SetHeader(ctx, metadata.Pairs("x-cosmos-block-height", strconv.FormatInt(height, 10))); err != nil {
+		return nil, err
+	}
+	return &inferencetypes.QueryWarmKeyLogResponse{Entries: entries}, nil
+}
+
+func (s *InferenceServer) WarmKeyEntry(_ context.Context, req *inferencetypes.QueryWarmKeyEntryRequest) (*inferencetypes.QueryWarmKeyEntryResponse, error) {
+	if req.GetGranter() == "" || req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "invalid request")
+	}
+	entry := s.store.GetWarmKeyEntry(req.GetGranter(), req.GetId())
+	if entry == nil {
+		return nil, status.Error(codes.NotFound, "warm-key entry not found")
+	}
+	return &inferencetypes.QueryWarmKeyEntryResponse{Entry: entry}, nil
+}
+
 // CometServer implements cmtservice for GetLatestBlock (Phase 3a).
 type CometServer struct {
 	cmtservice.UnimplementedServiceServer
@@ -116,6 +141,10 @@ func (s *CometServer) GetNodeInfo(_ context.Context, _ *cmtservice.GetNodeInfoRe
 
 func (s *CometServer) GetLatestBlock(_ context.Context, _ *cmtservice.GetLatestBlockRequest) (*cmtservice.GetLatestBlockResponse, error) {
 	height := s.store.GetBlockHeight()
+	if lb, err := s.store.MainnetLightBlock(context.Background(), height); err == nil {
+		id := lb.Commit.BlockID.ToProto()
+		return &cmtservice.GetLatestBlockResponse{BlockId: &id, SdkBlock: &cmtservice.Block{Header: cmtservice.Header{Height: lb.Height, ChainID: lb.ChainID, Time: lb.Time, ValidatorsHash: lb.ValidatorsHash, NextValidatorsHash: lb.NextValidatorsHash, AppHash: lb.AppHash}}}, nil
+	}
 	return &cmtservice.GetLatestBlockResponse{
 		SdkBlock: &cmtservice.Block{
 			Header: cmtservice.Header{
@@ -124,4 +153,13 @@ func (s *CometServer) GetLatestBlock(_ context.Context, _ *cmtservice.GetLatestB
 			},
 		},
 	}, nil
+}
+
+func (s *CometServer) GetBlockByHeight(ctx context.Context, req *cmtservice.GetBlockByHeightRequest) (*cmtservice.GetBlockByHeightResponse, error) {
+	lb, err := s.store.MainnetLightBlock(ctx, req.Height)
+	if err != nil {
+		return nil, err
+	}
+	id := lb.Commit.BlockID.ToProto()
+	return &cmtservice.GetBlockByHeightResponse{BlockId: &id, SdkBlock: &cmtservice.Block{Header: cmtservice.Header{Height: lb.Height, ChainID: lb.ChainID, Time: lb.Time, ValidatorsHash: lb.ValidatorsHash, NextValidatorsHash: lb.NextValidatorsHash, AppHash: lb.AppHash}}}, nil
 }

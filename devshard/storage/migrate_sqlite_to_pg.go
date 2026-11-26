@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -141,6 +142,12 @@ func migrateOneSQLiteSession(src *SQLite, dest Storage, escrowID string) error {
 	}
 
 	if err := migrateDiffsChunked(src, dest, escrowID, meta.LatestNonce, copiedThrough); err != nil {
+		return err
+	}
+
+	// Admission is private local provenance, not inferred from copied bytes.
+	// Preserve only the prefix the trusted source database already recorded.
+	if err := migrateHostAdmission(src, dest, escrowID, meta.HostAdmissionNonce); err != nil {
 		return err
 	}
 
@@ -372,5 +379,35 @@ func quarantineSQLiteArtifacts(storeDir string) error {
 		}
 	}
 	slog.Info("devshard storage: quarantined sqlite artifacts after HA migrate", "dir", storeDir)
+	return nil
+}
+
+func migrateHostAdmission(src *SQLite, dest Storage, escrowID string, admitted uint64) error {
+	meta, err := dest.GetSessionMeta(escrowID)
+	if err != nil {
+		return err
+	}
+	chunk := migrateDiffChunkSize()
+	if chunk == 0 {
+		chunk = defaultMigrateDiffChunk
+	}
+	for from := meta.HostAdmissionNonce + 1; from <= admitted; {
+		to := min(admitted, from+chunk-1)
+		records, err := src.GetDiffs(escrowID, from, to)
+		if err != nil {
+			return err
+		}
+		if uint64(len(records)) != to-from+1 {
+			return ErrHostAdmissionGap
+		}
+		for i := range records {
+			records[i].HostAdmitted = true
+		}
+		// Use the identity-checking path, not bulk COPY into existing rows.
+		if err := PersistDiffBatch(context.Background(), dest, escrowID, records); err != nil {
+			return err
+		}
+		from = to + 1
+	}
 	return nil
 }

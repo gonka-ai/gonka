@@ -114,6 +114,9 @@ func (h *Host) PendingEvidenceDeferrable(reason types.TimeoutReason, txs ...*typ
 		ctx, cancel := context.WithTimeout(context.Background(), pendingEvidenceTipTimeout)
 		tip, err := h.LatestHeight(ctx)
 		cancel()
+		if oracle, ok := h.oracle.(interface{ RecentProofTipHeight() int64 }); ok {
+			tip = max(tip, oracle.RecentProofTipHeight())
+		}
 		if err == nil && tip > 0 && top > uint64(tip)+PendingEvidenceTipSlack {
 			return false
 		}
@@ -449,19 +452,25 @@ func judgeRefusedChallenge(
 	call func() ([]byte, []*types.DevshardTx, error),
 ) (refusedChallenge, error) {
 	receipt, mempool, err := call()
-	if err != nil {
+	if err != nil && !errors.Is(err, types.ErrHeaderPending) {
 		// The caller decides whether this error is an answer or no HTTP response.
 		return refusedUnreachable, err
 	}
-	if len(receipt) == 0 {
-		return refusedNoReceipt, nil
-	}
-	// The receipt counts only as the ExecutorSig of a queued ConfirmStart
-	// that verifies for this escrow and this inference.
+	// Receipt is a hint: different replicas and grant views may prefer
+	// different signatures. Every independently verified ConfirmStart proves
+	// liveness, as on the local-mempool fast path above.
 	confirmTx, pending := verifiedConfirmOrPending(ev, inferenceID, rec, receipt, mempool, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+	if confirmTx == nil && len(receipt) > 0 {
+		alternative, morePending := verifiedConfirmOrPending(ev, inferenceID, rec, nil, mempool, types.TimeoutReason_TIMEOUT_REASON_REFUSED)
+		confirmTx = alternative
+		pending = pending || morePending
+	}
 	if confirmTx == nil {
 		if pending {
 			return refusedNoReceipt, evidencePendingErr(inferenceID)
+		}
+		if err != nil {
+			return refusedUnreachable, err
 		}
 		return refusedNoReceipt, nil
 	}
@@ -523,10 +532,7 @@ func VerifyExecutionTimeout(
 	// to return, and the timeout stands.
 	if executorClient != nil {
 		_, executorMempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, nil, nil)
-		if errors.Is(err, types.ErrHeaderPending) && headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION) {
-			return false, err
-		}
-		if err == nil {
+		if err == nil || errors.Is(err, types.ErrHeaderPending) {
 			finishTx, remotePending := verifiedFinishOrPending(ev, st.EscrowID, inferenceID, rec, nil, executorMempool, types.TimeoutReason_TIMEOUT_REASON_EXECUTION)
 			if finishTx != nil {
 				if ingest != nil {
@@ -535,6 +541,9 @@ func VerifyExecutionTimeout(
 				return false, nil
 			}
 			pending = pending || remotePending
+		}
+		if errors.Is(err, types.ErrHeaderPending) && headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_EXECUTION) {
+			return false, err
 		}
 		// An unreachable executor supports the timeout claim, and a finish
 		// that does not verify is not evidence the work completed.
