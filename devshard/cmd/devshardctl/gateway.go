@@ -1897,7 +1897,8 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		r = r.WithContext(withClientResponseIntent(r.Context(), clientIntent))
 		if err := rt.validateRequestedModel(model); err != nil {
 			logRequestStage(ctx, "gateway_devshard_model_rejected", "escrow", devshardID, "model", model, "error", err)
-			g.recordGatewayRequestOutcome(firstNonEmpty(model, rt.model, g.settings.DefaultModel), "model_rejected", "model_rejected")
+			// The rejected model is client input; label by the devshard's model.
+			g.recordGatewayRequestOutcome(firstNonEmpty(rt.model, g.settings.DefaultModel), "model_rejected", "model_rejected")
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 			return
 		}

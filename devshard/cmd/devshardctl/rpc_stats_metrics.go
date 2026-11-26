@@ -3,6 +3,8 @@ package main
 import (
 	"sort"
 
+	devshardpkg "devshard"
+
 	"github.com/prometheus/client_golang/prometheus"
 
 	"devshard/transport"
@@ -209,7 +211,7 @@ func foldReconnects(rows []transport.RPCStatsReconnect) []transport.RPCStatsReco
 	merged := make(map[[2]string]uint64, len(rows))
 	for _, r := range rows {
 		peer := r.Peer
-		if peer == "" {
+		if !rpcStatsPeerLabelOK(peer) {
 			peer = transport.RPCStatsOtherLabel
 		}
 		reason := transport.RPCStatsReconnectReason(r.Reason)
@@ -284,11 +286,27 @@ func foldShards(shards []transport.RPCStatsShard) map[string]*foldedShard {
 // shardLabel is the escrow label for one snapshot row. "_" is the process
 // total, emitted separately, so a shard that reuses it would duplicate the
 // series and fail the scrape.
+// Ids that are not canonical escrow ids also fold into other: the body is
+// the host's, and a long id is repeated on every endpoint series.
 func shardLabel(id string) string {
-	if id == "" || id == rpcStatsProcessEscrow {
+	if devshardpkg.ValidateEscrowID(id) != nil {
 		return transport.RPCStatsOtherLabel
 	}
 	return id
+}
+
+// rpcStatsPeerLabelOK bounds a host-supplied peer label to a short address.
+func rpcStatsPeerLabelOK(peer string) bool {
+	if peer == "" || len(peer) > rpcStatsMaxPeerLabelLen {
+		return false
+	}
+	for i := 0; i < len(peer); i++ {
+		c := peer[i]
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-' || c == '_' || c == '.' || c == ':' || c == '@') {
+			return false
+		}
+	}
+	return true
 }
 
 func mergeShard(dst, src *foldedShard) {
