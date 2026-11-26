@@ -102,6 +102,8 @@ type InvalidInferenceResult struct {
 	InferenceId string
 	Reason      string
 	Error       error
+	// ResponseBytes is the replay's response when the failure was found after the replay.
+	ResponseBytes []byte
 }
 
 func (r InvalidInferenceResult) IsSuccessful() bool {
@@ -113,7 +115,7 @@ func (r InvalidInferenceResult) GetInferenceId() string {
 }
 
 func (r InvalidInferenceResult) GetValidationResponseBytes() []byte {
-	return []byte{}
+	return r.ResponseBytes
 }
 
 const emptySentinelToken = "<EMPTY>"
@@ -441,20 +443,20 @@ func ExecuteValidationWithPolicy(
 		logprobsMode,
 	)
 	if err != nil {
-		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
+		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err, nil}, nil
 	}
 	if err := json.Unmarshal(modifiedRequest.NewBody, &requestMap); err != nil {
-		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
+		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err, nil}, nil
 	}
 
 	originalResponse, err := UnmarshalResponsePayload(responsePayload)
 	if err != nil {
-		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal responsePayload.", err}, nil
+		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal responsePayload.", err, nil}, nil
 	}
 
 	enforcedTokens, err := originalResponse.GetEnforcedTokens()
 	if err != nil {
-		return &InvalidInferenceResult{inferenceID, "Failed to get enforced tokens.", err}, nil
+		return &InvalidInferenceResult{inferenceID, "Failed to get enforced tokens.", err, nil}, nil
 	}
 
 	isEmptySentinel := IsEmptySentinelTokens(enforcedTokens)
@@ -462,7 +464,7 @@ func ExecuteValidationWithPolicy(
 	if !isEmptySentinel && HasNonNumericTokens(enforcedTokens) {
 		logging.Warn("Executor response contains non-numeric token strings in logprobs instead of token IDs", types.Validation,
 			"inferenceId", inferenceID)
-		return &InvalidInferenceResult{inferenceID, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
+		return &InvalidInferenceResult{inferenceID, "Logprobs contain decoded text instead of numeric token IDs.", nil, nil}, nil
 	}
 
 	tokenIDLimit := replayTokenIDLimit
@@ -557,7 +559,7 @@ func ExecuteValidationWithPolicy(
 	if isEmptySentinel && statusCode == http.StatusOK {
 		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
 			"inferenceId", inferenceID)
-		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil}, nil
+		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil, nil}, nil
 	}
 
 	if validationUsage, err := responseValidation.GetUsage(); err == nil {
@@ -574,7 +576,7 @@ func ExecuteValidationWithPolicy(
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
 				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens,
 				"suspected_cause", suspectedCause, "resolution", "invalid")
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts.", ResponseBytes: respBodyBytes}, nil
 		}
 	}
 
@@ -630,11 +632,11 @@ func shortOutputChecks(
 		if minTokens := completionapi.MinTokensOf(requestMap); minTokens > 0 && len(originalLogits) < minTokens {
 			logging.Warn("validation failed: output below the requested min_tokens", types.Validation,
 				"inferenceId", inferenceID, "outputTokens", len(originalLogits), "minTokens", minTokens)
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than the requested min_tokens."}
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than the requested min_tokens.", ResponseBytes: baseResult.ResponseBytes}
 		}
 		if stopTokenBeforeEnd(originalLogits, stopTokenIDs) {
 			logging.Warn("validation failed: output continues past a requested stop token", types.Validation, "inferenceId", inferenceID)
-			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output continues past a requested stop token."}
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output continues past a requested stop token.", ResponseBytes: baseResult.ResponseBytes}
 		}
 	}
 
