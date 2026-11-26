@@ -1057,18 +1057,20 @@ func (v *OffChainValidator) dispatchToMLNode(
 	return validateAbstainRetry
 }
 
-// defaultValidationSampleSize is used when poc_params.validation_sample_size is 0.
+// defaultValidationSampleSize is used when poc_params.validation_sample_size is
+// 0, and for a negative value, which the chain now rejects but may still hold.
 const defaultValidationSampleSize = 200
 
 // validationSampleSize returns how many leaf indices to sample per participant.
-// 0 means the default. Other values are clamped to
-// [1, types.MaxPocValidationSampleSize]: all sampled indices go in one proof
-// request, and the proof endpoint rejects an empty one or one with more.
+// 0 or a negative value means the default, so validation keeps its full
+// strength. Larger values are capped at types.MaxPocValidationSampleSize: all
+// sampled indices go in one proof request, and the proof endpoint rejects a
+// request with more.
 func validationSampleSize(configured int32) int {
-	if configured == 0 {
+	if configured <= 0 {
 		return defaultValidationSampleSize
 	}
-	return int(min(max(configured, 1), types.MaxPocValidationSampleSize))
+	return int(min(configured, types.MaxPocValidationSampleSize))
 }
 
 // sampleLeafIndices generates deterministic leaf indices using lazy Fisher-Yates.

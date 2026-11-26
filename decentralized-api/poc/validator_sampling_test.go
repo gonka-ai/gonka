@@ -68,7 +68,7 @@ func TestSampleLeafIndices_DifferentModel(t *testing.T) {
 }
 
 func TestValidationSampleSize_DefaultAndBounds(t *testing.T) {
-	assert.Equal(t, 1, validationSampleSize(-1))
+	assert.Equal(t, 200, validationSampleSize(-1))
 	assert.Equal(t, 200, validationSampleSize(0))
 	assert.Equal(t, 500, validationSampleSize(500))
 	assert.Equal(t, 500, validationSampleSize(501))

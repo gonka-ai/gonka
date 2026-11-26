@@ -95,7 +95,9 @@ const (
 
 	// MaxPocValidationSampleSize bounds poc_params.validation_sample_size. A
 	// validator sends all sampled leaf indices in one proof request, and the
-	// DAPI proof endpoint serves at most this many per request.
+	// DAPI proof endpoint serves at most this many per request. Each participant
+	// enforces the limit of its own DAPI version, so raise it only after every
+	// participant runs a DAPI that serves the larger limit.
 	MaxPocValidationSampleSize int32 = 500
 )
 
