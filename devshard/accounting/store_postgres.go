@@ -22,6 +22,10 @@ const (
 	// accountingBlobImportMarker guards the one-shot conversion of the legacy
 	// one-blob-per-escrow layout into the additive row layout.
 	accountingBlobImportMarker = "blob_to_rows"
+	// accountingPurgeLockNamespace is the advisory-lock class for an epoch
+	// tombstone. It is distinct from the connection-fence namespace, so the two
+	// never share a key.
+	accountingPurgeLockNamespace int32 = 0x50555247 // "PURG"
 )
 
 type postgresBackend struct {
@@ -148,6 +152,11 @@ func (s *postgresBackend) Load(ctx context.Context, t *Tracker) error {
 	if err != nil {
 		return err
 	}
+	purged, err := loadPurgedEpochSet(loadCtx, tx)
+	if err != nil {
+		return err
+	}
+	ledger.omitPurged(purged)
 
 	var skipped []string
 	t.mu.Lock()
@@ -168,6 +177,7 @@ func (s *postgresBackend) Load(ctx context.Context, t *Tracker) error {
 		}
 	}
 	t.dirty = nil
+	t.notePurgedEpochsLocked(purged)
 	t.mu.Unlock()
 
 	s.mu.Lock()
@@ -212,6 +222,102 @@ func loadWriterMeta(ctx context.Context, q pgxQuerier, writerID string) (time.Ti
 		}
 	}
 	return newest, writerErrors, rows.Err()
+}
+
+// PurgedEpochs reads the epoch tombstones a peer uses to drop a purged epoch
+// from memory. The save path enforces the same table, so a missed read here
+// cannot rewrite the rows.
+func (s *postgresBackend) PurgedEpochs(ctx context.Context) ([]uint64, error) {
+	if s == nil || s.pool == nil {
+		return nil, nil
+	}
+	opCtx, cancel := s.opCtx(ctx)
+	defer cancel()
+	set, err := loadPurgedEpochSet(opCtx, s.pool)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]uint64, 0, len(set))
+	for epoch := range set {
+		out = append(out, epoch)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
+}
+
+// lockEpochsForPurge serializes a purge of an epoch with every flush that would
+// write an escrow from it. Locks are taken in epoch order so two flushes that
+// touch the same set cannot deadlock.
+func lockEpochsForPurge(ctx context.Context, tx pgx.Tx, epochs []uint64) error {
+	ordered := uniqueEpochs(epochs)
+	for _, epoch := range ordered {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1, $2)`, accountingPurgeLockNamespace, purgeLockKey(epoch)); err != nil {
+			return fmt.Errorf("lock accounting epoch %d: %w", epoch, err)
+		}
+	}
+	return nil
+}
+
+func purgeLockKey(epoch uint64) int32 {
+	const maxInt32 = 1<<31 - 1
+	if epoch > maxInt32 {
+		return int32(epoch % maxInt32)
+	}
+	return int32(epoch)
+}
+
+func uniqueEpochs(epochs []uint64) []uint64 {
+	if len(epochs) == 0 {
+		return nil
+	}
+	seen := make(map[uint64]struct{}, len(epochs))
+	out := make([]uint64, 0, len(epochs))
+	for _, epoch := range epochs {
+		if epoch == 0 {
+			continue
+		}
+		if _, ok := seen[epoch]; ok {
+			continue
+		}
+		seen[epoch] = struct{}{}
+		out = append(out, epoch)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
+func insertPurgedEpochs(ctx context.Context, tx pgx.Tx, epochs []uint64) error {
+	for _, epoch := range uniqueEpochs(epochs) {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO accounting_purged_epochs(epoch) VALUES ($1)
+			ON CONFLICT (epoch) DO NOTHING`, int64(epoch)); err != nil {
+			return fmt.Errorf("record purged accounting epoch %d: %w", epoch, err)
+		}
+	}
+	return nil
+}
+
+func loadPurgedEpochSet(ctx context.Context, q pgxQuerier) (map[uint64]struct{}, error) {
+	rows, err := q.Query(ctx, `SELECT epoch FROM accounting_purged_epochs`)
+	if err != nil {
+		return nil, fmt.Errorf("load purged accounting epochs: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uint64]struct{})
+	for rows.Next() {
+		var epoch int64
+		if err := rows.Scan(&epoch); err != nil {
+			return nil, err
+		}
+		if epoch <= 0 {
+			continue
+		}
+		out[uint64(epoch)] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *postgresBackend) Save(ctx context.Context, snap storeSnapshot, dirtyIDs, deletedIDs []string) error {
@@ -270,28 +376,108 @@ func (s *postgresBackend) saveLocked(
 	for _, blob := range snap.Escrows {
 		byID[blob.Meta.EscrowID] = blob
 	}
+	// Lock every epoch this transaction will write or tombstone, in epoch order,
+	// so a purge and a peer flush of the same epoch cannot commit in an order
+	// that recreates the rows. The peer that acquires the lock second observes
+	// the tombstone and deletes. An idle snapshot writes no escrow, so it does
+	// not take the lock or read the table.
+	lockEpochs := append([]uint64(nil), snap.PurgedEpochs...)
 	for _, id := range dirtyIDs {
+		blob, ok := byID[id]
+		if !ok {
+			continue
+		}
+		lockEpochs = append(lockEpochs, blob.Meta.CreationEpoch)
+	}
+	var purged map[uint64]struct{}
+	if len(uniqueEpochs(lockEpochs)) > 0 {
+		if err := lockEpochsForPurge(opCtx, tx, lockEpochs); err != nil {
+			return err
+		}
+		if err := insertPurgedEpochs(opCtx, tx, snap.PurgedEpochs); err != nil {
+			return err
+		}
+		purged, err = loadPurgedEpochSet(opCtx, tx)
+		if err != nil {
+			return err
+		}
+	}
+	// A dirty id that is also deleted, or whose epoch is tombstoned, is removed
+	// and not written. Writing it first would publish the rows and the delete
+	// in this same transaction would drop them.
+	deleting := make(map[string]struct{}, len(deletedIDs))
+	for _, id := range deletedIDs {
+		deleting[id] = struct{}{}
+	}
+	for _, id := range dirtyIDs {
+		blob, ok := byID[id]
+		if !ok {
+			continue
+		}
+		if _, drop := purged[blob.Meta.CreationEpoch]; !drop {
+			continue
+		}
+		if _, seen := deleting[id]; seen {
+			continue
+		}
+		deletedIDs = append(deletedIDs, id)
+		deleting[id] = struct{}{}
+	}
+	// Drop peer baselines before the write loop computes a share. A rollback
+	// puts them back; a commit leaves them clear so a reused id does not
+	// subtract a contribution that was just deleted.
+	clearedPeers := s.dropPeerBaselines(deletedIDs)
+	if err := deleteEscrowRows(opCtx, tx, deletedIDs); err != nil {
+		s.restorePeerBaselines(clearedPeers)
+		return err
+	}
+	for _, id := range dirtyIDs {
+		if _, drop := deleting[id]; drop {
+			continue
+		}
 		blob, ok := byID[id]
 		if !ok {
 			continue
 		}
 		mine := contributionFromBlob(blob).minus(s.peers[id])
 		if err := writeEscrowRows(opCtx, tx, writerID, blob, mine); err != nil {
+			s.restorePeerBaselines(clearedPeers)
 			return err
 		}
 	}
-	if err := deleteEscrowRows(opCtx, tx, deletedIDs); err != nil {
-		return err
-	}
 	if err := tx.Commit(opCtx); err != nil {
+		s.restorePeerBaselines(clearedPeers)
 		return err
-	}
-	// A pruned escrow is gone from the ledger; a later escrow reusing the id
-	// must not inherit a stale peer baseline.
-	for _, id := range deletedIDs {
-		delete(s.peers, id)
 	}
 	return nil
+}
+
+func (s *postgresBackend) dropPeerBaselines(ids []string) map[string]*escrowContribution {
+	var cleared map[string]*escrowContribution
+	for _, id := range ids {
+		peer, ok := s.peers[id]
+		if !ok {
+			continue
+		}
+		if cleared == nil {
+			cleared = make(map[string]*escrowContribution)
+		}
+		cleared[id] = peer
+		delete(s.peers, id)
+	}
+	return cleared
+}
+
+func (s *postgresBackend) restorePeerBaselines(cleared map[string]*escrowContribution) {
+	if len(cleared) == 0 {
+		return
+	}
+	if s.peers == nil {
+		s.peers = make(map[string]*escrowContribution, len(cleared))
+	}
+	for id, peer := range cleared {
+		s.peers[id] = peer
+	}
 }
 
 // importLegacyBlobLedger converts the pre-additive layout (one JSON blob per

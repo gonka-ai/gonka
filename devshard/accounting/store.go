@@ -35,6 +35,12 @@ type storeBackend interface {
 	Close() error
 }
 
+// purgedEpochSource is implemented by backends that share a ledger across
+// processes. SQLite is a single writer and has nothing to report.
+type purgedEpochSource interface {
+	PurgedEpochs(ctx context.Context) ([]uint64, error)
+}
+
 type escrowBlob struct {
 	Meta           EscrowMetadata             `json:"meta"`
 	Latest         uint64                     `json:"latest"`
@@ -78,6 +84,9 @@ type storeSnapshot struct {
 	UpdatedAt    time.Time
 	WriterErrors uint64
 	Escrows      []escrowBlob
+	// PurgedEpochs are operator purges this snapshot must tombstone. Empty for
+	// a retention prune, which deletes escrows without forbidding the epoch.
+	PurgedEpochs []uint64
 }
 
 // OpenStore opens the accounting backend selected by DEVSHARD_STORAGE_MODE.
@@ -112,10 +121,23 @@ func (s *Store) Save(ctx context.Context, t *Tracker) error {
 	defer s.saveMu.Unlock()
 	snap, dirtyIDs, deletedIDs := t.takePersistSnapshot(s.retention)
 	if err := s.backend.Save(ctx, snap, dirtyIDs, deletedIDs); err != nil {
-		t.restorePersistState(dirtyIDs, deletedIDs)
+		t.restorePersistState(dirtyIDs, deletedIDs, snap.PurgedEpochs)
 		return err
 	}
 	return nil
+}
+
+// PurgedEpochs reports epochs an operator purged in a shared ledger. A backend
+// that does not share one reports none.
+func (s *Store) PurgedEpochs(ctx context.Context) ([]uint64, error) {
+	if s == nil || s.backend == nil {
+		return nil, nil
+	}
+	src, ok := s.backend.(purgedEpochSource)
+	if !ok {
+		return nil, nil
+	}
+	return src.PurgedEpochs(ctx)
 }
 
 func applyLoadedEscrow(t *Tracker, blob escrowBlob) error {
@@ -240,6 +262,18 @@ func sortedKeys(in map[string]struct{}) []string {
 		out = append(out, key)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func sortedEpochs(in map[uint64]struct{}) []uint64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]uint64, 0, len(in))
+	for epoch := range in {
+		out = append(out, epoch)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 

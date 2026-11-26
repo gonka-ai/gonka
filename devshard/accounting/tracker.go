@@ -24,13 +24,23 @@ type Tracker struct {
 	// pendingDeletes are pruned escrow IDs whose deletion has not been persisted
 	// yet, so a failed persist still removes them on the next attempt.
 	pendingDeletes map[string]struct{}
-	updated        time.Time
-	stop           context.CancelFunc
-	done           chan struct{}
-	once           sync.Once
-	now            func() time.Time
-	errCount       uint64
-	wrCount        uint64
+	// pendingPurgeEpochs are operator-purged epochs whose tombstone has not been
+	// persisted yet. A retention prune does not add to this set.
+	pendingPurgeEpochs map[uint64]struct{}
+	// purgedEpochs are epochs this process has purged or has read from the
+	// tombstone table. RegisterEscrow refuses them for the life of the process.
+	purgedEpochs map[uint64]struct{}
+	// quietEscrows are ids dropped by a purge. Recording one succeeds and
+	// stores nothing, so a session that is still attached does not count as a
+	// recorder failure.
+	quietEscrows map[string]struct{}
+	updated      time.Time
+	stop         context.CancelFunc
+	done         chan struct{}
+	once         sync.Once
+	now          func() time.Time
+	errCount     uint64
+	wrCount      uint64
 
 	// Disposition delivery. Recording enqueues; a single goroutine calls the
 	// sink, so no sink work happens on the caller's goroutine.
@@ -162,6 +172,8 @@ func (t *Tracker) snapshotLoop(ctx context.Context, interval time.Duration) {
 	for {
 		select {
 		case <-ticker.C:
+			// Flush reads epoch tombstones before it writes, so this tick drops a
+			// purged epoch from memory instead of upserting the rows back.
 			if err := t.Flush(ctx); err != nil {
 				log.Printf("accounting snapshot: %v", err)
 			}
@@ -294,6 +306,12 @@ func (t *Tracker) Flush(ctx context.Context) error {
 	if t == nil || t.store == nil {
 		return nil
 	}
+	// A peer learns about a purge here, before this flush can upsert the escrow
+	// the other gateway just deleted. A failure leaves the save to enforce the
+	// same rule from the tombstone table.
+	if err := t.applyRemotePurges(ctx); err != nil {
+		log.Printf("accounting purged epochs: %v", err)
+	}
 	if err := t.store.Save(ctx, t); err != nil {
 		t.mu.Lock()
 		t.wrCount++
@@ -305,15 +323,29 @@ func (t *Tracker) Flush(ctx context.Context) error {
 }
 
 func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
+	if normalized, err := normalizeMetadata(meta); err == nil {
+		if err := t.refuseIfEpochPurged(normalized.CreationEpoch); err != nil {
+			return fmt.Errorf("escrow %q: %w", normalized.EscrowID, err)
+		}
+	}
 	return t.withWrite(func() error {
 		meta, err := normalizeMetadata(meta)
 		if err != nil {
 			return err
 		}
-		if existing := t.escrows[meta.EscrowID]; existing != nil {
-			if meta.CreationEpoch == 0 {
-				meta.CreationEpoch = existing.Meta.CreationEpoch
+		if existing := t.escrows[meta.EscrowID]; existing != nil && meta.CreationEpoch == 0 {
+			meta.CreationEpoch = existing.Meta.CreationEpoch
+		}
+		// The epoch may have been purged while the tombstone table was being read.
+		if meta.CreationEpoch != 0 {
+			if _, banned := t.purgedEpochs[meta.CreationEpoch]; banned {
+				return fmt.Errorf("escrow %q: epoch %d is purged: %w", meta.EscrowID, meta.CreationEpoch, ErrEpochPurged)
 			}
+		}
+		// A re-attach wins over a delete that has not been persisted. An id left
+		// in both sets is written and then deleted by the same save.
+		delete(t.pendingDeletes, meta.EscrowID)
+		if existing := t.escrows[meta.EscrowID]; existing != nil {
 			if existing.Meta.RefusalTimeout == 0 &&
 				existing.Meta.ExecutionTimeout == 0 &&
 				existing.Meta.TimeoutBufferSeconds == 0 {
@@ -684,8 +716,8 @@ func (t *Tracker) markDirtyLocked(escrowID string) {
 
 // restorePersistState re-arms the work a failed persist consumed so the next
 // snapshot retries it instead of silently dropping the changes.
-func (t *Tracker) restorePersistState(dirtyIDs, deletedIDs []string) {
-	if t == nil || (len(dirtyIDs) == 0 && len(deletedIDs) == 0) {
+func (t *Tracker) restorePersistState(dirtyIDs, deletedIDs []string, purgedEpochs []uint64) {
+	if t == nil || (len(dirtyIDs) == 0 && len(deletedIDs) == 0 && len(purgedEpochs) == 0) {
 		return
 	}
 	t.mu.Lock()
@@ -694,10 +726,24 @@ func (t *Tracker) restorePersistState(dirtyIDs, deletedIDs []string) {
 		t.markDirtyLocked(id)
 	}
 	for _, id := range deletedIDs {
+		// Registered again while the save was in flight. Putting the id back
+		// would delete the escrow the re-attach just created.
+		if _, live := t.escrows[id]; live {
+			continue
+		}
 		if t.pendingDeletes == nil {
 			t.pendingDeletes = make(map[string]struct{}, len(deletedIDs))
 		}
 		t.pendingDeletes[id] = struct{}{}
+	}
+	for _, epoch := range purgedEpochs {
+		if epoch == 0 {
+			continue
+		}
+		if t.pendingPurgeEpochs == nil {
+			t.pendingPurgeEpochs = make(map[uint64]struct{}, len(purgedEpochs))
+		}
+		t.pendingPurgeEpochs[epoch] = struct{}{}
 	}
 }
 
@@ -742,7 +788,10 @@ func (t *Tracker) takePersistSnapshot(retention uint64) (storeSnapshot, []string
 	sort.Strings(dirtyIDs)
 	t.dirty = nil
 
-	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount}
+	purgedEpochs := sortedEpochs(t.pendingPurgeEpochs)
+	t.pendingPurgeEpochs = nil
+
+	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount, PurgedEpochs: purgedEpochs}
 	for _, escrow := range t.escrows {
 		out.Escrows = append(out.Escrows, blobFromEscrow(escrow))
 	}
@@ -776,6 +825,117 @@ func (t *Tracker) pruneLocked(retention uint64) {
 			delete(t.escrows, id)
 		}
 	}
+}
+
+// applyRemotePurges drops escrows whose epoch another writer has tombstoned.
+// The query view reads memory, so without this a peer keeps serving the epoch
+// until it restarts.
+func (t *Tracker) applyRemotePurges(ctx context.Context) error {
+	if t == nil || t.store == nil {
+		return nil
+	}
+	epochs, err := t.store.PurgedEpochs(ctx)
+	if err != nil || len(epochs) == 0 {
+		return err
+	}
+	if dropped := t.dropPurgedEpochs(epochs); dropped > 0 {
+		log.Printf("accounting purge: dropped %d escrow(s) from a tombstoned epoch", dropped)
+	}
+	return nil
+}
+
+func (t *Tracker) dropPurgedEpochs(epochs []uint64) int {
+	set := make(map[uint64]struct{}, len(epochs))
+	for _, epoch := range epochs {
+		if epoch == 0 {
+			continue
+		}
+		set[epoch] = struct{}{}
+	}
+	if len(set) == 0 {
+		return 0
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.notePurgedEpochsLocked(set)
+	dropped := 0
+	for id, escrow := range t.escrows {
+		if _, ok := set[escrow.Meta.CreationEpoch]; !ok {
+			continue
+		}
+		delete(t.escrows, id)
+		delete(t.dirty, id)
+		if t.pendingDeletes == nil {
+			t.pendingDeletes = make(map[string]struct{})
+		}
+		t.pendingDeletes[id] = struct{}{}
+		t.quietEscrowLocked(id)
+		dropped++
+	}
+	return dropped
+}
+
+func (t *Tracker) notePurgedEpochLocked(epoch uint64) {
+	if epoch == 0 {
+		return
+	}
+	if t.purgedEpochs == nil {
+		t.purgedEpochs = make(map[uint64]struct{})
+	}
+	t.purgedEpochs[epoch] = struct{}{}
+}
+
+func (t *Tracker) notePurgedEpochsLocked(epochs map[uint64]struct{}) {
+	for epoch := range epochs {
+		t.notePurgedEpochLocked(epoch)
+	}
+}
+
+func (t *Tracker) quietEscrowLocked(id string) {
+	if id == "" {
+		return
+	}
+	if t.quietEscrows == nil {
+		t.quietEscrows = make(map[string]struct{})
+	}
+	t.quietEscrows[id] = struct{}{}
+}
+
+// refuseIfEpochPurged reports a tombstoned epoch. The in-memory set covers a
+// purge this process just performed. The store covers a tombstone another
+// process already committed, so a restart or a peer attach does not install
+// the observer.
+func (t *Tracker) refuseIfEpochPurged(epoch uint64) error {
+	if t == nil || epoch == 0 {
+		return nil
+	}
+	t.mu.RLock()
+	_, banned := t.purgedEpochs[epoch]
+	t.mu.RUnlock()
+	if banned {
+		return fmt.Errorf("epoch %d is purged: %w", epoch, ErrEpochPurged)
+	}
+	if t.store == nil {
+		return nil
+	}
+	epochs, err := t.store.PurgedEpochs(context.Background())
+	if err != nil {
+		log.Printf("accounting purge: unable to read tombstones: %v", err)
+		return nil
+	}
+	if len(epochs) == 0 {
+		return nil
+	}
+	t.mu.Lock()
+	for _, got := range epochs {
+		t.notePurgedEpochLocked(got)
+	}
+	_, banned = t.purgedEpochs[epoch]
+	t.mu.Unlock()
+	if banned {
+		return fmt.Errorf("epoch %d is purged: %w", epoch, ErrEpochPurged)
+	}
+	return nil
 }
 
 func (t *Tracker) nowUTC() time.Time {
@@ -826,6 +986,9 @@ func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error
 		}
 		e := t.escrows[escrowID]
 		if e == nil {
+			if _, quiet := t.quietEscrows[escrowID]; quiet {
+				return nil
+			}
 			return fmt.Errorf("escrow %q not registered", escrowID)
 		}
 		if err := fn(e); err != nil {
