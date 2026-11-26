@@ -87,7 +87,7 @@ func TestTimeoutVoteNeedsTheFloorBlockOnTheLocalChain(t *testing.T) {
 			chain.add(100, hash, anchorAt)
 			sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
 				testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-				state.WithHeaderTimes(headertime.New(chain)))
+				state.WithHeaderTimes(headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))))
 			require.NoError(t, err)
 			h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
 			require.NoError(t, err)
@@ -149,7 +149,7 @@ func TestApplyWaitsForAFloorBlockTheLocalChainIsAboutToSee(t *testing.T) {
 	chain := newHeaderChain()
 	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-		state.WithHeaderTimes(headertime.New(chain)))
+		state.WithHeaderTimes(headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))))
 	require.NoError(t, err)
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestExecutionVoteDefersOnAFinishWhoseBlockIsAboutToLand(t *testing.T) {
 	chain.add(200, floorHash, anchorAt.Add(time.Hour))
 	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), signing.NewSecp256k1Verifier(),
 		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000),
-		state.WithHeaderTimes(headertime.New(chain)))
+		state.WithHeaderTimes(headertime.New(headertime.WithFiller(headertime.OracleFiller(chain, headertime.OriginChain, false)))))
 	require.NoError(t, err)
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil, WithChainOracle(chain))
 	require.NoError(t, err)

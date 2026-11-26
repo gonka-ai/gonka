@@ -221,6 +221,17 @@ func WithHeaderTimes(src HeaderTimeSource) SMOption {
 	return func(sm *StateMachine) { sm.headerTimes = src }
 }
 
+// AppliedHeaderTimes returns the header-time source installed by opts.
+func AppliedHeaderTimes(opts ...SMOption) HeaderTimeSource {
+	sm := &StateMachine{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(sm)
+		}
+	}
+	return sm.headerTimes
+}
+
 // HeartbeatConfig is the log-plane config this machine was constructed with.
 func (sm *StateMachine) HeartbeatConfig() heightsync.HeartbeatConfig {
 	return sm.heartbeatCfg

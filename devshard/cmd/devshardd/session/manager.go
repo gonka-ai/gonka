@@ -33,6 +33,7 @@ import (
 	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/hostevents"
 	"devshard/observability"
 	"devshard/runtimeparams"
 	devshardserver "devshard/server"
@@ -108,6 +109,7 @@ type HostManager struct {
 	// Height-sync scheduler (NodeManager GetBlockHeader or chain client). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
 	headerTimes      *headertime.Source
+	hostEvents       *hostevents.Poller
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
@@ -997,7 +999,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	config := bridge.SessionConfigAtBind(len(group), escrow)
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier, m.store,
-		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(m.boundVersion))...,
+		m.sessionSMOpts(state.WithWarmKeyResolver(bridge.ApplyWarmKeyCheck(m.bridge)), state.WithVersion(m.boundVersion))...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -1323,7 +1325,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 		return state.NewStateMachine(
 			escrowID, meta.Config, meta.Group, meta.InitialBalance,
 			meta.CreatorAddr, m.verifier, m.store,
-			m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
+			m.sessionSMOpts(state.WithWarmKeyResolver(bridge.ApplyWarmKeyCheck(m.bridge)), state.WithVersion(recoveredVersion))...,
 		)
 	}
 	sm, err := newStateMachine()

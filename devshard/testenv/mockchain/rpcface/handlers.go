@@ -1,13 +1,11 @@
 package rpcface
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/cometbft/cometbft/p2p"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
-	cmttypes "github.com/cometbft/cometbft/types"
 
 	"devshard/testenv/mockchain/store"
 )
@@ -22,27 +20,6 @@ func statusHandler(st *store.Store) (*ctypes.ResultStatus, error) {
 			LatestBlockTime:   time.Now().UTC(),
 			CatchingUp:        false,
 		},
-	}, nil
-}
-
-func blockHandler(st *store.Store, heightPtr *int64) (*ctypes.ResultBlock, error) {
-	latest := st.GetBlockHeight()
-	height := latest
-	if heightPtr != nil {
-		height = *heightPtr
-	}
-	if height <= 0 {
-		return nil, fmt.Errorf("height must be greater than 0, but got %d", height)
-	}
-	if height > latest {
-		return nil, fmt.Errorf("height %d must be less than or equal to the current blockchain height %d",
-			height, latest)
-	}
-	block := cmttypes.MakeBlock(height, nil, nil, nil)
-	block.Header.ChainID = st.GetChainID()
-	return &ctypes.ResultBlock{
-		BlockID: cmttypes.BlockID{Hash: block.Hash()},
-		Block:   block,
 	}, nil
 }
 
