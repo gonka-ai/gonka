@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -21,7 +22,7 @@ func TestMarshalStateSnapshotWithCommitted_RoundTrip(t *testing.T) {
 		LatestNonce:                 42,
 		Inferences:                  map[uint64]*types.InferenceRecord{},
 		HostStats:                   map[uint32]*types.HostStats{0: {}},
-		WarmKeys:                    map[uint32]string{0: "warm-0"},
+		WarmKeyHistory:              signing.WarmKeyHistory{0: {{Addr: "warm-0", FromNonce: 1, GrantID: 1}}},
 	}
 	committed := map[uint64][]byte{
 		1: []byte("entry-one"),
@@ -52,7 +53,7 @@ func TestMarshalStateSnapshotWithCommitted_RoundTripFloor(t *testing.T) {
 		LatestNonce:                 42,
 		Inferences:                  map[uint64]*types.InferenceRecord{},
 		HostStats:                   map[uint32]*types.HostStats{0: {}},
-		WarmKeys:                    map[uint32]string{0: "warm-0"},
+		WarmKeyHistory:              signing.WarmKeyHistory{0: {{Addr: "warm-0", FromNonce: 1, GrantID: 1}}},
 	}
 	floor := &types.FloorIndexProto{
 		Truncated: true,

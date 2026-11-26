@@ -9,6 +9,7 @@ import (
 	"common/chainoracle/blocks/nmrpc"
 	"common/nodemanager/gen"
 	"devshard/chainoracle/params"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -39,14 +40,14 @@ func newHostEventRing() *hostEventRing {
 
 // AppendEscrowCreated records an escrow-created event and wakes waiters.
 func (r *hostEventRing) AppendEscrowCreated(p *gen.EscrowPayload) uint64 {
+	return r.append(&gen.HostEvent{Kind: gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED, Escrow: p})
+}
+
+func (r *hostEventRing) append(ev *gen.HostEvent) uint64 {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	ev := &gen.HostEvent{
-		Seq:            r.nextSeq,
-		Kind:           gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
-		ObservedAtUnix: time.Now().Unix(),
-		Escrow:         p,
-	}
+	ev.Seq = r.nextSeq
+	ev.ObservedAtUnix = time.Now().Unix()
 	r.nextSeq++
 	r.events = append(r.events, ev)
 	for ch := range r.waiters {
@@ -54,6 +55,27 @@ func (r *hostEventRing) AppendEscrowCreated(p *gen.EscrowPayload) uint64 {
 		delete(r.waiters, ch)
 	}
 	return ev.Seq
+}
+
+// publishWarmKeyLog exercises the same host-events path as production dapi.
+// Re-emitting older log entries is safe: grant ids are stable, and a replayed
+// grant never revives an entry whose end the consumer already recorded.
+func (s *Service) publishWarmKeyLog(ctx context.Context, granter string) error {
+	resp, err := s.chainClient.InferenceQueryClient().WarmKeyLog(ctx, &inferencetypes.QueryWarmKeyLogRequest{Granter: granter})
+	if err != nil {
+		return err
+	}
+	for _, entry := range resp.GetEntries() {
+		p := &gen.WarmKeyPayload{Granter: granter, Grantee: entry.Grantee, GrantId: entry.Id, Height: entry.GrantedAtHeight, ExpiresAtUnix: entry.ExpiresAtUnix}
+		kind := gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_GRANTED
+		if entry.RevokedAtHeight != 0 {
+			kind = gen.HostEventKind_HOST_EVENT_KIND_WARM_KEY_REVOKED
+			p.Height = entry.RevokedAtHeight
+			p.End = entry.End.String()
+		}
+		s.hostEvents.append(&gen.HostEvent{Kind: kind, WarmKey: p})
+	}
+	return nil
 }
 
 func (r *hostEventRing) subscribe() (<-chan struct{}, func()) {

@@ -401,9 +401,13 @@ func lookupValidateTarget(h hostSnap, escrowID string, inferenceID, epochID uint
 // in-memory mempool using exported APIs only (no modification to host.go).
 // The tx is delivered to the client in the next HostResponse.Mempool.
 func submitValidationToMempool(h *host.Host, inferenceID uint64, valid bool) error {
+	slot, slotErr := h.SigningSlot()
+	if slotErr != nil {
+		return slotErr
+	}
 	msg := &types.MsgValidation{
 		InferenceId:   inferenceID,
-		ValidatorSlot: h.PrimarySlot(),
+		ValidatorSlot: slot,
 		Valid:         valid,
 		EscrowId:      h.EscrowID(),
 	}

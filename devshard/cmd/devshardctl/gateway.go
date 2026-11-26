@@ -573,13 +573,11 @@ func validateGatewayHostRoutePrefix(routePrefix string) error {
 	return err
 }
 
-// buildReadOnlyRuntime rehydrates a transient, read-only runtime from local
-// storage without contacting the chain. It is used to serve debug/state
-// endpoints for devshards that are not resident in memory (inactive or
-// settled escrows). The runtime has no host clients and no redundancy: it can
-// answer read queries but must never route inferences. Callers own the
-// returned runtime and must close() it once the response is served.
-func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+// buildReadOnlyRuntime rehydrates a transient runtime from local storage for
+// debug/state queries of non-resident escrows. V7 warm-key verification may
+// read historical chain grants. It has no host clients or redundancy and must
+// never route inferences. Callers close it after serving the response.
+func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTracker, warmKeys bridge.WarmKeyGrantSource) (*devshardRuntime, error) {
 	keyHex := strings.TrimSpace(cfg.PrivateKeyHex)
 	if keyHex == "" && cfg.PrivateKeyEnv != "" {
 		keyHex = strings.TrimSpace(os.Getenv(cfg.PrivateKeyEnv))
@@ -600,6 +598,7 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		EscrowID:      cfg.ID,
 		StoragePath:   cfg.StoragePath,
 		HeaderTimes:   gatewayHeaderTimes(),
+		WarmKeys:      warmKeys,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: rehydrate local session: %w", cfg.ID, err)
@@ -652,14 +651,15 @@ func (g *Gateway) lazyRuntimeConfig(ctx context.Context, id string) (RuntimeConf
 }
 
 // hydrateReadOnlyRuntime builds a transient read-only runtime for a
-// non-resident devshard, serving from local storage only (no chain). Returns
+// non-resident devshard, using local storage and historical grant evidence. Returns
 // (nil, false, nil) when the devshard is unknown to the registry.
 func (g *Gateway) hydrateReadOnlyRuntime(ctx context.Context, id string) (*devshardRuntime, bool, error) {
 	cfg, ok, err := g.lazyRuntimeConfig(ctx, id)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
-	rt, err := buildReadOnlyRuntime(cfg, g.settings.DefaultModel, g.perf)
+	warmKeys, _ := g.chainBridge().(bridge.WarmKeyGrantSource)
+	rt, err := buildReadOnlyRuntime(cfg, g.settings.DefaultModel, g.perf, warmKeys)
 	if err != nil {
 		return nil, true, err
 	}

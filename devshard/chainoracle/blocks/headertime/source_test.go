@@ -17,6 +17,33 @@ type countingOracle struct {
 	calls   atomic.Int64
 }
 
+type movingTipOracle struct {
+	countingOracle
+	tip *blocks.Header
+}
+
+func (o *movingTipOracle) Latest(context.Context) (*blocks.Header, error) { return o.tip, nil }
+
+func TestSourceUsesLiveTipWithoutChangingHistoricalVerification(t *testing.T) {
+	at := time.Now()
+	history := &countingOracle{headers: map[int64]*blocks.Header{
+		10: blocks.HashOnlyHeader(10, at, "c", []byte{10}),
+	}}
+	live := &movingTipOracle{tip: blocks.HashOnlyHeader(11, at, "c", []byte{11})}
+	s := New(history, WithLatestOracle(live))
+	h, err := s.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(11), h.Height)
+	live.tip = blocks.HashOnlyHeader(12, at, "c", []byte{12})
+	h, err = s.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(12), h.Height)
+	_, err = s.HeaderTimeMs(10, []byte{10})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), history.calls.Load())
+	require.Zero(t, live.calls.Load(), "history must still come from the verifying oracle")
+}
+
 func (o *countingOracle) Latest(context.Context) (*blocks.Header, error) {
 	return nil, blocks.ErrHeaderNotFound
 }

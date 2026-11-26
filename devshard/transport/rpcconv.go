@@ -322,8 +322,9 @@ func ChallengeReceiptResponseToProto(r *ChallengeReceiptResponse) *rpcpb.Challen
 		return nil
 	}
 	return &rpcpb.ChallengeReceiptResponse{
-		Receipt: r.Receipt,
-		Mempool: r.Mempool,
+		Receipt:         r.Receipt,
+		Mempool:         r.Mempool,
+		EvidencePending: r.EvidencePending,
 	}
 }
 
@@ -333,8 +334,9 @@ func ChallengeReceiptResponseFromProto(r *rpcpb.ChallengeReceiptResponse) *Chall
 		return nil
 	}
 	return &ChallengeReceiptResponse{
-		Receipt: r.GetReceipt(),
-		Mempool: r.GetMempool(),
+		Receipt:         r.GetReceipt(),
+		Mempool:         r.GetMempool(),
+		EvidencePending: r.GetEvidencePending(),
 	}
 }
 

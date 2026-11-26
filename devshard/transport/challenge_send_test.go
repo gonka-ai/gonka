@@ -15,6 +15,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
 
 	"common/httpguard"
 	"devshard/host"
@@ -248,4 +249,32 @@ func TestChallengeCatchUpOverGRPC(t *testing.T) {
 	require.Len(t, req.Diffs, 1)
 	require.Equal(t, transport.DiffWireTxs(1, stored), req.Diffs[0].Txs)
 	requireGRPCContentType(t, obs.requestContentType(rpcpbconnect.SessionServiceChallengeReceiptProcedure))
+}
+
+func TestChallengeClientsPreserveEvidenceAlongsidePending(t *testing.T) {
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 7, ResponseHash: []byte("completed")}}}
+	encoded, err := proto.Marshal(tx)
+	require.NoError(t, err)
+	for _, wires := range []bool{false, true} {
+		t.Run(map[bool]string{false: "decoded", true: "wires"}[wires], func(t *testing.T) {
+			var calls atomic.Int32
+			rpc := newChallengeSendClient(t, func(transport.ChallengeReceiptRequest) (*transport.ChallengeReceiptResponse, error) {
+				calls.Add(1)
+				return &transport.ChallengeReceiptResponse{Receipt: []byte("receipt"), Mempool: [][]byte{encoded}, EvidencePending: true}, nil
+			})
+			var receipt []byte
+			var pool []*types.DevshardTx
+			var err error
+			if wires {
+				receipt, pool, err = rpc.ChallengeReceiptWires(context.Background(), 7, nil, nil, nil)
+			} else {
+				receipt, pool, err = rpc.ChallengeReceipt(context.Background(), 7, nil, nil)
+			}
+			require.ErrorIs(t, err, types.ErrHeaderPending)
+			require.Equal(t, []byte("receipt"), receipt)
+			require.Len(t, pool, 1)
+			require.True(t, proto.Equal(tx, pool[0]))
+			require.Equal(t, int32(1), calls.Load(), "logical pending must not retry or discard a successful response body")
+		})
+	}
 }

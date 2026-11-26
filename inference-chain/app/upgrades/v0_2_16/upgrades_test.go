@@ -377,6 +377,9 @@ func TestMigrateDevshardApprovedVersions(t *testing.T) {
 	require.Len(t, got, 2)
 	require.Equal(t, "v1", got[0].Name)
 	require.Equal(t, "v2", got[1].Name)
+	_, found, err := k.GetVersionPolicy(ctx, "v1")
+	require.NoError(t, err)
+	require.False(t, found, "v0.2.16 already ran; policy rows are stamped in v0.2.18")
 
 	after, err := k.GetParams(ctx)
 	require.NoError(t, err)

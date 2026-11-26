@@ -21,7 +21,7 @@ type EscrowCreatedRequest struct {
 	Amount     string `json:"amount,omitempty"`
 }
 
-func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(context.Context) error, versions *versionStore, hostEvents *hostEventRing) {
+func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(context.Context) error, versions *versionStore, hostEvents *hostEventRing, publishWarmKeys func(context.Context, string) error) {
 	g.POST("/testenv/params", func(c echo.Context) error {
 		if admin == nil || admin.BaseURL() == "" {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "mock-chain testenv admin not configured")
@@ -81,6 +81,11 @@ func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(cont
 		}
 		if err := admin.PatchGrantees(c.Request().Context(), req); err != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+		}
+		if publishWarmKeys != nil {
+			if err := publishWarmKeys(c.Request().Context(), req.GranterAddress); err != nil {
+				return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+			}
 		}
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})

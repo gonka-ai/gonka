@@ -18,6 +18,7 @@ func perHostEnvConfig(t *testing.T) *config.File {
 	t.Helper()
 	cfg := defaultConfig()
 	cfg.Hosts[2].Env = map[string]string{
+		"ACCOUNT_PUBKEY":                       "cold-account-public-key",
 		"DEVSHARD_RPC_MSGS_PER_MIN":            "3000",
 		"DEVSHARD_TESTENV_EXECUTOR_FAULT_DIR":  "/var/run/faults",
 		"DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA": "-2",
@@ -73,6 +74,8 @@ func TestWriteCompose_PerHostEnvGolden(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(want), string(got))
 	require.Equal(t, "${DEVSHARD_RPC_MSGS_PER_MIN:-}", envs["versiond-0"]["DEVSHARD_RPC_MSGS_PER_MIN"])
+	require.Contains(t, envs["versiond-0"], "ACCOUNT_PUBKEY")
+	require.Equal(t, "", envs["versiond-0"]["ACCOUNT_PUBKEY"])
 	require.NotContains(t, envs["versiond-0"], "DEVSHARD_TESTENV_EXECUTOR_FAULT_DIR")
 }
 

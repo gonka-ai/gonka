@@ -643,6 +643,22 @@ func (s *SQLite) AppendDiffBatch(ctx context.Context, escrowID string, recs []ty
 		return fmt.Errorf("update latest_nonce: %w", err)
 	}
 
+	first, last, err := hostAdmissionRange(recs)
+	if err != nil {
+		return err
+	}
+	if first > 0 {
+		result, err := tx.Exec(`UPDATE sessions SET host_admission_nonce = MAX(host_admission_nonce, ?) WHERE escrow_id = ? AND host_admission_nonce >= ?`, last, escrowID, first-1)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n != 1 {
+			return ErrHostAdmissionGap
+		}
+	}
+
 	return tx.Commit()
 }
 
@@ -652,15 +668,9 @@ func appendDiffSQLiteTx(tx *sql.Tx, escrowID string, rec types.DiffRecord) error
 		return err
 	}
 
+	// warm_keys_json is kept for the schema only: since v7 the warm-key
+	// history is consensus state carried by the diffs themselves.
 	var warmJSON *string
-	if len(rec.WarmKeyDelta) > 0 {
-		b, err := json.Marshal(rec.WarmKeyDelta)
-		if err != nil {
-			return fmt.Errorf("marshal warm keys: %w", err)
-		}
-		str := string(b)
-		warmJSON = &str
-	}
 
 	res, err := tx.Exec(
 		`INSERT INTO diffs (escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
@@ -748,7 +758,7 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	}
 
 	row := p.readDB.QueryRow(
-		`SELECT escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce, last_finalized, status
+		`SELECT escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce, last_finalized, status, host_admission_nonce
 		 FROM sessions WHERE escrow_id = ?`,
 		escrowID,
 	)
@@ -758,7 +768,7 @@ func (s *SQLite) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	var configJSON, groupJSON string
 	scanErr := row.Scan(
 		&meta.EscrowID, &version, &meta.CreatorAddr, &configJSON, &groupJSON,
-		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status,
+		&meta.InitialBalance, &meta.LatestNonce, &meta.LastFinalized, &meta.Status, &meta.HostAdmissionNonce,
 	)
 	if scanErr != nil {
 		if scanErr == sql.ErrNoRows {
@@ -799,7 +809,7 @@ func (s *SQLite) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.D
 	defer tx.Rollback()
 
 	rows, err := tx.Query(
-		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at
+		`SELECT nonce, txs_proto, user_sig, post_state_root, state_hash, created_at
 		 FROM diffs
 		 WHERE escrow_id = ? AND nonce >= ? AND nonce <= ?
 		 ORDER BY nonce`,

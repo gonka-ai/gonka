@@ -17,6 +17,7 @@ func TestDefaultDevshardEscrowParams_FeeDefaults(t *testing.T) {
 	require.Equal(t, int64(32*60), p.ExecutionTimeout)
 	require.Equal(t, types.DefaultDevshardValidationRate, p.ValidationRate)
 	require.Equal(t, types.DefaultDevshardVoteThresholdFactor, p.VoteThresholdFactor)
+	require.False(t, p.ApplySampledPassCount)
 	require.NoError(t, p.Validate())
 }
 
@@ -28,6 +29,7 @@ func TestDevshardEscrowParams_ProtoRoundTrip_Phase4Fields(t *testing.T) {
 	orig.VoteThresholdFactor = 55
 	orig.CreateDevshardFee = 11_111
 	orig.FeePerNonce = 2_222
+	orig.ApplySampledPassCount = true
 
 	bz, err := proto.Marshal(orig)
 	require.NoError(t, err)

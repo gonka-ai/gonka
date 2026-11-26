@@ -251,7 +251,9 @@ func (s *Server) ServeInference(ctx context.Context, call InferenceCall) error {
 	_ = writeSSEEvent(w, metaWrapper)
 
 	if s.gossip != nil && resp.StateSig != nil {
-		go s.gossip.AfterRequest(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig)
+		if slot, slotErr := s.host.StateSigningSlot(resp.Nonce); slotErr == nil {
+			go s.gossip.AfterRequestFrom(context.Background(), resp.Nonce, resp.StateHash, resp.StateSig, slot)
+		}
 	}
 	if s.gossip != nil && resp.StateSig == nil && len(resp.Mempool) > 0 {
 		go s.gossip.BroadcastTxs(context.Background(), resp.Mempool)
