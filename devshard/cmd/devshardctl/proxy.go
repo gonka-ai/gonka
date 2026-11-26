@@ -247,6 +247,14 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
+	// The gateway routes on the trimmed name but forwards the body as sent;
+	// an unmatched name is signed into MsgStartInference and the executor misses.
+	if p.model != "" && model != p.model {
+		err := &UnsupportedModelError{Model: model, Supported: []string{p.model}}
+		logRequestStage(ctx, "proxy_model_rejected", "escrow", p.escrowID, "model", model, "error", err)
+		writeGatewayJSONError(w, gatewayStatusCodeForError(err), err.Error())
+		return
+	}
 	var logprobsOptimizationOverride *bool
 	if p.logprobsOptimizationOverride != nil {
 		logprobsOptimizationOverride = p.logprobsOptimizationOverride()
