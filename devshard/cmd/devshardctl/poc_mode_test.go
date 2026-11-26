@@ -53,20 +53,34 @@ func applyRedundancySettingsForTest(t *testing.T, settings RedundancySettings) {
 	t.Cleanup(func() { restoreRedundancyTimingSettings(prev) })
 }
 
-func captureRedundancyTimingSettings() RedundancySettings {
-	return RedundancySettings{
-		ReceiptTimeoutMS:              int64(ReceiptTimeout / time.Millisecond),
-		FirstTokenTimeoutFloorMS:      int64(FirstTokenTimeoutCap / time.Millisecond),
-		PerInputTokenFirstTokenLagMS:  int64(PerInputTokenFirstTokenLag / time.Millisecond),
-		InterChunkStallTimeoutMS:      int64(InterChunkStallTimeout / time.Millisecond),
-		StreamingAttemptHardTimeoutMS: int64(StreamingAttemptHardTimeout / time.Millisecond),
-		PerInputTokenResponseLagMS:    int64(PerInputTokenResponseLag / time.Millisecond),
-		SecondaryWaitAfterWinnerMS:    int64(SecondaryWaitAfterWinner / time.Millisecond),
+type redundancyTimingSettings struct {
+	settings       RedundancySettings
+	stallLogThresh time.Duration
+}
+
+// captureRedundancyTimingSettings snapshots every redundancy timing knob a test
+// might touch. InterChunkStallLogThreshold is included even though
+// ApplyRedundancySettings does not manage it: the stall helpers set it directly,
+// so leaving it out made their t.Cleanup a no-op and leaked the value into later
+// tests -- which matters because other tests derive lastChunkAt from it.
+func captureRedundancyTimingSettings() redundancyTimingSettings {
+	return redundancyTimingSettings{
+		settings: RedundancySettings{
+			ReceiptTimeoutMS:              int64(ReceiptTimeout / time.Millisecond),
+			FirstTokenTimeoutFloorMS:      int64(FirstTokenTimeoutCap / time.Millisecond),
+			PerInputTokenFirstTokenLagMS:  int64(PerInputTokenFirstTokenLag / time.Millisecond),
+			InterChunkStallTimeoutMS:      int64(InterChunkStallTimeout / time.Millisecond),
+			StreamingAttemptHardTimeoutMS: int64(StreamingAttemptHardTimeout / time.Millisecond),
+			PerInputTokenResponseLagMS:    int64(PerInputTokenResponseLag / time.Millisecond),
+			SecondaryWaitAfterWinnerMS:    int64(SecondaryWaitAfterWinner / time.Millisecond),
+		},
+		stallLogThresh: InterChunkStallLogThreshold,
 	}
 }
 
-func restoreRedundancyTimingSettings(settings RedundancySettings) {
-	ApplyRedundancySettings(settings)
+func restoreRedundancyTimingSettings(prev redundancyTimingSettings) {
+	InterChunkStallLogThreshold = prev.stallLogThresh
+	ApplyRedundancySettings(prev.settings)
 }
 
 func TestShouldUseProbeForParticipantUsesModelPreservedSet(t *testing.T) {
