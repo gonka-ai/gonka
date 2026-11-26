@@ -9,8 +9,14 @@ import "math"
 // i+3*stride, stride = 256 * blocks. vLLM samples argmax p_i / q_i over the
 // kept tokens, so the value is a public function of seed, step and token, and a
 // validator recomputes it here. torch's last step is a fast-math logarithm, so
-// the values differ from its own in the last bits, and the launch needs a GPU
-// that holds all blocks at once, which every datacenter GPU does.
+// the values differ from its own in the last bits.
+//
+// This is the layout of a GPU that holds all blocks of the launch at once. A
+// card with fewer resident blocks (an H20 holds 624 of the 782 that
+// MiniMax-M2.7 needs) writes the ids past its own stride from other words, so
+// its honest answers are up to about a percent of positions further off the
+// winner. The thresholds carry that with the other differences between nodes;
+// the validator keeps the one layout.
 
 const (
 	philoxM0 = 0xD2511F53
