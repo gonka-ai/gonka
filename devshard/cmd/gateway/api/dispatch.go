@@ -69,7 +69,11 @@ func (t escrowTarget) CatchUp(ctx context.Context, nonce scheduler.Prepared, onF
 		return err
 	}
 	prepared.OnCatchUpFault(onFault)
-	return t.session.CatchUpBeforeSend(ctx, prepared)
+	err = t.session.CatchUpBeforeSend(ctx, prepared)
+	if errors.Is(err, user.ErrLocalCatchUpRead) {
+		return fmt.Errorf("%w: %w", engine.ErrLocalCatchUpRead, err)
+	}
+	return err
 }
 
 func preparedInference(nonce scheduler.Prepared) (*user.PreparedInference, error) {

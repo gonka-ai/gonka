@@ -45,9 +45,7 @@ func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64
 // the caller's goroutine, when the chunked catch-up it waits on finds the host
 // unreachable. See awaitHostCatchUp.
 func (s *Session) catchUpForSendWith(ctx context.Context, hostIdx int, target uint64, onFault func()) ([]types.Diff, error) {
-	s.mu.Lock()
-	diffs, ok, err := s.inlineCatchUpLocked(hostIdx, target)
-	s.mu.Unlock()
+	diffs, ok, err := s.inlineCatchUp(hostIdx, target)
 	if err != nil {
 		return nil, err
 	}
@@ -59,15 +57,16 @@ func (s *Session) catchUpForSendWith(ctx context.Context, hostIdx int, target ui
 		return nil, err
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	diffs, ok, err = s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err = s.inlineCatchUp(hostIdx, target)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
+		s.mu.Lock()
+		cursor := s.hostSyncNonce[hostIdx]
+		s.mu.Unlock()
 		return nil, fmt.Errorf("host %d is still more than %d diffs behind nonce %d after catch-up (cursor %d)",
-			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
+			hostIdx, catchUpChunkSize, target, cursor)
 	}
 	return diffs, nil
 }

@@ -810,6 +810,28 @@ func TestSendReportsAnUnavailableLocalRootAsTheGatewaysOwnFault(t *testing.T) {
 }
 
 // Test flow:
+//  1. Catch up a prepared nonce through a `recordingSession` whose catch-up fails with `user.ErrLocalCatchUpRead`.
+//  2. Catch up again with a catch-up failing on a transport error.
+//  3. Assert only the first is reported as `engine.ErrLocalCatchUpRead`, keeping the session's error.
+func TestCatchUpReportsALocalStoreReadAsTheGatewaysOwnFault(t *testing.T) {
+	t.Parallel()
+	session, _ := newLiveSession(t)
+	prepared := prepareNonce(t, session)
+	localRead := &recordingSession{catchUpErr: fmt.Errorf("%w: page 3", user.ErrLocalCatchUpRead)}
+	transportFailure := &recordingSession{catchUpErr: errors.New("catch-up chunk: connection refused")}
+
+	localErr := escrowTarget{session: localRead}.CatchUp(context.Background(), prepared, nil)
+	transportErr := escrowTarget{session: transportFailure}.CatchUp(context.Background(), prepared, nil)
+
+	if !errors.Is(localErr, engine.ErrLocalCatchUpRead) || !errors.Is(localErr, user.ErrLocalCatchUpRead) {
+		t.Fatalf("CatchUp = %v, want engine.ErrLocalCatchUpRead wrapping user.ErrLocalCatchUpRead", localErr)
+	}
+	if errors.Is(transportErr, engine.ErrLocalCatchUpRead) {
+		t.Fatalf("CatchUp = %v, want a transport failure left unmarked", transportErr)
+	}
+}
+
+// Test flow:
 //  1. Send a prepared nonce through a `recordingSession` whose reply carries a Finish for another nonce and one for the sent nonce.
 //  2. Read the response's `FinishTx`, then send again with a reply carrying only the other nonce's Finish.
 //  3. Assert the first is the sent nonce's Finish marshalled from the reply's mempool, and the second is nil.

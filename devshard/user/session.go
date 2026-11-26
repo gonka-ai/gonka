@@ -62,6 +62,8 @@ var ErrHostNonceAhead = errors.New("host nonce ahead of session")
 // post-state root for a nonce. It says nothing about the host's state.
 var ErrLocalRootUnavailable = errors.New("local post-state root unavailable")
 
+var ErrLocalCatchUpRead = errors.New("local catch-up diff read failed")
+
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
 // proxy may have open against the same verifier host. CollectTimeoutVotes fans
 // out one VerifyTimeout per verifier per timed-out nonce; the cap is
@@ -757,22 +759,38 @@ func (s *Session) diffsForHost(hostIdx int) ([]types.Diff, error) {
 // inlineCatchUpLocked returns the catch-up a request carrying target attaches
 // for hostIdx: at most one catchUpChunkSize chunk from the host's cursor,
 // always reaching target. ok is false when the host is further behind than
-// one chunk; catchUpForSend then teaches it the earlier nonces first, outside
-// the lock. A cursor already past target, moved by another request's catch-up,
-// gets target's diff alone: the host signs a receipt only for a nonce its
-// request carries, and has applied the rest. Caller must hold s.mu.
-func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) (diffs []types.Diff, ok bool, err error) {
-	if s.hostSyncNonce[hostIdx] >= target {
-		if diffs, err = s.diffRangeLocked(target, target); err != nil {
-			return nil, false, err
-		}
-		return diffs, true, nil
+// one chunk, or when the chunk starts below the retained suffix and has to be
+// read from the store; catchUpForSend then builds it outside the lock. A
+// cursor already past target, moved by another request's catch-up, gets
+// target's diff alone: the host signs a receipt only for a nonce its request
+// carries, and has applied the rest. Caller must hold s.mu.
+func (s *Session) inlineCatchUpLocked(hostIdx int, target uint64) ([]types.Diff, bool) {
+	from, to, ok := s.inlineCatchUpRangeLocked(hostIdx, target)
+	if !ok || (s.store != nil && from < s.firstRetainedNonceLocked()) {
+		return nil, false
 	}
-	from := s.hostSyncNonce[hostIdx] + 1
+	return s.appendRetainedLocked(nil, from, to), true
+}
+
+func (s *Session) inlineCatchUpRangeLocked(hostIdx int, target uint64) (from, to uint64, ok bool) {
+	if s.hostSyncNonce[hostIdx] >= target {
+		return target, target, true
+	}
+	from = s.hostSyncNonce[hostIdx] + 1
 	if from+catchUpChunkSize <= target {
+		return 0, 0, false
+	}
+	return from, min(s.nonce, from+catchUpChunkSize-1), true
+}
+
+func (s *Session) inlineCatchUp(hostIdx int, target uint64) ([]types.Diff, bool, error) {
+	s.mu.Lock()
+	from, to, ok := s.inlineCatchUpRangeLocked(hostIdx, target)
+	s.mu.Unlock()
+	if !ok {
 		return nil, false, nil
 	}
-	diffs, err = s.diffRangeLocked(from, min(s.nonce, from+catchUpChunkSize-1))
+	diffs, err := s.diffRange(from, to)
 	if err != nil {
 		return nil, false, err
 	}
@@ -844,7 +862,7 @@ func (s *Session) diffRange(from, to uint64) ([]types.Diff, error) {
 	}
 	stored, err := s.storedDiffs(from, min(to, first-1))
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%w: %w", ErrLocalCatchUpRead, err)
 	}
 	return append(stored, retained...), nil
 }
@@ -1311,8 +1329,9 @@ type PreparedInference struct {
 	diff    types.Diff
 	hostIdx int
 	catchUp []types.Diff
-	// farBehind marks a host more than one catch-up chunk behind. SendOnly
-	// builds its catch-up with catchUpForSend instead of using catchUp.
+	// farBehind marks a host more than one catch-up chunk behind, or one whose
+	// chunk is read from the store. SendOnly builds its catch-up with
+	// catchUpForSend instead of using catchUp.
 	farBehind bool
 	caughtUp  bool
 	params    InferenceParams
@@ -1965,10 +1984,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	s.nonceStates[nonce] = &nonceOutcome{}
 
-	catchUp, inline, err := s.inlineCatchUpLocked(hostIdx, nonce)
-	if err != nil {
-		return nil, fmt.Errorf("read catch-up for host %d nonce %d: %w: %w", hostIdx, nonce, ErrPreparedAfterCommit, err)
-	}
+	catchUp, inline := s.inlineCatchUpLocked(hostIdx, nonce)
 	if inline {
 		// TODO: remove this when we are sure that there is no bug in CatchUp
 		s.validateCatchUp(catchUp, nonce, hostIdx)
@@ -2398,9 +2414,7 @@ func (s *Session) drainOversizedBacklog(ctx context.Context, hostIdx int, catchU
 		return catchUp
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if drained, ok, err := s.inlineCatchUpLocked(hostIdx, targetNonce); err == nil && ok {
+	if drained, ok, err := s.inlineCatchUp(hostIdx, targetNonce); err == nil && ok {
 		return drained
 	}
 	return catchUp
