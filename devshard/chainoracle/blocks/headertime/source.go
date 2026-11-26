@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
+	"common/chainoracle/blocks/tipcache"
 	"devshard/types"
 )
 
@@ -33,6 +35,8 @@ type entry struct {
 
 type Source struct {
 	oracle       blocks.BlockOracle
+	latestOracle blocks.BlockOracle
+	proofHeaders *tipcache.Cache
 	fetchTimeout time.Duration
 	missWait     time.Duration
 	capacity     int
@@ -44,6 +48,14 @@ type Source struct {
 }
 
 type Option func(*Source)
+
+// WithLatestOracle separates the live tip feed from historical verification.
+// A history-only observer may cache its first Latest forever when it does not
+// receive Observe calls; use the process's existing Comet/failover feed instead.
+// Latest remains only a hint: the carried light proof authenticates that tip.
+func WithLatestOracle(oracle blocks.BlockOracle) Option {
+	return func(s *Source) { s.latestOracle = oracle }
+}
 
 func WithFetchTimeout(d time.Duration) Option {
 	return func(s *Source) { s.fetchTimeout = d }
@@ -60,6 +72,7 @@ func WithCapacity(n int) Option {
 func New(oracle blocks.BlockOracle, opts ...Option) *Source {
 	s := &Source{
 		oracle:       oracle,
+		proofHeaders: tipcache.New(0),
 		fetchTimeout: DefaultFetchTimeout,
 		missWait:     DefaultMissWait,
 		capacity:     DefaultCapacity,
@@ -76,9 +89,17 @@ func (s *Source) Observe(h *blocks.Header) {
 	if s == nil || h == nil || h.Height <= 0 || h.Time.IsZero() || len(h.BlockHash) == 0 {
 		return
 	}
+	s.ObserveProofHeader(h)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.putLocked(uint64(h.Height), h.BlockHash, h.Time.UnixMilli())
+}
+
+// ObserveProofHeader records a header from the configured local Comet feed.
+func (s *Source) ObserveProofHeader(h *blocks.Header) {
+	if s != nil {
+		s.proofHeaders.Remember(h)
+	}
 }
 
 func (s *Source) HeaderTimeMs(height uint64, hash []byte) (int64, error) {
@@ -192,4 +213,78 @@ func (s *Source) putLocked(height uint64, hash []byte, ms int64) {
 		}
 		s.order = append([]uint64(nil), s.order[drop:]...)
 	}
+}
+
+func (s *Source) liveTipOracle() blocks.BlockOracle {
+	if s == nil {
+		return nil
+	}
+	if s.latestOracle != nil {
+		return s.latestOracle
+	}
+	return s.oracle
+}
+
+// Latest returns the live tip hint for a carried proof.
+func (s *Source) Latest(ctx context.Context) (*blocks.Header, error) {
+	h, _, err := s.LatestForProofObservation(ctx)
+	return h, err
+}
+
+// LatestForProofObservation preserves the live tip's original validity cutoff.
+func (s *Source) LatestForProofObservation(ctx context.Context) (*blocks.Header, time.Time, error) {
+	oracle := s.liveTipOracle()
+	if timed, ok := oracle.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
+	}); ok {
+		return timed.LatestForProofObservation(ctx)
+	}
+	if proofTip, ok := oracle.(interface {
+		LatestForProof(context.Context) (*blocks.Header, error)
+	}); ok {
+		h, err := proofTip.LatestForProof(ctx)
+		return h, time.Time{}, err
+	}
+	if oracle == nil {
+		return nil, time.Time{}, blocks.ErrHeaderNotFound
+	}
+	h, err := oracle.Latest(ctx)
+	return h, time.Time{}, err
+}
+
+func (s *Source) RecentProofTipHeight() int64 {
+	if oracle, ok := s.liveTipOracle().(interface{ RecentProofTipHeight() int64 }); ok {
+		return oracle.RecentProofTipHeight()
+	}
+	return 0
+}
+
+func (s *Source) CanonicalHeaderForProof(ctx context.Context, height int64) (*blocks.Header, error) {
+	if s == nil || height <= 0 {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	if h, err := s.proofHeaders.At(ctx, height); err == nil {
+		return h, nil
+	}
+	if oracle, ok := s.oracle.(interface {
+		CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error)
+	}); ok {
+		h, err := oracle.CanonicalHeaderForProof(ctx, height)
+		if err == nil {
+			s.proofHeaders.Remember(h)
+		}
+		return h, err
+	}
+	return nil, blocks.ErrProveNotImplemented
+}
+
+func (s *Source) LightBlockAt(ctx context.Context, height int64) ([]byte, error) {
+	if s == nil {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	source, ok := s.oracle.(lightproof.Source)
+	if !ok {
+		return nil, blocks.ErrProveNotImplemented
+	}
+	return source.LightBlockAt(ctx, height)
 }

@@ -1,6 +1,8 @@
 package store
 
 import (
+	"context"
+	mockoracle "devshard/chainoracle/blocks/observer"
 	"sort"
 	"sync"
 
@@ -23,8 +25,10 @@ type EpochGroupKey struct {
 type Store struct {
 	mu sync.RWMutex
 
-	ChainID     string
-	BlockHeight int64
+	MainnetProofs bool
+	mainnet       *mockoracle.Mock
+	ChainID       string
+	BlockHeight   int64
 	// ParamsBlockHeight is the chain height at which DevshardEscrowParams were last
 	// published (mock-chain analogue of dapi params_block_height).
 	ParamsBlockHeight int64
@@ -88,6 +92,8 @@ func (s *Store) Replace(other *Store) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.MainnetProofs = other.MainnetProofs
+	s.mainnet = other.mainnet
 	s.ChainID = other.ChainID
 	s.BlockHeight = other.BlockHeight
 	s.ParamsBlockHeight = other.ParamsBlockHeight
@@ -138,6 +144,7 @@ func cloneEscrowMap(in map[uint64]*inferencetypes.DevshardEscrow) map[uint64]*in
 			continue
 		}
 		c := *v
+		c.MainnetAnchorHash = append([]byte(nil), v.MainnetAnchorHash...)
 		if v.Slots != nil {
 			c.Slots = append([]string(nil), v.Slots...)
 		}
@@ -243,6 +250,7 @@ func (s *Store) GetEscrow(id uint64) *inferencetypes.DevshardEscrow {
 		return nil
 	}
 	c := *e
+	c.MainnetAnchorHash = append([]byte(nil), e.MainnetAnchorHash...)
 	if e.Slots != nil {
 		c.Slots = append([]string(nil), e.Slots...)
 	}
@@ -282,6 +290,14 @@ func (s *Store) PutEscrow(e *inferencetypes.DevshardEscrow) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	c := *e
+	if s.mainnet != nil {
+		anchor, err := s.mainnetAtLocked(context.Background(), s.BlockHeight)
+		if err != nil {
+			panic(err)
+		}
+		c.MainnetAnchorHeight = anchor.Height
+		c.MainnetAnchorHash = append([]byte(nil), anchor.BlockHash...)
+	}
 	if e.Slots != nil {
 		c.Slots = append([]string(nil), e.Slots...)
 	}

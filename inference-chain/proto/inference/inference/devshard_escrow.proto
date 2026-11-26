@@ -23,6 +23,10 @@ message DevshardEscrow {
   uint32 vote_threshold_factor = 16;
   int64 refusal_timeout = 17;
   int64 execution_timeout = 18;
+  // 19 is allocated to the v7 height-sync timeout clock change.
+  int64 mainnet_anchor_height = 20;
+  bytes mainnet_anchor_hash = 21; // consensus block hash at escrow creation
+
 }
 
 message DevshardHostEpochStats {

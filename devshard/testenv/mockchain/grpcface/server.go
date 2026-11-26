@@ -1,6 +1,7 @@
 package grpcface
 
 import (
+	"common/nodemanager/gen"
 	"context"
 	"fmt"
 	"net"
@@ -40,6 +41,7 @@ func Register(srv *grpc.Server, deps Deps) {
 	if deps.Store == nil {
 		panic("mockchain grpc: nil store")
 	}
+	gen.RegisterNodeManagerServer(srv, mainnetServer{store: deps.Store})
 	inferencetypes.RegisterQueryServer(srv, NewInferenceServer(deps.Store))
 	cmtservice.RegisterServiceServer(srv, NewCometServer(deps.Store))
 	if deps.RPC != nil {

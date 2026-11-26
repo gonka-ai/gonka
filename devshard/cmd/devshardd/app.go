@@ -355,7 +355,7 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
-	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient()); err != nil {
+	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client, mlClient.NodeManagerClient(), cfg.Node.ChainRpcUrl); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)
 	}
 	closers.Add(manager.CloseHeightSync)

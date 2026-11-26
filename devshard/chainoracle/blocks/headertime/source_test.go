@@ -17,6 +17,33 @@ type countingOracle struct {
 	calls   atomic.Int64
 }
 
+type movingTipOracle struct {
+	countingOracle
+	tip *blocks.Header
+}
+
+func (o *movingTipOracle) Latest(context.Context) (*blocks.Header, error) { return o.tip, nil }
+
+func TestSourceUsesLiveTipWithoutChangingHistoricalVerification(t *testing.T) {
+	at := time.Now()
+	history := &countingOracle{headers: map[int64]*blocks.Header{
+		10: blocks.HashOnlyHeader(10, at, "c", []byte{10}),
+	}}
+	live := &movingTipOracle{tip: blocks.HashOnlyHeader(11, at, "c", []byte{11})}
+	s := New(history, WithLatestOracle(live))
+	h, err := s.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(11), h.Height)
+	live.tip = blocks.HashOnlyHeader(12, at, "c", []byte{12})
+	h, err = s.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(12), h.Height)
+	_, err = s.HeaderTimeMs(10, []byte{10})
+	require.NoError(t, err)
+	require.Equal(t, int64(1), history.calls.Load())
+	require.Zero(t, live.calls.Load(), "history must still come from the verifying oracle")
+}
+
 func (o *countingOracle) Latest(context.Context) (*blocks.Header, error) {
 	return nil, blocks.ErrHeaderNotFound
 }
@@ -117,4 +144,32 @@ func TestSourceDoesNotHoldTheCallerForASlowLookup(t *testing.T) {
 		return err == nil && ms == at.UnixMilli()
 	}, 2*time.Second, 10*time.Millisecond, "the lookup keeps running and fills the cache")
 	require.Equal(t, int64(1), o.calls.Load(), "concurrent misses share one fetch")
+}
+
+type canonicalCountingOracle struct {
+	*countingOracle
+	canonical *blocks.Header
+}
+
+func (o canonicalCountingOracle) CanonicalHeaderForProof(context.Context, int64) (*blocks.Header, error) {
+	o.calls.Add(1)
+	return o.canonical, nil
+}
+
+func TestCanonicalProofLookupUsesAndPopulatesHeaderCache(t *testing.T) {
+	at := time.Now().UTC()
+	first := blocks.HashOnlyHeader(100, at, "gonka", []byte{100})
+	second := blocks.HashOnlyHeader(101, at.Add(time.Second), "gonka", []byte{101})
+	wrong := blocks.HashOnlyHeader(101, second.Time, "gonka", []byte{7})
+	o := canonicalCountingOracle{&countingOracle{headers: map[int64]*blocks.Header{101: wrong}}, second}
+	s := New(o)
+	s.Observe(first)
+	_, err := s.HeaderTimeMs(101, second.BlockHash)
+	require.ErrorIs(t, err, types.ErrHeaderMismatch)
+	for _, h := range []*blocks.Header{first, second, second} {
+		got, err := s.CanonicalHeaderForProof(t.Context(), h.Height)
+		require.NoError(t, err)
+		require.Equal(t, h.BlockHash, got.BlockHash)
+	}
+	require.Equal(t, int64(2), o.calls.Load(), "one floor lookup and one independent canonical lookup")
 }

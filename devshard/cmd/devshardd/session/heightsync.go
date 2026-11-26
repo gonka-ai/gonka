@@ -11,6 +11,7 @@ import (
 	"common/chain"
 	"common/chainoracle/blocks"
 	"common/chainoracle/blocks/nmclient"
+	"common/chainoracle/blocks/observer"
 	"common/logging"
 	"common/nodemanager/gen"
 	"devshard/chainoracle/blocks/direct"
@@ -30,8 +31,8 @@ const (
 	envHeightSyncProbe = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
 )
 
-// SetHeightSyncFromEnv wires the height-sync oracle when a NodeManager
-// client or a chain client is available. No-op only when neither exists.
+// SetHeightSyncFromEnv wires the height-sync oracle from the available
+// NodeManager, chain query, and Comet RPC endpoints.
 // Call before RecoverSessions so recovered sessions pick up WithHeightSync
 // / WithChainOracle.
 //
@@ -42,7 +43,7 @@ const (
 // the cached window, then GetBlockHeader / GetBlockByHeight for heights
 // inside AtLookback of the known tip (same nm skip as Latest). A miss
 // returns a dummy header so L6 does not mark.
-func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *chain.Client, nm gen.NodeManagerClient) error {
+func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *chain.Client, nm gen.NodeManagerClient, cometRPC string) error {
 	if m == nil {
 		return nil
 	}
@@ -71,12 +72,22 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 	if chainClient != nil {
 		chainOracle = direct.NewFromChain(chainClient)
 	}
-	if nmOracle == nil && chainOracle == nil {
+	var options []failover.Option
+	if cometRPC != "" {
+		// LightBlockAt verifies the commit on this observer. The state machine
+		// authenticates the returned evidence against the escrow checkpoint.
+		comet, err := observer.NewTendermint(observer.TendermintConfig{RPCURL: cometRPC})
+		if err != nil {
+			return fmt.Errorf("chainoracle Comet RPC: %w", err)
+		}
+		options = append(options, failover.WithDirectLightBlocks(comet))
+	}
+	if nmOracle == nil && chainOracle == nil && len(options) == 0 {
 		return nil
 	}
 
 	cache := tipcache.New(failover.CometMaxAge)
-	var oracle blocks.BlockOracle = failover.New(cache, nmOracle, chainOracle)
+	var oracle blocks.BlockOracle = failover.New(cache, nmOracle, chainOracle, options...)
 	if d, fab := testenvOracleFromEnv(); d != 0 || fab {
 		oracle = wrapTestenvOracleOverlay(oracle, d, fab)
 		logging.Info("height sync testenv oracle overlay", inferenceTypes.System,
@@ -132,6 +143,7 @@ func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
 	logging.Debug("heightsync: comet observe", inferenceTypes.System,
 		"height", h.Height, "hash_len", len(h.BlockHash), "chain_id", h.ChainID)
 	tip.Observe(h)
+	m.headerTimes.ObserveProofHeader(h)
 	m.SetCometConnected(true)
 }
 

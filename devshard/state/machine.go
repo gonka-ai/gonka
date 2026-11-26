@@ -13,6 +13,7 @@ import (
 	"github.com/gtank/ristretto255"
 	"google.golang.org/protobuf/proto"
 
+	"common/chainoracle/blocks/lightproof"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -123,9 +124,10 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver WarmKeyResolver // optional, nil = no warm key support
-	headerTimes  HeaderTimeSource
-	deferred     []*types.DevshardTx
+	warmResolver   WarmKeyResolver // optional, nil = no warm key support
+	mainnetHeights MainnetHeightSource
+	headerTimes    HeaderTimeSource
+	deferred       []*types.DevshardTx
 
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
@@ -218,7 +220,12 @@ func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
 }
 
 func WithHeaderTimes(src HeaderTimeSource) SMOption {
-	return func(sm *StateMachine) { sm.headerTimes = src }
+	return func(sm *StateMachine) {
+		sm.headerTimes = src
+		if source, ok := src.(MainnetHeightSource); ok {
+			sm.mainnetHeights = source
+		}
+	}
 }
 
 // HeartbeatConfig is the log-plane config this machine was constructed with.
@@ -262,6 +269,7 @@ func NewStateMachine(
 		addrToSlotCount[s.ValidatorAddress]++
 	}
 	config = types.NormalizeSessionConfig(config, len(group))
+	config.MainnetAnchorHash = bytes.Clone(config.MainnetAnchorHash)
 
 	groupCopy := make([]types.SlotAssignment, len(group))
 	copy(groupCopy, group)
@@ -316,6 +324,12 @@ func NewStateMachine(
 	}
 	if sm.headerTimes == nil {
 		sm.headerTimes = fallbackHeaderTimes
+	}
+	if types.RequiresMainnetHeightProof(sm.state.StateRootAndProtocolVersion) {
+		if config.MainnetAnchorHeight <= 0 || len(config.MainnetAnchorHash) != 32 {
+			return nil, fmt.Errorf("v7 requires a chain-pinned mainnet checkpoint")
+		}
+		sm.state.MainnetCheckpoint = lightproof.Checkpoint{Height: config.MainnetAnchorHeight, Hash: bytes.Clone(config.MainnetAnchorHash)}
 	}
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
 	sm.heightSyncFloor = heightsync.NewFloorIndex()
@@ -621,6 +635,9 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 		return nil, nil, nil, err
 	}
 	defer sm.closeJournalLocked(j)
+	if err := sm.stageMainnetHeightLocked(txs); err != nil {
+		return nil, nil, nil, err
+	}
 
 	// Height-sync txs also have to survive CheckDiffLogPlane: applyTx for
 	// heartbeat/ack is admission-only, and skipping L0–L3 here would persist
@@ -664,7 +681,13 @@ func (sm *StateMachine) localBestEffortJournaled(nonce uint64, txs []*types.Devs
 		}
 		applied = append(applied, tx)
 	}
-	if len(applied) == 0 && logPlaneReject != nil {
+	appliedWork := len(applied)
+	if appliedWork > 0 && applied[0].GetMainnetHeight() != nil {
+		// The mandatory prelude authenticates the checkpoint; it does not
+		// make an otherwise rejected height-sync batch useful work.
+		appliedWork--
+	}
+	if appliedWork == 0 && logPlaneReject != nil {
 		return nil, nil, nil, logPlaneReject
 	}
 	sm.observeHeightSyncLocked(nonce, applied)
@@ -851,6 +874,9 @@ func (sm *StateMachine) applyCoreJournaled(nonce uint64, txs []*types.DevshardTx
 		return nil, nil, err
 	}
 	defer sm.closeJournalLocked(j)
+	if err := sm.stageMainnetHeightLocked(txs); err != nil {
+		return nil, nil, err
+	}
 
 	// 4. Apply each tx.
 	for _, tx := range txs {
@@ -975,7 +1001,9 @@ func (sm *StateMachine) Balance() uint64 {
 func (sm *StateMachine) Config() types.SessionConfig {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return sm.state.Config
+	config := sm.state.Config
+	config.MainnetAnchorHash = bytes.Clone(config.MainnetAnchorHash)
+	return config
 }
 
 // SnapshotState returns a deep copy of the current escrow state.
@@ -1014,6 +1042,8 @@ func snapshotNoInferencesLocked(src *types.EscrowState) types.EscrowState {
 	// only ever replaced wholesale (append to a nil slice), never mutated in
 	// place, so readers of the snapshot see a stable value.
 	s := *src
+	s.MainnetCheckpoint = cloneCheckpoint(src.MainnetCheckpoint)
+	s.Config.MainnetAnchorHash = bytes.Clone(src.Config.MainnetAnchorHash)
 	s.Inferences = nil
 
 	s.Group = make([]types.SlotAssignment, len(src.Group))
@@ -1072,6 +1102,9 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 	if state == nil {
 		return nil
 	}
+	if err := sm.validateSnapshotCheckpoint(state); err != nil {
+		return err
+	}
 	restored := cloneEscrowState(state)
 	hs := foldHeightSync(sm.inferenceStore, restored, sm.heartbeatCfg, floor)
 	sm.mu.Lock()
@@ -1083,6 +1116,8 @@ func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *h
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	s := *src
+	s.MainnetCheckpoint = cloneCheckpoint(src.MainnetCheckpoint)
+	s.Config.MainnetAnchorHash = bytes.Clone(src.Config.MainnetAnchorHash)
 
 	// Deep copy Group.
 	s.Group = make([]types.SlotAssignment, len(src.Group))
@@ -1234,6 +1269,9 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 		return sm.applyForceHeightSyncTurn(inner.ForceHeightSyncTurn, diffNonce)
 	case *types.DevshardTx_Heartbeat:
 		return sm.applyHeartbeat(inner.Heartbeat)
+	case *types.DevshardTx_MainnetHeight:
+		// Verified once, atomically, before all transaction effects.
+		return nil
 	case *types.DevshardTx_HeightAck:
 		return sm.applyHeightAck(inner.HeightAck)
 	default:

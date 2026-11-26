@@ -45,8 +45,12 @@ func (s *Session) catchUpForSend(ctx context.Context, hostIdx int, target uint64
 // the caller's goroutine, when the chunked catch-up it waits on finds the host
 // unreachable. See awaitHostCatchUp.
 func (s *Session) catchUpForSendWith(ctx context.Context, hostIdx int, target uint64, onFault func()) ([]types.Diff, error) {
+	return s.catchUpForRequest(ctx, hostIdx, target, host.HostRequest{}, onFault)
+}
+
+func (s *Session) catchUpForRequest(ctx context.Context, hostIdx int, target uint64, req host.HostRequest, onFault func()) ([]types.Diff, error) {
 	s.mu.Lock()
-	diffs, ok, err := s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err := s.inlineCatchUpForRequestLocked(hostIdx, target, req)
 	s.mu.Unlock()
 	if err != nil {
 		return nil, err
@@ -61,13 +65,13 @@ func (s *Session) catchUpForSendWith(ctx context.Context, hostIdx int, target ui
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	diffs, ok, err = s.inlineCatchUpLocked(hostIdx, target)
+	diffs, ok, err = s.inlineCatchUpForRequestLocked(hostIdx, target, req)
 	if err != nil {
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("host %d is still more than %d diffs behind nonce %d after catch-up (cursor %d)",
-			hostIdx, catchUpChunkSize, target, s.hostSyncNonce[hostIdx])
+		return nil, fmt.Errorf("catch-up for host %d cannot fit nonce %d in one request (cursor %d)",
+			hostIdx, target, s.hostSyncNonce[hostIdx])
 	}
 	return diffs, nil
 }

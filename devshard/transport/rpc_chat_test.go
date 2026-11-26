@@ -21,10 +21,17 @@ import (
 
 	"connectrpc.com/connect"
 
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"devshard"
+	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/headertime"
+	mockoracle "devshard/chainoracle/blocks/observer"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/signing"
+	"devshard/state"
 	"devshard/stub"
 	"devshard/transport/rpcpb"
 	"devshard/transport/rpcpb/rpcpbconnect"
@@ -69,6 +76,373 @@ func collectChatFrames(t *testing.T, env *serverTestEnv, body []byte) (chunks []
 	require.NoError(t, sink.Close())
 	decoded = gzipConcat(t, chunks)
 	return chunks, decoded
+}
+
+type chatTipOracle struct {
+	*mockoracle.Mock
+	tip         *blocks.Header
+	latestCalls atomic.Int64
+	stall       atomic.Bool
+	offline     atomic.Bool
+}
+
+func (o *chatTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	o.latestCalls.Add(1)
+	if o.stall.Load() {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if o.offline.Load() {
+		return nil, blocks.ErrHeaderNotFound
+	}
+	if o.tip != nil {
+		return o.tip, nil
+	}
+	return o.Mock.Latest(ctx)
+}
+
+type delayedChatAcceptance struct{ clock *atomic.Int64 }
+
+func (d delayedChatAcceptance) Check(types.EscrowState, []*types.DevshardTx) error {
+	time.Sleep(time.Second)
+	d.clock.Store(int64(time.Second))
+	return nil
+}
+
+func TestServeInference_ProofTipAlsoSuppliesOutboundHeightSync(t *testing.T) {
+	t.Run("fresh same-request tip", func(t *testing.T) { serveInferenceWithRequestTip(t, "", 2, 0) })
+	t.Run("expired tip with stalled dAPI", func(t *testing.T) { serveInferenceWithRequestTip(t, "anchor", 3, 1) })
+	t.Run("tip refreshed during signing", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "signing", 3, 0)
+	})
+	t.Run("stale checkpoint without a tip sample", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "stale checkpoint", 2, 1)
+	})
+	t.Run("refreshed anchor would contradict a heartbeat acknowledgment", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "heartbeat", 3, 1)
+	})
+	t.Run("acknowledgment arrives during streaming", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "streaming", 2, 0)
+	})
+	t.Run("first live tip becomes available before the response", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "cold retry", 1, 2)
+	})
+	t.Run("acknowledgment carries the committed floor above the anchor", func(t *testing.T) {
+		serveInferenceWithRequestTip(t, "floor carry", 2, 0)
+	})
+}
+
+func serveInferenceWithRequestTip(t *testing.T, expireBefore string, wantDAPIReads, wantDirectReads int64) {
+	t.Helper()
+	const escrowID = "escrow-1"
+	const balance = 1_000_000
+	validator, owner := testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)
+	address, err := blocks.AddressBytes(validator.CompressedPublicKeyBytes())
+	require.NoError(t, err)
+	blockAge := 10 * time.Second
+	coldRetry := expireBefore == "cold retry"
+	if coldRetry {
+		blockAge = 3 * time.Minute
+	}
+	chain, err := mockoracle.NewMock(mockoracle.MockConfig{
+		LightBlocks: true, ChainID: "chat-proof", InitialHeight: 100,
+		Validators: []mockoracle.MockValidator{{Signer: validator, Address: address, Power: 10}},
+		Start:      time.Now().Add(-blockAge), BlockInterval: time.Second,
+	})
+	require.NoError(t, err)
+	anchor, err := chain.AdvanceOne()
+	require.NoError(t, err)
+	cfg := testutil.DefaultConfig(1)
+	cfg.MainnetAnchorHeight, cfg.MainnetAnchorHash = anchor.Height, bytes.Clone(anchor.BlockHash)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{validator})
+	verifier := signing.NewSecp256k1Verifier()
+	newState := func(source state.MainnetHeightSource) *state.StateMachine {
+		store := testutil.MustMemoryStore(t, escrowID, owner.Address(), cfg, group, balance)
+		sm, err := state.NewStateMachine(escrowID, cfg, group, balance, owner.Address(), verifier, store,
+			state.WithVersion("v7"), state.WithMainnetHeights(source))
+		require.NoError(t, err)
+		return sm
+	}
+	dapi := &chatTipOracle{Mock: chain}
+	direct := &chatTipOracle{Mock: chain}
+	var floor *blocks.Header
+	var producerSource state.MainnetHeightSource = chain
+	if expireBefore == "floor carry" {
+		floor, err = chain.AdvanceOne()
+		require.NoError(t, err)
+		dapi.tip, direct.tip = anchor, anchor
+		producerSource = dapi
+	}
+	producer := newState(producerSource)
+	var prior []types.Diff
+	if floor != nil {
+		apply := func(tx *types.DevshardTx) types.Diff {
+			t.Helper()
+			proof, err := producer.BuildMainnetHeightTx(t.Context())
+			require.NoError(t, err)
+			txs := []*types.DevshardTx{proof, tx}
+			nonce := producer.LatestNonce() + 1
+			root, err := producer.ApplyLocal(nonce, txs)
+			require.NoError(t, err)
+			return testutil.SignDiffWithRoot(t, owner, escrowID, nonce, txs, root)
+		}
+		prior = append(prior, apply(&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+		}}}))
+		ack := &types.MsgHeightAck{
+			SlotId: 0, RefNonce: 1, ObservedHeight: uint64(floor.Height), ObservedBlockHash: floor.BlockHash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{1},
+		}
+		require.NoError(t, heightsync.SignAck(validator, ack))
+		prior = append(prior, apply(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}))
+	}
+	var proof *types.DevshardTx
+	if coldRetry {
+		pins := lightproof.Checkpoint{Height: anchor.Height, Hash: anchor.BlockHash}
+		carried, checkpoint, err := lightproof.Build(t.Context(), pins, anchor.Height, chain)
+		require.NoError(t, err)
+		proof = &types.DevshardTx{Tx: &types.DevshardTx_MainnetHeight{MainnetHeight: &types.MsgMainnetHeight{
+			Height: checkpoint.Height, TimeUnixNano: checkpoint.Time.UnixNano(), LightBlocks: carried,
+		}}}
+	} else {
+		proof, err = producer.BuildMainnetHeightTx(t.Context())
+		require.NoError(t, err)
+	}
+	txs := []*types.DevshardTx{proof}
+	var payload *PayloadJSON
+	staleCheckpoint := expireBefore == "stale checkpoint" || coldRetry
+	heartbeat := expireBefore == "heartbeat"
+	if heartbeat {
+		txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: uint64(anchor.Height), ObservedBlockHash: anchor.BlockHash,
+			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+		}}})
+	} else if floor != nil {
+		txs = append(txs, &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: uint64(floor.Height), ObservedBlockHash: floor.BlockHash,
+			SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+		}}})
+	} else if !staleCheckpoint {
+		txs = append(txs, testutil.StartTx(1))
+		payload = &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
+	}
+	nonce := producer.LatestNonce() + 1
+	root, err := producer.ApplyLocal(nonce, txs)
+	require.NoError(t, err)
+	signedDiff := testutil.SignDiffWithRoot(t, owner, escrowID, nonce, txs, root)
+	diff, err := DiffToJSON(signedDiff)
+	require.NoError(t, err)
+	oracle := failover.New(nil, dapi, direct, failover.WithDirectLightBlocks(chain))
+	initial := time.Now()
+	var clock atomic.Int64
+	oracle.SetNow(func() time.Time { return initial.Add(time.Duration(clock.Load())) })
+	var checker host.AcceptanceChecker
+	if expireBefore == "signing" {
+		checker = delayedChatAcceptance{clock: &clock}
+	}
+	h, err := host.NewHost(newState(headertime.New(oracle)), validator, stub.NewInferenceEngine(), escrowID, group, checker,
+		host.WithChainOracle(oracle))
+	require.NoError(t, err)
+	diffs := []DiffJSON{diff}
+	if len(prior) > 0 {
+		_, err := h.ApplyRecoveredDiffs(t.Context(), prior)
+		require.NoError(t, err)
+		dapi.latestCalls.Store(0)
+		direct.latestCalls.Store(0)
+	}
+	if staleCheckpoint {
+		_, err := h.ApplyRecoveredDiffs(t.Context(), []types.Diff{signedDiff})
+		require.NoError(t, err)
+		diffs = nil
+		if coldRetry {
+			dapi.offline.Store(true)
+			direct.offline.Store(true)
+		} else {
+			for range state.MainnetCheckpointMaxLag + 1 {
+				_, err := chain.AdvanceOne()
+				require.NoError(t, err)
+			}
+		}
+		dapi.latestCalls.Store(0)
+		direct.latestCalls.Store(0)
+	}
+	if expireBefore == "streaming" {
+		ack := &types.MsgHeightAck{SlotId: 0, RefNonce: 1, ObservedHeight: uint64(anchor.Height - 1), ObservedBlockHash: []byte{1}}
+		require.NoError(t, heightsync.SignAck(validator, ack))
+		h.HostMempool().AddTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}})
+	}
+	k := uint64(10)
+	if expireBefore == "streaming" || floor != nil {
+		k = 1 // Every nonce would ordinarily have an anchor.
+	}
+	scheduler, err := heightsync.NewAnchorSchedulerFromOracle(k, 1, oracle)
+	require.NoError(t, err)
+	srv, err := NewServer(h, nil, verifier, owner.Address(), WithHeightSync(scheduler, oracle))
+	require.NoError(t, err)
+	body, err := json.Marshal(InferenceRequest{
+		Diffs: diffs, Nonce: nonce, Stream: true, Payload: payload,
+	})
+	require.NoError(t, err)
+	var dapiReadsAtReceipt, directReadsAtReceipt int64
+	var chunks [][]byte
+	var duringStream *types.DevshardTx
+	sink := NewChatFrameSink(func(chunk []byte) error {
+		if len(chunks) == 0 {
+			dapiReadsAtReceipt = dapi.latestCalls.Load()
+			directReadsAtReceipt = direct.latestCalls.Load()
+			dapi.stall.Store(false)
+			if expireBefore == "streaming" {
+				higher, err := chain.AdvanceOne()
+				require.NoError(t, err)
+				heartbeatProof, err := producer.BuildMainnetHeightTx(t.Context())
+				require.NoError(t, err)
+				heartbeatTxs := []*types.DevshardTx{heartbeatProof, {Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+					ObservedHeight: uint64(higher.Height), ObservedBlockHash: higher.BlockHash,
+					SlotsNum: 1, Reason: string(heightsync.ReasonQuietSession),
+				}}}}
+				root, err := producer.ApplyLocal(2, heartbeatTxs)
+				require.NoError(t, err)
+				heartbeatDiff := testutil.SignDiffWithRoot(t, owner, escrowID, 2, heartbeatTxs, root)
+				response, err := h.HandleRequest(t.Context(), host.HostRequest{Nonce: 2, Diffs: []types.Diff{heartbeatDiff}})
+				require.NoError(t, err)
+				for _, tx := range response.Mempool {
+					if ack := tx.GetHeightAck(); ack != nil && ack.RefNonce == 2 {
+						duringStream = tx
+						break
+					}
+				}
+				require.NotNil(t, duringStream)
+			}
+		}
+		chunks = append(chunks, bytes.Clone(chunk))
+		return nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 4*time.Second)
+	defer cancel()
+	require.NoError(t, srv.ServeInference(ctx, InferenceCall{
+		SessionID: escrowID, Sender: owner.Address(), Body: body, Source: "test", Sink: sink,
+		OnStreamStart: func() {
+			if coldRetry {
+				direct.offline.Store(false)
+			} else if expireBefore == "anchor" || staleCheckpoint || heartbeat {
+				clock.Store(int64(time.Second))
+				dapi.stall.Store(true)
+			}
+			if heartbeat {
+				_, err := chain.AdvanceOne()
+				require.NoError(t, err)
+			}
+		},
+	}))
+	require.NoError(t, sink.Close())
+	decoded := gzipConcat(t, chunks)
+	require.Contains(t, decoded, `"devshard_receipt"`)
+	if heartbeat {
+		require.NotContains(t, decoded, `"height_sync"`, "the newer anchor would contradict the emitted acknowledgment")
+		var ack *types.MsgHeightAck
+		for _, tx := range h.MempoolTxs() {
+			if tx.GetHeightAck() != nil {
+				ack = tx.GetHeightAck()
+				break
+			}
+		}
+		require.NotNil(t, ack)
+		require.EqualValues(t, anchor.Height, ack.ObservedHeight)
+		require.Equal(t, anchor.BlockHash, ack.ObservedBlockHash)
+		require.False(t, srv.HeightSyncMarks().HasKind(heightsync.MarkDisputeOriginator))
+	} else {
+		require.Contains(t, decoded, `"height_sync"`)
+	}
+	if floor != nil {
+		client := &HTTPClient{}
+		response, err := client.parseSSEResponse(t.Context(), strings.NewReader(decoded), io.Discard, nil)
+		require.NoError(t, err)
+		require.True(t, response.HasEnvelope)
+		require.EqualValues(t, anchor.Height, response.EnvelopeHeight)
+		var carried *types.MsgHeightAck
+		for _, tx := range response.Mempool {
+			if ack := tx.GetHeightAck(); ack != nil && ack.RefNonce == nonce {
+				carried = ack
+			}
+		}
+		require.NotNil(t, carried)
+		require.EqualValues(t, floor.Height, carried.ObservedHeight)
+		require.Equal(t, floor.BlockHash, carried.ObservedBlockHash)
+		require.False(t, srv.HeightSyncMarks().HasKind(heightsync.MarkDisputeOriginator))
+	}
+	if staleCheckpoint {
+		require.NotContains(t, decoded, `"state_sig"`, "the stale checkpoint contributes no state signature")
+	} else {
+		require.Regexp(t, `"state_sig":"[^"]+"`, decoded)
+	}
+	require.Equal(t, wantDAPIReads, dapiReadsAtReceipt, "dAPI RPCs before the signed receipt and anchor")
+	require.Equal(t, wantDirectReads, directReadsAtReceipt, "chain RPCs before the signed receipt and anchor")
+	if expireBefore == "streaming" {
+		client := &HTTPClient{}
+		response, err := client.parseSSEResponse(t.Context(), strings.NewReader(decoded), io.Discard, nil)
+		require.NoError(t, err)
+		require.NotNil(t, duringStream)
+		for _, tx := range response.Mempool {
+			require.Nil(t, tx.GetHeightAck(), "the late acknowledgment was never paired with this anchor")
+		}
+		require.Contains(t, h.MempoolTxs(), duringStream, "the acknowledgment remains available for the next exchange")
+		_, err = chain.AdvanceOne()
+		require.NoError(t, err)
+		retryBody, err := json.Marshal(InferenceRequest{Nonce: 2, Stream: true})
+		require.NoError(t, err)
+		_, retry := collectChatFrames(t, &serverTestEnv{server: srv, userSigner: owner}, retryBody)
+		next, err := client.parseSSEResponse(t.Context(), strings.NewReader(retry), io.Discard, nil)
+		require.NoError(t, err)
+		require.NotContains(t, retry, `"height_sync"`, "the advanced tip cannot bind the earlier ACK")
+		var delivered *types.MsgHeightAck
+		for _, tx := range next.Mempool {
+			if ack := tx.GetHeightAck(); ack != nil && ack.RefNonce == 2 {
+				delivered = ack
+				break
+			}
+		}
+		require.NotNil(t, delivered, "the acknowledgment is sent on the next compatible response")
+		require.Equal(t, duringStream.GetHeightAck().ObservedHeight, delivered.ObservedHeight)
+
+		// A different pending signature for the same slot and heartbeat no
+		// longer suppresses anchors once the accepted diff covers the slot.
+		duplicate := &types.MsgHeightAck{
+			SlotId: 0, RefNonce: 2, ObservedHeight: uint64(anchor.Height), ObservedBlockHash: anchor.BlockHash,
+		}
+		require.NoError(t, heightsync.SignAck(validator, duplicate))
+		h.HostMempool().AddTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: duplicate}})
+		proof, err := producer.BuildMainnetHeightTx(t.Context())
+		require.NoError(t, err)
+		txs := []*types.DevshardTx{proof, duringStream}
+		root, err := producer.ApplyLocal(3, txs)
+		require.NoError(t, err)
+		committed, err := DiffToJSON(testutil.SignDiffWithRoot(t, owner, escrowID, 3, txs, root))
+		require.NoError(t, err)
+		committedBody, err := json.Marshal(InferenceRequest{Nonce: 3, Diffs: []DiffJSON{committed}, Stream: true})
+		require.NoError(t, err)
+		_, nextAnchor := collectChatFrames(t, &serverTestEnv{server: srv, userSigner: owner}, committedBody)
+		require.Contains(t, nextAnchor, `"height_sync"`, "the accepted slot cannot block the next anchor")
+	}
+}
+
+func TestResponseAnchorKeepsRelayedAcksIndependent(t *testing.T) {
+	ack := func(slot uint32, height uint64) *types.DevshardTx {
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
+			SlotId: slot, ObservedHeight: height, ObservedBlockHash: []byte{1},
+		}}}
+	}
+	own, obsolete, relayed, later := ack(0, 100), ack(0, 99), ack(1, 99), ack(0, 101)
+	slots := map[uint32]bool{0: true}
+	section := &heightsync.HeightSyncSection{MainnetHeight: 100, ProofType: heightsync.AnchorProofType, MainnetBlockHashHex: "01"}
+	paired := responseHeightAcks(section, []*types.DevshardTx{own}, []*types.DevshardTx{obsolete, relayed}, slots)
+	require.Equal(t, map[*types.DevshardTx]struct{}{own: {}}, paired)
+	server := setupServerEnv(t).server
+	require.True(t, server.responseAnchorCompatibleWithAcks(section, []*types.DevshardTx{own}))
+	lower := *section
+	lower.MainnetHeight--
+	require.False(t, server.responseAnchorCompatibleWithAcks(&lower, []*types.DevshardTx{own}), "a lower anchor without a matching floor could cause the peer to discard a fresh ACK")
+	require.Equal(t, []*types.DevshardTx{own, relayed}, retainAnchoredResponseAcks(
+		[]*types.DevshardTx{own, obsolete, relayed, later}, paired, slots))
 }
 
 func TestServeInference_ChatGzipParityWithSSE(t *testing.T) {

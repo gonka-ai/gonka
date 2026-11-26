@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"common/logging"
 
 	"golang.org/x/sync/singleflight"
@@ -61,9 +62,10 @@ var nmBackoffSchedule = []time.Duration{
 // nm is GetBlockHeader. chain is GetLatestBlock for Latest() and
 // GetBlockByHeight for At outside the window. HTTP is never used.
 type Oracle struct {
-	tip   blocks.BlockOracle
-	nm    blocks.BlockOracle
-	chain blocks.BlockOracle
+	tip         blocks.BlockOracle
+	nm          blocks.BlockOracle
+	chain       blocks.BlockOracle
+	lightBlocks lightproof.Source
 
 	mu             sync.Mutex
 	nowFn          func() time.Time
@@ -74,6 +76,9 @@ type Oracle struct {
 	nmUnimpl   bool
 	nmFailures int
 	nmNextTry  time.Time
+
+	preferDirectProofUntil time.Time
+	recentRPCTips          []rpcTipObservation
 
 	chainLast    *blocks.Header
 	chainLastAt  time.Time
@@ -87,8 +92,19 @@ type Oracle struct {
 // New wraps tip (Comet cache), optional nm (GetBlockHeader), and optional
 // chain (GetLatestBlock / GetBlockByHeight). Comet is not served until
 // SetCometConnected(true).
-func New(tip blocks.BlockOracle, nm blocks.BlockOracle, chain blocks.BlockOracle) *Oracle {
-	return &Oracle{tip: tip, nm: nm, chain: chain, nowFn: time.Now}
+func New(tip blocks.BlockOracle, nm blocks.BlockOracle, chain blocks.BlockOracle, opts ...Option) *Oracle {
+	o := &Oracle{tip: tip, nm: nm, chain: chain, nowFn: time.Now}
+	for _, opt := range opts {
+		opt(o)
+	}
+	return o
+}
+
+type Option func(*Oracle)
+
+// WithDirectLightBlocks adds independent Comet RPC evidence.
+func WithDirectLightBlocks(source lightproof.Source) Option {
+	return func(o *Oracle) { o.lightBlocks = source }
 }
 
 // SetCometConnected reports whether the Comet NewBlock subscription is up.
@@ -181,9 +197,12 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	}
 
 	var nmErr error
-	if h, err, skipped := o.tryNM(ctx, now); skipped {
+	if h, err, skipped := o.tryNM(ctx, now, nmLegacyRead); skipped {
 		logLatestTry("get_block_header", nil, err)
 	} else if err == nil && usable(h) {
+		o.mu.Lock()
+		o.rememberRPCTipLocked(h.Height)
+		o.mu.Unlock()
 		o.noteLatest(h, true)
 		return h, nil
 	} else {
@@ -210,13 +229,26 @@ func (o *Oracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	return nil, errors.New("blockoracle/failover: no tip")
 }
 
-func (o *Oracle) tryNM(ctx context.Context, now time.Time) (h *blocks.Header, err error, skipped bool) {
+type nmReadMode uint8
+
+const (
+	nmLegacyRead nmReadMode = iota
+	nmProofRead
+	nmResponseAnchorRead
+)
+
+func (o *Oracle) tryNM(ctx context.Context, now time.Time, mode nmReadMode) (h *blocks.Header, err error, skipped bool) {
 	if blocked, skipErr := o.nmBlocked(now); blocked {
 		return nil, skipErr, true
 	}
 
 	h, err = o.nm.Latest(ctx)
-	o.noteNMOutcome(now, h, err)
+	// Regular reads use the existing backoff. A response anchor's short
+	// deadline should not change health for other callers.
+	ctxErr := ctx.Err()
+	if mode == nmLegacyRead || ctxErr == nil || (mode == nmProofRead && errors.Is(ctxErr, context.DeadlineExceeded)) {
+		o.noteNMOutcome(now, h, err)
+	}
 	return h, err, false
 }
 
@@ -334,19 +366,31 @@ func (o *Oracle) tryChain(ctx context.Context, now time.Time) (*blocks.Header, e
 		return h, nil
 	}
 	o.mu.Unlock()
+	return o.queryChainTip(ctx, now)
+}
 
-	h, err := o.chain.Latest(ctx)
-	logLatestTry("get_latest_block", h, err)
-	if err != nil || !usable(h) {
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("blockoracle/failover: no tip")
+func (o *Oracle) queryChainTip(ctx context.Context, now time.Time) (*blocks.Header, error) {
+	h, err := o.fetchChainTip(ctx)
+	if err != nil {
+		return nil, err
 	}
 	o.mu.Lock()
 	o.chainLast = cloneHeader(h)
 	o.chainLastAt = now
+	o.rememberRPCTipLocked(h.Height)
 	o.mu.Unlock()
+	return h, nil
+}
+
+func (o *Oracle) fetchChainTip(ctx context.Context) (*blocks.Header, error) {
+	h, err := o.chain.Latest(ctx)
+	logLatestTry("get_latest_block", h, err)
+	if err != nil {
+		return nil, err
+	}
+	if !usable(h) {
+		return nil, errors.New("blockoracle/failover: no tip")
+	}
 	return h, nil
 }
 

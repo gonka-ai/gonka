@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/lightproof"
 	"common/nodemanager/gen"
 
 	"google.golang.org/grpc/codes"
@@ -46,7 +47,21 @@ func GetBlockHeader(ctx context.Context, oracle blocks.BlockOracle, req *gen.Get
 	if h == nil {
 		return nil, status.Error(codes.NotFound, blocks.ErrHeaderNotFound.Error())
 	}
-	return &gen.GetBlockHeaderResponse{Header: HeaderToProto(h)}, nil
+	resp := &gen.GetBlockHeaderResponse{Header: HeaderToProto(h)}
+	if req.GetIncludeLightBlock() {
+		source, ok := oracle.(lightproof.Source)
+		if !ok {
+			return nil, status.Error(codes.Unimplemented, "block header: light blocks unavailable")
+		}
+		resp.LightBlock, err = source.LightBlockAt(ctx, h.Height)
+		if err != nil {
+			return nil, headerStatus(oracle, err)
+		}
+		if len(resp.LightBlock) == 0 || len(resp.LightBlock) > lightproof.MaxBlockBytes {
+			return nil, status.Error(codes.Internal, "block header: invalid light block size")
+		}
+	}
+	return resp, nil
 }
 
 type verifyingOracle interface {

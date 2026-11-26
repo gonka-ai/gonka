@@ -699,3 +699,280 @@ func TestHeaderAtWaitDoesNotInheritLatestBackoff(t *testing.T) {
 		})
 	}
 }
+
+type delayedProofSource struct {
+	*recOracle
+	delay time.Duration
+}
+
+func (s delayedProofSource) LightBlockAt(ctx context.Context, h int64) ([]byte, error) {
+	timer := time.NewTimer(s.delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		if s.err != nil {
+			return nil, s.err
+		}
+		return []byte{byte(h)}, nil
+	}
+}
+
+func TestLightBlockProofCanUseSlowDAPIForMultipleHeights(t *testing.T) {
+	nm := delayedProofSource{recOracle: &recOracle{}, delay: 1250 * time.Millisecond}
+	comet := delayedProofSource{recOracle: &recOracle{err: errors.New("direct Comet unavailable")}}
+	o := failover.New(nil, nm, nil, failover.WithDirectLightBlocks(comet))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	for _, height := range []int64{10, 11} {
+		raw, err := o.LightBlockAt(ctx, height)
+		require.NoError(t, err)
+		require.Equal(t, []byte{byte(height)}, raw)
+	}
+}
+
+type delayedTipOracle struct {
+	*recOracle
+	delay time.Duration
+}
+
+func (o delayedTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	timer := time.NewTimer(o.delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return o.recOracle.Latest(ctx)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestProofTipWaitsForSlowDAPIAndAvoidsStaleChainCache(t *testing.T) {
+	fresh := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	stale := blocks.HashOnlyHeader(100, fresh.Time, fresh.ChainID, []byte{100})
+	directProof := delayedProofSource{recOracle: &recOracle{err: blocks.ErrProveNotImplemented}}
+	t.Run("dAPI reports the newer tip within its budget", func(t *testing.T) {
+		chain := &recOracle{hdr: stale}
+		dapi := delayedTipOracle{&recOracle{hdr: fresh}, 1200 * time.Millisecond}
+		o := failover.New(nil, dapi, chain)
+		got, err := o.LatestForProof(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Zero(t, chain.calls.Load())
+	})
+	t.Run("a refused direct query leaves the slower dAPI running", func(t *testing.T) {
+		chain := &recOracle{err: status.Error(codes.Unavailable, "direct chain down")}
+		dapi := delayedTipOracle{&recOracle{hdr: fresh}, 2150 * time.Millisecond}
+		o := failover.New(nil, dapi, chain)
+		ctx, cancel := context.WithTimeout(t.Context(), 6*time.Second)
+		defer cancel()
+		got, err := o.LatestForProof(ctx)
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Equal(t, int64(1), chain.calls.Load())
+	})
+	t.Run("dAPI failure falls back to a new chain response", func(t *testing.T) {
+		chain := &recOracle{hdr: stale}
+		dapi := &recOracle{err: status.Error(codes.Unavailable, "dAPI down")}
+		o := failover.New(nil, dapi, chain, failover.WithDirectLightBlocks(directProof))
+		got, err := o.Latest(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, stale.Height, got.Height)
+		chain.hdr = fresh
+		got, err = o.LatestForProof(t.Context())
+		require.NoError(t, err)
+		require.Equal(t, fresh.Height, got.Height)
+		require.Equal(t, int64(2), chain.calls.Load())
+	})
+}
+
+type recoveringTipOracle struct {
+	*recOracle
+	started atomic.Int64
+}
+
+func (o *recoveringTipOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	if o.started.Add(1) == 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return o.recOracle.Latest(ctx)
+}
+
+func TestProofTipChecksDAPIRecoveryAfterDirectFallback(t *testing.T) {
+	higher := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	dapi := &recoveringTipOracle{recOracle: &recOracle{hdr: higher}}
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(100, higher.Time, higher.ChainID, []byte{100})}
+	o := failover.New(nil, dapi, chain)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	got, err := o.LatestForProof(ctx)
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, got.Height)
+	require.Equal(t, int64(1), dapi.started.Load())
+
+	got, err = o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, higher.Height, got.Height)
+	require.Equal(t, int64(2), dapi.started.Load(), "the next admission can see the recovered dAPI")
+	require.Equal(t, int64(1), chain.calls.Load())
+}
+
+func TestProofTipRejectsDirectRegressionBelowRecentDAPIHeight(t *testing.T) {
+	fresh := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(100, fresh.Time, fresh.ChainID, []byte{100})}
+	dapi := &delayedTipOracle{recOracle: &recOracle{hdr: fresh}}
+	o := failover.New(nil, dapi, chain)
+
+	got, err := o.Latest(t.Context()) // Startup uses the ordinary tip path.
+	require.NoError(t, err)
+	require.Equal(t, fresh.Height, got.Height)
+
+	dapi.delay = 2150 * time.Millisecond
+	got, err = o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, fresh.Height, got.Height, "a responsive but lagging direct endpoint cannot lower the already observed tip")
+	require.Equal(t, int64(1), chain.calls.Load())
+	require.Equal(t, int64(2), dapi.calls.Load(), "the current result comes from a fresh dAPI response")
+}
+
+func TestProofTipKeepsRecentWebSocketProgressAfterDisconnect(t *testing.T) {
+	cache := tipcache.New(time.Hour)
+	newer := blocks.HashOnlyHeader(103, time.Now(), "gonka-test", []byte{103})
+	cache.Observe(newer)
+	observedAt := cache.LastObservedAt()
+	older := blocks.HashOnlyHeader(100, newer.Time, newer.ChainID, []byte{100})
+	nm := &recOracle{err: status.Error(codes.Unavailable, "dAPI down")}
+	chain := &recOracle{hdr: older}
+	o := failover.New(cache, nm, chain)
+	o.SetCometConnected(false) // No proof-tip read got to see the last live tip.
+	o.SetNow(func() time.Time { return observedAt.Add(time.Second) })
+
+	require.Equal(t, newer.Height, o.RecentProofTipHeight())
+	_, err := o.LatestForProof(t.Context())
+	require.ErrorIs(t, err, blocks.ErrHeaderUnverified)
+	require.Equal(t, observedAt, cache.LastObservedAt())
+
+	o.SetNow(func() time.Time { return observedAt.Add(failover.CometMaxAge + time.Millisecond) })
+	require.Zero(t, o.RecentProofTipHeight(), "a disconnected observation keeps its original age")
+	got, err := o.LatestForProof(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, older.Height, got.Height)
+}
+
+func TestProofTipFloorUsesEveryUnexpiredRPCObservation(t *testing.T) {
+	origin := time.Now()
+	now := origin
+	dapi := &recOracle{}
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(100, origin, "gonka", []byte{100})}
+	o := failover.New(nil, dapi, chain)
+	o.SetNow(func() time.Time { return now })
+	for _, sample := range []struct {
+		offset time.Duration
+		height int64
+	}{{0, 106}, {5 * time.Second, 104}, {19 * time.Second, 103}} {
+		now = origin.Add(sample.offset)
+		dapi.hdr = blocks.HashOnlyHeader(sample.height, now, "gonka", []byte{byte(sample.height)})
+		_, err := o.Latest(t.Context())
+		require.NoError(t, err)
+	}
+	now = origin.Add(20*time.Second - time.Nanosecond)
+	require.Equal(t, int64(106), o.RecentProofTipHeight())
+	now = origin.Add(20 * time.Second)
+	require.Equal(t, int64(104), o.RecentProofTipHeight())
+	now = origin.Add(25 * time.Second)
+	require.Equal(t, int64(103), o.RecentProofTipHeight())
+
+	dapi.err = status.Error(codes.Unavailable, "dAPI down")
+	_, err := o.LatestForProof(t.Context())
+	require.ErrorIs(t, err, blocks.ErrHeaderUnverified)
+	now = origin.Add(39 * time.Second)
+	require.Zero(t, o.RecentProofTipHeight())
+}
+
+func TestProofTipValidityUsesOriginalWebSocketReceiveTime(t *testing.T) {
+	cache := tipcache.New(time.Hour)
+	h := blocks.HashOnlyHeader(100, time.Now(), "gonka", []byte{100})
+	cache.Observe(h)
+	until := cache.LastObservedAt().Add(failover.CometMaxAge)
+	now := until.Add(-time.Nanosecond)
+	chain := &recOracle{hdr: blocks.HashOnlyHeader(103, now, "gonka", []byte{103})}
+	o := failover.New(cache, nil, chain)
+	o.SetNow(func() time.Time { return now })
+	o.SetCometConnected(true)
+	request := failover.WithRequestProofObservation(t.Context())
+	tip, freshUntil, err := o.LatestForProofObservation(request)
+	require.NoError(t, err)
+	require.Equal(t, h.Height, tip.Height)
+	require.Equal(t, until, freshUntil)
+	require.Zero(t, chain.calls.Load())
+	o.SetCometConnected(false)
+	tip, err = o.LatestForHeightSync(request)
+	require.NoError(t, err)
+	require.Equal(t, h.Height, tip.Height)
+	require.Zero(t, chain.calls.Load(), "the request can reuse the live observation before its own deadline")
+
+	now = until
+	tip, err = o.LatestForHeightSync(request)
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(1), chain.calls.Load(), "at the deadline the request must obtain a fresh observation")
+	tip, _, err = o.LatestForProofObservation(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(2), chain.calls.Load())
+}
+
+func TestHeightSyncProofTipRequiresALiveResponseContext(t *testing.T) {
+	first := &recOracle{hdr: nmHdr()}
+	chain := &recOracle{hdr: chainHdr()}
+	o := failover.New(nil, first, chain)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	request := failover.WithRequestProofObservation(ctx)
+	tip, err := o.LatestForProof(request)
+	require.NoError(t, err)
+	require.Equal(t, first.hdr.Height, tip.Height)
+	cancel()
+	_, err = o.LatestForHeightSync(request)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, int64(1), first.calls.Load())
+
+	// Detached repair probes call the ordinary Latest path under the same
+	// context values. They still make a fresh observation.
+	first.hdr = chain.hdr
+	tip, err = o.Latest(context.WithoutCancel(request))
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(2), first.calls.Load())
+}
+
+func TestHeightSyncProofTipShortDeadlineDoesNotQuarantineDAPI(t *testing.T) {
+	dapi := delayedTipOracle{&recOracle{hdr: nmHdr()}, 600 * time.Millisecond}
+	chain := &recOracle{err: status.Error(codes.Unavailable, "chain RPC refused")}
+	o := failover.New(nil, dapi, chain)
+	request := failover.WithRequestProofObservation(t.Context())
+	_, err := o.LatestForHeightSync(request)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, int64(1), chain.calls.Load())
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	tip, err := o.Latest(ctx)
+	require.NoError(t, err)
+	require.Equal(t, dapi.hdr.Height, tip.Height)
+}
+
+func TestLegacyTipDeadlineStillAllowsNextCallToReachChain(t *testing.T) {
+	dapi := &recoveringTipOracle{recOracle: &recOracle{hdr: nmHdr()}}
+	chain := delayedTipOracle{&recOracle{hdr: chainHdr()}, time.Millisecond}
+	o := failover.New(nil, dapi, chain)
+	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
+	defer cancel()
+	_, err := o.Latest(ctx)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	tip, err := o.Latest(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, chain.hdr.Height, tip.Height)
+	require.Equal(t, int64(1), dapi.started.Load(), "legacy backoff leaves budget for chain RPC on the next call")
+}

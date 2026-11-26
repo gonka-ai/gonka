@@ -651,6 +651,24 @@ func (h *Host) LatestHeight(ctx context.Context) (int64, error) {
 // ChainOracle returns the injected BlockOracle or nil if unwired.
 func (h *Host) ChainOracle() blocks.BlockOracle { return h.oracle }
 
+// RequiresMainnetHeightProof reports whether this escrow uses carried proofs.
+func (h *Host) RequiresMainnetHeightProof() bool {
+	return types.RequiresMainnetHeightProof(h.sm.ProtocolVersion())
+}
+
+// OutstandingLocalHeightAcks selects pending ACKs that still contribute to
+// their retained heartbeat turn. Relayed ACKs are independent of this host's response.
+func (h *Host) OutstandingLocalHeightAcks(txs []*types.DevshardTx) []*types.DevshardTx {
+	var outstanding []*types.DevshardTx
+	for _, tx := range txs {
+		ack := tx.GetHeightAck()
+		if ack != nil && h.slotIDs[ack.SlotId] && h.sm.HeightSyncAckOutstanding(ack.RefNonce, ack.SlotId) {
+			outstanding = append(outstanding, tx)
+		}
+	}
+	return outstanding
+}
+
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()
 
@@ -688,8 +706,26 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	needOracle := h.oracleNeededLocked(req, newlyApplied)
+	var tip mainnetTipObservation
+	proofOracle, hasProofClock := h.oracle.(interface {
+		LatestForProofObservation(context.Context) (*blocks.Header, time.Time, error)
+	})
+	reuseTip := needOracle && hasProofClock && types.RequiresMainnetHeightProof(h.sm.ProtocolVersion())
+	if reuseTip {
+		cp := h.sm.MainnetCheckpoint()
+		tip.checkpointHeight, tip.checkpointHash = cp.Height, cp.Hash
+	}
 	h.mu.Unlock()
-	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
+	var hdr *blocks.Header
+	var hdrErr error
+	if reuseTip {
+		hdr, tip.validUntil, hdrErr = proofOracle.LatestForProofObservation(ctx)
+		if hdrErr == nil && hdr != nil && !blocks.IsDummyHeader(hdr) {
+			tip.header, tip.receivedAt = hdr, time.Now()
+		}
+	} else {
+		hdr, hdrErr = h.latestHeaderIf(ctx, needOracle)
+	}
 	h.mu.Lock()
 
 	// (a2) Answer heartbeats addressed to this host's slot (spec §10.4).
@@ -705,7 +741,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	}
 
 	// (c) Sign state (with acceptance check + mempool staleness).
-	stateSig, root, nonce, err := h.signIfAccepted(lastAppliedTxs)
+	stateSig, root, nonce, err := h.signIfAccepted(ctx, lastAppliedTxs, tip)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, observability.Classify(observability.ReasonStateSignErr, observability.WhereHostSignState, err)
@@ -959,7 +995,7 @@ func (h *Host) disappearedFinishObs(inferenceID uint64) disappearedFinishObs {
 
 // signIfAccepted computes state root, checks acceptance, signs if allowed,
 // stores sig and checks finalization. Caller must hold h.mu.
-func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byte, nonce uint64, err error) {
+func (h *Host) signIfAccepted(ctx context.Context, applied []*types.DevshardTx, observations ...mainnetTipObservation) (stateSig, root []byte, nonce uint64, err error) {
 	nonce = h.sm.LatestNonce()
 	root, err = h.sm.ComputeStateRoot()
 	if err != nil {
@@ -972,8 +1008,17 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 		}
 	}
 
-	sig, err := h.signState(nonce, root)
+	sig, err := h.signState(ctx, nonce, root, observations...)
 	if err != nil {
+		if errors.Is(err, types.ErrHeaderPending) {
+			// Freshness gates state signatures, not execution of an already
+			// authenticated diff. Aborting here would strand a receipt that
+			// signReceipt has already queued, without running its execution job.
+			// Recovery must also be able to pass old checkpoints on its way
+			// to a fresh diff; never sign those intermediate roots.
+			logging.Debug("state signature withheld: checkpoint not fresh", "subsystem", "host", "nonce", nonce, "error", err)
+			return nil, root, nonce, nil
+		}
 		return nil, nil, 0, fmt.Errorf("sign state root: %w", err)
 	}
 	stateSig = sig
@@ -2015,7 +2060,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]t
 		}
 
 		// Sign state with acceptance check (same path as HandleRequest).
-		stateSig, root, nonce, err := h.signIfAccepted(nil)
+		stateSig, root, nonce, err := h.signIfAccepted(ctx, nil)
 		if err != nil {
 			return sigs, fmt.Errorf("sign recovered state: %w", err)
 		}
@@ -2095,8 +2140,26 @@ func (h *Host) GetSignatures(nonce uint64) (map[uint32][]byte, error) {
 	return h.store.GetSignatures(h.escrowID, nonce)
 }
 
+type mainnetTipObservation struct {
+	header           *blocks.Header
+	receivedAt       time.Time
+	validUntil       time.Time
+	checkpointHeight int64
+	checkpointHash   []byte
+}
+
 // signState marshals StateSignatureContent{root, escrowID, nonce} and signs it.
-func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
+func (h *Host) signState(ctx context.Context, nonce uint64, root []byte, observations ...mainnetTipObservation) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	var requestTip func() *blocks.Header
+	if len(observations) > 0 {
+		requestTip = func() *blocks.Header { return h.reusableMainnetTip(observations[0], time.Now()) }
+	}
+	if err := h.sm.CheckMainnetHeightFreshnessWithTip(ctx, time.Now(), requestTip); err != nil {
+		return nil, err
+	}
+
 	sigContent := &types.StateSignatureContent{
 		StateRoot: root,
 		EscrowId:  h.escrowID,
@@ -2107,6 +2170,21 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 		return nil, fmt.Errorf("marshal state sig content: %w", err)
 	}
 	return h.signer.Sign(sigData)
+}
+
+func (h *Host) reusableMainnetTip(observation mainnetTipObservation, now time.Time) *blocks.Header {
+	until := observation.receivedAt.Add(time.Second)
+	if observation.validUntil.Before(until) {
+		until = observation.validUntil
+	}
+	if observation.header == nil || !now.Before(until) {
+		return nil
+	}
+	cp := h.sm.MainnetCheckpoint()
+	if cp.Height != observation.checkpointHeight || !bytes.Equal(cp.Hash, observation.checkpointHash) {
+		return nil
+	}
+	return observation.header
 }
 
 // signProposer marshals msg and signs it, returning the proposer signature.

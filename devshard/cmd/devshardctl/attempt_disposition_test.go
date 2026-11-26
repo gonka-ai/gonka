@@ -242,8 +242,12 @@ func TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T) {
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 
+	// Keep heartbeat scheduling from changing which host gets the first
+	// attempt. This scenario must contain a failed attempt to stamp.
 	env := setupManualFloorProxy(t, 3, nil, true)
-	env.killables[int((env.session.Nonce()+1)%3)].Kill()
+	failedNonce := env.session.Nonce() + 1
+	failedSlot := failedNonce % uint64(len(env.killables))
+	env.killables[failedSlot].Kill()
 	rec := withAttemptSpanRecorder(t)
 
 	ctx, req := observability.StartGatewayRequest(context.Background())
@@ -253,13 +257,8 @@ func TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan(t *testing.T) {
 
 	var timedOut sdktrace.ReadOnlySpan
 	require.Eventually(t, func() bool {
-		for _, s := range attemptSpans(rec) {
-			if spanAttrMap(s)[string(observability.AttrTimeoutOutcome)] != nil {
-				timedOut = s
-				return true
-			}
-		}
-		return false
+		timedOut = attemptSpans(rec)[int64(failedNonce)]
+		return timedOut != nil && spanAttrMap(timedOut)[string(observability.AttrTimeoutOutcome)] != nil
 	}, 10*time.Second, 20*time.Millisecond,
 		"timeout evaluation must be able to stamp the still-open attempt span")
 	req.End()
