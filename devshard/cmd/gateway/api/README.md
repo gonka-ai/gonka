@@ -15,6 +15,8 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 | `stream.go` | `clientStream`: the writer the race streams through, and the fold for a non-streaming client |
 | `buffer_budget.go` | the ceiling on the bytes every non-streaming reply holds at once |
 | `cache.go` | the response cache, keyed on everything that varies the answer |
+| `cache_index.go` | the index from the nonce that won a reply to its entry, the set of verdicts that arrived before their reply, the removals built on them and the entry points the composition root calls |
+| `cache_policy.go` | the `Cache-Control` request directives |
 | `errors.go` | which error becomes which status |
 | `admin*.go` | the operator surface: escrows, overrides, quarantine, accounting resets |
 | `capture.go`, `inspect.go` | sampled request capture for diagnosis |
@@ -222,7 +224,29 @@ Eviction drops entries in map order: with a per-caller key and an hour's TTL the
 
 **A hit is served while proof-of-compute blocks requests.** `chat` runs admission first and keeps its refusal; a refusal that is proof-of-compute alone lets the lookup run, a hit is served, and a miss gets the same refusal. Every other refusal is written before the lookup. See [`docs/rules.md`](../docs/rules.md), "Refused mechanisms".
 
-Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
+Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`, `invalidated` for a reply whose nonce was voted invalid before it arrived, whose winner was a suspicious host, or whose race began before an epoch clear or a host mark) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
+
+### Removing an entry
+
+An entry records the nonce that won its race, the escrow that nonce belongs to and the participant that served it. `byNonce` indexes entries by (escrow, nonce); `put` and `dropLocked` are the only code that writes or deletes it, so expiry, eviction and replacement keep it exact. A reply with no winning nonce is stored and cannot be removed by nonce.
+
+The first negative validation vote seen in a composed diff removes the entry by (escrow, nonce), through `Server.InvalidateCachedReply`. The cache takes only its own lock in that call, because the diff observer runs under the session's lock. The signal comes through the nonce ledger's diff observer, so it exists only while `nonce_accounting` is enabled.
+
+A verdict can arrive before the reply reaches `put`. A verdict that finds no entry therefore records its (escrow, nonce) in `revoked`, and `put` refuses a reply whose nonce is there as `invalidated`. `revoked` holds at most `revokedLimit` rows and forgets the oldest when full; a reply that finishes after its verdict was forgotten is stored. A row has no expiry of its own: a nonce is never reused within an escrow.
+
+A reply whose winner was a suspicious host is not stored, so a mark that lands before the race ends is not undone by it. Each entry is charged `cacheEntryOverhead` for its map rows, including this index row.
+
+A rise of the chain's effective epoch (`ObservePhase`, subscribed to the phase observer) clears the whole cache; an unknown epoch or one no higher than the last seen changes nothing, so neither a failed poll nor a lagging chain read does. Marking a participant suspicious through the admin route removes the entries that participant served. Each clearing bumps a generation that `chat` reads before its race, and `put` refuses a reply from a race that began before it as `invalidated`. Neither clears `revoked`.
+
+### What the client controls
+
+The request header `Cache-Control` is read on `POST /v1/chat/completions` and nowhere else; the body is untouched, so the cache key is the same as without the header.
+
+- **`no-cache`** skips the lookup and runs a race; the fresh reply replaces the entry under its key.
+- **`no-store`** skips the lookup and stores nothing; the reply is not recorded, so it spends none of the response buffer budget. It wins over `no-cache` when both are present.
+- Every other directive is ignored. Names are matched case-insensitively and an argument (`no-cache="Set-Cookie"`) does not change the directive.
+
+A bypass during proof-of-compute is refused as a miss is, with the same 503. A different `seed` is a different body and therefore a different entry.
 
 ## Read next
 

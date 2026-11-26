@@ -15,6 +15,7 @@ The binary is [`../main.go`](../main.go): it copies the version the build stamps
 | `devshards.go`, `devshards_publish.go`, `devshards_republish.go`, `devshards_sessions.go`, `devshards_seeds.go` | turn stored rows into live escrow sessions |
 | `runtime_params.go` | binds an escrow's heartbeat schedule to the chain's operational governance |
 | `observers.go` | adapts one event into the several readers that want it |
+| `cache_invalidation.go` | carries negative validation verdicts to the response cache |
 | `planner_wiring.go` | feeds the funding planner the registry's escrow money and money-short wakeups, and exports its decisions and unsettled counts as metrics |
 | `operations.go` | the admin operations behind [`api`](../api/README.md) |
 | `model_filters.go` | the operator's per-model filter settings |
@@ -34,7 +35,7 @@ Most of `compose` is a straight line. Six places are not:
 - **`serve` owns the signal context**, so releasing it survives a panic. `os.Exit` skips a `defer` left in `main`.
 - **Routing joins the escrow set to the picker through the capacity model.** An escrow whose membership never reaches that model scores as weightless, is skipped by every pick, and serves nothing — so the join is not optional wiring. The warmup is handed the registry *after* the registry exists, because the registry publishes to it; and a nil warmup must never be assigned into the interface field, since a typed nil there is non-nil to a nil check.
 - **The engine hears of an applied Finish through a registry built before it.** The registry's served-binding observer forwards every Finish it judges to `finishNotice`, and the engine is stored into that notice once it exists, so a served winner's held sample is decided when its Finish applies ([`docs/race.md`](../docs/race.md), "A served winner's sample waits for its finish"). A Finish judged before the engine exists has no held sample to decide.
-- **The journal and the nonce recorder are built around each other.** The journal takes the recorder as its ledger sink when it is built; the recorder receives the journal as an argument of `Start`, which `serve` calls once both exist. `journalSettings` keeps a disabled recorder out of the journal's interface field.
+- **The journal and the nonce recorder are built around each other.** The journal takes the recorder as its ledger sink when it is built; the recorder receives the journal as an argument of `Start`, which `serve` calls once both exist; `diffJournal()` wraps it so a negative validation vote also reaches the response cache. `journalSettings` keeps a disabled recorder out of the journal's interface field.
 - **The capture and cache collectors are registered after the server**, which owns both sinks. Nothing evicts capture files, so the refusal count is the only signal that capture has turned itself off at its byte cap.
 
 ## Two readers of one fact
@@ -97,4 +98,4 @@ Boot has a matching budget: the concurrent-build limit and the idle connection p
 
 ## The harness surface
 
-`composed.go` exports what the [`scenarios`](../scenarios/) harness needs: compose the real gateway over a fake chain and in-process hosts (`Compose`, `Sources`), boot it one step at a time inside a `testing/synctest` bubble (`BootSteps`, `BootStep`), read its parts (`Handler`, `Config`, `Store`, `Observer`, `Escrows`, `Manager`, `Races`, `Nonces`, `Journal`, `Telemetry`), act as the operator (`Deactivate`, `Settle`) and stop it (`Shutdown`, `ShutdownGracePeriod`). Nothing in the binary calls it. It holds adapters only: a change of behaviour belongs in the file the adapter reaches, never here.
+`composed.go` exports what the [`scenarios`](../scenarios/) harness needs: compose the real gateway over a fake chain and in-process hosts (`Compose`, `Sources`), boot it one step at a time inside a `testing/synctest` bubble (`BootSteps`, `BootStep`), read its parts (`Handler`, `Config`, `Store`, `Observer`, `Escrows`, `Manager`, `Races`, `Nonces`, `DiffJournal`, `Journal`, `Telemetry`), act as the operator (`Deactivate`, `Settle`) and stop it (`Shutdown`, `ShutdownGracePeriod`). Nothing in the binary calls it. It holds adapters only: a change of behaviour belongs in the file the adapter reaches, never here.

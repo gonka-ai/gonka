@@ -66,7 +66,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_DRAIN_TIMEOUT_SECONDS` | 2 400 | how long a race may run after its client leaves; at least 1 200 ([race.md](./race.md), "Tunables and backstops") |
 | `GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST` | 3 | attempts one request may start in all, hedges and retries included; past it no hedge or retry starts, and the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
-| `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
+| `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts; the ledger's diff observer is also what removes a cached reply on a negative validation vote |
 | `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
 | `DEVSHARD_STATS_RETENTION_EPOCHS` | 2 | how many epochs before the current one the nonce ledger keeps retired escrows; `0` keeps every epoch |
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
@@ -207,7 +207,7 @@ Within one setting: a knob the setting sets beats the preset it names; a setting
 
 A filter entry lists `warnings` when the settings' limits override its filters — a cap below the floor, a cap below the budget's `force_zero_below`, or a default budget below it — so the conflict is visible where the filters are edited. Neither PUT refuses it: the two are edited separately and either order must be possible.
 
-A cached reply is keyed on the normalized body, the model and the empty-answer exemption, so a filter change never serves a reply produced under the old filters; entries also expire within the cache TTL.
+A cached reply is keyed on the normalized body, the model and the empty-answer exemption, so a filter change never serves a reply produced under the old filters; entries also expire within the cache TTL. A cached reply is also removed when its nonce is voted invalid (seen only while the nonce ledger, `DEVSHARD_STATS_ENABLED`, is on), when the chain's effective epoch rises, and when its participant is marked suspicious; a reply a suspicious host wins is not stored; a client can skip it per request with `Cache-Control: no-cache` or `no-store` ([`api/README.md`](../api/README.md), "What the client controls").
 
 ### When a release changes the presets
 
