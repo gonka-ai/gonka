@@ -288,6 +288,7 @@ type GatewayDevshardState struct {
 	RuntimeConfig
 	Active            bool   `json:"active"`
 	SettlementPending bool   `json:"settlement_pending,omitempty"`
+	SettlementReason  string `json:"settlement_reason,omitempty"`
 	OnHoldSince       string `json:"on_hold_since,omitempty"`
 	RotationRole      string `json:"rotation_role,omitempty"`
 	RotationEpoch     uint64 `json:"rotation_epoch,omitempty"`
@@ -325,9 +326,11 @@ type GatewayStore interface {
 	GetDevshard(ctx context.Context, id string) (GatewayDevshardState, bool, error)
 	SetDevshardActive(ctx context.Context, id string, active bool) error
 	DeactivateDevshardIfActive(ctx context.Context, id string, settlementPending bool) (bool, error)
+	DeactivateDevshardWithSettlementReason(ctx context.Context, id string, settlementPending bool, reason string) (bool, error)
 	HoldDevshardIfActive(ctx context.Context, id string, since time.Time) (time.Time, bool, error)
 	ReleaseDevshardHold(ctx context.Context, id string) error
 	SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error
+	SetDevshardSettlementPendingWithReason(ctx context.Context, id string, pending bool, reason string) error
 	DeleteDevshard(ctx context.Context, id string) error
 	SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
 	DeleteParticipantThrottle(ctx context.Context, key string) error
