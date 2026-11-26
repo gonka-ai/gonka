@@ -48,7 +48,7 @@ const (
 
 var errNoChainDialed = errors.New("the composed test gateway dials no chain")
 
-// TestMain ignores the goroutines that live for the process: database/sql's cleaner, the sqlite finalizer and the unclosable chain client.
+// TestMain ignores the goroutines that live for the process: database/sql's cleaner, the sqlite finalizer, the unclosable chain client and the commit-verifying header source.
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m,
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
@@ -58,6 +58,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/resolver/dns.(*dnsResolver).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransportAndUnlock"),
 		goleak.IgnoreAnyFunction("github.com/godbus/dbus.(*Conn).inWorker"),
+		goleak.IgnoreTopFunction("common/chainoracle/blocks/observer.(*Oracle).runVerifier"),
 	)
 }
 
@@ -133,7 +134,7 @@ func sessionsReading(records devshardLookup, storageDir string, reader chain.Rea
 			Serving: func(context.Context, string) (registry.EscrowSession, error) {
 				return nil, errNoChainDialed
 			},
-			ReadOnly:  readOnlySessions(records, storageDir),
+			ReadOnly:  readOnlySessions(records, storageDir, nil),
 			Reader:    reader,
 			Transport: chainWithoutADial{},
 		}, nil
@@ -171,7 +172,7 @@ func TestComposeReadsThePublicAPIThroughTheSourcesClient(t *testing.T) {
 	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   func(context.Context, string) (registry.EscrowSession, error) { return nil, errNoChainDialed },
-			ReadOnly:  readOnlySessions(gatewayStore, storageDir),
+			ReadOnly:  readOnlySessions(gatewayStore, storageDir, nil),
 			Reader:    chainWithoutADial{},
 			Transport: chainWithoutADial{},
 			PublicAPI: client,
