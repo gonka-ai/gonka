@@ -245,7 +245,7 @@ func txsAbout500() []*types.DevshardTx {
 	var txs []*types.DevshardTx
 	for range 8 {
 		txs = []*types.DevshardTx{{
-			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{Model: model}},
+			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{Model: model, ProtocolVersion: testutil.RuntimeTestVersion}},
 		}}
 		got := proto.Size(&types.DiffContent{Txs: txs})
 		if got >= 480 && got <= 520 {
@@ -271,13 +271,18 @@ func seedRefusalDiffs(t *testing.T, store *storage.SQLite, root []byte, n int) {
 	stored := proto.Size(&types.DiffContent{Txs: txs})
 	require.GreaterOrEqual(t, stored, 480)
 	require.LessOrEqual(t, stored, 520)
+	seedRefusalDiffsWith(t, store, root, n, func(int) []*types.DevshardTx { return txs })
+}
+
+func seedRefusalDiffsWith(t *testing.T, store *storage.SQLite, root []byte, n int, txsFor func(nonce int) []*types.DevshardTx) {
+	t.Helper()
 	const batch = 1000
 	recs := make([]types.DiffRecord, 0, batch)
 	for nonce := 1; nonce <= n; nonce++ {
 		recs = append(recs, types.DiffRecord{
 			Diff: types.Diff{
 				Nonce:         uint64(nonce),
-				Txs:           txs,
+				Txs:           txsFor(nonce),
 				PostStateRoot: root,
 			},
 			StateHash: root,
@@ -316,6 +321,16 @@ func newRefusalJournalServer(t *testing.T) (*transport.Server, []byte) {
 // pending record; the journal is not replayed into it.
 func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
 	t.Helper()
+	return newRefusalJournalServerWith(t, n, nil)
+}
+
+func newRefusalJournalServerWith(t *testing.T, n int, txsFor func(nonce int) []*types.DevshardTx) (*transport.Server, []byte) {
+	t.Helper()
+	return newRefusalJournalServerFull(t, n, txsFor, nil)
+}
+
+func newRefusalJournalServerFull(t *testing.T, n int, txsFor func(nonce int) []*types.DevshardTx, extra map[uint64]*types.InferenceRecord) (*transport.Server, []byte) {
+	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
@@ -335,7 +350,11 @@ func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
 		Group:          group,
 		InitialBalance: 100000,
 	}))
-	seedRefusalDiffs(t, store, root, n)
+	if txsFor == nil {
+		seedRefusalDiffs(t, store, root, n)
+	} else {
+		seedRefusalDiffsWith(t, store, root, n, txsFor)
+	}
 
 	sm, err := state.NewStateMachine(refusalJournalEscrow, config, group, 100000, user.Address(), verifier,
 		testutil.MustMemoryStore(t, refusalJournalEscrow, user.Address(), config, group, 100000))
@@ -353,6 +372,9 @@ func newRefusalJournalServerN(t *testing.T, n int) (*transport.Server, []byte) {
 			InputLength:  100,
 			MaxTokens:    testutil.TestMaxTokens,
 		},
+	}
+	for id, r := range extra {
+		st.Inferences[id] = r
 	}
 	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, sm.ExportHeightSyncFloor())
 	require.NoError(t, err)

@@ -158,6 +158,7 @@ func VerifyRefusedProgress(
 	ctx, cancel := context.WithTimeout(ctx, verifyBudget)
 	defer cancel()
 
+	coldChecked := false
 	for {
 		if err := ctx.Err(); err != nil {
 			return false, err
@@ -211,6 +212,27 @@ func VerifyRefusedProgress(
 				lead := &coldWalkLead{gate: walk.gate, key: walk.key, request: requestCtx}
 				defer lead.release()
 				walkCtx = context.WithValue(ctx, coldLeadKey{}, lead)
+			}
+		}
+		if !coldChecked && sessionNotFound(queryErr) && !executorProvedBound(ev, st, rec.ExecutorSlot) {
+			coldChecked = true
+			bindable, known := cachedColdStartProof(ctx)
+			switch {
+			case known && !bindable:
+				logColdUnbindable(st, inferenceID)
+				return false, nil
+			case known:
+			case cursor == 1 && coldLeadFrom(walkCtx) != nil:
+				walkCtx = withColdProofCheck(walkCtx)
+			default:
+				bindable, bindErr := coldStartProofBindable(ctx, st, journal)
+				if bindErr != nil {
+					return false, bindErr
+				}
+				if !bindable {
+					logColdUnbindable(st, inferenceID)
+					return false, nil
+				}
 			}
 		}
 
@@ -316,6 +338,10 @@ func challengeAndMaybeRetry(
 	unreachable func(error) bool,
 ) (bool, error) {
 	outcome, err := challengeOnce(ctx, st, inferenceID, rec, payload, cursor, executorClient, ingest, ev, tip, journal, queryTimeout, unreachable)
+	if errors.Is(err, errColdUnbindable) {
+		logColdUnbindable(st, inferenceID)
+		return false, nil
+	}
 	accept, done, err := classifyChallenge(outcome, err, unreachable, func() bool { return headerPendingDefers(ev, inferenceID, types.TimeoutReason_TIMEOUT_REASON_REFUSED) })
 	if done {
 		return accept, err
@@ -473,6 +499,9 @@ func challengeFrom(
 		return from
 	}, func(page []types.DiffWire, more bool) (func(context.Context) error, error) {
 		if err := walkCtx.Err(); err != nil {
+			return nil, err
+		}
+		if err := checkColdProofPage(ctx, st, page, more); err != nil {
 			return nil, err
 		}
 		warnOversizedDiff(page)

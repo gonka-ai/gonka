@@ -281,6 +281,7 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 				InferenceId: id, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 				ObservedHeight: 100, ObservedBlockHash: []byte{0xaa},
+				ProtocolVersion: testutil.RuntimeTestVersion,
 			}},
 		}})
 		require.NoError(t, err)

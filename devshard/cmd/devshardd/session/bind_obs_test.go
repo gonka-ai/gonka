@@ -385,7 +385,7 @@ func TestChallengeReceiptUnbound_MissingVersionDoesNotBind(t *testing.T) {
 	mgr, store, user, hosts := setupBindTestGroupSignedBy(t, escrowID, 1)
 	rpc := newBindRPC(t, mgr)
 
-	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diff := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTxVersioned(1, "")})
 	dj, err := transport.DiffToJSON(diff)
 	require.NoError(t, err)
 

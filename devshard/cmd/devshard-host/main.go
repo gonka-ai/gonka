@@ -461,7 +461,7 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, err := sm.ApplyDiff(rec.Diff)
+			root, err := sm.ApplyDiffPersisted(rec.Diff)
 			if err != nil {
 				return fmt.Errorf("replay nonce %d: %w", rec.Nonce, err)
 			}

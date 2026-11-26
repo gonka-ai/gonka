@@ -235,11 +235,12 @@ func SignRevealSeed(t *testing.T, signer *signing.Secp256k1Signer, escrowID stri
 
 func StartTx(inferenceID uint64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-		InferenceId: inferenceID,
-		PromptHash:  TestPromptHash[:],
-		Model:       "llama",
-		InputLength: 100,
-		MaxTokens:   TestMaxTokens,
+		InferenceId:     inferenceID,
+		PromptHash:      TestPromptHash[:],
+		Model:           "llama",
+		InputLength:     100,
+		MaxTokens:       TestMaxTokens,
+		ProtocolVersion: RuntimeTestVersion,
 	}}}
 }
 
