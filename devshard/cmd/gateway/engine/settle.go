@@ -56,6 +56,7 @@ type TimeoutStep struct {
 	Post      bool
 	Kind      SettleKind
 	Proof     *MissProof
+	Siblings  []uint64
 	Event     TimeoutEvent
 	Pace      func(ctx context.Context) error
 }
@@ -130,7 +131,7 @@ func (o RaceOutcome) TimeoutPlan() []TimeoutStep {
 		} else {
 			step.Post = true
 			if attempt.claimsMiss() {
-				step.Kind, step.Proof = SettleByMissClaim, attempt.MissProof
+				step.Kind, step.Proof, step.Siblings = SettleByMissClaim, attempt.MissProof, o.siblingNonces(attempt.Nonce)
 			}
 			step.Event.Action = TimeoutActionStarted
 			step.Event.Reason = TimeoutReasonNone
@@ -138,6 +139,16 @@ func (o RaceOutcome) TimeoutPlan() []TimeoutStep {
 		steps = append(steps, step)
 	}
 	return steps
+}
+
+func (o RaceOutcome) siblingNonces(nonce uint64) []uint64 {
+	siblings := make([]uint64, 0, len(o.Attempts))
+	for _, attempt := range o.Attempts {
+		if attempt.Nonce != nonce {
+			siblings = append(siblings, attempt.Nonce)
+		}
+	}
+	return siblings
 }
 
 type votePass struct {

@@ -257,9 +257,11 @@ type outcomeHandler struct {
 	detail  string
 }
 
-func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (user.TimeoutResult, error) {
+func (outcomeHandler) HandleErrorMissWithSibling(context.Context, uint64, []byte, []byte, uint64) (user.TimeoutResult, error) {
 	return user.TimeoutResult{}, nil
 }
+
+func (outcomeHandler) ServedSibling(uint64, uint64) bool { return false }
 
 func (outcomeHandler) FinishTxFor(uint64) []byte { return nil }
 

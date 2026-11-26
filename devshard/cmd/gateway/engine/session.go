@@ -15,12 +15,16 @@ import (
 const (
 	pacedCanceledOutcome = "skipped"
 	pacedCanceledDetail  = "context_canceled"
+
+	missClaimSkippedOutcome = "skipped"
+	missClaimSkippedDetail  = "unbilled_client_fault"
 )
 
 // timeoutHandler is the session's protocol-timeout entry point; *user.Session satisfies it.
 type timeoutHandler interface {
 	timeoutclaim.FinishSource
-	HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (user.TimeoutResult, error)
+	timeoutclaim.SiblingSource
+	HandleErrorMissWithSibling(ctx context.Context, nonce uint64, finishTx, responsePayload []byte, siblingInferenceID uint64) (user.TimeoutResult, error)
 	TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time)
 	WaitTimeoutDeadline(ctx context.Context, nonce uint64, sendTime time.Time) (reason types.TimeoutReason, ready bool, skipped user.TimeoutResult, err error)
 	VoteTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload, reason types.TimeoutReason) (result user.TimeoutResult, needsWait bool, err error)
@@ -73,7 +77,11 @@ func (s *SessionTimeouts) SettleTimeout(ctx context.Context, step TimeoutStep) (
 func (s *SessionTimeouts) settle(ctx context.Context, step TimeoutStep) (result user.TimeoutResult, deferred bool, err error) {
 	if step.Kind == SettleByMissClaim && step.Proof != nil {
 		if finishTx := timeoutclaim.FinishTx(step.Proof.finishTx, step.Nonce, s.handler); timeoutclaim.ClaimsMiss(finishTx) {
-			result, err = s.handler.HandleErrorMiss(ctx, step.Nonce, finishTx, step.Proof.ResponsePayload)
+			sibling, claimable := timeoutclaim.ClaimSibling(step.Nonce, finishTx, step.Proof.ResponsePayload, step.Siblings, s.handler)
+			if !claimable {
+				return user.TimeoutResult{Outcome: missClaimSkippedOutcome, DetailReason: missClaimSkippedDetail}, false, nil
+			}
+			result, err = s.handler.HandleErrorMissWithSibling(ctx, step.Nonce, finishTx, step.Proof.ResponsePayload, sibling)
 			return result, false, err
 		}
 	}

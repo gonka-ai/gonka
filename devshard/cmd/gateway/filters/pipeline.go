@@ -16,6 +16,7 @@ func runPipeline(document *Document, options Options) (Result, error) {
 	if err := validateStopTokenIDs(document, options.StopTokenVocabulary, routedModel); err != nil {
 		return Result{}, err
 	}
+	dropOutOfVocabularyLogitBiasKeys(document, options.StopTokenVocabulary, routedModel)
 	if err := normalizeMessages(document); err != nil {
 		return Result{}, err
 	}

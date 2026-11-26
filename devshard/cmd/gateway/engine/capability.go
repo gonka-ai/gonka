@@ -11,7 +11,11 @@ import (
 
 var versionNotFound = regexp.MustCompile(`version "[^"]*" not found`)
 
-const contextEstimateMargin = 2
+// See race.md, "Escalation".
+const (
+	contextEstimateMargin  = 2
+	requestRejectionQuorum = 2
+)
 
 type CapabilitySignal struct {
 	ToolsUnsupported   bool
@@ -83,6 +87,42 @@ func CapabilityOf(attempt AttemptOutcome) CapabilitySignal {
 // rulesOutRetry reports a trusted answer no other host would change: a context-length refusal a longer host could still serve keeps the search going. See race.md, "Escalation".
 func rulesOutRetry(attempt AttemptOutcome, modelContextLength, estimatedTokens uint64) bool {
 	return answersForEveryHost(attempt) && !CapabilityOf(attempt).servableElsewhere(modelContextLength, estimatedTokens)
+}
+
+func (c *raceCoordinator) rulesOutRetry(attempt *liveAttempt) bool {
+	outcome := *attempt.outcome
+	if !rulesOutRetry(outcome, c.deps.ModelContextLength, c.request.InputTokensFromBytes+c.request.OutputTokens) {
+		return false
+	}
+	if refusal := CapabilityOf(outcome); refusal.Refused() && !refusal.Retriable() {
+		return true
+	}
+	if c.requestRejectedBy == nil {
+		c.requestRejectedBy = make(map[string]struct{}, requestRejectionQuorum)
+	}
+	c.requestRejectedBy[attempt.participant] = struct{}{}
+	return len(c.requestRejectedBy) >= requestRejectionQuorum
+}
+
+// RequestRejectionConfirmed reports whether requestRejectionQuorum distinct trusted participants rejected the request itself. See race.md, "Escalation".
+func (o RaceOutcome) RequestRejectionConfirmed() bool {
+	return len(o.requestRejectedBy()) >= requestRejectionQuorum
+}
+
+// UnconfirmedRequestRejection reports a race that failed on a rejection of the request fewer than requestRejectionQuorum trusted participants made. See race.md, "Escalation".
+func (o RaceOutcome) UnconfirmedRequestRejection() bool {
+	rejectedBy := len(o.requestRejectedBy())
+	return !o.Succeeded && rejectedBy > 0 && rejectedBy < requestRejectionQuorum
+}
+
+func (o RaceOutcome) requestRejectedBy() map[string]struct{} {
+	rejectedBy := make(map[string]struct{}, requestRejectionQuorum)
+	for _, attempt := range o.Attempts {
+		if !attempt.Suspicious && rejectsRequest(attempt) {
+			rejectedBy[attempt.Participant] = struct{}{}
+		}
+	}
+	return rejectedBy
 }
 
 // answersForEveryHost reports a trusted host's answer the race takes as every host's: a refusal that is not Retriable, or a rejection of the request itself.

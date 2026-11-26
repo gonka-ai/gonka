@@ -16,9 +16,9 @@ type finishRecordingHandler struct {
 	claimedFinishTx []byte
 }
 
-func (h *finishRecordingHandler) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (user.TimeoutResult, error) {
+func (h *finishRecordingHandler) HandleErrorMissWithSibling(ctx context.Context, nonce uint64, finishTx, responsePayload []byte, sibling uint64) (user.TimeoutResult, error) {
 	h.claimedFinishTx = finishTx
-	return h.scriptedTimeoutHandler.HandleErrorMiss(ctx, nonce, finishTx, responsePayload)
+	return h.scriptedTimeoutHandler.HandleErrorMissWithSibling(ctx, nonce, finishTx, responsePayload, sibling)
 }
 
 // Test flow:

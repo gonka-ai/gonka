@@ -2,6 +2,9 @@ package filters
 
 import "devshard/cmd/gateway/internal/tokensource"
 
+// The request field whose keys are token ids. See README.md, "Logit bias keys".
+const logitBiasField = "logit_bias"
+
 // The strings a cacheability answer puts into the record, one per reason a reply may not be stored.
 const (
 	CacheStorable          = ""

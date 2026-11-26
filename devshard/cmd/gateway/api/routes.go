@@ -294,6 +294,10 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		s.countCacheResult(normalized.Model, recorder.entryRefusal(unstorable, outcome.EscrowID))
 		return
 	}
+	if outcome.UnconfirmedRequestRejection() {
+		s.countCacheResult(normalized.Model, cacheRefusedUnconfirmedRejection)
+		return
+	}
 	// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
 	cacheRefusal := s.cache.put(key, entry, s.now())
 	s.countCacheResult(normalized.Model, cacheRefusal)

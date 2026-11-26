@@ -142,6 +142,10 @@ Reasoning fields are left out: templates differ on whether they render a past tu
 
 `stop_token_ids` reach the engine only when every id is an integer inside the routed model's vocabulary (`validateStopTokenIDs`, through `completionapi.ValidateStopTokenIDs`): an out-of-vocabulary id asserts on the node. The document decodes numbers as `json.Number`, so an id written with a fraction, even an integral one like `1.0`, is refused here although the host, decoding it as a float, would accept it. The size comes from `Options.StopTokenVocabulary`, which the package calls only when the request carries a non-empty list, since the lookup can block on the chain. An unknown size — no function wired, or one that answers 0 — refuses the field with a 400, because no id can be proven safe without it. The check runs after the pre-validation stage, so a request another field's rule refuses fails there first.
 
+## Logit bias keys
+
+`logit_bias` keys past the routed model's vocabulary are dropped before the parameter rules run (`dropOutOfVocabularyLogitBiasKeys`, through `completionapi.TokenIDKeyOutOfRange`), so a key the engine would reject with a 400 never reaches a host. The size comes from `Options.StopTokenVocabulary`, asked only when the request carries a non-empty `logit_bias`; an unknown size falls back to `completionapi.UnknownVocabularyTokenIDLimit`. A key that is not a token id at all is left for `requireTokenIDKeys`, which refuses it, and a map the drop empties is removed by `validFloatMap`. The host drops the same keys again against its own pinned vocabulary.
+
 ## Model profiles
 
 A `*Profile` is one routed model's set of deltas from the default pipeline. A nil profile *is* the default — Qwen, DeepSeek and anything unrecognised.
