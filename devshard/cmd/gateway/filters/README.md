@@ -107,7 +107,7 @@ Collection rules:
 - `validListLength` bounds an array's length and, optionally, the length of its string elements. `messages` is capped at 2048 entries, `stop` at 16 entries of 256 bytes, `bad_words` at 64 entries of 128 bytes.
 - `requireStringElements` rejects the first non-string element, reported as `<param>[<index>]`.
 - `dropBlankStringListElements` removes whitespace-only strings from `bad_words` and drops the field when nothing survives.
-- `validFloatMap` rejects `logit_bias` outright past 1024 raw entries, then drops individual entries outside `[-100, 100]` or non-finite, and drops the field once none survive.
+- `validFloatMap` rejects `logit_bias` outright past 1024 entries, counted after the keys past the vocabulary are dropped, then drops individual entries outside `[-100, 100]` or non-finite, and drops the field once none survive.
 - `requireTokenIDKeys` rejects a `logit_bias` key that is not a non-negative 32-bit integer. The lexicographically first offender is reported, so the message is stable across map iteration order.
 - `validMetadata` enforces the OpenAI-compatible contract: an object, at most 16 keys, keys up to 64 bytes, string values up to 512 bytes.
 - `validStreamOptions` strips the field entirely unless `stream` is exactly `true`, then keeps only `include_usage` and drops the field when nothing survives.
@@ -144,7 +144,7 @@ Reasoning fields are left out: templates differ on whether they render a past tu
 
 ## Logit bias keys
 
-`logit_bias` keys past the routed model's vocabulary are dropped before the parameter rules run (`dropOutOfVocabularyLogitBiasKeys`, through `completionapi.TokenIDKeyOutOfRange`), so a key the engine would reject with a 400 never reaches a host. The size comes from `Options.StopTokenVocabulary`, asked only when the request carries a non-empty `logit_bias`; an unknown size falls back to `completionapi.UnknownVocabularyTokenIDLimit`. A key that is not a token id at all is left for `requireTokenIDKeys`, which refuses it, and a map the drop empties is removed by `validFloatMap`. The host drops the same keys again against its own pinned vocabulary.
+`logit_bias` keys that are token ids past the routed model's vocabulary are dropped before the parameter rules run (`dropOutOfVocabularyLogitBiasKeys`), so a key the engine would reject with a 400 never reaches a host. Only a key written as a plain non-negative 32-bit integer counts; anything else is left for `requireTokenIDKeys` to refuse, so a malformed key still gets the 400 it got before. The size comes from `Options.StopTokenVocabulary`, asked only when the request carries a non-empty `logit_bias`; an unknown size falls back to `completionapi.UnknownVocabularyTokenIDLimit`. A key that is not a token id at all is left for `requireTokenIDKeys`, which refuses it, and a map the drop empties is removed by `validFloatMap`. The host drops the same keys again against its own pinned vocabulary.
 
 ## Model profiles
 

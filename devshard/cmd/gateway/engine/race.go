@@ -180,7 +180,7 @@ type raceCoordinator struct {
 	burnCapReached   bool
 
 	retryRuledOut     bool
-	requestRejectedBy map[string]struct{}
+	requestRejections requestRejections
 	reportOnce        sync.Once
 }
 

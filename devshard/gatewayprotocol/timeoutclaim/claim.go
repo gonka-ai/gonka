@@ -11,8 +11,8 @@ import (
 	"devshard/user"
 )
 
-// NoSibling is the sibling an error-miss claim names when it needs none.
-const NoSibling uint64 = 0
+// NoSibling is host.NoSibling, the sibling a claim that needs none names.
+const NoSibling = host.NoSibling
 
 // Handler posts a timeout vote or an error-miss claim for an unfinished nonce; *user.Session satisfies it.
 type Handler interface {

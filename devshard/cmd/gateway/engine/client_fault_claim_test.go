@@ -24,7 +24,7 @@ func unbilledFinishTx(t *testing.T, nonce uint64) []byte {
 // Test flow:
 //  1. Settle a `SettleByMissClaim` step over an unbilled client-fault Finish whose race siblings served nothing.
 //  2. Settle the same step with one sibling the session holds as having served the prompt.
-//  3. Assert the first posts neither a claim nor a vote and reports the skip, and the second claims the miss naming that sibling.
+//  3. Assert the first posts neither a claim nor a vote and classifies as skipped for an unbilled client fault, not completed, and the second claims the miss naming that sibling.
 func TestAClientFaultMissIsClaimedOnlyBesideAServedSibling(t *testing.T) {
 	const nonce = uint64(7)
 	finishTx := unbilledFinishTx(t, nonce)
@@ -36,10 +36,7 @@ func TestAClientFaultMissIsClaimedOnlyBesideAServedSibling(t *testing.T) {
 	}
 
 	alone := &scriptedTimeoutHandler{}
-	aloneVote, err := (&SessionTimeouts{handler: alone}).SettleTimeout(context.Background(), step)
-	if err != nil {
-		t.Fatalf("SettleTimeout() without a served sibling = %v", err)
-	}
+	aloneVote, aloneErr := (&SessionTimeouts{handler: alone}).SettleTimeout(context.Background(), step)
 	served := &scriptedTimeoutHandler{servedSiblings: map[uint64]bool{9: true}}
 	if _, err := (&SessionTimeouts{handler: served}).SettleTimeout(context.Background(), step); err != nil {
 		t.Fatalf("SettleTimeout() beside a served sibling = %v", err)
@@ -48,8 +45,8 @@ func TestAClientFaultMissIsClaimedOnlyBesideAServedSibling(t *testing.T) {
 	if alone.missCalls != 0 || alone.calls != 0 {
 		t.Errorf("without a served sibling: %d claims and %d votes, want none", alone.missCalls, alone.calls)
 	}
-	if aloneVote.Detail != missClaimSkippedDetail {
-		t.Errorf("without a served sibling the vote detail = %q, want %q", aloneVote.Detail, missClaimSkippedDetail)
+	if action, reason := TimeoutOutcome(aloneVote, aloneErr, false); action != TimeoutActionSkipped || reason != TimeoutReasonClientFault {
+		t.Errorf("without a served sibling the outcome = %s/%s, want %s/%s", action, reason, TimeoutActionSkipped, TimeoutReasonClientFault)
 	}
 	if served.missCalls != 1 || served.claimedSibling != 9 {
 		t.Errorf("beside a served sibling: %d claims naming %d, want 1 naming 9", served.missCalls, served.claimedSibling)

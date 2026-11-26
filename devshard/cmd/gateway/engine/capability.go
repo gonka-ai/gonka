@@ -89,49 +89,50 @@ func rulesOutRetry(attempt AttemptOutcome, modelContextLength, estimatedTokens u
 	return answersForEveryHost(attempt) && !CapabilityOf(attempt).servableElsewhere(modelContextLength, estimatedTokens)
 }
 
-func (c *raceCoordinator) rulesOutRetry(attempt *liveAttempt) bool {
+func (c *raceCoordinator) retryRuledOutBy(attempt *liveAttempt) bool {
 	outcome := *attempt.outcome
 	if !rulesOutRetry(outcome, c.deps.ModelContextLength, c.request.InputTokensFromBytes+c.request.OutputTokens) {
 		return false
 	}
-	if refusal := CapabilityOf(outcome); refusal.Refused() && !refusal.Retriable() {
+	if refusesForEveryHost(outcome) {
 		return true
 	}
-	if c.requestRejectedBy == nil {
-		c.requestRejectedBy = make(map[string]struct{}, requestRejectionQuorum)
+	if c.requestRejections == nil {
+		c.requestRejections = requestRejections{}
 	}
-	c.requestRejectedBy[attempt.participant] = struct{}{}
-	return len(c.requestRejectedBy) >= requestRejectionQuorum
-}
-
-// RequestRejectionConfirmed reports whether requestRejectionQuorum distinct trusted participants rejected the request itself. See race.md, "Escalation".
-func (o RaceOutcome) RequestRejectionConfirmed() bool {
-	return len(o.requestRejectedBy()) >= requestRejectionQuorum
+	c.requestRejections.add(outcome)
+	return c.requestRejections.confirmed()
 }
 
 // UnconfirmedRequestRejection reports a race that failed on a rejection of the request fewer than requestRejectionQuorum trusted participants made. See race.md, "Escalation".
 func (o RaceOutcome) UnconfirmedRequestRejection() bool {
-	rejectedBy := len(o.requestRejectedBy())
-	return !o.Succeeded && rejectedBy > 0 && rejectedBy < requestRejectionQuorum
-}
-
-func (o RaceOutcome) requestRejectedBy() map[string]struct{} {
-	rejectedBy := make(map[string]struct{}, requestRejectionQuorum)
+	rejections := requestRejections{}
 	for _, attempt := range o.Attempts {
-		if !attempt.Suspicious && rejectsRequest(attempt) {
-			rejectedBy[attempt.Participant] = struct{}{}
-		}
+		rejections.add(attempt)
 	}
-	return rejectedBy
+	return !o.Succeeded && len(rejections) > 0 && !rejections.confirmed()
 }
 
-// answersForEveryHost reports a trusted host's answer the race takes as every host's: a refusal that is not Retriable, or a rejection of the request itself.
-func answersForEveryHost(attempt AttemptOutcome) bool {
-	if attempt.Suspicious {
-		return false
+type requestRejections map[string]struct{}
+
+func (r requestRejections) add(attempt AttemptOutcome) {
+	if !attempt.Suspicious && rejectsRequest(attempt) {
+		r[attempt.Participant] = struct{}{}
 	}
+}
+
+func (r requestRejections) confirmed() bool {
+	return len(r) >= requestRejectionQuorum
+}
+
+// answersForEveryHost reports a trusted host's answer that, alone or once confirmed, the race takes as every host's: a refusal that is not Retriable, or a rejection of the request itself.
+func answersForEveryHost(attempt AttemptOutcome) bool {
+	return !attempt.Suspicious && (refusesForEveryHost(attempt) || rejectsRequest(attempt))
+}
+
+func refusesForEveryHost(attempt AttemptOutcome) bool {
 	refusal := CapabilityOf(attempt)
-	return (refusal.Refused() && !refusal.Retriable()) || rejectsRequest(attempt)
+	return refusal.Refused() && !refusal.Retriable()
 }
 
 // rejectsRequest reports an error event from an attempt that streamed no content, with a structured 400 that filters reads as about the request, not the host. See ../filters/README.md, "Cacheability".

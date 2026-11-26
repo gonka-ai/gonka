@@ -560,6 +560,9 @@ const (
 	ErrorTimeoutRejectClientFault  = "client_fault"
 )
 
+// NoSibling is the sibling an error-miss claim names when it names none.
+const NoSibling uint64 = 0
+
 // VerifyErrorMiss checks whether a finished error/malformed body is a miss.
 //
 // Local computation only: no ctx, ExecutorClient, payload fetcher,
@@ -579,7 +582,7 @@ func VerifyErrorMiss(
 	localMempool []*types.DevshardTx,
 	finishVerifier FinishProposerVerifier,
 ) (bool, []byte, string, error) {
-	return VerifyErrorMissWithSibling(st, inferenceID, finishTx, responsePayload, 0, localMempool, finishVerifier)
+	return VerifyErrorMissWithSibling(st, inferenceID, finishTx, responsePayload, NoSibling, localMempool, finishVerifier)
 }
 
 func VerifyErrorMissWithSibling(

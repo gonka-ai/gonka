@@ -2554,8 +2554,8 @@ func TestRunRaceStopsEscalatingOnceTwoTrustedHostsRejectTheRequest(t *testing.T)
 	if len(outcome.Attempts) != 2 || outcome.Attempts[0].Terminal != TerminalErrorStream || outcome.Attempts[1].Terminal != TerminalErrorStream {
 		t.Fatalf("attempts = %+v, want the two rejected ones", outcome.Attempts)
 	}
-	if !outcome.RequestRejectionConfirmed() {
-		t.Fatal("RequestRejectionConfirmed() = false, want true after two distinct hosts rejected the request")
+	if outcome.UnconfirmedRequestRejection() {
+		t.Fatal("UnconfirmedRequestRejection() = true, want false after two distinct hosts rejected the request")
 	}
 
 	fixture.picker.mu.Lock()
@@ -2569,7 +2569,7 @@ func TestRunRaceStopsEscalatingOnceTwoTrustedHostsRejectTheRequest(t *testing.T)
 // Test flow:
 //  1. Start a race with two hosts queued: one scripted to reject the request body as malformed, one scripted to answer with content.
 //  2. Run the race to completion.
-//  3. Assert the race went on to the second host, which won, and the single rejection is not confirmed.
+//  3. Assert the race went on to the second host, which won.
 func TestRunRaceAsksAnotherHostAfterOneTrustedRejection(t *testing.T) {
 	fixture := newRaceFixture(refusalPolicy(), 3)
 	fixture.host(100, 0, "host-0", &hostScript{receipt: true, chunks: []string{"data: malformed-request\n\n"}})
@@ -2587,9 +2587,6 @@ func TestRunRaceAsksAnotherHostAfterOneTrustedRejection(t *testing.T) {
 	<-fixture.reported
 	if !outcome.Succeeded || outcome.WinnerNonce != 101 {
 		t.Fatalf("Succeeded = %t, WinnerNonce = %d, want the second host to win", outcome.Succeeded, outcome.WinnerNonce)
-	}
-	if outcome.RequestRejectionConfirmed() {
-		t.Fatal("RequestRejectionConfirmed() = true, want false after a single rejection")
 	}
 }
 

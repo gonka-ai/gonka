@@ -64,7 +64,7 @@ func (c *raceCoordinator) complete(attempt *liveAttempt, event AttemptEvent) {
 		RecordCapability(c.deps.Perf, attempt.participant, c.request.Model, signal)
 		c.exclude(attempt.participant)
 	}
-	if c.rulesOutRetry(attempt) {
+	if c.retryRuledOutBy(attempt) {
 		c.retryRuledOut = true
 		c.stopPicking()
 	}

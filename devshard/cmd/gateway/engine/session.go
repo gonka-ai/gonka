@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"devshard/cmd/gateway/quorum"
@@ -15,10 +16,9 @@ import (
 const (
 	pacedCanceledOutcome = "skipped"
 	pacedCanceledDetail  = "context_canceled"
-
-	missClaimSkippedOutcome = "skipped"
-	missClaimSkippedDetail  = "unbilled_client_fault"
 )
+
+var errClientFaultUnclaimed = errors.New("unbilled client fault with no served sibling: no miss claimed")
 
 // timeoutHandler is the session's protocol-timeout entry point; *user.Session satisfies it.
 type timeoutHandler interface {
@@ -79,7 +79,7 @@ func (s *SessionTimeouts) settle(ctx context.Context, step TimeoutStep) (result 
 		if finishTx := timeoutclaim.FinishTx(step.Proof.finishTx, step.Nonce, s.handler); timeoutclaim.ClaimsMiss(finishTx) {
 			sibling, claimable := timeoutclaim.ClaimSibling(step.Nonce, finishTx, step.Proof.ResponsePayload, step.Siblings, s.handler)
 			if !claimable {
-				return user.TimeoutResult{Outcome: missClaimSkippedOutcome, DetailReason: missClaimSkippedDetail}, false, nil
+				return user.TimeoutResult{}, false, errClientFaultUnclaimed
 			}
 			result, err = s.handler.HandleErrorMissWithSibling(ctx, step.Nonce, finishTx, step.Proof.ResponsePayload, sibling)
 			return result, false, err

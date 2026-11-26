@@ -7,9 +7,5 @@ func validateStopTokenIDs(document *Document, vocabulary func(model string) int,
 	if !completionapi.HasStopTokenIDs(document.Raw()) {
 		return nil
 	}
-	vocabularySize := VocabularySizeUnknown
-	if vocabulary != nil {
-		vocabularySize = vocabulary(routedModel)
-	}
-	return WrapReject(completionapi.ValidateStopTokenIDs(document.Raw(), vocabularySize))
+	return WrapReject(completionapi.ValidateStopTokenIDs(document.Raw(), vocabularySizeFor(vocabulary, routedModel)))
 }

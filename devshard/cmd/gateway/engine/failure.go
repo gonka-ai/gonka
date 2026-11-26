@@ -60,7 +60,7 @@ func (o RaceOutcome) winnerHolds(holds func(AttemptOutcome) bool) bool {
 // hostError prefers the crowned attempt's refusal, then a trusted refusal or rejection that rules out a retry; a shorter host's context refusal answers only when every host refused. See race.md, "Escalation".
 func (o RaceOutcome) hostError() *HostApplicationError {
 	var found *AttemptOutcome
-	foundRetryRuledOut := false
+	foundSpeaksForEveryHost := false
 	for index := range o.Attempts {
 		attempt := &o.Attempts[index]
 		if attempt.ErrorSource == "" {
@@ -73,9 +73,9 @@ func (o RaceOutcome) hostError() *HostApplicationError {
 		if o.refusedByAShorterHost(*attempt) {
 			continue
 		}
-		retryRuledOut := answersForEveryHost(*attempt)
-		if found == nil || (retryRuledOut && !foundRetryRuledOut) {
-			found, foundRetryRuledOut = attempt, retryRuledOut
+		speaksForEveryHost := answersForEveryHost(*attempt)
+		if found == nil || (speaksForEveryHost && !foundSpeaksForEveryHost) {
+			found, foundSpeaksForEveryHost = attempt, speaksForEveryHost
 		}
 	}
 	if found == nil {

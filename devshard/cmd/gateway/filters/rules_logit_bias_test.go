@@ -23,6 +23,7 @@ func normalizedLogitBias(t *testing.T, biases string, vocabulary func(string) in
 //  1. Normalize a request whose logit_bias holds a key inside the routed model's vocabulary and one past it, with the vocabulary known.
 //  2. Normalize the same request with the vocabulary unknown, and one whose only key is past the vocabulary.
 //  3. Assert the key past a known vocabulary is dropped, the fallback limit applies when it is unknown, and an emptied map is removed.
+//  4. Normalize requests whose only key is not a plain non-negative integer and assert each is still refused rather than dropped.
 func TestLogitBiasKeysPastTheVocabularyAreDropped(t *testing.T) {
 	known := normalizedLogitBias(t, `{"5":1,"1000":2}`, fixedVocabulary(testVocabularySize))
 	unknown := normalizedLogitBias(t, `{"5":1,"1000":2,"10000000":3}`, fixedVocabulary(VocabularySizeUnknown))
@@ -39,5 +40,10 @@ func TestLogitBiasKeysPastTheVocabularyAreDropped(t *testing.T) {
 	}
 	if emptied != nil {
 		t.Errorf("logit_bias emptied by the drop = %v, want it removed", emptied)
+	}
+	for _, malformed := range []string{`{"-5":1}`, `{" 99999999":1}`, `{"1_000000":1}`} {
+		if _, _, err := normalizeWith(t, fmt.Sprintf(logitBiasRequest, malformed), "m", fixedVocabulary(testVocabularySize)); err == nil {
+			t.Errorf("logit_bias %s normalized, want the 400 a key that is not a token id gets", malformed)
+		}
 	}
 }

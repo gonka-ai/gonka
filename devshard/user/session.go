@@ -4698,7 +4698,7 @@ func (s *Session) timeoutUnarmed(nonce uint64) bool {
 }
 
 func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (TimeoutResult, error) {
-	return s.HandleErrorMissWithSibling(ctx, nonce, finishTx, responsePayload, 0)
+	return s.HandleErrorMissWithSibling(ctx, nonce, finishTx, responsePayload, host.NoSibling)
 }
 
 func (s *Session) ServedSibling(inferenceID, siblingID uint64) bool {

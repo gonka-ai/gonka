@@ -276,6 +276,8 @@ func TimeoutOutcome(vote TimeoutVote, err error, escrowMissing bool) (action Tim
 		return TimeoutActionCompleted, TimeoutReasonNone
 	case errors.Is(err, user.ErrNonceFinishedWhileWaiting):
 		return TimeoutActionSkipped, TimeoutReasonNonceFinished
+	case errors.Is(err, errClientFaultUnclaimed):
+		return TimeoutActionSkipped, TimeoutReasonClientFault
 	case errors.Is(err, user.ErrTimeoutNotApplied):
 		return TimeoutActionFailed, firstNamed(vote.Detail, TimeoutReasonNotApplied)
 	case err != nil && escrowMissing:
