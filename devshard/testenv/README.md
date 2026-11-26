@@ -267,7 +267,7 @@ requires HAProxy to withdraw it before listener shutdown, verifies survivor
 recovery through shared Postgres, and admits the host again only after it
 converges.
 
-**Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees, A5 streamed HTTP 200 SSE error envelope accounted as `MsgErrorMiss` (companion to A2; 3-host stack). Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
+**Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk (`TestLostFirstChunk`), A2 ML 503 (`TestMLUpstream5xx`), A3 stale escrow on chain gRPC (`TestStaleEscrow`), A4 bad warm-key grantees (`TestBadWarmKey`), A5 streamed HTTP 200 SSE error envelope accounted as `MsgErrorMiss` (`TestErrorFinishMiss`; companion to A2; 3-host stack). Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 
 ### Public-proxy overlay (optional)
 

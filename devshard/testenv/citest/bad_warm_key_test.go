@@ -10,9 +10,9 @@ import (
 	"devshard/testenv/mockchain/adminface"
 )
 
-// TestA4_BadWarmKey verifies POST /testenv/grantees revokes the configured warm grantee
+// TestBadWarmKey verifies POST /testenv/grantees revokes the configured warm grantee
 // on mock-chain and that Connect gossip then permission-denies that key.
-func TestA4_BadWarmKey(t *testing.T) {
+func TestBadWarmKey(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 

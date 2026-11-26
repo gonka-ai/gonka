@@ -151,10 +151,10 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 
 | ID     | Scenario           | Validates                                                                      | Test (planned)                                 | Status |
 | ------ | ------------------ | ------------------------------------------------------------------------------ | ---------------------------------------------- | ------ |
-| **G1** | gRPC escrow create | Gateway creates escrow via gRPC tx only; visible on gRPC query                 | `TestG1_GatewayEscrowCreateGRPC`               | ✅      |
-| **G2** | gRPC escrow read   | Gateway reads escrow via gRPC bridge (no LCD)                                  | `TestG2_GatewayEscrowReadGRPC`                 | ✅      |
-| **G3** | Chat without LCD   | Full chat path with compose **without** `DEVSHARD_CHAIN_REST` / mock REST port | `TestG3_GatewayChatGRPCOnly`                   | ⬜      |
-| **G4** | REST removed gate  | CI grep: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl               | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅      |
+| **G1** | gRPC escrow create | Gateway creates escrow via gRPC tx only; visible on gRPC query                 | `TestGatewayEscrowCreateGRPC`               | ✅      |
+| **G2** | gRPC escrow read   | Gateway reads escrow via gRPC bridge (no LCD)                                  | `TestGatewayEscrowReadGRPC`                 | ✅      |
+| **G3** | Chat without LCD   | Full chat path with compose **without** `DEVSHARD_CHAIN_REST` / mock REST port | `TestGatewayChatGRPCOnly`                   | ⬜      |
+| **G4** | REST removed gate  | CI grep: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl               | `TestNoRESTChainClientsInGatewayProduction` | ✅      |
 
 
 Detail: `[scenarios.md](./scenarios.md)` § Phase 12 transport scenarios.
@@ -163,7 +163,7 @@ Detail: `[scenarios.md](./scenarios.md)` § Phase 12 transport scenarios.
 
 ```makefile
 citest-grpc-transport:  ## G1–G3 gRPC-only gateway citest
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestGatewayEscrowCreateGRPC|TestGatewayEscrowReadGRPC|TestGatewayChatGRPCOnly)$' -count=1 -v -timeout 30m
 ```
 
 Fold **G3** into `make citest-stack` once `TestGatewayChat` is gRPC-only.
