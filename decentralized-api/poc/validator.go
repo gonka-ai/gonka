@@ -314,10 +314,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 	pocParams = types.ApplyStageRecipe(pocParams, recipe)
-	sampleSize := int(pocParams.ValidationSampleSize)
-	if sampleSize == 0 {
-		sampleSize = 200
-	}
+	sampleSize := validationSampleSize(pocParams.ValidationSampleSize)
 
 	nodes, err := v.getNodesWithRetry(pocStageStartBlockHeight)
 	if err != nil {
@@ -1058,6 +1055,22 @@ func (v *OffChainValidator) dispatchToMLNode(
 	logging.Warn("OffChainValidator: ML node request failed", types.PoC,
 		"participant", work.address, "node", node.Node.Host, "attempt", work.attempt, "error", err)
 	return validateAbstainRetry
+}
+
+// defaultValidationSampleSize is used when poc_params.validation_sample_size is
+// 0, and for a negative value, which the chain now rejects but may still hold.
+const defaultValidationSampleSize = 200
+
+// validationSampleSize returns how many leaf indices to sample per participant.
+// 0 or a negative value means the default, so validation keeps its full
+// strength. Larger values are capped at types.MaxPocValidationSampleSize: all
+// sampled indices go in one proof request, and the proof endpoint rejects a
+// request with more.
+func validationSampleSize(configured int32) int {
+	if configured <= 0 {
+		return defaultValidationSampleSize
+	}
+	return int(min(configured, types.MaxPocValidationSampleSize))
 }
 
 // sampleLeafIndices generates deterministic leaf indices using lazy Fisher-Yates.

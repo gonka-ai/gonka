@@ -28,10 +28,7 @@ func (v *OffChainValidator) ValidateOpenChallenges() {
 		logging.Error("OffChainValidator: PocParams missing for challenge validation", types.PoC)
 		return
 	}
-	sampleSize := int(pocParams.ValidationSampleSize)
-	if sampleSize == 0 {
-		sampleSize = 200
-	}
+	sampleSize := validationSampleSize(pocParams.ValidationSampleSize)
 
 	samplingBlockHash := v.getSamplingBlockHash(epochState)
 	if samplingBlockHash == "" {
