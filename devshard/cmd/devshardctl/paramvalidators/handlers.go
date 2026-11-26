@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 
-	"common/completionapi"
 	"devshard"
 )
 
@@ -102,7 +101,6 @@ type SanitizeFloatMapParameter struct {
 	Max              *float64
 	DropFieldIfEmpty bool
 	MaxEntries       int
-	TokenIDKeyLimit  int64
 }
 
 func (h SanitizeFloatMapParameter) HandleParameter(ctx ParameterContext) error {
@@ -114,10 +112,6 @@ func (h SanitizeFloatMapParameter) HandleParameter(ctx ParameterContext) error {
 		return fmt.Errorf("%s: map size %d exceeds limit %d", ctx.Parameter, len(raw), h.MaxEntries)
 	}
 	for key, value := range raw {
-		if h.TokenIDKeyLimit > 0 && completionapi.TokenIDKeyOutOfRange(key, h.TokenIDKeyLimit) {
-			delete(raw, key)
-			continue
-		}
 		number, ok := devshard.JSONNumericFloat64(value)
 		if !ok {
 			continue

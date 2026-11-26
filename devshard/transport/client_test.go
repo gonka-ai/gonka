@@ -22,6 +22,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	devshardpkg "devshard"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/logging"
@@ -38,6 +39,12 @@ func allowRetiredHTTP(cfg ClientConfig) ClientConfig {
 }
 
 func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host) {
+	t.Helper()
+	client, ts, userSigner, group, h, _ := setupClientTestEnvWithHostSigner(t)
+	return client, ts, userSigner, group, h
+}
+
+func setupClientTestEnvWithHostSigner(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host, *signing.Secp256k1Signer) {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -78,7 +85,7 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	// (owner is allowed on challenge-receipt). Without this, executorClient
 	// is nil and a refused timeout is accepted.
 	srv.SetPeerClients(map[int]HostPeerClient{0: client})
-	return client, ts, userSigner, group, h
+	return client, ts, userSigner, group, h, hostSigner
 }
 
 func TestHTTPClient_CatalogHealthzURL(t *testing.T) {
@@ -165,16 +172,31 @@ func TestHTTPClient_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 }
 
 func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
-	client, _, userSigner, _, h := setupClientTestEnv(t)
+	client, _, userSigner, _, h, hostSigner := setupClientTestEnvWithHostSigner(t)
 	ctx := context.Background()
 
 	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 99,
 		ExecutorSig: []byte("other"),
-		ConfirmedAt: 1,
 	}}})
 
-	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	heartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{SlotsNum: 1, Reason: "quiet_session"}}}
+	ack := func(ref, height uint64, hash []byte) *types.DevshardTx {
+		msg := &types.MsgHeightAck{RefNonce: ref, SlotId: 0, ObservedHeight: height, ObservedBlockHash: hash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0x01}}
+		require.NoError(t, heightsync.SignAck(hostSigner, msg))
+		return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: msg}}
+	}
+	start := testutil.StartTx(3)
+	start.GetStartInference().ObservedHeight, start.GetStartInference().ObservedBlockHash = 100, []byte{0x01}
+	refusalBlocks := uint64(testutil.DefaultConfig(1).RefusalTimeout)
+	diffs := []types.Diff{
+		testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{heartbeat}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 2, []*types.DevshardTx{ack(1, 100, []byte{0x01})}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 3, []*types.DevshardTx{start}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 4, []*types.DevshardTx{heartbeat}),
+		testutil.SignDiff(t, userSigner, "escrow-1", 5, []*types.DevshardTx{ack(4, 100+refusalBlocks, []byte{0x02})}),
+	}
 	payload := &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
@@ -183,20 +205,21 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 		StartedAt:   1000,
 	}
 
-	accept, _, _, mempool, _, err := client.VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, []types.Diff{diff}, host.TimeoutArtifacts{})
+	accept, _, _, mempool, _, err := client.VerifyTimeout(ctx, 3, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, diffs, host.TimeoutArtifacts{})
 	require.NoError(t, err)
 	require.False(t, accept, "alive executor must reject the refused timeout")
 	require.NotEmpty(t, mempool, "reject must return recovery mempool")
 
 	var got *types.MsgConfirmStart
 	for _, tx := range mempool {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 3 {
 			got = cs
 			break
 		}
 	}
 	require.NotNil(t, got, "verify-timeout mempool must include MsgConfirmStart")
-	requireRecoveryOnlyFor(t, mempool, 1)
+	require.Equal(t, uint64(100), got.ObservedHeight, "the receipt carries the floor as of its inference")
+	requireRecoveryOnlyFor(t, mempool, 3)
 }
 
 func TestHTTPClient_VerifyTimeout_ExecutionOmitsPrompt(t *testing.T) {
@@ -911,6 +934,10 @@ func TestMaxSSEEventBytes_DefaultsToHardCap(t *testing.T) {
 	require.Equal(t, 4096, client.maxSSEEventBytes())
 }
 
+func TestMaxSSEEventBytes_DefaultCapIsSixteenMebibytes(t *testing.T) {
+	require.Equal(t, 16<<20, DefaultMaxSSEEventBytes)
+}
+
 func TestParseSSE_OversizeEventAbortsNearTheLimit(t *testing.T) {
 	// A selected executor can answer 200 + text/event-stream, start a data line
 	// and then stream forever without a newline, [DONE] or a receipt. The read
@@ -1000,7 +1027,6 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 	require.Contains(t, forwarded[0], "top_logprobs")
 }
 
-// A host that does not stream writes its whole response as one data line, and the gateway always asks for logprobs, so a few thousand tokens already pass 1 MiB.
 func TestParseSSE_WholeResponseWithLogprobsParsesAsOneEvent(t *testing.T) {
 	const entry = `{"token":"tok","logprob":-0.1234567890123,"bytes":[116,111,107],"top_logprobs":[{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]},{"token":"tok","logprob":-1.2345678901234,"bytes":[116,111,107]}]}`
 	logprobEntries := strings.TrimSuffix(strings.Repeat(entry+",", 4096), ",")
@@ -1077,4 +1103,28 @@ func TestClassifiersReadConnectApplicationStatus(t *testing.T) {
 // newInfiniteDataLineReader opens an SSE data line that never terminates.
 func newInfiniteDataLineReader(filler io.Reader) io.Reader {
 	return io.MultiReader(strings.NewReader("data: "), filler)
+}
+
+// A host may answer application/json despite being asked to stream, and the gateway's force-streaming
+// switch makes that the normal case rather than the legacy one. Without the acknowledgement the
+// attempt looks refused: timeoutKind reads a zero receipt as a refusal, which is the wrong vote
+// against a host that answered.
+func TestHTTPClient_Send_JSONResponseStillDeliversTheReceipt(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		body, marshalErr := json.Marshal(InferenceResponse{Nonce: 7, Receipt: []byte("receipt-7")})
+		require.NoError(t, marshalErr)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	client := NewHTTPClient(server.URL, "escrow-1", signer, allowRetiredHTTP(DefaultClientConfig()))
+
+	var acknowledged *host.HostResponse
+	response, err := client.Send(context.Background(), host.HostRequest{Nonce: 7}, nil,
+		func(partial *host.HostResponse) { acknowledged = partial })
+
+	require.NoError(t, err)
+	require.NotNil(t, acknowledged, "the JSON path never acknowledged the nonce")
+	require.Equal(t, response, acknowledged, "the acknowledgement carried something other than the response")
 }

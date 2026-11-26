@@ -292,6 +292,19 @@ func permanentNMSkip(err error) bool {
 	return false
 }
 
+func nmTransportStatus(err error) bool {
+	st, ok := status.FromError(err)
+	if !ok {
+		return false
+	}
+	switch st.Code() {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
+		return true
+	default:
+		return false
+	}
+}
+
 func transientNM(err error) bool {
 	if err == nil {
 		return false
@@ -300,6 +313,8 @@ func transientNM(err error) bool {
 		switch st.Code() {
 		case codes.Unavailable, codes.DeadlineExceeded, codes.ResourceExhausted:
 			return true
+		default:
+			return false
 		}
 	}
 	text := strings.ToLower(err.Error())
@@ -392,6 +407,75 @@ func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 	}
 	h, _ := v.(*blocks.Header)
 	if !usable(h) {
+		return blocks.DummyHeader(height), nil
+	}
+	return cloneHeader(h), nil
+}
+
+func (o *Oracle) HeaderAt(ctx context.Context, height int64) (*blocks.Header, error) {
+	if o == nil || height <= 0 {
+		return blocks.DummyHeader(height), nil
+	}
+	if h := o.fromWindow(ctx, height); h != nil {
+		return h, nil
+	}
+	if tip := o.knownTipHeight(ctx); tip > 0 && height > tip {
+		return blocks.DummyHeader(height), nil
+	}
+	v, err, _ := o.atFlight.Do("history:"+strconv.FormatInt(height, 10), func() (any, error) {
+		return o.atFetch(ctx, height, o.now())
+	})
+	if err != nil {
+		return nil, err
+	}
+	h, _ := v.(*blocks.Header)
+	if !usable(h) {
+		return blocks.DummyHeader(height), nil
+	}
+	return cloneHeader(h), nil
+}
+
+func (o *Oracle) HeaderAtWait(ctx context.Context, height int64, wait time.Duration) (*blocks.Header, error) {
+	if o == nil || height <= 0 {
+		return blocks.DummyHeader(height), nil
+	}
+	now := o.now()
+	o.mu.Lock()
+	skipNM := o.nm == nil || o.nmUnimpl && now.Before(o.nmNextTry)
+	o.mu.Unlock()
+	if !skipNM {
+		var h *blocks.Header
+		var err error
+		if w, ok := o.nm.(blocks.HeaderWaiter); ok && wait > 0 {
+			h, err = w.AtWait(ctx, height, wait)
+		} else {
+			h, err = o.nm.At(ctx, height)
+		}
+		logAtTry("get_block_header_wait", height, h, err)
+		if err == nil && usable(h) && h.Height == height {
+			o.noteNMOutcome(now, h, nil)
+			return cloneHeader(h), nil
+		}
+		if errors.Is(err, blocks.ErrHeaderUnverified) {
+			return nil, err
+		}
+		if err == nil || errors.Is(err, blocks.ErrHeaderNotFound) {
+			return blocks.DummyHeader(height), nil
+		}
+		if !permanentNMSkip(err) && !nmTransportStatus(err) {
+			return nil, err
+		}
+		o.noteNMOutcome(now, nil, err)
+	}
+	if o.chain == nil {
+		return blocks.DummyHeader(height), nil
+	}
+	h, err := o.chain.At(ctx, height)
+	logAtTry("get_block_by_height", height, h, err)
+	if err != nil {
+		return nil, err
+	}
+	if !usable(h) || h.Height != height {
 		return blocks.DummyHeader(height), nil
 	}
 	return cloneHeader(h), nil

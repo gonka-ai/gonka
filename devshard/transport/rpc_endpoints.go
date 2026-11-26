@@ -26,12 +26,15 @@ const (
 	EndpointPayload          = "payload"
 )
 
-// DefaultRPCMaxConnsPerPeer is MaxIdleConnsPerHost / MaxConnsPerHost on a
-// PeerConn. Matches DefaultRPCMaxStreams so concurrent Chats are not
-// queued behind the HTTP/1.1 pool, and so EffectiveMaxStreams is not
-// clamped below the chat cap. Advertised max_streams is still
-// min(MaxStreams, MaxConns) if either env is lowered.
+// DefaultRPCMaxConnsPerPeer is MaxConnsPerHost on a PeerConn. Matches
+// DefaultRPCMaxStreams so concurrent Chats are not queued behind the
+// HTTP/1.1 pool, and so EffectiveMaxStreams is not clamped below the chat
+// cap. Advertised max_streams is still min(MaxStreams, MaxConns) if either
+// env is lowered.
 const DefaultRPCMaxConnsPerPeer = int(DefaultRPCMaxStreams)
+
+// DefaultRPCMaxIdleConnsPerPeer bounds the idle connections a PeerConn keeps per host; a burst's extra sockets close instead of waiting out IdleConnTimeout.
+const DefaultRPCMaxIdleConnsPerPeer = 128
 
 // HostRPCEscrowID is the URL escrow for Watch and live-session Attach
 // renewals. It is not a real escrow: the path keeps /sessions/:id/rpc/ so
@@ -272,7 +275,9 @@ func SelectTransport(httpClient *HTTPClient, hostAddress string, endpoints Endpo
 func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra *ClientConfig) PeerConnConfig {
 	maxConns := RPCMaxConnsPerPeerFromEnv()
 	var adoption *PeerRPCAdoption
+	chatCompressMinBytes := 0
 	if extra != nil {
+		chatCompressMinBytes = extra.ChatCompressMinBytes
 		if extra.RPCMaxConnsPerPeer > 0 {
 			maxConns = extra.RPCMaxConnsPerPeer
 		}
@@ -289,14 +294,15 @@ func peerConnConfigFromClient(httpClient *HTTPClient, hostAddress string, extra 
 	}
 	grpc := RPCH2GRPCEnabled(os.Getenv(envRPCH2GRPC)) && dial.H2URL != ""
 	return PeerConnConfig{
-		BaseURL:      base,
-		RoutePrefix:  httpClient.RoutePrefix(),
-		DoorEscrowID: httpClient.escrowID,
-		HostAddress:  strings.TrimSpace(hostAddress),
-		Signer:       httpClient.signer,
-		MaxConns:     maxConns,
-		Adoption:     adoption,
-		DialSet:      dial,
-		GRPC:         grpc,
+		BaseURL:              base,
+		RoutePrefix:          httpClient.RoutePrefix(),
+		DoorEscrowID:         httpClient.escrowID,
+		HostAddress:          strings.TrimSpace(hostAddress),
+		Signer:               httpClient.signer,
+		MaxConns:             maxConns,
+		Adoption:             adoption,
+		DialSet:              dial,
+		GRPC:                 grpc,
+		ChatCompressMinBytes: chatCompressMinBytes,
 	}
 }

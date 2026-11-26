@@ -439,21 +439,21 @@ func TestHeartbeat_DrainsPendingRaiseBeforeSpan(t *testing.T) {
 	base := session.Nonce()
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
-	confirmNonce, confirmH, ok := firstRaisingConfirm(seenDiffs(session), base)
-	require.True(t, ok, "drain must persist the pending confirm")
+	confirmNonce, confirmH, ok := firstRaisingFinish(seenDiffs(session), base)
+	require.True(t, ok, "drain must persist the pending finish, the host-signed raise")
 	require.Equal(t, uint64(150), confirmH)
 	span := heartbeatDiffsAfter(seenDiffs(session), base)
 	require.GreaterOrEqual(t, len(span), 2, "group size ≥ 2 so a later heartbeat exists")
 	require.Greater(t, span[0].Nonce, confirmNonce,
-		"confirm must land on its own nonce before the span")
+		"the raise must land on its own nonce before the span")
 	for _, d := range span {
 		for _, tx := range d.Txs {
 			if hb := tx.GetHeartbeat(); hb != nil {
 				require.Equal(t, uint64(150), hb.ObservedHeight,
 					"every heartbeat copies F after the raise, nonce %d", d.Nonce)
 			}
-			require.Nil(t, tx.GetConfirmStart(),
-				"confirm must not share a heartbeat nonce")
+			require.Nil(t, tx.GetFinishInference(),
+				"the raising finish must not share a heartbeat nonce")
 		}
 	}
 	rec := session.HeartbeatTurnTracker().Record(span[0].Nonce)
@@ -461,14 +461,14 @@ func TestHeartbeat_DrainsPendingRaiseBeforeSpan(t *testing.T) {
 	require.Equal(t, uint64(150), rec.HReq)
 }
 
-func firstRaisingConfirm(diffs []types.Diff, after uint64) (nonce, height uint64, ok bool) {
+func firstRaisingFinish(diffs []types.Diff, after uint64) (nonce, height uint64, ok bool) {
 	for _, d := range diffs {
 		if d.Nonce <= after {
 			continue
 		}
 		for _, tx := range d.Txs {
-			if c := tx.GetConfirmStart(); c != nil && c.ObservedHeight > 0 {
-				return d.Nonce, c.ObservedHeight, true
+			if f := tx.GetFinishInference(); f != nil && f.ObservedHeight > 0 {
+				return d.Nonce, f.ObservedHeight, true
 			}
 		}
 	}

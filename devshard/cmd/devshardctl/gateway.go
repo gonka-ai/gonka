@@ -85,9 +85,6 @@ type Gateway struct {
 	holdTopUpsInFlight           keyedInFlight
 	executionTimeoutSweepCursor  atomic.Uint64
 	executionTimeoutSweepRunning atomic.Bool
-	awaitingParticipantMu        sync.Mutex
-	awaitingParticipant          map[string]struct{}
-	awaitingParticipantRetrying  atomic.Bool
 	prunedStorageCutoff          atomic.Uint64
 	runtimeParams                *runtimeparams.Managed
 	runtimeParamsClose           func()
@@ -434,6 +431,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		ExecutionTimeoutSeconds:    timeoutOverrides.ExecutionTimeoutSeconds,
 		ExtraClientConfig:          extraClient,
 		Heartbeat:                  heartbeatFromDeps(deps),
+		HeaderTimes:                gatewayHeaderTimes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
@@ -444,6 +442,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
 	// inference. The loop waits for router catalog admission before the
 	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
+	if deps.completionStore != nil {
+		session.SetInferenceCompletionStore(deps.completionStore)
+	}
 	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
@@ -501,12 +502,13 @@ func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings Gatew
 		params = g.runtimeParams.BindProvider()
 	}
 	return runtimeBuildDeps{
-		bridge:       g.chainBridge(),
-		chainClient:  g.chainClient,
-		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
-		perf:         perf,
-		params:       params,
-		metrics:      g.metrics,
+		completionStore: g.store,
+		bridge:          g.chainBridge(),
+		chainClient:     g.chainClient,
+		defaultModel:    firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
+		perf:            perf,
+		params:          params,
+		metrics:         g.metrics,
 	}
 }
 
@@ -597,6 +599,7 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		PrivateKeyHex: keyHex,
 		EscrowID:      cfg.ID,
 		StoragePath:   cfg.StoragePath,
+		HeaderTimes:   gatewayHeaderTimes(),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: rehydrate local session: %w", cfg.ID, err)
@@ -957,6 +960,9 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	if g == nil || rt == nil {
 		return
 	}
+	if rt.session != nil && g.store != nil {
+		rt.session.SetInferenceCompletionStore(g.store)
+	}
 	if rt.proxy != nil {
 		rt.proxy.phaseGate = g.phaseGate
 		rt.proxy.logprobsOptimizationOverride = g.logprobsOptimizationOverride
@@ -1028,7 +1034,6 @@ func (g *Gateway) checkBalances() {
 	g.mu.Unlock()
 	chainMaxNonce := g.chainMaxNonce()
 	shareChainMaxNonce(runtimes, chainMaxNonce)
-	g.startRetryAwaitingParticipants()
 	if !isRotationEnabled {
 		g.releaseEscrowHolds(runtimes, "rotation_disabled")
 		return
@@ -1487,6 +1492,7 @@ func (g *Gateway) Close() error {
 	if g.perfPruner != nil {
 		g.perfPruner.stopAndWait()
 	}
+	g.perf.Close()
 	if g.perfStore != nil {
 		if err := g.perfStore.Close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1792,6 +1798,20 @@ func (g *Gateway) serveChatOnEscrow(rt *devshardRuntime, body []byte, cost chatR
 		return nil, false
 	}
 	return capture, true
+}
+
+// rotatesModelLocked reports a model escrow rotation keeps serving, so a gap
+// between a deactivation and its replacement is temporary.
+func (g *Gateway) rotatesModelLocked(model string) bool {
+	if !g.settings.EscrowRotation.Enabled {
+		return false
+	}
+	for _, rotationModel := range g.settings.EscrowRotation.Models {
+		if rotationModel.ModelID == model {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) validatePooledRequestedModel(requestModel string) error {
@@ -2120,9 +2140,7 @@ func (g *Gateway) serveChatToRuntime(rt *devshardRuntime, path string, body []by
 	req.RequestURI = path
 	w.Header().Set("X-Devshard-ID", rt.id)
 	logRequestStage(req.Context(), "gateway_request_forwarded", "escrow", rt.id, "path", path)
-	confirmed := new(atomic.Bool)
-	req = req.WithContext(withRejectionConfirmation(req.Context(), confirmed))
-	capture := &gatewayChatCacheCapture{ResponseWriter: w, rejectionConfirmed: confirmed}
+	capture := &gatewayChatCacheCapture{ResponseWriter: w}
 	rt.handler.ServeHTTP(capture, req)
 	return capture
 }
@@ -2247,7 +2265,7 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, cost chatRequestCo
 			}
 		}
 		if len(matching) == 0 {
-			if isModelListedInLimits(g.settings.ModelLimits, requestModel) {
+			if isModelListedInLimits(g.settings.ModelLimits, requestModel) || g.rotatesModelLocked(requestModel) {
 				return nil, &ModelTemporarilyUnavailableError{Model: requestModel}
 			}
 			return nil, &UnsupportedModelError{Model: requestModel, Supported: supportedModels(candidates)}

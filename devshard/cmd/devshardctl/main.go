@@ -19,25 +19,24 @@ import (
 	"common/httpguard"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/profiling"
 	"devshard/runtimeparams"
 	"devshard/state"
-	"devshard/types"
 	"devshard/user"
 )
 
 type adminAuthContextKey struct{}
 
 const (
-	defaultChainGRPCURL                 = "localhost:9090"
-	defaultPublicAPIURL                 = "http://localhost:9000"
-	defaultModelName                    = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
-	defaultListenPort                   = "8080"
-	defaultMaxConcurrentRequests        = 512
-	startupSkipReasonLocalRecovery      = "local_recovery_failed"
-	startupSkipReasonParticipantMissing = "participant_missing"
+	defaultChainGRPCURL            = "localhost:9090"
+	defaultPublicAPIURL            = "http://localhost:9000"
+	defaultModelName               = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+	defaultListenPort              = "8080"
+	defaultMaxConcurrentRequests   = 512
+	startupSkipReasonLocalRecovery = "local_recovery_failed"
 )
 
 type startupSkippedEscrow struct {
@@ -68,28 +67,6 @@ type HostStatsJSON struct {
 	CompletedValidations uint32 `json:"completed_validations,omitempty"`
 	Validated            uint32 `json:"validated,omitempty"`
 	Finished             uint32 `json:"finished,omitempty"`
-}
-
-func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
-	entry := HostStatsJSON{
-		SlotID:  slot,
-		Missed:  hs.Missed,
-		Invalid: hs.Invalid,
-		Cost:    hs.Cost,
-	}
-	if hs.RequiredValidations != 0 {
-		entry.RequiredValidations = hs.RequiredValidations
-	}
-	if hs.CompletedValidations != 0 {
-		entry.CompletedValidations = hs.CompletedValidations
-	}
-	if hs.Validated != 0 {
-		entry.Validated = hs.Validated
-	}
-	if hs.Finished != 0 {
-		entry.Finished = hs.Finished
-	}
-	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -470,6 +447,9 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	if err := initGatewayHeightSync(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC)); err != nil {
 		log.Fatalf("height sync oracle: %v", err)
 	}
+	if gatewayHeaderTimes() == nil {
+		log.Printf("header_times_unwired: no chain source for block times; inferences cannot start once hosts stamp a height-sync floor")
+	}
 
 	perfStore, err := NewPerfStore(ctx, baseStorageDir)
 	if err != nil {
@@ -485,6 +465,7 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 	runtimes, startupSkipped, err := buildGatewayRuntimes(ctx, gatewayStore, &gatewayState, baseStorageDir, perf, chainClient)
 	if err != nil {
 		runtimeParamsClose()
+		perf.Close()
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
@@ -510,7 +491,6 @@ func mustBuildGateway(ctx context.Context, gatewayStore GatewayStore, gatewaySta
 		}
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
-	gateway.awaitParticipants(startupSkipped)
 	wireStopTokenVocabulary(chainClient.InferenceQueryClient(), func() uint64 { return gateway.phaseGate.Snapshot().EpochIndex })
 	gateway.perfStore = perfStore
 	gateway.startPerfPruner(accountingTracker, retentionEpochs)
@@ -598,16 +578,6 @@ func buildGatewayRuntimes(ctx context.Context, gatewayStore GatewayStore, gatewa
 			if !allEntries[res.idx].active {
 				log.Printf("inactive devshard %s could not be loaded, skipping runtime: %v", cfg.ID, res.err)
 				skipped = append(skipped, res.idx)
-				continue
-			}
-			if errors.Is(res.err, bridge.ErrParticipantNotFound) {
-				log.Printf("devshard %s group holds a slot with no participant on chain, skipping runtime and keeping it active: %v", cfg.ID, res.err)
-				skipped = append(skipped, res.idx)
-				startupSkipped = append(startupSkipped, startupSkippedEscrow{
-					EscrowID: cfg.ID,
-					Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
-					Reason:   startupSkipReasonParticipantMissing,
-				})
 				continue
 			}
 			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
@@ -904,20 +874,19 @@ func readBoolEnv(name string, fallback bool) bool {
 }
 
 func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
-	hsHash, err := state.ComputeHostStatsHash(p.HostStats)
+	root, err := settlement.Root(*p)
 	if err != nil {
 		return SettlementJSON{}, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.StateRootAndProtocolVersion)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
-	for slot, hs := range p.HostStats {
-		stats = append(stats, hostStatsJSONFromDomain(slot, hs))
+	for _, hostStat := range settlement.HostStatsBySlot(p.HostStats) {
+		stats = append(stats, HostStatsJSON(hostStat))
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))
-	for slot, sig := range p.Signatures {
-		sigs = append(sigs, SlotSignatureJSON{SlotID: slot, Signature: base64.StdEncoding.EncodeToString(sig)})
+	for _, signature := range settlement.SignaturesBySlot(p.Signatures) {
+		sigs = append(sigs, SlotSignatureJSON{SlotID: signature.SlotID, Signature: base64.StdEncoding.EncodeToString(signature.Signature)})
 	}
 
 	return SettlementJSON{

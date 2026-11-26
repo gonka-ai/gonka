@@ -11,15 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
-
 	"devshard"
 	"devshard/signing"
 	"devshard/types"
 )
 
 // TestMaxTokens is the happy-path reservation used by fixtures.
-const TestMaxTokens = completionapi.MinTokensFloor
+const TestMaxTokens = 64
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
@@ -61,7 +59,7 @@ func mustCanonicalPromptHash(prompt []byte) [32]byte {
 	return arr
 }
 
-func MustGenerateKey(t *testing.T) *signing.Secp256k1Signer {
+func MustGenerateKey(t testing.TB) *signing.Secp256k1Signer {
 	t.Helper()
 	s, err := signing.GenerateKey()
 	require.NoError(t, err)
@@ -137,7 +135,7 @@ type ReceiptStamp struct {
 	Hash   []byte
 }
 
-func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64, stamp ...ReceiptStamp) []byte {
+func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, stamp ...ReceiptStamp) []byte {
 	t.Helper()
 	content := &types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
@@ -145,9 +143,7 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 		Model:       model,
 		InputLength: inputLength,
 		MaxTokens:   maxTokens,
-		StartedAt:   startedAt,
 		EscrowId:    escrowID,
-		ConfirmedAt: confirmedAt,
 	}
 	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
 		content.ObservedHeight = stamp[0].Height
@@ -244,7 +240,6 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   TestMaxTokens,
-		StartedAt:   1000,
 	}}}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +16,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
+	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
@@ -40,14 +42,20 @@ type HTTPSessionConfig struct {
 	// false in this library so tests can call MaybeHeartbeat. The gateway
 	// sets it unless DEVSHARD_HEIGHTSYNC_HEARTBEAT is true/1/on.
 	DisableHeightSyncHeartbeat bool
+	// OpenAbsentHostsAsDeadSlots opens the session when a group member is absent from the chain, its slot failing every
+	// call with ErrHostAbsentFromChain, instead of a lazy slot that looks the host up again on every use.
+	OpenAbsentHostsAsDeadSlots bool
+	StepTimer                  StepTimer
 	// QuietSettleDelay overrides DefaultQuietSettleDelay for leftover
 	// receipt/Finish compose. Zero keeps the session default (5m). The
 	// gateway sets this from DEVSHARD_QUIET_SETTLE_DELAY (testenv: 5s).
 	QuietSettleDelay time.Duration
-	// ExtraClientConfig: only its HeightSync fields reach each host client.
+	// ExtraClientConfig: its HeightSync fields reach each host client; the whole config reaches SelectTransport.
 	ExtraClientConfig *transport.ClientConfig
 	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
 	Heartbeat *heightsync.HeartbeatConfig
+
+	HeaderTimes state.HeaderTimeSource
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
@@ -88,6 +96,18 @@ func hostClientConfig(
 	return clientConfig
 }
 
+// ErrHostAbsentFromChain is every call to a group member the chain no longer lists.
+var ErrHostAbsentFromChain = errors.New("host is absent from the chain")
+
+// absentHostClient stands in for a group member the chain no longer lists, so the escrow keeps serving on the rest of its group.
+type absentHostClient struct {
+	address string
+}
+
+func (c absentHostClient) Send(context.Context, host.HostRequest, io.Writer, func(*host.HostResponse)) (*host.HostResponse, error) {
+	return nil, fmt.Errorf("host %s: %w", c.address, ErrHostAbsentFromChain)
+}
+
 func asHostClient(v any) HostClient {
 	if v == nil {
 		return nil
@@ -126,6 +146,7 @@ type LocalSessionConfig struct {
 	PrivateKeyHex string
 	EscrowID      string
 	StoragePath   string
+	HeaderTimes   state.HeaderTimeSource
 }
 
 // NewLocalSession rehydrates a Session from local SQLite storage without
@@ -160,7 +181,11 @@ func NewLocalSession(cfg LocalSessionConfig) (*Session, *state.StateMachine, err
 	// No host clients: read-only sessions never dispatch inferences. The
 	// slice length must match the group so NewSession's invariant holds.
 	clients := make([]HostClient, len(meta.Group))
-	session, sm, err := RecoverSession(store, signer, verifier, cfg.EscrowID, "", meta.Group, clients)
+	var smOpts []state.SMOption
+	if cfg.HeaderTimes != nil {
+		smOpts = append(smOpts, state.WithHeaderTimes(cfg.HeaderTimes))
+	}
+	session, sm, err := RecoverSession(store, signer, verifier, cfg.EscrowID, "", meta.Group, clients, smOpts...)
 	if err != nil {
 		store.Close()
 		return nil, nil, fmt.Errorf("recover session: %w", err)
@@ -248,11 +273,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		} else if info == nil || strings.TrimSpace(info.URL) == "" {
 			err = fmt.Errorf("host %s: %w", addr, transport.ErrPeerURLMissing)
 		}
+		if err != nil && cfg.OpenAbsentHostsAsDeadSlots && errors.Is(err, bridge.ErrParticipantNotFound) {
+			logging.Warn("group member is absent from the chain; its slot fails every call", "subsystem", "session",
+				"escrow", cfg.EscrowID, "host", addr)
+			return absentHostClient{address: addr}, nil
+		}
 		if err != nil {
-			if !errors.Is(err, bridge.ErrParticipantNotFound) {
-				logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
-					"escrow", cfg.EscrowID, "participant", addr, "error", err)
-			}
+			logging.Warn("host client unresolved; retried on next use", "subsystem", "session",
+				"escrow", cfg.EscrowID, "participant", addr, "error", err)
 			return nil, err
 		}
 		httpClient := transport.NewHTTPClient(strings.TrimSpace(info.URL), cfg.EscrowID, signer,
@@ -285,6 +313,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		session.SetParticipantKeys(participantKeys)
 		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		session.SetDisableHeightSyncHeartbeat(cfg.DisableHeightSyncHeartbeat)
+		session.SetStepTimer(cfg.StepTimer)
 		if cfg.QuietSettleDelay > 0 {
 			session.SetQuietSettleDelay(cfg.QuietSettleDelay)
 		}
@@ -348,9 +377,10 @@ var hostLookupOpenWait = transport.DefaultLazyWait
 // openHostClients builds one client per distinct participant in group. A
 // participant whose lookup fails transiently, publishes no URL, or outlasts
 // hostLookupOpenWait does not fail the session: it gets a lazyHostClient that
-// resolves on use, which the gateway's chat picker skips until then.
-// bridge.ErrParticipantNotFound is a definitive chain answer and still fails
-// the open, so the gateway parks the escrow until the participant appears.
+// resolves on use, which the gateway's chat picker skips until then. A
+// participant absent from the chain (bridge.ErrParticipantNotFound) opens the
+// same way, so the escrow serves on the rest of its group and takes the host
+// back once the chain lists it again.
 func openHostClients(escrowID string, group []types.SlotAssignment, build func(addr string) (HostClient, error)) (map[string]HostClient, error) {
 	lazies := make(map[string]*transport.Lazy[HostClient], len(group))
 	for _, slot := range group {
@@ -373,14 +403,6 @@ func openHostClients(escrowID string, group []types.SlotAssignment, build func(a
 	}
 	wg.Wait()
 
-	for _, l := range lazies {
-		if _, err := l.Failure(); errors.Is(err, bridge.ErrParticipantNotFound) {
-			for _, l := range lazies {
-				l.Close()
-			}
-			return nil, err
-		}
-	}
 	out := make(map[string]HostClient, len(lazies))
 	var unresolved []string
 	for addr, l := range lazies {
@@ -411,6 +433,9 @@ func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.S
 	if cfg.Heartbeat != nil {
 		extra = append(extra, state.WithHeartbeatConfig(*cfg.Heartbeat))
 	}
+	if cfg.HeaderTimes != nil {
+		extra = append(extra, state.WithHeaderTimes(cfg.HeaderTimes))
+	}
 	return extra
 }
 
@@ -426,6 +451,9 @@ func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOpt
 	}
 	if cfg.QuietSettleDelay > 0 {
 		extra = append(extra, WithQuietSettleDelay(cfg.QuietSettleDelay))
+	}
+	if cfg.StepTimer != nil {
+		extra = append(extra, WithStepTimer(cfg.StepTimer))
 	}
 	return extra
 }

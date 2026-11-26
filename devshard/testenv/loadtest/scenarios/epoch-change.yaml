@@ -51,6 +51,7 @@ topology:
 
 protocol:
   refusal_timeout: 5s
+  # Above the generation tail (the 2048-token class runs 45–63 s), so no honest host is cut at its deadline.
   execution_timeout: 90s
 
 workload:
@@ -119,6 +120,9 @@ assertions:
     require_new_escrow: true
   invariants:
     enabled: true
+    # Kept at the 30 s timeout's value: each fault here is refused or lifted at its
+    # end, so no nonce waits out the 90 s deadline past it, and the spacing holds.
+    grace: 3m10s
     baseline: {from: 1m, to: 2m}
     trend_early: {from: 3m, to: 5m}
     trend_late: {from: 11m30s, to: 13m}

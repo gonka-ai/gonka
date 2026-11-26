@@ -331,7 +331,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		errorMissVerifyRejects: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_error_miss_verify_rejects_total",
-				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body, client_fault) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
+				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
 			},
 			[]string{"cause", "completeness"},
 		),
@@ -1344,6 +1344,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, mo
 		return "phase_transition_aborted"
 	case inf.preludePressure.Load():
 		return "gateway_pending_pressure"
+	case inf.endedByGateway.Load():
+		return "gateway_cancelled"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
 	case isModelBurnEmpty(inf, model):

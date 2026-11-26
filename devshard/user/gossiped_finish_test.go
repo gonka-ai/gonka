@@ -25,11 +25,13 @@ func finishTxFor(t *testing.T, signer signing.Signer, inferenceID uint64, slot u
 
 func confirmTxFor(t *testing.T, signer signing.Signer, inferenceID uint64, rec *types.InferenceRecord, confirmedAt int64) *types.DevshardTx {
 	t.Helper()
+	stamp := floorStampOf(rec)
 	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID,
 		ExecutorSig: testutil.SignExecutorReceipt(t, signer, "escrow-1", inferenceID, rec.PromptHash, rec.Model,
-			rec.InputLength, rec.MaxTokens, rec.StartedAt, confirmedAt),
-		ConfirmedAt: confirmedAt,
+			rec.InputLength, rec.MaxTokens, stamp),
+		ObservedHeight:    stamp.Height,
+		ObservedBlockHash: stamp.Hash,
 	}}}
 }
 

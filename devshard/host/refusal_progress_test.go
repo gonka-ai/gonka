@@ -173,7 +173,7 @@ func progressDiffs(n int, root []byte) []types.Diff {
 
 func runProgress(t *testing.T, st types.EscrowState, peer *progressPeer, journal *progressJournal, ev EvidenceVerifier) (bool, error) {
 	t.Helper()
-	return VerifyRefusedProgress(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peer, nil, ev, peer, journal, time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable)
+	return VerifyRefusedProgress(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peer, nil, due(ev), peer, journal, time.Second, 2*time.Second, progressUnreachable)
 }
 
 func TestRefusalRecheckRetriesAdvancedNonce(t *testing.T) {
@@ -442,8 +442,8 @@ func runOnePage(t *testing.T, st types.EscrowState, peer *progressPeer, journal 
 	t.Helper()
 	return VerifyRefusedProgress(
 		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-		peer, nil, newEvidenceGroup(t).sm, peer, journal,
-		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+		time.Second, 2*time.Second, progressUnreachable,
 	)
 }
 
@@ -554,8 +554,8 @@ func TestRefusalCursorChoosesTheSuffix(t *testing.T) {
 		}
 		accept, err := VerifyRefusedProgress(
 			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			time.Second, 2*time.Second, deadlinePassedRefused(st, 1),
+			peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+			time.Second, 2*time.Second,
 			func(err error) bool { return err != nil && !errors.Is(err, busy) },
 		)
 		require.NoError(t, err)
@@ -678,8 +678,8 @@ func TestRefusalWalkStops(t *testing.T) {
 		journal := &onePageJournal{t: t, diffs: diffs}
 		accept, err := VerifyRefusedProgress(
 			ctx, st, 1, st.Inferences[1], testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+			peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+			time.Second, 2*time.Second, progressUnreachable,
 		)
 		require.ErrorIs(t, err, context.Canceled)
 		require.False(t, accept)
@@ -701,8 +701,8 @@ func TestRefusalWalkStops(t *testing.T) {
 		journal := &onePageJournal{t: t, diffs: diffs}
 		accept, err := VerifyRefusedProgress(
 			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			50*time.Millisecond, 400*time.Millisecond, deadlinePassedRefused(st, 1), progressUnreachable,
+			peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+			50*time.Millisecond, 400*time.Millisecond, progressUnreachable,
 		)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.False(t, accept)
@@ -814,8 +814,8 @@ func TestRefusalCursorRejectsABuriedSessionPhrase(t *testing.T) {
 	}
 	accept, err := VerifyRefusedProgress(
 		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-		peer, nil, newEvidenceGroup(t).sm, peer, journal,
-		time.Second, 2*time.Second, deadlinePassedRefused(st, 1),
+		peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+		time.Second, 2*time.Second,
 		func(err error) bool { return err != nil && !errors.Is(err, buried) },
 	)
 	require.NoError(t, err)
@@ -878,8 +878,8 @@ func TestRefusalAnsweredCatchUpReceiptRejects(t *testing.T) {
 	}
 	accept, err := VerifyRefusedProgress(
 		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-		peer, nil, g.sm, peer, journal,
-		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		peer, nil, due(g.sm), peer, journal,
+		time.Second, 2*time.Second, progressUnreachable,
 	)
 	require.NoError(t, err)
 	require.False(t, accept)
@@ -915,8 +915,8 @@ func TestRefusalProbeTimeoutDoesNotAccept(t *testing.T) {
 		peer := &blockingHeadPeer{blockFrom: 0}
 		accept, err := VerifyRefusedProgress(
 			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			50*time.Millisecond, time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+			peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+			50*time.Millisecond, time.Second, progressUnreachable,
 		)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.False(t, accept)
@@ -937,8 +937,8 @@ func TestRefusalProbeTimeoutDoesNotAccept(t *testing.T) {
 		}
 		accept, err := VerifyRefusedProgress(
 			context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-			peer, nil, newEvidenceGroup(t).sm, peer, journal,
-			50*time.Millisecond, time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+			peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+			50*time.Millisecond, time.Second, progressUnreachable,
 		)
 		require.ErrorIs(t, err, context.DeadlineExceeded)
 		require.False(t, accept)
@@ -997,8 +997,8 @@ func TestRefusalCorruptCatchUpDoesNotAccept(t *testing.T) {
 	st := progressState(3)
 	accept, err := VerifyRefusedProgress(
 		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-		peer, nil, newEvidenceGroup(t).sm, peer, journal,
-		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+		time.Second, 2*time.Second, progressUnreachable,
 	)
 	require.Error(t, err)
 	require.False(t, accept)
@@ -1059,8 +1059,8 @@ func TestRefusalReloadFailureDoesNotAccept(t *testing.T) {
 	st := progressState(3)
 	accept, err := VerifyRefusedProgress(
 		context.Background(), st, 1, st.Inferences[1], testPayload(), nil,
-		peer, nil, newEvidenceGroup(t).sm, peer, journal,
-		time.Second, 2*time.Second, deadlinePassedRefused(st, 1), progressUnreachable,
+		peer, nil, due(newEvidenceGroup(t).sm), peer, journal,
+		time.Second, 2*time.Second, progressUnreachable,
 	)
 	require.True(t, reloaded)
 	require.ErrorIs(t, err, readErr)
@@ -1164,4 +1164,76 @@ func TestScreenCatchUpPageRejectsDamagedFraming(t *testing.T) {
 		}
 	})
 	require.Zero(t, allocs)
+}
+
+type windowedJudge struct {
+	EvidenceVerifier
+	deferrals *evidenceDeferrals
+}
+
+func (w windowedJudge) PendingEvidenceDeferrable(types.TimeoutReason, ...*types.DevshardTx) bool {
+	return false
+}
+
+func (w windowedJudge) HeaderPendingDeferrable(inferenceID uint64, reason types.TimeoutReason) bool {
+	return w.deferrals.allow(inferenceID, reason)
+}
+
+func TestRefusalDefersWhenTheExecutorIsWaitingForAHeader(t *testing.T) {
+	root := bytes.Repeat([]byte{1}, 32)
+	st := progressState(3)
+	pending := fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)
+	for _, cold := range []bool{false, true} {
+		now := time.Unix(1_800_000_000, 0)
+		judge := windowedJudge{EvidenceVerifier: due(newEvidenceGroup(t).sm), deferrals: &evidenceDeferrals{clock: func() time.Time { return now }}}
+		peerFor := func() *progressPeer {
+			peer := &progressPeer{
+				heads: []struct {
+					nonce uint64
+					root  []byte
+					err   error
+				}{{nonce: 1, root: root}},
+				steps: []struct {
+					receipt []byte
+					mempool []*types.DevshardTx
+					err     error
+				}{{err: pending}},
+			}
+			if cold {
+				peer.heads[0].nonce, peer.heads[0].root, peer.heads[0].err = 0, nil, errors.New("session not found")
+			}
+			return peer
+		}
+		run := func() (bool, error) {
+			return VerifyRefusedProgress(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, peerFor(), nil, judge, peerFor(), &progressJournal{diffs: progressDiffs(3, root)}, time.Second, 2*time.Second, progressUnreachable)
+		}
+		accept, err := run()
+		require.ErrorIs(t, err, types.ErrHeaderPending, "an executor waiting for a block gives no vote yet")
+		require.False(t, accept)
+
+		now = now.Add(PendingEvidenceDeferWindow + time.Second)
+		accept, err = run()
+		require.NoError(t, err)
+		require.True(t, accept, "after the window an answer the verifier cannot check counts as unreachable")
+	}
+}
+
+func TestRefusedTimeoutHeaderPendingIsBoundedToo(t *testing.T) {
+	st := stateWithPendingFull(1, 1)
+	now := time.Unix(1_800_000_000, 0)
+	judge := windowedJudge{EvidenceVerifier: due(newEvidenceGroup(t).sm), deferrals: &evidenceDeferrals{clock: func() time.Time { return now }}}
+	executor := &progressPeer{steps: []struct {
+		receipt []byte
+		mempool []*types.DevshardTx
+		err     error
+	}{{err: fmt.Errorf("challenge-receipt: %w", types.ErrHeaderPending)}}}
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, judge)
+	require.ErrorIs(t, err, types.ErrHeaderPending)
+	require.False(t, accept)
+
+	now = now.Add(PendingEvidenceDeferWindow + time.Second)
+	accept, err = VerifyRefusedTimeout(context.Background(), st, 1, st.Inferences[1], testPayload(), nil, executor, nil, judge)
+	require.NoError(t, err)
+	require.True(t, accept)
 }

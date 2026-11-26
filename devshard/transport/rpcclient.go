@@ -94,14 +94,14 @@ func NewRPCClient(httpClient *HTTPClient, conn *PeerConn, endpoints EndpointSet)
 		c.sessionQuery = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCQueryReadMaxBytes)...)
 		c.sessionLarge = rpcpbconnect.NewSessionServiceClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes)...)
 		c.challengeLarge = newChallengeClient(conn.http, base, connectClientOptions(DefaultRPCLargeReadMaxBytes))
-		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions()...)
+		c.sessionChat = rpcpbconnect.NewSessionServiceClient(conn.http, base, chatClientOptions(conn.cfg.ChatCompressMinBytes)...)
 		c.gossip = rpcpbconnect.NewGossipServiceClient(conn.http, base, opts...)
 		if conn.cfg.GRPC {
 			c.sessionGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(opts, true)...)
 			c.sessionQueryGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCQueryReadMaxBytes), true)...)
 			c.sessionLargeGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true)...)
 			c.challengeLargeGRPC = newChallengeClient(conn.httpFor(true), base, maybeGRPC(connectClientOptions(DefaultRPCLargeReadMaxBytes), true))
-			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(chatClientOptions(), true)...)
+			c.sessionChatGRPC = rpcpbconnect.NewSessionServiceClient(conn.httpFor(true), base, maybeGRPC(chatClientOptions(conn.cfg.ChatCompressMinBytes), true)...)
 			c.gossipGRPC = rpcpbconnect.NewGossipServiceClient(conn.httpFor(true), base, maybeGRPC(opts, true)...)
 		}
 	}
@@ -421,17 +421,21 @@ func (c *RPCClient) gossipClient() rpcpbconnect.GossipServiceClient {
 }
 
 // chatClientOptions gzips the request envelope (prompt + catch-up diffs) like
-// the unary clients and HTTP Send. withGzipReadCap keeps that gzip registered
+// the unary clients and HTTP Send, from MinGzipBodyBytes up, or from compressMinBytes when it is positive. withGzipReadCap keeps that gzip registered
 // for WithSendGzip and stops response inflation at the read cap. The handler
 // never compresses ChatFrames, so response chunks are still one application
 // gzip stream and are not compressed twice.
-func chatClientOptions() []connect.ClientOption {
-	return []connect.ClientOption{
+func chatClientOptions(compressMinBytes int) []connect.ClientOption {
+	options := []connect.ClientOption{
 		connect.WithReadMaxBytes(int(DefaultMaxBodySize)),
 		withGzipReadCap(int(DefaultMaxBodySize)),
 		connect.WithSendGzip(),
 		connect.WithCompressMinBytes(MinGzipBodyBytes),
 	}
+	if compressMinBytes > 0 {
+		options = append(options, connect.WithCompressMinBytes(compressMinBytes))
+	}
+	return options
 }
 
 func (c *RPCClient) GetSignatures(ctx context.Context, nonce uint64) (map[uint32][]byte, error) {
@@ -813,7 +817,7 @@ func (c *RPCClient) ChallengeReceiptWires(ctx context.Context, inferenceID uint6
 	defer cancel()
 	resp, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page)
 	if err != nil {
-		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+		return nil, nil, TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 	}
 	mempool, err := DevshardTxsFromBytes(resp.GetMempool())
 	if err != nil {
@@ -849,7 +853,7 @@ func (c *RPCClient) challengeReceiptRaw(ctx context.Context, raw []byte) ([]byte
 		return nil
 	})
 	if err != nil {
-		return nil, nil, fmt.Errorf("challenge-receipt: %w", err)
+		return nil, nil, TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 	}
 	return receipt, mempool, nil
 }
@@ -883,7 +887,7 @@ func (c *RPCClient) PrepareChallengeCatchUp(inferenceID uint64, diffs []types.Di
 		ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 		defer cancel()
 		if _, err := c.sendChallenge(ctx, c.challengeLargeClient(), body, page); err != nil {
-			return fmt.Errorf("challenge-receipt: %w", err)
+			return TagHeaderPending(fmt.Errorf("challenge-receipt: %w", err))
 		}
 		return nil
 	}, nil

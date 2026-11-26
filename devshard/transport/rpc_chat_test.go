@@ -106,7 +106,8 @@ func TestServeInference_ChatGzipParityWithSSE(t *testing.T) {
 	require.Contains(t, decoded, "[DONE]")
 	require.Contains(t, decoded, "devshard_meta")
 
-	// Same BestSpeed windowed gzip. A slide into per-frame members is a
+	// The Chat frames are one gzip window, so they stay close to the SSE
+	// response gzipped whole. A slide into per-frame members is a
 	// material regression (PR #1739). Allow a small slack for flush points.
 	slack := len(sseCompressed)/10 + 64
 	require.LessOrEqual(t, len(chatCompressed), len(sseCompressed)+slack,

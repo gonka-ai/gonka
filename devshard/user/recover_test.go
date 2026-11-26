@@ -100,8 +100,18 @@ func setupRecoverableSession(
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
+	flushSignatureWriter(session)
 
 	return group, hosts, user
+}
+
+func flushSignatureWriter(s *Session) {
+	s.mu.Lock()
+	writer := s.signatureWriter
+	s.mu.Unlock()
+	if writer != nil {
+		writer.flush()
+	}
 }
 
 func TestRecoverSession_HappyPath(t *testing.T) {
@@ -127,8 +137,10 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	// Recover.
 	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
+	t.Cleanup(func() { flushSignatureWriter(session) })
 	require.Equal(t, uint64(numInferences), session.Nonce())
 	require.Len(t, session.Diffs(), numInferences)
+	require.Equal(t, uint64(numInferences+1), session.racesFromNonce, "every recovered nonce belongs to a previous process, so none has a race to wait for")
 
 	// Verify can send nonce 6.
 	ctx := context.Background()
@@ -166,7 +178,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 
 	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: 100, MaxTokens: 0, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 0,
 	}}}}
 
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
@@ -535,7 +547,7 @@ func TestRecoverSession_HeartbeatDrainCatchUpAfterCrashBeforeDispatch(t *testing
 	require.NoError(t, err)
 	require.NotEmpty(t, composed)
 
-	confirmNonce, confirmH, ok := firstRaisingConfirm(session.Diffs(), seedNonce)
+	confirmNonce, confirmH, ok := firstRaisingFinish(session.Diffs(), seedNonce)
 	require.True(t, ok)
 	require.Equal(t, uint64(150), confirmH)
 	span := heartbeatDiffsAfter(session.Diffs(), seedNonce)
@@ -896,12 +908,19 @@ func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
 	ctx := context.Background()
 
 	session.SeedHeightSync(ctx)
-	for i, client := range seedClients {
+	// Quorum is half the roster. The tail is a sweep SeedHeightSync does not wait for.
+	seeded := 0
+	for _, client := range seedClients {
 		h, hash, ok := client.ObservedStampNow()
-		require.True(t, ok, "slot %d should expose the volatile seed before restart", i)
+		if !ok {
+			continue
+		}
+		seeded++
 		require.Equal(t, uint64(55), h)
 		require.NotEmpty(t, hash)
 	}
+	require.GreaterOrEqual(t, seeded*2, len(seedClients),
+		"seed returns once half the slots expose a volatile anchor")
 	require.Equal(t, uint64(0), session.Nonce())
 	require.Empty(t, session.Diffs())
 	require.Equal(t, uint64(0), session.StateMachine().HeightSyncLatestTurnStart())
@@ -1000,6 +1019,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	t.Cleanup(func() { require.NoError(t, session.Close()) })
 	ctx := context.Background()
 	firstTurn := session.Nonce() + 1
 
@@ -1012,7 +1032,9 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
+	session.mu.Lock()
 	session.clients[targetHostIdx] = targetClient
+	session.mu.Unlock()
 
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.True(t, targetClient.Dropped(),
@@ -1055,8 +1077,8 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
-	session.clients[targetHostIdx] = restartedTarget
 	session.mu.Lock()
+	session.clients[targetHostIdx] = restartedTarget
 	session.hostSyncNonce[targetHostIdx] = floor
 	session.mu.Unlock()
 
@@ -1660,11 +1682,11 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
-		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens)
 	txs1 := []*types.DevshardTx{
 		testutil.StartTx(1),
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: 1, ExecutorSig: confirmSig, ConfirmedAt: 2000,
+			InferenceId: 1, ExecutorSig: confirmSig,
 		}}},
 	}
 	root1, err := sm.ApplyLocal(1, txs1)
@@ -2005,12 +2027,12 @@ func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T
 	appendAppliedDiff(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{
 			InferenceId: 1, PromptHash: promptHash, Model: "llama",
-			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens,
 		},
 	}}})
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, testutil.TestMaxTokens)
 	appendAppliedDiff(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{
-		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000},
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig},
 	}}})
 	finish := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: testutil.TestResponseHash, ServedHash: testutil.TestServedHash,
@@ -2839,7 +2861,6 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   0,
-			StartedAt:   1000,
 		},
 	}}}
 	root, err := sm.ApplyLocalPersisted(1, belowFloor)

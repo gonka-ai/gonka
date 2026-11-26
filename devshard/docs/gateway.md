@@ -47,7 +47,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` | no | `false` | Enable automatic finalization and on-chain settlement for rotated escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env`, optional `settlement_enabled` (overrides `DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED` for that model) |
-| - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
+| - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `2400` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
 | - | `PGHOST` | no | - | When set (or `DEVSHARD_STORAGE_MODE` is `hybrid`/`postgres`), gateway settings and epoch accounting use Postgres only. Local `{baseStorageDir}/gateway.db` / `accounting.db` are migration sources, not runtime fallbacks |
 | - | `PGPORT` | when `PGHOST` set | `5432` | Postgres port |
 | - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
@@ -633,7 +633,7 @@ Non-streaming (`"stream": false` or omitted): the proxy buffers all SSE chunks f
 
 Streaming (`"stream": true`): the proxy relays SSE `data:` lines in real time. The stream ends with `data: [DONE]`. Devshard protocol events (receipts, metadata) are filtered out -- only inference data reaches the client.
 
-If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 30s) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed, and the request starts no further attempt: no hedge, no escalation after a failed or silent attempt, and no retry after a phase transition, since another nonce would only buy an answer nobody reads.
+If the client disconnects before the host finishes, the proxy keeps draining the host SSE stream in the background for up to `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` (default 40 min) so protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can still run. Further writes to the disconnected client are swallowed, and the request starts no further attempt: no hedge, no escalation after a failed or silent attempt, and no retry after a phase transition, since another nonce would only buy an answer nobody reads.
 
 ## Speculative execution
 

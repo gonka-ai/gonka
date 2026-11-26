@@ -406,8 +406,8 @@ func TestSeed_Catalog503ThenServingSucceeds(t *testing.T) {
 	h, ok := client.ObservedHeightNow()
 	require.True(t, ok)
 	require.Equal(t, uint64(55), h)
-	require.GreaterOrEqual(t, hits.Load(), int32(4),
-		"3 one-shot retries until serving plus 1 post-quorum sweep")
+	require.Eventually(t, func() bool { return hits.Load() >= 4 }, 5*time.Second, 10*time.Millisecond,
+		"3 one-shot retries until serving plus 1 post-quorum sweep, which runs after the seed reports ready")
 }
 
 func TestSeed_RetriesOnlyMissingThenSweepsAll(t *testing.T) {
@@ -453,12 +453,10 @@ func TestSeed_RetriesOnlyMissingThenSweepsAll(t *testing.T) {
 
 	env.session.SeedHeightSync(context.Background())
 	require.False(t, env.session.HeightSeedMissed())
-	require.Equal(t, int32(2), hits[0].Load(),
-		"already-seeded slot is skipped on retry rounds and hit once more on the post-quorum sweep")
-	require.Equal(t, int32(4), hits[1].Load(),
-		"slot 1: 3 attempts to succeed + 1 sweep")
-	require.Equal(t, int32(4), hits[2].Load(),
-		"slot 2 keeps retrying until quorum, then one sweep, not until it itself succeeds")
+	env.session.heightSeedSweeps.Wait()
+	require.Equal(t, int32(2), hits[0].Load(), "slot 0 is skipped on retry rounds and hit once more by the post-quorum sweep")
+	require.Equal(t, int32(4), hits[1].Load(), "slot 1 retries until it makes quorum, then the sweep hits it once")
+	require.Contains(t, []int32{3, 4}, hits[2].Load(), "slot 2 gets one sweep after quorum, never retried until it serves; its quorum-round call may be cancelled before it lands")
 }
 
 func TestHeightSeedAttemptTimeout_ClampsToCallerDeadline(t *testing.T) {
@@ -514,6 +512,38 @@ func TestSeed_HungSlotDoesNotWaitQueryTimeout(t *testing.T) {
 	st := env.peerTips.Snapshot(time.Now())
 	require.GreaterOrEqual(t, st.VerifiedOriginators, 1,
 		"the live slot must still record its Anchor")
+}
+
+// Test flow:
+//  1. Seed a session over two live slots and one that hangs until its attempt times out.
+//  2. Require the seed to finish as soon as the live slots make quorum, not after the hung slot's attempt timeout.
+func TestSeed_QuorumFinishesWithoutWaitingForAHungSlot(t *testing.T) {
+	env := setupSeedSession(t, []bool{true, true, true})
+	release := make(chan struct{})
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(hang.Close)
+	t.Cleanup(func() { close(release) })
+	cfg := seedHTTPConfig()
+	cfg.RoutePrefix = seedTestRoutePrefix
+	cfg.HeightSeedTimeout = time.Minute
+	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 3, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+	cfg.HeightSyncPeerTips = env.peerTips
+	env.session.clients = []HostClient{
+		transport.NewHTTPClient(env.slots[0].server.URL, "escrow-1", env.session.signer, cfg),
+		transport.NewHTTPClient(env.slots[1].server.URL, "escrow-1", env.session.signer, cfg),
+		transport.NewHTTPClient(hang.URL, "escrow-1", env.session.signer, cfg),
+	}
+
+	start := time.Now()
+	env.session.SeedHeightSync(context.Background())
+
+	require.Less(t, time.Since(start), 20*time.Second, "quorum was met by the live slots; the hung slot must not hold the seed")
+	require.False(t, env.session.HeightSeedMissed())
 }
 
 func TestClassifySeedVerdict(t *testing.T) {
@@ -848,4 +878,30 @@ func TestSeed_CourierWorksWithWarmLogOracle(t *testing.T) {
 	h, ok := c.ObservedHeightNow()
 	require.True(t, ok)
 	require.Equal(t, uint64(55), h, "stamp must come from the host seed, not the local follower")
+}
+
+type answeringSeeder struct{}
+
+func (answeringSeeder) SeedHeightSync(context.Context) (bool, error) { return true, nil }
+
+type stalledSeeder struct{ returned atomic.Bool }
+
+func (seeder *stalledSeeder) SeedHeightSync(ctx context.Context) (bool, error) {
+	<-ctx.Done()
+	seeder.returned.Store(true)
+	return false, ctx.Err()
+}
+
+// Test flow:
+//  1. Fan a seed out to one host that anchors at once and one that answers only when its call is cancelled.
+//  2. Stop at the first anchor.
+//  3. Assert the stalled call had returned by then and its cancellation is not reported: no seed call outlives the fan-out, so a session close cannot tear down a client one is still using.
+func TestFanHeightSeedUntil_LeavesNoCallRunning(t *testing.T) {
+	stalled := &stalledSeeder{}
+	targets := []seedTarget{{slot: 0, seeder: answeringSeeder{}}, {slot: 1, seeder: stalled}}
+
+	out := fanHeightSeedUntil(context.Background(), targets, func(seeded int) bool { return seeded >= 1 })
+
+	require.True(t, stalled.returned.Load(), "the stalled seed call is still running after the fan-out returned")
+	require.Equal(t, []seedOutcome{{slot: 0, ok: true}}, out, "a call stopped by the fan-out reports nothing")
 }

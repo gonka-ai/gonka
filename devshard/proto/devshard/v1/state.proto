@@ -36,14 +36,17 @@ message InferenceRecordProto {
   uint64 output_tokens = 10;
   uint64 reserved_cost = 11;
   uint64 actual_cost = 12;
-  int64  started_at = 13;
-  int64  confirmed_at = 14;
+  reserved 13, 14;
+  reserved "started_at", "confirmed_at";
   uint32 votes_valid = 15;
   uint32 votes_invalid = 16;
   bytes  validated_by = 17;
   uint64 started_at_height = 18;
   uint64 confirmed_at_height = 19;
   bytes  served_hash = 20;
+  bytes  started_at_block_hash = 21;
+  int64  started_at_time_ms = 22;
+  int64  confirmed_at_time_ms = 23;
 }
 
 message InferencesMapProto {

@@ -2,6 +2,7 @@ package user
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -243,7 +244,7 @@ func RecoverSession(
 			} else {
 				sm.RestoreSealedNonces(sealedNonces)
 				replayFrom = snapNonce + 1
-				sess.nonce = snapNonce
+				sess.setNonceLocked(snapNonce)
 				snapshotCursor = restoredHostCursor(cursor, len(group), snapNonce)
 				snapshotRestored = true
 				log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d",
@@ -278,10 +279,7 @@ func RecoverSession(
 				for _, rec := range page {
 					sess.diffs = append(sess.diffs, rec.Diff)
 					for slotID, sig := range rec.Signatures {
-						if _, ok := sess.signatures[rec.Nonce]; !ok {
-							sess.signatures[rec.Nonce] = make(map[uint32][]byte)
-						}
-						sess.signatures[rec.Nonce][slotID] = sig
+						sess.recordSignatureLocked(rec.Nonce, slotID, sig)
 					}
 				}
 				sess.dropDiffPrefixLocked()
@@ -316,7 +314,12 @@ func RecoverSession(
 	err = storage.ReadDiffPages(store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 		for _, rec := range page {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+			var root []byte
+			applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
+				var err error
+				root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+				return err
+			})
 			if applyErr != nil {
 				if errors.Is(applyErr, types.ErrInvalidNonce) {
 					return fmt.Errorf("%w: replay nonce %d: %w",
@@ -332,13 +335,10 @@ func RecoverSession(
 			}
 
 			sess.diffs = append(sess.diffs, rec.Diff)
-			sess.nonce = rec.Nonce
+			sess.setNonceLocked(rec.Nonce)
 
 			for slotID, sig := range rec.Signatures {
-				if _, ok := sess.signatures[rec.Nonce]; !ok {
-					sess.signatures[rec.Nonce] = make(map[uint32][]byte)
-				}
-				sess.signatures[rec.Nonce][slotID] = sig
+				sess.recordSignatureLocked(rec.Nonce, slotID, sig)
 			}
 		}
 		sess.dropDiffPrefixLocked()
@@ -376,17 +376,15 @@ func restoreSignaturesFromStore(sess *Session, store storage.Storage, escrowID s
 	if len(sigs) == 0 {
 		return nil
 	}
-	if _, ok := sess.signatures[nonce]; !ok {
-		sess.signatures[nonce] = make(map[uint32][]byte)
-	}
 	for slotID, sig := range sigs {
-		sess.signatures[nonce][slotID] = sig
+		sess.recordSignatureLocked(nonce, slotID, sig)
 	}
 	log.Printf("recover_session escrow=%s signatures_restored nonce=%d slots=%d", escrowID, nonce, len(sigs))
 	return nil
 }
 
 func finishRecover(sess *Session, sm *state.StateMachine, replayFrom uint64) (*Session, *state.StateMachine, error) {
+	sess.adoptRecoveredNonces()
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}

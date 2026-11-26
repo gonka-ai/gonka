@@ -1422,6 +1422,7 @@ func (x *ListNodeCapacityResponse) GetServedAtUnix() int64 {
 type GetBlockHeaderRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Height        int64                  `protobuf:"varint,1,opt,name=height,proto3" json:"height,omitempty"`
+	WaitMs        int64                  `protobuf:"varint,2,opt,name=wait_ms,json=waitMs,proto3" json:"wait_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1459,6 +1460,13 @@ func (*GetBlockHeaderRequest) Descriptor() ([]byte, []int) {
 func (x *GetBlockHeaderRequest) GetHeight() int64 {
 	if x != nil {
 		return x.Height
+	}
+	return 0
+}
+
+func (x *GetBlockHeaderRequest) GetWaitMs() int64 {
+	if x != nil {
+		return x.WaitMs
 	}
 	return 0
 }
@@ -2003,9 +2011,10 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x06status\x18\x05 \x01(\tR\x06status\"v\n" +
 	"\x18ListNodeCapacityResponse\x124\n" +
 	"\x05nodes\x18\x01 \x03(\v2\x1e.nodemanager.NodeCapacityEntryR\x05nodes\x12$\n" +
-	"\x0eserved_at_unix\x18\x02 \x01(\x03R\fservedAtUnix\"/\n" +
+	"\x0eserved_at_unix\x18\x02 \x01(\x03R\fservedAtUnix\"H\n" +
 	"\x15GetBlockHeaderRequest\x12\x16\n" +
-	"\x06height\x18\x01 \x01(\x03R\x06height\"J\n" +
+	"\x06height\x18\x01 \x01(\x03R\x06height\x12\x17\n" +
+	"\await_ms\x18\x02 \x01(\x03R\x06waitMs\"J\n" +
 	"\x16GetBlockHeaderResponse\x120\n" +
 	"\x06header\x18\x01 \x01(\v2\x18.nodemanager.BlockHeaderR\x06header\"C\n" +
 	"\x15ProveBlockPathRequest\x12\x16\n" +

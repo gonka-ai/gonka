@@ -170,14 +170,14 @@ func TestGatewayChainOracle_DefaultOffDoesNotMint(t *testing.T) {
 	t.Setenv("DEVSHARD_CHAIN_RPC", "http://127.0.0.1:26657")
 
 	require.NoError(t, initGatewayHeightSync(nil, "http://127.0.0.1:26657"))
-	require.Nil(t, hsSt, "follower must not start when the flag is unset")
+	require.NotNil(t, hsSt, "the follower always starts: timeouts read block times through it")
+	require.NotNil(t, gatewayHeaderTimes())
 
 	cfg, err := extraClientConfigFromEnv()
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
-	require.Nil(t, cfg.HeightSyncLogOracle)
-	require.Nil(t, hsSt)
+	require.Nil(t, cfg.HeightSyncLogOracle, "the log oracle stays behind the flag")
 
 	got, err, miss := cfg.HeightSync.Decide(context.Background(), heightsync.DecideHints{Nonce: 1})
 	require.NoError(t, err)

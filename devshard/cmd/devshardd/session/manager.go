@@ -30,6 +30,7 @@ import (
 	"common/chainoracle/blocks"
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/chainoracle/blocks/headertime"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/observability"
@@ -106,6 +107,7 @@ type HostManager struct {
 
 	// Height-sync scheduler (NodeManager GetBlockHeader or chain client). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
+	headerTimes      *headertime.Source
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
 	heightSyncTip    interface{ Observe(h *blocks.Header) }
@@ -1384,7 +1386,12 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			err = storage.ReadDiffPages(m.store, escrowID, replayFrom, meta.LatestNonce, func(page []types.DiffRecord) error {
 				for _, rec := range page {
 					sm.InjectWarmKeys(rec.WarmKeyDelta)
-					root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+					var root []byte
+					applyErr := state.RetryWhileHeaderPending(context.Background(), state.ReplayHeaderWait, func() error {
+						var err error
+						root, err = sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+						return err
+					})
 					if applyErr != nil {
 						return fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 					}
@@ -2259,6 +2266,9 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 func (m *HostManager) sessionSMOpts(extra ...state.SMOption) []state.SMOption {
 	if m.params != nil {
 		extra = append(extra, state.WithHeartbeatConfig(m.params.SessionParams().Heartbeat))
+	}
+	if m.headerTimes != nil {
+		extra = append(extra, state.WithHeaderTimes(m.headerTimes))
 	}
 	return extra
 }

@@ -451,7 +451,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxRepetitionPenalty)}}).
 				withRule(RequestFilterStagePostLimits, rejectNonPositiveNumber),
 			newParameter("logit_bias").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatMapParameter{StripNonFinite: true, Min: floatPointer(LogitBiasMinValue), Max: floatPointer(LogitBiasMaxValue), DropFieldIfEmpty: true, MaxEntries: LogitBiasMaxEntries, TokenIDKeyLimit: completionapi.UnknownVocabularyTokenIDLimit}}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatMapParameter{StripNonFinite: true, Min: floatPointer(LogitBiasMinValue), Max: floatPointer(LogitBiasMaxValue), DropFieldIfEmpty: true, MaxEntries: LogitBiasMaxEntries}}),
 			newParameter("stop").
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}}),
@@ -515,6 +515,9 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						ForceZeroBelowMaxTokens: kimiSmallMaxTokensForceNoThinking,
 					},
 				}),
+			// Before tools: ToolsValidator drops min_tokens on a coerced "required", after it is validated.
+			newParameter("min_tokens").
+				withRule(RequestFilterStagePreValidation, mustBeUint),
 			newParameter("tools").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolsValidator{
@@ -531,8 +534,6 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolChoiceValidator{MaxNameLen: ToolChoiceMaxNameLen},
 				}),
-			newParameter("min_tokens").
-				withRule(RequestFilterStagePreValidation, mustBeUint),
 			newParameter("bad_words").
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeStringListParameter{

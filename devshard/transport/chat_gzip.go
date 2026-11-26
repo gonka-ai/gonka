@@ -9,15 +9,21 @@ import (
 )
 
 // ChatGzipCoalesceBytes is the aggregation cut: about five vLLM token events
-// (id, object, created, model, delta). BestSpeed keeps its match table from
-// 128 bytes up; this cut is larger so one Huffman tree covers those tokens.
-// The default is per token. SetChatGzipCoalesce(ChatGzipCoalesceBytes) packs
-// later events to this size. The first model token still leaves on its own.
-// chatGzipCoalesceMax bounds a stream that never sends a blank line.
+// (id, object, created, model, delta), so one Huffman tree covers those
+// tokens. The default is per token. SetChatGzipCoalesce(ChatGzipCoalesceBytes)
+// packs later events to this size. The first model token still leaves on its
+// own. chatGzipCoalesceMax bounds a stream that never sends a blank line.
 const (
 	ChatGzipCoalesceBytes = 1024
 	chatGzipCoalesceMax   = 16 << 10
 )
+
+// chatGzipLevel is the lowest level that keeps the 32 KiB window across a sync
+// flush. BestSpeed starts each flushed block with an empty window, so a token
+// can match only within its own frame and a per-event flush pays for the
+// repeated id, object, created and model every time. Flush still ends the
+// block, so a frame is readable the moment it is sent.
+const chatGzipLevel = 2
 
 // chatGzipCoalesceMin is the live cut. Zero flushes every finished SSE event.
 var chatGzipCoalesceMin atomic.Int32
@@ -35,7 +41,7 @@ func chatGzipCut() int {
 	return int(chatGzipCoalesceMin.Load())
 }
 
-// ChatGzipEmitter is one gzip.Writer (BestSpeed). Concatenating chunks
+// ChatGzipEmitter is one gzip.Writer (chatGzipLevel). Concatenating chunks
 // reconstitutes the stream. Close with no Write emits nothing so a handler
 // error before the first event is zero frames, not an empty gzip member.
 type ChatGzipEmitter struct {
@@ -47,7 +53,7 @@ type ChatGzipEmitter struct {
 
 func NewChatGzipEmitter(send func([]byte) error) *ChatGzipEmitter {
 	e := &ChatGzipEmitter{send: send}
-	e.gz, _ = gzip.NewWriterLevel(&e.buf, gzip.BestSpeed)
+	e.gz, _ = gzip.NewWriterLevel(&e.buf, chatGzipLevel)
 	return e
 }
 
@@ -192,8 +198,8 @@ func (s *ChatFrameSink) eventReady() bool {
 }
 
 // firstTokenReady is the model event the gateway times. The receipt uses
-// FlushNow and does not count. Size does not matter, including under the
-// 128-byte BestSpeed floor.
+// FlushNow and does not count. Size does not matter: a short first token
+// leaves on its own.
 func (s *ChatFrameSink) firstTokenReady() bool {
 	return s.oweFirstToken && !s.sentFirstToken && s.eventBoundary()
 }

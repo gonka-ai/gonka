@@ -776,9 +776,7 @@ type ExecutorReceiptContent struct {
 	Model             string                 `protobuf:"bytes,3,opt,name=model,proto3" json:"model,omitempty"`
 	InputLength       uint64                 `protobuf:"varint,4,opt,name=input_length,json=inputLength,proto3" json:"input_length,omitempty"`
 	MaxTokens         uint64                 `protobuf:"varint,5,opt,name=max_tokens,json=maxTokens,proto3" json:"max_tokens,omitempty"`
-	StartedAt         int64                  `protobuf:"varint,6,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	EscrowId          string                 `protobuf:"bytes,7,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
-	ConfirmedAt       int64                  `protobuf:"varint,8,opt,name=confirmed_at,json=confirmedAt,proto3" json:"confirmed_at,omitempty"`
 	ObservedHeight    uint64                 `protobuf:"varint,9,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
 	ObservedBlockHash []byte                 `protobuf:"bytes,10,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
 	unknownFields     protoimpl.UnknownFields
@@ -850,25 +848,11 @@ func (x *ExecutorReceiptContent) GetMaxTokens() uint64 {
 	return 0
 }
 
-func (x *ExecutorReceiptContent) GetStartedAt() int64 {
-	if x != nil {
-		return x.StartedAt
-	}
-	return 0
-}
-
 func (x *ExecutorReceiptContent) GetEscrowId() string {
 	if x != nil {
 		return x.EscrowId
 	}
 	return ""
-}
-
-func (x *ExecutorReceiptContent) GetConfirmedAt() int64 {
-	if x != nil {
-		return x.ConfirmedAt
-	}
-	return 0
 }
 
 func (x *ExecutorReceiptContent) GetObservedHeight() uint64 {
@@ -886,6 +870,8 @@ func (x *ExecutorReceiptContent) GetObservedBlockHash() []byte {
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
+// CanonicalSignedBytes prefixes "devshard.timeoutvote.v1" so this cannot be
+// replayed as ErrorMissVoteContent (proto3 would otherwise omit field 4).
 type TimeoutVoteContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
@@ -955,6 +941,7 @@ func (x *TimeoutVoteContent) GetAccept() bool {
 }
 
 // ErrorMissVoteContent is what a host signs for an ErrorMissVote.
+// CanonicalSignedBytes prefixes "devshard.errormissvote.v1".
 type ErrorMissVoteContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
@@ -1141,7 +1128,7 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12.\n" +
 	"\x06status\x18\x02 \x01(\x0e2\x16.devshard.v1.AckStatusR\x06status\x12'\n" +
 	"\x0fobserved_height\x18\x03 \x01(\x04R\x0eobservedHeight\x12\x1b\n" +
-	"\tack_nonce\x18\x04 \x01(\x04R\backNonce\"\xec\x02\n" +
+	"\tack_nonce\x18\x04 \x01(\x04R\backNonce\"\xd0\x02\n" +
 	"\x16ExecutorReceiptContent\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
 	"\vprompt_hash\x18\x02 \x01(\fR\n" +
@@ -1149,14 +1136,12 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\x05model\x18\x03 \x01(\tR\x05model\x12!\n" +
 	"\finput_length\x18\x04 \x01(\x04R\vinputLength\x12\x1d\n" +
 	"\n" +
-	"max_tokens\x18\x05 \x01(\x04R\tmaxTokens\x12\x1d\n" +
-	"\n" +
-	"started_at\x18\x06 \x01(\x03R\tstartedAt\x12\x1b\n" +
-	"\tescrow_id\x18\a \x01(\tR\bescrowId\x12!\n" +
-	"\fconfirmed_at\x18\b \x01(\x03R\vconfirmedAt\x12'\n" +
+	"max_tokens\x18\x05 \x01(\x04R\tmaxTokens\x12\x1b\n" +
+	"\tescrow_id\x18\a \x01(\tR\bescrowId\x12'\n" +
 	"\x0fobserved_height\x18\t \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\n" +
-	" \x01(\fR\x11observedBlockHash\"\xa6\x01\n" +
+	" \x01(\fR\x11observedBlockHashJ\x04\b\x06\x10\aJ\x04\b\b\x10\tR\n" +
+	"started_atR\fconfirmed_at\"\xa6\x01\n" +
 	"\x12TimeoutVoteContent\x12\x1b\n" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
 	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x122\n" +

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -202,30 +200,9 @@ func serveCachedChatResponse(w http.ResponseWriter, r *http.Request, entry cache
 
 type gatewayChatCacheCapture struct {
 	http.ResponseWriter
-	status             int
-	body               bytes.Buffer
-	writeErr           error
-	rejectionConfirmed *atomic.Bool
-}
-
-type rejectionConfirmationKey struct{}
-
-func withRejectionConfirmation(ctx context.Context, confirmed *atomic.Bool) context.Context {
-	return context.WithValue(ctx, rejectionConfirmationKey{}, confirmed)
-}
-
-func confirmRejection(ctx context.Context) {
-	if confirmed, ok := ctx.Value(rejectionConfirmationKey{}).(*atomic.Bool); ok && confirmed != nil {
-		confirmed.Store(true)
-	}
-}
-
-func responseCarriesError(body []byte) bool {
-	if _, ok := sseChunkErrorDetails(body); ok {
-		return true
-	}
-	_, ok := jsonErrorPayloadDetails(body)
-	return ok
+	status   int
+	body     bytes.Buffer
+	writeErr error
 }
 
 func (w *gatewayChatCacheCapture) WriteHeader(status int) {
@@ -279,9 +256,6 @@ func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourc
 	body := w.body.Bytes()
 	if reason := cacheableChatResponse(statusCode, body, stream); reason != "" {
 		return cachedChatResponse{}, reason
-	}
-	if responseCarriesError(body) && (w.rejectionConfirmed == nil || !w.rejectionConfirmed.Load()) {
-		return cachedChatResponse{}, "unconfirmed_rejection"
 	}
 	return cachedChatResponse{
 		EscrowID:        escrowID,
