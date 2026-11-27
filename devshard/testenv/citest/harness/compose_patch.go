@@ -319,6 +319,12 @@ func EnableHeightSyncCompose(t *testing.T, composePath string) {
 	)
 }
 
+// EnableHeartbeatCompose turns the gateway's quiet-escrow heartbeat on, so the height floor advances with chain time and block-time timeouts fall due without traffic.
+func EnableHeartbeatCompose(t *testing.T, composePath string) {
+	t.Helper()
+	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API", `DEVSHARD_HEIGHTSYNC_HEARTBEAT: "1"`)
+}
+
 // EnableLegacyDapiCompose makes mock-dapi omit /block/* (0.2.15 / pre-mount
 // dapi). Height-sync still points at mock-dapi; hosts failover to direct chain.
 func EnableLegacyDapiCompose(t *testing.T, composePath string) {

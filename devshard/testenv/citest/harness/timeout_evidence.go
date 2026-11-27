@@ -39,6 +39,7 @@ func BootTimeoutEvidenceStack(t *testing.T, prefix string) (*Stack, *config.File
 		ExecutionTimeout: TimeoutEvidenceExecutionTimeout,
 	})
 	stack.RunGencompose(t)
+	EnableHeartbeatCompose(t, stack.ComposePath)
 	cfg := stack.LoadConfig(t)
 	requireFourVersiondHosts(t, cfg)
 	stack.Up(t)
