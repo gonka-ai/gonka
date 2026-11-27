@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"connectrpc.com/connect"
@@ -40,6 +41,69 @@ func (e *catchUpCallError) Unwrap() error { return e.err }
 
 func (e *executorCallError) Error() string { return e.err.Error() }
 func (e *executorCallError) Unwrap() error { return e.err }
+
+// executorWait records that the check's deadline passed during a call to the
+// executor, whether the check made progress or only waited (neither counts),
+// and how long the check had.
+type executorWait struct {
+	silent, progressed atomic.Bool
+	window             time.Duration
+}
+
+// noteHeadSilent marks a held SessionHead that had at least a quarter of
+// queryTimeout, or any held one in a check given nearly the full queryTimeout
+// (a guardCompletion retry); otherwise it is no verdict.
+func noteHeadSilent(ctx context.Context, budget, queryTimeout time.Duration) {
+	if w := executorWaitFrom(ctx); budget >= queryTimeout/4 || (w != nil && w.window >= queryTimeout*9/10) {
+		noteExecutorSilent(ctx)
+		return
+	}
+	noteNoVerdict(ctx)
+}
+
+// noteNoVerdict keeps the count as it is: the check ended without telling
+// anything about the executor.
+func noteNoVerdict(ctx context.Context) {
+	if w := executorWaitFrom(ctx); w != nil {
+		w.progressed.Store(true)
+	}
+}
+
+type executorWaitKey struct{}
+
+func executorWaitFrom(ctx context.Context) *executorWait {
+	w, _ := ctx.Value(executorWaitKey{}).(*executorWait)
+	return w
+}
+
+func noteExecutorSilent(ctx context.Context) {
+	if w := executorWaitFrom(ctx); w != nil {
+		w.silent.Store(true)
+	}
+}
+
+// settleExecutorWait counts a check of at least minWindow that ended on a
+// deadline during an executor call; past silentExecutorChecks in a row it
+// accepts. Progress neither counts nor clears; a cancelled request is skipped.
+func settleExecutorWait(walk *coldWalkCtx, w *executorWait, request context.Context, minWindow time.Duration, accept bool, err error) (bool, error) {
+	if walk == nil || w == nil || errors.Is(request.Err(), context.Canceled) {
+		return accept, err
+	}
+	silent := err != nil && w.silent.Load() && errors.Is(err, context.DeadlineExceeded)
+	if (silent && w.window < minWindow) || (err != nil && w.progressed.Load()) {
+		return accept, err
+	}
+	if !silent {
+		walk.gate.clearSilent(walk.key)
+		return accept, err
+	}
+	n := walk.gate.noteSilent(walk.key)
+	if n <= silentExecutorChecks {
+		return accept, err
+	}
+	logging.Warn("refused timeout: executor silent past the verify deadline, accepting", "executor", walk.key, "checks", n)
+	return true, nil
+}
 
 // WireReload reads a sent page from the journal again. A client that drops
 // the page once it is encoded calls it when it retries the send.
@@ -124,7 +188,7 @@ func VerifyRefusedProgress(
 	queryTimeout time.Duration,
 	verifyBudget time.Duration,
 	unreachable func(error) bool,
-) (bool, error) {
+) (accept bool, err error) {
 	requestCtx := ctx
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -157,6 +221,12 @@ func VerifyRefusedProgress(
 	}
 	ctx, cancel := context.WithTimeout(ctx, verifyBudget)
 	defer cancel()
+	deadline, _ := ctx.Deadline()
+	wait := &executorWait{window: time.Until(deadline)}
+	ctx = context.WithValue(ctx, executorWaitKey{}, wait)
+	defer func() {
+		accept, err = settleExecutorWait(coldWalkFrom(ctx), wait, requestCtx, queryTimeout/2, accept, err)
+	}()
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -176,12 +246,15 @@ func VerifyRefusedProgress(
 		probeErr := queryCtx.Err()
 		queryCancel()
 		if queryErr != nil && requestCtx.Err() != nil && errors.Is(queryErr, requestCtx.Err()) {
+			noteHeadSilent(ctx, queryBudget, queryTimeout)
 			return false, requestCtx.Err()
 		}
 		if queryErr != nil && ctx.Err() != nil && errors.Is(queryErr, ctx.Err()) {
+			noteHeadSilent(ctx, queryBudget, queryTimeout)
 			return false, ctx.Err()
 		}
 		if ownProbeTimeout(ctx, probeErr, queryErr) {
+			noteHeadSilent(ctx, queryBudget, queryTimeout)
 			return false, probeErr
 		}
 
@@ -197,6 +270,7 @@ func VerifyRefusedProgress(
 		if walk := coldWalkFrom(ctx); walk != nil {
 			join, resume, joinErr := walk.gate.Join(ctx, walk.key, refusalWalkHead(st, cursor, nonce, matched, queryErr), st.LatestNonce)
 			if joinErr != nil {
+				noteNoVerdict(ctx)
 				return false, joinErr
 			}
 			switch join {
@@ -383,9 +457,11 @@ func refusalAfterProgress(
 		probeErr := queryCtx.Err()
 		queryCancel()
 		if ctx.Err() != nil {
+			noteHeadSilent(ctx, queryBudget, queryTimeout)
 			return false, ctx.Err()
 		}
 		if ownProbeTimeout(ctx, probeErr, queryErr) {
+			noteHeadSilent(ctx, queryBudget, queryTimeout)
 			return false, probeErr
 		}
 		if queryErr != nil || nonce <= previous || nonce > st.LatestNonce || len(root) != 32 {
@@ -563,6 +639,7 @@ func prepareCatchUp(
 		noteRefusalPage(err, ctx, unreachable)
 		if err != nil {
 			if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+				noteExecutorSilent(ctx)
 				return ctx.Err()
 			}
 			noteColdPageAnswered(ctx)
@@ -574,9 +651,14 @@ func prepareCatchUp(
 		}
 		nonce, root, tipErr := readTip(ctx, tip, queryTimeout)
 		if ctx.Err() != nil {
+			noteExecutorSilent(ctx)
 			return ctx.Err()
 		}
 		if tipErr == nil && tipRootMatches(journal, latest, nonce, *cursor, root) {
+			// Progress covers the whole answered page and beats every earlier one.
+			if walk, w := coldWalkFrom(ctx), executorWaitFrom(ctx); walk != nil && w != nil && nonce+1 >= pageEnd && walk.gate.raiseSilentTip(walk.key, nonce) {
+				w.progressed.Store(true)
+			}
 			*cursor = nonce + 1
 			noteColdBound(ctx, nonce)
 		}
@@ -695,6 +777,7 @@ func finishChallengeCall(
 	noteRefusalPage(err, nil, unreachable)
 	if err != nil {
 		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			noteExecutorSilent(ctx)
 			return 0, ctx.Err()
 		}
 		return 0, &executorCallError{err: err}
