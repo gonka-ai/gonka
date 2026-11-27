@@ -21,6 +21,7 @@ import (
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 )
 
 const (
@@ -41,6 +42,7 @@ type EscrowRegistry interface {
 	SettlementSession(escrowID string) (registry.EscrowSession, bool)
 	HoldSettlement(escrowID string) (registry.EscrowSession, func(), bool)
 	Inspect(ctx context.Context, escrowID string) (registry.EscrowSession, func(), error)
+	BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error)
 	IsBusy(escrowID string) bool
 }
 

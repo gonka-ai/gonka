@@ -27,6 +27,7 @@ import (
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 )
 
 const (
@@ -36,10 +37,13 @@ const (
 )
 
 type fakeRegistry struct {
-	models   []string
-	escrows  []scheduler.Escrow
-	sessions map[string]registry.EscrowSession
-	busy     map[string]bool
+	models      []string
+	escrows     []scheduler.Escrow
+	sessions    map[string]registry.EscrowSession
+	busy        map[string]bool
+	parked      map[string]registry.EscrowSession
+	settlements map[string]settlement.Message
+	settleErr   error
 }
 
 func (f *fakeRegistry) Serves(model string) bool { return slices.Contains(f.models, model) }
@@ -90,12 +94,19 @@ func (f *fakeRegistry) HoldSettlement(escrowID string) (registry.EscrowSession, 
 func (f *fakeRegistry) Inspect(_ context.Context, escrowID string) (registry.EscrowSession, func(), error) {
 	session, held := f.SettlementSession(escrowID)
 	if !held {
+		session, held = f.parked[escrowID]
+	}
+	if !held {
 		return nil, nil, fmt.Errorf("escrow %s: %w", escrowID, escrow.ErrUnknownEscrow)
 	}
 	return session, func() {}, nil
 }
 
 func (f *fakeRegistry) IsBusy(escrowID string) bool { return f.busy[escrowID] }
+
+func (f *fakeRegistry) BuildSettlement(_ context.Context, escrowID string) (settlement.Message, error) {
+	return f.settlements[escrowID], f.settleErr
+}
 
 // fakeEngine's ledger stands in for the real engine's recording point, which runs before Run returns.
 type fakeEngine struct {

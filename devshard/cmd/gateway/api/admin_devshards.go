@@ -13,6 +13,7 @@ import (
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 	"devshard/types"
 )
 
@@ -196,8 +197,18 @@ func (s *Server) handleDevshardCollectSignatures(w http.ResponseWriter, r *http.
 	})
 }
 
+type finalizedDevshard struct {
+	settlement.File
+	Phase         string `json:"phase"`
+	FinalizeNonce uint64 `json:"finalize_nonce"`
+}
+
 func (s *Server) handleDevshardFinalize(w http.ResponseWriter, r *http.Request) {
 	if !allowMethods(w, r, http.MethodGet, http.MethodPost) {
+		return
+	}
+	if r.Method == http.MethodGet {
+		s.writeSettlementFile(w, r)
 		return
 	}
 	escrowID := r.PathValue("id")
@@ -207,19 +218,6 @@ func (s *Server) handleDevshardFinalize(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer release()
-	state := session.SnapshotState()
-	if r.Method == http.MethodGet {
-		if state.Phase == types.PhaseActive {
-			writeError(w, http.StatusConflict, "devshard is not finalized")
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"escrow_id":      escrowID,
-			"phase":          phaseName(state.Phase),
-			"finalize_nonce": state.FinalizeNonce,
-		})
-		return
-	}
 	if s.escrows.IsBusy(escrowID) {
 		s.writeErrorFor(w, fmt.Errorf("%w: %s", escrow.ErrDevshardBusy, escrowID))
 		return
@@ -228,6 +226,24 @@ func (s *Server) handleDevshardFinalize(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"escrow_id": escrowID, "finalized": true})
+}
+
+func (s *Server) writeSettlementFile(w http.ResponseWriter, r *http.Request) {
+	session, escrowID, release, ok := s.inspectable(w, r)
+	if !ok {
+		return
+	}
+	state := session.SnapshotState()
+	release()
+	if state.Phase != types.PhaseSettlement {
+		writeError(w, http.StatusConflict, "devshard is not finalized")
+		return
+	}
+	message, err := s.escrows.BuildSettlement(r.Context(), escrowID)
+	if writeControlFailure(w, err) {
+		return
+	}
+	writeJSON(w, http.StatusOK, finalizedDevshard{File: settlement.NewFile(message), Phase: phaseName(state.Phase), FinalizeNonce: state.FinalizeNonce})
 }
 
 func (s *Server) devshardRecord(r *http.Request, escrowID string) (store.DevshardRecord, bool, error) {
