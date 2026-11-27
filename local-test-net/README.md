@@ -96,7 +96,7 @@ Legacy clients calling `/v1/devshard/*` are rewritten by the proxy to `/devshard
 make gateway-build   # -> build/gateway
 ```
 
-Production join stacks use a separate gateway container (`deploy/join/docker-compose.devshard-gateway.yml`) instead.
+Production runs the gateway as its own container; see [`devshard/cmd/gateway/deploy`](../devshard/cmd/gateway/deploy/README.md).
 
 ### Deploy (`deploy/join/`)
 

@@ -341,7 +341,7 @@ the HA overlays.
 | [`deploy/join/docker-compose.yml`](../../deploy/join/docker-compose.yml) | Base: node, api (dapi), **edge-api**, versiond, **proxy** (edge), explorer, … |
 | [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | HA: postgres + versiond2 + versiond-router; proxy → router |
 | [`deploy/join/docker-compose.edge-api-multi.yml`](../../deploy/join/docker-compose.edge-api-multi.yml) | Optional: edge-api2/3 + edge-api-router; proxy → router |
-| [`deploy/join/docker-compose.devshard-gateway.yml`](../../deploy/join/docker-compose.devshard-gateway.yml) | Optional gateway |
+| [`devshard/cmd/gateway/deploy/docker-compose.devshard-gateway.yml`](../cmd/gateway/deploy/docker-compose.devshard-gateway.yml) | Optional gateway |
 
 ```bash
 # Baseline join

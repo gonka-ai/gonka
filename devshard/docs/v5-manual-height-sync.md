@@ -24,7 +24,7 @@ Join gateway is `http://127.0.0.1:18080` unless you remapped it. Admin Bearer is
 
 ```bash
 GATEWAY=http://127.0.0.1:18080
-ADMIN_KEY=sk-admin-your-key   # from config.devshard.env
+ADMIN_KEY=sk-admin-your-key   # from config.devshard-gateway.env
 
 # Chat (must stay 200 / SSE complete; never hang or 5xx because of height-sync)
 curl -sS "$GATEWAY/v1/chat/completions" \

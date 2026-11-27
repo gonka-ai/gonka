@@ -209,7 +209,7 @@ Two independent probe jobs. Neither feeds routing or quarantine. A probe outage 
 
 ### Gateway
 
-Read from the process environment on every start (not from `gateway.db`). Join: `deploy/join/config.devshard.env.template` and `docker-compose.devshard-gateway.yml`. Testenv: gencompose `gateway` service.
+Read from the process environment on every start (not from `gateway.db`). Deploy: `devshard/cmd/gateway/deploy/config.devshard-gateway.env.template` and `docker-compose.devshard-gateway.yml`. Testenv: gencompose `gateway` service.
 
 | Env | Default | Role |
 | --- | --- | --- |

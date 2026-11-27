@@ -120,7 +120,6 @@ func TestBuildCopiesOverridesModels(t *testing.T) {
 
 // deployedEnvTemplates are the operator-facing deploy files Build must accept without failing.
 var deployedEnvTemplates = []string{
-	"../../../../deploy/join/config.devshard.env.template",
 	"../deploy/config.devshard-gateway.env.template",
 }
 

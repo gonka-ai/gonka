@@ -131,7 +131,7 @@ Each drain is bounded by the grace period but **not cancelled** by it — a step
 
 The `journal` step (8) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
 
-**Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. Both compose files that run the gateway (`deploy/docker-compose.devshard-gateway.yml` and the join stack's `deploy/join/docker-compose.devshard-gateway.yml`) set `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
+**Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. The gateway's compose file (`deploy/docker-compose.devshard-gateway.yml`) sets `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
 
 ## Session storage
 
