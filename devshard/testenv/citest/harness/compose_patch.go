@@ -325,6 +325,12 @@ func EnableHeartbeatCompose(t *testing.T, composePath string) {
 	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API", `DEVSHARD_HEIGHTSYNC_HEARTBEAT: "1"`)
 }
 
+// DisableHostRPCStatsCompose turns the gateway's host RPC stats poll off, so its HTTP/1.1 reads of /devshard/stats/rpc leave no keep-alive connection to the host's child in a test that counts them.
+func DisableHostRPCStatsCompose(t *testing.T, composePath string) {
+	t.Helper()
+	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API", `DEVSHARD_GATEWAY_RPC_STATS_ENABLED: "false"`)
+}
+
 // EnableLegacyDapiCompose makes mock-dapi omit /block/* (0.2.15 / pre-mount
 // dapi). Height-sync still points at mock-dapi; hosts failover to direct chain.
 func EnableLegacyDapiCompose(t *testing.T, composePath string) {

@@ -44,6 +44,7 @@ func BootProxyOverlayStack(t *testing.T, prefix string) (*Stack, *config.File, E
 	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	stack.PrepareProxyOverlay(t)
+	DisableHostRPCStatsCompose(t, stack.ComposePath)
 	cfg := stack.LoadConfig(t)
 	pinProxyOverlayIP(t, stack, cfg)
 	requireTwoVersiondHosts(t, cfg)

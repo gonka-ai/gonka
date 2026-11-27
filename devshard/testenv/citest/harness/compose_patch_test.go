@@ -232,6 +232,29 @@ services:
 	require.Equal(t, 1, strings.Count(text, `DEVSHARD_HEIGHTSYNC_HEARTBEAT: "1"`))
 }
 
+// Test flow:
+// 1. Write a compose file where only the gateway carries DEVSHARD_PUBLIC_API.
+// 2. Disable the host RPC stats poll.
+// 3. The gateway's environment gains the switch set to false exactly once.
+func TestDisableHostRPCStatsCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
+  gateway:
+    environment:
+      DEVSHARD_PUBLIC_API: http://mock-dapi:12345
+`), 0o644))
+
+	DisableHostRPCStatsCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(string(body), `DEVSHARD_GATEWAY_RPC_STATS_ENABLED: "false"`))
+}
+
 func TestEnableLegacyDapiCompose(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker-compose.yml")
