@@ -340,6 +340,7 @@ services:
       target: gateway-runtime
       args:
         DEVSHARD_VERSION: "{{ .Versiond.VersionName }}"
+        GATEWAY_VERSION: "{{ .Versiond.VersionName }}"
     image: devshard-gateway:latest
     entrypoint: ["gateway"]
     environment:

@@ -28,7 +28,7 @@ To reproduce an escrow lifecycle problem (create, drain, timeout votes, settle, 
 
 ## Release and rollback
 
-A release is an image. `make release` builds it for `linux/amd64` (`PLATFORM`) and pushes it as `$(GATEWAY_IMAGE):<tag>` for every tag in `GATEWAY_TAGS`. It refuses to run without `GATEWAY_VERSION` (the gateway's release version), `DEVSHARD_PROTOCOL_VERSION` (the protocol version on chain, stamped into every settlement; [`CONTRIBUTING.md`](../CONTRIBUTING.md), "Before you push") and `GATEWAY_TAGS`. The image carries `org.opencontainers.image.revision` (the commit, with `-dirty` when the work tree differs from HEAD), `org.opencontainers.image.version` (the protocol version) and `org.opencontainers.image.source` labels.
+A release is an image. `make release` builds it for `linux/amd64` (`PLATFORM`) and pushes it as `$(GATEWAY_IMAGE):<tag>` for every tag in `GATEWAY_TAGS`. It refuses to run without `GATEWAY_VERSION` (the gateway's release version), `DEVSHARD_PROTOCOL_VERSION` (the protocol version on chain, stamped into every settlement; [`CONTRIBUTING.md`](../CONTRIBUTING.md), "Before you push") and `GATEWAY_TAGS`. The image carries `org.opencontainers.image.revision` (the commit, with `-dirty` when the work tree has any change, untracked files included), `org.opencontainers.image.version` (the gateway version), `ai.gonka.devshard.protocol-version` (the protocol version) and `org.opencontainers.image.source` labels. Outside a git checkout of this repository the commit cannot be read, so `make image` and `make release` also refuse to run without `COMMIT=<sha>`.
 
 To release and deploy:
 
