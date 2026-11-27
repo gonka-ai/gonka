@@ -678,65 +678,7 @@ tokens are not an escape hatch.
 
 ## Gateway
 
-All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
-
-1. **Let the path run.** `shouldRunHandleTimeoutOn` returns false for any finished
-   nonce. Exception: run when `errorMissEnabledFor(inf)` (`errorTerminal`) even
-   if the nonce finished. `runHandleTimeout(errorMiss)` calls `HandleErrorMiss`,
-   not `HandleTimeout`.
-2. **Keep reading the SSE body through `devshard_meta`.** After a terminal
-   error envelope (and `[DONE]`), `parseSSEResponse` must not stop. The host
-   still emits `devshard_meta` with the signed Finish. Stopping at the error
-   leaves `inf.resp.Mempool` empty, `errorMissOutcome` reports no Finish, and the path
-   never votes. OpenAI `data:` chunks are unsigned; only
-   `MsgFinishInference.ProposerSig` over `sha256(stored body)` is evidence.
-3. **No Finish → no miss.** If the stream ends at EOF with no signed Finish,
-   do **not** call `HandleErrorMiss`. `no_finish_tx` is not evidence. Fall
-   back to ordinary `HandleTimeout` (refusal / execution deadline).
-4. **`HandleErrorMiss`**, not a reason branch of `HandleTimeout`. Today the
-   execution path sees a pending Finish and returns early after publishing it.
-   For an error attempt: **do not** early-return, and **do not** call
-   `sleepUntilDeadlineWithHeartbeat` — no `RefusalTimeout`, no `ExecutionTimeout`,
-   no `TimeoutBuffer`. If the record is still `Pending`, publish ConfirmStart
-   first (`SendPendingDiff`, Finish pinned) so verifiers see `Started`; then
-   collect error-miss votes. Timeout path stays refused/execution only.
-5. **Same-diff composition.** Pin the pending Finish (and any ErrorMiss already
-   queued for that nonce) as soon as `ProcessResponse` queues it, and again
-   for the vote round, so a height-sync heartbeat or unrelated `composeDiff`
-   cannot apply it as a normal Finish (validation would then sample it). Pass
-   `MsgErrorMiss` into the same locked compose as `extraTxs` after that Finish
-   — do not enqueue ErrorMiss into the shared pending queue first. Append
-   order puts Finish ahead of ErrorMiss.
-6. **Forward the artifacts — both required.** `verify-error-miss` (not
-   verify-timeout) carries:
-   - `finish_tx`, from `inf.resp.Mempool` (the `devshard_meta` tail the gateway
-     already parses for `HasMsgFinish`) or from `pendingTxs`;
-   - `response_payload`, the canonical
-     `json.Marshal(SerializedStreamedResponse{Events: lines})` over the host's
-     verbatim `data:` lines for that attempt.
-
-   With gossip off these are the verifiers' only sources, so a round missing
-   either collects zero accepts.
-7. **Retain the full error body.** `inf.errorBodySample` is capped by
-   `bodySampleForLog` and cannot be used to rebuild the payload. Capture the
-   attempt's complete `data:` line set — verbatim as the host emitted them (post
-   id-injection, pre `rewriteStreamingPayload`), excluding `devshard_receipt` /
-   `devshard_meta`. Bound the retention (`maxErrorStreamBytes`) so this does not
-   become a memory sink on the happy path.
-8. **Fix the local finished view.** `nonceStates[n].finished` is set from
-   `HasMsgFinish`, so gateway-local `IsNonceFinished` would still report finished
-   after an accepted error miss, disagreeing with chain state. Clear it when
-   `MsgErrorMiss` applies, so `completeAccountingRequest` and the debug/stats
-   views do not bill a timed-out inference.
-9. **Retire the exemption TODO** in `recordPostContentWinnerFailureOnce`.
-   Keep gateway *perf/quarantine* scoring decoupled from the on-chain miss —
-   the miss is the protocol penalty, quarantine remains a latency/health
-   signal — but make that a deliberate, commented decision instead of the
-   "until hosts submit Finish for errors" placeholder, which this change resolves.
-10. **Client response unchanged.** `hostApplicationError` still surfaces with its
-    original status/body. Only accounting changes. Emit is always on, gated by
-    `errorTerminal` (retriable capability 4xx stay off). Content before the error
-    still emits.
+The gateway side is implemented in `devshard/cmd/gateway`: the engine retains the attempt's verbatim error stream and the signed Finish, and claims the miss from them (`engine/miss_proof.go`), with `devshard/user/session.go` publishing ConfirmStart before the votes and composing Finish and `MsgErrorMiss` into one diff. [`cmd/gateway/docs/race.md`](../../cmd/gateway/docs/race.md#error-misses) describes how the race charges an error event. The client still gets the host's original error status and body; only accounting changes.
 
 ## Rollout: ship as a new approved version
 
@@ -826,9 +768,7 @@ Remaining rollout rules:
   gateway's payload reconstruction has drifted from the executor's
   serialization, which silently disables the whole path. Alert on that label
   only.
-- Update `docs/inference-lifecycle.md` (status transitions) and
-  `proposals/gateway-observability/observability.md` (the `error_stream` row now
-  has a follow-up outcome).
+- Update `docs/inference-lifecycle.md` (status transitions).
 
 ## Acceptance tests
 
@@ -899,23 +839,12 @@ Verifier (`devshard/host`, `devshard/transport`):
   EngineCore case. This is the test that protects the whole scheme from a
   serialization drift.
 
-Gateway (`devshard/cmd/devshardctl`):
+Gateway:
 
-- Error-stream attempt end to end: client still gets the original error status
-  and body, Finish + `MsgErrorMiss` share a diff (after any ConfirmStart
-  catch-up), `Missed == 1`, request is not billed as finished.
-- **Keep-reading:** SSE with error + `[DONE]` + `devshard_meta` Finish lands
-  on `resp.Mempool`; error + `[DONE]` + EOF with no meta does **not** vote a
-  miss (`TestParseSSE_ReadsMetaAfterErrorAndDone`,
-  `TestParseSSE_ErrorDoneEOFWithoutMetaHasNoFinish`,
-  `TestErrorMissRunnable_RequiresSignedFinish`).
-- **ConfirmStart before votes:** start from `StatusPending` with ConfirmStart
-  still pending; real `VerifyErrorMiss` accepts only after the gateway
-  publishes the receipt (`TestHandleErrorMiss_PublishesConfirmStartBeforeVotes`).
-- **No-wait assertion:** run with a realistic `ExecutionTimeout` (e.g. `32*60`,
-  not the `1`s the existing proxy tests use at `proxy_test.go:709`) and assert the
-  miss is applied in well under a second. Existing timeout tests pass only because
-  they shrink the config; this path must not need that.
+- Error-stream attempt end to end: client still gets the original error status and body, Finish + `MsgErrorMiss` share a diff (after any ConfirmStart catch-up), `Missed == 1`, request is not billed as finished (`cmd/gateway/engine/miss_proof_test.go`, `miss_claim_test.go`, `error_miss_plan_test.go`).
+- **Keep-reading:** SSE with error + `[DONE]` + `devshard_meta` Finish lands on `resp.Mempool`; error + `[DONE]` + EOF with no meta does **not** vote a miss (`TestParseSSE_ReadsMetaAfterErrorAndDone`, `TestParseSSE_ErrorDoneEOFWithoutMetaHasNoFinish` in `transport/client_test.go`).
+- **ConfirmStart before votes:** start from `StatusPending` with ConfirmStart still pending; real `VerifyErrorMiss` accepts only after the gateway publishes the receipt (`TestHandleErrorMiss_PublishesConfirmStartBeforeVotes` in `user/error_timeout_test.go`).
+- **No-wait assertion:** run with a realistic `ExecutionTimeout` (e.g. `32*60`) and assert the miss is applied in well under a second; this path must not need a shrunk config.
 - Content-then-error still emits (`errorTerminal`); non-terminal capability error
   → no `MsgErrorMiss`. (There is no env flag to silence emit.)
 - Insufficient votes → today's behaviour, request still fails cleanly.

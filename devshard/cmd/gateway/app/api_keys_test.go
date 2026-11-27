@@ -14,8 +14,10 @@ import (
 	"time"
 
 	"devshard/cmd/gateway/config"
+	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/internal/logcapture"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
 const (
@@ -243,9 +245,9 @@ func TestBootWithNoKeysAndAnAPIKeyModelStartsAndWarns(t *testing.T) {
 	logged := logcapture.Install(t)
 	gatewayEnvironment(t)
 	t.Setenv("DEVSHARD_ADMIN_API_KEY", routeTestAdminKey)
-	records, err := store.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
+	records, err := sqlite.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	if err := records.SaveOverrides(context.Background(), apiKeyModelOverrides()); err != nil {
 		t.Fatalf("SaveOverrides(): %v", err)
@@ -263,8 +265,8 @@ func TestBootWithNoKeysAndAnAPIKeyModelStartsAndWarns(t *testing.T) {
 	if !warned {
 		t.Fatalf("no warning about the api_key model with no key: %+v", logged.All())
 	}
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"disabled":true}`)
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"disabled":false}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"enabled":false}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"enabled":true}`)
 	gateway.createKey(fmt.Sprintf(`{"key":%q}`, firstFakeClientKey))
 	if status := gateway.chatStatus(firstFakeClientKey); status == http.StatusUnauthorized {
 		t.Fatalf("the first key on an upgraded gateway = %d, want it accepted", status)
@@ -279,9 +281,9 @@ func TestBootWithNoKeysAndAnAPIKeyModelStartsAndWarns(t *testing.T) {
 func TestAStaleStoredModelBlockBootsAndBlocksSettingsWritesUntilCleared(t *testing.T) {
 	gatewayEnvironment(t)
 	t.Setenv("DEVSHARD_ADMIN_API_KEY", routeTestAdminKey)
-	records, err := store.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
+	records, err := sqlite.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	overrides := apiKeyModelOverrides()
 	rotation := `[{"model_id":"model-other"}]`
@@ -297,11 +299,11 @@ func TestAStaleStoredModelBlockBootsAndBlocksSettingsWritesUntilCleared(t *testi
 
 	created := gateway.createKey(fmt.Sprintf(`{"key":%q}`, firstFakeClientKey))
 	gateway.requireAdminStatus(http.StatusOK, http.MethodDelete, "/v1/admin/api-keys/"+fmt.Sprint(created["id"]), "")
-	status, response := gateway.admin(http.MethodPost, "/v1/admin/settings", `{"disabled":true}`)
+	status, response := gateway.admin(http.MethodPost, "/v1/admin/settings", `{"enabled":false}`)
 	if status != http.StatusBadRequest || !strings.Contains(response, keyedModel) {
 		t.Fatalf("a settings write beside a stale block = %d %s, want 400 naming %s", status, response, keyedModel)
 	}
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"models":{"model-a":null},"disabled":true}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"models":{"model-a":null},"enabled":false}`)
 }
 
 // Test flow:
@@ -311,9 +313,9 @@ func TestAStaleStoredModelBlockBootsAndBlocksSettingsWritesUntilCleared(t *testi
 func TestBootLoadsTheActiveKeysFromTheDatabase(t *testing.T) {
 	gatewayEnvironment(t)
 	t.Setenv("DEVSHARD_ADMIN_API_KEY", routeTestAdminKey)
-	records, err := store.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
+	records, err := sqlite.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	ctx := context.Background()
 	createdAt := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -382,4 +384,53 @@ func TestACreateWhoseIDIsTakenIsRefusedRevokedOrNot(t *testing.T) {
 	if listing := gateway.requireAdminStatus(http.StatusOK, http.MethodGet, "/v1/admin/api-keys", ""); len(listing["api_keys"].([]any)) != 2 {
 		t.Fatalf("list = %v, want two rows", listing)
 	}
+}
+
+// Test flow:
+//  1. Select Postgres, open the store through the factory and compose a gateway over it with an admin key.
+//  2. Create a key through the admin API, put the model on the `api_key` tier, and assert the key is accepted and an unknown one is 401.
+//  3. List the keys and assert the answer names the key's ID and holds no key value.
+//  4. Create a second key, revoke the first, and assert the first is 401 and the second is accepted, and revoking the last active key is refused with 409.
+func TestAGatewayOnPostgresCreatesListsServesAndRevokesAKey(t *testing.T) {
+	selectPostgres(t)
+	gatewayEnvironment(t)
+	t.Setenv("DEVSHARD_ADMIN_API_KEY", routeTestAdminKey)
+	values, err := env.Load()
+	if err != nil {
+		t.Fatalf("loading environment: %v", err)
+	}
+	storageDir := t.TempDir()
+	choice, err := chooseStore(&storageDir)
+	if err != nil {
+		t.Fatalf("chooseStore() = %v, want nil", err)
+	}
+	gatewayStore, err := choice.open(context.Background())
+	if err != nil {
+		t.Fatalf("open() = %v, want nil", err)
+	}
+	gateway := keyedGateway{t: t, handler: composedGatewayOver(t, values, storageDir, gatewayStore, chainWithoutADial{}).server.Handler}
+
+	gateway.createKey(fmt.Sprintf(`{"key":%q,"label":"alpha"}`, firstFakeClientKey))
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", keyedModelSettings)
+	if status := gateway.chatStatus(firstFakeClientKey); status == http.StatusUnauthorized {
+		t.Fatalf("a key created on Postgres = %d, want it accepted", status)
+	}
+	if status := gateway.chatStatus("fake-unknown-key-0000000"); status != http.StatusUnauthorized {
+		t.Fatalf("an unknown key = %d, want 401", status)
+	}
+
+	_, listing := gateway.admin(http.MethodGet, "/v1/admin/api-keys", "")
+	if !strings.Contains(listing, digestPrefix(firstFakeClientKey)) || strings.Contains(listing, firstFakeClientKey) {
+		t.Fatalf("list = %s, want the key's ID and not its value", listing)
+	}
+
+	gateway.createKey(fmt.Sprintf(`{"key":%q}`, secondFakeClientKey))
+	gateway.requireAdminStatus(http.StatusOK, http.MethodDelete, "/v1/admin/api-keys/"+digestPrefix(firstFakeClientKey), "")
+	if status := gateway.chatStatus(firstFakeClientKey); status != http.StatusUnauthorized {
+		t.Fatalf("a revoked key on Postgres = %d, want 401", status)
+	}
+	if status := gateway.chatStatus(secondFakeClientKey); status == http.StatusUnauthorized {
+		t.Fatalf("the surviving key on Postgres = %d, want it accepted", status)
+	}
+	gateway.requireAdminStatus(http.StatusConflict, http.MethodDelete, "/v1/admin/api-keys/"+digestPrefix(secondFakeClientKey), "")
 }

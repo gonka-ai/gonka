@@ -123,7 +123,7 @@ func TestChatIsRejectedDuringPoCAndServedUnderRelaxedMode(t *testing.T) {
 // Test flow:
 //  1. Start a harness whose chain snapshot is in PoC generation.
 //  2. GET /v1/status.
-//  3. Assert the status names that epoch phase: an operator, and the load harness's phase check, read the chain's phase from the gateway the way they read it from devshardctl.
+//  3. Assert the status names that epoch phase: an operator, and the load harness's phase check, read the chain's phase from the gateway's status.
 func TestStatusReportsTheChainsEpochPhase(t *testing.T) {
 	live := newHarness(t)
 	live.snapshots.snapshot = chain.PhaseSnapshot{RequestsBlocked: true, BlockReason: chain.BlockReasonPoC, EpochPhase: chain.EpochPhasePoCGenerate}

@@ -47,6 +47,8 @@ type fakeSettlementSource struct {
 	busy        bool
 	retireErr   error
 	finalizeErr error
+	unresolved  []uint64
+	forced      int
 	buildErr    error
 	buildInput  settlement.Message
 	calls       *callLog
@@ -86,6 +88,16 @@ func (f *fakeSettlementSource) Finalize(ctx context.Context, escrowID string) er
 		f.calls.record("Finalize")
 	}
 	return f.finalizeErr
+}
+
+func (f *fakeSettlementSource) FinalizeForced(ctx context.Context, escrowID string) ([]uint64, error) {
+	if f.calls != nil {
+		f.calls.record("Finalize")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forced++
+	return f.unresolved, f.finalizeErr
 }
 
 func (f *fakeSettlementSource) BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error) {

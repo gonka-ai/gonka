@@ -17,6 +17,8 @@ type streamLog struct {
 	budget   *BufferBudget
 	index    *streamIndex
 	escrowID string
+	// generation is the cache generation the race began in.
+	generation uint64
 
 	body      []byte
 	bounds    []int
@@ -28,9 +30,9 @@ type streamLog struct {
 	changed   chan struct{}
 }
 
-func newStreamLog(key cacheKey, limit int64, budget *BufferBudget, index *streamIndex) *streamLog {
+func newStreamLog(key cacheKey, generation uint64, limit int64, budget *BufferBudget, index *streamIndex) *streamLog {
 	log := &streamLog{
-		key: key, limit: limit, budget: budget, index: index,
+		key: key, generation: generation, limit: limit, budget: budget, index: index,
 		bounds:    make([]int, 0, expectedStreamEvents),
 		hasSocket: true,
 		changed:   make(chan struct{}),
@@ -201,11 +203,15 @@ func (index *streamIndex) remove(log *streamLog) {
 	index.logs[log.key] = remaining
 }
 
-func (index *streamIndex) adopt(key cacheKey) (*logReader, bool) {
+// adopt skips a log from before the cache was last cleared, as the cache refuses its reply.
+func (index *streamIndex) adopt(key cacheKey, generation uint64) (*logReader, bool) {
 	index.mu.Lock()
 	candidates := slices.Clone(index.logs[key])
 	index.mu.Unlock()
 	for _, log := range candidates {
+		if log.generation != generation {
+			continue
+		}
 		if reader, adopted := log.adopt(); adopted {
 			index.replays.Add(1)
 			return reader, true

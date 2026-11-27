@@ -1022,39 +1022,6 @@ func TestPostgres_HAPeerCreateWhileSiblingIndexRebuild_StillVisibleAfterReady(t 
 	require.True(t, starter.HasEscrow(afterEscrow))
 }
 
-func TestMigrateLegacy_IntoPostgresStorage(t *testing.T) {
-	cleanup := setupPostgresContainer(t)
-	defer cleanup()
-
-	legacyPath := writeLegacyDB(t, []legacyTestSession{
-		{escrowID: "legacy-a", version: "", status: "active", balance: 1000, latestNonce: 2, lastFinalized: 1},
-		{escrowID: "legacy-b", version: "", status: "active", balance: 2000, latestNonce: 1},
-	})
-	store, err := NewStorage(context.Background(), t.TempDir())
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = store.Close() })
-	pg, ok := store.(*HybridStorage).pg.(*Postgres)
-	require.True(t, ok)
-
-	n, err := MigrateLegacySQLite(legacyPath, store, func(escrowID string) (uint64, error) {
-		switch escrowID {
-		case "legacy-a":
-			return 20, nil
-		case "legacy-b":
-			return 21, nil
-		default:
-			return 0, ErrSkipLegacySession
-		}
-	})
-	require.NoError(t, err)
-	require.Equal(t, 2, n)
-
-	for _, escrowID := range []string{"legacy-a", "legacy-b"} {
-		_, err = pg.GetSessionMeta(escrowID)
-		require.NoError(t, err)
-	}
-}
-
 // listDevshardPartitions returns every devshard_*_epoch_<N> partition that
 // currently exists, sorted, so the assertion is order-stable.
 func listDevshardPartitions(t *testing.T, pool *pgxpool.Pool) []string {

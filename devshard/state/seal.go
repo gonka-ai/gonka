@@ -564,7 +564,7 @@ func (sm *StateMachine) stateClockLocked() StateClockWindow {
 }
 
 // AutoSealStateClock returns the deterministic state-clock window over the
-// current live inference tail. Used for mismatch forensics on devshardctl.
+// current live inference tail. Used for mismatch forensics on the gateway.
 func (sm *StateMachine) AutoSealStateClock() StateClockWindow {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()

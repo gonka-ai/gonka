@@ -1,7 +1,6 @@
 package rpcface
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/cometbft/cometbft/p2p"
@@ -25,25 +24,15 @@ func statusHandler(st *store.Store) (*ctypes.ResultStatus, error) {
 	}, nil
 }
 
-func blockHandler(st *store.Store, heightPtr *int64) (*ctypes.ResultBlock, error) {
-	latest := st.GetBlockHeight()
-	height := latest
-	if heightPtr != nil {
-		height = *heightPtr
+func blockHandler(c *chainHeaders, heightPtr *int64) (*ctypes.ResultBlock, error) {
+	height, err := c.resolve(heightPtr)
+	if err != nil {
+		return nil, err
 	}
-	if height <= 0 {
-		return nil, fmt.Errorf("height must be greater than 0, but got %d", height)
-	}
-	if height > latest {
-		return nil, fmt.Errorf("height %d must be less than or equal to the current blockchain height %d",
-			height, latest)
-	}
+	header := c.headerAt(height)
 	block := cmttypes.MakeBlock(height, nil, nil, nil)
-	block.Header.ChainID = st.GetChainID()
-	return &ctypes.ResultBlock{
-		BlockID: cmttypes.BlockID{Hash: block.Hash()},
-		Block:   block,
-	}, nil
+	block.Header = *header
+	return &ctypes.ResultBlock{BlockID: blockIDOf(header), Block: block}, nil
 }
 
 func healthHandler(*rpctypes.Context) (*ctypes.ResultHealth, error) {

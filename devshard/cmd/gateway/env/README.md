@@ -20,9 +20,11 @@ One typed table: name, type, and nothing else.
 - **So does a session's connection to its hosts.** `DEVSHARD_RPC_H2_UPGRADE`, `DEVSHARD_RPC_GRPC`, `DEVSHARD_RPC_MAX_CONNS_PER_PEER` and `DEVSHARD_RPC_ENDPOINTS` are read by `devshard/transport` when a session dials its hosts, because every devshard binary that dials a host honours them under the same spelling; they are listed in [`../docs/operations.md`](../docs/operations.md) too.
 - **Two grammars.** Every `DEVSHARD_*` variable and six `GATEWAY_*` limits are lenient: an unusable value is ignored with a warning and the default applies. Every other `GATEWAY_*` variable is strict, and every parse failure among them is reported at once, so one restart names every misconfigured variable rather than one per attempt.
 
-## The log format
+## The log format and level
 
 `LogFormat` reads `DEVSHARD_LOG_FORMAT` apart from `Load`, because the format must be applied before anything can log and `Load` is the first thing that can fail. Empty means `json`, the form a collector reads as labels; any other value than `json` keeps the `log` package's own text line.
+
+`LogLevel` reads `DEVSHARD_LOG_LEVEL` apart from `Load` for the same reason and returns it unparsed; the caller applies `observability.ParseLogLevel`, which keeps an unset or unknown value at `info`.
 
 ## The values it names
 

@@ -14,9 +14,10 @@ import (
 	"devshard/cmd/gateway/api"
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
-func requireStoredDevshard(t *testing.T, records *store.Store, escrowID string) {
+func requireStoredDevshard(t *testing.T, records store.Store, escrowID string) {
 	t.Helper()
 	if _, err := findDevshard(context.Background(), records, escrowID); err != nil {
 		t.Errorf("escrow %s's row is gone: %v", escrowID, err)
@@ -205,7 +206,7 @@ func TestADeleteHoldsTheEscrowsLockWhileRemovingTheRowAndTheStorage(t *testing.T
 	ctx := context.Background()
 	t.Setenv("DEVSHARD_IMPORT_KEY", "0x01")
 	storeDir := t.TempDir()
-	records, err := store.Open(storeDir)
+	records, err := sqlite.Open(storeDir)
 	if err != nil {
 		t.Fatalf("Open(): %v", err)
 	}
@@ -220,7 +221,7 @@ func TestADeleteHoldsTheEscrowsLockWhileRemovingTheRowAndTheStorage(t *testing.T
 
 	deleted := make(chan error, 1)
 	go func() { deleted <- operator.DeleteDevshard(ctx, "42") }()
-	awaitRunningIn(t, "(*Store).DeleteDevshard", deleted, release)
+	awaitRunningIn(t, "(*Backend).DeleteDevshard", deleted, release)
 	lock, _ := operator.writes.Load("42")
 	writes := lock.(*sync.Mutex)
 	lockHeld := !writes.TryLock()

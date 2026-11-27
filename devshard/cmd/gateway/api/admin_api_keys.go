@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 
+	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/store"
 )
@@ -16,6 +17,7 @@ const (
 	generatedAPIKeyPrefix = "sk-"
 	generatedAPIKeyBytes  = 24
 	keyNotSupplied        = ""
+	nulCharacter          = 0
 )
 
 type createAPIKeyRequest struct {
@@ -82,6 +84,10 @@ func (s *Server) createAPIKey(w http.ResponseWriter, r *http.Request) {
 	var request createAPIKeyRequest
 	if err := decodeAdminBodyStrictly(w, r, &request); err != nil {
 		s.writeErrorFor(w, badRequestUnlessOversized(err))
+		return
+	}
+	if strings.ContainsRune(request.Key, nulCharacter) || strings.ContainsRune(request.Label, nulCharacter) {
+		s.writeErrorFor(w, filters.WrapReject(ErrNULCharacter))
 		return
 	}
 	key := request.Key

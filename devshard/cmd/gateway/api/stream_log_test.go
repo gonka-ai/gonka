@@ -12,7 +12,7 @@ import (
 const testLogLimit = 1 << 20
 
 func testLog(index *streamIndex, budget *BufferBudget, limit int64) *streamLog {
-	return newStreamLog(cacheKey{model: "qwen"}, limit, budget, index)
+	return newStreamLog(cacheKey{model: "qwen"}, 0, limit, budget, index)
 }
 
 // Test flow:
@@ -33,7 +33,7 @@ func TestALogPastItsLimitIsDroppedAndReturnsItsBudget(t *testing.T) {
 		t.Fatalf("budget holds %d after the log dropped, want 0", budget.Held())
 	}
 	log.detachSocket()
-	if _, adopted := index.adopt(log.key); adopted {
+	if _, adopted := index.adopt(log.key, 0); adopted {
 		t.Fatal("a dropped log was adopted")
 	}
 	if _, refusal := log.conclude("7", nil); refusal != cacheRefusedTooLarge {
@@ -50,7 +50,7 @@ func TestAReaderOfALogDroppedMidReplyEndsOnAnErrorEvent(t *testing.T) {
 	log := testLog(index, nil, tinyLogLimit)
 	log.append([]byte("data: 1\n\n"))
 	log.detachSocket()
-	reader, adopted := index.adopt(log.key)
+	reader, adopted := index.adopt(log.key, 0)
 	if !adopted {
 		t.Fatal("a detached log was not adopted")
 	}
@@ -109,19 +109,19 @@ func TestALogWithASocketOrAReaderIsNotAdopted(t *testing.T) {
 	log := testLog(index, nil, testLogLimit)
 	log.append([]byte("data: 1\n\n"))
 
-	if _, adopted := index.adopt(log.key); adopted {
+	if _, adopted := index.adopt(log.key, 0); adopted {
 		t.Fatal("a log with a live socket was adopted")
 	}
 	log.detachSocket()
-	reader, adopted := index.adopt(log.key)
+	reader, adopted := index.adopt(log.key, 0)
 	if !adopted {
 		t.Fatal("a log whose client left was not adopted")
 	}
-	if _, again := index.adopt(log.key); again {
+	if _, again := index.adopt(log.key, 0); again {
 		t.Fatal("a log somebody reads was adopted a second time")
 	}
 	reader.release()
-	if _, readopted := index.adopt(log.key); !readopted {
+	if _, readopted := index.adopt(log.key, 0); !readopted {
 		t.Fatal("a log whose reader left was not adoptable again")
 	}
 }

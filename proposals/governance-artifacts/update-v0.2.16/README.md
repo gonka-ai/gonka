@@ -104,7 +104,6 @@ The epoch and cosmos fee groups default to 1 ngonka/gas. The software-upgrade pr
 
 ### devshard / edge-api
 
-- Redact the gateway private key from the devshardctl admin state response. [#1555](https://github.com/gonka-ai/gonka/pull/1555) by @aikuznetsov.
 - Add chain-aware readiness and bounded request draining during edge-api shutdown, with matching compose settings. [#1605](https://github.com/gonka-ai/gonka/pull/1605) by @snevolin.
 
 ### mlnode / deploy

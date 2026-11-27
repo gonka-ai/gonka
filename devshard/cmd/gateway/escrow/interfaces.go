@@ -26,7 +26,7 @@ type escrowLookup interface {
 	GetEscrow(ctx context.Context, escrowID string) (chain.EscrowInfo, bool, error)
 }
 
-// Satisfied by *store.Store.
+// Satisfied by store.Store.
 type escrowStore interface {
 	ListDevshards(ctx context.Context) ([]store.DevshardRecord, error)
 	Devshard(ctx context.Context, escrowID string) (store.DevshardRecord, bool, error)
@@ -73,6 +73,7 @@ type SettlementSource interface {
 	Retire(escrowID string) error // synchronous: no nonce can be committed on the escrow after it returns
 	IsBusy(escrowID string) bool
 	Finalize(ctx context.Context, escrowID string) error // idempotent: no-op if already finalized
+	FinalizeForced(ctx context.Context, escrowID string) ([]uint64, error)
 	BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error)
 }
 
@@ -126,6 +127,7 @@ type lifecycleNarrator interface {
 	SettledRecordDropped(escrowID string)
 	EscrowTickFailed(err error)
 	TimeoutsSwept(due, applied, failed int)
+	EscrowSettledPastUnresolved(escrowID string, nonces []uint64)
 	EscrowPlanned(model string, creates, retires int, reasons string, moneyShort bool, need, liquid uint64, fullCount int)
 	EscrowStarved(escrowID string, free uint64)
 	EscrowFull(escrowID string, free uint64)

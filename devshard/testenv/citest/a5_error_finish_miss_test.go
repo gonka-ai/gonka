@@ -15,6 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	hostFailedAnswer    = "an upstream host failed to answer the request"
+	gatewayLogTailLines = 400
+)
+
 // TestA5_ErrorFinishMiss verifies a streamed OpenAI error envelope (HTTP 200 SSE)
 // is accounted as MsgErrorMiss: the client still sees today's
 // hostApplicationError, the executor takes a Missed, Cost is unchanged, the
@@ -30,18 +35,18 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			if out, err := stack.ComposeLogsTail(400, "devshardctl"); err == nil {
-				t.Logf("citest: gateway logs:\n%s", out)
+			if logTail, err := stack.ComposeLogsTail(gatewayLogTailLines, "gateway"); err == nil {
+				t.Logf("citest: gateway logs:\n%s", logTail)
 			}
-			harness.DumpComposeLogs(t, stack, "devshardctl", "mock-openai", "versiond-0", "versiond-1", "versiond-2", "versiond-3")
+			harness.DumpComposeLogs(t, stack, "gateway", "mock-openai", "versiond-0", "versiond-1", "versiond-2", "versiond-3")
 		}
 	})
 
-	harness.PatchGatewayRedundancySpeedPolicy(t, client, eps.GatewayHTTP, "legacy")
+	escrowID := harness.GetGatewayEscrowID(t, client, eps.GatewayHTTP)
 
-	feePerNonce := harness.GetGatewayFeePerNonce(t, client, eps.GatewayHTTP, adminKey)
+	feePerNonce := harness.GetGatewayFeePerNonce(t, client, eps.GatewayHTTP, adminKey, escrowID)
 	require.NotZero(t, feePerNonce, "session FeePerNonce must be set")
-	before := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
+	before := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
 	beforeMissed := totalHostMissed(before.HostStats)
 
 	on := true
@@ -54,11 +59,11 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 		},
 		MaxTokens: 16,
 	}
-	harness.Step(t, "non-stream chat with mock-openai stream_error_envelope should serve hostApplicationError")
+	harness.Step(t, "non-stream chat with mock-openai stream_error_envelope is answered as a failed host")
 	status, body := harness.PostGatewayChatFailure(t, client, eps.GatewayHTTP, adminKey, req)
-	require.Equal(t, http.StatusInternalServerError, status, body)
-	require.Contains(t, body, "InternalServerError")
-	require.Contains(t, body, "EngineCore encountered an issue")
+	require.Equal(t, http.StatusBadGateway, status, body)
+	require.Contains(t, body, hostFailedAnswer)
+	require.NotContains(t, body, "EngineCore encountered an issue", "the host's own error text must not reach the client")
 
 	harness.Step(t, "wait for ERROR miss to land: StatusTimedOut, Missed++, host Cost unwound")
 	var (
@@ -66,17 +71,20 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 		after    harness.GatewayLedgerSnapshot
 	)
 	ok := harness.AssertEventually(t, 2*time.Minute, 500*time.Millisecond, func() bool {
-		after = harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
+		after = harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
 		if totalHostMissed(after.HostStats) < beforeMissed+1 {
 			return false
 		}
-		for _, inf := range harness.GetGatewayDebugInferences(t, client, eps.GatewayHTTP, adminKey) {
-			if inf.Status == "timed_out" {
-				timedOut = inf
-				return true
+		landed := false
+		for _, inference := range harness.GetGatewayDebugInferences(t, client, eps.GatewayHTTP, adminKey, escrowID) {
+			switch inference.Status {
+			case harness.InferenceStatusPending, harness.InferenceStatusStarted:
+				return false
+			case harness.InferenceStatusTimedOut:
+				timedOut, landed = inference, true
 			}
 		}
-		return false
+		return landed
 	})
 	require.True(t, ok, "ERROR miss did not land (missed %d→? timed_out missing)", beforeMissed)
 

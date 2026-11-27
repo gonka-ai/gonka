@@ -22,7 +22,7 @@ func TestMLUpstream5xx(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "mock-openai-0", "versiond-0", "versiond-1")
+			harness.DumpComposeLogs(t, stack, "gateway", "mock-openai-0", "versiond-0", "versiond-1")
 		}
 	})
 

@@ -142,16 +142,6 @@ func FindMetric(metrics []ParsedMetric, name string, labels map[string]string) (
 	return ParsedMetric{}, false
 }
 
-// MetricHasLabelValue reports whether any sample of name has label=value.
-func MetricHasLabelValue(metrics []ParsedMetric, name, label, value string) bool {
-	for _, m := range metrics {
-		if m.Name == name && m.Labels[label] == value {
-			return true
-		}
-	}
-	return false
-}
-
 // RequireNoMetric fails if any sample of name has all of labels.
 func RequireNoMetric(t *testing.T, metrics []ParsedMetric, name string, labels map[string]string) {
 	t.Helper()

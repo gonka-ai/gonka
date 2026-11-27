@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -576,6 +578,75 @@ func TestTheStatusReportsTheSessionVersion(t *testing.T) {
 }
 
 // Test flow:
+//  1. Configure relaxed PoC mode and register a live session for an escrow.
+//  2. GET /v1/status and decode the body into plain maps.
+//  3. Assert `mode` is "gateway" and `poc_mode` is "relaxed".
+//  4. Assert the escrow's `config` carries each session parameter of the machine under its snake_case key.
+func TestTheStatusNamesTheProcessAGatewayAndCarriesEachEscrowsSessionConfig(t *testing.T) {
+	live := newHarness(t)
+	live.swapConfig(func(next *config.Config) { next.Modes.PoCMode = config.PoCModeRelaxed })
+	session, machine := newLiveSession(t)
+	live.escrows.escrows = []scheduler.Escrow{{ID: liveEscrowID, Model: "qwen"}}
+	live.escrows.sessions[liveEscrowID] = registry.NewSessionHandle(session, machine)
+
+	recorder := live.request(t, http.MethodGet, "/v1/status", "", nil)
+
+	var reported struct {
+		Mode      string `json:"mode"`
+		PoCMode   string `json:"poc_mode"`
+		Devshards []struct {
+			Config map[string]uint64 `json:"config"`
+		} `json:"devshards"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &reported); err != nil {
+		t.Fatalf("decoding: %v (%s)", err, recorder.Body.String())
+	}
+	if reported.Mode != "gateway" || reported.PoCMode != "relaxed" {
+		t.Fatalf("mode = %q, poc_mode = %q, want gateway, relaxed", reported.Mode, reported.PoCMode)
+	}
+	sessionConfig := machine.Config()
+	want := map[string]uint64{
+		"refusal_timeout":              uint64(sessionConfig.RefusalTimeout),
+		"execution_timeout":            uint64(sessionConfig.ExecutionTimeout),
+		"token_price":                  sessionConfig.TokenPrice,
+		"create_devshard_fee":          sessionConfig.CreateDevshardFee,
+		"fee_per_nonce":                sessionConfig.FeePerNonce,
+		"vote_threshold":               uint64(sessionConfig.VoteThreshold),
+		"validation_rate":              uint64(sessionConfig.ValidationRate),
+		"inference_seal_grace_nonces":  uint64(sessionConfig.InferenceSealGraceNonces),
+		"inference_seal_grace_seconds": uint64(sessionConfig.InferenceSealGraceSeconds),
+		"auto_seal_every_n_nonces":     uint64(sessionConfig.AutoSealEveryNNonces),
+	}
+	if len(reported.Devshards) != 1 || !maps.Equal(reported.Devshards[0].Config, want) {
+		t.Fatalf("devshards = %+v, want one escrow with config %v", reported.Devshards, want)
+	}
+}
+
+// Test flow:
+//  1. Register the harness escrow with a session that cannot report its config.
+//  2. GET /v1/status and decode the escrows it lists.
+//  3. Assert the escrow is listed and its row carries no `config` key.
+func TestTheStatusLeavesOutTheConfigOfASessionThatCannotReportIt(t *testing.T) {
+	live := newHarness(t)
+	live.escrows.sessions["7"] = &pointReadSession{balance: 900, version: "v5"}
+
+	recorder := live.request(t, http.MethodGet, "/v1/status", "", nil)
+
+	var reported struct {
+		Devshards []map[string]any `json:"devshards"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &reported); err != nil {
+		t.Fatalf("decoding: %v (%s)", err, recorder.Body.String())
+	}
+	if len(reported.Devshards) != 1 || reported.Devshards[0]["id"] != "7" || reported.Devshards[0]["balance"] != float64(900) {
+		t.Fatalf("devshards = %v, want the escrow 7 with balance 900", reported.Devshards)
+	}
+	if _, reported := reported.Devshards[0]["config"]; reported {
+		t.Fatalf("status carries a config for a session with none: %s", recorder.Body.String())
+	}
+}
+
+// Test flow:
 //  1. Register an escrow session that counts full state copies, with balance 900 and protocol version v5.
 //  2. Request the escrow's status.
 //  3. Assert the status carries the balance and the protocol version.
@@ -642,6 +713,51 @@ func TestAZeroLiveWeightRefusalIsCountedAndAnswered503(t *testing.T) {
 	reasons := live.rejections.reasons()
 	if len(reasons) != 1 || reasons[0] != "no_live_weight" {
 		t.Fatalf("recorded %v, want the no_live_weight reason", reasons)
+	}
+	if live.rejections.model != "qwen" {
+		t.Errorf("model = %q, want the model that was turned away", live.rejections.model)
+	}
+}
+
+// Test flow:
+//  1. Make the limiter refuse with `context.Canceled`, take the base context `HTTPServer` hands every request, and end the requests through the cancel it returns.
+//  2. POST a chat completion with that context.
+//  3. Assert the response is not 499 and no `client_gone` rejection was recorded, because the gateway ended the wait, not the client.
+func TestARequestCancelledByTheGatewayStoppingIsNotCountedAsAClientGone(t *testing.T) {
+	live := newHarness(t)
+	live.limiter.err = context.Canceled
+	server, endRequests := live.server.HTTPServer(":0")
+	stopping := server.BaseContext(nil)
+	endRequests()
+
+	recorder := live.requestWithContext(t, stopping, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+
+	if recorder.Code == statusClientClosedRequest {
+		t.Fatalf("status = %d, want anything but %d for a wait the gateway ended: %s", recorder.Code, statusClientClosedRequest, recorder.Body.String())
+	}
+	if reasons := live.rejections.reasons(); len(reasons) != 0 {
+		t.Fatalf("recorded %v, want no rejection for a wait the gateway ended", reasons)
+	}
+}
+
+// Test flow:
+//  1. Make the limiter refuse with `context.Canceled`, as it does for a request whose context is already cancelled.
+//  2. POST a chat completion with an already-cancelled context.
+//  3. Assert the response is 499, and exactly one rejection was recorded with reason `client_gone` and the model that was turned away.
+func TestARequestCancelledAtTheLimiterIsCountedAndAnswered499(t *testing.T) {
+	live := newHarness(t)
+	live.limiter.err = context.Canceled
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	recorder := live.requestWithContext(t, cancelled, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+
+	if recorder.Code != statusClientClosedRequest {
+		t.Fatalf("status = %d, want %d: %s", recorder.Code, statusClientClosedRequest, recorder.Body.String())
+	}
+	reasons := live.rejections.reasons()
+	if len(reasons) != 1 || reasons[0] != limits.RejectionClientGone {
+		t.Fatalf("recorded %v, want the client_gone reason", reasons)
 	}
 	if live.rejections.model != "qwen" {
 		t.Errorf("model = %q, want the model that was turned away", live.rejections.model)

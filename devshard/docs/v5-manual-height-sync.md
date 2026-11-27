@@ -20,11 +20,11 @@ Lie/lag overlays (`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA`, `DEVSHARD_TESTENV_ORAC
 
 ## How to observe
 
-Join gateway is `http://127.0.0.1:18080` unless you remapped it. Admin Bearer is `DEVSHARD_ADMIN_API_KEY`. Set `DEVSHARD_LOG_LEVEL=debug` on `devshardd` / `devshardctl` to see `delta` / `trust_level`. Warn/error lines appear at default info+.
+Join gateway is `http://127.0.0.1:18080` unless you remapped it. Admin Bearer is `DEVSHARD_ADMIN_API_KEY`. Set `DEVSHARD_LOG_LEVEL=debug` on `devshardd` / the gateway to see `delta` / `trust_level`. Warn/error lines appear at default info+.
 
 ```bash
 GATEWAY=http://127.0.0.1:18080
-ADMIN_KEY=sk-admin-your-key   # from config.devshard.env
+ADMIN_KEY=sk-admin-your-key   # from config.devshard-gateway.env
 
 # Chat (must stay 200 / SSE complete; never hang or 5xx because of height-sync)
 curl -sS "$GATEWAY/v1/chat/completions" \
@@ -50,7 +50,7 @@ curl -sS "$GATEWAY/v1/debug/heightsync" -H "Authorization: Bearer $ADMIN_KEY" | 
 | `heightsync: logplane` `L6` `DEFERRED_FAIL` | **debug** | Canonical hash at `H` ≠ claimed hash |
 | `devshard_gateway_heightsync_height_spread` | gateway `/metrics` | Max − min fresh (and stale) host claims |
 | `devshard_gateway_heightsync_host_height_lag` | gateway `/metrics` | Leader − this slot |
-| `devshard_heightsync_marks_total{kind=…}` | host/gateway | `l5a_admission`, `deferred_fail`, `height_unbacked`, … |
+| `devshard_heightsync_marks_total{kind=…}` | host `/metrics` | `l5a_admission`, `deferred_fail`, `height_unbacked`, … |
 
 Reproducible A/B/C (one dishonest oracle on the solo identity):
 

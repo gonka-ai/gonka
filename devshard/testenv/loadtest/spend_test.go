@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
 	"devshard/testenv/mockchain/ledgerface"
 )
 
@@ -220,40 +219,38 @@ func TestSpendLedgerPrefersInvariantRead(t *testing.T) {
 }
 
 // Test flow:
-// 1. Write run-summary.json for the same fixture ledger and a pending.jsonl reading nonce 30 for escrow 12 under each gateway driver.
-// 2. Read each file back and check that the spend block carries the same chain totals for both, and divides every escrow's nonces by the 10 completed requests.
-func TestWriteRunSummarySpendForBothGateways(t *testing.T) {
-	for _, driver := range []config.GatewayDriver{config.GatewayDriverDevshardctl, config.GatewayDriverGateway} {
-		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "pending.jsonl"), []byte(`{"escrow_id":"12","nonce":30}`+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		run := runReport{
-			summary: Summary{Scenario: "s", StartedAt: time.Unix(0, 0).UTC(), Duration: time.Minute, Requests: 10, Completed: 10},
-			inputs:  RunInputs{Gateway: driver, ChainLedger: spendFixtureLedger()},
-		}
-		if _, err := writeRunSummary(dir, run); err != nil {
-			t.Fatal(err)
-		}
-		body, err := os.ReadFile(filepath.Join(dir, runSummaryFileName))
-		if err != nil {
-			t.Fatal(err)
-		}
-		var decoded struct {
-			Spend struct {
-				Source string `json:"source"`
-				Totals struct {
-					SpentNgonka               uint64  `json:"spent_ngonka"`
-					NoncesPerCompletedRequest float64 `json:"nonces_per_completed_request"`
-				} `json:"totals"`
-				Escrows []json.RawMessage `json:"escrows"`
-			} `json:"spend"`
-		}
-		if err := json.Unmarshal(body, &decoded); err != nil {
-			t.Fatal(err)
-		}
-		if decoded.Spend.Source == "" || decoded.Spend.Totals.SpentNgonka != 610 || decoded.Spend.Totals.NoncesPerCompletedRequest != 8 || len(decoded.Spend.Escrows) != 3 {
-			t.Fatalf("%s spend = %+v", driver, decoded.Spend)
-		}
+// 1. Write run-summary.json for the fixture ledger and a pending.jsonl reading nonce 30 for escrow 12.
+// 2. Read the file back and check that the spend block carries the chain totals, and divides every escrow's nonces by the 10 completed requests.
+func TestWriteRunSummarySpend(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "pending.jsonl"), []byte(`{"escrow_id":"12","nonce":30}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := runReport{
+		summary: Summary{Scenario: "s", StartedAt: time.Unix(0, 0).UTC(), Duration: time.Minute, Requests: 10, Completed: 10},
+		inputs:  RunInputs{ChainLedger: spendFixtureLedger()},
+	}
+	if _, err := writeRunSummary(dir, run); err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, runSummaryFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Spend struct {
+			Source string `json:"source"`
+			Totals struct {
+				SpentNgonka               uint64  `json:"spent_ngonka"`
+				NoncesPerCompletedRequest float64 `json:"nonces_per_completed_request"`
+			} `json:"totals"`
+			Escrows []json.RawMessage `json:"escrows"`
+		} `json:"spend"`
+	}
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Spend.Source == "" || decoded.Spend.Totals.SpentNgonka != 610 || decoded.Spend.Totals.NoncesPerCompletedRequest != 8 || len(decoded.Spend.Escrows) != 3 {
+		t.Fatalf("spend = %+v", decoded.Spend)
 	}
 }

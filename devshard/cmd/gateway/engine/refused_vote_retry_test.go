@@ -263,6 +263,8 @@ func (outcomeHandler) HandleErrorMiss(context.Context, uint64, []byte, []byte) (
 
 func (outcomeHandler) FinishTxFor(uint64) []byte { return nil }
 
+func (outcomeHandler) IsNonceCanonicalFinished(uint64) bool { return false }
+
 func (outcomeHandler) WaitTimeoutDeadline(context.Context, uint64, time.Time) (types.TimeoutReason, bool, user.TimeoutResult, error) {
 	return types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, user.TimeoutResult{}, nil
 }

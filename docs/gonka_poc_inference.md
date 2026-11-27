@@ -42,7 +42,7 @@ The flag is self-reported and used only for routing. It never gates authorizatio
 
 ## Gateway Routing During Validation
 
-The devshard gateway decides, per phase, which miners can take inference traffic. The phase constants live in `devshard/cmd/devshardctl/phase_gate.go`.
+The devshard gateway decides, per phase, which miners can take inference traffic. The phase constants live in `devshard/cmd/gateway/chain/snapshot.go`.
 
 **Generation phases** (`PoCGenerate`, `PoCGenerateWindDown`, and the confirmation-PoC grace and generation phases): only preserved miners serve inference, as before.
 
@@ -69,12 +69,10 @@ Giving a capable miner real capacity needs both halves. `CapacityState.TotalWeig
 
 ## Concurrency Limit
 
-The gateway scales its concurrency cap by `PoCMaxConcurrentPer10000Weight` when fewer nodes serve inference. That happens during generation, when only preserved nodes are available. Validation reopens the non-preserved capable nodes, so the higher cap is no longer needed there.
+While the chain reports requests blocked, the gateway prices its concurrency cap with `poc_max_concurrent_requests_per_10000_weight` instead of `requests_per_10000_weight`, because fewer nodes serve inference.
 
-**Phase-scoped cap (`devshard/cmd/devshardctl/gateway.go`)**:
-- `currentMaxConcurrentPer10000Weight` returns `PoCMaxConcurrentPer10000Weight` only when `pocGenerationActive` is true.
-- `pocGenerationActive` reads the phase snapshot and calls `rawPoCGenerationState`, which is true for the four generation phases and false for validation.
-- Validation and steady-state both fall back to the base `MaxConcurrentPer10000Weight`.
+**Phase-scoped cap (`devshard/cmd/gateway/app/capacity.go`)**:
+- `ForModel` takes `PoCRequestsPer10000Weight` while the phase snapshot reports `RequestsBlocked`, and `RequestsPer10000Weight` otherwise.
 
 ## Fail-Closed Behavior
 
@@ -97,9 +95,10 @@ Every unknown resolves to "not capable", so a miner or node is never offered tra
 - `decentralized-api/internal/server/public/app_info_handlers.go` - the per-node `mlnodes` list on `/v1/versions`
 
 ### Devshard Gateway
-- `devshard/cmd/devshardctl/versions_cache.go` - the background capability poller
-- `devshard/cmd/devshardctl/phase_gate.go` - `mergePreservedWithValidationCapable`, `rawPoCValidationState`, `rawPoCGenerationState`
-- `devshard/cmd/devshardctl/gateway.go` - the phase-scoped concurrency cap
+- `devshard/cmd/gateway/chain/versions.go` - the background capability poller
+- `devshard/cmd/gateway/chain/observer_fetch.go` - `mergePreservedWithValidationCapable`
+- `devshard/cmd/gateway/chain/snapshot.go` - `rawPoCValidationState`, `rawPoCBlockingState`
+- `devshard/cmd/gateway/app/capacity.go` - the phase-scoped concurrency cap
 
 ## Summary
 

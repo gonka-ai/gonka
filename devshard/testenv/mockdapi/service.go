@@ -116,7 +116,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		return nil, err
 	}
 	hostEvents := newHostEventRing()
-	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, blockMock, cfg.OmitBlockRoutes, cfg.MLNodes)
+	nodeManager := newNodeManagerServer(paramsSrv, hostEvents, newChainBlocks(chainClient), cfg.OmitBlockRoutes, cfg.MLNodes)
 	nodeManager.hosts = newHostPools(cfg.MLNodes, cfg.MLNodeHosts, cfg.HostAddrs)
 
 	s := &Service{

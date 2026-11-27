@@ -14,10 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ExpectedHostPingDial is the in-network dial base the gateway probes
-// (escrow slot URL origin, no RoutePrefix).
-const ExpectedHostPingDial = config.DefaultEscrowSlotURL
-
 // ChildClockFaultFile is the trip file checked by testenv-tagged /clock (must
 // match cmd/devshardd defaultClockFaultFile).
 const ChildClockFaultFile = "/tmp/devshard-clock-fault"
@@ -79,14 +75,15 @@ func PostAdminCreateEscrow(t *testing.T, client *http.Client, gatewayURL, adminA
 		client = HTTPClient()
 	}
 	payload, err := json.Marshal(map[string]any{
-		"amount":   amount,
-		"model_id": modelID,
-		"register": true,
+		"amount":          amount,
+		"model_id":        modelID,
+		"private_key_env": GatewayEscrowKeyEnv,
+		"activate":        true,
 	})
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/escrows", bytes.NewReader(payload))
 	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	setAdminBearer(req, adminAPIKey)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := client.Do(req)
 	require.NoError(t, err)

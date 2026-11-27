@@ -27,7 +27,6 @@ var repeatJudged = map[string]bool{"invariants.no-nonce-left-pending.max_pending
 // historyKey names the runs whose outcomes of a check form one history.
 type historyKey struct {
 	Scenario string `json:"scenario"`
-	Gateway  string `json:"gateway"`
 }
 
 // historyRun is one run's outcome of one known_bug or repeatJudged check.
@@ -37,7 +36,7 @@ type historyRun struct {
 	Status  string    `json:"status"` // XPASS or XFAIL; PASS or FAIL, before the repeat rule, for repeatJudged
 }
 
-// checkHistory is the JSON file: outcomes by "scenario|gateway|check", one per run start.
+// checkHistory is the JSON file: outcomes by "scenario|check", one per run start.
 type checkHistory struct {
 	Checks map[string][]historyRun `json:"checks"`
 }
@@ -82,7 +81,7 @@ func recordCheckHistory(path string, key historyKey, run string, started time.Ti
 		default:
 			continue
 		}
-		name := key.Scenario + "|" + key.Gateway + "|" + check.Name
+		name := key.Scenario + "|" + check.Name
 		runs := slices.DeleteFunc(slices.Clone(history.Checks[name]), func(r historyRun) bool { return r.Started.Equal(started) })
 		runs = append(runs, historyRun{Run: run, Started: started, Status: status})
 		sort.Slice(runs, func(a, b int) bool { return runs[a].Started.Before(runs[b].Started) })

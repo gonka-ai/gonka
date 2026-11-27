@@ -84,5 +84,5 @@ func (e *Engine) replayOwedVote(vote OwedVote) {
 		},
 	}
 	outcome := RaceOutcome{RequestID: vote.RequestID, EscrowID: vote.EscrowID, Model: vote.Model}
-	e.queueVotes(outcome, poster, []TimeoutStep{step}, func() {}, registration.release, firstVoteRound)
+	e.queueVotes(outcome, poster, registration, []TimeoutStep{step}, func() {}, registration.release, firstVoteRound)
 }

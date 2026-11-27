@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"common/httpguard"
+
 	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
 	"google.golang.org/protobuf/proto"
@@ -79,7 +80,7 @@ func TestPeerRPCLimitsNoProxy(t *testing.T) {
 	cancel()
 	rpc.Close()
 
-	stack.StopService(t, "devshardctl")
+	stack.StopService(t, "gateway")
 	patchChildLimits(t, stack)
 	recreateHosts(t, stack, cfg)
 	harness.WaitGETOK(t, harness.GatewayChatClient(), eps.RouterHTTP+"/"+version+"/healthz", 5*time.Minute, "devshardd health after limit drop", stack)
@@ -125,7 +126,7 @@ func TestPeerRPCLimitsOverlay(t *testing.T) {
 	cancel()
 	rpc.Close()
 
-	stack.StopService(t, "devshardctl")
+	stack.StopService(t, "gateway")
 	patchChildLimits(t, stack)
 	recreateHosts(t, stack, cfg)
 	harness.WaitGETOK(t, harness.GatewayChatClient(), eps.RouterHTTP+"/"+version+"/healthz", 5*time.Minute, "devshardd health after limit drop", stack)

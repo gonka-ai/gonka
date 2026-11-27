@@ -401,7 +401,7 @@ func (e *Engine) settle(outcome RaceOutcome, params any, registration *raceRegis
 	markSettled := afterAll(len(groups), registration.release)
 	for _, group := range groups {
 		e.oweRefusals(outcome, params, poster, group.steps)
-		e.queueVotes(outcome, poster, group.steps, func() {
+		e.queueVotes(outcome, poster, registration, group.steps, func() {
 			e.decideHeldWinners(outcome.EscrowID, group.steps, registration)
 			markPosted()
 		}, markSettled, firstVoteRound)
@@ -418,11 +418,12 @@ func (e *Engine) poster(escrowID string, params any) TimeoutPoster {
 	return nil
 }
 
-func (e *Engine) queueVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, afterPost, markSettled func(), round int) {
+func (e *Engine) queueVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, steps []TimeoutStep, afterPost, markSettled func(), round int) {
 	due := func() time.Time { return earliestDue(steps, poster) }
-	unripe := func() bool { return due().After(e.settles.now()) }
+	deadline := e.finishRechecked(steps, registration, due)
+	unripe := func() bool { return deadline().After(e.settles.now()) }
 	task := settleTask{
-		deadline: due,
+		deadline: deadline,
 		wake:     e.stopping,
 		post: func() {
 			// A vote not yet due at Stop is left owed in the store or to the next boot's sweep.
@@ -438,7 +439,7 @@ func (e *Engine) queueVotes(outcome RaceOutcome, poster TimeoutPoster, steps []T
 				return
 			}
 			e.payRefusals(outcome.EscrowID, steps, pass.pending())
-			e.followVotes(outcome, poster, pass, afterPost, markSettled, round)
+			e.followVotes(outcome, poster, registration, pass, afterPost, markSettled, round)
 		},
 	}
 	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))
@@ -454,22 +455,22 @@ func (e *Engine) cancelUnripeOnStop(ctx context.Context, unripe func() bool) (co
 	return ctx, func() { stop(); cancel() }
 }
 
-func (e *Engine) followVotes(outcome RaceOutcome, poster TimeoutPoster, pass votePass, afterPost, markSettled func(), round int) {
+func (e *Engine) followVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, pass votePass, afterPost, markSettled func(), round int) {
 	groups := voteGroups(pass.deferred, poster)
 	if len(groups) == 0 {
 		afterPost()
-		e.retryRefusedVotes(outcome, poster, pass.retries, markSettled, round)
+		e.retryRefusedVotes(outcome, poster, registration, pass.retries, markSettled, round)
 		return
 	}
 	deferredPosted := afterAll(len(groups), afterPost)
 	settled := afterAll(len(groups)+1, markSettled)
 	for _, group := range groups {
-		e.queueVotes(outcome, poster, group.steps, deferredPosted, settled, round)
+		e.queueVotes(outcome, poster, registration, group.steps, deferredPosted, settled, round)
 	}
-	e.retryRefusedVotes(outcome, poster, pass.retries, settled, round)
+	e.retryRefusedVotes(outcome, poster, registration, pass.retries, settled, round)
 }
 
-func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, steps []TimeoutStep, markSettled func(), round int) {
+func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, registration *raceRegistration, steps []TimeoutStep, markSettled func(), round int) {
 	if len(steps) == 0 || round >= refusedVoteRetries || e.stopping.Err() != nil {
 		if e.stopping.Err() == nil {
 			e.payRefusals(outcome.EscrowID, steps, nil)
@@ -484,7 +485,7 @@ func (e *Engine) retryRefusedVotes(outcome RaceOutcome, poster TimeoutPoster, st
 		post: func() {
 			pass := postTimeouts(settleContext(outcome.RequestID), poster, steps, outcome.Lifecycle.EscrowMissing, e.reportTimeout)
 			e.payRefusals(outcome.EscrowID, steps, pass.pending())
-			e.followVotes(outcome, poster, pass, func() {}, markSettled, round+1)
+			e.followVotes(outcome, poster, registration, pass, func() {}, markSettled, round+1)
 		},
 	}
 	e.settles.Add(task, int(e.deps.Config.Load().Engine.MaxConcurrentTimeoutVotes))

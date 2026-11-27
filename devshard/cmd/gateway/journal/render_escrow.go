@@ -247,6 +247,20 @@ func (j *Journal) TimeoutsSwept(due, applied, failed int) {
 	})
 }
 
+// CompletionJournalFailed renders a read or delete on an escrow's completion journal that failed around a finalize.
+func (j *Journal) CompletionJournalFailed(escrowID string, err error) {
+	j.emitLine(KindEscrowTransition, func(lines logSink) {
+		lines.Error("completion journal unavailable around finalize", logkey.Escrow, escrowID, logkey.Error, err)
+	})
+}
+
+// EscrowSettledPastUnresolved renders a forced settle that finalized past nonces still unresolved in the completion journal.
+func (j *Journal) EscrowSettledPastUnresolved(escrowID string, nonces []uint64) {
+	j.emitLine(KindEscrowTransition, func(lines logSink) {
+		lines.Warn("escrow settled past unresolved nonces", logkey.Escrow, escrowID, logkey.Unresolved, len(nonces), logkey.Nonces, nonces)
+	})
+}
+
 // SettleBroadcast renders a settle transaction the node accepted, before its commit is awaited.
 func (j *Journal) SettleBroadcast(escrowID, txHash, settler string) {
 	j.emitLine(KindEscrowTransition, func(lines logSink) {

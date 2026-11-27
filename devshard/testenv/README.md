@@ -1,7 +1,6 @@
 # devshard testenv
 
-Local Docker stack for integration testing: **mock-chain**, **mock-dapi**, **mock-openai**,
-**versiond × N** (supervising **devshardd**), **versiond-router**, and **devshardctl**.
+Local Docker stack for integration testing: **mock-chain**, **mock-dapi**, **mock-openai**, **versiond × N** (supervising **devshardd**), **versiond-router**, and the **gateway** (`devshard/cmd/gateway`).
 
 Config-driven via `config/config.yaml` and `cmd/gencompose`.
 
@@ -28,11 +27,11 @@ Go packages under `devshard/testenv/` — what each one is for:
 | **`mockchain/`** | Fake Cosmos chain library: escrow/participant store, gRPC query/tx server, RPC events, seed loader, `/testenv` admin mutations. |
 | **`mockdapi/`** | Fake dapi library: polls mock-chain for params, serves long-poll runtime config, hands out mock-openai URL as ML node, mounts `gatewayphase` stubs. |
 | **`mockopenai/`** | Fake ML node library: minimal OpenAI HTTP API used by production `devshardd` after `AcquireMLNode`. |
-| **`gatewayphase/`** | Tiny HTTP stubs for devshardctl’s **chain epoch phase** poller (`ChainPhaseGate`): `/v1/epochs/latest` and `/v1/epochs/current/participants`. Mounted on mock-dapi; not a mock gateway. |
+| **`gatewayphase/`** | Tiny HTTP stubs for the gateway’s **chain epoch phase** reads: `/v1/epochs/latest` and `/v1/epochs/current/participants`. Mounted on mock-dapi; not a mock gateway. |
 | **`keymaterial/`** | Builds deterministic Cosmos **file keyrings** from config host keys so devshardd can sign txs in containers (`KEYRING_DIR`, `KEY_NAME`). |
 | **`citest/`** | Go integration tests: compose validation, gateway wiring, full-stack behavior tests (`make citest-stack`), Phase 9 adversarial A1–A5 (`make citest-adversarial`, `-tags=testenvci`), and optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
 
-Production binaries (`devshardd`, `devshardctl`, `versiond`) are **not** reimplemented here — testenv only fakes their external dependencies (chain, dapi, ML) and wires them in Compose.
+Production binaries (`devshardd`, `gateway`, `versiond`) are **not** reimplemented here — testenv only fakes their external dependencies (chain, dapi, ML) and wires them in Compose.
 
 ## Version naming
 
@@ -58,7 +57,7 @@ Skeleton: [`config/config.yaml`](config/config.yaml).
 | `mock_chain`, `mock_dapi`, `mock_openai` | Mock services (ports, hosts) |
 | `versiond` | Protocol `version_name` (`v2`), `binary_version`, `mode` (`single` \| `multi`), devshardd override path, keyring |
 | `versiond_router` | Sticky HAProxy router (`:8080`) |
-| `devshardctl` | Gateway listen port |
+| `gateway` | Gateway listen port |
 | `postgres` | Shared Postgres — **required** for `versiond.mode: multi`; **off** for `single` (file payload fallback) |
 | `hosts` | One **versiond** + **devshardd** slot per entry (`id`, keys, IP) |
 | `user` | Escrow owner / gateway private key (filled by gencompose) |
@@ -314,7 +313,7 @@ Send traffic, then explore:
 | Tempo | http://127.0.0.1:13200/ | Ready; Grafana Explore → Tempo datasource |
 | Alloy | http://127.0.0.1:12345/ | Pipeline UI (OTLP + docker logs) |
 | Grafana | http://127.0.0.1:13000/ (admin/admin1) | Explore → Tempo / Loki `{compose_service=~"versiond.*"}` |
-| Prometheus | http://127.0.0.1:19099/targets | Jobs `devshardd`, `devshardctl`; Tempo span metrics remote_write |
+| Prometheus | http://127.0.0.1:19099/targets | Jobs `devshardd`, `gateway`; Tempo span metrics remote_write |
 | Jaeger | http://127.0.0.1:11686/jaeger/ | Legacy profile only |
 
 Quick probe after gateway chat (tempo-alloy):
@@ -357,7 +356,7 @@ Requires rebuilding **devshardd** after pulling observability init changes (`mak
 
 ### Phase 7 gateway smoke (Docker)
 
-Full path: `devshardctl` → `versiond-router` → `devshardd` → `mock-openai`.
+Full path: `gateway` → `versiond-router` → `devshardd` → `mock-openai`.
 
 ```bash
 cd devshard/testenv
@@ -396,7 +395,7 @@ OpenAI path: `POST /v1/chat/completions` → gateway → versiond-router (sticky
 | mock-openai | 8088 | OpenAI-compatible ML stub |
 | versiond-0..2 | 8080 (internal) | `VERSIOND_ORACLE_URL` → mock-dapi |
 | versiond-router | 8080 | Sticky route to versiond by escrow/session |
-| devshardctl | 8081 | Gateway — Phase 7: LCD tx + public API stubs + chat via router |
+| gateway | 8081 | Gateway: chain over gRPC, public API stubs, chat via router |
 
 ## Troubleshooting
 

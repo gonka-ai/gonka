@@ -43,7 +43,7 @@ The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does 
 
 | Field | Consumer | Notes |
 |-------|----------|--------|
-| `refusal_timeout`, `execution_timeout` (governance params) | devshardctl proxy (`InferenceTimeouts` when wired) | Per inference attempt for the live proxy deadline; the consensus copies are the per-escrow lane A fields above |
+| `refusal_timeout`, `execution_timeout` (governance params) | gateway | Per inference attempt for the live deadline; the consensus copies are the per-escrow lane A fields above |
 | `max_nonce` | `MaxNonceProvider` | Host accept/reject gate |
 | `devshard_requests_enabled` | `AvailabilityTracker` | 503 when disabled |
 | `logprobs_mode` | Validation path | |
@@ -217,7 +217,7 @@ Implementation details: [params-provider-adaptive-plan.md](./params-provider-ada
 | `QueryGetDevshardEscrow` | Per-escrow authoritative state |
 | `QueryGetParticipant`, `QueryGetEpochGroupData` | Per executor / epoch+model |
 | `QueryGranteesByMessageType`, `QueryAccountByAddress` | Per validator / address |
-| REST `GetEscrow` (devshardctl) | Escrow REST only — no `/params` for grace |
+| REST `GetEscrow` (gateway) | Escrow REST only — no `/params` for grace |
 
 ---
 

@@ -16,7 +16,7 @@ func stringPointer(value string) *string    { return &value }
 func boolPointer(value bool) *bool          { return &value }
 
 // Test flow:
-//  1. Build a config from environment values (port, capture sample rate, capture max bytes) and admin overrides (max tokens, disabled flag, per-weight concurrency) that mix env-only, override-only, and both-set fields.
+//  1. Build a config from environment values (port, capture sample rate, capture max bytes) and admin overrides (max tokens, enabled flag, per-weight concurrency) that mix env-only, override-only, and both-set fields.
 //  2. Assert each built field takes the right source: an override beats the same env value, an env value beats an untouched default, and an override-only field takes the override.
 func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 	values := env.Values{
@@ -26,7 +26,7 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 		CaptureMaxBytes:   int64Pointer(4096),
 	}
 	overrides := Overrides{
-		Tunables: env.Tunables{DefaultMaxTokens: int64Pointer(1500), Disabled: boolPointer(true), MaxConcurrentRequestsPer10000Weight: float64Pointer(2.5)},
+		Tunables: env.Tunables{DefaultMaxTokens: int64Pointer(1500), Enabled: boolPointer(false), MaxConcurrentRequestsPer10000Weight: float64Pointer(2.5)},
 	}
 
 	configuration, err := Build(values, overrides)
@@ -39,8 +39,8 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 	if configuration.Limits.DefaultMaxTokens != 1500 {
 		t.Errorf("Limits.DefaultMaxTokens = %d, want override value 1500", configuration.Limits.DefaultMaxTokens)
 	}
-	if !configuration.Modes.Disabled {
-		t.Error("Modes.Disabled = false, want override value true")
+	if configuration.Modes.Enabled {
+		t.Error("Modes.Enabled = true, want override value false")
 	}
 	if configuration.Limits.MaxTokensCap != 4096 {
 		t.Errorf("Limits.MaxTokensCap = %d, want untouched default 4096", configuration.Limits.MaxTokensCap)
@@ -53,6 +53,34 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 	}
 	if configuration.Capture.MaxBytes != 4096 {
 		t.Errorf("Capture.MaxBytes = %d, want env value 4096", configuration.Capture.MaxBytes)
+	}
+}
+
+// Test flow:
+//  1. Build a config from empty environment values.
+//  2. Assert the host RPC-stats poll is on with 15s, 4s and 8 workers.
+//  3. Build a config from environment values for all four knobs.
+//  4. Assert each lands in `HostRPCStats`.
+func TestBuildCarriesTheHostRPCStatsKnobs(t *testing.T) {
+	configuration, err := Build(env.Values{}, Overrides{})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	if got := configuration.HostRPCStats; got != (HostRPCStats{Enabled: true, IntervalMS: 15_000, TimeoutMS: 4_000, Concurrency: 8}) {
+		t.Errorf("HostRPCStats defaults = %+v", got)
+	}
+
+	configuration, err = Build(env.Values{
+		HostRPCStatsEnabled:     boolPointer(false),
+		HostRPCStatsIntervalMS:  int64Pointer(30_000),
+		HostRPCStatsTimeoutMS:   int64Pointer(5_000),
+		HostRPCStatsConcurrency: int64Pointer(2),
+	}, Overrides{})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	if got := configuration.HostRPCStats; got != (HostRPCStats{Enabled: false, IntervalMS: 30_000, TimeoutMS: 5_000, Concurrency: 2}) {
+		t.Errorf("HostRPCStats from env = %+v", got)
 	}
 }
 
@@ -120,7 +148,6 @@ func TestBuildCopiesOverridesModels(t *testing.T) {
 
 // deployedEnvTemplates are the operator-facing deploy files Build must accept without failing.
 var deployedEnvTemplates = []string{
-	"../../../../deploy/join/config.devshard.env.template",
 	"../deploy/config.devshard-gateway.env.template",
 }
 

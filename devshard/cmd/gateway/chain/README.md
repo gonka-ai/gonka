@@ -69,11 +69,11 @@ Every read the observer makes through the chain client — the two fallback read
 | --- | --- | --- |
 | all | outside a blocking phase (the completed window of a confirmation PoC included), during the confirmation-PoC grace period, and during the lead window before a PoC while the chain holds no snapshot for it | every node |
 | snapshot | the chain holds a preserved-nodes snapshot whose episode anchor matches | the nodes that snapshot lists |
-| legacy | anything else, a failed read included | nodes whose second timeslot allocation is set |
+| legacy | anything else, a failed read included (except in the lead window, below) | nodes whose second timeslot allocation is set |
 
 The anchor a snapshot must match is the confirmation-PoC trigger height or the epoch's PoC start height, depending on which reason blocked requests; zero skips the anchor check. During the confirmation-PoC grace period the matching snapshot intentionally does not exist yet, which is why that case falls to *all* rather than to *legacy*. The lead window (see below) is the same case: the chain samples a PoC's snapshot in the block that starts it, so before that block the chain answers "no snapshot for this episode" and the rule that held before the window, *all*, carries on.
 
-A chain that answers "no snapshot for this episode" is a different thing from one that could not be reached, and only the second is an error — a non-fatal one: the preserved-set view falls back to the legacy rule for that poll, and the failure is recorded in `LastError`.
+A chain that answers "no snapshot for this episode" is a different thing from one that could not be reached, and only the second is an error — a non-fatal one: the preserved-set view falls back to the legacy rule for that poll (to *all* inside the lead window), and the failure is recorded in `LastError`.
 
 ### The serving set narrows two blocks before a PoC
 
@@ -81,7 +81,7 @@ The chain announces the next PoC's start height (`epoch_stages.next_poc_start`, 
 
 A confirmation PoC is triggered by an event, not a known height, so it is not anticipated; its grace period is the chain's own lead. The lookahead narrows the set only once the chain holds the snapshot for the coming start height; until then a read that succeeds without a matching snapshot keeps *all*, because no host is taken into PoC before the start block and on a chain whose nodes carry the reset second timeslot flag the legacy rule keeps no host at all.
 
-A snapshot read that fails, or a gateway with no chain access, keeps the legacy rule, as everywhere else. From the start block on, a missing snapshot is a chain fault and falls to *legacy*, which is what that rule is for: a chain that never samples, or whose sampling failed.
+A snapshot read that fails inside the lead window keeps *all* for that poll, and `LastError` records the failure, because the legacy rule would weigh every escrow zero on a chain whose nodes carry the reset second timeslot flag. Outside the lead window a failed read, like a gateway with no chain access, keeps the legacy rule, as everywhere else. From the start block on, a missing snapshot is a chain fault and falls to *legacy*, which is what that rule is for: a chain that never samples, or whose sampling failed.
 
 ### PoC validation rejoins capable miners
 

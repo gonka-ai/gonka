@@ -13,7 +13,6 @@ Release lines:
 Previous line: [release-0.2.15-v5.md](./release-0.2.15-v5.md).
 Peer RPC path: [grpc-transport-connection.md](./grpc-transport-connection.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
-Load simulation: [gateway-load-simulation.md](./gateway-load-simulation.md).
 
 ## What this release is
 
@@ -213,10 +212,6 @@ kept with the run.
 ```bash
 make -C devshard/testenv loadtest SCENARIO=normal-load
 ```
-
-The in-process `loadsim` tag is a separate measurement. It does not start
-Docker, and it does not exercise the host transport. See
-[gateway-load-simulation.md](./gateway-load-simulation.md).
 
 [Devshard load tests v6](https://github.com/gonka-ai/gonka/actions/runs/38140509094/job/114477018374)
 (`8b29799`, job "Build and Test Devshard") did not run these scenarios. The

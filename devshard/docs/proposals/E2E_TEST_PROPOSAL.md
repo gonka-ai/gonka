@@ -42,7 +42,7 @@ Recommended tools:
 | Test runner | Go `testing` | Owns scenario execution, assertions, setup, teardown, and CI integration. |
 | Containers | `testcontainers-go` | Starts Docker networks, containers, exposed ports, volumes, and readiness checks from Go. |
 | Assertions | `stretchr/testify` | Keeps E2E checks readable and consistent with existing devshard tests. |
-| HTTP client | Go `net/http` plus devshard clients | Drives `devshardctl`, host transport routes, mock-chain controls, and diagnostic endpoints. |
+| HTTP client | Go `net/http` plus devshard clients | Drives `gateway`, host transport routes, mock-chain controls, and diagnostic endpoints. |
 | JSON handling | Standard `encoding/json` or existing devshard JSON helpers | Parses OpenAI-compatible responses, control responses, and settlement payloads. |
 | Docker images | Explicit `make` targets | Builds images before tests run; individual tests select prebuilt images and fail fast if missing. |
 | Outer test runner | `docker-compose.e2e.yml` | Runs the Go E2E test process in a pinned Go container while mounting the Docker socket for `testcontainers-go`. |
@@ -75,18 +75,13 @@ Each test starts an isolated Docker network through `testcontainers-go`. The
 Go test process controls the environment through Docker APIs and mapped service
 ports.
 
-For local and CI consistency, `docker-compose.e2e.yml` may run only the Go test
-runner container. That container mounts the repository and Docker socket, sets
-the `DEVSHARD_E2E_*` image names, and invokes `go test ./e2e`. It must not
-define `mock-chain`, `devshard-host`, `devshardctl`, Postgres, MySQL, or any
-other service under test. Those containers are created by the Go tests with
-`testcontainers-go`.
+For local and CI consistency, `docker-compose.e2e.yml` may run only the Go test runner container. That container mounts the repository and Docker socket, sets the `DEVSHARD_E2E_*` image names, and invokes `go test ./e2e`. It must not define `mock-chain`, `devshard-host`, `gateway`, Postgres, MySQL, or any other service under test. Those containers are created by the Go tests with `testcontainers-go`.
 
 The default smoke environment should spin up:
 
 - one `mock-chain` container
 - three `devshard-host-N` containers
-- one `devshardctl` container
+- one `gateway` container
 - one `postgres` container
 
 The first E2E environment includes only the storage backends named in this
@@ -106,7 +101,7 @@ flowchart LR
 
     subgraph Net["isolated Docker network"]
         MockChain["mock-chain\nchain metadata + control API"]
-        DevshardCtl["devshardctl\nOpenAI-compatible API"]
+        Gateway["gateway\nOpenAI-compatible API"]
 
         Host0["devshard-host-0\nslot 0"]
         Host1["devshard-host-1\nslot 1"]
@@ -120,14 +115,14 @@ flowchart LR
 
     TestRunner --> Docker
     TestRunner --> Client
-    Client --> DevshardCtl
+    Client --> Gateway
     Client -.direct protocol checks.-> Host0
     Client -.direct protocol checks.-> Host1
     Client -.direct protocol checks.-> Host2
 
-    DevshardCtl --> Host0
-    DevshardCtl --> Host1
-    DevshardCtl --> Host2
+    Gateway --> Host0
+    Gateway --> Host1
+    Gateway --> Host2
 
     Host0 <-->|gossip| Host1
     Host1 <-->|gossip| Host2
@@ -136,7 +131,7 @@ flowchart LR
     Host0 --> MockChain
     Host1 --> MockChain
     Host2 --> MockChain
-    DevshardCtl --> MockChain
+    Gateway --> MockChain
 
     Host0 --> Postgres
     Host1 --> Postgres
@@ -153,7 +148,7 @@ Container inventory:
 |---|---:|---:|---|
 | `mock-chain` | yes | 1 | Serves escrow, participant, epoch, version, and warm-key metadata. Provides dev-only control APIs for metadata faults. |
 | `devshard-host-N` | yes | 3 by default | Runs one real devshard participant per slot with transport, gossip, storage, signing, and stub engines. |
-| `devshardctl` | yes for smoke | 1 | Exposes the OpenAI-compatible user API and drives the normal user-facing path. |
+| `gateway` | yes for smoke | 1 | Exposes the OpenAI-compatible user API and drives the normal user-facing path. |
 | `postgres` | yes | 1 | Provides the default smoke storage backend and production-like recovery coverage. |
 | SQLite volumes | no | 1 per host | Preserve host-local state across container restarts in SQLite recovery scenarios. |
 
@@ -227,18 +222,15 @@ either the legacy route prefix or a versioned prefix:
 /devshard/<version>/*
 ```
 
-### `devshardctl`
+### `gateway`
 
-The suite should include scenarios that drive requests through the
-OpenAI-compatible `devshardctl` surface. This validates the user-facing path:
+The suite should include scenarios that drive requests through the OpenAI-compatible `gateway` surface. This validates the user-facing path:
 
 ```text
-client -> devshardctl -> devshard transport clients -> host containers
+client -> gateway -> devshard transport clients -> host containers
 ```
 
-Some lower-level scenarios can talk directly to host transport endpoints when
-that makes the assertion clearer, but the smoke suite should use
-`devshardctl`.
+Some lower-level scenarios can talk directly to host transport endpoints when that makes the assertion clearer, but the smoke suite should use `gateway`.
 
 ### `postgres`
 
@@ -339,16 +331,11 @@ Smoke scenarios should be reliable and fast enough for every CI run.
 
 1. **Happy path**
 
-   Start three hosts and `devshardctl`. Send several non-streaming chat
-   completion requests. Finalize the session. Assert the settlement output is
-   present and all hosts agree on the final state.
+   Start three hosts and `gateway`. Send several non-streaming chat completion requests. Finalize the session. Assert the settlement output is present and all hosts agree on the final state.
 
 2. **Streaming path**
 
-   Send a streaming chat completion request through `devshardctl`. Assert the
-   client receives content chunks and `[DONE]`. Assert devshard protocol
-   receipt/meta events are handled internally and do not corrupt the
-   OpenAI-compatible stream.
+   Send a streaming chat completion request through `gateway`. Assert the client receives content chunks and `[DONE]`. Assert devshard protocol receipt/meta events are handled internally and do not corrupt the OpenAI-compatible stream.
 
 3. **Auth rejection**
 
@@ -395,10 +382,10 @@ Smoke scenarios should be reliable and fast enough for every CI run.
    Test flow:
 
    1. Start the default three-host environment with persistent SQLite volumes.
-   2. Send several requests through `devshardctl`.
+   2. Send several requests through `gateway`.
    3. Stop one `devshard-host-N` container.
    4. Start a replacement host container with the same SQLite volume and config.
-   5. Continue sending requests through `devshardctl`.
+   5. Continue sending requests through `gateway`.
    6. Finalize the session.
    7. Assert nonce monotonicity, stable state root agreement, final signatures,
       and settlement `host_stats`.
@@ -412,12 +399,12 @@ Smoke scenarios should be reliable and fast enough for every CI run.
    Test flow:
 
    1. Start the default three-host environment with persistent SQLite volumes.
-   2. Send several requests through `devshardctl`.
+   2. Send several requests through `gateway`.
    3. Stop all `devshard-host-N` containers.
    4. Restart all hosts with the same SQLite volumes, signer keys, peer URLs,
       and mock-chain metadata.
    5. Wait for health checks and gossip/catch-up to settle.
-   6. Continue sending requests through `devshardctl`.
+   6. Continue sending requests through `gateway`.
    7. Finalize the session.
    8. Assert no nonce regression, no version/epoch conflict, enough final
       signatures, and a valid settlement contract.
@@ -519,12 +506,7 @@ make -C devshard e2e-test
 make -C devshard e2e
 ```
 
-`e2e-images` should be an explicit build target that produces the images used
-by the tests, including `mock-chain`, `devshard-host`, and `devshardctl`.
-`e2e-test` should run only the Go E2E suite through `docker-compose.e2e.yml`
-using already-built images. `e2e` should be the one-command CI target that
-builds images and then runs `e2e-test`. Individual test cases should fail fast
-if required images are missing instead of silently rebuilding them.
+`e2e-images` should be an explicit build target that produces the images used by the tests, including `mock-chain`, `devshard-host`, and `gateway`. `e2e-test` should run only the Go E2E suite through `docker-compose.e2e.yml` using already-built images. `e2e` should be the one-command CI target that builds images and then runs `e2e-test`. Individual test cases should fail fast if required images are missing instead of silently rebuilding them.
 
 Recommended tiers:
 

@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-router-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-router-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-router-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-router-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests gateway-build devshardd-build devshardd-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
 
 # For binary release: default linux/amd64 before local Docker defaults.
 DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
@@ -14,8 +14,6 @@ DEVSHARD_VERSION ?= dev
 DEVSHARD_BINARY_VERSION ?= dev-log
 # State-root / settlement protocol tag (not versiond runtime name). See devshard/docs/protocol-version.md.
 DEVSHARD_PROTOCOL_VERSION ?= v2
-DEVSHARD_GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
-DEVSHARD_GATEWAY_TAGS ?=
 # Extra go build tags for devshardd. Must stay empty for releases: devshard_testenv
 # compiles in payload fault injection (see devshard/cmd/devshardd/session/payload_fault.go).
 DEVSHARD_BUILD_TAGS ?=
@@ -184,12 +182,12 @@ DEVSHARD_VERSION_LDFLAGS = -X main.Version=$(DEVSHARD_VERSION) -X devshard/types
 DEVSHARDD_LDFLAGS = $(DEVSHARD_VERSION_LDFLAGS) -X main.BinaryVersion=$(DEVSHARD_BINARY_VERSION)
 
 # Linux binary for Testermint: docker-cp'd into *-api containers (not baked into the api image).
-devshardctl-build:
-	@echo "Building devshardctl for $(DOCKER_GOOS)/$(DOCKER_GOARCH) (DEVSHARD_VERSION=$(DEVSHARD_VERSION))..."
+gateway-build:
+	@echo "Building gateway for $(DOCKER_GOOS)/$(DOCKER_GOARCH) (DEVSHARD_VERSION=$(DEVSHARD_VERSION))..."
 	@mkdir -p build
-	@cd devshard && CGO_ENABLED=0 GOOS=$(DOCKER_GOOS) GOARCH=$(DOCKER_GOARCH) \
-		go build -ldflags "$(DEVSHARD_VERSION_LDFLAGS)" -o ../build/devshardctl ./cmd/devshardctl/
-	@chmod +x build/devshardctl
+	@CGO_ENABLED=0 GOOS=$(DOCKER_GOOS) GOARCH=$(DOCKER_GOARCH) \
+		$(MAKE) --no-print-directory -C devshard/cmd/gateway build GATEWAY_VERSION=$(DEVSHARD_VERSION) BINARY=$(abspath build/gateway)
+	@chmod +x build/gateway
 
 devshardd-build:
 	@echo "Building devshardd (DEVSHARD_VERSION=$(DEVSHARD_VERSION) DEVSHARD_BINARY_VERSION=$(DEVSHARD_BINARY_VERSION))..."
@@ -233,15 +231,6 @@ devshardd-release:
 		shasum -a 256 "$$release_dir/devshardd.zip" | awk '{print $$1}' > "$$release_dir/devshardd.zip.sha256"; \
 		echo "Built $$release_dir/devshardd.zip"; \
 		echo "SHA256: $$(cat "$$release_dir/devshardd.zip.sha256")"
-
-devshard-gateway-release: DEVSHARD_PROTOCOL_VERSION = v3
-devshard-gateway-release:
-	@$(MAKE) -C devshard devshard-gateway-release \
-		DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
-		DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
-		DEVSHARD_GATEWAY_IMAGE=$(DEVSHARD_GATEWAY_IMAGE) \
-		DEVSHARD_GATEWAY_TAGS="$(DEVSHARD_GATEWAY_TAGS)" \
-		PLATFORM=$(PLATFORM)
 
 node-local-build:
 	@echo "Building inference-chain locally..."

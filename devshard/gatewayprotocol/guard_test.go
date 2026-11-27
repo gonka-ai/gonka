@@ -20,7 +20,7 @@ func layerImports() map[string][]string {
 		"settlement":     {"devshard/state", "devshard/types"},
 		"settlementwire": {"devshard/gatewayprotocol/settlement", "github.com/productscience/inference/x/inference/types", "google.golang.org/protobuf/encoding/protowire"},
 		"streamevidence": {"common/completionapi"},
-		"timeoutclaim":   {"devshard/host", "devshard/types", "devshard/user"},
+		"timeoutclaim":   {"devshard/host", "devshard/types"},
 	}
 }
 
@@ -37,7 +37,7 @@ func localModules() []string {
 }
 
 func treeImporterPatterns() []string {
-	return []string{"cmd/gateway/...", "cmd/devshardctl", "gatewayprotocol/..."}
+	return []string{"cmd/gateway/...", "gatewayprotocol/..."}
 }
 
 func matchesPattern(directory, pattern string) bool {
@@ -167,8 +167,8 @@ func TestTreePackagesImportOnlyTheirLayer(t *testing.T) {
 // Test flow:
 //  1. Collect the production Go files of every directory in the devshard module.
 //  2. Parse each file's imports.
-//  3. Assert an import of the tree comes only from `cmd/gateway/...`, `cmd/devshardctl` or the tree itself, and that at least one allowed import was seen.
-func TestOnlyGatewaysImportTheTree(t *testing.T) {
+//  3. Assert an import of the tree comes only from `cmd/gateway/...` or the tree itself, and that at least one allowed import was seen.
+func TestOnlyTheGatewayImportsTheTree(t *testing.T) {
 	root := moduleRoot(t)
 	set := token.NewFileSet()
 	checked, allowedTreeImports := 0, 0
@@ -182,7 +182,7 @@ func TestOnlyGatewaysImportTheTree(t *testing.T) {
 				isTreeImport := importPath == treeImportPath || strings.HasPrefix(importPath, treeImportPath+"/")
 				switch {
 				case isTreeImport && !isImporter:
-					t.Errorf("%s imports %s; only the gateways may import the tree", path, importPath)
+					t.Errorf("%s imports %s; only the gateway may import the tree", path, importPath)
 				case isTreeImport:
 					allowedTreeImports++
 				}

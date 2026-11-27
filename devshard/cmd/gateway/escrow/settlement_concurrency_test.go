@@ -58,6 +58,10 @@ func (source *stalledSettlementSource) Finalize(ctx context.Context, escrowID st
 	return source.fakeSettlementSource.Finalize(ctx, escrowID)
 }
 
+func (source *stalledSettlementSource) FinalizeForced(ctx context.Context, escrowID string) ([]uint64, error) {
+	return nil, source.Finalize(ctx, escrowID)
+}
+
 func (source *stalledSettlementSource) finalizeCount(escrowID string) int {
 	source.mu.Lock()
 	defer source.mu.Unlock()

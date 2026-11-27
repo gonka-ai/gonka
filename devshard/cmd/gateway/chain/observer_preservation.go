@@ -28,6 +28,8 @@ func (o *PhaseObserver) resolvePreservation(ctx context.Context, epoch epochInfo
 		return preservationModeSnapshot, preservedNodes, nil
 	case status == preservedSnapshotMissingCurrent && allowAllParticipantsUntilSnapshot(epoch, reason):
 		return preservationModeAll, preservedSnapshotState{}, nil
+	case status == preservedSnapshotUnavailable && err != nil && reason == BlockReasonPoC && epoch.InPoCLeadWindow:
+		return preservationModeAll, preservedSnapshotState{}, err
 	default:
 		return preservationModeLegacy, preservedSnapshotState{}, err
 	}

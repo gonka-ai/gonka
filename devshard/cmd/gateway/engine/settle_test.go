@@ -106,7 +106,7 @@ func TestTimeoutLadderPostsWhenNoSkipConditionHolds(t *testing.T) {
 }
 
 // Test flow:
-//  1. For each table case's attempt shape (no skip condition, phase transition aborted, an already-finished empty/error/capability-refused stream, a long response past/just-under its exemption — where `ContentSource` is what marks a stream as carrying real content, since `ContentChunks` alone also counts error events — or a state-divergent host), settle it and check whether a vote posted and what reason the first event carries.
+//  1. For each table case's attempt shape (no skip condition, phase transition aborted, an already-finished empty/error/capability-refused stream, a long response past/just-under 280 seconds, or a state-divergent host), settle it and check whether a vote posted and what reason the first event carries.
 //  2. For a separately tabled case of an attempt whose nonce already finished successfully, assert it produces neither a post nor any event at all.
 func TestTimeoutLadderSkipConditions(t *testing.T) {
 	longResponse := unsettledAttempt()
@@ -128,16 +128,16 @@ func TestTimeoutLadderSkipConditions(t *testing.T) {
 	emptyFinished := unsettledAttempt()
 	emptyFinished.Terminal = TerminalEmptyStream
 	emptyFinished.ReceiptTime = testEpoch.Add(time.Second)
-	emptyFinished.NonceFinished = true
+	emptyFinished.NonceFinished, emptyFinished.FinishApplied = true, true
 
 	errorStreamFinished := unsettledAttempt()
 	errorStreamFinished.Terminal = TerminalErrorStream
 	errorStreamFinished.ErrorSource = "error"
-	errorStreamFinished.NonceFinished = true
+	errorStreamFinished.NonceFinished, errorStreamFinished.FinishApplied = true, true
 
 	capabilityRefusedFinished := unsettledAttempt()
 	capabilityRefusedFinished.Terminal = TerminalCapabilityRefused
-	capabilityRefusedFinished.NonceFinished = true
+	capabilityRefusedFinished.NonceFinished, capabilityRefusedFinished.FinishApplied = true, true
 
 	won := cleanAttempt()
 
@@ -152,7 +152,7 @@ func TestTimeoutLadderSkipConditions(t *testing.T) {
 		{name: "empty_stream_already_finished", attempt: emptyFinished, wantReason: TimeoutReasonEmptyStream},
 		{name: "error_stream_already_finished", attempt: errorStreamFinished, wantReason: TimeoutReasonNonceFinished},
 		{name: "capability_refusal_already_finished", attempt: capabilityRefusedFinished, wantReason: TimeoutReasonNonceFinished},
-		{name: "long_response_after_content", attempt: longResponse, wantReason: TimeoutReasonLongResponse},
+		{name: "long_response_without_finish_is_still_settled", attempt: longResponse, wantPosted: true, wantReason: TimeoutReasonNone},
 		{name: "just_under_long_response_exemption", attempt: justUnderLongResponse, wantPosted: true, wantReason: TimeoutReasonNone},
 		{name: "state_divergent_host_is_still_settled", attempt: stateDivergent, wantPosted: true, wantReason: TimeoutReasonNone},
 	}
@@ -199,16 +199,34 @@ func TestTimeoutLadderSkipConditions(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build an attempt that matches several skip conditions at once (phase aborted, an already-finished empty stream, and a long response past its exemption).
+//  1. Build an unsettled attempt whose nonce has a queued Finish that the state machine has not applied.
+//  2. Settle it through a `stubPoster`.
+//  3. Assert one vote was posted and the first event carries no skip reason.
+func TestAQueuedFinishDoesNotSkipTheTimeoutVote(t *testing.T) {
+	attempt := unsettledAttempt()
+	attempt.NonceFinished = true
+	poster := &stubPoster{}
+
+	events := settleEvents(race(attempt), poster)
+
+	if len(poster.posts) != 1 {
+		t.Fatalf("posts = %d, want 1", len(poster.posts))
+	}
+	if len(events) == 0 || events[0].Reason != TimeoutReasonNone {
+		t.Fatalf("events = %+v, want a vote with no skip reason", events)
+	}
+}
+
+// Test flow:
+//  1. Build an attempt that matches several skip conditions at once (phase aborted and an already-finished empty stream).
 //  2. Settle it and assert the reported reason is the first matching rung of the ladder, phase-aborted, not any of the later ones.
 func TestTimeoutSkipLadderOrder(t *testing.T) {
 	attempt := unsettledAttempt()
 	attempt.PhaseTransitionAborted = true
 	attempt.Terminal = TerminalEmptyStream
 	attempt.ReceiptTime = testEpoch.Add(time.Second)
-	attempt.NonceFinished = true
+	attempt.NonceFinished, attempt.FinishApplied = true, true
 	attempt.ContentChunks = 3
-	attempt.Completed = testEpoch.Add(longResponseExemption)
 
 	events := settleEvents(race(attempt), &stubPoster{})
 
@@ -314,9 +332,9 @@ func TestTimeoutEventCarriesRaceIdentity(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build an attempt that ended in an error stream, whose only chunk was the error event itself, held open past the long-response exemption.
+//  1. Build an attempt that ended in an error stream, whose only chunk was the error event itself, held open past 280 seconds.
 //  2. Compute its `TimeoutPlan`.
-//  3. Assert the plan still posts a timeout vote for the unfinished nonce, since the long-response exemption does not apply to a stream with no real content.
+//  3. Assert the plan posts a timeout vote for the unfinished nonce.
 func TestAnErrorOnlyStreamStillVotesItsTimeout(t *testing.T) {
 	attempt := failedAttempt(TerminalErrorStream)
 	attempt.ContentChunks = 1
@@ -335,10 +353,10 @@ func TestAnErrorOnlyStreamStillVotesItsTimeout(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build an attempt truncated after streaming real content past the long-response exemption.
+//  1. Build an attempt truncated after streaming real content for 280 seconds with no Finish.
 //  2. Compute its `TimeoutPlan`.
-//  3. Assert the plan reports the attempt but does not post — the long-response exemption still holds.
-func TestALongRunningContentStreamKeepsItsExemption(t *testing.T) {
+//  3. Assert the plan posts a timeout vote for the unfinished nonce.
+func TestALongRunningContentStreamStillPostsItsTimeout(t *testing.T) {
 	attempt := failedAttempt(TerminalStreamTruncated)
 	attempt.ContentChunks = 40
 	attempt.ContentSource = "delta.content"
@@ -347,8 +365,8 @@ func TestALongRunningContentStreamKeepsItsExemption(t *testing.T) {
 
 	plan := outcome.TimeoutPlan()
 
-	if len(plan) != 1 || plan[0].Post {
-		t.Fatalf("a long content stream lost its exemption: %+v", plan)
+	if len(plan) != 1 || !plan[0].Post {
+		t.Fatalf("a long content stream without a Finish skipped its timeout vote: %+v", plan)
 	}
 }
 

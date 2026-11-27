@@ -144,36 +144,36 @@ func TestQueryLeaseCountsSkipsExcludedHosts(t *testing.T) {
 // 1. Parse a /metrics body with gateway counters, a histogram, the fork counter and runtime series.
 // 2. Check only domain series are kept and their keys round-trip through parseDomainKey.
 func TestParseDomainMetrics(t *testing.T) {
-	body := `# TYPE devshard_gateway_participant_quarantine_transitions_total counter
-devshard_gateway_participant_quarantine_transitions_total{participant_key="p2",model="m-a",mode="shadow",reason="empty_stream_quarantine"} 3
-# TYPE devshard_gateway_attempt_latency_seconds histogram
-devshard_gateway_attempt_latency_seconds_bucket{le="1"} 2
-devshard_gateway_attempt_latency_seconds_bucket{le="+Inf"} 4
-devshard_gateway_attempt_latency_seconds_sum 5.5
-devshard_gateway_attempt_latency_seconds_count 4
+	body := `# TYPE devshard_gateway_participant_transport_errors_total counter
+devshard_gateway_participant_transport_errors_total{participant_key="p2",model="m-a",status="503"} 3
+# TYPE devshard_gateway_participant_receipt_seconds histogram
+devshard_gateway_participant_receipt_seconds_bucket{le="1"} 2
+devshard_gateway_participant_receipt_seconds_bucket{le="+Inf"} 4
+devshard_gateway_participant_receipt_seconds_sum 5.5
+devshard_gateway_participant_receipt_seconds_count 4
 # TYPE devshard_diff_fork_detected_total counter
 devshard_diff_fork_detected_total 0
 # TYPE go_goroutines gauge
 go_goroutines 12
 `
 	values := parseDomainMetrics(body)
-	key := `devshard_gateway_participant_quarantine_transitions_total{mode="shadow",model="m-a",participant_key="p2",reason="empty_stream_quarantine"}`
+	key := `devshard_gateway_participant_transport_errors_total{model="m-a",participant_key="p2",status="503"}`
 	require.Equal(t, map[string]float64{
 		key: 3,
-		`devshard_gateway_attempt_latency_seconds_count{}`: 4,
-		`devshard_gateway_attempt_latency_seconds_sum{}`:   5.5,
-		`devshard_diff_fork_detected_total{}`:              0,
+		`devshard_gateway_participant_receipt_seconds_count{}`: 4,
+		`devshard_gateway_participant_receipt_seconds_sum{}`:   5.5,
+		`devshard_diff_fork_detected_total{}`:                  0,
 	}, values)
 	name, labels := parseDomainKey(key)
-	require.Equal(t, quarantineFamily, name)
-	require.Equal(t, map[string]string{"mode": "shadow", "model": "m-a", "participant_key": "p2", "reason": "empty_stream_quarantine"}, labels)
+	require.Equal(t, "devshard_gateway_participant_transport_errors_total", name)
+	require.Equal(t, map[string]string{"model": "m-a", "participant_key": "p2", "status": "503"}, labels)
 	require.Nil(t, parseDomainMetrics("go_goroutines 3\n"))
 	require.Nil(t, parseDomainMetrics("not metrics {"))
 }
 
 // Test flow:
 // 1. Summarize inferences in pending, started and terminal states.
-// 2. Check the open count, the oldest age and the oldest status.
+// 2. Check the open count, the oldest age and the oldest status, and that the open record with no time anchor is listed as unanchored.
 func TestSummarizePending(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	sample := PendingSample{At: now}
@@ -187,6 +187,7 @@ func TestSummarizePending(t *testing.T) {
 	require.Equal(t, 100.0, sample.MaxAgeSeconds)
 	require.Equal(t, "2", sample.OldestInference)
 	require.Equal(t, "started", sample.OldestStatus)
+	require.Equal(t, []string{"4"}, sample.Unanchored)
 }
 
 // Test flow:
@@ -205,18 +206,16 @@ func TestSettlementDisabledModels(t *testing.T) {
 }
 
 // Test flow:
-// 1. Resolve settings for 5s/30s protocol timeouts and configured quarantines.
+// 1. Resolve settings for 5s/30s protocol timeouts.
 // 2. Check grace (refusal + execution + sweep grace + sweep tick), the pending-age bound with the sweep grace, and window defaults and overrides.
 func TestResolveInvariantSettings(t *testing.T) {
 	s := Scenario{Protocol: Protocol{RefusalTimeout: "5s", ExecutionTimeout: "30s"}, Workload: Workload{Duration: "15m"}}
-	s.Gateway.ParticipantThrottle = GatewayParticipantThrottle{HTTPQuarantine: "45s", EmptyStreamQuarantine: "45s"}
 	settings := resolveInvariantSettings(s)
 	require.Equal(t, 5*time.Second+30*time.Second+2*time.Minute+5*time.Second+30*time.Second, settings.Grace)
 	require.Equal(t, 5*time.Second+30*time.Second+2*time.Minute+5*time.Second+30*time.Second+30*time.Second, settings.MaxPendingAge)
 	require.Equal(t, [2]time.Duration{time.Minute, 2 * time.Minute}, settings.Baseline)
 	require.Equal(t, [2]time.Duration{2 * time.Minute, 4 * time.Minute}, settings.TrendEarly)
 	require.Equal(t, [2]time.Duration{13 * time.Minute, 15 * time.Minute}, settings.TrendLate)
-	require.Equal(t, map[string]time.Duration{"http": 45 * time.Second, "empty_stream": 45 * time.Second, "sender_rate": time.Second}, settings.Quarantine)
 	s.Assertions.Invariants = InvariantAssertions{Grace: "10s", MaxPendingAge: "1m", TrendEarly: InvariantWindow{From: "3m", To: "5m"}}
 	settings = resolveInvariantSettings(s)
 	require.Equal(t, 10*time.Second, settings.Grace)
@@ -331,7 +330,7 @@ func TestJSONLPollerHaltKeepsTheArtifactOpen(t *testing.T) {
 
 // Test flow:
 // 1. Serve a fake gateway with an active resident escrow, a deactivated resident one and a retired one.
-// 2. Fetch devshards and collect throttle and pending samples for resident escrows only.
+// 2. Fetch devshards and collect pending samples for resident escrows only.
 // 3. Check that the pending poller hands on the inference list it read for each resident escrow.
 func TestGatewayPollersAgainstFake(t *testing.T) {
 	var paths []string
@@ -341,12 +340,10 @@ func TestGatewayPollersAgainstFake(t *testing.T) {
 		switch r.URL.Path {
 		case "/v1/admin/devshards":
 			_, _ = w.Write([]byte(`{"devshards":[{"id":"11","model":"m-a","active":true,"runtime":{"nonce":9}},{"id":"12","model":"m-b","active":false,"runtime":{"nonce":4}},{"id":"10","model":"m-a","active":false}]}`))
-		case "/v1/admin/devshards/11/participants", "/v1/admin/devshards/12/participants":
-			_, _ = w.Write([]byte(`{"participants":[{"participant_key":"p2","quarantined":false,"shadow_quarantined":true,"quarantine_until":"2026-01-01T00:00:45Z","failure_strikes":3,"blocked":false}]}`))
-		case "/devshard/11/v1/debug/pending", "/devshard/12/v1/debug/pending":
-			_, _ = w.Write([]byte(`{"nonce":9,"pending":[{"type":"finish","id":3}],"warm_keys":[]}`))
+		case "/devshard/11/v1/state", "/devshard/12/v1/state":
+			_, _ = w.Write([]byte(`{"nonce":9}`))
 		case "/devshard/11/v1/debug/inferences", "/devshard/12/v1/debug/inferences":
-			body, _ := json.Marshal(map[string]any{"inferences": map[string]any{"3": map[string]any{"status": "started", "started_at": time.Now().Add(-time.Minute).Unix()}}})
+			body, _ := json.Marshal(map[string]any{"inferences": []any{map[string]any{"nonce": 3, "status": "started", "record": map[string]any{"started_at_time_ms": time.Now().Add(-time.Minute).UnixMilli()}}}})
 			_, _ = w.Write(body)
 		default:
 			http.NotFound(w, r)
@@ -360,17 +357,12 @@ func TestGatewayPollersAgainstFake(t *testing.T) {
 		{ID: "12", Model: "m-b", Resident: true, Nonce: 4},
 		{ID: "10", Model: "m-a"},
 	}, devshards)
-	throttle := collectThrottle(server.URL, "key")(context.Background(), "")
-	require.Len(t, throttle, 2)
-	require.True(t, throttle[0].Participants[0].inQuarantine())
-	require.Equal(t, 3, throttle[1].Participants[0].FailureStrikes)
 	seen := map[string]int{}
-	pending := collectPending(server.URL, "key", config.GatewayDriverDevshardctl, func(escrowID string, inferences map[string]DebugInference) { seen[escrowID] = len(inferences) })(context.Background(), "")
+	pending := collectPending(server.URL, "key", func(escrowID string, inferences map[string]DebugInference) { seen[escrowID] = len(inferences) })(context.Background(), "")
 	require.Len(t, pending, 2)
 	require.Empty(t, pending[0].Error)
-	require.Equal(t, 1, pending[0].PendingTxs)
 	require.Equal(t, 1, pending[0].Open)
 	require.InDelta(t, 60, pending[0].MaxAgeSeconds, 2)
 	require.Equal(t, map[string]int{"11": 1, "12": 1}, seen)
-	require.NotContains(t, paths, "/v1/admin/devshards/10/participants")
+	require.NotContains(t, paths, "/devshard/10/v1/state")
 }

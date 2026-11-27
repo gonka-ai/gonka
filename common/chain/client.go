@@ -136,6 +136,14 @@ func NewWithRPCFallback(grpcURL, rpcURL string) (*Client, error) {
 	return &Client{conn: conn, queryConn: fallback}, nil
 }
 
+// ResolveRPCURL is the CometBFT RPC endpoint a service uses: rpcURL when set, otherwise the one derived from the gRPC host, or "" when neither exists.
+func ResolveRPCURL(grpcURL, rpcURL string) string {
+	if resolved := strings.TrimSpace(rpcURL); resolved != "" {
+		return resolved
+	}
+	return RPCURLFromGRPCURL(grpcURL)
+}
+
 // NewWithQueryFallback is NewWithRPCFallback with the endpoint policy every
 // service shares: rpcURL may be empty, in which case it is derived from the gRPC
 // host, and a client that cannot determine an RPC endpoint at all still runs on
@@ -145,10 +153,7 @@ func NewWithRPCFallback(grpcURL, rpcURL string) (*Client, error) {
 // Degrading rather than failing is deliberate: a fallback meant to keep queries
 // working must not be the reason a deployment stops booting.
 func NewWithQueryFallback(grpcURL, rpcURL string) (*Client, error) {
-	resolved := strings.TrimSpace(rpcURL)
-	if resolved == "" {
-		resolved = RPCURLFromGRPCURL(grpcURL)
-	}
+	resolved := ResolveRPCURL(grpcURL, rpcURL)
 	if resolved == "" {
 		slog.Warn("chain: no CometBFT RPC endpoint, queries run on direct gRPC only",
 			"grpc_url", grpcURL)

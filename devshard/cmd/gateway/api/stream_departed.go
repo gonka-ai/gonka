@@ -58,13 +58,13 @@ type outcomeRelay struct {
 	left    bool
 }
 
-func (s *Server) newOutcomeRelay(client *clientStream, log *streamLog, requestID, model string) *outcomeRelay {
+func (s *Server) newOutcomeRelay(ctx context.Context, client *clientStream, log *streamLog, requestID, model string) *outcomeRelay {
 	if log == nil {
 		return nil
 	}
 	return &outcomeRelay{settle: func(final engine.RaceOutcome) {
 		client.finishDetached(final)
-		s.concludeStream(log, requestID, model, final.EscrowID, cmp.Or(final.Failure(), client.rewriteFailure()))
+		s.concludeStream(ctx, log, requestID, model, final, cmp.Or(final.Failure(), client.rewriteFailure()))
 	}}
 }
 

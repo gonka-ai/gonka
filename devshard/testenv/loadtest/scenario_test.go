@@ -7,8 +7,6 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
-
-	"devshard/testenv/config"
 )
 
 func TestScenario_LogTail(t *testing.T) {
@@ -121,42 +119,6 @@ func TestScenario_DefaultSecondaryWaitAfterWinner(t *testing.T) {
 	require.Equal(t, DefaultSecondaryWaitAfterWinner, scenario.SecondaryWaitAfterWinner())
 }
 
-func TestScenario_TransportFailureQuarantine(t *testing.T) {
-	for _, value := range []string{"", "30m", "30s", "1ms", "invalid", "0s", "-1s", "500us"} {
-		t.Run(value, func(t *testing.T) {
-			scenario := testScenario()
-			scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine = value
-			err := scenario.Validate()
-			switch value {
-			case "", "30m", "30s", "1ms":
-				require.NoError(t, err)
-			default:
-				require.ErrorContains(t, err, "gateway.participant_throttle.transport_failure_quarantine")
-			}
-		})
-	}
-	scenario, err := LoadScenario(filepath.Join("scenarios", "catch-up.yaml"))
-	require.NoError(t, err)
-	require.Equal(t, "70s", scenario.Gateway.ParticipantThrottle.TransportFailureQuarantine)
-	require.Equal(t, "70s", scenario.Gateway.ParticipantThrottle.HTTPQuarantine)
-}
-
-func TestScenario_HTTPQuarantine(t *testing.T) {
-	for _, value := range []string{"", "60m", "70s", "1ms", "invalid", "0s", "-1s", "500us"} {
-		t.Run(value, func(t *testing.T) {
-			scenario := testScenario()
-			scenario.Gateway.ParticipantThrottle.HTTPQuarantine = value
-			err := scenario.Validate()
-			switch value {
-			case "", "60m", "70s", "1ms":
-				require.NoError(t, err)
-			default:
-				require.ErrorContains(t, err, "gateway.participant_throttle.http_quarantine")
-			}
-		})
-	}
-}
-
 func TestLoadScenario_EscrowRotation(t *testing.T) {
 	scenario, err := LoadScenario(filepath.Join("scenarios", "escrow-rotation.yaml"))
 	require.NoError(t, err)
@@ -212,31 +174,6 @@ func TestLoadProfile_Timeout(t *testing.T) {
 	require.True(t, profile.Hang)
 }
 
-func TestScenario_GatewayDriver(t *testing.T) {
-	for _, testCase := range []struct {
-		driver  string
-		isValid bool
-	}{
-		{driver: "", isValid: true},
-		{driver: "devshardctl", isValid: true},
-		{driver: "gateway", isValid: true},
-		{driver: "nginx", isValid: false},
-	} {
-		t.Run(testCase.driver, func(t *testing.T) {
-			scenario := testScenario()
-			scenario.Topology.Gateway = config.GatewayDriver(testCase.driver)
-
-			err := scenario.Validate()
-
-			if testCase.isValid {
-				require.NoError(t, err)
-			} else {
-				require.ErrorContains(t, err, "topology.gateway")
-			}
-		})
-	}
-}
-
 // Test flow:
 // 1. Start from a valid scenario with streaming on, per-host env, ML node bindings, cases, the new quarantines, per-model settlement and a request mix.
 // 2. Check it validates, so the old stream ban is gone.
@@ -251,7 +188,6 @@ func TestScenario_ChunkAFieldsValidation(t *testing.T) {
 		s.Topology.MockML.Nodes[0].Host = "versiond-0"
 		s.Topology.MockML.Nodes[1].Host = "versiond-3"
 		s.Cases = []Case{{ID: "host-over-peer-chat-budget", KnownBug: "#1988"}}
-		s.Gateway.ParticipantThrottle = GatewayParticipantThrottle{EmptyStreamQuarantine: "45s", StalledWinnerQuarantine: "45s"}
 		enabled := false
 		s.Gateway.EscrowRotation = GatewayEscrowRotation{Enabled: true, PrePoCBlocks: 10, TempCount: 1, TargetCount: 1, Amount: 1, PrivateKeyEnv: "KEY",
 			Models: []GatewayRotationModel{{Model: "model-b", SettlementEnabled: &enabled}, {Model: "model-a"}}}
@@ -275,8 +211,6 @@ func TestScenario_ChunkAFieldsValidation(t *testing.T) {
 		{"node host", func(s *Scenario) { s.Topology.MockML.Nodes[0].Host = "mock-chain" }, "mock_ml.nodes[0].host"},
 		{"empty case id", func(s *Scenario) { s.Cases = append(s.Cases, Case{}) }, "cases[1]"},
 		{"duplicate case", func(s *Scenario) { s.Cases = append(s.Cases, Case{ID: "host-over-peer-chat-budget"}) }, "cases[1]"},
-		{"empty stream quarantine", func(s *Scenario) { s.Gateway.ParticipantThrottle.EmptyStreamQuarantine = "0s" }, "empty_stream_quarantine"},
-		{"stalled winner quarantine", func(s *Scenario) { s.Gateway.ParticipantThrottle.StalledWinnerQuarantine = "soon" }, "stalled_winner_quarantine"},
 		{"rotation model empty", func(s *Scenario) { s.Gateway.EscrowRotation.Models[0].Model = "" }, "escrow_rotation.models[0]"},
 		{"rotation model duplicate", func(s *Scenario) { s.Gateway.EscrowRotation.Models[1].Model = "model-b" }, "escrow_rotation.models[1]"},
 		{"rotation models without rotation", func(s *Scenario) { s.Gateway.EscrowRotation.Enabled = false }, "requires gateway.escrow_rotation.enabled"},
@@ -328,7 +262,6 @@ workload:
   events:
     - {id: c1, case: receipt-then-empty-stream, action: ml_fault, target: mock-openai-5, at: 2m, until: 3m, params: {patch: {empty_stream: true}}}
 gateway:
-  participant_throttle: {empty_stream_quarantine: 45s, stalled_winner_quarantine: 45s}
   escrow_rotation:
     models: [{model: model-b, settlement_enabled: false}]
 `), &scenario))
@@ -338,6 +271,5 @@ gateway:
 	require.Equal(t, 2048, scenario.Workload.Request.Mix.MaxTokens[1].Value)
 	require.Equal(t, "hi", scenario.Workload.Request.Mix.Prompts[0].Value[0].Content)
 	require.Equal(t, map[string]any{"empty_stream": true}, scenario.Workload.Events[0].Params["patch"])
-	require.Equal(t, "45s", scenario.Gateway.ParticipantThrottle.StalledWinnerQuarantine)
 	require.False(t, *scenario.Gateway.EscrowRotation.Models[0].SettlementEnabled)
 }

@@ -6,7 +6,7 @@
 
 ## What it does not own
 
-The transaction around the message (the `Any` wrapper, body, auth info, sign doc), signing and broadcasting stay in `devshard/cmd/gateway/chain`; the create-escrow message too. `devshard/cmd/devshardctl` builds its settle transaction through `common/chain/tx` and calls this package only from tests. Its `settle_wire_equivalence_test.go` sends the full, empty-optional, zero-scalar and validated-finished messages as settlement JSON through `settleParamsFromJSON` and `common/chain/tx` to the in-process mock chain, decodes the broadcast `MsgSettleDevshardEscrow` and asserts it equals `Marshal`'s output decoded the same way. The decoded comparison cannot see fields 7 and 8, which the generated type drops, so for every message without a zero counter of fields 1 to 6 or a zero slot id, with fees and a version set, it also asserts the raw bytes are equal; the validated-finished message holds host stats with both counters, one of them and neither. The raw bytes are equal for the full, empty-optional and validated-finished messages; for the zero-scalar message they differ, because `common/chain/tx` writes the zero `slot_id` and zero counters of a host-stats entry and the zero `slot_id` of a slot signature that `Marshal` omits.
+The transaction around the message (the `Any` wrapper, body, auth info, sign doc), signing and broadcasting stay in `devshard/cmd/gateway/chain`; the create-escrow message too.
 
 ## The goldens
 

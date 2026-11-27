@@ -117,7 +117,7 @@ type pendingSettle struct {
 	deadline settleDeadline
 }
 
-// Settle settles one escrow on demand, on the same path the rotation lifecycle uses; force crosses the busy check alone. See ../docs/operations.md.
+// Settle settles one escrow on demand, on the same path the rotation lifecycle uses; force crosses the busy check and the completion journal's wait. See ../docs/operations.md.
 func (m *Manager) Settle(ctx context.Context, escrowID string, force bool) (chain.SettleEscrowResult, error) {
 	record, found, err := m.store.Devshard(ctx, escrowID)
 	if err != nil {
@@ -221,7 +221,7 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 	if err := ctx.Err(); err != nil {
 		return chain.SettleEscrowResult{}, fmt.Errorf("settling escrow %s: %w", record.EscrowID, err)
 	}
-	if err := m.settlementSource.Finalize(ctx, record.EscrowID); err != nil {
+	if err := m.finalize(ctx, record.EscrowID, force); err != nil {
 		return chain.SettleEscrowResult{}, fmt.Errorf("finalizing escrow %s: %w", record.EscrowID, err)
 	}
 	input, err := m.settlementSource.BuildSettlement(ctx, record.EscrowID)
@@ -248,6 +248,24 @@ func (m *Manager) settleEntered(ctx context.Context, record store.DevshardRecord
 	}
 	return result, nil
 }
+
+func (m *Manager) finalize(ctx context.Context, escrowID string, force bool) error {
+	if !force {
+		return m.settlementSource.Finalize(ctx, escrowID)
+	}
+	unresolved, err := m.settlementSource.FinalizeForced(ctx, escrowID)
+	if err != nil {
+		return err
+	}
+	if len(unresolved) > 0 {
+		m.settledUnresolved.Add(uint64(len(unresolved)))
+		m.narrator.EscrowSettledPastUnresolved(escrowID, unresolved)
+	}
+	return nil
+}
+
+// SettledUnresolvedNonces counts the nonces forced settles finalized past while they were unresolved in the completion journal.
+func (m *Manager) SettledUnresolvedNonces() uint64 { return m.settledUnresolved.Load() }
 
 func (m *Manager) sweepBeforeFinalize(ctx context.Context, escrowID string, force bool) error {
 	if m.timeoutSweeper == nil {

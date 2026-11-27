@@ -24,7 +24,7 @@ A host answers requests, but only when there are requests. Between them the gate
 
 ## Knobs
 
-`DEVSHARD_GATEWAY_HOST_PING_DISABLED`, `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` (`15s`), `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` (`2s`), `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` (8). See [`docs/configuration.md`](../docs/configuration.md), "The knobs that decide behaviour".
+`DEVSHARD_GATEWAY_HOST_PING_ENABLED` (`true`), `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` (`15s`), `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` (`2s`), `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` (8). See [`docs/configuration.md`](../docs/configuration.md), "The knobs that decide behaviour".
 
 ## Read next
 

@@ -67,12 +67,6 @@ func ComputeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	return computeHostStatsHash(hostStats)
 }
 
-// ComputeRestHash computes sha256(balance_be || inferences_hash || warm_keys_hash).
-// Exported for settlement verification on mainnet.
-func ComputeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
-	return computeRestHash(balance, inferences, warmKeys)
-}
-
 // ComputeInferencesHashV2 returns sha256(sealed_acc || live_inferences_hash).
 // live_inferences_hash is the 32-byte encoding of the sum of one Ristretto255
 // point per live record. The frame is the protowire tag, varint length, and
@@ -245,23 +239,6 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	}
 	hash := sha256.Sum256(data)
 	return hash[:], nil
-}
-
-func computeRestHash(balance uint64, inferences map[uint64]*types.InferenceRecord, warmKeys map[uint32]string) ([]byte, error) {
-	infHash, err := computeInferencesHash(inferences)
-	if err != nil {
-		return nil, err
-	}
-	warmKeysHash := computeWarmKeysHash(warmKeys)
-
-	balBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(balBytes, balance)
-
-	h := sha256.New()
-	h.Write(balBytes)
-	h.Write(infHash)
-	h.Write(warmKeysHash)
-	return h.Sum(nil), nil
 }
 
 func computeInferencesHash(inferences map[uint64]*types.InferenceRecord) ([]byte, error) {

@@ -21,29 +21,12 @@ func TestRouterCatalogHealthzURL(t *testing.T) {
 		routerCatalogHealthzURL("http://127.0.0.1:9/", "v2"))
 }
 
-func TestGatewayStatusHasRuntime(t *testing.T) {
-	require.False(t, gatewayStatusHasRuntime(nil))
-	require.False(t, gatewayStatusHasRuntime(map[string]any{}))
-	require.False(t, gatewayStatusHasRuntime(map[string]any{"runtimes": float64(0)}))
-	require.False(t, gatewayStatusHasRuntime(map[string]any{"devshards": []any{}}))
-
-	require.True(t, gatewayStatusHasRuntime(map[string]any{"escrow_id": "1"}))
-	require.True(t, gatewayStatusHasRuntime(map[string]any{"runtimes": float64(1)}))
-	require.True(t, gatewayStatusHasRuntime(map[string]any{"devshards": []any{map[string]any{"id": "1"}}}))
-}
-
-func TestGatewayStatusHeightSeedReady(t *testing.T) {
-	require.True(t, gatewayStatusHeightSeedReady(nil))
-	require.True(t, gatewayStatusHeightSeedReady(map[string]any{}))
-	require.True(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "ok"}}))
-	require.False(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "pending"}}))
-	require.False(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "catalog_pending"}}))
-	require.False(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "missed"}}))
-	require.False(t, gatewayStatusHeightSeedReady(map[string]any{
-		"height_seed": map[string]any{"state": "ok"},
-		"devshards":   []any{map[string]any{"height_seed": map[string]any{"state": "pending"}}},
-	}))
-	require.True(t, gatewayStatusHeightSeedReady(map[string]any{
-		"devshards": []any{map[string]any{"height_seed": map[string]any{"state": "ok"}}},
-	}))
+// Test flow:
+// 1. Judge status listings with no escrow, an escrow with no id and an escrow with an id.
+// 2. Check only the listing with an identified escrow counts as routable.
+func TestGatewayStatusListsRoutableEscrow(t *testing.T) {
+	require.False(t, gatewayStatusListsRoutableEscrow(nil))
+	require.False(t, gatewayStatusListsRoutableEscrow([]gatewayStatusEscrow{}))
+	require.False(t, gatewayStatusListsRoutableEscrow([]gatewayStatusEscrow{{EscrowID: noEscrowID}}))
+	require.True(t, gatewayStatusListsRoutableEscrow([]gatewayStatusEscrow{{EscrowID: "1"}}))
 }

@@ -7,6 +7,7 @@ import (
 	"devshard/cmd/gateway/chain"
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/filters"
+	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
 	"devshard/types"
@@ -129,6 +130,7 @@ func (s *Server) modelList(models []string) modelListResponse {
 
 type statusResponse struct {
 	Mode            string            `json:"mode"`
+	PoCMode         string            `json:"poc_mode"`
 	Version         string            `json:"version"`
 	RequestsBlocked bool              `json:"requests_blocked"`
 	BlockReason     chain.BlockReason `json:"block_reason,omitempty"`
@@ -209,13 +211,51 @@ func rotationViews(statuses []store.RotationStatus) []rotationView {
 
 // SessionVersion is the protocol tag an escrow is bound to. See README.md, "The views a response is built from".
 type devshardStatus struct {
-	EscrowID       string `json:"id"`
-	Model          string `json:"model"`
-	ActiveRequests int    `json:"active_requests"`
-	Nonce          uint64 `json:"nonce"`
-	Phase          string `json:"phase"`
-	Balance        uint64 `json:"balance,omitempty"`
-	SessionVersion string `json:"session_version,omitempty"`
+	EscrowID       string               `json:"id"`
+	Model          string               `json:"model"`
+	ActiveRequests int                  `json:"active_requests"`
+	Nonce          uint64               `json:"nonce"`
+	Phase          string               `json:"phase"`
+	Balance        uint64               `json:"balance,omitempty"`
+	SessionVersion string               `json:"session_version,omitempty"`
+	Config         *statusSessionConfig `json:"config,omitempty"`
+}
+
+type statusSessionConfig struct {
+	RefusalTimeout            int64  `json:"refusal_timeout"`
+	ExecutionTimeout          int64  `json:"execution_timeout"`
+	TokenPrice                uint64 `json:"token_price"`
+	CreateDevshardFee         uint64 `json:"create_devshard_fee"`
+	FeePerNonce               uint64 `json:"fee_per_nonce"`
+	VoteThreshold             uint32 `json:"vote_threshold"`
+	ValidationRate            uint32 `json:"validation_rate"`
+	InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
+	InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
+	AutoSealEveryNNonces      uint32 `json:"auto_seal_every_n_nonces"`
+}
+
+type sessionConfigReader interface {
+	SessionConfig() types.SessionConfig
+}
+
+func sessionConfigView(session registry.EscrowSession) *statusSessionConfig {
+	reader, readable := session.(sessionConfigReader)
+	if !readable {
+		return nil
+	}
+	frozen := reader.SessionConfig()
+	return &statusSessionConfig{
+		RefusalTimeout:            frozen.RefusalTimeout,
+		ExecutionTimeout:          frozen.ExecutionTimeout,
+		TokenPrice:                frozen.TokenPrice,
+		CreateDevshardFee:         frozen.CreateDevshardFee,
+		FeePerNonce:               frozen.FeePerNonce,
+		VoteThreshold:             frozen.VoteThreshold,
+		ValidationRate:            frozen.ValidationRate,
+		InferenceSealGraceNonces:  frozen.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: frozen.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      frozen.AutoSealEveryNNonces,
+	}
 }
 
 type limiterStatus struct {
@@ -264,7 +304,8 @@ func (s *Server) status(escrows []scheduler.Escrow) statusResponse {
 	}
 	refusal := admission(snapshot, configuration.Modes, s.now(), configuration.Chain.SnapshotMaxAgeSeconds)
 	return statusResponse{
-		Mode:            configuration.Modes.PoCMode,
+		Mode:            statusMode,
+		PoCMode:         configuration.Modes.PoCMode,
 		Version:         s.version,
 		RequestsBlocked: refusal != nil,
 		BlockReason:     statusBlockReason(snapshot, refusal),
@@ -291,6 +332,7 @@ func (s *Server) devshardStatus(escrow scheduler.Escrow) devshardStatus {
 	status.Phase = phaseName(session.Phase())
 	status.Balance = session.Balance()
 	status.SessionVersion = session.ProtocolVersion()
+	status.Config = sessionConfigView(session)
 	return status
 }
 

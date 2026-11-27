@@ -39,16 +39,16 @@ func (s countingSink) TargetCount(count int) {
 }
 
 func runnableSettings() config.HostPing {
-	return config.HostPing{IntervalMS: 40, TimeoutMS: 10, Concurrency: 2}
+	return config.HostPing{Enabled: true, IntervalMS: 40, TimeoutMS: 10, Concurrency: 2}
 }
 
 // Test flow:
-//  1. Build runnable settings and mark them disabled.
+//  1. Build runnable settings and switch them off.
 //  2. Call New with those settings, one live host dial, and a counting sink.
 //  3. Assert it returns nil.
 func TestAPingerIsAbsentWhenTheProbeIsOff(t *testing.T) {
 	settings := runnableSettings()
-	settings.Disabled = true
+	settings.Enabled = false
 
 	if pinger := New(settings, dialsHeld{{BaseURL: "http://a:8080"}}, countingSink{}); pinger != nil {
 		t.Fatal("New() returned a pinger for a probe that is switched off")
@@ -60,7 +60,7 @@ func TestAPingerIsAbsentWhenTheProbeIsOff(t *testing.T) {
 //  2. Call New with those settings, one live host dial, and a counting sink.
 //  3. Assert it returns nil rather than a pinger.
 func TestAScheduleThatDoesNotHoldCostsThePingNotTheBoot(t *testing.T) {
-	settings := config.HostPing{IntervalMS: 10, TimeoutMS: 10, Concurrency: 1}
+	settings := config.HostPing{Enabled: true, IntervalMS: 10, TimeoutMS: 10, Concurrency: 1}
 
 	if pinger := New(settings, dialsHeld{{BaseURL: "http://a:8080"}}, countingSink{}); pinger != nil {
 		t.Fatal("New() accepted a wave that can outlast its own period")
