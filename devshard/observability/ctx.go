@@ -120,6 +120,7 @@ const (
 	ReasonAcquireErr                  Reason = "acquire_err"
 	ReasonReleaseErr                  Reason = "release_err"
 	ReasonMissingInferenceID          Reason = "missing_inference_id"
+	ReasonInvalidInferenceID          Reason = "invalid_inference_id"
 	ReasonPayloadNotFound             Reason = "payload_not_found"
 	ReasonPayloadRetrieveErr          Reason = "payload_retrieve_err"
 	ReasonPayloadResponseSignErr      Reason = "payload_response_sign_err"
@@ -397,7 +398,28 @@ func FailNoReceipt(ctx context.Context, escrowID string, reason Reason, failureW
 // MetricStatusError on failure and MetricStatusOK on the success branch.
 func LogPayloadRequest(ctx context.Context, level Level, escrowID string, status MetricStatus, reason Reason, msg string, err error, kv ...any) {
 	IncPayloadRequest(status, reason)
-	Log(ctx, level, msg, StagePayloadRequest, WhereManagerPayloads, escrowID, reason, err, kv...)
+	Log(ctx, level, msg, StagePayloadRequest, WhereManagerPayloads, escrowID, reason, err, clipPayloadFields(kv)...)
+}
+
+const payloadLogFieldMaxBytes = 128
+
+func clipPayloadFields(kv []any) []any {
+	var out []any
+	for i, v := range kv {
+		s, ok := v.(string)
+		if !ok || len(s) <= payloadLogFieldMaxBytes {
+			continue
+		}
+		if out == nil {
+			out = append([]any(nil), kv...)
+		}
+		clipped, _ := truncateBytes(s, payloadLogFieldMaxBytes)
+		out[i] = clipped
+	}
+	if out == nil {
+		return kv
+	}
+	return out
 }
 
 // FailReceiptOrphan logs an error, increments the receipt-orphan counter, and
