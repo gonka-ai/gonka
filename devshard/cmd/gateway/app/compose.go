@@ -376,6 +376,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 			Available:          participants.Available,
 			DrainCloseFailures: escrows.DrainCloseFailures,
 		}),
+		metrics.NewHeightSyncCollector(escrows),
 		metrics.NewChainCollector(observer, clock),
 		metrics.NewTransportCollector(transport.DefaultHostConnectionTracker()),
 		metrics.NewAccountingCollector(ledger),

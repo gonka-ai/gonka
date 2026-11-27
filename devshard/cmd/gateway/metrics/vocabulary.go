@@ -1,5 +1,23 @@
 package metrics
 
+import (
+	"maps"
+	"slices"
+
+	"devshard/heightsync"
+	"devshard/types"
+)
+
+// What a height-sync exchange carried, and how many bits a peer-seen bitmap byte holds.
+const (
+	exchangeTotal       = "total"
+	exchangeWithSection = "section"
+	exchangeWithStamp   = "stamp"
+	exchangeAgreed      = "agree"
+
+	bitsPerByte = 8
+)
+
 // What one sweep tick did with the nonces it found.
 const (
 	sweepOutcomeApplied = "applied"
@@ -29,4 +47,10 @@ const (
 	reasonEscrowMissing    = "escrow_missing"
 	reasonBalanceExhausted = "balance_exhausted"
 	reasonReplyRefused     = "reply_refused"
+)
+
+// The host sync states and anchor kinds one escrow's height-sync series are labelled with.
+var (
+	syncStates  = slices.Sorted(maps.Values(types.SyncState_name))
+	anchorKinds = []string{heightsync.AnchorKindCadence, heightsync.AnchorKindHeartbeat, heightsync.AnchorKindForced, heightsync.AnchorKindResponse}
 )

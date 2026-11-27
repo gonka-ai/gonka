@@ -50,7 +50,7 @@ curl -sS "$GATEWAY/v1/debug/heightsync" -H "Authorization: Bearer $ADMIN_KEY" | 
 | `heightsync: logplane` `L6` `DEFERRED_FAIL` | **debug** | Canonical hash at `H` ≠ claimed hash |
 | `devshard_gateway_heightsync_height_spread` | gateway `/metrics` | Max − min fresh (and stale) host claims |
 | `devshard_gateway_heightsync_host_height_lag` | gateway `/metrics` | Leader − this slot |
-| `devshard_heightsync_marks_total{kind=…}` | host/gateway | `l5a_admission`, `deferred_fail`, `height_unbacked`, … |
+| `devshard_heightsync_marks_total{kind=…}` | host `/metrics` | `l5a_admission`, `deferred_fail`, `height_unbacked`, … |
 
 Reproducible A/B/C (one dishonest oracle on the solo identity):
 

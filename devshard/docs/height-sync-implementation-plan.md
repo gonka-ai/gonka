@@ -1010,7 +1010,7 @@ That works because **the gateway is the sequencer**. It is the only party that a
 | Originator anchors from responses | per-escrow `transport.HeightSyncPeerTips` (built with each escrow session's client config in `cmd/gateway/app/devshards_sessions.go`) |
 | Cadence state | `heightsync.Heartbeat` (turnovers, abandoned turns, `SinceTurnover`) in `user.Session` |
 
-So these are **read-only projections of state the gateway holds**, computed on scrape by a collector in `cmd/gateway/metrics` (`prometheus.NewDesc` + `Collect`), not pushed from the hot path. Two consequences to respect: the escrow-labelled series must be dropped on teardown through the `DeleteEscrowMetrics` path (`devshard/observability/metrics_lifecycle.go`), and reading session state on scrape must not take a lock the dispatch path holds — each accessor added below returns a copied snapshot.
+So these are **read-only projections of state the gateway holds**, computed on scrape by a collector in `cmd/gateway/metrics` (`prometheus.NewDesc` + `Collect`), not pushed from the hot path. Two consequences to respect: the escrow-labelled series are rebuilt from the live escrow set on every scrape, so a retired escrow leaves none behind, and reading session state on scrape must not take a lock the dispatch path holds — each accessor added below returns a copied snapshot.
 
 **One thing the gateway structurally cannot see: host arming.** Close-ready emits nothing on the wire, by design (§8.10, spec §12.2), so `heightsync_close_ready_armed` stays a host-side gauge and is *not* mirrored here. What the gateway can publish is the **input** hosts arm on — its own contact toward each slot:
 
@@ -1096,11 +1096,10 @@ Note that a gateway with **no** fresh height cannot seal anything — it does no
 
 | Signal | Kind | Labels |
 | ------ | ---- | ------ |
-| `devshard_gateway_heightsync_peer_seen` | gauge | `devshard_id`, `observer_slot`, `subject_slot` — `1` if `observer` reported seeing `subject` |
 | `devshard_gateway_heightsync_peer_seen_count` | gauge | `devshard_id`, `observer_slot` — popcount, the cheap per-host summary |
 | `devshard_gateway_heightsync_peer_seen_unseen_total` | gauge | `devshard_id`, `subject_slot` — how many observers do **not** see this slot; a slot unseen by everyone is isolated, a slot unseen by one observer is one bad link |
 
-**Cardinality is the real constraint:** the full matrix is `slots_num²` per escrow. At `slots_num = 4` that is 16 series per escrow, which is fine — but it is quadratic, so it is gated by `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX` (default **off**, mirroring how the host-ping job takes a `_DISABLED` switch) and dropped on escrow teardown. `peer_seen_count` and `unseen_total` are linear in `slots_num` and always on, so the default path stays bounded while the matrix is opt-in for debugging. The matrix in full is always available on `GET /v1/debug/heightsync`, which is where an operator should normally read it — a per-escrow point-in-time question does not need a time series.
+**Cardinality is the real constraint:** the full matrix is `slots_num²` per escrow and is quadratic, so it stays off the registry: `peer_seen_count` and `unseen_total` are linear in `slots_num`, rebuilt from the live escrows on every scrape. The matrix in full is on `GET /v1/debug/heightsync`, which is where an operator should read it — a per-escrow point-in-time question does not need a time series.
 
 Two interpretation rules, both from §11: a cleared bit means "no fresh claim within `F`", which is **not** an accusation — it can be the observer's own oracle outage. And the matrix is a host self-report, so a `0` where the log shows that host did have a claim is a vector contradiction handled by §11.1, not something this gauge decides.
 
@@ -1115,12 +1114,12 @@ Two interpretation rules, both from §11: a cleared bit means "no fresh claim wi
 | H43 | One unreachable slot | `turns_abandoned_total` rises; ring entries carry `turn_abandoned`; cadence keeps running |
 | H44 | Acks stamped `H` arriving while tip is `H + 1` | they land in bucket `H`; bucket `H` is not published until sealed; no fake zero for `H` |
 | H45 | Height with no anchor at all | `blocks_without_anchor_total` increments exactly once for that sealed height |
-| H46 | 4-slot roster, slot 2 invisible to slot 0 only | `peer_seen{observer=0,subject=2}=0`, others `1`; `unseen_total{subject=2}=1`; `peer_seen_count{observer=0}=3` |
+| H46 | 4-slot roster, slot 2 invisible to slot 0 only | `peer_seen_count{observer=0}=3`; `unseen_total{subject=2}=1`, the others `0` |
 | H47 | Escrow settles | every `devshard_id`-labelled series above is gone (assert by label value, not by a per-series list, so a later addition that misses cleanup fails here) |
-| H48 | Peer matrix not enabled (default) | matrix series absent; `peer_seen_count` / `unseen_total` still present; matrix still readable on `/v1/debug/heightsync` |
+| H48 | Any roster | no series carries both an observer and a subject slot; `peer_seen_count` / `unseen_total` present; matrix readable on `/v1/debug/heightsync` |
 | H49 | Gateway goes quiet toward one slot past `T_idle` | `arming_predicted{slot}=1`; asserted **not** to feed any closing or routing decision (test double sees zero calls, the hard-invariant pattern from the host-ping plan) |
 
-H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26/H42c container scenarios (H26 bootstraps `F` with two chats, then a quiet `Interval`; extra chat in that wait is H42c's `discharged_by_inference`). Compose companions for H40/H43/H47/H48 and `/v1/debug/heightsync` live in `testenv/citest/height_sync_test.go` (no Phase F). H48c waits for `heartbeat_opened` after the same floor seed before asserting quadratic `peer_seen`.
+H39–H49 are gateway-package tests over a fabricated session plus a registry gather. H41/H42 also run in the H26/H42c container scenarios (H26 bootstraps `F` with two chats, then a quiet `Interval`; extra chat in that wait is H42c's `discharged_by_inference`). Compose companions for H40/H43 and `/v1/debug/heightsync` live in `testenv/citest/height_sync_test.go` (no Phase F).
 
 ### 8.13 Tests for Phase E
 
@@ -1309,13 +1308,13 @@ Level-triggered on elapsed time: `now − last_signal_at > T_idle` ⇒ armed; an
 
 #### E8 — Observability + container ✅
 
-Metrics/logs from §8.12 (`heightsync: logplane`), plus the four gateway-collected operator views in §8.12.1–§8.12.5: height divergence across hosts, cadence rate + last-N triggers (including heartbeats replaced by inference stamps), anchors per sealed block, and the `peer_seen` matrix. All of them land on the gateway registry and `GET /v1/debug/heightsync`; none adds a wire field or a host scrape. Supporting accessors: `HeightSyncPeerTips.PerOriginator`, a cadence event ring on `heightsync.Heartbeat`, and a sealed per-height anchor tally.
+Metrics/logs from §8.12 (`heightsync: logplane`), plus the four gateway-collected operator views in §8.12.1–§8.12.5: height divergence across hosts, cadence rate + last-N triggers (including heartbeats replaced by inference stamps), anchors per sealed block, and the `peer_seen` matrix. The first three land on the gateway registry and all four on `GET /v1/debug/heightsync` (the registry carries the matrix's per-slot counts); none adds a wire field or a host scrape. Supporting accessors: `HeightSyncPeerTips.PerOriginator`, a cadence event ring on `heightsync.Heartbeat`, and a sealed per-height anchor tally.
 
 **Tests:** H26, H27, H39–H49. **Landed.**
 
 - H26: two chats seed `F` (confirm/finish ride the next nonce), then a quiet `Interval`; cadence in logs, turns complete, **zero** probes. Compose seed does not raise `F`; stretching the timeout does not help a floorless session.
 - H27: same floor seed, wait for `heartbeat_opened`, then one host stopped → degraded turns, bounded probes, arm only after `T_idle` of **user** silence.
-- H39–H49 (§8.12.6) for the gateway views, including the teardown-cleanup, opt-in matrix, and inert-prediction guards.
+- H39–H49 (§8.12.6) for the gateway views, including the teardown-cleanup and no-per-pair-series guards.
 - E8 also counts the stamp/section overlap that gates §10.1: per exchange, whether a section was present, whether a stamped tx was present, and whether the two agreed. That ratio is the measured saving of the single-source redesign; without it §10.1 is speculation. §8.12.3's `discharged_by_inference` event is the cadence half of the same measurement. Host-side counters live in `heightsync/prom_logplane.go` (registered from `devshardd` only — one escrow per process; gateway scrapes labelled operator views instead). Gateway operator views are pull-based on `GET /metrics` and `GET /v1/debug/heightsync`.
 
 #### E9 — Session-open height seed ✅

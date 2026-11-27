@@ -91,7 +91,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
 | **ML node pool** | N mock-openai instances behind mock-dapi `AcquireMLNode`; a fault on one node leaves the others healthy | `TestMLNodePool_PerNodeFault` |
 | **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
-| **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped; peer-matrix opt-in | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped`, `…PeerMatrixOptIn` |
+| **Height-sync cadence** | Two chats seed `F` (§10.3.1), then quiet `Interval` → `heartbeat_opened`; one host stopped | `TestContainerE2E_HeightSync_QuietEscrowHeartbeat`, `…OneHostStopped` |
 | **Height-sync host claims** | Solo oracle overlay: lag / future `\|Δ\|>D` / fabricated `H+1`; chat 200; detection logs + spread | `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns`, `…HostFutureHeightBeyondD`, `…HostFabricatedHashInsideD` |
 | **Baseline smoke** | Pinned 0.2.15-v5 versiond/router, this child, RPC off, no proxy | `TestBaselineSmoke` |
 | **Peer RPC chat** | Gateway chat over Connect HTTP/1.1; child counts Attach and Chat | `TestPeerRPCChat` |
