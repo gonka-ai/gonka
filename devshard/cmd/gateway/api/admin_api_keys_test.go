@@ -117,3 +117,20 @@ func TestTheIDOfADatabaseKeyIsTheDigestPrefixRequestsAreLoggedUnder(t *testing.T
 		t.Fatalf("request caller = %s, want %s", got, idOfAPIKey(key))
 	}
 }
+
+// Test flow:
+//  1. Post a create whose key holds a NUL character, then one whose label does.
+//  2. Assert both answer 400 and the operator was never asked to write.
+func TestAKeyOrLabelWithANULCharacterIsRefused(t *testing.T) {
+	live := newHarness(t)
+
+	inKey := live.request(t, http.MethodPost, "/v1/admin/api-keys", `{"key":"fake-supplied-key\u00000001"}`, adminHeaders())
+	inLabel := live.request(t, http.MethodPost, "/v1/admin/api-keys", `{"label":"night\u0000ly"}`, adminHeaders())
+
+	if inKey.Code != http.StatusBadRequest || inLabel.Code != http.StatusBadRequest {
+		t.Fatalf("statuses = %d %d, want 400 400: %s %s", inKey.Code, inLabel.Code, inKey.Body, inLabel.Body)
+	}
+	if len(live.operations.createdKeys) != 0 {
+		t.Fatalf("operator received %+v, want no write", live.operations.createdKeys)
+	}
+}

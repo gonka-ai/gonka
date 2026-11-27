@@ -137,6 +137,10 @@ func (n *recordingLifecycleNarrator) TimeoutsSwept(due, applied, failed int) {
 	n.note("swept due %d applied %d failed %d", due, applied, failed)
 }
 
+func (n *recordingLifecycleNarrator) EscrowSettledPastUnresolved(escrowID string, nonces []uint64) {
+	n.note("settled past unresolved %s %v", escrowID, nonces)
+}
+
 func (n *recordingLifecycleNarrator) EscrowPlanned(model string, creates, retires int, reasons string, moneyShort bool, need, liquid uint64, fullCount int) {
 	n.note("planned %s creates %d retires %d reasons %s", model, creates, retires, reasons)
 }

@@ -2,34 +2,9 @@ package store
 
 import (
 	"context"
-	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
-	"time"
 )
-
-// OwedVote is one refusal vote a race owes, with the prompt the hosts check that vote against. See README.md, "Owed refusal votes".
-type OwedVote struct {
-	EscrowID    string
-	Nonce       uint64
-	StartedAt   time.Time
-	RequestID   string
-	Participant string
-	Model       string
-	Prompt      []byte
-}
-
-const (
-	owedVoteQueueDepth     = 1024
-	maxOwedVotePromptBytes = 1 << 20
-)
-
-// OwedVoteStats counts the saves and deletes the writer shed or the database refused.
-type OwedVoteStats struct {
-	Dropped int64
-	Failed  int64
-}
 
 type owedVoteWrite struct {
 	vote OwedVote
@@ -38,7 +13,7 @@ type owedVoteWrite struct {
 
 // OwedVotes writes from one goroutine and sheds a write rather than block: a race owes its votes on the response path.
 type OwedVotes struct {
-	store *Store
+	rows  OwedVoteRows
 	queue chan owedVoteWrite
 	done  chan struct{}
 
@@ -49,21 +24,12 @@ type OwedVotes struct {
 	failed  atomic.Int64
 }
 
-// NewOwedVotes registers the writer with the store, whose Close drains it before the database handle goes.
-func (s *Store) NewOwedVotes() (*OwedVotes, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.owedVotes != nil && !s.owedVotes.isClosed() {
-		return nil, errors.New("owed votes: already open")
-	}
-	owedVotes := &OwedVotes{
-		store: s,
+func newOwedVotes(rows OwedVoteRows) *OwedVotes {
+	return &OwedVotes{
+		rows:  rows,
 		queue: make(chan owedVoteWrite, owedVoteQueueDepth),
 		done:  make(chan struct{}),
 	}
-	s.owedVotes = owedVotes
-	go owedVotes.run()
-	return owedVotes, nil
 }
 
 // Owe queues the vote's row; a prompt over the bound, a full queue or a closed writer leaves the vote in memory only.
@@ -93,35 +59,14 @@ func (o *OwedVotes) enqueue(write owedVoteWrite) {
 	}
 }
 
+// Stats returns the counters of what the writer has shed or lost so far.
 func (o *OwedVotes) Stats() OwedVoteStats {
 	return OwedVoteStats{Dropped: o.dropped.Load(), Failed: o.failed.Load()}
 }
 
 // Load returns every vote a previous process owed and did not post, ordered by (escrow_id, nonce).
 func (o *OwedVotes) Load(ctx context.Context) ([]OwedVote, error) {
-	rows, err := o.store.db.QueryContext(ctx, `
-		SELECT escrow_id, nonce, started_at, request_id, participant, model, prompt
-		FROM owed_refusal_votes ORDER BY escrow_id, nonce`)
-	if err != nil {
-		return nil, fmt.Errorf("loading owed votes: %w", err)
-	}
-	defer rows.Close()
-	var votes []OwedVote
-	for rows.Next() {
-		var vote OwedVote
-		var startedAt string
-		if err := rows.Scan(&vote.EscrowID, &vote.Nonce, &startedAt, &vote.RequestID, &vote.Participant, &vote.Model, &vote.Prompt); err != nil {
-			return nil, fmt.Errorf("scanning owed vote row: %w", err)
-		}
-		if vote.StartedAt, err = parseTime(startedAt); err != nil {
-			return nil, fmt.Errorf("parsing owed vote started_at %q: %w", startedAt, err)
-		}
-		votes = append(votes, vote)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating owed votes: %w", err)
-	}
-	return votes, nil
+	return o.rows.LoadOwedVotes(ctx)
 }
 
 func (o *OwedVotes) drain() {
@@ -145,22 +90,15 @@ func (o *OwedVotes) isClosed() bool {
 func (o *OwedVotes) run() {
 	defer close(o.done)
 	for write := range o.queue {
-		if err := o.write(write); err != nil {
+		if err := o.write(context.Background(), write); err != nil {
 			o.failed.Add(1)
 		}
 	}
 }
 
-func (o *OwedVotes) write(write owedVoteWrite) error {
+func (o *OwedVotes) write(ctx context.Context, write owedVoteWrite) error {
 	if write.paid {
-		_, err := o.store.db.Exec(`DELETE FROM owed_refusal_votes WHERE escrow_id = ? AND nonce = ?`, write.vote.EscrowID, write.vote.Nonce)
-		return err
+		return o.rows.DeleteOwedVote(ctx, write.vote.EscrowID, write.vote.Nonce)
 	}
-	vote := write.vote
-	_, err := o.store.db.Exec(`
-		INSERT INTO owed_refusal_votes (escrow_id, nonce, started_at, request_id, participant, model, prompt)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(escrow_id, nonce) DO NOTHING`,
-		vote.EscrowID, vote.Nonce, FormatTime(vote.StartedAt), vote.RequestID, vote.Participant, vote.Model, vote.Prompt)
-	return err
+	return o.rows.SaveOwedVote(ctx, write.vote)
 }

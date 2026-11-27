@@ -11,7 +11,7 @@ import (
 
 	"devshard/cmd/gateway/config"
 	"devshard/cmd/gateway/internal/logcapture"
-	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 )
 
 const (
@@ -37,9 +37,9 @@ func warnings(logged *logcapture.Recorder) string {
 
 func storeLegacyDocument(t *testing.T, document string) {
 	t.Helper()
-	records, err := store.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
+	records, err := sqlite.Open(os.Getenv("DEVSHARD_STORAGE_DIR"))
 	if err != nil {
-		t.Fatalf("store.Open(): %v", err)
+		t.Fatalf("sqlite.Open(): %v", err)
 	}
 	overrides, err := config.ParseStoredOverrides([]byte(document))
 	if err != nil {

@@ -149,3 +149,5 @@ These rules bind new and changed code; an existing comment in a file you touch m
 ## Commits
 
 Conventional commits scoped to the gateway, one topic each: `fix(gateway): keep a draining escrow's session open under a settlement still running on it`. The subject names the behaviour, not the edit; detail goes in the body.
+
+The store's contract suite (`store/storetest`) runs against SQLite always and against Postgres when `GATEWAY_TEST_POSTGRES_DSN` names a throwaway database whose role may create schemas; with `GATEWAY_TEST_REQUIRE_POSTGRES=1` a missing DSN fails the run instead of skipping it, as CI sets it. The benchmarks run from each backend's package, `go test -run '^$' -bench BenchmarkBackend ./cmd/gateway/store/sqlite/` and `./cmd/gateway/store/postgres/` (the latter with the DSN set); `GATEWAY_BENCH_SWEEP_ROWS` sets the size of the retention-sweep table.

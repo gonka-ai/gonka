@@ -45,7 +45,7 @@ type BootStep struct {
 }
 
 // Compose composes the gateway over sources instead of a dialled chain.
-func Compose(ctx context.Context, values env.Values, storageDir string, gatewayStore *store.Store, sources Sources) (*Composed, error) {
+func Compose(ctx context.Context, values env.Values, storageDir string, gatewayStore store.Store, sources Sources) (*Composed, error) {
 	dialled := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   sources.Serving,
@@ -89,7 +89,7 @@ func (composed *Composed) Handler() http.Handler { return composed.gateway.serve
 func (composed *Composed) Config() *config.Holder { return composed.gateway.config }
 
 // Store is the control-plane store.
-func (composed *Composed) Store() *store.Store { return composed.gateway.store }
+func (composed *Composed) Store() store.Store { return composed.gateway.store }
 
 // Observer is the chain phase observer.
 func (composed *Composed) Observer() *chain.PhaseObserver { return composed.gateway.observer }

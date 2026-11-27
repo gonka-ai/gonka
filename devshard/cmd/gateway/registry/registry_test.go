@@ -30,6 +30,7 @@ func TestMain(m *testing.M) {
 type settlementSource interface {
 	IsBusy(escrowID string) bool
 	Finalize(ctx context.Context, escrowID string) error
+	FinalizeForced(ctx context.Context, escrowID string) ([]uint64, error)
 	BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error)
 }
 

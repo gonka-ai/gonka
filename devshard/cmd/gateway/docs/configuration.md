@@ -37,6 +37,8 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_PORT` | 8080 | the listening port |
 | `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC` or its RPC fallback, and a configured value wins over the node; a node whose `app.toml` has `grpc.enable` and `api.enable` both false cannot answer it, so set it there ([`chain/README.md`](../chain/README.md), "The gRPC transport") |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |
+| `DEVSHARD_STORAGE_MODE` | `sqlite` | where the control-plane store lives, `sqlite` or `postgres`; read outside `env.Load` ([operations.md](./operations.md), "Storing state in Postgres") |
+| `GATEWAY_INSTANCE_ID` | empty | required in `postgres` mode; a stable name for this process, written to the boot log |
 | `DEVSHARD_SESSION_RETENTION_EPOCHS` | 2 | how many epochs before the effective one an escrow's session directory stays on disk; `0` keeps every one, and `1` is raised to 2, the hosts' own horizon ([operations.md](./operations.md), "Session storage") |
 | `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; `0` sets no static cap and lets the weight model decide alone |
 | `GATEWAY_ADMISSION_QUEUE_WAIT_MS` | 300000 | how long a request waits for a slot before 429 |

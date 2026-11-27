@@ -474,6 +474,21 @@ jobs:
     defaults:
       run:
         working-directory: ./devshard
+    services:
+      postgres:
+        image: postgres:18.1-bookworm
+        env:
+          # The superuser of this throwaway database may create the per-test schemas.
+          POSTGRES_USER: gateway
+          POSTGRES_PASSWORD: gateway
+          POSTGRES_DB: gateway
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gateway -d gateway"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     steps:
       - name: Free up disk space on runner
@@ -526,6 +541,16 @@ jobs:
         run: |
           packages=$(go list ./cmd/gateway/... | grep -v '/scenarios$')
           go test -race -count=1 -timeout 30m $packages
+
+      - name: Run gateway store tests against Postgres
+        # Runs after a red earlier step too, and a skipped Postgres half fails the step: loopback needs no TLS, see cmd/gateway/store/postgres.
+        if: ${{ !cancelled() }}
+        env:
+          GATEWAY_TEST_POSTGRES_DSN: postgres://gateway:gateway@127.0.0.1:5432/gateway?sslmode=disable
+          GATEWAY_TEST_REQUIRE_POSTGRES: '1'
+        run: |
+          go test -count=1 ./cmd/gateway/store/...
+          go test -count=1 -run TestPostgresChoice ./cmd/gateway/app/
 
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9

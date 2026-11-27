@@ -15,6 +15,7 @@ import (
 	"devshard/cmd/gateway/store"
 	"devshard/gatewayprotocol/settlement"
 	"devshard/types"
+	"devshard/user"
 )
 
 func (s *Server) handleAdminDevshards(w http.ResponseWriter, r *http.Request) {
@@ -222,7 +223,12 @@ func (s *Server) handleDevshardFinalize(w http.ResponseWriter, r *http.Request) 
 		s.writeErrorFor(w, fmt.Errorf("%w: %s", escrow.ErrDevshardBusy, escrowID))
 		return
 	}
-	if writeControlFailure(w, session.Finalize(r.Context())) {
+	finalizeErr := session.Finalize(r.Context())
+	if errors.Is(finalizeErr, user.ErrInferenceCompletionPending) {
+		s.writeErrorFor(w, finalizeErr)
+		return
+	}
+	if writeControlFailure(w, finalizeErr) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"escrow_id": escrowID, "finalized": true})

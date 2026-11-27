@@ -29,6 +29,7 @@ import (
 	"devshard/logging"
 	"devshard/transport"
 	"devshard/types"
+	"devshard/user"
 )
 
 // The Retry-After a shard without room answers with, the non-standard status for a request whose client left before the gateway answered, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
@@ -52,6 +53,8 @@ var (
 	ErrLastAPIKey = errors.New("the last active API key cannot be revoked while a model is api_key")
 
 	ErrEnvAPIKey = errors.New("an API key set through " + env.APIKeysVariable + " cannot be created or revoked here")
+
+	ErrNULCharacter = errors.New("an API key and its label must not contain a NUL character")
 
 	ErrPrivateKeyEnvRequired = errors.New("private_key_env is required; a raw private_key is not accepted")
 
@@ -196,6 +199,8 @@ func statusForError(err error) int {
 		return http.StatusServiceUnavailable
 	}
 	switch {
+	case errors.Is(err, user.ErrInferenceCompletionPending):
+		return http.StatusServiceUnavailable
 	case errors.Is(err, scheduler.ErrEscrowGone):
 		return http.StatusConflict
 	case errors.Is(err, engine.ErrStopped), errors.Is(err, registry.ErrClosed):
@@ -321,7 +326,7 @@ func (s *Server) writeErrorUnder(w http.ResponseWriter, err error, configuration
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	case chainUnreadable(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(chain.DefaultObserverPollInterval.Seconds()), 10))
-	case modelUnavailable(err), outOfFunds(err):
+	case modelUnavailable(err), outOfFunds(err), errors.Is(err, user.ErrInferenceCompletionPending):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(escrow.TickInterval.Seconds()), 10))
 	case hostsUnavailable(err), noLiveWeight(err):
 		baseMS := configuration.Limits.HostCutoff.BaseMS
