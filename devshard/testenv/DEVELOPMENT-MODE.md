@@ -41,7 +41,7 @@ Debug services need `SYS_PTRACE` and `seccomp:unconfined` (already set in `docke
 
 ## Chain transport (gateway)
 
-The gateway uses **gRPC only** for chain queries and escrow tx (`DEVSHARD_CHAIN_GRPC` / `NODE_GRPC_URL`). mock-chain serves gRPC `:9090`, CometBFT RPC `:26657`, and testenv admin — no LCD REST face. See [`docs/chain-transport-consolidation.md`](docs/chain-transport-consolidation.md).
+The gateway uses **gRPC only** for chain queries and escrow tx (`DEVSHARD_CHAIN_GRPC` / `NODE_GRPC_URL`). mock-chain serves gRPC `:9090`, CometBFT RPC `:26657` (status, block, header, commit signed by its one fixed validator, validators, blockchain, and the websocket feed), and testenv admin — no LCD REST face. See [`docs/chain-transport-consolidation.md`](docs/chain-transport-consolidation.md).
 
 ## Stop
 

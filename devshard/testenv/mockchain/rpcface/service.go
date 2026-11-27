@@ -35,6 +35,7 @@ type Service struct {
 	store *store.Store
 	bus   *cmttypes.EventBus
 	env   *core.Environment
+	chain *chainHeaders
 
 	blockInterval      time.Duration
 	blockIntervalDelta time.Duration
@@ -67,14 +68,16 @@ func NewService(st *store.Store, config Config) (*Service, error) {
 		Config:   *cmtCfg.RPC,
 	}
 
-	return &Service{
+	s := &Service{
 		store:              st,
 		bus:                bus,
 		env:                env,
 		blockInterval:      interval,
 		blockIntervalDelta: config.BlockIntervalDelta,
 		blockSeed:          config.BlockSeed,
-	}, nil
+	}
+	s.chain = newChainHeaders(st, interval)
+	return s, nil
 }
 
 // Store returns the backing chain store.
@@ -123,7 +126,7 @@ func (s *Service) PublishEscrowSettled(id uint64, settler string, totalPayout, f
 }
 
 func (s *Service) publishNewBlock(height int64) error {
-	return s.bus.PublishEventNewBlock(newBlockEvent(s.store.GetChainID(), height))
+	return s.bus.PublishEventNewBlock(newBlockEvent(s.chain.headerAt(height)))
 }
 
 func (s *Service) runBlockTicker(ctx context.Context) {
@@ -160,9 +163,15 @@ func (s *Service) routes() map[string]*rpcserver.RPCFunc {
 			"",
 		),
 		"block": rpcserver.NewRPCFunc(
-			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultBlock, error) { return blockHandler(st, height) },
+			func(_ *rpctypes.Context, height *int64) (*ctypes.ResultBlock, error) {
+				return blockHandler(s.chain, height)
+			},
 			"height",
 		),
+		"commit":     rpcserver.NewRPCFunc(s.chain.commitHandler, "height"),
+		"header":     rpcserver.NewRPCFunc(s.chain.headerHandler, "height"),
+		"validators": rpcserver.NewRPCFunc(s.chain.validatorsHandler, "height,page,per_page"),
+		"blockchain": rpcserver.NewRPCFunc(s.chain.blockchainHandler, "minHeight,maxHeight"),
 	}
 }
 
