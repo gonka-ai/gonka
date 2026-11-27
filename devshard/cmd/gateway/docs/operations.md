@@ -86,7 +86,7 @@ An `api_key` model needs an active key. Revoking the last active key while the n
 
 ### The kill switch
 
-`modes.disabled` (env `DEVSHARD_GATEWAY_DISABLED`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
+`modes.disabled` (env `DEVSHARD_GATEWAY_ENABLED=false`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
 
 With `disabled_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `disabled_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
 

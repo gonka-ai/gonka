@@ -26,7 +26,7 @@ The route is the versionless `/devshard/stats/rpc`, not the host's versioned pre
 
 ## Knobs
 
-`DEVSHARD_GATEWAY_RPC_STATS_DISABLED`, `DEVSHARD_GATEWAY_RPC_STATS_INTERVAL` (`15s`), `DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT` (`4s`), `DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY` (8). See [`docs/configuration.md`](../docs/configuration.md), "The knobs that decide behaviour".
+`DEVSHARD_GATEWAY_RPC_STATS_ENABLED` (`true`), `DEVSHARD_GATEWAY_RPC_STATS_INTERVAL` (`15s`), `DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT` (`4s`), `DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY` (8). See [`docs/configuration.md`](../docs/configuration.md), "The knobs that decide behaviour".
 
 ## Read next
 

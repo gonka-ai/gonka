@@ -27,7 +27,7 @@ func TestGeneratedComposeGatewayWiring(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_PUBLIC_API: http://mock-dapi:9100")
 	require.Contains(t, text, "DEVSHARD_NODE_MANAGER_ADDR: mock-dapi:9400")
 	require.Contains(t, text, "GATEWAY_MAX_TOKENS_CAP")
-	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_DISABLED")
+	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_ENABLED")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_INTERVAL")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_TIMEOUT")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY")

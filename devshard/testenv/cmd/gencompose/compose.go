@@ -370,7 +370,7 @@ services:
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       # Host ping (gateway → used hosts). On by default; observability only.
-      DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"
+      DEVSHARD_GATEWAY_HOST_PING_ENABLED: "true"
       DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
       DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "2s"
       DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"

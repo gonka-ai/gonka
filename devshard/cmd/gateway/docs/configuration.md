@@ -81,10 +81,10 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_GATEWAY_CHAIN_ORACLE` | false | whether the gateway follows mainnet itself, from `NODE_MANAGER_ADDR`, the chain RPC and gRPC. It is not what the gateway stamps from — it labels how much a carried tip is trusted, and it serves the block-time lookups when no commit-verified source is configured ([`heights/README.md`](../heights/README.md)) |
 | `DEVSHARD_NODE_MANAGER_ADDR` / `NODE_MANAGER_ADDR` | localhost:9400 | node-manager's address, resolved once (`runtimeparams.SettingsFromEnv`) for both its readers: the runtime-params feed and, when it is on, the height follower. Unreachable is not fatal to either — the feed polls the chain instead, less promptly, and the follower fails over to the chain RPC and gRPC |
 | `DEVSHARD_PARAMS_SOURCE` | auto | which feed answers for governance: `auto` prefers the long poll with a chain fallback, `chain` polls the chain alone and dials no node manager |
-| `DEVSHARD_GATEWAY_HOST_PING_DISABLED` | false | whether the hosts the live escrows use are pinged for reachability and clock drift. Observability only — a host that stops answering a ping keeps its routing weight ([`hostping/README.md`](../hostping/README.md)) |
+| `DEVSHARD_GATEWAY_HOST_PING_ENABLED` | true | whether the hosts the live escrows use are pinged for reachability and clock drift. Observability only — a host that stops answering a ping keeps its routing weight ([`hostping/README.md`](../hostping/README.md)) |
 | `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` / `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` | 15s / 2s | the probe cadence and its patience; the timeout must be at most half the interval or the ping is refused and switched off |
 | `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` | 8 | hosts probed at once within one wave |
-| `DEVSHARD_GATEWAY_RPC_STATS_DISABLED` | false | whether the hosts the live escrows use are polled for their rate limiters' counters of the last closed minute. Observability only — a host whose limiter refuses this gateway keeps its routing weight ([`hostrpc/README.md`](../hostrpc/README.md)) |
+| `DEVSHARD_GATEWAY_RPC_STATS_ENABLED` | true | whether the hosts the live escrows use are polled for their rate limiters' counters of the last closed minute. Observability only — a host whose limiter refuses this gateway keeps its routing weight ([`hostrpc/README.md`](../hostrpc/README.md)) |
 | `DEVSHARD_GATEWAY_RPC_STATS_INTERVAL` / `DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT` | 15s / 4s | the poll cadence and its patience per host; the timeout must be at most the interval or the poll is refused and switched off |
 | `DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY` | 8 | hosts polled at once within one wave |
 | `DEVSHARD_ALLOW_PRIVATE_ADDRESSES` | false | whether dials to private addresses are allowed. A host URL comes from chain state, so the guard is on in production and only a stand whose hosts are Docker names turns it off; turning it off is logged |
@@ -99,7 +99,7 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 
 | Variable | Default | What it decides |
 | --- | --- | --- |
-| `DEVSHARD_GATEWAY_DISABLED` | false | the kill switch ([operations.md](./operations.md), "The kill switch") |
+| `DEVSHARD_GATEWAY_ENABLED` | true | whether the gateway serves clients; `false` is the kill switch ([operations.md](./operations.md), "The kill switch") |
 | `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ([operations.md](./operations.md), "The kill switch") |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
 | `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |

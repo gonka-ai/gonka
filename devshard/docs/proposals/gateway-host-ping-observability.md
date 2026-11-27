@@ -219,7 +219,7 @@ Also decide explicitly what "used" means and where the refcount is incremented, 
 - `devshard_gateway_host_ping_probe_kind{host=...,kind=...}`
 - `devshard_gateway_host_ping_targets`, `devshard_gateway_host_ping_ticks_total`, `…_ticks_skipped_total`
 
-Config: `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, concurrency, timeout, capability re-probe TTL, plus a **kill switch** (`DEVSHARD_GATEWAY_HOST_PING_DISABLED`) — symmetric with dapi's `DAPI_API__MLNODE_METRICS_DISABLED`, so a misbehaving probe job can be stopped without a rebuild. Surface A needs this as much as Surface B does.
+Config: `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, concurrency, timeout, capability re-probe TTL, plus a **kill switch** (`DEVSHARD_GATEWAY_HOST_PING_ENABLED=false`) — like dapi's `DAPI_API__MLNODE_METRICS_DISABLED`, so a misbehaving probe job can be stopped without a rebuild. Surface A needs this as much as Surface B does.
 
 ### `devshardd` work
 

@@ -213,7 +213,7 @@ Read from the process environment on every start (not from `gateway.db`). Deploy
 
 | Env | Default | Role |
 | --- | --- | --- |
-| `DEVSHARD_GATEWAY_HOST_PING_DISABLED` | `false` | Kill switch. `true` / `1` / `on` (via `boolvalue.Parse`) stops the job; chat is unchanged |
+| `DEVSHARD_GATEWAY_HOST_PING_ENABLED` | `true` | Kill switch. `false` / `0` / `off` (via `boolvalue.Parse`) stops the job; chat is unchanged |
 | `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` | `15s` | Tick period (`time.ParseDuration`). Keep **below** HTTP idle timeout (120s) so samples stay warm-RTT |
 | `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` | `2s` | Per-target HTTP timeout. Must stay ≪ interval |
 | `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` | `8` | In-flight probes per tick. `≤0` falls back to 8 |
@@ -299,7 +299,7 @@ Skip this list for single-instance v5 (base `docker-compose.yml` only).
 - [ ] Leave the four `DEVSHARD_GATEWAY_HOST_PING_*` vars at defaults unless
       you need a faster scrape (citest uses `INTERVAL=3s`) or a kill
       switch. Unset is the same as the table above.
-- [ ] `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true` must still serve chat;
+- [ ] `DEVSHARD_GATEWAY_HOST_PING_ENABLED=false` must still serve chat;
       `devshard_gateway_host_ping_up` must not appear.
 - [ ] After a successful chat, gateway `/metrics` shows
       `devshard_gateway_host_ping_up{host=…}` and
@@ -400,7 +400,7 @@ make -C devshard/testenv citest-host-ping
 | Test | Expect |
 | --- | --- |
 | `TestHostPing` | Unused host has no `host_ping_up`; after chat, gauges appear (interval patched to `3s`); deactivate drops series |
-| `TestHostPingKillSwitch` | `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true`; chat 200; no `host_ping_up` |
+| `TestHostPingKillSwitch` | `DEVSHARD_GATEWAY_HOST_PING_ENABLED=false`; chat 200; no `host_ping_up` |
 
 ### `TestSQLiteToPostgresHAMigration` — v4 §1.7 on a real child
 

@@ -109,7 +109,7 @@ Feature: Host ping observability
     And devshard_gateway_host_ping_targets >= 1
 
   Scenario: Kill switch does not affect chat
-    Given DEVSHARD_GATEWAY_HOST_PING_DISABLED=true
+    Given DEVSHARD_GATEWAY_HOST_PING_ENABLED=false
     When a chat completion is sent
     Then the response is HTTP 200
     And the host_ping_up series is absent
@@ -136,7 +136,7 @@ curl -sS "$GATEWAY/metrics" | grep -E 'devshard_gateway_host_ping_(up|targets|rt
 
 Expect `host_ping_up{host=…} 1` and `host_ping_targets` ≥ 1.
 
-3. Kill switch: set `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true`, restart the gateway, chat 200, no `host_ping_up` series. Restore the default afterwards.
+3. Kill switch: set `DEVSHARD_GATEWAY_HOST_PING_ENABLED=false`, restart the gateway, chat 200, no `host_ping_up` series. Restore the default afterwards.
 4. Optional: stop `/clock` (or drop the host) on one used target. Chat must still 200; the participant must **not** enter quarantine / 429.
 5. Optional: scrape `http://127.0.0.1:9100/metrics` (dapi) for `dapi_mlnode_ping_*` unless `DAPI_API__MLNODE_PING_DISABLED=true`.
 

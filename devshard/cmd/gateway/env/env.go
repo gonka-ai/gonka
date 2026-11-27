@@ -198,6 +198,14 @@ func Load() (Values, error) {
 		}
 		*target = &parsed
 	}
+	readInvertedBool := func(name string, target **bool) {
+		var enabled *bool
+		readLenientBool(name, &enabled)
+		if enabled != nil {
+			disabled := !*enabled
+			*target = &disabled
+		}
+	}
 	readDurationAsMilliseconds := func(name string, target **int64) {
 		raw := lookup(name)
 		if raw == "" {
@@ -287,7 +295,7 @@ func Load() (Values, error) {
 			ignoreUnusableValue("DEVSHARD_POC_REQUEST_MODE", raw)
 		}
 	}
-	readLenientBool("DEVSHARD_GATEWAY_DISABLED", &values.Disabled)
+	readInvertedBool("DEVSHARD_GATEWAY_ENABLED", &values.Disabled)
 	readString("DEVSHARD_GATEWAY_DISABLED_MESSAGE", &values.DisabledMessage)
 	readString("DEVSHARD_GATEWAY_DISABLED_NEW_URL", &values.DisabledRedirectURL)
 
@@ -337,11 +345,11 @@ func Load() (Values, error) {
 	readLenientInt("DEVSHARD_HEIGHTSYNC_K", 0, &values.HeightSyncAnchorK)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_SLOTS", 0, &values.HeightSyncAnchorSlots)
 	readDurationAsMilliseconds("DEVSHARD_QUIET_SETTLE_DELAY", &values.HeightSyncQuietSettleDelayMS)
-	readLenientBool("DEVSHARD_GATEWAY_HOST_PING_DISABLED", &values.HostPingDisabled)
+	readInvertedBool("DEVSHARD_GATEWAY_HOST_PING_ENABLED", &values.HostPingDisabled)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", &values.HostPingIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", &values.HostPingTimeoutMS)
 	readLenientInt("DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY", 1, &values.HostPingConcurrency)
-	readLenientBool("DEVSHARD_GATEWAY_RPC_STATS_DISABLED", &values.HostRPCStatsDisabled)
+	readInvertedBool("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", &values.HostRPCStatsDisabled)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", &values.HostRPCStatsIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT", &values.HostRPCStatsTimeoutMS)
 	readLenientInt("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", 1, &values.HostRPCStatsConcurrency)

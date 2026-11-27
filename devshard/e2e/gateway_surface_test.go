@@ -21,7 +21,7 @@ func gatewayGet(t *testing.T, client *http.Client, url, bearer string) (int, str
 //  4. Assert admin state still answers, so the escrow stays settleable.
 func TestE2E_GatewayKillSwitchLeavesTheOperatorSurfaceUp(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{
-		gatewayEnvOverrides: map[string]string{"DEVSHARD_GATEWAY_DISABLED": "true"},
+		gatewayEnvOverrides: map[string]string{"DEVSHARD_GATEWAY_ENABLED": "false"},
 	})
 
 	if resp := testutil.SendCompletionRaw(t, client, env.clientURL, "while disabled", testutil.AdminAPIKey); resp.StatusCode != http.StatusServiceUnavailable {
