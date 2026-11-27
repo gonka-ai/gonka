@@ -10,10 +10,11 @@ import (
 	"devshard/cmd/gateway/internal/logkey"
 )
 
-// See ../docs/observability.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
+// See ../docs/observability.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload. NoTraceID is the RequestLine.TraceID of a request that ran with tracing off.
 const (
-	loggedFieldSlots    = 36
+	loggedFieldSlots    = 40
 	MaxLoggedErrorBytes = 256
+	NoTraceID           = ""
 
 	cacheHitOutcome = "cache_hit"
 )
@@ -84,9 +85,8 @@ func requestFinishedFields(line *RequestLine) []any {
 	return withTrace(fields, line)
 }
 
-// withTrace adds the ids a Loki join reads when the request ran under a trace: request_id beside request, and trace_id.
 func withTrace(fields []any, line *RequestLine) []any {
-	if line.TraceID == "" {
+	if line.TraceID == NoTraceID {
 		return fields
 	}
 	return append(fields, logkey.RequestID, line.RequestID, logkey.TraceID, line.TraceID)

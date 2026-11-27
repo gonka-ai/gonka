@@ -4,11 +4,11 @@ import (
 	"context"
 	"time"
 
+	"go.opentelemetry.io/otel/trace"
+
 	"devshard/cmd/gateway/engine"
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/journal"
-
-	"go.opentelemetry.io/otel/trace"
 )
 
 // finishRequest hands the journal what a finished request can no longer be asked. See README.md, "What a finished request records".
@@ -38,10 +38,9 @@ func outputTokenBudget(normalized filters.Result) uint64 {
 	return normalized.MaxCompletionTokens
 }
 
-// traceIDOf is the request span's trace id, or empty while tracing is off.
 func traceIDOf(ctx context.Context) string {
 	if spanContext := trace.SpanContextFromContext(ctx); spanContext.IsValid() {
 		return spanContext.TraceID().String()
 	}
-	return ""
+	return journal.NoTraceID
 }

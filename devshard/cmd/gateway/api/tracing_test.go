@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"testing"
 
-	"devshard/cmd/gateway/internal/logcapture"
-
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	"devshard/cmd/gateway/internal/logcapture"
 )
 
 // Test flow:
