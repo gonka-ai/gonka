@@ -152,8 +152,11 @@ func rewriteDecodedEvent(event []byte, dataLines int, payload []byte, intent Log
 		}
 		return event, false
 	}
-	decoded, changed, ok := decodePayload(payload)
-	if !ok {
+	decoded, changed, outcome := decodePayload(payload)
+	switch outcome {
+	case decodeShapeExceeded:
+		return nil, true
+	case decodeMalformed:
 		return unreadable()
 	}
 	changed = stripDecodedFields(decoded, intent) || changed
