@@ -296,8 +296,8 @@ func Load() (Values, error) {
 		}
 	}
 	readInvertedBool("DEVSHARD_GATEWAY_ENABLED", &values.Disabled)
-	readString("DEVSHARD_GATEWAY_DISABLED_MESSAGE", &values.DisabledMessage)
-	readString("DEVSHARD_GATEWAY_DISABLED_NEW_URL", &values.DisabledRedirectURL)
+	readString("DEVSHARD_GATEWAY_OFF_MESSAGE", &values.DisabledMessage)
+	readString("DEVSHARD_GATEWAY_OFF_REDIRECT_URL", &values.DisabledRedirectURL)
 
 	readLenientBool("DEVSHARD_ESCROW_ROTATION_ENABLED", &values.RotationEnabled)
 	readLenientInt("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 0, &values.RotationPrePoCBlocks)

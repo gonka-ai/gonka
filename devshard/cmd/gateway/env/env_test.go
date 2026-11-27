@@ -68,7 +68,7 @@ func TestLoadParsesTypedValues(t *testing.T) {
 //  2. Call `Load`.
 //  3. Assert the string value is trimmed and the blank int variable loads as unset (nil).
 func TestLoadWhitespaceIsTrimmedAndEmptyMeansUnset(t *testing.T) {
-	t.Setenv("DEVSHARD_GATEWAY_DISABLED_MESSAGE", "  gateway paused  ")
+	t.Setenv("DEVSHARD_GATEWAY_OFF_MESSAGE", "  gateway paused  ")
 	t.Setenv("DEVSHARD_TX_GAS_LIMIT", "   ")
 
 	values, err := Load()
