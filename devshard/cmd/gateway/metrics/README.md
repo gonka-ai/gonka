@@ -6,14 +6,14 @@ The only package that knows Prometheus exists.
 
 ## What it owns
 
-- **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, owed votes, journal, nonce ledger.
-- **Recorders** (`race.go`, `dispatch_recorder.go`, `limit_recorder.go`, `stats_tokenizer_recorder.go`) — the write side, called by the subsystems that produce the facts.
+- **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, height sync (`heightsync_collector.go`: each published escrow's cached height-sync view, rebuilt on every scrape; a draining escrow is not one), unopened escrows (`unopened_collector.go`: the active escrows the last publish could not open, read from `app`'s list, so an escrow that opens or is deactivated leaves no series), chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, owed votes, journal, nonce ledger.
+- **Recorders** (`race.go`, `dispatch_recorder.go`, `limit_recorder.go`, `stats_tokenizer_recorder.go`, `host_rpc_recorder.go`) — the write side, called by the subsystems that produce the facts.
 - **Label discipline** (`labels.go`) — what may become a label and what may not.
 
 ## Boundaries
 
 - **Family names are frozen as `devshard_*`.** A dashboard and an operator's alert select on these strings; a rename is a silent alert that stops firing.
-- **Unbounded labels stay out.** A nonce or a request id is never a label: either would grow the series without end. An escrow id is a label only where [`docs/rules.md`](../docs/rules.md), "11. Labels, ordering and determinism", allows it — the three dispatch counters, deleted when the escrow's dispatcher is reaped, and the registry gauges, rebuilt from the live escrow set on every scrape. What a metric cannot carry, the JSON accounting API serves instead.
+- **Unbounded labels stay out.** A nonce or a request id is never a label: either would grow the series without end. An escrow id is a label only where [`docs/rules.md`](../docs/rules.md), "11. Labels, ordering and determinism", allows it — the three dispatch counters, deleted when the escrow's dispatcher is reaped, and the registry gauges and the height-sync series, rebuilt from the live escrow set on every scrape. What a metric cannot carry, the JSON accounting API serves instead.
 - **A collector reads its source; it does not keep its own copy**, so a gauge cannot disagree with the thing it reports.
 
 ## Cardinality in practice

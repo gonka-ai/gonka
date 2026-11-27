@@ -75,7 +75,7 @@ What it does not measure:
 - **One concern per package.** [`README.md`](./README.md), "Packages", says which package owns what; a package's own `README.md` says what it owns, what it does not, and its boundaries. A change that does not fit an owner's description is in the wrong package, or the description changes with it.
 - **`app` is the composition root.** [`app/README.md`](./app/README.md), says what each of its files is for. Domain rules live in a layer package; the package root holds only the binary's `main.go`.
 - **Changes stay inside `cmd/gateway`.** The devshard libraries (`devshard/user`, `devshard/state`, `devshard/transport`, `devshard/heightsync`) and the chain are owned upstream. When the gateway needs different behaviour from them, adapt on the gateway's side — a wrapper such as `registry.sessionHandle`, a consumer-side interface, and list a library limitation the gateway has to live with in [`docs/rules.md`](./docs/rules.md), "Known gaps".
-- **Protocol rules shared with `devshardctl` live in `devshard/gatewayprotocol`**, a tree beside the devshard libraries rather than one of them. A rule a host, a verifier or the chain would judge differently between the two gateways is changed there, once, and never copied into the gateway; [`gatewayprotocol/README.md`](../../gatewayprotocol/README.md) lists what the tree owns and how hosts are kept from linking it.
+- **Protocol rules live in `devshard/gatewayprotocol`**, a tree beside the devshard libraries rather than one of them. A rule a host, a verifier or the chain would judge is changed there, once, and never copied into the gateway; [`gatewayprotocol/README.md`](../../gatewayprotocol/README.md) lists what the tree owns and how hosts are kept from linking it.
 - **Wire strings live in the package's `vocabulary.go`, type and all.** A metric label value, a log field value, a reason carried between packages: a named string type and its constants, passed as that type rather than `string`.
 - **Interfaces are declared by their consumer**, as small as the consumer needs.
 - **Dependencies.** `common`, `inference-chain` and the devshard libraries come through `replace` in `devshard/go.mod`. A new third-party module needs a reason in the pull request and a `go mod tidy` from `devshard/`.
@@ -136,14 +136,11 @@ These rules bind new and changed code; an existing comment in a file you touch m
 - **Fakes** implement the consumer-side interface; a real in-process session is preferred where the behaviour under test lives in the session.
 - **A bug fix starts with a failing test**, shown failing for the reason the bug gives. An assertion that passed before the fix is checked by mutation: break the fix, watch the test fail, restore it.
 - **End to end.** Tests that need the running stand — mock chain, real hosts, containers — live in [`devshard/e2e`](../../e2e/), named `TestE2E_Gateway…`, in the same `Test flow` format. `make -C devshard e2e` builds the images and runs them; [`devshard/e2e/README.md`](../../e2e/README.md) shows how to run one.
-- **End-to-end gates.** Every e2e test skips unless `DEVSHARD_E2E=1`, which the compose runner sets. Two more gates keep the long scenarios out of that default run, and the runner passes neither through, so set them on the run itself. `DEVSHARD_E2E_SLOW=1` adds the gateway scenarios that wait out a protocol deadline (`TestE2E_GatewayAccountsATimeoutItsVerifiersCouldNotDecide`, `TestE2E_GatewayAppliesTheTimeoutOfAHostThatReceiptsAndStalls`, `TestE2E_GatewayAccountsAStalledNonceEvenWhenTheGroupCallsItARefusal`) and the slow scenarios of the parity test. `DEVSHARD_E2E_PARITY=1` runs `TestE2E_DriverParity`, which boots the stand twice per scenario to compare devshardctl and the gateway on the same traffic. From the repository root, after `make -C devshard e2e-images`:
+- **End-to-end gates.** Every e2e test skips unless `DEVSHARD_E2E=1`, which the compose runner sets. One more gate keeps the long scenarios out of that default run, and the runner does not pass it through, so set it on the run itself. `DEVSHARD_E2E_SLOW=1` adds the gateway scenarios that wait out a protocol deadline (`TestE2E_GatewayAccountsATimeoutItsVerifiersCouldNotDecide`, `TestE2E_GatewayAppliesTheTimeoutOfAHostThatReceiptsAndStalls`, `TestE2E_GatewayAccountsAStalledNonceEvenWhenTheGroupCallsItARefusal`). From the repository root, after `make -C devshard e2e-images`:
 
   ```sh
   docker compose -f devshard/docker-compose.e2e.yml run --rm -e DEVSHARD_E2E_SLOW=1 e2e-test go test ./e2e -run TestE2E_Gateway -count=1 -v -timeout 30m
-  docker compose -f devshard/docker-compose.e2e.yml run --rm -e DEVSHARD_E2E_PARITY=1 -e DEVSHARD_E2E_SLOW=1 e2e-test go test ./e2e -run TestE2E_DriverParity -count=1 -v -timeout 60m
   ```
-
-  Drop `-e DEVSHARD_E2E_SLOW=1` from the second command to skip the parity scenarios that wait out a protocol deadline.
 
 ## Scenario harness
 

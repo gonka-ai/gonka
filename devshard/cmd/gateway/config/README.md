@@ -29,9 +29,10 @@ Everything the gateway's behaviour depends on, in one value that is never mutate
 | `Limits.HostWindows` | the per-host congestion windows, counted in requests of the model: a floor and a starting size for input and for output, and no ceiling — where a window stops is what the host's own congestion signals say. See [`docs/capacity.md`](../docs/capacity.md), "The participant limiter: IOCW". |
 | `Limits.Congestion` | the factors a narrowing multiplies the blamed window by, the factor the other window takes with it, and how far above the best latency it has held a host may drift before a healthy answer counts as congestion. |
 | `ModelSettings` | one model's overrides of the network-wide settings of the same name, held under `models.<id>`; a `nil` field inherits the network value rather than meaning zero. See "Per-model settings". |
-| `Modes` | PoC mode and the disabled/redirect switches. |
+| `Modes` | PoC mode and the enabled, off-message and off-redirect switches. |
 | `Rotation` | escrow rotation, its settlement switches (any epoch and previous epoch only), and how far before PoC it runs; `SettleMarginBlocks` (default 600, at least 1) is how many blocks before an escrow's settlement deadline it is parked for settling ([`docs/escrows.md`](../docs/escrows.md)). |
 | `HeightSync` | whether the heartbeat cadence runs, whether a session chases a seeded tip, the optional mainnet follower, the anchor cadence `AnchorK` / `AnchorSlots` ([`heights/README.md`](../heights/README.md)), and `QuietSettleDelayMS`, how long a session keeps a leftover receipt or Finish for the next request before composing them on its own: 5 minutes by default, the shared session's `user.DefaultQuietSettleDelay`. |
+| `HostRPCStats` | the poll of the live escrows' hosts for their rate-limiter counters: interval and timeout in milliseconds, concurrency, and a switch to turn it off ([`hostrpc/README.md`](../hostrpc/README.md)). |
 | `HostPing` | the reachability and clock-drift probe of the live escrows' hosts: interval and timeout in milliseconds, concurrency, and a switch to turn it off ([`hostping/README.md`](../hostping/README.md)). |
 | `Cache` | the response cache's byte ceiling. |
 | `Accounting` | the request records, bounded on both axes; neither bound may be zero. |

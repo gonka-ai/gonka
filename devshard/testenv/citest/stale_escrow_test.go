@@ -28,7 +28,7 @@ func TestStaleEscrow(t *testing.T) {
 	gatewayURL := eps.GatewayHTTP
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "mock-chain", "mock-dapi", "versiond-0", "versiond-1")
+			harness.DumpComposeLogs(t, stack, "gateway", "mock-chain", "mock-dapi", "versiond-0", "versiond-1")
 		}
 	})
 

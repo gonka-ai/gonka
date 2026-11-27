@@ -50,17 +50,20 @@ func TestGatewaySessionLedgerQuiet_IgnoresLiveInferences(t *testing.T) {
 }
 
 func TestGatewaySessionOpenHolds(t *testing.T) {
-	if got := gatewaySessionOpenHolds(nil); got != 0 {
-		t.Fatalf("nil counts: got %d", got)
+	entriesWithStatuses := func(statuses ...string) []gatewayInferenceEntry {
+		entries := make([]gatewayInferenceEntry, 0, len(statuses))
+		for _, status := range statuses {
+			entries = append(entries, gatewayInferenceEntry{Status: status})
+		}
+		return entries
 	}
-	if got := gatewaySessionOpenHolds(map[string]int{
-		"finished": 2, "validated": 1, "timed_out": 1, "invalidated": 1, "challenged": 4,
-	}); got != 0 {
+	if got := openHolds(nil); got != 0 {
+		t.Fatalf("no entries: got %d", got)
+	}
+	if got := openHolds(entriesWithStatuses("finished", "validated", "timed_out", "invalidated", "challenged")); got != 0 {
 		t.Fatalf("non-reservation statuses must be 0 open holds, got %d", got)
 	}
-	if got := gatewaySessionOpenHolds(map[string]int{
-		"pending": 1, "started": 2, "challenged": 3, "finished": 9,
-	}); got != 3 {
+	if got := openHolds(entriesWithStatuses("pending", "started", "started", "challenged", "finished")); got != 3 {
 		t.Fatalf("pending+started only: got %d want 3", got)
 	}
 }

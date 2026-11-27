@@ -68,7 +68,7 @@ The container's healthcheck probes `/healthz`, which answers 200 without checkin
 
 | Route | Why the healthcheck does not use it |
 | --- | --- |
-| `/v1/status` | every probe would build the status of every escrow. It also does not say whether chat is served: its `requests_blocked` reports the chain's admission gate, while a disabled gateway answers 503, or 308 with a redirect set, on the chat routes |
+| `/v1/status` | every probe would build the status of every escrow. It also does not say whether chat is served: its `requests_blocked` reports the chain's admission gate, while a gateway that is off answers 503, or 308 with a redirect set, on the chat routes |
 | `/metrics` | every probe would be a full scrape |
 
 ## Settings to decide before the first run

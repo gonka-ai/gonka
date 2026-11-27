@@ -178,7 +178,7 @@ func TestWarmupWithoutALedgerRecordsNothingAndDoesNotPanic(t *testing.T) {
 // Test flow:
 //  1. Parse the probe's fixed prompt body.
 //  2. Assert its declared `max_tokens` matches `probe.MaxTokens`, the amount the warmup actually reserves.
-//  3. Assert the probe's params reserve exactly `state.MinReservationTokens`, the same output budget devshardctl's PoC probe reserves.
+//  3. Assert the probe's params reserve exactly `state.MinReservationTokens`, the output floor a burned nonce reserves.
 func TestABurnedNonceAndAWarmupProbeAgreeOnTheirTokenFloor(t *testing.T) {
 	var body struct {
 		MaxTokens uint64 `json:"max_tokens"`

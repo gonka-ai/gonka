@@ -284,7 +284,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
     @Tag("integration")
     @Disabled(
         "Accepted Step 7 e2e (2026-05-22): governance + runtimeconfig disable/re-enable verified in " +
-            "versiond logs; curl via devshardctl proxy does not observe HTTP 503 (proxy timeout/502). " +
+            "versiond logs; curl via the gateway did not observe HTTP 503 (proxy timeout/502). " +
             "See devshard/docs/params-refactoring-implementation.md — Step 7 e2e acceptance notes.",
     )
     fun `governance flip disables then re-enables devshardd completions within 30s`() {
@@ -294,15 +294,15 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
         val escrowAmount = 7_000_000_000L
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
-        val handle = genesis.startDevshardProxy(
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = overrideRoutePrefix,
         )
         try {
             genesis.waitForMidEpochWindow()
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
-            val okBefore = genesis.sendChatCompletionWithStatus(handle.proxyUrl, devshardEscrowModel, "before gov")
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
+            val okBefore = genesis.sendChatCompletionWithStatus(handle.escrowUrl, devshardEscrowModel, "before gov")
             assertThat(okBefore.httpCode).isBetween(200, 299)
 
             val chainParams = genesis.getParams()
@@ -319,7 +319,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
             genesis.waitForNextInferenceWindow()
             val rejected = genesis.waitForDevshardCompletionRejected(
                 escrowModelId = devshardEscrowModel,
-                proxyUrl = handle.proxyUrl,
+                escrowUrl = handle.escrowUrl,
                 timeoutMs = propagationSlaMs,
             )
             assertThat(rejected)
@@ -342,7 +342,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                 while (System.currentTimeMillis() < deadline && !accepted) {
                     val resp = try {
                         genesis.sendChatCompletionWithStatus(
-                            handle.proxyUrl,
+                            handle.escrowUrl,
                             devshardEscrowModel,
                             "after re-enable",
                             maxTimeSeconds = 8,
@@ -363,7 +363,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
             assertThat(enableElapsed).isLessThan(governanceReEnableSlaMs)
             assertThat(chainEscrow(genesis).devshardRequestsEnabled).isTrue()
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
     }
 
@@ -407,7 +407,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
             user.keyName,
             modelId = devshardEscrowModel,
         )
-        val handle = genesis.startDevshardProxy(
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = overrideRoutePrefix,
@@ -415,13 +415,13 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
         try {
             logSection("Restarting dapi API container (devshardd long-poll should backoff and resume)")
             restartApiContainer(genesis)
-            genesis.stopDevshardProxy(escrowId)
-            val proxyAfterRestart = genesis.startDevshardProxy(
+            genesis.withdrawDevshardEscrow(escrowId)
+            val escrowAfterRestart = genesis.serveDevshardEscrow(
                 escrowId = escrowId,
                 keyName = user.keyName,
                 routePrefix = overrideRoutePrefix,
             )
-            genesis.waitForDevshardProxyWarmup(proxyAfterRestart.proxyUrl)
+            genesis.waitForDevshardEscrowWarmup(escrowAfterRestart.escrowUrl)
             nodeManagerClient(genesis).use { waitForSyncedRuntimeConfig(it) }
             genesis.waitForNextInferenceWindow()
 
@@ -433,7 +433,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
                 while (System.currentTimeMillis() < deadline && !recovered) {
                     val resp = try {
                         genesis.sendChatCompletionWithStatus(
-                            proxyAfterRestart.proxyUrl,
+                            escrowAfterRestart.escrowUrl,
                             devshardEscrowModel,
                             "post-restart",
                             maxTimeSeconds = 8,
@@ -453,7 +453,7 @@ class DevsharddRuntimeConfigTests : TestermintTest() {
             }
             assertThat(elapsed).isLessThan(recoveryDeadlineMs)
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
     }
 

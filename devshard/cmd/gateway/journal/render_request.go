@@ -10,10 +10,11 @@ import (
 	"devshard/cmd/gateway/internal/logkey"
 )
 
-// See ../docs/observability.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload.
+// See ../docs/observability.md, "The request record". MaxLoggedErrorBytes bounds host-controlled text in a log line: a message-less HostApplicationError renders its whole payload. NoTraceID is the RequestLine.TraceID of a request that ran with tracing off.
 const (
-	loggedFieldSlots    = 36
+	loggedFieldSlots    = 40
 	MaxLoggedErrorBytes = 256
+	NoTraceID           = ""
 
 	cacheHitOutcome = "cache_hit"
 )
@@ -21,9 +22,9 @@ const (
 // renderRequestFinished writes both shapes: the short one of a cache hit, and the record of a raced request.
 func renderRequestFinished(lines logSink, line *RequestLine) {
 	if line.CacheHit {
-		lines.Info("request finished", logkey.Request, line.RequestID, logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID,
+		lines.Info("request finished", withTrace([]any{logkey.Request, line.RequestID, logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID,
 			logkey.Escrow, line.EscrowID, logkey.Stream, line.ClientStream, logkey.InputTokens, line.Outcome.InputTokens,
-			logkey.InputTokensSource, string(cmp.Or(line.Outcome.InputTokensSource, filters.InputTokensBytesEstimate)), logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes)
+			logkey.InputTokensSource, string(cmp.Or(line.Outcome.InputTokensSource, filters.InputTokensBytesEstimate)), logkey.Outcome, cacheHitOutcome, logkey.Bytes, line.Bytes}, line)...)
 		return
 	}
 	fields := requestFinishedFields(line)
@@ -35,18 +36,18 @@ func renderRequestFinished(lines logSink, line *RequestLine) {
 }
 
 func renderRequestThrottled(lines logSink, line *RequestLine) {
-	lines.Warn("gateway limiter turned a request away", logkey.Request, line.RequestID,
-		logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID, logkey.Reason, line.LimiterReason)
+	lines.Warn("gateway limiter turned a request away", withTrace([]any{logkey.Request, line.RequestID,
+		logkey.Model, line.Model, logkey.APIKeyID, line.APIKeyID, logkey.Reason, line.LimiterReason}, line)...)
 }
 
 func renderRequestBodyUnread(lines logSink, line *RequestLine) {
-	lines.Warn("request body not received: connection closed", logkey.Request, line.RequestID, logkey.Error, loggedError(line.BodyErr))
+	lines.Warn("request body not received: connection closed", withTrace([]any{logkey.Request, line.RequestID, logkey.Error, loggedError(line.BodyErr)}, line)...)
 }
 
 // renderReplyNotCached names a truncated answer, which nothing else does. See docs/observability.md, "Lines that mean something happened".
 func renderReplyNotCached(lines logSink, line *RequestLine) {
-	lines.Warn("a host stopped mid-answer: reply served, not cached", logkey.Request, line.RequestID,
-		logkey.Model, line.Model, logkey.Escrow, line.EscrowID)
+	lines.Warn("a host stopped mid-answer: reply served, not cached", withTrace([]any{logkey.Request, line.RequestID,
+		logkey.Model, line.Model, logkey.Escrow, line.EscrowID}, line)...)
 }
 
 // requestFinishedFields builds the line in a slice reserved for the widest one a finished request can carry.
@@ -81,7 +82,14 @@ func requestFinishedFields(line *RequestLine) []any {
 	if line.DeliverErr != nil {
 		fields = append(fields, logkey.DeliverError, loggedError(line.DeliverErr))
 	}
-	return fields
+	return withTrace(fields, line)
+}
+
+func withTrace(fields []any, line *RequestLine) []any {
+	if line.TraceID == NoTraceID {
+		return fields
+	}
+	return append(fields, logkey.RequestID, line.RequestID, logkey.TraceID, line.TraceID)
 }
 
 func hostClockOffset(outcome engine.RaceOutcome) (offsetMS, roundTripMS int64, stamped bool) {

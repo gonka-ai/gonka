@@ -82,7 +82,11 @@ func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config
 	return []bootStep{
 		{name: "chain observer", start: func() error { g.observer.Start(backgroundCtx); return nil }},
 		{name: "warmup prober", start: func() error { g.warmup.Start(backgroundCtx); return nil }},
-		{name: "host pings", start: func() error { g.hostPings.Start(backgroundCtx); return nil }},
+		{name: "host pings", start: func() error {
+			g.hostPings.Start(backgroundCtx)
+			g.hostRPCStats.Start(backgroundCtx)
+			return nil
+		}},
 		{name: "seed devshards", start: func() error { return seedDevshards(ctx, g.store, settings.Server.DevshardsJSON) }},
 		{name: "publish escrows", start: func() error {
 			unopened, err := g.publishEscrows(ctx)

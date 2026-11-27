@@ -133,7 +133,7 @@ paths:
 | [`deploy/join/docker-compose.yml`](../../deploy/join/docker-compose.yml) | Image tags; **edge-api** service; **proxy** (`EDGE_API_SERVICE_NAME`, depends_on edge-api) |
 | [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | Postgres + versiond2 + versiond-router; `proxy.VERSIOND_SERVICE_NAME` |
 | [`deploy/join/docker-compose.edge-api-multi.yml`](../../deploy/join/docker-compose.edge-api-multi.yml) | Optional multi edge-api + router |
-| [`deploy/join/docker-compose.devshard-gateway.yml`](../../deploy/join/docker-compose.devshard-gateway.yml) | Gateway (`DEVSHARD_CHAIN_GRPC`) |
+| [`devshard/cmd/gateway/deploy/docker-compose.devshard-gateway.yml`](../cmd/gateway/deploy/docker-compose.devshard-gateway.yml) | Gateway (`DEVSHARD_CHAIN_GRPC`) |
 
 ```bash
 cd deploy/join

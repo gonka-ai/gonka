@@ -50,7 +50,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 `requireAdmin` is where the admin key comparison lives, on the operator routes themselves rather than in a blanket middleware. With no admin key configured the whole surface answers 404.
 
-`disabled` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: a healthcheck may read `/v1/status`, and a gateway disabled on purpose is not unhealthy.
+`enabled: false` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: a healthcheck may read `/v1/status`, and a gateway switched off on purpose is not unhealthy.
 
 ## Reading a body
 
@@ -83,7 +83,7 @@ Each `route` is one registered pattern. An empty label means the route is not in
 - `Send` hands the stream on unwrapped: the transport flushes each SSE line through an `http.Flusher` assertion on it, and a wrapper would leave a crowned winner's bytes in the server's buffer. `ProcessResponse` is applied for a reply that arrived beside an error too.
 - `divergedState` reads a post state root the escrow cannot accept from either side of the wire: the host reports it as a diff it could not apply, the session as a hash that differs from the local root.
 - `Poster` resolves the vote poster for one escrow and the params its race committed. A retired escrow still resolves: its committed nonces have no other settlement path.
-- `escrowVotes.payload` rebuilds what the host was asked for with `Payload` in [`devshard/gatewayprotocol/timeoutclaim`](../../../gatewayprotocol/timeoutclaim/README.md), the rule `devshardctl` follows too. The record is read on its own with `Inference`, never through `SnapshotState`: a vote comes when an escrow is already struggling, and a full state copy per vote is what it can least afford. The status views read the balance and the version the same way.
+- `escrowVotes.payload` rebuilds what the host was asked for with `Payload` in [`devshard/gatewayprotocol/timeoutclaim`](../../../gatewayprotocol/timeoutclaim/README.md). The record is read on its own with `Inference`, never through `SnapshotState`: a vote comes when an escrow is already struggling, and a full state copy per vote is what it can least afford. The status views read the balance and the version the same way.
 
 ## Streaming the reply
 
@@ -165,6 +165,8 @@ A request's prompt is counted at most once. `checkContext` reads the prompt for 
 `devshardView` and `rotationView` keep the storage rows out of the response: without them a column rename in the store silently changes the API, and the record's own field names reach the client as written.
 
 These keys are fixed: an escrow is `id` in `/v1/status`, `/v1/admin/state` and the `/v1/admin/devshards` answers and requests, and `active_requests`, `latest` / `model_id`, `suspicious_hosts`, `loaded_runtimes`, `escrows_removed`, `nonces`, `max_concurrent_requests_per_10000_weight` in `capacity`, `active` on import and `model_id` on escrow creation. Import takes `source_path`, the path the gateway copies the escrow from. The `/v1/admin/devshards` listing goes through `devshardView` like `/v1/admin/state`, so an empty `settle_tx_hash` or `route_prefix` is left out. `/v1/status` reports `chain_phase`, the chain's epoch phase as the last snapshot read it, and a listing row carries `runtime` only while its session is resident; `admission_test.go` and `admin_test.go` read those two by name, and `fixed_keys_test.go` holds the rest in place. The admin settings keep their own keys: `config.Overrides` is also the stored form, so its keys stay as they are.
+
+`/v1/status` answers `mode: "gateway"` as a constant, and the PoC request mode (`off` or `relaxed`) under `poc_mode`; `mode` is the process kind and `poc_mode` the request mode. Each `devshards[]` row whose session is routable carries `config`, the parameters the session froze at creation under snake_case keys (`refusal_timeout`, `execution_timeout`, `token_price`, `create_devshard_fee`, `fee_per_nonce`, `vote_threshold`, `validation_rate`, `inference_seal_grace_nonces`, `inference_seal_grace_seconds`, `auto_seal_every_n_nonces`); `/devshard/{id}/v1/debug/state` carries the same values under the Go field names. `config` is read through `sessionConfigReader`, the session read that copies only the config, so a session that cannot report it leaves the key out.
 
 `devshardStatus.SessionVersion` is the protocol tag the session was created under and the one every settlement payload carries. An operator reading this endpoint has no other way to see which version an escrow is bound to, and a mismatch with the host it dispatches to is what makes a settlement unacceptable.
 

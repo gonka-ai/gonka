@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -31,6 +30,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/protobuf/proto"
+)
+
+const (
+	gatewayStatusPollInterval = 500 * time.Millisecond
+	rotationWatchWindow       = 30 * time.Second
 )
 
 // BootAdversarialStack boots the standard stack and waits for gateway chat readiness.
@@ -252,83 +256,39 @@ func PatchTestenvEscrowSettle(t *testing.T, client *http.Client, mockDapiHTTP st
 	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /testenv/escrow: %s", string(body))
 }
 
-// GetGatewayEscrowID reads the active escrow id from gateway /v1/status.
-func GetGatewayEscrowID(t *testing.T, client *http.Client, gatewayURL string) string {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	var status map[string]any
-	require.NoError(t, GetJSON(client, gatewayURL+"/v1/status", &status))
-	id, ok := statusEscrowID(status)
-	if !ok {
-		t.Fatalf("gateway /v1/status missing escrow_id: %v", status)
-	}
-	return id
-}
-
-// WaitGatewayEscrowRetired polls GET /v1/status until escrowID is no longer
-// the resident runtime (missing escrow_id, typically phase=not_found, or a
-// different id after rotation). Height-sync series drop only after retireRuntime
-// removes the runtime from the registry.
+// WaitGatewayEscrowRetired polls GET /v1/status until escrowID is no longer a routable escrow.
 func WaitGatewayEscrowRetired(t *testing.T, client *http.Client, gatewayURL, escrowID string, timeout time.Duration) {
 	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
 	if timeout == 0 {
 		timeout = 2 * time.Minute
 	}
 	require.NotEmpty(t, escrowID)
-	ok := AssertEventually(t, timeout, 500*time.Millisecond, func() bool {
-		var status map[string]any
-		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
-			return false
-		}
-		id, present := statusEscrowID(status)
-		return !present || id != escrowID
+	ok := AssertEventually(t, timeout, gatewayStatusPollInterval, func() bool {
+		escrows, err := GetGatewayStatusEscrows(client, gatewayURL)
+		return err == nil && !statusListsEscrow(escrows, escrowID)
 	})
-	require.True(t, ok, "escrow %s still resident on /v1/status after %s", escrowID, timeout)
+	require.True(t, ok, "escrow %s still routable on /v1/status after %s", escrowID, timeout)
 }
 
-// RequireGatewayEscrowNotRotated asserts /v1/status did not pick up a new
-// escrow after previousEscrowID died. A retired last runtime leaves no
-// escrow_id and reports phase=not_found; that is deactivation, not rotation.
-// Polls briefly so retire-after-drain can land as not_found; a still-resident
-// runtime with the same id also passes.
+// RequireGatewayEscrowNotRotated asserts /v1/status picked up no new escrow after previousEscrowID died: it either still lists previousEscrowID alone or lists nothing.
 func RequireGatewayEscrowNotRotated(t *testing.T, client *http.Client, gatewayURL, previousEscrowID string) {
 	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	deadline := time.Now().Add(30 * time.Second)
-	var last map[string]any
+	deadline := time.Now().Add(rotationWatchWindow)
 	for {
-		require.NoError(t, GetJSON(client, gatewayURL+"/v1/status", &last))
-		id, ok := statusEscrowID(last)
-		if ok {
-			require.Equal(t, previousEscrowID, id, "gateway silently rotated to a new escrow after stale settlement")
-			if time.Now().After(deadline) {
-				t.Logf("gateway still resident with escrow %s after settle (not rotated)", id)
-				return
-			}
-			time.Sleep(500 * time.Millisecond)
-			continue
+		escrows, err := GetGatewayStatusEscrows(client, gatewayURL)
+		require.NoError(t, err)
+		if len(escrows) == 0 {
+			return
 		}
-		phase, _ := last["phase"].(string)
-		require.Equal(t, "not_found", phase, "retired /v1/status must name the absence (phase=not_found), got %v", last)
-		return
+		for _, escrow := range escrows {
+			require.Equal(t, previousEscrowID, escrow.EscrowID, "gateway silently rotated to a new escrow after stale settlement")
+		}
+		if time.Now().After(deadline) {
+			t.Logf("gateway still routes escrow %s after settle (not rotated)", previousEscrowID)
+			return
+		}
+		time.Sleep(gatewayStatusPollInterval)
 	}
-}
-
-func statusEscrowID(status map[string]any) (string, bool) {
-	if id, ok := status["escrow_id"].(string); ok && id != "" {
-		return id, true
-	}
-	if n, ok := status["escrow_id"].(float64); ok && n > 0 {
-		return fmt.Sprintf("%.0f", n), true
-	}
-	return "", false
 }
 
 // PatchAdversarialFastTimeouts lowers refusal/execution timeouts so gateway adversarial paths fail quickly.
@@ -343,101 +303,6 @@ func PatchAdversarialFastTimeouts(t *testing.T, client *http.Client, mockDapiHTT
 	time.Sleep(8 * time.Second)
 }
 
-// PatchGatewayAdminSettings POSTs a partial /v1/admin/settings body (JSON object).
-func PatchGatewayAdminSettings(t *testing.T, client *http.Client, gatewayURL string, body map[string]any) {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	data, err := json.Marshal(body)
-	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /v1/admin/settings: %s", string(respBody))
-}
-
-// PatchAdversarialFastRedundancy shrinks gateway redundancy timers so a stopped
-// host fails the race quickly enough for deadline-based dispositions in citest.
-func PatchAdversarialFastRedundancy(t *testing.T, client *http.Client, gatewayURL string) {
-	t.Helper()
-	PatchGatewayAdminSettings(t, client, gatewayURL, map[string]any{
-		"redundancy": map[string]any{
-			"receipt_timeout_ms":               int64(200),
-			"non_stream_response_floor_ms":     int64(300),
-			"non_stream_no_content_timeout_ms": int64(800),
-			"non_stream_max_attempt_wait_ms":   int64(900),
-			"secondary_wait_after_winner_ms":   int64(250),
-		},
-	})
-}
-
-// PostGatewayChatStreamResult posts stream chat and returns status, assembled content, and whether [DONE] was seen.
-func PostGatewayChatStreamResult(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, content string, sawDone bool) {
-	t.Helper()
-	if client == nil {
-		client = GatewayChatClient()
-	}
-	req.Stream = true
-	data, err := json.Marshal(req)
-	require.NoError(t, err)
-
-	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
-	require.NoError(t, err)
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
-
-	resp, err := client.Do(httpReq)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	status = resp.StatusCode
-	if status >= 300 {
-		return status, string(body), false
-	}
-
-	var assembled strings.Builder
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "data: [DONE]" {
-			sawDone = true
-			continue
-		}
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		payload := strings.TrimPrefix(line, "data: ")
-		var chunk map[string]any
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			continue
-		}
-		choices, _ := chunk["choices"].([]any)
-		if len(choices) == 0 {
-			continue
-		}
-		choice, _ := choices[0].(map[string]any)
-		delta, _ := choice["delta"].(map[string]any)
-		if delta == nil {
-			continue
-		}
-		if s, ok := delta["content"].(string); ok {
-			assembled.WriteString(s)
-		}
-	}
-	require.NoError(t, scanner.Err())
-	return status, assembled.String(), sawDone
-}
-
 func PostGatewayChatExpectStatus(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest, wantStatus int) {
 	t.Helper()
 	if client == nil {
@@ -448,9 +313,7 @@ func PostGatewayChatExpectStatus(t *testing.T, client *http.Client, gatewayURL, 
 	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
 	require.NoError(t, err)
 	httpReq.Header.Set("Content-Type", "application/json")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(httpReq, adminAPIKey)
 	resp, err := client.Do(httpReq)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -471,9 +334,7 @@ func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey stri
 		return 0, err, ""
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(httpReq, adminAPIKey)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return 0, err, ""
@@ -481,20 +342,6 @@ func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey stri
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, nil, string(raw)
-}
-
-// PostGatewayChatSoft posts non-stream chat and returns status / transport error
-// without failing the test. Used while injecting host faults where either
-// success or failure is acceptable.
-func PostGatewayChatSoft(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, transportErr error) {
-	t.Helper()
-	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
-	if transportErr != nil {
-		t.Logf("citest: soft chat transport error: %v", transportErr)
-		return 0, transportErr
-	}
-	t.Logf("citest: soft chat status=%d body_len=%d", status, len(body))
-	return status, nil
 }
 
 // PostGatewayChatExpectFailure posts non-stream chat and requires HTTP status >= 400 or transport timeout.

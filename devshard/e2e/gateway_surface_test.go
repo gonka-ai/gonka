@@ -15,23 +15,23 @@ func gatewayGet(t *testing.T, client *http.Client, url, bearer string) (int, str
 }
 
 // Test flow:
-//  1. Start the three-host environment with the gateway disabled.
+//  1. Start the three-host environment with the gateway switched off.
 //  2. Assert a completion is answered 503.
 //  3. Assert the scrape still answers, so the gateway can be diagnosed.
 //  4. Assert admin state still answers, so the escrow stays settleable.
 func TestE2E_GatewayKillSwitchLeavesTheOperatorSurfaceUp(t *testing.T) {
 	env, client := startGatewayEnv(t, e2eEnvOptions{
-		gatewayEnvOverrides: map[string]string{"DEVSHARD_GATEWAY_DISABLED": "true"},
+		gatewayEnvOverrides: map[string]string{"DEVSHARD_GATEWAY_ENABLED": "false"},
 	})
 
-	if resp := testutil.SendCompletionRaw(t, client, env.clientURL, "while disabled", testutil.AdminAPIKey); resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("chat while disabled = %d %s, want 503", resp.StatusCode, resp.Body)
+	if resp := testutil.SendCompletionRaw(t, client, env.clientURL, "while switched off", testutil.AdminAPIKey); resp.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("chat while switched off = %d %s, want 503", resp.StatusCode, resp.Body)
 	}
 	if status, _ := gatewayGet(t, client, env.clientURL+"/metrics", ""); status != http.StatusOK {
-		t.Errorf("/metrics while disabled = %d, want 200: a gateway nobody can scrape cannot be diagnosed", status)
+		t.Errorf("/metrics while switched off = %d, want 200: a gateway nobody can scrape cannot be diagnosed", status)
 	}
 	if status, _ := gatewayGet(t, client, env.clientURL+"/v1/admin/state", testutil.AdminAPIKey); status != http.StatusOK {
-		t.Errorf("admin state while disabled = %d, want 200: the escrow still has to be settleable", status)
+		t.Errorf("admin state while switched off = %d, want 200: the escrow still has to be settleable", status)
 	}
 }
 

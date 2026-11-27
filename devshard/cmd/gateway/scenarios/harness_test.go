@@ -312,7 +312,7 @@ func setGatewayEnvironment(t *testing.T, spec testSpec, creator *signing.Secp256
 		"DEVSHARD_ESCROW_ROTATION_MODELS_JSON":        modelsJSON(t, spec.allModels(), nil),
 		"DEVSHARD_TX_FEE_AMOUNT":                      "1000",
 		"DEVSHARD_TX_POLL_INTERVAL_MS":                "500",
-		"DEVSHARD_GATEWAY_HOST_PING_DISABLED":         "true",
+		"DEVSHARD_GATEWAY_HOST_PING_ENABLED":          "false",
 		"GATEWAY_WARM_NEW_ESCROWS":                    strconv.FormatBool(spec.armedFloor),
 		"DEVSHARD_STATS_ENABLED":                      "true",
 		"DEVSHARD_STATS_PORT":                         "9091",

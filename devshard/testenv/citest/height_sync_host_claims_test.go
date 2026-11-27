@@ -14,7 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const hostClaimsReconcileWarn = "untrusted peer tip disagrees with oracle at reconciled height"
+const (
+	hostClaimsReconcileWarn  = "untrusted peer tip disagrees with oracle at reconciled height"
+	lowerClaimMinimumSpread  = 15
+	futureClaimMinimumSpread = 8
+	heightSyncWait           = 2 * time.Minute
+	busyDischargeSlack       = 20 * time.Second
+)
 
 func bootHeightSyncHostClaimStack(t *testing.T, prefix string, delta int64, fabricate bool) (*harness.Stack, *config.File, harness.Endpoints, string) {
 	t.Helper()
@@ -24,7 +30,7 @@ func bootHeightSyncHostClaimStack(t *testing.T, prefix string, delta int64, fabr
 	solo := harness.FirstSoloHostID(t, cfg)
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", solo)
 		}
 	})
 	return stack, cfg, eps, solo
@@ -77,7 +83,7 @@ func dumpHeightSyncLogs(t *testing.T, stack *harness.Stack, services ...string) 
 
 // TestContainerE2E_HeightSync_HostLowerHeightAutoAligns is scenario A: the solo
 // identity's Latest() is patched 20 blocks behind. Chat must keep returning 200;
-// operators see a negative delta and a non-zero height_spread / host_height_lag.
+// operators see a negative delta and a height spread on the gateway's height-sync view.
 func TestContainerE2E_HeightSync_HostLowerHeightAutoAligns(t *testing.T) {
 	stack, cfg, eps, solo := bootHeightSyncHostClaimStack(t, "citest-hs-claim-a-*", -20, false)
 	waitHostClaimOverlayArmed(t, stack, solo)
@@ -87,15 +93,11 @@ func TestContainerE2E_HeightSync_HostLowerHeightAutoAligns(t *testing.T) {
 		postHeightSyncChat(t, cfg, eps, fmt.Sprintf("citest height-sync host lower height %d", i))
 	}
 
-	client := harness.GatewayChatClient()
-	body := harness.WaitMetricsPredicate(t, client, eps.GatewayHTTP+"/metrics", 2*time.Minute, func(b string) bool {
-		spread, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_height_spread", nil)
-		return ok && spread >= 15
-	})
-	spread, _ := harness.MetricLineValue(body, "devshard_gateway_heightsync_height_spread", nil)
-	require.GreaterOrEqual(t, spread, 15.0, "solo lag of 20 must show up as height_spread")
+	view := waitHeightSpread(t, eps, lowerClaimMinimumSpread)
+	spread, _ := view.HeightSpread()
+	require.GreaterOrEqual(t, spread, uint64(lowerClaimMinimumSpread), "solo lag of 20 must show up as the height spread")
 
-	logs := composeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
+	logs := composeLogs(t, stack, "gateway", "versiond-0", "versiond-1", solo)
 	require.True(t, harness.LogsContainFields(logs, harness.LogNumberPrefixField("delta", "-")),
 		"operators must see a negative delta for the lagging host; logs:\n%s", logs)
 	require.True(t, harness.LogsContainFields(logs, harness.LogStringField("trust_level", "peer_aligned")))
@@ -114,18 +116,14 @@ func TestContainerE2E_HeightSync_HostFutureHeightBeyondD(t *testing.T) {
 		postHeightSyncChat(t, cfg, eps, fmt.Sprintf("citest height-sync host future height %d", i))
 	}
 
-	client := harness.GatewayChatClient()
-	harness.WaitMetricsPredicate(t, client, eps.GatewayHTTP+"/metrics", 2*time.Minute, func(b string) bool {
-		spread, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_height_spread", nil)
-		return ok && spread >= 8
-	})
+	escrowID := waitHeightSpread(t, eps, futureClaimMinimumSpread).DevshardID
 
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
-		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "devshardctl", "versiond-0", "versiond-1", solo)
+		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "gateway", "versiond-0", "versiond-1", solo)
 	})
 	require.True(t, ok, "future claim |Δ|>D must log trust_level=untrusted_peer")
 
-	stack.WaitComposeLogsContain(t, 2*time.Minute, "heartbeat_opened", "devshardctl")
+	waitHeartbeatOpened(t, eps, escrowID)
 	ok = harness.AssertEventually(t, 2*time.Minute, 3*time.Second, func() bool {
 		postHeightSyncChat(t, cfg, eps, "citest height-sync host future height l5a probe")
 		return composeLogsContains(stack, "l5a_admission", "versiond-0", "versiond-1", solo)
@@ -146,7 +144,7 @@ func TestContainerE2E_HeightSync_HostFabricatedHashInsideD(t *testing.T) {
 	postHeightSyncChat(t, cfg, eps, "citest height-sync fabricated hash seed c")
 
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
-		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "devshardctl", "versiond-0", "versiond-1", solo)
+		return composeLogsHaveField(stack, harness.LogStringField("trust_level", "untrusted_peer"), "gateway", "versiond-0", "versiond-1", solo)
 	})
 	require.True(t, ok, "H+1 fabricated claim must log untrusted_peer before reconcile")
 
@@ -163,7 +161,16 @@ func TestContainerE2E_HeightSync_HostFabricatedHashInsideD(t *testing.T) {
 		return composeLogsContains(stack, hostClaimsReconcileWarn, "versiond-0", "versiond-1")
 	})
 	if !ok {
-		dumpHeightSyncLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
+		dumpHeightSyncLogs(t, stack, "gateway", "versiond-0", "versiond-1", solo)
 	}
 	require.True(t, ok, "honest host must warn when its oracle reaches the fabricated height")
+}
+
+func waitHeightSpread(t *testing.T, eps harness.Endpoints, minimumSpread uint64) harness.HeightSyncView {
+	t.Helper()
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
+	return harness.WaitHeightSyncView(t, nil, eps.GatewayHTTP, escrowID, heightSyncWait, func(view harness.HeightSyncView) bool {
+		spread, claimed := view.HeightSpread()
+		return claimed && spread >= minimumSpread
+	})
 }

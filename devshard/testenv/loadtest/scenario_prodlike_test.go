@@ -53,10 +53,6 @@ func TestLoadScenario_ProdLike15m(t *testing.T) {
 	require.Equal(t, strconv.Itoa(300*transport.RPCWeightChat), s.Topology.Hosts[0].ResolvedEnv()["DEVSHARD_RPC_MSGS_PER_MIN"])
 	require.Equal(t, uint32(1700), s.Topology.Chain.MaxNonce)
 	require.Equal(t, []string{"versiond-4"}, zstdPayloadHosts(s))
-	for _, quarantine := range []string{s.Gateway.ParticipantThrottle.HTTPQuarantine, s.Gateway.ParticipantThrottle.TransportFailureQuarantine, s.Gateway.ParticipantThrottle.EmptyStreamQuarantine, s.Gateway.ParticipantThrottle.StalledWinnerQuarantine} {
-		require.Equal(t, "45s", quarantine)
-	}
-
 	bugs := map[string]string{}
 	for _, c := range s.Cases {
 		if c.KnownBug != "" {

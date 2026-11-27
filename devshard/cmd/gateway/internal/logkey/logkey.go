@@ -4,6 +4,8 @@ package logkey
 
 const (
 	Request             = "request"
+	RequestID           = "request_id"
+	TraceID             = "trace_id"
 	Escrow              = "escrow"
 	Nonce               = "nonce"
 	Model               = "model"
@@ -137,7 +139,7 @@ const (
 	Used            = "used"
 	OpenModels      = "open_models"
 	Tokenizer       = "tokenizer"
-	GatewayDisabled = "gateway_disabled"
+	GatewayEnabled  = "gateway_enabled"
 	InFlight        = "in_flight"
 	Preset          = "preset"
 	AllowOffChain   = "allow_off_chain"

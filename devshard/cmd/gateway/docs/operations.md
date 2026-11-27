@@ -17,7 +17,7 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | --- | --- | --- |
 | `/v1/chat/completions` | per-model (below) | no |
 | `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
-| `/v1/status` | none, as above | yes — a gateway disabled on purpose is not unhealthy |
+| `/v1/status` | none, as above | yes — a gateway switched off on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
 | `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which answers 200 without checking anything else ([`deploy/README.md`](../deploy/README.md)); at most 4 scrapes run at once and each is cut at 10 s, both answered 503 ([`metrics/README.md`](../metrics/README.md), "Scrapes") |
 | `/v1/requests/{id}` | admin | yes |
@@ -26,6 +26,8 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | `/debug/pprof/*` | admin | yes |
 
 The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting the scheduler choose — the recovery surface for an escrow that needs attention on its own. A pinned chat to an escrow the gateway no longer routes answers 404, as an unknown devshard.
+
+`GET /devshard/{id}/v1/finalize` answers 409 until the escrow is in the settlement phase, then the settlement file `inferenced tx inference settle-devshard-escrow <file>` reads, built as the gateway's own settle builds it, from local storage for an escrow the gateway no longer holds in memory: the same signatures, host stats and state root, so an operator can settle by hand when the gateway cannot broadcast. The body carries `phase` and `finalize_nonce` beside the file's fields, which the command ignores; save it as it is. The command reads neither `validated` nor `finished` of a host-stats entry, so a file in which a slot has either non-zero is refused by the chain. Each call builds the settlement afresh and narrates a set it could not verify, as a settle does. `POST` on the same route finalizes the escrow.
 
 `GET /devshard/{id}/v1/debug/signatures` lists the slots that signed each nonce the session still holds signatures for — the retained window plus each validator's highest — so the view stays bounded on a long-lived escrow (`user/session.go`, `dropSignaturesThroughLocked`).
 
@@ -84,9 +86,9 @@ An `api_key` model needs an active key. Revoking the last active key while the n
 
 ### The kill switch
 
-`modes.disabled` (env `DEVSHARD_GATEWAY_DISABLED`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
+`modes.enabled` set to false (env `DEVSHARD_GATEWAY_ENABLED=false`, or `enabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
 
-With `disabled_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `disabled_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
+With `off_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `off_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
 
 ## Boot
 
@@ -94,9 +96,9 @@ With `disabled_redirect_url` set it answers **308** with the new URL in both the
 
 1. the chain observer starts — nothing downstream can score a host before a snapshot exists;
 2. the warmup prober starts;
-3. the host pings start — observability alone, and they read the live set per wave, so starting before anything is published costs nothing ([`hostping/README.md`](../hostping/README.md));
+3. the host pings and the host RPC-stats poll start — observability alone, and they read the live set per wave, so starting before anything is published costs nothing ([`hostping/README.md`](../hostping/README.md), [`hostrpc/README.md`](../hostrpc/README.md));
 4. `seedDevshards` applies `escrows_json` to the store — a seeded escrow that names no key variable is **refused**, not silently accepted. It leaves a row it already holds alone, but settlement deletes the row of an escrow it settled, so on every later boot the seed writes that escrow back as active;
-5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 9 does once the chain lists the participant again;
+5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving; `devshard_gateway_escrow_unopened{devshard_id,model,reason}` lists it until it opens or is deactivated. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 9 does once the chain lists the participant again;
 6. the nonce ledger starts, so nothing above it files a fact into a sink that is not yet reading;
 7. the refusal votes a previous process left owed in the store are owed again, each holding its escrow until it posts, so the lifecycle below does not settle an escrow ahead of the vote; a vote whose escrow did not open in step 5 is dropped ([race.md](./race.md), "Owed refusal votes across a restart");
 8. the escrow lifecycle manager starts its 15 s tick;
@@ -131,7 +133,7 @@ Each drain is bounded by the grace period but **not cancelled** by it — a step
 
 The `journal` step (8) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
 
-**Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. Both compose files that run the gateway (`deploy/docker-compose.devshard-gateway.yml` and the join stack's `deploy/join/docker-compose.devshard-gateway.yml`) set `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
+**Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. The gateway's compose file (`deploy/docker-compose.devshard-gateway.yml`) sets `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
 
 ## Session storage
 

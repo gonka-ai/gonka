@@ -36,7 +36,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-router", "devshardctl", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-router", "gateway", "devshard-postgres")
 		}
 	})
 
@@ -53,6 +53,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 
 	harness.Step(t, "phase 1: create HA-version sessions under sqlite on %s", legacyHost)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	model := config.PrimaryModelID(cfg)
 	adminKey := harness.TestenvAdminAPIKey
 	for i := 0; i < 3; i++ {
@@ -66,19 +67,19 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 		resp := harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, adminKey, req)
 		harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 	}
-	snap := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	require.NotEmpty(t, snap.EscrowID)
-	require.Greater(t, snap.LatestNonce, uint64(0), "expected session diffs after chat")
+	snapshot := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	require.NotEmpty(t, snapshot.EscrowID)
+	require.Greater(t, snapshot.LatestNonce, uint64(0), "expected session diffs after chat")
 
 	storeDir := harness.VersionStoreDir(stack, legacyHost, haVersion)
 	inv := harness.InventorySQLiteVersionStore(t, storeDir)
-	require.Contains(t, inv.EscrowIDs, snap.EscrowID)
+	require.Contains(t, inv.EscrowIDs, snapshot.EscrowID)
 	harness.Step(t, "phase 1 inventory: %d sqlite escrow(s) under %s", len(inv.EscrowIDs), storeDir)
 
 	harness.Step(t, "phase 2: unpin %q, declare HA, start %s; sqlite → Devshard-Ha must 503", haVersion, secondHost)
 	// Heartbeats during a router recreate persist a 30m participant quarantine
 	// (`participant_limit_loaded_from_db`). Restarting the gateway does not clear it.
-	stack.StopService(t, "devshardctl")
+	stack.StopService(t, "gateway")
 	harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
 	harness.PatchRouterHADeployment(t, stack.ComposePath, true)
 	// Bring the second host back before recreating the router so catalog
@@ -137,9 +138,9 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	requireHAPoolBackend(t, client, haURL)
 
 	// Migrated escrow remains readable via gateway after HA is healthy.
-	after := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	require.Equal(t, snap.EscrowID, after.EscrowID)
-	require.GreaterOrEqual(t, after.LatestNonce, snap.LatestNonce)
+	after := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	require.Equal(t, snapshot.EscrowID, after.EscrowID)
+	require.GreaterOrEqual(t, after.LatestNonce, snapshot.LatestNonce)
 }
 
 func requirePinnedToLegacy(t *testing.T, client *http.Client, cfg *config.File, routerHTTP, version, legacyHost string, n int, prefix string) {

@@ -10,8 +10,6 @@ import (
 	"time"
 )
 
-const ghostStage = "ghost_probe_skipped"
-
 // faultBurnReasons are the burns a fault causes: the gateway ejected or cut off the slot's host, or
 // its session holds no client for a host the chain did not list when the escrow opened.
 var faultBurnReasons = map[string]bool{"participant_ejected_no_send": true, "participant_cut_off_no_send": true, "participant_absent_from_chain_no_send": true}
@@ -30,8 +28,7 @@ type gatewayBurn struct {
 	Reason   string    `json:"reason"`
 }
 
-// readGatewayBurns returns every burn line of a compose log, devshardctl's ghost_probe_skipped or the
-// gateway's gatewayBurnMessage, in the text or the JSON log format, in log order.
+// readGatewayBurns returns every gatewayBurnMessage line of a compose log, in the text or the JSON log format, in log order.
 func readGatewayBurns(path string) ([]gatewayBurn, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -43,7 +40,7 @@ func readGatewayBurns(path string) ([]gatewayBurn, error) {
 	scanner.Buffer(make([]byte, 0, 1<<20), 16<<20)
 	for scanner.Scan() {
 		line := scanner.Text()
-		if !strings.Contains(line, ghostStage) && !strings.Contains(line, gatewayBurnMessage) {
+		if !strings.Contains(line, gatewayBurnMessage) {
 			continue
 		}
 		burn, ok, err := parseGatewayBurn(line)
@@ -59,10 +56,7 @@ func readGatewayBurns(path string) ([]gatewayBurn, error) {
 
 func parseGatewayBurn(line string) (gatewayBurn, bool, error) {
 	fields := logLineFields(line)
-	switch {
-	case fields["stage"] == ghostStage:
-	case fields["msg"] == gatewayBurnMessage && fields["nonce"] != "":
-	default:
+	if fields["msg"] != gatewayBurnMessage || fields["nonce"] == "" {
 		return gatewayBurn{}, false, nil
 	}
 	if _, err := strconv.ParseUint(fields["nonce"], 10, 64); err != nil {

@@ -13,8 +13,6 @@ import (
 	"devshard/transport"
 
 	"gopkg.in/yaml.v3"
-
-	"devshard/testenv/config"
 )
 
 type Scenario struct {
@@ -78,25 +76,8 @@ type CPUProfileWindow struct {
 }
 
 type Gateway struct {
-	Redundancy          GatewayRedundancy          `yaml:"redundancy"`
-	EscrowRotation      GatewayEscrowRotation      `yaml:"escrow_rotation"`
-	ParticipantThrottle GatewayParticipantThrottle `yaml:"participant_throttle"`
-}
-
-type GatewayParticipantThrottle struct {
-	TransportFailureQuarantine string `yaml:"transport_failure_quarantine"`
-	HTTPQuarantine             string `yaml:"http_quarantine"`
-	EmptyStreamQuarantine      string `yaml:"empty_stream_quarantine"`
-	StalledWinnerQuarantine    string `yaml:"stalled_winner_quarantine"`
-}
-
-func (t GatewayParticipantThrottle) settings() map[string]string {
-	return map[string]string{
-		"transport_failure_quarantine": t.TransportFailureQuarantine,
-		"http_quarantine":              t.HTTPQuarantine,
-		"empty_stream_quarantine":      t.EmptyStreamQuarantine,
-		"stalled_winner_quarantine":    t.StalledWinnerQuarantine,
-	}
+	Redundancy     GatewayRedundancy     `yaml:"redundancy"`
+	EscrowRotation GatewayEscrowRotation `yaml:"escrow_rotation"`
 }
 
 type GatewayRedundancy struct {
@@ -125,13 +106,12 @@ type GatewayRotationModel struct {
 const DefaultSecondaryWaitAfterWinner = 10 * time.Minute
 
 type Topology struct {
-	VersiondMode string               `yaml:"versiond_mode"`
-	Storage      string               `yaml:"storage"`
-	Participants int                  `yaml:"participants"`
-	Gateway      config.GatewayDriver `yaml:"gateway"`
-	Chain        ChainTopology        `yaml:"chain"`
-	MockML       MockMLTopology       `yaml:"mock_ml"`
-	Hosts        []TopologyHost       `yaml:"hosts"`
+	VersiondMode string         `yaml:"versiond_mode"`
+	Storage      string         `yaml:"storage"`
+	Participants int            `yaml:"participants"`
+	Chain        ChainTopology  `yaml:"chain"`
+	MockML       MockMLTopology `yaml:"mock_ml"`
+	Hosts        []TopologyHost `yaml:"hosts"`
 }
 
 // TopologyHost adds environment variables to one versiond container. Keys
@@ -374,9 +354,6 @@ func (s Scenario) Validate() error {
 	if s.Topology.Storage != "per_participant" {
 		return fmt.Errorf("only topology.storage per_participant is supported")
 	}
-	if err := s.Topology.Gateway.Validate(); err != nil {
-		return fmt.Errorf("topology.gateway: %w", err)
-	}
 	if s.Topology.Participants != 0 && s.Topology.Participants < 2 {
 		return fmt.Errorf("topology.participants must be at least 2 when set")
 	}
@@ -524,18 +501,6 @@ func (s Scenario) Validate() error {
 				return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner: %w", err)
 			}
 			return fmt.Errorf("gateway.redundancy.secondary_wait_after_winner must be positive")
-		}
-	}
-	for name, value := range s.Gateway.ParticipantThrottle.settings() {
-		if value == "" {
-			continue
-		}
-		duration, err := time.ParseDuration(value)
-		if err != nil {
-			return fmt.Errorf("gateway.participant_throttle.%s: %w", name, err)
-		}
-		if duration < time.Millisecond {
-			return fmt.Errorf("gateway.participant_throttle.%s must be at least 1ms", name)
 		}
 	}
 	rotation := s.Gateway.EscrowRotation

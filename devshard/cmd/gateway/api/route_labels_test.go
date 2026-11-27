@@ -13,8 +13,8 @@ import (
 )
 
 var (
-	// legacyRouteLabels is the label domain the existing dashboards select on.
-	legacyRouteLabels = []string{
+	// dashboardRouteLabels is the label domain the dashboards select on.
+	dashboardRouteLabels = []string{
 		"/v1/models",
 		"/v1/chat/completions",
 		"/v1/status",
@@ -50,8 +50,8 @@ var (
 		"/devshard/{id}/v1/debug/sync-hosts",
 	}
 
-	// deliberateDivergences are the only labels allowed to sit outside the devshardctl domain.
-	deliberateDivergences = []string{otherRouteLabel, "/v1/requests/{id}", "/v1/admin/hosts", "/v1/admin/devshards/settle", "/v1/admin/devshards/deactivate", "/v1/admin/filters", "/v1/admin/filters/presets", "/v1/admin/filters/{model}", "/v1/admin/api-keys", "/v1/admin/api-keys/{id}"}
+	// labelsOutsideTheDashboards are the only labels allowed to sit outside the dashboard domain.
+	labelsOutsideTheDashboards = []string{otherRouteLabel, "/v1/requests/{id}", "/v1/admin/hosts", "/v1/admin/devshards/settle", "/v1/admin/devshards/deactivate", "/v1/admin/filters", "/v1/admin/filters/presets", "/v1/admin/filters/{model}", "/v1/admin/api-keys", "/v1/admin/api-keys/{id}"}
 )
 
 // Test flow:
@@ -127,17 +127,17 @@ func TestEveryRouteCarriesItsExactMetricLabel(t *testing.T) {
 
 // Test flow:
 //  1. Walk every registered route on a harness server.
-//  2. Assert every non-empty label is either in `legacyRouteLabels` or `deliberateDivergences`.
-func TestEveryInstrumentedLabelIsALegacyLabelOrADeclaredDivergence(t *testing.T) {
+//  2. Assert every non-empty label is either in `dashboardRouteLabels` or `labelsOutsideTheDashboards`.
+func TestEveryInstrumentedLabelIsADashboardLabelOrDeclaredOutsideThem(t *testing.T) {
 	live := newHarness(t)
 	for _, route := range live.server.routes() {
 		if route.label == "" {
 			continue
 		}
-		if slices.Contains(legacyRouteLabels, route.label) || slices.Contains(deliberateDivergences, route.label) {
+		if slices.Contains(dashboardRouteLabels, route.label) || slices.Contains(labelsOutsideTheDashboards, route.label) {
 			continue
 		}
-		t.Fatalf("route %q emits label %q, which is neither a devshardctl label nor a declared divergence", route.pattern, route.label)
+		t.Fatalf("route %q emits label %q, which is neither a dashboard label nor declared outside the dashboards", route.pattern, route.label)
 	}
 }
 

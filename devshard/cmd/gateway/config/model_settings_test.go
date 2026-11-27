@@ -246,7 +246,7 @@ func TestMergingModelsWorksPerModelAndPerField(t *testing.T) {
 //  2. Assert each is refused: only the keys of `ModelSettings` may appear under `models.<id>`.
 func TestMergingRefusesAKeyNoModelHas(t *testing.T) {
 	for _, patch := range []string{
-		`{"models":{"model-a":{"disabled":true}}}`,
+		`{"models":{"model-a":{"enabled":false}}}`,
 		`{"models":{"model-a":{"rotation_enabled":true}}}`,
 		`{"models":{"model-a":{"max_burns_per_requests":1}}}`,
 	} {

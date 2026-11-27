@@ -27,6 +27,8 @@ import (
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
+	"devshard/logging"
 )
 
 const (
@@ -36,10 +38,13 @@ const (
 )
 
 type fakeRegistry struct {
-	models   []string
-	escrows  []scheduler.Escrow
-	sessions map[string]registry.EscrowSession
-	busy     map[string]bool
+	models      []string
+	escrows     []scheduler.Escrow
+	sessions    map[string]registry.EscrowSession
+	busy        map[string]bool
+	parked      map[string]registry.EscrowSession
+	settlements map[string]settlement.Message
+	settleErr   error
 }
 
 func (f *fakeRegistry) Serves(model string) bool { return slices.Contains(f.models, model) }
@@ -90,6 +95,9 @@ func (f *fakeRegistry) HoldSettlement(escrowID string) (registry.EscrowSession, 
 func (f *fakeRegistry) Inspect(_ context.Context, escrowID string) (registry.EscrowSession, func(), error) {
 	session, held := f.SettlementSession(escrowID)
 	if !held {
+		session, held = f.parked[escrowID]
+	}
+	if !held {
 		return nil, nil, fmt.Errorf("escrow %s: %w", escrowID, escrow.ErrUnknownEscrow)
 	}
 	return session, func() {}, nil
@@ -97,11 +105,16 @@ func (f *fakeRegistry) Inspect(_ context.Context, escrowID string) (registry.Esc
 
 func (f *fakeRegistry) IsBusy(escrowID string) bool { return f.busy[escrowID] }
 
+func (f *fakeRegistry) BuildSettlement(_ context.Context, escrowID string) (settlement.Message, error) {
+	return f.settlements[escrowID], f.settleErr
+}
+
 // fakeEngine's ledger stands in for the real engine's recording point, which runs before Run returns.
 type fakeEngine struct {
 	runs    atomic.Int64
 	raced   atomic.Pointer[engine.Request]
 	racedIn atomic.Pointer[trace.SpanContext]
+	racedAs atomic.Pointer[string]
 	reply   string
 	chunks  []string
 	outcome engine.RaceOutcome
@@ -118,6 +131,9 @@ func (e *fakeEngine) Run(ctx context.Context, request engine.Request, client io.
 	e.runs.Add(1)
 	spanContext := trace.SpanContextFromContext(ctx)
 	e.racedIn.Store(&spanContext)
+	if id, bound := logging.RequestID(ctx); bound {
+		e.racedAs.Store(&id)
+	}
 	e.raced.Store(&request)
 	if e.finishes != nil {
 		e.finishes <- request.OnFinished
@@ -720,41 +736,41 @@ func TestImportKeepsTheTemplatedMetricLabel(t *testing.T) {
 }
 
 // Test flow:
-//  1. Disable the gateway with a custom disabled message.
+//  1. Switch the gateway off with a custom off message.
 //  2. Assert a client route now answers 503.
 //  3. Assert /metrics, /healthz, /v1/status, and an admin-keyed operator route still answer 200.
 func TestKillSwitchSparesMetricsHealthzAndTheOperatorRoutes(t *testing.T) {
 	live := newHarness(t)
 	live.swapConfig(func(next *config.Config) {
-		next.Modes.Disabled = true
-		next.Modes.DisabledMessage = "moved"
+		next.Modes.Enabled = false
+		next.Modes.OffMessage = "moved"
 	})
 	if got := live.request(t, http.MethodGet, "/v1/models", "", nil).Code; got != http.StatusServiceUnavailable {
-		t.Fatalf("disabled client route: got %d, want 503", got)
+		t.Fatalf("switched-off client route: got %d, want 503", got)
 	}
 	if got := live.request(t, http.MethodGet, "/metrics", "", nil).Code; got != http.StatusOK {
-		t.Fatalf("disabled gateway must still serve /metrics: got %d", got)
+		t.Fatalf("a gateway switched off must still serve /metrics: got %d", got)
 	}
 	if got := live.request(t, http.MethodGet, "/healthz", "", nil).Code; got != http.StatusOK {
-		t.Fatalf("disabled gateway must still serve /healthz, or its container healthcheck reports a gateway disabled on purpose as unhealthy: got %d", got)
+		t.Fatalf("a gateway switched off must still serve /healthz, or its container healthcheck reports a gateway switched off on purpose as unhealthy: got %d", got)
 	}
 	if got := live.request(t, http.MethodGet, "/v1/status", "", nil).Code; got != http.StatusOK {
-		t.Fatalf("disabled gateway must still serve /v1/status, which the deployed compose healthcheck reads: got %d", got)
+		t.Fatalf("a gateway switched off must still serve /v1/status, which the deployed compose healthcheck reads: got %d", got)
 	}
 	if got := live.request(t, http.MethodGet, "/v1/admin/state", "", adminHeaders()).Code; got != http.StatusOK {
-		t.Fatalf("disabled gateway must still serve the operator routes: got %d", got)
+		t.Fatalf("a gateway switched off must still serve the operator routes: got %d", got)
 	}
 }
 
 // Test flow:
-//  1. Disable the gateway with a redirect URL configured.
+//  1. Switch the gateway off with a redirect URL configured.
 //  2. Send a client route request.
 //  3. Assert the response is 308 with the Location header set to the configured destination.
 func TestKillSwitchRedirectsOnlyWithADestination(t *testing.T) {
 	live := newHarness(t)
 	live.swapConfig(func(next *config.Config) {
-		next.Modes.Disabled = true
-		next.Modes.DisabledRedirectURL = "https://elsewhere.example/v1"
+		next.Modes.Enabled = false
+		next.Modes.OffRedirectURL = "https://elsewhere.example/v1"
 	})
 	recorder := live.request(t, http.MethodGet, "/v1/models", "", nil)
 	if recorder.Code != http.StatusPermanentRedirect {

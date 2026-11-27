@@ -2,7 +2,6 @@ package testutil
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -112,51 +111,6 @@ func streamEventHasContent(t *testing.T, payload map[string]any) bool {
 	return false
 }
 
-func RequireSettlementContract(t *testing.T, settlement map[string]any) {
-	t.Helper()
-	require.NotEmpty(t, settlement["escrow_id"])
-	require.NotEmpty(t, settlement["version"])
-	require.NotEmpty(t, settlement["state_root"])
-	require.NotZero(t, NumericField(t, settlement, "nonce"))
-
-	signatures, ok := settlement["signatures"].([]any)
-	require.True(t, ok, "signatures should be a JSON array")
-	require.NotEmpty(t, signatures)
-	seenSlots := make(map[uint64]struct{}, len(signatures))
-	for _, raw := range signatures {
-		sig, ok := raw.(map[string]any)
-		require.True(t, ok, "signature entries should be objects")
-		slotID := NumericField(t, sig, "slot_id")
-		require.NotEmpty(t, sig["signature"])
-		if _, exists := seenSlots[slotID]; exists {
-			t.Fatalf("duplicate settlement signature for slot %d", slotID)
-		}
-		seenSlots[slotID] = struct{}{}
-	}
-}
-
-func RequireCompletedValidationContract(t *testing.T, settlement map[string]any) {
-	t.Helper()
-	progress := validationProgressFromHostStats(t, settlement["host_stats"])
-	require.Greater(t, progress.required, uint64(0), "settlement should require at least one validation")
-	require.Equal(t, progress.required, progress.completed,
-		"settlement should include every required validation as completed")
-}
-
-func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCount int) {
-	t.Helper()
-	stats, ok := settlement["host_stats"].([]any)
-	require.True(t, ok, "host_stats should be a JSON array")
-	require.Len(t, stats, hostCount, "settlement should include one host_stats entry per host")
-	for _, raw := range stats {
-		stat, ok := raw.(map[string]any)
-		require.True(t, ok, "host_stats entries should be objects")
-		_ = NumericField(t, stat, "slot_id")
-		_ = optionalNumericField(t, stat, "required_validations")
-		_ = optionalNumericField(t, stat, "completed_validations")
-	}
-}
-
 func RequireSignatureCollectionQuorum(t *testing.T, collection map[string]any, nonce uint64, totalSlots int) {
 	t.Helper()
 	require.Equal(t, nonce, NumericField(t, collection, "nonce"))
@@ -171,12 +125,11 @@ func RequireSignatureCollectionQuorum(t *testing.T, collection map[string]any, n
 	require.True(t, hasQuorum, "latest nonce should report signature quorum")
 }
 
+// RequireSignatureStatusQuorum asserts the escrow's signature status holds quorum through nonce, with the nonce's own entry at quorum.
 func RequireSignatureStatusQuorum(t *testing.T, status map[string]any, nonce uint64, totalSlots int) {
 	t.Helper()
-	require.Equal(t, nonce, NumericField(t, status, "current_nonce"))
-	require.Equal(t, uint64(totalSlots), NumericField(t, status, "total_slots"))
 	require.GreaterOrEqual(t, NumericField(t, status, "highest_quorum_nonce"), nonce,
-		"latest nonce should be the highest nonce with quorum")
+		"latest nonce should be at or below the highest nonce with quorum")
 	hasQuorum, ok := status["has_quorum"].(bool)
 	require.True(t, ok, "signature status has_quorum should be a boolean")
 	require.True(t, hasQuorum, "signature status should report quorum")
@@ -190,14 +143,19 @@ func RequireSignatureStatusQuorum(t *testing.T, status map[string]any, nonce uin
 			continue
 		}
 		require.Equal(t, uint64(totalSlots), NumericField(t, entry, "total_slots"))
-		require.GreaterOrEqual(t, NumericField(t, entry, "sig_weight"), NumericField(t, status, "quorum_threshold"),
-			"latest nonce status entry should reach quorum")
+		require.GreaterOrEqual(t, NumericField(t, entry, "sig_weight"), signatureQuorumThreshold(totalSlots),
+			"latest nonce status entry should carry the slot weight of a 2/3+1 quorum")
 		hasQuorum, ok := entry["has_quorum"].(bool)
 		require.True(t, ok, "latest nonce has_quorum should be a boolean")
 		require.True(t, hasQuorum, "latest nonce status entry should report quorum")
 		return
 	}
-	t.Fatalf("signature status should include latest nonce %d", nonce)
+	t.Fatalf("signature status should include latest nonce %d: %v", nonce, status)
+}
+
+// signatureQuorumThreshold is the protocol's 2/3+1 slot-weighted quorum, computed apart from the gateway's own has_quorum.
+func signatureQuorumThreshold(totalSlots int) uint64 {
+	return uint64(2*totalSlots/3 + 1)
 }
 
 func RequireGossipNonceConvergence(t *testing.T, statuses []GossipNonceStatus, nonce uint64) {
@@ -234,73 +192,6 @@ func RequireTimeoutInferenceTransaction(t *testing.T, timeout TimeoutInferenceTr
 	}
 }
 
-func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
-	t.Helper()
-	inferences, ok := state["inferences"].(map[string]any)
-	require.True(t, ok, "state inferences should be an object")
-
-	counts := map[uint64]uint64{}
-	statusCounts := map[string]int{}
-	for inferenceID, raw := range inferences {
-		inference, ok := raw.(map[string]any)
-		require.True(t, ok, "state inference %s should be an object", inferenceID)
-		statusCounts[fmt.Sprint(inference["status"])]++
-		validatedBy, ok := inference["validated_by"].([]any)
-		if !ok {
-			continue
-		}
-		for _, rawSlot := range validatedBy {
-			slotID := NumericValue(t, rawSlot, "validated_by slot")
-			counts[slotID]++
-		}
-	}
-
-	summary := ""
-	reached := false
-	for slotID, completed := range counts {
-		if summary != "" {
-			summary += "; "
-		}
-		summary += fmt.Sprintf("slot %d completed=%d", slotID, completed)
-		if completed >= target {
-			reached = true
-		}
-	}
-	if summary == "" {
-		summary = fmt.Sprintf("%d inferences (finished=%d started=%d timed_out=%d), none validated yet",
-			len(inferences), statusCounts["finished"], statusCounts["started"], statusCounts["timed_out"])
-	}
-	return reached, summary
-}
-
-type validationProgress struct {
-	required  uint64
-	completed uint64
-	summary   string
-}
-
-func validationProgressFromHostStats(t *testing.T, raw any) validationProgress {
-	t.Helper()
-	progress := validationProgress{}
-	switch stats := raw.(type) {
-	case []any:
-		for _, rawStat := range stats {
-			stat, ok := rawStat.(map[string]any)
-			require.True(t, ok, "host_stats entries should be objects")
-			progress.add(t, fmt.Sprint(stat["slot_id"]), stat)
-		}
-	case map[string]any:
-		for slotID, rawStat := range stats {
-			stat, ok := rawStat.(map[string]any)
-			require.True(t, ok, "host_stats[%s] should be an object", slotID)
-			progress.add(t, slotID, stat)
-		}
-	default:
-		t.Fatalf("host_stats has unsupported type %T", raw)
-	}
-	return progress
-}
-
 func optionalNumericField(t *testing.T, obj map[string]any, field string) uint64 {
 	t.Helper()
 	value, ok := obj[field]
@@ -308,18 +199,6 @@ func optionalNumericField(t *testing.T, obj map[string]any, field string) uint64
 		return 0
 	}
 	return NumericValue(t, value, field)
-}
-
-func (p *validationProgress) add(t *testing.T, slotID string, stat map[string]any) {
-	t.Helper()
-	required := optionalNumericField(t, stat, "required_validations")
-	completed := optionalNumericField(t, stat, "completed_validations")
-	p.required += required
-	p.completed += completed
-	if p.summary != "" {
-		p.summary += "; "
-	}
-	p.summary += fmt.Sprintf("slot %s completed=%d required=%d", slotID, completed, required)
 }
 
 func NumericField(t *testing.T, obj map[string]any, field string) uint64 {

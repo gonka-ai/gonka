@@ -51,7 +51,7 @@ The binary takes no flags and reads its whole configuration from the environment
 | understand the race, routing, escrows, capacity or the nonce ledger | [`docs/README.md`](./docs/README.md) lists each design document |
 | know the invariants and the non-goals | [`docs/rules.md`](./docs/rules.md) |
 | change code | [`CONTRIBUTING.md`](./CONTRIBUTING.md), then the `README.md` of the package you touch |
-| find the protocol rules the gateway shares with `devshardctl` | [`../../gatewayprotocol/README.md`](../../gatewayprotocol/README.md), and [`../../docs/gateway-protocol-library.md`](../../docs/gateway-protocol-library.md) for what belongs there |
+| find the protocol rules the gateway takes from `gatewayprotocol` | [`../../gatewayprotocol/README.md`](../../gatewayprotocol/README.md), and [`../../docs/gateway-protocol-library.md`](../../docs/gateway-protocol-library.md) for what belongs there |
 
 ## Packages
 
@@ -79,6 +79,7 @@ Each package has a `README.md` that states what the package owns, its contract w
 | [`shadow/`](./shadow/README.md) | probing the participants that serve no client |
 | [`heights/`](./heights/README.md) | carrying mainnet height into the escrow's log: the courier, and the optional follower |
 | [`hostping/`](./hostping/README.md) | pinging the live escrows' hosts for reachability and clock drift |
+| [`hostrpc/`](./hostrpc/README.md) | polling the live escrows' hosts for the counters their rate limiters keep |
 | [`store/`](./store/README.md) | control-plane state in SQLite |
 | [`config/`](./config/README.md) | the immutable configuration snapshot and its atomic holder |
 | [`env/`](./env/README.md) | every gateway environment variable; the runtime-params feed reads its own through `devshard/runtimeparams` |
@@ -86,6 +87,6 @@ Each package has a `README.md` that states what the package owns, its contract w
 | [`app/`](./app/README.md) | the composition root: builds every layer into one process, boots and stops it |
 | [`scenarios/`](./scenarios/README.md) | the scenario tests: the composed gateway against a fake chain and in-process hosts on fake time |
 
-The protocol rules the gateway shares with `devshardctl` are not a package here: they live in [`devshard/gatewayprotocol`](../../gatewayprotocol/README.md).
+The protocol rules a host, a verifier or the chain would judge are not a package here: they live in [`devshard/gatewayprotocol`](../../gatewayprotocol/README.md).
 
 The package root holds only `main.go`, which copies the stamped version to `app.Version` and calls `app.Main`.

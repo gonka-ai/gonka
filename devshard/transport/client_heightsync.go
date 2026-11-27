@@ -14,7 +14,7 @@ import (
 
 // SetOneShotHeightSyncRequestMutateHook registers a hook that runs once on the next
 // outbound inference request that carries a non-nil height-sync section (after the
-// optional config HeightSyncRequestMutateHook). Used by testenv devshardctl debug only.
+// optional config HeightSyncRequestMutateHook).
 func (c *HTTPClient) SetOneShotHeightSyncRequestMutateHook(fn func(*heightsync.HeightSyncSection, uint64)) {
 	if c == nil || c.oneShot == nil {
 		return

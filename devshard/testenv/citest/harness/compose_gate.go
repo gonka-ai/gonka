@@ -8,18 +8,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// RequireGatewayGRPCOnlyCompose asserts devshardctl has gRPC chain env only (no LCD REST wiring).
+// RequireGatewayGRPCOnlyCompose asserts gateway has gRPC chain env only (no LCD REST wiring).
 func RequireGatewayGRPCOnlyCompose(t *testing.T, composePath string) {
 	t.Helper()
 	body, err := os.ReadFile(composePath)
 	require.NoError(t, err)
 	text := string(body)
 
-	devshardctl := extractComposeServiceBlock(text, "devshardctl:")
-	require.NotEmpty(t, devshardctl, "devshardctl service block not found in %s", composePath)
-	require.Contains(t, devshardctl, "DEVSHARD_CHAIN_GRPC:")
-	require.NotContains(t, devshardctl, "DEVSHARD_CHAIN_REST")
-	require.NotContains(t, devshardctl, "DEVSHARD_TX_QUERY_REST")
+	gateway := extractComposeServiceBlock(text, "gateway:")
+	require.NotEmpty(t, gateway, "gateway service block not found in %s", composePath)
+	require.Contains(t, gateway, "DEVSHARD_CHAIN_GRPC:")
+	require.NotContains(t, gateway, "DEVSHARD_CHAIN_REST")
+	require.NotContains(t, gateway, "DEVSHARD_TX_QUERY_REST")
 }
 
 func extractComposeServiceBlock(compose, serviceName string) string {

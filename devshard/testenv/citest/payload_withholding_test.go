@@ -26,7 +26,7 @@ func TestPayloadWithholding_AllCallers500_Invalidates(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "versiond-3", "devshardctl", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "versiond-3", "gateway", "mock-openai")
 		}
 	})
 
@@ -52,7 +52,7 @@ func TestPayloadWithholding_SelectiveValidator_Challenges(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "versiond-3", "devshardctl")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "versiond-3", "gateway")
 		}
 	})
 
@@ -173,6 +173,7 @@ func bootPayloadWithholdingReady(t *testing.T, stack *harness.Stack, cfg *config
 	t.Helper()
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health", stack)
 
 	dapi := harness.MockDAPIFromEndpoints(eps)
@@ -185,9 +186,7 @@ func bootPayloadWithholdingReady(t *testing.T, stack *harness.Stack, cfg *config
 		MaxTokens: 16,
 	}
 	harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, seed)
-	escrow := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).EscrowID
-	require.NotEmpty(t, escrow)
-	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
+	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrowID)
 }
 
 func drivePayloadWithholdingChats(t *testing.T, client *http.Client, gatewayURL, model, wave string, n int) {
@@ -254,11 +253,12 @@ func postPayloadWithholdingChat(t *testing.T, client *http.Client, gatewayURL, m
 	return err
 }
 
-func driveUntilInferenceStatus(t *testing.T, client *http.Client, gatewayURL, model, status string, timeout time.Duration, extra ...string) map[string]harness.GatewayInference {
+func driveUntilInferenceStatus(t *testing.T, client *http.Client, gatewayURL, model, status string, timeout time.Duration, extra ...string) map[string]harness.GatewayDebugInference {
 	t.Helper()
 	want := append([]string{status}, extra...)
+	escrowID := harness.GetGatewayEscrowID(t, client, gatewayURL)
 	deadline := time.Now().Add(timeout)
-	var last map[string]harness.GatewayInference
+	var last map[string]harness.GatewayDebugInference
 	i := 0
 	for time.Now().Before(deadline) {
 		req := harness.ChatCompletionRequest{
@@ -271,7 +271,7 @@ func driveUntilInferenceStatus(t *testing.T, client *http.Client, gatewayURL, mo
 		if _, err := harness.TryPostGatewayChatCompletion(client, gatewayURL, harness.TestenvAdminAPIKey, req); err != nil {
 			t.Logf("citest: chat %d: %v", i, err)
 		}
-		last = harness.GetGatewayInferences(t, client, gatewayURL, harness.TestenvAdminAPIKey)
+		last = harness.GetGatewayDebugInferences(t, client, gatewayURL, harness.TestenvAdminAPIKey, escrowID)
 		for _, s := range want {
 			if harness.CountGatewayInferenceStatus(last, s) >= 1 {
 				return last

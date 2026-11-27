@@ -25,7 +25,7 @@ func reportFixtureDir(t *testing.T) string {
 	writeReportFixture(t, outputDir, "events.json", []EventRecord{
 		{ID: "receipt-then-empty-stream", Case: "receipt-then-empty-stream", Action: "ml_fault", Target: "mock-openai-3", StartedAt: atPtr(time.Minute), EndedAt: atPtr(2 * time.Minute)},
 		{ID: "timeout-vote-fanout", Case: "timeout-vote-fanout", Action: "ml_fault", Target: "mock-openai-4", StartedAt: atPtr(3 * time.Minute), EndedAt: atPtr(4 * time.Minute)},
-		{ID: "gateway-killed-mid-race", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "devshardctl", StartedAt: atPtr(3*time.Minute + 30*time.Second), EndedAt: atPtr(3*time.Minute + 32*time.Second)},
+		{ID: "gateway-killed-mid-race", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "gateway", StartedAt: atPtr(3*time.Minute + 30*time.Second), EndedAt: atPtr(3*time.Minute + 32*time.Second)},
 	})
 	writeReportFixture(t, outputDir, "invariants.json", map[string]any{"tables": map[string]any{"error-rate-and-latency": []requestWindowStats{
 		{Window: "baseline", Requests: 30},

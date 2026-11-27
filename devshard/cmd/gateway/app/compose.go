@@ -25,6 +25,7 @@ import (
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/heights"
 	"devshard/cmd/gateway/hostping"
+	"devshard/cmd/gateway/hostrpc"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/limits"
@@ -54,7 +55,7 @@ const (
 
 // Main runs the gateway until SIGINT or SIGTERM and exits the process with status 1 when it fails.
 func Main() {
-	observability.InstallLogger(env.LogFormat())
+	observability.InstallLoggerWithOptions(observability.LoggerOptions{Format: env.LogFormat(), Level: observability.ParseLogLevel(env.LogLevel())})
 	applyDialGuard()
 	warnIgnoredLegacyStore()
 	if err := serve(); err != nil {
@@ -151,9 +152,11 @@ type gateway struct {
 	events       *journal.Journal
 	warmup       *warmup.Prober
 	hostPings    *hostping.Pinger
+	hostRPCStats *hostrpc.Poller
 	heights      *heights.Oracle
 	governance   *runtimeParams
 	hosts        HostDirectory
+	unopened     *unopenedEscrows
 
 	builders     int
 	devshardWork chan struct{}
@@ -376,6 +379,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 			Available:          participants.Available,
 			DrainCloseFailures: escrows.DrainCloseFailures,
 		}),
+		metrics.NewHeightSyncCollector(escrows),
 		metrics.NewChainCollector(observer, clock),
 		metrics.NewTransportCollector(transport.DefaultHostConnectionTracker()),
 		metrics.NewAccountingCollector(ledger),
@@ -453,9 +457,11 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		events:       events,
 		warmup:       prober,
 		hostPings:    hostping.New(configuration.HostPing, escrows, metrics.NewHostPingRecorder(telemetry)),
+		hostRPCStats: hostrpc.New(configuration.HostRPCStats, escrows, metrics.NewHostRPCRecorder(telemetry)),
 		heights:      sources.Heights,
 		governance:   sources.Governance,
 		hosts:        sources.Hosts,
+		unopened:     registerUnopened(telemetry),
 		builders:     boot.builders,
 		devshardWork: devshardWork,
 		bootSteps:    (*gateway).bootOrder,

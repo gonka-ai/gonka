@@ -50,7 +50,7 @@ topology:
     # transport.RPCWeightChat, so the budget still bites if the weight changes.
     # At Chat weight 1 (#1988) this is 300 weight a minute, below the 6000
     # network default, so the gateway does not skip P4 on its budget: P4
-    # refuses, and the gateway pauses it 1 s (quarantines-match-faults sender_rate).
+    # refuses.
     - id: versiond-5
       rpc_chats_per_min: 300
     # P3 keeps payloads in zstd files only (sqlite-payloads-in-zstd-files, payload-files-are-zstd). sqlite keeps no
@@ -123,17 +123,17 @@ workload:
        params: {file: devshard-fault-drop-payload}}
     - {id: host-under-poc-challenge, case: host-under-poc-challenge, action: dapi_challenge, target: versiond-4, at: 9m, until: 10m}
     # P4's budget is set at boot, so it bites all run: a background marker
-    # yields misses and quarantines inside P4's other windows to those cases.
+    # yields misses inside P4's other windows to those cases.
     - {id: host-over-peer-chat-budget, case: host-over-peer-chat-budget, action: marker, target: versiond-5, at: 0s, until: 15m,
-       params: {background: true, observe: host_rate_limited, waive_misses: true, expect_quarantine: sender_rate}}
+       params: {background: true, observe: host_rate_limited, waive_misses: true}}
     # 1m45s: a hung nonce times out 90–95 s after it starts, so the hang outlasts the
     # execution timeout and the first timeout votes fire before it lifts.
     - {id: timeout-vote-fanout, case: timeout-vote-fanout, action: ml_fault, target: mock-openai-4, at: 10m30s, until: 12m15s,
        params: {patch: {hang: true}}}
     - {id: host-public-port-down, case: host-public-port-down, action: tripfile, target: versiond-3, at: 12m30s, until: 13m15s,
-       params: {file: devshard-fault-public-down, expect_quarantine: "http,transport"}}
+       params: {file: devshard-fault-public-down}}
     - {id: participant-unavailable-on-chain, case: participant-unavailable-then-absent-on-chain, action: chain_participant, target: versiond-5, at: 13m, until: 13m30s,
-       params: {mode: unavailable, expect_quarantine: none}}
+       params: {mode: unavailable}}
     - {id: participant-absent-on-chain, case: participant-unavailable-then-absent-on-chain, action: chain_participant, target: versiond-5, at: 13m30s, until: 14m,
        params: {mode: absent}}
     - {id: gateway-restart-while-participant-absent, case: gateway-restart-while-participant-absent, action: gateway_restart, at: 13m40s}
@@ -141,11 +141,6 @@ workload:
 gateway:
   redundancy:
     secondary_wait_after_winner: 30s
-  participant_throttle:
-    transport_failure_quarantine: 45s
-    http_quarantine: 45s
-    empty_stream_quarantine: 45s
-    stalled_winner_quarantine: 45s
   escrow_rotation:
     enabled: true
     settlement_enabled: true

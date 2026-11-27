@@ -15,11 +15,11 @@ import (
 
 var splitScenarios = []string{"prod-like-steady", "faults-ml-node", "faults-host", "faults-gateway-restart", "epoch-change", "vote-fanout", "load-ladder"}
 
-const plannedEventDrift = 30 * time.Second
-
 const (
-	p4ChatsPerRPS            = 3.8 / 16
-	gatewayPacingFloorPerMin = 10
+	plannedEventDrift         = 30 * time.Second
+	sameParticipantFaultSlack = 6 * time.Second
+	p4ChatsPerRPS             = 3.8 / 16
+	gatewayPacingFloorPerMin  = 10
 )
 
 var nestedFaults = map[string]string{"faults-gateway-restart/gateway-restart-while-participant-absent": "participant-absent-on-chain"}
@@ -131,14 +131,12 @@ func TestSplitScenariosJudgeEachRecoveryBeforeTheNextFault(t *testing.T) {
 // Test flow:
 // 1. Load each split scenario and lay out its planned faults in start order, the nested one left out.
 // 2. Require at least 2 minutes and one request timeout between consecutive faults, and the next fault to end at least the grace plus 15 s after the previous one, so no request start falls in two graced tails.
-// 3. Require two faults on one participant to be the grace plus a quarantine and a poll apart, and P0 and P1 never targeted.
+// 3. Require two faults on one participant to be the grace plus a poll apart, and P0 and P1 never targeted.
 // 4. Require the workload to run the last fault's whole grace tail.
 func TestSplitScenariosKeepFaultsApart(t *testing.T) {
 	for _, name := range splitScenarios {
 		s := loadSplitScenario(t, name)
 		grace := resolveInvariantSettings(s).Grace
-		quarantine, err := time.ParseDuration(s.Gateway.ParticipantThrottle.StalledWinnerQuarantine)
-		require.NoError(t, err)
 		var faults []plannedFault
 		for _, fault := range plannedFaults(t, s) {
 			if _, nested := nestedFaults[name+"/"+fault.id]; !nested {
@@ -156,7 +154,7 @@ func TestSplitScenariosKeepFaultsApart(t *testing.T) {
 				require.GreaterOrEqual(t, fault.end-previous.end, grace+15*time.Second, "%s: %s after %s", name, fault.id, previous.id)
 			}
 			if earlier, seen := lastOn[fault.participant]; seen && fault.participant != "" {
-				require.GreaterOrEqual(t, fault.start-earlier.end, grace+quarantine+quarantineDurationT, "%s: %s after %s on %s", name, fault.id, earlier.id, fault.participant)
+				require.GreaterOrEqual(t, fault.start-earlier.end, grace+sameParticipantFaultSlack, "%s: %s after %s on %s", name, fault.id, earlier.id, fault.participant)
 			}
 			lastOn[fault.participant] = fault
 		}

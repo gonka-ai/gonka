@@ -72,7 +72,6 @@ const (
 	WhereRuntimeExecute             Where = "runtime.execute"
 	WhereRuntimeValidate            Where = "runtime.validate"
 	WherePeerRPCGate                Where = "rpc.handshake_gate"
-	WhereGatewayRPCStats            Where = "gateway.rpc_stats"
 )
 
 const (

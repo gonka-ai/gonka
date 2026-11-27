@@ -17,7 +17,7 @@ var ErrDiffFork = errors.New("diff fork: conflicting payload at same nonce")
 
 // HA assumptions for AppendDiff / host catch-up (proposal §7.5):
 //
-//  1. The gateway (devshardctl) is the single-instance sequencer per escrow, so
+//  1. The gateway is the single-instance sequencer per escrow, so
 //     composeDiffLocked never races another writer on the same nonce. Persist-
 //     first compose makes persist failure "store unchanged, memory unchanged".
 //  2. Host duplicates under multi-instance HA are byte-identical because the

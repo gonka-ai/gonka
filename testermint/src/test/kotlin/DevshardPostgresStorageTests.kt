@@ -49,19 +49,19 @@ class DevshardPostgresStorageTests : TestermintTest() {
         val epochIndex = escrow.epochIndex.toLong()
         logSection("Escrow $escrowId is in epoch $epochIndex")
 
-        logSection("Driving inferences through devshard proxy")
-        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
+        logSection("Driving inferences through the gateway")
+        val handle = genesis.serveDevshardEscrow(escrowId = escrowId, keyName = user.keyName)
         try {
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
             for (i in 0 until 10) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "pg test prompt $i")
+                val response = genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "pg test prompt $i")
                 assertThat(response).isNotEmpty()
             }
             // Settle so the session has its full lifecycle's worth of writes
             // committed to PG (sessions row, all diffs, all signatures).
             genesis.assertDevshardSettlement(handle, escrowId, user, escrowAmount, requireCompletedValidations = false)
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
 
         logSection("Verifying devshard tables in Postgres")
@@ -142,15 +142,15 @@ class DevshardPostgresStorageTests : TestermintTest() {
         val firstEpoch = genesis.node.queryDevshardEscrow(firstEscrowId).escrow!!.epochIndex.toLong()
 
         run {
-            val handle = genesis.startDevshardProxy(escrowId = firstEscrowId, keyName = user.keyName)
+            val handle = genesis.serveDevshardEscrow(escrowId = firstEscrowId, keyName = user.keyName)
             try {
-                genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
+                genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
                 for (i in 0 until 5) {
-                    genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "first $i")
+                    genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "first $i")
                 }
                 genesis.assertDevshardSettlement(handle, firstEscrowId, user, escrowAmount, requireCompletedValidations = false)
             } finally {
-                genesis.stopDevshardProxy(firstEscrowId)
+                genesis.withdrawDevshardEscrow(firstEscrowId)
             }
         }
 
@@ -174,13 +174,13 @@ class DevshardPostgresStorageTests : TestermintTest() {
             val tickUser = genesis.createFundedDevshardUser("devshard-pg-prune-tick-${tick++}")
             val newEscrowId = genesis.createDevshardEscrowForUser(escrowAmount, tickUser.keyName, modelId = devshardEscrowModel)
             lastTickEpoch = genesis.node.queryDevshardEscrow(newEscrowId).escrow!!.epochIndex.toLong()
-            val handle = genesis.startDevshardProxy(escrowId = newEscrowId, keyName = tickUser.keyName)
+            val handle = genesis.serveDevshardEscrow(escrowId = newEscrowId, keyName = tickUser.keyName)
             try {
-                genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
-                genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "tick")
+                genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
+                genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "tick")
                 genesis.assertDevshardSettlement(handle, newEscrowId, tickUser, escrowAmount, requireCompletedValidations = false)
             } finally {
-                genesis.stopDevshardProxy(newEscrowId)
+                genesis.withdrawDevshardEscrow(newEscrowId)
             }
             genesis.waitForNextEpoch()
         }

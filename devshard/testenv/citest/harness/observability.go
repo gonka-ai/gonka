@@ -83,7 +83,7 @@ func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 	if version == "" {
 		version = "v2"
 	}
-	replaced := strings.ReplaceAll(string(body), "devshardctl:8081", fmt.Sprintf("devshardctl:%d", cfg.Devshardctl.Port))
+	replaced := strings.ReplaceAll(string(body), "gateway:8081", fmt.Sprintf("gateway:%d", cfg.Gateway.Port))
 	replaced = strings.ReplaceAll(replaced, "metrics_path: /v2/metrics", fmt.Sprintf("metrics_path: /%s/metrics", version))
 	require.NoError(t, os.WriteFile(promPath, []byte(replaced), 0o644))
 

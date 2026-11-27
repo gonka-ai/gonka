@@ -14,7 +14,7 @@ import (
 )
 
 // TestTraceLogCorrelationGatewayHostDapi proves one user chat produces one
-// trace_id and one request_id across all three hops: devshardctl (gateway),
+// trace_id and one request_id across all three hops: gateway,
 // versiond/devshardd (host) and mock-dapi (node manager).
 //
 // TestTraceLogCorrelation already covers gateway + host. The node-selection hop
@@ -29,7 +29,7 @@ func TestTraceLogCorrelationGatewayHostDapi(t *testing.T) {
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, stack,
-				"devshardctl", "versiond-0", "mock-dapi", "alloy", "loki", "tempo")
+				"gateway", "versiond-0", "mock-dapi", "alloy", "loki", "tempo")
 		}
 	})
 
@@ -57,19 +57,19 @@ func TestTraceLogCorrelationGatewayHostDapi(t *testing.T) {
 	// warm-up chat cannot satisfy the assertions below. Exactly one trace_id
 	// for this request_id is also the negative case: an orphan Acquire that
 	// started its own root trace would show up as a second id here.
-	traceID := harness.RequireSingleTraceForRequest(t, obs, "devshardctl", requestID, 2*time.Minute)
+	traceID := harness.RequireSingleTraceForRequest(t, obs, "gateway", requestID, 2*time.Minute)
 	t.Logf("citest: shared trace_id=%s", traceID)
 
 	// Logs: every hop wrote at least one line on that trace.
 	harness.RequireLogsForTrace(t, obs, traceID, []string{
-		"devshardctl",
+		"gateway",
 		"versiond.*",
 		"mock-dapi",
 	}, 2*time.Minute)
 
 	// …and those lines describe the same user request, not just the same trace.
 	harness.RequireRequestIDOnTrace(t, obs, traceID, requestID, []string{
-		"devshardctl",
+		"gateway",
 		"versiond.*",
 		"mock-dapi",
 	}, 2*time.Minute)
@@ -84,7 +84,7 @@ func TestTraceLogCorrelationGatewayHostDapi(t *testing.T) {
 	// Spans: same three services on one trace, and the acquire hop is visible
 	// either as the host client span or the mock-dapi server span.
 	harness.WaitTraceServices(t, obs, traceID,
-		[]string{"devshardctl", "devshardd", "mock-dapi"}, 2*time.Minute)
+		[]string{"gateway", "devshardd", "mock-dapi"}, 2*time.Minute)
 	harness.WaitTraceSpanNames(t, obs, traceID,
 		[]string{"gateway.request", "devshardd.request"}, 2*time.Minute)
 	acquireSpan := harness.WaitTraceSpanNameAny(t, obs, traceID, []string{
