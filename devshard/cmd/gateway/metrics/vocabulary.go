@@ -30,6 +30,23 @@ const (
 	lostCauseWriteFailed = "write_failed"
 )
 
+// Why an active escrow's session would not open; any other cause is UnopenedOther. See operations.md, "Boot".
+const (
+	UnopenedLocalState = "local_state_unrecoverable"
+	UnopenedKeyMissing = "private_key_missing"
+	UnopenedChain      = "chain_unavailable"
+	UnopenedDraining   = "draining"
+	UnopenedOther      = "other"
+)
+
+func unopenedReasonLabel(reason string) string {
+	switch reason {
+	case UnopenedLocalState, UnopenedKeyMissing, UnopenedChain, UnopenedDraining:
+		return reason
+	}
+	return UnopenedOther
+}
+
 // What a probe wave did.
 const (
 	HostPingTickStarted = "started"

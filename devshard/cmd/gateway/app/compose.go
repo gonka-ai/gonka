@@ -156,6 +156,7 @@ type gateway struct {
 	heights      *heights.Oracle
 	governance   *runtimeParams
 	hosts        HostDirectory
+	unopened     *unopenedEscrows
 
 	builders     int
 	devshardWork chan struct{}
@@ -460,6 +461,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		heights:      sources.Heights,
 		governance:   sources.Governance,
 		hosts:        sources.Hosts,
+		unopened:     registerUnopened(telemetry),
 		builders:     boot.builders,
 		devshardWork: devshardWork,
 		bootSteps:    (*gateway).bootOrder,
