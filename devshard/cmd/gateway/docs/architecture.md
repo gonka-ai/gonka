@@ -86,7 +86,7 @@ The non-test imports between gateway packages, as `go list -f '{{.ImportPath}} {
 
 - `accounting` imports `engine`, `filters`, `scheduler`
 - `api` imports `chain`, `config`, `engine`, `escrow`, `filters`, `internal/logkey`, `internal/safemath`, `internal/strictjson`, `journal`, `limits`, `perf`, `registry`, `scheduler`, `store`, `tokenizer`
-- `app` imports `accounting`, `api`, `chain`, `config`, `engine`, `env`, `escrow`, `filters`, `heights`, `hostping`, `internal/logkey`, `internal/strictjson`, `journal`, `limits`, `metrics`, `nonces`, `perf`, `registry`, `scheduler`, `shadow`, `store`, `tokenizer`, `warmup`
+- `app` imports `accounting`, `api`, `chain`, `config`, `engine`, `env`, `escrow`, `filters`, `heights`, `hostping`, `hostrpc`, `internal/logkey`, `internal/strictjson`, `journal`, `limits`, `metrics`, `nonces`, `perf`, `registry`, `scheduler`, `shadow`, `store`, `tokenizer`, `warmup`
 - `chain` imports `internal/safemath`, `internal/strictjson`
 - `config` imports `chain`, `env`, `filters`
 - `engine` imports `chain`, `config`, `filters`, `internal/strictjson`, `limits`, `perf`, `scheduler`
@@ -96,6 +96,7 @@ The non-test imports between gateway packages, as `go list -f '{{.ImportPath}} {
 - `funding` imports `internal/safemath`, `liquidity`
 - `heights` imports `config`, `internal/logkey`
 - `hostping` imports `config`, `internal/logkey`, `registry`
+- `hostrpc` imports `config`, `internal/logkey`, `registry`
 - `internal/leakcheck` imports no gateway package
 - `internal/logcapture` imports no gateway package
 - `internal/logkey` imports no gateway package

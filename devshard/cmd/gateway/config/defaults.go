@@ -121,6 +121,11 @@ func Defaults() Config {
 			TimeoutMS:   2_000,
 			Concurrency: 8,
 		},
+		HostRPCStats: HostRPCStats{
+			IntervalMS:  15_000,
+			TimeoutMS:   4_000,
+			Concurrency: 8,
+		},
 		Engine: Engine{
 			ReceiptTimeoutMS:             5_000,
 			FirstTokenFloorMS:            6_000,

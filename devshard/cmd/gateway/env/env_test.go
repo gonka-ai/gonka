@@ -200,6 +200,45 @@ func TestTheRenamedGatewaySpellingsAreNotRead(t *testing.T) {
 }
 
 // Test flow:
+//  1. Set every host RPC-stats variable, with the switch as `on` and the durations as `15s` and `4s`.
+//  2. Call `Load`.
+//  3. Assert each loads, the durations converted to milliseconds.
+//  4. Set the interval to `0s` and the concurrency to `0`, call `Load` again, and assert both are ignored.
+func TestTheHostRPCStatsVariablesAreRead(t *testing.T) {
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_DISABLED", "on")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", "15s")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT", "4s")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", "8")
+
+	values, err := Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if values.HostRPCStatsDisabled == nil || !*values.HostRPCStatsDisabled {
+		t.Errorf("HostRPCStatsDisabled = %v, want true from on", values.HostRPCStatsDisabled)
+	}
+	if values.HostRPCStatsIntervalMS == nil || *values.HostRPCStatsIntervalMS != 15_000 {
+		t.Errorf("HostRPCStatsIntervalMS = %v, want 15000", values.HostRPCStatsIntervalMS)
+	}
+	if values.HostRPCStatsTimeoutMS == nil || *values.HostRPCStatsTimeoutMS != 4_000 {
+		t.Errorf("HostRPCStatsTimeoutMS = %v, want 4000", values.HostRPCStatsTimeoutMS)
+	}
+	if values.HostRPCStatsConcurrency == nil || *values.HostRPCStatsConcurrency != 8 {
+		t.Errorf("HostRPCStatsConcurrency = %v, want 8", values.HostRPCStatsConcurrency)
+	}
+
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", "0s")
+	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", "0")
+	values, err = Load()
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if values.HostRPCStatsIntervalMS != nil || values.HostRPCStatsConcurrency != nil {
+		t.Errorf("interval %v and concurrency %v, want both ignored so the defaults apply", values.HostRPCStatsIntervalMS, values.HostRPCStatsConcurrency)
+	}
+}
+
+// Test flow:
 //  1. Set every host-ping and height-sync variable, in the deployed spellings (durations, on/off/yes).
 //  2. Call `Load`.
 //  3. Assert each loads, the durations converted to milliseconds.

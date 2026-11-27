@@ -7,7 +7,7 @@ The only package that knows Prometheus exists.
 ## What it owns
 
 - **The registry** (`metrics.go`) and every collector: limits, capacity, perf, registry, height sync (`heightsync_collector.go`: each published escrow's cached height-sync view, rebuilt on every scrape; a draining escrow is not one), chain, funding (`funding_collector.go`: per-model escrow money, counts, planner decisions and guarantee, read from plain `FundingModel` values), cache, capture, transport, accounting, owed votes, journal, nonce ledger.
-- **Recorders** (`race.go`, `dispatch_recorder.go`, `limit_recorder.go`, `stats_tokenizer_recorder.go`) — the write side, called by the subsystems that produce the facts.
+- **Recorders** (`race.go`, `dispatch_recorder.go`, `limit_recorder.go`, `stats_tokenizer_recorder.go`, `host_rpc_recorder.go`) — the write side, called by the subsystems that produce the facts.
 - **Label discipline** (`labels.go`) — what may become a label and what may not.
 
 ## Boundaries

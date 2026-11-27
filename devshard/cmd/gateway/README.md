@@ -79,6 +79,7 @@ Each package has a `README.md` that states what the package owns, its contract w
 | [`shadow/`](./shadow/README.md) | probing the participants that serve no client |
 | [`heights/`](./heights/README.md) | carrying mainnet height into the escrow's log: the courier, and the optional follower |
 | [`hostping/`](./hostping/README.md) | pinging the live escrows' hosts for reachability and clock drift |
+| [`hostrpc/`](./hostrpc/README.md) | polling the live escrows' hosts for the counters their rate limiters keep |
 | [`store/`](./store/README.md) | control-plane state in SQLite |
 | [`config/`](./config/README.md) | the immutable configuration snapshot and its atomic holder |
 | [`env/`](./env/README.md) | every gateway environment variable; the runtime-params feed reads its own through `devshard/runtimeparams` |

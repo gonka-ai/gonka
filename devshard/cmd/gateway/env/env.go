@@ -78,6 +78,11 @@ type Values struct {
 	HostPingTimeoutMS   *int64
 	HostPingConcurrency *int64
 
+	HostRPCStatsDisabled    *bool
+	HostRPCStatsIntervalMS  *int64
+	HostRPCStatsTimeoutMS   *int64
+	HostRPCStatsConcurrency *int64
+
 	ChainVersionsPollIntervalSeconds *int64
 
 	ContentionProfiles *bool
@@ -331,6 +336,10 @@ func Load() (Values, error) {
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", &values.HostPingIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", &values.HostPingTimeoutMS)
 	readLenientInt("DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY", 1, &values.HostPingConcurrency)
+	readLenientBool("DEVSHARD_GATEWAY_RPC_STATS_DISABLED", &values.HostRPCStatsDisabled)
+	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", &values.HostRPCStatsIntervalMS)
+	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT", &values.HostRPCStatsTimeoutMS)
+	readLenientInt("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", 1, &values.HostRPCStatsConcurrency)
 	readLenientBool("DEVSHARD_REQUEST_CAPTURE_ENABLED", &values.CaptureEnabled)
 	readString("DEVSHARD_REQUEST_CAPTURE_DIR", &values.CaptureDir)
 	readStrictFloat("GATEWAY_CAPTURE_SAMPLE_RATE", &values.CaptureSampleRate)

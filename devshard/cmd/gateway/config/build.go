@@ -71,6 +71,10 @@ func Build(values env.Values, overrides Overrides, clientKeys ...string) (*Confi
 	overrideIfSet(&configuration.HostPing.IntervalMS, values.HostPingIntervalMS)
 	overrideIfSet(&configuration.HostPing.TimeoutMS, values.HostPingTimeoutMS)
 	overrideIfSet(&configuration.HostPing.Concurrency, values.HostPingConcurrency)
+	overrideIfSet(&configuration.HostRPCStats.Disabled, values.HostRPCStatsDisabled)
+	overrideIfSet(&configuration.HostRPCStats.IntervalMS, values.HostRPCStatsIntervalMS)
+	overrideIfSet(&configuration.HostRPCStats.TimeoutMS, values.HostRPCStatsTimeoutMS)
+	overrideIfSet(&configuration.HostRPCStats.Concurrency, values.HostRPCStatsConcurrency)
 
 	// Admin-override layer (wins over env).
 	applyTunables(&configuration, overrides.Tunables)

@@ -57,6 +57,34 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a config from empty environment values.
+//  2. Assert the host RPC-stats poll is on with 15s, 4s and 8 workers.
+//  3. Build a config from environment values for all four knobs.
+//  4. Assert each lands in `HostRPCStats`.
+func TestBuildCarriesTheHostRPCStatsKnobs(t *testing.T) {
+	configuration, err := Build(env.Values{}, Overrides{})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	if got := configuration.HostRPCStats; got != (HostRPCStats{IntervalMS: 15_000, TimeoutMS: 4_000, Concurrency: 8}) {
+		t.Errorf("HostRPCStats defaults = %+v", got)
+	}
+
+	configuration, err = Build(env.Values{
+		HostRPCStatsDisabled:    boolPointer(true),
+		HostRPCStatsIntervalMS:  int64Pointer(30_000),
+		HostRPCStatsTimeoutMS:   int64Pointer(5_000),
+		HostRPCStatsConcurrency: int64Pointer(2),
+	}, Overrides{})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	if got := configuration.HostRPCStats; got != (HostRPCStats{Disabled: true, IntervalMS: 30_000, TimeoutMS: 5_000, Concurrency: 2}) {
+		t.Errorf("HostRPCStats from env = %+v", got)
+	}
+}
+
+// Test flow:
 //  1. Build a config with two client keys passed as the active keys, then overwrite the caller's slice.
 //  2. Assert the built server's API keys are the two keys as passed, so the snapshot does not alias the caller's slice.
 //  3. Build a config with no keys and assert the server has none, with no error even though a model is `api_key`.

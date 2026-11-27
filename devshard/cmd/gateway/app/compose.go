@@ -25,6 +25,7 @@ import (
 	"devshard/cmd/gateway/escrow"
 	"devshard/cmd/gateway/heights"
 	"devshard/cmd/gateway/hostping"
+	"devshard/cmd/gateway/hostrpc"
 	"devshard/cmd/gateway/internal/logkey"
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/limits"
@@ -151,6 +152,7 @@ type gateway struct {
 	events       *journal.Journal
 	warmup       *warmup.Prober
 	hostPings    *hostping.Pinger
+	hostRPCStats *hostrpc.Poller
 	heights      *heights.Oracle
 	governance   *runtimeParams
 	hosts        HostDirectory
@@ -454,6 +456,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 		events:       events,
 		warmup:       prober,
 		hostPings:    hostping.New(configuration.HostPing, escrows, metrics.NewHostPingRecorder(telemetry)),
+		hostRPCStats: hostrpc.New(configuration.HostRPCStats, escrows, metrics.NewHostRPCRecorder(telemetry)),
 		heights:      sources.Heights,
 		governance:   sources.Governance,
 		hosts:        sources.Hosts,

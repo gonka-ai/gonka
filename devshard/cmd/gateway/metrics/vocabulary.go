@@ -36,6 +36,19 @@ const (
 	HostPingTickSkipped = "skipped"
 )
 
+// What a host's RPC stats report is folded to, and the labels they are exported under. See ../hostrpc/README.md.
+const (
+	hostRPCOther          = "other"
+	hostRPCReconnectWatch = "watch"
+	hostRPCReconnectTTL   = "ttl"
+	hostRPCAttachFloor    = "floor"
+	hostRPCAttachOrigin   = "origin"
+	hostRPCParticipant    = "participant_key"
+	hostRPCEndpoint       = "endpoint"
+	hostRPCZone           = "zone"
+	hostRPCReason         = "reason"
+)
+
 // See README.md, "Race labels".
 const (
 	outcomeFailure = "failure"

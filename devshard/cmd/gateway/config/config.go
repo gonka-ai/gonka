@@ -177,6 +177,14 @@ type HostPing struct {
 	Concurrency int64
 }
 
+// HostRPCStats groups the poll of the live escrows' hosts for their rate-limiter counters. See ../hostrpc/README.md.
+type HostRPCStats struct {
+	Disabled    bool
+	IntervalMS  int64
+	TimeoutMS   int64
+	Concurrency int64
+}
+
 // Engine groups race-escalation tuning. See race.md, "Tunables and backstops".
 type Engine struct {
 	ReceiptTimeoutMS             int64
@@ -215,21 +223,22 @@ type TimeoutSweep struct {
 
 // Config is the complete immutable gateway configuration snapshot.
 type Config struct {
-	Server     Server
-	Chain      Chain
-	Tx         Tx
-	Limits     Limits
-	Modes      Modes
-	Rotation   Rotation
-	Cache      Cache
-	Accounting Accounting
-	Capture    Capture
-	Stream     Stream
-	Perf       Perf
-	HostPing   HostPing
-	HeightSync HeightSync
-	Engine     Engine
-	Scheduler  Scheduler
+	Server       Server
+	Chain        Chain
+	Tx           Tx
+	Limits       Limits
+	Modes        Modes
+	Rotation     Rotation
+	Cache        Cache
+	Accounting   Accounting
+	Capture      Capture
+	Stream       Stream
+	Perf         Perf
+	HostPing     HostPing
+	HostRPCStats HostRPCStats
+	HeightSync   HeightSync
+	Engine       Engine
+	Scheduler    Scheduler
 
 	TimeoutSweep TimeoutSweep
 
