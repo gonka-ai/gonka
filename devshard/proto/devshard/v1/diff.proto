@@ -130,6 +130,19 @@ message ErrorMissVoteContent {
   bytes  response_hash = 4;
 }
 
+// ChatFrameSignatureContent is what the executor signs on a peer RPC
+// ChatFrame. stream_hash is the running hash over every uncompressed byte of
+// the Chat stream up to and including that frame, so the newest valid
+// signature covers the whole prefix. CanonicalSignedBytes prefixes
+// "devshard.chatframe.v1".
+message ChatFrameSignatureContent {
+  string escrow_id    = 1;
+  uint64 inference_id = 2;
+  uint64 seq          = 3; // 1 for the first signed frame
+  bytes  stream_hash  = 4;
+  uint64 stream_bytes = 5; // uncompressed bytes stream_hash covers
+}
+
 // StateSignatureContent is what a host signs for state attestation.
 message StateSignatureContent {
   bytes  state_root = 1;

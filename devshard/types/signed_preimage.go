@@ -18,16 +18,18 @@ const (
 	DomainMsgValidationVote = "devshard.validationvote.v1"
 	DomainTimeoutVote       = "devshard.timeoutvote.v1"
 	DomainErrorMissVote     = "devshard.errormissvote.v1"
+	DomainChatFrame         = "devshard.chatframe.v1"
 )
 
 // signedPreimageDomain is the prefix CanonicalSignedBytes adds. Empty means the
 // preimage is the deterministic proto encoding alone (the message's field
 // layout must then be unique among other empty-domain signed types).
 var signedPreimageDomain = map[protoreflect.FullName]string{
-	"devshard.v1.MsgValidation":        DomainMsgValidation,
-	"devshard.v1.MsgValidationVote":    DomainMsgValidationVote,
-	"devshard.v1.TimeoutVoteContent":   DomainTimeoutVote,
-	"devshard.v1.ErrorMissVoteContent": DomainErrorMissVote,
+	"devshard.v1.MsgValidation":             DomainMsgValidation,
+	"devshard.v1.MsgValidationVote":         DomainMsgValidationVote,
+	"devshard.v1.TimeoutVoteContent":        DomainTimeoutVote,
+	"devshard.v1.ErrorMissVoteContent":      DomainErrorMissVote,
+	"devshard.v1.ChatFrameSignatureContent": DomainChatFrame,
 }
 
 // SignedPreimageDomain is the domain tag CanonicalSignedBytes prefixes, or "".
