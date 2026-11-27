@@ -1676,7 +1676,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		if errors.Is(err, devshard.ErrValidationDeferred) {
 			observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusDeferred)
-			observability.Log(ctx, observability.LevelInfo, "validation deferred: no credit", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, "", nil,
+			observability.Log(ctx, observability.LevelInfo, "validation deferred", observability.StageValidationFinished, observability.WhereHostValidate, h.escrowID, "", err,
 				"inference_id", job.inferenceID, "model", job.model)
 			return // Keep the obligation eligible after cooldown.
 		}
