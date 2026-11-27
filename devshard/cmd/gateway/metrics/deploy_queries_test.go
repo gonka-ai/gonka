@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,11 +16,14 @@ import (
 
 const observabilityDir = "../../../../deploy/join/observability"
 
-var gatewayFamilyName = regexp.MustCompile(`devshard_gateway_[a-z0-9_]+`)
+var (
+	gatewayFamilyName = regexp.MustCompile(`devshard_gateway_[a-z0-9_]+`)
+	devshardctlOnly   = []string{"gonka-gateway-observability.json"}
+)
 
 // Test flow:
 //  1. Collect every devshard_gateway_* family name the metrics package declares in its non-test sources.
-//  2. Read every expr and query string of the dashboards under deploy/join/observability.
+//  2. Read every expr and query string of the dashboards under deploy/join/observability, skipping the devshardctl-only dashboard.
 //  3. Assert the queries name at least one gateway family, and that each family they name, less a histogram's _bucket, _sum or _count suffix, is one the package declares.
 func TestEveryShippedQueryNamesAFamilyTheGatewayDeclares(t *testing.T) {
 	declared := declaredGatewayFamilies(t)
@@ -29,6 +33,9 @@ func TestEveryShippedQueryNamesAFamilyTheGatewayDeclares(t *testing.T) {
 		t.Fatalf("filepath.Glob(dashboards) = %v, %v, want at least one dashboard", dashboards, err)
 	}
 	for _, path := range dashboards {
+		if slices.Contains(devshardctlOnly, filepath.Base(path)) {
+			continue
+		}
 		queries[filepath.Base(path)] = dashboardQueries(t, path)
 	}
 
