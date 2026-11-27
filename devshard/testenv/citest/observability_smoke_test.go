@@ -20,7 +20,7 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "jaeger", "promtail")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "jaeger", "promtail")
 		}
 	})
 
@@ -44,11 +44,11 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 	t.Logf("citest: gateway X-Request-Id=%q", requestID)
 
 	t.Logf("citest: observability profile=%s", obs.Profile)
-	harness.WaitTraceSpan(t, obs, "devshardctl", "gateway.request", 2*time.Minute)
+	harness.WaitTraceSpan(t, obs, "gateway", "gateway.request", 2*time.Minute)
 	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.request", 2*time.Minute)
 	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.inference", 2*time.Minute)
 	traceID := harness.WaitTraceCoveringServices(t, obs,
-		[]string{"devshardctl", "devshardd"},
+		[]string{"gateway", "devshardd"},
 		2*time.Minute,
 	)
 	t.Logf("citest: shared trace_id=%s", traceID)

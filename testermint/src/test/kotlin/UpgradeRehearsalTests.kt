@@ -96,17 +96,17 @@ class UpgradeRehearsalTests : TestermintTest() {
         genesis.waitForNextInferenceWindow()
         val escrowAmount = 7_000_000_000L
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = defaultModel)
-        val handle = genesis.startDevshardProxy(
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = devshardVersionedRoutePrefix(),
         )
         try {
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
             makeInferenceRequestWhenRoutable(genesis, inferenceRequest)
             repeat(5) { index ->
                 val responseText = genesis.sendChatCompletion(
-                    handle.proxyUrl,
+                    handle.escrowUrl,
                     defaultModel,
                     "upgrade rehearsal post-upgrade prompt $index",
                 )
@@ -120,7 +120,7 @@ class UpgradeRehearsalTests : TestermintTest() {
                 requireCompletedValidations = false,
             )
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
 
         writeCompletionManifest(targetUpgrade, upgradeHeight, postInference.id, escrowId, postUpgradePocResult)

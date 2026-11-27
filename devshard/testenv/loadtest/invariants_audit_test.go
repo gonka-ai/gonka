@@ -22,9 +22,8 @@ func attemptFailureKey(participant, reason string) string {
 // passing fixture, with host rate-limit terminals rising through the run.
 func budgetInputs() InvariantInputs {
 	in := passingInputs()
-	in.Settings.Quarantine["sender_rate"] = senderRateQuarantine
 	in.Events = append(in.Events, EventRecord{ID: "bg", Case: "host-over-peer-chat-budget", Action: "marker", Target: "versiond-3",
-		Params:    map[string]any{"background": true, "waive_misses": true, "expect_quarantine": "sender_rate", "observe": "host_rate_limited"},
+		Params:    map[string]any{"background": true, "waive_misses": true, "observe": "host_rate_limited"},
 		StartedAt: atPtr(0), EndedAt: atPtr(10 * time.Minute)})
 	for offset := time.Duration(0); offset < in.Workload; offset += 10 * time.Second {
 		host := processSample("versiond-3/devshardd", offset, 9, 200, 80<<20)
@@ -110,39 +109,15 @@ func TestInvariantBackgroundBudgetMarkerFires(t *testing.T) {
 }
 
 // Test flow:
-// 1. Add a sender_rate transition on p2 outside e1 and require quarantines-match-faults.bg.reason and attribution to pass.
-// 2. Add an http_throttle transition outside e1 and require quarantines-match-faults.bg.reason to fail.
-// 3. Charge p2 a miss outside e1 and require misses-only-in-fault-windows.bg.waived_misses to fail.
+// 1. Charge p2 a miss outside e1.
+// 2. Require misses-only-in-fault-windows.bg.waived_misses to fail.
 func TestInvariantBackgroundBudgetMarkerJudges(t *testing.T) {
-	addAt := func(in *InvariantInputs, offset time.Duration, reason string) {
-		for i := range in.Metrics {
-			s := &in.Metrics[i]
-			if s.Target != "gateway" || s.Domain == nil {
-				continue
-			}
-			s.Domain[transitionKey("p2", "probe", reason)] = 0
-			if !s.At.Before(at(offset)) {
-				s.Domain[transitionKey("p2", "probe", reason)] = 1
-			}
-		}
-	}
 	in := budgetInputs()
-	addAt(&in, 90*time.Second, "sender_rate_quarantine")
-	checks, _ := evaluateInvariants(in)
-	require.True(t, checksNamed(t, checks, "quarantines-match-faults.bg.reason")[0].Passed, checksNamed(t, checks, "quarantines-match-faults.bg.reason")[0].Details)
-	require.True(t, checksNamed(t, checks, "quarantines-match-faults.quarantine_attributed")[0].Passed)
-
-	in = budgetInputs()
-	addAt(&in, 90*time.Second, "http_throttle_quarantine")
-	checks, _ = evaluateInvariants(in)
-	require.False(t, checksNamed(t, checks, "quarantines-match-faults.bg.reason")[0].Passed)
-
-	in = budgetInputs()
 	in.Accounting = append(in.Accounting[:1], append([]AccountingSnapshot{accountingAt(2*time.Minute, "mid", map[string]uint64{"p2": 1})}, in.Accounting[1:]...)...)
 	for i := 2; i < len(in.Accounting); i++ {
 		in.Accounting[i] = accountingAt(in.Accounting[i].At.Sub(fixtureT0), in.Accounting[i].Label, map[string]uint64{"p2": 5})
 	}
-	checks, _ = evaluateInvariants(in)
+	checks, _ := evaluateInvariants(in)
 	require.False(t, checksNamed(t, checks, "misses-only-in-fault-windows.bg.waived_misses")[0].Passed)
 }
 
@@ -179,7 +154,7 @@ func TestInvariantHonestHTTP5xx(t *testing.T) {
 }
 
 // Test flow:
-// 1. Evaluate no-escrow-falsely-marked-missing with no "escrow missing on chain" lines and require a pass.
+// 1. Evaluate no-escrow-falsely-marked-missing with no "escrow gone from chain, taken out of service" lines and require a pass.
 // 2. Mark escrow 11, which mock-chain still lists, inactive as missing and require a failure.
 // 3. Mark an escrow mock-chain does not list and require a pass; drop the log and require unavailable.
 func TestInvariantEscrowMissingOnChain(t *testing.T) {
@@ -199,15 +174,15 @@ func TestInvariantEscrowMissingOnChain(t *testing.T) {
 }
 
 // Test flow:
-// 1. Write a Compose log with two gateway "escrow missing on chain" lines, one other skip reason and noise.
+// 1. Write a Compose log with two gateway "escrow gone from chain" lines, one other line and noise.
 // 2. Require readEscrowMissing to return exactly the two escrow IDs in order.
 func TestReadEscrowMissing(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compose.log")
 	body := strings.Join([]string{
-		"devshardctl-1  | 2026/10/13 09:21:40 devshard 15 escrow missing on chain, marking inactive and skipping runtime: escrow not found",
-		"devshardctl-1  | 2026/10/13 09:21:40 devshard 16 escrow settled on chain, marking inactive and skipping runtime: settled",
+		`gateway-1  | {"msg":"escrow gone from chain, taken out of service","escrow":"15"}`,
+		`gateway-1  | {"msg":"escrow parked at its settlement deadline","escrow":"16"}`,
 		"versiond-3-1   | INFO reconcile desired versions",
-		"devshardctl-1  | 2026/10/13 09:21:41 devshard 17 escrow missing on chain, marking inactive and skipping runtime: escrow not found",
+		`gateway-1  | {"msg":"escrow gone from chain, taken out of service","escrow":"17"}`,
 	}, "\n")
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	ids, err := readEscrowMissing(path)
@@ -231,36 +206,6 @@ func TestInvariantFinalNonceTable(t *testing.T) {
 	}
 	require.Equal(t, uint64(40), finals["10"])
 	require.Equal(t, uint64(590), finals["11"], "the highest of resident, settled and observed nonces")
-}
-
-// Test flow:
-// 1. Run the whole-run budget marker on p2, which expects sender_rate quarantines, and let the gateway quarantine p2 for http at 1 min, outside any other fault, and again at 3m40s inside p2's empty-stream fault.
-// 2. Require the empty-stream fault's reason check to pass, since the marker alone produced http before, and the marker's reason check to name both http transitions.
-func TestInvariantQuarantineReasonFollowsTheBackgroundWindowThatProducesIt(t *testing.T) {
-	in := budgetInputs()
-	key := transitionKey("p2", "shadow", "http_throttle_quarantine")
-	for i := range in.Metrics {
-		s := &in.Metrics[i]
-		if s.Target != "gateway" || s.Domain == nil {
-			continue
-		}
-		offset := s.At.Sub(fixtureT0)
-		s.Domain[key] = 0
-		if offset >= time.Minute {
-			s.Domain[key] = 1
-		}
-		if offset >= 3*time.Minute+40*time.Second {
-			s.Domain[key] = 2
-		}
-	}
-
-	checks, _ := evaluateInvariants(in)
-
-	fault := checksNamed(t, checks, "quarantines-match-faults.e1.reason")[0]
-	require.True(t, fault.Passed, "actual=%s details=%s", fault.Actual, fault.Details)
-	marker := checksNamed(t, checks, "quarantines-match-faults.bg.reason")[0]
-	require.False(t, marker.Passed)
-	require.Equal(t, "mismatched=2", marker.Actual)
 }
 
 // Test flow:

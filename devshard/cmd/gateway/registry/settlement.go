@@ -7,22 +7,103 @@ import (
 	"fmt"
 	"strconv"
 
+	"devshard/cmd/gateway/accounting"
 	"devshard/cmd/gateway/chain"
 	"devshard/gatewayprotocol/settlement"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/types"
+	"devshard/user"
 )
 
 // Finalize collects host signatures, so a non-resident escrow is rehydrated with a serving session.
 func (r *Registry) Finalize(ctx context.Context, escrowID string) error {
 	return r.withServingSession(ctx, escrowID, func(session EscrowSession) error {
 		if err := session.Finalize(ctx); err != nil {
+			if errors.Is(err, user.ErrInferenceCompletionPending) {
+				return fmt.Errorf("%w: %w", chain.ErrDevshardBusy, err)
+			}
+			return err
+		}
+		r.clearCompletions(escrowID)
+		r.observeFinalized(escrowID, session)
+		return nil
+	})
+}
+
+// FinalizeForced finalizes without waiting on the completion journal and returns the nonces it finalized past while unresolved.
+func (r *Registry) FinalizeForced(ctx context.Context, escrowID string) ([]uint64, error) {
+	var unresolved []uint64
+	err := r.withServingSession(ctx, escrowID, func(session EscrowSession) error {
+		var err error
+		if unresolved, err = r.finalizeDetached(ctx, escrowID, session); err != nil {
 			return err
 		}
 		r.observeFinalized(escrowID, session)
 		return nil
 	})
+	return unresolved, err
+}
+
+func (r *Registry) finalizeDetached(ctx context.Context, escrowID string, session EscrowSession) ([]uint64, error) {
+	served := session.UserSession()
+	if served == nil || r.completions == nil {
+		return nil, session.Finalize(ctx)
+	}
+	var unresolved []uint64
+	if session.Phase() != types.PhaseSettlement {
+		unresolved = r.unresolvedCompletions(escrowID, session)
+	}
+	served.SetInferenceCompletionStore(nil)
+	defer served.SetInferenceCompletionStore(r.completions)
+	if err := session.Finalize(ctx); err != nil {
+		return nil, err
+	}
+	r.clearCompletions(escrowID)
+	return unresolved, nil
+}
+
+func (r *Registry) unresolvedCompletions(escrowID string, session EscrowSession) []uint64 {
+	entries, err := r.completions.ListInferenceCompletions(escrowID)
+	if err != nil {
+		r.narrateCompletionsFailed(escrowID, err)
+		return nil
+	}
+	var unresolved []uint64
+	for _, entry := range entries {
+		if record, tracked := session.Inference(entry.Nonce); tracked && !completionResolved(record.Status) {
+			unresolved = append(unresolved, entry.Nonce)
+		}
+	}
+	return unresolved
+}
+
+func completionResolved(status types.InferenceStatus) bool {
+	return accounting.FinishApplied(status) || status == types.StatusTimedOut
+}
+
+func (r *Registry) clearCompletions(escrowID string) {
+	if r.completions == nil {
+		return
+	}
+	entries, err := r.completions.ListInferenceCompletions(escrowID)
+	if err != nil {
+		r.narrateCompletionsFailed(escrowID, err)
+		return
+	}
+	var failures []error
+	for _, entry := range entries {
+		failures = append(failures, r.completions.DeleteInferenceCompletion(escrowID, entry.Nonce))
+	}
+	if err := errors.Join(failures...); err != nil {
+		r.narrateCompletionsFailed(escrowID, err)
+	}
+}
+
+func (r *Registry) narrateCompletionsFailed(escrowID string, err error) {
+	if r.narrator != nil {
+		r.narrator.CompletionJournalFailed(escrowID, err)
+	}
 }
 
 func (r *Registry) withServingSession(ctx context.Context, escrowID string, work func(EscrowSession) error) error {

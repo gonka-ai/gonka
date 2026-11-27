@@ -30,6 +30,7 @@ import (
 	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/store"
+	"devshard/cmd/gateway/store/sqlite"
 	"devshard/host"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -528,9 +529,9 @@ func TestLoadSimulation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveStorageDir() = %v, want nil", err)
 	}
-	gatewayStore, err := store.Open(storageDir)
+	gatewayStore, err := sqlite.Open(storageDir)
 	if err != nil {
-		t.Fatalf("store.Open() = %v, want nil", err)
+		t.Fatalf("sqlite.Open() = %v, want nil", err)
 	}
 	open := config.ModelAccessOpen
 	if err := gatewayStore.SaveOverrides(t.Context(), config.Overrides{Models: map[string]config.ModelSettings{loadSimulationModel: {Access: &open}}}); err != nil {
@@ -550,7 +551,7 @@ func TestLoadSimulation(t *testing.T) {
 	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   fleet.serving,
-			ReadOnly:  readOnlySessions(gatewayStore, storageDir),
+			ReadOnly:  readOnlySessions(gatewayStore, storageDir, nil),
 			Reader:    chainServingModels{models: map[string]chain.ModelParams{loadSimulationModel: {ContextWindow: 32768, MaxModelLen: 32768}}},
 			Transport: chainWithoutADial{},
 		}, nil

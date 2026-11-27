@@ -31,7 +31,7 @@ type StateRootMismatchOpts struct {
 }
 
 // IsPostStateRootMismatchError reports whether err is a post_state_root mismatch,
-// including HTTP-wrapped errors returned to devshardctl clients.
+// including HTTP-wrapped errors returned to gateway clients.
 func IsPostStateRootMismatchError(err error) bool {
 	if err == nil {
 		return false

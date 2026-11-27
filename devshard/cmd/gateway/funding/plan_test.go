@@ -175,11 +175,12 @@ func TestPlanSizesCreatesAndRetiresFromMoneyDemandAndBudget(t *testing.T) {
 			wantBudget:  true,
 		},
 		{
-			name: "inside the bridge window the planner creates nothing",
+			name: "inside the bridge window a capacity shortfall is funded within the room",
 			state: modelWith(func(state *ModelState) {
 				demandAboveLiquidity(state)
 				state.MaxUnsettled, state.NearBridgeWindow, state.InBridgeWindow = 4, true, true
 			}),
+			wantCreates: creates(ReasonCapacity, ReasonCapacity),
 		},
 		{
 			name: "blocked requests create nothing and break the guarantee",
@@ -462,12 +463,11 @@ func TestPlanUnderPlannerOnRules(t *testing.T) {
 		wantBroken  bool
 	}{
 		{
-			name: "inside the bridge window a guard shortfall creates nothing and breaks the guarantee",
+			name: "inside the bridge window the guard is held to temp_count",
 			state: modelWith(func(state *ModelState) {
 				state.Escrows[1] = starvedEscrow("2", 40_000)
 				state.InBridgeWindow = true
 			}),
-			wantBroken: true,
 		},
 		{
 			name: "an unread escrow whose stored amount covers the slot counts toward the guarantee",

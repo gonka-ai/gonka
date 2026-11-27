@@ -63,31 +63,32 @@ func TestVersiondSnapshotRecoveryUsesSnapshotAfterRestart(t *testing.T) {
 	adminKey := harness.TestenvAdminAPIKey
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router", "devshard-postgres")
 		}
 	})
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, chatClient, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 
 	model := config.PrimaryModelID(cfg)
-	snap0 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	require.NotEmpty(t, snap0.EscrowID)
-	summary.EscrowID = snap0.EscrowID
+	snapshotInitial := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	require.NotEmpty(t, snapshotInitial.EscrowID)
+	summary.EscrowID = snapshotInitial.EscrowID
 
-	targetNonce := nextSnapshotNonce(snap0.LatestNonce)
+	targetNonce := nextSnapshotNonce(snapshotInitial.LatestNonce)
 	summary.TargetSnapshotNonce = targetNonce
-	harness.Step(t, "advance gateway session %s to snapshot nonce %d", snap0.EscrowID, targetNonce)
+	harness.Step(t, "advance gateway session %s to snapshot nonce %d", snapshotInitial.EscrowID, targetNonce)
 	warmupStartedAt := time.Now()
-	snapAtSnapshot := advanceGatewaySessionToNonce(t, chatClient, client, eps.GatewayHTTP, adminKey, model, targetNonce)
+	snapshotAtSnapshot := advanceGatewaySessionToNonce(t, chatClient, client, eps.GatewayHTTP, adminKey, escrowID, model, targetNonce)
 	summary.WarmupMs = millisSince(warmupStartedAt)
-	summary.LatestNonceBeforeRestart = snapAtSnapshot.LatestNonce
-	harness.Step(t, "snapshot warmup finished in %s at latest nonce %d", time.Duration(summary.WarmupMs)*time.Millisecond, snapAtSnapshot.LatestNonce)
-	require.Equal(t, snap0.EscrowID, snapAtSnapshot.EscrowID, "escrow id changed while advancing to snapshot")
+	summary.LatestNonceBeforeRestart = snapshotAtSnapshot.LatestNonce
+	harness.Step(t, "snapshot warmup finished in %s at latest nonce %d", time.Duration(summary.WarmupMs)*time.Millisecond, snapshotAtSnapshot.LatestNonce)
+	require.Equal(t, snapshotInitial.EscrowID, snapshotAtSnapshot.EscrowID, "escrow id changed while advancing to snapshot")
 
 	snapshotWaitStartedAt := time.Now()
-	snapshotNonce := waitPostgresSnapshotNonce(t, stack, cfg, snapAtSnapshot.EscrowID, targetNonce, 3*time.Minute)
+	snapshotNonce := waitPostgresSnapshotNonce(t, stack, cfg, snapshotAtSnapshot.EscrowID, targetNonce, 3*time.Minute)
 	summary.SnapshotWaitMs = millisSince(snapshotWaitStartedAt)
 	summary.PostgresSnapshotNonce = snapshotNonce
 	require.GreaterOrEqual(t, snapshotNonce, targetNonce)
@@ -96,10 +97,10 @@ func TestVersiondSnapshotRecoveryUsesSnapshotAfterRestart(t *testing.T) {
 	harness.Step(t, "restart all versiond instances (%v) and demand-load the snapshotted session", hostIDs)
 	recoveryStartedAt := time.Now()
 	harness.RestartServices(t, stack, hostIDs...)
-	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, snapAtSnapshot.EscrowID)
+	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, snapshotAtSnapshot.EscrowID)
 	summary.HostDemandLoadMs = make(map[string]int64, len(hostIDs))
 	for _, hostID := range hostIDs {
-		summary.HostDemandLoadMs[hostID] = waitVersiondHostSessionMempool(t, stack, hostID, snapAtSnapshot.EscrowID, 3*time.Minute).Milliseconds()
+		summary.HostDemandLoadMs[hostID] = waitVersiondHostSessionMempool(t, stack, hostID, snapshotAtSnapshot.EscrowID, 3*time.Minute).Milliseconds()
 	}
 	summary.RestartRecoveryMs = millisSince(recoveryStartedAt)
 	harness.Step(t, "versiond restart recovery finished in %s", time.Duration(summary.RestartRecoveryMs)*time.Millisecond)
@@ -110,18 +111,18 @@ func TestVersiondSnapshotRecoveryUsesSnapshotAfterRestart(t *testing.T) {
 	require.LessOrEqual(t, time.Duration(summary.RestartRecoveryMs)*time.Millisecond, snapshotRecoveryFailThreshold,
 		"snapshot restart recovery exceeded threshold")
 
-	snapAfterRestart := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	summary.LatestNonceAfterRestart = snapAfterRestart.LatestNonce
-	harness.RequireGatewaySessionStable(t, snapAtSnapshot, snapAfterRestart)
+	snapshotAfterRestart := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	summary.LatestNonceAfterRestart = snapshotAfterRestart.LatestNonce
+	harness.RequireGatewaySessionStable(t, snapshotAtSnapshot, snapshotAfterRestart)
 
 	logs, err := stack.ComposeLogsTail(5000, hostIDs...)
 	require.NoError(t, err)
 	summary.RestoredSnapshotLogSeen = strings.Contains(logs, "restored devshard snapshot") &&
-		strings.Contains(logs, "escrow_id="+snapAtSnapshot.EscrowID)
+		strings.Contains(logs, "escrow_id="+snapshotAtSnapshot.EscrowID)
 	summary.SnapshotErrorLogSeen = strings.Contains(logs, "failed to load devshard snapshot") ||
 		strings.Contains(logs, "failed to decode devshard snapshot") ||
 		strings.Contains(logs, "devshard snapshot failed root check")
-	require.True(t, summary.RestoredSnapshotLogSeen, "expected restored devshard snapshot log for escrow %s", snapAtSnapshot.EscrowID)
+	require.True(t, summary.RestoredSnapshotLogSeen, "expected restored devshard snapshot log for escrow %s", snapshotAtSnapshot.EscrowID)
 	require.False(t, summary.SnapshotErrorLogSeen, "unexpected snapshot fallback/error log")
 
 	harness.Step(t, "continue gateway chat after snapshot recovery")
@@ -135,9 +136,9 @@ func TestVersiondSnapshotRecoveryUsesSnapshotAfterRestart(t *testing.T) {
 	})
 	summary.PostRestartChatMs = millisSince(chatAfterRestartStartedAt)
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
-	snapAfterChat := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	summary.LatestNonceAfterChat = snapAfterChat.LatestNonce
-	harness.RequireGatewaySessionAdvanced(t, snapAfterRestart, snapAfterChat)
+	snapshotAfterChat := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	summary.LatestNonceAfterChat = snapshotAfterChat.LatestNonce
+	harness.RequireGatewaySessionAdvanced(t, snapshotAfterRestart, snapshotAfterChat)
 
 	if artifactDir, ok := writeSnapshotRecoverySummary(t, summary); ok {
 		summaryArtifactWritten = true
@@ -172,33 +173,34 @@ func TestVersiondSnapshotRecoveryCorruptSnapshotFallsBack(t *testing.T) {
 	adminKey := harness.TestenvAdminAPIKey
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router", "devshard-postgres")
 		}
 	})
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, chatClient, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 
 	model := config.PrimaryModelID(cfg)
-	snap0 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	require.NotEmpty(t, snap0.EscrowID)
+	snapshotInitial := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	require.NotEmpty(t, snapshotInitial.EscrowID)
 
-	targetNonce := nextSnapshotNonce(snap0.LatestNonce)
-	harness.Step(t, "advance gateway session %s to snapshot nonce %d", snap0.EscrowID, targetNonce)
-	snapAtSnapshot := advanceGatewaySessionToNonce(t, chatClient, client, eps.GatewayHTTP, adminKey, model, targetNonce)
-	require.Equal(t, snap0.EscrowID, snapAtSnapshot.EscrowID, "escrow id changed while advancing to snapshot")
-	snapshotNonce := waitPostgresSnapshotNonce(t, stack, cfg, snapAtSnapshot.EscrowID, targetNonce, 3*time.Minute)
+	targetNonce := nextSnapshotNonce(snapshotInitial.LatestNonce)
+	harness.Step(t, "advance gateway session %s to snapshot nonce %d", snapshotInitial.EscrowID, targetNonce)
+	snapshotAtSnapshot := advanceGatewaySessionToNonce(t, chatClient, client, eps.GatewayHTTP, adminKey, escrowID, model, targetNonce)
+	require.Equal(t, snapshotInitial.EscrowID, snapshotAtSnapshot.EscrowID, "escrow id changed while advancing to snapshot")
+	snapshotNonce := waitPostgresSnapshotNonce(t, stack, cfg, snapshotAtSnapshot.EscrowID, targetNonce, 3*time.Minute)
 	require.GreaterOrEqual(t, snapshotNonce, targetNonce)
 
-	corruptPostgresSnapshot(t, stack, cfg, snapAtSnapshot.EscrowID)
+	corruptPostgresSnapshot(t, stack, cfg, snapshotAtSnapshot.EscrowID)
 
 	hostIDs := harness.VersiondHostIDs(cfg)
 	recoveryHost := hostIDs[0]
-	harness.Step(t, "restart %s and demand-load session %s with corrupt snapshot", recoveryHost, snapAtSnapshot.EscrowID)
+	harness.Step(t, "restart %s and demand-load session %s with corrupt snapshot", recoveryHost, snapshotAtSnapshot.EscrowID)
 	recoveryStartedAt := time.Now()
 	harness.RestartService(t, stack, recoveryHost)
-	elapsed := waitVersiondHostSessionMempool(t, stack, recoveryHost, snapAtSnapshot.EscrowID, 3*time.Minute)
+	elapsed := waitVersiondHostSessionMempool(t, stack, recoveryHost, snapshotAtSnapshot.EscrowID, 3*time.Minute)
 	harness.Step(t, "%s corrupt snapshot fallback finished in %s (direct load %s)", recoveryHost, time.Since(recoveryStartedAt), elapsed)
 	require.LessOrEqual(t, time.Since(recoveryStartedAt), snapshotRecoveryFailThreshold,
 		"corrupt snapshot fallback exceeded threshold")
@@ -206,12 +208,12 @@ func TestVersiondSnapshotRecoveryCorruptSnapshotFallsBack(t *testing.T) {
 	logs, err := stack.ComposeLogsTail(5000, recoveryHost)
 	require.NoError(t, err)
 	require.Contains(t, logs, "failed to decode devshard snapshot, replaying full history")
-	require.Contains(t, logs, "escrow_id="+snapAtSnapshot.EscrowID)
+	require.Contains(t, logs, "escrow_id="+snapshotAtSnapshot.EscrowID)
 	require.NotContains(t, logs, "restored devshard snapshot")
-	requirePostgresSnapshotRepaired(t, stack, cfg, snapAtSnapshot.EscrowID)
+	requirePostgresSnapshotRepaired(t, stack, cfg, snapshotAtSnapshot.EscrowID)
 
-	snapAfterFallback := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionStable(t, snapAtSnapshot, snapAfterFallback)
+	snapshotAfterFallback := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionStable(t, snapshotAtSnapshot, snapshotAfterFallback)
 
 	harness.Step(t, "continue gateway chat after corrupt snapshot fallback")
 	resp := harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
@@ -222,8 +224,8 @@ func TestVersiondSnapshotRecoveryCorruptSnapshotFallsBack(t *testing.T) {
 		MaxTokens: 4,
 	})
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
-	snapAfterChat := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionAdvanced(t, snapAfterFallback, snapAfterChat)
+	snapshotAfterChat := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionAdvanced(t, snapshotAfterFallback, snapshotAfterChat)
 }
 
 type snapshotRecoverySummary struct {
@@ -315,13 +317,13 @@ func advanceGatewaySessionToNonce(
 	t *testing.T,
 	chatClient *http.Client,
 	statusClient *http.Client,
-	gatewayURL, adminKey, model string,
+	gatewayURL, adminKey, escrowID, model string,
 	targetNonce uint64,
 ) harness.GatewaySessionSnapshot {
 	t.Helper()
 
 	maxRequests := int(host.SnapshotInterval) + 50
-	var snap harness.GatewaySessionSnapshot
+	var snapshot harness.GatewaySessionSnapshot
 	for i := 1; i <= maxRequests; i++ {
 		resp := harness.PostGatewayChatCompletion(t, chatClient, gatewayURL, adminKey, harness.ChatCompletionRequest{
 			Model: model,
@@ -333,18 +335,18 @@ func advanceGatewaySessionToNonce(
 		harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
 		if i == 1 || i%25 == 0 {
-			snap = harness.GetGatewaySessionSnapshot(t, statusClient, gatewayURL, adminKey)
-			harness.Step(t, "snapshot warmup request %d/%d reached latest nonce %d", i, maxRequests, snap.LatestNonce)
-			if snap.LatestNonce >= targetNonce {
-				return snap
+			snapshot = harness.GetGatewaySessionSnapshot(t, statusClient, gatewayURL, adminKey, escrowID)
+			harness.Step(t, "snapshot warmup request %d/%d reached latest nonce %d", i, maxRequests, snapshot.LatestNonce)
+			if snapshot.LatestNonce >= targetNonce {
+				return snapshot
 			}
 		}
 	}
 
-	snap = harness.GetGatewaySessionSnapshot(t, statusClient, gatewayURL, adminKey)
-	require.GreaterOrEqual(t, snap.LatestNonce, targetNonce,
+	snapshot = harness.GetGatewaySessionSnapshot(t, statusClient, gatewayURL, adminKey, escrowID)
+	require.GreaterOrEqual(t, snapshot.LatestNonce, targetNonce,
 		"gateway session did not reach snapshot nonce after %d requests", maxRequests)
-	return snap
+	return snapshot
 }
 
 func waitPostgresSnapshotNonce(t *testing.T, stack *harness.Stack, cfg *config.File, escrowID string, minNonce uint64, timeout time.Duration) uint64 {

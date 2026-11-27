@@ -1,8 +1,8 @@
-# `gatewayprotocol` — protocol rules shared by the gateways
+# `gatewayprotocol` — protocol rules a host, a verifier or the chain judge
 
-Two gateways talk to the same hosts and the same chain: `devshard/cmd/devshardctl` and `devshard/cmd/gateway`. A rule lives in this tree when a host, a verifier or the chain would reject, pay differently or judge differently if it received the other gateway's result. Everything else is gateway-local and stays in its gateway: locking, memory ownership, panic recovery, HTTP, logging, metrics, and choices no other party can tell apart, such as a byte layout the chain decodes to the same message.
+The gateway `devshard/cmd/gateway` talks to hosts and to the chain. A rule lives in this tree when a host, a verifier or the chain would reject, pay differently or judge differently if it received a result built another way. Everything else is gateway-local and stays in its gateway: locking, memory ownership, panic recovery, HTTP, logging, metrics, and choices no other party can tell apart, such as a byte layout the chain decodes to the same message.
 
-A protocol change is made here, once. Each package's README says how the two gateways use it. A gateway that needs a rule to behave differently changes the rule here or argues that it is local and moves it out.
+A protocol change is made here, once. Each package's README says how the gateway uses it. A gateway change that needs a rule to behave differently changes the rule here or argues that it is local and moves it out.
 
 ## Layers
 
@@ -12,13 +12,13 @@ A protocol change is made here, once. Each package's README says how the two gat
 | [`settlement`](./settlement/README.md) | the settle message, the slot order of its lists, the signatures it posts, the settlement root | `devshard/state`, `devshard/types`, standard library |
 | [`settlementwire`](./settlementwire/README.md) | the mapping from the settle message to `MsgSettleDevshardEscrow` and its marshalling | `settlement`, `github.com/productscience/inference/x/inference/types`, `google.golang.org/protobuf/encoding/protowire`, standard library |
 | [`streamevidence`](./streamevidence/README.md) | which lines of an error stream are evidence, the `[DONE]` test, the error-miss payload they serialize into, and whether that payload proves the error | `common/completionapi`, standard library |
-| [`timeoutclaim`](./timeoutclaim/README.md) | the choice between an error-miss claim and a timeout vote, the Finish a claim carries, and the timeout vote's payload | `devshard/host`, `devshard/types`, `devshard/user`, standard library |
+| [`timeoutclaim`](./timeoutclaim/README.md) | the choice between an error-miss claim and a timeout vote, the Finish a claim carries, and the timeout vote's payload | `devshard/host`, `devshard/types` |
 
 Forbidden in every package of the tree: `devshard/cmd/...`, `sync`, `sync/atomic`, `net/http`, `os`, `log`, `log/slog`, `devshard/logging`, `devshard/observability`, `github.com/prometheus/...`. The tree holds rules, not runtime: state, transport and observability belong to the gateway that calls it.
 
 ## Who may import the tree
 
-Only `devshard/cmd/gateway/...`, `devshard/cmd/devshardctl` and the tree itself. Hosts never link it: `devshardd` and `devshard-host` do not import it, directly or through a gateway package, which `go list -deps ./cmd/devshardd ./cmd/devshard-host | grep gatewayprotocol` shows by printing nothing.
+Only `devshard/cmd/gateway/...` and the tree itself. Hosts never link it: `devshardd` and `devshard-host` do not import it, directly or through a gateway package, which `go list -deps ./cmd/devshardd ./cmd/devshard-host | grep gatewayprotocol` shows by printing nothing.
 
 ## The guard
 

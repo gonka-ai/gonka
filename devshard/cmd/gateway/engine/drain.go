@@ -51,23 +51,32 @@ func (d drain) deadline(clientGoneAt time.Time) time.Time {
 	return clientGoneAt.Add(d.timeout)
 }
 
+// DepartedSink is a client writer that keeps taking the winner's bytes after the client left. See race.md, "Client departure and the drain".
+type DepartedSink interface {
+	WriteDeparted(chunk []byte)
+}
+
 func (d drain) gate(client io.Writer) io.Writer {
 	if client == nil {
 		return nil
 	}
-	return clientStream{client: client, gone: d.clientGone(), depart: d.depart}
+	departed, _ := client.(DepartedSink)
+	return clientStream{client: client, gone: d.clientGone(), depart: d.depart, departed: departed}
 }
 
-// clientStream reports every write as done; a failed write departs the client, and a departed client's bytes are dropped. See race.md, "Client departure and the drain".
 type clientStream struct {
-	client io.Writer
-	gone   <-chan struct{}
-	depart context.CancelCauseFunc
+	client   io.Writer
+	gone     <-chan struct{}
+	depart   context.CancelCauseFunc
+	departed DepartedSink
 }
 
 func (s clientStream) Write(chunk []byte) (int, error) {
 	select {
 	case <-s.gone:
+		if s.departed != nil {
+			s.departed.WriteDeparted(chunk)
+		}
 		return len(chunk), nil
 	default:
 	}

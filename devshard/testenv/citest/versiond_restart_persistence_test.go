@@ -22,18 +22,19 @@ func TestVersiondRestartSessionPersistence(t *testing.T) {
 	adminKey := harness.TestenvAdminAPIKey
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router")
 		}
 	})
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, chatClient, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 
 	model := config.PrimaryModelID(cfg)
-	snap0 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
+	snapshotInitial := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
 
-	harness.Step(t, "initial gateway chat establishes session %s", snap0.EscrowID)
+	harness.Step(t, "initial gateway chat establishes session %s", snapshotInitial.EscrowID)
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
@@ -41,14 +42,14 @@ func TestVersiondRestartSessionPersistence(t *testing.T) {
 		},
 		MaxTokens: 16,
 	})
-	snap1 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionAdvanced(t, snap0, snap1)
+	snapshotBeforeSingleRestart := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionAdvanced(t, snapshotInitial, snapshotBeforeSingleRestart)
 
 	harness.Step(t, "restart %s and continue same session", cfg.Hosts[0].ID)
 	harness.RestartService(t, stack, cfg.Hosts[0].ID)
-	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, snap1.EscrowID)
-	snapAfterOne := harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionStable(t, snap1, snapAfterOne)
+	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, snapshotBeforeSingleRestart.EscrowID)
+	snapshotAfterOne := harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionStable(t, snapshotBeforeSingleRestart, snapshotAfterOne)
 
 	harness.Step(t, "gateway chat after single versiond restart")
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
@@ -58,19 +59,19 @@ func TestVersiondRestartSessionPersistence(t *testing.T) {
 		},
 		MaxTokens: 16,
 	})
-	snap2 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionAdvanced(t, snapAfterOne, snap2)
+	snapshotBeforeFullRestart := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionAdvanced(t, snapshotAfterOne, snapshotBeforeFullRestart)
 
 	hostIDs := harness.VersiondHostIDs(cfg)
 	harness.Step(t, "restart all versiond instances (%v) and continue same session", hostIDs)
 	harness.RestartServices(t, stack, hostIDs...)
-	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, snap2.EscrowID)
-	snapAfterAll := harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionStable(t, snap2, snapAfterAll)
-	harness.ClearGatewayParticipantQuarantines(t, client, eps.GatewayHTTP, adminKey, snap2.EscrowID)
+	harness.WaitVersiondSessionHealthy(t, stack, cfg, eps, snapshotBeforeFullRestart.EscrowID)
+	snapshotAfterAll := harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionStable(t, snapshotBeforeFullRestart, snapshotAfterAll)
+	harness.ClearGatewayParticipantQuarantines(t, client, eps.GatewayHTTP, adminKey, snapshotBeforeFullRestart.EscrowID)
 	// Unquarantine can let stranded timeout votes finish; re-settle so the
 	// Advanced baseline is not sitting on a still-held reservation.
-	snapAfterAll = harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey)
+	snapshotAfterAll = harness.WaitGatewaySessionSettled(t, client, eps.GatewayHTTP, adminKey, escrowID)
 
 	harness.Step(t, "gateway chat after all versiond restarts")
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
@@ -80,6 +81,6 @@ func TestVersiondRestartSessionPersistence(t *testing.T) {
 		},
 		MaxTokens: 16,
 	})
-	snap3 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	harness.RequireGatewaySessionAdvanced(t, snapAfterAll, snap3)
+	snapshotAfterRestarts := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey, escrowID)
+	harness.RequireGatewaySessionAdvanced(t, snapshotAfterAll, snapshotAfterRestarts)
 }

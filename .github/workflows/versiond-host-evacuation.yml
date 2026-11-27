@@ -11,7 +11,7 @@ on:
       - 'versioned/**'
       - 'versiond-router/**'
       - 'common/storage/**'
-      # devshardd and the devshardctl gateway span packages across the module;
+      # devshardd and the gateway span packages across the module;
       # storage recovery, routing, state and transport changes all affect this
       # acceptance contract. Documentation alone does not need the 40m stack.
       - 'devshard/**'

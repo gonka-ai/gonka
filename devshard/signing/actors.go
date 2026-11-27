@@ -2,7 +2,7 @@ package signing
 
 // SlotActors is the identity set that may produce a host signature for a slot.
 //
-// Both binaries (devshardd and devshardctl) recover signatures with Verifier
+// Both binaries (devshardd and the gateway) recover signatures with Verifier
 // and then call Allows. The same rule applies to HeightAck, confirm, finish,
 // votes, repair, settlement, and gossip: cold slot key, or this slot's bound
 // warm key; if the slot is still unbound, a sibling slot's bound warm key for

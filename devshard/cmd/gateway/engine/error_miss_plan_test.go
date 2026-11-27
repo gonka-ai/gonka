@@ -87,12 +87,12 @@ func TestAMissIsClaimedEvenThoughTheHostFinished(t *testing.T) {
 }
 
 // Test flow:
-//  1. Build an attempt ending in error with no proof and `NonceFinished` set.
+//  1. Build an attempt ending in error with no proof and an applied Finish.
 //  2. Compute its `TimeoutPlan`.
 //  3. Assert the single resulting step is not posted.
 func TestAFinishedNonceWithoutProofIsStillSkipped(t *testing.T) {
 	attempt := attemptEndingInError(nil)
-	attempt.NonceFinished = true
+	attempt.NonceFinished, attempt.FinishApplied = true, true
 
 	steps := raceEndingIn(attempt).TimeoutPlan()
 

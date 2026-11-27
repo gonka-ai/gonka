@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -216,71 +215,21 @@ func getJSON(ctx context.Context, url, apiKey string, out any) error {
 	return json.NewDecoder(response.Body).Decode(out)
 }
 
-// ThrottleSample is one GW-dbg throttle snapshot of a resident runtime, from
-// GET /v1/admin/devshards/{id}/participants. The snapshot has no quarantine
-// reason; reasons come from the transitions counter in metrics.jsonl.
-type ThrottleSample struct {
-	At           time.Time             `json:"at"`
-	EscrowID     string                `json:"escrow_id,omitempty"`
-	Participants []ThrottleParticipant `json:"participants,omitempty"`
-	Error        string                `json:"error,omitempty"`
-}
-
-type ThrottleParticipant struct {
-	ParticipantKey        string `json:"participant_key"`
-	Quarantined           bool   `json:"quarantined"`
-	ShadowQuarantined     bool   `json:"shadow_quarantined,omitempty"`
-	ProbeQuarantined      bool   `json:"probe_quarantined,omitempty"`
-	QuarantineMode        string `json:"quarantine_mode,omitempty"`
-	QuarantineUntil       string `json:"quarantine_until,omitempty"`
-	QuarantineRemainingMS int64  `json:"quarantine_remaining_ms,omitempty"`
-	FailureStrikes        int    `json:"failure_strikes,omitempty"`
-	Blocked               bool   `json:"blocked"`
-}
-
-func (p ThrottleParticipant) inQuarantine() bool {
-	return p.Quarantined || p.ShadowQuarantined || p.ProbeQuarantined
-}
-
-func collectThrottle(gatewayURL, apiKey string) func(context.Context, string) []ThrottleSample {
-	return func(ctx context.Context, _ string) []ThrottleSample {
-		now := time.Now().UTC()
-		devshards, err := fetchGatewayDevshards(ctx, gatewayURL, apiKey)
-		if err != nil {
-			return []ThrottleSample{{At: now, Error: err.Error()}}
-		}
-		var samples []ThrottleSample
-		for _, id := range residentIDs(devshards) {
-			sample := ThrottleSample{At: time.Now().UTC(), EscrowID: id}
-			var body struct {
-				Participants []ThrottleParticipant `json:"participants"`
-			}
-			if err := getJSON(ctx, gatewayURL+"/v1/admin/devshards/"+id+"/participants", apiKey, &body); err != nil {
-				sample.Error = err.Error()
-			}
-			sample.Participants = body.Participants
-			samples = append(samples, sample)
-		}
-		return samples
-	}
-}
-
-// PendingSample is the GW-dbg pending view of one resident runtime.
-// /v1/debug/pending lists queued txs without timestamps, so the age comes from
-// /v1/debug/inferences: started_at (unix seconds) of pending/started records.
+// PendingSample is one resident escrow's open work, read from /v1/state and /v1/debug/inferences.
+// OpenStarted maps each open nonce to its started_at, so no-nonce-left-pending can leave burned nonces out.
+// Unanchored lists the open nonces with no block-time anchor: the state machine never makes them due, so they are judged stuck.
 type PendingSample struct {
-	At              time.Time `json:"at"`
-	EscrowID        string    `json:"escrow_id,omitempty"`
-	Active          bool      `json:"active"`
-	Nonce           uint64    `json:"nonce"`
-	PendingTxs      int       `json:"pending_txs"`
-	Open            int       `json:"open_inferences"`
-	MaxAgeSeconds   float64   `json:"max_age_seconds"`
-	OldestInference string    `json:"oldest_inference,omitempty"`
-	OldestStatus    string    `json:"oldest_status,omitempty"`
-	// OpenStarted maps each open nonce to its started_at, so no-nonce-left-pending can leave burned nonces out.
-	OpenStarted map[string]int64 `json:"open_started,omitempty"`
-	Error       string           `json:"error,omitempty"`
+	At              time.Time        `json:"at"`
+	EscrowID        string           `json:"escrow_id,omitempty"`
+	Active          bool             `json:"active"`
+	Nonce           uint64           `json:"nonce"`
+	Open            int              `json:"open_inferences"`
+	MaxAgeSeconds   float64          `json:"max_age_seconds"`
+	OldestInference string           `json:"oldest_inference,omitempty"`
+	OldestStatus    string           `json:"oldest_status,omitempty"`
+	OpenStarted     map[string]int64 `json:"open_started,omitempty"`
+	Unanchored      []string         `json:"unanchored_open,omitempty"`
+	Error           string           `json:"error,omitempty"`
 }
 
 // DebugInference is the subset of a /v1/debug/inferences record the
@@ -305,7 +254,7 @@ func fetchDebugInferences(ctx context.Context, runtimeURL, apiKey string) (map[s
 }
 
 // collectPending samples the pending view of each resident escrow and hands seen every inference list it reads.
-func collectPending(gatewayURL, apiKey string, driver config.GatewayDriver, seen func(escrowID string, inferences map[string]DebugInference)) func(context.Context, string) []PendingSample {
+func collectPending(gatewayURL, apiKey string, seen func(escrowID string, inferences map[string]DebugInference)) func(context.Context, string) []PendingSample {
 	return func(ctx context.Context, _ string) []PendingSample {
 		devshards, err := fetchGatewayDevshards(ctx, gatewayURL, apiKey)
 		if err != nil {
@@ -320,7 +269,7 @@ func collectPending(gatewayURL, apiKey string, driver config.GatewayDriver, seen
 			sample := PendingSample{At: time.Now().UTC(), EscrowID: d.ID, Active: d.Active}
 			var errs []string
 			var err error
-			if sample.Nonce, sample.PendingTxs, err = fetchPendingView(ctx, base, apiKey, driver); err != nil {
+			if sample.Nonce, err = fetchEscrowNonce(ctx, base, apiKey); err != nil {
 				errs = append(errs, err.Error())
 			}
 			inferences, err := fetchDebugInferences(ctx, base, apiKey)
@@ -343,7 +292,8 @@ func summarizePending(sample *PendingSample, inferences map[string]DebugInferenc
 			continue
 		}
 		sample.Open++
-		if inference.StartedAt <= 0 {
+		if inference.StartedAt <= noTimeAnchor {
+			sample.Unanchored = append(sample.Unanchored, id)
 			continue
 		}
 		if sample.OpenStarted == nil {
@@ -355,6 +305,7 @@ func summarizePending(sample *PendingSample, inferences map[string]DebugInferenc
 			sample.MaxAgeSeconds, sample.OldestInference, sample.OldestStatus = age, id, inference.Status
 		}
 	}
+	sort.Strings(sample.Unanchored)
 }
 
 // HostStatsSample is one Host-stats read through docker exec. Kind is
@@ -686,11 +637,7 @@ func countLogLines(path, needle string) (int, error) {
 	return count, scanner.Err()
 }
 
-// escrowMissingLine is devshardctl's startup line for an escrow it marks inactive
-// because the chain lookup said NotFound (cmd/devshardctl/main.go).
-var escrowMissingLine = regexp.MustCompile(`devshard (\S+) escrow missing on chain, marking inactive`)
-
-// readEscrowMissing returns the escrow IDs of every escrowMissingLine in the log.
+// readEscrowMissing returns the escrow IDs of every gatewayEscrowGoneMessage line in the log.
 func readEscrowMissing(path string) ([]string, error) {
 	file, err := os.Open(path)
 	if err != nil {
@@ -701,10 +648,7 @@ func readEscrowMissing(path string) ([]string, error) {
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 1<<20), 16<<20)
 	for scanner.Scan() {
-		line := scanner.Text()
-		if m := escrowMissingLine.FindStringSubmatch(line); m != nil {
-			ids = append(ids, m[1])
-		} else if id, ok := gatewayEscrowGone(line); ok {
+		if id, ok := gatewayEscrowGone(scanner.Text()); ok {
 			ids = append(ids, id)
 		}
 	}

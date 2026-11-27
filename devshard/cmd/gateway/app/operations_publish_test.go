@@ -11,7 +11,7 @@ import (
 	"devshard/cmd/gateway/store"
 )
 
-func parkingRegistry(t *testing.T, records *store.Store) *registry.Registry {
+func parkingRegistry(t *testing.T, records store.Store) *registry.Registry {
 	t.Helper()
 	var escrows *registry.Registry
 	escrows = registry.New(registry.Deps{

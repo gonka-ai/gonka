@@ -45,7 +45,7 @@ type BootStep struct {
 }
 
 // Compose composes the gateway over sources instead of a dialled chain.
-func Compose(ctx context.Context, values env.Values, storageDir string, gatewayStore *store.Store, sources Sources) (*Composed, error) {
+func Compose(ctx context.Context, values env.Values, storageDir string, gatewayStore store.Store, sources Sources) (*Composed, error) {
 	dialled := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   sources.Serving,
@@ -89,7 +89,7 @@ func (composed *Composed) Handler() http.Handler { return composed.gateway.serve
 func (composed *Composed) Config() *config.Holder { return composed.gateway.config }
 
 // Store is the control-plane store.
-func (composed *Composed) Store() *store.Store { return composed.gateway.store }
+func (composed *Composed) Store() store.Store { return composed.gateway.store }
 
 // Observer is the chain phase observer.
 func (composed *Composed) Observer() *chain.PhaseObserver { return composed.gateway.observer }
@@ -105,6 +105,9 @@ func (composed *Composed) Races() *engine.Engine { return composed.gateway.races
 
 // Nonces is the nonce ledger's recorder, nil when nonce accounting is off.
 func (composed *Composed) Nonces() *nonces.Recorder { return composed.gateway.nonces }
+
+// DiffJournal is what the nonce ledger hands every composed diff to: the journal, and the response cache's verdict watch.
+func (composed *Composed) DiffJournal() nonces.DiffJournal { return composed.gateway.diffJournal() }
 
 // Journal is the journal every producer narrates through.
 func (composed *Composed) Journal() *journal.Journal { return composed.gateway.events }

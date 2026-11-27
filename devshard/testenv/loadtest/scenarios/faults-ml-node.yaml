@@ -6,7 +6,7 @@ seed: 1515
 # prod-like-15m, each judged alone. Faults are 2m30s apart: recovery-after-fault needs its 60 s
 # budget plus one 30 s bucket before the next fault, and requests in a gap
 # then fall in one fault's graced tail (3m10s), never in two. P2's two faults
-# are 6 m apart, past its quarantine and grace. The run ends 4 m after the
+# are 6 m apart, past its grace. The run ends 4 m after the
 # last fault so its whole grace tail is inside the workload.
 # P2 = versiond-3, P3 = versiond-4, P4 = versiond-5; P0/P1 are never faulted.
 
@@ -94,11 +94,6 @@ workload:
 gateway:
   redundancy:
     secondary_wait_after_winner: 30s
-  participant_throttle:
-    transport_failure_quarantine: 45s
-    http_quarantine: 45s
-    empty_stream_quarantine: 45s
-    stalled_winner_quarantine: 45s
   escrow_rotation:
     enabled: true
     settlement_enabled: true

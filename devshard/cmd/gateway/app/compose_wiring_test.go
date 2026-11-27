@@ -9,7 +9,6 @@ import (
 	"devshard/cmd/gateway/env"
 	"devshard/cmd/gateway/limits"
 	"devshard/cmd/gateway/perf"
-	"devshard/cmd/gateway/store"
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
@@ -70,9 +69,13 @@ func TestTheHostRoutePrefixComesFromTheProtocolVersionNotTheGatewayVersion(t *te
 	if err != nil {
 		t.Fatalf("resolving storage dir: %v", err)
 	}
-	gatewayStore, err := store.Open(storageDir)
+	choice, err := chooseStore(&storageDir)
 	if err != nil {
-		t.Fatalf("opening store: %v", err)
+		t.Fatalf("chooseStore() = %v, want nil", err)
+	}
+	gatewayStore, err := choice.open(context.Background())
+	if err != nil {
+		t.Fatalf("open() = %v, want nil", err)
 	}
 	var gotPrefix string
 	inner := sessionsReading(gatewayStore, storageDir, chainWithoutADial{})

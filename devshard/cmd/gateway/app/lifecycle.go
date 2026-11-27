@@ -82,14 +82,18 @@ func (g *gateway) bootOrder(ctx, backgroundCtx context.Context, settings *config
 	return []bootStep{
 		{name: "chain observer", start: func() error { g.observer.Start(backgroundCtx); return nil }},
 		{name: "warmup prober", start: func() error { g.warmup.Start(backgroundCtx); return nil }},
-		{name: "host pings", start: func() error { g.hostPings.Start(backgroundCtx); return nil }},
+		{name: "host pings", start: func() error {
+			g.hostPings.Start(backgroundCtx)
+			g.hostRPCStats.Start(backgroundCtx)
+			return nil
+		}},
 		{name: "seed devshards", start: func() error { return seedDevshards(ctx, g.store, settings.Server.DevshardsJSON) }},
 		{name: "publish escrows", start: func() error {
 			unopened, err := g.publishEscrows(ctx)
 			started.unopenedEscrows = unopened
 			return err
 		}},
-		{name: "nonce ledger", start: func() error { g.nonces.Start(backgroundCtx, g.escrows, g.events); return nil }},
+		{name: "nonce ledger", start: func() error { g.nonces.Start(backgroundCtx, g.escrows, g.diffJournal()); return nil }},
 		{name: "owed refusal votes", start: func() error { return g.replayOwedVotes(ctx) }},
 		{name: "escrow lifecycle", start: func() error { g.manager.Start(backgroundCtx); return nil }},
 		{name: "devshard write republish", start: func() error {

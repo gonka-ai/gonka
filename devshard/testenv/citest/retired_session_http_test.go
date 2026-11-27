@@ -28,7 +28,7 @@ func TestRetiredSessionHTTP(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-router")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-router")
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)
@@ -92,7 +92,7 @@ func waitGETStatus(t *testing.T, client *http.Client, url string, timeout time.D
 	})
 	if !ok {
 		if stack != nil {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-router", "gateway")
 		}
 		t.Fatalf("citest: %s not ready after %d attempts (%s): %s", label, attempts, url, lastErr)
 	}

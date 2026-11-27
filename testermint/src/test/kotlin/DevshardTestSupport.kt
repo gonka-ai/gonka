@@ -8,7 +8,11 @@ import kotlin.test.assertNotNull
 import org.assertj.core.api.Assertions.assertThat
 import java.time.Duration
 
-private val devshardHeightSeedTimeout: Duration = Duration.ofMinutes(2)
+private val devshardWarmupTimeout: Duration = Duration.ofMinutes(2)
+private const val devshardActivePhase = "active"
+private const val devshardWarmupProbeNonce = 1L
+private const val devshardStatusUnavailable = "status-unavailable"
+private val devshardWarmupPollInterval: Duration = Duration.ofMillis(500)
 private val devshardPreFinalizeDelay: Duration = Duration.ofSeconds(2)
 private const val versionedMlNodeSegment = "v3.0.8"
 
@@ -87,12 +91,12 @@ val devshardEscrowHalfValidateSpec = spec<AppState> {
 }
 
 fun LocalInferencePair.traceDevshardInferencePhase(
-    handle: LocalInferencePair.DevshardProxyHandle,
+    handle: LocalInferencePair.DevshardEscrowRoute,
     inferenceId: Long,
     label: String,
 ) {
     runCatching {
-        val inference = getDevshardProxyInferences(handle.proxyUrl)[inferenceId]
+        val inference = getDevshardEscrowInferences(handle.escrowUrl)[inferenceId]
         logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=${inference?.let { cosmosJson.toJson(it) } ?: "missing"}")
     }.onFailure {
         logSection("phase-trace [$label] inference_id=$inferenceId proxy_state=unavailable (${it.message})")
@@ -136,15 +140,14 @@ fun LocalInferencePair.dumpDevshardChallengeTraceLogs(escrowId: Long) {
                 logSection("phase-trace $containerName (${filtered.lines().size} matching lines):\n$filtered")
             }
         }
-        val proxyLog = devshardProxyLogPath(escrowId)
         runCatching {
             val lines = api.executor.exec(
-                listOf("sh", "-c", "grep -E '$grepExpr' $proxyLog 2>/dev/null | tail -200 || true"),
+                listOf("sh", "-c", "grep -E '$grepExpr' $gatewayLogPath 2>/dev/null | tail -200 || true"),
                 null,
             )
-            logSection("phase-trace devshardctl ($proxyLog):\n${lines.joinToString("\n")}")
+            logSection("phase-trace gateway ($gatewayLogPath):\n${lines.joinToString("\n")}")
         }.onFailure {
-            logSection("phase-trace devshardctl log unavailable: ${it.message}")
+            logSection("phase-trace gateway log unavailable: ${it.message}")
         }
     }.onFailure {
         logSection("phase-trace docker dump failed: ${it.message}")
@@ -196,33 +199,23 @@ fun LocalInferencePair.waitForMidEpochWindow(
     )
 }
 
-/**
- * Wait until GET /v1/status reports height_seed.state=ok (or omits the
- * field when the seed gate is off). Chat 503s until then; a 2s sleep is
- * not enough for catalog admission + owner height-sync quorum.
- */
-fun LocalInferencePair.waitForDevshardProxyWarmup(
-    proxyUrl: String,
-    timeout: Duration = devshardHeightSeedTimeout,
+/** Waits until the gateway's warm-up probe has taken the escrow's first nonce, which it does only after the escrow's height seed is ready. */
+fun LocalInferencePair.waitForDevshardEscrowWarmup(
+    escrowUrl: String,
+    timeout: Duration = devshardWarmupTimeout,
 ) {
-    logSection("Waiting for devshard height seed on $proxyUrl")
+    logSection("Waiting for the gateway's warm-up probe on $escrowUrl")
     val deadline = System.currentTimeMillis() + timeout.toMillis()
-    var last = "unparsed"
+    var last = devshardStatusUnavailable
     while (System.currentTimeMillis() < deadline) {
-        val status = runCatching { getDevshardProxyStatus(proxyUrl) }.getOrNull()
-        if (status != null && status.heightSeedReady()) {
+        val status = runCatching { getDevshardEscrowStatus(escrowUrl) }.getOrNull()
+        if (status != null && status.phase == devshardActivePhase && status.nonce >= devshardWarmupProbeNonce) {
             return
         }
-        last = status?.heightSeed?.let { "state=${it.state} seeded=${it.seeded}/${it.slots}" }
-            ?: "status-unavailable"
-        Thread.sleep(500)
+        last = status?.let { "phase=${it.phase} nonce=${it.nonce}" } ?: devshardStatusUnavailable
+        Thread.sleep(devshardWarmupPollInterval.toMillis())
     }
-    error("timed out waiting for height_seed.state=ok on $proxyUrl (last=$last)")
-}
-
-fun DevshardProxyStatus.heightSeedReady(): Boolean {
-    val state = heightSeed?.state ?: return true
-    return state.isEmpty() || state == "ok"
+    error("timed out waiting for the gateway's warm-up probe on $escrowUrl (last $last)")
 }
 
 /**
@@ -231,7 +224,7 @@ fun DevshardProxyStatus.heightSeedReady(): Boolean {
  */
 fun LocalInferencePair.waitForDevshardCompletionRejected(
     escrowModelId: String,
-    proxyUrl: String,
+    escrowUrl: String,
     timeoutMs: Long = 60_000L,
     pollIntervalMs: Long = 2_000L,
     requestTimeoutSeconds: Int = 8,
@@ -240,7 +233,7 @@ fun LocalInferencePair.waitForDevshardCompletionRejected(
     while (System.currentTimeMillis() < deadline) {
         val resp = try {
             sendChatCompletionWithStatus(
-                proxyUrl,
+                escrowUrl,
                 escrowModelId,
                 "devshard-rejected-poll",
                 maxTimeSeconds = requestTimeoutSeconds,
@@ -266,23 +259,22 @@ fun LocalInferencePair.waitForDevshardPreFinalize(delay: Duration = devshardPreF
     Thread.sleep(delay.toMillis())
 }
 
-/** Propagate signed diffs to all physical hosts before observability/finalize. */
-fun LocalInferencePair.syncDevshardProxyHosts(proxyUrl: String, log: Boolean = true) {
+/** Sends catch-up diffs to the hosts that have not signed the current nonce, through the gateway's signature collection. */
+fun LocalInferencePair.syncDevshardEscrowHosts(escrowUrl: String, log: Boolean = true) {
     if (log) {
-        logSection("Syncing devshard proxy hosts")
+        logSection("Collecting signatures (catches up lagging hosts)")
     }
+    val nonce = getDevshardEscrowStatus(escrowUrl).nonce
     val raw = api.executor.exec(
         listOf(
             "sh", "-c",
-            "curl -sf -X POST $proxyUrl/v1/debug/sync-hosts " +
+            "curl -sf -X POST '$escrowUrl/v1/debug/signatures/collect?nonce=$nonce' " +
                 "-H 'Authorization: Bearer $devshardAdminApiKey'",
         ),
         null,
     ).joinToString("")
-    val start = raw.indexOf('{')
-    val end = raw.lastIndexOf('}')
-    check(start >= 0 && end >= 0) {
-        "sync-hosts returned no JSON object. raw:\n$raw"
+    check(raw.contains('{') && raw.contains('}')) {
+        "signatures/collect returned no JSON object. raw:\n$raw"
     }
 }
 
@@ -393,50 +385,50 @@ fun LocalInferencePair.createDevshardEscrowForUser(
 }
 
 fun LocalInferencePair.assertDevshardSettlement(
-    handle: LocalInferencePair.DevshardProxyHandle,
+    handle: LocalInferencePair.DevshardEscrowRoute,
     escrowId: Long,
     user: DevshardTestUser,
     escrowAmount: Long,
     requireCompletedValidations: Boolean = false,
     expectedStateRootProtocolVersion: String = devshardStateRootProtocolVersion(),
-): LocalInferencePair.DevshardctlResult {
+): LocalInferencePair.GatewaySettlementResult {
     waitForDevshardPreFinalize()
-    logSection("Finalizing via proxy")
-    val statusBeforeFinalization = getDevshardProxyStatus(handle.proxyUrl)
-    val result = finalizeDevshardProxy(handle.proxyUrl)
+    val statusBeforeFinalization = getDevshardEscrowStatus(handle.escrowUrl)
+    logSection("Settling through the gateway")
+    val result = settleDevshardThroughGateway(escrowId)
+    val settlement = result.settlement
+    val settleTransaction = result.settleTx
+    assertThat(settleTransaction.code).isEqualTo(0)
+    assertThat(result.settler).isEqualTo(user.address)
 
     logSection("Verifying settlement data")
-    assertThat(result.parsed.escrowId).isEqualTo(escrowId.toString())
-    assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(expectedStateRootProtocolVersion)
-    assertThat(result.parsed.nonce).isGreaterThan(0)
-    assertThat(result.parsed.hostStats).isNotEmpty()
-    assertThat(result.parsed.signatures).isNotEmpty()
+    assertThat(settlement.escrowId).isEqualTo(escrowId.toString())
+    assertThat(settlement.stateRootAndProtocolVersion).isEqualTo(expectedStateRootProtocolVersion)
+    assertThat(settlement.nonce).isGreaterThan(0)
+    assertThat(settlement.hostStats).isNotEmpty()
+    assertThat(settlement.signatures).isNotEmpty()
 
     val activeNonces = statusBeforeFinalization.nonce
     val expectedFees =
         statusBeforeFinalization.config.createDevshardFee +
             (statusBeforeFinalization.config.feePerNonce * activeNonces)
-    assertThat(result.parsed.nonce).isGreaterThanOrEqualTo(activeNonces)
-    assertThat(result.parsed.fees).isEqualTo(expectedFees)
+    assertThat(settlement.nonce).isGreaterThanOrEqualTo(activeNonces)
+    assertThat(settlement.fees).isEqualTo(expectedFees)
 
-    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }
+    val totalCompletedValidations = settlement.hostStats.sumOf { it.completedValidations ?: 0 }
     if (requireCompletedValidations) {
         assertThat(totalCompletedValidations).isGreaterThan(0)
     }
 
-    val totalCost = result.parsed.hostStats.sumOf { it.cost }
-    val totalPayout = totalCost + result.parsed.fees
+    val totalCost = settlement.hostStats.sumOf { it.cost }
+    val totalPayout = totalCost + settlement.fees
     val expectedRemainder = escrowAmount - totalPayout
 
-    logSection("Submitting settlement from user account")
-    val settleResp = settleDevshardEscrow(result.rawJson, from = user.keyName)
-    assertThat(settleResp.code).isEqualTo(0)
-
-    val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
+    val settleEvent = assertNotNull(settleTransaction.events.firstOrNull { it.type == "devshard_escrow_settled" })
     assertThat(settleEvent.attributes.firstOrNull { it.key == "total_payout" }?.value)
         .isEqualTo(totalPayout.toString())
     assertThat(settleEvent.attributes.firstOrNull { it.key == "fees" }?.value)
-        .isEqualTo(result.parsed.fees.toString())
+        .isEqualTo(settlement.fees.toString())
     assertThat(settleEvent.attributes.firstOrNull { it.key == "remainder" }?.value)
         .isEqualTo(expectedRemainder.toString())
     assertThat(
@@ -481,7 +473,7 @@ fun LocalInferencePair.waitForDevshardValidationObservability(
     routePrefix: String = com.productscience.defaultDevshardRoutePrefix(),
     /**
      * Invoked after an incomplete/failed poll and before sleeping. Use to
-     * re-run [syncDevshardProxyHosts] so late validation diffs from join hosts
+     * re-run [syncDevshardEscrowHosts] so late validation diffs from join hosts
      * land on the pair whose stats endpoint is being polled.
      */
     beforeRetry: (() -> Unit)? = null,
@@ -544,28 +536,28 @@ fun DevshardInferencePayload.hasChallengedOutcome(): Boolean =
     status == DevshardInferenceStatus.CHALLENGED || status == DevshardInferenceStatus.INVALIDATED
 
 fun LocalInferencePair.findChallengedDevshardInference(
-    handle: LocalInferencePair.DevshardProxyHandle,
+    handle: LocalInferencePair.DevshardEscrowRoute,
 ): DevshardInferencePayload? {
-    return getDevshardProxyInferences(handle.proxyUrl)
+    return getDevshardEscrowInferences(handle.escrowUrl)
         .values.firstOrNull { it.hasChallengedOutcome() }
 }
 
 fun LocalInferencePair.waitForConfirmedDevshardInferences(
-    proxyUrl: String,
+    escrowUrl: String,
     minCount: Int,
     timeoutMs: Long = 120_000L,
     pollIntervalMs: Long = 500L,
 ) {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (System.currentTimeMillis() < deadline) {
-        val inferences = getDevshardProxyInferences(proxyUrl)
-        val confirmed = inferences.values.count { rec ->
-            rec.confirmedAt != null &&
-                rec.confirmedAt!! > 0 &&
+        val inferences = getDevshardEscrowInferences(escrowUrl)
+        val confirmed = inferences.values.count { inferenceRecord ->
+            inferenceRecord.confirmedAtHeight != null &&
+                inferenceRecord.confirmedAtHeight!! > 0 &&
                 (
-                    rec.status == DevshardInferenceStatus.FINISHED ||
-                        rec.status == DevshardInferenceStatus.STARTED ||
-                        rec.status == DevshardInferenceStatus.VALIDATED
+                    inferenceRecord.status == DevshardInferenceStatus.FINISHED ||
+                        inferenceRecord.status == DevshardInferenceStatus.STARTED ||
+                        inferenceRecord.status == DevshardInferenceStatus.VALIDATED
                     )
         }
         if (confirmed >= minCount) {
@@ -573,40 +565,41 @@ fun LocalInferencePair.waitForConfirmedDevshardInferences(
         }
         Thread.sleep(pollIntervalMs)
     }
-    val inferences = getDevshardProxyInferences(proxyUrl)
+    val inferences = getDevshardEscrowInferences(escrowUrl)
     error(
         "timed out waiting for $minCount confirmed inferences " +
-            "(got ${inferences.values.count { it.confirmedAt != null && it.confirmedAt!! > 0 }})",
+            "(got ${inferences.values.count { it.confirmedAtHeight != null && it.confirmedAtHeight!! > 0 }})",
     )
 }
 
 fun LocalInferencePair.waitForFinishedDevshardInferences(
-    proxyUrl: String,
+    escrowUrl: String,
     minCount: Int,
     timeoutMs: Long = 120_000L,
     pollIntervalMs: Long = 500L,
 ) {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (System.currentTimeMillis() < deadline) {
-        val inferences = getDevshardProxyInferences(proxyUrl)
-        val finished = inferences.values.count { rec ->
-            rec.status == DevshardInferenceStatus.FINISHED &&
-                rec.confirmedAt != null &&
-                rec.confirmedAt!! > 0
+        val inferences = getDevshardEscrowInferences(escrowUrl)
+        val finished = inferences.values.count { inferenceRecord ->
+            inferenceRecord.status == DevshardInferenceStatus.FINISHED &&
+                inferenceRecord.confirmedAtHeight != null &&
+                inferenceRecord.confirmedAtHeight!! > 0
         }
         if (finished >= minCount) {
             return
         }
         Thread.sleep(pollIntervalMs)
     }
-    val inferences = getDevshardProxyInferences(proxyUrl)
+    val inferences = getDevshardEscrowInferences(escrowUrl)
     error(
         "timed out waiting for $minCount finished inferences " +
             "(got ${inferences.values.count { it.status == DevshardInferenceStatus.FINISHED }})",
     )
 }
 
-fun DevshardProxyDebugState.liveStatus(name: String): Int = liveStatusCounts?.get(name) ?: 0
+fun LocalInferencePair.devshardStatusCounts(escrowUrl: String): Map<DevshardInferenceStatus, Int> =
+    getDevshardEscrowInferences(escrowUrl).values.groupingBy { it.status }.eachCount()
 
 /**
  * Drive chat completions until [targetNonce] is reached and at least [minSealed]
@@ -614,7 +607,7 @@ fun DevshardProxyDebugState.liveStatus(name: String): Int = liveStatusCounts?.ge
  * are multiples of [devshardAutoSealEveryNNonces] (escrow snapshot at create).
  */
 fun LocalInferencePair.waitForDevshardAutoSeal(
-    proxyUrl: String,
+    escrowUrl: String,
     minSealed: Int,
     targetNonce: Long = devshardAutoSealEveryNNonces,
     model: String = defaultModel,
@@ -624,18 +617,18 @@ fun LocalInferencePair.waitForDevshardAutoSeal(
     val deadline = System.currentTimeMillis() + timeoutMs
     var drive = 0
     while (System.currentTimeMillis() < deadline) {
-        val debug = getDevshardProxyDebugState(proxyUrl)
+        val debug = getDevshardEscrowDebugState(escrowUrl)
         if (debug.nonce >= targetNonce && debug.sealedInferences >= minSealed) {
             return
         }
         if (debug.nonce < targetNonce || debug.sealedInferences < minSealed) {
-            val response = sendChatCompletion(proxyUrl, model, "autoseal drive $drive")
+            val response = sendChatCompletion(escrowUrl, model, "autoseal drive $drive")
             assertThat(response).isNotEmpty()
             drive++
         }
         Thread.sleep(pollIntervalMs)
     }
-    val last = getDevshardProxyDebugState(proxyUrl)
+    val last = getDevshardEscrowDebugState(escrowUrl)
     error(
         "timed out waiting for auto-seal: nonce=${last.nonce} target=$targetNonce " +
             "sealed=${last.sealedInferences} minSealed=$minSealed",

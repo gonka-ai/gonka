@@ -24,9 +24,9 @@ devshard/bin/
 /decentralized-api/devshardd
 /edge-api/build/edge-api
 devshard/build/
-/devshard/devshardctl
+/devshard/gateway
 /devshard/devshardd
-/devshard/cmd/devshardctl/devshardctl
+/devshard/cmd/gateway/gateway
 /devshard/cmd/devshardd/devshardd
 chain-venv/
 .inference/

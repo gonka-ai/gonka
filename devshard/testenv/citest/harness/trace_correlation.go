@@ -15,21 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// WaitLokiLogQL polls until a LogQL query returns at least one stream with values.
-func WaitLokiLogQL(t *testing.T, obs ObservabilityEndpoints, query string, timeout time.Duration) {
-	t.Helper()
-	if timeout == 0 {
-		timeout = 2 * time.Minute
-	}
-	require.NotEmpty(t, query)
-	client := &http.Client{Timeout: 10 * time.Second}
-	t.Logf("citest: waiting for Loki query %s", query)
-	ok := assertEventually(t, timeout, 3*time.Second, func() bool {
-		return lokiQueryHasStreams(client, obs.Loki, query)
-	})
-	require.True(t, ok, "Loki query returned no streams within %s: %s", timeout, query)
-}
-
 // RequireLogsForTrace asserts Loki has at least one JSON log line for traceID
 // from each compose_service regex.
 func RequireLogsForTrace(t *testing.T, obs ObservabilityEndpoints, traceID string, composeServices []string, timeout time.Duration) {
@@ -65,9 +50,7 @@ func PostGatewayChatCompletionEx(t *testing.T, client *http.Client, gatewayURL, 
 	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
 	require.NoError(t, err)
 	httpReq.Header.Set("Content-Type", "application/json")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(httpReq, adminAPIKey)
 	resp, err := client.Do(httpReq)
 	require.NoError(t, err)
 	defer resp.Body.Close()

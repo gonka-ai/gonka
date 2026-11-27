@@ -12,7 +12,6 @@ import (
 	"sort"
 	"time"
 
-	"devshard/testenv/config"
 	"devshard/testenv/mockchain/ledgerface"
 )
 
@@ -24,8 +23,6 @@ const (
 // RunInputs is what the checks read from the live stack after the workload. A run saves it to
 // run-inputs.json, so EvaluateSavedRun judges the run directory again without a stack.
 type RunInputs struct {
-	// Gateway is the driver the run used; empty in a run saved before it was recorded, which is devshardctl.
-	Gateway config.GatewayDriver `json:"gateway,omitempty"`
 	// Started is the workload start the invariants and the ghost-rate fault windows are planned against.
 	Started            time.Time          `json:"started"`
 	Hosts              []InvariantHost    `json:"hosts"`
@@ -119,11 +116,7 @@ func recheckRun(dir string, strictXFail bool, history string) ([]AssertionResult
 	if history == "" {
 		history = defaultCheckHistory(dir)
 	}
-	gateway := inputs.Gateway
-	if gateway == "" {
-		gateway = scenario.Topology.Gateway
-	}
-	key := historyKey{Scenario: scenario.Scenario, Gateway: string(gateway)}
+	key := historyKey{Scenario: scenario.Scenario}
 	if marked, err := recordCheckHistory(history, key, dir, inputs.Started, checks); err != nil {
 		notes = append(notes, fmt.Sprintf("check history %s: %v", history, err))
 	} else {
@@ -133,9 +126,6 @@ func recheckRun(dir string, strictXFail bool, history string) ([]AssertionResult
 }
 
 func evaluateRun(dir string, scenario Scenario, summary Summary, events []EventRecord, inputs RunInputs, strictXFail bool) ([]AssertionResult, error) {
-	if inputs.Gateway != "" {
-		scenario.Topology.Gateway = inputs.Gateway
-	}
 	checks := assertRun(scenario, summary, inputs, events)
 	checks = append(checks, eventAssertions(events)...)
 	if accountingEnabled(scenario.Assertions.Accounting) {
@@ -164,7 +154,7 @@ func evaluateRunInvariants(dir string, scenario Scenario, events []EventRecord, 
 		end = &invariantEndState{DidNotCompress: -1, ChainError: notSaved, LeasesError: notSaved}
 	}
 	in := InvariantInputs{
-		Gateway: scenario.Topology.Gateway, Started: inputs.Started, Workload: scenario.Duration(), Settings: resolveInvariantSettings(scenario), Hosts: inputs.Hosts,
+		Started: inputs.Started, Workload: scenario.Duration(), Settings: resolveInvariantSettings(scenario), Hosts: inputs.Hosts,
 		NodeHosts: map[string]string{}, Events: events, Burns: inputs.Burns, ChainMaxNonce: scenario.Topology.Chain.MaxNonce,
 		PendingSettleFrom: end.PendingSettleFrom, SettlementDisabled: end.SettlementDisabled, ReconcileTicks: end.ReconcileTicks, Devshards: end.Devshards, Inferences: end.Inferences,
 		SettleTxs: end.SettleTxs, Escrows: end.Escrows, ChainError: end.ChainError, Leases: end.Leases, LeasesError: end.LeasesError,
@@ -178,7 +168,6 @@ func evaluateRunInvariants(dir string, scenario Scenario, events []EventRecord, 
 		return nil, fmt.Errorf("read requests.jsonl: %w", err)
 	}
 	in.Accounting = readSamples[AccountingSnapshot](dir, "accounting-snapshots.jsonl")
-	in.Throttle = readSamples[ThrottleSample](dir, "throttle.jsonl")
 	in.Pending = readSamples[PendingSample](dir, "pending.jsonl")
 	in.HostStats = readSamples[HostStatsSample](dir, "host-stats.jsonl")
 	in.DapiHosts = readSamples[DapiHostSample](dir, "dapi-host-stats.jsonl")

@@ -17,7 +17,7 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | --- | --- | --- |
 | `/v1/chat/completions` | per-model (below) | no |
 | `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
-| `/v1/status` | none, as above | yes — a gateway disabled on purpose is not unhealthy |
+| `/v1/status` | none, as above | yes — a gateway switched off on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
 | `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which answers 200 without checking anything else ([`deploy/README.md`](../deploy/README.md)); at most 4 scrapes run at once and each is cut at 10 s, both answered 503 ([`metrics/README.md`](../metrics/README.md), "Scrapes") |
 | `/v1/requests/{id}` | admin | yes |
@@ -26,6 +26,8 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | `/debug/pprof/*` | admin | yes |
 
 The `/devshard/{id}/…` prefix pins a request to one escrow instead of letting the scheduler choose — the recovery surface for an escrow that needs attention on its own. A pinned chat to an escrow the gateway no longer routes answers 404, as an unknown devshard.
+
+`GET /devshard/{id}/v1/finalize` answers 409 until the escrow is in the settlement phase, then the settlement file `inferenced tx inference settle-devshard-escrow <file>` reads, built as the gateway's own settle builds it, from local storage for an escrow the gateway no longer holds in memory: the same signatures, host stats and state root, so an operator can settle by hand when the gateway cannot broadcast. The body carries `phase` and `finalize_nonce` beside the file's fields, which the command ignores; save it as it is. The command reads neither `validated` nor `finished` of a host-stats entry, so a file in which a slot has either non-zero is refused by the chain. Each call builds the settlement afresh and narrates a set it could not verify, as a settle does. `POST` on the same route finalizes the escrow.
 
 `GET /devshard/{id}/v1/debug/signatures` lists the slots that signed each nonce the session still holds signatures for — the retained window plus each validator's highest — so the view stays bounded on a long-lived escrow (`user/session.go`, `dropSignaturesThroughLocked`).
 
@@ -58,7 +60,7 @@ The `models` setting is also the list of models the gateway offers (`config.Conf
 
 ### Client API keys
 
-Client keys live in the `api_keys` table of `gateway.db`, **in plain text**: the storage directory and every archive of it are as secret as the keys. They are managed through the admin API and apply on the next request, with no restart.
+Client keys live in the `api_keys` table of the control-plane store, `gateway.db` in `sqlite` mode and the gateway's own database in `postgres` mode, **in plain text**: the storage directory or database and every archive and backup of it are as secret as the keys. They are managed through the admin API and apply on the next request, with no restart.
 
 | Call | What it does |
 | --- | --- |
@@ -72,7 +74,7 @@ curl -X POST -H "Authorization: Bearer $DEVSHARD_ADMIN_API_KEY" -d '{"label":"bi
 {"id":"3f9a1c2e","source":"database","label":"billing","created_at":"2026-01-02T03:04:05.000000000Z","revoked":false,"key":"sk-..."}
 ```
 
-The `id` is the first eight hex characters of the key's SHA-256, the `api_key_id` the request record carries ([observability.md](./observability.md), "The request record"). A create whose `id` exists, revoked or not, answers 409, so an id is never reused. A supplied key shorter than 16 characters, containing whitespace (no `Bearer` header can carry it) or equal to the admin key answers 400. To rotate a key, create the new one and revoke the old one.
+The `id` is the first eight hex characters of the key's SHA-256, the `api_key_id` the request record carries ([observability.md](./observability.md), "The request record"). A create whose `id` exists, revoked or not, answers 409, so an id is never reused. A supplied key shorter than 16 characters, containing whitespace (no `Bearer` header can carry it) or a NUL character, equal to the admin key, or a label with a NUL character answers 400. To rotate a key, create the new one and revoke the old one.
 
 An `api_key` model needs an active key. Revoking the last active key while the network `access` or any model's `access` is `api_key` answers 409, and a settings write that leaves such a model with no active key answers 400. A gateway whose database holds no key and whose settings put a model on `api_key` still starts, and logs a warning that an `api_key` model has no active key, so the first key can be created. A settings write is refused only when it creates that state, so the kill switch and every other setting stay writable until a key exists, and the rule binds again once a key does. A stored block for a model `rotation_models_json` no longer lists is ignored, so it never counts as an `api_key` model. A `DEVSHARD_ADMIN_API_KEY` equal to an active database client key fails the boot: a database client key must differ from the admin key. The `api key created`, `api key read` and `api key revoked` audit lines carry the `api_key_id` and `api_key_label`.
 
@@ -84,9 +86,9 @@ An `api_key` model needs an active key. Revoking the last active key while the n
 
 ### The kill switch
 
-`modes.disabled` (env `DEVSHARD_GATEWAY_DISABLED`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
+`modes.enabled` set to false (env `DEVSHARD_GATEWAY_ENABLED=false`, or `enabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
 
-With `disabled_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `disabled_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
+With `off_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `off_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
 
 ## Boot
 
@@ -94,9 +96,9 @@ With `disabled_redirect_url` set it answers **308** with the new URL in both the
 
 1. the chain observer starts — nothing downstream can score a host before a snapshot exists;
 2. the warmup prober starts;
-3. the host pings start — observability alone, and they read the live set per wave, so starting before anything is published costs nothing ([`hostping/README.md`](../hostping/README.md));
+3. the host pings and the host RPC-stats poll start — observability alone, and they read the live set per wave, so starting before anything is published costs nothing ([`hostping/README.md`](../hostping/README.md), [`hostrpc/README.md`](../hostrpc/README.md));
 4. `seedDevshards` applies `escrows_json` to the store — a seeded escrow that names no key variable is **refused**, not silently accepted. It leaves a row it already holds alone, but settlement deletes the row of an escrow it settled, so on every later boot the seed writes that escrow back as active;
-5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 9 does once the chain lists the participant again;
+5. `publishEscrows` opens a session per active escrow and publishes it for routing, bounded by `MaxConcurrentRuntimeBuilds` (16) so a large set does not open 200 sessions at once. An escrow the chain no longer has is marked inactive; one the chain reports settled is refused before its session opens (`bridge.ErrEscrowSettled`) and its row is deleted, as settlement deletes it, so a seed written back by step 4 is never published or routed; one whose key is missing, or whose session would not open for any other reason, stays active and unpublished, is logged as `devshard could not be opened, retrying`, and is retried every lifecycle tick (15 s) until it opens, so one escrow never keeps the others from serving; `devshard_gateway_escrow_unopened{devshard_id,model,reason}` lists it until it opens or is deactivated. A group member the chain no longer lists does not stop a session opening: its slot fails every call as a down host's would (`user.ErrHostAbsentFromChain`) until the session is reopened, which step 9 does once the chain lists the participant again;
 6. the nonce ledger starts, so nothing above it files a fact into a sink that is not yet reading;
 7. the refusal votes a previous process left owed in the store are owed again, each holding its escrow until it posts, so the lifecycle below does not settle an escrow ahead of the vote; a vote whose escrow did not open in step 5 is dropped ([race.md](./race.md), "Owed refusal votes across a restart");
 8. the escrow lifecycle manager starts its 15 s tick;
@@ -131,7 +133,7 @@ Each drain is bounded by the grace period but **not cancelled** by it — a step
 
 The `journal` step (8) is bounded the same way, but with a floor: it waits for its queue for whatever budget remains, or for one second whenever the steps above it leave less than one second of the grace period, so its queue can still reach the ledger, and a close that outlasts that wait is reported as "abandoned with events still queued".
 
-**Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. Both compose files that run the gateway (`deploy/docker-compose.devshard-gateway.yml` and the join stack's `deploy/join/docker-compose.devshard-gateway.yml`) set `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
+**Docker's stop timeout.** Docker sends SIGKILL ten seconds after SIGTERM unless the service sets `stop_grace_period`, and ten seconds is the grace period itself, so a gateway with a stream still open would be killed before the journal drains, the final accounting snapshot is written and the store closes. The gateway's compose file (`deploy/docker-compose.devshard-gateway.yml`) sets `stop_grace_period: 30s`, which covers the grace period, the journal's one-second floor and the steps after it. A deployment that raises the grace period raises this with it.
 
 ## Session storage
 
@@ -143,9 +145,31 @@ The pass leaves alone a directory with no `epoch_<N>.db` (a session still openin
 
 The pass stops with the gateway. A value below the hosts' horizon is raised to it with a warning; `0` turns the pass off.
 
+## The completion journal
+
+Every serving escrow session writes each started nonce to the store's `inference_completions` table before the nonce is composed and sent, and deletes the entry once the nonce finishes or times out; a read-only session never dispatches and keeps no journal. While an entry is unresolved, the session refuses `Finalize` with `user.ErrInferenceCompletionPending`: settlement reads that as busy and defers the escrow to a later tick without counting a tick failure, and `/devshard/{id}/v1/finalize` answers 503 with a `Retry-After` of one tick. The execution timeout resolves a nonce nobody answered, after which the next tick settles the escrow; an ordinary settle is deferred that way for as long as the entry lasts. A forced settle, the deadline settle inside the settle margin or an operator's `force=true`, finalizes without waiting on the journal: the registry detaches the journal from the escrow's session for that finalize, so a started nonce still unresolved is paid to its executors like any open record, and the settlement deadline is never missed for the sake of the execution timeout. A finalize that landed clears the escrow's journal rows, so a restart does not read them again, and after a forced finalize the journal is attached again. The nonces a forced settle finalized past are narrated and counted: the line `escrow settled past unresolved nonces` carries the escrow, `unresolved` (how many) and `nonces` (which), and `devshard_gateway_escrow_settled_unresolved_nonces_total` adds how many; a nonce counts when its journal entry has a record in the session that is still pending or started, not finished, challenged, validated, invalidated or timed out; an entry with no record in the session is not counted, the nonces are read as the forced finalize begins, and the line is silent when none was. A journal that cannot be read or cleared around a forced finalize is logged as `completion journal unavailable around finalize` with the escrow and the error, and the nonces that read would have named go uncounted. A failed forced finalize leaves the journal attached and its rows in place, and the next forced attempt counts them; once the finalize has landed, a repeated forced settle clears leftover rows without counting them again. Attaching the journal switches that escrow's session SQLite to `synchronous=FULL` through `RequireDurableCommits`; if that fails, the escrow refuses every new inference and every `Finalize` stays pending, so an ordinary settle defers it on every tick until its session is reopened, while a forced settle detaches the journal and finalizes. An entry survives a restart and gates `Finalize` in the new process, because the journal lives in the control-plane store, SQLite or Postgres.
+
 ## One process per escrow set
 
-The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. The Postgres settings (`PGHOST`, `PGPORT`, `PGUSER`, `PGPASSWORD`, `PGDATABASE`, `PG_CONNECT_TIMEOUT`) are not read; when any is set the gateway logs `legacy Postgres settings are ignored` at boot, naming them (`env.LegacyPostgresVariablesSet`).
+The gateway is one process per set of escrows. It keeps its state in its own SQLite store under `DEVSHARD_STORAGE_DIR` and shares it with no other process: two gateways given the same escrows, through `DEVSHARDS_JSON` or the admin API, would each sequence their nonces and each ledger would see only its own share, which the chain rejects as diverged state. Pointing two gateways at one Postgres database does not change that: nothing yet elects a leader, so the rule stands.
+
+### Storing state in Postgres
+
+`DEVSHARD_STORAGE_MODE` selects the control-plane store: unset or `sqlite` keeps `gateway.db` under `DEVSHARD_STORAGE_DIR`, `postgres` uses a database of its own, and any other value, `hybrid` and `auto` included, is refused at boot. Switching modes is an operator action: each store starts from its own data and nothing is copied between them.
+
+In `postgres` mode `GATEWAY_INSTANCE_ID` (a stable name for this process, written to the boot log) and `PGHOST` are required; the connection comes from the libpq `PG*` variables, with `PG_CONNECT_TIMEOUT`, `PG_OPERATION_TIMEOUT` and `PG_POOL_MAX_CONNS` as for the hosts. With several hosts in `PGHOST` the connect timeout per host is capped at `PG_OPERATION_TIMEOUT` divided by the number of hosts plus one, so a host that never answers leaves the next host and the statement room inside one operation; the cap counts one address per host name, and on a slow link raise `PG_OPERATION_TIMEOUT` so the first host can still finish connecting.
+
+Boot refuses, with no SQLite fallback:
+
+- a host that is not loopback or a unix socket reached without TLS (`sslmode` `require`, `verify-ca` or `verify-full`; `require` does not check the certificate, so prefer `verify-full` with `PGSSLROOTCERT`);
+- a server with `fsync` off; every connection pins `synchronous_commit` on, so that setting cannot weaken a commit;
+- a database that holds tables and no `gateway_database_marker`, so give the gateway a database nobody else uses.
+
+The client API keys, the settings document with its `models` block and legacy keys, and every other control-plane table live in Postgres in this mode; a key created, listed or revoked through the admin API reads and writes the Postgres table. Sessions and nonce accounting stay in SQLite under `DEVSHARD_STORAGE_DIR` in both modes.
+
+Connect directly or through a session-level pooler: the pool uses prepared statements and startup parameters, which transaction pooling breaks.
+
+While the mode is `sqlite`, any `PG*` variable that is set is ignored and named in the boot log ([observability.md](./observability.md), "Lines that mean something happened").
 
 ## Outbound dependencies
 

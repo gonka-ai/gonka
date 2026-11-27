@@ -10,7 +10,7 @@ if [ $# -lt 1 ]; then
 	exit 2
 fi
 
-trees="devshard/cmd/gateway devshard/gatewayprotocol devshard/cmd/devshardctl"
+trees="devshard/cmd/gateway devshard/gatewayprotocol"
 base=$1
 head=${2:-}
 out="$(mktemp -d)/review-package.md"

@@ -60,6 +60,7 @@ type Manager struct {
 	reserveTaken        markSet
 	moneyShort          requestMarks
 	deadlines           deadlineWatch
+	settledUnresolved   atomic.Uint64
 	wakeup              chan struct{}
 
 	timeoutSweeper TimeoutSweeper

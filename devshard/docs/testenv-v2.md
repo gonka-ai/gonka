@@ -1,8 +1,6 @@
 # devshard testenv v2 — operator runbook
 
-Local Docker lab for **devshard-only** integration testing: mock chain (Cosmos gRPC +
-CometBFT RPC + LCD REST), mock-dapi (chainoracle + NodeManager long-poll), mock-openai,
-versiond × N supervising devshardd, versiond-router, and devshardctl gateway.
+Local Docker lab for **devshard-only** integration testing: mock chain (Cosmos gRPC + CometBFT RPC + LCD REST), mock-dapi (chainoracle + NodeManager long-poll), mock-openai, versiond × N supervising devshardd, versiond-router, and the gateway.
 
 **Stack scenarios & tests:** [`testenv/docs/scenarios.md`](../testenv/docs/scenarios.md)  
 **gRPC transport consolidation (Phase 12b):** [`testenv/docs/chain-transport-consolidation.md`](../testenv/docs/chain-transport-consolidation.md)  

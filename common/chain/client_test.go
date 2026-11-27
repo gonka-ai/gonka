@@ -77,6 +77,27 @@ func TestRPCURLFromGRPCURL(t *testing.T) {
 	}
 }
 
+func TestResolveRPCURL(t *testing.T) {
+	cases := []struct {
+		name string
+		grpc string
+		rpc  string
+		want string
+	}{
+		{"explicit wins over the gRPC host", "node:9090", "http://rpc:26657", "http://rpc:26657"},
+		{"explicit is trimmed", "node:9090", "  http://rpc:26657  ", "http://rpc:26657"},
+		{"empty derives from the gRPC host", "node:9090", "", "http://node:26657"},
+		{"blank derives from the gRPC host", "node:9090", "   ", "http://node:26657"},
+		{"empty derives from a resolver target", "dns:///node:9090", "", "http://node:26657"},
+		{"no host gives empty", "", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, chain.ResolveRPCURL(tc.grpc, tc.rpc))
+		})
+	}
+}
+
 func TestNewWithRPCFallback_AcceptsDerivedRPCURL(t *testing.T) {
 	rpcURL := chain.RPCURLFromGRPCURL("node:9090")
 	c, err := chain.NewWithRPCFallback("node:9090", rpcURL)

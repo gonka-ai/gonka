@@ -21,6 +21,7 @@ import (
 	"devshard/cmd/gateway/registry"
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
+	"devshard/gatewayprotocol/settlement"
 )
 
 const (
@@ -41,6 +42,7 @@ type EscrowRegistry interface {
 	SettlementSession(escrowID string) (registry.EscrowSession, bool)
 	HoldSettlement(escrowID string) (registry.EscrowSession, func(), bool)
 	Inspect(ctx context.Context, escrowID string) (registry.EscrowSession, func(), error)
+	BuildSettlement(ctx context.Context, escrowID string) (settlement.Message, error)
 	IsBusy(escrowID string) bool
 }
 
@@ -258,6 +260,7 @@ type Server struct {
 	requestIDs   func() string
 	buffers      *BufferBudget
 	cache        *responseCache
+	streams      *streamIndex
 	capture      *requestCapture
 
 	stopTokenVocabulary     func(model string) int
@@ -339,6 +342,7 @@ func New(deps Deps) (*Server, error) {
 	}
 	configuration := deps.Config.Load()
 	server.cache = newResponseCache(configuration.Cache.ChatCacheMaxBytes)
+	server.streams = newStreamIndex()
 	server.promptCounts = newPromptCountGate(configuration.Server.MaxConcurrentPromptCounts)
 	server.statsTokenizerEnabled = configuration.Server.StatsTokenizerEnabled
 	capture, err := newRequestCapture(configuration.Capture, deps.StorageDir, server.now)
@@ -357,7 +361,7 @@ func (s *Server) Handler() http.Handler { return s.handler }
 
 // HTTPServer sets neither ReadTimeout nor WriteTimeout, which would cut an SSE stream, and returns the cancel of every request context, which Shutdown alone never calls. See README.md, "Reading a body" and "Streaming the reply".
 func (s *Server) HTTPServer(address string) (*http.Server, context.CancelFunc) {
-	requests, cancelRequests := context.WithCancel(context.Background())
+	requests, cancelRequests := context.WithCancelCause(context.Background())
 	return &http.Server{
 		Addr:              address,
 		Handler:           s.handler,
@@ -365,7 +369,7 @@ func (s *Server) HTTPServer(address string) (*http.Server, context.CancelFunc) {
 		IdleTimeout:       idleConnectionTimeout,
 		MaxHeaderBytes:    maxRequestHeaderBytes,
 		BaseContext:       func(net.Listener) context.Context { return requests },
-	}, cancelRequests
+	}, func() { cancelRequests(errGatewayStopping) }
 }
 
 func randomRequestID() string {
@@ -381,3 +385,6 @@ func (s *Server) CaptureStats() (written, refused, failed, held int64) { return 
 
 // CacheStats reports the response cache's own account of itself, for the metrics collector.
 func (s *Server) CacheStats() (hits, misses, entries, bytes int64) { return s.cache.stats() }
+
+// StreamLogStats reports the live stream logs' own account of themselves, for the metrics collector.
+func (s *Server) StreamLogStats() (replays, live int64) { return s.streams.stats() }

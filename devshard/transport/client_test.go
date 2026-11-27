@@ -308,7 +308,6 @@ func TestHTTPClient_Send_CapturesDevshardErrorHeader(t *testing.T) {
 	var statusErr *UpstreamStatusError
 	require.True(t, errors.As(err, &statusErr))
 	require.Equal(t, DevshardErrorEscrowSettled, statusErr.DevshardError)
-	require.True(t, IsUpstreamEscrowSettled(err))
 }
 
 func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
@@ -1084,11 +1083,9 @@ func TestClassifiersReadConnectApplicationStatus(t *testing.T) {
 	notFound := connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host"))
 	notFound.Meta().Set(HeaderDevshardError, DevshardErrorEscrowNotFound)
 	require.True(t, IsUpstreamEscrowNotFound(fmt.Errorf("chat: %w", notFound)))
-	require.False(t, IsUpstreamEscrowSettled(notFound))
 
 	settled := connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow settled"))
 	settled.Meta().Set(HeaderDevshardError, DevshardErrorEscrowSettled)
-	require.True(t, IsUpstreamEscrowSettled(fmt.Errorf("chat: %w", settled)))
 	require.False(t, IsUpstreamEscrowNotFound(settled))
 
 	missing := connect.NewError(connect.CodeNotFound, errors.New("session not found"))
@@ -1097,7 +1094,6 @@ func TestClassifiersReadConnectApplicationStatus(t *testing.T) {
 
 	open := connect.NewError(connect.CodeFailedPrecondition, errors.New("escrow is not open on this host"))
 	require.False(t, IsUpstreamEscrowNotFound(open))
-	require.False(t, IsUpstreamEscrowSettled(open))
 }
 
 // newInfiniteDataLineReader opens an SSE data line that never terminates.

@@ -37,7 +37,7 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "proxy", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "gateway", "proxy", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
 		}
 	})
 	version := cfg.Versiond.VersionName
@@ -63,7 +63,7 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	for _, p := range cfg.Participants {
 		require.Equal(t, config.ProxyOverlayURL, p.InferenceURL, "participant %s", p.Address)
 	}
-	upgrade, _ := stack.ComposeExecOutput("devshardctl", "printenv", "DEVSHARD_RPC_H2_UPGRADE")
+	upgrade, _ := stack.ComposeExecOutput("gateway", "printenv", "DEVSHARD_RPC_H2_UPGRADE")
 	require.NotEqual(t, "false", strings.TrimSpace(upgrade))
 
 	harness.WaitStackHealthy(t, stack, eps)
@@ -78,7 +78,7 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	proxyIP := procIPv4(overlayProxyIP(cfg))
 	// The gateway keeps one mux to the proxy for peer RPC. JSON hops to
 	// the same port do not outlive the keep-alive window.
-	gatewayConns := outlivingKeepAliveTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort)
+	gatewayConns := outlivingKeepAliveTCP(t, stack, "gateway", proxyIP, config.DefaultProxyPort)
 	require.Equal(t, 1, gatewayConns, "gateway must hold exactly one peer mux to the proxy")
 	// The proxy muxes that peer onto one HTTP/2 connection to the router's
 	// :8081. A host peer dial through the same proxy can hold a second one.
@@ -103,7 +103,7 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	// idle timeout before a keep-alive-length reading elsewhere ends.
 	require.Equal(t, proxyBackend, settledPersistentTCP(t, stack, "proxy", "", 8081),
 		"parallel RPCs opened new proxy connections to versiond-router:8081")
-	require.Equal(t, gatewayConns, outlivingKeepAliveTCP(t, stack, "devshardctl", proxyIP, config.DefaultProxyPort),
+	require.Equal(t, gatewayConns, outlivingKeepAliveTCP(t, stack, "gateway", proxyIP, config.DefaultProxyPort),
 		"parallel RPCs opened new gateway connections to the proxy")
 	require.Equal(t, routerConns, outlivingKeepAliveTCP(t, stack, "versiond-router", procIPv4(hostIP), 8080),
 		"parallel RPCs opened new versiond-router connections to %s", hostID)
@@ -129,7 +129,7 @@ func TestPeerRPCOverlayHop(t *testing.T) {
 	stack.RecreateServices(t, "proxy")
 	require.False(t, tcpAccepted(strings.TrimPrefix(stack.ProxyH2HTTP(t), "http://")),
 		"the rewritten proxy must reset the HTTP/2 preface")
-	stack.RecreateServices(t, "devshardctl")
+	stack.RecreateServices(t, "gateway")
 	eps = stack.Endpoints(t, cfg)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	before := chatOKCount(t, stack, cfg)

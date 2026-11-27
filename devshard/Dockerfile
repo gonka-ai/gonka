@@ -1,4 +1,4 @@
-FROM golang:1.25.9-alpine3.23 AS devshardctl-builder
+FROM golang:1.25.9-alpine3.23 AS gateway-builder
 
 ARG DEVSHARD_VERSION=dev
 ARG GATEWAY_VERSION=dev
@@ -18,32 +18,17 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
 
 COPY devshard/. .
 
-# devshardctl: pure Go, no CGO needed
-RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
-    --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
-    CGO_ENABLED=0 go build \
-    -ldflags "-X main.Version=${DEVSHARD_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
-    -o /devshardctl ./cmd/devshardctl
-
-# gateway: pure Go like devshardctl; DEVSHARD_VERSION is the protocol version hashed into every settlement payload, GATEWAY_VERSION is the gateway's own release version.
+# gateway: pure Go, no CGO needed; DEVSHARD_VERSION is the protocol version hashed into every settlement payload, GATEWAY_VERSION is the gateway's own release version.
 RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
     CGO_ENABLED=0 go build \
     -ldflags "-X main.Version=${GATEWAY_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
     -o /gateway ./cmd/gateway
 
-# Testenv / gateway-only image (no CGO devshardd build).
-FROM alpine:3.23 AS devshardctl-runtime
-RUN apk add --no-cache ca-certificates wget
-COPY --from=devshardctl-builder /devshardctl /usr/local/bin/devshardctl
-EXPOSE 8080
-ENTRYPOINT ["devshardctl"]
-
-# The rewrite, for the same testenv stack: it runs beside devshardctl rather than replacing it, so the
-# existing scenarios keep exercising the binary in production while new ones drive this.
+# Gateway-only image (no CGO devshardd build).
 FROM alpine:3.23 AS gateway-runtime
 RUN apk add --no-cache ca-certificates wget
-COPY --from=devshardctl-builder /gateway /usr/local/bin/gateway
+COPY --from=gateway-builder /gateway /usr/local/bin/gateway
 EXPOSE 8080
 ENTRYPOINT ["gateway"]
 
@@ -94,13 +79,6 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
 
 COPY devshard/. .
 
-# devshardctl: pure Go, no CGO needed
-RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
-    --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
-    CGO_ENABLED=0 go build \
-    -ldflags "-X main.Version=${DEVSHARD_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
-    -o ./build/devshardctl ./cmd/devshardctl
-
 # devshardd: CGO + muslc required for blst
 RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
     --mount=type=cache,id=devshard-go-mod,target=/go/pkg/mod \
@@ -113,4 +91,3 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates
 COPY --from=builder /app/devshard/build/devshardd /usr/local/bin/devshardd
-COPY --from=builder /app/devshard/build/devshardctl /usr/local/bin/devshardctl

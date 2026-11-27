@@ -38,10 +38,6 @@ func processSample(target string, offset time.Duration, pid, goroutines, heap fl
 	}}
 }
 
-func transitionKey(participant, mode, reason string) string {
-	return quarantineFamily + `{mode="` + mode + `",model="m-a",participant_key="` + participant + `",reason="` + reason + `"}`
-}
-
 func settleTx(seq uint64, escrow, nonce uint64, root string, fees uint64, stats ...ledgerface.SettleHostStatView) ledgerface.TxView {
 	return ledgerface.TxView{Seq: seq, Type: "settle", Settle: &ledgerface.SettleTxView{EscrowID: escrow, Nonce: nonce, StateRootAndProtocolVersion: root, Fees: fees, HostStats: stats}}
 }
@@ -61,13 +57,12 @@ func passingInputs() InvariantInputs {
 			Grace: 95 * time.Second, MaxPendingAge: 220 * time.Second, SteadyAfter: 2 * time.Minute,
 			Baseline: [2]time.Duration{time.Minute, 2 * time.Minute}, TrendEarly: [2]time.Duration{2 * time.Minute, 4 * time.Minute},
 			TrendLate: [2]time.Duration{8 * time.Minute, 10 * time.Minute}, Cases: map[string]string{"no-runtime-for-deactivated-escrow": "escrow-rotation-per-model-settlement"},
-			Quarantine: map[string]time.Duration{"empty_stream": 45 * time.Second},
 		},
 		Hosts:     []InvariantHost{{"versiond-0", "p0"}, {"versiond-1", "p0"}, {"versiond-2", "p1"}, {"versiond-3", "p2"}, {"versiond-4", "p3"}},
 		NodeHosts: map[string]string{"n2": "versiond-3"},
 		Events: []EventRecord{
 			{ID: "e1", Case: "receipt-then-empty-stream", Action: "ml_fault", Target: "n2", Params: map[string]any{"patch": map[string]any{"empty_stream": true}}, StartedAt: atPtr(3 * time.Minute), EndedAt: atPtr(4 * time.Minute)},
-			{ID: "e2", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "devshardctl", StartedAt: atPtr(5 * time.Minute), EndedAt: atPtr(5*time.Minute + 10*time.Second)},
+			{ID: "e2", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "gateway", StartedAt: atPtr(5 * time.Minute), EndedAt: atPtr(5*time.Minute + 10*time.Second)},
 			{ID: "e3", Case: "host-under-poc-challenge", Action: "dapi_challenge", Target: "versiond-4", StartedAt: atPtr(6 * time.Minute), EndedAt: atPtr(7 * time.Minute)},
 		},
 		Accounting: []AccountingSnapshot{
@@ -94,14 +89,6 @@ func passingInputs() InvariantInputs {
 	for offset := time.Duration(0); offset < in.Workload; offset += time.Second {
 		in.Requests = append(in.Requests, RequestResult{StartedAt: at(offset), Duration: 100 * time.Millisecond, Status: 200, Outcome: "completed"})
 	}
-	for offset := 3*time.Minute + 25*time.Second; offset <= 4*time.Minute+15*time.Second; offset += throttlePollEvery {
-		quarantined := offset >= 3*time.Minute+30*time.Second && offset <= 4*time.Minute+10*time.Second
-		p := ThrottleParticipant{ParticipantKey: "p2", ShadowQuarantined: quarantined, FailureStrikes: 3}
-		if quarantined {
-			p.QuarantineUntil = at(3*time.Minute + 30*time.Second + 45*time.Second).Format(time.RFC3339Nano)
-		}
-		in.Throttle = append(in.Throttle, ThrottleSample{At: at(offset), EscrowID: "11", Participants: []ThrottleParticipant{p, {ParticipantKey: "p1"}}})
-	}
 	for offset := time.Duration(0); offset < in.Workload; offset += 10 * time.Second {
 		pid := 1.0
 		if offset >= 5*time.Minute+10*time.Second {
@@ -109,9 +96,9 @@ func passingInputs() InvariantInputs {
 		}
 		gateway := processSample("gateway", offset, pid, 100, 50<<20)
 		if pid == 1 {
-			gateway.Domain = map[string]float64{transitionKey("p2", "shadow", "empty_stream_quarantine"): 0}
+			gateway.Domain = map[string]float64{attemptFailureKey("p2", "empty_stream"): 0}
 			if offset >= 3*time.Minute+30*time.Second {
-				gateway.Domain[transitionKey("p2", "shadow", "empty_stream_quarantine")] = 1
+				gateway.Domain[attemptFailureKey("p2", "empty_stream")] = 1
 			}
 		}
 		host := processSample("versiond-2/devshardd", offset, 7, 200, 80<<20)
@@ -310,23 +297,23 @@ func TestInvariantPendingAge(t *testing.T) {
 	checks, _ := evaluateInvariants(in)
 	dirty := checksNamed(t, checks, "no-nonce-left-pending.clean_end_state")[0]
 	require.Equal(t, "dirty=1 apart=0", dirty.Actual)
-	require.Equal(t, "escrow 11 open=3 pending_txs=0", dirty.Details)
+	require.Equal(t, "escrow 11 open=3", dirty.Details)
 }
 
 // Test flow:
-// 1. Settle-poll escrow 11 every second for 60 s after a drain at 10m10s, with a tx batch of 14 still queued for the first 8 s.
+// 1. Settle-poll escrow 11 every second for 60 s after a drain at 10m10s, with 14 inferences still open for the first 8 s.
 // 2. Require clean_end_state to pass, judged on the first two clean polls, and max_pending_age to ignore a post-drain poll 400 s old.
-// 3. Keep the batch queued through the first 30 s after drain and clear it at 45 s.
-// 4. Require clean_end_state to fail on escrow 11 with its batch.
+// 3. Keep the inferences open through the first 30 s after drain and close them at 45 s.
+// 4. Require clean_end_state to fail on escrow 11 with its open inferences.
 func TestInvariantCleanEndStateWaitsForTheSettle(t *testing.T) {
-	settling := func(queuedFor time.Duration) InvariantInputs {
+	settling := func(openFor time.Duration) InvariantInputs {
 		in := passingInputs()
 		in.Pending = in.Pending[:len(in.Pending)-2]
 		in.PendingSettleFrom = at(10*time.Minute + 10*time.Second)
 		for after := time.Duration(0); after < 60*time.Second; after += time.Second {
 			s := PendingSample{At: in.PendingSettleFrom.Add(after), EscrowID: "11", Nonce: 50}
-			if after < queuedFor {
-				s.PendingTxs = 14
+			if after < openFor {
+				s.Open = 14
 			}
 			if after == 50*time.Second {
 				s.Open, s.MaxAgeSeconds = 1, 400
@@ -345,7 +332,7 @@ func TestInvariantCleanEndStateWaitsForTheSettle(t *testing.T) {
 	checks, _ = evaluateInvariants(settling(45 * time.Second))
 	clean = checksNamed(t, checks, "no-nonce-left-pending.clean_end_state")[0]
 	require.False(t, clean.Passed)
-	require.Equal(t, "escrow 11 open=0 pending_txs=14", clean.Details)
+	require.Equal(t, "escrow 11 open=14", clean.Details)
 }
 
 // Test flow:
@@ -389,6 +376,36 @@ func TestInvariantPendingAgeLeavesOutBurnedNonces(t *testing.T) {
 }
 
 // Test flow:
+// 1. Give one pending sample of escrow 11 an open nonce 77 with no time anchor, so no age can be read for it.
+// 2. Require max_pending_age to fail on that nonce, named in the details, as a FIX only on a repeat.
+// 3. Record nonce 77 as burned by the gateway.
+// 4. Require max_pending_age to pass.
+func TestInvariantPendingAgeFailsAnOpenNonceWithNoTimeAnchor(t *testing.T) {
+	unanchored := func() InvariantInputs {
+		in := passingInputs()
+		s := &in.Pending[20]
+		s.Open, s.Unanchored = 1, []string{"77"}
+		return in
+	}
+
+	checks, report := evaluateInvariants(unanchored())
+	check := checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
+	require.False(t, check.Passed)
+	require.True(t, check.fixOnRepeat)
+	require.Contains(t, check.Actual, "unanchored=1")
+	require.Equal(t, "escrow "+unanchored().Pending[20].EscrowID+" inference 77 open with no time anchor", check.Details)
+	body, err := json.Marshal(report.Tables["no-nonce-left-pending"])
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"unanchored_open":1`)
+
+	in := unanchored()
+	in.Burns = []gatewayBurn{{EscrowID: in.Pending[20].EscrowID, Nonce: "77"}}
+	checks, _ = evaluateInvariants(in)
+	check = checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
+	require.True(t, check.Passed, "actual=%s details=%s", check.Actual, check.Details)
+}
+
+// Test flow:
 // 1. Hold escrow 11 inference 77, executed on slot 2 (p2, versiond-3), open from 2m50s to 7m00s, three polls above the 220 s bound.
 // 2. Require max_pending_age to fail as a single record that is a FIX only on a repeat, its details naming host versiond-3, fault e1 and the global gateway restart e2.
 // 3. Add a second record over the bound on escrow 10 whose executor is unknown, at 8m00s and 300 s old.
@@ -408,7 +425,7 @@ func TestInvariantPendingAgeNamesTheHostAndFaultOfEachRecord(t *testing.T) {
 	check := checksNamed(t, checks, "no-nonce-left-pending.max_pending_age")[0]
 	require.False(t, check.Passed)
 	require.True(t, check.fixOnRepeat)
-	require.Equal(t, "max=250s records_over=1 samples_over=3 burned_max=0s burned_samples_over=0", check.Actual)
+	require.Equal(t, "max=250s records_over=1 samples_over=3 unanchored=0 burned_max=0s burned_samples_over=0", check.Actual)
 	require.Equal(t, "escrow 11 inference 77 (pending) on versiond-3 in e1, e2: 250s old at "+at(7*time.Minute).Format(time.RFC3339)+", 3 polls over", check.Details)
 	body, err := json.Marshal(report.Tables["no-nonce-left-pending"])
 	require.NoError(t, err)
@@ -436,55 +453,6 @@ func TestInvariantResidentRuntimes(t *testing.T) {
 	})
 	checks, _ := evaluateInvariants(passingInputs())
 	require.Equal(t, "escrow-rotation-per-model-settlement", checksNamed(t, checks, "no-runtime-for-deactivated-escrow.no_resident_deactivated")[0].Case)
-}
-
-// Test flow:
-// 1. Quarantine an honest host, give the empty-stream fault an http reason, and give the challenged host an empty_stream quarantine.
-// 2. Stretch quarantine_until beyond the configured duration.
-// 3. Require each quarantines-match-faults check to fail on its fixture.
-func TestInvariantQuarantine(t *testing.T) {
-	addTransition := func(in *InvariantInputs, offset time.Duration, participant, mode, reason string) {
-		for i := range in.Metrics {
-			if in.Metrics[i].Target == "gateway" && in.Metrics[i].At.After(at(offset-time.Second)) && in.Metrics[i].At.Before(at(5*time.Minute+10*time.Second)) {
-				in.Metrics[i].Domain[transitionKey(participant, mode, reason)] = 1
-			} else if in.Metrics[i].Target == "gateway" && in.Metrics[i].Domain != nil {
-				in.Metrics[i].Domain[transitionKey(participant, mode, reason)] = 0
-			}
-		}
-	}
-	runInvariantCases(t, []invariantCase{
-		{name: "pass honest", check: "quarantines-match-faults.honest_not_quarantined", passed: true},
-		{name: "honest quarantined", check: "quarantines-match-faults.honest_not_quarantined", passed: false, mutate: func(in *InvariantInputs) {
-			in.Throttle[3].Participants[1].Quarantined = true
-		}},
-		{name: "pass reason", check: "quarantines-match-faults.e1.reason", passed: true},
-		{name: "wrong reason", check: "quarantines-match-faults.e1.reason", passed: false, mutate: func(in *InvariantInputs) {
-			addTransition(in, 3*time.Minute+40*time.Second, "p2", "probe", "http_throttle_quarantine")
-		}},
-		{name: "pass challenge", check: "quarantines-match-faults.e3.reason", passed: true},
-		{name: "challenge gets empty_stream quarantine", check: "quarantines-match-faults.e3.reason", passed: false, mutate: func(in *InvariantInputs) {
-			for i := range in.Metrics {
-				if in.Metrics[i].Target == "gateway" && in.Metrics[i].At.After(at(5*time.Minute+10*time.Second)) {
-					value := 0.0
-					if in.Metrics[i].At.After(at(6*time.Minute + 20*time.Second)) {
-						value = 1
-					}
-					in.Metrics[i].Domain = map[string]float64{transitionKey("p3", "shadow", "empty_stream_quarantine"): value}
-				}
-			}
-		}},
-		{name: "pass durations", check: "quarantines-match-faults.durations", passed: true},
-		{name: "quarantine too long", check: "quarantines-match-faults.durations", passed: false, mutate: func(in *InvariantInputs) {
-			for i := range in.Throttle {
-				if in.Throttle[i].Participants[0].ShadowQuarantined {
-					in.Throttle[i].Participants[0].QuarantineUntil = at(6 * time.Minute).Format(time.RFC3339Nano)
-				}
-			}
-		}},
-		{name: "unattributed transition", check: "quarantines-match-faults.quarantine_attributed", passed: false, mutate: func(in *InvariantInputs) {
-			addTransition(in, 2*time.Minute, "p3", "probe", "transport_failure_quarantine")
-		}},
-	})
 }
 
 func failRequests(from, to time.Duration, every int, status int) func(*InvariantInputs) {
@@ -531,7 +499,7 @@ func TestInvariantLatencyAndErrors(t *testing.T) {
 			fail(6*time.Minute, 6*time.Minute+30*time.Second, 5, 502)(in)
 		}},
 		{name: "requests cut by a gateway restart stay out of the fault they started in", check: "error-rate-and-latency.e3.error_rate", passed: true, mutate: func(in *InvariantInputs) {
-			in.Events = append(in.Events, EventRecord{ID: "e6", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "devshardctl", StartedAt: atPtr(6*time.Minute + 40*time.Second), EndedAt: atPtr(6*time.Minute + 42*time.Second)})
+			in.Events = append(in.Events, EventRecord{ID: "e6", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "gateway", StartedAt: atPtr(6*time.Minute + 40*time.Second), EndedAt: atPtr(6*time.Minute + 42*time.Second)})
 			for i := range in.Requests {
 				offset := in.Requests[i].StartedAt.Sub(fixtureT0)
 				if offset >= 6*time.Minute+30*time.Second && offset < 6*time.Minute+40*time.Second {
@@ -582,7 +550,7 @@ func TestInvariantLatencyAndErrors(t *testing.T) {
 // 2. Require the restart's active window to end at 3:45, the first request start that succeeded, and at its 90 s recovery budget when nothing succeeds; a non-restart event still ends at its EndedAt.
 // 3. Require all 25 outage errors (3:20-3:45) in the e1+e6 overlap row, none in e1's own row, and e1's error check to pass.
 func TestInvariantRestartWindowEndsWhenTheGatewayServesAgain(t *testing.T) {
-	restart := EventRecord{ID: "e6", Case: "gateway-restart-while-participant-absent", Action: "gateway_restart", Target: "devshardctl", StartedAt: atPtr(3*time.Minute + 20*time.Second), EndedAt: atPtr(3*time.Minute + 25*time.Second)}
+	restart := EventRecord{ID: "e6", Case: "gateway-restart-while-participant-absent", Action: "gateway_restart", Target: "gateway", StartedAt: atPtr(3*time.Minute + 20*time.Second), EndedAt: atPtr(3*time.Minute + 25*time.Second)}
 	in := passingInputs()
 	in.Events = append(in.Events, restart)
 	failRequests(3*time.Minute+20*time.Second, 3*time.Minute+45*time.Second, 1, 502)(&in)
@@ -651,7 +619,7 @@ func TestInvariantReportsOverlappingFaultsApart(t *testing.T) {
 func TestInvariantsMarkWhatTheRunCouldNotJudge(t *testing.T) {
 	in := passingInputs()
 	in.Events = append(in.Events,
-		EventRecord{ID: "e6", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "devshardctl", StartedAt: atPtr(6*time.Minute + 40*time.Second), EndedAt: atPtr(6*time.Minute + 42*time.Second)},
+		EventRecord{ID: "e6", Case: "gateway-killed-mid-race", Action: "gateway_restart", Target: "gateway", StartedAt: atPtr(6*time.Minute + 40*time.Second), EndedAt: atPtr(6*time.Minute + 42*time.Second)},
 		EventRecord{ID: "e7", Case: "host-hangs-after-first-token", Action: "ml_fault", Target: "n2", StartedAt: atPtr(4*time.Minute + 20*time.Second), EndedAt: atPtr(4*time.Minute + 50*time.Second)},
 	)
 	failRequests(4*time.Minute, 4*time.Minute+20*time.Second, 10, 502)(&in)
@@ -1017,13 +985,12 @@ func TestInvariantHeapSlopeNeedsAnEightMinuteWindow(t *testing.T) {
 }
 
 // Test flow:
-// 1. Leave one event unapplied, strip the ML fault's strikes and transitions, and keep the gateway PID through its restart.
+// 1. Leave one event unapplied, strip the ML fault's attempt failures, and keep the gateway PID through its restart.
 // 2. Require the faults-fired-and-ml-nodes-bound check of that event to fail and to carry no case.
 func TestInvariantFaultFired(t *testing.T) {
 	runInvariantCases(t, []invariantCase{
 		{name: "pass ml fault", check: "faults-fired-and-ml-nodes-bound.e1.fired", passed: true},
 		{name: "ml fault left no trace", check: "faults-fired-and-ml-nodes-bound.e1.fired", passed: false, mutate: func(in *InvariantInputs) {
-			in.Throttle = nil
 			for i := range in.Metrics {
 				in.Metrics[i].Domain = nil
 			}
@@ -1252,7 +1219,7 @@ func TestParseReconcileTick(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "versiond-5", service)
 	require.Equal(t, time.Date(2026, 10, 13, 6, 21, 30, 5e8, time.UTC), when)
-	_, _, ok = parseReconcileTick("devshardctl-1 | 2026/10/13 06:10:29 INFO served chat")
+	_, _, ok = parseReconcileTick("gateway-1 | 2026/10/13 06:10:29 INFO served chat")
 	require.False(t, ok)
 }
 

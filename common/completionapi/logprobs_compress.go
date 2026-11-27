@@ -13,7 +13,7 @@ const skipDecodeAboveBytes = 4 << 10
 var droppedLogprobFields = []string{"bytes", "logprob"}
 
 // fieldsNoValidatorReads are the serving engine's own bookkeeping. Nothing in validation reads them
-// and the gateway drops all three on arrival (internalStrippedFields, devshardctl/stream_rewrite.go),
+// and the gateway strips all three from every reply (clientStrippedFields in its filters package),
 // so the hashed payload carries them for nothing.
 var fieldsNoValidatorReads = []string{"token_ids", "prompt_token_ids", "prompt_logprobs"}
 

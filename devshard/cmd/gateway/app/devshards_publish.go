@@ -9,6 +9,7 @@ import (
 
 	"devshard/bridge"
 	"devshard/cmd/gateway/escrow"
+	"devshard/cmd/gateway/metrics"
 	"devshard/cmd/gateway/store"
 )
 
@@ -22,7 +23,18 @@ func (g *gateway) publishEscrows(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("listing devshards: %w", err)
 	}
 	add := func(ctx context.Context, record store.DevshardRecord) error { return addServing(ctx, listing, record) }
-	return publishEscrows(ctx, records, g.builders, add, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, g.events.EscrowUnopened)
+	models := make(map[string]string, len(records))
+	for _, record := range records {
+		models[record.EscrowID] = record.Model
+	}
+	var stuck []metrics.UnopenedEscrow
+	unopened := func(escrowID string, cause error) {
+		g.events.EscrowUnopened(escrowID, cause)
+		stuck = append(stuck, metrics.UnopenedEscrow{EscrowID: escrowID, Model: models[escrowID], Reason: unopenedReason(cause)})
+	}
+	count, err := publishEscrows(ctx, records, g.builders, add, g.escrows.Retire, unservableDeactivation(ctx, g.store), g.events.EscrowUnservable, unopened)
+	g.unopened.Replace(stuck)
+	return count, err
 }
 
 type devshardDeactivator interface {

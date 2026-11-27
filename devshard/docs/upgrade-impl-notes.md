@@ -14,8 +14,7 @@ The first versioned release used a dual-route transition:
   `proxy -> versiond -> devshardd`
 - `devshardd` is a temporary standalone host binary built out of the
   `decentralized-api/` module
-- `devshardctl` defaults to `/devshard/<build-version>` and accepts
-  `DEVSHARD_ROUTE_PREFIX` only as an override for tests or local debugging
+- the gateway derives its route prefix `/devshard/<build-version>` from its own version and does not accept an override
 
 The main goal was to prove that the standalone host process can run behind
 versiond. Current binaries require clients to use `/devshard/<version>/*`.
@@ -71,9 +70,7 @@ go build -ldflags "-X main.Version=$VERSION" \
   -o build/devshardd ./cmd/devshardd
 ```
 
-The binary can already carry a release version at build time. The current build
-wiring passes `DEVSHARD_VERSION` into `main.Version`, so a local or release build can
-stamp `devshardd` and `devshardctl` with the same version string.
+The binary can already carry a release version at build time. The current build wiring passes `DEVSHARD_VERSION` into `main.Version`, so a local or release build can stamp `devshardd` and the gateway with the same version string.
 
 That same route/binary token is now bound into session state:
 

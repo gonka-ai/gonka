@@ -13,7 +13,7 @@ import (
 
 // devshardWrites reports changed rows, so a replacement escrow routes without waiting for a poll.
 type devshardWrites struct {
-	*store.Store
+	store.Store
 	changed func()
 }
 

@@ -17,23 +17,6 @@ import (
 	"devshard/internal/testutil"
 )
 
-func TestIsUndeclaredVersionError(t *testing.T) {
-	const catalogBody = "version v2 is not present in the governance routing catalog"
-	const staticBody = "version v5 is not declared in VERSIOND_VERSIONS on this router"
-
-	require.True(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, catalogBody, ""))
-	require.True(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, staticBody, ""))
-	require.True(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, "", DevshardErrorUndeclaredVersion))
-	require.True(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, "unrelated", "UNDECLARED_VERSION"),
-		"header match is case-insensitive")
-	require.False(t, IsUndeclaredVersionError(http.StatusNotFound, catalogBody, ""))
-	require.False(t, IsUndeclaredVersionError(http.StatusInternalServerError, catalogBody, DevshardErrorUndeclaredVersion),
-		"a host must not spoof catalog immunity on a non-503")
-	require.False(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, "nginx limit", ""))
-	require.False(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, "", DevshardErrorRequestsDisabled))
-	require.False(t, IsUndeclaredVersionError(http.StatusServiceUnavailable, "", ""))
-}
-
 func TestSkipCatalogQuarantine(t *testing.T) {
 	require.True(t, SkipCatalogQuarantine("/sessions/1/height-sync", http.StatusServiceUnavailable, DevshardErrorUndeclaredVersion))
 	require.True(t, SkipCatalogQuarantine("/sessions/1/height-sync", http.StatusServiceUnavailable, "UNDECLARED_VERSION"),
@@ -43,25 +26,6 @@ func TestSkipCatalogQuarantine(t *testing.T) {
 	require.False(t, SkipCatalogQuarantine("/sessions/1/height-sync", http.StatusServiceUnavailable, ""))
 	require.False(t, SkipCatalogQuarantine("/sessions/1/height-sync", http.StatusServiceUnavailable, DevshardErrorRequestsDisabled))
 	require.False(t, SkipCatalogQuarantine("/sessions/1/height-sync", http.StatusNotFound, DevshardErrorUndeclaredVersion))
-}
-
-func TestUndeclaredVersionFromError(t *testing.T) {
-	catalog := &UpstreamStatusError{
-		StatusCode:    http.StatusServiceUnavailable,
-		Body:          "version v2 is not present in the governance routing catalog",
-		DevshardError: DevshardErrorUndeclaredVersion,
-	}
-	require.Equal(t, catalog, UndeclaredVersionFromError(fmt.Errorf("send: %w", catalog)))
-	routerOnly := &UpstreamStatusError{
-		StatusCode:  http.StatusServiceUnavailable,
-		RouterError: DevshardErrorUndeclaredVersion,
-	}
-	require.Equal(t, routerOnly, UndeclaredVersionFromError(routerOnly))
-	require.Nil(t, UndeclaredVersionFromError(&UpstreamStatusError{
-		StatusCode: http.StatusServiceUnavailable,
-		Body:       "nginx limit",
-	}))
-	require.Nil(t, UndeclaredVersionFromError(fmt.Errorf("dial: timeout")))
 }
 
 func TestIsRetryableNonInference(t *testing.T) {

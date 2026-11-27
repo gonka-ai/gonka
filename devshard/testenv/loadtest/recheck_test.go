@@ -72,7 +72,6 @@ func writeSavedRun(t *testing.T, dir string, in InvariantInputs, inputs RunInput
 	writeJSONLines(t, filepath.Join(dir, "requests.jsonl"), asValues(in.Requests)...)
 	writeJSONLines(t, filepath.Join(dir, "metrics.jsonl"), asValues(in.Metrics)...)
 	writeJSONLines(t, filepath.Join(dir, "accounting-snapshots.jsonl"), asValues(in.Accounting)...)
-	writeJSONLines(t, filepath.Join(dir, "throttle.jsonl"), asValues(in.Throttle)...)
 	writeJSONLines(t, filepath.Join(dir, "pending.jsonl"), asValues(in.Pending)...)
 	writeJSONLines(t, filepath.Join(dir, "host-stats.jsonl"), asValues(in.HostStats)...)
 	writeJSONLines(t, filepath.Join(dir, "dapi-host-stats.jsonl"), asValues(in.DapiHosts)...)

@@ -12,12 +12,12 @@ import (
 //  3. Assert every top-level and per-model field round-trips, including both per-model pointer fields, and that fields never set decode back to nil.
 func TestOverridesJSONRoundTrip(t *testing.T) {
 	maxTokens := int64(2048)
-	disabled := true
+	enabled := false
 	access, modelDefaultMaxTokens := "api_key", int64(1024)
 	modelMaxConcurrentRequests := int64(64)
 	modelMaxInputTokensInFlight := int64(8192)
 	original := Overrides{
-		Tunables: env.Tunables{DefaultMaxTokens: &maxTokens, Disabled: &disabled},
+		Tunables: env.Tunables{DefaultMaxTokens: &maxTokens, Enabled: &enabled},
 		Access:   &access,
 		Models: map[string]ModelSettings{
 			"model-a": {
@@ -77,7 +77,7 @@ func TestParseOverridesOfEmptyObjectIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ParseOverrides(empty): %v", err)
 	}
-	if decoded.DefaultMaxTokens != nil || decoded.Disabled != nil || decoded.Access != nil {
+	if decoded.DefaultMaxTokens != nil || decoded.Enabled != nil || decoded.Access != nil {
 		t.Fatalf("ParseOverrides(empty) = %+v, want zero value", decoded)
 	}
 }

@@ -24,23 +24,6 @@ const (
 	nonInferenceRetryInitial = 50 * time.Millisecond
 )
 
-// IsUndeclaredVersionError reports a versiond-router catalog miss. Used to
-// classify the error for clients and retries. Status must be 503 — a host
-// must not look like a catalog miss by putting the phrase in some other body.
-//
-// Quarantine skipping is NOT this function: see SkipCatalogQuarantine.
-func IsUndeclaredVersionError(statusCode int, body, devshardError string) bool {
-	if statusCode != http.StatusServiceUnavailable {
-		return false
-	}
-	if strings.EqualFold(strings.TrimSpace(devshardError), DevshardErrorUndeclaredVersion) {
-		return true
-	}
-	b := strings.ToLower(body)
-	return strings.Contains(b, "not present in the governance routing catalog") ||
-		strings.Contains(b, "not declared in versiond_versions")
-}
-
 // SkipCatalogQuarantine is the limiter exemption for a router-generated
 // undeclared-version 503. It applies only to non-inference paths (height-sync
 // seed, heartbeat, …). /chat/completions always records the 503 as a host
@@ -58,23 +41,6 @@ func SkipCatalogQuarantine(path string, statusCode int, routerError string) bool
 		return false
 	}
 	return strings.EqualFold(strings.TrimSpace(routerError), DevshardErrorUndeclaredVersion)
-}
-
-// UndeclaredVersionFromError returns the upstream 503 catalog miss wrapped in
-// err, or nil if err is not that class of failure.
-func UndeclaredVersionFromError(err error) *UpstreamStatusError {
-	var status *UpstreamStatusError
-	if !errors.As(err, &status) {
-		return nil
-	}
-	if IsUndeclaredVersionError(status.StatusCode, status.Body, status.DevshardError) {
-		return status
-	}
-	if status.StatusCode == http.StatusServiceUnavailable &&
-		strings.EqualFold(strings.TrimSpace(status.RouterError), DevshardErrorUndeclaredVersion) {
-		return status
-	}
-	return nil
 }
 
 // IsEscrowLookupLimited is a 429 from a host (or its versiond) whose

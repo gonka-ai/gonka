@@ -90,7 +90,7 @@ type escrowLifecycle interface {
 type operations struct {
 	values       env.Values
 	config       *config.Holder
-	store        *store.Store
+	store        store.Store
 	escrows      *registry.Registry
 	manager      escrowLifecycle
 	participants *limits.ParticipantLimiter

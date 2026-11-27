@@ -1,6 +1,6 @@
 ---
 name: gateway-review
-description: One round of fresh-eyes review of your own finished change to the new gateway (devshard/cmd/gateway) or the rules both gateways share (devshard/gatewayprotocol) — two read-only reviewers in parallel, one for correctness and one for craft, every finding verified before it is fixed. Run it when the change is complete and its tests pass, and only when you or the change's author asks for it.
+description: One round of fresh-eyes review of your own finished change to the gateway (devshard/cmd/gateway) or the protocol rules it shares with hosts and the chain (devshard/gatewayprotocol) — two read-only reviewers in parallel, one for correctness and one for craft, every finding verified before it is fixed. Run it when the change is complete and its tests pass, and only when you or the change's author asks for it.
 ---
 
 # Gateway review
@@ -34,24 +34,25 @@ One round. Two reviewers. No second round.
 
 Reviewers are read-only. They report; you fix.
 
-## Binding rules for the new gateway
+## Binding rules for the gateway
 
 Hand these to both reviewers. A breach is a finding.
 
-- **Gateway-only.** A change never alters code a host binary runs. Code outside `devshard/cmd/gateway`, `devshard/gatewayprotocol` and the call sites in `devshard/cmd/devshardctl` is touched only when hosts never run it; prove it with `go list -deps` and the callers. Shared packages (`devshard/user`, `state`, `storage`, `types`, `host`) are not edited for a gateway's sake, except for the money-losing defects that `devshard/cmd/gateway/docs/rules.md` lists under "Boundaries it declines to cross".
-- **Layers.** `devshard/gatewayprotocol` holds the rules that hosts, verifiers or the chain judge apply to both gateways alike, with no runtime imports; `devshard/cmd/gateway` is the new gateway's runtime; `devshard/cmd/devshardctl` is the current gateway and calls `gatewayprotocol` for the shared rules.
-- **One copy of a protocol rule.** A protocol rule written again in `cmd/gateway` or `devshardctl` instead of called from `gatewayprotocol` is a finding, whichever gateway holds the copy.
+- **Gateway-only.** A change never alters code a host binary runs. Code outside `devshard/cmd/gateway` and `devshard/gatewayprotocol` is touched only when hosts never run it; prove it with `go list -deps` and the callers. Shared packages (`devshard/user`, `state`, `storage`, `types`, `host`) are not edited for a gateway's sake, except for the money-losing defects that `devshard/cmd/gateway/docs/rules.md` lists under "Boundaries it declines to cross".
+- **Layers.** `devshard/gatewayprotocol` holds the rules that hosts, verifiers or the chain judge, with no runtime imports; `devshard/cmd/gateway` is the gateway's runtime and calls `gatewayprotocol` for those rules.
+- **One copy of a protocol rule.** A protocol rule written again in `cmd/gateway` instead of called from `gatewayprotocol` is a finding.
 - **The guard.** `gatewayprotocol/guard_test.go` stays green: every package has a row in its layer table and a `README.md`, imports stay inside the row, and `go list -deps ./cmd/devshardd ./cmd/devshard-host | grep gatewayprotocol` prints nothing.
-- **A rule changed, both call sites checked.** A change to a `gatewayprotocol` rule is traced through every caller in `cmd/gateway` and in `devshardctl`; a caller left on the previous behaviour is a finding.
+- **A rule changed, every call site checked.** A change to a `gatewayprotocol` rule is traced through every caller in `cmd/gateway`; a caller left on the previous behaviour is a finding.
 - **Names** are full, meaningful words — no cryptic abbreviations, in code and in tests alike. Booleans read as predicates, functions as verbs, collections as plurals.
+- **Environment variables.** No environment variable of the gateway ends in `_DISABLED`; a boolean switch is named `..._ENABLED`, and one that is on by default is turned off with `false`.
 - **Comments.** None on unexported identifiers or struct fields. An exported identifier gets at most one doc line, starting with its name. No comment inside a `const (...)` or `var (...)` block: one before the block, or none. Reasoning belongs in the package's Markdown docs, written declaratively. A comment that names a CVE or a security reason stays next to the code it guards, inside a block or a literal included.
 - **No magic values.** A number or an empty string with a meaning is a named constant, used at every return and comparison — no bare `""` or `0` standing for "none" or "unknown".
 - **Grouping.** Adjacent top-level `const` and `var` declarations go in one block each; wire strings and typed enums live in the package's `vocabulary.go`.
 - **State changes through methods** where that fits, rather than one type assigning another's fields.
 - **File size.** A production file over 500 lines is split; test files may be longer.
 - **Tests** carry a `// Test flow:` block, are deterministic (no real clock, network or sleeps), and test behaviour, not implementation.
-- **Docs.** A new environment variable, setting or behaviour is documented where its neighbours are: variables and admin overrides in `docs/configuration.md`, routes and the boot order in `docs/operations.md`, log lines and metrics in `docs/observability.md`. The docs describe the new gateway in its own terms; no run numbers.
-- **Gates** before the change is called done: `go build ./...`, `go vet ./...`, `golangci-lint run`, `go test -race` on the touched packages and on `./gatewayprotocol/...`; a change to a `gatewayprotocol` rule also runs `go test -race ./cmd/devshardctl/`.
+- **Docs.** A new environment variable, setting or behaviour is documented where its neighbours are: variables and admin overrides in `docs/configuration.md`, routes and the boot order in `docs/operations.md`, log lines and metrics in `docs/observability.md`. The docs describe the gateway in its own terms; no run numbers.
+- **Gates** before the change is called done: `go build ./...`, `go vet ./...`, `golangci-lint run`, `go test -race` on the touched packages and on `./gatewayprotocol/...`.
 
 ## Style checks
 

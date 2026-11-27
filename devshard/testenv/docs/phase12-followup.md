@@ -16,8 +16,7 @@ testenv exit criteria where applicable.
 
 **Plan:** [`chain-transport-consolidation.md`](./chain-transport-consolidation.md)
 
-Remove LCD REST from devshardctl: escrow queries + create/settle tx → `common/chain`
-gRPC (same as devshardd). Testenv scenarios **G1–G3**; see [`scenarios.md`](./scenarios.md).
+Remove LCD REST from the gateway: escrow queries + create/settle tx → `common/chain` gRPC (same as devshardd). Testenv scenarios **G1–G3**; see [`scenarios.md`](./scenarios.md).
 
 | Track | Summary | Status |
 |-------|---------|--------|

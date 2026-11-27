@@ -11,20 +11,18 @@ import (
 )
 
 // Test flow:
-// 1. Write a compose log with one text-form and one JSON-form ghost_probe_skipped line, and an unrelated line.
-// 2. Require both burns with their time, escrow, nonce, host label and reason, in log order.
-func TestReadGatewayBurnsReadsTextAndJSONLines(t *testing.T) {
+// 1. Write a compose log with one JSON-form burn line, and an unrelated line.
+// 2. Require the burn with its time, escrow, nonce, host label and reason.
+func TestReadGatewayBurnsReadsJSONLines(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compose.log")
-	log := "devshardctl-1  | time=2026-10-15T14:35:00.5Z request=r1 stage=ghost_probe_skipped escrow=1 nonce=9 host=hukvxfc7 reason=no_compatible_request_after_stale\n" +
-		`devshardctl-1  | {"time":"2026-10-15T14:35:01.04529705Z","level":"INFO","msg":"ghost_probe_skipped","stage":"ghost_probe_skipped","escrow":"8","nonce":833,"host":"kmyczv6w","kind":2,"reason":"participant_ejected_no_send"}` + "\n" +
-		`devshardctl-1  | {"time":"2026-10-15T14:35:02Z","msg":"winner_selected","escrow":"8","nonce":834}` + "\n"
+	log := `gateway-1  | {"time":"2026-10-15T14:35:01.04529705Z","level":"WARN","msg":"nonce burned for nobody","escrow":"8","nonce":833,"host":"kmyczv6w","kind":2,"reason":"participant_ejected_no_send"}` + "\n" +
+		`gateway-1  | {"time":"2026-10-15T14:35:02Z","msg":"winner_selected","escrow":"8","nonce":834}` + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
 
 	burns, err := readGatewayBurns(path)
 
 	require.NoError(t, err)
 	require.Equal(t, []gatewayBurn{
-		{At: time.Date(2026, 10, 15, 14, 35, 0, 500000000, time.UTC), EscrowID: "1", Nonce: "9", Host: "hukvxfc7", Reason: "no_compatible_request_after_stale"},
 		{At: time.Date(2026, 10, 15, 14, 35, 1, 45297050, time.UTC), EscrowID: "8", Nonce: "833", Host: "kmyczv6w", Reason: "participant_ejected_no_send"},
 	}, burns)
 }

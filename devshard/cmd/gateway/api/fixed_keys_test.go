@@ -24,9 +24,9 @@ func TestRoutesAnswerUnderTheFixedKeyNames(t *testing.T) {
 		absentKeys  [][]string
 	}{
 		{
-			name: "status names each escrow by id and counts its active requests", method: http.MethodGet, target: "/v1/status",
-			presentKeys: [][]string{{"devshards", "0", "id"}, {"devshards", "0", "active_requests"}, {"capacity", "0", "max_concurrent_requests_per_10000_weight"}},
-			absentKeys:  [][]string{{"devshards", "0", "escrow_id"}, {"devshards", "0", "active_users"}, {"capacity", "0", "max_concurrent_per_10000_weight"}},
+			name: "status names each escrow by id and counts its active requests", method: http.MethodGet, target: "/v1/status", liveEscrow: true,
+			presentKeys: [][]string{{"mode"}, {"poc_mode"}, {"devshards", "0", "id"}, {"devshards", "0", "active_requests"}, {"devshards", "0", "config", "refusal_timeout"}, {"devshards", "0", "config", "auto_seal_every_n_nonces"}, {"capacity", "0", "max_concurrent_requests_per_10000_weight"}},
+			absentKeys:  [][]string{{"devshards", "0", "escrow_id"}, {"devshards", "0", "active_users"}, {"devshards", "0", "config", "RefusalTimeout"}, {"capacity", "0", "max_concurrent_per_10000_weight"}},
 		},
 		{
 			name: "the admin listing names each escrow by id", method: http.MethodGet, target: "/v1/admin/devshards",

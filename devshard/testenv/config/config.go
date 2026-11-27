@@ -36,7 +36,7 @@ type File struct {
 	MLNodes        int               `yaml:"ml_nodes"`
 	Versiond       VersiondCfg       `yaml:"versiond"`
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
-	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
+	Gateway        GatewayCfg        `yaml:"gateway"`
 	Postgres       PostgresCfg       `yaml:"postgres"`
 	Escrow         EscrowMeta        `yaml:"escrow"`
 	Hosts          []HostCfg         `yaml:"hosts"`
@@ -167,36 +167,12 @@ type VersiondRouterCfg struct {
 	IP   string `yaml:"ip"`
 }
 
-// DevshardctlCfg is the gateway service (Phase 7 wires REST paths).
-type DevshardctlCfg struct {
-	Host      string        `yaml:"host"`
-	Port      int           `yaml:"port"`
-	StatsPort int           `yaml:"stats_port"`
-	IP        string        `yaml:"ip"`
-	Driver    GatewayDriver `yaml:"driver,omitempty"`
-}
-
-// GatewayDriver names the binary the gateway service runs; empty means devshardctl.
-type GatewayDriver string
-
-const (
-	GatewayDriverDevshardctl GatewayDriver = "devshardctl"
-	GatewayDriverGateway     GatewayDriver = "gateway"
-)
-
-// Validate accepts the empty driver as devshardctl.
-func (d GatewayDriver) Validate() error {
-	switch d {
-	case "", GatewayDriverDevshardctl, GatewayDriverGateway:
-		return nil
-	default:
-		return fmt.Errorf("gateway driver %q must be %q or %q", d, GatewayDriverDevshardctl, GatewayDriverGateway)
-	}
-}
-
-// IsGateway reports whether the service runs cmd/gateway instead of devshardctl.
-func (d GatewayDriver) IsGateway() bool {
-	return d == GatewayDriverGateway
+// GatewayCfg is the gateway service.
+type GatewayCfg struct {
+	Host      string `yaml:"host"`
+	Port      int    `yaml:"port"`
+	StatsPort int    `yaml:"stats_port"`
+	IP        string `yaml:"ip"`
 }
 
 // PostgresCfg is optional shared storage for devshardd children.
@@ -235,7 +211,7 @@ type HostCfg struct {
 	Env map[string]string `yaml:"env,omitempty"`
 }
 
-// UserCfg is the devshardctl operator identity.
+// UserCfg is the gateway operator identity.
 type UserCfg struct {
 	PrivateKeyHex string `yaml:"private_key_hex"`
 	Address       string `yaml:"address"`
@@ -290,7 +266,7 @@ const (
 	DefaultProxyPort        = 8080
 	ProxyOverlayURL         = "http://proxy:8080"
 	ProxyOverlayEnv         = "TESTENV_PROXY_OVERLAY"
-	DefaultDevshardctlHost  = "devshardctl"
+	DefaultGatewayHost      = "gateway"
 	DefaultPostgresHost     = "devshard-postgres"
 	DefaultPostgresPort     = 5432
 	DefaultPostgresDB       = "devshardd"
@@ -298,7 +274,7 @@ const (
 	DefaultPostgresPassword = "devshardd"
 	DefaultEscrowSlots      = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
-	// devshardctl transport clients append RoutePrefix separately.
+	// gateway transport clients append RoutePrefix separately.
 	DefaultEscrowSlotURL = "http://versiond-router:8080"
 	DefaultEscrowAmount  = uint64(1_000_000)
 	DefaultTokenPrice    = uint64(100)
@@ -439,14 +415,14 @@ func (c *File) ApplyDefaults() {
 		c.VersiondRouter.Port = DefaultVersiondRouterPort
 	}
 
-	if c.Devshardctl.Host == "" {
-		c.Devshardctl.Host = DefaultDevshardctlHost
+	if c.Gateway.Host == "" {
+		c.Gateway.Host = DefaultGatewayHost
 	}
-	if c.Devshardctl.Port == 0 {
-		c.Devshardctl.Port = DefaultUserPort
+	if c.Gateway.Port == 0 {
+		c.Gateway.Port = DefaultUserPort
 	}
-	if c.Devshardctl.StatsPort == 0 {
-		c.Devshardctl.StatsPort = DefaultStatsPort
+	if c.Gateway.StatsPort == 0 {
+		c.Gateway.StatsPort = DefaultStatsPort
 	}
 
 	if c.Postgres.Host == "" {
@@ -767,9 +743,6 @@ func (c *File) Validate() error {
 	}
 	if strings.TrimSpace(c.User.Address) == "" || strings.TrimSpace(c.User.PrivateKeyHex) == "" {
 		return errors.New("user key and address must be set (run gencompose)")
-	}
-	if err := c.Devshardctl.Driver.Validate(); err != nil {
-		return fmt.Errorf("devshardctl.driver: %w", err)
 	}
 	if c.Versiond.Mode == VersiondModeMulti && !c.Postgres.Enabled {
 		return errors.New("versiond.mode multi requires postgres.enabled: true (shared payload/session store for multiple versiond hosts)")

@@ -34,17 +34,17 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         val escrowAmount = 7_000_000_000L
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
-        logSection("Starting devshard proxy for auto-seal test against devshardd")
-        val handle = genesis.startDevshardProxy(
+        logSection("Serving the auto-seal escrow through the gateway")
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = overrideRoutePrefix,
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
 
-            val status = genesis.getDevshardProxyStatus(handle.proxyUrl)
+            val status = genesis.getDevshardEscrowStatus(handle.escrowUrl)
             assertThat(status.config.inferenceSealGraceNonces).isEqualTo(devshardAutoSealInferenceSealGraceNonces.toInt())
             assertThat(status.config.inferenceSealGraceSeconds)
                 .isEqualTo(devshardAutoSealInferenceSealGraceSeconds.toInt())
@@ -54,17 +54,20 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
 
             logSection("Sending first batch ($firstBatch finished inferences)")
             for (i in 0 until firstBatch) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "autoseal batch1 $i")
+                val response = genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "autoseal batch1 $i")
                 assertThat(response).isNotEmpty()
             }
-            genesis.waitForFinishedDevshardInferences(handle.proxyUrl, firstBatch)
+            genesis.waitForFinishedDevshardInferences(handle.escrowUrl, firstBatch)
 
-            val debugBeforeGrace = genesis.getDevshardProxyDebugState(handle.proxyUrl)
-            val liveFinishedBefore = debugBeforeGrace.liveStatus("finished")
+            val debugBeforeGrace = genesis.getDevshardEscrowDebugState(handle.escrowUrl)
+            val statusCountsBefore = genesis.devshardStatusCounts(handle.escrowUrl)
+            // The gateway lists sealed records too, so every sealed one is taken off the finished count.
+            val liveFinishedBefore =
+                (statusCountsBefore[DevshardInferenceStatus.FINISHED] ?: 0) - debugBeforeGrace.sealedInferences
             logSection(
                 "Before grace wait: live=${debugBeforeGrace.liveInferences} " +
                     "sealed=${debugBeforeGrace.sealedInferences} nonce=${debugBeforeGrace.nonce} " +
-                    "live_status=${debugBeforeGrace.liveStatusCounts}",
+                    "status_counts=$statusCountsBefore",
             )
             assertThat(debugBeforeGrace.liveInferences).isGreaterThanOrEqualTo(firstBatch)
             // Finished still needs the clock gate (grace + execution_timeout).
@@ -83,16 +86,16 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
                     "and waiting for >= $firstBatch sealed inferences",
             )
             genesis.waitForDevshardAutoSeal(
-                proxyUrl = handle.proxyUrl,
+                escrowUrl = handle.escrowUrl,
                 minSealed = firstBatch,
                 targetNonce = devshardAutoSealEveryNNonces,
             )
 
-            val debugAfter = genesis.getDevshardProxyDebugState(handle.proxyUrl)
+            val debugAfter = genesis.getDevshardEscrowDebugState(handle.escrowUrl)
             logSection(
                 "After second batch: live=${debugAfter.liveInferences} " +
                     "sealed=${debugAfter.sealedInferences} nonce=${debugAfter.nonce} " +
-                    "live_status=${debugAfter.liveStatusCounts}",
+                    "status_counts=${genesis.devshardStatusCounts(handle.escrowUrl)}",
             )
 
             assertThat(debugAfter.sealedInferences)
@@ -105,7 +108,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
                 .describedAs("live map should shrink as sealed inferences are folded into sealed_acc")
                 .isLessThan(debugBeforeGrace.liveInferences)
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
     }
 
@@ -231,7 +234,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
 
         logSection("Starting $sessionCount devshard proxies against devshardd")
         val handles = sessions.map { session ->
-            genesis.startDevshardProxy(
+            genesis.serveDevshardEscrow(
                 escrowId = session.escrowId,
                 keyName = session.keyName,
                 routePrefix = overrideRoutePrefix,
@@ -239,14 +242,14 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         }
 
         try {
-            handles.forEach { genesis.waitForDevshardProxyWarmup(it.proxyUrl) }
-            logSection("Running $sessionCount proxy sessions in parallel")
+            handles.forEach { genesis.waitForDevshardEscrowWarmup(it.escrowUrl) }
+            logSection("Running $sessionCount gateway escrows in parallel")
             val dispatcher = Executors.newFixedThreadPool(sessionCount).asCoroutineDispatcher()
             runBlocking(dispatcher) {
                 handles.map { handle ->
                     async {
                         for (i in 0 until 10) {
-                            genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
+                            genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "test prompt $i")
                         }
                     }
                 }.awaitAll()
@@ -255,7 +258,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
                 handles.map { handle ->
                     async {
                         for (i in 0 until 10) {
-                            genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
+                            genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "test prompt $i")
                         }
                     }
                 }.awaitAll()
@@ -263,7 +266,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
 
             logSection("Syncing devshard hosts before validation observability")
             handles.forEach { handle ->
-                genesis.syncDevshardProxyHosts(handle.proxyUrl)
+                genesis.syncDevshardEscrowHosts(handle.escrowUrl)
             }
 
             logSection("Waiting for validation observability on active escrows")
@@ -275,34 +278,36 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
                     minCompleted = 1,
                     routePrefix = overrideRoutePrefix,
                     beforeRetry = {
-                        genesis.syncDevshardProxyHosts(handle.proxyUrl, log = false)
+                        genesis.syncDevshardEscrowHosts(handle.escrowUrl, log = false)
                     },
                 )
             }
 
             logSection("Finalizing, settling, and verifying $sessionCount escrows")
             sessions.zip(handles).forEach { (session, handle) ->
-                val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
-                assertThat(result.parsed.escrowId)
-                    .withFailMessage("Escrow ID mismatch for ${session.keyName}")
-                    .isEqualTo(session.escrowId.toString())
-                assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
-                assertThat(result.parsed.hostStats).isNotEmpty()
-                // Settlement host_stats validation counters are always zero on this
-                // branch: the reveal-based recomputeCompliance was removed with seed
-                // reveal (see devshard/docs/inference-lifecycle.md). Validation
-                // coverage is asserted via validationObservability below instead.
-                assertThat(result.parsed.signatures).isNotEmpty()
                 val obs = genesis.getDevshardShardStatsDetail(session.escrowId, routePrefix = overrideRoutePrefix)
                 assertThat(obs.validationObservability.totals.completedValidations)
                     .withFailMessage("validation observability for escrow ${session.escrowId}")
                     .isGreaterThan(0)
 
-                val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
-                assertThat(settleResp.code)
+                val result = genesis.settleDevshardThroughGateway(session.escrowId)
+                val settlement = result.settlement
+                val settleTransaction = result.settleTx
+                assertThat(settleTransaction.code)
                     .withFailMessage("Settlement failed for escrow ${session.escrowId}")
                     .isEqualTo(0)
-                val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
+                assertThat(result.settler).isEqualTo(session.address)
+                assertThat(settlement.escrowId)
+                    .withFailMessage("Escrow ID mismatch for ${session.keyName}")
+                    .isEqualTo(session.escrowId.toString())
+                assertThat(settlement.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
+                assertThat(settlement.hostStats).isNotEmpty()
+                // Settlement host_stats validation counters are always zero on this
+                // branch: the reveal-based recomputeCompliance was removed with seed
+                // reveal (see devshard/docs/inference-lifecycle.md). Validation
+                // coverage is asserted via validationObservability below instead.
+                assertThat(settlement.signatures).isNotEmpty()
+                val settleEvent = assertNotNull(settleTransaction.events.firstOrNull { it.type == "devshard_escrow_settled" })
                 assertThat(
                     settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
                 ).isEqualTo(devshardStateRootProtocolVersion())
@@ -318,7 +323,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
                     .isGreaterThan(fundAmount - escrowAmount)
             }
         } finally {
-            handles.forEach { genesis.stopDevshardProxy(it.escrowId) }
+            handles.forEach { genesis.withdrawDevshardEscrow(it.escrowId) }
         }
     }
 
@@ -344,37 +349,37 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         val escrowAmount = 7_000_000_000L
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
-        logSection("Starting devshard proxy against devshardd")
-        val handle = genesis.startDevshardProxy(
+        logSection("Serving the escrow through the gateway")
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = overrideRoutePrefix,
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
-            logSection("Sending chat completions via proxy")
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
+            logSection("Sending chat completions through the gateway")
             val numInferences = 20L
             for (i in 0 until numInferences) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
+                val response = genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "test prompt $i")
                 assertThat(response).isNotEmpty()
             }
 
             genesis.waitForDevshardPreFinalize()
-            logSection("Finalizing via proxy")
-            val result = genesis.finalizeDevshardProxy(handle.proxyUrl)
+            logSection("Settling through the gateway")
+            val result = genesis.settleDevshardThroughGateway(escrowId)
+            val settlement = result.settlement
+            val settleTransaction = result.settleTx
+            assertThat(settleTransaction.code).isEqualTo(0)
+            assertThat(result.settler).isEqualTo(user.address)
 
             logSection("Verifying settlement data")
-            assertThat(result.parsed.escrowId).isEqualTo("$escrowId")
-            assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
-            assertThat(result.parsed.nonce).isGreaterThan(0)
-            assertThat(result.parsed.hostStats).isNotEmpty()
-            assertThat(result.parsed.signatures).isNotEmpty()
-
-            logSection("Submitting settlement from user account")
-            val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = user.keyName)
-            assertThat(settleResp.code).isEqualTo(0)
-            val settleEvent = assertNotNull(settleResp.events.firstOrNull { it.type == "devshard_escrow_settled" })
+            assertThat(settlement.escrowId).isEqualTo("$escrowId")
+            assertThat(settlement.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
+            assertThat(settlement.nonce).isGreaterThan(0)
+            assertThat(settlement.hostStats).isNotEmpty()
+            assertThat(settlement.signatures).isNotEmpty()
+            val settleEvent = assertNotNull(settleTransaction.events.firstOrNull { it.type == "devshard_escrow_settled" })
             assertThat(
                 settleEvent.attributes.firstOrNull { it.key == "state_root_and_protocol_version" }?.value,
             ).isEqualTo(devshardStateRootProtocolVersion())
@@ -392,7 +397,7 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
             )
             assertThat(inference.votesInvalid).isNotZero()
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
     }
 }

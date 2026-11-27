@@ -20,7 +20,7 @@ Every setting that applies to the whole network can also be set for one model, u
 
 Each variable is read under one name only. `DEVSHARD_CHAIN_GRPC` and `DEVSHARD_CHAIN_RPC` fall back to `NODE_GRPC_URL` and `NODE_RPC_URL`.
 
-Two grammars apply. The lenient one covers every `DEVSHARD_*` variable and six `GATEWAY_*` limits — `GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, `GATEWAY_MAX_CONCURRENT_REQUESTS`, the two `_PER_10000_WEIGHT` limits and `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT`. It reads booleans in devshard's shared grammar (`on`, `off`, `yes`, `no` as well as `true` and `false`), `DEVSHARD_STATS_TOKENIZER` among them, except the three height-sync switches, which keep their own spellings: `DEVSHARD_GATEWAY_CHAIN_ORACLE` and `DEVSHARD_HEIGHTSYNC_HEARTBEAT` are on only for `true`, `1` or `on`, and `DEVSHARD_REQUIRE_HEIGHT_SEED` is off only for `0`, `false`, `off` or `no`; `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, `_TIMEOUT` and `DEVSHARD_QUIET_SETTLE_DELAY` as durations (`15s`); `DEVSHARD_POC_REQUEST_MODE` in any letter case. A lenient value that is unparsable, negative, or zero where zero means the default (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, the two `_PER_10000_WEIGHT` limits, the transaction, cache, port and snapshot settings, `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS`, `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS` and `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY`) is ignored with a warning naming the variable, so the default applies. A `GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` set alone also sets the PoC limit unless it equals the default.
+Two grammars apply. The lenient one covers every `DEVSHARD_*` variable and six `GATEWAY_*` limits — `GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, `GATEWAY_MAX_CONCURRENT_REQUESTS`, the two `_PER_10000_WEIGHT` limits and `GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT`. It reads booleans in devshard's shared grammar (`on`, `off`, `yes`, `no` as well as `true` and `false`), `DEVSHARD_STATS_TOKENIZER` among them, except the three height-sync switches, which keep their own spellings: `DEVSHARD_GATEWAY_CHAIN_ORACLE` and `DEVSHARD_HEIGHTSYNC_HEARTBEAT` are on only for `true`, `1` or `on`, and `DEVSHARD_REQUIRE_HEIGHT_SEED` is off only for `0`, `false`, `off` or `no`; `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, `_TIMEOUT`, `DEVSHARD_GATEWAY_RPC_STATS_INTERVAL`, `_TIMEOUT` and `DEVSHARD_QUIET_SETTLE_DELAY` as durations (`15s`); `DEVSHARD_POC_REQUEST_MODE` in any letter case. A lenient value that is unparsable, negative, or zero where zero means the default (`GATEWAY_DEFAULT_MAX_TOKENS`, `GATEWAY_MAX_TOKENS_CAP`, the two `_PER_10000_WEIGHT` limits, the transaction, cache, port and snapshot settings, `DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS`, `DEVSHARD_MAX_CONCURRENT_PROMPT_COUNTS`, `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` and `DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY`) is ignored with a warning naming the variable, so the default applies. A `GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT` set alone also sets the PoC limit unless it equals the default.
 
 Every other `GATEWAY_*` variable is strict and refuses a bad value at boot. An **empty** value counts as unset.
 
@@ -37,11 +37,13 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_PORT` | 8080 | the listening port |
 | `DEVSHARD_CHAIN_ID` | empty | the chain id the gateway signs its transactions for; empty asks the node over `DEVSHARD_CHAIN_GRPC` or its RPC fallback, and a configured value wins over the node; a node whose `app.toml` has `grpc.enable` and `api.enable` both false cannot answer it, so set it there ([`chain/README.md`](../chain/README.md), "The gRPC transport") |
 | `DEVSHARD_STORAGE_DIR` | `$HOME/.cache/gonka-gateway` | where `gateway.db` and the escrow storage live |
+| `DEVSHARD_STORAGE_MODE` | `sqlite` | where the control-plane store lives, `sqlite` or `postgres`; read outside `env.Load` ([operations.md](./operations.md), "Storing state in Postgres") |
+| `GATEWAY_INSTANCE_ID` | empty | required in `postgres` mode; a stable name for this process, written to the boot log |
 | `DEVSHARD_SESSION_RETENTION_EPOCHS` | 2 | how many epochs before the effective one an escrow's session directory stays on disk; `0` keeps every one, and `1` is raised to 2, the hosts' own horizon ([operations.md](./operations.md), "Session storage") |
 | `GATEWAY_MAX_CONCURRENT_REQUESTS` | 2048 | the hard admission ceiling; `0` sets no static cap and lets the weight model decide alone |
 | `GATEWAY_ADMISSION_QUEUE_WAIT_MS` | 300000 | how long a request waits for a slot before 429 |
 | `GATEWAY_ADMISSION_QUEUE_PER_SLOT` | 4 | how deep the queue is allowed to grow per slot |
-| `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** non-streaming reply being assembled, at once |
+| `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** reply being assembled or recorded for the response cache, at once, including each live stream log until its race ends |
 | `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` | 128 MiB | **every** chat body being read and normalised, at once; a body past it is answered 503; at least 10 MiB ([`request.md`](request.md), "Order of operations") |
 | `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` | 64 KiB/s | the slowest average a client may read one reply at, after a 30-second allowance, before its write fails; between 1 B/s and 1 GiB/s ([`api/README.md`](../api/README.md), "Streaming the reply") |
 | `DEVSHARD_CHAT_CACHE_MAX_BYTES` | 256 MiB | the response cache |
@@ -66,7 +68,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_DRAIN_TIMEOUT_SECONDS` | 2 400 | how long a race may run after its client leaves; at least 1 200 ([race.md](./race.md), "Tunables and backstops") |
 | `GATEWAY_ENGINE_MAX_STARTED_ATTEMPTS_PER_REQUEST` | 3 | attempts one request may start in all, hedges and retries included; past it no hedge or retry starts, and the request is answered overloaded when no attempt of it is alive; `0` never caps ([`routing.md`](routing.md), "The burn cap of a request") |
 | `GATEWAY_ENGINE_MAX_CONCURRENT_TIMEOUT_VOTES` | 64 | chain votes for unfinished nonces being posted at once, not a bound on settling escrows; one past it waits for a poster rather than being dropped |
-| `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts |
+| `DEVSHARD_STATS_ENABLED` | false | the per-nonce ledger and its JSON API on `DEVSHARD_STATS_PORT` (9091), on every interface, with 10 s read, 60 s write and 120 s idle timeouts; the ledger's diff observer is also what removes a cached reply on a negative validation vote |
 | `DEVSHARD_STATS_SNAPSHOT_SECONDS` | 60 | how often the nonce ledger writes its snapshot to disk, and so the most a crash can roll it back; a value below 1 is ignored with a warning |
 | `DEVSHARD_STATS_RETENTION_EPOCHS` | 2 | how many epochs before the current one the nonce ledger keeps retired escrows; `0` keeps every epoch |
 | `GATEWAY_PERF_EWMA_HALFLIFE_SECONDS` | 600 | how fast a host's history forgets |
@@ -78,16 +80,20 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_REQUIRE_HEIGHT_SEED` | true | whether a session chases a host-signed tip from the moment it opens and reports `seed_incomplete` when it cannot. It does not refuse requests — see [`docs/escrows.md`](escrows.md), "Height sync". Off in the e2e stand |
 | `DEVSHARD_HEIGHTSYNC_K` / `DEVSHARD_HEIGHTSYNC_SLOTS` | 10 / 1 | the anchor cadence carried on the height-sync envelope |
 | `DEVSHARD_QUIET_SETTLE_DELAY` | 5m | how long a session keeps a finished request's leftovers for the next request before composing them on its own nonce; the test stand sets `5s` |
-| `DEVSHARD_GATEWAY_CHAIN_ORACLE` | false | whether the gateway follows mainnet itself, from `NODE_MANAGER_ADDR`, the chain RPC and gRPC. It is not what the gateway stamps from — it only labels how much a carried tip is trusted ([`heights/README.md`](../heights/README.md)) |
+| `DEVSHARD_GATEWAY_CHAIN_ORACLE` | false | whether the gateway follows mainnet itself, from `NODE_MANAGER_ADDR`, the chain RPC and gRPC. It is not what the gateway stamps from — it labels how much a carried tip is trusted, and it serves the block-time lookups when no commit-verified source is configured ([`heights/README.md`](../heights/README.md)) |
 | `DEVSHARD_NODE_MANAGER_ADDR` / `NODE_MANAGER_ADDR` | localhost:9400 | node-manager's address, resolved once (`runtimeparams.SettingsFromEnv`) for both its readers: the runtime-params feed and, when it is on, the height follower. Unreachable is not fatal to either — the feed polls the chain instead, less promptly, and the follower fails over to the chain RPC and gRPC |
 | `DEVSHARD_PARAMS_SOURCE` | auto | which feed answers for governance: `auto` prefers the long poll with a chain fallback, `chain` polls the chain alone and dials no node manager |
-| `DEVSHARD_GATEWAY_HOST_PING_DISABLED` | false | whether the hosts the live escrows use are pinged for reachability and clock drift. Observability only — a host that stops answering a ping keeps its routing weight ([`hostping/README.md`](../hostping/README.md)) |
+| `DEVSHARD_GATEWAY_HOST_PING_ENABLED` | true | whether the hosts the live escrows use are pinged for reachability and clock drift. Observability only — a host that stops answering a ping keeps its routing weight ([`hostping/README.md`](../hostping/README.md)) |
 | `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` / `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` | 15s / 2s | the probe cadence and its patience; the timeout must be at most half the interval or the ping is refused and switched off |
 | `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` | 8 | hosts probed at once within one wave |
+| `DEVSHARD_GATEWAY_RPC_STATS_ENABLED` | true | whether the hosts the live escrows use are polled for their rate limiters' counters of the last closed minute. Observability only — a host whose limiter refuses this gateway keeps its routing weight ([`hostrpc/README.md`](../hostrpc/README.md)) |
+| `DEVSHARD_GATEWAY_RPC_STATS_INTERVAL` / `DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT` | 15s / 4s | the poll cadence and its patience per host; the timeout must be at most the interval or the poll is refused and switched off |
+| `DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY` | 8 | hosts polled at once within one wave |
 | `DEVSHARD_ALLOW_PRIVATE_ADDRESSES` | false | whether dials to private addresses are allowed. A host URL comes from chain state, so the guard is on in production and only a stand whose hosts are Docker names turns it off; turning it off is logged |
 | `DEVSHARD_OTEL_ENABLED` | false | whether OpenTelemetry traces are exported; off is a no-op tracer ([observability.md](./observability.md), "Tracing") |
 | `OTEL_ENDPOINT` / `OTEL_HEADERS` | unset | the OTLP gRPC collector and its headers as `key=value,key=value`; a malformed header is skipped with a warning |
 | `DEVSHARD_LOG_FORMAT` | json | one JSON object per line, which promtail and the Loki panels read; any other value is the text form |
+| `DEVSHARD_LOG_LEVEL` | info | the minimum level that is logged: `debug`, `warn` (or `warning`) or `error`; unset or any other value stays at `info`, so a typo cannot start a debug flood |
 
 ## The rest of the variables
 
@@ -95,13 +101,13 @@ These are read the same way and rarely need changing. Where a knob has a longer 
 
 | Variable | Default | What it decides |
 | --- | --- | --- |
-| `DEVSHARD_GATEWAY_DISABLED` | false | the kill switch ([operations.md](./operations.md), "The kill switch") |
-| `DEVSHARD_GATEWAY_DISABLED_MESSAGE` | empty | the text of the 503 a disabled gateway answers ([operations.md](./operations.md), "The kill switch") |
+| `DEVSHARD_GATEWAY_ENABLED` | true | whether the gateway serves clients; `false` is the kill switch ([operations.md](./operations.md), "The kill switch") |
+| `DEVSHARD_GATEWAY_OFF_MESSAGE` | empty | the text of the 503 a gateway that is off answers ([operations.md](./operations.md), "The kill switch") |
 | `DEVSHARD_ENABLE_CONTENTION_PROFILES` | false | whether lock contention and blocking are sampled, so `/debug/pprof/mutex` and `/debug/pprof/block` hold data; it costs a little on every contended lock, so it stays off outside a diagnosis, and turning it on is logged |
-| `DEVSHARD_GATEWAY_DISABLED_NEW_URL` | empty | the URL a disabled gateway redirects to with 308; empty means 503 |
+| `DEVSHARD_GATEWAY_OFF_REDIRECT_URL` | empty | the URL a gateway that is off redirects to with 308; empty means 503 |
 | `DEVSHARD_ADMIN_API_KEY` | empty | the admin key; a key shorter than 16 characters is refused, and an empty one leaves the admin surface unrouted ([operations.md](./operations.md), "Who may call what"); client keys are not set here, bar the legacy variable ([operations.md](./operations.md), "Legacy inputs") |
 | `DEVSHARDS_JSON` | empty | the escrows seeded into the store at boot, each naming its `id` (the chain escrow id in canonical decimal; any other fails the boot), `model` and `private_key_env` ([operations.md](./operations.md), "Boot") |
-| `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC every chain call falls back to when gRPC is unreachable, queries and transactions alike; the gateway runs with gRPC unreachable as long as `DEVSHARD_CHAIN_RPC` points at a live CometBFT RPC, and a transaction broadcast runs once on the transport the reads selected; an empty RPC endpoint is derived from the gRPC host at the standard port ([`app/README.md`](../app/README.md), "Escrow sessions and the chain connection") |
+| `DEVSHARD_CHAIN_GRPC` / `DEVSHARD_CHAIN_RPC` | `localhost:9090` / empty | the chain's gRPC endpoint, and the CometBFT RPC every chain call falls back to when gRPC is unreachable, queries and transactions alike; the gateway runs with gRPC unreachable as long as `DEVSHARD_CHAIN_RPC` points at a live CometBFT RPC, and a transaction broadcast runs once on the transport the reads selected; an empty RPC endpoint is derived from the gRPC host at the standard port ([`app/README.md`](../app/README.md), "Escrow sessions and the chain connection"), and that resolved endpoint is also where block header times are read and commit-checked first (a derived endpoint that does not answer at startup is dropped for the unverified read, an explicit one is kept) ([`heights/README.md`](../heights/README.md)) |
 | `DEVSHARD_PUBLIC_API` | `http://localhost:9000` | the public API the phase observer polls; it must be an absolute URL |
 | `DEVSHARD_RPC_H2_UPGRADE` | on | whether a session's connection to a host first tries HTTP/2 on the origin of the host's inference URL (h2c on `http`, TLS offering ALPN `gonka-rpc/1` on `https`) and drops to Connect over HTTP/1.1 on the same origin when the host does not speak it; `0`, `false`, `no` or `off` stays on HTTP/1.1 |
 | `DEVSHARD_RPC_GRPC` | off | whether that HTTP/2 connection speaks native gRPC instead of Connect; on only for `1`, `true`, `yes` or `on`, and never used over HTTP/1.1 |
@@ -207,7 +213,7 @@ Within one setting: a knob the setting sets beats the preset it names; a setting
 
 A filter entry lists `warnings` when the settings' limits override its filters — a cap below the floor, a cap below the budget's `force_zero_below`, or a default budget below it — so the conflict is visible where the filters are edited. Neither PUT refuses it: the two are edited separately and either order must be possible.
 
-A cached reply is keyed on the normalized body, the model and the empty-answer exemption, so a filter change never serves a reply produced under the old filters; entries also expire within the cache TTL.
+A cached reply is keyed on the normalized body, the model and the empty-answer exemption, so a filter change never serves a reply produced under the old filters; entries also expire within the cache TTL. A cached reply is also removed when its nonce is voted invalid (seen only while the nonce ledger, `DEVSHARD_STATS_ENABLED`, is on), when the chain's effective epoch rises, and when its participant is marked suspicious; a reply a suspicious host wins is not stored; a client can skip it per request with `Cache-Control: no-cache` or `no-store` ([`api/README.md`](../api/README.md), "What the client controls").
 
 ### When a release changes the presets
 

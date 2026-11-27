@@ -272,7 +272,7 @@ const (
 
 func shortDeadlineGateway() map[string]string {
 	return map[string]string{
-		"DEVSHARD_E2E":                          "1",
+		e2eModeEnv:                              e2eModeOn,
 		e2econfig.RefusalTimeoutSecondsEnv:      strconv.Itoa(shortRefusalTimeoutSeconds),
 		e2econfig.ExecutionTimeoutSecondsEnv:    strconv.Itoa(shortExecutionTimeoutSeconds),
 		e2econfig.StreamingHardTimeoutMillisEnv: strconv.Itoa(shortStreamingHardTimeoutMillis),

@@ -181,14 +181,14 @@ jobs:
           make build-docker
           # Host Linux binaries for Testermint:
           # - build/devshardd: mounted into versiond (VERSIOND_OVERRIDE)
-          # - build/devshardctl: docker-cp'd into *-api for startDevshardProxy
+          # - build/gateway: docker-cp'd into *-api for serveDevshardEscrow
           # Stamp both versiond route name and BinaryVersion as "testapp" for CI
           # (matches VERSIOND_BINARY_NAME default / local-build-pixelplex e2e convention).
-          DEVSHARD_VERSION=testapp DEVSHARD_BINARY_VERSION=testapp make devshardd-build devshardctl-build
+          DEVSHARD_VERSION=testapp DEVSHARD_BINARY_VERSION=testapp make devshardd-build gateway-build
           echo "=== devshard version (DEVSHARD_VERSION / build/devshard-version) ==="
           make -s print-devshard-version
           cat build/devshard-version
-          ls -la build/devshardd build/devshardctl
+          ls -la build/devshardd build/gateway
           echo "=== Images immediately after build ==="
           docker images | head -20
 
@@ -220,7 +220,7 @@ jobs:
           name: devshard-host-binaries
           path: |
             build/devshardd
-            build/devshardctl
+            build/gateway
             build/devshard-version
           retention-days: 1
 
@@ -289,11 +289,11 @@ jobs:
 
       - name: Prepare Devshard Host Binaries
         run: |
-          chmod +x build/devshardd build/devshardctl
+          chmod +x build/devshardd build/gateway
           echo "=== devshard version stamp (for Testermint) ==="
           cat build/devshard-version 2>/dev/null || echo "(missing build/devshard-version)"
-          ls -la build/devshardd build/devshardctl
-          file build/devshardd build/devshardctl || true
+          ls -la build/devshardd build/gateway
+          file build/devshardd build/gateway || true
 
       - name: Install Make
         run: |

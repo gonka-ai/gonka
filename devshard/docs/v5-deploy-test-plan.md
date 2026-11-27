@@ -6,15 +6,7 @@ walkthrough that shipped with `devshard-0.2.14-v4`. Storage, HA identity,
 validation leases, versionless obs, rolling update, and the sqlite →
 `Devshard-Ha` 503 → postgres migrate story in v4 **§1.7 / §2–§7** still apply.
 
-This note is what **changed for the 0.2.15 / v5 line**: the **HA join
-overlay** (`docker-compose.versiond.yml`) — router health, how
-`VERSIOND_NON_HA_VERSIONS` must be set, catalog admission, and the citest
-that proves it — and the v5 gateway height-sync follower
-(`DEVSHARD_GATEWAY_CHAIN_ORACLE`), which applies to every
-`devshardctl` whether or not the overlay is on. The same is true of
-**host ping** (`DEVSHARD_GATEWAY_HOST_PING_*` on the gateway,
-`DAPI_API__MLNODE_PING_DISABLED` on dapi): observability only, on by
-default, not HA-overlay-specific.
+This note is what **changed for the 0.2.15 / v5 line**: the **HA join overlay** (`docker-compose.versiond.yml`) — router health, how `VERSIOND_NON_HA_VERSIONS` must be set, catalog admission, and the citest that proves it — and the v5 gateway height-sync follower (`DEVSHARD_GATEWAY_CHAIN_ORACLE`), which applies to every gateway whether or not the overlay is on. The same is true of **host ping** (`DEVSHARD_GATEWAY_HOST_PING_*` on the gateway, `DAPI_API__MLNODE_PING_DISABLED` on dapi): observability only, on by default, not HA-overlay-specific.
 
 Related: [versiond-router/README.md](../../versiond-router/README.md),
 [release-0.2.14-v4.md](./release-0.2.14-v4.md),
@@ -144,11 +136,7 @@ stamp **`v2`** unless you change the fixture.
 
 ### 6. Gateway vs router recreate (operational)
 
-Height-sync and heartbeats go through the router. Force-recreating
-`versiond-router` while `devshardctl` is live can 503 those calls. The gateway
-**persists** a participant quarantine (~30 minutes) in
-`/var/lib/devshardctl`; a process restart reloads it (`participant_limit_loaded_from_db`)
-and chat becomes `429` / limiter `(0/0)`.
+Height-sync and heartbeats go through the router. Force-recreating `versiond-router` while the gateway is live can 503 those calls.
 
 For planned router replacements: stop or drain the gateway first, wait until
 `/{version}/healthz` is the **routed** 200 (or the intended `Devshard-Ha` 503),
@@ -159,10 +147,7 @@ then start the gateway. Citest does this in
 
 ## Gateway chain follower (`DEVSHARD_GATEWAY_CHAIN_ORACLE`)
 
-Applies to **every** v5 gateway (`devshardctl`), single-instance and HA.
-Normative text: [HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
-§6 (architecture), §13 (courier producer), §18.5 (seed). Tests H105–H108
-in [height-sync-tests.md](./height-sync-tests.md) §7.8.
+Applies to **every** v5 gateway, single-instance and HA. Normative text: [HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §6 (architecture), §13 (courier producer), §18.5 (seed). Tests H105–H108 in [height-sync-tests.md](./height-sync-tests.md) §7.7.
 
 The gateway is a height-sync **courier**. Outbound `(height, hash)` comes
 from **host-signed** Anchors (cold-start `POST /sessions/:id/height-sync`
@@ -210,11 +195,9 @@ when the gate is on.
 
 ## Host ping observability (`DEVSHARD_GATEWAY_HOST_PING_*`)
 
-Applies to **every** v5 gateway (`devshardctl`) and dapi, single-instance
-and HA. Design: [gateway-host-ping-observability.md](./proposals/gateway-host-ping-observability.md).
+Applies to **every** v5 gateway and dapi, single-instance and HA. Design: [gateway-host-ping-observability.md](./proposals/gateway-host-ping-observability.md).
 
-Two independent probe jobs. Neither feeds routing, quarantine, or
-`PerfTracker`. A probe outage must not 429 chat.
+Two independent probe jobs. Neither feeds routing or quarantine. A probe outage must not 429 chat.
 
 | Prober | Targets | Preferred path | Fallback |
 | --- | --- | --- | --- |
@@ -224,16 +207,13 @@ Two independent probe jobs. Neither feeds routing, quarantine, or
 `devshardd` always mounts `GET /clock` (lifecycle-bypass, same as
 `/healthz`). There is **no** env to turn that endpoint off.
 
-### Gateway (`devshardctl`)
+### Gateway
 
-Read from the process environment on every start (not from `gateway.db`).
-Join: `deploy/join/config.devshard.env.template` and
-`docker-compose.devshard-gateway.yml`. Testenv: gencompose `devshardctl`
-service.
+Read from the process environment on every start (not from `gateway.db`). Deploy: `devshard/cmd/gateway/deploy/config.devshard-gateway.env.template` and `docker-compose.devshard-gateway.yml`. Testenv: gencompose `gateway` service.
 
 | Env | Default | Role |
 | --- | --- | --- |
-| `DEVSHARD_GATEWAY_HOST_PING_DISABLED` | `false` | Kill switch. `true` / `1` / `on` (via `boolvalue.Parse`) stops the job; chat is unchanged |
+| `DEVSHARD_GATEWAY_HOST_PING_ENABLED` | `true` | Kill switch. `false` / `0` / `off` (via `boolvalue.Parse`) stops the job; chat is unchanged |
 | `DEVSHARD_GATEWAY_HOST_PING_INTERVAL` | `15s` | Tick period (`time.ParseDuration`). Keep **below** HTTP idle timeout (120s) so samples stay warm-RTT |
 | `DEVSHARD_GATEWAY_HOST_PING_TIMEOUT` | `2s` | Per-target HTTP timeout. Must stay ≪ interval |
 | `DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY` | `8` | In-flight probes per tick. `≤0` falls back to 8 |
@@ -319,7 +299,7 @@ Skip this list for single-instance v5 (base `docker-compose.yml` only).
 - [ ] Leave the four `DEVSHARD_GATEWAY_HOST_PING_*` vars at defaults unless
       you need a faster scrape (citest uses `INTERVAL=3s`) or a kill
       switch. Unset is the same as the table above.
-- [ ] `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true` must still serve chat;
+- [ ] `DEVSHARD_GATEWAY_HOST_PING_ENABLED=false` must still serve chat;
       `devshard_gateway_host_ping_up` must not appear.
 - [ ] After a successful chat, gateway `/metrics` shows
       `devshard_gateway_host_ping_up{host=…}` and
@@ -420,7 +400,7 @@ make -C devshard/testenv citest-host-ping
 | Test | Expect |
 | --- | --- |
 | `TestHostPing` | Unused host has no `host_ping_up`; after chat, gauges appear (interval patched to `3s`); deactivate drops series |
-| `TestHostPingKillSwitch` | `DEVSHARD_GATEWAY_HOST_PING_DISABLED=true`; chat 200; no `host_ping_up` |
+| `TestHostPingKillSwitch` | `DEVSHARD_GATEWAY_HOST_PING_ENABLED=false`; chat 200; no `host_ping_up` |
 
 ### `TestSQLiteToPostgresHAMigration` — v4 §1.7 on a real child
 
