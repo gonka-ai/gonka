@@ -111,15 +111,15 @@ func TestNewStateMachine_LegacyZeroFeePerNonceUsesCompiledDefault(t *testing.T) 
 
 // TestVoteThreshold_ConfigFieldNotUsedOutsideStatePackage ensures consensus code
 // does not read SessionConfig.VoteThreshold directly outside devshard/state.
-// Observability (proxy /status) and bind (types/config.go) are allowlisted.
+// Bind (types/config.go, bridge/config.go) is allowlisted.
 func TestVoteThreshold_ConfigFieldNotUsedOutsideStatePackage(t *testing.T) {
 	root := repoRoot(t)
 	allowSubstrings := []string{
 		string(filepath.Join("devshard", "state")),
 		string(filepath.Join("devshard", "types", "config.go")),
 		string(filepath.Join("devshard", "bridge", "config.go")),
-		string(filepath.Join("devshard", "cmd", "devshardctl", "proxy.go")),
 	}
+	baselineCheckouts := filepath.Join(root, "devshard", "testenv", "baselines")
 	var violations []string
 	scanRoots := []string{
 		filepath.Join(root, "devshard"),
@@ -136,6 +136,9 @@ func TestVoteThreshold_ConfigFieldNotUsedOutsideStatePackage(t *testing.T) {
 				return err
 			}
 			if info.IsDir() {
+				if path == baselineCheckouts {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {

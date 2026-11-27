@@ -4,13 +4,13 @@ These scenarios split the production-like run (prod-like-15m) into focused runs 
 
 All scenarios use seed 1515 and the prod-like topology. That is five participants: P0 (versiond-0 and versiond-1, an HA pair) and P1 (versiond-2) are never faulted and are the honest controls; P2 is versiond-3, P3 is versiond-4 (sqlite storage) and P4 is versiond-5. Each container has its own mock ML node (mock-openai-N), so an ML fault lands on one participant. Traffic is 8 requests a second for the first minute and 16 after it, over model-a (70 %, settles) and model-b (30 %, settlement off), half streamed and half with logprobs, unless a scenario says otherwise. Fault definitions are copied from prod-like-15m; only their times changed, and `participant-absent-on-chain` is 45 s instead of 30 s. P4's peer chat budget (`host-over-peer-chat-budget`) in prod-like-steady is lower than prod-like-15m's (see there).
 
-Known-bug markers: `session-nonce-within-max-nonce` (`nonce-overrun`) everywhere, `host-under-poc-challenge` (#1823) in faults-host, `host-over-peer-chat-budget` (#1988) in prod-like-steady and `timeout-vote-fanout` (#1988) in vote-fanout. `deactivated-escrow-runtime-retired` has no marker here: #1988 retires the runtime of a model that does not settle (cmd/devshardctl/gateway.go:5102–5104), and `no-runtime-for-deactivated-escrow` passed in every v6 run of batch A and batch B, with rotations in each. prod-like-15m keeps its markers unchanged.
+Known-bug markers: `session-nonce-within-max-nonce` (`nonce-overrun`) everywhere, `host-under-poc-challenge` (#1823) in faults-host, `host-over-peer-chat-budget` (#1988) in prod-like-steady and `timeout-vote-fanout` (#1988) in vote-fanout. `deactivated-escrow-runtime-retired` has no marker here: #1988 retires the runtime of a model that does not settle, and `no-runtime-for-deactivated-escrow` passed in every v6 run of batch A and batch B, with rotations in each. prod-like-15m keeps its markers unchanged.
 
 Every fault is placed so the report can judge it. The recovery check (`recovery-after-fault`) needs 60 s after the fault, or 90 s after a gateway restart, plus one 30 s bucket before the next fault starts, so faults are at least 2m30s apart (3m30s after a gateway restart). The error check (`error-rate-and-latency`) gives a request to the faults active while it ran, else to the fault whose 3m10s grace tail its start falls in, and a request in two tails is judged by no fault, so each fault ends at least 3m25s after the previous one. A gateway restart stays active past the moment its process is back, until the first request that starts after that and succeeds (at most its 90 s recovery budget), so requests failing because the restarted gateway cannot serve yet count for the restart, not for another fault. Consecutive faults hit different participants, two faults on one participant are at least 4 minutes apart, and each run lasts the full grace tail after its last fault. scenario_split_test.go checks all of this from the planned timelines.
 
 Execution timeout. The protocol timeout also cancels a live model run (#2003), and a prod-like generation of the 2048-token class takes 45–63 s, so a 30 s execution timeout cuts honest hosts at their deadline ("context deadline exceeded" after streaming) and charges them misses from the first minute on. Every scenario here, and prod-like-15m, therefore sets `execution_timeout: 90s`. vote-fanout needs the timeout to fire inside its hang, so its hang lasts 1m45s (see vote-fanout); prod-like-15m, which carries that case, does the same. Only missrate-catch-up keeps 30 s, because it requires an applied timeout from a 30 s pause. Scenarios without a `protocol` block use the mock chain's 1200 s default. The scenarios other than vote-fanout pin `grace: 3m10s`, the 30 s value the fault spacing above is built on. That still covers every fault here: each one is either refused by the host, so the 5 s refusal timeout applies, or lifted when its window ends, so no nonce waits out the 90 s deadline after a fault. A hang does hold its nonces to the 90 s deadline, so vote-fanout pins no grace and gets the default 5 s + 90 s + the gateway's 2m5s sweep grace + its 30 s sweep tick = 4m10s. `max_pending_age` follows the timeout: that sum + 30 s = 4m40s. scenario_split_test.go checks which scenarios keep 30 s, which pin the grace, and why.
 
-Run a scenario from devshard/testenv, one at a time, with nothing heavy running beside it: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/<name>.yaml -output loadtest/results/<name>-<date>`. Add `-gateway gateway` for the new gateway where that driver exists. Each run writes report.md; `go run ./cmd/loadtest -report <run dir>` renders it again from the run's files, and `go run ./cmd/loadtest -recheck <run dir>` judges every check again from the run's files, `run-inputs.json` included, without a stack (see the main README, "Run report"). A run lasts its workload plus about 6m30s at most: about 45 s to start, up to 2 minutes for requests still in flight, up to 3 minutes of drain and about 45 s of checks. The first build takes longer.
+Run a scenario from devshard/testenv, one at a time, with nothing heavy running beside it: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/<name>.yaml -output loadtest/results/<name>-<date>`. Each run writes report.md; `go run ./cmd/loadtest -report <run dir>` renders it again from the run's files, and `go run ./cmd/loadtest -recheck <run dir>` judges every check again from the run's files, `run-inputs.json` included, without a stack (see the main README, "Run report"). A run lasts its workload plus about 6m30s at most: about 45 s to start, up to 2 minutes for requests still in flight, up to 3 minutes of drain and about 45 s of checks. The first build takes longer.
 
 The report has a load-step table for every scenario whose traffic has several stages. Each row is one stage and shows:
 - offered over planned: the requests the generator released against the stage's rps times its length;
@@ -35,15 +35,14 @@ It keeps one whole-run condition: Chat refused because P4's peer budget is spent
 - in the load ladder the budget would cap P4, so the ladder would measure P4 instead of the gateway;
 - in the fault scenarios it would overlap P4's own faults.
 
-Why 6 and not 300: in the v6 run (batch A, 20261014T085518Z) P4 served 2.1 Chats a second at 8 requests a second and 3.8–4.1 at 16, under the 5 a second that 300 allows, so P4 refused no Chat, `faults-fired-and-ml-nodes-bound` failed and `misses-only-in-fault-windows` and `quarantines-match-faults` passed with nothing to judge. A higher share of traffic for P4 is not a scenario knob. A lower budget only causes refusals below 10 a minute: from 10 a minute up, the gateway paces its own Chats to the budget P4 advertises (transport/rpc_chat.go takes from it, transport/rpc_budget.go), so it would wait rather than be refused. Below 10 the gateway treats the budget as not advertised. #1988's skip of a host whose chat budget is spent also applies only at or above the network default (6000 a minute). So the gateway sends to P4, P4 refuses (`rate_limited`, no receipt), and #1988 pauses P4 for 1 s (`sender_rate_quarantine`). At 6 a minute P4 admits one Chat every 10 s against the 2–4 a second it is offered, so it is over budget for the whole run; scenario_split_test.go checks this from the stages. Every peer's own RPCs to P4 share that 6-weight budget, so validators fetch P4's payloads (weight 6) about once a minute each. Because P4 now serves about one Chat in 40, there are about that many fewer payloads to fetch, so the pressure on validators is about what it was at 300 (when hosts already paced their GetPayloads to P4).
+Why 6 and not 300: in the v6 run (batch A, 20261014T085518Z) P4 served 2.1 Chats a second at 8 requests a second and 3.8–4.1 at 16, under the 5 a second that 300 allows, so P4 refused no Chat, `faults-fired-and-ml-nodes-bound` failed and `misses-only-in-fault-windows` passed with nothing to judge. A higher share of traffic for P4 is not a scenario knob. A lower budget only causes refusals below 10 a minute: from 10 a minute up, the gateway paces its own Chats to the budget P4 advertises (transport/rpc_chat.go takes from it, transport/rpc_budget.go), so it would wait rather than be refused. Below 10 the gateway treats the budget as not advertised. #1988's skip of a host whose chat budget is spent also applies only at or above the network default (6000 a minute). So the gateway sends to P4, P4 refuses (`rate_limited`, no receipt). At 6 a minute P4 admits one Chat every 10 s against the 2–4 a second it is offered, so it is over budget for the whole run; scenario_split_test.go checks this from the stages. Every peer's own RPCs to P4 share that 6-weight budget, so validators fetch P4's payloads (weight 6) about once a minute each. Because P4 now serves about one Chat in 40, there are about that many fewer payloads to fetch, so the pressure on validators is about what it was at 300 (when hosts already paced their GetPayloads to P4).
 
 What each `host-over-peer-chat-budget` check should now show:
 - `faults-fired-and-ml-nodes-bound.host-over-peer-chat-budget.fired`: PASS, because P4's `rate_limited` no-receipt terminal count rises. It has no case, so no marker applies.
-- `quarantines-match-faults.host-over-peer-chat-budget.reason`: P4's quarantines are `sender_rate`. XPASS confirms #1988's 1 s sender-rate quarantine; XFAIL names the reason the gateway used instead.
 - `misses-only-in-fault-windows.host-over-peer-chat-budget.waived_misses`: no miss is charged to P4 for a Chat it refused before a receipt. XPASS confirms it; XFAIL counts the misses. A refused validation fetch is not P4's miss, but if a peer fails P4 for one, it shows up here too.
 `host-over-peer-chat-budget` keeps its #1988 marker until such a run shows XPASS. prod-like-15m keeps 300 (unchanged), so its `host-over-peer-chat-budget` fires no Chat refusal either.
 
-Good: errors stay at or below 2 % for the run and at or below 0.5 % in the quiet window, latency stays flat across the run, `faults-fired-and-ml-nodes-bound.host-over-peer-chat-budget.fired` passes, and the budget's `misses-only-in-fault-windows` and `quarantines-match-faults` checks show XFAIL, or XPASS if the #1988 fixes cover it.
+Good: errors stay at or below 2 % for the run and at or below 0.5 % in the quiet window, latency stays flat across the run, `faults-fired-and-ml-nodes-bound.host-over-peer-chat-budget.fired` passes, and the budget's `misses-only-in-fault-windows` check shows XFAIL, or XPASS if the #1988 fixes cover it.
 
 Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/prod-like-steady.yaml -output loadtest/results/prod-like-steady`
 
@@ -58,9 +57,7 @@ Purpose: does the gateway ride out a misbehaving model server? Three faults on t
 
 Good:
 - racing hides each fault, so each fault's error share stays at or below 2 % and the run at or below 2 %;
-- the error rate is back under 0.5 % within 60 s after each fault;
-- P2 is quarantined for empty_stream after `receipt-then-empty-stream` and for stalled_winner, transport or empty_stream after `host-hangs-after-first-token` (the gateway sees a receipt and no content), and P3 for http after `ml-server-returns-429`;
-- no honest host is quarantined.
+- the error rate is back under 0.5 % within 60 s after each fault.
 
 Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/faults-ml-node.yaml -output loadtest/results/faults-ml-node`
 
@@ -77,9 +74,7 @@ Purpose: does the gateway ride out a misbehaving host? Four faults on the hosts 
 Good:
 - each fault's error share stays at or below 2 % and the run at or below 2 %;
 - errors recover within 60 s after each fault;
-- P4 catches up after the pause, with no state-root disagreement among honest hosts and no pending work older than 4m40s, burned nonces apart;
-- P2 is quarantined only for http or transport during `host-public-port-down`;
-- no honest host is quarantined.
+- P4 catches up after the pause, with no state-root disagreement among honest hosts and no pending work older than 4m40s, burned nonces apart.
 
 Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/faults-host.yaml -output loadtest/results/faults-host`
 
@@ -100,7 +95,6 @@ Consequences of this nesting:
 
 Good:
 - the gateway is back to under 0.5 % errors within 90 s of each restart, and the run stays at or below 12 % errors (prod-like-15m's bound, which pays for restarts);
-- the unavailable step quarantines nobody;
 - no escrow is falsely marked missing.
 
 Run: `make build-devshardd && go run ./cmd/loadtest -scenario loadtest/scenarios/faults-gateway-restart.yaml -output loadtest/results/faults-gateway-restart`
@@ -128,12 +122,12 @@ Before mock-openai read the body of a hung request, it never saw P3's host give 
 
 The generator allows 1024 requests in flight, because about 260 are in flight at 32 requests a second with a healthy gateway. If the load ladder shows that this machine cannot hold 32 requests a second, lower `peak_rps`.
 
-After the hang, P3 refuses nonces it has no diff for yet (`target_diff_absent`) while it catches up, and the gateway counts those receipts without content as empty streams, so its last quarantine starts about 80 s after the hang lifts, inside the fault's grace. The run at 5b905ff2 also showed the two gateway answers that `error-rate-and-latency.rotation_gap_errors` and `max_nonce_errors` fail on: 56 × 400 `unsupported model` in the rotation gaps, which grow to 1 s while the loaded machine slows the chain transaction, and 11 × 502 `nonce exceeds chain max_nonce limit` from escrow 9, which still held 399 routed requests when it reached its nonce limit. All eight saved runs at 3e5990cc and 5b905ff2 fail `rotation_gap_errors` (5 to 56 each), and runs will keep failing it until the gateway closes the gap; `max_nonce: 1700` makes rotations frequent, but the 200-nonce margin is the same at the chain's default of 1 000 000.
+After the hang, P3 refuses nonces it has no diff for yet (`target_diff_absent`) while it catches up, and the gateway counts those receipts without content as empty streams. The run at 5b905ff2 also showed the two gateway answers that `error-rate-and-latency.rotation_gap_errors` and `max_nonce_errors` fail on: 56 × 400 `unsupported model` in the rotation gaps, which grow to 1 s while the loaded machine slows the chain transaction, and 11 × 502 `nonce exceeds chain max_nonce limit` from escrow 9, which still held 399 routed requests when it reached its nonce limit. All eight saved runs at 3e5990cc and 5b905ff2 fail `rotation_gap_errors` (5 to 56 each), and runs will keep failing it until the gateway closes the gap; `max_nonce: 1700` makes rotations frequent, but the 200-nonce margin is the same at the chain's default of 1 000 000.
 
-`timeout-vote-fanout` keeps its #1988 marker until a run on 192318583 confirms the fixes (Chat weight 1, the 64-vote cap, the 1 s sender-rate quarantine) and reports XFAIL or XPASS.
+`timeout-vote-fanout` keeps its #1988 marker until a run on 192318583 confirms the fixes (Chat weight 1, the 64-vote cap) and reports XFAIL or XPASS.
 
 Good:
-- no host is quarantined for a sender-rate reason, and Chats are not starved;
+- Chats are not starved;
 - the error share during the hang stays at or below 2 % and recovers within 60 s;
 - no harness stall follows the hang.
 

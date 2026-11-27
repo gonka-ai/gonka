@@ -82,15 +82,14 @@ func TestMetricsCollectorFinalSampleAndArtifacts(t *testing.T) {
 	c := newMetricsCollector(context.Background(), file, dir, time.Second)
 	nonce := uint64(800)
 	c.collect = func(context.Context) []MetricsSample {
-		return []MetricsSample{{Target: "escrow", EscrowID: "2", Nonce: &nonce, State: &GatewayStateSizes{Diffs: 256, DiffsBytes: 1024}}}
+		return []MetricsSample{{Target: "escrow", EscrowID: "2", Nonce: &nonce}}
 	}
 	c.sample()
 	close(c.done)
 	summary := c.stop()
 	require.Equal(t, summary, c.stop())
 	require.Len(t, summary.Escrows, 1)
-	require.Equal(t, 2, summary.Escrows[0].Samples)
-	require.Equal(t, 256, summary.Escrows[0].MaxDiffs)
+	require.Equal(t, uint64(800), *summary.Escrows[0].LastNonce)
 	require.Empty(t, summary.CollectionErrors)
 	body, err := os.ReadFile(filepath.Join(dir, "metrics-summary.json"))
 	require.NoError(t, err)
@@ -152,8 +151,8 @@ func TestProcessIdentityIgnoresWallClockShift(t *testing.T) {
 }
 
 // Test flow:
-// 1. Parse a devshardctl status body with a top-level nonce and a gateway status body listing one escrow.
-// 2. Check both yield the escrow nonce and the chain phase.
+// 1. Parse a gateway status body listing one escrow.
+// 2. Check it yields the escrow nonce and the chain phase.
 func TestParseStatus(t *testing.T) {
 	for _, testCase := range []struct {
 		name       string
@@ -161,7 +160,6 @@ func TestParseStatus(t *testing.T) {
 		nonce      uint64
 		chainPhase string
 	}{
-		{name: "devshardctl top-level nonce", body: `{"nonce":42,"chain_phase":"inference"}`, nonce: 42, chainPhase: "inference"},
 		{name: "gateway single escrow", body: `{"chain_phase":"poc","devshards":[{"id":"1","nonce":17}]}`, nonce: 17, chainPhase: "poc"},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {

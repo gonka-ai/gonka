@@ -41,7 +41,7 @@ type EscrowSource interface {
 	RoutableSession(escrowID string) (registry.EscrowSession, bool)
 }
 
-// DiffJournal is satisfied by *journal.Journal; DiffComposed runs under the session lock, so it reads and appends only.
+// DiffJournal is satisfied by *journal.Journal; DiffComposed runs under the session lock, so it takes no lock but its own.
 type DiffJournal interface {
 	DiffComposed(escrowID string, diff *types.Diff)
 }

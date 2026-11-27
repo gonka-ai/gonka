@@ -49,7 +49,7 @@ const (
 
 var errNoChainDialed = errors.New("the composed test gateway dials no chain")
 
-// TestMain ignores the goroutines that live for the process: database/sql's cleaner, the sqlite finalizer and the unclosable chain client.
+// TestMain ignores the goroutines that live for the process: database/sql's cleaner, the sqlite finalizer, the unclosable chain client and the commit-verifying header source.
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m,
 		goleak.IgnoreTopFunction("database/sql.(*DB).connectionOpener"),
@@ -59,6 +59,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/resolver/dns.(*dnsResolver).watcher"),
 		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransportAndUnlock"),
 		goleak.IgnoreAnyFunction("github.com/godbus/dbus.(*Conn).inWorker"),
+		goleak.IgnoreTopFunction("common/chainoracle/blocks/observer.(*Oracle).runVerifier"),
 	)
 }
 
@@ -134,7 +135,7 @@ func sessionsReading(records devshardLookup, storageDir string, reader chain.Rea
 			Serving: func(context.Context, string) (registry.EscrowSession, error) {
 				return nil, errNoChainDialed
 			},
-			ReadOnly:  readOnlySessions(records, storageDir),
+			ReadOnly:  readOnlySessions(records, storageDir, nil),
 			Reader:    reader,
 			Transport: chainWithoutADial{},
 		}, nil
@@ -172,7 +173,7 @@ func TestComposeReadsThePublicAPIThroughTheSourcesClient(t *testing.T) {
 	sources := func(config.Chain, config.HeightSync, string, *transport.PeerRPCAdoption, user.StepTimer) (chainSources, error) {
 		return chainSources{
 			Serving:   func(context.Context, string) (registry.EscrowSession, error) { return nil, errNoChainDialed },
-			ReadOnly:  readOnlySessions(gatewayStore, storageDir),
+			ReadOnly:  readOnlySessions(gatewayStore, storageDir, nil),
 			Reader:    chainWithoutADial{},
 			Transport: chainWithoutADial{},
 			PublicAPI: client,
@@ -446,7 +447,7 @@ func scrape(t *testing.T, baseURL string) string {
 
 // Test flow:
 //  1. Compose a gateway.
-//  2. For each owner (limits, perf, registry, chain, transport, accounting, owed votes, journal, funding), build a fresh collector describing the same families.
+//  2. For each owner (limits, perf, registry, height sync, unopened escrows, chain, transport, accounting, owed votes, journal, funding), build a fresh collector describing the same families.
 //  3. Try registering it on the gateway's own telemetry registry.
 //  4. Assert registration is refused, since a refusal proves compose already registered that owner's collector.
 func TestEveryOwnerCollectorIsRegisteredOnTheGatewaysRegistry(t *testing.T) {
@@ -460,6 +461,8 @@ func TestEveryOwnerCollectorIsRegisteredOnTheGatewaysRegistry(t *testing.T) {
 		{name: "limits", collector: metrics.NewLimitsCollector(metrics.LimitsSources{})},
 		{name: "perf", collector: metrics.NewPerfCollector(nil)},
 		{name: "registry", collector: metrics.NewRegistryCollector(metrics.RegistrySources{})},
+		{name: "height sync", collector: metrics.NewHeightSyncCollector(nil)},
+		{name: "unopened escrows", collector: metrics.NewUnopenedCollector(nil)},
 		{name: "chain", collector: metrics.NewChainCollector(nil, time.Now)},
 		{name: "transport", collector: metrics.NewTransportCollector(nil)},
 		{name: "accounting", collector: metrics.NewAccountingCollector(nil)},

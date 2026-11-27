@@ -43,43 +43,16 @@ type AccountingParticipant struct {
 	Counters              []AccountingCounter `json:"counters"`
 }
 
+// AccountingCounter is one classified bucket of the gateway's nonce ledger, keyed flat beside its count.
 type AccountingCounter struct {
-	EscrowID string               `json:"escrow_id"`
-	Key      AccountingCounterKey `json:"key"`
-	Count    uint64               `json:"count"`
-}
-
-type AccountingCounterKey struct {
-	SlotID                 uint32 `json:"slot_id"`
-	Disposition            string `json:"disposition"`
-	DispatchPhase          string `json:"dispatch_phase,omitempty"`
-	TimeoutEvaluationPhase string `json:"timeout_evaluation_phase,omitempty"`
-	QuarantineMode         string `json:"quarantine_mode,omitempty"`
-	NoSendReason           string `json:"no_send_reason,omitempty"`
-	GhostReason            string `json:"ghost_reason,omitempty"`
-	FailureOrigin          string `json:"failure_origin,omitempty"`
-	DetailReason           string `json:"detail_reason,omitempty"`
-	TimeoutKind            string `json:"timeout_kind,omitempty"`
-	TimeoutOutcome         string `json:"timeout_outcome,omitempty"`
-	TimeoutReason          string `json:"timeout_reason,omitempty"`
-}
-
-// UnmarshalJSON reads devshardctl's counter, keyed under "key", and the gateway's, keyed flat beside the count.
-func (c *AccountingCounter) UnmarshalJSON(data []byte) error {
-	var nested struct {
-		EscrowID string                `json:"escrow_id"`
-		Key      *AccountingCounterKey `json:"key"`
-		Count    uint64                `json:"count"`
-	}
-	if err := json.Unmarshal(data, &nested); err != nil {
-		return err
-	}
-	c.EscrowID, c.Count = nested.EscrowID, nested.Count
-	if nested.Key != nil {
-		c.Key = *nested.Key
-		return nil
-	}
-	return json.Unmarshal(data, &c.Key)
+	EscrowID      string `json:"escrow_id"`
+	SlotID        uint32 `json:"slot_id"`
+	Disposition   string `json:"disposition"`
+	GhostReason   string `json:"ghost_reason,omitempty"`
+	TimeoutKind   string `json:"timeout_kind,omitempty"`
+	TimeoutAction string `json:"timeout_action,omitempty"`
+	TimeoutReason string `json:"timeout_reason,omitempty"`
+	Count         uint64 `json:"count"`
 }
 
 type AccountingChecks struct {
@@ -179,55 +152,14 @@ func AccountingDispositionTotal(resp AccountingParticipantsResponse) uint64 {
 	return total
 }
 
-// SettledAccounting polls until nothing is in flight or awaiting a timeout vote, and returns the last reading either way; expectDispositions also waits for the served traffic to be classified.
-func SettledAccounting(t *testing.T, client *http.Client, statsURL, query string, within time.Duration, expectDispositions bool) AccountingParticipantsResponse {
-	t.Helper()
-	deadline := time.Now().Add(within)
-	var last AccountingParticipantsResponse
-	for {
-		reading, status, _, err := fetchAccountingParticipants(t, client, statsURL, query)
-		if err == nil && status == http.StatusOK {
-			last = reading
-			classified := !expectDispositions || AccountingDispositionTotal(reading) > 0
-			if classified && AccountingInFlightTotal(reading) == 0 && accountingTimeoutPendingTotal(reading) == 0 {
-				return reading
-			}
-		}
-		if time.Now().After(deadline) {
-			return last
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-}
-
-func accountingTimeoutPendingTotal(resp AccountingParticipantsResponse) uint64 {
-	var total uint64
-	for _, participant := range resp.Participants {
-		total += participant.TimeoutPending
-	}
-	return total
-}
-
-// AccountingTimeoutOutcomes sums every participant's timeout outcomes into one map.
-func AccountingTimeoutOutcomes(resp AccountingParticipantsResponse) map[string]uint64 {
-	totals := make(map[string]uint64)
-	for _, participant := range resp.Participants {
-		for outcome, count := range participant.TimeoutOutcomes {
-			totals[outcome] += count
+// AccountingParticipantRow finds one participant's row, by its address.
+func AccountingParticipantRow(resp AccountingParticipantsResponse, participant string) (AccountingParticipant, bool) {
+	for _, row := range resp.Participants {
+		if row.Participant == participant {
+			return row, true
 		}
 	}
-	return totals
-}
-
-// AccountingDispositions sums every participant's dispositions into one map.
-func AccountingDispositions(resp AccountingParticipantsResponse) map[string]uint64 {
-	totals := make(map[string]uint64)
-	for _, participant := range resp.Participants {
-		for disposition, count := range participant.Dispositions {
-			totals[disposition] += count
-		}
-	}
-	return totals
+	return AccountingParticipant{}, false
 }
 
 func AccountingDispositionCount(resp AccountingParticipantsResponse, disposition string) uint64 {
@@ -238,17 +170,15 @@ func AccountingDispositionCount(resp AccountingParticipantsResponse, disposition
 	return total
 }
 
-func AccountingGhostCounterCount(resp AccountingParticipantsResponse, noSendReason, quarantineMode string) uint64 {
+// AccountingGhostCounterCount sums the ghost burns the ledger filed under one reason, or under any reason when it is empty.
+func AccountingGhostCounterCount(resp AccountingParticipantsResponse, ghostReason string) uint64 {
 	var total uint64
 	for _, participant := range resp.Participants {
 		for _, counter := range participant.Counters {
-			if counter.Key.Disposition != "ghost" {
+			if counter.Disposition != "ghost" {
 				continue
 			}
-			if noSendReason != "" && counter.Key.NoSendReason != noSendReason && counter.Key.GhostReason != noSendReason {
-				continue
-			}
-			if quarantineMode != "" && counter.Key.QuarantineMode != quarantineMode {
+			if ghostReason != "" && counter.GhostReason != ghostReason {
 				continue
 			}
 			total += counter.Count

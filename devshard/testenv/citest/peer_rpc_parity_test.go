@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"common/httpguard"
+
 	"connectrpc.com/connect"
 
 	"devshard/signing"
@@ -49,7 +50,7 @@ func TestPeerRPCParity(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "proxy", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
+			harness.DumpComposeLogs(t, stack, "gateway", "proxy", "versiond-0", "versiond-1", "versiond-router", "mock-openai")
 		}
 	})
 	version := cfg.Versiond.VersionName
@@ -126,7 +127,7 @@ func switchGatewayLeg(t *testing.T, stack *harness.Stack, cfg *config.File, clie
 	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_ENDPOINTS", strconv.Quote(endpoints))
 	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_H2_UPGRADE", strconv.Quote(upgrade))
 	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_RPC_GRPC", strconv.Quote(grpc))
-	stack.RecreateServices(t, "devshardctl")
+	stack.RecreateServices(t, "gateway")
 	eps := stack.Endpoints(t, cfg)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	requirePrintenv(t, stack, "DEVSHARD_RPC_H2_UPGRADE", upgrade)
@@ -137,9 +138,9 @@ func switchGatewayLeg(t *testing.T, stack *harness.Stack, cfg *config.File, clie
 
 func requirePrintenv(t *testing.T, stack *harness.Stack, key, want string) {
 	t.Helper()
-	out, err := stack.ComposeExecOutput("devshardctl", "printenv", key)
+	printed, err := stack.ComposeExecOutput("gateway", "printenv", key)
 	require.NoError(t, err)
-	require.Equal(t, want, strings.TrimSpace(out))
+	require.Equal(t, want, strings.TrimSpace(printed))
 }
 
 func compareUnaries(t *testing.T, stack *harness.Stack, cfg *config.File, eps harness.Endpoints, version string) {
@@ -148,7 +149,7 @@ func compareUnaries(t *testing.T, stack *harness.Stack, cfg *config.File, eps ha
 	// child allows two. Chat comparison is done. Stop the gateway, then
 	// recreate the children so a stream the proxy is still holding does
 	// not keep that slot. The unary dial is the only Watch for this signer.
-	stack.StopService(t, "devshardctl")
+	stack.StopService(t, "gateway")
 	var hosts []string
 	for _, h := range cfg.Hosts {
 		hosts = append(hosts, h.ID)

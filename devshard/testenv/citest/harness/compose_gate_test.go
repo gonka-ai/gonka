@@ -12,7 +12,7 @@ func TestRequireGatewayGRPCOnlyCompose(t *testing.T) {
 	okPath := dir + "/ok.yml"
 	require.NoError(t, os.WriteFile(okPath, []byte(`
 services:
-  devshardctl:
+  gateway:
     environment:
       DEVSHARD_CHAIN_GRPC: mock-chain:9090
   mock-chain:

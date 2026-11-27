@@ -12,7 +12,7 @@ import (
 
 // TestTraceLogCorrelation asserts that a gateway chat produces one shared
 // trace_id across gateway + host spans and Loki log lines from both
-// compose_service families (devshardctl and versiond).
+// compose_service families (gateway and versiond).
 func TestTraceLogCorrelation(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -21,7 +21,7 @@ func TestTraceLogCorrelation(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "jaeger", "promtail", "loki")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "jaeger", "promtail", "loki")
 		}
 	})
 
@@ -45,20 +45,20 @@ func TestTraceLogCorrelation(t *testing.T) {
 
 	t.Logf("citest: observability profile=%s otel=%s", obs.Profile, obs.Profile.OTELEndpoint())
 
-	// One trace spanning gateway (devshardctl) and host (devshardd).
+	// One trace spanning gateway and host (devshardd).
 	traceID := harness.WaitTraceCoveringServices(t, obs,
-		[]string{"devshardctl", "devshardd"},
+		[]string{"gateway", "devshardd"},
 		2*time.Minute,
 	)
 	t.Logf("citest: shared trace_id=%s", traceID)
 
 	// Loki lines for that trace_id from both compose_service families.
 	harness.RequireLogsForTrace(t, obs, traceID, []string{
-		"devshardctl",
+		"gateway",
 		"versiond.*",
 	}, 2*time.Minute)
 
 	// Sanity: gateway.request + host request spans exist (operations).
-	harness.WaitTraceSpan(t, obs, "devshardctl", "gateway.request", 30*time.Second)
+	harness.WaitTraceSpan(t, obs, "gateway", "gateway.request", 30*time.Second)
 	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.request", 30*time.Second)
 }

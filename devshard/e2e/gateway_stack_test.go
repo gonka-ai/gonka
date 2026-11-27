@@ -10,8 +10,7 @@ import (
 	"devshard/e2e/testutil"
 )
 
-// The gateway scenarios drive the devshardctl stack with cmd/gateway as the binary under test, so a
-// difference in outcome is a difference in the gateway. This file holds the harness they share.
+// startGatewayEnv starts the three-host stand with cmd/gateway as the binary under test and a client for it.
 func startGatewayEnv(t *testing.T, opts e2eEnvOptions) (*e2eEnv, *http.Client) {
 	t.Helper()
 	requireE2EEnabled(t)
@@ -19,9 +18,7 @@ func startGatewayEnv(t *testing.T, opts e2eEnvOptions) (*e2eEnv, *http.Client) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
 
-	opts.runGateway = true
-	images := requireGatewayImage(t, requiredImages(t))
-	env := startE2EEnv(ctx, t, images, opts)
+	env := startE2EEnv(ctx, t, requiredImages(t), opts)
 	return env, &http.Client{Timeout: testutil.DefaultRequestTimeout}
 }
 
@@ -34,10 +31,15 @@ func requireSlowE2E(t *testing.T) {
 	}
 }
 
+// escrowURL is where the gateway serves the stand's escrow's own routes.
+func (e *e2eEnv) escrowURL() string {
+	return testutil.EscrowRoute(e.clientURL, defaultEscrowID)
+}
+
 // gatewaySessionNonce reads escrow state through the gateway: addressed by id, admin-gated, flat.
 func gatewaySessionNonce(t *testing.T, client *http.Client, clientURL string) uint64 {
 	t.Helper()
-	state := testutil.GetJSON(t, client, clientURL+"/devshard/"+defaultEscrowID+"/v1/state")
+	state := testutil.GetJSON(t, client, testutil.EscrowRoute(clientURL, defaultEscrowID)+"/v1/state")
 	return testutil.NumericField(t, state, "latest_nonce")
 }
 

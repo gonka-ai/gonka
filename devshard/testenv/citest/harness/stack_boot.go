@@ -13,6 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const (
+	errorMissRefusalTimeoutSeconds   = 10
+	errorMissExecutionTimeoutSeconds = 30
+)
+
 // BootMixedVersiondStack is the §8.2 no-proxy mixed fleet: versiond-0 pinned
 // to baselineImage (0.2.15-v5), versiond-1 and versiond-router left on this
 // tree. One shared router, same escrow, HTTP/1.1 on :8080.
@@ -39,6 +44,7 @@ func BootProxyOverlayStack(t *testing.T, prefix string) (*Stack, *config.File, E
 	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	stack.PrepareProxyOverlay(t)
+	DisableHostRPCStatsCompose(t, stack.ComposePath)
 	cfg := stack.LoadConfig(t)
 	pinProxyOverlayIP(t, stack, cfg)
 	requireTwoVersiondHosts(t, cfg)
@@ -63,19 +69,27 @@ func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 // Three distinct identities are required so two non-executor verifiers can
 // exceed VoteThreshold (need weight > 1). A 3-container stack is only two
 // identities (HA+solo), so the solo cannot vote a miss against the HA.
+// The gateway claims a miss at the record's vote deadline, so the escrow gets
+// short timeouts for the claim to land inside the test's wait.
 func BootErrorMissStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 4, EscrowSlots: 3})
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{
+		Hosts:            4,
+		EscrowSlots:      3,
+		RefusalTimeout:   errorMissRefusalTimeoutSeconds,
+		ExecutionTimeout: errorMissExecutionTimeoutSeconds,
+	})
 	stack.RunGencompose(t)
+	EnableHeartbeatCompose(t, stack.ComposePath)
 	cfg := stack.LoadConfig(t)
 	requireFourVersiondHosts(t, cfg)
 	stack.Up(t)
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
-// BootStackBuild is like BootStack but rebuilds compose images first (devshardctl gRPC wiring).
+// BootStackBuild is like BootStack but rebuilds compose images first (gateway gRPC wiring).
 func BootStackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
@@ -186,22 +200,6 @@ func BootHeightSyncLegacyDapiStack(t *testing.T, prefix string) (*Stack, *config
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
-// BootHeightSyncPeerMatrixStack is BootHeightSyncStack with the opt-in
-// peer_seen matrix series enabled on the gateway.
-func BootHeightSyncPeerMatrixStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
-	t.Helper()
-	stack := NewStack(t, prefix)
-	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteStackConfig(t, stack.WorkDir)
-	stack.RunGencompose(t)
-	EnableHeightSyncCompose(t, stack.ComposePath)
-	EnableHeightSyncPeerMatrixCompose(t, stack.ComposePath)
-	cfg := stack.LoadConfig(t)
-	requireTwoVersiondHosts(t, cfg)
-	stack.Up(t)
-	return stack, cfg, stack.Endpoints(t, cfg)
-}
-
 func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
@@ -210,48 +208,6 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
-	started := time.Now()
-	stack.UpWithObservability(t, cfg)
-	obs := stack.ObservabilityHostEndpoints(t)
-	obs.StartedAt = started
-	return stack, cfg, stack.Endpoints(t, cfg), obs
-}
-
-// BootObservabilityStackHASolo is the 3×versiond observability stack: HA pair
-// (versiond-0/1, one on-chain participant) plus a solo executor (versiond-2).
-// Ghost disposition citests probe-quarantine one identity and leave the other
-// healthy; a 2-host HA-only stack cannot, because both hosts share one
-// participant.
-func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
-	t.Helper()
-	stack := NewStack(t, prefix)
-	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 4})
-	stack.RunGencompose(t)
-	cfg := stack.LoadConfig(t)
-	requireThreeVersiondHosts(t, cfg)
-	started := time.Now()
-	stack.UpWithObservability(t, cfg)
-	obs := stack.ObservabilityHostEndpoints(t)
-	obs.StartedAt = started
-	return stack, cfg, stack.Endpoints(t, cfg), obs
-}
-
-// BootPayloadCaptureStack boots an observability stack with DEVSHARD_LOG_PAYLOADS*
-// enabled for the payload-capture citests. level should be "full" (testenv only)
-// so partial response bodies appear on the payload_captured line.
-func BootPayloadCaptureStack(t *testing.T, prefix, level string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
-	t.Helper()
-	if level == "" {
-		level = "full"
-	}
-	stack := NewStack(t, prefix)
-	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteStackConfig(t, stack.WorkDir)
-	stack.RunGencompose(t)
-	cfg := stack.LoadConfig(t)
-	requireTwoVersiondHosts(t, cfg)
-	EnablePayloadCapture(t, stack, level)
 	started := time.Now()
 	stack.UpWithObservability(t, cfg)
 	obs := stack.ObservabilityHostEndpoints(t)

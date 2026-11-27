@@ -24,9 +24,26 @@ const (
 	cacheRefusedWriteFailed = "write_failed"
 	cacheRefusedRaceFailed  = "race_failed"
 	cacheRefusedNoEscrow    = "no_escrow"
+	cacheRefusedInvalidated = "invalidated"
 )
 
 const cacheResultStored = "stored"
+
+const (
+	cacheControlHeader      = "Cache-Control"
+	directiveListSeparator  = ","
+	directiveValueSeparator = "="
+)
+
+type cacheDirective string
+
+const (
+	cacheDirectiveNone    cacheDirective = ""
+	cacheDirectiveNoCache cacheDirective = "no-cache"
+	cacheDirectiveNoStore cacheDirective = "no-store"
+)
+
+const servedNonceNone uint64 = 0
 
 // Why a request was captured. Capture has these two triggers and no others.
 const (
@@ -53,6 +70,9 @@ const (
 	phaseNameSettlement = "settlement"
 	phaseNameUnknown    = "unknown"
 )
+
+// What /v1/status says the process is; the PoC request mode is reported beside it, not in its place.
+const statusMode = "gateway"
 
 type (
 	apiKeySource string

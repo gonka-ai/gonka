@@ -91,7 +91,7 @@ var eventActions = map[string]eventActionSpec{
 }
 
 var globalEventTargets = map[string]string{
-	"gateway_restart": "devshardctl",
+	"gateway_restart": "gateway",
 	"epoch_advance":   "mock-chain",
 }
 

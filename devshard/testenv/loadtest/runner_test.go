@@ -210,33 +210,40 @@ func TestAssertRunJudgesGeneratorDropsOnTheirOwnBound(t *testing.T) {
 	}
 }
 
-func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"finished"},"2":{"status":"pending"}}}`)
+func serveOrphanInferences(t *testing.T, inferences string) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/admin/devshards":
+			_, _ = fmt.Fprint(w, `{"devshards":[{"id":"7","active":true}]}`)
+		case "/devshard/7/v1/debug/inferences":
+			_, _ = fmt.Fprintf(w, `{"inferences":%s}`, inferences)
+		default:
+			http.NotFound(w, r)
+		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
+	return server
+}
 
-	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.5, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{Nonce: "2"}}, nil)})
+func TestWaitForNoOrphanedWork_AllowsLoggedGhostPendingWithinThreshold(t *testing.T) {
+	server := serveOrphanInferences(t, `[{"nonce":1,"status":"finished","record":{}},{"nonce":2,"status":"pending","record":{}}]`)
+
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.5, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{EscrowID: "7", Nonce: "2"}}, nil)})
 	require.NoError(t, err)
 	require.Equal(t, 1, summary.Finished)
 	require.Zero(t, summary.Orphaned)
 }
 
 func TestWaitForNoOrphanedWork_RejectsGhostRateAboveThreshold(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"finished"},"2":{"status":"pending"}}}`)
-	}))
-	defer server.Close()
+	server := serveOrphanInferences(t, `[{"nonce":1,"status":"finished","record":{}},{"nonce":2,"status":"pending","record":{}}]`)
 
-	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.25, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{Nonce: "2"}}, nil)})
+	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{MaxGhostRate: 0.25, Timeout: time.Second, Ghosts: newGhostSet([]gatewayBurn{{EscrowID: "7", Nonce: "2"}}, nil)})
 	require.ErrorContains(t, err, "ghost inference rate 0.5000")
 }
 
 func TestWaitForNoOrphanedWorkDoesNotRequireOneInferencePerRequest(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"finished"}}}`)
-	}))
-	defer server.Close()
+	server := serveOrphanInferences(t, `[{"nonce":1,"status":"finished","record":{}}]`)
 
 	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: time.Second})
 	require.NoError(t, err)
@@ -245,10 +252,7 @@ func TestWaitForNoOrphanedWorkDoesNotRequireOneInferencePerRequest(t *testing.T)
 }
 
 func TestWaitForNoOrphanedWorkRejectsPendingInference(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"pending"}}}`)
-	}))
-	defer server.Close()
+	server := serveOrphanInferences(t, `[{"nonce":1,"status":"pending","record":{}}]`)
 
 	_, _, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond})
 	require.ErrorContains(t, err, "orphaned=1")
@@ -256,10 +260,7 @@ func TestWaitForNoOrphanedWorkRejectsPendingInference(t *testing.T) {
 }
 
 func TestWaitForNoOrphanedWorkAcceptsTerminalStatuses(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"validated"},"2":{"status":"invalidated"},"3":{"status":"timed_out"}}}`)
-	}))
-	defer server.Close()
+	server := serveOrphanInferences(t, `[{"nonce":1,"status":"validated","record":{}},{"nonce":2,"status":"invalidated","record":{}},{"nonce":3,"status":"timed_out","record":{}}]`)
 
 	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: time.Second})
 	require.NoError(t, err)
@@ -332,7 +333,7 @@ func TestWaitForNoOrphanedWorkReadsTheChainForSettledEscrows(t *testing.T) {
 		case "/v1/admin/devshards":
 			_, _ = fmt.Fprint(w, `{"devshards":[{"id":"7","active":false}]}`)
 		case "/devshard/7/v1/debug/inferences":
-			_, _ = fmt.Fprintf(w, `{"inferences":{"1":{"status":"challenged","started_at":%d}}}`, time.Now().Add(-15*time.Minute).Unix())
+			_, _ = fmt.Fprintf(w, `{"inferences":[{"nonce":1,"status":"challenged","record":{"started_at_time_ms":%d}}]}`, time.Now().Add(-15*time.Minute).UnixMilli())
 		case "/testenv/escrows":
 			_, _ = fmt.Fprint(w, `{"escrows":[{"id":7,"model_id":"model-a","settled":true}]}`)
 		default:
@@ -341,7 +342,7 @@ func TestWaitForNoOrphanedWorkReadsTheChainForSettledEscrows(t *testing.T) {
 	}))
 	defer server.Close()
 
-	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: 280 * time.Second, ChainURL: server.URL}, true)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: 280 * time.Second, ChainURL: server.URL})
 
 	require.NoError(t, err)
 	require.Zero(t, summary.Orphaned)
@@ -399,16 +400,16 @@ func TestWaitForNoOrphanedWorkLeavesDeactivatedEscrowsToTheSettleCheck(t *testin
 		case "/v1/admin/devshards":
 			_, _ = fmt.Fprint(w, `{"devshards":[{"id":"1","active":false},{"id":"2","active":true}]}`)
 		case "/devshard/1/v1/debug/inferences":
-			_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"pending"}}}`)
+			_, _ = fmt.Fprint(w, `{"inferences":[{"nonce":1,"status":"pending","record":{}}]}`)
 		case "/devshard/2/v1/debug/inferences":
-			_, _ = fmt.Fprint(w, `{"inferences":{"1":{"status":"finished"}}}`)
+			_, _ = fmt.Fprint(w, `{"inferences":[{"nonce":1,"status":"finished","record":{}}]}`)
 		default:
 			http.NotFound(w, r)
 		}
 	}))
 	defer server.Close()
 
-	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond}, true)
+	_, summary, err := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond})
 
 	require.NoError(t, err)
 	require.Zero(t, summary.Orphaned)
@@ -416,25 +417,25 @@ func TestWaitForNoOrphanedWorkLeavesDeactivatedEscrowsToTheSettleCheck(t *testin
 }
 
 // Test flow:
-// 1. Serve an active escrow with a pending record younger than the pending-age bound, then one older.
-// 2. Require the young record to count as in flight and the old one as orphaned.
+// 1. Serve an active escrow with a pending record younger than the pending-age bound, then one older, then one with no time anchor.
+// 2. Require the young record to count as in flight, and the old one and the unanchored one as orphaned.
 func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
+	anchoredRecord := func(age time.Duration) string {
+		return fmt.Sprintf(`{"started_at_height":40,"started_at_time_ms":%d}`, time.Now().Add(-age).UnixMilli())
+	}
 	cases := []struct {
 		name     string
-		age      time.Duration
+		record   string
 		orphaned int
 		inFlight int
 	}{
-		{name: "younger than the bound is in flight", age: 10 * time.Second, inFlight: 1},
-		{name: "older than the bound is orphaned", age: 2 * time.Minute, orphaned: 1},
+		{name: "younger than the bound is in flight", record: anchoredRecord(10 * time.Second), inFlight: 1},
+		{name: "older than the bound is orphaned", record: anchoredRecord(2 * time.Minute), orphaned: 1},
+		{name: "no time anchor is orphaned", record: `{"started_at_height":40}`, orphaned: 1},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			startedAt := time.Now().Add(-testCase.age).Unix()
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = fmt.Fprintf(w, `{"inferences":{"1":{"status":"pending","started_at":%d}}}`, startedAt)
-			}))
-			defer server.Close()
+			server := serveOrphanInferences(t, fmt.Sprintf(`[{"nonce":1,"status":"pending","record":%s}]`, testCase.record))
 
 			_, summary, _ := waitForNoOrphanedWork(context.Background(), server.URL, "", orphanJudge{Timeout: 10 * time.Millisecond, MaxPendingAge: time.Minute})
 
@@ -446,8 +447,8 @@ func TestWaitForNoOrphanedWorkJudgesActiveRecordsByTheirAge(t *testing.T) {
 
 func TestReadGatewayBurnsJSONLogs(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "compose.log")
-	log := `devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"ghost_probe_skipped","stage":"ghost_probe_skipped","escrow":"1","nonce":271,"reason":"participant_catching_up_no_send"}` + "\n" +
-		`devshardctl-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"started","stage":"started","escrow":"1","nonce":272}` + "\n"
+	log := `gateway-1 | {"time":"2026-10-14T12:28:14Z","level":"WARN","msg":"nonce burned for nobody","escrow":"1","nonce":271,"reason":"participant_catching_up_no_send"}` + "\n" +
+		`gateway-1 | {"time":"2026-10-14T12:28:14Z","level":"INFO","msg":"started","stage":"started","escrow":"1","nonce":272}` + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(log), 0o644))
 
 	burns, err := readGatewayBurns(path)
@@ -455,27 +456,6 @@ func TestReadGatewayBurnsJSONLogs(t *testing.T) {
 	require.Equal(t, []gatewayBurn{
 		{At: time.Date(2026, 10, 14, 12, 28, 14, 0, time.UTC), EscrowID: "1", Nonce: "271", Reason: "participant_catching_up_no_send"},
 	}, burns)
-}
-
-func TestFetchGatewayStateSizes(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/debug/state-sizes", r.URL.Path)
-		require.Equal(t, "Bearer test-key", r.Header.Get("Authorization"))
-		_, _ = fmt.Fprint(w, `{"diffs":12,"diffs_bytes":12345,"diffs_mb":0.011,"signature_nonces":8,"nonce_states":14,"pending_txs":2,"applied_tx_keys":11}`)
-	}))
-	defer server.Close()
-
-	sizes, err := fetchGatewayStateSizes(context.Background(), server.URL, "test-key")
-	require.NoError(t, err)
-	require.Equal(t, GatewayStateSizes{
-		Diffs:           12,
-		DiffsBytes:      12345,
-		DiffsMB:         0.011,
-		SignatureNonces: 8,
-		NonceStates:     14,
-		PendingTxs:      2,
-		AppliedTxKeys:   11,
-	}, sizes)
 }
 
 func TestScopedGatewayURL(t *testing.T) {
@@ -491,68 +471,6 @@ func TestRotationModelIDsPreferDatasetModels(t *testing.T) {
 	}
 	got := rotationModelIDs(cfg, []string{"dataset-model", "dataset-model"}, scenario)
 	require.Equal(t, []string{"dataset-model", "config-model", scenario.Workload.Request.Model}, got)
-}
-
-func TestWriteGatewayStateSizes(t *testing.T) {
-	outputDir := t.TempDir()
-	require.NoError(t, writeGatewayStateSizes(outputDir, GatewayStateSizes{
-		Diffs:           12,
-		DiffsBytes:      12345,
-		DiffsMB:         0.011,
-		SignatureNonces: 8,
-		NonceStates:     14,
-		PendingTxs:      2,
-		AppliedTxKeys:   11,
-	}))
-
-	body, err := os.ReadFile(filepath.Join(outputDir, "gateway-state.json"))
-	require.NoError(t, err)
-	require.JSONEq(t, `{"diffs":12,"diffs_bytes":12345,"diffs_mb":0.011,"signature_nonces":8,"nonce_states":14,"pending_txs":2,"applied_tx_keys":11}`, string(body))
-}
-
-func TestDisabledRotationDoesNotConfigureGatewayNonceLimit(t *testing.T) {
-	scenario := testScenario()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]json.RawMessage
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		require.NotContains(t, body, "escrow_rotation")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-	require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
-}
-
-func TestApplyGatewayParticipantQuarantine(t *testing.T) {
-	for _, tc := range []struct {
-		name     string
-		settings GatewayParticipantThrottle
-		want     map[string]int64
-	}{
-		{name: "defaults"},
-		{name: "transport only", settings: GatewayParticipantThrottle{TransportFailureQuarantine: "30s"}, want: map[string]int64{"transport_failure_quarantine_ms": 30000}},
-		{name: "http only", settings: GatewayParticipantThrottle{HTTPQuarantine: "45s"}, want: map[string]int64{"http_quarantine_ms": 45000}},
-		{name: "both", settings: GatewayParticipantThrottle{TransportFailureQuarantine: "70s", HTTPQuarantine: "70s"}, want: map[string]int64{"transport_failure_quarantine_ms": 70000, "http_quarantine_ms": 70000}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			scenario := testScenario()
-			scenario.Gateway.ParticipantThrottle = tc.settings
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "/v1/admin/settings", r.URL.Path)
-				var body map[string]json.RawMessage
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-				if tc.want == nil {
-					require.NotContains(t, body, "participant_throttle")
-				} else {
-					var throttle map[string]int64
-					require.NoError(t, json.Unmarshal(body["participant_throttle"], &throttle))
-					require.Equal(t, tc.want, throttle)
-				}
-				w.WriteHeader(http.StatusOK)
-			}))
-			defer server.Close()
-			require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, nil))
-		})
-	}
 }
 
 // Test flow:
@@ -574,7 +492,7 @@ func TestFetchOrphanSnapshot_ReadsGatewayPerEscrowLists(t *testing.T) {
 	}))
 	defer server.Close()
 
-	snapshot, err := fetchOrphanSnapshot(context.Background(), server.Client(), server.URL, "", true)
+	snapshot, err := fetchOrphanSnapshot(context.Background(), server.Client(), server.URL, "")
 
 	require.NoError(t, err)
 	require.Len(t, snapshot.Runtimes, 2)
@@ -583,14 +501,14 @@ func TestFetchOrphanSnapshot_ReadsGatewayPerEscrowLists(t *testing.T) {
 	require.Equal(t, map[string]debugInference{"1": {Status: "validated"}}, snapshot.Runtimes[1].Inferences)
 }
 
-func TestDecodeDebugInferences_ReadsDevshardctlNonceMap(t *testing.T) {
-	inferences, err := decodeDebugInferences(json.RawMessage(`{"5":{"status":"timed_out"}}`))
+func TestDecodeDebugInferences_ReadsTheGatewayList(t *testing.T) {
+	inferences, err := decodeDebugInferences(json.RawMessage(`[{"nonce":5,"status":"timed_out","record":{}}]`))
 
 	require.NoError(t, err)
 	require.Equal(t, map[string]debugInference{"5": {Status: "timed_out"}}, inferences)
 }
 
-func TestApplyCmdGatewayScenarioSettings_SendsOverridesAndToleratesRefusal(t *testing.T) {
+func TestApplyGatewayScenarioSettings_SendsOverridesAndToleratesRefusal(t *testing.T) {
 	var method string
 	var overrides map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -601,9 +519,8 @@ func TestApplyCmdGatewayScenarioSettings_SendsOverridesAndToleratesRefusal(t *te
 	defer server.Close()
 	scenario := testScenario()
 	scenario.Gateway.Redundancy.SecondaryWaitAfterWinner = "30s"
-	scenario.Gateway.ParticipantThrottle.HTTPQuarantine = "70s"
 
-	err := applyCmdGatewayScenarioSettings(context.Background(), server.URL, "admin", scenario, nil)
+	err := applyGatewayScenarioSettings(context.Background(), server.URL, "admin", scenario, nil)
 
 	require.NoError(t, err)
 	require.Equal(t, http.MethodPut, method)
@@ -658,39 +575,6 @@ func TestRefuseConcurrentStacks(t *testing.T) {
 }
 
 // Test flow:
-// 1. Apply gateway settings with the two new quarantines and per-model settlement overrides to a fake admin endpoint.
-// 2. Check the throttle keys in milliseconds, and that settlement_enabled is set only on overridden models.
-// 3. Check an override for a model that is not rotated is rejected.
-func TestApplyGatewayChunkASettings(t *testing.T) {
-	scenario := mixScenario()
-	scenario.Gateway.ParticipantThrottle = GatewayParticipantThrottle{EmptyStreamQuarantine: "45s", StalledWinnerQuarantine: "1m"}
-	disabled := false
-	scenario.Gateway.EscrowRotation = GatewayEscrowRotation{Enabled: true, SettlementEnabled: true, PrePoCBlocks: 10, TempCount: 1, TargetCount: 2, Amount: 5, PrivateKeyEnv: "KEY",
-		Models: []GatewayRotationModel{{Model: "model-b", SettlementEnabled: &disabled}, {Model: "model-a"}}}
-	var body struct {
-		Throttle map[string]int64 `json:"participant_throttle"`
-		Rotation struct {
-			SettlementEnabled bool             `json:"settlement_enabled"`
-			Models            []map[string]any `json:"models"`
-		} `json:"escrow_rotation"`
-	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.NoError(t, json.NewDecoder(r.Body).Decode(&body))
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-	models := rotationModelIDs(nil, nil, scenario)
-	require.Equal(t, []string{"model-a", "model-b"}, models)
-	require.NoError(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, models))
-	require.Equal(t, map[string]int64{"empty_stream_quarantine_ms": 45000, "stalled_winner_quarantine_ms": 60000}, body.Throttle)
-	require.True(t, body.Rotation.SettlementEnabled)
-	require.Len(t, body.Rotation.Models, 2)
-	require.NotContains(t, body.Rotation.Models[0], "settlement_enabled")
-	require.Equal(t, false, body.Rotation.Models[1]["settlement_enabled"])
-	require.ErrorContains(t, applyGatewayScenarioSettings(context.Background(), server.URL, "", scenario, []string{"model-a"}), "model-b is not a rotated model")
-}
-
-// Test flow:
 // 1. Write the runner config from a minimal base config for a 3-participant scenario with per-host env, ML node bindings and a two-model mix.
 // 2. Load the written config.
 // 3. Check host env and node bindings are threaded through, and each mix model has its own escrow and epoch group.
@@ -733,7 +617,7 @@ func TestEventAssertions(t *testing.T) {
 	now := time.Now().UTC()
 	checks := eventAssertions([]EventRecord{
 		{ID: "c1", Action: "ml_fault", Target: "mock-openai-3", StartedAt: &now, EndedAt: &now},
-		{ID: "c6", Action: "gateway_restart", Target: "devshardctl", Error: "kill failed"},
+		{ID: "c6", Action: "gateway_restart", Target: "gateway", Error: "kill failed"},
 		{ID: "c3", Action: "pause", Target: "versiond-3", StartedAt: &now},
 	})
 	require.Equal(t, "events.c1.ml_fault.mock-openai-3.applied", checks[0].Name)

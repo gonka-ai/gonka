@@ -167,10 +167,13 @@ func tempoHasOperation(client *http.Client, baseURL, service, operation string) 
 	return false
 }
 
+// tempoCoveringSearchLimit is far above the gateway's own chain-query traces, because Tempo returns the first matches it finds, not the newest.
+const tempoCoveringSearchLimit = 500
+
 func tempoTraceCoveringServices(client *http.Client, baseURL string, wantServices []string) (string, bool) {
 	ids := tempoSearchTraceIDs(client, baseURL, map[string]string{
 		"service.name": wantServices[0],
-	}, 20)
+	}, tempoCoveringSearchLimit)
 	for _, id := range ids {
 		have, ok := tempoTraceServices(client, baseURL, id)
 		if !ok {

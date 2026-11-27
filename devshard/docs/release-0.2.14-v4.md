@@ -19,8 +19,7 @@ behind **versiond-router** on **shared Postgres**, with sticky session routing
 and validation-lease exclusivity. Pre-v4 approved versions stay **single-host**
 (SQLite) until retired.
 
-The gateway (`devshardctl`) talks to the chain over **gRPC only** — LCD REST
-create/settle paths are gone.
+The gateway talks to the chain over **gRPC only** — LCD REST create/settle paths are gone.
 
 Public observability is **versionless**: dashboards scrape
 `/devshard/sessions|stats|metrics` without binding protocol version. Only the
@@ -59,36 +58,9 @@ unknown modes fall back to exclusive stop/start.
 
 ## Breaking / operator-facing changes
 
-### Gateway CLI: `--chain-rest` → `--chain-grpc`
-
-`devshardctl` no longer accepts LCD REST for chain I/O.
-
-| Before (pre-v4 / r1) | After (r2 / v4) |
-| --- | --- |
-| `--chain-rest` / `DEVSHARD_CHAIN_REST` (LCD, e.g. `:1317`) | `--chain-grpc` / `DEVSHARD_CHAIN_GRPC` (gRPC, e.g. `:9090`) |
-| Optional `DEVSHARD_TX_QUERY_REST` | Unused — tx confirm uses gRPC `GetTx` |
-| Admin / persisted `chain_rest` | Deprecated and **ignored**; use `chain_grpc` / env |
-
-**Migration:**
-
-1. Point gateway at chain gRPC: `--chain-grpc host:9090` or
-   `DEVSHARD_CHAIN_GRPC=host:9090` (also accepts `NODE_GRPC_URL`).
-2. Remove `--chain-rest` and `DEVSHARD_CHAIN_REST` / `DEVSHARD_TX_QUERY_REST`
-   from compose, systemd, and scripts.
-3. Optional TLS: `CHAIN_GRPC_TLS=true|1|yes` (default remains plaintext).
-4. Override chain id when not mainnet: `DEVSHARD_CHAIN_ID` (default
-   `gonka-mainnet`).
-
-Join / testenv compose already seeds `DEVSHARD_CHAIN_GRPC` only.
-
 ### edge-api / devshardd / gateway: chain query fallback to CometBFT RPC
 
-edge-api, devshardd and the devshardctl gateway still prefer direct chain gRPC
-(`:9090`), but their chain **queries** now fall back to CometBFT RPC (`:26657`)
-when gRPC is unreachable. This covers nodes with `:9090` not published, bound to
-`localhost`, or firewalled, which previously made every query fail. A node with
-gRPC fully disabled is covered for module queries only — see the limitation
-below.
+edge-api, devshardd and the gateway still prefer direct chain gRPC (`:9090`), but their chain **queries** now fall back to CometBFT RPC (`:26657`) when gRPC is unreachable. This covers nodes with `:9090` not published, bound to `localhost`, or firewalled, which previously made every query fail. A node with gRPC fully disabled is covered for module queries only — see the limitation below.
 
 Only the gRPC endpoint is required. The RPC endpoint defaults to the same host on
 port `26657`, so an existing deployment gains the fallback without new settings:
@@ -280,7 +252,7 @@ Design note: [pr-versionless-observability.md](./pr-versionless-observability.md
 ### Target topology
 
 ```text
-clients / gateway (devshardctl)
+clients / gateway
        │
        ▼
  public edge proxy  (deploy/join `proxy` — nginx)
@@ -369,7 +341,7 @@ the HA overlays.
 | [`deploy/join/docker-compose.yml`](../../deploy/join/docker-compose.yml) | Base: node, api (dapi), **edge-api**, versiond, **proxy** (edge), explorer, … |
 | [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | HA: postgres + versiond2 + versiond-router; proxy → router |
 | [`deploy/join/docker-compose.edge-api-multi.yml`](../../deploy/join/docker-compose.edge-api-multi.yml) | Optional: edge-api2/3 + edge-api-router; proxy → router |
-| [`deploy/join/docker-compose.devshard-gateway.yml`](../../deploy/join/docker-compose.devshard-gateway.yml) | Optional gateway |
+| [`devshard/cmd/gateway/deploy/docker-compose.devshard-gateway.yml`](../cmd/gateway/deploy/docker-compose.devshard-gateway.yml) | Optional gateway |
 
 ```bash
 # Baseline join

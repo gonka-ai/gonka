@@ -14,10 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const gatewayChatTimeout = 3 * time.Minute
-
-// TestenvAdminAPIKey matches DEVSHARD_ADMIN_API_KEY in gencompose .env.
-const TestenvAdminAPIKey = "testenv-citest-admin"
+// TestenvAdminAPIKey matches DEVSHARD_ADMIN_API_KEY in gencompose .env, and GatewayEscrowKeyEnv names the
+// gateway env var that holds the escrow signing key, as gencompose renders it.
+const (
+	gatewayChatTimeout  = 3 * time.Minute
+	TestenvAdminAPIKey  = "testenv-citest-admin"
+	GatewayEscrowKeyEnv = "GATEWAY_ESCROW_KEY"
+)
 
 // GatewayChatClient returns an HTTP client with a longer timeout for inference paths.
 func GatewayChatClient() *http.Client {
@@ -158,9 +161,7 @@ func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayU
 	require.NoError(t, err)
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(httpReq, adminAPIKey)
 
 	resp, err := client.Do(httpReq)
 	require.NoError(t, err)
@@ -248,9 +249,7 @@ func TryPostGatewayChatCompletionStreamTimed(client *http.Client, gatewayURL, ad
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(httpReq, adminAPIKey)
 	start := time.Now()
 	resp, err := client.Do(httpReq)
 	if err != nil {
@@ -335,9 +334,7 @@ func postGatewayChatHTTP(client *http.Client, gatewayURL, adminAPIKey string, re
 	if req.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
 	}
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(httpReq, adminAPIKey)
 	resp, err := client.Do(httpReq)
 	if err != nil {
 		return GatewayChatHTTPResult{}, err
@@ -419,9 +416,7 @@ func PostGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if adminAPIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
+	setAdminBearer(req, adminAPIKey)
 	resp, err := client.Do(req)
 	if err != nil {
 		return err
@@ -431,8 +426,8 @@ func PostGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest
 	if err != nil {
 		return err
 	}
-	if resp.StatusCode >= 300 {
-		return fmt.Errorf("POST %s: %d %s", url, resp.StatusCode, string(body))
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return &GatewayStatusError{Method: http.MethodPost, URL: url, StatusCode: resp.StatusCode, Body: string(body)}
 	}
 	if dest == nil {
 		return nil
@@ -441,8 +436,7 @@ func PostGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest
 }
 
 // WaitGatewayChatReady waits for catalog admission first (when stack is
-// provided), then polls GET /v1/status until the gateway reports a runtime
-// (escrow_id, runtimes > 0, or a non-empty devshards list). Catalog must come
+// provided), then polls GET /v1/status until the gateway lists a routable escrow. Catalog must come
 // before treating the gateway as chat-ready: heartbeats and warmup POST
 // /chat/completions, and a 503 undeclared_version quarantines the host. It
 // does not POST /v1/chat/completions.
@@ -457,34 +451,29 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 	if len(stack) > 0 && stack[0] != nil {
 		WaitRouterCatalogAdmitted(t, stack[0], timeout)
 	}
-	t.Logf("citest: waiting for gateway chat runtime → %s/v1/status", gatewayURL)
+	t.Logf("citest: waiting for a routable gateway escrow → %s/v1/status", gatewayURL)
 	var attempts int
 	var lastDetail string
 	ok := assertEventually(t, timeout, 2*time.Second, func() bool {
 		attempts++
-		var status map[string]any
-		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
+		escrows, err := GetGatewayStatusEscrows(client, gatewayURL)
+		if err != nil {
 			lastDetail = err.Error()
-			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
+			maybeLogWaitAttempt(t, "routable gateway escrow", attempts, lastDetail)
 			return false
 		}
-		if !gatewayStatusHasRuntime(status) {
-			lastDetail = fmt.Sprintf("no active runtime in status: %v", status)
-			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
-			return false
-		}
-		if !gatewayStatusHeightSeedReady(status) {
-			lastDetail = fmt.Sprintf("height seed not ready in status: %v", status)
-			maybeLogWaitAttempt(t, "gateway height seed", attempts, lastDetail)
+		if !gatewayStatusListsRoutableEscrow(escrows) {
+			lastDetail = fmt.Sprintf("no routable escrow in status: %+v", escrows)
+			maybeLogWaitAttempt(t, "routable gateway escrow", attempts, lastDetail)
 			return false
 		}
 		return true
 	})
 	if !ok {
 		if len(stack) > 0 && stack[0] != nil {
-			DumpComposeLogs(t, stack[0], "devshardctl", "mock-chain", "versiond-0", "versiond-1")
+			DumpComposeLogs(t, stack[0], "gateway", "mock-chain", "versiond-0", "versiond-1")
 		}
-		t.Fatalf("citest: gateway chat runtime not ready after %d attempts: %s", attempts, lastDetail)
+		t.Fatalf("citest: gateway lists no routable escrow after %d attempts: %s", attempts, lastDetail)
 	}
 }
 
@@ -512,58 +501,11 @@ func routerCatalogHealthzURL(routerHTTP, version string) string {
 	return strings.TrimRight(routerHTTP, "/") + "/" + version + "/healthz"
 }
 
-func gatewayStatusHasRuntime(status map[string]any) bool {
-	if status == nil {
-		return false
-	}
-	if _, ok := status["escrow_id"]; ok {
-		return true
-	}
-	if runtimes, ok := status["runtimes"].(float64); ok && runtimes > 0 {
-		return true
-	}
-	if devshards, ok := status["devshards"].([]any); ok && len(devshards) > 0 {
-		return true
+func gatewayStatusListsRoutableEscrow(escrows []gatewayStatusEscrow) bool {
+	for _, escrow := range escrows {
+		if escrow.EscrowID != noEscrowID {
+			return true
+		}
 	}
 	return false
-}
-
-func gatewayStatusHeightSeedReady(status map[string]any) bool {
-	if status == nil {
-		return true
-	}
-	if !heightSeedValueReady(status["height_seed"]) {
-		return false
-	}
-	devshards, ok := status["devshards"].([]any)
-	if !ok {
-		return true
-	}
-	for _, raw := range devshards {
-		item, _ := raw.(map[string]any)
-		if item == nil {
-			continue
-		}
-		if !heightSeedValueReady(item["height_seed"]) {
-			return false
-		}
-	}
-	return true
-}
-
-func heightSeedValueReady(v any) bool {
-	if v == nil {
-		return true
-	}
-	m, ok := v.(map[string]any)
-	if !ok {
-		return true
-	}
-	state, _ := m["state"].(string)
-	switch state {
-	case "", "ok":
-		return true
-	default:
-		return false
-	}
 }

@@ -15,6 +15,8 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 | `stream.go` | `clientStream`: the writer the race streams through, and the fold for a non-streaming client |
 | `buffer_budget.go` | the ceiling on the bytes every non-streaming reply holds at once |
 | `cache.go` | the response cache, keyed on everything that varies the answer |
+| `cache_index.go` | the index from the nonce that won a reply to its entry, the set of verdicts that arrived before their reply, the removals built on them and the entry points the composition root calls |
+| `cache_policy.go` | the `Cache-Control` request directives |
 | `errors.go` | which error becomes which status |
 | `admin*.go` | the operator surface: escrows, overrides, quarantine, accounting resets |
 | `capture.go`, `inspect.go` | sampled request capture for diagnosis |
@@ -48,7 +50,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 `requireAdmin` is where the admin key comparison lives, on the operator routes themselves rather than in a blanket middleware. With no admin key configured the whole surface answers 404.
 
-`disabled` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: a healthcheck may read `/v1/status`, and a gateway disabled on purpose is not unhealthy.
+`enabled: false` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: a healthcheck may read `/v1/status`, and a gateway switched off on purpose is not unhealthy.
 
 ## Reading a body
 
@@ -81,7 +83,7 @@ Each `route` is one registered pattern. An empty label means the route is not in
 - `Send` hands the stream on unwrapped: the transport flushes each SSE line through an `http.Flusher` assertion on it, and a wrapper would leave a crowned winner's bytes in the server's buffer. `ProcessResponse` is applied for a reply that arrived beside an error too.
 - `divergedState` reads a post state root the escrow cannot accept from either side of the wire: the host reports it as a diff it could not apply, the session as a hash that differs from the local root.
 - `Poster` resolves the vote poster for one escrow and the params its race committed. A retired escrow still resolves: its committed nonces have no other settlement path.
-- `escrowVotes.payload` rebuilds what the host was asked for with `Payload` in [`devshard/gatewayprotocol/timeoutclaim`](../../../gatewayprotocol/timeoutclaim/README.md), the rule `devshardctl` follows too. The record is read on its own with `Inference`, never through `SnapshotState`: a vote comes when an escrow is already struggling, and a full state copy per vote is what it can least afford. The status views read the balance and the version the same way.
+- `escrowVotes.payload` rebuilds what the host was asked for with `Payload` in [`devshard/gatewayprotocol/timeoutclaim`](../../../gatewayprotocol/timeoutclaim/README.md). The record is read on its own with `Inference`, never through `SnapshotState`: a vote comes when an escrow is already struggling, and a full state copy per vote is what it can least afford. The status views read the balance and the version the same way.
 
 ## Streaming the reply
 
@@ -142,6 +144,7 @@ Both halves of `usage` latch together over an attempt, so a row can never pair o
 - **A race where every attempt was refused as overloaded is the shard having nowhere to send the request, not an upstream answering badly.** `engine.ErrHostsUnavailable` answers 503 with `Retry-After` of the live `HostCutoff.BaseMS`, rounded up to whole seconds, read from `s.config` the same way every other handler reads runtime configuration — the same base a refusing host is cut off for.
 - **A request that reached its cap is told to wait longer than a busy shard is.** `scheduler.ErrRequestCapped`, which a race returns when the burn cap or the cap on started attempts refused a hedge or retry and no attempt of the request was alive, answers 503 with the overloaded message and `Retry-After` of `requestCapRetryAfter` (30 seconds). `ErrHostsBusy` keeps its one second. See [routing.md](../docs/routing.md), "The burn cap of a request".
 - **A model whose weight-derived limit is zero is the shard having no capacity, not a quota.** `limits.ErrNoLiveWeight`, which the limiter returns at once when a weight-derived concurrency limit is zero, answers 503 with the same `Retry-After` as `engine.ErrHostsUnavailable` instead of a 429 with the admission queue wait, the cadence at which a cut-off host comes back. It is not a `*limits.RateLimitError`; `limiterRefusal` still counts it under the `no_live_weight` rejection reason and journals it as a throttled request.
+- **A request whose client left before the limiter took it answers 499.** `limits/gateway.go` returns `context.Canceled` for a cancelled context; `limiterRefusal` counts it under the `client_gone` rejection reason and journals it as a throttled request, so the departure is in the log and the counter instead of a silent 502. A wait cancelled by the gateway's own shutdown (the base context is cancelled with `errGatewayStopping`) is neither counted nor answered 499.
 
 ## What a finished request records
 
@@ -164,6 +167,8 @@ A request's prompt is counted at most once. `checkContext` reads the prompt for 
 `devshardView` and `rotationView` keep the storage rows out of the response: without them a column rename in the store silently changes the API, and the record's own field names reach the client as written.
 
 These keys are fixed: an escrow is `id` in `/v1/status`, `/v1/admin/state` and the `/v1/admin/devshards` answers and requests, and `active_requests`, `latest` / `model_id`, `suspicious_hosts`, `loaded_runtimes`, `escrows_removed`, `nonces`, `max_concurrent_requests_per_10000_weight` in `capacity`, `active` on import and `model_id` on escrow creation. Import takes `source_path`, the path the gateway copies the escrow from. The `/v1/admin/devshards` listing goes through `devshardView` like `/v1/admin/state`, so an empty `settle_tx_hash` or `route_prefix` is left out. `/v1/status` reports `chain_phase`, the chain's epoch phase as the last snapshot read it, and a listing row carries `runtime` only while its session is resident; `admission_test.go` and `admin_test.go` read those two by name, and `fixed_keys_test.go` holds the rest in place. The admin settings keep their own keys: `config.Overrides` is also the stored form, so its keys stay as they are.
+
+`/v1/status` answers `mode: "gateway"` as a constant, and the PoC request mode (`off` or `relaxed`) under `poc_mode`; `mode` is the process kind and `poc_mode` the request mode. Each `devshards[]` row whose session is routable carries `config`, the parameters the session froze at creation under snake_case keys (`refusal_timeout`, `execution_timeout`, `token_price`, `create_devshard_fee`, `fee_per_nonce`, `vote_threshold`, `validation_rate`, `inference_seal_grace_nonces`, `inference_seal_grace_seconds`, `auto_seal_every_n_nonces`); `/devshard/{id}/v1/debug/state` carries the same values under the Go field names. `config` is read through `sessionConfigReader`, the session read that copies only the config, so a session that cannot report it leaves the key out.
 
 `devshardStatus.SessionVersion` is the protocol tag the session was created under and the one every settlement payload carries. An operator reading this endpoint has no other way to see which version an escrow is bound to, and a mismatch with the host it dispatches to is what makes a settlement unacceptable.
 
@@ -223,7 +228,29 @@ Eviction drops entries in map order: with a per-caller key and an hour's TTL the
 
 **A hit is served while proof-of-compute blocks requests.** `chat` runs admission first and keeps its refusal; a refusal that is proof-of-compute alone lets the lookup run, a hit is served, and a miss gets the same refusal. Every other refusal is written before the lookup. See [`docs/rules.md`](../docs/rules.md), "Refused mechanisms".
 
-Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
+Every reply offered to the cache is counted in `devshard_gateway_cache_results_total{model,result}`: `stored`, or the refusal by name — the cache's own (`too_large` for a reply past the entry limit, `write_failed`, `race_failed` for a race that failed or a client that left, `no_escrow`, `invalidated` for a reply whose nonce was voted invalid before it arrived, whose winner was a suspicious host, or whose race began before an epoch clear or a host mark) or the `filters` vocabulary (`empty_body`, `unfinished_answer`, `transient_failure`, `unreadable_event`, `unreplayable_status`). Hits and misses stay in `devshard_gateway_cache_hits_total` and `_misses_total`; this counter answers the other question, why a reply that ran a race is not there to hit.
+
+### Removing an entry
+
+An entry records the nonce that won its race, the escrow that nonce belongs to and the participant that served it. `byNonce` indexes entries by (escrow, nonce); `put` and `dropLocked` are the only code that writes or deletes it, so expiry, eviction and replacement keep it exact. A reply with no winning nonce is stored and cannot be removed by nonce.
+
+The first negative validation vote seen in a composed diff removes the entry by (escrow, nonce), through `Server.InvalidateCachedReply`. The cache takes only its own lock in that call, because the diff observer runs under the session's lock. The signal comes through the nonce ledger's diff observer, so it exists only while `nonce_accounting` is enabled.
+
+A verdict can arrive before the reply reaches `put`. A verdict that finds no entry therefore records its (escrow, nonce) in `revoked`, and `put` refuses a reply whose nonce is there as `invalidated`. `revoked` holds at most `revokedLimit` rows and forgets the oldest when full; a reply that finishes after its verdict was forgotten is stored. A row has no expiry of its own: a nonce is never reused within an escrow.
+
+A reply whose winner was a suspicious host is not stored, so a mark that lands before the race ends is not undone by it. Each entry is charged `cacheEntryOverhead` for its map rows, including this index row.
+
+A rise of the chain's effective epoch (`ObservePhase`, subscribed to the phase observer) clears the whole cache; an unknown epoch or one no higher than the last seen changes nothing, so neither a failed poll nor a lagging chain read does. Marking a participant suspicious through the admin route removes the entries that participant served. Each clearing bumps a generation that `chat` reads before its race, and `put` refuses a reply from a race that began before it as `invalidated`. Neither clears `revoked`.
+
+### What the client controls
+
+The request header `Cache-Control` is read on `POST /v1/chat/completions` and nowhere else; the body is untouched, so the cache key is the same as without the header.
+
+- **`no-cache`** skips the lookup and runs a race; the fresh reply replaces the entry under its key.
+- **`no-store`** skips the lookup and stores nothing; the reply is not recorded, so it spends none of the response buffer budget. It wins over `no-cache` when both are present.
+- Every other directive is ignored. Names are matched case-insensitively and an argument (`no-cache="Set-Cookie"`) does not change the directive.
+
+A bypass during proof-of-compute is refused as a miss is, with the same 503. A different `seed` is a different body and therefore a different entry.
 
 ## Read next
 

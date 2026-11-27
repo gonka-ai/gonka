@@ -4,11 +4,14 @@ import (
 	"context"
 
 	p2p "github.com/cometbft/cometbft/proto/tendermint/p2p"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"devshard/testenv/mockchain/rpcface"
 	"devshard/testenv/mockchain/store"
 )
 
@@ -96,15 +99,16 @@ func (s *InferenceServer) GranteesByMessageType(_ context.Context, req *inferenc
 	return &inferencetypes.QueryGranteesByMessageTypeResponse{Grantees: out}, nil
 }
 
-// CometServer implements cmtservice for GetLatestBlock (Phase 3a).
+// CometServer implements cmtservice for GetLatestBlock (Phase 3a) and GetBlockByHeight.
 type CometServer struct {
 	cmtservice.UnimplementedServiceServer
 	store *store.Store
+	rpc   *rpcface.Service
 }
 
-// NewCometServer returns a cmtservice server backed by store.
-func NewCometServer(st *store.Store) *CometServer {
-	return &CometServer{store: st}
+// NewCometServer returns a cmtservice server backed by store. With rpc set, blocks carry the time and hash the CometBFT RPC serves at the same height; without it GetBlockByHeight is unimplemented.
+func NewCometServer(st *store.Store, rpc *rpcface.Service) *CometServer {
+	return &CometServer{store: st, rpc: rpc}
 }
 
 // GetNodeInfo answers with the chain id as "network"; the gateway reads it before signing anything.
@@ -114,7 +118,34 @@ func (s *CometServer) GetNodeInfo(_ context.Context, _ *cmtservice.GetNodeInfoRe
 	}, nil
 }
 
+func (s *CometServer) GetBlockByHeight(_ context.Context, req *cmtservice.GetBlockByHeightRequest) (*cmtservice.GetBlockByHeightResponse, error) {
+	if s.rpc == nil {
+		return nil, status.Error(codes.Unimplemented, "mockchain grpc: no block source")
+	}
+	header, id, err := s.rpc.BlockAt(&req.Height)
+	if err != nil {
+		return nil, status.Error(codes.InvalidArgument, err.Error())
+	}
+	return &cmtservice.GetBlockByHeightResponse{BlockId: protoBlockID(id), SdkBlock: sdkBlock(header)}, nil
+}
+
+func protoBlockID(id cmttypes.BlockID) *cmtproto.BlockID {
+	pb := id.ToProto()
+	return &pb
+}
+
+func sdkBlock(header *cmttypes.Header) *cmtservice.Block {
+	return &cmtservice.Block{Header: cmtservice.Header{Height: header.Height, ChainID: header.ChainID, Time: header.Time}}
+}
+
 func (s *CometServer) GetLatestBlock(_ context.Context, _ *cmtservice.GetLatestBlockRequest) (*cmtservice.GetLatestBlockResponse, error) {
+	if s.rpc != nil {
+		header, id, err := s.rpc.BlockAt(nil)
+		if err != nil {
+			return nil, status.Error(codes.InvalidArgument, err.Error())
+		}
+		return &cmtservice.GetLatestBlockResponse{BlockId: protoBlockID(id), SdkBlock: sdkBlock(header)}, nil
+	}
 	height := s.store.GetBlockHeight()
 	return &cmtservice.GetLatestBlockResponse{
 		SdkBlock: &cmtservice.Block{

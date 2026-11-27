@@ -54,18 +54,18 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
         val escrowAmount = 7_000_000_000L
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
-        logSection("Starting devshard proxy against devshardd")
-        val handle = genesis.startDevshardProxy(
+        logSection("Serving the escrow through the gateway")
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = overrideRoutePrefix,
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
-            logSection("Sending chat completions via proxy")
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
+            logSection("Sending chat completions through the gateway")
             for (i in 0 until 20) {
-                val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
+                val response = genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "test prompt $i")
                 assertThat(response).isNotEmpty()
             }
 
@@ -82,7 +82,7 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
                 requireCompletedValidations = false,
             )
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
     }
 
@@ -101,20 +101,20 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
         val escrowAmount = 7_000_000_000L
         val escrowId = genesis.createDevshardEscrowForUser(escrowAmount, user.keyName, modelId = devshardEscrowModel)
 
-        logSection("Starting devshard proxy against devshardd")
-        val handle = genesis.startDevshardProxy(
+        logSection("Serving the escrow through the gateway")
+        val handle = genesis.serveDevshardEscrow(
             escrowId = escrowId,
             keyName = user.keyName,
             routePrefix = overrideRoutePrefix,
         )
 
         try {
-            genesis.waitForDevshardProxyWarmup(handle.proxyUrl)
-            logSection("Sending streaming chat completions via proxy")
+            genesis.waitForDevshardEscrowWarmup(handle.escrowUrl)
+            logSection("Sending streaming chat completions through the gateway")
             val numInferences = 20L
             for (i in 0 until numInferences) {
                 val response =
-                    genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i", stream = true)
+                    genesis.sendChatCompletion(handle.escrowUrl, defaultModel, "test prompt $i", stream = true)
                 assertThat(response).isNotEmpty()
                 assertThat(response).contains("data:")
             }
@@ -128,13 +128,13 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
             )
 
             logSection("Verifying inference statuses")
-            val finished = genesis.getDevshardProxyInferences(handle.proxyUrl)
+            val finished = genesis.getDevshardEscrowInferences(handle.escrowUrl)
                 .values.count { it.status == DevshardInferenceStatus.FINISHED }
             assertThat(finished)
                 .describedAs("finished devshardd inferences")
                 .isGreaterThanOrEqualTo(numInferences.toInt())
         } finally {
-            genesis.stopDevshardProxy(escrowId)
+            genesis.withdrawDevshardEscrow(escrowId)
         }
     }
 }

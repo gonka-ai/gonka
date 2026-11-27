@@ -156,7 +156,7 @@ func TestE2E_GatewayAppliesTheTimeoutOfAHostThatReceiptsAndStalls(t *testing.T) 
 	requireSlowE2E(t)
 	env, client := startGatewayEnv(t, e2eEnvOptions{
 		gatewayEnvOverrides: map[string]string{
-			"DEVSHARD_E2E":                          "1",
+			e2eModeEnv:                              e2eModeOn,
 			e2econfig.RefusalTimeoutSecondsEnv:      "5",
 			e2econfig.ExecutionTimeoutSecondsEnv:    "10",
 			e2econfig.StreamingHardTimeoutMillisEnv: "5000",

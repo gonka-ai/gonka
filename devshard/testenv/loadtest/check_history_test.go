@@ -17,7 +17,7 @@ import (
 // 5. Record a run older than all of them and require its count to cover only runs up to it.
 func TestCheckHistoryAsksForFiveConsecutiveXPass(t *testing.T) {
 	path := filepath.Join(t.TempDir(), checkHistoryFile)
-	key := historyKey{Scenario: "prod-like-15m", Gateway: "devshardctl"}
+	key := historyKey{Scenario: "prod-like-15m"}
 	check := func(status string) []AssertionResult {
 		return []AssertionResult{
 			{Name: "invariants.error-rate-and-latency.timeout-vote-fanout.error_rate", Case: "timeout-vote-fanout", Status: status, Passed: true, Details: "known_bug #1988"},
@@ -59,7 +59,7 @@ func TestCheckHistoryAsksForFiveConsecutiveXPass(t *testing.T) {
 // 5. Record a run with two records over the bound; require it to fail with no earlier run over the bound needed.
 func TestCheckHistoryFixesMaxPendingAgeOnlyWhenItRepeats(t *testing.T) {
 	path := filepath.Join(t.TempDir(), checkHistoryFile)
-	key := historyKey{Scenario: "prod-like-15m", Gateway: "gateway"}
+	key := historyKey{Scenario: "prod-like-15m"}
 	check := func(records int) []AssertionResult {
 		age := AssertionResult{Name: "invariants.no-nonce-left-pending.max_pending_age", Passed: records == 0, Actual: fmt.Sprintf("records_over=%d", records)}
 		if records == 1 {

@@ -111,7 +111,7 @@ func TestAPublishPassNeverReopensAnEscrowParkedAfterItListedTheRows(t *testing.T
 		Now: time.Now,
 	})
 	t.Cleanup(func() { escrows.Close() })
-	composed := &gateway{store: records, escrows: escrows, builders: 1}
+	composed := &gateway{store: records, escrows: escrows, builders: 1, unopened: &unopenedEscrows{}}
 
 	if _, err := composed.publishEscrows(ctx); err != nil {
 		t.Fatalf("publishEscrows() = %v, want nil", err)

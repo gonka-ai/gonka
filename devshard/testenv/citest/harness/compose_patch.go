@@ -319,21 +319,24 @@ func EnableHeightSyncCompose(t *testing.T, composePath string) {
 	)
 }
 
+// EnableHeartbeatCompose turns the gateway's quiet-escrow heartbeat on, so the height floor advances with chain time and block-time timeouts fall due without traffic.
+func EnableHeartbeatCompose(t *testing.T, composePath string) {
+	t.Helper()
+	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API", `DEVSHARD_HEIGHTSYNC_HEARTBEAT: "1"`)
+}
+
+// DisableHostRPCStatsCompose turns the gateway's host RPC stats poll off, so its HTTP/1.1 reads of /devshard/stats/rpc leave no keep-alive connection to the host's child in a test that counts them.
+func DisableHostRPCStatsCompose(t *testing.T, composePath string) {
+	t.Helper()
+	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API", `DEVSHARD_GATEWAY_RPC_STATS_ENABLED: "false"`)
+}
+
 // EnableLegacyDapiCompose makes mock-dapi omit /block/* (0.2.15 / pre-mount
 // dapi). Height-sync still points at mock-dapi; hosts failover to direct chain.
 func EnableLegacyDapiCompose(t *testing.T, composePath string) {
 	t.Helper()
 	PatchComposeInsertEnvAfterAll(t, composePath, "MOCK_DAPI_HTTP_ADDR",
 		`MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`,
-	)
-}
-
-// EnableHeightSyncPeerMatrixCompose turns on the quadratic peer_seen matrix
-// series on the gateway only (DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX).
-func EnableHeightSyncPeerMatrixCompose(t *testing.T, composePath string) {
-	t.Helper()
-	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API",
-		`DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`,
 	)
 }
 

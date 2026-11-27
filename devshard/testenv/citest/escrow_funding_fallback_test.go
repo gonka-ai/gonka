@@ -28,6 +28,8 @@ const (
 
 	settledEscrowsTimeout  = 2 * time.Minute
 	settledEscrowsInterval = time.Second
+
+	requestRecordMessage = "request finished"
 )
 
 type fundingFallbackEnv struct {
@@ -44,13 +46,10 @@ type fundingFallbackStatus struct {
 }
 
 type fundingRuntimeStatus struct {
-	ID                 string `json:"id"`
-	Active             bool   `json:"active"`
-	Nonce              uint64 `json:"nonce"`
-	Balance            uint64 `json:"balance"`
-	ActiveRequests     int64  `json:"active_requests"`
-	PendingRaceCleanup int64  `json:"pending_race_cleanup"`
-	ReservedTokens     int64  `json:"reserved_tokens"`
+	ID             string `json:"id"`
+	Nonce          uint64 `json:"nonce"`
+	Balance        uint64 `json:"balance"`
+	ActiveRequests int64  `json:"active_requests"`
 }
 
 // Test flow:
@@ -99,7 +98,7 @@ func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *t
 //  1. Boot the stack with two escrows, neither able to fund an oversized request.
 //  2. Serve one ordinary request on each escrow, then wait until both are idle and snapshot them.
 //  3. Send a request no escrow can fund.
-//  4. Assert a retryable 503 that counts both refusals, names no escrow and carries no SSE content type.
+//  4. Assert a retryable 503 that reports no escrow capacity for lack of balance, names no escrow and carries no SSE content type.
 //  5. Assert both escrows kept their nonce, balance and place in service.
 //  6. Send a small request through the pool and assert the refusal was per-request, not sticky.
 func TestGatewayReturnsRetryable503WhenNoEscrowCanFundRequest(t *testing.T) {
@@ -129,8 +128,7 @@ func TestGatewayReturnsRetryable503WhenNoEscrowCanFundRequest(t *testing.T) {
 	require.NotEmpty(t, tooLarge.Header.Get("Retry-After"))
 	require.Empty(t, tooLarge.Header.Get("X-Devshard-ID"))
 	require.NotContains(t, tooLarge.ContentType, "text/event-stream")
-	// The count is the only evidence in the response that both escrows were offered the request.
-	require.Contains(t, string(tooLarge.Body), "no escrow can fund this request (2 refused)")
+	require.Contains(t, string(tooLarge.Body), "no escrow capacity: insufficient escrow balance")
 
 	finalStatus := waitForSettledEscrows(t, env, 2)
 	for _, escrowID := range []string{env.firstEscrowID, env.secondEscrowID} {
@@ -163,7 +161,7 @@ func bootFundingFallbackEnv(t *testing.T, prefix string, firstBalance, secondBal
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai", "mock-chain")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "mock-openai", "mock-chain")
 		}
 	})
 
@@ -176,9 +174,10 @@ func bootFundingFallbackEnv(t *testing.T, prefix string, firstBalance, secondBal
 		EscrowID uint64 `json:"escrow_id"`
 	}
 	require.NoError(t, harness.PostGatewayJSON(client, eps.GatewayHTTP+"/v1/admin/escrows", harness.TestenvAdminAPIKey, map[string]any{
-		"amount":   secondBalance,
-		"model_id": model,
-		"register": true,
+		"amount":          secondBalance,
+		"model_id":        model,
+		"private_key_env": harness.GatewayEscrowKeyEnv,
+		"activate":        true,
 	}, &created))
 	env := fundingFallbackEnv{
 		stack:          stack,
@@ -209,7 +208,7 @@ func waitForSettledEscrows(t *testing.T, env fundingFallbackEnv, expectedEscrows
 			return false
 		}
 		for _, runtime := range status.Devshards {
-			if runtime.ActiveRequests != 0 || runtime.ReservedTokens != 0 || runtime.PendingRaceCleanup != 0 {
+			if runtime.ActiveRequests != 0 {
 				detail = fmt.Sprintf("escrow %s still busy: %+v", runtime.ID, runtime)
 				return false
 			}
@@ -223,30 +222,28 @@ func waitForSettledEscrows(t *testing.T, env fundingFallbackEnv, expectedEscrows
 
 func requireEscrowUntouched(t *testing.T, before, after fundingRuntimeStatus) {
 	t.Helper()
-	require.True(t, after.Active, "escrow %s was retired for refusing one oversized request", after.ID)
 	require.Equal(t, before.Nonce, after.Nonce, "escrow %s consumed a nonce for a refused reservation", after.ID)
 	require.Equal(t, before.Balance, after.Balance, "escrow %s consumed balance for a refused reservation", after.ID)
 }
 
-// requirePickerSkippedUnfundableEscrow checks the gateway log for one request.
-// An escrow that fails escrowCanFund is not selected, so it has no
-// gateway_escrow_refused_funding line. That line is only for an escrow the
-// picker already reserved and that later returns ErrInsufficientBalance.
+// requirePickerSkippedUnfundableEscrow checks the request record: the race ran on the chosen escrow, never on the one that cannot fund it.
 func requirePickerSkippedUnfundableEscrow(t *testing.T, env fundingFallbackEnv, requestID, skipped, chosen string) {
 	t.Helper()
 	require.NotEmpty(t, requestID, "gateway response did not carry X-Request-Id")
-	logs, err := env.stack.ComposeLogsTail(400, "devshardctl")
-	require.NoError(t, err)
-	require.True(t, harness.LogsContainFields(logs, gatewayStageFields(requestID, "gateway_runtime_selected", chosen)...),
-		"the picker did not select escrow %s for %s", chosen, requestID)
-	require.False(t, harness.LogsContainFields(logs, gatewayStageFields(requestID, "gateway_runtime_selected", skipped)...))
-	require.False(t, harness.LogsContainFields(logs, gatewayStageFields(requestID, "gateway_escrow_refused_funding", skipped)...))
+	var logs string
+	recorded := harness.AssertEventually(t, settledEscrowsTimeout, settledEscrowsInterval, func() bool {
+		tail, err := env.stack.ComposeLogsTail(400, "gateway")
+		logs = tail
+		return err == nil && harness.LogsContainFields(logs, requestRecordFields(requestID, chosen)...)
+	})
+	require.True(t, recorded, "no request record names escrow %s for %s", chosen, requestID)
+	require.False(t, harness.LogsContainFields(logs, requestRecordFields(requestID, skipped)...))
 }
 
-func gatewayStageFields(requestID, stage, escrow string) []harness.LogField {
+func requestRecordFields(requestID, escrow string) []harness.LogField {
 	return []harness.LogField{
+		harness.LogStringField("msg", requestRecordMessage),
 		harness.LogStringField("request", requestID),
-		harness.LogStringField("stage", stage),
 		harness.LogStringField("escrow", escrow),
 	}
 }

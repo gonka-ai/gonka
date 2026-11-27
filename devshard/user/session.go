@@ -98,12 +98,14 @@ var VerifierQueueWaitTimeout = 120 * time.Second
 // rejected, or failed.
 var VerifyTimeoutSlowLog = 15 * time.Second
 
-// inflightSnapshotLimit caps how many occupying RPCs are spelled out on
-// timeout_vote_queue_expired. The count is still exact.
-const inflightSnapshotLimit = 8
-
-// nonceOutcomeRetention is how many nonces an outcome outlives its inference's seal.
-const nonceOutcomeRetention = 1024
+// inflightSnapshotLimit caps how many occupying RPCs are spelled out on timeout_vote_queue_expired; the count
+// is still exact. nonceOutcomeRetention is how many nonces an outcome outlives its inference's seal.
+// stateRootMismatchSide names this side in a state-root mismatch diagnostic.
+const (
+	inflightSnapshotLimit = 8
+	nonceOutcomeRetention = 1024
+	stateRootMismatchSide = "gateway"
+)
 
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
@@ -306,8 +308,7 @@ type Session struct {
 	addrToSlots map[string][]uint32 // validator address -> slot IDs
 	// participantKeys[i] is the canonical participant identifier for
 	// slot i: always the slot's gonka validator address (bech32). This
-	// matches the keying used by chain-side state in
-	// CapacityState/ParticipantRequestLimiter and by the transport
+	// matches the keying used by chain-side state and by the transport
 	// admission controller. Multi-slot validators legitimately repeat
 	// the same key here; ParticipantKeys() de-duplicates for views
 	// that want a per-host (not per-slot) list.
@@ -2188,7 +2189,7 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference, err e
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.sm.LogStateRootMismatchDiagnostic(state.StateRootMismatchOpts{
-		Side:          "devshardctl",
+		Side:          stateRootMismatchSide,
 		Nonce:         p.diff.Nonce,
 		DiffPostState: p.diff.PostStateRoot,
 		SealClock:     s.sm.AutoSealStateClock(),
@@ -4092,7 +4093,7 @@ func (s *Session) HostLabel(hostIdx int) string {
 
 // SetParticipantKeys overrides the per-slot participant identifiers
 // used by admission control, the picker's PoC/throttle checks, and
-// CapacityState lookups. The canonical contract is that each entry is
+// chain-state lookups. The canonical contract is that each entry is
 // the slot's gonka validator address (matching the chain's
 // participant Index). NewSession already initializes the slice this
 // way; callers should only override when the underlying group changes

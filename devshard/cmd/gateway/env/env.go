@@ -73,10 +73,15 @@ type Values struct {
 	HeightSyncAnchorSlots        *int64
 	HeightSyncQuietSettleDelayMS *int64
 
-	HostPingDisabled    *bool
+	HostPingEnabled     *bool
 	HostPingIntervalMS  *int64
 	HostPingTimeoutMS   *int64
 	HostPingConcurrency *int64
+
+	HostRPCStatsEnabled     *bool
+	HostRPCStatsIntervalMS  *int64
+	HostRPCStatsTimeoutMS   *int64
+	HostRPCStatsConcurrency *int64
 
 	ChainVersionsPollIntervalSeconds *int64
 
@@ -105,6 +110,11 @@ func LogFormat() string {
 		return LogFormatJSON
 	}
 	return LogFormatText
+}
+
+// LogLevel is read apart from Load for the same reason as LogFormat; the caller parses it with observability.ParseLogLevel, so an unknown value stays at info.
+func LogLevel() string {
+	return lookup("DEVSHARD_LOG_LEVEL")
 }
 
 // AllowPrivateAddresses is read apart from Load because the dial guard is armed before anything dials. See operations.md.
@@ -277,9 +287,9 @@ func Load() (Values, error) {
 			ignoreUnusableValue("DEVSHARD_POC_REQUEST_MODE", raw)
 		}
 	}
-	readLenientBool("DEVSHARD_GATEWAY_DISABLED", &values.Disabled)
-	readString("DEVSHARD_GATEWAY_DISABLED_MESSAGE", &values.DisabledMessage)
-	readString("DEVSHARD_GATEWAY_DISABLED_NEW_URL", &values.DisabledRedirectURL)
+	readLenientBool("DEVSHARD_GATEWAY_ENABLED", &values.Enabled)
+	readString("DEVSHARD_GATEWAY_OFF_MESSAGE", &values.OffMessage)
+	readString("DEVSHARD_GATEWAY_OFF_REDIRECT_URL", &values.OffRedirectURL)
 
 	readLenientBool("DEVSHARD_ESCROW_ROTATION_ENABLED", &values.RotationEnabled)
 	readLenientInt("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 0, &values.RotationPrePoCBlocks)
@@ -327,10 +337,14 @@ func Load() (Values, error) {
 	readLenientInt("DEVSHARD_HEIGHTSYNC_K", 0, &values.HeightSyncAnchorK)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_SLOTS", 0, &values.HeightSyncAnchorSlots)
 	readDurationAsMilliseconds("DEVSHARD_QUIET_SETTLE_DELAY", &values.HeightSyncQuietSettleDelayMS)
-	readLenientBool("DEVSHARD_GATEWAY_HOST_PING_DISABLED", &values.HostPingDisabled)
+	readLenientBool("DEVSHARD_GATEWAY_HOST_PING_ENABLED", &values.HostPingEnabled)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", &values.HostPingIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", &values.HostPingTimeoutMS)
 	readLenientInt("DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY", 1, &values.HostPingConcurrency)
+	readLenientBool("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", &values.HostRPCStatsEnabled)
+	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", &values.HostRPCStatsIntervalMS)
+	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT", &values.HostRPCStatsTimeoutMS)
+	readLenientInt("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", 1, &values.HostRPCStatsConcurrency)
 	readLenientBool("DEVSHARD_REQUEST_CAPTURE_ENABLED", &values.CaptureEnabled)
 	readString("DEVSHARD_REQUEST_CAPTURE_DIR", &values.CaptureDir)
 	readStrictFloat("GATEWAY_CAPTURE_SAMPLE_RATE", &values.CaptureSampleRate)

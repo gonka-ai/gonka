@@ -216,8 +216,7 @@ with a local override can still run a version absent from `approved_versions`.
 
 Only the devshard binary. dapi is not managed by versiond.
 
-`devshardctl` is a client-side CLI shipped alongside each release for protocol
-compatibility. versiond does not manage it.
+The gateway is a client-side binary shipped alongside each release for protocol compatibility. versiond does not manage it.
 
 ## Temporary first release
 

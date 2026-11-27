@@ -27,12 +27,13 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "devshardctl", "mock-openai-0", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "gateway", "mock-openai-0", "devshard-postgres")
 		}
 	})
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health", stack)
 
 	dapi := harness.MockDAPIFromEndpoints(eps)
@@ -49,9 +50,9 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 		MaxTokens: 16,
 	}
 	harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, seed)
-	snap := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey)
-	require.NotEmpty(t, snap.EscrowID)
-	harness.WarmEscrowOnBothReplicas(t, stack, cfg, snap.EscrowID)
+	snapshot := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, escrowID)
+	require.NotEmpty(t, snapshot.EscrowID)
+	harness.WarmEscrowOnBothReplicas(t, stack, cfg, snapshot.EscrowID)
 
 	harness.Step(t, "drive load with parallel lease monitor")
 	stopMonitor := make(chan struct{})
@@ -123,6 +124,7 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.PatchGatewayForceUpstreamStreaming(t, client, eps.GatewayHTTP, true)
 	dapi := harness.MockDAPIFromEndpoints(eps)
 	harness.SetValidationRate100(t, client, dapi.HTTP)
@@ -134,8 +136,7 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 		MaxTokens: 16,
 	}
 	harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, seed)
-	escrow := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).EscrowID
-	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
+	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrowID)
 
 	t.Run("streamClient", func(t *testing.T) {
 		runPendingStretchOnStack(t, stack, cfg, eps, client, mockOpenAI, model, "7a-stream", true)
@@ -246,8 +247,8 @@ func runPendingStretchOnStack(
 	}
 	if !sawOKWhilePending.Load() || !sawFirstTokenWhilePending.Load() {
 		ok := harness.AssertEventually(t, followUp, 250*time.Millisecond, func() bool {
-			snap, err := stack.TryPostgresLeaseSnapshot(cfg)
-			if err != nil || snap.Pending < 1 {
+			snapshot, err := stack.TryPostgresLeaseSnapshot(cfg)
+			if err != nil || snapshot.Pending < 1 {
 				return false
 			}
 			if loadOK.Load() > 0 {
@@ -317,6 +318,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	escrowID := harness.GetGatewayEscrowID(t, nil, eps.GatewayHTTP)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health", stack)
 
 	dapi := harness.MockDAPIFromEndpoints(eps)
@@ -329,8 +331,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 		MaxTokens: 16,
 	}
 	harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, seed)
-	escrow := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).EscrowID
-	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
+	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrowID)
 
 	harness.Step(t, "slow ML so leases stay pending while Validate is in-flight")
 	harness.SlowMockOpenAI(t, client, mockOpenAI, 20_000)
@@ -362,7 +363,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	harness.RequireLeaseOneOwnerPerInference(t, pending)
 	submittedBefore := pending.Submitted
 	pendingBefore := pending.Pending
-	wantNonce := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).LatestNonce
+	wantNonce := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, escrowID).LatestNonce
 	require.Greater(t, wantNonce, uint64(0), "gateway must have durable diffs before the victim is stopped")
 
 	victim := cfg.Hosts[1].ID
@@ -376,8 +377,8 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	// Sticky traffic often lived on the victim. GET /mempool catch-up loads
 	// Finished inferences and enqueues validation so Acquire can insert a
 	// new pending row (graceful stop already Released the old one).
-	harness.WarmEscrowOnHost(t, stack, cfg, survivor, escrow)
-	harness.WaitHostDurableNonce(t, stack, cfg, survivor, escrow, wantNonce, 2*time.Minute)
+	harness.WarmEscrowOnHost(t, stack, cfg, survivor, escrowID)
+	harness.WaitHostDurableNonce(t, stack, cfg, survivor, escrowID, wantNonce, 2*time.Minute)
 
 	final := harness.WaitLeaseSubmittedGrowth(t, stack, cfg, submittedBefore+pendingBefore, 2*time.Minute)
 	harness.RequireLeaseExclusivityPass(t, final, 1)

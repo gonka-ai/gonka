@@ -44,9 +44,6 @@ workload:
 gateway:
   escrow_rotation:
     enabled: false
-  participant_throttle:
-    transport_failure_quarantine: 70s
-    http_quarantine: 70s
   redundancy:
     secondary_wait_after_winner: 30s
 
@@ -72,7 +69,7 @@ diagnostics:
     - start_after: 4m
       duration: 30s
     # Start before freezing: the paused child's profiler cannot start via exec.
-    # Covers 5s before pause and 115s after unpause, including quarantine expiry.
+    # Covers 5s before pause and 115s after unpause.
     - start_after: 4m55s
       duration: 7m
     # Later steady state, after recovery.
@@ -92,7 +89,6 @@ diagnostics:
       targets: [gateway, versiond-2, versiond-1]
     - start_after: 10m30s
       targets: [gateway, versiond-2, versiond-1]
-    # Approximately after the 70s quarantine; actual expiry is error-driven.
     - start_after: 11m15s
       targets: [gateway, versiond-2, versiond-1]
     - start_after: 11m50s

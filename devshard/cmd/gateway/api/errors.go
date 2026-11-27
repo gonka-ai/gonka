@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math"
@@ -31,14 +32,15 @@ import (
 	"devshard/user"
 )
 
-// The Retry-After a shard without room answers with, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
+// The Retry-After a shard without room answers with, the non-standard status for a request whose client left before the gateway answered, and how a host's text is cut down for a client. See README.md, "Errors and statuses".
 const (
-	noHostRetryAfter       = time.Second
-	requestCapRetryAfter   = 30 * time.Second
-	maxHostExcerptBytes    = 512
-	noHostExcerpt          = ""
-	invalidUTF8Replacement = ""
-	unprintableReplacement = ' '
+	statusClientClosedRequest = 499
+	noHostRetryAfter          = time.Second
+	requestCapRetryAfter      = 30 * time.Second
+	maxHostExcerptBytes       = 512
+	noHostExcerpt             = ""
+	invalidUTF8Replacement    = ""
+	unprintableReplacement    = ' '
 )
 
 var (
@@ -61,6 +63,8 @@ var (
 	ErrDevshardNotActivatable = errors.New("devshard cannot be activated")
 
 	ErrInvalidEscrowID = errors.New("escrow id is not a chain escrow id")
+
+	errGatewayStopping = errors.New("gateway is stopping")
 )
 
 type hostBodyRefusedError struct{ refusal string }
@@ -250,6 +254,9 @@ func writeControlFailure(w http.ResponseWriter, err error) bool {
 func limiterRefusal(err error) (label string, refused bool) {
 	if noLiveWeight(err) {
 		return limits.RejectionNoLiveWeight, true
+	}
+	if errors.Is(err, context.Canceled) {
+		return limits.RejectionClientGone, true
 	}
 	if throttled, ours := rateLimited(err); ours {
 		return throttled.Label(), true

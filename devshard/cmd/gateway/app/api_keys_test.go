@@ -265,8 +265,8 @@ func TestBootWithNoKeysAndAnAPIKeyModelStartsAndWarns(t *testing.T) {
 	if !warned {
 		t.Fatalf("no warning about the api_key model with no key: %+v", logged.All())
 	}
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"disabled":true}`)
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"disabled":false}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"enabled":false}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"enabled":true}`)
 	gateway.createKey(fmt.Sprintf(`{"key":%q}`, firstFakeClientKey))
 	if status := gateway.chatStatus(firstFakeClientKey); status == http.StatusUnauthorized {
 		t.Fatalf("the first key on an upgraded gateway = %d, want it accepted", status)
@@ -299,11 +299,11 @@ func TestAStaleStoredModelBlockBootsAndBlocksSettingsWritesUntilCleared(t *testi
 
 	created := gateway.createKey(fmt.Sprintf(`{"key":%q}`, firstFakeClientKey))
 	gateway.requireAdminStatus(http.StatusOK, http.MethodDelete, "/v1/admin/api-keys/"+fmt.Sprint(created["id"]), "")
-	status, response := gateway.admin(http.MethodPost, "/v1/admin/settings", `{"disabled":true}`)
+	status, response := gateway.admin(http.MethodPost, "/v1/admin/settings", `{"enabled":false}`)
 	if status != http.StatusBadRequest || !strings.Contains(response, keyedModel) {
 		t.Fatalf("a settings write beside a stale block = %d %s, want 400 naming %s", status, response, keyedModel)
 	}
-	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"models":{"model-a":null},"disabled":true}`)
+	gateway.requireAdminStatus(http.StatusOK, http.MethodPost, "/v1/admin/settings", `{"models":{"model-a":null},"enabled":false}`)
 }
 
 // Test flow:

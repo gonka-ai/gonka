@@ -156,12 +156,6 @@ func RequestID(ctx context.Context) (string, bool) {
 	return commonobs.RequestID(ctx)
 }
 
-// PropagateRequestID copies the request ID from src into dst.
-// Returns dst unchanged if src has no request ID.
-func PropagateRequestID(dst, src context.Context) context.Context {
-	return commonobs.PropagateRequestID(dst, src)
-}
-
 // Stage emits a log line in the canonical format:
 //
 //	request=req-... stage=some_stage key1=val1 key2=val2

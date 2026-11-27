@@ -29,59 +29,57 @@ data class DevshardMempoolResponse(
     val txs: List<Any>?
 )
 
-data class DevshardProxyStatus(
+data class DevshardEscrowStatus(
     @SerializedName("escrow_id")
     val escrowId: String,
     val nonce: Long,
     val phase: String,
     val balance: Long,
     val config: DevshardSessionConfig,
-    @SerializedName("height_seed")
-    val heightSeed: DevshardHeightSeedStatus? = null,
 )
 
-data class DevshardHeightSeedStatus(
-    val state: String? = null,
-    val seeded: Int? = null,
-    val slots: Int? = null,
-)
-
+// The gateway's debug state encodes the session config with Go field names (types.SessionConfig has no JSON tags).
 data class DevshardSessionConfig(
-    @SerializedName("refusal_timeout")
+    @SerializedName("RefusalTimeout")
     val refusalTimeout: Long,
-    @SerializedName("execution_timeout")
+    @SerializedName("ExecutionTimeout")
     val executionTimeout: Long,
-    @SerializedName("token_price")
+    @SerializedName("TokenPrice")
     val tokenPrice: Long,
-    @SerializedName("create_devshard_fee")
+    @SerializedName("CreateDevshardFee")
     val createDevshardFee: Long,
-    @SerializedName("fee_per_nonce")
+    @SerializedName("FeePerNonce")
     val feePerNonce: Long,
-    @SerializedName("vote_threshold")
+    @SerializedName("VoteThreshold")
     val voteThreshold: Int,
-    @SerializedName("validation_rate")
+    @SerializedName("ValidationRate")
     val validationRate: Int,
-    @SerializedName("inference_seal_grace_nonces")
+    @SerializedName("InferenceSealGraceNonces")
     val inferenceSealGraceNonces: Int? = null,
-    @SerializedName("inference_seal_grace_seconds")
+    @SerializedName("InferenceSealGraceSeconds")
     val inferenceSealGraceSeconds: Int? = null,
 )
 
-data class DevshardProxyDebugState(
+data class DevshardEscrowDebugState(
     val nonce: Long,
     @SerializedName("live_inferences")
     val liveInferences: Int,
     @SerializedName("sealed_inferences")
     val sealedInferences: Int,
-    @SerializedName("live_status_counts")
-    val liveStatusCounts: Map<String, Int>? = null,
+)
+
+data class GatewaySettleResponse(
+    @SerializedName("escrow_id")
+    val escrowId: Long,
+    @SerializedName("tx_hash")
+    val txHash: String,
+    val settler: String,
 )
 
 data class DevshardSettlementData(
     @SerializedName("escrow_id")
     val escrowId: String,
-    // devshardctl finalize emits "version" (v1 wire compat); inferenced reads the same key.
-    @SerializedName("version")
+    @SerializedName("state_root_and_protocol_version")
     val stateRootAndProtocolVersion: String,
     @SerializedName("state_root")
     val stateRoot: String,
@@ -133,16 +131,14 @@ data class DevshardInferencePayload(
     val reservedCost: Long,
     @SerializedName("actual_cost")
     val actualCost: Long?,
-    @SerializedName("started_at")
-    val startedAt: Long,
-    @SerializedName("confirmed_at")
-    val confirmedAt: Long?,
+    @SerializedName("started_at_height")
+    val startedAtHeight: Long?,
+    @SerializedName("confirmed_at_height")
+    val confirmedAtHeight: Long?,
     @SerializedName("votes_valid")
     val votesValid: Int?,
     @SerializedName("votes_invalid")
     val votesInvalid: Int?,
-    @SerializedName("validated_by")
-    val validatedBy: Array<Long>?,
 ) {
     val statusEnum: DevshardInferenceStatus
         get() = status

@@ -95,11 +95,6 @@ workload:
 gateway:
   redundancy:
     secondary_wait_after_winner: 30s
-  participant_throttle:
-    transport_failure_quarantine: 45s
-    http_quarantine: 45s
-    empty_stream_quarantine: 45s
-    stalled_winner_quarantine: 45s
   escrow_rotation:
     enabled: true
     settlement_enabled: true

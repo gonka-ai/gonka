@@ -22,7 +22,7 @@ func TestA4_BadWarmKey(t *testing.T) {
 	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-dapi")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "mock-dapi")
 		}
 	})
 	requireHosts(t, cfg, 2)

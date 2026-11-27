@@ -19,9 +19,9 @@ type Tunables struct {
 	MaxBufferedRequestBytes                *int64   `json:"max_buffered_request_bytes,omitempty"`
 	MinClientReadBytesPerSecond            *int64   `json:"min_client_read_bytes_per_second,omitempty"`
 	WarmNewEscrows                         *bool    `json:"warm_new_escrows,omitempty"`
-	Disabled                               *bool    `json:"disabled,omitempty"`
-	DisabledMessage                        *string  `json:"disabled_message,omitempty"`
-	DisabledRedirectURL                    *string  `json:"disabled_redirect_url,omitempty"`
+	Enabled                                *bool    `json:"enabled,omitempty"`
+	OffMessage                             *string  `json:"off_message,omitempty"`
+	OffRedirectURL                         *string  `json:"off_redirect_url,omitempty"`
 	RotationEnabled                        *bool    `json:"rotation_enabled,omitempty"`
 	RotationSettlementEnabled              *bool    `json:"rotation_settlement_enabled,omitempty"`
 	RotationPreviousEpochSettlementEnabled *bool    `json:"rotation_previous_epoch_settlement_enabled,omitempty"`

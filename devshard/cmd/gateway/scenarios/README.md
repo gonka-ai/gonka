@@ -158,6 +158,12 @@ Checked after every step by `invariants_test.go`. A test that legitimately break
 | `TestAJournalEntrySurvivesARestartAndStillGatesFinalize` | a gateway restart with a started, unresolved nonce | the journal entry survives and still gates Finalize until the timeout resolves it, then the escrow settles |
 | `TestAForcedSettleFinalizesThroughAPendingJournalEntry` | the deadline forces the settle of an escrow with a started nonce still journaled | an ordinary Finalize is refused as pending, then the forced settle finalizes inside the margin without waiting for the execution timeout, clears the escrow's journal and logs `escrow settled past unresolved nonces` |
 
+### Cache — `cache_test.go`
+
+| Test | Why it exists | What it checks |
+| --- | --- | --- |
+| `TestAReplyVotedInvalidIsNotServedFromTheCacheAgain` | a cached reply whose inference validators voted invalid must not keep being served | an identical request is a cache hit after the first, and runs a race again once the invalid votes have reached the session |
+
 ### Data — `data_test.go`
 
 | Test | Why it exists | What it checks |

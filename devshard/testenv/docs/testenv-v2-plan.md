@@ -3,11 +3,7 @@
 Status: **proposal** for `merge/pixelplex-refactoring-into-r2` (and follow-on PRs).
 Last audited against `merge/pixelplex-refactoring-into-r2` + `devshard-testenv`.
 
-This plan **reuses the testenv *idea*** from branch `devshard-testenv` (local protocol
-lab, Docker Compose, Go-controlled integration tests) but **rewrites the topology**
-to match production: **versiond → devshardd**, **versiond-router**, and the **current
-gateway devshardctl**. It **drops** the old testenv height-sync / gossip-anchor /
-`host.Host` BlockOracle seam work.
+This plan **reuses the testenv *idea*** from branch `devshard-testenv` (local protocol lab, Docker Compose, Go-controlled integration tests) but **rewrites the topology** to match production: **versiond → devshardd**, **versiond-router**, and the **current gateway**. It **drops** the old testenv height-sync / gossip-anchor / `host.Host` BlockOracle seam work.
 
 > ⚠️ **Read §0 (Audit findings) first.** The audit changed four things materially vs
 > the original draft: (1) the "mock-chain" is **not** a small custom-proto gRPC stub —
@@ -33,9 +29,7 @@ verbatim):
 | `devshard/testenv/Dockerfile.dev`, `docker-compose.dev.yml`, `DEVELOPMENT-MODE.md` | Dev overlay: air live-reload + dlv (Phase 4 ✅) |
 | `devshard/testenv/cmd/gencompose/` + `config/` key fields | Config-driven compose + deterministic keys (Phase 4 ✅ stub; Phase 6 extends) |
 
-**Ignore** on that branch: `height-sync`, `devshard/heightsync`, `devshardd-testenv`
-direct binary, slim devshardctl proxy, `host.BlockOracle` seam, height-sync transport
-changes, `heightsyncd`.
+**Ignore** on that branch: `height-sync`, `devshard/heightsync`, `devshardd-testenv` direct binary, slim testenv proxy, `host.BlockOracle` seam, height-sync transport changes, `heightsyncd`.
 
 ---
 
@@ -69,8 +63,7 @@ a minimal CometBFT RPC (subscribe/status/block). See Phase 3 (D1 = Option A).
 
 ### 0.2 Gateway uses Cosmos REST (LCD), not gRPC ⚠️
 
-`devshard/cmd/devshardctl` (the current gateway) talks to the chain over **REST/LCD**
-(`chain_tx_rest.go`, default `http://localhost:1317`) for:
+The gateway of that time talked to the chain over **REST/LCD** (default `http://localhost:1317`) for:
 
 - `MsgCreateDevshardEscrow` / `MsgSettleDevshardEscrow` broadcast (tx),
 - account number/sequence lookup, tx polling.
@@ -150,17 +143,13 @@ Confirmed in `versioned/internal/config/config.go` and `versiond-router/`:
 
 ### 0.9 Chain query transport is already half-consolidated ⚠️ (architectural opportunity)
 
-The brief asks to **merge the chain-fetch transport into `common/` and reuse it at
-edge-api, devshardd, and devshardctl** (and let the testenv chain oracle simulate
-chain reads through the *same* transport). The audit shows this is already half-done and
-fragmented:
+The brief asks to **merge the chain-fetch transport into `common/` and reuse it at edge-api, devshardd, and gateway** (and let the testenv chain oracle simulate chain reads through the *same* transport). The audit shows this is already half-done and fragmented:
 
 | Consumer | Chain **query** transport (today) | Params fetch | On `common/chain`? |
 |----------|-----------------------------------|--------------|:--:|
 | `edge-api/queryapi` | `common/chain.Client` gRPC (`h.chain.InferenceQueryClient()`) | n/a (read APIs) | ✅ |
 | `devshardd` bridge (`bridge/chain.go`) | `common/chain.Client` gRPC | — | ✅ |
 | `devshardd` params (`runtimeparams`) | **private** `QueryClientProvider` → `inferencetypes.QueryClient` gRPC | gRPC fetcher (`chain_fetcher_grpc.go`) | ❌ duplicate abstraction |
-| `devshardctl` gateway (`runtime_params.go`) | **REST/LCD** (`NewRESTChainFetcher`) | REST fetcher (`chain_fetcher_rest.go`) | ❌ REST-only outlier |
 | `dapi` | `decentralized-api/cosmosclient` + `apiconfig.ConfigManager` | publishes from chain | ❌ separate (out of testenv scope) |
 
 So `devshardd` carries **two** chain transports (common/chain for bridge, a private
@@ -173,8 +162,7 @@ So `devshardd` carries **two** chain transports (common/chain for bridge, a priv
 `GRPCChainFetcher` logic, build it on `common/chain.InferenceClient`). Then:
 
 - `devshardd` params uses `common/chain` (drop the private `QueryClientProvider`);
-- `devshardctl` gains a gRPC query path (keep REST only for **tx broadcast** of
-  create/settle — queries move to gRPC), so it fetches params the same way;
+- `gateway` gains a gRPC query path (keep REST only for **tx broadcast** of create/settle — queries move to gRPC), so it fetches params the same way;
 - `mock-dapi`'s params/epoch oracle **reads from mock-chain via `common/chain`** (exactly
   "simulate the requests to mock-chain using the same transport"), instead of inventing a
   YAML-only snapshot truth;
@@ -197,7 +185,7 @@ The dapi/cosmosclient consolidation stays **out of scope** (tx + publisher); onl
    Cosmos query gRPC + cmtservice + minimal CometBFT RPC (+ LCD REST for the gateway);
    **`mock-dapi`** replacing dapi for the NodeManager surfaces; **`mock-openai`** as the
    OpenAI-compatible ML endpoint `AcquireMLNode` hands out (D2).
-3. **Current gateway:** the **`devshardctl` gateway variant** (not the slim testenv proxy).
+3. **Current gateway:** the production gateway (not the slim testenv proxy).
 4. **Params + epoch oracle via long-poll:** `mock-dapi` serves `GetRuntimeConfig`
    long-poll (params + epoch) using a **shared `common/runtimeconfig/server`** core, so the
    same code backs dapi today and edge-api later.
@@ -211,9 +199,7 @@ The dapi/cosmosclient consolidation stays **out of scope** (tx + publisher); onl
 7. **Dev overlay (live reload):** ✅ **DONE (Phase 4)** — `Dockerfile.dev` + `docker-compose.dev.yml` +
    `air` configs from `devshard-testenv`; mock-chain rebuilds on save without rebaking images.
    Phase 5–6 extend the overlay to mock-dapi / versiond services.
-8. **One chain query transport:** `common/chain` is the single gRPC chain-read transport
-   for edge-api, devshardd (bridge + params), and devshardctl (queries); `mock-dapi`
-   reads mock-chain through it too (§0.9, Phase 2b).
+8. **One chain query transport:** `common/chain` is the single gRPC chain-read transport for edge-api, devshardd (bridge + params), and gateway (queries); `mock-dapi` reads mock-chain through it too (§0.9, Phase 2b).
 
 ### Non-goals
 
@@ -240,7 +226,7 @@ The dapi/cosmosclient consolidation stays **out of scope** (tx + publisher); onl
     │ gRPC + RPC (events)            │ gRPC queries                  │ REST tx
     ▼                                ▼                               ▼
 ┌─────────────────────────┐   (escrow/host/epoch)          ┌──────────────────┐
-│ mock-dapi  (×1)         │                                │ devshardctl      │
+│ mock-dapi  (×1)         │                                │ gateway      │
 │  mounts chainoracle:    │                                │ (gateway)        │
 │  :9400 params gRPC LP   │◄── long-poll ── devshardd      │ OpenAI proxy,    │
 │  :9100 blocks HTTP/SSE  │                                │ capacity, store  │
@@ -269,8 +255,8 @@ The dapi/cosmosclient consolidation stays **out of scope** (tx + publisher); onl
 
 | Path | Wiring |
 |------|--------|
-| User chat | `devshardctl` → host session URLs (from mock-chain escrow slots) → `versiond-router` → `versiond-N` → `devshardd` |
-| Escrow create/settle | `devshardctl` → mock-chain **LCD :1317** (tx) → escrow store → CometBFT **event** |
+| User chat | `gateway` → host session URLs (from mock-chain escrow slots) → `versiond-router` → `versiond-N` → `devshardd` |
+| Escrow create/settle | `gateway` → mock-chain **LCD :1317** (tx) → escrow store → CometBFT **event** |
 | devshardd escrow/epoch queries | `devshardd` `common/chain` → mock-chain **gRPC :9090** |
 | devshardd chain events | `devshardd` `events.Listener` → mock-chain **RPC :26657** (ws) |
 | Params + epoch (long-poll) | `devshardd` → `NODE_MANAGER_ADDR=mock-dapi:9400` → **chainoracle params** `GetRuntimeConfig` |
@@ -299,7 +285,7 @@ gRPC to mock-chain `:9090`. Only **tx broadcast** (gateway create/settle) uses L
 | `cmd/devshardd-testenv/`, `cmd/heightsyncd/` | **Drop** | |
 | `devshard/heightsync/`, `host` BlockOracle, height-sync transport | **Do not port** | |
 | `devshard/blockoracle/` (→ **`chainoracle`**) | **Port + rename + extend** | blocks HTTP/SSE + params gRPC; see Phase 2 |
-| Old slim `devshardctl` | **Do not port** | use `cmd/devshardctl` gateway |
+| Old slim testenv proxy | **Do not port** | use the production gateway |
 
 ---
 
@@ -445,9 +431,7 @@ ports; zero testenv/host imports.
 
 ### Phase 2b — Consolidate chain query transport into `common` ✅ **DONE**
 
-**Goal:** one chain **read** transport (`common/chain`) reused by edge-api, devshardd
-(bridge + params), devshardctl (queries), and mock-dapi — so the testenv exercises the
-*same* code path production uses (§0.9). Tx broadcast stays REST for now.
+**Goal:** one chain **read** transport (`common/chain`) reused by edge-api, devshardd (bridge + params), gateway (queries), and mock-dapi — so the testenv exercises the *same* code path production uses (§0.9). Tx broadcast stays REST for now.
 
 **Delivered:**
 
@@ -459,8 +443,6 @@ ports; zero testenv/host imports.
 | `devshard/runtimeparams/chain_fetcher_grpc.go` | thin wrapper over `common/runtimeconfig.ChainFetcher` |
 | `devshard/runtimeparams/query.go` | **removed** — single `*chain.Client` dial for bridge + params |
 | `devshard/cmd/devshardd/params_provider.go` | passes `*chain.Client` (not `QueryClientProvider`) |
-| `devshard/cmd/devshardctl/runtime_params.go` | gRPC fetcher primary; REST legacy fallback |
-| `devshard/cmd/devshardctl/main.go` | `--chain-grpc` / `DEVSHARD_CHAIN_GRPC` / `NODE_GRPC_URL` |
 | `devshard/chainoracle/params/fetcher.go` | `ChainClientFetcher` on `common/chain` |
 
 **Validated:**
@@ -470,8 +452,7 @@ cd common && go test ./runtimeconfig/... -count=1
 cd devshard && go test ./runtimeparams/... ./runtimeconfig/... ./chainoracle/... -count=1
 ```
 
-**Exit:** ✅ devshardd and devshardctl fetch params over `common/chain` gRPC; REST retained
-as fallback when gRPC URL unset.
+**Exit:** ✅ devshardd and gateway fetch params over `common/chain` gRPC; REST retained as fallback when gRPC URL unset.
 
 ---
 
@@ -489,7 +470,7 @@ transaction work.
 |-------|------|------|----------|-----------|
 | **3a** | Cosmos gRPC + cmtservice | `:9090` | devshardd bridge, params fetch, chainoracle | stack smoke, params, epoch |
 | **3b** | CometBFT RPC (ws subscribe) | `:26657` | devshardd `events.Listener`, phase bootstrap | stack smoke, epoch |
-| **3c** | Cosmos LCD REST (tx) | `:1317` | devshardctl create/settle escrow | gateway chat |
+| **3c** | Cosmos LCD REST (tx) | `:1317` | gateway create/settle escrow | gateway chat |
 
 **Layout**
 
@@ -614,7 +595,7 @@ escrow-created handler work end-to-end with 3a gRPC.
 
 #### Phase 3c — LCD REST face (`:1317`) — **third (gateway chat)** ✅ **DONE**
 
-**Goal:** `devshardctl` creates/settles escrows without code changes (`chain_tx_rest.go`).
+**Goal:** the gateway creates/settles escrows without code changes.
 
 **Implement (narrow — two msg types only):**
 
@@ -636,14 +617,13 @@ Decode protobuf tx body → mutate `store` → emit CometBFT `Tx` event (3b) →
 | `testenv/mockchain/restface/` | LCD REST: accounts, broadcast, tx query, node_info |
 | `testenv/mockchain/store/accounts.go` | account sequence + escrow id allocation |
 | `testenv/cmd/mockchain/` | triple listener: gRPC `:9090`, RPC `:26657`, REST `:1317` |
-| `cmd/devshardctl/chain_tx_rest_mockchain_test.go` | production `RESTChainTxClient` against mock-chain |
 
 Env: `MOCK_CHAIN_REST_ADDR` (default `:1317`).
 
 **Validated:**
 
 ```bash
-cd devshard && go test ./testenv/mockchain/... ./cmd/devshardctl/ -run 'MockChain|REST' -count=1
+cd devshard && go test ./testenv/mockchain/... -count=1
 ```
 
 **Exit (3c):** the gateway chat path can create an escrow in testenv; full three-face
@@ -740,7 +720,7 @@ Phase 6 **extends** the same binary and template — no second compose generator
 |------|----------------|----------------------|----------|
 | **Phase 4 (initial)** ✅ | `mock-chain` | `:2345` → mock-chain | 3b/3c iteration without image rebuilds |
 | **Phase 5** ✅ | + `mock-dapi`, `mock-openai` | `:2346` mock-dapi; `:2347` mock-openai | chainoracle + ML stub hacking |
-| **Phase 6** | + `devshardctl` | — | gateway REST/LCD work |
+| **Phase 6** | + `gateway` | — | gateway REST/LCD work |
 | **Phase 6+** | `versiond-0` child `devshardd` | `:2348` → devshardd (host-0 only) | see note below |
 
 **versiond / devshardd note:** `versiond` is a binary supervisor, not an `air` target. For
@@ -847,9 +827,7 @@ injection via env and `/testenv/fault`.
 
 **Delivered:**
 
-1. ✅ **Extended** `cmd/gencompose` (`compose.go`) to emit `versiond-0..N-1`, `versiond-router`,
-   `devshardctl`, optional `devshard-postgres` (`postgres.enabled`), plus Phase 4/5 services.
-   Also writes `.env` with `TESTENV_USER_PRIVATE_KEY` / `TESTENV_KEYRING_PASSWORD`.
+1. ✅ **Extended** `cmd/gencompose` (`compose.go`) to emit `versiond-0..N-1`, `versiond-router`, `gateway`, optional `devshard-postgres` (`postgres.enabled`), plus Phase 4/5 services. Also writes `.env` with `TESTENV_USER_PRIVATE_KEY` / `TESTENV_KEYRING_PASSWORD`.
 2. ✅ Each `versiond-i` env:
    - `VERSIOND_ORACLE_URL=http://mock-dapi:9100/versions`
    - `VERSIOND_BINARY_NAME=devshardd`, `VERSIOND_OVERRIDE_v2=/opt/devshard/devshardd`,
@@ -865,8 +843,7 @@ injection via env and `/testenv/fault`.
 5. ✅ Separate per-host `./data/<id>` dirs; router + versiond patterns from `local-test-net` /
    `deploy/join` overlays. **No `api` (dapi) service.**
 
-**Config:** `versiond`, `versiond_router`, `devshardctl`, `postgres` sections in `config/config.yaml`.
-Default skeleton: **3** versiond hosts (`versiond-0..2`).
+**Config:** `versiond`, `versiond_router`, `gateway`, `postgres` sections in `config/config.yaml`. Default skeleton: **3** versiond hosts (`versiond-0..2`).
 
 **Docs:** `testenv/README.md` — build, test, start 3× versiond + router.
 
@@ -887,7 +864,7 @@ starts stack with materialized keyrings (devshardd child healthy when binary + a
 
 ---
 
-### Phase 7 — Gateway `devshardctl` integration ✅ **DONE**
+### Phase 7 — Gateway integration ✅ **DONE**
 
 **Goal:** use the current gateway, not the slim proxy.
 
@@ -895,9 +872,7 @@ starts stack with materialized keyrings (devshardd child healthy when binary + a
 
 **Delivered:**
 
-1. ✅ `devshardctl` compose service with full gateway env (`DEVSHARD_ESCROW_ID`, `DEVSHARD_MODEL`,
-   `DEVSHARD_CHAIN_GRPC`, `DEVSHARD_PUBLIC_API` → mock-dapi, `DEVSHARD_TX_QUERY_REST`, build arg
-   `DEVSHARD_VERSION=v2`, healthcheck on `/v1/status`).
+1. ✅ `gateway` compose service with full gateway env (`DEVSHARDS_JSON` seeding the escrow, `DEVSHARD_CHAIN_GRPC`, `DEVSHARD_PUBLIC_API` → mock-dapi, build arg `DEVSHARD_VERSION=v2`, healthcheck on `/healthz`).
 2. ✅ `syncChainSeed` fixes: escrow **slots** = host validator addresses; participant
    `inference_url` = versiond-router origin (no duplicate `/devshard/<v>` path).
 3. ✅ `gatewayphase` HTTP stubs on mock-dapi (`/v1/epochs/latest`, `/v1/epochs/current/participants`).
@@ -931,7 +906,7 @@ TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewaySingleHostSmok
    | Router stickiness | same escrow/session → same versiond backend across retries | ✅ **DONE** |
    | Params long-poll | `/testenv/params` change → devshardd session bind uses new timeouts | ✅ **DONE** |
    | Epoch switch | `/testenv/epoch` advance → fast-forward blocks to `next_poc_start`, runtimeparams epoch bump | ✅ **DONE** |
-   | Gateway chat | devshardctl → router → devshardd → `mock-openai` `/v1/chat/completions` → 200 (stream + non-stream) | ✅ **DONE** |
+   | Gateway chat | gateway → router → devshardd → `mock-openai` `/v1/chat/completions` → 200 (stream + non-stream) | ✅ **DONE** |
    | Versiond failover | router retries the surviving instance | ✅ **DONE** |
 
    **Epoch switch implementation:** `citest/epoch_switch_test.go` posts `POST /testenv/epoch`
@@ -941,14 +916,7 @@ TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewaySingleHostSmok
    long-poll with higher `current_epoch_id`. Included in `make citest-stack` (rebuild
    `mock-chain` image when epoch admin changes).
 
-   **Gateway chat implementation:** `citest/gateway_chat_test.go` boots the standard stack and posts
-   pooled `POST /v1/chat/completions` on devshardctl for non-stream and SSE stream;
-   asserts HTTP 200, non-empty assistant content with `mock-openai:` prefix, and
-   `data: [DONE]` on the stream path. Uses admin API key (`TESTENV_ADMIN_API_KEY`),
-   waits for gateway runtime + `/{version}/healthz` via router. Helpers in
-   `citest/harness/gateway_chat.go`. Compose/gencompose fixes: mock-chain REST escrow
-   query, router `/devshard/` rewrite, `NODE_RPC_URL`, internal router URL `:8080`.
-   Included in `make citest-stack`.
+   **Gateway chat implementation:** `citest/gateway_chat_test.go` boots the standard stack and posts pooled `POST /v1/chat/completions` on gateway for non-stream and SSE stream; asserts HTTP 200, non-empty assistant content with `mock-openai:` prefix, and `data: [DONE]` on the stream path. Uses admin API key (`TESTENV_ADMIN_API_KEY`), waits for gateway runtime + `/{version}/healthz` via router. Helpers in `citest/harness/gateway_chat.go`. Compose/gencompose fixes: mock-chain REST escrow query, router `/devshard/` rewrite, `NODE_RPC_URL`, internal router URL `:8080`. Included in `make citest-stack`.
 
    **Versiond failover implementation:** `citest/versiond_failover_test.go` finds two session ids
    routed to different versiond upstreams (sticky hash), stops the compose service for
@@ -1121,7 +1089,7 @@ wired in Phase 11 (`.github/workflows/devshard-testenv.yml`); integration on dis
 | Layer | Command |
 |-------|---------|
 | common runtimeconfig server ✅ | `go test ./common/runtimeconfig/...` |
-| chain transport consolidation (2b) ✅ | `go test ./devshard/runtimeparams/... ./common/chain/...`; `go build ./...` for devshardd + devshardctl |
+| chain transport consolidation (2b) ✅ | `go test ./devshard/runtimeparams/... ./common/chain/...`; `go build ./...` for devshardd + gateway |
 | dapi delegation unchanged ✅ | `go test ./decentralized-api/nodemanager/...` |
 | chainoracle ✅ | `go test ./devshard/chainoracle/...` |
 | testenv unit ✅ | `cd devshard && go test ./testenv/...` |
@@ -1171,8 +1139,8 @@ Phase 3b  mock-chain CometBFT RPC face              ✅ DONE
 Phase 3c  mock-chain LCD REST face                  ✅ DONE
 Phase 4   gencompose stub + dev overlay (keys, air, dlv)  ✅ DONE
 Phase 5   mock-dapi + mock-openai (mounts chainoracle)  ✅ DONE
-Phase 6   gencompose versiond×N + router + devshardctl + keyrings  ✅ DONE
-Phase 7   devshardctl gateway in compose             ✅ DONE
+Phase 6   gencompose versiond×N + router + gateway + keyrings  ✅ DONE
+Phase 7   gateway in compose             ✅ DONE
 Phase 8   Go citest harness + named stack behavior tests          ✅ DONE
 Phase 9   adversarial scenarios (A1–A5 ✅)
 Phase 10  observability overlay (optional)              ✅ DONE

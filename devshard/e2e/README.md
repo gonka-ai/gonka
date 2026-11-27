@@ -1,8 +1,6 @@
 # Devshard E2E Tests
 
-This package contains Docker-backed end-to-end tests for `devshard`. The tests
-run real HTTP between `devshardctl` and `devshard-host` containers, use a local
-mock chain, and include Postgres in the smoke environment.
+This package contains Docker-backed end-to-end tests for `devshard`. The tests run real HTTP between the gateway (`cmd/gateway`) and `devshard-host` containers, use a local mock chain, and include Postgres in the smoke environment.
 
 The Go tests own the service topology through `testcontainers-go`. The
 `docker-compose.e2e.yml` file only starts the Go test runner container.
@@ -11,14 +9,10 @@ The Go tests own the service topology through `testcontainers-go`. The
 
 Each test starts an isolated Docker network with:
 
-- `mock-chain`: testenv gRPC mock chain (`testenv/cmd/mockchain`) seeded from
-  `e2e/mock-chain-config.yaml`; serves escrow/participant queries on `:9090` and
-  devshardctl phase-gate stubs on `:9191` (`/v1/epochs/*`).
-  With `MOCK_CHAIN_HUB_ADDR` set it also answers as the Hugging Face hub over TLS (`MOCK_CHAIN_HUB_DIR`, `MOCK_CHAIN_HUB_CERT`, `MOCK_CHAIN_HUB_KEY`); a scenario that aliases it `huggingface.co`, pins `hf_repo`/`hf_commit` on its epoch group and hands the gateway the certificate through `SSL_CERT_FILE` gets the pinned tokenizer without leaving the network.
+- `mock-chain`: testenv gRPC mock chain (`testenv/cmd/mockchain`) seeded from `e2e/mock-chain-config.yaml`; serves escrow/participant queries on `:9090` and the gateway's phase-gate stubs on `:9191` (`/v1/epochs/*`). With `MOCK_CHAIN_HUB_ADDR` set it also answers as the Hugging Face hub over TLS (`MOCK_CHAIN_HUB_DIR`, `MOCK_CHAIN_HUB_CERT`, `MOCK_CHAIN_HUB_KEY`); a scenario that aliases it `huggingface.co`, pins `hf_repo`/`hf_commit` on its epoch group and hands the gateway the certificate through `SSL_CERT_FILE` gets the pinned tokenizer without leaving the network.
 - `postgres`: smoke CI storage dependency.
 - `devshard-host-0..2`: three participant hosts with stub inference.
-- `devshardctl`: OpenAI-compatible HTTP entry point for the test client.
-- `devshard-gateway`: the same entry point served by `cmd/gateway`, started **instead of** `devshardctl` when a scenario sets `runGateway`. The two cannot run together: both would open the same escrow and advance the same nonce sequence. Its image comes from `DEVSHARD_E2E_GATEWAY_IMAGE` and is built by `make -C cmd/gateway image`, which `make e2e-images` calls.
+- `devshard-gateway`: the OpenAI-compatible HTTP entry point for the test client, served by `cmd/gateway` with the stand's escrow registered through `DEVSHARDS_JSON`. Its own escrow routes live under `/devshard/{id}/v1/...` and are admin-gated. Its image comes from `DEVSHARD_E2E_GATEWAY_IMAGE` and is built by `make -C cmd/gateway image`, which `make e2e-images` calls.
 
 Some recovery tests also attach named Docker volumes to host containers to
 verify SQLite-backed restart behavior.
@@ -52,9 +46,7 @@ Enable debug logs with:
 DEVSHARD_E2E_DEBUG=1 make -C devshard e2e-test
 ```
 
-Debug mode prints E2E request/response details and settlement contracts. The
-testcontainers Docker lifecycle logger is muted so output focuses on test
-behavior rather than container create/start/stop noise.
+Debug mode prints E2E request/response details. The testcontainers Docker lifecycle logger is muted so output focuses on test behavior rather than container create/start/stop noise.
 
 ## Reports
 
@@ -69,8 +61,7 @@ CI uploads this report as `devshard-e2e-junit-report` and publishes it as the
 
 ## Test Files
 
-- `non_streaming_test.go`: non-streaming OpenAI-style completions, cache
-  behavior, and settlement-contract validation.
+- `non_streaming_test.go`: non-streaming OpenAI-style completions, cache behavior, auth, request validation and finalization.
 - `non_streaming_corner_cases_test.go`: non-streaming error and degraded-host
   behavior.
 - `streaming_test.go`: SSE streaming shape, cache-hit streaming shape, and
@@ -81,6 +72,8 @@ CI uploads this report as `devshard-e2e-junit-report` and publishes it as the
   application, recovery, and finalization.
 - `runtime_config_test.go`: chain-backed runtime configuration wiring.
 - `containers_test.go`: Docker network/container setup and restart helpers.
+- `gateway_stack_test.go`: `startGatewayEnv`, the entry point every scenario starts its stand with, and the ledger readers the scenarios share.
+- `gateway_*_test.go`: gateway scenarios grouped by subject.
 - `testutil/`: HTTP clients, request helpers, assertions, and env defaults.
 
 ## Notes

@@ -41,7 +41,7 @@ func Register(srv *grpc.Server, deps Deps) {
 		panic("mockchain grpc: nil store")
 	}
 	inferencetypes.RegisterQueryServer(srv, NewInferenceServer(deps.Store))
-	cmtservice.RegisterServiceServer(srv, NewCometServer(deps.Store))
+	cmtservice.RegisterServiceServer(srv, NewCometServer(deps.Store, deps.RPC))
 	if deps.RPC != nil {
 		ledger := deps.ledger()
 		authtypes.RegisterQueryServer(srv, newAuthServer(deps.Store))

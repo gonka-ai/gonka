@@ -3,57 +3,27 @@ package harness
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
-	"time"
-
-	"devshard/testenv/config"
 
 	"github.com/stretchr/testify/require"
 )
 
-// BootStackWithAggregateByteLimits boots the standard 2×versiond stack after
-// stamping GATEWAY_AGGREGATE_MAX_* on the generated compose (before first Up).
-func BootStackWithAggregateByteLimits(t *testing.T, prefix string, maxMemoryBytes, maxResponseBytes int64) (*Stack, *config.File, Endpoints) {
-	t.Helper()
-	stack := NewStack(t, prefix)
-	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteStackConfig(t, stack.WorkDir)
-	stack.RunGencompose(t)
-	PatchComposeAggregateByteLimits(t, stack.ComposePath, maxMemoryBytes, maxResponseBytes)
-	cfg := stack.LoadConfig(t)
-	requireTwoVersiondHosts(t, cfg)
-	stack.Up(t)
-	client := GatewayChatClient()
-	eps := stack.Endpoints(t, cfg)
-	WaitStackHealthy(t, stack, eps)
-	WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
-	WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
-	return stack, cfg, eps
-}
-
-// PatchGatewayForceUpstreamStreaming sets redundancy.force_upstream_streaming via
-// POST /v1/admin/settings (in-memory ApplyRedundancySettings for the process).
+// PatchGatewayForceUpstreamStreaming sets force_upstream_streaming via POST /v1/admin/settings.
 func PatchGatewayForceUpstreamStreaming(t *testing.T, client *http.Client, gatewayURL string, enabled bool) {
 	t.Helper()
 	if client == nil {
 		client = GatewayChatClient()
 	}
-	body := map[string]any{
-		"redundancy": map[string]any{
-			"force_upstream_streaming": enabled,
-		},
-	}
+	body := map[string]any{"force_upstream_streaming": enabled}
 	data, err := json.Marshal(body)
 	require.NoError(t, err)
 	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
+	setAdminBearer(req, TestenvAdminAPIKey)
 	resp, err := client.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -62,86 +32,7 @@ func PatchGatewayForceUpstreamStreaming(t *testing.T, client *http.Client, gatew
 
 	var got map[string]any
 	require.NoError(t, json.Unmarshal(raw, &got))
-	red, _ := got["redundancy"].(map[string]any)
-	require.NotNil(t, red, "admin settings response missing redundancy")
-	require.Equal(t, enabled, red["force_upstream_streaming"],
-		"force_upstream_streaming not applied: %s", string(raw))
-}
-
-// PatchGatewayRedundancySpeedPolicy sets redundancy.speed_policy (legacy / hybrid / pairwise).
-func PatchGatewayRedundancySpeedPolicy(t *testing.T, client *http.Client, gatewayURL, policy string) {
-	t.Helper()
-	if client == nil {
-		client = GatewayChatClient()
-	}
-	body := map[string]any{
-		"redundancy": map[string]any{
-			"speed_policy": policy,
-		},
-	}
-	data, err := json.Marshal(body)
-	require.NoError(t, err)
-	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
-	require.NoError(t, err)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /v1/admin/settings: %s", string(raw))
-
-	var got map[string]any
-	require.NoError(t, json.Unmarshal(raw, &got))
-	red, _ := got["redundancy"].(map[string]any)
-	require.NotNil(t, red, "admin settings response missing redundancy")
-	require.Equal(t, policy, red["speed_policy"], "speed_policy not applied: %s", string(raw))
-}
-
-// PatchComposeAggregateByteLimits inserts GATEWAY_AGGREGATE_* byte caps on
-// devshardctl. Caller must RecreateServices(t, "devshardctl") for them to take effect.
-func PatchComposeAggregateByteLimits(t *testing.T, composePath string, maxMemoryBytes, maxResponseBytes int64) {
-	t.Helper()
-	lines := []string{
-		fmt.Sprintf(`GATEWAY_AGGREGATE_MAX_MEMORY_BYTES: "%d"`, maxMemoryBytes),
-		fmt.Sprintf(`GATEWAY_AGGREGATE_MAX_RESPONSE_BYTES: "%d"`, maxResponseBytes),
-	}
-	body, err := os.ReadFile(composePath)
-	require.NoError(t, err)
-	if strings.Contains(string(body), "GATEWAY_AGGREGATE_MAX_MEMORY_BYTES:") {
-		PatchComposeEnvKey(t, composePath, "GATEWAY_AGGREGATE_MAX_MEMORY_BYTES", fmt.Sprintf(`"%d"`, maxMemoryBytes))
-		PatchComposeEnvKey(t, composePath, "GATEWAY_AGGREGATE_MAX_RESPONSE_BYTES", fmt.Sprintf(`"%d"`, maxResponseBytes))
-		return
-	}
-	PatchComposeInsertEnvAfter(t, composePath, "GATEWAY_MAX_TOKENS_CAP", lines...)
-}
-
-// RequireAggregateSpilledInGatewayLogs asserts proxy_request_completed logged a spill.
-func RequireAggregateSpilledInGatewayLogs(t *testing.T, s *Stack) {
-	t.Helper()
-	out, err := s.ComposeLogsTail(400, "devshardctl")
-	require.NoError(t, err)
-	require.True(t, LogsContainFields(out, LogBoolField("aggregate_spilled", true)),
-		"expected aggregate spill in gateway logs")
-}
-
-// RequireAggregateSpoolDirEmpty asserts the aggregate spool has no leftover
-// named files (unlinked-at-create + Close).
-//
-// List from inside the gateway container: spool.Open creates the dir as 0o700,
-// so a host os.ReadDir on the bind mount fails with EACCES on Linux CI.
-func RequireAggregateSpoolDirEmpty(t *testing.T, s *Stack) {
-	t.Helper()
-	const dir = "/var/lib/devshardctl/aggregate-spool"
-	out := s.ComposeExec(t, "devshardctl", "sh", "-c",
-		`if [ ! -e '`+dir+`' ]; then exit 0; fi; ls -A -1 '`+dir+`'`)
-	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line != "" {
-			names = append(names, line)
-		}
-	}
-	require.Empty(t, names, "aggregate spool should be empty after request close; got %v", names)
+	require.Equal(t, enabled, got["force_upstream_streaming"], "force_upstream_streaming not applied: %s", string(raw))
 }
 
 // SSEChunksHaveTopLevelUsage reports whether any chunk carries a non-null usage object.

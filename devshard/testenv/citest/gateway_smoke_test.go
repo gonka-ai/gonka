@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestGatewaySingleHostSmoke exercises devshardctl → versiond-router → devshardd → mock-openai.
+// TestGatewaySingleHostSmoke exercises gateway → versiond-router → devshardd → mock-openai.
 // Requires Docker, a linux devshardd at ../../build/devshardd, and TESTENV_GATEWAY_SMOKE=1.
 func TestGatewaySingleHostSmoke(t *testing.T) {
 	if os.Getenv("TESTENV_GATEWAY_SMOKE") != "1" {
@@ -43,18 +43,19 @@ func TestGatewaySingleHostSmoke(t *testing.T) {
 		"max_tokens": 32,
 	}
 	var completion map[string]any
-	require.NoError(t, harness.PostJSON(client, eps.GatewayHTTP+"/v1/chat/completions", chatBody, &completion))
+	require.NoError(t, harness.PostGatewayJSON(client, eps.GatewayHTTP+"/v1/chat/completions", harness.TestenvAdminAPIKey, chatBody, &completion))
 	choices, ok := completion["choices"].([]any)
 	require.True(t, ok, "completion response: %v", completion)
 	require.NotEmpty(t, choices)
 
 	createBody := map[string]any{
-		"amount":   500_000,
-		"model_id": "test-model",
-		"register": true,
+		"amount":          500_000,
+		"model_id":        "test-model",
+		"private_key_env": harness.GatewayEscrowKeyEnv,
+		"activate":        true,
 	}
 	var created map[string]any
-	require.NoError(t, harness.PostJSON(client, eps.GatewayHTTP+"/v1/admin/escrows", createBody, &created))
+	require.NoError(t, harness.PostGatewayJSON(client, eps.GatewayHTTP+"/v1/admin/escrows", harness.TestenvAdminAPIKey, createBody, &created))
 	require.NotZero(t, created["escrow_id"])
 	t.Logf("created escrow via gateway REST: %v", created)
 }

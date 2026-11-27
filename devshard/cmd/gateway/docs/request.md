@@ -15,7 +15,7 @@ One `POST /v1/chat/completions`, from the socket to the settled nonce. Every ste
 | 5 | is the model routable at all | `routableModel`, for a caller step 4 admitted | 503 when not ready or an offered model has nothing routable; 400 for a model nobody offers |
 | 6 | do the prompt and `max_tokens` fit the model's context | `checkContext`: the prompt's byte bound, and the pinned tokenizer's count only when the bound does not fit, with the chat template's minimum and `max_tokens` against the context length | 400 `context_length_exceeded` |
 | 7 | does the chain phase admit new work | `admission`, on `snapshots.Snapshot()` | 503, except a refusal that is proof-of-compute alone, which waits for step 8 |
-| 8 | cache lookup | `cacheKeyFor` → `cache.get` | — (hit returns here); a miss behind a proof-of-compute refusal answers that 503 |
+| 8 | cache lookup | `cacheKeyFor` → `cache.get`, skipped by a `no-cache` or `no-store` request header | — (hit returns here); a miss or a bypass behind a proof-of-compute refusal answers that 503 |
 | 9 | count the prompt once when `DEVSHARD_STATS_TOKENIZER` is on, take an admission slot and token budget | `countPrompt`, then `limiter.AcquireForModel` | 429 |
 | 10 | does the chain phase still admit new work | `admission` again, on a fresh snapshot: the limiter can hold a request for minutes, and a block that began meanwhile must not get a nonce | 503 |
 | 11 | race it | `race` → `engine.Run` | see below |

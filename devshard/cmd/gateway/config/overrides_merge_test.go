@@ -9,25 +9,25 @@ import (
 // Test flow:
 //  1. Start from stored overrides that open the network access, switch the gateway off and pin a request cap.
 //  2. Merge a patch naming only a new request cap, then one setting the kill switch to null.
-//  3. Assert the first keeps access and disabled and takes the new cap, and the second clears disabled alone: a partial write changes only what it names.
+//  3. Assert the first keeps access and enabled and takes the new cap, and the second clears enabled alone: a partial write changes only what it names.
 func TestMergingAPatchChangesOnlyWhatItNames(t *testing.T) {
-	disabled, capBefore, open := true, int64(100), ModelAccessOpen
-	stored := Overrides{Tunables: env.Tunables{Disabled: &disabled, MaxConcurrentRequests: &capBefore}, Access: &open}
+	enabled, capBefore, open := false, int64(100), ModelAccessOpen
+	stored := Overrides{Tunables: env.Tunables{Enabled: &enabled, MaxConcurrentRequests: &capBefore}, Access: &open}
 
 	merged, err := stored.Merged([]byte(`{"max_concurrent_requests":250}`))
 	if err != nil {
 		t.Fatalf("Merged() = %v, want nil", err)
 	}
-	if merged.Access == nil || *merged.Access != ModelAccessOpen || merged.Disabled == nil || !*merged.Disabled || *merged.MaxConcurrentRequests != 250 {
-		t.Fatalf("merged = access %v disabled %v cap %v, want the access and the kill switch kept and the cap 250", merged.Access, merged.Disabled, *merged.MaxConcurrentRequests)
+	if merged.Access == nil || *merged.Access != ModelAccessOpen || merged.Enabled == nil || *merged.Enabled || *merged.MaxConcurrentRequests != 250 {
+		t.Fatalf("merged = access %v enabled %v cap %v, want the access and the kill switch kept and the cap 250", merged.Access, merged.Enabled, *merged.MaxConcurrentRequests)
 	}
 
-	cleared, err := merged.Merged([]byte(`{"disabled":null}`))
+	cleared, err := merged.Merged([]byte(`{"enabled":null}`))
 	if err != nil {
 		t.Fatalf("Merged() with null = %v, want nil", err)
 	}
-	if cleared.Disabled != nil || cleared.Access == nil || *cleared.Access != ModelAccessOpen || *cleared.MaxConcurrentRequests != 250 {
-		t.Fatalf("cleared = disabled %v access %v cap %v, want only disabled cleared", cleared.Disabled, cleared.Access, cleared.MaxConcurrentRequests)
+	if cleared.Enabled != nil || cleared.Access == nil || *cleared.Access != ModelAccessOpen || *cleared.MaxConcurrentRequests != 250 {
+		t.Fatalf("cleared = enabled %v access %v cap %v, want only enabled cleared", cleared.Enabled, cleared.Access, cleared.MaxConcurrentRequests)
 	}
 }
 
@@ -44,7 +44,7 @@ func TestMergingAPatchRefusesAnUnknownField(t *testing.T) {
 //  1. Merge a patch naming a field in another case than its tag.
 //  2. Assert it is refused like any unknown field: the patch never answers 200 for a setting it left unchanged.
 func TestMergingAPatchRefusesAFieldNamedInAnotherCase(t *testing.T) {
-	if _, err := (Overrides{}).Merged([]byte(`{"Disabled":true}`)); err == nil {
+	if _, err := (Overrides{}).Merged([]byte(`{"Enabled":false}`)); err == nil {
 		t.Fatal("Merged() = nil, want the field refused as unknown")
 	}
 }

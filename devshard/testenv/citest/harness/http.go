@@ -48,7 +48,7 @@ func WaitGETOK(t *testing.T, client *http.Client, url string, timeout time.Durat
 	})
 	if !ok {
 		if len(stack) > 0 && stack[0] != nil {
-			DumpComposeLogs(t, stack[0], "versiond-0", "versiond-1", "versiond-router", "devshardctl", "mock-dapi")
+			DumpComposeLogs(t, stack[0], "versiond-0", "versiond-1", "versiond-router", "gateway", "mock-dapi")
 		}
 		msg := fmt.Sprintf("citest: %s not ready after %d attempts (%s): %s", label, attempts, url, lastErr)
 		if strings.Contains(url, "/v1/epochs/latest") && strings.Contains(lastErr, "404") {

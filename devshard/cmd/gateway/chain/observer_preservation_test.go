@@ -88,8 +88,8 @@ func TestPhaseObserver_LeadWindowSwitchesToTheSnapshotOnceItIsWritten(t *testing
 
 // Test flow:
 //  1. Configure an Inference epoch two blocks before the next PoC at 950 with the two-miner participants and a snapshot read that fails.
-//  2. Refresh and assert the legacy lookahead still applies: only the miner keeping a node through PoC serves, and LastError names the failed read.
-func TestPhaseObserver_LeadWindowWithFailedSnapshotReadKeepsLegacyLookahead(t *testing.T) {
+//  2. Refresh and assert both miners keep serving, and LastError names the failed read.
+func TestPhaseObserver_LeadWindowWithFailedSnapshotReadKeepsEveryMinerServing(t *testing.T) {
 	stub := newPhaseObserverStub()
 	server := httptest.NewServer(stub.handler())
 	defer server.Close()
@@ -101,8 +101,8 @@ func TestPhaseObserver_LeadWindowWithFailedSnapshotReadKeepsLegacyLookahead(t *t
 	observer.refresh(context.Background())
 	snapshot := observer.Snapshot()
 
-	if want := []string{"gonka1bcd"}; !reflect.DeepEqual(snapshot.Preserved, want) {
-		t.Errorf("Preserved = %v, want legacy %v", snapshot.Preserved, want)
+	if want := []string{"gonka1abc", "gonka1bcd"}; !reflect.DeepEqual(snapshot.Preserved, want) {
+		t.Errorf("Preserved = %v, want every miner %v", snapshot.Preserved, want)
 	}
 	if !strings.Contains(snapshot.LastError, "chain unreachable") {
 		t.Errorf("LastError = %q, want substring %q", snapshot.LastError, "chain unreachable")

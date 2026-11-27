@@ -38,8 +38,7 @@ topology:
     # reached it, and the gateway paces its Chats to any advertised budget of
     # 10 a minute or more (transport/rpc_budget.go), so it would wait, not be
     # refused. Under 10 the gateway neither paces nor skips (that needs the
-    # 6000 default): it sends, P4 refuses, and the gateway pauses P4 1 s
-    # (quarantines-match-faults sender_rate). P4 is over its 0.1/s budget the whole run.
+    # 6000 default): it sends and P4 refuses. P4 is over its 0.1/s budget the whole run.
     - id: versiond-5
       rpc_chats_per_min: 6
     # P3 keeps payloads in zstd files only (sqlite-payloads-in-zstd-files, payload-files-are-zstd). sqlite keeps no
@@ -97,18 +96,13 @@ workload:
       models: [{value: model-a, weight: 70}, {value: model-b, weight: 30}]
   events:
     # P4's budget is set at boot, so it bites all run: a background marker
-    # yields misses and quarantines inside P4's other windows to those cases.
+    # yields misses inside P4's other windows to those cases.
     - {id: host-over-peer-chat-budget, case: host-over-peer-chat-budget, action: marker, target: versiond-5, at: 0s, until: 15m,
-       params: {background: true, observe: host_rate_limited, waive_misses: true, expect_quarantine: sender_rate}}
+       params: {background: true, observe: host_rate_limited, waive_misses: true}}
 
 gateway:
   redundancy:
     secondary_wait_after_winner: 30s
-  participant_throttle:
-    transport_failure_quarantine: 45s
-    http_quarantine: 45s
-    empty_stream_quarantine: 45s
-    stalled_winner_quarantine: 45s
   escrow_rotation:
     enabled: true
     settlement_enabled: true

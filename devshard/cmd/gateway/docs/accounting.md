@@ -91,13 +91,9 @@ Every route is read-only and serves one gateway's view of public network behavio
 
 Each escrow keeps its newest 256 events, which caps a pathological run rather than trimming normal traffic: a verdict is rare, and an escrow dies with its epoch.
 
-### The counter's shape is this ledger's own
+### The counter is served flat
 
-A counter is served **flat** — `escrow_id`, `slot_id`, `disposition`, `ghost_reason`, `terminal`, `phase` and the timeout fields all at the top level of the object. `devshard/accounting` nests the same facts under a `key` object and calls the burn reason `no_send_reason`.
-
-Nothing outside this gateway reads the JSON counter, so no reader has to migrate to the flat shape, and the two shapes stay apart.
-
-The cost of that is worth stating, because it is silent: a reader written against the nested shape finds none of these fields, decodes them as empty, filters every counter out and reports **zero burns rather than an error**. The gateway e2e scenarios therefore read counters with their own helper, not the shared one.
+A counter is served **flat** — `escrow_id`, `slot_id`, `disposition`, `ghost_reason`, `terminal`, `phase` and the timeout fields all at the top level of the object. Nothing outside this gateway reads the JSON counter.
 
 ## Findings
 
@@ -109,7 +105,7 @@ Findings are derived on every read and **never stored**: the counters are the fa
 
 - **A volume floor.** No *rate* finding is raised below **20** nonces in its denominator: a rate off four attempts describes noise, not a host. The one finding that counts rather than measures, `ledger_overcounted`, has no floor: a single overcounted nonce is already a defect in the books.
 - **Burns are excluded from every host rate.** A burn is this gateway's own decision; charging it to the host would report the gateway's throttling as the host's failure.
-- **The gateway's own failures are excluded.** A phase transition ending an attempt, a vote round that reached no verdict, a missing poster, a long response that had already produced content, and a client that stopped waiting are all the gateway's. A failure the ledger could not *name* still counts — excusing the unclassified would empty the rates.
+- **The gateway's own failures are excluded.** A phase transition ending an attempt, a vote round that reached no verdict, a missing poster, a long response that had already produced content (a reason only rows written before the gateway voted on long responses carry), and a client that stopped waiting are all the gateway's. A failure the ledger could not *name* still counts — excusing the unclassified would empty the rates.
 - **The warmup probe and the shadow probe leave the outcome ratios whatever they ended as.** Each is the gateway's own request, so it leaves both sides of `execution_timeouts`, `refusals`, `answers_unused`, `logprobs_not_token_ids` and `failure_terminals`; excluding it only when it succeeded would report a host's refusals while hiding its successes. The chain's own findings still count it: `chain_recorded_misses` and `chain_recorded_invalid` are read from the escrow's per-host stats (`query.go`), so a probe the host failed and was voted timed out on is one of its misses there, as on chain. The timing findings (`slow_receipts`, `slow_chunks`, `slow_decode`) and `clock_drift` count a probe's answer or receipt like any other. The warmup probe is filed under the terminal `warmup_probe`, a probe sent to a `participants.shadow` host under `shadow_probe`, and both are recorded through the same path (`ProbeRecorded`, `nonces.Recorder.RecordProbe`). The shadow probe also stays out of the rates that drive routing, because it never touches the limiter or the host-health tracker: its outcome is read from `devshard_gateway_shadow_probes_total` and its timing histograms, not from a participant's congestion, cut-off or ejection state (routing.md, "Shadow participants").
 
 Thresholds are constants rather than configuration: two gateways must not report the same host differently, and a host comparing two reports should be able to tell that the host moved, not the ruler.
