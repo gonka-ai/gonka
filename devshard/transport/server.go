@@ -665,7 +665,7 @@ func (s *Server) ServeVerifyTimeout(ctx context.Context, req VerifyTimeoutReques
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		accept, err = s.verifyRefusedTimeout(ctx, st, req.InferenceID, rec, PayloadFromJSON(req.Payload), localMempool, executorClient, group[executorIdx].ValidatorAddress)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
-		accept, err = host.VerifyExecutionTimeout(ctx, st, req.InferenceID, rec, localMempool, executorClient, s.host, s.host)
+		accept, err = s.verifyExecutionTimeout(ctx, st, req.InferenceID, rec, localMempool, executorClient)
 	default:
 		return nil, clientRequest(fmt.Sprintf("unknown timeout reason: %s", req.Reason))
 	}
