@@ -2,12 +2,12 @@ package filters
 
 import (
 	"fmt"
-	"regexp"
+	"regexp/syntax"
 
 	json "github.com/goccy/go-json"
 )
 
-// Bound families kept separate per schema-carrying field even where the values match. See README.md, "Schema bounds".
+// Bound families kept separate per schema-carrying field even where the values match, and the one pattern byte budget shared by the whole request. See README.md, "Schema bounds".
 const (
 	chatTemplateKwargsMaxDepth     = 16
 	chatTemplateKwargsMaxSizeBytes = 16 * 1024
@@ -19,6 +19,10 @@ const (
 	toolsMaxBranch     = 16
 	toolsMaxEnum       = 256
 	toolsMaxPatternLen = 512
+
+	toolsMaxCount = 128
+
+	requestPatternMaxBytes = 4096
 
 	toolChoiceMaxNameLen = 64
 
@@ -72,16 +76,48 @@ type SchemaBounds struct {
 	MaxPatternLen int
 }
 
+type patternBudget struct {
+	bytes int
+	seen  map[string]struct{}
+}
+
+func (b *patternBudget) admit(pattern string) (bool, error) {
+	if b == nil {
+		return true, nil
+	}
+	if _, repeated := b.seen[pattern]; repeated {
+		return false, nil
+	}
+	b.bytes += len(pattern)
+	if b.bytes > requestPatternMaxBytes {
+		return false, fmt.Errorf("pattern budget exceeded: limit %d bytes", requestPatternMaxBytes)
+	}
+	if b.seen == nil {
+		b.seen = make(map[string]struct{})
+	}
+	b.seen[pattern] = struct{}{}
+	return true, nil
+}
+
+func validateRegexSyntax(pattern string) error {
+	_, err := syntax.Parse(pattern, syntax.Perl)
+	return err
+}
+
 // Check walks schema for structural violations before measuring its serialized size.
 func (b SchemaBounds) Check(schema map[string]any) error {
+	return b.checkWithin(schema, nil)
+}
+
+func (b SchemaBounds) checkWithin(schema map[string]any, budget *patternBudget) error {
 	var nodes int
-	if err := b.walk(schema, 1, &nodes); err != nil {
+	if err := b.walk(schema, 1, &nodes, budget); err != nil {
 		return err
 	}
 	return checkSize(schema, b.MaxSizeBytes)
 }
 
-func (b SchemaBounds) walk(schema any, depth int, nodes *int) error {
+func (b SchemaBounds) walk(schema any, depth int, nodes *int, budget *patternBudget) error {
 	if depth > b.MaxDepth {
 		return depthExceededError(b.MaxDepth)
 	}
@@ -104,7 +140,10 @@ func (b SchemaBounds) walk(schema any, depth int, nodes *int) error {
 	if err := validateSchemaType(object); err != nil {
 		return err
 	}
-	if err := b.validateSchemaPattern(object); err != nil {
+	if err := b.validateSchemaPattern(object, budget); err != nil {
+		return err
+	}
+	if err := b.validatePatternPropertyKeys(object, budget); err != nil {
 		return err
 	}
 	for _, branchKey := range branchSchemaKeys {
@@ -120,16 +159,16 @@ func (b SchemaBounds) walk(schema any, depth int, nodes *int) error {
 		case map[string]any:
 			if _, isChildMap := schemaChildMapKeys[key]; isChildMap {
 				for _, child := range typed {
-					if err := b.walk(child, depth+1, nodes); err != nil {
+					if err := b.walk(child, depth+1, nodes, budget); err != nil {
 						return err
 					}
 				}
-			} else if err := b.walk(typed, depth+1, nodes); err != nil {
+			} else if err := b.walk(typed, depth+1, nodes, budget); err != nil {
 				return err
 			}
 		case []any:
 			for _, child := range typed {
-				if err := b.walk(child, depth+1, nodes); err != nil {
+				if err := b.walk(child, depth+1, nodes, budget); err != nil {
 					return err
 				}
 			}
@@ -165,8 +204,8 @@ func validateSchemaType(object map[string]any) error {
 	return nil
 }
 
-// validateSchemaPattern rejects an over-long or uncompilable `pattern` (CVE-2025-48944); MaxPatternLen <= 0 disables it.
-func (b SchemaBounds) validateSchemaPattern(object map[string]any) error {
+// validateSchemaPattern rejects an over-long or invalid `pattern` (CVE-2025-48944); MaxPatternLen <= 0 disables it.
+func (b SchemaBounds) validateSchemaPattern(object map[string]any, budget *patternBudget) error {
 	if b.MaxPatternLen <= 0 {
 		return nil
 	}
@@ -178,11 +217,35 @@ func (b SchemaBounds) validateSchemaPattern(object map[string]any) error {
 	if !ok {
 		return fmt.Errorf("schema pattern is not a valid regular expression: must be a string")
 	}
-	if len(pattern) > b.MaxPatternLen {
-		return fmt.Errorf("schema pattern is not a valid regular expression: length %d exceeds limit %d", len(pattern), b.MaxPatternLen)
+	return b.validateRegex(pattern, "schema pattern", budget)
+}
+
+func (b SchemaBounds) validatePatternPropertyKeys(object map[string]any, budget *patternBudget) error {
+	if b.MaxPatternLen <= 0 {
+		return nil
 	}
-	if _, err := regexp.Compile(pattern); err != nil {
-		return fmt.Errorf("schema pattern is not a valid regular expression: %w", err)
+	keys, ok := object["patternProperties"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	for key := range keys {
+		if err := b.validateRegex(key, "schema patternProperties key", budget); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b SchemaBounds) validateRegex(pattern, subject string, budget *patternBudget) error {
+	if len(pattern) > b.MaxPatternLen {
+		return fmt.Errorf("%s is not a valid regular expression: length %d exceeds limit %d", subject, len(pattern), b.MaxPatternLen)
+	}
+	fresh, err := budget.admit(pattern)
+	if err != nil || !fresh {
+		return err
+	}
+	if err := validateRegexSyntax(pattern); err != nil {
+		return fmt.Errorf("%s is not a valid regular expression: %w", subject, err)
 	}
 	return nil
 }
@@ -258,10 +321,12 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// jsonMarshaledSize returns len(json.Marshal(v)) without allocating it; Encode trails a newline, so subtract one.
+// jsonMarshaledSize returns the size of v encoded without HTML escaping, as Document.Marshal writes it, without allocating it; Encode trails a newline, so subtract one.
 func jsonMarshaledSize(v any) (int, error) {
 	var counter countingWriter
-	if err := json.NewEncoder(&counter).Encode(v); err != nil {
+	encoder := json.NewEncoder(&counter)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
 		return 0, err
 	}
 	return counter.n - 1, nil

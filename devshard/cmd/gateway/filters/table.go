@@ -143,13 +143,16 @@ var (
 		spec("metadata", StagePreValidation, validMetadata(metadataMaxKeys, metadataMaxKeyLen, metadataMaxValueLen)),
 		spec("stream_options", StagePreValidation, validStreamOptions()),
 		spec("min_tokens", StagePreValidation, requireUint()),
-		spec("tools", StagePreValidation, validTools(SchemaBounds{
-			MaxDepth:      toolsMaxDepth,
-			MaxNodes:      toolsMaxNodes,
-			MaxSizeBytes:  toolsMaxSizeBytes,
-			MaxBranch:     toolsMaxBranch,
-			MaxEnum:       toolsMaxEnum,
-			MaxPatternLen: toolsMaxPatternLen,
+		spec("tools", StagePreValidation, validTools(toolsBounds{
+			SchemaBounds: SchemaBounds{
+				MaxDepth:      toolsMaxDepth,
+				MaxNodes:      toolsMaxNodes,
+				MaxSizeBytes:  toolsMaxSizeBytes,
+				MaxBranch:     toolsMaxBranch,
+				MaxEnum:       toolsMaxEnum,
+				MaxPatternLen: toolsMaxPatternLen,
+			},
+			MaxCount: toolsMaxCount,
 		}, "auto")),
 		spec("tool_choice", StagePreValidation, validToolChoice(toolChoiceMaxNameLen)),
 		spec("parallel_tool_calls", StagePreValidation, parallelToolCalls()),

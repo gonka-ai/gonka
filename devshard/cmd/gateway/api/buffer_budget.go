@@ -11,9 +11,10 @@ var (
 )
 
 type BufferBudget struct {
-	mu    sync.Mutex
-	held  int64
-	limit int64
+	mu      sync.Mutex
+	held    int64
+	limit   int64
+	callers map[string]int64
 }
 
 func NewBufferBudget(limit int64) *BufferBudget {
@@ -29,7 +30,7 @@ func (b *BufferBudget) reserve(bytes int64) bool {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if b.limit > 0 && b.held+bytes > b.limit {
+	if !b.fitsLocked(bytes) {
 		return false
 	}
 	b.held += bytes
@@ -42,9 +43,60 @@ func (b *BufferBudget) release(bytes int64) {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.held -= bytes
-	if b.held < 0 {
-		b.held = 0
+	b.giveBackLocked(bytes)
+}
+
+func (b *BufferBudget) fitsLocked(bytes int64) bool {
+	return b.limit <= 0 || b.held+bytes <= b.limit
+}
+
+func (b *BufferBudget) giveBackLocked(bytes int64) {
+	b.held = max(b.held-bytes, 0)
+}
+
+type callerShare struct {
+	budget *BufferBudget
+	caller string
+	limit  int64
+}
+
+func (b *BufferBudget) forCaller(caller string, limit int64) *callerShare {
+	return &callerShare{budget: b, caller: caller, limit: limit}
+}
+
+func (s *callerShare) reserve(bytes int64) bool {
+	if s == nil || !s.budget.accountsFor(bytes) {
+		return true
+	}
+	b := s.budget
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.fitsLocked(bytes) {
+		return false
+	}
+	if s.limit > 0 && b.callers[s.caller]+bytes > s.limit {
+		return false
+	}
+	if b.callers == nil {
+		b.callers = make(map[string]int64)
+	}
+	b.held += bytes
+	b.callers[s.caller] += bytes
+	return true
+}
+
+func (s *callerShare) release(bytes int64) {
+	if s == nil || !s.budget.accountsFor(bytes) {
+		return
+	}
+	b := s.budget
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.giveBackLocked(bytes)
+	if remaining := b.callers[s.caller] - bytes; remaining > 0 {
+		b.callers[s.caller] = remaining
+	} else {
+		delete(b.callers, s.caller)
 	}
 }
 

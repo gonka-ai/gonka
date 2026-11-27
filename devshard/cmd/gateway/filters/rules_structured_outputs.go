@@ -1,7 +1,6 @@
 package filters
 
 import (
-	"regexp"
 	"strings"
 )
 
@@ -27,34 +26,34 @@ func buildStructuredOutputsKnownFields() map[string]struct{} {
 }
 
 // structuredOutputsConstraintValidators pairs each constraint field with its validator so a new one can't be added without.
-func structuredOutputsConstraintValidators(bounds structuredOutputsBounds) map[string]func(value any) error {
-	return map[string]func(value any) error{
-		"json": func(value any) error {
+func structuredOutputsConstraintValidators(bounds structuredOutputsBounds) map[string]func(value any, budget *patternBudget) error {
+	return map[string]func(value any, budget *patternBudget) error{
+		"json": func(value any, budget *patternBudget) error {
 			schema, ok := value.(map[string]any)
 			if !ok {
 				return Reject("structured_outputs.json: must be an object (string-encoded schemas are not accepted)")
 			}
-			if err := bounds.Check(schema); err != nil {
+			if err := bounds.checkWithin(schema, budget); err != nil {
 				return Reject("structured_outputs.json: %v", err)
 			}
 			return nil
 		},
-		"regex": func(value any) error {
-			return validStructuredOutputsPattern(value, bounds.MaxPatternLen, "regex")
+		"regex": func(value any, budget *patternBudget) error {
+			return validStructuredOutputsPattern(value, bounds.MaxPatternLen, "regex", budget)
 		},
-		"choice": func(value any) error {
+		"choice": func(value any, _ *patternBudget) error {
 			return validStructuredOutputsChoice(value, bounds.MaxChoiceEntries, bounds.MaxChoiceEntryLen, bounds.MaxSizeBytes)
 		},
-		"grammar": func(value any) error {
+		"grammar": func(value any, _ *patternBudget) error {
 			return validStructuredOutputsGrammar(value, bounds.MaxGrammarLen, bounds.MaxGrammarNesting)
 		},
-		"json_object": func(value any) error {
+		"json_object": func(value any, _ *patternBudget) error {
 			if _, ok := value.(bool); !ok {
 				return Reject("structured_outputs.json_object: must be a boolean")
 			}
 			return nil
 		},
-		"structural_tag": func(value any) error {
+		"structural_tag": func(value any, _ *patternBudget) error {
 			return validStructuredOutputsStructuralTag(value, bounds.MaxStructuralTagLen)
 		},
 	}
@@ -105,12 +104,12 @@ func validStructuredOutputs(bounds structuredOutputsBounds) RuleFunc {
 			if !presentField(value, ok) {
 				continue
 			}
-			if err := constraintValidators[field](value); err != nil {
+			if err := constraintValidators[field](value, ctx.Document.patternBudget()); err != nil {
 				return err
 			}
 		}
 		if value, ok := object["whitespace_pattern"]; presentField(value, ok) {
-			if err := validStructuredOutputsPattern(value, bounds.MaxPatternLen, "whitespace_pattern"); err != nil {
+			if err := validStructuredOutputsPattern(value, bounds.MaxPatternLen, "whitespace_pattern", ctx.Document.patternBudget()); err != nil {
 				return err
 			}
 		}
@@ -126,7 +125,7 @@ func validStructuredOutputs(bounds structuredOutputsBounds) RuleFunc {
 }
 
 // validStructuredOutputsPattern backs both "regex" and "whitespace_pattern"; only the message prefix differs.
-func validStructuredOutputsPattern(value any, maxLen int, fieldName string) error {
+func validStructuredOutputsPattern(value any, maxLen int, fieldName string, budget *patternBudget) error {
 	pattern, ok := value.(string)
 	if !ok {
 		return Reject("structured_outputs.%s: invalid shape: must be a string", fieldName)
@@ -134,7 +133,14 @@ func validStructuredOutputsPattern(value any, maxLen int, fieldName string) erro
 	if len(pattern) > maxLen {
 		return Reject("structured_outputs.%s: length exceeded: %d > %d", fieldName, len(pattern), maxLen)
 	}
-	if _, err := regexp.Compile(pattern); err != nil {
+	fresh, err := budget.admit(pattern)
+	if err != nil {
+		return Reject("structured_outputs.%s: %v", fieldName, err)
+	}
+	if !fresh {
+		return nil
+	}
+	if err := validateRegexSyntax(pattern); err != nil {
 		return Reject("structured_outputs.%s: must compile as a regex: %v", fieldName, err)
 	}
 	return nil

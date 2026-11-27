@@ -419,3 +419,18 @@ func TestObjectBoundsCheckHasNoSchemaSemantics(t *testing.T) {
 		t.Fatalf("Check() = %v, want nil (ObjectBounds must not apply schema semantics)", err)
 	}
 }
+
+// Test flow:
+//  1. Build a schema whose description is made of <, > and & characters.
+//  2. Compute its marshaled size.
+//  3. Assert the size counts each of those characters as one byte, as the normalized body carries them.
+func TestJSONMarshaledSizeCountsHTMLCharactersAsOneByte(t *testing.T) {
+	schema := map[string]any{"d": "<>&<>&"}
+	size, err := jsonMarshaledSize(schema)
+	if err != nil {
+		t.Fatalf("jsonMarshaledSize: %v", err)
+	}
+	if want := len(`{"d":"<>&<>&"}`); size != want {
+		t.Errorf("jsonMarshaledSize = %d, want %d", size, want)
+	}
+}

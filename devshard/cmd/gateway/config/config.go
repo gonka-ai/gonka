@@ -77,23 +77,24 @@ type HostCutoff struct {
 
 // Limits groups admission tuning; several zeroes mean unlimited. See README.md, "What each group holds".
 type Limits struct {
-	DefaultMaxTokens            int64
-	ForceUpstreamStreaming      bool
-	LogprobsOptimization        *bool
-	MaxBufferedResponseBytes    int64
-	MaxBufferedRequestBytes     int64
-	MinClientReadBytesPerSecond int64
-	MaxTokensCap                int64
-	FallbackMaxModelLen         int64
-	Concurrency                 Concurrency
-	MaxInputTokensInFlight      int64
-	AdmissionQueueWaitMS        int64
-	AdmissionQueuePerSlot       int64
-	HostWindows                 HostWindows
-	Congestion                  Congestion
-	HostCutoff                  HostCutoff
-	Access                      string
-	MaxModelLen                 *int64
+	DefaultMaxTokens                 int64
+	ForceUpstreamStreaming           bool
+	LogprobsOptimization             *bool
+	MaxBufferedResponseBytes         int64
+	MaxBufferedRequestBytes          int64
+	MaxBufferedRequestBytesPerCaller int64
+	MinClientReadBytesPerSecond      int64
+	MaxTokensCap                     int64
+	FallbackMaxModelLen              int64
+	Concurrency                      Concurrency
+	MaxInputTokensInFlight           int64
+	AdmissionQueueWaitMS             int64
+	AdmissionQueuePerSlot            int64
+	HostWindows                      HostWindows
+	Congestion                       Congestion
+	HostCutoff                       HostCutoff
+	Access                           string
+	MaxModelLen                      *int64
 }
 
 type Modes struct {

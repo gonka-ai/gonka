@@ -47,6 +47,7 @@ func TestDefaultsMatchSpec(t *testing.T) {
 		{"Limits.Concurrency.PoCRequestsPer10000Weight", configuration.Limits.Concurrency.PoCRequestsPer10000Weight, 10.0},
 		{"Limits.MaxInputTokensInFlight", configuration.Limits.MaxInputTokensInFlight, int64(0)},
 		{"Limits.AdmissionQueueWaitMS", configuration.Limits.AdmissionQueueWaitMS, int64(300_000)},
+		{"Limits.MaxBufferedRequestBytesPerCaller", configuration.Limits.MaxBufferedRequestBytesPerCaller, int64(32 << 20)},
 		{"Limits.MinClientReadBytesPerSecond", configuration.Limits.MinClientReadBytesPerSecond, int64(65_536)},
 		{"Limits.FallbackMaxModelLen", configuration.Limits.FallbackMaxModelLen, int64(1_000_000)},
 		{"Limits.HostWindows.Input.MinRequests", configuration.Limits.HostWindows.Input.MinRequests, int64(16)},
@@ -167,6 +168,7 @@ func TestValidateCatchesEveryRuleBreach(t *testing.T) {
 		{"poc_max_concurrent_requests_per_10000_weight above the request cap", func(c *Config) { c.Limits.Concurrency.PoCRequestsPer10000Weight = maxConcurrentRequests + 1 }, "poc_max_concurrent_requests_per_10000_weight"},
 		{"max_input_tokens_in_flight negative", func(c *Config) { c.Limits.MaxInputTokensInFlight = -1 }, "max_input_tokens_in_flight"},
 		{"max_buffered_request_bytes below one body", func(c *Config) { c.Limits.MaxBufferedRequestBytes = filters.MaxBodyBytes - 1 }, "max_buffered_request_bytes"},
+		{"max_buffered_request_bytes_per_caller below one body", func(c *Config) { c.Limits.MaxBufferedRequestBytesPerCaller = filters.MaxBodyBytes - 1 }, "max_buffered_request_bytes_per_caller"},
 		{"admission_queue_wait_ms negative", func(c *Config) { c.Limits.AdmissionQueueWaitMS = -1 }, "admission_queue_wait_ms"},
 		{"min_client_read_bytes_per_second too low", func(c *Config) { c.Limits.MinClientReadBytesPerSecond = 0 }, "min_client_read_bytes_per_second"},
 		{"min_client_read_bytes_per_second too high", func(c *Config) { c.Limits.MinClientReadBytesPerSecond = maxMinClientReadBytesPerSecond + 1 }, "min_client_read_bytes_per_second"},
@@ -290,6 +292,31 @@ func TestValidateAcceptsADefaultAboveTheCap(t *testing.T) {
 	configuration.Limits.MaxTokensCap = 4_096
 	if err := configuration.Validate(); err != nil {
 		t.Fatalf("Validate() with a default above the cap = %v, want nil", err)
+	}
+}
+
+// Test flow:
+//  1. Build a default config whose per-caller body share equals the whole body budget.
+//  2. Assert `Validate` accepts it.
+func TestValidateAcceptsAPerCallerShareEqualToTheBodyBudget(t *testing.T) {
+	configuration := Defaults()
+	configuration.Limits.MaxBufferedRequestBytesPerCaller = configuration.Limits.MaxBufferedRequestBytes
+	if err := configuration.Validate(); err != nil {
+		t.Fatalf("Validate() with a share equal to the budget = %v, want nil", err)
+	}
+}
+
+// Test flow:
+//  1. Build a default config and lower the body budget to 16 MiB, between one body and the default 32 MiB share, leaving the share at its default.
+//  2. Assert `Validate` accepts it, so an operator who lowers only the budget still boots.
+func TestValidateAcceptsABodyBudgetBelowTheDefaultPerCallerShare(t *testing.T) {
+	configuration := Defaults()
+	configuration.Limits.MaxBufferedRequestBytes = 16 << 20
+	if configuration.Limits.MaxBufferedRequestBytes >= configuration.Limits.MaxBufferedRequestBytesPerCaller {
+		t.Fatalf("budget %d is not below the default share %d, so the test proves nothing", configuration.Limits.MaxBufferedRequestBytes, configuration.Limits.MaxBufferedRequestBytesPerCaller)
+	}
+	if err := configuration.Validate(); err != nil {
+		t.Fatalf("Validate() with a budget below the default share = %v, want nil", err)
 	}
 }
 

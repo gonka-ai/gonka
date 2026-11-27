@@ -204,15 +204,19 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		return
 	}
 
-	body, err := readBody(w, r, chatIngestLimit, s.requestBodies)
+	share := s.requestBodies.forCaller(identity.caller(), bodyShareLimit(configuration, identity))
+	body, err := readBody(w, r, chatIngestLimit, share)
 	if err != nil {
 		s.refuseBody(w, requestID, err)
 		return
 	}
-	releaseBody := sync.OnceFunc(func() { s.requestBodies.release(int64(len(body))) })
+	bodyBytes := int64(len(body))
+	releaseBody := sync.OnceFunc(func() { share.release(bodyBytes) })
 	defer releaseBody()
 	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))
-	releaseBody()
+	if identity.admin {
+		releaseBody()
+	}
 	if err != nil {
 		s.capture.filterRejected(r, requestID, body, err)
 		s.writeErrorFor(w, err)
@@ -247,11 +251,13 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		key = cacheKeyFor(r, normalized)
 		if directive.looksUp() {
 			if reader, adopted := s.streams.adopt(key, s.cache.currentGeneration()); adopted {
+				releaseBody()
 				escrowID, written := serveLog(w, r, requestID, reader)
 				s.finishReplay(requestID, normalized.Model, identity.caller(), escrowID, true, written, prompt)
 				return
 			}
 			if entry, hit := s.cache.get(key, s.now()); hit {
+				releaseBody()
 				written := serveCached(w, requestID, entry)
 				s.finishReplay(requestID, normalized.Model, identity.caller(), entry.escrowID, entry.stream, written, prompt)
 				return
@@ -264,7 +270,9 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	}
 
 	counted := s.countPrompt(normalized.Model, prompt)
-	if err := s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(counted.tokens), s.capacity.ForModel(normalized.Model)); err != nil {
+	err = s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(counted.tokens), s.capacity.ForModel(normalized.Model))
+	releaseBody()
+	if err != nil {
 		if label, refused := limiterRefusal(err); refused && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, label)
 			s.events.RequestThrottled(journal.RequestLine{
@@ -354,6 +362,13 @@ func (s *Server) routableModel(configured *config.Config, model string) error {
 		return &ModelUnavailableError{Model: model}
 	}
 	return &UnsupportedModelError{Model: model, Supported: served}
+}
+
+func bodyShareLimit(configured *config.Config, identity credentials) int64 {
+	if identity.admin {
+		return configured.Limits.MaxBufferedRequestBytes
+	}
+	return min(configured.Limits.MaxBufferedRequestBytesPerCaller, configured.Limits.MaxBufferedRequestBytes)
 }
 
 func reachesAnyModel(configured *config.Config, identity credentials) bool {

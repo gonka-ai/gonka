@@ -74,7 +74,7 @@ func BenchmarkEnsureStructuralBounds(b *testing.B) {
 	b.ReportAllocs()
 	b.SetBytes(int64(len(body)))
 	for b.Loop() {
-		if err := ensureStructuralBounds(body, MaxNestingDepth, MaxStructuralNodes); err != nil {
+		if err := ensureStructuralBounds(body, MaxNestingDepth, MaxStructuralNodes, MaxContainerMembers); err != nil {
 			b.Fatal(err)
 		}
 	}

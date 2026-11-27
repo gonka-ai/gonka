@@ -295,6 +295,7 @@ func Load() (Values, error) {
 	readStrictBool("GATEWAY_LOGPROBS_OPTIMIZATION_OVERRIDE", &values.LogprobsOptimization)
 	readStrictInt("GATEWAY_MAX_BUFFERED_RESPONSE_BYTES", &values.MaxBufferedResponseBytes)
 	readStrictInt("GATEWAY_MAX_BUFFERED_REQUEST_BYTES", &values.MaxBufferedRequestBytes)
+	readStrictInt("GATEWAY_MAX_BUFFERED_REQUEST_BYTES_PER_CALLER", &values.MaxBufferedRequestBytesPerCaller)
 	readStrictInt("GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND", &values.MinClientReadBytesPerSecond)
 	readStrictBool("GATEWAY_WARM_NEW_ESCROWS", &values.WarmNewEscrows)
 	readStrictInt("GATEWAY_ROTATION_SETTLE_MARGIN_BLOCKS", &values.RotationSettleMarginBlocks)

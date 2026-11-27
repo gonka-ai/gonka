@@ -20,19 +20,29 @@ const (
 	ChatTemplateMinimumTokens = 4
 
 	MaxStructuralNodes = 250_000
+
+	MaxContainerMembers = 4096
 )
 
 // Document wraps a decoded request body. No mutex: the pipeline runs single-goroutine per request.
 type Document struct {
-	raw map[string]any
+	raw      map[string]any
+	patterns *patternBudget
 }
 
-// ParseDocument bounds body's size, nesting depth, and node count, then decodes it into a Document.
+func (d *Document) patternBudget() *patternBudget {
+	if d.patterns == nil {
+		d.patterns = &patternBudget{}
+	}
+	return d.patterns
+}
+
+// ParseDocument bounds body's size, nesting depth, node count and members per container, then decodes it into a Document.
 func ParseDocument(body []byte) (*Document, error) {
 	if len(body) > MaxBodyBytes {
 		return nil, Reject("request body size %d exceeds limit %d", len(body), MaxBodyBytes)
 	}
-	if err := ensureStructuralBounds(body, MaxNestingDepth, MaxStructuralNodes); err != nil {
+	if err := ensureStructuralBounds(body, MaxNestingDepth, MaxStructuralNodes, MaxContainerMembers); err != nil {
 		return nil, err
 	}
 	// Standard library on purpose: its error text reaches the client verbatim and the goldens pin that wording.
@@ -95,9 +105,9 @@ func (d *Document) Raw() map[string]any {
 	return d.raw
 }
 
-// Marshal encodes the document; encoding/json sorts map keys, so output is deterministic.
+// Marshal encodes the document without HTML escaping; map keys are sorted, so output is deterministic.
 func (d *Document) Marshal() ([]byte, error) {
-	body, err := json.Marshal(d.raw)
+	body, err := json.MarshalWithOption(d.raw, json.DisableHTMLEscape())
 	if err != nil {
 		return nil, Reject("marshal request: %v", err)
 	}
@@ -109,10 +119,11 @@ func presentField(value any, exists bool) bool {
 	return exists && value != nil
 }
 
-// ensureStructuralBounds scans body once outside string literals, rejecting it past maxDepth or maxNodes.
-func ensureStructuralBounds(body []byte, maxDepth, maxNodes int) error {
+// ensureStructuralBounds scans body once outside string literals, rejecting it past maxDepth, maxNodes or maxMembers in any one container.
+func ensureStructuralBounds(body []byte, maxDepth, maxNodes, maxMembers int) error {
 	depth := 0
 	nodes := 0
+	separators := make([]int, maxDepth+1)
 	for index := 0; index < len(body); index++ {
 		switch body[index] {
 		case '"':
@@ -123,6 +134,7 @@ func ensureStructuralBounds(body []byte, maxDepth, maxNodes int) error {
 			if depth > maxDepth {
 				return Reject("request nesting depth exceeds limit %d", maxDepth)
 			}
+			separators[depth] = 0
 		case '}', ']':
 			depth--
 			if depth < 0 {
@@ -130,6 +142,10 @@ func ensureStructuralBounds(body []byte, maxDepth, maxNodes int) error {
 			}
 			continue
 		case ',':
+			separators[depth]++
+			if separators[depth] >= maxMembers {
+				return Reject("request container member count exceeds limit %d", maxMembers)
+			}
 		default:
 			continue
 		}

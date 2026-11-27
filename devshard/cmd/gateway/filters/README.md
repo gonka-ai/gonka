@@ -70,9 +70,11 @@ Rules run in `parameterTable` order, so where a row sits is behaviour rather tha
 
 ## Structural bounds before the decode
 
-Three bounds run before anything is decoded: `MaxBodyBytes` (10 MiB) on the raw body, `MaxNestingDepth` (32), and `MaxStructuralNodes` (250,000) counting containers and elements.
+Four bounds run before anything is decoded: `MaxBodyBytes` (10 MiB) on the raw body, `MaxNestingDepth` (32), `MaxStructuralNodes` (250,000) counting containers and elements, and `MaxContainerMembers` (4,096) on the members of any one object or array.
 
-`ensureStructuralBounds` scans the body byte by byte in a single pass, tracking string literals and escapes so that braces and commas inside a string are not counted. A closing bracket never drives the depth below zero, so an unbalanced body is bounded rather than rejected here — the decoder that follows is what rejects it.
+`ensureStructuralBounds` scans the body byte by byte in a single pass, tracking string literals and escapes so that braces and commas inside a string are not counted. Each container counts its own members, so a nested container adds nothing to its parent. A closing bracket never drives the depth below zero, so an unbalanced body is bounded rather than rejected here — the decoder that follows is what rejects it.
+
+`MaxContainerMembers` is twice the 2,048-message limit and four times the `logit_bias` limit, so no container the other rules admit comes near it. A body past it is refused with a 400 before the decode, which would otherwise build and sort one map of that size; it does not bound the total, which `MaxStructuralNodes` still does.
 
 ## Which JSON decoder, and why
 
@@ -82,7 +84,7 @@ The package uses two: `encoding/json` from the standard library, and `github.com
 | --- | --- | --- |
 | `ParseDocument` | standard library | Its error text goes to the client verbatim, and the golden corpus pins that wording. A faster library with different phrasing would change what every malformed request sees. |
 | `stripInternalFields`, `decodeStreamedEvent`, `completionAsChunks` | standard library | goccy parses a number token even into a `json.RawMessage` and errors past the float64 range. That fails the strip open — a body carrying `1e999` would keep every internal field — and fails the chunk conversion on a `created` out of range. |
-| `Document.Marshal`, `DecodeUpstreamError`, `jsonMarshaledSize` | goccy | Neither the error text nor the range behaviour is load-bearing here, and `Marshal` sorts map keys, so the normalised body is deterministic. |
+| `Document.Marshal`, `DecodeUpstreamError`, `jsonMarshaledSize` | goccy | Neither the error text nor the range behaviour is load-bearing here, and `Marshal` sorts map keys, so the normalised body is deterministic, and it passes `DisableHTMLEscape`, so a `<`, `>` or `&` stays one byte instead of growing to six in the body and in the prompt-size charge computed from it. |
 
 Every goccy decode of bytes a host or a client sent goes through `internal/strictjson`, which hands goccy only what `encoding/json.Valid` accepts; what an operator configures, such as the admin overrides and the rotation models, is decoded directly. `transport` cannot import it, so its two decodes of a chat reply, the SSE envelope (`HTTPClient.handleSSELine`) and the JSON body (`HTTPClient.Send`), run `encoding/json.Valid` themselves; both are reached only from a chat send, which host binaries never make: they reach `HTTPClient` through peer and executor clients with no `Send`. On some malformed input goccy reads past its buffer and panics, intermittently and more often under concurrency; the attempt classifier decodes every event of every attempt, so one malformed line from a host would otherwise be able to take the gateway down.
 
@@ -132,7 +134,7 @@ What the gateway forces, and what it strips:
 
 ## The prompt text
 
-`PromptText` reads a normalized body back into the text a host's chat template renders: each message's content, each tool call's name and arguments, and the `tools` array as its JSON, in order, without the template's own tokens. A content that was text parts is one string by then (`flattenMessageTextParts`). A field that is not a string is written as compact JSON without the HTML escapes (`\u003c`, `\u0026`) the body's own encoding adds, since the templates render `<` and `&` as themselves, and with its numbers as the client wrote them. Reasoning fields are left out: templates differ on whether they render a past turn's reasoning, and the check that reads this text ([`docs/request.md`](../docs/request.md), "Step 6 in detail") must not count what a host may drop, since an over-count refuses a request a host would serve while an under-count only leaves it unchecked. It decodes the body a second time, and only for a model with a loaded tokenizer; a string value is decoded straight into a string, and only a value that is not one goes through the generic decode and re-encoding.
+`PromptText` reads a normalized body back into the text a host's chat template renders: each message's content, each tool call's name and arguments, and the `tools` array as its JSON, in order, without the template's own tokens. A content that was text parts is one string by then (`flattenMessageTextParts`). A field that is not a string is written as compact JSON without HTML escapes, so a body that carries `\u003c` or `\u0026` as a client wrote it renders `<` and `&` as themselves, as the templates do, and with its numbers as the client wrote them. Reasoning fields are left out: templates differ on whether they render a past turn's reasoning, and the check that reads this text ([`docs/request.md`](../docs/request.md), "Step 6 in detail") must not count what a host may drop, since an over-count refuses a request a host would serve while an under-count only leaves it unchecked. It decodes the body a second time, and only for a model with a loaded tokenizer; a string value is decoded straight into a string, and only a value that is not one goes through the generic decode and re-encoding.
 
 ## Stop token ids
 
@@ -226,7 +228,11 @@ Four fields carry a nested payload, and each has its own bound family, kept sepa
 - depth (16), node count (128 or 256), serialised size (16 KiB, 64 KiB for `tools[].function.parameters`), branch arms per `anyOf`/`oneOf`/`allOf` (16), and `enum` size (256).
 - `$ref`, `$defs` and `definitions` are forbidden outright.
 - `type` must be a JSON-Schema primitive, or an array of them; anything else crashes xgrammar's grammar compiler (CVE-2025-48944).
-- `pattern` must be a string, under 512 bytes, and must compile (CVE-2025-48944).
+- `pattern` must be a string, under 512 bytes, and must be a valid regular expression (CVE-2025-48944). The check parses it with the Go regular-expression parser, which rejects exactly what compiling would reject and never builds the matching program, so it stays cheap for patterns whose compiled form would be huge. Every key of `patternProperties` gets the same length cap and check.
+
+Every regular expression in one request shares a single budget of 4096 bytes of distinct pattern text: each schema `pattern` and each key of a schema's `patternProperties` in `tools[].function.parameters`, `response_format.json_schema.schema` and `structured_outputs.json`, plus `structured_outputs.regex` and `structured_outputs.whitespace_pattern`. A pattern is charged by its length after its field's length cap and before it is parsed, and a pattern already seen earlier in the request, in any of those fields, is neither charged nor parsed again. The budget is bytes because parse cost follows pattern length: measured at up to about 16 µs and 5 KB per byte for the heaviest shapes (negated, case-folded Unicode classes and long alternations of classes), so a full budget costs under 100 ms and about 20 MB, while a typical id or date pattern costs a few microseconds. A `patternProperties` key is a regular expression downstream, so it is held to the same rules as a `pattern`.
+
+`validTools` also bounds `tools` as one array, on top of each tool's own limits above: at most 128 entries. Only the per-tool node cap applies to nodes: walking the largest request the per-tool limits allow (128 tools of 256 nodes) takes about 20 ms against about 260 ms to decode and validate the same body. The per-tool 64 KiB serialised-size cap is not shared; the 10 MiB request body limit bounds the total.
 
 The walk distinguishes two key families. `schemaDataKeys` — `enum`, `const`, `default`, `examples`, `required`, `dependentRequired` — hold literal data, not child schemas, so the walker must not recurse into them. `schemaChildMapKeys` — `properties`, `patternProperties`, `dependentSchemas` — hold name-to-schema maps: each value is walked as its own child schema, and the wrapper map itself is not counted as an extra node.
 
@@ -251,7 +257,7 @@ The six constraint fields — `json`, `regex`, `choice`, `grammar`, `json_object
 Each constraint pairs with its own validator in a map, so a new constraint field cannot be added without one — a coverage test checks the pairing. Per-constraint caps:
 
 - `json` must be an object, not a string-encoded schema, and clears `SchemaBounds`.
-- `regex` and `whitespace_pattern` share one validator: string, under `MaxPatternLen`, and must compile.
+- `regex` and `whitespace_pattern` share one validator: string, under `MaxPatternLen`, charged to the request's pattern budget, and must be a valid regular expression.
 - `choice` is a non-empty string array, at most 256 entries, each under 1024 bytes, with a total under the shared size cap.
 - `grammar` is capped at 8 KiB and 200 levels of nesting. The check tracks *active* bracket depth: unmatched opens, the CVE-2026-25048 proof-of-concept shape, drive the depth up without a close ever bringing it down.
 - `structural_tag` accepts only the object form (vLLM's `StructuralTagResponseFormat`) under 4 KiB; a JSON-encoded string form crashes the engine with an HTTP 500.

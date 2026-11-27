@@ -32,8 +32,13 @@ var (
 	}
 )
 
+type toolsBounds struct {
+	SchemaBounds
+	MaxCount int
+}
+
 // validTools enforces the OpenAI tool contract plus tool_choice and min_tokens cross-field cleanup. See README.md, "`tools` and `tool_choice`".
-func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
+func validTools(bounds toolsBounds, defaultToolChoice string) RuleFunc {
 	return func(ctx RuleContext) error {
 		raw, exists := ctx.Document.Get("tools")
 		if !exists {
@@ -52,6 +57,9 @@ func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 			ctx.Document.Delete("tool_choice")
 			return nil
 		}
+		if bounds.MaxCount > 0 && len(tools) > bounds.MaxCount {
+			return Reject("tools: array length %d exceeds limit %d", len(tools), bounds.MaxCount)
+		}
 		if choice, _ := ctx.Document.Get("tool_choice"); choice == "required" {
 			ctx.Document.Set("tool_choice", defaultToolChoice)
 			ctx.Document.Delete("min_tokens")
@@ -59,6 +67,7 @@ func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 		if !ctx.Document.Has("tool_choice") && defaultToolChoice != "" {
 			ctx.Document.Set("tool_choice", defaultToolChoice)
 		}
+		budget := ctx.Document.patternBudget()
 		for index, item := range tools {
 			tool, ok := item.(map[string]any)
 			if !ok {
@@ -81,7 +90,7 @@ func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 			if !ok {
 				continue
 			}
-			if err := bounds.Check(parameters); err != nil {
+			if err := bounds.checkWithin(parameters, budget); err != nil {
 				return Reject("tools[%d].function.parameters: %v", index, err)
 			}
 		}
@@ -159,14 +168,14 @@ func validResponseFormat(bounds SchemaBounds, maxNameLen int) RuleFunc {
 			if ctx.Profile.rejectsJSONSchema() {
 				return Reject("response_format.type: json_schema is not supported by this model")
 			}
-			return validResponseFormatJSONSchema(responseFormat, bounds, maxNameLen)
+			return validResponseFormatJSONSchema(responseFormat, bounds, maxNameLen, ctx.Document.patternBudget())
 		default:
 			return Reject("response_format.type: missing or unsupported: %q is not supported (allowed: text, json_object, json_schema)", responseType)
 		}
 	}
 }
 
-func validResponseFormatJSONSchema(responseFormat map[string]any, bounds SchemaBounds, maxNameLen int) error {
+func validResponseFormatJSONSchema(responseFormat map[string]any, bounds SchemaBounds, maxNameLen int, budget *patternBudget) error {
 	wrapper, ok := responseFormat["json_schema"].(map[string]any)
 	if !ok {
 		return Reject("response_format.json_schema: invalid wrapper shape: must be an object")
@@ -185,7 +194,7 @@ func validResponseFormatJSONSchema(responseFormat map[string]any, bounds SchemaB
 	if !ok {
 		return Reject("response_format.json_schema.schema: invalid shape: must be an object")
 	}
-	if err := bounds.Check(schema); err != nil {
+	if err := bounds.checkWithin(schema, budget); err != nil {
 		return Reject("response_format.json_schema.schema: %v", err)
 	}
 	return nil

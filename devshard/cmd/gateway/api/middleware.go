@@ -197,7 +197,7 @@ func (s *Server) disabled(next http.HandlerFunc) http.HandlerFunc {
 }
 
 // readBody bounds ingest with MaxBytesReader, not LimitReader. See README.md, "Reading a body".
-func readBody(w http.ResponseWriter, r *http.Request, limit int64, budget *BufferBudget) ([]byte, error) {
+func readBody(w http.ResponseWriter, r *http.Request, limit int64, budget *callerShare) ([]byte, error) {
 	deadlines := http.NewResponseController(w)
 	_ = deadlines.SetReadDeadline(time.Now().Add(bodyReadTimeout))
 	r.Body = http.MaxBytesReader(baseWriter(w), r.Body, limit)
@@ -207,7 +207,7 @@ func readBody(w http.ResponseWriter, r *http.Request, limit int64, budget *Buffe
 }
 
 // readAll is io.ReadAll starting wide enough for an ordinary body. The start is a constant, never the declared Content-Length: a header the client has not backed with bytes must buy no memory. See README.md, "Reading a body".
-func readAll(reader io.Reader, budget *BufferBudget) ([]byte, error) {
+func readAll(reader io.Reader, budget *callerShare) ([]byte, error) {
 	body := make([]byte, 0, bodyReadStart)
 	for {
 		if len(body) == cap(body) {

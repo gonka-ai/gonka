@@ -178,6 +178,9 @@ func (c *Config) validateLimits(complain func(format string, args ...any)) {
 	if c.Limits.MaxBufferedRequestBytes < filters.MaxBodyBytes {
 		complain("max_buffered_request_bytes: %d must be >= %d, the largest body one request may send", c.Limits.MaxBufferedRequestBytes, filters.MaxBodyBytes)
 	}
+	if c.Limits.MaxBufferedRequestBytesPerCaller < filters.MaxBodyBytes {
+		complain("max_buffered_request_bytes_per_caller: %d must be >= %d, the largest body one request may send", c.Limits.MaxBufferedRequestBytesPerCaller, filters.MaxBodyBytes)
+	}
 	if c.Limits.MinClientReadBytesPerSecond < 1 || c.Limits.MinClientReadBytesPerSecond > maxMinClientReadBytesPerSecond {
 		complain("min_client_read_bytes_per_second: %d must be between 1 and %d", c.Limits.MinClientReadBytesPerSecond, maxMinClientReadBytesPerSecond)
 	}

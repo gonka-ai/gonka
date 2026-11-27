@@ -58,14 +58,45 @@ func paddedBody(totalBytes int) []byte {
 	return []byte(`{"user":"` + strings.Repeat("a", totalBytes-len(envelope)) + `"}`)
 }
 
-// structuralNodeBody builds `{"stop":[0,0,…]}` holding exactly nodes structural tokens.
+// structuralNodeBody builds `{"stop":[[0,0,…],[0,0,…]]}` holding exactly nodes structural tokens, no container past MaxContainerMembers.
 func structuralNodeBody(nodes int) []byte {
+	const wrapperNodes = 2
+	remaining := nodes - wrapperNodes
+	groups := 1
+	for remaining-(groups-1) > groups*MaxContainerMembers {
+		groups++
+	}
+	remaining -= groups - 1
 	var builder strings.Builder
-	builder.WriteString(`{"stop":[0`)
-	for i := 2; i < nodes; i++ {
-		builder.WriteString(",0")
+	builder.WriteString(`{"stop":[`)
+	for group := range groups {
+		if group > 0 {
+			builder.WriteString(",")
+		}
+		members := min(remaining, MaxContainerMembers)
+		remaining -= members
+		builder.WriteString("[0")
+		builder.WriteString(strings.Repeat(",0", members-1))
+		builder.WriteString("]")
 	}
 	builder.WriteString("]}")
+	return []byte(builder.String())
+}
+
+// wideContainerBody builds `{"stop":[0,…]}` or `{"logit_bias":{"0":0,…}}` holding exactly the given number of members in the one container.
+func wideContainerBody(members int, object bool) []byte {
+	var builder strings.Builder
+	if object {
+		builder.WriteString(`{"x":{"0":0`)
+		for index := 1; index < members; index++ {
+			fmt.Fprintf(&builder, `,"%d":0`, index)
+		}
+		builder.WriteString("}}")
+	} else {
+		builder.WriteString(`{"x":[0`)
+		builder.WriteString(strings.Repeat(",0", members-1))
+		builder.WriteString("]}")
+	}
 	return []byte(builder.String())
 }
 
@@ -136,6 +167,88 @@ func TestDocumentParseIgnoresStructuralCharactersInsideStrings(t *testing.T) {
 	body := []byte(`{"user":"` + strings.Repeat(`{[,`, 250000) + `"}`)
 	if _, err := ParseDocument(body); err != nil {
 		t.Fatalf("ParseDocument() with structural characters inside a string: want nil error, got %v", err)
+	}
+}
+
+// Test flow:
+//  1. For an array and an object, build a body whose one container holds one member past `MaxContainerMembers` via `wideContainerBody`.
+//  2. Parse each body.
+//  3. Assert parsing fails with the exact "container member count exceeds limit" message and maps to HTTP 400.
+func TestDocumentParseRejectsContainerMembersAboveLimit(t *testing.T) {
+	for _, object := range []bool{false, true} {
+		_, err := ParseDocument(wideContainerBody(MaxContainerMembers+1, object))
+		if err == nil {
+			t.Fatalf("ParseDocument() with %d members, object=%v: want error, got nil", MaxContainerMembers+1, object)
+		}
+		want := fmt.Sprintf("request container member count exceeds limit %d", MaxContainerMembers)
+		if err.Error() != want {
+			t.Errorf("ParseDocument() object=%v error = %q, want %q", object, err.Error(), want)
+		}
+		if got := ErrorStatus(err, 0); got != 400 {
+			t.Errorf("ErrorStatus() object=%v = %d, want 400", object, got)
+		}
+	}
+}
+
+// Test flow:
+//  1. For an array and an object, build a body whose one container holds exactly `MaxContainerMembers` members.
+//  2. Parse each body.
+//  3. Assert parsing succeeds.
+func TestDocumentParseAcceptsContainerMembersAtLimit(t *testing.T) {
+	for _, object := range []bool{false, true} {
+		if _, err := ParseDocument(wideContainerBody(MaxContainerMembers, object)); err != nil {
+			t.Errorf("ParseDocument() with %d members, object=%v: want nil error, got %v", MaxContainerMembers, object, err)
+		}
+	}
+}
+
+// Test flow:
+//  1. Build a body of three sibling arrays and one nested array, each holding exactly `MaxContainerMembers` members, so the whole body holds more than that in total.
+//  2. Parse the body.
+//  3. Assert parsing succeeds, because each container is counted on its own and a nested container does not add to its parent.
+func TestDocumentParseCountsMembersPerContainer(t *testing.T) {
+	array := string(wideContainerBody(MaxContainerMembers, false))
+	array = array[len(`{"x":`) : len(array)-1]
+	body := []byte(`{"a":` + array + `,"b":` + array + `,"c":[` + array + `]}`)
+	if _, err := ParseDocument(body); err != nil {
+		t.Errorf("ParseDocument() with full sibling and nested containers: want nil error, got %v", err)
+	}
+}
+
+// Test flow:
+//  1. Build a body whose container has members past the limit, only inside string literals.
+//  2. Parse the body.
+//  3. Assert parsing succeeds, because commas inside a string are not members.
+func TestDocumentParseIgnoresCommasInsideStringsForMemberCount(t *testing.T) {
+	body := []byte(`{"user":"` + strings.Repeat(",", MaxContainerMembers*2) + `"}`)
+	if _, err := ParseDocument(body); err != nil {
+		t.Errorf("ParseDocument() with commas inside a string: want nil error, got %v", err)
+	}
+}
+
+// Test flow:
+//  1. Build an ordinary request with the largest containers the other rules allow: 2048 messages, 1024 logit_bias entries, 128 tools.
+//  2. Assert `MaxContainerMembers` is at least twice the message limit.
+//  3. Run the body through `ensureStructuralBounds` at the production limits and assert it is accepted, so the member limit leaves headroom over every legitimate container.
+func TestMemberLimitLeavesHeadroomOverTheLargestLegitimateContainers(t *testing.T) {
+	messages := make([]string, 0, messagesMaxEntries)
+	tools := make([]string, 0, toolsMaxCount)
+	bias := make([]string, 0, 1024)
+	for range messagesMaxEntries {
+		messages = append(messages, `{"role":"user","content":"hi"}`)
+	}
+	for range toolsMaxCount {
+		tools = append(tools, `{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}`)
+	}
+	for index := range 1024 {
+		bias = append(bias, fmt.Sprintf(`"%d":1`, index))
+	}
+	body := `{"model":"m","messages":[` + strings.Join(messages, ",") + `],"tools":[` + strings.Join(tools, ",") + `],"logit_bias":{` + strings.Join(bias, ",") + `}}`
+	if MaxContainerMembers < 2*messagesMaxEntries {
+		t.Errorf("MaxContainerMembers = %d, want at least twice the %d-message limit", MaxContainerMembers, messagesMaxEntries)
+	}
+	if err := ensureStructuralBounds([]byte(body), MaxNestingDepth, MaxStructuralNodes, MaxContainerMembers); err != nil {
+		t.Errorf("structural bounds on the largest legitimate containers: want nil error, got %v", err)
 	}
 }
 
@@ -377,5 +490,47 @@ func TestDocumentMarshalSortsKeys(t *testing.T) {
 	want := `{"apple":"first","middle":"second","zebra":"last"}`
 	if string(got) != want {
 		t.Errorf("Marshal() = %s, want %s", got, want)
+	}
+}
+
+// Test flow:
+//  1. Parse a document whose strings carry <, > and & as the client wrote them.
+//  2. Marshal the document.
+//  3. Assert the output keeps the three characters literal and is exactly as long as the compact input.
+func TestDocumentMarshalDoesNotEscapeHTML(t *testing.T) {
+	input := `{"content":"if a < b && c > d { return }"}`
+	document, err := ParseDocument([]byte(input))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	got, err := document.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(got) != input {
+		t.Errorf("Marshal() = %s, want %s", got, input)
+	}
+}
+
+// Test flow:
+//  1. Build a chat body whose user message is 2000 repetitions of "<a> && <b>".
+//  2. Call NormalizeRequest with default options.
+//  3. Assert the normalized body carries none of the unicode escapes a default encoder writes for those three characters, and is shorter than the input plus 512 bytes of forced fields.
+func TestNormalizeRequestKeepsHTMLCharactersOneByteEach(t *testing.T) {
+	content := strings.Repeat("<a> && <b>", 2000)
+	body := `{"model":"qwen","messages":[{"role":"user","content":"` + content + `"}]}`
+
+	result, err := NormalizeRequest([]byte(body), Options{DefaultMaxTokens: 3072, MaxTokensCap: 4096})
+	if err != nil {
+		t.Fatalf("NormalizeRequest: %v", err)
+	}
+	for _, code := range []string{"u003c", "u003e", "u0026"} {
+		if strings.Contains(string(result.Body), `\`+code) {
+			t.Fatalf("normalized body contains an escaped %s", code)
+		}
+	}
+	if len(result.Body) > len(body)+512 {
+		t.Errorf("normalized body is %d bytes for a %d-byte input", len(result.Body), len(body))
 	}
 }
