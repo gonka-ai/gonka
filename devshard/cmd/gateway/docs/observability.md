@@ -194,13 +194,13 @@ The families no question above needs, with the help text each one exports.
 
 ### Watching the funding planner
 
-The planner alone creates and retires escrows. An escrow whose balance falls under the model's floor keeps serving the requests it can afford: routing spends starved residue first on small requests, and a depletion mark other than the nonce cap is dropped and counted instead of retiring the escrow. At least `full_context_slots` full regular escrows are kept (the guarantee; a standby does not count), capacity follows demand, and creates are bounded by `max_unsettled` and by a rate bucket of two at once, then one per refill. The epoch bridge keeps its window; the planner plans nothing inside it, and after PoC it funds the regular set and retires the old temps once the spread is met. Read `escrow funding planned` and `devshard_gateway_planner_decisions_total` to see what it decided.
+The planner and the epoch bridge create and retire escrows. An escrow whose balance falls under the model's floor keeps serving the requests it can afford: routing spends starved residue first on small requests, and a depletion mark other than the nonce cap is dropped and counted instead of retiring the escrow. At least `full_context_slots` full regular escrows are kept (the guarantee; a standby does not count), capacity follows demand, and creates are bounded by `max_unsettled` and by a rate bucket of two at once, then one per refill. The epoch bridge keeps its window: inside it the planner funds only the guard shortfall, held to `temp_count`, and the capacity shortfall, both as temps at the bridge label, and retires nothing but a nonce-capped escrow. After PoC it funds the regular set and retires the old temps once the spread is met. Read `escrow funding planned` and `devshard_gateway_planner_decisions_total` to see what it decided.
 
 What to watch:
 
 | Signal | Healthy |
 | --- | --- |
-| `devshard_gateway_funding_guarantee{model}` | at or above 0; below 0 the guarantee is short, and `funding guarantee broken` says why (wallet, breaker, PoC, bridge window) |
+| `devshard_gateway_funding_guarantee{model}` | at or above 0; below 0 the guarantee is short, and `funding guarantee broken` says why (wallet, breaker, PoC); inside the bridge window a model whose `temp_count` is below `full_context_slots` can read below 0 without that line |
 | `devshard_gateway_escrow_money{model,class}` | `free` follows demand; `stuck` stays near 0 |
 | `devshard_gateway_planner_decisions_total{model,action,reason}` | creates and retires track demand; a steady stream of `capacity` creates with a flat `max_unsettled` is churn against the budget |
 | `devshard_gateway_planner_ignored_marks_total{model,reason}` | balance marks dropped by design; a rising `balance_floor` count is routing reporting what the planner already plans for |
