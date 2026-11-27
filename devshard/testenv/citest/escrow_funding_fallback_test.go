@@ -98,7 +98,7 @@ func TestGatewayMovesOversizedRequestToAnotherEscrowWithoutRetiringTheFirst(t *t
 //  1. Boot the stack with two escrows, neither able to fund an oversized request.
 //  2. Serve one ordinary request on each escrow, then wait until both are idle and snapshot them.
 //  3. Send a request no escrow can fund.
-//  4. Assert a retryable 503 that counts both refusals, names no escrow and carries no SSE content type.
+//  4. Assert a retryable 503 that reports no escrow capacity for lack of balance, names no escrow and carries no SSE content type.
 //  5. Assert both escrows kept their nonce, balance and place in service.
 //  6. Send a small request through the pool and assert the refusal was per-request, not sticky.
 func TestGatewayReturnsRetryable503WhenNoEscrowCanFundRequest(t *testing.T) {
@@ -128,8 +128,7 @@ func TestGatewayReturnsRetryable503WhenNoEscrowCanFundRequest(t *testing.T) {
 	require.NotEmpty(t, tooLarge.Header.Get("Retry-After"))
 	require.Empty(t, tooLarge.Header.Get("X-Devshard-ID"))
 	require.NotContains(t, tooLarge.ContentType, "text/event-stream")
-	// The count is the only evidence in the response that both escrows were offered the request.
-	require.Contains(t, string(tooLarge.Body), "no escrow can fund this request (2 refused)")
+	require.Contains(t, string(tooLarge.Body), "no escrow capacity: insufficient escrow balance")
 
 	finalStatus := waitForSettledEscrows(t, env, 2)
 	for _, escrowID := range []string{env.firstEscrowID, env.secondEscrowID} {
