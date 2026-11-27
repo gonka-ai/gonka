@@ -12,6 +12,7 @@ import (
 	"devshard/cmd/gateway/filters"
 	"devshard/cmd/gateway/journal"
 	"devshard/cmd/gateway/scheduler"
+	"devshard/logging"
 	"devshard/observability"
 	"devshard/transport"
 	"devshard/user"
@@ -195,10 +196,10 @@ func (s *Server) handleDevshardChat(w http.ResponseWriter, r *http.Request) {
 func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) {
 	traced, span := observability.StartGatewayRequest(r.Context())
 	defer span.End()
-	r = r.WithContext(traced)
 	configuration := s.config.Load()
 	identity := s.resolveCredentials(r)
 	requestID := s.requestIDs()
+	r = r.WithContext(logging.SetRequestID(traced, requestID))
 	if !reachesAnyModel(configuration, identity) {
 		s.writeErrorFor(w, &AccessDeniedError{Message: "no model is open to this request's credentials"})
 		return
@@ -206,7 +207,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	body, err := readBody(w, r, chatIngestLimit, s.requestBodies)
 	if err != nil {
-		s.refuseBody(w, requestID, err)
+		s.refuseBody(w, r, requestID, err)
 		return
 	}
 	releaseBody := sync.OnceFunc(func() { s.requestBodies.release(int64(len(body))) })
@@ -250,7 +251,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 				written := serveCached(w, requestID, entry)
 				hitCount := prompt.countSoFar()
 				s.events.RequestFinished(journal.RequestLine{
-					RequestID: requestID, Model: normalized.Model, APIKeyID: identity.caller(), EscrowID: entry.escrowID,
+					RequestID: requestID, TraceID: traceIDOf(r.Context()), Model: normalized.Model, APIKeyID: identity.caller(), EscrowID: entry.escrowID,
 					ClientStream: entry.stream, Bytes: written, CacheHit: true,
 					Outcome: engine.RaceOutcome{InputTokens: hitCount.tokens, InputTokensSource: hitCount.source},
 				})
@@ -268,7 +269,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		if label, refused := limiterRefusal(err); refused && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, label)
 			s.events.RequestThrottled(journal.RequestLine{
-				RequestID: requestID, Model: normalized.Model, APIKeyID: identity.caller(), LimiterReason: label,
+				RequestID: requestID, TraceID: traceIDOf(r.Context()), Model: normalized.Model, APIKeyID: identity.caller(), LimiterReason: label,
 			})
 		}
 		s.writeErrorForModel(w, err, normalized.Model)
@@ -311,7 +312,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	cacheRefusal := s.cache.put(key, entry, s.now())
 	s.countCacheResult(normalized.Model, cacheRefusal)
 	if cacheRefusal == filters.CacheRefusedUnfinished {
-		s.events.ReplyNotCached(journal.RequestLine{RequestID: requestID, Model: normalized.Model, EscrowID: outcome.EscrowID})
+		s.events.ReplyNotCached(journal.RequestLine{RequestID: requestID, TraceID: traceIDOf(r.Context()), Model: normalized.Model, EscrowID: outcome.EscrowID})
 	}
 }
 
@@ -408,10 +409,10 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 	if err != nil {
 		s.capture.attemptsFailed(r, requestID, normalized, err)
 		if !client.closeUnstarted() {
-			s.finishRequest(requestID, apiKeyID, normalized, outcome, deliveryFailedMidStream, client, s.now().Sub(startedAt), err, client.Fail(err))
+			s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, deliveryFailedMidStream, client, s.now().Sub(startedAt), err, client.Fail(err))
 			return outcome, err
 		}
-		s.finishRequest(requestID, apiKeyID, normalized, outcome, deliveryFailedBeforeFirstByte, client, s.now().Sub(startedAt), err, nil)
+		s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, deliveryFailedBeforeFirstByte, client, s.now().Sub(startedAt), err, nil)
 		w.Header().Set(RequestIDHeader, requestID)
 		s.writeErrorForModel(w, err, normalized.Model)
 		return outcome, nil
@@ -426,6 +427,6 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 	if closeErr != nil {
 		delivery = deliveryFailedMidStream
 	}
-	s.finishRequest(requestID, apiKeyID, normalized, outcome, delivery, client, s.now().Sub(startedAt), client.answeredHostFailure(), closeErr)
+	s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, delivery, client, s.now().Sub(startedAt), client.answeredHostFailure(), closeErr)
 	return outcome, cmp.Or(closeErr, client.replayRefusal())
 }

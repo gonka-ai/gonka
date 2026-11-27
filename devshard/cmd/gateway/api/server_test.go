@@ -28,6 +28,7 @@ import (
 	"devshard/cmd/gateway/scheduler"
 	"devshard/cmd/gateway/store"
 	"devshard/gatewayprotocol/settlement"
+	"devshard/logging"
 )
 
 const (
@@ -113,6 +114,7 @@ type fakeEngine struct {
 	runs    atomic.Int64
 	raced   atomic.Pointer[engine.Request]
 	racedIn atomic.Pointer[trace.SpanContext]
+	racedAs atomic.Pointer[string]
 	reply   string
 	chunks  []string
 	outcome engine.RaceOutcome
@@ -129,6 +131,9 @@ func (e *fakeEngine) Run(ctx context.Context, request engine.Request, client io.
 	e.runs.Add(1)
 	spanContext := trace.SpanContextFromContext(ctx)
 	e.racedIn.Store(&spanContext)
+	if id, bound := logging.RequestID(ctx); bound {
+		e.racedAs.Store(&id)
+	}
 	e.raced.Store(&request)
 	if e.finishes != nil {
 		e.finishes <- request.OnFinished
