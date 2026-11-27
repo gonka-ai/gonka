@@ -8,7 +8,9 @@ import (
 	"unsafe"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -134,7 +136,7 @@ func TestChallengeCatchUpAppliesTheSameRoot(t *testing.T) {
 	require.NoError(t, err)
 	var req rpcpb.ChallengeReceiptRequest
 	require.NoError(t, proto.Unmarshal(body, &req))
-	decoded, err := DiffsFromJSON(diffsJSONFromProto(req.GetDiffs()))
+	decoded, err := DiffsFromJSON(diffsJSONFromProto(req.GetDiffs()), PageLimits)
 	require.NoError(t, err)
 	require.Len(t, decoded, 1)
 	require.True(t, proto.Equal(diff.Txs[0], decoded[0].Txs[0]))
@@ -324,4 +326,203 @@ func TestChallengeEnvelopeEncodesIntoTheSendBuffer(t *testing.T) {
 	require.Equal(t, env.size(), len(out))
 	require.Same(t, unsafe.SliceData(dst[:1]), unsafe.SliceData(out), "the page is written into the buffer it was given")
 	require.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(64<<10), "signing and encoding a %d KiB page", n*each>>10)
+}
+
+func TestDiffsFromJSONCapsTxsAcrossDiffs(t *testing.T) {
+	for _, lim := range []DiffLimits{PageLimits, CatchUpLimits} {
+		per := lim.Txs / 16 // each diff alone is under the cap
+		txs := bytes.Repeat([]byte{0x12, 0x00}, per)
+		var djs []DiffJSON
+		for n := 0; n <= lim.Txs; n += per {
+			djs = append(djs, DiffJSON{Nonce: uint64(len(djs) + 1), Txs: txs})
+		}
+		_, err := DiffsFromJSON(djs, lim)
+		require.ErrorIs(t, err, types.ErrDecodeLimit)
+
+		_, err = DiffsFromJSON(djs[:len(djs)-1], lim)
+		require.NoError(t, err)
+	}
+	_, err := DiffsFromJSON(make([]DiffJSON, CatchUpMaxDiffs+1), CatchUpLimits)
+	require.ErrorIs(t, err, types.ErrDecodeLimit)
+	_, err = DiffsFromJSON(make([]DiffJSON, CatchUpMaxDiffs+1), PageLimits)
+	require.NoError(t, err)
+}
+
+func TestHostRequestFromJSONCountsDiffs(t *testing.T) {
+	_, err := HostRequestFromJSON(InferenceRequest{Diffs: make([]DiffJSON, CatchUpMaxDiffs+1)})
+	require.ErrorIs(t, err, types.ErrDecodeLimit)
+
+	half := bytes.Repeat([]byte{0x12, 0x00}, CatchUpLimits.Txs/2+1)
+	_, err = HostRequestFromJSON(InferenceRequest{Diffs: []DiffJSON{{Nonce: 1, Txs: half}, {Nonce: 2, Txs: half}}})
+	require.ErrorIs(t, err, types.ErrDecodeLimit)
+
+	req, err := HostRequestFromJSON(InferenceRequest{Diffs: honestCatchUp(t, CatchUpMaxDiffs), Nonce: CatchUpMaxDiffs})
+	require.NoError(t, err)
+	require.Len(t, req.Diffs, CatchUpMaxDiffs)
+}
+
+// honestCatchUp is n diffs that fill CatchUpLimits exactly: per diff one
+// heartbeat with a full sync_vector and the rest of the tx budget empty.
+func honestCatchUp(t *testing.T, n int) []DiffJSON {
+	t.Helper()
+	perDiff := CatchUpLimits.Txs / CatchUpMaxDiffs
+	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum:   types.MaxGroupSize,
+		SyncVector: make([]*types.SyncVectorEntry, types.MaxGroupSize),
+	}}}}
+	for len(txs) < perDiff {
+		txs = append(txs, &types.DevshardTx{})
+	}
+	content, err := proto.Marshal(&types.DiffContent{Txs: txs})
+	require.NoError(t, err)
+	djs := make([]DiffJSON, n)
+	for i := range djs {
+		djs[i] = DiffJSON{Nonce: uint64(i + 1), Txs: content}
+	}
+	return djs
+}
+
+func TestCheckPayloadPassesHonestCatchUp(t *testing.T) {
+	field := fieldNumber(t, &rpcpb.VerifyTimeoutRequest{}, "diffs")
+	djs := honestCatchUp(t, CatchUpMaxDiffs)
+	diffs := make([]*rpcpb.Diff, len(djs))
+	for i, dj := range djs {
+		diffs[i] = &rpcpb.Diff{Nonce: dj.Nonce, Txs: dj.Txs}
+	}
+	b, err := proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: diffs})
+	require.NoError(t, err)
+	require.NoError(t, CheckDiffsPayload(b, CatchUpLimits, field))
+	_, err = DiffsFromJSON(djs, CatchUpLimits)
+	require.NoError(t, err)
+
+	// One more diff, or one more tx in the last diff, is over.
+	b, err = proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: append(diffs, diffs[0])})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, field), types.ErrDecodeLimit)
+	last := diffs[len(diffs)-1]
+	diffs[len(diffs)-1] = &rpcpb.Diff{Nonce: last.Nonce, Txs: append(bytes.Clone(last.Txs), 0x12, 0x00)}
+	b, err = proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: diffs})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, field), types.ErrDecodeLimit)
+}
+
+func TestDevshardTxsFromBytesCap(t *testing.T) {
+	data := make([][]byte, types.MaxDecodedTxs+1)
+	_, err := DevshardTxsFromBytes(data)
+	require.ErrorIs(t, err, types.ErrDecodeLimit)
+
+	txs, err := DevshardTxsFromBytes(data[:types.MaxDecodedTxs])
+	require.NoError(t, err)
+	require.Len(t, txs, types.MaxDecodedTxs)
+}
+
+func TestCheckPayloadCounts(t *testing.T) {
+	empty := bytes.Repeat([]byte{0x12, 0x00}, 4000)
+	var diffs []*rpcpb.Diff
+	for n := 0; n <= types.MaxDecodedTxs; n += 4000 {
+		diffs = append(diffs, &rpcpb.Diff{Nonce: uint64(len(diffs) + 1), Txs: empty})
+	}
+	field := fieldNumber(t, &rpcpb.ChallengeReceiptRequest{}, "diffs")
+	b, err := proto.Marshal(&rpcpb.ChallengeReceiptRequest{Diffs: diffs})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, PageLimits, field), types.ErrDecodeLimit)
+	b, err = proto.Marshal(&rpcpb.ChallengeReceiptRequest{Diffs: diffs[1:]})
+	require.NoError(t, err)
+	require.NoError(t, CheckDiffsPayload(b, PageLimits, field))
+	require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, field), types.ErrDecodeLimit)
+
+	b, err = proto.Marshal(&rpcpb.GossipTxsRequest{Txs: make([][]byte, types.MaxDecodedTxs+1)})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckTxsPayload(b, 1), types.ErrDecodeLimit)
+	b, err = proto.Marshal(&rpcpb.GossipTxsRequest{Txs: make([][]byte, types.MaxDecodedTxs)})
+	require.NoError(t, err)
+	require.NoError(t, CheckTxsPayload(b, 1))
+}
+
+func TestCheckPayloadLeavesParseErrorsToDecoder(t *testing.T) {
+	b, err := proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: []*rpcpb.Diff{{Nonce: 1, Txs: []byte{0xff}}}})
+	require.NoError(t, err)
+	require.NoError(t, CheckDiffsPayload(b, CatchUpLimits, 4))
+	require.NoError(t, CheckDiffsPayload([]byte{0x22, 0x05}, CatchUpLimits, 4))
+	require.NoError(t, CheckTxsPayload([]byte{0x0a, 0x05}, 1))
+}
+
+func timeoutVotes(n int) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
+		Votes: make([]*types.TimeoutVote, n),
+	}}}
+}
+
+func TestCheckPayloadCountsVotesInsideTxs(t *testing.T) {
+	field := fieldNumber(t, &rpcpb.VerifyTimeoutRequest{}, "diffs")
+	for _, n := range []int{types.MaxGroupSize + 1, types.MaxGroupSize} {
+		content, err := proto.Marshal(&types.DiffContent{Txs: []*types.DevshardTx{timeoutVotes(n)}})
+		require.NoError(t, err)
+		b, err := proto.Marshal(&rpcpb.VerifyTimeoutRequest{Diffs: []*rpcpb.Diff{{Nonce: 1, Txs: content}}})
+		require.NoError(t, err)
+		tx, err := proto.Marshal(timeoutVotes(n))
+		require.NoError(t, err)
+		gossip, err := proto.Marshal(&rpcpb.GossipTxsRequest{Txs: [][]byte{tx}})
+		require.NoError(t, err)
+		if n > types.MaxGroupSize {
+			require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, field), types.ErrDecodeLimit)
+			require.ErrorIs(t, CheckTxsPayload(gossip, 1), types.ErrDecodeLimit)
+			_, err = DevshardTxsFromBytes([][]byte{tx})
+			require.ErrorIs(t, err, types.ErrDecodeLimit)
+		} else {
+			require.NoError(t, CheckDiffsPayload(b, CatchUpLimits, field))
+			require.NoError(t, CheckTxsPayload(gossip, 1))
+		}
+	}
+}
+
+func TestCheckPayloadPassesHonestHeartbeatPage(t *testing.T) {
+	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		SlotsNum:   types.MaxGroupSize,
+		SyncVector: make([]*types.SyncVectorEntry, types.MaxGroupSize),
+	}}}
+	content, err := proto.Marshal(&types.DiffContent{Txs: []*types.DevshardTx{hb}})
+	require.NoError(t, err)
+	diffs := make([]*rpcpb.Diff, MaxDecodedDiffs)
+	for i := range diffs {
+		diffs[i] = &rpcpb.Diff{Nonce: uint64(i + 1), Txs: content}
+	}
+	b, err := proto.Marshal(&rpcpb.ChallengeReceiptRequest{Diffs: diffs})
+	require.NoError(t, err)
+	field := fieldNumber(t, &rpcpb.ChallengeReceiptRequest{}, "diffs")
+	require.NoError(t, CheckDiffsPayload(b, PageLimits, field))
+	require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, field), types.ErrDecodeLimit)
+}
+
+func TestCheckPayloadCountsErrorMissFinishTx(t *testing.T) {
+	errorMiss := func(n int) []byte {
+		b, err := proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_ErrorMiss{ErrorMiss: &types.MsgErrorMiss{
+			Votes: make([]*types.ErrorMissVote, n),
+		}}})
+		require.NoError(t, err)
+		return b
+	}
+	field := fieldNumber(t, &rpcpb.VerifyErrorMissRequest{}, "finish_tx")
+	diffs := fieldNumber(t, &rpcpb.VerifyErrorMissRequest{}, "diffs")
+	b, err := proto.Marshal(&rpcpb.VerifyErrorMissRequest{FinishTx: errorMiss(types.MaxGroupSize + 1)})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, diffs, field), types.ErrDecodeLimit)
+
+	// finish_tx shares the entry budget with the votes inside the diffs.
+	var content []byte
+	for range CatchUpLimits.Entries / types.MaxGroupSize {
+		content = protowire.AppendBytes(protowire.AppendTag(content, 2, protowire.BytesType), errorMiss(types.MaxGroupSize))
+	}
+	b, err = proto.Marshal(&rpcpb.VerifyErrorMissRequest{
+		Diffs:    []*rpcpb.Diff{{Nonce: 1, Txs: content}},
+		FinishTx: errorMiss(1),
+	})
+	require.NoError(t, err)
+	require.ErrorIs(t, CheckDiffsPayload(b, CatchUpLimits, diffs, field), types.ErrDecodeLimit)
+	require.NoError(t, CheckDiffsPayload(b, CatchUpLimits, diffs))
+}
+
+func fieldNumber(t *testing.T, m proto.Message, name string) protowire.Number {
+	t.Helper()
+	return m.ProtoReflect().Descriptor().Fields().ByName(protoreflect.Name(name)).Number()
 }

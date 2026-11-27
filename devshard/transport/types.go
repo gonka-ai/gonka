@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"errors"
 	"fmt"
 
 	"google.golang.org/protobuf/encoding/protowire"
@@ -161,10 +162,13 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 	})
 }
 
-// DiffsFromJSON decodes a challenge / verify diffs list.
-func DiffsFromJSON(djs []DiffJSON) ([]types.Diff, error) {
+// DiffsFromJSON decodes a challenge / verify diffs list within lim.
+func DiffsFromJSON(djs []DiffJSON, lim DiffLimits) ([]types.Diff, error) {
 	if len(djs) == 0 {
 		return nil, nil
+	}
+	if err := countDiffsJSON(djs, lim); err != nil {
+		return nil, err
 	}
 	diffs := make([]types.Diff, 0, len(djs))
 	for i, dj := range djs {
@@ -200,6 +204,9 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 
 // HostRequestFromJSON converts an InferenceRequest back to HostRequest.
 func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
+	if err := countDiffsJSON(ir.Diffs, CatchUpLimits); err != nil {
+		return host.HostRequest{}, err
+	}
 	diffs := make([]types.Diff, len(ir.Diffs))
 	for i, dj := range ir.Diffs {
 		d, err := DiffFromJSON(dj)
@@ -274,6 +281,15 @@ func DevshardTxsToBytes(txs []*types.DevshardTx) ([][]byte, error) {
 
 // DevshardTxsFromBytes deserializes proto byte slices to DevshardTx.
 func DevshardTxsFromBytes(data [][]byte) ([]*types.DevshardTx, error) {
+	if len(data) > types.MaxDecodedTxs {
+		return nil, fmt.Errorf("%w: %d, at most %d", types.ErrDecodeLimit, len(data), types.MaxDecodedTxs)
+	}
+	var count types.TxCount
+	for _, b := range data {
+		if err := count.AddTx(b); errors.Is(err, types.ErrDecodeLimit) {
+			return nil, err
+		}
+	}
 	result := make([]*types.DevshardTx, len(data))
 	for i, b := range data {
 		tx := &types.DevshardTx{}

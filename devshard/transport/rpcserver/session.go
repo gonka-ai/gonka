@@ -316,12 +316,15 @@ func (h *SessionHandler) VerifyTimeout(ctx context.Context, req *connect.Request
 	if err != nil {
 		return nil, err
 	}
+	if err := checkDiffsPayload(payload, transport.CatchUpLimits, verifyTimeoutDiffs); err != nil {
+		return nil, err
+	}
 	var inner rpcpb.VerifyTimeoutRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
 	}
 	jsonReq := transport.VerifyTimeoutRequestFromProto(&inner)
-	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
+	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs, transport.CatchUpLimits)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -351,12 +354,15 @@ func (h *SessionHandler) VerifyErrorMiss(ctx context.Context, req *connect.Reque
 	if err != nil {
 		return nil, err
 	}
+	if err := checkDiffsPayload(payload, transport.CatchUpLimits, verifyErrorMissDiffs, verifyErrorMissFinish); err != nil {
+		return nil, err
+	}
 	var inner rpcpb.VerifyErrorMissRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
 	}
 	jsonReq := transport.VerifyErrorMissRequestFromProto(&inner)
-	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs)
+	diffs, err := transport.DiffsFromJSON(jsonReq.Diffs, transport.CatchUpLimits)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
@@ -386,6 +392,9 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 	if err != nil {
 		return nil, err
 	}
+	if err := checkDiffsPayload(payload, transport.PageLimits, challengeReceiptDiffs); err != nil {
+		return nil, err
+	}
 	var inner rpcpb.ChallengeReceiptRequest
 	if err := unmarshalPayload(payload, &inner); err != nil {
 		return nil, err
@@ -403,7 +412,7 @@ func (h *SessionHandler) ChallengeReceipt(ctx context.Context, req *connect.Requ
 			return decoded, decErr
 		}
 		ran = true
-		decoded, decErr = transport.DiffsFromJSON(jsonReq.Diffs)
+		decoded, decErr = transport.DiffsFromJSON(jsonReq.Diffs, transport.PageLimits)
 		return decoded, decErr
 	}
 	srv, err := h.bindStartProof(ctx, "rpc_challenge_receipt", decode, "")
