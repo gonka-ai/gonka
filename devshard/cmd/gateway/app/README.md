@@ -31,7 +31,7 @@ The binary is [`../main.go`](../main.go): it copies the version the build stamps
 
 Most of `compose` is a straight line. Six places are not:
 
-- **Logging is configured before anything else can log**, from `env.LogFormat`. JSON is the default: a collector reads its fields as labels, while the text line carries `log`'s own date prefix and would have to be re-parsed.
+- **Logging is configured before anything else can log**, from `env.LogFormat` and `env.LogLevel`. JSON is the default: a collector reads its fields as labels, while the text line carries `log`'s own date prefix and would have to be re-parsed.
 - **`serve` owns the signal context**, so releasing it survives a panic. `os.Exit` skips a `defer` left in `main`.
 - **Routing joins the escrow set to the picker through the capacity model.** An escrow whose membership never reaches that model scores as weightless, is skipped by every pick, and serves nothing — so the join is not optional wiring. The warmup is handed the registry *after* the registry exists, because the registry publishes to it; and a nil warmup must never be assigned into the interface field, since a typed nil there is non-nil to a nil check.
 - **The engine hears of an applied Finish through a registry built before it.** The registry's served-binding observer forwards every Finish it judges to `finishNotice`, and the engine is stored into that notice once it exists, so a served winner's held sample is decided when its Finish applies ([`docs/race.md`](../docs/race.md), "A served winner's sample waits for its finish"). A Finish judged before the engine exists has no held sample to decide.

@@ -112,6 +112,11 @@ func LogFormat() string {
 	return LogFormatText
 }
 
+// LogLevel is read apart from Load for the same reason as LogFormat; the caller parses it with observability.ParseLogLevel, so an unknown value stays at info.
+func LogLevel() string {
+	return lookup("DEVSHARD_LOG_LEVEL")
+}
+
 // AllowPrivateAddresses is read apart from Load because the dial guard is armed before anything dials. See operations.md.
 func AllowPrivateAddresses() bool {
 	allowed, err := boolvalue.Parse(lookup(AllowPrivateAddressesVariable))

@@ -8,6 +8,8 @@ The gateway writes a line for every event that **moves money, changes what it wi
 
 Lines are JSON objects by default. Promtail lifts `level` into a Loki label (`deploy/join/observability/promtail-config.yaml`), and the Loki panels parse the rest with `| json`, so a gateway switched to `DEVSHARD_LOG_FORMAT=text` empties those panels.
 
+`DEVSHARD_LOG_LEVEL` sets the lowest level written: `info` by default, or `debug`, `warn` or `error`; an unknown value stays at `info`.
+
 Every lifecycle line is written by the journal (`journal/`) in the order its steps happened. A file named beside a line below is the step's producer, unless it names a `journal/render_*.go` renderer or says "written by". A test fails on a lifecycle line written around the journal and on a key the log vocabulary does not declare (`journal/guard_test.go`, `journal/keys_test.go`).
 
 ### The trace

@@ -55,7 +55,7 @@ const (
 
 // Main runs the gateway until SIGINT or SIGTERM and exits the process with status 1 when it fails.
 func Main() {
-	observability.InstallLogger(env.LogFormat())
+	observability.InstallLoggerWithOptions(observability.LoggerOptions{Format: env.LogFormat(), Level: observability.ParseLogLevel(env.LogLevel())})
 	applyDialGuard()
 	warnIgnoredLegacyStore()
 	if err := serve(); err != nil {

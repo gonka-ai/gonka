@@ -91,6 +91,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `DEVSHARD_OTEL_ENABLED` | false | whether OpenTelemetry traces are exported; off is a no-op tracer ([observability.md](./observability.md), "Tracing") |
 | `OTEL_ENDPOINT` / `OTEL_HEADERS` | unset | the OTLP gRPC collector and its headers as `key=value,key=value`; a malformed header is skipped with a warning |
 | `DEVSHARD_LOG_FORMAT` | json | one JSON object per line, which promtail and the Loki panels read; any other value is the text form |
+| `DEVSHARD_LOG_LEVEL` | info | the minimum level that is logged: `debug`, `warn` (or `warning`) or `error`; unset or any other value stays at `info`, so a typo cannot start a debug flood |
 
 ## The rest of the variables
 
