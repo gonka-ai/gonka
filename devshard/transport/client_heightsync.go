@@ -57,6 +57,15 @@ func (c *HTTPClient) ingestResponseHeightSync(hs *heightsync.HeightSyncSection, 
 	if hs == nil || !heightsync.IsAnchorSection(hs) {
 		return
 	}
+	if err := heightsync.CheckSectionWireBounds(hs); err != nil {
+		logging.Warn("heightsync: oversized response section dropped",
+			heightsync.LogFieldSubsystem, "heightsync",
+			heightsync.LogFieldDirection, "response",
+			heightsync.LogFieldNonce, nonce,
+			"source", source,
+			"error", err.Error())
+		return
+	}
 	var blobOK bool
 	if c.heightSyncPeerTips != nil && c.heightSyncVerifier != nil {
 		if err := heightsync.VerifyOrigin(c.heightSyncVerifier, hs, hs.SenderSignature); err != nil {

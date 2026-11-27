@@ -81,7 +81,11 @@ type LogPlaneResult struct {
 	Reason        string
 	Marks         []AttributableMark
 	DeferredFails []AttributableMark
+	Suppressed    int
+	limit         int
 }
+
+const MaxEnvelopeBindingMarks = 256
 
 // invalid and mark are metric-free on purpose. One diff is evaluated many
 // times — the compose trial loop re-checks a growing prefix per tx, replay and
@@ -97,6 +101,14 @@ func (r LogPlaneResult) invalid(err error, reason string) LogPlaneResult {
 
 func (r *LogPlaneResult) mark(m AttributableMark) {
 	r.Marks = append(r.Marks, m)
+}
+
+func (r *LogPlaneResult) admit() bool {
+	if r.limit > 0 && len(r.Marks) >= r.limit {
+		r.Suppressed++
+		return false
+	}
+	return true
 }
 
 // CheckDiffLogPlane runs L0–L7 against one diff.
@@ -156,14 +168,25 @@ func CheckEnvelopeBinding(in LogPlaneInput, cfg HeartbeatConfig) []AttributableM
 	if in.Sec == nil {
 		return nil
 	}
+	if err := CheckSectionWireBounds(in.Sec); err != nil {
+		logLogPlane(in.Nonce, 0, "edge", "SKIP", err.Error())
+		return nil
+	}
 	cfg = cfg.withDefaults()
-	var out LogPlaneResult
+	out := LogPlaneResult{limit: MaxEnvelopeBindingMarks}
 	hbs, acks := collectLogPlaneTxs(in.Nonce, in.Txs)
 	// Transport edge: no fold is available, so marks carry the turn start only
 	// when the heartbeat opening it is in this diff.
 	idx := newTurnIndex(hbs, LogPlaneState{Cfg: cfg})
 	checkL4(in, hbs, acks, idx, &out)
 	checkL5a(in, hbs, acks, idx, cfg, &out)
+	if out.Suppressed > 0 {
+		logging.Warn("heightsync: envelope binding marks capped",
+			LogFieldSubsystem, "heightsync",
+			LogFieldNonce, in.Nonce,
+			"kept", len(out.Marks),
+			"suppressed", out.Suppressed)
+	}
 	return out.Marks
 }
 
@@ -636,6 +659,8 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 		return h < want
 	}
 	if sec.Direction == "response" {
+		var blob, sig []byte
+		ready := false
 		for _, ref := range acks {
 			if !StampPresent(ref.ack.ObservedBlockHash) {
 				continue
@@ -647,14 +672,22 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 			if !bad(ref.ack.ObservedHeight, want, exact) {
 				continue
 			}
-			blob, _ := CanonicalOriginBytes(sec)
+			if !out.admit() {
+				continue
+			}
+			if !ready {
+				blob, _ = CanonicalOriginBytes(sec)
+				blob = capMarkBlob(blob)
+				sig = append([]byte(nil), sec.SenderSignature...)
+				ready = true
+			}
 			out.mark(AttributableMark{
 				Kind:      MarkDisputeOriginator,
 				Slot:      ref.ack.SlotId,
 				TurnStart: idx.forAck(ref.ack.RefNonce),
 				Nonce:     in.Nonce,
 				Blob:      blob,
-				Sig:       append([]byte(nil), sec.SenderSignature...),
+				Sig:       sig,
 				Detail: fmt.Sprintf("ack height %d != max(response section %d, floor) = %d",
 					ref.ack.ObservedHeight, envH, want),
 			})
@@ -670,6 +703,10 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 	if isCarryForwardAnchor(sec) {
 		return
 	}
+	var blob, sig []byte
+	var ts int64
+	escrow := ""
+	ready := false
 	for _, ref := range hbs {
 		if !StampPresent(ref.hb.ObservedBlockHash) {
 			continue
@@ -681,10 +718,10 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 		if !bad(ref.hb.ObservedHeight, want, exact) {
 			continue
 		}
-		var blob, sig []byte
-		var ts int64
-		escrow := ""
-		if in.RequestLeg != nil {
+		if !out.admit() {
+			continue
+		}
+		if !ready && in.RequestLeg != nil {
 			// Digest, not the HTTP body: CanonicalRequestLegBytes is already
 			// what the signature covers (spec §15 request leg).
 			blob = CanonicalRequestLegBytes(in.RequestLeg.EscrowID, in.RequestLeg.Body, in.RequestLeg.Timestamp)
@@ -692,6 +729,7 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 			ts = in.RequestLeg.Timestamp
 			escrow = in.RequestLeg.EscrowID
 		}
+		ready = true
 		out.mark(AttributableMark{
 			Kind:      MarkDisputeCarrier,
 			TurnStart: idx.forHeartbeat(ref.nonce),
@@ -717,6 +755,9 @@ func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex
 			return
 		}
 		if absU64(h, in.LocalAligned) <= d {
+			return
+		}
+		if !out.admit() {
 			return
 		}
 		out.mark(AttributableMark{
