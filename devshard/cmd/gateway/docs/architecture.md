@@ -170,7 +170,7 @@ graph LR
     LOST --> OPEN
     STR --> OPEN
     OPEN --> VOTE["timeout vote or<br/>error-miss claim"]
-    OPEN --> SKIP["vote skipped:<br/>phase aborted or a long response"]
+    OPEN --> SKIP["vote skipped:<br/>phase aborted, or nonce already finished"]
     VOTE --> APP["applied"]
     VOTE --> FAIL["failed: retried or swept,<br/>otherwise settlement decides"]
     BURN --> REF["paid at settlement:<br/>a ghost stays pending and<br/>the drain credits its floor reserve"]

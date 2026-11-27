@@ -25,7 +25,11 @@ type scriptedTimeoutHandler struct {
 	calls     int
 	missCalls int
 	finishTx  []byte
+
+	finishApplied bool
 }
+
+func (h *scriptedTimeoutHandler) IsNonceCanonicalFinished(uint64) bool { return h.finishApplied }
 
 func (h *scriptedTimeoutHandler) TimeoutDeadline(uint64, time.Time) (string, time.Time) {
 	return string(TimeoutKindExecution), time.Time{}

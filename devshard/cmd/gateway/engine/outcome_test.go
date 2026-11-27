@@ -115,6 +115,7 @@ func cleanAttempt() AttemptOutcome {
 		Terminal:      TerminalWon,
 		Confirmed:     true,
 		NonceFinished: true,
+		FinishApplied: true,
 	}
 }
 
@@ -122,7 +123,7 @@ func failedAttempt(terminal Terminal) AttemptOutcome {
 	attempt := cleanAttempt()
 	attempt.Terminal = terminal
 	attempt.Confirmed = false
-	attempt.NonceFinished = false
+	attempt.NonceFinished, attempt.FinishApplied = false, false
 	attempt.ContentChunks = 0
 	return attempt
 }
