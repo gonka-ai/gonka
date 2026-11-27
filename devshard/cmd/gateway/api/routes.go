@@ -249,14 +249,14 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	if s.cache != nil {
 		key = cacheKeyFor(r, normalized)
 		if directive.looksUp() {
+			if reader, adopted := s.streams.adopt(key, s.cache.currentGeneration()); adopted {
+				escrowID, written := serveLog(w, r, requestID, reader)
+				s.finishReplay(r.Context(), requestID, normalized.Model, identity.caller(), escrowID, true, written, prompt)
+				return
+			}
 			if entry, hit := s.cache.get(key, s.now()); hit {
 				written := serveCached(w, requestID, entry)
-				hitCount := prompt.countSoFar()
-				s.events.RequestFinished(journal.RequestLine{
-					RequestID: requestID, TraceID: traceIDOf(r.Context()), Model: normalized.Model, APIKeyID: identity.caller(), EscrowID: entry.escrowID,
-					ClientStream: entry.stream, Bytes: written, CacheHit: true,
-					Outcome: engine.RaceOutcome{InputTokens: hitCount.tokens, InputTokensSource: hitCount.source},
-				})
+				s.finishReplay(r.Context(), requestID, normalized.Model, identity.caller(), entry.escrowID, entry.stream, written, prompt)
 				return
 			}
 		}
@@ -296,34 +296,59 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	if s.cache == nil || !directive.stores() {
 		// Nothing to store, so the outcome and the hidden failure the cache path reads are both moot.
-		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot)
+		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot, nil)
+		return
+	}
+	if normalized.ClientStream {
+		log := newStreamLog(key, s.cache.currentGeneration(), s.cache.entryLimit(), s.buffers, s.streams)
+		_, _ = s.race(w, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot, log)
 		return
 	}
 	generation := s.cache.currentGeneration()
 	recorder := newCacheRecorder(w, s.cache.entryLimit(), normalized.ClientStream, s.buffers)
 	defer recorder.releaseBudget()
-	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot)
+	outcome, hiddenFailure := s.race(recorder, r, requestID, identity.caller(), normalized, counted, escrowPin, configuration.For(normalized.Model).Limits.LogprobsOptimization, slot, nil)
 	unstorable := cmp.Or(r.Context().Err(), hiddenFailure)
 	entry, storable := recorder.entry(outcome.EscrowID, normalized.ClientStream, unstorable)
 	if !storable {
 		s.countCacheResult(normalized.Model, recorder.entryRefusal(unstorable, outcome.EscrowID))
 		return
 	}
+	entry, cacheRefusal := servedBy(entry, outcome, generation)
+	// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
+	s.offerToCache(r.Context(), key, entry, cacheRefusal, requestID, normalized.Model)
+}
+
+// servedBy stamps the entry with what the cache's invalidation reads: the winning nonce, its participant and the generation the race began in.
+func servedBy(entry cachedResponse, outcome engine.RaceOutcome, generation uint64) (cachedResponse, string) {
 	entry.nonce = outcome.WinnerNonce
 	entry.generation = generation
 	if winner := outcome.Winner(); winner != nil {
 		if winner.Suspicious {
-			s.countCacheResult(normalized.Model, cacheRefusedInvalidated)
-			return
+			return cachedResponse{}, cacheRefusedInvalidated
 		}
 		entry.participant = winner.Participant
 	}
-	// The client keeps every byte that arrived; only the replay stops, and only this refusal is news.
-	cacheRefusal := s.cache.put(key, entry, s.now())
-	s.countCacheResult(normalized.Model, cacheRefusal)
-	if cacheRefusal == filters.CacheRefusedUnfinished {
-		s.events.ReplyNotCached(journal.RequestLine{RequestID: requestID, TraceID: traceIDOf(r.Context()), Model: normalized.Model, EscrowID: outcome.EscrowID})
+	return entry, filters.CacheStorable
+}
+
+func (s *Server) offerToCache(ctx context.Context, key cacheKey, entry cachedResponse, refusal, requestID, model string) {
+	if refusal == filters.CacheStorable {
+		refusal = s.cache.put(key, entry, s.now())
 	}
+	s.countCacheResult(model, refusal)
+	if refusal == filters.CacheRefusedUnfinished {
+		s.events.ReplyNotCached(journal.RequestLine{RequestID: requestID, TraceID: traceIDOf(ctx), Model: model, EscrowID: entry.escrowID})
+	}
+}
+
+func (s *Server) finishReplay(ctx context.Context, requestID, model, apiKeyID, escrowID string, stream bool, written int64, prompt requestPrompt) {
+	hitCount := prompt.countSoFar()
+	s.events.RequestFinished(journal.RequestLine{
+		RequestID: requestID, TraceID: traceIDOf(ctx), Model: model, APIKeyID: apiKeyID, EscrowID: escrowID,
+		ClientStream: stream, Bytes: written, CacheHit: true,
+		Outcome: engine.RaceOutcome{InputTokens: hitCount.tokens, InputTokensSource: hitCount.source},
+	})
 }
 
 func (s *Server) countCacheResult(model, refusal string) {
@@ -388,10 +413,21 @@ func authorizeModel(configured *config.Config, model string, identity credential
 }
 
 // race returns the outcome and the failure the reply's status could not carry. See README.md, "Streaming the reply".
-func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool, slot *limiterSlot) (engine.RaceOutcome, error) {
+func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyID string, normalized filters.Result, prompt promptCount, escrowPin string, logprobsOptimization *bool, slot *limiterSlot, log *streamLog) (outcome engine.RaceOutcome, hidden error) {
 	startedAt := s.now()
 	client := newClientStream(w, requestID, normalized.ClientStream, normalized.ClientUsage, normalized.Logprobs, prompt.tokens, s.buffers)
-	defer client.discard()
+	client.recordTo(log)
+	relay := s.newOutcomeRelay(r.Context(), client, log, requestID, normalized.Model)
+	handedOff := false
+	defer func() {
+		if handedOff {
+			return
+		}
+		client.discard()
+		if log != nil {
+			s.concludeStream(r.Context(), log, requestID, normalized.Model, outcome, hidden)
+		}
+	}()
 	outputTokens := outputTokenBudget(normalized)
 	outcome, err := s.inference.Run(r.Context(), engine.Request{
 		RequestID:               requestID,
@@ -404,7 +440,8 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 		OutputTokens:            outputTokens,
 		ClientStream:            normalized.ClientStream,
 		EmptyAnswerCountsTokens: normalized.EmptyAnswerCountsTokens,
-		OnEscrow:                func(escrowID string) { client.Header().Set(EscrowHeader, escrowID) },
+		OnEscrow:                func(escrowID string) { client.Header().Set(EscrowHeader, escrowID); log.noteEscrow(escrowID) },
+		OnOutcome:               relay.report,
 		OnFinished:              slot.share(),
 
 		Params: user.InferenceParams{
@@ -418,6 +455,13 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 	}, client)
 	if err != nil {
 		s.capture.attemptsFailed(r, requestID, normalized, err)
+		if log != nil && client.departed(r.Context(), err) {
+			handedOff = true
+			client.detachSocket()
+			relay.leave()
+			s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, client.departedVerdict(), client, s.now().Sub(startedAt), err, nil)
+			return outcome, err
+		}
 		if !client.closeUnstarted() {
 			s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, deliveryFailedMidStream, client, s.now().Sub(startedAt), err, client.Fail(err))
 			return outcome, err
@@ -425,6 +469,9 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 		s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, deliveryFailedBeforeFirstByte, client, s.now().Sub(startedAt), err, nil)
 		w.Header().Set(RequestIDHeader, requestID)
 		s.writeErrorForModel(w, err, normalized.Model)
+		if log != nil {
+			return outcome, err
+		}
 		return outcome, nil
 	}
 	// The authoritative X-Devshard-ID write. See README.md, "Streaming the reply".
@@ -434,9 +481,12 @@ func (s *Server) race(w http.ResponseWriter, r *http.Request, requestID, apiKeyI
 	// Returned, not just logged, so the cache refuses a body that stops mid-answer.
 	closeErr := client.Close()
 	delivery := deliveryServed
-	if closeErr != nil {
+	if closeErr != nil || !log.socketAttached() {
 		delivery = deliveryFailedMidStream
 	}
 	s.finishRequest(r.Context(), requestID, apiKeyID, normalized, outcome, delivery, client, s.now().Sub(startedAt), client.answeredHostFailure(), closeErr)
+	if log != nil {
+		return outcome, client.rewriteFailure()
+	}
 	return outcome, cmp.Or(closeErr, client.replayRefusal())
 }

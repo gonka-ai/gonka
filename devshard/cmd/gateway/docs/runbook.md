@@ -17,7 +17,7 @@ export ADMIN_KEY=<the value of DEVSHARD_ADMIN_API_KEY>
 | --- | --- |
 | every request 429 | `limiter_queue_depth` and `effective_max_concurrent_requests` — the weight model may have scaled capacity to almost nothing after an epoch switch |
 | every request 503 with no model listed | the chain snapshot is stale, or the escrow set is empty — check `chain_snapshot_healthy` and `/v1/admin/devshards` |
-| 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: non-streaming replies are holding the whole budget |
+| 503 on a healthy-looking gateway | `buffered_response_bytes` at the ceiling: replies being assembled or recorded are holding the whole budget; `stream_logs` says how many live stream logs are among them |
 | a model returns 401 to every caller but the admin | neither the model nor the network names an `access` for it — set `access` under `models.<id>`; on an `api_key` model, a caller whose key is not an active client key is refused too, so list them with `GET /v1/admin/api-keys` |
 | the admin surface 404s | `DEVSHARD_ADMIN_API_KEY` is unset |
 | burns climbing | `ghost_nonces_burned_total` by reason — see [accounting.md](./accounting.md) |

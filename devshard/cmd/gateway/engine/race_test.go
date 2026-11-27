@@ -1735,7 +1735,7 @@ func TestInterruptedAttemptsBeforeTheObserverSeesGenerationAnswerAsAnEmptyStream
 					t.Errorf("attempt %d phase aborted = %v, want %v", attempt.Nonce, attempt.PhaseTransitionAborted, testCase.wantAborted)
 				}
 			}
-			if got := outcome.failure(); !errors.Is(got, testCase.wantFailure) {
+			if got := outcome.Failure(); !errors.Is(got, testCase.wantFailure) {
 				t.Errorf("failure = %v, want %v", got, testCase.wantFailure)
 			}
 		})

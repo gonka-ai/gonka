@@ -429,6 +429,7 @@ func compose(ctx context.Context, values env.Values, storageDir string, gatewayS
 	// Registered after the server, which owns both sinks. See README.md, "Wiring order, and the knots in it".
 	telemetry.Register(metrics.NewCaptureCollector(server))
 	telemetry.Register(metrics.NewCacheCollector(server))
+	telemetry.Register(metrics.NewStreamLogCollector(server))
 	observer.Subscribe(server.ObservePhase)
 	httpServer, endRequests := server.HTTPServer(fmt.Sprintf(":%d", configuration.Server.Port))
 
