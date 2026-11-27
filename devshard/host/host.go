@@ -509,7 +509,7 @@ func (h *Host) AddTx(tx *types.DevshardTx) {
 			"escrow", h.escrowID, "inference_id", id, "tx_hash", types.TxHash(tx))
 		return
 	}
-	h.mempool.AddTx(tx)
+	h.mempool.AddRecoveryTx(tx)
 }
 
 // settledRecoveryTxLocked reports a ConfirmStart or FinishInference that can no

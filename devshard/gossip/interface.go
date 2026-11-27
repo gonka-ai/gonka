@@ -33,6 +33,8 @@ type SigAccumulator interface {
 }
 
 // MempoolSink receives transactions from gossip peers.
+// Admission is best effort; implementations may drop new transactions when
+// their retained-gossip budget is exhausted.
 type MempoolSink interface {
 	AddTx(tx *types.DevshardTx)
 }

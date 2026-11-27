@@ -5,6 +5,15 @@ import (
 	"sync"
 
 	"devshard/types"
+	"google.golang.org/protobuf/proto"
+)
+
+// These are per-host-session budgets for retained peer-gossip transactions,
+// independent of transport message limits. The byte budget measures protobuf
+// encoding size, not Go heap usage; the count budget also bounds entry overhead.
+const (
+	MaxGossipMempoolTxs   = 4096
+	MaxGossipMempoolBytes = 8 << 20
 )
 
 // MempoolEntry tracks a host-proposed tx awaiting inclusion.
@@ -13,21 +22,75 @@ type MempoolEntry struct {
 	ProposedAt uint64 // nonce when proposed
 }
 
+type mempoolSource uint8
+
+const (
+	mempoolGossip mempoolSource = iota
+	mempoolRecovery
+	mempoolLocal
+)
+
+type retainedTx struct {
+	MempoolEntry
+	source       mempoolSource
+	encodedBytes int // charged only for gossip entries
+}
+
 // Mempool stores host-proposed txs that haven't been included in a diff yet.
 // Keyed by txHash for O(1) lookup and O(m) removal.
 type Mempool struct {
 	mu      sync.Mutex
-	entries map[uint64]MempoolEntry
+	entries map[uint64]retainedTx
+
+	gossipCount    int
+	gossipBytes    int
+	maxGossipTxs   int
+	maxGossipBytes int
 }
 
 func NewMempool() *Mempool {
-	return &Mempool{entries: make(map[uint64]MempoolEntry)}
+	return &Mempool{
+		entries:        make(map[uint64]retainedTx),
+		maxGossipTxs:   MaxGossipMempoolTxs,
+		maxGossipBytes: MaxGossipMempoolBytes,
+	}
 }
 
+// Add retains locally proposed work, even when the gossip budget is full.
 func (m *Mempool) Add(entry MempoolEntry) {
+	m.addProtected(entry, mempoolLocal)
+}
+
+// AddRecoveryTx retains recovery work already verified by the caller. It must
+// not compete with unsolicited gossip for admission, nor overwrite the local
+// proposal nonce of an identical transaction.
+func (m *Mempool) AddRecoveryTx(tx *types.DevshardTx) {
+	m.addProtected(MempoolEntry{Tx: tx}, mempoolRecovery)
+}
+
+func (m *Mempool) addProtected(entry MempoolEntry, source mempoolSource) {
+	if entry.Tx == nil {
+		return
+	}
+	hash := types.TxHash(entry.Tx)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.entries[types.TxHash(entry.Tx)] = entry
+	if previous, ok := m.entries[hash]; ok {
+		if previous.source > source {
+			return
+		}
+		m.releaseGossip(previous)
+	}
+	m.entries[hash] = retainedTx{MempoolEntry: entry, source: source}
+}
+
+// releaseGossip releases the admission budget before removal or promotion.
+// Caller holds m.mu.
+func (m *Mempool) releaseGossip(entry retainedTx) {
+	if entry.source == mempoolGossip {
+		m.gossipCount--
+		m.gossipBytes -= entry.encodedBytes
+	}
 }
 
 // RemoveIncluded removes entries whose tx matches any tx in the diff (by hash).
@@ -35,7 +98,11 @@ func (m *Mempool) RemoveIncluded(txs []*types.DevshardTx) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	for _, tx := range txs {
-		delete(m.entries, types.TxHash(tx))
+		hash := types.TxHash(tx)
+		if entry, ok := m.entries[hash]; ok {
+			m.releaseGossip(entry)
+			delete(m.entries, hash)
+		}
 	}
 }
 
@@ -162,7 +229,33 @@ func (m *Mempool) Len() int {
 	return len(m.entries)
 }
 
-// AddTx wraps Add with a zero ProposedAt. Satisfies gossip.MempoolSink.
+// AddTx admits best-effort peer gossip within both cumulative budgets. At
+// capacity, new entries are dropped; already retained work is not evicted.
+// Replays neither consume budget nor replace a local/recovery entry. Local
+// proposals and verified recovery must use Add and AddRecoveryTx instead.
+// Satisfies gossip.MempoolSink; gossip acknowledgement is not an admission receipt.
 func (m *Mempool) AddTx(tx *types.DevshardTx) {
-	m.Add(MempoolEntry{Tx: tx, ProposedAt: 0})
+	if tx == nil {
+		return
+	}
+	size := proto.Size(tx)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if size > m.maxGossipBytes {
+		return
+	}
+	hash := types.TxHash(tx)
+	if _, ok := m.entries[hash]; ok {
+		return
+	}
+	if m.gossipCount >= m.maxGossipTxs || size > m.maxGossipBytes-m.gossipBytes {
+		return
+	}
+	m.entries[hash] = retainedTx{
+		MempoolEntry: MempoolEntry{Tx: tx},
+		source:       mempoolGossip,
+		encodedBytes: size,
+	}
+	m.gossipCount++
+	m.gossipBytes += size
 }
