@@ -97,10 +97,6 @@ func VersionlessSessionSignaturesPath(escrowID string) string {
 	return fmt.Sprintf("%s/sessions/%s/signatures", VersionlessRoutePrefix, escrowID)
 }
 
-// VersionlessStatsRPCPath is GET /devshard/stats/rpc.
-func VersionlessStatsRPCPath() string {
-	return VersionlessRoutePrefix + "/stats/rpc"
-}
 func VersionlessStatsShardsPath() string {
 	return VersionlessRoutePrefix + "/stats/shards"
 }

@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,60 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// GatewayAttemptSpanName is the gateway per-attempt span (observability.SpanNameGatewayAttempt).
-const GatewayAttemptSpanName = "gateway.attempt"
-
 // Stage names emitted by mock-dapi on the node-selection hop.
 const (
 	StageMLNodeAcquire = "mlnode_acquire"
 	StageMLNodeRelease = "mlnode_release"
 )
-
-// PostGatewayChatSoftEx posts a chat and returns the status plus response
-// headers without failing the test. The multi-host attempt citest drives
-// several chats while hunting for one that fanned out to two hosts; a round the
-// gateway refuses is a round to skip, not a test failure.
-func PostGatewayChatSoftEx(
-	t *testing.T,
-	client *http.Client,
-	gatewayURL, adminAPIKey string,
-	req ChatCompletionRequest,
-) (status int, header http.Header, content string) {
-	t.Helper()
-	if client == nil {
-		client = GatewayChatClient()
-	}
-	data, err := json.Marshal(req)
-	require.NoError(t, err)
-	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
-	require.NoError(t, err)
-	httpReq.Header.Set("Content-Type", "application/json")
-	if adminAPIKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	}
-
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		t.Logf("citest: chat transport error: %v", err)
-		return 0, http.Header{}, ""
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Logf("citest: chat body read error: %v", err)
-		return resp.StatusCode, resp.Header.Clone(), ""
-	}
-	if resp.StatusCode >= 300 {
-		t.Logf("citest: chat status=%d body=%s", resp.StatusCode, truncateForLog(string(body), 300))
-		return resp.StatusCode, resp.Header.Clone(), ""
-	}
-	var out ChatCompletionResponse
-	if err := json.Unmarshal(body, &out); err != nil || len(out.Choices) == 0 {
-		t.Logf("citest: chat 200 but unusable body: %v %s", err, truncateForLog(string(body), 300))
-		return resp.StatusCode, resp.Header.Clone(), ""
-	}
-	return resp.StatusCode, resp.Header.Clone(), out.Choices[0].Message.Content
-}
 
 // LokiEntry is one JSON log line plus the stream labels Loki attached to it.
 type LokiEntry struct {
@@ -457,64 +407,6 @@ func WaitTraceSpanNameAny(t *testing.T, obs ObservabilityEndpoints, traceID stri
 	})
 	require.True(t, ok, "trace %s has none of %v within %s (saw %v)", traceID, anyOf, timeout, seen)
 	return found
-}
-
-// GatewayAttemptParticipants returns the attempt-span count and the distinct
-// participant keys those attempts targeted.
-func GatewayAttemptParticipants(spans []map[string]string) (int, []string) {
-	attempts := 0
-	seen := make(map[string]struct{})
-	for _, s := range spans {
-		if s["name"] != GatewayAttemptSpanName {
-			continue
-		}
-		attempts++
-		key := s["participant.key"]
-		if key == "" {
-			key = s["devshard.host.id"]
-		}
-		if key != "" {
-			seen[key] = struct{}{}
-		}
-	}
-	participants := make([]string, 0, len(seen))
-	for key := range seen {
-		participants = append(participants, key)
-	}
-	sort.Strings(participants)
-	return attempts, participants
-}
-
-// TryWaitMultiHostAttempts polls traceID until its gateway.attempt spans cover
-// at least minParticipants distinct hosts. Non-fatal by design: which host the
-// picker chooses as primary is not fixed, so callers drive another chat instead
-// of failing on the first single-host request.
-func TryWaitMultiHostAttempts(
-	obs ObservabilityEndpoints,
-	traceID string,
-	minParticipants int,
-	timeout time.Duration,
-) (attempts int, participants []string, ok bool) {
-	if minParticipants <= 0 {
-		minParticipants = 2
-	}
-	if timeout == 0 {
-		timeout = 45 * time.Second
-	}
-	deadline := time.Now().Add(timeout)
-	for {
-		spans, loaded := TraceSpans(obs, traceID)
-		if loaded {
-			attempts, participants = GatewayAttemptParticipants(spans)
-			if len(participants) >= minParticipants {
-				return attempts, participants, true
-			}
-		}
-		if time.Now().After(deadline) {
-			return attempts, participants, false
-		}
-		time.Sleep(3 * time.Second)
-	}
 }
 
 func spanNames(spans []map[string]string) []string {

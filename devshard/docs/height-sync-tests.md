@@ -45,7 +45,7 @@ are different numbering schemes.
 | ---- | ----- | ---------- | --------------- |
 | **Unit** | Go packages only | none | < 1 s per package |
 | **In-process e2e** | Four `httptest` hosts + static `BlockOracle`s in one process | `-tags=dev` for held-response timing scenarios | seconds |
-| **Container e2e** | Docker compose: `heightsyncd`, `mockdapi` SSE, Loki, VictoriaMetrics, four `devshardd` hosts, `devshardctl` | `-tags=testenvci` | minutes |
+| **Container e2e** | Docker compose: `heightsyncd`, `mockdapi` SSE, Loki, VictoriaMetrics, four `devshardd` hosts, the gateway | `-tags=testenvci` | minutes |
 
 Default commands (run from `devshard/`):
 
@@ -455,37 +455,12 @@ automatic for `executor_sig`.
 | -- | ------------------- | ------------------ |
 | H26 | ✅ `TestContainerE2E_HeightSync_QuietEscrowHeartbeat` | Two chats seed `F` (start is hashless; confirm/finish ride chat 2). Then `Interval` of quiet — extra chat in that wait substitutes `discharged_by_inference`. Heartbeat cadence visible in logs + `cadence_events_total`, turns complete, **zero** probe traffic; `/v1/debug/heightsync` lists the escrow; peer matrix series stay off by default; seal/empty-height gauges eventually appear (H44/H45 smoke). Compose seed does not raise `F`; stretching the timeout does not help a floorless session. |
 | H27 | ✅ `TestContainerE2E_HeightSync_OneHostStopped` | Same two-chat floor seed, wait for `heartbeat_opened`, then one host stopped: degraded turns, bounded probe traffic, arming only after `T_idle` of user silence; `turns_abandoned_total` rises (H43). |
-| H40c | ✅ `TestContainerE2E_HeightSync_StaleClaimSpread` | Compose companion to H40: after a stopped host goes past `F`, claim age rises and spread does not silently shrink. |
-| H42c | ✅ `TestContainerE2E_HeightSync_BusyEscrowDischarge` | Compose companion to H42: stamped traffic surfaces as `discharged_by_inference` in metrics and the debug ring. |
-| H47c | ✅ `TestContainerE2E_HeightSync_SettleDropsSeries` | Compose companion to H47: after admin deactivate (same `retireRuntime` drop as settle), no series carries that `devshard_id`. |
-| H48c | ✅ `TestContainerE2E_HeightSync_PeerMatrixOptIn` | Compose companion to H48: two chats seed `F`, wait for `heartbeat_opened`, then with `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX=1` quadratic `peer_seen` series appear (`observer_slot` / `subject_slot`). |
+| H40c | ✅ `TestContainerE2E_HeightSync_StaleClaimSpread` | After a stopped host goes past `F`, claim age rises and spread does not silently shrink. |
+| H42c | ✅ `TestContainerE2E_HeightSync_BusyEscrowDischarge` | Stamped traffic surfaces as `discharged_by_inference` in metrics and the debug ring. |
+| H47c | ✅ `TestContainerE2E_HeightSync_SettleDropsSeries` | After admin deactivate (same `retireRuntime` drop as settle), no series carries that `devshard_id`. |
+| H48c | ✅ `TestContainerE2E_HeightSync_PeerMatrixOptIn` | Two chats seed `F`, wait for `heartbeat_opened`, then with `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX=1` quadratic `peer_seen` series appear (`observer_slot` / `subject_slot`). |
 
-### 7.7 Gateway observability (plan §8.12.1–§8.12.6)
-
-All of these gather at the **gateway** and assert on its Prometheus registry or on
-`GET /v1/debug/heightsync` — never on a host scrape and never on a new wire
-field. Package `devshard/cmd/devshardctl` unless noted.
-
-| ID | Test (planned name) | What it will prove |
-| -- | ------------------- | ------------------ |
-| H39 | ✅ `TestGatewayHeightSync_DivergenceSpreadAndLag` | Two hosts claim `H`, one claims `H − 5` ⇒ `height_spread = 5`, per-slot lag `0/0/5`, leader lag `0`. |
-| H40 | ✅ `TestGatewayHeightSync_StaleClaimDropsFromSpread` (+ compose `TestContainerE2E_HeightSync_StaleClaimSpread`) | A host that stops acking loses its `host_height` series past `F` and raises `host_claim_age_seconds`; spread does **not** silently shrink to the live pair (stale claims stay in the spread set). |
-| H41 | ✅ `TestGatewayHeightSync_QuietCadenceEventsAndRing` | Quiet escrow: `cadence_events_total{event="heartbeat_opened"}` advances ~once per `Interval`; the ring holds one ordered entry per turn. |
-| H42 | ✅ `TestGatewayHeightSync_InferenceDischargeIsVisible` (+ compose `TestContainerE2E_HeightSync_BusyEscrowDischarge`) | Busy stamped escrow: events are `discharged_by_inference`, `heartbeat_opened` stays **zero**, and the ring records the substitution explicitly rather than as an absence. |
-| H43 | ✅ `TestGatewayHeightSync_AbandonedTurnCounted` (+ H27 compose scrape) | One unreachable slot: `turns_abandoned_total` rises, ring entries carry `turn_abandoned`, cadence keeps running. |
-| H44 | ✅ `TestGatewayHeightSync_BucketSealsAfterDAck` (+ H26 compose smoke) | Acks stamped `H` arriving while the tip is `H + 1` land in bucket `H`; the bucket is not published until sealed, so no fake zero for `H`. |
-| H45 | ✅ `TestGatewayHeightSync_BlockWithoutAnchorCounted` (+ H26 compose smoke) | A sealed height with no anchor increments `blocks_without_anchor_total` exactly once. |
-| H46 | ✅ `TestGatewayHeightSync_PeerSeenMatrix` | 4-slot roster with slot 2 invisible to slot 0 only: `peer_seen{observer=0,subject=2}=0`, `unseen_total{subject=2}=1`, `peer_seen_count{observer=0}=3`. |
-| H47 | ✅ `TestGatewayHeightSync_SettleDropsEverySeries` (+ compose `TestContainerE2E_HeightSync_SettleDropsSeries`) | After settle, **no** series carries that `devshard_id` — asserted by label value, not a per-series list, so a later addition that misses cleanup fails here. |
-| H48 | ✅ `TestGatewayHeightSync_PeerMatrixOptIn` (+ compose `TestContainerE2E_HeightSync_PeerMatrixOptIn`) | Matrix off by default ⇒ quadratic series absent while linear `peer_seen_count` / `unseen_total` remain and the matrix is still readable on `/v1/debug/heightsync`. |
-| H49 | ✅ `TestGatewayHeightSync_ArmingPredictionIsInert` | Gateway quiet toward one slot past `T_idle` ⇒ `arming_predicted{slot}=1`, and a limiter/closing test double records **zero** calls — the prediction must never drive a decision. |
-
-`heightsync_close_ready_armed` is deliberately **not** in this group: arming emits
-nothing on the wire (§12.2), so the gateway cannot observe it. H21 covers it
-host-side. H49's `arming_predicted` is the gateway's view of its **own** silence —
-an early warning on a different clock, not a mirror of any host's flag.
-
-### 7.8 Gateway chain follower (spec §6, attack 27)
+### 7.7 Gateway chain follower (spec §6, attack 27)
 
 The gateway is a courier. `DEVSHARD_GATEWAY_CHAIN_ORACLE` (default
 **off**) may start a Comet/failover follower as `HeightSyncLogOracle`
@@ -495,10 +470,10 @@ originator. See [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PRO
 
 | ID | Test (planned name) | Package | What it will prove |
 | -- | ------------------- | ------- | ------------------ |
-| H105 | ✅ `TestGatewayChainOracle_DefaultOffDoesNotMint` | `cmd/devshardctl` | Flag unset, `DEVSHARD_CHAIN_RPC` set: scheduler source is `PeerTipOracleSource`; `HeightSyncLogOracle` is nil; no Comet feed; empty peer tips ⇒ `Decide` emits Omit, never a gateway-minted Anchor. |
-| H106 | ✅ `TestGatewayChainOracle_OnStillSeeds` + `TestSeed_WarmLogOracleDoesNotCountTowardQuorum` | `cmd/devshardctl` + `user` | Flag on + local `Latest()` succeeds + peer tips empty: `Decide` still Omits; `WaitHeightSeed` still waits / 503s; the local tip does not count toward `seeded`. |
-| H107 | ✅ `TestGatewayChainOracle_PreservesOriginator` + `TestSeed_CourierWorksWithWarmLogOracle` | `cmd/devshardctl` + `user` | Flag on + seed quorum: outbound Anchor keeps `OriginatorSenderID` from the host blob; `HeightSyncEvidenceFor(host, h)` returns that blob; no attestation is stored under a gateway identity. |
-| H108 | ✅ `TestGatewayChainOracle_FlagValues` | `cmd/devshardctl` | `true` / `1` / `on` enable the follower; unset / `false` / `0` / `off` and invalid values fail closed (follower off). |
+| H105 | ✅ `TestNoFollowerUnlessItIsAskedFor` | `cmd/gateway/heights` | Flag unset: `NewOracle` builds no follower even with a Comet RPC source set; the scheduler source stays `PeerTipOracleSource`, so empty peer tips ⇒ `Decide` emits Omit, never a gateway-minted Anchor. |
+| H106 | ✅ `TestSeed_WarmLogOracleDoesNotCountTowardQuorum` | `user` | Flag on + local `Latest()` succeeds + peer tips empty: `Decide` still Omits; `WaitHeightSeed` still waits / 503s; the local tip does not count toward `seeded`. |
+| H107 | ✅ `TestSeed_CourierWorksWithWarmLogOracle` | `user` | Flag on + seed quorum: outbound Anchor keeps `OriginatorSenderID` from the host blob; `HeightSyncEvidenceFor(host, h)` returns that blob; no attestation is stored under a gateway identity. |
+| H108 | ✅ `TestTheHeightSyncSwitchesKeepTheirExactSpellings` | `cmd/gateway/env` | `true` / `1` / `on` enable the follower; unset / `false` / `0` / `off` and invalid values fail closed (follower off). |
 
 ---
 

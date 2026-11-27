@@ -43,7 +43,7 @@ var ErrPayloadTooLarge = errors.New("executor payload response too large")
 
 const (
 	// maxPromptPayloadBytes matches the gateway chat-request body cap
-	// (devshardctl MaxChatRequestBodySize). The prompt is stored as JSON, not
+	// (filters.MaxBodyBytes). The prompt is stored as JSON, not
 	// as a token stream, so the body cap — not inputTokens — bounds this side.
 	maxPromptPayloadBytes = 10 << 20
 

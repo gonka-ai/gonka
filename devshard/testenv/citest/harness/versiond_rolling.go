@@ -179,9 +179,7 @@ func StartGatewayChatCompletionStream(
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Accept", "text/event-stream")
-		if adminAPIKey != "" {
-			httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
-		}
+		setAdminBearer(httpReq, adminAPIKey)
 
 		resp, err := client.Do(httpReq)
 		if err != nil {

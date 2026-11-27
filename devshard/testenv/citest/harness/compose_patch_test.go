@@ -30,12 +30,12 @@ services:
       context: /repo
       dockerfile: versiond-router/Dockerfile
     image: devshard-versiond-router:latest
-  devshardctl:
+  gateway:
     build:
       context: /repo
       dockerfile: devshard/Dockerfile
-      target: devshardctl-runtime
-    image: devshard-runtime:latest
+      target: gateway-runtime
+    image: devshard-gateway:latest
 `
 	got, err := pinVersiondCompose(src, "devshard-versiond:0.2.15-v5", "devshard-versiond-router:0.2.15-v5")
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ services:
 	require.NotContains(t, got, "dockerfile: Dockerfile\n")
 	require.NotContains(t, got, "versiond-router/Dockerfile")
 	require.Contains(t, got, "dockerfile: devshard/Dockerfile")
-	require.Contains(t, got, "image: devshard-runtime:latest")
+	require.Contains(t, got, "image: devshard-gateway:latest")
 }
 
 func TestPinVersiondServiceImageLeavesSibling(t *testing.T) {
@@ -218,7 +218,7 @@ services:
   versiond-1:
     environment:
       VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
-  devshardctl:
+  gateway:
     environment:
       DEVSHARD_PUBLIC_API: http://mock-dapi:12345
 `), 0o644))
@@ -247,22 +247,6 @@ services:
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`)
-}
-
-func TestEnableHeightSyncPeerMatrixCompose(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "docker-compose.yml")
-	require.NoError(t, os.WriteFile(path, []byte(`
-services:
-  devshardctl:
-    environment:
-      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
-`), 0o644))
-
-	EnableHeightSyncPeerMatrixCompose(t, path)
-	body, err := os.ReadFile(path)
-	require.NoError(t, err)
-	require.Contains(t, string(body), `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`)
 }
 
 // The same host is a separate server in every backend, with its own state, so

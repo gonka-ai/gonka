@@ -1,10 +1,6 @@
 # Host signature verification
 
-Every host-authored message in devshard is authenticated the same way, and both
-binaries (`devshardd` and `devshardctl`) run the same code to do it. This
-document describes that shared structure, how to reuse it when adding a signed
-message or endpoint, and how a warm key the host has never seen before gets
-admitted.
+Every host-authored message in devshard is authenticated the same way, and both binaries (`devshardd` and the gateway) run the same code to do it. This document describes that shared structure, how to reuse it when adding a signed message or endpoint, and how a warm key the host has never seen before gets admitted.
 
 ## 1. A signature check has two independent halves
 

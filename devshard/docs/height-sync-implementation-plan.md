@@ -254,7 +254,7 @@ Receiver rule (backward compatible **inside v5**):
 - If the body parses as `InferenceRequestEnvelope` → use it.
 - Else parse as today's JSON `InferenceRequest` → treat as **Omit** (no section).
 
-Old **clients** talking to v5 hosts: Omit is valid outside sync turns; inside a sync turn the host still **responds** with a signed Anchor (`TestHeightSyncAnchor_E2E_ForcedSyncTurn_HostResponsesAnchorEvenIfUserOmits`). Gateway/devshardctl on this branch must be upgraded together with hosts for cadence; mixed old-ctl + new-host is Omit-on-request, Anchor-on-response.
+Old **clients** talking to v5 hosts: Omit is valid outside sync turns; inside a sync turn the host still **responds** with a signed Anchor (`TestHeightSyncAnchor_E2E_ForcedSyncTurn_HostResponsesAnchorEvenIfUserOmits`). The gateway must be upgraded together with hosts for cadence; a mixed old gateway + new host is Omit-on-request, Anchor-on-response.
 
 ### 4.3 Unit tests to bring over
 
@@ -603,7 +603,6 @@ Touched existing files:
 | `transport/server.go` | `HandleHeightSyncRepair`, `RepairProbe`, `CloseReadyView()`, `TurnTracker()` accessors |
 | `server/routes.go`, `cmd/devshard-host/main.go` | Register `POST /sessions/:id/heightsync/repair` with `withSessionAuth` |
 | `observability/metrics_prometheus.go` | New counters/gauges (§8.12) — host-side signals only (`close_ready_armed`, repair probes, marks) |
-| `cmd/devshardctl/metrics.go`, `gateway.go` | Gateway-collected operator views (§8.12.1–§8.12.5): `devshard_gateway_heightsync_*` descs on the gateway collector, `GET /v1/debug/heightsync` in the admin-gated `/v1/debug/*` family, escrow-teardown cleanup |
 | `transport/peer_tips.go` | `PerOriginator()` snapshot — per-slot heights and ages for divergence, exposing state already held in `tipsByOriginator` |
 | `heightsync/heartbeat.go` | Bounded cadence-event ring (`heartbeat_opened` / `discharged_by_inference` / `skipped_no_height` / `turn_abandoned` / `turn_settled_degraded`) for the last-N view |
 
@@ -999,7 +998,7 @@ Logging follows the existing `heightsync: decide` / `oracle_debug` pattern from 
 
 #### 8.12.1 Collection point: the gateway
 
-**All four operator views below are gathered at the gateway** (`devshard/cmd/devshardctl`), exported on its existing custom registry (`metrics.go`, served by `GET /metrics` in `gateway.go`) under the `devshard_gateway_heightsync_*` prefix, with `slog` lines in the gateway process. Nothing here is scraped from `devshardd`, and nothing new is added to the wire.
+**All four operator views below are gathered at the gateway** (`devshard/cmd/gateway`), exported on its metrics registry under the `devshard_gateway_heightsync_*` prefix, with `slog` lines in the gateway process. Nothing here is scraped from `devshardd`, and nothing new is added to the wire.
 
 That works because **the gateway is the sequencer**. It is the only party that appends to `Diff`, so every host-signed artefact these views need already passes through it:
 
@@ -1008,10 +1007,10 @@ That works because **the gateway is the sequencer**. It is the only party that a
 | Per-slot host height claims (**first-party**) | response-leg Anchors in the per-escrow `transport.HeightSyncPeerTips`. **Not** `MsgHeightAck.observed_height`, which since §8.7.1 is a reference height and reads as roster-wide agreement even when the roster is a thousand blocks apart |
 | Per-slot host self-assessment | `MsgHeightAck.sync_state` — the log-visible half of the divergence signal |
 | Each host's view of every *other* host | `MsgHeightAck.peer_seen` bitmap |
-| Originator anchors from responses | per-escrow `transport.HeightSyncPeerTips` (built in `heightsync_env.go:extraClientConfigFromEnv`) |
+| Originator anchors from responses | per-escrow `transport.HeightSyncPeerTips` (built with each escrow session's client config in `cmd/gateway/app/devshards_sessions.go`) |
 | Cadence state | `heightsync.Heartbeat` (turnovers, abandoned turns, `SinceTurnover`) in `user.Session` |
 
-So these are **read-only projections of state the gateway holds**, computed on scrape by a collector in the shape of `gatewayMetricsCollector` (`prometheus.NewDesc` + `Collect`), not pushed from the hot path. Two consequences to respect: the escrow-labelled series must be dropped on teardown through the `DeleteEscrowMetrics` path (`devshard/observability/metrics_lifecycle.go`), and reading session state on scrape must not take a lock the dispatch path holds — each accessor added below returns a copied snapshot.
+So these are **read-only projections of state the gateway holds**, computed on scrape by a collector in `cmd/gateway/metrics` (`prometheus.NewDesc` + `Collect`), not pushed from the hot path. Two consequences to respect: the escrow-labelled series must be dropped on teardown through the `DeleteEscrowMetrics` path (`devshard/observability/metrics_lifecycle.go`), and reading session state on scrape must not take a lock the dispatch path holds — each accessor added below returns a copied snapshot.
 
 **One thing the gateway structurally cannot see: host arming.** Close-ready emits nothing on the wire, by design (§8.10, spec §12.2), so `heightsync_close_ready_armed` stays a host-side gauge and is *not* mirrored here. What the gateway can publish is the **input** hosts arm on — its own contact toward each slot:
 
@@ -1069,7 +1068,7 @@ A counter answers "how often"; it cannot answer "what happened the last few time
 
 `discharged_by_inference` is the direct measurement of §10.5's payoff: `rate(discharged_by_inference) / rate(all events)` is the fraction of the cadence that real traffic paid for, which is exactly the quantity E8 already promises to measure for §10.1.
 
-**Last N triggers** go in a bounded per-escrow ring (default 64, the `heightsync/audit.go` ring pattern — bounded, defensive-copy on read) exposed as JSON on a new admin-gated `GET /v1/debug/heightsync` alongside the existing `/v1/debug/*` family in `gateway.go`. One entry: `{at, event, turn_start, h_ref, span, slots_acked, quorum, outcome, duration_to_turnover, reason}`. This is a debug surface, not a metric: it is unbounded in label space and only ever read by a human or a citest, which is precisely why it must not be a Prometheus series.
+**Last N triggers** go in a bounded per-escrow ring (default 64, the `heightsync/audit.go` ring pattern — bounded, defensive-copy on read) exposed as JSON on a new admin-gated `GET /v1/debug/heightsync` alongside the gateway's other `/v1/debug/*` routes (`cmd/gateway/api/routes.go`). One entry: `{at, event, turn_start, h_ref, span, slots_acked, quorum, outcome, duration_to_turnover, reason}`. This is a debug surface, not a metric: it is unbounded in label space and only ever read by a human or a citest, which is precisely why it must not be a Prometheus series.
 
 Each entry also emits one `heightsync: cadence` log line with the same fields, so container tests can assert on logs the way catalog §5 already does and an operator without Prometheus can still answer the question from `docker logs`.
 

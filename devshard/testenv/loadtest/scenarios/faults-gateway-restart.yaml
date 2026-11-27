@@ -5,8 +5,8 @@ seed: 1515
 # Gateway restarts and chain membership changes. The SIGKILL (gateway-killed-mid-race) runs alone
 # on racing traffic; the next fault waits 3m30s, past the 90 s restart budget
 # and past the 3m10s in which the sweep settles the nonces the kill left on
-# every host. The two participant-unavailable-then-absent-on-chain steps hit P4 4m05s apart, past the grace and the
-# quarantine, so each is judged and attributed on its own. gateway-restart-while-participant-absent must
+# every host. The two participant-unavailable-then-absent-on-chain steps hit P4 4m05s apart, past the grace,
+# so each is judged and attributed on its own. gateway-restart-while-participant-absent must
 # restart the gateway while P4 is absent, so it stays 10 s inside participant-absent-on-chain
 # as in prod-like-15m; its own error-rate-and-latency and recovery-after-fault cannot be judged apart from
 # participant-absent-on-chain. participant-absent-on-chain lasts 45 s so its recovery-after-fault budget (60 s after its end)
@@ -92,7 +92,7 @@ workload:
   events:
     - {id: gateway-killed-mid-race, case: gateway-killed-mid-race, action: gateway_restart, at: 2m30s, params: {signal: KILL}}
     - {id: participant-unavailable-on-chain, case: participant-unavailable-then-absent-on-chain, action: chain_participant, target: versiond-5, at: 6m, until: 6m30s,
-       params: {mode: unavailable, expect_quarantine: none}}
+       params: {mode: unavailable}}
     - {id: participant-absent-on-chain, case: participant-unavailable-then-absent-on-chain, action: chain_participant, target: versiond-5, at: 10m35s, until: 11m20s,
        params: {mode: absent}}
     - {id: gateway-restart-while-participant-absent, case: gateway-restart-while-participant-absent, action: gateway_restart, at: 10m45s}
@@ -100,11 +100,6 @@ workload:
 gateway:
   redundancy:
     secondary_wait_after_winner: 30s
-  participant_throttle:
-    transport_failure_quarantine: 45s
-    http_quarantine: 45s
-    empty_stream_quarantine: 45s
-    stalled_winner_quarantine: 45s
   escrow_rotation:
     enabled: true
     settlement_enabled: true

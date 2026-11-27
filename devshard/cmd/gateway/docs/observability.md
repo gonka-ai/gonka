@@ -197,7 +197,7 @@ What to watch:
 
 ## Tracing
 
-`DEVSHARD_OTEL_ENABLED` turns OpenTelemetry tracing on, exporting to `OTEL_ENDPOINT` with `OTEL_HEADERS`; spans carry the service name `devshardctl` (`observability.GatewayServiceName`), which the Tempo queries and dashboards select on. Off, the tracer is a no-op. A broken exporter or a malformed header degrades to no tracing and a warning, never to a gateway that will not start (`app/tracing.go`), and spans are flushed for up to ten seconds at shutdown.
+`DEVSHARD_OTEL_ENABLED` turns OpenTelemetry tracing on, exporting to `OTEL_ENDPOINT` with `OTEL_HEADERS`; spans carry the service name `gateway` (`observability.GatewayServiceName`), which the Tempo queries and dashboards select on. Off, the tracer is a no-op. A broken exporter or a malformed header degrades to no tracing and a warning, never to a gateway that will not start (`app/tracing.go`), and spans are flushed for up to ten seconds at shutdown.
 
 Every chat request opens a `gateway.request` root span (`api/routes.go`, `chat`), and the race runs under it. The transport stamps `traceparent` and `X-Request-Id` on every host call made under a live span, over JSON and Connect alike, so a host's spans join the request's trace; `trace_id` is the join key with the logs. Timeout votes and settlement run after the request on their own context and start no trace. Ids belong in span attributes and log lines, never in metric labels ([`devshard/docs/gateway-tracing.md`](../../../docs/gateway-tracing.md)).
 

@@ -57,7 +57,7 @@ The **`devshard-testenv`** branch already ships a tuned Alloy pipeline. Treat it
 | Role | Component | Image (pinned) | Host port | Notes |
 |------|-----------|----------------|-----------|-------|
 | Trace backend | **Jaeger** v2 | `jaegertracing/jaeger:2.17.0` | `11686` UI | OTLP gRPC `:4317` — **app talks here directly** |
-| Metrics store | **Prometheus** | `prom/prometheus:v3.11.3` | `19099` | Static scrape of `devshardctl`, `versiond-*/<version>/metrics` |
+| Metrics store | **Prometheus** | `prom/prometheus:v3.11.3` | `19099` | Static scrape of `gateway`, `versiond-*/<version>/metrics` |
 | Log store | **Loki** | `grafana/loki:3.6.10` | `13101` | Filesystem TSDB |
 | Log shipper | **Promtail** | `grafana/promtail:3.6.10` | — | Docker SD |
 | UI | **Grafana** | `grafana/grafana:13.0.1` | `13000` | Prometheus, Loki, Jaeger datasources |
@@ -84,7 +84,7 @@ flowchart LR
   VD[devshardd] -->|OTLP :4317| TB[Jaeger or Tempo]
   PT[Promtail] --> LOKI[Loki]
   DOCKER[(Docker logs)] --> PT
-  CTL[devshardctl] --> PROM[Prometheus]
+  CTL[gateway] --> PROM[Prometheus]
   VD -->|/metrics via versiond| PROM
 ```
 
@@ -101,7 +101,7 @@ flowchart LR
 flowchart TB
   subgraph apps [testenv stack]
     VD[versiond / devshardd]
-    CTL[devshardctl]
+    CTL[gateway]
   end
 
   VD -->|OTLP gRPC| AL[Alloy :4317]
@@ -209,7 +209,7 @@ git show devshard-testenv:devshard/testenv/observability/alloy/config.alloy
 | `devshard-testenv` scrape target | Main testenv equivalent |
 |----------------------------------|-------------------------|
 | `devshardd-testenv-0:9600` … | `versiond-0:8080/<version>/metrics` (or dedicated metrics port if exposed) |
-| `devshardctl` | `devshardctl:<port>/metrics` |
+| `gateway` | `gateway:<port>/metrics` |
 | VictoriaMetrics `remote_write` | Keep VM **or** `prometheus.remote_write` → Prometheus — pick one metrics store per profile family |
 
 Keep unchanged from branch: **cAdvisor** relabel rules, **node-exporter** scrape, **docker log** pipeline (`discovery.docker`, `loki.relabel.promote_service_name`, healthcheck drop).
@@ -367,7 +367,7 @@ Unchanged:
 | Task | Done |
 |------|------|
 | Copy `observability/alloy/config.alloy` + `compose-fragment.yaml` pieces (Alloy, cAdvisor, node-exporter) | |
-| Adapt `prometheus.scrape "devshardd"` targets for `versiond-*` / `devshardctl` | |
+| Adapt `prometheus.scrape "devshardd"` targets for `versiond-*` / `gateway` | |
 | `docker-compose.observability.alloy.yml` + static IP | |
 | `TESTENV_OTEL_ENDPOINT=http://alloy:4317` for `*-alloy` profiles | |
 

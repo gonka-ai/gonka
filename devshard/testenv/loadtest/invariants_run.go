@@ -22,7 +22,6 @@ type invariantRun struct {
 	apiKey     string
 	settings   invariantSettings
 	started    time.Time
-	throttle   *jsonlPoller[ThrottleSample]
 	pending    *jsonlPoller[PendingSample]
 	hostStats  *jsonlPoller[HostStatsSample]
 	dapiHosts  *jsonlPoller[DapiHostSample]
@@ -45,13 +44,7 @@ func startInvariantRun(ctx context.Context, opts RunnerConfig, cfg *config.File,
 	if r.accounting, err = startJSONLPoller(ctx, out("accounting-snapshots.jsonl"), "baseline", atTimes(accountingBoundaries(started, planned, r.settings.Grace)), collectAccounting(statsURL)); err != nil {
 		return nil, err
 	}
-	if _, skipped := invariantNotApplicable("quarantines-match-faults", cfg.Devshardctl.Driver); !skipped {
-		if r.throttle, err = startJSONLPoller(ctx, out("throttle.jsonl"), "start", everyInterval(throttlePollEvery), collectThrottle(gatewayURL, apiKey)); err != nil {
-			r.stop()
-			return nil, err
-		}
-	}
-	if r.pending, err = startJSONLPoller(ctx, out("pending.jsonl"), "start", everyInterval(pendingPollEvery), collectPending(gatewayURL, apiKey, cfg.Devshardctl.Driver, func(escrowID string, inferences map[string]DebugInference) {
+	if r.pending, err = startJSONLPoller(ctx, out("pending.jsonl"), "start", everyInterval(pendingPollEvery), collectPending(gatewayURL, apiKey, func(escrowID string, inferences map[string]DebugInference) {
 		r.liveInferences[escrowID] = inferences
 	})); err != nil {
 		r.stop()
@@ -81,7 +74,6 @@ func (r *invariantRun) stop() {
 		return
 	}
 	r.accounting.stop("final")
-	r.throttle.stop("final")
 	r.pending.stop("final")
 	r.hostStats.stop("final")
 	r.dapiHosts.stop("final")

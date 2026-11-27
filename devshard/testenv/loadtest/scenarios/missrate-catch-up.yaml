@@ -50,10 +50,6 @@ workload:
 gateway:
   redundancy:
     secondary_wait_after_winner: 1s
-  participant_throttle:
-    transport_failure_quarantine: 5s
-    http_quarantine: 5s
-
 assertions:
   requests:
     http_status: 200

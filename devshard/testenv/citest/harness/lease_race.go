@@ -284,7 +284,7 @@ func WarmEscrowOnHost(t *testing.T, stack *Stack, cfg *config.File, hostID, escr
 		return true
 	})
 	if !ok {
-		DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
+		DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "gateway")
 		t.Fatalf("citest: warm %s mempool not 200 after %d attempts → %s: %s", hostID, attempts, url, lastErr)
 	}
 	t.Logf("citest: warm %s → %s (%d bytes)", hostID, url, len(lastOut))
@@ -325,7 +325,7 @@ func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, 
 		lastErr = fmt.Sprintf("nonce=%d < %d", n, want)
 		time.Sleep(2 * time.Second)
 	}
-	DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
+	DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "gateway")
 	t.Fatalf("citest: %s durable nonce=%d < %d after %s (%d attempts): %s",
 		hostID, last, want, timeout, attempts, lastErr)
 	return last

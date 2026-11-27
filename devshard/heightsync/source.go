@@ -14,7 +14,7 @@ type OracleSource interface {
 	Stale() bool
 }
 
-// PeerTipCache is the peer-tip store used by courier-mode users (devshardctl).
+// PeerTipCache is the peer-tip store used by courier-mode users.
 type PeerTipCache interface {
 	MaxFresh(now time.Time, freshness time.Duration) *HeightSyncSection
 }

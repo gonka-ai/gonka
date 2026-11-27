@@ -89,7 +89,7 @@ Citest companion (empty journal, not a substitute for a long-journal host): `mak
 
 ## 5. Host ping observability
 
-[#1580](https://github.com/gonka-ai/gonka/pull/1580). Two probe jobs, **observability only** (no routing, no quarantine, no PerfTracker). Gateway pings **used** escrow hosts (`GET {prefix}/clock`, fallback `/healthz` + `Date`). Dapi pings ML-node inventory. A probe outage must not 429 chat.
+[#1580](https://github.com/gonka-ai/gonka/pull/1580). Two probe jobs, **observability only** (no routing, no quarantine). Gateway pings **used** escrow hosts (`GET {prefix}/clock`, fallback `/healthz` + `Date`). Dapi pings ML-node inventory. A probe outage must not 429 chat.
 
 Defaults: interval **15s**, timeout **2s**, concurrency **8**. Leave the four `DEVSHARD_GATEWAY_HOST_PING_*` vars unset unless you need a kill switch or a faster scrape.
 

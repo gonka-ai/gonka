@@ -34,7 +34,7 @@ func TestPeerRPCHASessionSpread(t *testing.T) {
 
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router")
+			harness.DumpComposeLogs(t, stack, "gateway", "versiond-0", "versiond-1", "versiond-router")
 		}
 	})
 

@@ -91,13 +91,9 @@ Every route is read-only and serves one gateway's view of public network behavio
 
 Each escrow keeps its newest 256 events, which caps a pathological run rather than trimming normal traffic: a verdict is rare, and an escrow dies with its epoch.
 
-### The counter's shape is this ledger's own
+### The counter is served flat
 
-A counter is served **flat** — `escrow_id`, `slot_id`, `disposition`, `ghost_reason`, `terminal`, `phase` and the timeout fields all at the top level of the object. `devshard/accounting` nests the same facts under a `key` object and calls the burn reason `no_send_reason`.
-
-Nothing outside this gateway reads the JSON counter, so no reader has to migrate to the flat shape, and the two shapes stay apart.
-
-The cost of that is worth stating, because it is silent: a reader written against the nested shape finds none of these fields, decodes them as empty, filters every counter out and reports **zero burns rather than an error**. The gateway e2e scenarios therefore read counters with their own helper, not the shared one.
+A counter is served **flat** — `escrow_id`, `slot_id`, `disposition`, `ghost_reason`, `terminal`, `phase` and the timeout fields all at the top level of the object. Nothing outside this gateway reads the JSON counter.
 
 ## Findings
 

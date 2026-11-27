@@ -83,7 +83,7 @@ Each `route` is one registered pattern. An empty label means the route is not in
 - `Send` hands the stream on unwrapped: the transport flushes each SSE line through an `http.Flusher` assertion on it, and a wrapper would leave a crowned winner's bytes in the server's buffer. `ProcessResponse` is applied for a reply that arrived beside an error too.
 - `divergedState` reads a post state root the escrow cannot accept from either side of the wire: the host reports it as a diff it could not apply, the session as a hash that differs from the local root.
 - `Poster` resolves the vote poster for one escrow and the params its race committed. A retired escrow still resolves: its committed nonces have no other settlement path.
-- `escrowVotes.payload` rebuilds what the host was asked for with `Payload` in [`devshard/gatewayprotocol/timeoutclaim`](../../../gatewayprotocol/timeoutclaim/README.md), the rule `devshardctl` follows too. The record is read on its own with `Inference`, never through `SnapshotState`: a vote comes when an escrow is already struggling, and a full state copy per vote is what it can least afford. The status views read the balance and the version the same way.
+- `escrowVotes.payload` rebuilds what the host was asked for with `Payload` in [`devshard/gatewayprotocol/timeoutclaim`](../../../gatewayprotocol/timeoutclaim/README.md). The record is read on its own with `Inference`, never through `SnapshotState`: a vote comes when an escrow is already struggling, and a full state copy per vote is what it can least afford. The status views read the balance and the version the same way.
 
 ## Streaming the reply
 

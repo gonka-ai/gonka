@@ -26,7 +26,7 @@ type Config struct {
 	BinaryDir         string
 	// BlockSeed seeds the mock block observer (deterministic headers).
 	BlockSeed int64
-	// GatewayBlockHeight / GatewayEpochIndex pin the devshardctl public-API
+	// GatewayBlockHeight / GatewayEpochIndex pin the gateway public-API
 	// stubs; both zero makes them follow mock-chain block height and epoch.
 	GatewayBlockHeight int64
 	GatewayEpochIndex  uint64

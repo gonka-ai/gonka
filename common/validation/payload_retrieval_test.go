@@ -206,7 +206,7 @@ func TestFetchPayloadsHTTP_OversizedResponseRejected(t *testing.T) {
 
 func TestPayloadResponseByteLimit_DefaultGatewayCapFits(t *testing.T) {
 	t.Parallel()
-	// Shipped RequestMaxTokensCap is 4096 (devshardctl/gateway.go). A derived
+	// Shipped RequestMaxTokensCap is 4096 (gateway filters package). A derived
 	// cap below the old 64 MiB constant means default traffic cannot be
 	// false-invalidated by the read limit.
 	const defaultRequestMaxTokensCap = 4096

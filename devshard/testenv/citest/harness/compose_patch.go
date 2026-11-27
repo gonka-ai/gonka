@@ -328,15 +328,6 @@ func EnableLegacyDapiCompose(t *testing.T, composePath string) {
 	)
 }
 
-// EnableHeightSyncPeerMatrixCompose turns on the quadratic peer_seen matrix
-// series on the gateway only (DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX).
-func EnableHeightSyncPeerMatrixCompose(t *testing.T, composePath string) {
-	t.Helper()
-	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API",
-		`DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`,
-	)
-}
-
 // PatchComposeServiceEnv replaces one `KEY: ...` line inside a single service
 // block and returns the value it replaced. Unlike PatchComposeEnvKey this does
 // not touch the other services, which is what makes it usable for putting one

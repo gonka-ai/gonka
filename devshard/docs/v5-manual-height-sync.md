@@ -20,7 +20,7 @@ Lie/lag overlays (`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA`, `DEVSHARD_TESTENV_ORAC
 
 ## How to observe
 
-Join gateway is `http://127.0.0.1:18080` unless you remapped it. Admin Bearer is `DEVSHARD_ADMIN_API_KEY`. Set `DEVSHARD_LOG_LEVEL=debug` on `devshardd` / `devshardctl` to see `delta` / `trust_level`. Warn/error lines appear at default info+.
+Join gateway is `http://127.0.0.1:18080` unless you remapped it. Admin Bearer is `DEVSHARD_ADMIN_API_KEY`. Set `DEVSHARD_LOG_LEVEL=debug` on `devshardd` / the gateway to see `delta` / `trust_level`. Warn/error lines appear at default info+.
 
 ```bash
 GATEWAY=http://127.0.0.1:18080

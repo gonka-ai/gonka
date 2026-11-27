@@ -28,9 +28,9 @@ Two probe surfaces:
 | Gateway | Distinct `devshardd` hosts for **opened escrows this gateway has used** (≥1 inference) | Idle registered hosts should not be probed |
 | Dapi | Every ML node in the participant’s **broker inventory** (same source as [PR #1469](https://github.com/gonka-ai/gonka/pull/1469) federation) | Operator cares about the whole local fleet, not only “recently used” |
 
-Inference / quarantine / PerfTracker remain the control plane; these pings are **observability only** (enforced as a hard invariant below).
+Inference results, quarantine and routing remain the control plane; these pings are **observability only** (enforced as a hard invariant below).
 
-Existing timing signals do not cover this: `PerfTracker` / `RequestSample` record receipt and first-token times, but only for hosts that received real inference, only under load, and with application work folded in. There is no idle-path reachability baseline and no clock comparison anywhere in the codebase — the only clock logic is the 30 s signed-request drift limit in `devshard/transport/auth.go`, which rejects requests rather than measuring drift.
+Existing timing signals do not cover this: the gateway records receipt and first-token times, but only for hosts that received real inference, only under load, and with application work folded in. There is no idle-path reachability baseline and no clock comparison anywhere in the codebase — the only clock logic is the 30 s signed-request drift limit in `devshard/transport/auth.go`, which rejects requests rather than measuring drift.
 
 ---
 
@@ -50,7 +50,7 @@ Because the two tiers differ in precision by ~3 orders of magnitude, keep them d
 
 Capability cache per target: on first ping success → sticky `ping`; on definitive miss (404 / 405) → sticky `date`/`health` and **never** alternate per tick. Invalidate on:
 
-- **Observed version change** — preferred over blind TTL. The gateway already polls peer versions (`VersionsCache`, `devshard/cmd/devshardctl/versions_cache.go`), so an upgraded host regains divergence immediately instead of after a TTL.
+- **Observed version change** — preferred over blind TTL. The gateway already polls peer versions (`devshard/cmd/gateway/chain/versions.go`), so an upgraded host regains divergence immediately instead of after a TTL.
 - **TTL** (5–15 min) as the fallback when no version signal exists (dapi → mlnode).
 
 ⚠️ **Proxy allowlist.** A 404 can come from an intermediary rather than the target: gonka fronts services with nginx (`proxy/nginx.unified.conf.template`) and only routes explicitly configured paths. If a new ping path is not added there, capability detection sticks to fallback **permanently and silently**. Adding the route to the proxy config is part of shipping the endpoint, not a follow-up.
@@ -173,7 +173,7 @@ The two counters also make the job's own cost auditable without adding per-probe
 
 #### Registry and cleanup
 
-- Gateway metrics live on a **custom registry**, not the default one (`DevshardMetrics`, `prometheus.NewRegistry()` in `devshard/cmd/devshardctl/metrics.go`) — register ping instruments there, not via `promauto`.
+- Gateway metrics live on a **custom registry**, not the default one (`prometheus.NewRegistry()` in `devshard/cmd/gateway/metrics/metrics.go`) — register ping instruments there, not via `promauto`.
 - On target removal: **DeleteLabelValues** so stale hosts disappear — same “absence” spirit as 404 nodes omitted from mlnode federation. Note the gateway has **no such cleanup helper today**; `devshard/observability/metrics_lifecycle.go:DeleteEscrowMetrics` is the precedent to copy. Every per-host gauge above (including the freshness gauge) must be deleted together, or a retired host leaves a permanently stale `up=1`.
 
 ### 6. Interaction with PR #1469 federation
@@ -201,13 +201,7 @@ Example: 50 hosts / 15s ≈ **3.3 probes/s**, each &lt;1 KB with a &lt;2s timeou
 
 Opened escrows this gateway instance has used (≥1 inference). Distinct dial targets only.
 
-Nothing like this exists today, and the *keying* is the design decision to get right first. Every existing per-host structure in the gateway is keyed by **participant key** (`host:N`), not by dial target:
-
-| Structure | Key | File |
-|---|---|---|
-| `CapacityState` (weights, `escrowMembership`) | participant key | `capacity_state.go` |
-| `PerfTracker.hosts` (receipt / first-token rings) | participant key | `hostperf.go` |
-| `ParticipantRequestLimiter.participants` (quarantine) | participant key | gateway limiter |
+Nothing like this exists today, and the *keying* is the design decision to get right first. Every per-host structure in the gateway (routing weights and escrow membership, receipt and first-token timings, participant quarantine) is keyed by **participant key** (`host:N`), not by dial target.
 
 Several participant keys can resolve to one dial target, so **probing per participant key would multiply identical probes** against the same socket. Probe per **distinct dial target**, and pick the label deliberately:
 
@@ -340,13 +334,13 @@ Contract details and checklist: [Ping endpoint shape](#ping-endpoint-shape-both-
 
 ## Hard invariant: probes never feed the control plane
 
-Stronger than "observability only": ping results **must not** reach `ParticipantRequestLimiter`, quarantine, `CapacityState`, or routing — not even as a tie-breaker. The failure mode is not hypothetical. Probe results are correlated across all targets by construction (one prober, one client, one transport, one tick), so a fault local to the *prober* — DNS blip, socket exhaustion, a paused process, a proxy rule change that 404s the ping path — presents as "the entire fleet is down" and would quarantine everything at once. The inference path fails independently per request and is therefore the safe control signal.
+Stronger than "observability only": ping results **must not** reach participant quarantine, routing weights, or routing — not even as a tie-breaker. The failure mode is not hypothetical. Probe results are correlated across all targets by construction (one prober, one client, one transport, one tick), so a fault local to the *prober* — DNS blip, socket exhaustion, a paused process, a proxy rule change that 404s the ping path — presents as "the entire fleet is down" and would quarantine everything at once. The inference path fails independently per request and is therefore the safe control signal.
 
 Corollary: the ping job must be able to fail loudly without degrading service. That is exactly what the freshness gauge and tick counters in §5 are for, and why the kill switch exists on both surfaces.
 
 ## Out of scope
 
-- Replacing quarantine / PerfTracker / inference failover with these pings.
+- Replacing quarantine / receipt timings / inference failover with these pings.
 - Gateway probing every chain-registered host (only used-escrow hosts).
 - NTP / hard clock sync, and any attempt to *correct* clocks from these measurements.
 - Embedding ping series into public `/v1/mlnodes/metrics` federation output.

@@ -11,16 +11,11 @@ import com.productscience.data.*
 import com.productscience.data.ProposalStatus
 import okhttp3.Address
 import org.tinylog.kotlin.Logger
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
-import java.nio.file.Files
-import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import kotlin.concurrent.thread
 
 val nameExtractor = "(.+)-node".toRegex()
 
@@ -240,138 +235,8 @@ fun attachDockerLogs(
     }
 }
 
-/** Log file path inside the genesis/join *-api* container (not on the test host). */
-fun devshardProxyLogPath(escrowId: Long): String = "/tmp/devshardctl-proxy-$escrowId.log"
-
-private val devshardctlLogFollowers = ConcurrentHashMap<Long, DevshardctlLogFollower>()
-
-/** Api container IDs that already have host-built `build/devshardctl` installed. */
-private val containersWithDevshardctl = ConcurrentHashMap.newKeySet<String>()
-
-/**
- * Tails devshardctl stdout/stderr from the api container into tinylog with source=devshardctl,
- * so per-test log files include user-side auto-seal diagnostics alongside dapi host logs.
- */
-private class DevshardctlLogFollower(
-    private val containerId: String,
-    private val logFile: String,
-    private val pairName: String,
-) {
-    @Volatile
-    private var process: Process? = null
-
-    private val followerThread = thread(name = "devshardctl-log-$logFile", isDaemon = true) {
-        logContext(
-            mapOf(
-                "pair" to pairName,
-                "source" to "devshardctl",
-                "operation" to "base",
-            ),
-        ) {
-            try {
-                val proc = ProcessBuilder("docker", "exec", containerId, "tail", "-n", "0", "-F", logFile)
-                    .redirectErrorStream(true)
-                    .start()
-                process = proc
-                BufferedReader(InputStreamReader(proc.inputStream)).use { reader ->
-                    var line: String?
-                    while (reader.readLine().also { line = it } != null) {
-                        if (Thread.currentThread().isInterrupted) {
-                            break
-                        }
-                        val text = line!!.trim()
-                        if (text.isNotEmpty()) {
-                            Logger.info(text)
-                        }
-                    }
-                }
-            } catch (_: InterruptedException) {
-                // follower stopped
-            } finally {
-                process?.destroyForcibly()
-                process = null
-            }
-        }
-    }
-
-    fun stop() {
-        followerThread.interrupt()
-        process?.destroyForcibly()
-    }
-}
-
-private fun LocalInferencePair.apiContainerId(): String {
-    val exec = api.executor
-    require(exec is DockerExecutor) { "devshardctl log tail requires DockerExecutor-backed api" }
-    return exec.containerId
-}
-
-/**
- * Testermint runs `devshardctl` inside the api container (dynamic per-escrow processes).
- * Production ships a separate gateway image; the api image no longer embeds the binary.
- * Install the host-built Linux binary from `build/devshardctl` when missing.
- */
-private fun LocalInferencePair.ensureDevshardctlInstalled() {
-    val containerId = apiContainerId()
-    if (containersWithDevshardctl.contains(containerId)) {
-        return
-    }
-    synchronized(containersWithDevshardctl) {
-        if (containersWithDevshardctl.contains(containerId)) {
-            return
-        }
-        val hostBinary = Path.of(getRepoRoot(), "build", "devshardctl")
-        if (Files.isRegularFile(hostBinary)) {
-            val cp = ProcessBuilder(
-                "docker",
-                "cp",
-                hostBinary.toAbsolutePath().toString(),
-                "$containerId:/usr/local/bin/devshardctl",
-            )
-                .redirectErrorStream(true)
-                .start()
-            val cpOut = cp.inputStream.bufferedReader().use { it.readText() }
-            check(cp.waitFor() == 0) {
-                "docker cp build/devshardctl into $containerId failed: $cpOut"
-            }
-            api.executor.exec(listOf("chmod", "+x", "/usr/local/bin/devshardctl"), null)
-            containersWithDevshardctl.add(containerId)
-            Logger.info("Installed host build/devshardctl into api container {}", containerId)
-            return
-        }
-
-        val alreadyPresent = try {
-            api.executor.exec(
-                listOf("sh", "-c", "command -v devshardctl >/dev/null 2>&1 && echo OK"),
-                null,
-            ).any { it.trim() == "OK" }
-        } catch (_: Exception) {
-            false
-        }
-        check(alreadyPresent) {
-            "devshardctl is not in the api container and missing at $hostBinary. " +
-                "Run: make devshardctl-build (produces a Linux binary for docker exec)"
-        }
-        containersWithDevshardctl.add(containerId)
-    }
-}
-
-private fun LocalInferencePair.attachDevshardctlLogs(escrowId: Long) {
-    val logFile = devshardProxyLogPath(escrowId)
-    devshardctlLogFollowers.compute(escrowId) { _, existing ->
-        existing?.stop()
-        DevshardctlLogFollower(apiContainerId(), logFile, config.pairName)
-    }
-    Logger.info("Tailing devshardctl log from api container: {}", logFile)
-}
-
-private fun LocalInferencePair.detachDevshardctlLogs(escrowId: Long) {
-    devshardctlLogFollowers.remove(escrowId)?.stop()
-}
-
-// Admin bearer the test proxies start with. A fresh single-escrow gateway has no
-// configured model access, so the gateway 401s normal traffic; sending this admin
-// key bypasses model-access control (see modelAccessError in devshardctl).
+// Admin bearer the test gateway starts with. Its escrows carry no configured model access, so
+// normal traffic is refused; this admin key bypasses model-access control (authorizeModel in the gateway).
 const val devshardAdminApiKey = "sk-admin-test"
 
 data class LocalInferencePair(
@@ -1118,120 +983,47 @@ data class LocalInferencePair(
         }
     }
 
-    data class DevshardProxyHandle(val escrowId: Long, val port: Int, val proxyUrl: String)
+    data class DevshardEscrowRoute(val escrowId: Long, val escrowUrl: String)
 
-    fun startDevshardProxy(
+    fun serveDevshardEscrow(
         escrowId: Long,
         keyName: String? = null,
-        port: Int = 18080 + escrowId.toInt(),
         routePrefix: String? = null,
-        debugLogging: Boolean = false,
         model: String = defaultModel,
-    ): DevshardProxyHandle =
-        wrapLog("startDevshardProxy", true) {
-            ensureDevshardctlInstalled()
+    ): DevshardEscrowRoute =
+        wrapLog("serveDevshardEscrow", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
-            val stderrFile = devshardProxyLogPath(escrowId)
-            // Tests pin the route prefix explicitly so they are not coupled to
-            // devshardctl's release-default routing choice.
             // FQN: IDE analysis of this large file sometimes fails to resolve the
             // same-package top-level helper in DevshardVersiondTestConfig.kt.
             val effectiveRoutePrefix = routePrefix ?: com.productscience.defaultDevshardRoutePrefix()
-            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
-            val logLevelFromEnv = System.getenv("DEVSHARD_LOG_LEVEL")?.trim().orEmpty()
-            val logLevelEnv = when {
-                debugLogging -> " DEVSHARD_LOG_LEVEL=debug"
-                logLevelFromEnv.isNotEmpty() -> " DEVSHARD_LOG_LEVEL='$logLevelFromEnv'"
-                else -> ""
-            }
-            val startCommand = listOf(
-                "sh", "-c",
-                "DEVSHARD_PRIVATE_KEY='$privateKey'" +
-                    " DEVSHARD_ESCROW_ID=$escrowId" +
-                    " DEVSHARD_MODEL='$model'" +
-                    " DEVSHARD_ADMIN_API_KEY='$devshardAdminApiKey'" +
-                    " DEVSHARD_CHAIN_GRPC=\$NODE_HOST:9090" +
-                    " NODE_RPC_URL=http://\$NODE_HOST:26657" +
-                    " NODE_MANAGER_ADDR=localhost:9400" +
-                    " DEVSHARD_PORT=$port" +
-                    // Lift gateway rate limits for tests. The dynamic cap is
-                    // floor(weight * per10000 / 10000); tiny test PoC weight rounds it to 0.
-                    // Per10000=0 does not disable it -- WithTuningDefaults resets 0 to the
-                    // default 5/10 -- so set it high instead to keep the cap large.
-                    " GATEWAY_MAX_CONCURRENT_REQUESTS=0" +
-                    " GATEWAY_MAX_INPUT_TOKENS_IN_FLIGHT=0" +
-                    " GATEWAY_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=1000000" +
-                    " GATEWAY_POC_MAX_CONCURRENT_REQUESTS_PER_10000_WEIGHT=1000000" +
-                    // Isolate each escrow's gateway store in its own dir. The gateway
-                    // bootstraps DEVSHARD_ESCROW_ID from env only when no gateway.db
-                    // exists in the base dir; a shared base dir makes a second escrow's
-                    // proxy load the first escrow's persisted state instead.
-                    " DEVSHARD_STORAGE_DIR=/tmp/devshardctl-proxy-${escrowId}" +
-                    // e2e hosts register docker-internal hostnames that resolve to
-                    // private IPs, so the dial-time SSRF guard must be off here.
-                    // Production leaves this unset (default: private targets blocked).
-                    " DEVSHARD_ALLOW_PRIVATE_ADDRESSES=true" +
-                    routePrefixEnv +
-                    logLevelEnv +
-                    " nohup devshardctl >$stderrFile 2>&1 &" +
-                    " echo \$!"
-            )
-            api.executor.exec(startCommand, null)
-            // Wait for proxy to be ready.
-            val proxyUrl = "http://localhost:$port"
-            var ready = false
-            for (i in 0 until 30) {
-                try {
-                    val output = api.executor.exec(listOf("sh", "-c", "curl -sf $proxyUrl/v1/status >/dev/null 2>&1 && echo OK"), null)
-                    if (output.any { it.trim() == "OK" }) {
-                        ready = true
-                        break
-                    }
-                } catch (_: Exception) { }
-                Thread.sleep(500)
-            }
-            if (!ready) {
-                val logs = try {
-                    api.executor.exec(listOf("cat", stderrFile), null).joinToString("")
-                } catch (_: Exception) { "no logs" }
-                error("devshardctl did not start within 15s. Logs:\n$logs")
-            }
-            attachDevshardctlLogs(escrowId)
-            DevshardProxyHandle(escrowId, port, proxyUrl)
+            serveEscrowThroughGateway(GatewayEscrowSeed(escrowId, model, effectiveRoutePrefix, privateKey))
+            DevshardEscrowRoute(escrowId, "$gatewayBaseUrl/devshard/$escrowId")
         }
 
-    fun stopDevshardProxy(escrowId: Long) {
-        try {
-            api.executor.exec(listOf("sh", "-c", "pkill -f 'DEVSHARD_ESCROW_ID=$escrowId.*devshardctl' || true"), null)
-        } catch (_: Exception) { /* ignore */ }
-        detachDevshardctlLogs(escrowId)
+    fun withdrawDevshardEscrow(escrowId: Long) {
+        deactivateEscrowInGateway(escrowId)
     }
 
-    // Returns every inference the gateway knows about, keyed by inference id.
-    // Uses /v1/debug/inferences (full map including sealed records). /v1/state
-    // deliberately omits inferences so summary reads stay cheap.
-    fun getDevshardProxyInferences(proxyUrl: String): Map<Long, DevshardInferencePayload> {
+    fun getDevshardEscrowInferences(escrowUrl: String): Map<Long, DevshardInferencePayload> {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf $proxyUrl/v1/debug/inferences -H 'Authorization: Bearer $devshardAdminApiKey'"
+            "curl -sf $escrowUrl/v1/debug/inferences -H 'Authorization: Bearer $devshardAdminApiKey'"
         ), null).joinToString("")
-        val start = raw.indexOf('{')
-        val end = raw.lastIndexOf('}')
-        if (start < 0 || end < 0) {
-            error("debug/inferences returned no JSON object. raw:\n$raw")
-        }
-        val root = JsonParser.parseString(raw.substring(start, end + 1)).asJsonObject
-        val inferences = root.getAsJsonObject("inferences") ?: return emptyMap()
-        return inferences.entrySet().associate { (id, value) ->
-            id.toLong() to cosmosJson.fromJson(value, DevshardInferencePayload::class.java)
+        val root = JsonParser.parseString(extractJsonObject(raw, "debug/inferences")).asJsonObject
+        val entries = root.getAsJsonArray("inferences") ?: return emptyMap()
+        return entries.associate { element ->
+            val entry = element.asJsonObject
+            val record = entry.getAsJsonObject("record")
+            record.add("status", entry.get("status"))
+            entry.get("nonce").asLong to cosmosJson.fromJson(record, DevshardInferencePayload::class.java)
         }
     }
 
     data class DevshardChatCompletionResult(val httpCode: Int, val body: String)
 
-    fun sendChatCompletion(proxyUrl: String, model: String, prompt: String, stream: Boolean = false): String {
-        val result = sendChatCompletionWithStatus(proxyUrl, model, prompt, stream)
-        if (result.httpCode !in 200..299) {
+    fun sendChatCompletion(escrowUrl: String, model: String, prompt: String, stream: Boolean = false): String {
+        val result = sendChatCompletionWithStatus(escrowUrl, model, prompt, stream)
+        if (result.httpCode !in httpSuccessStatuses) {
             error("chat completion failed with HTTP ${result.httpCode}: ${result.body}")
         }
         return result.body
@@ -1239,7 +1031,7 @@ data class LocalInferencePair(
 
     /** Like [sendChatCompletion] but returns the HTTP status (for availability / outage tests). */
     fun sendChatCompletionWithStatus(
-        proxyUrl: String,
+        escrowUrl: String,
         model: String,
         prompt: String,
         stream: Boolean = false,
@@ -1252,7 +1044,7 @@ data class LocalInferencePair(
             "sh", "-c",
             "curl --silent --show-error --connect-timeout 5 --max-time $effectiveMaxTimeSeconds " +
                 "-o $bodyFile -w '%{http_code}' " +
-                "-X POST $proxyUrl/v1/chat/completions " +
+                "-X POST $escrowUrl/v1/chat/completions " +
                 "-H 'Content-Type: application/json' " +
                 "-H 'Authorization: Bearer $devshardAdminApiKey' " +
                 "-d '${body.replace("'", "'\\''")}'"
@@ -1265,76 +1057,63 @@ data class LocalInferencePair(
         return DevshardChatCompletionResult(httpCode, responseBody)
     }
 
-    fun getDevshardProxyStatus(proxyUrl: String): DevshardProxyStatus {
+    fun getDevshardEscrowStatus(escrowUrl: String): DevshardEscrowStatus =
+        Gson().fromJson(readDevshardDebugState(escrowUrl), DevshardEscrowStatus::class.java)
+
+    fun getDevshardEscrowDebugState(escrowUrl: String): DevshardEscrowDebugState =
+        Gson().fromJson(readDevshardDebugState(escrowUrl), DevshardEscrowDebugState::class.java)
+
+    private fun readDevshardDebugState(escrowUrl: String): String {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl --silent --show-error --fail $proxyUrl/v1/status"
+            "curl -sf $escrowUrl/v1/debug/state -H 'Authorization: Bearer $devshardAdminApiKey'",
         ), null).joinToString("")
+        return extractJsonObject(raw, "debug/state")
+    }
+
+    private fun extractJsonObject(raw: String, source: String): String {
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')
         if (start < 0 || end < 0) {
-            error("status returned no JSON object. raw:\n$raw")
+            error("$source returned no JSON object. raw:\n$raw")
         }
-        val json = raw.substring(start, end + 1)
-        return Gson().fromJson(json, DevshardProxyStatus::class.java)
+        return raw.substring(start, end + 1)
     }
 
-    fun getDevshardProxyDebugState(proxyUrl: String): DevshardProxyDebugState {
-        val raw = api.executor.exec(listOf(
-            "sh", "-c",
-            "curl -sf $proxyUrl/v1/debug/state -H 'Authorization: Bearer $devshardAdminApiKey'",
-        ), null).joinToString("")
-        val start = raw.indexOf('{')
-        val end = raw.lastIndexOf('}')
-        if (start < 0 || end < 0) {
-            error("debug/state returned no JSON object. raw:\n$raw")
-        }
-        val json = raw.substring(start, end + 1)
-        return Gson().fromJson(json, DevshardProxyDebugState::class.java)
-    }
-
-    fun finalizeDevshardProxy(proxyUrl: String): DevshardctlResult {
-        val bodyFile = "/tmp/devshard-finalize-${System.nanoTime()}.out"
-        val raw = api.executor.exec(listOf(
-            "sh", "-c",
-            "curl --silent --show-error --connect-timeout 5 --max-time 120 " +
-                "-o $bodyFile -w '%{http_code}' " +
-                "-X POST $proxyUrl/v1/finalize " +
-                "-H 'Authorization: Bearer $devshardAdminApiKey'"
-        ), null).joinToString("").trim()
-        val httpCode = raw.toIntOrNull()
-            ?: error("finalize curl did not return an HTTP status code (got ${raw.take(80)})")
-        val body = runCatching {
-            api.executor.exec(listOf("cat", bodyFile), null).joinToString("")
-        }.getOrDefault("")
-        if (httpCode !in 200..299) {
-            error("finalize failed with HTTP $httpCode: $body")
-        }
-        val start = body.indexOf('{')
-        val end = body.lastIndexOf('}')
-        if (start < 0 || end < 0) {
-            error("finalize returned no JSON object. raw:\n$body")
-        }
-        val json = body.substring(start, end + 1)
-        val parsed = Gson().fromJson(json, DevshardSettlementData::class.java)
-        return DevshardctlResult(parsed = parsed, rawJson = json, stderr = "")
-    }
-
-    data class DevshardctlResult(val parsed: DevshardSettlementData, val rawJson: String, val stderr: String)
-
-    fun settleDevshardEscrow(settlementJson: String, from: String? = null): TxResponse =
-        wrapLog("settleDevshardEscrow", true) {
-            node.writeFileToContainer(settlementJson, "settlement.json")
-            if (from != null) {
-                val txResp = node.sendTransactionDirectly(
-                    listOf("inference", "settle-devshard-escrow", "settlement.json"),
-                    from
-                )
-                node.waitForTxProcessed(txResp.txhash)
-            } else {
-                submitTransaction(listOf("inference", "settle-devshard-escrow", "settlement.json"))
+    /** Settles through the gateway's admin route, which finalizes, signs with the escrow's key and waits for the commit. */
+    fun settleDevshardThroughGateway(escrowId: Long): GatewaySettlementResult =
+        wrapLog("settleDevshardThroughGateway", true) {
+            var answer = noGatewayAnswer
+            for (attempt in 0 until gatewaySettleAttempts) {
+                answer = gatewayAdminRequest("POST", "/v1/admin/devshards/$escrowId/settle", maxTimeSeconds = gatewaySettleTimeoutSeconds)
+                if (answer.httpCode != httpStatusConflict) {
+                    break
+                }
+                Thread.sleep(gatewaySettleRetryMillis)
             }
+            if (answer.httpCode !in httpSuccessStatuses) {
+                error("gateway settle of escrow $escrowId failed with HTTP ${answer.httpCode}: ${answer.body}")
+            }
+            val settled = Gson().fromJson(extractJsonObject(answer.body, "settle"), GatewaySettleResponse::class.java)
+            forgetGatewayEscrow(escrowId)
+            val settleTx = node.waitForTxProcessed(settled.txHash)
+            val message = settleTx.tx?.asJsonObject
+                ?.getAsJsonObject("body")
+                ?.getAsJsonArray("messages")
+                ?.firstOrNull()
+                ?: error("settle tx ${settled.txHash} carries no message")
+            GatewaySettlementResult(
+                settlement = Gson().fromJson(message, DevshardSettlementData::class.java),
+                settler = settled.settler,
+                settleTx = settleTx,
+            )
         }
+
+    data class GatewaySettlementResult(
+        val settlement: DevshardSettlementData,
+        val settler: String,
+        val settleTx: TxResponse,
+    )
 
     fun createDevshardEscrow(amount: Long, from: String, modelId: String = defaultModel): TxResponse {
         val txResp = node.sendTransactionDirectly(

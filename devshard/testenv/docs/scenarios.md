@@ -1,8 +1,6 @@
 # Stack citest scenarios
 
-Implemented Go integration tests for the devshard testenv v2 stack. Each scenario
-boots a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2,
-versiond-router, devshardctl, Postgres) and asserts production-like behaviour end to end.
+Implemented Go integration tests for the devshard testenv v2 stack. Each scenario boots a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2, versiond-router, gateway, Postgres) and asserts production-like behaviour end to end.
 
 **Design history:** [`testenv-v2-plan.md`](./testenv-v2-plan.md) (planning doc; scenarios below are what shipped).
 
@@ -15,7 +13,7 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **mock-openai** | OpenAI-compatible ML upstream for devshardd after `AcquireMLNode` |
 | **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`); both load the **same** `KEY_NAME` (HA participant `hosts[0]`) |
 | **versiond-router** | Sticky HAProxy (consistent hash on session id, per-version health-checked pools) |
-| **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
+| **gateway** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
 
 Citest uses an **isolated config** (subnet `172.31.0.0/24`) and lets Docker assign
@@ -79,7 +77,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Router stickiness** | Same session → same versiond upstream | `TestRouterStickiness` |
 | **Params long-poll** | Governance patch wakes `GetRuntimeConfig` | `TestParamsLongPoll` |
 | **Epoch switch** | Epoch advance fast-forwards chain + bumps epoch in long-poll | `TestEpochSwitch` |
-| **Gateway chat** | devshardctl → router → devshardd → mock-openai (stream + non-stream) | `TestGatewayChat` |
+| **Gateway chat** | gateway → router → devshardd → mock-openai (stream + non-stream) | `TestGatewayChat` |
 | **Versiond failover** | Stop → first-502 failover to survivor | `TestVersiondStickySessionFailover` |
 | **Versiond restart persistence** | Restart preserves the gateway session | `TestVersiondRestartSessionPersistence` |
 | **HA stale standby catch-up** | Sticky primary advances PG, stop it; stale standby catch-up without `23505` | `TestHAStaleStandbyCatchupIdempotent` |
@@ -126,10 +124,9 @@ Full plan: [`chain-transport-consolidation.md`](./chain-transport-consolidation.
 
 | ID | Name | What we validate | Test | Status |
 |----|------|------------------|------|--------|
-| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestG1_GatewayEscrowCreateGRPC` | ✅ |
-| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestG2_GatewayEscrowReadGRPC` | ✅ |
-| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestG3_GatewayChatGRPCOnly` | ✅ |
-| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
+| **G1** | gRPC escrow create | An escrow is created via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestGatewayEscrowCreateGRPC` | ✅ |
+| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestGatewayEscrowReadGRPC` | ✅ |
+| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestGatewayChatGRPCOnly` | ✅ |
 
 Run: `make citest-grpc-transport` from `devshard/testenv/`.
 
@@ -253,10 +250,8 @@ service boundary responds.
    - mock-chain RPC `/health`
    - mock-dapi `/healthz` and `/v1/epochs/latest`
    - versiond-router `/healthz`
-   - devshardctl `/v1/status`
-3. `stack.RequireServicesRunning` — `docker compose ps` shows `mock-chain`, `mock-dapi`,
-   `mock-openai`, `versiond-router`, `devshardctl`, `devshard-postgres`, `versiond-0`,
-   `versiond-1` running.
+   - gateway `/v1/status`
+3. `stack.RequireServicesRunning` — `docker compose ps` shows `mock-chain`, `mock-dapi`, `mock-openai`, `versiond-router`, `gateway`, `devshard-postgres`, `versiond-0`, `versiond-1` running.
 
 **Pass criteria:** All health endpoints return 2xx; all listed containers running. Implies
 devshardd children started under versiond (protocol `v2`, chain dial to mock-chain).
@@ -615,18 +610,17 @@ see new epoch. Covers CometBFT RPC face (3b) + params notification path used at 
 
 ## Gateway chat
 
-**What we test:** Full **MVP+ chat path**: devshardctl creates/uses escrow, routes through
-sticky versiond-router to devshardd, which calls mock-openai — **non-stream and SSE stream**.
+**What we test:** Full **MVP+ chat path**: the gateway uses its seeded escrow, routes through sticky versiond-router to devshardd, which calls mock-openai — **non-stream and SSE stream**.
 
 **How:**
 
 1. Boot the standard stack; wait gateway `/v1/status` and devshardd health via router
    `/{version}/healthz`.
-2. `POST /v1/chat/completions` on devshardctl (pooled chat, `stream=false`) with test API key.
+2. `POST /v1/chat/completions` on the gateway (pooled chat, `stream=false`) with test API key.
 3. Assert HTTP 200 and mock-openai deterministic assistant content/role.
 4. Repeat with `stream=true`; assemble SSE chunks; assert same mock-openai content shape.
 
-On failure, dumps logs for `devshardctl`, `versiond-0`, `versiond-1`, `mock-openai`.
+On failure, dumps logs for `gateway`, `versiond-0`, `versiond-1`, `mock-openai`.
 
 **Pass criteria:** Both stream modes return 200 with expected mock-openai payload. Escrow
 create/settle uses mock-chain gRPC only (see **G3** in
@@ -663,9 +657,7 @@ surviving session keeps working. Mid-stream SSE after StartConfirm is **not** sp
 
 ### Versiond restart persistence
 
-**What we test:** The **versiond → devshardd → router → gateway** stack survives versiond
-restarts without losing the active escrow session or regressing nonce/state. `devshardctl`
-stays up; restarted devshardd children recover from Postgres.
+**What we test:** The **versiond → devshardd → router → gateway** stack survives versiond restarts without losing the active escrow session or regressing nonce/state. The gateway stays up; restarted devshardd children recover from Postgres.
 
 **Test:** `TestVersiondRestartSessionPersistence` (`citest/versiond_restart_persistence_test.go`)
 
@@ -761,9 +753,9 @@ alignment (`INVALID(height_regression)`) stays a unit pin.
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
 | Height-sync | `make citest-height-sync` | Cadence, dapi pause, host claims A/B/C ([`heightsync_host_claims.feature`](../scenarios/heightsync_host_claims.feature)) |
-| gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
+| gRPC transport | `make citest-grpc-transport` | G1–G3 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | Profile smoke, trace↔log correlation, disposition spans, payload capture, jaeger-promtail regression, mock-dapi hop, and shadow multi-host — see [`gateway-tracing.md`](../../docs/gateway-tracing.md) |
+| Observability | `make citest-observability` | Profile smoke, trace↔log correlation, jaeger-promtail regression, and the mock-dapi hop — see [`gateway-tracing.md`](../../docs/gateway-tracing.md) |
 | Observability (node-selection hop only) | `make citest-dapi-correlation` | Gateway, host, and mock-dapi share one trace; subset of `citest-observability` |
 | ML node pool | `make citest-ml-nodes` | Per-node ML fault targeting |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
@@ -776,10 +768,9 @@ See [`README.md`](../README.md) for adversarial and observability detail.
 **What we test:** `common/chain/tx` creates a devshard escrow via mock-chain gRPC
 (`BroadcastTx` + `GetTx` + auth `Account` query) — no LCD for the tx path.
 
-**How:** `TestG1_GatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
-calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
+**How:** `TestGatewayEscrowCreateGRPC` boots the mock-chain stack, dials mock-chain gRPC, calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
-**Run:** `make citest-grpc-transport` (or `-run TestG1_`).
+**Run:** `make citest-grpc-transport` (or `-run TestGatewayEscrowCreateGRPC`).
 
 ---
 
@@ -787,7 +778,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Escrow read via `bridge.GRPCBridge` / `common/chain.Client` against dockerized mock-chain (no LCD).
 
-**Test:** `TestG2_GatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
+**Test:** `TestGatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
 
 ---
 
@@ -795,23 +786,11 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Gateway chat (non-stream + SSE) with gRPC-only chain transport.
 
-**How:** `TestG3_GatewayChatGRPCOnly` — full standard stack with
-`docker compose up --build`; the compose gate asserts that devshardctl has no
-`DEVSHARD_CHAIN_REST` or `DEVSHARD_TX_QUERY_REST`.
+**How:** `TestGatewayChatGRPCOnly` — full standard stack with `docker compose up --build`; the compose gate asserts that the gateway has no `DEVSHARD_CHAIN_REST` or `DEVSHARD_TX_QUERY_REST`.
 
 **Pass criteria:** Non-stream + stream chat return 200.
 
-**Run:** `make citest-grpc-transport` (or `-run TestG3_`).
-
----
-
-## G4 — REST removed gate ✅
-
-**What we test:** Production gateway code must not call REST chain clients.
-
-**How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
-
-**Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
+**Run:** `make citest-grpc-transport` (or `-run TestGatewayChatGRPCOnly`).
 
 ---
 
@@ -937,13 +916,7 @@ pattern and **no `t.Parallel()`**.
 **Can run in parallel (only across isolated hosts / CI runners, or if
 `network.subnet` + `base_ip` are parameterized per stack):**
 
-- Distinct top-level scenarios that each `BootStack` are logically independent
-  (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
-  `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
-  `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A5`, the observability suite (`O1`, correlation, disposition, payload capture,
-  jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow
-  long-poll warm**.
+- Distinct top-level scenarios that each `BootStack` are logically independent (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`, `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`, `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`, `A1–A5`, the observability suite (`O1`, correlation, jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,

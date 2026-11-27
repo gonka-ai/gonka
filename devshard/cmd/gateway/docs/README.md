@@ -30,4 +30,4 @@ This directory holds the documents that describe behaviour no single package own
 | [capacity.md](./capacity.md) | admission, the per-host congestion windows, outlier ejection, buffered replies |
 | [accounting.md](./accounting.md) | the nonce ledger: its vocabulary, its surface, every finding and its storage |
 | [rules.md](./rules.md) | the invariants that must stay true, the non-goals and what the tests do not verify |
-| [`devshard/gatewayprotocol`](../../../gatewayprotocol/README.md) | the protocol rules this gateway shares with `devshardctl`: the settle message and its root, the claim-or-vote choice, the probe budget, the evidence of an error stream; [`gateway-protocol-library.md`](../../../docs/gateway-protocol-library.md) explains the boundary |
+| [`devshard/gatewayprotocol`](../../../gatewayprotocol/README.md) | the protocol rules a host, a verifier or the chain would judge: the settle message and its root, the claim-or-vote choice, the probe budget, the evidence of an error stream; [`gateway-protocol-library.md`](../../../docs/gateway-protocol-library.md) explains the boundary |

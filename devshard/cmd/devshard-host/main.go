@@ -509,7 +509,7 @@ func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.Exec
 }
 
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
-// aligned with devshardctl when escrow params come from mock-chain gRPC.
+// aligned with the gateway when escrow params come from mock-chain gRPC.
 func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
 	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
 		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),

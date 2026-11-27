@@ -418,31 +418,26 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE")
 	require.Contains(t, text, "DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS")
 	require.Contains(t, text, "DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR")
-	require.Contains(t, text, "devshardctl:")
+	require.Contains(t, text, "gateway:")
 	require.Contains(t, text, "DEVSHARD_PRIVATE_KEY")
-	require.Contains(t, text, "DEVSHARD_ESCROW_ID")
 	require.Contains(t, text, "DEVSHARD_PUBLIC_API")
 	require.Contains(t, text, "DEVSHARD_CHAIN_GRPC")
 	require.Contains(t, text, "DEVSHARD_CHAIN_RPC")
 	require.Contains(t, text, "NODE_RPC_URL")
-	require.Contains(t, text, "DEVSHARD_NODE_MANAGER_ADDR")
 	require.Contains(t, text, "LOG_FORMAT: ${LOG_FORMAT:-json}")
 	require.Contains(t, text, "DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}")
 	require.Contains(t, text, "OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}")
-	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS: ${DEVSHARD_LOG_PAYLOADS:-off}")
-	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}")
-	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}")
+	require.NotContains(t, text, "DEVSHARD_LOG_PAYLOADS")
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST")
 	require.NotContains(t, text, "DEVSHARD_CHAIN_REST:")
 	require.NotContains(t, text, "MOCK_CHAIN_REST")
 	require.NotContains(t, text, ":1317")
 	require.Contains(t, text, "/health")
-	require.Contains(t, text, "DEVSHARD_MODEL")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_DISABLED")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_INTERVAL")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_TIMEOUT")
 	require.Contains(t, text, "DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY")
-	require.Contains(t, text, "/v1/status")
+	require.Contains(t, text, "/healthz")
 }
 
 func TestWriteCompose_MLNodesPool(t *testing.T) {
@@ -514,13 +509,12 @@ func TestWriteCompose_ContentionProfilesEnv(t *testing.T) {
 	}
 	require.NoError(t, yaml.Unmarshal(body, &compose))
 	require.Equal(t, "true", compose.Services["versiond-0"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
-	require.Equal(t, "true", compose.Services["devshardctl"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
+	require.Equal(t, "true", compose.Services["gateway"].Environment["DEVSHARD_ENABLE_CONTENTION_PROFILES"])
 }
 
-func TestWriteCompose_GatewayDriverRunsCmdGateway(t *testing.T) {
+func TestWriteCompose_GatewayRunsCmdGateway(t *testing.T) {
 	dir := t.TempDir()
 	cfg := defaultConfig()
-	cfg.Devshardctl.Driver = config.GatewayDriverGateway
 	cfg.Versiond.EnableContentionProfiles = true
 	require.NoError(t, fillConfig(cfg))
 
@@ -543,7 +537,7 @@ func TestWriteCompose_GatewayDriverRunsCmdGateway(t *testing.T) {
 		} `yaml:"services"`
 	}
 	require.NoError(t, yaml.Unmarshal(body, &compose))
-	gateway := compose.Services["devshardctl"]
+	gateway := compose.Services["gateway"]
 	require.Equal(t, "gateway-runtime", gateway.Build.Target)
 	require.Equal(t, "devshard-gateway:latest", gateway.Image)
 	require.Equal(t, []string{"gateway"}, gateway.Entrypoint)

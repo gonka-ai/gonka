@@ -39,13 +39,13 @@ loadtest: ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
 	@echo "SCENARIO is required, for example: make loadtest SCENARIO=normal-load"
 	@false
 else
-loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name [GATEWAY=devshardctl|gateway]).
-	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml $(if $(GATEWAY),-gateway $(GATEWAY))
+loadtest: build-devshardd ## Run a scenario in an isolated Docker testenv (SCENARIO=name).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/$(SCENARIO).yaml
 endif
 
 .PHONY: loadtest-prodlike
-loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min) [GATEWAY=devshardctl|gateway].
-	go run ./cmd/loadtest -scenario loadtest/scenarios/prod-like-15m.yaml $(if $(GATEWAY),-gateway $(GATEWAY))
+loadtest-prodlike: build-devshardd ## Run the production-like 15-minute scenario (about 22 min).
+	go run ./cmd/loadtest -scenario loadtest/scenarios/prod-like-15m.yaml
 
 test-compose: ## gencompose + docker compose config validation.
 	go test ./citest/... -count=1
@@ -109,7 +109,7 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 # TESTENV_VERSIOND_ROUTER_IMAGE (see docs/grpc-transport-phase6-plan.md).
 # gencompose names the pool mock-openai-0 … mock-openai-{N-1}. Every member
 # shares image devshard-mock-openai:latest, so building the first service is enough.
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 gateway
 CITEST_BUILD_INFRA := versiond-router versiond-0
 # Rolling-update and warm-cutover stay in their own targets. Versiond.* used to
 # pull them into this suite as well.
@@ -214,20 +214,19 @@ citest-versiond-warm-cutover: citest-images ## v5 warm-cutover boot + overlap sw
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	$(CITEST_RPC_RUN) -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_' -count=1 -v -timeout 30m
 
-citest-force-upstream-streaming: citest-images ## Force-upstream streaming + aggregate spill citest.
-	$(CITEST_RPC_RUN) -run 'TestGatewayForcedStream|TestGatewayAggregateSpill|TestGatewayAggregateOversize' -count=1 -v -timeout 60m
+citest-force-upstream-streaming: citest-images ## Force-upstream streaming citest.
+	$(CITEST_RPC_RUN) -run 'TestGatewayForcedStream' -count=1 -v -timeout 60m
 
-citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
-	$(CITEST_RPC_RUN) -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
-	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
+citest-grpc-transport: citest-images ## Phase 12b G1–G3 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
+	$(CITEST_RPC_RUN) -run '^TestGateway(EscrowCreateGRPC|EscrowReadGRPC|ChatGRPCOnly)$$' -count=1 -v -timeout 30m
 
-citest-observability: citest-images ## O1 smoke plus trace, disposition, payload, and shadow-host correlation.
+citest-observability: citest-images ## O1 smoke plus trace and log correlation.
 	$(MAKE) build-devshardd
-	$(CITEST_RPC_RUN) -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestPayloadCapture|TestShadowHostMultiAttemptSameTrace' -count=1 -v -timeout 90m
+	$(CITEST_RPC_RUN) -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestJaegerPromtailRegression' -count=1 -v -timeout 90m
 
-citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation, incl. multi-host attempts.
+citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation.
 	$(MAKE) build-devshardd
-	$(CITEST_RPC_RUN) -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' -count=1 -v -timeout 45m
+	$(CITEST_RPC_RUN) -run '^TestTraceLogCorrelationGatewayHostDapi$$' -count=1 -v -timeout 45m
 
 citest-ml-nodes: citest-images ## Multi mock-openai pool with per-node fault targeting.
 	$(MAKE) build-devshardd

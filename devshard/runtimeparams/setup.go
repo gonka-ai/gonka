@@ -20,7 +20,7 @@ type RuntimeProvider interface {
 }
 
 // Managed owns a background runtime-params provider shared by devshardd and
-// devshardctl. Prefer dAPI GetRuntimeConfig long-poll; fall back to chain.
+// the gateway. Prefer dAPI GetRuntimeConfig long-poll; fall back to chain.
 type Managed struct {
 	Provider     RuntimeProvider
 	Source       string

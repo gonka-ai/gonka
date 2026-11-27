@@ -5,17 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"time"
 )
 
 const runSummaryFileName = "run-summary.json"
 
-// RunSummary is run-summary.json: one flat record per run with the same fields for either gateway,
-// so runs of one scenario on both drivers can be tabulated side by side.
+// RunSummary is run-summary.json: one flat record per run with the same fields every run, so runs of one scenario can be tabulated side by side.
 type RunSummary struct {
 	Scenario        string                    `json:"scenario"`
-	Gateway         string                    `json:"gateway"`
 	Run             string                    `json:"run"`
 	Seed            int64                     `json:"seed"`
 	StartedAt       time.Time                 `json:"started_at"`
@@ -28,7 +25,6 @@ type RunSummary struct {
 	Burns           int                       `json:"burned_nonces"`
 	Processes       map[string]ProcessSummary `json:"processes"`
 	FailedChecks    []string                  `json:"failed_checks"`
-	NotApplicable   []string                  `json:"not_applicable_checks"`
 	Spend           RunSummarySpend           `json:"spend"`
 	// ChallengedAtSeal is nil when the run saved no drain read or no run.yaml to judge it by.
 	ChallengedAtSeal *RunSummaryChallengedAtSeal `json:"challenged_at_seal,omitempty"`
@@ -84,7 +80,6 @@ type ProcessSummary struct {
 func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 	summary := RunSummary{
 		Scenario:        run.summary.Scenario,
-		Gateway:         gatewayDriverName(run.inputs.Gateway),
 		Run:             filepath.Base(outputDir),
 		Seed:            run.summary.Seed,
 		StartedAt:       run.summary.StartedAt,
@@ -95,7 +90,6 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 		Burns:           len(run.inputs.Burns),
 		Processes:       map[string]ProcessSummary{},
 		FailedChecks:    []string{},
-		NotApplicable:   []string{},
 	}
 	sent := run.summary.Requests - run.summary.Dropped
 	summary.Requests = RunSummaryRequests{Planned: run.summary.Requests, Sent: sent, Completed: run.summary.Completed, Failed: run.summary.Failed, Dropped: run.summary.Dropped, ErrorRate: run.summary.ErrorRate, DroppedRate: run.summary.DroppedRate}
@@ -114,9 +108,6 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 		summary.StatusCounts[status]++
 		if status == statusFix {
 			summary.FailedChecks = append(summary.FailedChecks, check.Name)
-		}
-		if strings.HasPrefix(check.Details, "not applicable to ") {
-			summary.NotApplicable = append(summary.NotApplicable, check.Name)
 		}
 	}
 	if run.inputs.Orphans != nil && run.inputs.Orphans.Last != nil {
@@ -148,7 +139,6 @@ func writeRunSummary(outputDir string, run runReport) (RunSummary, error) {
 		}
 	}
 	slices.Sort(summary.FailedChecks)
-	slices.Sort(summary.NotApplicable)
 	body, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
 		return summary, err

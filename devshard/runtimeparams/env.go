@@ -18,8 +18,7 @@ const (
 )
 
 // EnvSettings holds runtime-config tuning from environment variables.
-// Both devshardd and devshardctl honor DEVSHARDD_* names; devshardctl also
-// accepts DEVSHARD_* aliases for the same knobs.
+// DEVSHARDD_* names take precedence; DEVSHARD_* aliases set the same knobs.
 type EnvSettings struct {
 	Source          string
 	ServerMaxWait   time.Duration

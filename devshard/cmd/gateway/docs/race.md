@@ -278,7 +278,7 @@ A host that answers with its own error envelope did not go silent: it finished, 
 
 The claim is evidence, not judgement. A verifier recomputes `sha256` of the response payload and compares it against the hash inside the Finish the executor signed, so the gateway has to hand back the host's own event lines byte for byte (`host/timeout.go`, `VerifyErrorMiss`). The lines are retained while the stream is still speculative and released the moment the attempt turns out to be anything else, because most attempts are (`engine/miss_proof.go`, `errorStreamRetainer`). Two lines never count toward the hash: the `devshard_receipt` and `devshard_meta` events the host wraps around its answer after taking the hash.
 
-Which lines are evidence, the `[DONE]` test and the payload they serialize into are protocol rules that `devshardctl` follows too, so they come from `streamevidence` in [`devshard/gatewayprotocol`](../../../gatewayprotocol/streamevidence/README.md) (`DataLines`, `IsDoneLine`, `Payload`). The retainer, its release and its bound stay here: the bound is this gateway's own, 64 KiB per attempt (`maxMissProofBytes`). The retainer is also cut short when reassembly drops bytes (`engine/reassembly.go`).
+Which lines are evidence, the `[DONE]` test and the payload they serialize into are protocol rules, so they come from `streamevidence` in [`devshard/gatewayprotocol`](../../../gatewayprotocol/streamevidence/README.md) (`DataLines`, `IsDoneLine`, `Payload`). The retainer, its release and its bound stay here: the bound is this gateway's own, 64 KiB per attempt (`maxMissProofBytes`). The retainer is also cut short when reassembly drops bytes (`engine/reassembly.go`).
 
 A claim is made only for a stream that proves its error. The retainer yields a proof only when `streamevidence.ProvesErrorMiss` passes on the payload, because a verifier rejects a claim that fails that check; an error stream without a proof is voted or skipped like any other attempt (`engine/miss_proof.go`, `errorStreamRetainer.proof`; `engine/outcome.go`, `AttemptOutcome.claimsMiss`).
 
@@ -292,7 +292,7 @@ The claim itself waits on the record's own vote deadline like every other step, 
 
 Two skips are deliberately overridden for a miss. The nonce **is** finished — that is the whole point, and the ordinary "already finished" skip would let the error be paid for. And a claim with no signed Finish behind it falls back to the ordinary vote, because every verifier would reject it as `no_finish_tx` (`engine/session.go`, `SessionTimeouts.settle`).
 
-Whether a step claims or votes is `ClaimsMiss` in `timeoutclaim`, and the Finish a claim carries is `FinishTx` there: the one the host's reply carried, kept on the attempt's `MissProof`, otherwise the one the session has queued; `devshardctl` makes the same choice ([`timeoutclaim/README.md`](../../../gatewayprotocol/timeoutclaim/README.md)).
+Whether a step claims or votes is `ClaimsMiss` in `timeoutclaim`, and the Finish a claim carries is `FinishTx` there: the one the host's reply carried, kept on the attempt's `MissProof`, otherwise the one the session has queued ([`timeoutclaim/README.md`](../../../gatewayprotocol/timeoutclaim/README.md)).
 
 A landed miss comes back as `user.ErrInferenceMissed`, which is the protocol reporting a settlement as an error because the nonce did not finish normally. It is read as completed, not failed (`engine/settle.go`, `TimeoutOutcome`).
 

@@ -68,7 +68,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, env.stack,
-				env.hosts[0], env.hosts[1], "versiond-router", "devshardctl")
+				env.hosts[0], env.hosts[1], "versiond-router", "gateway")
 		}
 	})
 	// Declared versions are routed and health-checked through their own pool, so
@@ -126,7 +126,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	// router is down connection-refuses those seeds and quarantines every host
 	// (W_tot=0 → 429 (0/0) on the paused stream). SQLite HA migration already
 	// stops the gateway across router recreates for the same reason.
-	env.stack.StopService(t, "devshardctl")
+	env.stack.StopService(t, "gateway")
 	env.stack.StopService(t, "versiond-router")
 	env.stack.StartService(t, "versiond-router")
 	// The harness publishes random host ports, and Docker picks a new one when

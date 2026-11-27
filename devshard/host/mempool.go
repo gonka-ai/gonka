@@ -65,8 +65,8 @@ func (m *Mempool) HasStaleEntry(currentNonce, grace uint64) bool {
 // resort to peer-to-peer recovery gossip.
 //
 // Used by the host to recover from "user as sole sequencer" stalls: if the
-// user diff failed to absorb our Finish (e.g. because the OpenAI client at
-// devshardctl disconnected before reading devshard_meta, or the proxy
+// user diff failed to absorb our Finish (e.g. because the gateway's client
+// disconnected before reading devshard_meta, or the gateway
 // crashed mid-drain), we re-broadcast it via tx gossip so peers can learn
 // about it and -- crucially -- include it in their own mempool returns to
 // the user, giving the user another path to sequence it into a signed diff.

@@ -23,8 +23,8 @@ type chainLedger struct {
 	Error     string                  `json:"error,omitempty"`
 }
 
-// RunSummarySpend is what the escrows paid out by the end of the run, as the mock chain records it,
-// so either gateway is measured alike. Unavailable maps a nil field to the reason it is missing.
+// RunSummarySpend is what the escrows paid out by the end of the run, as the mock chain records it.
+// Unavailable maps a nil field to the reason it is missing.
 type RunSummarySpend struct {
 	Source      string        `json:"source"`
 	Unavailable string        `json:"unavailable,omitempty"`

@@ -1,10 +1,6 @@
 # Pre-proposal: Resume disconnected requests when streaming tokens
 
-We should be able to resume disconnected requests when streaming tokens.
-Today neither vLLM nor devshard exposes mid-stream resume or token polling.
-This note records the current gaps, what vLLM is adding elsewhere, and how
-`devshardctl` already behaves on client disconnect — as context for a future
-design.
+We should be able to resume disconnected requests when streaming tokens. Today neither vLLM nor devshard exposes mid-stream resume or token polling. This note records the current gaps, what vLLM is adding elsewhere, and how the gateway already behaves on client disconnect — as context for a future design.
 
 ## What does not exist today
 
@@ -24,10 +20,7 @@ not buffer a pollable partial stream for clients.
   via `completedResponses` / `CachedResponseBody`), **redundant new attempts**
   on another host, or **partial on-chain finish** if the executor captured
   chunks before upstream abort — not resume from chunk N.
-- `metaDrainTimeout` in `devshardctl` is **not** client reconnect; it keeps
-  the proxy→host connection alive briefly so protocol state (`devshard_meta`,
-  `ProcessResponse`, `MsgFinishInference`) can advance even when the end user
-  has gone away.
+- The gateway's drain after a client disconnect is **not** client reconnect; it keeps the gateway→host exchange alive so protocol state (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) can advance even when the end user has gone away.
 
 ## Industry standards deep dive
 
@@ -82,8 +75,7 @@ model:
    custom cursor).
 2. Buffer chunks server-side (Redis, DB, in-memory ring buffer).
 3. On reconnect, replay from the client’s last acknowledged cursor.
-4. Optionally keep the **upstream** model request alive while the client is
-   gone (OpenAI `background=true`; devshard `metaDrainTimeout`).
+4. Optionally keep the **upstream** model request alive while the client is gone (OpenAI `background=true`; devshard gateway drain).
 
 Critical distinction (also noted in industry writeups):
 
@@ -248,7 +240,7 @@ This continues **conversation state across turns**, not “pick up the same
 
 | OpenAI Responses concept | Possible devshard analogue |
 |--------------------------|---------------------------|
-| `background=true` (server keeps working) | `metaDrainTimeout` + decoupled upstream ctx |
+| `background=true` (server keeps working) | gateway drain + decoupled upstream ctx |
 | `store=true` + event log | Per-inference chunk buffer + monotonic `sequence_number` |
 | `GET ?starting_after=` | New client endpoint: replay buffered SSE from cursor |
 | `response_id` | Inference ID + session nonce / sealed lookup key |
@@ -285,38 +277,21 @@ disconnect is to **abort** generation when the HTTP connection closes (free GPU
 /KV). There is no per-request token poll endpoint; aggregate metrics live at
 `/metrics`.
 
-## What devshardctl does today on disconnect
+## What the gateway does today on disconnect
 
-To follow protocol, `devshardctl` tries to **drain the host response queue**
-even after the end user has disconnected:
+A client disconnect does not kill the gateway's race: the receipt, the response the session applies to its own state and the vote that settles a committed nonce all complete after the client is gone (`devshard/cmd/gateway/docs/race.md`, "Client departure and the drain"). The race runs on `context.WithoutCancel` of the client's context, and writes to a departed client are reported as successful so the host that earned the crown is not charged for the client's socket.
 
-- `runInference` uses `context.Background()` for the upstream path so client
-  `r.Context()` cancellation does not immediately tear down the host
-  connection.
-- After disconnect (`cancelFlag`), `sendAndProcess` keeps reading host SSE
-  until `metaDrainTimeout` (default 10s, overridable via
-  `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS`), so `ProcessResponse` can merge
-  mempool txs including `MsgFinishInference`.
-- If the host finishes execution during that drain, the executor caches the
-  full canonical response body in `completedResponses` on the host. A later
-  request with the same `StartInference` diff can receive `CachedResponseBody`
-  and replay the **entire** response from scratch (not resume from offset).
-- Sealed inference content can be persisted to storage and served via lookup
-  after RAM eviction — again as a **full** cached response, not incremental
-  token polling.
+- If the host finishes execution after the client left, the executor caches the full canonical response body in `completedResponses` on the host. A later request with the same `StartInference` diff can receive `CachedResponseBody` and replay the **entire** response from scratch (not resume from offset).
+- Sealed inference content can be persisted to storage and served via lookup after RAM eviction — again as a **full** cached response, not incremental token polling.
 
-This drain protects **session and chain correctness**; it is the foundation on
-which a future "respond later" UX could build (e.g. client reconnects and
-receives a full replay), but it does not yet implement mid-stream resume.
+This drain protects **session and chain correctness**; it is the foundation on which a future "respond later" UX could build (e.g. client reconnects and receives a full replay), but it does not yet implement mid-stream resume.
 
 ## Open questions for a future proposal
 
 1. Should devshard target **Responses-style event replay** (buffer deltas +
    `starting_after` cursor), **full replay** from host/disk cache (simpler), or
    **vLLM Realtime/streaming-input** (model-layer continuation)?
-2. If the user disconnects before `metaDrainTimeout` completes, do we still
-   want devshardd→vLLM to run to completion (avoid aborting upstream on proxy
-   write failure) so more responses land in cache?
+2. If the user disconnects before the drain completes, do we still want devshardd→vLLM to run to completion (avoid aborting upstream on proxy write failure) so more responses land in cache?
 3. What client contract signals replay vs resume (`devshard_stream_reset` today
    only covers full replay on retry)? Should we adopt SSE `id:` fields or an
    explicit `devshard_sequence_number` aligned with OpenAI Responses events?

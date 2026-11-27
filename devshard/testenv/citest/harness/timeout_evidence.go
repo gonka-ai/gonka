@@ -63,31 +63,31 @@ func SetExecutorFault(t *testing.T, stack *Stack, cfg *config.File, file string,
 }
 
 // NewGatewayInferences returns the records in after whose ids are not in before.
-func NewGatewayInferences(before, after map[string]GatewayInference) map[string]GatewayInference {
-	out := make(map[string]GatewayInference)
-	for id, rec := range after {
+func NewGatewayInferences(before, after map[string]GatewayDebugInference) map[string]GatewayDebugInference {
+	fresh := make(map[string]GatewayDebugInference)
+	for id, record := range after {
 		if _, seen := before[id]; !seen {
-			out[id] = rec
+			fresh[id] = record
 		}
 	}
-	return out
+	return fresh
 }
 
-// WaitGatewayInferencesSettle polls until settled holds for every id in ids, or
-// wait elapses, and returns the last record seen for each id.
-func WaitGatewayInferencesSettle(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, ids map[string]GatewayInference, wait time.Duration, settled func(status string) bool) map[string]GatewayInference {
+// WaitGatewayInferencesSettle polls until settled holds for every record in watched, or
+// wait elapses, and returns the last record seen for each of their ids.
+func WaitGatewayInferencesSettle(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, escrowID string, watched map[string]GatewayDebugInference, wait time.Duration, settled func(status string) bool) map[string]GatewayDebugInference {
 	t.Helper()
-	last := make(map[string]GatewayInference, len(ids))
+	last := make(map[string]GatewayDebugInference, len(watched))
 	AssertEventually(t, wait, time.Second, func() bool {
-		all := GetGatewayInferences(t, client, gatewayURL, adminAPIKey)
+		all := GetGatewayDebugInferences(t, client, gatewayURL, adminAPIKey, escrowID)
 		done := true
-		for id := range ids {
-			rec, ok := all[id]
+		for id := range watched {
+			record, ok := all[id]
 			if !ok {
 				continue
 			}
-			last[id] = rec
-			if !settled(rec.Status) {
+			last[id] = record
+			if !settled(record.Status) {
 				done = false
 			}
 		}

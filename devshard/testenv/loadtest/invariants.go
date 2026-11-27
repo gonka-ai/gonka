@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"devshard/testenv/config"
 	"devshard/testenv/mockchain/ledgerface"
 )
 
@@ -54,21 +53,16 @@ const (
 	hostValidationQueueBytes = 20_000 * 176
 	// hostServingFamily counts the requests a host finished; a host is serving once it rises above 0.
 	hostServingFamily = "devshard_request_terminal_total"
-	throttlePollEvery = 5 * time.Second
 	pendingPollEvery  = 10 * time.Second
 	// pendingSettle: clean_end_state judges an escrow on its first two clean polls this soon after drain,
 	// so a tx batch still in flight at the drain end is not read as left pending.
 	pendingSettle     = 30 * time.Second
 	pendingSettlePoll = time.Second
 	// pendingPostDrain is how long the pending poller keeps polling after drain, to record how long the rest takes to clear.
-	pendingPostDrain    = 60 * time.Second
-	hostStatsPollEvery  = 30 * time.Second
-	dapiHostsPollEvery  = 10 * time.Second
-	stateRootRecovery   = 60 * time.Second
-	quarantineDurationT = throttlePollEvery + time.Second
-	// senderRateQuarantine is the gateway's pause for a sender-rate refusal
-	// (peerQuotaQuarantine, reason sender_rate_quarantine, from #1988).
-	senderRateQuarantine = time.Second
+	pendingPostDrain   = 60 * time.Second
+	hostStatsPollEvery = 30 * time.Second
+	dapiHostsPollEvery = 10 * time.Second
+	stateRootRecovery  = 60 * time.Second
 	// sqliteLeaseExclusion is why no-skipped-validation-leases skips a sqlite host: its lease store is a no-op (storage/leases.go).
 	sqliteLeaseExclusion = "sqlite storage keeps no validation leases"
 )
@@ -82,9 +76,6 @@ type invariantSettings struct {
 	TrendEarly    [2]time.Duration
 	TrendLate     [2]time.Duration
 	Cases         map[string]string
-	// Quarantine holds configured durations by reason family:
-	// http, transport, empty_stream, stalled_winner, sender_rate.
-	Quarantine map[string]time.Duration
 }
 
 // resolveInvariantSettings applies the defaults: grace g = refusal + execution
@@ -100,7 +91,6 @@ func resolveInvariantSettings(s Scenario) invariantSettings {
 		MaxPendingAge: refusal + execution + gatewaySweepGrace + gatewaySweepTick + 30*time.Second,
 		SteadyAfter:   min(defaultInvariantSteadyAfter, workload/2),
 		Cases:         inv.Cases,
-		Quarantine:    map[string]time.Duration{"sender_rate": senderRateQuarantine},
 	}
 	if d, err := time.ParseDuration(inv.Grace); err == nil {
 		out.Grace = d
@@ -111,12 +101,6 @@ func resolveInvariantSettings(s Scenario) invariantSettings {
 	out.Baseline = parseInvariantWindow(inv.Baseline, [2]time.Duration{min(time.Minute, workload/4), min(2*time.Minute, workload/2)})
 	out.TrendEarly = parseInvariantWindow(inv.TrendEarly, [2]time.Duration{out.SteadyAfter, min(out.SteadyAfter+2*time.Minute, workload)})
 	out.TrendLate = parseInvariantWindow(inv.TrendLate, [2]time.Duration{max(workload-2*time.Minute, out.SteadyAfter), workload})
-	throttle := s.Gateway.ParticipantThrottle
-	for family, value := range map[string]string{"http": throttle.HTTPQuarantine, "transport": throttle.TransportFailureQuarantine, "empty_stream": throttle.EmptyStreamQuarantine, "stalled_winner": throttle.StalledWinnerQuarantine} {
-		if d, err := time.ParseDuration(value); err == nil {
-			out.Quarantine[family] = d
-		}
-	}
 	return out
 }
 
@@ -138,7 +122,6 @@ type InvariantHost struct {
 // InvariantInputs is everything the evaluators read; nil slices mean the
 // source was not collected. Field comments name the source as in the design.
 type InvariantInputs struct {
-	Gateway            config.GatewayDriver
 	Started            time.Time
 	Workload           time.Duration
 	Settings           invariantSettings
@@ -147,8 +130,7 @@ type InvariantInputs struct {
 	Events             []EventRecord                        // Events: events.json
 	Requests           []RequestResult                      // Requests: requests.jsonl
 	Accounting         []AccountingSnapshot                 // GW-acct: stats /api/v1/epochs/current/participants
-	Throttle           []ThrottleSample                     // GW-dbg: /v1/admin/devshards/{id}/participants
-	Pending            []PendingSample                      // GW-dbg: /v1/debug/pending + /v1/debug/inferences
+	Pending            []PendingSample                      // GW-dbg: /v1/state + /v1/debug/inferences
 	PendingSettleFrom  time.Time                            // drain end, when the pending poller turned to settle polls; zero in runs before them
 	HostStats          []HostStatsSample                    // Host-stats: /stats/shards[/:id], /stats/rpc
 	DapiHosts          []DapiHostSample                     // mock-dapi: /testenv/host-stats
@@ -166,7 +148,7 @@ type InvariantInputs struct {
 	ChainError    string
 	// ChainMaxNonce is the mock-chain devshard max_nonce; zero skips escrow-accounting-reconciles.final_nonce_le_max.
 	ChainMaxNonce uint32
-	// EscrowMissing lists the escrows the gateway marked inactive as "escrow missing on chain"; nil when not read.
+	// EscrowMissing lists the escrows the gateway marked inactive as "escrow gone from chain, taken out of service"; nil when not read.
 	EscrowMissing []string
 	// DidNotCompress is the responses-compress count in compose-pre-drain.log; negative when unreadable.
 	DidNotCompress int
@@ -344,7 +326,6 @@ var invariantEvaluators = []struct {
 	{"honest-hosts-agree-on-state", evalHonestHostsAgreeOnState},
 	{"no-nonce-left-pending", evalNoNonceLeftPending},
 	{"no-runtime-for-deactivated-escrow", evalNoRuntimeForDeactivatedEscrow},
-	{"quarantines-match-faults", evalQuarantinesMatchFaults},
 	{"error-rate-and-latency", evalErrorRateAndLatency},
 	{"recovery-after-fault", evalRecoveryAfterFault},
 	{"no-restarts-or-resource-growth", evalNoRestartsOrResourceGrowth},
@@ -366,10 +347,6 @@ func evaluateInvariants(in InvariantInputs) ([]AssertionResult, InvariantReport)
 	}
 	var checks []AssertionResult
 	for _, eval := range invariantEvaluators {
-		if check, skipped := invariantNotApplicable(eval.name, in.Gateway); skipped {
-			checks = append(checks, check)
-			continue
-		}
 		results, table := eval.fn(c)
 		checks = append(checks, results...)
 		if table != nil {
@@ -890,14 +867,20 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 	samplesOver := 0
 	var burnedMax float64
 	burnedOver, legacy := 0, 0
+	unanchored := map[[2]string]bool{}
 	settleFrom := c.in.PendingSettleFrom
 	latest := usable[0].At
 	for _, s := range usable {
 		if !settleFrom.IsZero() && s.At.After(settleFrom.Add(pendingPollEvery/2)) {
 			continue
 		}
-		if s.Open > 0 && s.OpenStarted == nil {
+		if s.Open > 0 && s.OpenStarted == nil && s.Unanchored == nil {
 			legacy++
+		}
+		for _, id := range s.Unanchored {
+			if !burned[s.EscrowID][id] {
+				unanchored[[2]string{s.EscrowID, id}] = true
+			}
 		}
 		s, burnedAge := withoutBurned(s, burned[s.EscrowID])
 		burnedMax = max(burnedMax, burnedAge)
@@ -941,14 +924,14 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 	for _, s := range final {
 		open := openUnburned(s, burned)
 		switch {
-		case open == 0 && s.PendingTxs == 0:
+		case open == 0:
 			if s.Open > 0 {
 				apart = append(apart, fmt.Sprintf("escrow %s burned_open=%d", s.EscrowID, s.Open))
 			}
 		case s.Nonce <= 1:
-			apart = append(apart, fmt.Sprintf("escrow %s warm-up only, nonce=%d open=%d pending_txs=%d", s.EscrowID, s.Nonce, open, s.PendingTxs))
+			apart = append(apart, fmt.Sprintf("escrow %s warm-up only, nonce=%d open=%d", s.EscrowID, s.Nonce, open))
 		default:
-			dirty = append(dirty, fmt.Sprintf("escrow %s open=%d pending_txs=%d", s.EscrowID, open, s.PendingTxs))
+			dirty = append(dirty, fmt.Sprintf("escrow %s open=%d", s.EscrowID, open))
 		}
 	}
 	sort.Strings(dirty)
@@ -962,17 +945,20 @@ func evalNoNonceLeftPending(c *invariantContext) ([]AssertionResult, any) {
 		}
 		lines = append(lines, fmt.Sprintf("escrow %s inference %s (%s) on %s in %s: %.0fs old at %s, %d polls over", r.Escrow, r.Inference, r.Status, r.Host, faults, r.Age, r.At.Format(time.RFC3339), r.Polls))
 	}
-	age := withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, len(over) == 0, fmt.Sprintf("max pending/started age <= %s at every sample, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs records_over=%d samples_over=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), samplesOver, burnedMax, burnedOver), strings.Join(firstN(lines, 10), "; ")), overSpans...)
+	lines = append(lines, unanchoredLines(unanchored)...)
+	stuck := len(over) + len(unanchored)
+	age := withSpans(invariantCheck("no-nonce-left-pending.max_pending_age", caseID, stuck == 0, fmt.Sprintf("max pending/started age <= %s at every sample and every open nonce anchored, burned nonces apart", c.in.Settings.MaxPendingAge), fmt.Sprintf("max=%.0fs records_over=%d samples_over=%d unanchored=%d burned_max=%.0fs burned_samples_over=%d", worst.MaxAgeSeconds, len(over), samplesOver, len(unanchored), burnedMax, burnedOver), strings.Join(firstN(lines, 10), "; ")), overSpans...)
 	// One stuck nonce is chance often enough (2 of 3 gateway prod-like runs) that only a repeat is a FIX.
-	age.fixOnRepeat = len(over) == 1
+	age.fixOnRepeat = stuck == 1
 	table := pendingTable(worst, limit, samplesOver, burnedMax, burnedOver, legacy)
 	table["records_over"] = len(over)
+	table["unanchored_open"] = len(unanchored)
 	if len(over) > 0 {
 		table["max_age_inference"], table["max_age_host"], table["max_age_faults"] = over[0].Inference, over[0].Host, over[0].Faults
 	}
 	return []AssertionResult{
 		age,
-		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference and no pending tx, burned nonces and warm-up-only escrows apart", fmt.Sprintf("dirty=%d apart=%d", len(dirty), len(apart)), strings.Join(append(dirty, apart...), "; ")),
+		invariantCheck("no-nonce-left-pending.clean_end_state", caseID, len(dirty) == 0, "final poll: no open inference, burned nonces and warm-up-only escrows apart", fmt.Sprintf("dirty=%d apart=%d", len(dirty), len(apart)), strings.Join(append(dirty, apart...), "; ")),
 	}, table
 }
 
@@ -1055,8 +1041,8 @@ func settledPending(samples []PendingSample, from time.Time, burned map[string]m
 		if settled[s.EscrowID] {
 			continue
 		}
-		clean := openUnburned(s, burned) == 0 && s.PendingTxs == 0
-		if prev, ok := final[s.EscrowID]; ok && clean && openUnburned(prev, burned) == 0 && prev.PendingTxs == 0 {
+		clean := openUnburned(s, burned) == 0
+		if prev, ok := final[s.EscrowID]; ok && clean && openUnburned(prev, burned) == 0 {
 			settled[s.EscrowID] = true
 		}
 		final[s.EscrowID] = s
@@ -1072,7 +1058,22 @@ func openUnburned(s PendingSample, burned map[string]map[string]bool) int {
 			open--
 		}
 	}
+	for _, id := range s.Unanchored {
+		if burned[s.EscrowID][id] {
+			open--
+		}
+	}
 	return open
+}
+
+// unanchoredLines names each open nonce that no sample could age, in escrow and nonce order.
+func unanchoredLines(unanchored map[[2]string]bool) []string {
+	lines := make([]string, 0, len(unanchored))
+	for key := range unanchored {
+		lines = append(lines, fmt.Sprintf("escrow %s inference %s open with no time anchor", key[0], key[1]))
+	}
+	sort.Strings(lines)
+	return lines
 }
 
 // withoutBurned returns the sample with its oldest open nonce recomputed over the nonces the gateway
@@ -1136,30 +1137,6 @@ func evalNoRuntimeForDeactivatedEscrow(c *invariantContext) ([]AssertionResult, 
 	}, map[string]any{"resident_deactivated": resident}
 }
 
-// ---- quarantines-match-faults: quarantine durations proportional to cause (GW-prom transitions, GW-dbg throttle) ----
-
-type quarantineTransition struct {
-	At          time.Time `json:"at"`
-	Participant string    `json:"participant"`
-	Mode        string    `json:"mode"`
-	Reason      string    `json:"reason"`
-	Count       float64   `json:"count"`
-	Event       string    `json:"event,omitempty"`
-}
-
-type quarantineEpisode struct {
-	Participant string    `json:"participant"`
-	From        time.Time `json:"from"`
-	To          time.Time `json:"to"`
-	Until       time.Time `json:"until,omitempty"`
-	// Longest is the longest single quarantine in the episode: a quarantine_until less the poll
-	// that first showed it. A quarantine renewed as it ends starts a new one in the same episode.
-	Longest time.Duration `json:"longest,omitempty"`
-	Event   string        `json:"event,omitempty"`
-}
-
-const quarantineFamily = "devshard_gateway_participant_quarantine_transitions_total"
-
 // parseDomainKey splits name{a="x",b="y"} into its labels.
 func parseDomainKey(key string) (string, map[string]string) {
 	name, rest, found := strings.Cut(key, "{")
@@ -1190,289 +1167,6 @@ func unquotePrefix(s string) (string, string, error) {
 	}
 	value, err := strconv.Unquote(prefix)
 	return value, s[len(prefix):], err
-}
-
-// quarantineTransitions turns transition counters into increments; the
-// probation step after a quarantine expires is not a new quarantine.
-func (c *invariantContext) quarantineTransitions() []quarantineTransition {
-	var out []quarantineTransition
-	previous := map[string]float64{}
-	for _, s := range sortedMetrics(c.in.Metrics) {
-		if s.Target != "gateway" {
-			continue
-		}
-		for key, value := range s.Domain {
-			name, labels := parseDomainKey(key)
-			if name != quarantineFamily {
-				continue
-			}
-			prev, seen := previous[key]
-			previous[key] = value
-			increase := value
-			if seen {
-				increase = counterIncrease(prev, value)
-			}
-			if increase <= 0 || labels["reason"] == "quarantine_expired" || labels["mode"] == "probation" {
-				continue
-			}
-			t := quarantineTransition{At: s.At, Participant: labels["participant_key"], Mode: labels["mode"], Reason: labels["reason"], Count: increase}
-			out = append(out, t)
-		}
-	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
-	return out
-}
-
-func quarantineEpisodes(samples []ThrottleSample) []quarantineEpisode {
-	type point struct {
-		at    time.Time
-		in    bool
-		until time.Time
-	}
-	series := map[string][]point{}
-	for _, s := range samples {
-		for _, p := range s.Participants {
-			until, _ := time.Parse(time.RFC3339Nano, p.QuarantineUntil)
-			series[p.ParticipantKey] = append(series[p.ParticipantKey], point{at: s.At, in: p.inQuarantine(), until: until})
-		}
-	}
-	var episodes []quarantineEpisode
-	for participant, points := range series {
-		sort.SliceStable(points, func(i, j int) bool { return points[i].at.Before(points[j].at) })
-		var current *quarantineEpisode
-		firstShown := map[time.Time]time.Time{}
-		for _, p := range points {
-			switch {
-			case p.in && current != nil && p.at.Sub(current.To) <= 3*throttlePollEvery:
-				current.To = p.at
-				if p.until.After(current.Until) {
-					current.Until = p.until
-				}
-			case p.in:
-				if current != nil {
-					episodes = append(episodes, *current)
-				}
-				current = &quarantineEpisode{Participant: participant, From: p.at, To: p.at, Until: p.until}
-			case current != nil && !p.at.Equal(current.To):
-				episodes = append(episodes, *current)
-				current = nil
-			}
-			if p.in && !p.until.IsZero() {
-				if _, seen := firstShown[p.until]; !seen {
-					firstShown[p.until] = p.at
-				}
-				current.Longest = max(current.Longest, p.until.Sub(firstShown[p.until]))
-			}
-		}
-		if current != nil {
-			episodes = append(episodes, *current)
-		}
-	}
-	sort.SliceStable(episodes, func(i, j int) bool { return episodes[i].From.Before(episodes[j].From) })
-	return episodes
-}
-
-// quarantineReasonFamily maps a gateway reason label to the setting that
-// sets its duration.
-func quarantineReasonFamily(reason string) string {
-	switch {
-	case strings.HasPrefix(reason, "sender_rate"):
-		return "sender_rate"
-	case strings.HasPrefix(reason, "http_"):
-		return "http"
-	case strings.HasPrefix(reason, "empty_stream"):
-		return "empty_stream"
-	case strings.HasPrefix(reason, "stalled_winner"):
-		return "stalled_winner"
-	case strings.Contains(reason, "transport"), strings.HasPrefix(reason, "escrow_lookup"):
-		return "transport"
-	}
-	return ""
-}
-
-// expectedQuarantine returns the reason families an event may cause, and
-// whether the event states an expectation at all. params.expect_quarantine
-// ("none" or a comma list of families) overrides the action default.
-func expectedQuarantine(record EventRecord) (allowed map[string]bool, forbidden map[string]bool, specified bool) {
-	if raw, ok := record.Params["expect_quarantine"].(string); ok {
-		allowed = map[string]bool{}
-		if raw != "none" {
-			for _, family := range strings.Split(raw, ",") {
-				allowed[strings.TrimSpace(family)] = true
-			}
-		}
-		return allowed, nil, true
-	}
-	switch record.Action {
-	case "ml_fault":
-		patch, _ := record.Params["patch"].(map[string]any)
-		switch {
-		case patch["empty_stream"] == true:
-			return map[string]bool{"empty_stream": true}, nil, true
-		case patch["http_status"] != nil:
-			return map[string]bool{"http": true}, nil, true
-		case patch["pause_stream"] == true, patch["hang"] == true:
-			// The host has sent its receipt but no content when the gateway gives up on the
-			// attempt, which it reports as an empty stream: the gateway counts any attempt with a
-			// receipt and no content chunk as one, cancelled or not, while stalled_winner needs a
-			// winner that sent content and its own cancel is never a transport failure. Under
-			// pause_stream only the requests holding the mock's workers get the first token.
-			return map[string]bool{"stalled_winner": true, "transport": true, "empty_stream": true}, nil, true
-		}
-	case "dapi_challenge":
-		return nil, map[string]bool{"empty_stream": true}, true
-	}
-	return nil, nil, false
-}
-
-func evalQuarantinesMatchFaults(c *invariantContext) ([]AssertionResult, any) {
-	caseID := c.runCase("quarantines-match-faults")
-	transitions := c.quarantineTransitions()
-	episodes := quarantineEpisodes(c.in.Throttle)
-	var honestHits, unattributed []string
-	var honestSpans, unattributedSpans []timeSpan
-	eventBad := map[string][]string{}
-	eventBadSpans := map[string][]timeSpan{}
-	// A background window produces the reason families it shows outside every foreground window;
-	// a transition of such a family is its, even inside a foreground fault of the same participant.
-	windowsAt := make([][]faultWindow, len(transitions))
-	foregroundAt := make([]bool, len(transitions))
-	produced := map[string]map[string]bool{}
-	for i, t := range transitions {
-		windowsAt[i] = c.faultyDuring(t.Participant, t.At.Add(-hostStatsPollEvery), t.At)
-		foregroundAt[i] = c.inForegroundWindow(t.Participant, t.At.Add(-hostStatsPollEvery), t.At)
-		for _, w := range windowsAt[i] {
-			if w.Background && !foregroundAt[i] {
-				if produced[w.Event.ID] == nil {
-					produced[w.Event.ID] = map[string]bool{}
-				}
-				produced[w.Event.ID][quarantineReasonFamily(t.Reason)] = true
-			}
-		}
-	}
-	for i := range transitions {
-		t := &transitions[i]
-		windows := windowsAt[i]
-		if c.honest[t.Participant] {
-			honestHits = append(honestHits, fmt.Sprintf("%s %s/%s at %s", t.Participant, t.Mode, t.Reason, t.At.Format(time.RFC3339)))
-			honestSpans = append(honestSpans, timeSpan{From: t.At, To: t.At})
-			continue
-		}
-		if len(windows) == 0 {
-			unattributed = append(unattributed, fmt.Sprintf("%s %s/%s at %s", t.Participant, t.Mode, t.Reason, t.At.Format(time.RFC3339)))
-			unattributedSpans = append(unattributedSpans, timeSpan{From: t.At, To: t.At})
-			continue
-		}
-		t.Event = windows[0].Event.ID
-		family := quarantineReasonFamily(t.Reason)
-		background := false
-		for _, w := range windows {
-			if w.Background && produced[w.Event.ID][family] {
-				background, t.Event = true, w.Event.ID
-			}
-		}
-		for _, w := range windows {
-			if (w.Background && foregroundAt[i] && !background) || (!w.Background && background) {
-				continue
-			}
-			allowed, forbidden, specified := expectedQuarantine(w.Event)
-			if specified && (forbidden[family] || (allowed != nil && !allowed[family])) {
-				eventBad[w.Event.ID] = append(eventBad[w.Event.ID], fmt.Sprintf("%s/%s", t.Mode, t.Reason))
-				eventBadSpans[w.Event.ID] = append(eventBadSpans[w.Event.ID], timeSpan{From: t.At, To: t.At})
-			}
-		}
-	}
-	for i := range episodes {
-		e := &episodes[i]
-		if c.honest[e.Participant] {
-			honestHits = append(honestHits, fmt.Sprintf("%s quarantined %s..%s", e.Participant, e.From.Format(time.RFC3339), e.To.Format(time.RFC3339)))
-			honestSpans = append(honestSpans, timeSpan{From: e.From, To: e.To})
-		}
-		if windows := c.faultyDuring(e.Participant, e.From.Add(-c.in.Settings.Grace), e.From); len(windows) > 0 {
-			e.Event = windows[0].Event.ID
-		}
-	}
-	checks := []AssertionResult{
-		withSpans(invariantCheck("quarantines-match-faults.honest_not_quarantined", caseID, len(honestHits) == 0, "no quarantine transition or throttle quarantine for honest participants", fmt.Sprintf("violations=%d", len(honestHits)), strings.Join(firstN(honestHits, 10), "; ")), honestSpans...),
-		withSpans(invariantCheck("quarantines-match-faults.quarantine_attributed", caseID, len(unattributed) == 0, "every quarantine transition falls in a fault window of that participant", fmt.Sprintf("unattributed=%d", len(unattributed)), strings.Join(firstN(unattributed, 10), "; ")), unattributedSpans...),
-	}
-	for _, w := range c.windows {
-		if allowed, forbidden, specified := expectedQuarantine(w.Event); specified {
-			bad, spans := eventBad[w.Event.ID], []timeSpan{w.Graced}
-			if w.Background {
-				spans = eventBadSpans[w.Event.ID]
-			}
-			checks = append(checks, withSpans(invariantCheck("quarantines-match-faults."+w.Event.ID+".reason", w.Event.Case, len(bad) == 0, describeExpectation(allowed, forbidden), fmt.Sprintf("mismatched=%d", len(bad)), strings.Join(bad, "; ")), spans...))
-		}
-	}
-	durationBad, durationNote := c.quarantineDurations(episodes, transitions)
-	checks = append(checks, invariantCheck("quarantines-match-faults.durations", caseID, len(durationBad) == 0, "quarantine_until - start <= configured duration + 1 tick; no quarantine outlives its cause by more than that", fmt.Sprintf("violations=%d", len(durationBad)), strings.TrimPrefix(strings.Join(durationBad, "; ")+durationNote, "; ")))
-	return checks, map[string]any{"transitions": transitions, "episodes": episodes}
-}
-
-func describeExpectation(allowed, forbidden map[string]bool) string {
-	switch {
-	case len(forbidden) > 0:
-		return "no quarantine with reason family " + strings.Join(sortedKeys(forbidden), ",")
-	case len(allowed) == 0:
-		return "no quarantine"
-	}
-	return "quarantine reason family in " + strings.Join(sortedKeys(allowed), ",")
-}
-
-func sortedKeys(m map[string]bool) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func (c *invariantContext) quarantineDurations(episodes []quarantineEpisode, transitions []quarantineTransition) ([]string, string) {
-	var bad []string
-	skipped := 0
-	for _, e := range episodes {
-		if c.honest[e.Participant] {
-			continue
-		}
-		duration, ok := c.episodeDuration(e, transitions)
-		if !ok {
-			skipped++
-			continue
-		}
-		if e.Longest > duration+quarantineDurationT {
-			bad = append(bad, fmt.Sprintf("%s single quarantine %s > %s", e.Participant, e.Longest.Round(time.Second), duration))
-		}
-		// The episode is charged to the latest fault that can have caused it, so a quarantine
-		// that starts in one fault is not blamed on an earlier fault whose grace it also falls in.
-		var cause *faultWindow
-		for _, w := range c.faultyDuring(e.Participant, e.From.Add(-c.in.Settings.Grace), e.From) {
-			if cause == nil || w.Graced.To.After(cause.Graced.To) {
-				cause = &w
-			}
-		}
-		if cause != nil && e.To.After(cause.Graced.To.Add(duration+quarantineDurationT)) {
-			bad = append(bad, fmt.Sprintf("%s quarantined until %s, cause %s ended %s", e.Participant, e.To.Format(time.RFC3339), cause.Event.ID, cause.Span.To.Format(time.RFC3339)))
-		}
-	}
-	if skipped > 0 {
-		return bad, fmt.Sprintf("; %d episodes skipped: reason duration not configured", skipped)
-	}
-	return bad, ""
-}
-
-// episodeDuration picks the configured duration of the transition closest
-// before the episode start.
-func (c *invariantContext) episodeDuration(e quarantineEpisode, transitions []quarantineTransition) (time.Duration, bool) {
-	var reason string
-	for _, t := range transitions {
-		if t.Participant == e.Participant && !t.At.After(e.From.Add(throttlePollEvery)) {
-			reason = t.Reason
-		}
-	}
-	d, ok := c.in.Settings.Quarantine[quarantineReasonFamily(reason)]
-	return d, ok
 }
 
 // ---- error-rate-and-latency: latency and error-rate bounds per window (Requests, Events) ----
@@ -2337,21 +2031,6 @@ func (c *invariantContext) firedSignal(record EventRecord) (string, bool) {
 				return signal, false
 			}
 		}
-		for _, s := range c.in.Throttle {
-			if !graced.contains(s.At) {
-				continue
-			}
-			for _, p := range s.Participants {
-				if p.ParticipantKey == participant && (p.FailureStrikes > 0 || p.inQuarantine()) {
-					return "throttle strikes or quarantine observed", true
-				}
-			}
-		}
-		for _, t := range c.quarantineTransitions() {
-			if t.Participant == participant && graced.contains(t.At) {
-				return "quarantine transition " + t.Reason, true
-			}
-		}
 		if c.attemptFailuresIncreased(participant, graced) {
 			return "attempt failures increased", true
 		}
@@ -2698,7 +2377,7 @@ func evalNoEscrowFalselyMarkedMissing(c *invariantContext) ([]AssertionResult, a
 		}
 	}
 	return []AssertionResult{
-		invariantCheck("no-escrow-falsely-marked-missing.no_false_escrow_missing", caseID, len(bad) == 0, "no escrow marked inactive as \"escrow missing on chain\" while mock-chain still has it",
+		invariantCheck("no-escrow-falsely-marked-missing.no_false_escrow_missing", caseID, len(bad) == 0, "no escrow marked inactive as \"escrow gone from chain, taken out of service\" while mock-chain still has it",
 			fmt.Sprintf("violations=%d lines=%d", len(bad), len(c.in.EscrowMissing)), strings.Join(bad, "; ")),
 	}, map[string]any{"escrow_missing": c.in.EscrowMissing}
 }
