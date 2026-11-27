@@ -186,7 +186,7 @@ gateway-build:
 	@echo "Building gateway for $(DOCKER_GOOS)/$(DOCKER_GOARCH) (DEVSHARD_VERSION=$(DEVSHARD_VERSION))..."
 	@mkdir -p build
 	@CGO_ENABLED=0 GOOS=$(DOCKER_GOOS) GOARCH=$(DOCKER_GOARCH) \
-		$(MAKE) --no-print-directory -C devshard/cmd/gateway build GATEWAY_VERSION=$(DEVSHARD_VERSION) BINARY=$(abspath build/gateway)
+		$(MAKE) --no-print-directory -C devshard/cmd/gateway build GATEWAY_VERSION=$(DEVSHARD_VERSION) DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_VERSION) BINARY=$(abspath build/gateway)
 	@chmod +x build/gateway
 
 devshardd-build:

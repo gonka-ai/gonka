@@ -663,7 +663,9 @@ jobs:
           context: .
           file: devshard/Dockerfile
           target: gateway-runtime
-          build-args: DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
+          build-args: |
+            GATEWAY_VERSION=${{ steps.e2e-version.outputs.version }}
+            DEVSHARD_VERSION=${{ steps.e2e-version.outputs.version }}
           tags: devshard-gateway:local
           load: true
           cache-from: type=gha,version=2,scope=devshard-e2e-gateway

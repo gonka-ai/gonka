@@ -37,6 +37,7 @@ func TestGeneratedComposeGatewayWiring(t *testing.T) {
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST:")
 	require.Contains(t, text, "args:")
 	require.Contains(t, text, "DEVSHARD_VERSION: \"v2\"")
+	require.Contains(t, text, "GATEWAY_VERSION: \"v2\"")
 	require.Contains(t, text, "/healthz")
 	require.Contains(t, text, "mock-dapi")
 }
