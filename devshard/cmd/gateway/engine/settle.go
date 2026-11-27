@@ -59,6 +59,8 @@ type TimeoutStep struct {
 	Proof     *MissProof
 	Event     TimeoutEvent
 	Pace      func(ctx context.Context) error
+
+	deferred bool
 }
 
 func timeoutKind(a AttemptOutcome) TimeoutKind {
@@ -149,6 +151,7 @@ func (p *votePass) take(step TimeoutStep, place voteFollowUp) {
 	case followUpRetry:
 		p.retries = append(p.retries, step)
 	case followUpDeferred:
+		step.deferred = true
 		p.deferred = append(p.deferred, step)
 	}
 }
@@ -206,7 +209,8 @@ func earliestDue(steps []TimeoutStep, poster TimeoutPoster) time.Time {
 }
 
 func voteDue(step TimeoutStep, poster TimeoutPoster) time.Time {
-	if !step.Post || poster == nil {
+	// A miss claim has no protocol deadline. See ../docs/race.md, "Error misses".
+	if !step.Post || poster == nil || (step.Kind == SettleByMissClaim && !step.deferred) {
 		return postAtOnce
 	}
 	return poster.VoteDeadline(step.Nonce, step.StartedAt)
