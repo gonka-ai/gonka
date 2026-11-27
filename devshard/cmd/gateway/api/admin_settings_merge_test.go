@@ -13,8 +13,8 @@ import (
 )
 
 func storedAccessAndKillSwitch(live *harness) {
-	disabled, open := true, config.ModelAccessOpen
-	live.control.overrides = config.Overrides{Tunables: env.Tunables{Disabled: &disabled}, Models: map[string]config.ModelSettings{"qwen": {Access: &open}}}
+	enabled, open := false, config.ModelAccessOpen
+	live.control.overrides = config.Overrides{Tunables: env.Tunables{Enabled: &enabled}, Models: map[string]config.ModelSettings{"qwen": {Access: &open}}}
 }
 
 // Test flow:
@@ -31,8 +31,8 @@ func TestAPostedSettingsPatchKeepsWhatItDoesNotName(t *testing.T) {
 		t.Fatalf("status %d (%s), want 200", recorder.Code, recorder.Body.String())
 	}
 	applied := live.operations.appliedOverrides()
-	if applied.Models["qwen"].Access == nil || *applied.Models["qwen"].Access != config.ModelAccessOpen || applied.Disabled == nil || !*applied.Disabled {
-		t.Fatalf("applied models %v disabled %v, want both kept", applied.Models, applied.Disabled)
+	if applied.Models["qwen"].Access == nil || *applied.Models["qwen"].Access != config.ModelAccessOpen || applied.Enabled == nil || *applied.Enabled {
+		t.Fatalf("applied models %v enabled %v, want both kept", applied.Models, applied.Enabled)
 	}
 	if applied.MaxConcurrentRequests == nil || *applied.MaxConcurrentRequests != 250 {
 		t.Fatalf("applied request cap %v, want 250", applied.MaxConcurrentRequests)
@@ -53,8 +53,8 @@ func TestAPutSettingsDocumentReplacesTheStoredOne(t *testing.T) {
 		t.Fatalf("status %d (%s), want 200", recorder.Code, recorder.Body.String())
 	}
 	applied := live.operations.appliedOverrides()
-	if applied.Models != nil || applied.Disabled != nil || *applied.MaxConcurrentRequests != 250 {
-		t.Fatalf("applied models %v disabled %v, want only the request cap", applied.Models, applied.Disabled)
+	if applied.Models != nil || applied.Enabled != nil || *applied.MaxConcurrentRequests != 250 {
+		t.Fatalf("applied models %v enabled %v, want only the request cap", applied.Models, applied.Enabled)
 	}
 }
 

@@ -78,7 +78,7 @@ func (s *Server) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	auditAdmin("settings written",
 		logkey.Method, r.Method,
 		logkey.OpenModels, inForce.OpenModels(),
-		logkey.GatewayDisabled, inForce.Modes.Disabled,
+		logkey.GatewayEnabled, inForce.Modes.Enabled,
 		logkey.ParticipantsTrust, inForce.Scheduler.Participants.Trust,
 		logkey.ParticipantsShadow, inForce.Scheduler.Participants.Shadow,
 		logkey.ParticipantsUnthrottled, inForce.Scheduler.Participants.Unthrottled,

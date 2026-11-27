@@ -26,7 +26,7 @@ type Pinger struct {
 
 // New returns nil when the probe is off or its schedule does not hold. See README.md.
 func New(settings config.HostPing, live liveDials, sink Sink) *Pinger {
-	if settings.Disabled || live == nil || sink == nil {
+	if !settings.Enabled || live == nil || sink == nil {
 		return nil
 	}
 	prober, err := probe.New(probe.Config{

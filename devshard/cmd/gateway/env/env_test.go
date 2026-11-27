@@ -46,8 +46,8 @@ func TestLoadParsesTypedValues(t *testing.T) {
 	if values.RotationEnabled == nil || *values.RotationEnabled != true {
 		t.Fatalf("RotationEnabled = %v, want true", values.RotationEnabled)
 	}
-	if values.Disabled == nil || *values.Disabled != true {
-		t.Fatalf("Disabled = %v, want true", values.Disabled)
+	if values.Enabled == nil || *values.Enabled != false {
+		t.Fatalf("Enabled = %v, want false", values.Enabled)
 	}
 	if values.TxFeeAmount == nil || *values.TxFeeAmount != 500 {
 		t.Fatalf("TxFeeAmount = %v, want 500", values.TxFeeAmount)
@@ -75,8 +75,8 @@ func TestLoadWhitespaceIsTrimmedAndEmptyMeansUnset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(): unexpected error: %v", err)
 	}
-	if values.DisabledMessage == nil || *values.DisabledMessage != "gateway paused" {
-		t.Fatalf("DisabledMessage = %v, want trimmed \"gateway paused\"", values.DisabledMessage)
+	if values.OffMessage == nil || *values.OffMessage != "gateway paused" {
+		t.Fatalf("OffMessage = %v, want trimmed \"gateway paused\"", values.OffMessage)
 	}
 	if values.TxGasLimit != nil {
 		t.Fatalf("TxGasLimit = %v, want nil for blank value", *values.TxGasLimit)
@@ -108,8 +108,8 @@ func TestLoadRejectsMalformedGatewayValuesWithVariableName(t *testing.T) {
 // Test flow:
 //  1. Set each `_ENABLED` switch to a true spelling (`true`, `1`, `on`).
 //  2. Call `Load`.
-//  3. Assert each matching disabled field is set to false, so an explicit enabled switch reads as not disabled.
-func TestAnEnabledSwitchSetToTrueLeavesTheDisabledFieldFalse(t *testing.T) {
+//  3. Assert each matching enabled field is set to true.
+func TestAnEnabledSwitchSetToTrueSetsTheEnabledField(t *testing.T) {
 	t.Setenv("DEVSHARD_GATEWAY_ENABLED", "true")
 	t.Setenv("DEVSHARD_GATEWAY_HOST_PING_ENABLED", "1")
 	t.Setenv("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", "on")
@@ -118,11 +118,11 @@ func TestAnEnabledSwitchSetToTrueLeavesTheDisabledFieldFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	for name, field := range map[string]*bool{"Disabled": values.Disabled, "HostPingDisabled": values.HostPingDisabled, "HostRPCStatsDisabled": values.HostRPCStatsDisabled} {
+	for name, field := range map[string]*bool{"Enabled": values.Enabled, "HostPingEnabled": values.HostPingEnabled, "HostRPCStatsEnabled": values.HostRPCStatsEnabled} {
 		if field == nil {
-			t.Errorf("%s is unset, want false from the enabled switch", name)
-		} else if *field {
-			t.Errorf("%s = true, want false from the enabled switch", name)
+			t.Errorf("%s is unset, want true from the enabled switch", name)
+		} else if !*field {
+			t.Errorf("%s = false, want true from the enabled switch", name)
 		}
 	}
 }
@@ -165,7 +165,7 @@ func TestAnUnusableValueIsIgnoredNotRefused(t *testing.T) {
 	}
 	for name, isSet := range map[string]bool{
 		"Port":                                values.Port != nil,
-		"Disabled":                            values.Disabled != nil,
+		"Enabled":                             values.Enabled != nil,
 		"TxFeeAmount":                         values.TxFeeAmount != nil,
 		"TxPollIntervalMS":                    values.TxPollIntervalMS != nil,
 		"NonceAccountingSnapshotSeconds":      values.NonceAccountingSnapshotSeconds != nil,
@@ -236,8 +236,8 @@ func TestTheHostRPCStatsVariablesAreRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if values.HostRPCStatsDisabled == nil || !*values.HostRPCStatsDisabled {
-		t.Errorf("HostRPCStatsDisabled = %v, want true from off", values.HostRPCStatsDisabled)
+	if values.HostRPCStatsEnabled == nil || *values.HostRPCStatsEnabled {
+		t.Errorf("HostRPCStatsEnabled = %v, want false from off", values.HostRPCStatsEnabled)
 	}
 	if values.HostRPCStatsIntervalMS == nil || *values.HostRPCStatsIntervalMS != 15_000 {
 		t.Errorf("HostRPCStatsIntervalMS = %v, want 15000", values.HostRPCStatsIntervalMS)
@@ -278,8 +278,8 @@ func TestTheHostPingAndHeightSyncVariablesAreReadUnderTheirDeployedNames(t *test
 	if err != nil {
 		t.Fatalf("Load(): %v", err)
 	}
-	if values.HostPingDisabled == nil || !*values.HostPingDisabled {
-		t.Errorf("HostPingDisabled = %v, want true from no", values.HostPingDisabled)
+	if values.HostPingEnabled == nil || *values.HostPingEnabled {
+		t.Errorf("HostPingEnabled = %v, want false from no", values.HostPingEnabled)
 	}
 	if values.HostPingIntervalMS == nil || *values.HostPingIntervalMS != 15_000 {
 		t.Errorf("HostPingIntervalMS = %v, want 15000 from the duration 15s", values.HostPingIntervalMS)

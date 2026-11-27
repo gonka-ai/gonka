@@ -50,7 +50,7 @@ The only package that speaks HTTP to a client, and the one that decides what a f
 
 `requireAdmin` is where the admin key comparison lives, on the operator routes themselves rather than in a blanket middleware. With no admin key configured the whole surface answers 404.
 
-`disabled` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: a healthcheck may read `/v1/status`, and a gateway disabled on purpose is not unhealthy.
+`enabled: false` is the operator kill switch. Routes marked `alwaysOn` — `/metrics`, `/healthz`, `/v1/status` and the operator surface — stay reachable through it: a healthcheck may read `/v1/status`, and a gateway switched off on purpose is not unhealthy.
 
 ## Reading a body
 

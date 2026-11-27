@@ -97,10 +97,10 @@ type Limits struct {
 }
 
 type Modes struct {
-	PoCMode             string
-	Disabled            bool
-	DisabledMessage     string
-	DisabledRedirectURL string
+	PoCMode        string
+	Enabled        bool
+	OffMessage     string
+	OffRedirectURL string
 }
 
 type Rotation struct {
@@ -171,7 +171,7 @@ type HeightSync struct {
 
 // HostPing groups the probe of the live escrows' hosts. See ../hostping/README.md.
 type HostPing struct {
-	Disabled    bool
+	Enabled     bool
 	IntervalMS  int64
 	TimeoutMS   int64
 	Concurrency int64
@@ -179,7 +179,7 @@ type HostPing struct {
 
 // HostRPCStats groups the poll of the live escrows' hosts for their rate-limiter counters. See ../hostrpc/README.md.
 type HostRPCStats struct {
-	Disabled    bool
+	Enabled     bool
 	IntervalMS  int64
 	TimeoutMS   int64
 	Concurrency int64

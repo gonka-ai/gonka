@@ -137,7 +137,7 @@ const (
 	Used            = "used"
 	OpenModels      = "open_models"
 	Tokenizer       = "tokenizer"
-	GatewayDisabled = "gateway_disabled"
+	GatewayEnabled  = "gateway_enabled"
 	InFlight        = "in_flight"
 	Preset          = "preset"
 	AllowOffChain   = "allow_off_chain"

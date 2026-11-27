@@ -17,7 +17,7 @@ Three tiers, and the tier decides both who may call it and whether the kill swit
 | --- | --- | --- |
 | `/v1/chat/completions` | per-model (below) | no |
 | `/v1/models` | none — it lists what is routable, nothing caller-specific | no |
-| `/v1/status` | none, as above | yes — a gateway disabled on purpose is not unhealthy |
+| `/v1/status` | none, as above | yes — a gateway switched off on purpose is not unhealthy |
 | `/devshard/{id}/v1/chat/completions`, `.../models`, `.../status` | as above, pinned to one escrow | no |
 | `/metrics`, `/healthz` | none | yes — the gateway's compose healthcheck reads `/healthz`, which answers 200 without checking anything else ([`deploy/README.md`](../deploy/README.md)); at most 4 scrapes run at once and each is cut at 10 s, both answered 503 ([`metrics/README.md`](../metrics/README.md), "Scrapes") |
 | `/v1/requests/{id}` | admin | yes |
@@ -86,9 +86,9 @@ An `api_key` model needs an active key. Revoking the last active key while the n
 
 ### The kill switch
 
-`modes.disabled` (env `DEVSHARD_GATEWAY_ENABLED=false`, or `disabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
+`modes.enabled` set to false (env `DEVSHARD_GATEWAY_ENABLED=false`, or `enabled` through the admin settings endpoint) stops serving clients while leaving `/metrics`, `/healthz`, `/v1/status`, the admin surface and the recovery surface up — so a gateway can be taken out of service and still be inspected, settled and drained.
 
-With `disabled_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `disabled_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
+With `off_redirect_url` set it answers **308** with the new URL in both the header and the body; without one, **503** with `off_message`. The distinction matters to clients: a 308 is a permanent move, a 503 is "come back later".
 
 ## Boot
 

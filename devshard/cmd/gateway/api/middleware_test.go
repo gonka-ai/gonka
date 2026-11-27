@@ -20,7 +20,7 @@ func TestAnOversizedAdminBodyIsRejectedAndTheConnectionIsClosed(t *testing.T) {
 	upstream := httptest.NewServer(live.server.Handler())
 	t.Cleanup(upstream.Close)
 
-	oversized := `{"disabled_message":"` + strings.Repeat("A", adminIngestLimit+1) + `"}`
+	oversized := `{"off_message":"` + strings.Repeat("A", adminIngestLimit+1) + `"}`
 	request, err := http.NewRequestWithContext(t.Context(), http.MethodPut, upstream.URL+"/v1/admin/settings", strings.NewReader(oversized))
 	if err != nil {
 		t.Fatalf("building request: %v", err)
@@ -48,7 +48,7 @@ func TestAnOversizedAdminBodyIsRejectedAndTheConnectionIsClosed(t *testing.T) {
 //  2. Assert the response is 200.
 func TestAnAdminBodyInsideTheBoundIsAccepted(t *testing.T) {
 	live := newHarness(t)
-	body := `{"disabled_message":"` + strings.Repeat("A", 1024) + `"}`
+	body := `{"off_message":"` + strings.Repeat("A", 1024) + `"}`
 	recorder := live.request(t, http.MethodPut, "/v1/admin/settings", body, adminHeaders())
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status: got %d (%s), want 200", recorder.Code, recorder.Body.String())

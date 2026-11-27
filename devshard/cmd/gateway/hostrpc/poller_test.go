@@ -38,7 +38,7 @@ func (s waveSink) Replace(snapshots map[string]*transport.RPCStatsSnapshot) {
 }
 
 func runnable() config.HostRPCStats {
-	return config.HostRPCStats{IntervalMS: 10_000, TimeoutMS: 5_000, Concurrency: 2}
+	return config.HostRPCStats{Enabled: true, IntervalMS: 10_000, TimeoutMS: 5_000, Concurrency: 2}
 }
 
 func allowLoopback(t *testing.T, allow bool) {
@@ -76,18 +76,18 @@ func waitWave(t *testing.T, sink waveSink) map[string]*transport.RPCStatsSnapsho
 }
 
 // Test flow:
-//  1. Build settings that are runnable and mark them disabled.
+//  1. Build settings that are runnable and switch them off.
 //  2. Call New with those settings, one live host dial, and a sink.
 //  3. Assert it returns nil.
 //  4. Repeat with a timeout longer than the interval and assert nil again.
 func TestAPollerIsAbsentWhenPollingIsOffOrTheScheduleDoesNotHold(t *testing.T) {
 	live := dialsHeld{{ParticipantKey: "gonka1a", BaseURL: "http://a:8080"}}
 	off := runnable()
-	off.Disabled = true
+	off.Enabled = false
 	if New(off, live, newWaveSink()) != nil {
 		t.Error("New() returned a poller for polling that is switched off")
 	}
-	slow := config.HostRPCStats{IntervalMS: 10, TimeoutMS: 20, Concurrency: 1}
+	slow := config.HostRPCStats{Enabled: true, IntervalMS: 10, TimeoutMS: 20, Concurrency: 1}
 	if New(slow, live, newWaveSink()) != nil {
 		t.Error("New() accepted a poll that can outlast its own period")
 	}
@@ -235,7 +235,7 @@ func TestAWavePollsNoMoreHostsAtOnceThanItsConcurrency(t *testing.T) {
 		dials = append(dials, registry.HostDial{ParticipantKey: "gonka1" + key, BaseURL: server.URL})
 	}
 	sink := newWaveSink()
-	poller := New(config.HostRPCStats{IntervalMS: 10_000, TimeoutMS: 5_000, Concurrency: 2}, dials, sink)
+	poller := New(config.HostRPCStats{Enabled: true, IntervalMS: 10_000, TimeoutMS: 5_000, Concurrency: 2}, dials, sink)
 
 	poller.wave(t.Context())
 

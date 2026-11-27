@@ -73,12 +73,12 @@ type Values struct {
 	HeightSyncAnchorSlots        *int64
 	HeightSyncQuietSettleDelayMS *int64
 
-	HostPingDisabled    *bool
+	HostPingEnabled     *bool
 	HostPingIntervalMS  *int64
 	HostPingTimeoutMS   *int64
 	HostPingConcurrency *int64
 
-	HostRPCStatsDisabled    *bool
+	HostRPCStatsEnabled     *bool
 	HostRPCStatsIntervalMS  *int64
 	HostRPCStatsTimeoutMS   *int64
 	HostRPCStatsConcurrency *int64
@@ -198,14 +198,6 @@ func Load() (Values, error) {
 		}
 		*target = &parsed
 	}
-	readInvertedBool := func(name string, target **bool) {
-		var enabled *bool
-		readLenientBool(name, &enabled)
-		if enabled != nil {
-			disabled := !*enabled
-			*target = &disabled
-		}
-	}
 	readDurationAsMilliseconds := func(name string, target **int64) {
 		raw := lookup(name)
 		if raw == "" {
@@ -295,9 +287,9 @@ func Load() (Values, error) {
 			ignoreUnusableValue("DEVSHARD_POC_REQUEST_MODE", raw)
 		}
 	}
-	readInvertedBool("DEVSHARD_GATEWAY_ENABLED", &values.Disabled)
-	readString("DEVSHARD_GATEWAY_OFF_MESSAGE", &values.DisabledMessage)
-	readString("DEVSHARD_GATEWAY_OFF_REDIRECT_URL", &values.DisabledRedirectURL)
+	readLenientBool("DEVSHARD_GATEWAY_ENABLED", &values.Enabled)
+	readString("DEVSHARD_GATEWAY_OFF_MESSAGE", &values.OffMessage)
+	readString("DEVSHARD_GATEWAY_OFF_REDIRECT_URL", &values.OffRedirectURL)
 
 	readLenientBool("DEVSHARD_ESCROW_ROTATION_ENABLED", &values.RotationEnabled)
 	readLenientInt("DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS", 0, &values.RotationPrePoCBlocks)
@@ -345,11 +337,11 @@ func Load() (Values, error) {
 	readLenientInt("DEVSHARD_HEIGHTSYNC_K", 0, &values.HeightSyncAnchorK)
 	readLenientInt("DEVSHARD_HEIGHTSYNC_SLOTS", 0, &values.HeightSyncAnchorSlots)
 	readDurationAsMilliseconds("DEVSHARD_QUIET_SETTLE_DELAY", &values.HeightSyncQuietSettleDelayMS)
-	readInvertedBool("DEVSHARD_GATEWAY_HOST_PING_ENABLED", &values.HostPingDisabled)
+	readLenientBool("DEVSHARD_GATEWAY_HOST_PING_ENABLED", &values.HostPingEnabled)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_INTERVAL", &values.HostPingIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", &values.HostPingTimeoutMS)
 	readLenientInt("DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY", 1, &values.HostPingConcurrency)
-	readInvertedBool("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", &values.HostRPCStatsDisabled)
+	readLenientBool("DEVSHARD_GATEWAY_RPC_STATS_ENABLED", &values.HostRPCStatsEnabled)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_INTERVAL", &values.HostRPCStatsIntervalMS)
 	readDurationAsMilliseconds("DEVSHARD_GATEWAY_RPC_STATS_TIMEOUT", &values.HostRPCStatsTimeoutMS)
 	readLenientInt("DEVSHARD_GATEWAY_RPC_STATS_CONCURRENCY", 1, &values.HostRPCStatsConcurrency)

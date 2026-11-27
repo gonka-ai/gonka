@@ -50,7 +50,7 @@ type Poller struct {
 
 // New returns nil when polling is off or its schedule does not hold. See README.md.
 func New(settings config.HostRPCStats, live liveDials, sink Sink) *Poller {
-	if settings.Disabled || live == nil || sink == nil {
+	if !settings.Enabled || live == nil || sink == nil {
 		return nil
 	}
 	interval := time.Duration(settings.IntervalMS) * time.Millisecond

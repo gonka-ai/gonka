@@ -100,7 +100,7 @@ func (s *Server) buildHandler() http.Handler {
 			handler = adminFailure(cmp.Or(registered.label, registered.pattern), s.requireAdmin(handler))
 		}
 		if !registered.alwaysOn {
-			handler = s.disabled(handler)
+			handler = s.killSwitch(handler)
 		}
 		var wrapped http.Handler = handler
 		if registered.label != "" {

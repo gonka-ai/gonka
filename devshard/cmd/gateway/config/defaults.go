@@ -70,6 +70,7 @@ func Defaults() Config {
 			},
 		},
 		Modes: Modes{
+			Enabled: true,
 			PoCMode: PoCModeRelaxed,
 		},
 		Rotation: Rotation{
@@ -117,11 +118,13 @@ func Defaults() Config {
 			QuietSettleDelayMS: 300_000,
 		},
 		HostPing: HostPing{
+			Enabled:     true,
 			IntervalMS:  15_000,
 			TimeoutMS:   2_000,
 			Concurrency: 8,
 		},
 		HostRPCStats: HostRPCStats{
+			Enabled:     true,
 			IntervalMS:  15_000,
 			TimeoutMS:   4_000,
 			Concurrency: 8,
