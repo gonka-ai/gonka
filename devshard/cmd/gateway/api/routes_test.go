@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -572,6 +573,75 @@ func TestTheStatusReportsTheSessionVersion(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), `"session_version":"`+types.EffectiveStateRootAndProtocolVersion+`"`) {
 		t.Fatalf("the status carries no session version: %s", recorder.Body.String())
+	}
+}
+
+// Test flow:
+//  1. Configure relaxed PoC mode and register a live session for an escrow.
+//  2. GET /v1/status and decode the body into plain maps.
+//  3. Assert `mode` is "gateway" and `poc_mode` is "relaxed".
+//  4. Assert the escrow's `config` carries each session parameter of the machine under its snake_case key.
+func TestTheStatusNamesTheProcessAGatewayAndCarriesEachEscrowsSessionConfig(t *testing.T) {
+	live := newHarness(t)
+	live.swapConfig(func(next *config.Config) { next.Modes.PoCMode = config.PoCModeRelaxed })
+	session, machine := newLiveSession(t)
+	live.escrows.escrows = []scheduler.Escrow{{ID: liveEscrowID, Model: "qwen"}}
+	live.escrows.sessions[liveEscrowID] = registry.NewSessionHandle(session, machine)
+
+	recorder := live.request(t, http.MethodGet, "/v1/status", "", nil)
+
+	var reported struct {
+		Mode      string `json:"mode"`
+		PoCMode   string `json:"poc_mode"`
+		Devshards []struct {
+			Config map[string]uint64 `json:"config"`
+		} `json:"devshards"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &reported); err != nil {
+		t.Fatalf("decoding: %v (%s)", err, recorder.Body.String())
+	}
+	if reported.Mode != "gateway" || reported.PoCMode != "relaxed" {
+		t.Fatalf("mode = %q, poc_mode = %q, want gateway, relaxed", reported.Mode, reported.PoCMode)
+	}
+	sessionConfig := machine.Config()
+	want := map[string]uint64{
+		"refusal_timeout":              uint64(sessionConfig.RefusalTimeout),
+		"execution_timeout":            uint64(sessionConfig.ExecutionTimeout),
+		"token_price":                  sessionConfig.TokenPrice,
+		"create_devshard_fee":          sessionConfig.CreateDevshardFee,
+		"fee_per_nonce":                sessionConfig.FeePerNonce,
+		"vote_threshold":               uint64(sessionConfig.VoteThreshold),
+		"validation_rate":              uint64(sessionConfig.ValidationRate),
+		"inference_seal_grace_nonces":  uint64(sessionConfig.InferenceSealGraceNonces),
+		"inference_seal_grace_seconds": uint64(sessionConfig.InferenceSealGraceSeconds),
+		"auto_seal_every_n_nonces":     uint64(sessionConfig.AutoSealEveryNNonces),
+	}
+	if len(reported.Devshards) != 1 || !maps.Equal(reported.Devshards[0].Config, want) {
+		t.Fatalf("devshards = %+v, want one escrow with config %v", reported.Devshards, want)
+	}
+}
+
+// Test flow:
+//  1. Register the harness escrow with a session that cannot report its config.
+//  2. GET /v1/status and decode the escrows it lists.
+//  3. Assert the escrow is listed and its row carries no `config` key.
+func TestTheStatusLeavesOutTheConfigOfASessionThatCannotReportIt(t *testing.T) {
+	live := newHarness(t)
+	live.escrows.sessions["7"] = &pointReadSession{balance: 900, version: "v5"}
+
+	recorder := live.request(t, http.MethodGet, "/v1/status", "", nil)
+
+	var reported struct {
+		Devshards []map[string]any `json:"devshards"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &reported); err != nil {
+		t.Fatalf("decoding: %v (%s)", err, recorder.Body.String())
+	}
+	if len(reported.Devshards) != 1 || reported.Devshards[0]["id"] != "7" || reported.Devshards[0]["balance"] != float64(900) {
+		t.Fatalf("devshards = %v, want the escrow 7 with balance 900", reported.Devshards)
+	}
+	if _, reported := reported.Devshards[0]["config"]; reported {
+		t.Fatalf("status carries a config for a session with none: %s", recorder.Body.String())
 	}
 }
 

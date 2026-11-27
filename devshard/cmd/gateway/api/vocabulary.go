@@ -71,6 +71,9 @@ const (
 	phaseNameUnknown    = "unknown"
 )
 
+// What /v1/status says the process is; the PoC request mode is reported beside it, not in its place.
+const statusMode = "gateway"
+
 type (
 	apiKeySource string
 	filterSource string
