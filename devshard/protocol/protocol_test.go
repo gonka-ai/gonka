@@ -407,7 +407,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 				EscrowId:  "escrow-1",
 				Nonce:     nonce,
 			}
-			sigData, err := proto.Marshal(sigContent)
+			sigData, err := types.CanonicalSignedBytes(sigContent)
 			require.NoError(t, err)
 			addr, err := verifier.RecoverAddress(sigData, sig)
 			require.NoError(t, err)

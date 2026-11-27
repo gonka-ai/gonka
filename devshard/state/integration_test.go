@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-	"google.golang.org/protobuf/proto"
 
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -107,7 +106,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 			EscrowId:  escrowID,
 			Nonce:     nonce,
 		}
-		sigData, err := proto.Marshal(stateSignContent)
+		sigData, err := types.CanonicalSignedBytes(stateSignContent)
 		require.NoError(t, err)
 		sig, err := hosts[signerIdx].Sign(sigData)
 		require.NoError(t, err)
@@ -165,7 +164,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 			EscrowId:  escrowID,
 			Nonce:     nonce,
 		}
-		sigData, err := proto.Marshal(stateSignContent)
+		sigData, err := types.CanonicalSignedBytes(stateSignContent)
 		require.NoError(t, err)
 		sig, err := host.Sign(sigData)
 		require.NoError(t, err)
@@ -207,7 +206,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 			EscrowId:  escrowID,
 			Nonce:     nonce,
 		}
-		sigData, err := proto.Marshal(stateSignContent)
+		sigData, err := types.CanonicalSignedBytes(stateSignContent)
 		require.NoError(t, err)
 		recovered, err := verifier.RecoverAddress(sigData, sig)
 		require.NoError(t, err)

@@ -3463,7 +3463,7 @@ func (s *Session) warmKeyAuthorized(warm, cold string) bool {
 }
 
 func (s *Session) recoverStateSignatureAddress(nonce uint64, postRoot, signature []byte) (string, error) {
-	sigData, err := proto.Marshal(&types.StateSignatureContent{
+	sigData, err := types.CanonicalSignedBytes(&types.StateSignatureContent{
 		StateRoot: postRoot,
 		EscrowId:  s.escrowID,
 		Nonce:     nonce,

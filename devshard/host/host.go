@@ -1966,7 +1966,7 @@ func (h *Host) AccumulateGossipSig(nonce uint64, stateHash, sig []byte, senderSl
 		EscrowId:  h.escrowID,
 		Nonce:     nonce,
 	}
-	sigData, mErr := proto.Marshal(sigContent)
+	sigData, mErr := types.CanonicalSignedBytes(sigContent)
 	if mErr != nil {
 		return fmt.Errorf("marshal sig content: %w", mErr)
 	}
@@ -2102,7 +2102,7 @@ func (h *Host) signState(nonce uint64, root []byte) ([]byte, error) {
 		EscrowId:  h.escrowID,
 		Nonce:     nonce,
 	}
-	sigData, err := proto.Marshal(sigContent)
+	sigData, err := types.CanonicalSignedBytes(sigContent)
 	if err != nil {
 		return nil, fmt.Errorf("marshal state sig content: %w", err)
 	}
