@@ -1,6 +1,7 @@
 package completionapi
 
 import (
+	"bytes"
 	"common/logging"
 	"common/utils"
 	"encoding/json"
@@ -339,24 +340,44 @@ func NewCompletionResponseFromLines(lines []string) (CompletionResponse, error) 
 }
 
 func NewCompletionResponseFromLinesFromResponsePayload(payload []byte) (CompletionResponse, error) {
-	var genericMap map[string]interface{}
-	bytes := []byte(payload)
-	if err := json.Unmarshal(bytes, &genericMap); err != nil {
-		logging.Error("Failed to unmarshal response payload into var genericMap map[string]interface{}", types.Inferences, "err", err)
-		return nil, err
-	}
-
-	if _, exists := genericMap["events"]; exists {
+	// A streamed payload is {"events":[...]} . Peeking at the top-level keys
+	// avoids decoding every event string into a map just to notice that key.
+	if payloadHasTopLevelEvents(payload) {
 		logging.Info("Unmarshaling streamed response", types.Inferences)
 
 		var serialized SerializedStreamedResponse
-		if err := json.Unmarshal(bytes, &serialized); err != nil {
+		if err := json.Unmarshal(payload, &serialized); err != nil {
 			logging.Error("Failed to unmarshal response payload into SerializedStreamedResponse", types.Inferences, "err", err)
 			return nil, err
 		}
 
 		return NewCompletionResponseFromLines(serialized.Events)
-	} else {
-		return NewCompletionResponseFromBytes(bytes)
 	}
+	return NewCompletionResponseFromBytes(payload)
+}
+
+// payloadHasTopLevelEvents reports whether the top-level object has an
+// "events" key. It returns before decoding that value, so the event bodies
+// are not copied.
+func payloadHasTopLevelEvents(payload []byte) bool {
+	dec := json.NewDecoder(bytes.NewReader(payload))
+	tok, err := dec.Token()
+	if err != nil || tok != json.Delim('{') {
+		return false
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		name, _ := key.(string)
+		if name == "events" {
+			return true
+		}
+		var skip json.RawMessage
+		if err := dec.Decode(&skip); err != nil {
+			return false
+		}
+	}
+	return false
 }

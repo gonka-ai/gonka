@@ -25,6 +25,11 @@ const (
 	replayTokenIDLimit = 9_999_999
 	// maxReplayTopTokensPerPosition is the vLLM plugin's per-position top_tokens limit; wider positions are rejected before replay.
 	maxReplayTopTokensPerPosition = 64
+	// storedPromptRejectReason and storedResponseRejectReason are the
+	// InvalidInferenceResult reasons for a stored payload that cannot be
+	// parsed. Validator.Validate turns those into an executor-fault vote.
+	storedPromptRejectReason   = "Failed to modify promptPayload."
+	storedResponseRejectReason = "Failed to unmarshal responsePayload."
 )
 
 // ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
@@ -259,10 +264,39 @@ func NormalizeReplayStream(statusCode int, body []byte) (int, []byte, error) {
 	if replayDataPayload(lines[len(lines)-1]) != "[DONE]" {
 		return 0, nil, errReplayStreamIncomplete
 	}
-	if _, err := parseReplayResponse(body); err != nil {
+	// The caller parses the body once and keeps that tree. A full parse here
+	// would build the logprob tree and throw it away, and executeMLRequest
+	// calls this again before that parse.
+	if err := replayStreamWellFormed(lines); err != nil {
 		return 0, nil, err
 	}
 	return statusCode, body, nil
+}
+
+// replayStreamWellFormed checks that every data line is JSON and that one
+// chunk carries usage. Unknown fields are skipped, so a line's logprobs are
+// not decoded into token strings.
+func replayStreamWellFormed(lines []string) error {
+	sawUsage := false
+	for _, line := range lines {
+		payload := replayDataPayload(line)
+		if payload == "" || payload == "[DONE]" {
+			continue
+		}
+		var head struct {
+			Usage completionapi.Usage `json:"usage"`
+		}
+		if err := json.Unmarshal([]byte(payload), &head); err != nil {
+			return err
+		}
+		if !head.Usage.IsEmpty() {
+			sawUsage = true
+		}
+	}
+	if !sawUsage {
+		return errReplayStreamNoUsage
+	}
+	return nil
 }
 
 func parseReplayResponse(body []byte) (completionapi.CompletionResponse, error) {
@@ -441,7 +475,7 @@ func ExecuteValidationWithPolicy(
 		logprobsMode,
 	)
 	if err != nil {
-		return &InvalidInferenceResult{inferenceID, "Failed to modify promptPayload.", err}, nil
+		return &InvalidInferenceResult{inferenceID, storedPromptRejectReason, err}, nil
 	}
 	if err := json.Unmarshal(modifiedRequest.NewBody, &requestMap); err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal promptPayload.", err}, nil
@@ -449,13 +483,15 @@ func ExecuteValidationWithPolicy(
 
 	originalResponse, err := UnmarshalResponsePayload(responsePayload)
 	if err != nil {
-		return &InvalidInferenceResult{inferenceID, "Failed to unmarshal responsePayload.", err}, nil
+		return &InvalidInferenceResult{inferenceID, storedResponseRejectReason, err}, nil
 	}
 
 	enforcedTokens, err := originalResponse.GetEnforcedTokens()
 	if err != nil {
 		return &InvalidInferenceResult{inferenceID, "Failed to get enforced tokens.", err}, nil
 	}
+	// Logits stay on Resp. The raw SSE lines duplicate the stored payload.
+	dropStreamLines(originalResponse)
 
 	isEmptySentinel := IsEmptySentinelTokens(enforcedTokens)
 
@@ -509,6 +545,9 @@ func ExecuteValidationWithPolicy(
 	if err != nil {
 		return nil, err
 	}
+	// The marshaled body is what the node receives. The token tree copy is
+	// only an input to that marshal.
+	delete(requestMap, "enforced_tokens")
 
 	resp, err := execute(ctx, requestBody)
 	if err != nil {
@@ -553,6 +592,7 @@ func ExecuteValidationWithPolicy(
 		logging.Error("Failed to unmarshal responseValidation", types.Validation, "id", inferenceID, "error", err)
 		return nil, err
 	}
+	dropStreamLines(responseValidation)
 
 	if isEmptySentinel && statusCode == http.StatusOK {
 		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
@@ -639,6 +679,50 @@ func shortOutputChecks(
 	}
 
 	return CompareLogitsWithPolicy(originalLogits, validationLogits, baseResult, scoring.ForRequest(requestMap), logprobsMode)
+}
+
+// StoredPayloadKind says whether a validation result is a stored payload
+// the executor failed to make parseable. Other invalid results are votes
+// about the inference itself.
+type StoredPayloadKind int
+
+const (
+	StoredPayloadOK StoredPayloadKind = iota
+	StoredPayloadPrompt
+	StoredPayloadResponse
+)
+
+// RejectedStoredPayload reports a prompt or response parse failure and the
+// cause to surface on the executor-fault vote.
+func RejectedStoredPayload(result ValidationResult) (StoredPayloadKind, error) {
+	inv, ok := result.(*InvalidInferenceResult)
+	if !ok || inv == nil {
+		return StoredPayloadOK, nil
+	}
+	switch inv.Reason {
+	case storedPromptRejectReason:
+		return StoredPayloadPrompt, storedPayloadCause(inv)
+	case storedResponseRejectReason:
+		return StoredPayloadResponse, storedPayloadCause(inv)
+	default:
+		return StoredPayloadOK, nil
+	}
+}
+
+func storedPayloadCause(inv *InvalidInferenceResult) error {
+	if inv.Error != nil {
+		return inv.Error
+	}
+	return errors.New(inv.Reason)
+}
+
+// dropStreamLines releases the raw SSE text once the decoded response exists.
+// GetEnforcedTokens, GetUsage, and ExtractLogits read Resp.
+func dropStreamLines(resp completionapi.CompletionResponse) {
+	streamed, ok := resp.(*completionapi.StreamedCompletionResponse)
+	if ok && streamed != nil {
+		streamed.Lines = nil
+	}
 }
 
 func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionResponse, error) {
