@@ -164,6 +164,7 @@ const (
 	pgInferenceValidationObsParent = "devshard_inference_validation_obs"
 	pgSealedValidationObsParent    = "devshard_sealed_validation_obs"
 	pgValidationLeasesParent       = "devshard_validation_leases"
+	pgOwnFinishesParent            = "devshard_own_finishes"
 	pgSessionIndex                 = "devshard_session_index"
 )
 
@@ -179,6 +180,7 @@ var postgresPartitionedParents = []string{
 	pgInferenceValidationObsParent,
 	pgSealedValidationObsParent,
 	pgValidationLeasesParent,
+	pgOwnFinishesParent,
 }
 
 func pgSessionsPartition(epochID uint64) string {
@@ -207,6 +209,9 @@ func pgSealedValidationObsPartition(epochID uint64) string {
 }
 func pgValidationLeasesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgValidationLeasesParent, epochID)
+}
+func pgOwnFinishesPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgOwnFinishesParent, epochID)
 }
 
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
@@ -786,6 +791,9 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 		return err
 	}
 	if err := create(pgValidationLeasesParent, pgValidationLeasesPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgOwnFinishesParent, pgOwnFinishesPartition(epochID)); err != nil {
 		return err
 	}
 
@@ -2308,7 +2316,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_sealed_inferences', 'devshard_validation_leases', 'devshard_slot_validation_obs', 'devshard_inference_validation_obs', 'devshard_sealed_validation_obs')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_sealed_inferences', 'devshard_validation_leases', 'devshard_slot_validation_obs', 'devshard_inference_validation_obs', 'devshard_sealed_validation_obs', 'devshard_own_finishes')
 	`)
 	if err != nil {
 		return fmt.Errorf("list devshard partitions: %w", err)
@@ -2406,7 +2414,7 @@ func (s *Postgres) DeleteEscrowCache(escrowID string) error {
 }
 
 func pgPartitionEpoch(name string) (uint64, bool) {
-	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgInferencesParent, pgValidationLeasesParent, pgValidationObsParent, pgInferenceValidationObsParent, pgSealedValidationObsParent} {
+	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgInferencesParent, pgValidationLeasesParent, pgValidationObsParent, pgInferenceValidationObsParent, pgSealedValidationObsParent, pgOwnFinishesParent} {
 		prefix := parent + "_epoch_"
 		if strings.HasPrefix(name, prefix) {
 			epochID, err := strconv.ParseUint(strings.TrimPrefix(name, prefix), 10, 64)

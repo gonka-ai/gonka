@@ -295,6 +295,19 @@ ALTER TABLE devshard_validation_credits
     ADD COLUMN IF NOT EXISTS hold_token     UUID,
     ADD COLUMN IF NOT EXISTS reserved_until TIMESTAMPTZ`},
 	},
+	{
+		ID:   21,
+		Name: "devshard_own_finishes_parent",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_own_finishes (
+    epoch_id     BIGINT NOT NULL,
+    escrow_id    TEXT   NOT NULL,
+    inference_id BIGINT NOT NULL,
+    tx_proto     BYTEA  NOT NULL,
+    created_at   BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (epoch_id, escrow_id, inference_id)
+) PARTITION BY RANGE (epoch_id)`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

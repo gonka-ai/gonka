@@ -291,6 +291,22 @@ func migrateSealedAndObs(src *SQLite, dest Storage, escrowID string) error {
 		}
 	}
 
+	finishes, err := src.listOwnFinishes(escrowID)
+	if err != nil {
+		return err
+	}
+	if len(finishes) > 0 {
+		finishDest, ok := AsOwnFinishStore(dest, escrowID)
+		if !ok {
+			return fmt.Errorf("dest %T does not support own finishes", dest)
+		}
+		for id, tx := range finishes {
+			if err := finishDest.SaveOwnFinish(escrowID, id, tx); err != nil {
+				return fmt.Errorf("copy own finish %d: %w", id, err)
+			}
+		}
+	}
+
 	live, err := src.listValidationObs(escrowID, "inference_validation_obs")
 	if err != nil {
 		return fmt.Errorf("list live validation obs: %w", err)

@@ -803,3 +803,33 @@ func runPruneEpoch_WriteAfter(t *testing.T, store Storage) {
 	require.NoError(t, err)
 	require.Len(t, diffs, 1)
 }
+
+func runOwnFinishes(t *testing.T, store Storage) {
+	t.Helper()
+	require.NoError(t, store.CreateSession(defaultParams()))
+	finishes, ok := AsOwnFinishStore(store, "escrow-1")
+	require.True(t, ok)
+
+	got, err := finishes.LoadOwnFinishes("escrow-1", []uint64{1, 2})
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	require.NoError(t, finishes.SaveOwnFinish("escrow-1", 1, []byte("first")))
+	require.NoError(t, finishes.SaveOwnFinish("escrow-1", 1, []byte("second")))
+	require.NoError(t, finishes.SaveOwnFinish("escrow-1", 3, []byte("third")))
+
+	got, err = finishes.LoadOwnFinishes("escrow-1", []uint64{1, 2, 3})
+	require.NoError(t, err)
+	require.Equal(t, map[uint64][]byte{1: []byte("first"), 3: []byte("third")}, got)
+
+	got, err = finishes.LoadOwnFinishes("escrow-1", []uint64{3})
+	require.NoError(t, err)
+	require.Equal(t, map[uint64][]byte{3: []byte("third")}, got)
+
+	got, err = finishes.LoadOwnFinishes("escrow-1", nil)
+	require.NoError(t, err)
+	require.Empty(t, got)
+
+	_, err = finishes.LoadOwnFinishes("missing", []uint64{1})
+	require.ErrorIs(t, err, ErrSessionNotFound)
+}
