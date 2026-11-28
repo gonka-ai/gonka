@@ -354,6 +354,8 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			Priority: 10_000_000,
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
+		// SDK skips the fee transfer for the zero fee `--gas auto` simulates with; this meters it. Remove when the SDK does.
+		NewFeeDeductSimGasDecorator(options.AccountKeeper, options.BankKeeper),
 		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
 		// Cheap mempool filters before signature verification (avoid crypto work on
 		// obviously invalid PoC txs). CheckTx ante failures discard
