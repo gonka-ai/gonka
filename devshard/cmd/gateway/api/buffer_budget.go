@@ -6,8 +6,9 @@ import (
 )
 
 var (
-	ErrResponseBufferFull = errors.New("the gateway is holding as many buffered replies as it can")
-	ErrRequestBodiesFull  = errors.New("the gateway is reading as many request bodies as it can")
+	ErrResponseBufferFull  = errors.New("the gateway is holding as many buffered replies as it can")
+	ErrRequestBodiesFull   = errors.New("the gateway is reading as many request bodies as it can")
+	ErrCallerBodyShareFull = errors.New("this caller already has as many request bodies in flight as its share of the gateway's request-body budget holds")
 )
 
 type BufferBudget struct {
@@ -64,25 +65,33 @@ func (b *BufferBudget) forCaller(caller string, limit int64) *callerShare {
 	return &callerShare{budget: b, caller: caller, limit: limit}
 }
 
-func (s *callerShare) reserve(bytes int64) bool {
+func (s *callerShare) reserve(bytes int64) error {
 	if s == nil || !s.budget.accountsFor(bytes) {
-		return true
+		return nil
 	}
 	b := s.budget
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if !b.fitsLocked(bytes) {
-		return false
+	if s.overShareLocked(bytes) {
+		return ErrCallerBodyShareFull
 	}
-	if s.limit > 0 && b.callers[s.caller]+bytes > s.limit {
-		return false
+	if !b.fitsLocked(bytes) {
+		return ErrRequestBodiesFull
 	}
 	if b.callers == nil {
 		b.callers = make(map[string]int64)
 	}
 	b.held += bytes
 	b.callers[s.caller] += bytes
-	return true
+	return nil
+}
+
+func (s *callerShare) overShareLocked(bytes int64) bool {
+	b := s.budget
+	if s.limit <= 0 || (b.limit > 0 && s.limit >= b.limit) {
+		return false
+	}
+	return b.callers[s.caller]+bytes > s.limit
 }
 
 func (s *callerShare) release(bytes int64) {

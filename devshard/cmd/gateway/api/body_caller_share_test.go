@@ -71,7 +71,7 @@ func shareHarness(t *testing.T, access string) (*harness, string) {
 
 // Test flow:
 //  1. Make qwen reachable by API key only, give the gateway a body budget of three bodies and a per-caller share of two, and let one key send two bodies that deliver every byte and then stall.
-//  2. Send a third body with the same key and assert it is refused 503 with a Retry-After while the first two hold their bytes and the budget has a free slot.
+//  2. Send a third body with the same key and assert it is refused 429 with a Retry-After and an error naming the caller's share, while the first two hold their bytes and the budget has a free slot.
 //  3. Send a body with a second key and assert it is served 200 although the first key is stalling.
 //  4. Release the stalled bodies and assert both are served, nothing stays reserved and no caller keeps an entry.
 //  5. Send a body with the first key again and assert it is served.
@@ -82,8 +82,8 @@ func TestACallerThatStallsItsBodiesCannotHoldMoreThanItsShareOfTheBodyBudget(t *
 	refused := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(clientKey))
 	admitted := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(otherClientKey))
 
-	if refused.Code != http.StatusServiceUnavailable || refused.Header().Get("Retry-After") == "" {
-		t.Errorf("third body of the stalling key = %d, Retry-After %q (%s), want 503 with a Retry-After", refused.Code, refused.Header().Get("Retry-After"), refused.Body.String())
+	if refused.Code != http.StatusTooManyRequests || refused.Header().Get("Retry-After") == "" || !strings.Contains(refused.Body.String(), ErrCallerBodyShareFull.Error()) {
+		t.Errorf("third body of the stalling key = %d, Retry-After %q (%s), want 429 with a Retry-After and %q", refused.Code, refused.Header().Get("Retry-After"), refused.Body.String(), ErrCallerBodyShareFull.Error())
 	}
 	if admitted.Code != http.StatusOK {
 		t.Errorf("body of a second key = %d (%s), want 200 while the first key stalls", admitted.Code, admitted.Body.String())
@@ -158,7 +158,7 @@ func TestABodyBudgetBelowTheCallerShareCapsANonAdminCallerAtTheBudget(t *testing
 // Test flow:
 //  1. Give one caller a share of 100 bytes in a budget of 1000 and read a 60 byte body for it.
 //  2. Read a 60 byte body for a second caller and assert it is read in full.
-//  3. Read a second 60 byte body for the first caller and assert it is refused with `ErrRequestBodiesFull`.
+//  3. Read a second 60 byte body for the first caller and assert it is refused with `ErrCallerBodyShareFull`.
 //  4. Assert the refusal gave back what that read had charged: the first body's 60 bytes and the second caller's 60 are all that stay reserved.
 //  5. Give both bodies back and assert nothing is reserved and no caller is tracked.
 func TestARefusedCallerGivesBackOnlyWhatItsOwnReadCharged(t *testing.T) {
@@ -177,8 +177,8 @@ func TestARefusedCallerGivesBackOnlyWhatItsOwnReadCharged(t *testing.T) {
 	}
 	_, err = readAll(strings.NewReader(sixty), first)
 
-	if !errors.Is(err, ErrRequestBodiesFull) {
-		t.Errorf("read past the share = %v, want ErrRequestBodiesFull", err)
+	if !errors.Is(err, ErrCallerBodyShareFull) {
+		t.Errorf("read past the share = %v, want ErrCallerBodyShareFull", err)
 	}
 	if held := budget.Held(); held != 120 {
 		t.Errorf("reserved after the refusal = %d, want 120", held)
@@ -187,6 +187,61 @@ func TestARefusedCallerGivesBackOnlyWhatItsOwnReadCharged(t *testing.T) {
 	second.release(int64(len(secondBody)))
 	if held, callers := budget.Held(), len(budget.callers); held != 0 || callers != 0 {
 		t.Errorf("after giving back: %d bytes reserved and %d callers tracked, want 0 and 0", held, callers)
+	}
+}
+
+// Test flow:
+//  1. Make qwen reachable by API key, give the gateway a body budget of three bodies and a share of two, stall two bodies from one key and one from another so the budget is full.
+//  2. Send a body with the second key, whose own share has room, and assert it is refused 503 with a Retry-After and the global budget's text, not 429.
+//  3. Map both refusals through `statusForError` and assert the share is 429 and the global budget 503.
+func TestAFullBodyBudgetIsStillAnsweredAsTheGatewayHavingNoRoom(t *testing.T) {
+	live, body := shareHarness(t, config.ModelAccessAPIKey)
+	stallBodies(t, live, clientKey, body, shareHoldingBody)
+	stallBodies(t, live, otherClientKey, body, shareBudgetBody-shareHoldingBody)
+
+	refused := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(otherClientKey))
+
+	if refused.Code != http.StatusServiceUnavailable || refused.Header().Get("Retry-After") == "" || !strings.Contains(refused.Body.String(), ErrRequestBodiesFull.Error()) {
+		t.Errorf("body past the whole budget = %d, Retry-After %q (%s), want 503 with a Retry-After and %q", refused.Code, refused.Header().Get("Retry-After"), refused.Body.String(), ErrRequestBodiesFull.Error())
+	}
+	if got := statusForError(ErrCallerBodyShareFull); got != http.StatusTooManyRequests {
+		t.Errorf("status of a caller past its share = %d, want %d", got, http.StatusTooManyRequests)
+	}
+	if got := statusForError(ErrRequestBodiesFull); got != http.StatusServiceUnavailable {
+		t.Errorf("status of a full budget = %d, want %d", got, http.StatusServiceUnavailable)
+	}
+}
+
+// Test flow:
+//  1. Give a caller a share of 100 bytes in a budget of 150 and hold 90 bytes for it, then hold 60 bytes for a second caller so the budget is full.
+//  2. Read 20 more bytes for the first caller and assert it is refused with `ErrCallerBodyShareFull`, since it is past its own share as well.
+//  3. Read 20 bytes for a third caller and assert it is refused with `ErrRequestBodiesFull`, since only the budget is full.
+//  4. Give a caller a share equal to the whole budget and read past it, and assert that refusal is `ErrRequestBodiesFull`, since a share spanning the budget is never exceeded before the budget is.
+func TestAShareIsAnsweredBeforeTheBudgetAndAShareSpanningTheBudgetIsNot(t *testing.T) {
+	budget := NewBufferBudget(150)
+	first := budget.forCaller("first", 100)
+	second := budget.forCaller("second", 100)
+	third := budget.forCaller("third", 100)
+	if err := first.reserve(90); err != nil {
+		t.Fatalf("first reservation: %v", err)
+	}
+	if err := second.reserve(60); err != nil {
+		t.Fatalf("second caller's reservation: %v", err)
+	}
+
+	if err := first.reserve(20); !errors.Is(err, ErrCallerBodyShareFull) {
+		t.Errorf("past its share with the budget full = %v, want ErrCallerBodyShareFull", err)
+	}
+	if err := third.reserve(20); !errors.Is(err, ErrRequestBodiesFull) {
+		t.Errorf("within its share with the budget full = %v, want ErrRequestBodiesFull", err)
+	}
+
+	whole := NewBufferBudget(100).forCaller("whole", 100)
+	if err := whole.reserve(60); err != nil {
+		t.Fatalf("whole-budget share reservation: %v", err)
+	}
+	if err := whole.reserve(60); !errors.Is(err, ErrRequestBodiesFull) {
+		t.Errorf("past a share equal to the budget = %v, want ErrRequestBodiesFull", err)
 	}
 }
 
@@ -214,7 +269,7 @@ func TestTheAdminKeyIsNotHeldToTheCallerShareOfTheBodyBudget(t *testing.T) {
 
 // Test flow:
 //  1. Open qwen to every caller, give the gateway a body budget of three bodies and a share of two, and stall two bodies from one credential: none at all, then a key no one configured.
-//  2. Send a body with no key and a body with an unknown key and assert both are refused 503, so neither lands in an exempt bucket.
+//  2. Send a body with no key and a body with an unknown key and assert both are refused 429, so neither lands in an exempt bucket.
 //  3. Send a body with a client key and a body with the admin key and assert both are served 200 while the other credentials stall.
 func TestKeylessAndUnknownKeyCallersShareOneCappedBucket(t *testing.T) {
 	const unknownKey = "no-such-key"
@@ -228,8 +283,8 @@ func TestKeylessAndUnknownKeyCallersShareOneCappedBucket(t *testing.T) {
 			client := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(clientKey))
 			admin := live.request(t, http.MethodPost, "/v1/chat/completions", body, adminHeaders())
 
-			if keyless.Code != http.StatusServiceUnavailable || unknown.Code != http.StatusServiceUnavailable {
-				t.Errorf("body with no key = %d, with an unknown key = %d, want 503 for both", keyless.Code, unknown.Code)
+			if keyless.Code != http.StatusTooManyRequests || unknown.Code != http.StatusTooManyRequests {
+				t.Errorf("body with no key = %d, with an unknown key = %d, want 429 for both", keyless.Code, unknown.Code)
 			}
 			if client.Code != http.StatusOK || admin.Code != http.StatusOK {
 				t.Errorf("body with a client key = %d, with the admin key = %d, want 200 for both", client.Code, admin.Code)

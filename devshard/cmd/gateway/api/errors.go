@@ -188,6 +188,9 @@ func statusForError(err error) int {
 	if _, ours := rateLimited(err); ours {
 		return http.StatusTooManyRequests
 	}
+	if callerOverShare(err) {
+		return http.StatusTooManyRequests
+	}
 	if shardHasNoRoom(err) || requestCapped(err) {
 		return http.StatusServiceUnavailable
 	}
@@ -289,6 +292,10 @@ func requestCapped(err error) bool {
 	return errors.Is(err, scheduler.ErrRequestCapped)
 }
 
+func callerOverShare(err error) bool {
+	return errors.Is(err, ErrCallerBodyShareFull)
+}
+
 func shardHasNoRoom(err error) bool {
 	return errors.Is(err, scheduler.ErrHostsBusy) ||
 		errors.Is(err, scheduler.ErrNoEscrowCapacity) ||
@@ -322,7 +329,7 @@ func (s *Server) writeErrorUnder(w http.ResponseWriter, err error, configuration
 		w.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
 	case requestCapped(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(requestCapRetryAfter.Seconds()), 10))
-	case ours, shardHasNoRoom(err):
+	case ours, callerOverShare(err), shardHasNoRoom(err):
 		w.Header().Set("Retry-After", strconv.FormatInt(int64(noHostRetryAfter.Seconds()), 10))
 	}
 	writeJSON(w, statusForError(err), errorEnvelope{Error: detailForError(err)})

@@ -214,9 +214,9 @@ func readAll(reader io.Reader, budget *callerShare) ([]byte, error) {
 			body = append(body, 0)[:len(body)]
 		}
 		read, err := reader.Read(body[len(body):cap(body)])
-		if !budget.reserve(int64(read)) {
+		if refusal := budget.reserve(int64(read)); refusal != nil {
 			budget.release(int64(len(body)))
-			return nil, ErrRequestBodiesFull
+			return nil, refusal
 		}
 		body = body[:len(body)+read]
 		if err != nil {

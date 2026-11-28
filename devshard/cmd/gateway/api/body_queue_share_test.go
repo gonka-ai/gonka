@@ -91,7 +91,7 @@ func assertNothingReserved(t *testing.T, live *harness, when string) {
 // Test flow:
 //  1. Make qwen reachable by API key, give the gateway a body budget of three bodies and a share of two, and hold the limiter's verdict.
 //  2. Send two bodies with one key and assert both reach the limiter wait and the budget holds both while they queue.
-//  3. Send a third body with the same key and assert it is refused 503 with a Retry-After before it reaches the limiter.
+//  3. Send a third body with the same key and assert it is refused 429 with a Retry-After before it reaches the limiter.
 //  4. Send a body with a second key and assert it reaches the limiter wait, so one key's queue does not block another key.
 //  5. Admit every queued request and assert all are served 200 and nothing stays reserved.
 //  6. Send a body with the first key again and assert it is served.
@@ -104,8 +104,8 @@ func TestAQueuedRequestStaysChargedToItsCallerUntilTheLimiterAdmitsIt(t *testing
 		t.Errorf("body bytes reserved while two requests queue = %d, want %d", held, want)
 	}
 	refused := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(clientKey))
-	if refused.Code != http.StatusServiceUnavailable || refused.Header().Get("Retry-After") == "" {
-		t.Errorf("third body of the queueing key = %d, Retry-After %q (%s), want 503 with a Retry-After", refused.Code, refused.Header().Get("Retry-After"), refused.Body.String())
+	if refused.Code != http.StatusTooManyRequests || refused.Header().Get("Retry-After") == "" {
+		t.Errorf("third body of the queueing key = %d, Retry-After %q (%s), want 429 with a Retry-After", refused.Code, refused.Header().Get("Retry-After"), refused.Body.String())
 	}
 	select {
 	case <-gated.entered:
