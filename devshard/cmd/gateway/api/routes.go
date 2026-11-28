@@ -214,9 +214,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	releaseBody := sync.OnceFunc(func() { share.release(bodyBytes) })
 	defer releaseBody()
 	normalized, err := filters.NormalizeRequest(body, filterOptions(configuration, identity.admin, s.servedModelVocabulary, s.modelFilters.Profiles()))
-	if identity.admin {
-		releaseBody()
-	}
+	releaseBody()
 	if err != nil {
 		s.capture.filterRejected(r, requestID, body, err)
 		s.writeErrorFor(w, err)
@@ -251,13 +249,11 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 		key = cacheKeyFor(r, normalized)
 		if directive.looksUp() {
 			if reader, adopted := s.streams.adopt(key, s.cache.currentGeneration()); adopted {
-				releaseBody()
 				escrowID, written := serveLog(w, r, requestID, reader)
 				s.finishReplay(requestID, normalized.Model, identity.caller(), escrowID, true, written, prompt)
 				return
 			}
 			if entry, hit := s.cache.get(key, s.now()); hit {
-				releaseBody()
 				written := serveCached(w, requestID, entry)
 				s.finishReplay(requestID, normalized.Model, identity.caller(), entry.escrowID, entry.stream, written, prompt)
 				return
@@ -271,7 +267,6 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 
 	counted := s.countPrompt(normalized.Model, prompt)
 	err = s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(counted.tokens), s.capacity.ForModel(normalized.Model))
-	releaseBody()
 	if err != nil {
 		if label, refused := limiterRefusal(err); refused && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, label)

@@ -90,30 +90,19 @@ func assertNothingReserved(t *testing.T, live *harness, when string) {
 
 // Test flow:
 //  1. Make qwen reachable by API key, give the gateway a body budget of three bodies and a share of two, and hold the limiter's verdict.
-//  2. Send two bodies with one key and assert both reach the limiter wait and the budget holds both while they queue.
-//  3. Send a third body with the same key and assert it is refused 429 with a Retry-After before it reaches the limiter.
-//  4. Send a body with a second key and assert it reaches the limiter wait, so one key's queue does not block another key.
+//  2. Queue four bodies with one key, more than its share and more than the whole budget would hold, and assert every one reaches the limiter wait.
+//  3. Assert the budget reserves nothing and tracks no caller while they queue.
+//  4. Send a body with a second key and assert it reaches the limiter wait too.
 //  5. Admit every queued request and assert all are served 200 and nothing stays reserved.
-//  6. Send a body with the first key again and assert it is served.
-func TestAQueuedRequestStaysChargedToItsCallerUntilTheLimiterAdmitsIt(t *testing.T) {
+func TestARequestQueuedAtTheLimiterHoldsNoBodyBudget(t *testing.T) {
 	live, body := shareHarness(t, config.ModelAccessAPIKey)
-	gated := gateLimiter(t, live, queuedBodyCount)
-	queued := queueBodies(t, live, gated, clientKey, body, shareHoldingBody)
+	gated := gateLimiter(t, live, queuedBodyCount+1)
+	queued := queueBodies(t, live, gated, clientKey, body, queuedBodyCount)
 
-	if held, want := live.server.requestBodies.Held(), int64(len(body))*shareHoldingBody; held != want {
-		t.Errorf("body bytes reserved while two requests queue = %d, want %d", held, want)
-	}
-	refused := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(clientKey))
-	if refused.Code != http.StatusTooManyRequests || refused.Header().Get("Retry-After") == "" {
-		t.Errorf("third body of the queueing key = %d, Retry-After %q (%s), want 429 with a Retry-After", refused.Code, refused.Header().Get("Retry-After"), refused.Body.String())
-	}
-	select {
-	case <-gated.entered:
-		t.Error("the refused third body reached the limiter")
-	default:
-	}
+	assertNothingReserved(t, live, "while four bodies of one key queue")
 	other := sendQueued(context.Background(), live, otherClientKey, body)
 	awaitValue(t, gated.entered, "the second key's request reaching the limiter wait")
+	assertNothingReserved(t, live, "while five bodies of two keys queue")
 
 	gated.admitAll()
 	for _, sender := range append(queued, other) {
@@ -123,17 +112,14 @@ func TestAQueuedRequestStaysChargedToItsCallerUntilTheLimiterAdmitsIt(t *testing
 		}
 	}
 	assertNothingReserved(t, live, "after every queued request was admitted")
-	if again := live.request(t, http.MethodPost, "/v1/chat/completions", body, callerHeaders(clientKey)); again.Code != http.StatusOK {
-		t.Errorf("body of the queueing key after admission = %d (%s), want 200", again.Code, again.Body.String())
-	}
 }
 
 // Test flow:
 //  1. Make qwen reachable by API key, give the gateway a body budget of three bodies and a share of two, and queue two bodies of one key at the limiter.
 //  2. Give the first a limiter refusal and cancel the second's context.
 //  3. Assert the first is answered 429, the second returns, and nothing stays reserved.
-//  4. Send two more bodies with the same key and assert both reach the limiter wait, so the charge came back.
-func TestARequestTheLimiterRefusesOrAbandonsReturnsItsCharge(t *testing.T) {
+//  4. Send four more bodies with the same key and assert all reach the limiter wait.
+func TestARequestTheLimiterRefusesOrAbandonsLeavesNothingReserved(t *testing.T) {
 	live, body := shareHarness(t, config.ModelAccessAPIKey)
 	gated := gateLimiter(t, live, queuedBodyCount)
 	refusedSender := sendQueued(context.Background(), live, clientKey, body)
@@ -151,13 +137,13 @@ func TestARequestTheLimiterRefusesOrAbandonsReturnsItsCharge(t *testing.T) {
 		t.Errorf("request the limiter refused = %d (%s), want 429", refusedSender.recorder.Code, refusedSender.recorder.Body.String())
 	}
 	assertNothingReserved(t, live, "after one request was refused and one abandoned")
-	queueBodies(t, live, gated, clientKey, body, shareHoldingBody)
+	queueBodies(t, live, gated, clientKey, body, queuedBodyCount)
 }
 
 // Test flow:
 //  1. Leave every model at the default admin-only access, give the gateway a body budget of three bodies, and hold the limiter's verdict.
 //  2. Send four bodies with the admin key and assert all four reach the limiter wait.
-//  3. Assert the budget holds nothing while they queue, since the admin key is not held to a share past normalisation.
+//  3. Assert the budget holds nothing while they queue.
 //  4. Admit them and assert all are served 200.
 func TestAnAdminRequestQueuedAtTheLimiterHoldsNoBodyBudget(t *testing.T) {
 	body := chatBodyOfBytes("qwen", shareBodyBytes)
@@ -179,27 +165,33 @@ func TestAnAdminRequestQueuedAtTheLimiterHoldsNoBodyBudget(t *testing.T) {
 
 // Test flow:
 //  1. Open qwen to every caller with the default body budget and share, and hold the limiter's verdict.
-//  2. Queue 64 ordinary bodies of 64 KiB with one client key and assert all reach the limiter wait.
-//  3. Admit them and assert all are served 200 and nothing stays reserved.
-func TestOrdinaryQueuedBodiesFitTheDefaultCallerShare(t *testing.T) {
-	const ordinaryBodyBytes = 64 << 10
-	const ordinaryQueueDepth = 64
-	body := chatBodyOfBytes("qwen", ordinaryBodyBytes)
+//  2. Queue 24 bodies of 1.6 MB, about 400k tokens, with one client key, together more than the default caller share, and assert all reach the limiter wait.
+//  3. Assert the budget reserves nothing while they queue.
+//  4. Admit them and assert all are served 200 and nothing stays reserved.
+func TestQueuedBodiesBeyondTheDefaultCallerShareAreAllAdmittedToTheQueue(t *testing.T) {
+	const largeBodyBytes = 1_600_000
+	const largeQueueDepth = 24
+	body := chatBodyOfBytes("qwen", largeBodyBytes)
 	live := liveWithRealTelemetry(t, func(c *config.Config) {
 		c.Server.APIKeys = []string{clientKey}
 		grantAccess(c, map[string]string{"qwen": config.ModelAccessAPIKey})
 	})
-	live.server.requestBodies = NewBufferBudget(config.Defaults().Limits.MaxBufferedRequestBytes)
-	gated := gateLimiter(t, live, ordinaryQueueDepth)
+	defaults := config.Defaults().Limits
+	live.server.requestBodies = NewBufferBudget(defaults.MaxBufferedRequestBytes)
+	if queuedBytes := int64(len(body)) * largeQueueDepth; queuedBytes <= defaults.MaxBufferedRequestBytesPerCaller {
+		t.Fatalf("%d queued bytes do not exceed the default caller share of %d", queuedBytes, defaults.MaxBufferedRequestBytesPerCaller)
+	}
+	gated := gateLimiter(t, live, largeQueueDepth)
 
-	queued := queueBodies(t, live, gated, clientKey, body, ordinaryQueueDepth)
+	queued := queueBodies(t, live, gated, clientKey, body, largeQueueDepth)
 
+	assertNothingReserved(t, live, "while the large bodies queue")
 	gated.admitAll()
 	for _, sender := range queued {
 		awaitValue(t, sender.handled, "a queued request returning")
 		if sender.recorder.Code != http.StatusOK {
-			t.Errorf("ordinary queued body = %d (%s), want 200", sender.recorder.Code, sender.recorder.Body.String())
+			t.Errorf("large queued body = %d (%s), want 200", sender.recorder.Code, sender.recorder.Body.String())
 		}
 	}
-	assertNothingReserved(t, live, "after every ordinary queued request was admitted")
+	assertNothingReserved(t, live, "after every large queued request was admitted")
 }
