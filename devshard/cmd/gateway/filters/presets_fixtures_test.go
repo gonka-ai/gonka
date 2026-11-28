@@ -7,6 +7,9 @@ const (
 
 	kimiOutputTokensFloor uint64 = 16
 
+	defaultToolsMaxCount      = 128
+	defaultPatternBudgetBytes = 4096
+
 	presetKimiForTest     PresetName = "kimi"
 	presetMinimaxForTest  PresetName = "minimax"
 	presetGLMFlashForTest PresetName = "glm_flash"

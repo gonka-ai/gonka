@@ -20,6 +20,10 @@ type RuleContext struct {
 	Profile  *Profile
 }
 
+func (ctx RuleContext) patternBudget() *patternBudget {
+	return ctx.Document.patternBudget(ctx.Profile.patternBudgetBytes())
+}
+
 // RuleFunc is one parameter rule: inspect/mutate ctx.Document, or reject.
 type RuleFunc func(RuleContext) error
 
@@ -143,16 +147,13 @@ var (
 		spec("metadata", StagePreValidation, validMetadata(metadataMaxKeys, metadataMaxKeyLen, metadataMaxValueLen)),
 		spec("stream_options", StagePreValidation, validStreamOptions()),
 		spec("min_tokens", StagePreValidation, requireUint()),
-		spec("tools", StagePreValidation, validTools(toolsBounds{
-			SchemaBounds: SchemaBounds{
-				MaxDepth:      toolsMaxDepth,
-				MaxNodes:      toolsMaxNodes,
-				MaxSizeBytes:  toolsMaxSizeBytes,
-				MaxBranch:     toolsMaxBranch,
-				MaxEnum:       toolsMaxEnum,
-				MaxPatternLen: toolsMaxPatternLen,
-			},
-			MaxCount: toolsMaxCount,
+		spec("tools", StagePreValidation, validTools(SchemaBounds{
+			MaxDepth:      toolsMaxDepth,
+			MaxNodes:      toolsMaxNodes,
+			MaxSizeBytes:  toolsMaxSizeBytes,
+			MaxBranch:     toolsMaxBranch,
+			MaxEnum:       toolsMaxEnum,
+			MaxPatternLen: toolsMaxPatternLen,
 		}, "auto")),
 		spec("tool_choice", StagePreValidation, validToolChoice(toolChoiceMaxNameLen)),
 		spec("parallel_tool_calls", StagePreValidation, parallelToolCalls()),

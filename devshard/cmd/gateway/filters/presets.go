@@ -72,7 +72,7 @@ func PresetCatalog() map[PresetName]FilterKnobs {
 	return catalog
 }
 
-// ComposeProfile resolves a setting into a fresh profile, refusing any knob value that loosens a request guard.
+// ComposeProfile resolves a setting into a fresh profile, refusing any knob value outside its bound or its ceiling.
 func ComposeProfile(model string, setting ModelSetting) (*Profile, error) {
 	presetName := setting.PresetFor(model)
 	preset, known := presetProfiles[presetName]

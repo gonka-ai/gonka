@@ -30,9 +30,9 @@ func maxDepthSchema(b *testing.B) map[string]any {
 }
 
 func BenchmarkToolsLargestRequestWithoutPatterns(b *testing.B) {
-	bounds := testToolsBounds().SchemaBounds
+	bounds := testToolsBounds()
 	for name, schema := range map[string]map[string]any{"wide_256_nodes": maxNodesSchema(b), "deep_16_levels": maxDepthSchema(b)} {
-		parameters := make([]map[string]any, toolsMaxCount)
+		parameters := make([]map[string]any, defaultToolsMaxCount)
 		for index := range parameters {
 			parameters[index] = schema
 		}
@@ -171,8 +171,8 @@ func BenchmarkWorstPatternRequest(b *testing.B) {
 			patterns[index] = shape(tag)
 			total += len(patterns[index])
 		}
-		if total > requestPatternMaxBytes {
-			b.Fatalf("%s patterns total %d bytes, budget %d", name, total, requestPatternMaxBytes)
+		if total > defaultPatternBudgetBytes {
+			b.Fatalf("%s patterns total %d bytes, budget %d", name, total, defaultPatternBudgetBytes)
 		}
 		tools := make([]string, len(patterns))
 		for index, pattern := range patterns {
@@ -192,5 +192,96 @@ func BenchmarkWorstPatternRequest(b *testing.B) {
 				}
 			})
 		}
+	}
+}
+
+func ceilingOptions(b *testing.B, toolsCount, patternBytes int) Options {
+	b.Helper()
+	profile, err := ComposeProfile("m", ModelSetting{Filters: FilterKnobs{ToolsMaxCount: &toolsCount, PatternBudgetBytes: &patternBytes}})
+	if err != nil {
+		b.Fatalf("ComposeProfile() = %v", err)
+	}
+	return Options{RoutedModel: "m", Profiles: NewProfileSet(map[string]*Profile{"m": profile}), DefaultMaxTokens: 3072, MaxTokensCap: 4096}
+}
+
+func plainConversationBody(b *testing.B) []byte {
+	b.Helper()
+	const paragraph = `The quick brown fox jumps over the lazy dog, and then explains at some length why it did so, quoting a \"source\" and a path like /usr/local/share for good measure. `
+	const messages = 2000
+	content := strings.Repeat(paragraph, (MaxBodyBytes-4096)/messages/len(paragraph))
+	body := []byte(`{"model":"m","messages":[{"role":"system","content":"s"}`)
+	for range messages {
+		body = append(body, `,{"role":"user","content":"`...)
+		body = append(body, content...)
+		body = append(body, `"}`...)
+	}
+	return append(body, `]}`...)
+}
+
+func plainSingleStringBody() []byte {
+	content := strings.Repeat("The quick brown fox jumps over the lazy dog. ", (MaxBodyBytes-1024)/45)
+	return []byte(`{"model":"m","messages":[{"role":"user","content":"` + content + `"}]}`)
+}
+
+func heavyPatternTools(b *testing.B, budgetBytes int) []string {
+	b.Helper()
+	var tools []string
+	for total, index := 0, 0; ; index++ {
+		pattern := strings.Repeat(`(?i)[^\p{Lu}\p{Ll}]`, 24) + strconv.Itoa(index)
+		if total += len(pattern); total > budgetBytes {
+			return tools
+		}
+		tools = append(tools, `{"type":"function","function":{"name":"p`+strconv.Itoa(index)+`","parameters":`+mustMarshalJSON(b, patternSchema(pattern))+`}}`)
+	}
+}
+
+func denseToolsBody(b *testing.B, count, patternBudgetBytes int) []byte {
+	b.Helper()
+	patternTools := heavyPatternTools(b, patternBudgetBytes)
+	build := func(properties int) string {
+		dense := `{"type":"function","function":{"name":"d","parameters":` + mustMarshalJSON(b, wideToolSchema(properties)) + `}}`
+		tools := append(repeatedTools(count-len(patternTools), dense), patternTools...)
+		return patternRequestBody(tools, "")
+	}
+	low, high := 0, toolsMaxNodes-1
+	for low < high {
+		middle := (low + high + 1) / 2
+		if _, err := ParseDocument([]byte(build(middle))); err == nil {
+			low = middle
+		} else {
+			high = middle - 1
+		}
+	}
+	return []byte(build(low))
+}
+
+func BenchmarkRaisedKnobCeilings(b *testing.B) {
+	cases := []struct {
+		name         string
+		body         func(b *testing.B) []byte
+		toolsCount   int
+		patternBytes int
+	}{
+		{"plain_conversation_10MiB", plainConversationBody, defaultToolsMaxCount, defaultPatternBudgetBytes},
+		{"plain_single_string_10MiB", func(*testing.B) []byte { return plainSingleStringBody() }, defaultToolsMaxCount, defaultPatternBudgetBytes},
+		{"defaults_dense_tools_and_heavy_patterns", func(b *testing.B) []byte {
+			return denseToolsBody(b, defaultToolsMaxCount, defaultPatternBudgetBytes)
+		}, defaultToolsMaxCount, defaultPatternBudgetBytes},
+		{"ceilings_dense_tools_and_heavy_patterns", func(b *testing.B) []byte {
+			return denseToolsBody(b, MaxToolsMaxCount, MaxPatternBudgetBytes)
+		}, MaxToolsMaxCount, MaxPatternBudgetBytes},
+	}
+	for _, testCase := range cases {
+		body := testCase.body(b)
+		options := ceilingOptions(b, testCase.toolsCount, testCase.patternBytes)
+		b.Run(testCase.name, func(b *testing.B) {
+			b.SetBytes(int64(len(body)))
+			b.ReportAllocs()
+			for b.Loop() {
+				if _, err := NormalizeRequest(body, options); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }

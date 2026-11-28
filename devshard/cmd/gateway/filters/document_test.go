@@ -6,6 +6,11 @@ import (
 	"testing"
 )
 
+const (
+	htmlRepetitions       = 2000
+	forcedFieldsAllowance = 512
+)
+
 // nestedObjectBody builds `{"a":{"a":...1...}}` with exactly depth opening braces.
 func nestedObjectBody(depth int) []byte {
 	var builder strings.Builder
@@ -58,7 +63,6 @@ func paddedBody(totalBytes int) []byte {
 	return []byte(`{"user":"` + strings.Repeat("a", totalBytes-len(envelope)) + `"}`)
 }
 
-// structuralNodeBody builds `{"stop":[[0,0,…],[0,0,…]]}` holding exactly nodes structural tokens, no container past MaxContainerMembers.
 func structuralNodeBody(nodes int) []byte {
 	const wrapperNodes = 2
 	remaining := nodes - wrapperNodes
@@ -83,7 +87,6 @@ func structuralNodeBody(nodes int) []byte {
 	return []byte(builder.String())
 }
 
-// wideContainerBody builds `{"stop":[0,…]}` or `{"logit_bias":{"0":0,…}}` holding exactly the given number of members in the one container.
 func wideContainerBody(members int, object bool) []byte {
 	var builder strings.Builder
 	if object {
@@ -232,15 +235,15 @@ func TestDocumentParseIgnoresCommasInsideStringsForMemberCount(t *testing.T) {
 //  3. Run the body through `ensureStructuralBounds` at the production limits and assert it is accepted, so the member limit leaves headroom over every legitimate container.
 func TestMemberLimitLeavesHeadroomOverTheLargestLegitimateContainers(t *testing.T) {
 	messages := make([]string, 0, messagesMaxEntries)
-	tools := make([]string, 0, toolsMaxCount)
-	bias := make([]string, 0, 1024)
+	tools := make([]string, 0, defaultToolsMaxCount)
+	bias := make([]string, 0, logitBiasMaxEntries)
 	for range messagesMaxEntries {
 		messages = append(messages, `{"role":"user","content":"hi"}`)
 	}
-	for range toolsMaxCount {
+	for range defaultToolsMaxCount {
 		tools = append(tools, `{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}`)
 	}
-	for index := range 1024 {
+	for index := range logitBiasMaxEntries {
 		bias = append(bias, fmt.Sprintf(`"%d":1`, index))
 	}
 	body := `{"model":"m","messages":[` + strings.Join(messages, ",") + `],"tools":[` + strings.Join(tools, ",") + `],"logit_bias":{` + strings.Join(bias, ",") + `}}`
@@ -518,7 +521,7 @@ func TestDocumentMarshalDoesNotEscapeHTML(t *testing.T) {
 //  2. Call NormalizeRequest with default options.
 //  3. Assert the normalized body carries none of the unicode escapes a default encoder writes for those three characters, and is shorter than the input plus 512 bytes of forced fields.
 func TestNormalizeRequestKeepsHTMLCharactersOneByteEach(t *testing.T) {
-	content := strings.Repeat("<a> && <b>", 2000)
+	content := strings.Repeat("<a> && <b>", htmlRepetitions)
 	body := `{"model":"qwen","messages":[{"role":"user","content":"` + content + `"}]}`
 
 	result, err := NormalizeRequest([]byte(body), Options{DefaultMaxTokens: 3072, MaxTokensCap: 4096})
@@ -530,7 +533,7 @@ func TestNormalizeRequestKeepsHTMLCharactersOneByteEach(t *testing.T) {
 			t.Fatalf("normalized body contains an escaped %s", code)
 		}
 	}
-	if len(result.Body) > len(body)+512 {
+	if len(result.Body) > len(body)+forcedFieldsAllowance {
 		t.Errorf("normalized body is %d bytes for a %d-byte input", len(result.Body), len(body))
 	}
 }

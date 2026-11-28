@@ -107,6 +107,18 @@ func TestNormalizeRequestRejectsAPatternPropertiesKeyWithInvalidSyntax(t *testin
 }
 
 // Test flow:
+//  1. Build a tools schema whose patternProperties holds the invalid keys `(c`, `(a` and `(b`.
+//  2. Call NormalizeRequest thirty times.
+//  3. Assert every rejection names `(a`, the first key in sorted order, so the 400 text does not depend on map iteration order.
+func TestNormalizeRequestNamesTheFirstSortedInvalidPatternPropertiesKey(t *testing.T) {
+	body := patternRequestBody(nil, `,"tools":[`+toolWithParams(t, schemaWithPatternPropertyKeys(nil, "(c", "(a", "(b"))+`]`)
+	for range 30 {
+		_, err := normalizeToolsTestRequest(t, body)
+		requireToolsRejection(t, err, "`(a`")
+	}
+}
+
+// Test flow:
 //  1. For tools, response_format and structured_outputs.json, build a schema with the five realistic `pattern` values and a nested object whose patternProperties holds three short keys, one of them a repeat of a `pattern`.
 //  2. Call NormalizeRequest.
 //  3. Assert the request is accepted.
@@ -127,7 +139,7 @@ func TestNormalizeRequestAcceptsARealisticSchemaWithPatternProperties(t *testing
 //  1. Build a schema whose patternProperties keys are `(unclosed` and a 513-byte run of one letter, and run `SchemaBounds.Check` with a pattern cap of 0.
 //  2. Assert the check accepts it, because a cap of 0 turns the pattern rules off for keys as it does for `pattern`.
 func TestSchemaBoundsPatternCapOfZeroSkipsPatternPropertiesKeys(t *testing.T) {
-	bounds := testToolsBounds().SchemaBounds
+	bounds := testToolsBounds()
 	bounds.MaxPatternLen = 0
 	schema := schemaWithPatternPropertyKeys(nil, "(unclosed", strings.Repeat("a", maxPatternPropertiesKey+1))
 	if err := bounds.Check(schema); err != nil {

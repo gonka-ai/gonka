@@ -104,12 +104,12 @@ func validStructuredOutputs(bounds structuredOutputsBounds) RuleFunc {
 			if !presentField(value, ok) {
 				continue
 			}
-			if err := constraintValidators[field](value, ctx.Document.patternBudget()); err != nil {
+			if err := constraintValidators[field](value, ctx.patternBudget()); err != nil {
 				return err
 			}
 		}
 		if value, ok := object["whitespace_pattern"]; presentField(value, ok) {
-			if err := validStructuredOutputsPattern(value, bounds.MaxPatternLen, "whitespace_pattern", ctx.Document.patternBudget()); err != nil {
+			if err := validStructuredOutputsPattern(value, bounds.MaxPatternLen, "whitespace_pattern", ctx.patternBudget()); err != nil {
 				return err
 			}
 		}

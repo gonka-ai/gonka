@@ -209,6 +209,46 @@ func TestAdminFiltersRejectsUnknownFilter(t *testing.T) {
 }
 
 // Test flow:
+//  1. PUT tools_max_count 64 and pattern_budget_bytes 2048 for Qwen, then GET the model's entry.
+//  2. Assert both responses show the stored values as effective and Kimi's entry still shows 128 and 4096.
+//  3. PUT each knob at zero, negative and one past its ceiling.
+//  4. Assert each is 400 naming the knob and the stored values stay as they were.
+func TestAdminFiltersRequestCostKnobs(t *testing.T) {
+	live := newFiltersHarness(t)
+
+	put := putFilters(t, live, filtersRoutePath+filtersQwenModel, `{"filters":{"tools_max_count":64,"pattern_budget_bytes":2048}}`)
+
+	if put.Code != http.StatusOK {
+		t.Fatalf("status = %d, body %s", put.Code, put.Body.String())
+	}
+	got := live.request(t, http.MethodGet, filtersRoutePath+filtersQwenModel, "", adminHeaders())
+	for _, entry := range []filterEntryResponse{decodeInto[filterEntryResponse](t, put), decodeInto[filterEntryResponse](t, got)} {
+		if entry.Effective["tools_max_count"] != float64(64) || entry.Effective["pattern_budget_bytes"] != float64(2048) {
+			t.Errorf("effective = %v, want tools_max_count 64 and pattern_budget_bytes 2048", entry.Effective)
+		}
+	}
+	kimi := decodeInto[filterEntryResponse](t, live.request(t, http.MethodGet, filtersRoutePath+filtersKimiModel, "", adminHeaders()))
+	if kimi.Effective["tools_max_count"] != float64(128) || kimi.Effective["pattern_budget_bytes"] != float64(4096) {
+		t.Errorf("kimi effective = %v, want the defaults 128 and 4096", kimi.Effective)
+	}
+	for _, refused := range []struct{ knob, value string }{
+		{"tools_max_count", "0"}, {"tools_max_count", "-1"}, {"tools_max_count", "257"},
+		{"pattern_budget_bytes", "0"}, {"pattern_budget_bytes", "-1"}, {"pattern_budget_bytes", "8193"},
+	} {
+		t.Run(refused.knob+"="+refused.value, func(t *testing.T) {
+			recorder := putFilters(t, live, filtersRoutePath+filtersQwenModel, `{"filters":{"`+refused.knob+`":`+refused.value+`}}`)
+			if recorder.Code != http.StatusBadRequest || !strings.Contains(recorder.Body.String(), refused.knob+" "+refused.value) {
+				t.Errorf("status = %d, body %s, want 400 naming %s", recorder.Code, recorder.Body.String(), refused.knob)
+			}
+		})
+	}
+	after := decodeInto[filterEntryResponse](t, live.request(t, http.MethodGet, filtersRoutePath+filtersQwenModel, "", adminHeaders()))
+	if after.Effective["tools_max_count"] != float64(64) {
+		t.Errorf("effective after refusals = %v, want the stored 64", after.Effective["tools_max_count"])
+	}
+}
+
+// Test flow:
 //  1. PUT an empty body, an empty object, and an empty preset with no filters.
 //  2. Assert each is 400 and nothing is stored.
 func TestAdminFiltersRejectsEmptySetting(t *testing.T) {

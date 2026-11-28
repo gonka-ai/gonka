@@ -32,13 +32,8 @@ var (
 	}
 )
 
-type toolsBounds struct {
-	SchemaBounds
-	MaxCount int
-}
-
 // validTools enforces the OpenAI tool contract plus tool_choice and min_tokens cross-field cleanup. See README.md, "`tools` and `tool_choice`".
-func validTools(bounds toolsBounds, defaultToolChoice string) RuleFunc {
+func validTools(bounds SchemaBounds, defaultToolChoice string) RuleFunc {
 	return func(ctx RuleContext) error {
 		raw, exists := ctx.Document.Get("tools")
 		if !exists {
@@ -57,8 +52,8 @@ func validTools(bounds toolsBounds, defaultToolChoice string) RuleFunc {
 			ctx.Document.Delete("tool_choice")
 			return nil
 		}
-		if bounds.MaxCount > 0 && len(tools) > bounds.MaxCount {
-			return Reject("tools: array length %d exceeds limit %d", len(tools), bounds.MaxCount)
+		if limit := ctx.Profile.toolsMaxCount(); len(tools) > limit {
+			return Reject("tools: array length %d exceeds limit %d", len(tools), limit)
 		}
 		if choice, _ := ctx.Document.Get("tool_choice"); choice == "required" {
 			ctx.Document.Set("tool_choice", defaultToolChoice)
@@ -67,7 +62,7 @@ func validTools(bounds toolsBounds, defaultToolChoice string) RuleFunc {
 		if !ctx.Document.Has("tool_choice") && defaultToolChoice != "" {
 			ctx.Document.Set("tool_choice", defaultToolChoice)
 		}
-		budget := ctx.Document.patternBudget()
+		budget := ctx.patternBudget()
 		for index, item := range tools {
 			tool, ok := item.(map[string]any)
 			if !ok {
@@ -168,7 +163,7 @@ func validResponseFormat(bounds SchemaBounds, maxNameLen int) RuleFunc {
 			if ctx.Profile.rejectsJSONSchema() {
 				return Reject("response_format.type: json_schema is not supported by this model")
 			}
-			return validResponseFormatJSONSchema(responseFormat, bounds, maxNameLen, ctx.Document.patternBudget())
+			return validResponseFormatJSONSchema(responseFormat, bounds, maxNameLen, ctx.patternBudget())
 		default:
 			return Reject("response_format.type: missing or unsupported: %q is not supported (allowed: text, json_object, json_schema)", responseType)
 		}

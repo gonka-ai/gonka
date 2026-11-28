@@ -46,6 +46,8 @@ type Profile struct {
 	ThinkingTokenBudget     *ThinkingBudget
 	EmptyAnswerCountsTokens bool
 	OutputTokensFloor       uint64
+	ToolsMaxCount           int
+	PatternBudgetBytes      int
 }
 
 const (
@@ -94,6 +96,8 @@ func (profile *Profile) Knobs() FilterKnobs {
 		ParallelToolCalls:       &resolved.ParallelToolCalls,
 		RejectJSONSchema:        &resolved.RejectJSONSchema,
 		OutputTokensFloor:       &resolved.OutputTokensFloor,
+		ToolsMaxCount:           &resolved.ToolsMaxCount,
+		PatternBudgetBytes:      &resolved.PatternBudgetBytes,
 	}
 }
 
@@ -187,6 +191,14 @@ func (profile *Profile) rejectsTools() bool {
 
 func (profile *Profile) stripsParallelToolCalls() bool {
 	return profile.resolved().ParallelToolCalls == ParallelToolCallsStrip
+}
+
+func (profile *Profile) toolsMaxCount() int {
+	return profile.resolved().ToolsMaxCount
+}
+
+func (profile *Profile) patternBudgetBytes() int {
+	return profile.resolved().PatternBudgetBytes
 }
 
 func (profile *Profile) rejectsJSONSchema() bool {

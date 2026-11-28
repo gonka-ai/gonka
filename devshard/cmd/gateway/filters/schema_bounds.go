@@ -2,12 +2,14 @@ package filters
 
 import (
 	"fmt"
+	"maps"
 	"regexp/syntax"
+	"slices"
 
 	json "github.com/goccy/go-json"
 )
 
-// Bound families kept separate per schema-carrying field even where the values match, and the one pattern byte budget shared by the whole request. See README.md, "Schema bounds".
+// Bound families kept separate per schema-carrying field even where the values match. See README.md, "Schema bounds".
 const (
 	chatTemplateKwargsMaxDepth     = 16
 	chatTemplateKwargsMaxSizeBytes = 16 * 1024
@@ -19,10 +21,6 @@ const (
 	toolsMaxBranch     = 16
 	toolsMaxEnum       = 256
 	toolsMaxPatternLen = 512
-
-	toolsMaxCount = 128
-
-	requestPatternMaxBytes = 4096
 
 	toolChoiceMaxNameLen = 64
 
@@ -77,6 +75,7 @@ type SchemaBounds struct {
 }
 
 type patternBudget struct {
+	limit int
 	bytes int
 	seen  map[string]struct{}
 }
@@ -89,8 +88,8 @@ func (b *patternBudget) admit(pattern string) (bool, error) {
 		return false, nil
 	}
 	b.bytes += len(pattern)
-	if b.bytes > requestPatternMaxBytes {
-		return false, fmt.Errorf("pattern budget exceeded: limit %d bytes", requestPatternMaxBytes)
+	if b.bytes > b.limit {
+		return false, fmt.Errorf("pattern budget exceeded: limit %d bytes", b.limit)
 	}
 	if b.seen == nil {
 		b.seen = make(map[string]struct{})
@@ -228,7 +227,7 @@ func (b SchemaBounds) validatePatternPropertyKeys(object map[string]any, budget 
 	if !ok {
 		return nil
 	}
-	for key := range keys {
+	for _, key := range slices.Sorted(maps.Keys(keys)) {
 		if err := b.validateRegex(key, "schema patternProperties key", budget); err != nil {
 			return err
 		}
@@ -321,7 +320,6 @@ func (c *countingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// jsonMarshaledSize returns the size of v encoded without HTML escaping, as Document.Marshal writes it, without allocating it; Encode trails a newline, so subtract one.
 func jsonMarshaledSize(v any) (int, error) {
 	var counter countingWriter
 	encoder := json.NewEncoder(&counter)

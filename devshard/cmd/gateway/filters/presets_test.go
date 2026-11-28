@@ -13,6 +13,7 @@ func expectedProfile(adjust func(*Profile)) Profile {
 	profile := Profile{
 		ThinkingTemplateKey: enableThinkingKwargKey, ReasoningEffort: ReasoningEffortPolicy{Mode: ReasoningEffortForward},
 		Tools: ToolsAllow, ParallelToolCalls: ParallelToolCallsKeep,
+		ToolsMaxCount: defaultToolsMaxCount, PatternBudgetBytes: defaultPatternBudgetBytes,
 	}
 	adjust(&profile)
 	return profile
@@ -205,7 +206,7 @@ func TestEveryEmbeddedPresetComposes(t *testing.T) {
 //  1. Load preset folders with no default, a default that leaves a choice unset, a misspelt knob, an out-of-range floor, and one model bound by two presets.
 //  2. Assert each folder is refused rather than loaded half way, and a folder with only a valid default loads.
 func TestBrokenPresetFilesAreRefused(t *testing.T) {
-	validDefault := &fstest.MapFile{Data: []byte(`{"models":[],"filters":{"thinking_template_key":"enable_thinking","reasoning_effort":{"mode":"forward"},"tools":"allow","parallel_tool_calls":"keep"}}`)}
+	validDefault := &fstest.MapFile{Data: []byte(`{"models":[],"filters":{"thinking_template_key":"enable_thinking","reasoning_effort":{"mode":"forward"},"tools":"allow","parallel_tool_calls":"keep","tools_max_count":128,"pattern_budget_bytes":4096}}`)}
 	cases := map[string]fstest.MapFS{
 		"default_missing":               {"presets/a.json": {Data: []byte(`{"models":[],"filters":{}}`)}},
 		"default_leaves_a_choice_unset": {"presets/default.json": {Data: []byte(`{"models":[],"filters":{}}`)}},

@@ -122,7 +122,7 @@ func realisticTools(count, uniformNodes, patternEvery int) []map[string]any {
 //  1. Call NormalizeRequest with 129 small tools.
 //  2. Assert the request is rejected with a 400 naming the 128-entry limit.
 func TestNormalizeRequestRejectsMoreThanMaxTools(t *testing.T) {
-	body := toolsBudgetBody(repeatedTools(toolsMaxCount+1, `{"type":"function","function":{"name":"x"}}`))
+	body := toolsBudgetBody(repeatedTools(defaultToolsMaxCount+1, `{"type":"function","function":{"name":"x"}}`))
 	_, err := normalizeToolsTestRequest(t, body)
 	requireToolsRejection(t, err, "tools: array length 129 exceeds limit 128")
 }
@@ -131,14 +131,14 @@ func TestNormalizeRequestRejectsMoreThanMaxTools(t *testing.T) {
 //  1. Call NormalizeRequest with exactly 128 small tools that each carry a parameters object.
 //  2. Assert the request is accepted and all 128 tools are forwarded.
 func TestNormalizeRequestAcceptsExactlyMaxTools(t *testing.T) {
-	body := toolsBudgetBody(repeatedTools(toolsMaxCount, toolWithParams(t, map[string]any{"type": "object"})))
+	body := toolsBudgetBody(repeatedTools(defaultToolsMaxCount, toolWithParams(t, map[string]any{"type": "object"})))
 	document, err := normalizeToolsTestRequest(t, body)
 	if err != nil {
 		t.Fatalf("NormalizeRequest() = %v, want acceptance", err)
 	}
 	tools, _ := document.Get("tools")
-	if got := len(tools.([]any)); got != toolsMaxCount {
-		t.Fatalf("len(tools) = %d, want %d", got, toolsMaxCount)
+	if got := len(tools.([]any)); got != defaultToolsMaxCount {
+		t.Fatalf("len(tools) = %d, want %d", got, defaultToolsMaxCount)
 	}
 }
 
@@ -151,13 +151,13 @@ func TestNormalizeRequestAcceptsMaxCountToolsAtThePerToolNodeLimit(t *testing.T)
 	if err := testToolsBounds().Check(schema); err != nil {
 		t.Fatalf("a single tool must be within bounds, Check() = %v", err)
 	}
-	document, err := normalizeToolsTestRequest(t, toolsBudgetBody(repeatedTools(toolsMaxCount, toolWithParams(t, schema))))
+	document, err := normalizeToolsTestRequest(t, toolsBudgetBody(repeatedTools(defaultToolsMaxCount, toolWithParams(t, schema))))
 	if err != nil {
 		t.Fatalf("NormalizeRequest() = %v, want acceptance", err)
 	}
 	tools, _ := document.Get("tools")
-	if got := len(tools.([]any)); got != toolsMaxCount {
-		t.Fatalf("len(tools) = %d, want %d", got, toolsMaxCount)
+	if got := len(tools.([]any)); got != defaultToolsMaxCount {
+		t.Fatalf("len(tools) = %d, want %d", got, defaultToolsMaxCount)
 	}
 }
 
@@ -196,7 +196,7 @@ func TestNormalizeRequestRejectsToolsOverTheTotalPatternBudget(t *testing.T) {
 //  2. Call NormalizeRequest twice with the exact body, so a second request proves the budget starts fresh.
 //  3. Assert the exact body is accepted both times and the one-byte-over body is rejected with the pattern budget error.
 func TestNormalizeRequestPatternBudgetBoundary(t *testing.T) {
-	lengths := append(repeatedLengths(budgetFillerTools, budgetFillerPatternBytes), requestPatternMaxBytes-budgetFillerTotalBytes)
+	lengths := append(repeatedLengths(budgetFillerTools, budgetFillerPatternBytes), defaultPatternBudgetBytes-budgetFillerTotalBytes)
 	exact := toolsBudgetBody(distinctPatternTools(t, lengths...))
 	for attempt := 1; attempt <= 2; attempt++ {
 		if _, err := normalizeToolsTestRequest(t, exact); err != nil {
@@ -227,8 +227,8 @@ func TestNormalizeRequestAcceptsTheHeaviestPatternsWithinTheBudget(t *testing.T)
 		total += len(pattern)
 		tools[index] = toolWithParams(t, patternSchema(pattern))
 	}
-	if total != requestPatternMaxBytes {
-		t.Fatalf("patterns total %d bytes, want exactly the budget %d", total, requestPatternMaxBytes)
+	if total != defaultPatternBudgetBytes {
+		t.Fatalf("patterns total %d bytes, want exactly the budget %d", total, defaultPatternBudgetBytes)
 	}
 	if _, err := normalizeToolsTestRequest(t, toolsBudgetBody(tools)); err != nil {
 		t.Fatalf("NormalizeRequest() = %v, want acceptance", err)
@@ -240,7 +240,7 @@ func TestNormalizeRequestAcceptsTheHeaviestPatternsWithinTheBudget(t *testing.T)
 //  2. Call NormalizeRequest.
 //  3. Assert the request is accepted, since a pattern already seen in the request is not charged again.
 func TestNormalizeRequestChargesARepeatedPatternOnce(t *testing.T) {
-	body := toolsBudgetBody(repeatedTools(toolsMaxCount, toolWithParams(t, patternSchema("^"+strings.Repeat("a", 198)+"$"))))
+	body := toolsBudgetBody(repeatedTools(defaultToolsMaxCount, toolWithParams(t, patternSchema("^"+strings.Repeat("a", 198)+"$"))))
 	if _, err := normalizeToolsTestRequest(t, body); err != nil {
 		t.Fatalf("NormalizeRequest() = %v, want acceptance", err)
 	}
@@ -285,18 +285,6 @@ func TestNormalizeRequestAcceptsDistinctPatternsAtAgentScale(t *testing.T) {
 	got, _ := document.Get("tools")
 	if len(got.([]any)) != distinctAgentTools {
 		t.Fatalf("len(tools) = %d, want %d", len(got.([]any)), distinctAgentTools)
-	}
-}
-
-// Test flow:
-//  1. Run `validTools` with a zero MaxCount against more tools than the default count limit allows.
-//  2. Assert the rule accepts them, proving a zero limit turns the count cap off rather than rejecting everything.
-func TestValidToolsZeroMaxCountDisablesTheCountBound(t *testing.T) {
-	rule := validTools(toolsBounds{SchemaBounds: testToolsBounds().SchemaBounds}, "auto")
-	tools := repeatedTools(toolsMaxCount+1, `{"type":"function","function":{"name":"x"}}`)
-	document := parseTestDocument(t, `{"tools":[`+strings.Join(tools, ",")+`]}`)
-	if err := runRule(t, document, "tools", rule); err != nil {
-		t.Fatalf("validTools() = %v, want acceptance", err)
 	}
 }
 

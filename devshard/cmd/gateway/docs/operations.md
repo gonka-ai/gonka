@@ -55,6 +55,7 @@ Every filter a built-in preset uses is a knob; [`filters/README.md`](../filters/
 | `template_kwargs` | `{forced: {...}, denied: [...]}` | kwargs the template always gets, or never sees |
 | `tools`, `parallel_tool_calls`, `reject_json_schema` | `allow`/`reject`, `keep`/`strip`, bool | for a model served without tool calling or schema-guided decoding |
 | `force_zero_penalties`, `reject_structured_outputs`, `allow_safety_identifier`, `keep_reasoning_split`, `default_reasoning_split`, `output_tokens_floor` | as named | Kimi's and MiniMax's deltas, open to any model |
+| `tools_max_count`, `pattern_budget_bytes` | integers, 1 to 256 and 1 to 8192 | how many entries `tools` may carry (default 128) and how many bytes of distinct regular-expression text one request's schemas may carry (default 4096); any value from 1 up to the ceiling is accepted and a value outside that range is a 400; a setting that stores either knob is unreadable to a gateway release that predates it, which runs the model's built-in filters instead |
 
 A new model with a Kimi-like template but its own key and a cooler temperature is one call:
 
@@ -210,7 +211,7 @@ Signing keys are addressed **by the name of the variable that holds them**, neve
 | `GATEWAY_ADMISSION_QUEUE_PER_SLOT` | 4 | how deep the queue is allowed to grow per slot |
 | `GATEWAY_MAX_BUFFERED_RESPONSE_BYTES` | 512 MiB | **every** reply being assembled or recorded for the response cache, at once, including each live stream log until its race ends |
 | `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` | 128 MiB | **every** chat body being read and normalised, at once, and every non-admin body until the limiter's wait for its request ends; a body past it is answered 503; at least 10 MiB ([`request.md`](request.md), "Order of operations") |
-| `GATEWAY_MAX_BUFFERED_REQUEST_BYTES_PER_CALLER` | 32 MiB | the share of that budget one caller (one API key, or every keyless and unknown-key request together) may hold at once; the admin key takes no share and counts only against the whole budget; a body past it is answered 503; at least 10 MiB; a value above `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` is the whole budget, so lowering only the budget below 32 MiB boots with a share equal to the budget ([`request.md`](request.md), "Order of operations") |
+| `GATEWAY_MAX_BUFFERED_REQUEST_BYTES_PER_CALLER` | 32 MiB | the share of that budget one caller (one API key, or every keyless and unknown-key request together) may hold at once; the admin key takes no share and counts only against the whole budget; a body past it is answered 503, so one key's queued requests together hold at most the share (512 requests of 64 KiB at the default); at least 10 MiB; a value above `GATEWAY_MAX_BUFFERED_REQUEST_BYTES` is the whole budget, so lowering only the budget below 32 MiB boots with a share equal to the budget ([`request.md`](request.md), "Order of operations") |
 | `GATEWAY_MIN_CLIENT_READ_BYTES_PER_SECOND` | 64 KiB/s | the slowest average a client may read one reply at, after a 30-second allowance, before its write fails; between 1 B/s and 1 GiB/s ([`api/README.md`](../api/README.md), "Streaming the reply") |
 | `DEVSHARD_CHAT_CACHE_MAX_BYTES` | 256 MiB | the response cache |
 | `GATEWAY_DEFAULT_MAX_TOKENS` / `GATEWAY_MAX_TOKENS_CAP` | from `filters` | the output budget a request gets and may ask for |

@@ -30,9 +30,9 @@ type Document struct {
 	patterns *patternBudget
 }
 
-func (d *Document) patternBudget() *patternBudget {
+func (d *Document) patternBudget(limit int) *patternBudget {
 	if d.patterns == nil {
-		d.patterns = &patternBudget{}
+		d.patterns = &patternBudget{limit: limit}
 	}
 	return d.patterns
 }
@@ -119,7 +119,6 @@ func presentField(value any, exists bool) bool {
 	return exists && value != nil
 }
 
-// ensureStructuralBounds scans body once outside string literals, rejecting it past maxDepth, maxNodes or maxMembers in any one container.
 func ensureStructuralBounds(body []byte, maxDepth, maxNodes, maxMembers int) error {
 	depth := 0
 	nodes := 0

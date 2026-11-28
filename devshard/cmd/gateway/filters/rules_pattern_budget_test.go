@@ -10,6 +10,7 @@ import (
 const (
 	patternBudgetExceeded = "pattern budget exceeded: limit 4096 bytes"
 	parseAllocationsFloor = 10
+	allocationRuns        = 20
 )
 
 func fillerPattern(tag string, length int) string {
@@ -205,20 +206,20 @@ func TestNormalizeRequestAcceptsRealisticToolsWithAResponseFormat(t *testing.T) 
 //  2. Assert the repeat allocates nothing and leaves the charged bytes unchanged, while the fresh budget allocates and charges the pattern.
 //  3. Assert the fresh run allocates at least 10 times, which only a parse of this pattern does, so the zero-allocation repeat was not parsed again.
 func TestValidateSchemaPatternDoesNotParseARepeatedPattern(t *testing.T) {
-	bounds := testToolsBounds().SchemaBounds
+	bounds := testToolsBounds()
 	object := map[string]any{"pattern": `^\d{4}-\d{2}-\d{2}$`}
-	seen := &patternBudget{}
+	seen := &patternBudget{limit: defaultPatternBudgetBytes}
 	if err := bounds.validateSchemaPattern(object, seen); err != nil {
 		t.Fatalf("validateSchemaPattern() = %v, want acceptance", err)
 	}
 	charged := seen.bytes
-	repeat := testing.AllocsPerRun(20, func() {
+	repeat := testing.AllocsPerRun(allocationRuns, func() {
 		if err := bounds.validateSchemaPattern(object, seen); err != nil {
 			t.Fatalf("validateSchemaPattern() on a repeat = %v, want acceptance", err)
 		}
 	})
-	fresh := testing.AllocsPerRun(20, func() {
-		if err := bounds.validateSchemaPattern(object, &patternBudget{}); err != nil {
+	fresh := testing.AllocsPerRun(allocationRuns, func() {
+		if err := bounds.validateSchemaPattern(object, &patternBudget{limit: defaultPatternBudgetBytes}); err != nil {
 			t.Fatalf("validateSchemaPattern() on a fresh budget = %v, want acceptance", err)
 		}
 	})

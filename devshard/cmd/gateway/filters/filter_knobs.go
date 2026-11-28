@@ -10,6 +10,9 @@ const (
 	thinkingContentHeadroomMax = RequestMaxTokensCap
 	samplingBoundIncluded      = true
 	samplingBoundExcluded      = false
+
+	MaxToolsMaxCount      = 256
+	MaxPatternBudgetBytes = 8192
 )
 
 // FilterKnobs are the filters a preset file or an operator sets; nil inherits from the base. See README.md, "Knobs".
@@ -30,6 +33,8 @@ type FilterKnobs struct {
 	ParallelToolCalls       *ParallelToolCallsPolicy `json:"parallel_tool_calls,omitempty"`
 	RejectJSONSchema        *bool                    `json:"reject_json_schema,omitempty"`
 	OutputTokensFloor       *uint64                  `json:"output_tokens_floor,omitempty"`
+	ToolsMaxCount           *int                     `json:"tools_max_count,omitempty"`
+	PatternBudgetBytes      *int                     `json:"pattern_budget_bytes,omitempty"`
 }
 
 func composeOver(base Profile, knobs FilterKnobs) (*Profile, error) {
@@ -53,6 +58,8 @@ func (knobs FilterKnobs) applyTo(profile *Profile) {
 	setIfPresent(&profile.Tools, knobs.Tools)
 	setIfPresent(&profile.ParallelToolCalls, knobs.ParallelToolCalls)
 	setIfPresent(&profile.RejectJSONSchema, knobs.RejectJSONSchema)
+	setIfPresent(&profile.ToolsMaxCount, knobs.ToolsMaxCount)
+	setIfPresent(&profile.PatternBudgetBytes, knobs.PatternBudgetBytes)
 	if knobs.DefaultReasoningSplit != nil {
 		profile.DefaultReasoningSplit = clonePointer(knobs.DefaultReasoningSplit)
 	}
@@ -87,6 +94,12 @@ func clonePointer[Value any](source *Value) *Value {
 func (profile *Profile) validate() error {
 	if profile.OutputTokensFloor > MaxOutputTokensFloor {
 		return fmt.Errorf("output_tokens_floor %d is above %d", profile.OutputTokensFloor, MaxOutputTokensFloor)
+	}
+	if profile.ToolsMaxCount < 1 || profile.ToolsMaxCount > MaxToolsMaxCount {
+		return fmt.Errorf("tools_max_count %d must be between 1 and %d", profile.ToolsMaxCount, MaxToolsMaxCount)
+	}
+	if profile.PatternBudgetBytes < 1 || profile.PatternBudgetBytes > MaxPatternBudgetBytes {
+		return fmt.Errorf("pattern_budget_bytes %d must be between 1 and %d", profile.PatternBudgetBytes, MaxPatternBudgetBytes)
 	}
 	if err := validTemplateKey("thinking_template_key", profile.ThinkingTemplateKey); err != nil {
 		return err

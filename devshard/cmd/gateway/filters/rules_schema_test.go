@@ -20,11 +20,8 @@ func toolWithParams(t *testing.T, schema map[string]any) string {
 	return `{"type":"function","function":{"name":"x","description":"x","parameters":` + mustMarshalJSON(t, schema) + `}}`
 }
 
-func testToolsBounds() toolsBounds {
-	return toolsBounds{
-		SchemaBounds: SchemaBounds{MaxDepth: toolsMaxDepth, MaxNodes: toolsMaxNodes, MaxSizeBytes: toolsMaxSizeBytes, MaxBranch: toolsMaxBranch, MaxEnum: toolsMaxEnum, MaxPatternLen: toolsMaxPatternLen},
-		MaxCount:     toolsMaxCount,
-	}
+func testToolsBounds() SchemaBounds {
+	return SchemaBounds{MaxDepth: toolsMaxDepth, MaxNodes: toolsMaxNodes, MaxSizeBytes: toolsMaxSizeBytes, MaxBranch: toolsMaxBranch, MaxEnum: toolsMaxEnum, MaxPatternLen: toolsMaxPatternLen}
 }
 
 func runRule(t *testing.T, document *Document, param string, rule RuleFunc) error {
@@ -97,7 +94,7 @@ func TestValidToolsRejects(t *testing.T) {
 //  2. Assert the rejection is prefixed with `tools[0].function.parameters`, proving the bounds check is wired with that field path.
 func TestValidToolsAppliesBoundsWithFieldPathPrefix(t *testing.T) {
 	shallow := SchemaBounds{MaxDepth: 3, MaxNodes: 100, MaxSizeBytes: 100000, MaxBranch: 100, MaxEnum: 100}
-	rule := validTools(toolsBounds{SchemaBounds: shallow}, "auto")
+	rule := validTools(shallow, "auto")
 	document := parseTestDocument(t, `{"tools":[`+toolWithParams(t, nestedPropertiesSchema(4))+`]}`)
 	err := runRule(t, document, "tools", rule)
 	want := "tools[0].function.parameters: nesting depth exceeded: limit 3"
