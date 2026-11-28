@@ -26,6 +26,8 @@ Two races at the end of a wait are resolved by whether the waiter is still in th
 
 `AdmissionQueuePerSlot` bounds the queue at that multiple of the model's own concurrency cap; past it the request is refused with `queue_depth` rather than joining a queue it cannot reach the front of within the wait budget.
 
+`MaxQueuedBytes` bounds the bodies the queue holds, across all models: a request that has to wait passes its body size to `AcquireForModel`, which adds it to the queue's byte total when the waiter is appended and takes it off wherever the waiter leaves the queue (admitted, timed out, cancelled), all under the limiter's lock. A request that would take the total past the cap is refused at once with `ErrQueuedBytesFull`, not a `*RateLimitError`, counted under `queue_bytes`; a queue already too deep is refused first, and a request that does not wait is never charged. Zero means unlimited here, though `max_queued_request_bytes` is validated to at least `filters.MaxBodyBytes`. `Reconfigure` replaces the cap, so the next request that starts waiting is judged against it and the waiters already queued stay.
+
 Releasing leaves an idle model's counter in the map. Deleting it would cost an allocation on the model's next acquire, and a model that goes quiet would vanish from the snapshot — which a reader cannot tell apart from the gateway being gone. The map is bounded by the number of routable models.
 
 ## How one model's cap is computed

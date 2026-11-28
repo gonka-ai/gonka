@@ -38,6 +38,7 @@ const (
 	RejectionConcurrentRequests = "concurrent_requests"
 	RejectionInputTokens        = "input_tokens"
 	RejectionQueueDepth         = "queue_depth"
+	RejectionQueueBytes         = "queue_bytes"
 	RejectionNoLiveWeight       = "no_live_weight"
 	RejectionUnnamed            = "unnamed"
 )

@@ -15,7 +15,7 @@ func BenchmarkLimiterAcquireRelease(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
 	for range b.N {
-		if err := limiter.AcquireForModel(ctx, "model-0", 100, capacity); err != nil {
+		if err := limiter.AcquireForModel(ctx, "model-0", 100, 0, capacity); err != nil {
 			b.Fatal(err)
 		}
 		limiter.ReleaseForModel("model-0", 100)
@@ -29,7 +29,7 @@ func BenchmarkLimiterAcquireReleaseParallel(b *testing.B) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			if err := limiter.AcquireForModel(ctx, "model-0", 100, capacity); err != nil {
+			if err := limiter.AcquireForModel(ctx, "model-0", 100, 0, capacity); err != nil {
 				b.Fatal(err)
 			}
 			limiter.ReleaseForModel("model-0", 100)

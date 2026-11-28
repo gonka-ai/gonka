@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -1563,14 +1564,59 @@ func TestReconfiguringTheGatewayChangesTheCapTheNextRequestIsJudgedAgainst(t *te
 	widened.Limits.AdmissionQueueWaitMS = 0
 	composed.config.Swap(&widened)
 
-	if err := composed.limiter.AcquireForModel(context.Background(), "model-a", 1, limits.ModelCapacity{ScaleFactor: 1}); err != nil {
+	if err := composed.limiter.AcquireForModel(context.Background(), "model-a", 1, 0, limits.ModelCapacity{ScaleFactor: 1}); err != nil {
 		t.Fatalf("first AcquireForModel() under a cap of 1 = %v, want admitted", err)
 	}
 	var rateLimited *limits.RateLimitError
-	if err := composed.limiter.AcquireForModel(context.Background(), "model-a", 1, limits.ModelCapacity{ScaleFactor: 1}); !errors.As(err, &rateLimited) {
+	if err := composed.limiter.AcquireForModel(context.Background(), "model-a", 1, 0, limits.ModelCapacity{ScaleFactor: 1}); !errors.As(err, &rateLimited) {
 		t.Fatalf("second AcquireForModel() under a cap of 1 = %v, want a rate-limit error; the limiter never saw the new configuration", err)
 	}
 	composed.limiter.ReleaseForModel("model-a", 1)
+}
+
+// Test flow:
+//  1. Compose a gateway and swap its config for one with a concurrency cap of 1, a long admission wait and a queued-bytes budget of one body of the largest size a request may carry.
+//  2. Acquire the only slot, then queue one such body in a goroutine and wait until the limiter shows one waiter.
+//  3. Assert a second such body is refused with `limits.ErrQueuedBytesFull`.
+//  4. Swap the config again with a budget of two bodies and queue another; assert the limiter shows two waiters.
+//  5. Cancel the waiters and wait for both to return.
+func TestReconfiguringTheGatewayChangesTheQueuedBytesBudgetTheNextRequestIsJudgedAgainst(t *testing.T) {
+	gatewayEnvironment(t)
+	composed := composedGateway(t)
+	const body = filters.MaxBodyBytes
+	narrow := config.Defaults()
+	narrow.Limits.Concurrency.MaxRequests = 1
+	narrow.Limits.AdmissionQueueWaitMS = 60_000
+	narrow.Limits.MaxQueuedRequestBytes = body
+	composed.config.Swap(&narrow)
+	capacity := limits.ModelCapacity{ScaleFactor: 1}
+	if err := composed.limiter.AcquireForModel(context.Background(), "model-a", 1, 0, capacity); err != nil {
+		t.Fatalf("the acquire that takes the only slot = %v, want admitted", err)
+	}
+	waitersCtx, cancelWaiters := context.WithCancel(context.Background())
+	defer cancelWaiters()
+	waiters := make(chan error, 2)
+	queue := func() { waiters <- composed.limiter.AcquireForModel(waitersCtx, "model-a", 1, body, capacity) }
+	go queue()
+	waitForQueueDepth(t, composed, 1)
+	if err := composed.limiter.AcquireForModel(context.Background(), "model-a", 1, body, capacity); !errors.Is(err, limits.ErrQueuedBytesFull) {
+		t.Fatalf("a second body past a budget of one body = %v, want ErrQueuedBytesFull", err)
+	}
+
+	widened := narrow
+	widened.Limits.MaxQueuedRequestBytes = 2 * body
+	composed.config.Swap(&widened)
+	go queue()
+	waitForQueueDepth(t, composed, 2)
+
+	cancelWaiters()
+	for range 2 {
+		select {
+		case <-waiters:
+		case <-time.After(queueDepthBound):
+			t.Fatalf("a cancelled waiter never returned within %s", queueDepthBound)
+		}
+	}
 }
 
 // Test flow:
@@ -1664,6 +1710,19 @@ func TestTheComposedParticipantLimiterPricesAModelByTheContextGovernanceReports(
 
 	prefill := float64(composed.config.Load().Limits.HostWindows.Input.InitialRequests * governedContext)
 	waitForPrefillWindow(t, composed, "model-a", prefill)
+}
+
+const queueDepthBound = 5 * time.Second
+
+func waitForQueueDepth(t *testing.T, composed *gateway, want int) {
+	t.Helper()
+	deadline := time.Now().Add(queueDepthBound)
+	for composed.limiter.Snapshot().Total.QueueDepth != want {
+		if time.Now().After(deadline) {
+			t.Fatalf("the limiter never showed %d waiting requests within %s", want, queueDepthBound)
+		}
+		runtime.Gosched()
+	}
 }
 
 func waitForPrefillWindow(t *testing.T, composed *gateway, model string, want float64) {

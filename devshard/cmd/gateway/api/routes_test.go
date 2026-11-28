@@ -648,6 +648,54 @@ func TestAZeroLiveWeightRefusalIsCountedAndAnswered503(t *testing.T) {
 	}
 }
 
+const normalisationSlackBytes = 4096
+
+// Test flow:
+//  1. Make the limiter refuse with `limits.ErrQueuedBytesFull`.
+//  2. POST a chat completion.
+//  3. Assert the response is 503 with Retry-After 1, carrying the limiter's own text, and exactly one rejection was recorded with reason `queue_bytes` and the model that was turned away.
+func TestAFullQueueByteBudgetIsCountedAndAnswered503(t *testing.T) {
+	live := newHarness(t)
+	live.limiter.err = limits.ErrQueuedBytesFull
+
+	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", chatBody, nil)
+
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", recorder.Code, recorder.Body.String())
+	}
+	if got := recorder.Header().Get("Retry-After"); got != "1" {
+		t.Errorf("Retry-After = %q, want 1", got)
+	}
+	if !strings.Contains(recorder.Body.String(), limits.ErrQueuedBytesFull.Error()) {
+		t.Errorf("body = %s, want the limiter's own text %q", recorder.Body.String(), limits.ErrQueuedBytesFull.Error())
+	}
+	reasons := live.rejections.reasons()
+	if len(reasons) != 1 || reasons[0] != "queue_bytes" {
+		t.Fatalf("recorded %v, want the queue_bytes reason", reasons)
+	}
+	if live.rejections.model != "qwen" {
+		t.Errorf("model = %q, want the model that was turned away", live.rejections.model)
+	}
+}
+
+// Test flow:
+//  1. Leave qwen at the default access and build a chat completion of 1 MiB.
+//  2. POST it as the admin.
+//  3. Assert the limiter was asked to hold the normalised body's bytes: no fewer than the content and no more than the request plus the normalisation slack.
+func TestTheLimiterIsToldHowManyBytesTheNormalisedBodyHolds(t *testing.T) {
+	live := newHarness(t)
+	body := chatBodyOfBytes("qwen", shareBodyBytes)
+
+	recorder := live.request(t, http.MethodPost, "/v1/chat/completions", body, nil)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", recorder.Code, recorder.Body.String())
+	}
+	if got := live.limiter.bodies.Load(); got < shareBodyBytes-normalisationSlackBytes || got > shareBodyBytes+normalisationSlackBytes {
+		t.Errorf("limiter was told %d body bytes, want about the %d of the request", got, shareBodyBytes)
+	}
+}
+
 // Test flow:
 //  1. Build a chat completion whose content alone fills the host budget left beside the catch-up reserve, but still under the raw ingest cap.
 //  2. POST it.

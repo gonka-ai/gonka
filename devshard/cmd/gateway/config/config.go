@@ -83,6 +83,7 @@ type Limits struct {
 	MaxBufferedResponseBytes         int64
 	MaxBufferedRequestBytes          int64
 	MaxBufferedRequestBytesPerCaller int64
+	MaxQueuedRequestBytes            int64
 	MinClientReadBytesPerSecond      int64
 	MaxTokensCap                     int64
 	FallbackMaxModelLen              int64

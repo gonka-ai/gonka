@@ -50,7 +50,7 @@ type InferenceEngine interface {
 
 // GatewayLimiter is the admission slot and input-token budget a request holds while it races.
 type GatewayLimiter interface {
-	AcquireForModel(ctx context.Context, model string, inputTokens int64, capacity limits.ModelCapacity) error
+	AcquireForModel(ctx context.Context, model string, inputTokens, bodyBytes int64, capacity limits.ModelCapacity) error
 	ReleaseForModel(model string, inputTokens int64)
 }
 

@@ -26,11 +26,11 @@ const (
 
 type cancellationAwareLimiter struct{ *countingLimiter }
 
-func (l cancellationAwareLimiter) AcquireForModel(ctx context.Context, model string, inputTokens int64, capacity limits.ModelCapacity) error {
+func (l cancellationAwareLimiter) AcquireForModel(ctx context.Context, model string, inputTokens, bodyBytes int64, capacity limits.ModelCapacity) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return l.countingLimiter.AcquireForModel(ctx, model, inputTokens, capacity)
+	return l.countingLimiter.AcquireForModel(ctx, model, inputTokens, bodyBytes, capacity)
 }
 
 type expiringBodyConnection struct {

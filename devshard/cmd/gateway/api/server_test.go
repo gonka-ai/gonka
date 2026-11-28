@@ -154,11 +154,13 @@ type countingLimiter struct {
 	releases  atomic.Int64
 	tokens    atomic.Int64
 	acquired  atomic.Int64
+	bodies    atomic.Int64
 	err       error
 	onAcquire func()
 }
 
-func (l *countingLimiter) AcquireForModel(_ context.Context, _ string, inputTokens int64, _ limits.ModelCapacity) error {
+func (l *countingLimiter) AcquireForModel(_ context.Context, _ string, inputTokens, bodyBytes int64, _ limits.ModelCapacity) error {
+	l.bodies.Store(bodyBytes)
 	if l.err != nil {
 		return l.err
 	}

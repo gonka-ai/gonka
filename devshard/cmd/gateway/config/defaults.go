@@ -42,6 +42,7 @@ func Defaults() Config {
 			MaxBufferedResponseBytes:         512 << 20,
 			MaxBufferedRequestBytes:          128 << 20,
 			MaxBufferedRequestBytesPerCaller: 32 << 20,
+			MaxQueuedRequestBytes:            4 << 30,
 			MinClientReadBytesPerSecond:      64 << 10,
 			MaxTokensCap:                     int64(filters.RequestMaxTokensCap),
 			Concurrency: Concurrency{

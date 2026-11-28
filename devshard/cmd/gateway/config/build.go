@@ -139,6 +139,7 @@ func applyTunables(configuration *Config, tunables env.Tunables) {
 	overrideIfSet(&configuration.Limits.MaxBufferedResponseBytes, tunables.MaxBufferedResponseBytes)
 	overrideIfSet(&configuration.Limits.MaxBufferedRequestBytes, tunables.MaxBufferedRequestBytes)
 	overrideIfSet(&configuration.Limits.MaxBufferedRequestBytesPerCaller, tunables.MaxBufferedRequestBytesPerCaller)
+	overrideIfSet(&configuration.Limits.MaxQueuedRequestBytes, tunables.MaxQueuedRequestBytes)
 	overrideIfSet(&configuration.Limits.MinClientReadBytesPerSecond, tunables.MinClientReadBytesPerSecond)
 	overrideIfSet(&configuration.Scheduler.WarmNewEscrows, tunables.WarmNewEscrows)
 	overrideIfSet(&configuration.Chain.SnapshotMaxAgeSeconds, tunables.ChainSnapshotMaxAgeSeconds)

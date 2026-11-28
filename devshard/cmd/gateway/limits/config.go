@@ -21,6 +21,7 @@ func GatewayConfigFromLimits(l config.Limits) GatewayConfig {
 		MaxConcurrent:         l.Concurrency.MaxRequests,
 		MaxInputTokens:        l.MaxInputTokensInFlight,
 		AdmissionQueuePerSlot: l.AdmissionQueuePerSlot,
+		MaxQueuedBytes:        l.MaxQueuedRequestBytes,
 		AcquireWait:           time.Duration(l.AdmissionQueueWaitMS) * time.Millisecond,
 	}
 }

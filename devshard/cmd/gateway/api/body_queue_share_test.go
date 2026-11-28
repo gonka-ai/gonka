@@ -24,7 +24,7 @@ type gatedLimiter struct {
 	admitAll func()
 }
 
-func (l gatedLimiter) AcquireForModel(ctx context.Context, model string, inputTokens int64, capacity limits.ModelCapacity) error {
+func (l gatedLimiter) AcquireForModel(ctx context.Context, model string, inputTokens, bodyBytes int64, capacity limits.ModelCapacity) error {
 	l.entered <- struct{}{}
 	select {
 	case err := <-l.refusals:
@@ -35,7 +35,7 @@ func (l gatedLimiter) AcquireForModel(ctx context.Context, model string, inputTo
 	case <-time.After(exchangeBound):
 		return errors.New("the test never gave the limiter a verdict")
 	}
-	return l.countingLimiter.AcquireForModel(ctx, model, inputTokens, capacity)
+	return l.countingLimiter.AcquireForModel(ctx, model, inputTokens, bodyBytes, capacity)
 }
 
 type queuedSender struct {

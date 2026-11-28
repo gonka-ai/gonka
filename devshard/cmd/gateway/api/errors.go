@@ -249,6 +249,9 @@ func limiterRefusal(err error) (label string, refused bool) {
 	if noLiveWeight(err) {
 		return limits.RejectionNoLiveWeight, true
 	}
+	if queuedBytesFull(err) {
+		return limits.RejectionQueueBytes, true
+	}
 	if throttled, ours := rateLimited(err); ours {
 		return throttled.Label(), true
 	}
@@ -284,6 +287,10 @@ func noLiveWeight(err error) bool {
 	return errors.Is(err, limits.ErrNoLiveWeight)
 }
 
+func queuedBytesFull(err error) bool {
+	return errors.Is(err, limits.ErrQueuedBytesFull)
+}
+
 func hostsUnavailable(err error) bool {
 	return errors.Is(err, engine.ErrHostsUnavailable)
 }
@@ -301,7 +308,8 @@ func shardHasNoRoom(err error) bool {
 		errors.Is(err, scheduler.ErrNoEscrowCapacity) ||
 		errors.Is(err, scheduler.ErrEscrowBusy) ||
 		errors.Is(err, ErrResponseBufferFull) ||
-		errors.Is(err, ErrRequestBodiesFull)
+		errors.Is(err, ErrRequestBodiesFull) ||
+		queuedBytesFull(err)
 }
 
 func (s *Server) writeErrorFor(w http.ResponseWriter, err error) {

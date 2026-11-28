@@ -202,7 +202,7 @@ func TestCapacityGatewayParticipantLimiterComposeEndToEnd(t *testing.T) {
 	modelCapacity := ModelCapacity{ScaleFactor: scale}
 
 	ctx := context.Background()
-	if err := gatewayLimiter.AcquireForModel(ctx, "modelA", 128, modelCapacity); err != nil {
+	if err := gatewayLimiter.AcquireForModel(ctx, "modelA", 128, 0, modelCapacity); err != nil {
 		t.Fatalf("GatewayLimiter.AcquireForModel under cap = %v, want nil", err)
 	}
 	gatewayLimiter.ReleaseForModel("modelA", 128)

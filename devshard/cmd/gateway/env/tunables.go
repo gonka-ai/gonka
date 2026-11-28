@@ -18,6 +18,7 @@ type Tunables struct {
 	MaxBufferedResponseBytes               *int64   `json:"max_buffered_response_bytes,omitempty"`
 	MaxBufferedRequestBytes                *int64   `json:"max_buffered_request_bytes,omitempty"`
 	MaxBufferedRequestBytesPerCaller       *int64   `json:"max_buffered_request_bytes_per_caller,omitempty"`
+	MaxQueuedRequestBytes                  *int64   `json:"max_queued_request_bytes,omitempty"`
 	MinClientReadBytesPerSecond            *int64   `json:"min_client_read_bytes_per_second,omitempty"`
 	WarmNewEscrows                         *bool    `json:"warm_new_escrows,omitempty"`
 	Disabled                               *bool    `json:"disabled,omitempty"`

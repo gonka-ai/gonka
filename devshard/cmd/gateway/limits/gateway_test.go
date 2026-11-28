@@ -21,10 +21,10 @@ func TestAcquireForModel_AdmitsUnderCap(t *testing.T) {
 	t.Parallel()
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 2, AcquireWait: time.Second})
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 10, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 10, 0, fullScale()); err != nil {
 		t.Fatalf("first AcquireForModel: %v", err)
 	}
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 10, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 10, 0, fullScale()); err != nil {
 		t.Fatalf("second AcquireForModel: %v", err)
 	}
 }
@@ -39,12 +39,12 @@ func TestAcquireForModel_InputTokenBudgetEnforced(t *testing.T) {
 	wait := 60 * time.Millisecond
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 100, MaxInputTokens: 100, AcquireWait: wait})
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 80, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 80, 0, fullScale()); err != nil {
 		t.Fatalf("first AcquireForModel: %v", err)
 	}
 
 	start := time.Now()
-	err := limiter.AcquireForModel(context.Background(), "modelA", 50, fullScale())
+	err := limiter.AcquireForModel(context.Background(), "modelA", 50, 0, fullScale())
 	elapsed := time.Since(start)
 
 	var rateLimitErr *RateLimitError
@@ -71,7 +71,7 @@ func TestAcquireForModel_BlocksThenAdmitsWhenSlotFreesWithinWait(t *testing.T) {
 	t.Parallel()
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1, AcquireWait: time.Second})
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, fullScale()); err != nil {
 		t.Fatalf("initial AcquireForModel: %v", err)
 	}
 
@@ -81,7 +81,7 @@ func TestAcquireForModel_BlocksThenAdmitsWhenSlotFreesWithinWait(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := limiter.AcquireForModel(context.Background(), "modelA", 1, fullScale())
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, fullScale())
 	elapsed := time.Since(start)
 
 	if err != nil {
@@ -104,11 +104,11 @@ func TestSnapshot_CountsAWaiterAgainstItsModelsQueue(t *testing.T) {
 	t.Parallel()
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1, MaxInputTokens: 100, AcquireWait: time.Second})
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 10, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 10, 0, fullScale()); err != nil {
 		t.Fatalf("initial AcquireForModel: %v", err)
 	}
 	queued := make(chan error, 1)
-	go func() { queued <- limiter.AcquireForModel(context.Background(), "modelA", 10, fullScale()) }()
+	go func() { queued <- limiter.AcquireForModel(context.Background(), "modelA", 10, 0, fullScale()) }()
 
 	waitFor(t, func() bool { return limiter.Snapshot().Total.QueueDepth == 1 })
 	snapshot := limiter.Snapshot()
@@ -149,12 +149,12 @@ func TestAcquireForModel_TimesOutWhenNoSlotFrees(t *testing.T) {
 	wait := 60 * time.Millisecond
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1, AcquireWait: wait})
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, fullScale()); err != nil {
 		t.Fatalf("initial AcquireForModel: %v", err)
 	}
 
 	start := time.Now()
-	err := limiter.AcquireForModel(context.Background(), "modelA", 1, fullScale())
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, fullScale())
 	elapsed := time.Since(start)
 
 	var rateLimitErr *RateLimitError
@@ -184,7 +184,7 @@ func TestAcquireForModel_CtxCancelWakesPromptly(t *testing.T) {
 	t.Parallel()
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1, AcquireWait: time.Second})
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, fullScale()); err != nil {
 		t.Fatalf("initial AcquireForModel: %v", err)
 	}
 
@@ -196,7 +196,7 @@ func TestAcquireForModel_CtxCancelWakesPromptly(t *testing.T) {
 
 	start := time.Now()
 	done := make(chan error, 1)
-	go func() { done <- limiter.AcquireForModel(ctx, "modelA", 1, fullScale()) }()
+	go func() { done <- limiter.AcquireForModel(ctx, "modelA", 1, 0, fullScale()) }()
 
 	select {
 	case err := <-done:
@@ -222,7 +222,7 @@ func TestAcquireForModel_ContextAlreadyCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := limiter.AcquireForModel(ctx, "modelA", 1, fullScale()); !errors.Is(err, context.Canceled) {
+	if err := limiter.AcquireForModel(ctx, "modelA", 1, 0, fullScale()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("AcquireForModel with pre-cancelled ctx = %v, want context.Canceled", err)
 	}
 }
@@ -236,7 +236,7 @@ func TestAcquireForModel_ScaleFactorZeroBlocksImmediately(t *testing.T) {
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 5, AcquireWait: time.Second})
 
 	start := time.Now()
-	err := limiter.AcquireForModel(context.Background(), "modelA", 1, ModelCapacity{ScaleFactor: 0})
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, ModelCapacity{ScaleFactor: 0})
 	elapsed := time.Since(start)
 
 	var rateLimitErr *RateLimitError
@@ -269,12 +269,12 @@ func TestAcquireForModel_PerTenThousandWeightDynamicCap(t *testing.T) {
 		MaxConcurrentPer10000Weight: 5,
 	}
 
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, capacity); err != nil {
 		t.Fatalf("first AcquireForModel: %v", err)
 	}
 
 	start := time.Now()
-	err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity)
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, capacity)
 	elapsed := time.Since(start)
 
 	var rateLimitErr *RateLimitError
@@ -301,11 +301,11 @@ func TestAcquireForModel_DynamicCapClampsToBaselineWeight(t *testing.T) {
 	}
 
 	for i := range 10 {
-		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity); err != nil {
+		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, capacity); err != nil {
 			t.Fatalf("acquire %d = %v, want admitted under the baseline-derived cap of 10", i, err)
 		}
 	}
-	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity); err == nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, capacity); err == nil {
 		t.Fatal("11th AcquireForModel = nil, want rejection: current weight must not lift the cap above the baseline-derived limit")
 	}
 }
@@ -319,7 +319,7 @@ func TestAcquireForModel_BaselineZeroIsUnlimited(t *testing.T) {
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 0, AcquireWait: time.Millisecond})
 
 	for i := range 50 {
-		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, ModelCapacity{ScaleFactor: 0}); err != nil {
+		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, ModelCapacity{ScaleFactor: 0}); err != nil {
 			t.Fatalf("acquire %d = %v, want nil (baseline 0 means unlimited even at scale 0)", i, err)
 		}
 	}
@@ -340,12 +340,12 @@ func TestAcquireForModel_PerModelOverride(t *testing.T) {
 		},
 	})
 
-	if err := limiter.AcquireForModel(context.Background(), "tight-model", 1, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "tight-model", 1, 0, fullScale()); err != nil {
 		t.Fatalf("first AcquireForModel(tight-model): %v", err)
 	}
 
 	start := time.Now()
-	if err := limiter.AcquireForModel(context.Background(), "tight-model", 1, fullScale()); err == nil {
+	if err := limiter.AcquireForModel(context.Background(), "tight-model", 1, 0, fullScale()); err == nil {
 		t.Fatal("second AcquireForModel(tight-model) = nil, want rejection under the per-model override cap of 1")
 	}
 	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
@@ -353,7 +353,7 @@ func TestAcquireForModel_PerModelOverride(t *testing.T) {
 	}
 
 	for i := range 5 {
-		if err := limiter.AcquireForModel(context.Background(), "other-model", 1, fullScale()); err != nil {
+		if err := limiter.AcquireForModel(context.Background(), "other-model", 1, 0, fullScale()); err != nil {
 			t.Fatalf("AcquireForModel(other-model) %d = %v, want nil (its own budget of 10, not the override)", i, err)
 		}
 	}
@@ -401,7 +401,7 @@ func TestGatewayLimiter_ConcurrencyRace(t *testing.T) {
 			defer wg.Done()
 			for range iterations {
 				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-				err := limiter.AcquireForModel(ctx, "modelA", 3, fullScale())
+				err := limiter.AcquireForModel(ctx, "modelA", 3, 0, fullScale())
 				cancel()
 				if err != nil {
 					continue
@@ -432,15 +432,15 @@ func TestAcquireForModelGivesEachModelItsOwnBudget(t *testing.T) {
 	capacity := ModelCapacity{ScaleFactor: 1}
 	ctx := context.Background()
 
-	if err := limiter.AcquireForModel(ctx, "model-a", 1, capacity); err != nil {
+	if err := limiter.AcquireForModel(ctx, "model-a", 1, 0, capacity); err != nil {
 		t.Fatalf("acquire on model-a: %v", err)
 	}
-	if err := limiter.AcquireForModel(ctx, "model-b", 1, capacity); err != nil {
+	if err := limiter.AcquireForModel(ctx, "model-b", 1, 0, capacity); err != nil {
 		t.Fatalf("acquire on model-b = %v, want nil: model-a's traffic must not spend model-b's budget", err)
 	}
 
 	var rateLimit *RateLimitError
-	if err := limiter.AcquireForModel(ctx, "model-a", 1, capacity); !errors.As(err, &rateLimit) {
+	if err := limiter.AcquireForModel(ctx, "model-a", 1, 0, capacity); !errors.As(err, &rateLimit) {
 		t.Fatalf("second acquire on model-a = %v, want a rate-limit error: its own budget of 1 is spent", err)
 	}
 }
@@ -456,18 +456,18 @@ func TestAcquireForModelWeightDerivedCapIsNotSpentByAnotherModel(t *testing.T) {
 	perModelCapacity := ModelCapacity{CurrentWeight: 4000, BaselineWeight: 4000, MaxConcurrentPer10000Weight: 5}
 
 	for i := range 2 {
-		if err := limiter.AcquireForModel(ctx, "model-a", 1, perModelCapacity); err != nil {
+		if err := limiter.AcquireForModel(ctx, "model-a", 1, 0, perModelCapacity); err != nil {
 			t.Fatalf("acquire %d on model-a = %v, want nil under its weight-derived cap of 2", i, err)
 		}
 	}
 
 	for i := range 2 {
-		if err := limiter.AcquireForModel(ctx, "model-b", 1, perModelCapacity); err != nil {
+		if err := limiter.AcquireForModel(ctx, "model-b", 1, 0, perModelCapacity); err != nil {
 			t.Fatalf("acquire %d on model-b = %v, want nil: model-b's weight buys model-b two slots of its own", i, err)
 		}
 	}
 	var rateLimit *RateLimitError
-	if err := limiter.AcquireForModel(ctx, "model-b", 1, perModelCapacity); !errors.As(err, &rateLimit) {
+	if err := limiter.AcquireForModel(ctx, "model-b", 1, 0, perModelCapacity); !errors.As(err, &rateLimit) {
 		t.Fatalf("third acquire on model-b = %v, want a rate-limit error at its weight-derived cap of 2", err)
 	}
 }
@@ -479,7 +479,7 @@ func TestAcquireForModelWeightDerivedCapIsNotSpentByAnotherModel(t *testing.T) {
 func TestAcquireForModelSmallCapSurvivesPartialCapacity(t *testing.T) {
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1})
 
-	if err := limiter.AcquireForModel(context.Background(), "model-a", 1, ModelCapacity{ScaleFactor: 0.5}); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "model-a", 1, 0, ModelCapacity{ScaleFactor: 0.5}); err != nil {
 		t.Fatalf("acquire at half capacity under a cap of 1 = %v, want nil (rounded to 1, not floored to 0)", err)
 	}
 }
@@ -513,16 +513,16 @@ func TestAcquireForModelHandsFreedSlotToTheEarlierWaiter(t *testing.T) {
 	capacity := ModelCapacity{ScaleFactor: 1}
 	ctx := context.Background()
 
-	if err := limiter.AcquireForModel(ctx, "model-a", 1, capacity); err != nil {
+	if err := limiter.AcquireForModel(ctx, "model-a", 1, 0, capacity); err != nil {
 		t.Fatalf("initial acquire: %v", err)
 	}
 
 	earlier := make(chan error, 1)
-	go func() { earlier <- limiter.AcquireForModel(ctx, "model-a", 1, capacity) }()
+	go func() { earlier <- limiter.AcquireForModel(ctx, "model-a", 1, 0, capacity) }()
 	waitForQueueLen(t, limiter, 1)
 
 	later := make(chan error, 1)
-	go func() { later <- limiter.AcquireForModel(ctx, "model-a", 1, capacity) }()
+	go func() { later <- limiter.AcquireForModel(ctx, "model-a", 1, 0, capacity) }()
 	waitForQueueLen(t, limiter, 2)
 
 	limiter.ReleaseForModel("model-a", 1)
@@ -554,12 +554,12 @@ func TestAcquireForModelHandsFreedSlotToTheEarlierWaiter(t *testing.T) {
 //  6. Assert a further acquire is rejected immediately as a rate-limit error under the lowered cap.
 func TestReconfigureAppliesToTheNextAcquireAndReleasesTheQueue(t *testing.T) {
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1, AcquireWait: 10 * time.Second})
-	if err := limiter.AcquireForModel(context.Background(), "modelX", 1, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "modelX", 1, 0, fullScale()); err != nil {
 		t.Fatalf("first AcquireForModel(): %v", err)
 	}
 
 	queued := make(chan error, 1)
-	go func() { queued <- limiter.AcquireForModel(context.Background(), "modelX", 1, fullScale()) }()
+	go func() { queued <- limiter.AcquireForModel(context.Background(), "modelX", 1, 0, fullScale()) }()
 	waitFor(t, func() bool { return limiter.Snapshot().Total.QueueDepth == 1 })
 
 	limiter.Reconfigure(GatewayConfig{MaxConcurrent: 2, AcquireWait: 10 * time.Second})
@@ -578,7 +578,7 @@ func TestReconfigureAppliesToTheNextAcquireAndReleasesTheQueue(t *testing.T) {
 
 	limiter.Reconfigure(GatewayConfig{MaxConcurrent: 1, AcquireWait: 0})
 	var rateLimited *RateLimitError
-	if err := limiter.AcquireForModel(context.Background(), "modelX", 1, fullScale()); !errors.As(err, &rateLimited) {
+	if err := limiter.AcquireForModel(context.Background(), "modelX", 1, 0, fullScale()); !errors.As(err, &rateLimited) {
 		t.Fatalf("AcquireForModel() after a lowered cap = %v, want a rate-limit error", err)
 	}
 }
@@ -606,7 +606,7 @@ func TestAcquireForModel_ZeroLiveWeightIsAnOutageNotAQueue(t *testing.T) {
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1000, AcquireWait: 5 * time.Minute})
 	capacity := ModelCapacity{CurrentWeight: 0, BaselineWeight: 2000, MaxConcurrentPer10000Weight: 5}
 
-	err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity)
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, capacity)
 
 	if !errors.Is(err, ErrNoLiveWeight) {
 		t.Fatalf("AcquireForModel error = %v, want ErrNoLiveWeight", err)
@@ -628,7 +628,7 @@ func TestAcquireForModel_ZeroScaleWithoutWeightStaysARateLimit(t *testing.T) {
 	t.Parallel()
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: 1000, AcquireWait: time.Millisecond})
 
-	err := limiter.AcquireForModel(context.Background(), "modelA", 1, ModelCapacity{ScaleFactor: 0})
+	err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, ModelCapacity{ScaleFactor: 0})
 
 	var rateLimitErr *RateLimitError
 	if !errors.As(err, &rateLimitErr) || errors.Is(err, ErrNoLiveWeight) {
@@ -646,7 +646,7 @@ func TestAcquireForModel_HostWindowRoomIsNotZeroLiveWeight(t *testing.T) {
 	capacity := ModelCapacity{CurrentWeight: 0, BaselineWeight: 2000, MaxConcurrentPer10000Weight: 5, HostWindowRequests: 2}
 
 	for attempt := 1; attempt <= 2; attempt++ {
-		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, capacity); err != nil {
+		if err := limiter.AcquireForModel(context.Background(), "modelA", 1, 0, capacity); err != nil {
 			t.Fatalf("AcquireForModel attempt %d: %v, want admitted by the host window", attempt, err)
 		}
 	}

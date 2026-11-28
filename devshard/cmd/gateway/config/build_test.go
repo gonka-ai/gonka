@@ -57,6 +57,29 @@ func TestBuildAppliesPrecedenceDefaultsEnvOverrides(t *testing.T) {
 }
 
 // Test flow:
+//  1. Build a config with `MaxQueuedRequestBytes` set to 6 GiB in the environment, then again with an override of 2 GiB on top.
+//  2. Assert the environment value replaces the 4 GiB default and the override replaces the environment value.
+func TestBuildTakesTheQueuedRequestBytesFromTheEnvironmentAndTheOverride(t *testing.T) {
+	values := env.Values{Tunables: env.Tunables{MaxQueuedRequestBytes: int64Pointer(6 << 30)}}
+
+	fromEnvironment, err := Build(values, Overrides{})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	if got := fromEnvironment.Limits.MaxQueuedRequestBytes; got != 6<<30 {
+		t.Errorf("Limits.MaxQueuedRequestBytes = %d, want the environment value %d", got, int64(6<<30))
+	}
+
+	overridden, err := Build(values, Overrides{Tunables: env.Tunables{MaxQueuedRequestBytes: int64Pointer(2 << 30)}})
+	if err != nil {
+		t.Fatalf("Build(): %v", err)
+	}
+	if got := overridden.Limits.MaxQueuedRequestBytes; got != 2<<30 {
+		t.Errorf("Limits.MaxQueuedRequestBytes = %d, want the override %d", got, int64(2<<30))
+	}
+}
+
+// Test flow:
 //  1. Build a config with two client keys passed as the active keys, then overwrite the caller's slice.
 //  2. Assert the built server's API keys are the two keys as passed, so the snapshot does not alias the caller's slice.
 //  3. Build a config with no keys and assert the server has none, with no error even though a model is `api_key`.

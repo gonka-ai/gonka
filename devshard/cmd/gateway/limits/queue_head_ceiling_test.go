@@ -38,12 +38,12 @@ func limiterWithAStarvingHead(t *testing.T, clock *steppedClock) (*GatewayLimite
 	t.Helper()
 	limiter := NewGatewayLimiter(GatewayConfig{MaxConcurrent: headCeilingTokenCap, MaxInputTokens: headCeilingTokenCap, AcquireWait: headCeilingWait})
 	limiter.now = clock.Now
-	if err := limiter.AcquireForModel(context.Background(), headCeilingModel, heldTokens, fullScale()); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), headCeilingModel, heldTokens, 0, fullScale()); err != nil {
 		t.Fatalf("holding acquire: %v", err)
 	}
 	head := make(chan error, 1)
 	go func() {
-		head <- limiter.AcquireForModel(context.Background(), headCeilingModel, headTokens, fullScale())
+		head <- limiter.AcquireForModel(context.Background(), headCeilingModel, headTokens, 0, fullScale())
 	}()
 	waitForQueueLen(t, limiter, 1)
 	return limiter, head
@@ -69,7 +69,7 @@ func TestTheQueueHeadIsPassedOnlyUpToTheCeiling(t *testing.T) {
 	clock := &steppedClock{now: time.Unix(1_700_000_000, 0)}
 	limiter, head := limiterWithAStarvingHead(t, clock)
 	for range maxQueueHeadPasses {
-		if err := limiter.AcquireForModel(context.Background(), headCeilingModel, smallTokens, fullScale()); err != nil {
+		if err := limiter.AcquireForModel(context.Background(), headCeilingModel, smallTokens, 0, fullScale()); err != nil {
 			t.Fatalf("a small request inside the ceiling = %v, want it to pass the head", err)
 		}
 		limiter.ReleaseForModel(headCeilingModel, smallTokens)
@@ -77,7 +77,7 @@ func TestTheQueueHeadIsPassedOnlyUpToTheCeiling(t *testing.T) {
 
 	queuedSmall := make(chan error, 1)
 	go func() {
-		queuedSmall <- limiter.AcquireForModel(context.Background(), headCeilingModel, smallTokens, fullScale())
+		queuedSmall <- limiter.AcquireForModel(context.Background(), headCeilingModel, smallTokens, 0, fullScale())
 	}()
 
 	assertTheHeadGoesFirst(t, limiter, head, queuedSmall)
@@ -94,7 +94,7 @@ func TestAQueueHeadThatWaitedPastTheCeilingIsNotPassed(t *testing.T) {
 
 	queuedSmall := make(chan error, 1)
 	go func() {
-		queuedSmall <- limiter.AcquireForModel(context.Background(), headCeilingModel, smallTokens, fullScale())
+		queuedSmall <- limiter.AcquireForModel(context.Background(), headCeilingModel, smallTokens, 0, fullScale())
 	}()
 
 	assertTheHeadGoesFirst(t, limiter, head, queuedSmall)

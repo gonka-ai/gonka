@@ -615,6 +615,24 @@ func TestTheLogprobsOptimizationOverrideReadsAsATriState(t *testing.T) {
 }
 
 // Test flow:
+//  1. Set GATEWAY_MAX_QUEUED_REQUEST_BYTES to a number, call `Load`, then set it to a word and call `Load` again.
+//  2. Assert the number is read as the budget and the word is refused with an error naming the variable.
+func TestTheQueuedRequestBytesAreReadStrictly(t *testing.T) {
+	t.Setenv("GATEWAY_MAX_QUEUED_REQUEST_BYTES", "6442450944")
+	values, err := Load()
+	if err != nil || values.MaxQueuedRequestBytes == nil || *values.MaxQueuedRequestBytes != 6<<30 {
+		t.Fatalf("Load() with GATEWAY_MAX_QUEUED_REQUEST_BYTES=6442450944 = (%v, %v), want 6 GiB", values.MaxQueuedRequestBytes, err)
+	}
+
+	t.Setenv("GATEWAY_MAX_QUEUED_REQUEST_BYTES", "lots")
+	_, err = Load()
+
+	if err == nil || !strings.Contains(err.Error(), "GATEWAY_MAX_QUEUED_REQUEST_BYTES") {
+		t.Fatalf("Load() with GATEWAY_MAX_QUEUED_REQUEST_BYTES=lots = %v, want an error naming the variable", err)
+	}
+}
+
+// Test flow:
 //  1. Set GATEWAY_DISPATCH_QUEUE_DEPTH to a number, call `Load`, then set it to a word and call `Load` again.
 //  2. Assert the number is read as the depth and the word is refused with an error naming the variable.
 func TestTheDispatchQueueDepthIsReadStrictly(t *testing.T) {

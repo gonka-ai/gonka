@@ -21,7 +21,10 @@ const (
 )
 
 // ErrNoLiveWeight is the refusal for a model whose weight-derived concurrency limit is zero: its hosts carry no capacity right now, which is an outage rather than a quota. See capacity.md, "The gateway limiter".
-var ErrNoLiveWeight = errors.New("the model's weight-derived concurrency limit is zero")
+var (
+	ErrNoLiveWeight    = errors.New("the model's weight-derived concurrency limit is zero")
+	ErrQueuedBytesFull = errors.New("the gateway is holding as many queued request bodies as it can")
+)
 
 type RateLimitError struct {
 	Reason     string
@@ -69,6 +72,7 @@ type GatewayConfig struct {
 	MaxInputTokens        int64
 	AcquireWait           time.Duration
 	AdmissionQueuePerSlot int64
+	MaxQueuedBytes        int64
 	ByModel               map[string]GatewayConfig
 }
 
@@ -97,23 +101,25 @@ func (c *modelCounter) give(inputTokens int64) {
 
 // waiter is one blocked Acquire; its reason is what a timed-out wait reports. See capacity.md, "The queue".
 type waiter struct {
-	model    string
-	tokens   int64
-	capacity ModelCapacity
-	reason   string
-	ready    chan struct{}
-	queuedAt time.Time
-	passedBy int
+	model     string
+	tokens    int64
+	bodyBytes int64
+	capacity  ModelCapacity
+	reason    string
+	ready     chan struct{}
+	queuedAt  time.Time
+	passedBy  int
 }
 
 // GatewayLimiter is the gateway-wide admission limiter, queued in arrival order and passed by what fits; each model records the cap it was last judged against.
 type GatewayLimiter struct {
-	mu     sync.Mutex
-	cfg    GatewayConfig
-	models map[string]*modelCounter
-	total  modelCounter
-	queue  []*waiter
-	now    func() time.Time
+	mu          sync.Mutex
+	cfg         GatewayConfig
+	models      map[string]*modelCounter
+	total       modelCounter
+	queue       []*waiter
+	queuedBytes int64
+	now         func() time.Time
 }
 
 // InFlight is what one scope of the limiter currently holds.
@@ -175,7 +181,7 @@ func (l *GatewayLimiter) Snapshot() LimiterSnapshot {
 	return snapshot
 }
 
-func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inputTokens int64, capacity ModelCapacity) error {
+func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inputTokens, bodyBytes int64, capacity ModelCapacity) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -217,8 +223,14 @@ func (l *GatewayLimiter) AcquireForModel(ctx context.Context, model string, inpu
 		return &RateLimitError{Reason: reasonQueueTooDeep, RetryAfter: acquireWait}
 	}
 
-	blocked := &waiter{model: model, tokens: inputTokens, capacity: capacity, reason: reason, ready: make(chan struct{}), queuedAt: l.now()}
+	if l.queuedBytesFullLocked(bodyBytes) {
+		l.mu.Unlock()
+		return ErrQueuedBytesFull
+	}
+
+	blocked := &waiter{model: model, tokens: inputTokens, bodyBytes: bodyBytes, capacity: capacity, reason: reason, ready: make(chan struct{}), queuedAt: l.now()}
 	l.queue = append(l.queue, blocked)
+	l.queuedBytes += bodyBytes
 	l.promoteLocked() // capacity may already be free; the queue only enforces order, it is not a delay
 	l.mu.Unlock()
 
@@ -247,6 +259,7 @@ func (l *GatewayLimiter) dequeue(w *waiter) bool {
 	for i, queued := range l.queue {
 		if queued == w {
 			l.queue = append(l.queue[:i], l.queue[i+1:]...)
+			l.queuedBytes -= w.bodyBytes
 			return true
 		}
 	}
@@ -277,6 +290,7 @@ func (l *GatewayLimiter) promoteLocked() {
 			head.passedBy++
 		}
 		l.queue = append(l.queue[:i], l.queue[i+1:]...)
+		l.queuedBytes -= waiting.bodyBytes
 		l.takeLocked(counter, waiting.tokens)
 		close(waiting.ready)
 	}
@@ -316,6 +330,10 @@ func (l *GatewayLimiter) queueTooDeepLocked(model string, admitted admission) bo
 		}
 	}
 	return queued >= admitted.concurrencyLimit*perSlot
+}
+
+func (l *GatewayLimiter) queuedBytesFullLocked(bodyBytes int64) bool {
+	return l.cfg.MaxQueuedBytes > 0 && l.queuedBytes+bodyBytes > l.cfg.MaxQueuedBytes
 }
 
 func (l *GatewayLimiter) takeLocked(counter *modelCounter, inputTokens int64) {

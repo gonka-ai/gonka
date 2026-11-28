@@ -266,7 +266,7 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request, escrowPin string) 
 	}
 
 	counted := s.countPrompt(normalized.Model, prompt)
-	err = s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(counted.tokens), s.capacity.ForModel(normalized.Model))
+	err = s.limiter.AcquireForModel(r.Context(), normalized.Model, int64(counted.tokens), int64(len(normalized.Body)), s.capacity.ForModel(normalized.Model))
 	if err != nil {
 		if label, refused := limiterRefusal(err); refused && s.rejections != nil {
 			s.rejections.Rejected(normalized.Model, label)

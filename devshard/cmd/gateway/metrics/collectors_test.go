@@ -113,7 +113,7 @@ func TestTheLimitsCollectorMatchesTheLimiterAfterTraffic(t *testing.T) {
 		Models: func() []string { return []string{"qwen"} },
 	}))
 
-	if err := limiter.AcquireForModel(context.Background(), "qwen", 250, limits.ModelCapacity{ScaleFactor: 0.5}); err != nil {
+	if err := limiter.AcquireForModel(context.Background(), "qwen", 250, 0, limits.ModelCapacity{ScaleFactor: 0.5}); err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
 
@@ -142,7 +142,7 @@ func TestTheLimitsCollectorReportsEveryModelOnce(t *testing.T) {
 	}))
 
 	for _, model := range []string{"qwen", "mistral"} {
-		if err := limiter.AcquireForModel(context.Background(), model, 1, limits.ModelCapacity{ScaleFactor: 1}); err != nil {
+		if err := limiter.AcquireForModel(context.Background(), model, 1, 0, limits.ModelCapacity{ScaleFactor: 1}); err != nil {
 			t.Fatalf("acquire %s: %v", model, err)
 		}
 	}
